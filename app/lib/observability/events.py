@@ -3,7 +3,7 @@
 设计契约：
 - **事件词表收敛**：Harness / Data / Compute / Cartography 四个面的业务事件
   收进 ``EVENT_CATALOG``（category → event → 允许字段）。词表外的 event
-  直接抛错（漂移即红）；词表内未声明的字段一律丢弃（allowlist 制，denylist
+  开发/测试抛错，生产 warning 后丢弃；词表内未声明的字段一律丢弃（allowlist 制，denylist
   挡不住近形键）。
 - **vendor-neutral**：Sink 协议 + 有界 RingSink（诊断/测试）+ LoggingSink
   （stdlib logging，OTel-shaped 平面字段）。不绑定任何 SaaS；接 OTel SDK
@@ -173,14 +173,15 @@ def emit_event(
     error_code: Optional[str] = None,
     **fields: Any,
 ) -> None:
-    """发射一条业务事件（词表外 event 抛错；词表外字段丢弃）。"""
+    """发射一条业务事件（词表外 event 在非生产环境抛错；生产丢弃，字段始终丢弃）。"""
     catalog = EVENT_CATALOG.get(category)
-    if catalog is None:
-        raise ValueError(f"unknown event category: {category!r}")
-    if event not in catalog:
-        raise ValueError(f"unknown event {event!r} in category {category!r}")
-    if status not in STATUS_VOCABULARY:
-        raise ValueError(f"status {status!r} outside bounded vocabulary")
+    invalid = (catalog is None or event not in catalog or status not in STATUS_VOCABULARY)
+    if invalid:
+        from app.core.config import settings
+        if settings.ENV == "production":
+            logger.warning("invalid observability vocabulary dropped")
+            return
+        raise ValueError("event/category/status outside bounded vocabulary")
 
     from app.lib.runtime.context import current_runtime_context
 
@@ -201,7 +202,7 @@ def emit_event(
         "error_code": error_code,
     }
     sensitive = _sensitive_re()
-    allowed = catalog[event]
+    allowed = EVENT_CATALOG[category][event]
     for key, value in fields.items():
         if key not in allowed or value is None:
             continue  # allowlist 制：未声明/None 一律丢弃
@@ -247,10 +248,13 @@ def event_digest(limit: int = 500) -> Dict[str, Any]:
         if callable(snapshot):
             records.extend(snapshot(limit))
     for rec in records:
-        key = (rec.get("category"), rec.get("event"), rec.get("status"))
+        category, event = str(rec.get("category") or ""), str(rec.get("event") or "")
+        raw_status = rec.get("status")
+        status = str(raw_status) if raw_status is not None else None
+        key = (category, event, status)
         counts[key] = counts.get(key, 0) + 1
         if rec.get("duration_s") is not None:
-            dkey = (rec.get("category"), rec.get("event"))
+            dkey = (category, event)
             durations.setdefault(dkey, []).append(float(rec["duration_s"]))
 
     def _quantile(values: List[float], q: float) -> float:

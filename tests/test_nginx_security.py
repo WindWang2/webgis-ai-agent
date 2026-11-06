@@ -169,7 +169,7 @@ class TestNginxWebSocketRouting:
 
 
 class TestCspSingleSource:
-    """#1635：CSP 只有一份拷贝 —— frontend/next.config.mjs 的 headers()。
+    """#1635：CSP 只有一份拷贝 —— frontend/proxy.ts 的每次请求 nonce 策略。
 
     修复前 deploy/nginx/nginx.conf 与 docker-compose.prod.secure.yml 的内联
     副本在 server 级再注入一份更严的 CSP。CSP3 规定多个 CSP 响应头 = 多条
@@ -212,38 +212,24 @@ class TestCspSingleSource:
             "（与 deploy/nginx/nginx.conf 同一不变量）"
         )
 
-    def test_next_config_is_the_single_csp_source(self):
-        """应用侧必须恰好定义一份 CSP，且保留运行时依赖的放宽指令。"""
-        import re
-
-        with open("frontend/next.config.mjs", encoding="utf-8") as f:
-            config = f.read()
-        assert config.count('key: "Content-Security-Policy"') == 1, (
-            "next.config.mjs 必须恰好定义一份 CSP（唯一来源）"
-        )
-        m = re.search(
-            r'key:\s*"Content-Security-Policy",\s*value:\s*\[(.*?)\]\.join',
-            config,
-            re.DOTALL,
-        )
-        assert m, "无法解析 next.config.mjs 的 CSP value 数组"
-        directives = [
-            d.strip().rstrip(",").strip().strip('"') for d in m.group(1).splitlines()
-        ]
-        directives = [d for d in directives if d]
-        for required in (
-            "default-src 'self'",
-            # #1597：maplibre-gl v6 worker 适配依赖 data: URI 的 connect
-            "connect-src 'self' data: http: https: ws: wss:",
-            "img-src 'self' data: blob: http: https:",
-            "worker-src 'self' blob:",
-            "font-src 'self' data:",
-            "frame-ancestors 'none'",
+    def test_proxy_is_the_single_csp_source(self):
+        """One per-request nonce policy protects both Next runtime and custom scripts."""
+        from pathlib import Path
+        config = Path("frontend/next.config.mjs").read_text(encoding="utf-8")
+        proxy = Path("frontend/proxy.ts").read_text(encoding="utf-8")
+        layout = Path("frontend/app/layout.tsx").read_text(encoding="utf-8")
+        assert 'key: "Content-Security-Policy"' not in config
+        assert "crypto.randomUUID()" in proxy
+        assert "'nonce-${nonce}' 'strict-dynamic'" in proxy
+        assert "headers.set('Content-Security-Policy', policy)" in proxy
+        assert "response.headers.set('Content-Security-Policy', policy)" in proxy
+        assert '<script nonce={nonce}' in layout
+        for directive in (
+            "default-src 'self'", "connect-src 'self' data: http: https: ws: wss:",
+            "img-src 'self' data: blob: http: https:", "worker-src 'self' blob:",
+            "font-src 'self' data:", "frame-ancestors 'none'",
         ):
-            assert required in directives, (
-                f"next.config.mjs CSP 缺少指令 {required!r} —— 生产栈唯一下发"
-                "的 CSP，缺指令会被浏览器直接阻断对应能力"
-            )
+            assert directive in proxy
 
     def test_nginx_server_level_does_not_inject_x_frame_options(self):
         """server 级 add_header（8 空格缩进）不得含 X-Frame-Options —— 它会被

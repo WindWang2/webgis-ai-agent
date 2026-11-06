@@ -76,7 +76,7 @@ export function Tour(): React.ReactElement | null {
 
   // 键盘步进
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowRight' || e.key === 'Enter') {
+    if (e.key === 'ArrowRight' || (e.key === 'Enter' && !(e.target instanceof HTMLElement && e.target.closest('button')))) {
       e.preventDefault();
       nextStep(TOUR_STEPS.length);
     } else if (e.key === 'ArrowLeft') {
@@ -110,12 +110,12 @@ export function Tour(): React.ReactElement | null {
     <div className="fixed inset-0 z-[95]" onKeyDown={onKeyDown} data-testid="onboarding-tour">
       {/* 遮罩 + 焦点圈闭（有目标时挖孔，无目标时整层轻遮罩） */}
       <div
-        className="absolute inset-0 bg-black/50"
+        className={spot ? "absolute rounded-md bg-transparent" : "absolute inset-0 bg-black/50"}
         style={
           spot
             ? {
                 boxShadow: `0 0 0 9999px rgba(0,0,0,0.5)`,
-                clipPath: 'none',
+                top: spot.top, left: spot.left, width: spot.width, height: spot.height,
                 ...(reducedMotion ? {} : { transition: 'all 200ms ease' }),
               }
             : undefined

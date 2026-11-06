@@ -75,7 +75,7 @@ def build_raster_stretch_payload(
 
     nodata = ~np.isfinite(arr)
     norm = np.where(nodata, 0.0, (arr - clip_lo) / span)
-    quant = np.clip(np.rint(norm * (QUANT_NODATA - 1)), 0, QUANT_NODATA - 2)
+    quant = np.clip(np.rint(norm * (QUANT_NODATA - 1)), 0, QUANT_NODATA - 1)
     quant = np.where(nodata, QUANT_NODATA, quant).astype(np.uint8)
 
     bits = np.packbits(nodata.reshape(-1))

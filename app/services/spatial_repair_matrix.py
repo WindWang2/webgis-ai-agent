@@ -87,11 +87,11 @@ REPAIR_FIXTURES: Dict[str, Dict[str, Any]] = {
     "MISSING_CRS": {"fc": _fc([
         _pt(13000000.0, 4000000.0),
         _pt(13100000.0, 4010000.0),
-    ], source_crs="EPSG:3857")},
+    ]), "source_crs": "EPSG:3857"},
     "SUSPICIOUS_CRS": {"fc": _fc([
         _pt(12000000.0, 3000000.0),
         _pt(12100000.0, 3010000.0),
-    ], source_crs="EPSG:3857")},
+    ], source_crs="EPSG:3857"), "source_crs": "EPSG:3857"},
     "IMPOSSIBLE_LAT_LON": {"fc": _fc([
         _pt(110.0, 250.0),  # 纬度 > 90
     ])},

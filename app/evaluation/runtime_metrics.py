@@ -23,9 +23,9 @@ from typing import Any, Dict, List, NotRequired, Optional, Sequence, TypedDict
 
 class RetrievalMetricRecord(TypedDict):
     k: int
-    recall_at_k: float
-    precision_at_k: float
-    irrelevant_rate: float
+    recall_at_k: float | None
+    precision_at_k: float | None
+    irrelevant_rate: float | None
     cases: int
     skipped: int
 
@@ -34,11 +34,11 @@ class SurfaceRetrievalRecord(TypedDict):
     cases: int
     skipped: int
     k_max: int
-    recall_at_k: dict[str, float]
-    precision_at_k_max: float
-    avg_active_tools: float
+    recall_at_k: dict[str, float | None]
+    precision_at_k_max: float | None
+    avg_active_tools: float | None
     tier3_leak: int
-    avg_schema_bytes: float
+    avg_schema_bytes: float | None
     max_schema_bytes: int
     budget_violations: int
 
@@ -51,9 +51,9 @@ class RoutingObservation(TypedDict, total=False):
 
 class RoutingMetricRecord(TypedDict):
     calls: int
-    fallback_rate: float
-    failure_rate: float
-    avg_latency_s: float
+    fallback_rate: float | None
+    failure_rate: float | None
+    avg_latency_s: float | None
 
 
 class ExecutionObservation(TypedDict, total=False):
@@ -66,11 +66,11 @@ class ExecutionObservation(TypedDict, total=False):
 
 class ExecutionMetricRecord(TypedDict):
     turns: int
-    completion_rate: float
-    timeout_rate: float
-    no_progress_incidence: float
-    repeated_call_rate: float
-    avg_tool_count: float
+    completion_rate: float | None
+    timeout_rate: float | None
+    no_progress_incidence: float | None
+    repeated_call_rate: float | None
+    avg_tool_count: float | None
 
 
 class GisCorrectnessObservation(TypedDict, total=False):
@@ -82,9 +82,9 @@ class GisCorrectnessObservation(TypedDict, total=False):
 
 class GisCorrectnessRecord(TypedDict):
     cases: int
-    correct_algorithm_family_rate: float
-    correct_data_qualification_rate: float
-    final_map_state_pass_rate: float
+    correct_algorithm_family_rate: float | None
+    correct_data_qualification_rate: float | None
+    final_map_state_pass_rate: float | None
 
 
 class ContextObservation(TypedDict, total=False):
@@ -92,14 +92,16 @@ class ContextObservation(TypedDict, total=False):
     total_est_tokens: int
     over_budget: bool
     violations: list[str]
+    truncated: bool | list[str]
+    dropped_messages: int
 
 
 class ContextMetricRecord(TypedDict):
     reports: int
-    overflow_rate: float
-    truncation_incidence: float
-    schema_token_ratio: float
-    result_token_ratio: float
+    overflow_rate: float | None
+    truncation_incidence: float | None
+    schema_token_ratio: float | None
+    result_token_ratio: float | None
 
 
 class ChainGateEntry(TypedDict):
@@ -178,18 +180,18 @@ def relevant_tools_for_case(registry: Any, expected_capabilities: Sequence[str])
 @dataclass
 class RetrievalMetrics:
     k: int
-    recall_at_k: float
-    precision_at_k: float
-    irrelevant_rate: float
+    recall_at_k: float | None
+    precision_at_k: float | None
+    irrelevant_rate: float | None
     cases: int
     skipped: int = 0       # 无相关工具集的 case（不计入 recall 分母）
 
     def as_dict(self) -> RetrievalMetricRecord:
         return {
             "k": self.k,
-            "recall_at_k": round(self.recall_at_k, 4),
-            "precision_at_k": round(self.precision_at_k, 4),
-            "irrelevant_rate": round(self.irrelevant_rate, 4),
+            "recall_at_k": round(self.recall_at_k, 4) if self.recall_at_k is not None else None,
+            "precision_at_k": round(self.precision_at_k, 4) if self.precision_at_k is not None else None,
+            "irrelevant_rate": round(self.irrelevant_rate, 4) if self.irrelevant_rate is not None else None,
             "cases": self.cases,
             "skipped": self.skipped,
         }
@@ -227,9 +229,9 @@ def retrieval_metrics(
     n = len(recalls)
     return RetrievalMetrics(
         k=k,
-        recall_at_k=sum(recalls) / n if n else 0.0,
-        precision_at_k=sum(precisions) / n if n else 0.0,
-        irrelevant_rate=1.0 - (sum(precisions) / n if n else 0.0),
+        recall_at_k=sum(recalls) / n if n else None,
+        precision_at_k=sum(precisions) / n if n else None,
+        irrelevant_rate=1.0 - sum(precisions) / n if n else None,
         cases=n,
         skipped=skipped,
     )
@@ -242,11 +244,11 @@ class SurfaceRetrievalReport:
     cases: int
     skipped: int
     k_max: int
-    recall_at_k: Dict[int, float]
-    precision_at_k_max: float
-    avg_active_tools: float
+    recall_at_k: Dict[int, float | None]
+    precision_at_k_max: float | None
+    avg_active_tools: float | None
     tier3_leak: int                 # tier>=3 / effective_security_tier>=3 入面次数（恒期望 0）
-    avg_schema_bytes: float         # 仅 byte_sample>0 时计算，否则 0.0
+    avg_schema_bytes: float | None         # 仅 byte_sample>0 且有样本时计算，否则 None
     max_schema_bytes: int
     budget_violations: int          # project 字节预算违约次数（恒期望 0）
 
@@ -255,11 +257,11 @@ class SurfaceRetrievalReport:
             "cases": self.cases,
             "skipped": self.skipped,
             "k_max": self.k_max,
-            "recall_at_k": {str(k): round(v, 4) for k, v in sorted(self.recall_at_k.items())},
-            "precision_at_k_max": round(self.precision_at_k_max, 4),
-            "avg_active_tools": round(self.avg_active_tools, 2),
+            "recall_at_k": {str(k): round(v, 4) if v is not None else None for k, v in sorted(self.recall_at_k.items())},
+            "precision_at_k_max": round(self.precision_at_k_max, 4) if self.precision_at_k_max is not None else None,
+            "avg_active_tools": round(self.avg_active_tools, 2) if self.avg_active_tools is not None else None,
             "tier3_leak": self.tier3_leak,
-            "avg_schema_bytes": round(self.avg_schema_bytes, 1),
+            "avg_schema_bytes": round(self.avg_schema_bytes, 1) if self.avg_schema_bytes is not None else None,
             "max_schema_bytes": self.max_schema_bytes,
             "budget_violations": self.budget_violations,
         }
@@ -339,12 +341,12 @@ def surface_retrieval_report(
         skipped=skipped,
         k_max=k_max,
         recall_at_k={
-            k: (sum(v) / len(v) if v else 0.0) for k, v in recalls.items()
+            k: (sum(v) / len(v) if v else None) for k, v in recalls.items()
         },
-        precision_at_k_max=sum(precisions) / len(precisions) if precisions else 0.0,
-        avg_active_tools=sum(active_counts) / len(active_counts) if active_counts else 0.0,
+        precision_at_k_max=sum(precisions) / len(precisions) if precisions else None,
+        avg_active_tools=sum(active_counts) / len(active_counts) if active_counts else None,
         tier3_leak=tier3_leak,
-        avg_schema_bytes=sum(byte_sizes) / len(byte_sizes) if byte_sizes else 0.0,
+        avg_schema_bytes=sum(byte_sizes) / len(byte_sizes) if byte_sizes else None,
         max_schema_bytes=max(byte_sizes) if byte_sizes else 0,
         budget_violations=budget_violations,
     )
@@ -357,16 +359,16 @@ def surface_retrieval_report(
 @dataclass
 class RoutingMetrics:
     calls: int
-    fallback_rate: float
-    failure_rate: float
-    avg_latency_s: float
+    fallback_rate: float | None
+    failure_rate: float | None
+    avg_latency_s: float | None
 
     def as_dict(self) -> RoutingMetricRecord:
         return {
             "calls": self.calls,
-            "fallback_rate": round(self.fallback_rate, 4),
-            "failure_rate": round(self.failure_rate, 4),
-            "avg_latency_s": round(self.avg_latency_s, 3),
+            "fallback_rate": round(self.fallback_rate, 4) if self.fallback_rate is not None else None,
+            "failure_rate": round(self.failure_rate, 4) if self.failure_rate is not None else None,
+            "avg_latency_s": round(self.avg_latency_s, 3) if self.avg_latency_s is not None else None,
         }
 
 
@@ -383,7 +385,7 @@ def routing_metrics(
     """
     n = len(observations)
     if not n:
-        return RoutingMetrics(0, 0.0, 0.0, 0.0)
+        return RoutingMetrics(0, None, None, None)
     fallbacks = 0
     failures = 0
     latencies: List[float] = []
@@ -400,7 +402,7 @@ def routing_metrics(
         calls=n,
         fallback_rate=fallbacks / n,
         failure_rate=failures / n,
-        avg_latency_s=sum(latencies) / len(latencies) if latencies else 0.0,
+        avg_latency_s=sum(latencies) / len(latencies) if latencies else None,
     )
 
 
@@ -411,20 +413,20 @@ def routing_metrics(
 @dataclass
 class ExecutionMetrics:
     turns: int
-    completion_rate: float
-    timeout_rate: float
-    no_progress_incidence: float
-    repeated_call_rate: float
-    avg_tool_count: float
+    completion_rate: float | None
+    timeout_rate: float | None
+    no_progress_incidence: float | None
+    repeated_call_rate: float | None
+    avg_tool_count: float | None
 
     def as_dict(self) -> ExecutionMetricRecord:
         return {
             "turns": self.turns,
-            "completion_rate": round(self.completion_rate, 4),
-            "timeout_rate": round(self.timeout_rate, 4),
-            "no_progress_incidence": round(self.no_progress_incidence, 4),
-            "repeated_call_rate": round(self.repeated_call_rate, 4),
-            "avg_tool_count": round(self.avg_tool_count, 2),
+            "completion_rate": round(self.completion_rate, 4) if self.completion_rate is not None else None,
+            "timeout_rate": round(self.timeout_rate, 4) if self.timeout_rate is not None else None,
+            "no_progress_incidence": round(self.no_progress_incidence, 4) if self.no_progress_incidence is not None else None,
+            "repeated_call_rate": round(self.repeated_call_rate, 4) if self.repeated_call_rate is not None else None,
+            "avg_tool_count": round(self.avg_tool_count, 2) if self.avg_tool_count is not None else None,
         }
 
 
@@ -433,7 +435,7 @@ def execution_metrics(turn_reports: Sequence[ExecutionObservation]) -> Execution
     "repeated_calls": int, "tool_calls": int}``（trace/evidence 聚合产物）。"""
     n = len(turn_reports)
     if not n:
-        return ExecutionMetrics(0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return ExecutionMetrics(0, None, None, None, None, None)
     completed = sum(1 for r in turn_reports if r.get("completed"))
     timed_out = sum(1 for r in turn_reports if r.get("timed_out"))
     no_progress = sum(1 for r in turn_reports if r.get("no_progress"))
@@ -456,16 +458,16 @@ def execution_metrics(turn_reports: Sequence[ExecutionObservation]) -> Execution
 @dataclass
 class GisCorrectnessMetrics:
     cases: int
-    correct_algorithm_family_rate: float
-    correct_data_qualification_rate: float
-    final_map_state_pass_rate: float
+    correct_algorithm_family_rate: float | None
+    correct_data_qualification_rate: float | None
+    final_map_state_pass_rate: float | None
 
     def as_dict(self) -> GisCorrectnessRecord:
         return {
             "cases": self.cases,
-            "correct_algorithm_family_rate": round(self.correct_algorithm_family_rate, 4),
-            "correct_data_qualification_rate": round(self.correct_data_qualification_rate, 4),
-            "final_map_state_pass_rate": round(self.final_map_state_pass_rate, 4),
+            "correct_algorithm_family_rate": round(self.correct_algorithm_family_rate, 4) if self.correct_algorithm_family_rate is not None else None,
+            "correct_data_qualification_rate": round(self.correct_data_qualification_rate, 4) if self.correct_data_qualification_rate is not None else None,
+            "final_map_state_pass_rate": round(self.final_map_state_pass_rate, 4) if self.final_map_state_pass_rate is not None else None,
         }
 
 
@@ -505,9 +507,9 @@ def gis_correctness_metrics(case_outcomes: Sequence[GisCorrectnessObservation]) 
                 n_map_ok += 1
     return GisCorrectnessMetrics(
         cases=len(case_outcomes),
-        correct_algorithm_family_rate=n_family_ok / n_family if n_family else 0.0,
-        correct_data_qualification_rate=n_qual_ok / n_qual if n_qual else 0.0,
-        final_map_state_pass_rate=n_map_ok / n_map if n_map else 0.0,
+        correct_algorithm_family_rate=n_family_ok / n_family if n_family else None,
+        correct_data_qualification_rate=n_qual_ok / n_qual if n_qual else None,
+        final_map_state_pass_rate=n_map_ok / n_map if n_map else None,
     )
 
 
@@ -518,18 +520,18 @@ def gis_correctness_metrics(case_outcomes: Sequence[GisCorrectnessObservation]) 
 @dataclass
 class ContextMetrics:
     reports: int
-    overflow_rate: float
-    truncation_incidence: float
-    schema_token_ratio: float
-    result_token_ratio: float
+    overflow_rate: float | None
+    truncation_incidence: float | None
+    schema_token_ratio: float | None
+    result_token_ratio: float | None
 
     def as_dict(self) -> ContextMetricRecord:
         return {
             "reports": self.reports,
-            "overflow_rate": round(self.overflow_rate, 4),
-            "truncation_incidence": round(self.truncation_incidence, 4),
-            "schema_token_ratio": round(self.schema_token_ratio, 4),
-            "result_token_ratio": round(self.result_token_ratio, 4),
+            "overflow_rate": round(self.overflow_rate, 4) if self.overflow_rate is not None else None,
+            "truncation_incidence": round(self.truncation_incidence, 4) if self.truncation_incidence is not None else None,
+            "schema_token_ratio": round(self.schema_token_ratio, 4) if self.schema_token_ratio is not None else None,
+            "result_token_ratio": round(self.result_token_ratio, 4) if self.result_token_ratio is not None else None,
         }
 
 
@@ -537,7 +539,7 @@ def context_metrics(budget_reports: Sequence[ContextObservation]) -> ContextMetr
     """budget_reports: context_assembler 的 ``budget_report`` dict 序列。"""
     n = len(budget_reports)
     if not n:
-        return ContextMetrics(0, 0.0, 0.0, 0.0, 0.0)
+        return ContextMetrics(0, None, None, None, None)
     overflows = 0
     truncations = 0
     schema_ratios: List[float] = []
@@ -549,7 +551,10 @@ def context_metrics(budget_reports: Sequence[ContextObservation]) -> ContextMetr
             str(v).startswith("over_budget") for v in (rep.get("violations") or [])
         ):
             overflows += 1
-        if rep.get("violations"):
+        if rep.get("truncated") or (rep.get("dropped_messages") or 0) > 0 or any(
+            str(value).startswith(("truncated:", "truncation:", "dropped:"))
+            for value in (rep.get("violations") or [])
+        ):
             truncations += 1
         if total:
             schema_ratios.append(by.get("TOOL_SCHEMAS", 0) / total)
@@ -558,6 +563,6 @@ def context_metrics(budget_reports: Sequence[ContextObservation]) -> ContextMetr
         reports=n,
         overflow_rate=overflows / n,
         truncation_incidence=truncations / n,
-        schema_token_ratio=sum(schema_ratios) / len(schema_ratios) if schema_ratios else 0.0,
-        result_token_ratio=sum(result_ratios) / len(result_ratios) if result_ratios else 0.0,
+        schema_token_ratio=sum(schema_ratios) / len(schema_ratios) if schema_ratios else None,
+        result_token_ratio=sum(result_ratios) / len(result_ratios) if result_ratios else None,
     )

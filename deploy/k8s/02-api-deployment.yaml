@@ -58,20 +58,18 @@ spec:
       # #476：k8s 的 `command:` 覆盖镜像 ENTRYPOINT —— 镜像的
       # docker-entrypoint.sh（启动前 alembic upgrade head）在 k8s 不生效，
       # 必须显式用 initContainer 执行迁移。Pod Ready 之前 schema 已就绪，
-      # 滚动更新期间新副本不会带着旧 schema 接流量。
+      # 0102 changes credential format and requires a maintenance cutover of
+      # ALL writers (including Celery/HPA), not a rolling deployment. Existing
+      # credentials make the migration fail closed until that manual cutover
+      # is acknowledged in a separate one-off Job; see docs/DEPLOYMENT.md.
       initContainers:
       - name: db-migration
-        # #559 / #618-37: CI 推送 ghcr.io/windwang2/webgis-ai-agent:<sha>
-        # （production.yml build job）。metadata-action 另有 type=ref,event=branch
-        # (`master`) 与无 `v` 前缀的 semver。默认 tag 用 `master`，避免 raw
-        # apply 去拉从未推送的 `v0.1.2`。生产部署必须钉 CI sha：
-        #   kustomize edit set image ghcr.io/windwang2/webgis-ai-agent=ghcr.io/windwang2/webgis-ai-agent:<sha>
-        image: ghcr.io/windwang2/webgis-ai-agent:master
-        imagePullPolicy: Always
-        # #618-33: k8s `command:` 覆盖镜像 ENTRYPOINT，裸 `alembic upgrade
-        # head` 不会 stamp 收编 pre-alembic / create_all 库（CrashLoop）。
-        # 复用 docker-entrypoint.sh 的 legacy-db 探测 + stamp head + upgrade
-        # （幂等）。`true` 是迁移成功后的 CMD，initContainer 以 0 退出。
+        # All-zero digest deliberately prevents unconfigured raw deployment.
+        # Run pin-image.sh with the published CI manifest digest first.
+        image: ghcr.io/windwang2/webgis-ai-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        imagePullPolicy: IfNotPresent
+        # Entry point refuses unversioned databases unless adoption is
+        # explicitly requested after verification. `true` runs after migration.
         command: ["/usr/local/bin/docker-entrypoint.sh"]
         args: ["true"]
         # 与应用容器同一 config/secret 来源（DATABASE_URL 在其中）。
@@ -103,8 +101,8 @@ spec:
         # /app/backend/app/skills（Dockerfile.prod chown 的可写技能目录）
         # 播种进 skills-volume；uploads 的 admin 技能上传（config.py:238）
         # 与 agent 自建技能（skill_creator）此后才不再 EROFS。
-        image: ghcr.io/windwang2/webgis-ai-agent:master
-        imagePullPolicy: Always
+        image: ghcr.io/windwang2/webgis-ai-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "mkdir -p /seed-skills && cp -a /app/backend/app/skills/. /seed-skills/"]
         securityContext:
           allowPrivilegeEscalation: false
@@ -117,10 +115,9 @@ spec:
           mountPath: /seed-skills
       containers:
       - name: webgis-api
-        # #618-37: default tag `master` matches CI branch tag. Pin sha at
-        # deploy time (kustomize edit set image …:<sha>).
-        image: ghcr.io/windwang2/webgis-ai-agent:master
-        imagePullPolicy: Always
+        # Same immutable image as migration and seed containers.
+        image: ghcr.io/windwang2/webgis-ai-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        imagePullPolicy: IfNotPresent
         # 审计 I25：容器安全上下文 — 禁止权限提升，丢弃所有 capabilities
         securityContext:
           allowPrivilegeEscalation: false
@@ -131,12 +128,10 @@ spec:
         # 与 Dockerfile.prod 的 CMD 保持一致：使用 standalone server 而非 npx serve。
         # 之前的 `cd /app/frontend/out && npx serve` 引用了 Dockerfile.prod 不产出的目录，
         # 导致 k8s 部署下前端永久 502。
-        command: ["sh", "-c"]
-        # 审计 P0：trap + wait 确保 SIGTERM 正确传播给 uvicorn + node 子进程，
-        # 否则滚动更新时 pod 会脏退出（tini 在 k8s 侧不在 pid 1）。
-        # #1694 SEC-13：--ws-max-size 与 ws.py:29 / ws_collab.py:51 的
-        # _MAX_INBOUND_BYTES=16*1024 对齐（应用层检查在整帧缓冲之后，协议层先限）。
-        args: ["trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws-max-size 16384 & node frontend/.next/standalone/server.js -p 3000 & wait"]
+        command: ["python", "-m", "app.lib.runtime.service_supervisor"]
+        # Supervisor stops both process groups if either service exits, forwards
+        # SIGTERM, and bounds shutdown. uvicorn uses the 16KiB WS frame limit.
+        args: []
         ports:
         - containerPort: 8000
           name: api
@@ -147,6 +142,13 @@ spec:
             name: webgis-config
         - secretRef:
             name: webgis-secret
+        startupProbe:
+          httpGet:
+            path: /api/v1/health/live
+            port: 8000
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 60
         livenessProbe:
           httpGet:
             path: /api/v1/health/live

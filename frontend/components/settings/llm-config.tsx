@@ -4,6 +4,7 @@ import { useT } from '@/lib/i18n/useT';
 import React, { useState, useEffect, useCallback } from 'react';
 import { STitle } from '@/components/shared/section-title';
 import { apiFetch, isApiError, describeApiError } from '@/lib/api/transport';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 /** GET /api/v1/config/llm 返回的服务端 LLM 配置（api_key 已被服务端掩码）。 */
 interface ServerLlmConfig {
@@ -32,12 +33,15 @@ export function LlmConfig() {
   const [serverConfig, setServerConfig] = useState<ServerLlmConfig | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [accessIssue, setAccessIssue] = useState<'sign-in' | 'admin' | null>(null);
+  const setSettingsTab = useHudStore((state) => state.setSettingsTab);
   const [testState, setTestState] = useState<TestState>('idle');
   const [testDetail, setTestDetail] = useState<string | null>(null);
 
   const loadServerConfig = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
+    setAccessIssue(null);
     try {
       const data = await apiFetch<ServerLlmConfig>('/api/v1/config/llm', {
         label: 'LLM config load error',
@@ -45,8 +49,11 @@ export function LlmConfig() {
       setServerConfig(data);
     } catch (err) {
       setServerConfig(null);
+      const access = isApiError(err) && err.status === 401 ? 'sign-in'
+        : isApiError(err) && err.status === 403 ? 'admin' : null;
+      setAccessIssue(access);
       setLoadError(
-        isApiError(err) && err.status === 403
+        access === 'sign-in' ? t('settings.llm.signInRequired') : access === 'admin'
           ? t('settings.llm.viewForbidden')
           : describeApiError(err, t('settings.llm.loadFailed'))
       );
@@ -94,7 +101,15 @@ export function LlmConfig() {
       {loading && <div className="text-body text-ink-muted">{t('common.loading')}</div>}
 
       {!loading && loadError && (
-        <div className="text-body font-medium text-status-critical">{loadError}</div>
+        <div className="flex flex-col items-start gap-2 text-body font-medium text-status-critical" role="status">
+          <span>{loadError}</span>
+          {accessIssue === 'sign-in' && (
+            <button type="button" onClick={() => setSettingsTab('account')}
+              className="rounded-sm border border-edge-subtle px-3 py-1 text-ink-secondary hover:bg-surface-hover">
+              {t('settings.account.login')}
+            </button>
+          )}
+        </div>
       )}
 
       {!loading && serverConfig && (
@@ -120,7 +135,7 @@ export function LlmConfig() {
       <div className="flex items-center gap-3">
         <button
           onClick={handleTest}
-          disabled={testState === 'testing'}
+          disabled={testState === 'testing' || accessIssue !== null}
           className="inline-flex items-center gap-1.5 rounded-sm border border-edge-subtle bg-surface-sunken px-3 py-1 text-body font-medium text-ink-secondary transition-all hover:bg-surface-hover disabled:opacity-50"
         >
           {testState === 'testing' ? (
@@ -142,10 +157,10 @@ export function LlmConfig() {
                   strokeLinecap="round"
                 />
               </svg>
-              Testing...
+              {t('settings.llm.testing')}
             </>
           ) : (
-            <>Connectivity Test</>
+            <>{t('settings.llm.testConnection')}</>
           )}
         </button>
         <button
@@ -158,14 +173,14 @@ export function LlmConfig() {
       </div>
       {testState === 'success' && (
         <div className="text-body font-medium text-status-success">
-          Connection OK
+          {t('settings.llm.connected')}
         </div>
       )}
       {testState === 'error' && (
         <div className="text-body font-medium text-status-critical">
           {testDetail
             ? t('settings.llm.failedWithDetail', { detail: testDetail })
-            : 'Connection Failed'}
+            : t('settings.llm.testFailed')}
         </div>
       )}
     </div>

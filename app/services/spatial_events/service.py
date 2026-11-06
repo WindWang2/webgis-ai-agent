@@ -19,6 +19,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import uuid
+from contextvars import ContextVar
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -76,6 +79,8 @@ class SpatialEventService:
         self._invalidation = invalidation_bridge
         self._session_store = session_store
         self._wake = asyncio.Event()
+        self._wake_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._watch_cache: ContextVar[Optional[dict]] = ContextVar("spatial_watch_cache", default=None)
 
     @property
     def ledger(self) -> SpatialEventLedger:
@@ -126,10 +131,9 @@ class SpatialEventService:
 
     def notify(self) -> None:
         """唤醒本进程 worker（低延迟路径；轮询是兜底）。"""
-        try:
-            self._wake.set()
-        except RuntimeError:
-            pass  # 无事件循环（同步 hook 进程）——由轮询兜底
+        loop = self._wake_loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._wake.set)
 
     # ── drain ────────────────────────────────────────────────────────
 
@@ -169,40 +173,55 @@ class SpatialEventService:
         except Exception as e:  # noqa: BLE001
             logger.warning("[spatial_events] coalesce failed: %s", e)
 
+        claim_owner = f"{worker_id[:64]}:{uuid.uuid4().hex}"
         rows = await asyncio.to_thread(
-            self._ledger.claim_batch, worker_id, limit=n
+            self._ledger.claim_batch, claim_owner, limit=n
         )
         rows = _interleave_by_org(rows)
         summary["claimed"] = len(rows)
-        self._watch_cache = {}
+        self._watch_cache.set({})
 
-        last_processed_id = 0
-        for row in rows:
-            try:
-                outcome = await self._process_event(row)
-            except Exception as e:  # noqa: BLE001 — 单事件异常不拖垮批
-                logger.warning(
-                    "[spatial_events] event %s processing error: %s",
-                    row.get("id"), e,
-                )
-                outcome = {"deferred": True, "seconds": None}
-            if outcome.get("deferred"):
-                await asyncio.to_thread(
-                    self._ledger.mark_failed, row["id"],
-                    error_code=outcome.get("error_code", "DEFERRED"),
-                    backoff_s=float(outcome.get("seconds") or DEFERRED_BACKOFF_S),
-                )
-                summary["deferred"] += 1
-            elif outcome.get("skipped"):
-                summary["skipped"] = summary.get("skipped", 0) + 1
-            else:
-                await asyncio.to_thread(self._ledger.mark_processed, row["id"])
-                summary["processed"] += 1
-                last_processed_id = max(last_processed_id, int(row["id"]))
-            summary["fires"] += int(outcome.get("fires", 0))
+        heartbeat = asyncio.create_task(self._renew_claims(rows, claim_owner))
+        try:
+            last_processed_id = 0
+            for row in rows:
+                try:
+                    outcome = await self._process_event(row)
+                except Exception as e:  # noqa: BLE001 — 单事件异常不拖垮批
+                    logger.warning(
+                        "[spatial_events] event %s processing error: %s",
+                        row.get("id"), e,
+                    )
+                    outcome = {"deferred": True, "seconds": None}
+                if outcome.get("deferred"):
+                    settled = await asyncio.to_thread(
+                        self._ledger.mark_failed, row["id"],
+                        worker_id=claim_owner, error_code=outcome.get("error_code", "DEFERRED"),
+                        backoff_s=float(outcome.get("seconds") or DEFERRED_BACKOFF_S),
+                        deferred=outcome.get("error_code") in {"MISSION_ACTION_DEFERRED", "WATCH_STATE_CAS_CONFLICT", "GOVERNOR_DEFER"},
+                    )
+                    if settled:
+                        summary["deferred"] += 1
+                    else:
+                        summary["lost_claim"] = summary.get("lost_claim", 0) + 1
+                elif outcome.get("skipped"):
+                    summary["skipped"] = summary.get("skipped", 0) + 1
+                else:
+                    settled = await asyncio.to_thread(self._ledger.mark_processed, row["id"], worker_id=claim_owner)
+                    if settled:
+                        summary["processed"] += 1
+                        last_processed_id = max(last_processed_id, int(row["id"]))
+                    else:
+                        summary["lost_claim"] = summary.get("lost_claim", 0) + 1
+                summary["fires"] += int(outcome.get("fires", 0))
+
+        finally:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
 
         _ = last_processed_id
-        self._watch_cache = {}
+        self._watch_cache.set({})
         try:
             watermark = await asyncio.to_thread(
                 self._ledger.cursor_high_watermark
@@ -214,6 +233,13 @@ class SpatialEventService:
         except Exception as e:  # noqa: BLE001
             logger.warning("[spatial_events] cursor update failed: %s", e)
         return summary
+
+    async def _renew_claims(self, rows: List[Dict[str, Any]], worker_id: str) -> None:
+        interval = max(0.05, flags.stale_claim_s() / 3)
+        while True:
+            await asyncio.sleep(interval)
+            await asyncio.to_thread(self._ledger.renew_claims,
+                                    [int(row["id"]) for row in rows], worker_id=worker_id)
 
     async def run_worker(
         self,
@@ -230,6 +256,10 @@ class SpatialEventService:
         interval = (
             interval_s if interval_s is not None else flags.worker_interval_s()
         )
+        loop = asyncio.get_running_loop()
+        if self._wake_loop is not loop:
+            self._wake = asyncio.Event()
+            self._wake_loop = loop
         iterations = 0
         while True:
             if stop is not None and stop.is_set():
@@ -276,7 +306,8 @@ class SpatialEventService:
         if envelope is None:
             outcome["error_code"] = "MALFORMED_ROW"
             await asyncio.to_thread(
-                self._ledger.mark_skipped, row["id"], reason="MALFORMED_ROW"
+                self._ledger.mark_skipped, row["id"], reason="MALFORMED_ROW",
+                worker_id=str(row.get("claimed_by") or "")
             )
             outcome["skipped"] = True
             return outcome
@@ -292,9 +323,7 @@ class SpatialEventService:
             existing_fire = await asyncio.to_thread(
                 self._ledger.get_fire, wid, event_id
             )
-            if existing_fire is not None and existing_fire["outcome"] in (
-                "pending", "deferred",
-            ):
+            if existing_fire is not None:
                 # 重试路径（P1 修复）：fire 已持久（此前触发条件已满足），
                 # 直接重执行动作——绕过 cooldown 求值，否则重试会被
                 # (now - last_fired_at) < cooldown 吞掉、动作永久丢失。
@@ -369,9 +398,15 @@ class SpatialEventService:
                 return WatchEvalResult(
                     fired=False, reason="watch_state_missing", state=WatchState()
                 )
+            if state is not None and state.last_event_id == envelope.event_id:
+                return WatchEvalResult(
+                    fired=state.last_fired_at == envelope.occurred_at,
+                    reason="event_already_evaluated", state=state,
+                )
+            aoi = await self._resolve_aoi(watch.condition.aoi_ref, watch) if watch.condition.aoi_ref else None
             result = evaluate_watch(
                 watch, state or WatchState(), envelope,
-                resolve_aoi=self._resolve_aoi,
+                resolve_aoi=lambda ref: aoi,
             )
             committed = await asyncio.to_thread(
                 self._ledger.compare_and_swap_watch_state,
@@ -388,9 +423,10 @@ class SpatialEventService:
 
     async def _cached_watch_ids(self, org_id: str) -> List[str]:
         key = ("ids", org_id)
-        cache = getattr(self, "_watch_cache", None)
+        cache = self._watch_cache.get()
         if cache is None:
-            cache = self._watch_cache = {}
+            cache = {}
+            self._watch_cache.set(cache)
         if key not in cache:
             cache[key] = await asyncio.to_thread(
                 self._ledger.list_watches, org_id=org_id, enabled_only=True
@@ -399,9 +435,10 @@ class SpatialEventService:
 
     async def _cached_watch(self, watch_id: str, org_id: str):
         key = ("watch", org_id, watch_id)
-        cache = getattr(self, "_watch_cache", None)
+        cache = self._watch_cache.get()
         if cache is None:
-            cache = self._watch_cache = {}
+            cache = {}
+            self._watch_cache.set(cache)
         if key not in cache:
             cache[key] = await asyncio.to_thread(
                 self._ledger.get_watch, watch_id, org_id=org_id
@@ -469,7 +506,7 @@ class SpatialEventService:
             }
 
         existing = await asyncio.to_thread(
-            self._ledger.get_fire, watch_id, event_id
+            self._ledger.get_fire, watch_id, event_id, action=action
         )
         if existing is not None:
             done = existing["outcome"] in (
@@ -496,7 +533,7 @@ class SpatialEventService:
         # 认领（条件更新 pending/deferred → executing）：多副本重试同一
         # 触发时只有一方执行——mission_revise 无确定性幂等键，必须防双写。
         claimed = await asyncio.to_thread(
-            self._ledger.claim_fire, watch_id, event_id
+            self._ledger.claim_fire, watch_id, event_id, action=action
         )
         if not claimed:
             return {
@@ -510,7 +547,7 @@ class SpatialEventService:
         if ticket is None:
             await asyncio.to_thread(
                 self._ledger.update_fire_outcome, watch_id, event_id,
-                "deferred", {"reason": "governor_defer"},
+                "deferred", {"reason": "governor_defer"}, action=action,
             )
             return {
                 "action": action,
@@ -522,12 +559,17 @@ class SpatialEventService:
                 self._mission_bridge().execute,
                 action, watch, event_row, digest=digest,
             )
+        except BaseException:
+            await asyncio.to_thread(self._ledger.update_fire_outcome, watch_id, event_id,
+                                    "deferred", {"reason": "mission_execution_interrupted"}, action=action)
+            raise
         finally:
             await self._gate.release(ticket)
         await asyncio.to_thread(
             self._ledger.update_fire_outcome, watch_id, event_id,
             str(res.get("outcome") or "rejected"),
             res.get("detail") if isinstance(res.get("detail"), dict) else None,
+            action=action,
         )
         return {
             "action": action,
@@ -552,7 +594,7 @@ class SpatialEventService:
         - dry_run：只报告会命中什么（零副作用）。
         - 非 force：已 processed 的事件跳过；pending/failed/coalesced 重新
           入 pending（resume 语义）。
-        - force：重执行处理流水（不改状态）；副作用幂等由下游保证
+        - force：独占 claim 后重执行处理流水并结算状态；副作用幂等由下游保证
           （确定性 mission_id / fire UQ / STALE 标记幂等 / 投影去重）。
         """
         cap = max(1, min(int(limit), 500))
@@ -586,7 +628,28 @@ class SpatialEventService:
                 if changed:
                     report["requeued"] += 1
                 continue
-            outcome = await self._process_event(row)
+            claim_owner = f"replay:{uuid.uuid4().hex}"
+            claimed = await asyncio.to_thread(self._ledger.claim_replay, row["id"],
+                                             org_id=org_id, worker_id=claim_owner)
+            if not claimed:
+                continue
+            row = dict(row, claimed_by=claim_owner, status="processing")
+            heartbeat = asyncio.create_task(self._renew_claims([row], claim_owner))
+            try:
+                outcome = await self._process_event(row)
+                if outcome.get("deferred"):
+                    await asyncio.to_thread(self._ledger.mark_failed, row["id"],
+                                            worker_id=claim_owner, error_code="REPLAY_DEFERRED")
+                else:
+                    await asyncio.to_thread(self._ledger.mark_processed, row["id"], worker_id=claim_owner)
+            except Exception:
+                await asyncio.to_thread(self._ledger.mark_failed, row["id"],
+                                        worker_id=claim_owner, error_code="REPLAY_FAILED")
+                raise
+            finally:
+                heartbeat.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat
             report["replayed"] += 1
             report["outcomes"].append(
                 {
@@ -628,19 +691,20 @@ class SpatialEventService:
             )
             # 行来自本账本（已在 append 时验签/盖章）→ 信任上下文
             return SpatialEventEnvelope.model_validate(
-                kwargs, context={"trusted_webhook": True}
+                kwargs, context={"trusted_webhook": kwargs["source"] == "webhook"}
             )
         except Exception as e:  # noqa: BLE001 — 行损坏按 malformed 跳过
             logger.warning("[spatial_events] malformed row %s: %s", row.get("id"), e)
             return None
 
-    def _resolve_aoi(self, ref: str) -> Optional[Dict[str, Any]]:
-        """AOI ref → GeoJSON（会话 ref 存储；解析失败返回 None=不可判）。"""
-        if not ref or self._session_store is None:
+    async def _resolve_aoi(self, ref: str, watch: SpatialWatch) -> Optional[Dict[str, Any]]:
+        """Resolve an AOI only through its explicitly bound session store."""
+        if not ref or self._session_store is None or not watch.session_id:
             return None
         try:
-            payload = self._session_store.get_ref_data_sync(ref)  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001
+            payload = await self._session_store.get(watch.session_id, ref)
+        except Exception as exc:
+            logger.debug("AOI ref unavailable for watch %s: %s", watch.watch_id, exc)
             return None
         if not isinstance(payload, dict):
             return None
@@ -683,7 +747,8 @@ _SERVICE: Optional[SpatialEventService] = None
 def get_spatial_event_service() -> SpatialEventService:
     global _SERVICE
     if _SERVICE is None:
-        _SERVICE = SpatialEventService()
+        from app.services.session_data import session_data_manager
+        _SERVICE = SpatialEventService(session_store=session_data_manager)
     return _SERVICE
 
 

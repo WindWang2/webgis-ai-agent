@@ -179,6 +179,9 @@ def validate_gis_library(
     for rid in recipes.all_ids:
         recipe = recipes.get(rid)
         assert recipe is not None
+        from app.services.gis_harness.recipe_integrity import declaration_issues
+
+        issues.extend(f"recipe {rid}: {message}" for message in declaration_issues(recipe, models))
         recipe_caps = list(recipe.preferred_analysis) + list(recipe.optional_analysis)
         for task_caps in (getattr(recipe, "task_optional_analysis", None) or {}).values():
             recipe_caps.extend(task_caps)

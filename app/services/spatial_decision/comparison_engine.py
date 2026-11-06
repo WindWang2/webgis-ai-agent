@@ -33,10 +33,15 @@ class ScenarioComparisonEngine:
             "commute_time": "minimize",
             "traffic_load": "minimize",
             "road_saturation": "minimize",
+            "noise_level": "minimize",
+            "subway_access_min": "minimize",
         }
         goals = {}
         for m_key in metric_matrix:
-            goals[m_key] = default_goals.get(m_key, "maximize")
+            if m_key in default_goals:
+                goals[m_key] = default_goals[m_key]
+            elif m_key.startswith("commute_"):
+                goals[m_key] = "minimize"
         return goals
 
     async def compare_scenarios(
@@ -56,6 +61,9 @@ class ScenarioComparisonEngine:
         if not results:
             raise ValueError("At least one SpatialDecisionResult is required for scenario comparison.")
 
+        scenario_ids = [result.scenario.scenario_id for result in results]
+        if len(set(scenario_ids)) != len(scenario_ids):
+            raise ValueError("scenario_id values must be unique")
         comparison_id = f"cmp_{uuid.uuid4().hex[:12]}"
         
         # 1. Build Metric Matrix
@@ -76,7 +84,9 @@ class ScenarioComparisonEngine:
                 metric_matrix[m_key][scen_id] = m_delta.simulated
 
         # Default optimization goals if unspecified
-        goals = optimization_goals or self._infer_optimization_goals(metric_matrix)
+        if any(value not in ("maximize", "minimize") for value in (optimization_goals or {}).values()):
+            raise ValueError("optimization directions must be maximize or minimize")
+        goals = {**self._infer_optimization_goals(metric_matrix), **(optimization_goals or {})}
 
         # 2. Pareto Optimal Analysis
         pareto_scenarios = self._find_pareto_optimal(results, goals)
@@ -86,6 +96,9 @@ class ScenarioComparisonEngine:
         recommended_id, rationale = self._select_recommended_scenario(
             results, pareto_scenarios, trade_offs, goals
         )
+        unknown = sorted(set(metric_matrix) - set(goals))
+        if unknown:
+            rationale += "\n未指定优化方向的指标不参与评分: " + ", ".join(unknown)
 
         # 4. Generate Merged Comparison GeoJSON
         merged_features = []
@@ -232,6 +245,8 @@ class ScenarioComparisonEngine:
         """Select best scenario and build recommendation rationale."""
         if not results:
             return "", "无有效方案"
+        if not goals:
+            return "", "缺少明确的指标优化方向，无法推荐方案"
 
         # Calculate composite score for each scenario
         scores: Dict[str, float] = {}
@@ -239,7 +254,9 @@ class ScenarioComparisonEngine:
             scen_id = res.scenario.scenario_id
             score = 0.0
             for m_key, m_val in res.metrics.items():
-                goal = goals.get(m_key, "maximize")
+                goal = goals.get(m_key)
+                if goal is None:
+                    continue
                 delta_pct = m_val.delta_pct
                 # GIS-03: unsimulated metrics (delta_pct is None) contribute 0
                 # to the composite score — they carry no signal.
@@ -264,6 +281,7 @@ class ScenarioComparisonEngine:
         rationale_lines = [
             f"推荐采用方案 [{best_res.scenario.name}] (ID: {best_id}){pareto_note}。",
             f"综合得分: {scores[best_id]}，基于置信度 {round(best_res.confidence * 100, 1)}% 与多准则对比评估。",
+            "评分口径：各已知方向指标的相对变化百分比等权相加，再乘以 (0.5 + 0.5×置信度)；未采用原始量纲求和或业务偏好权重。",
             "核心优势:",
         ]
         

@@ -8,7 +8,7 @@
  * id 在场时返回 '$id'（MapLibre ['id'] 表达式语义，properties 取不到）。
  * 返回 null = 无稳定 id（发布侧不虚构过滤）。
  */
-export const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id', 'featureId', 'feature_id'] as const;
+export const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'FID', 'osm_id', '@id', 'featureId', 'feature_id'] as const;
 
 export function resolveFeatureId(
   properties: Record<string, unknown> | null | undefined,

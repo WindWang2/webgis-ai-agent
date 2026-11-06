@@ -1,3 +1,4 @@
+import { evaluateFilterBounded, isSupportedFilter } from '../layers/filter-evidence';
 /**
  * MapSpec-to-SVG Compiler Target
  *
@@ -230,6 +231,7 @@ const MAPLIBRE_EXPR_OPS = new Set([
   "step",
   "match",
   "literal",
+  "case",
 ]);
 
 /** Compile-time zoom used to evaluate MapLibre interpolate arrays (#1385 F04). */
@@ -239,7 +241,15 @@ function expressionInput(
   input: unknown,
   props: Record<string, any> | undefined,
   zoom: number,
+  depth = 0,
 ): number | string | undefined {
+  if (depth > 16) return undefined;
+  if (Array.isArray(input) && ['to-number', 'to-string', 'coalesce'].includes(input[0])) {
+    const values = input.slice(1).map((value) => expressionInput(value, props, zoom, depth + 1));
+    if (input[0] === 'to-string') return values[0] === undefined ? undefined : String(values[0]);
+    if (input[0] === 'to-number') return values.map(Number).find(Number.isFinite);
+    return values.find((value) => value !== undefined);
+  }
   if (input === "zoom" || (Array.isArray(input) && input[0] === "zoom")) return zoom;
   if (Array.isArray(input) && input[0] === "get" && typeof input[1] === "string") {
     return props?.[input[1]] as number | string | undefined;
@@ -255,6 +265,10 @@ function evaluateMapLibreExpression(
   fallback: unknown,
 ): unknown {
   const op = val[0];
+  if (op === 'case') {
+    for (let i = 1; i + 1 < val.length; i += 2) if (evaluateFilterBounded(val[i], { properties: props ?? {} }) === true) return val[i + 1];
+    return val[val.length - 1] ?? fallback;
+  }
   if (op === "literal") return val[1] !== undefined ? val[1] : fallback;
   if (op === "interpolate" || op === "interpolate-hcl" || op === "interpolate-lab") {
     const inputVal = Number(expressionInput(val[2], props, zoom));
@@ -293,7 +307,7 @@ function evaluateMapLibreExpression(
     const inputVal = expressionInput(val[1], props, zoom);
     for (let i = 2; i + 1 < val.length - 1; i += 2) {
       const label = val[i];
-      if (inputVal === label || String(inputVal) === String(label)) return val[i + 1];
+      if ((Array.isArray(label) ? label : [label]).some((item) => inputVal === item || String(inputVal) === String(item))) return val[i + 1];
     }
     return val.length >= 3 ? val[val.length - 1] : fallback;
   }
@@ -448,6 +462,31 @@ export function resolvePaintValue(
   return spec.value !== undefined ? spec.value : fallback;
 }
 
+function validGeographicCoordinates(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  if (typeof value[0] === 'number') return value.length >= 2 && Number.isFinite(value[0]) && Number.isFinite(value[1]) && Math.abs(value[0]) <= 180 && Math.abs(value[1]) <= 90;
+  return value.every(validGeographicCoordinates);
+}
+
+function resolveLabelText(value: unknown, properties: Record<string, unknown>, depth = 0): string | undefined {
+  if (depth > 16) return undefined;
+  if (typeof value === 'string') return value.replace(/\{([^{}]+)\}/g, (_, key: string) => String(properties[key] ?? ''));
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (!Array.isArray(value)) return undefined;
+  const [op, ...args] = value;
+  if (op === 'get' && typeof args[0] === 'string') {
+    const found = properties[args[0]];
+    return typeof found === 'string' || typeof found === 'number' || typeof found === 'boolean' ? String(found) : undefined;
+  }
+  if (op === 'to-string' || op === 'literal') return resolveLabelText(args[0], properties, depth + 1);
+  if (op === 'coalesce') return args.map((arg) => resolveLabelText(arg, properties, depth + 1)).find((text) => text !== undefined);
+  if (op === 'concat' || op === 'format') {
+    const parts = (op === 'format' ? args.filter((_, index) => index % 2 === 0) : args).map((arg) => resolveLabelText(arg, properties, depth + 1));
+    return parts.some((part) => part === undefined) ? undefined : parts.join('');
+  }
+  return undefined;
+}
+
 export function compileMapSpecToSvg(
   mapspec: any,
   options: MapSpecToSvgOptions = {}
@@ -494,7 +533,14 @@ function compileMapSpecToSvgBody(
     maxY = -Infinity;
 
   const sources = mapspec?.sources || {};
-  Object.values(sources).forEach((src: unknown) => {
+  const renderedSourceIds = new Set((mapspec.layers ?? []).filter((layer: Parameters<typeof resolveLayerVisibility>[0]) => {
+    const visibility = resolveLayerVisibility(layer);
+    if (visibility.visibility === 'none') return false;
+    return (visibility.gate.minzoom === undefined || activeExportZoom >= visibility.gate.minzoom)
+      && (visibility.gate.maxzoom === undefined || activeExportZoom < visibility.gate.maxzoom);
+  }).map((layer: { source?: string }) => layer.source));
+  Object.entries(sources).forEach(([sourceId, src]: [string, unknown]) => {
+    if (!renderedSourceIds.has(sourceId)) return;
     const rec = src as { inlineData?: { type?: string; features?: unknown[] }; data?: { type?: string; features?: unknown[] } } | undefined;
     const geojson = rec?.inlineData ?? rec?.data;
     if (!geojson) return;
@@ -511,7 +557,7 @@ function compileMapSpecToSvgBody(
           typeof c[0] === "number" &&
           typeof c[1] === "number" &&
           Number.isFinite(c[0]) &&
-          Number.isFinite(c[1])
+          Number.isFinite(c[1]) && Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90
         ) {
           minX = Math.min(minX, c[0]);
           maxX = Math.max(maxX, c[0]);
@@ -566,10 +612,18 @@ function compileMapSpecToSvgBody(
 
   // 2. Render Layers to SVG paths
   let elementsSvg = "";
-  const layers = mapspec?.layers || [];
+  const layers = (mapspec?.layers || []).flatMap((layer: { id: string; type: string; layout?: Record<string, unknown>; label?: { field?: string; size?: number; color?: string; haloColor?: string; haloWidth?: number } }) => {
+    if (!layer.label?.field || ['raster', 'heatmap', 'background', 'hillshade', 'symbol', 'text'].includes(layer.type)) return [layer];
+    const label = layer.label;
+    return [layer, { ...layer, id: `${layer.id}-label`, type: 'symbol',
+      layout: { ...layer.layout, 'text-field': ['get', label.field], 'text-size': label.size ?? 12 },
+      paint: { 'text-color': label.color ?? '#000000', 'text-halo-color': label.haloColor ?? '#ffffff', 'text-halo-width': label.haloWidth ?? 1 },
+    }];
+  });
 
+  const invalidCoordinatesDiagnosed = new Set<string>();
   layers.forEach((rawLayer: unknown) => {
-    const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string; visibility?: unknown; representation?: unknown };
+    const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string; visibility?: unknown; representation?: unknown; filter?: unknown };
     let layerType = layer.type || "circle";
 
     // v1.6（方向 5 / C6）：导出 = 固定 zoom 的一次裁决 —— 显隐/结构 zoom
@@ -687,6 +741,12 @@ function compileMapSpecToSvgBody(
       options.onDiagnostic?.("layer_ref_unavailable", String(layer.id ?? ""));
       return;
     }
+    if (layer.filter && !isSupportedFilter(layer.filter)) {
+      options.onDiagnostic?.('layer_filter_unsupported', String(layer.id ?? ''));
+      return;
+    }
+    if (layerType === 'heatmap') options.onDiagnostic?.('layer_approximated_heatmap', `layer=${layer.id}`);
+    if (layerType === 'fill-extrusion') options.onDiagnostic?.('layer_approximated_extrusion', `layer=${layer.id}`);
     const features: unknown[] = srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
 
     features.forEach((rawFeat: unknown) => {
@@ -694,8 +754,14 @@ function compileMapSpecToSvgBody(
         geometry?: { type?: string; coordinates?: any };
         properties?: Record<string, any>;
       } | null;
+      if (layer.filter && (!feat || evaluateFilterBounded(layer.filter, feat) !== true)) return;
       const geom = feat?.geometry;
       if (!geom) return;
+      if (!validGeographicCoordinates(geom.coordinates)) {
+        const id = String(layer.id ?? '');
+        if (!invalidCoordinatesDiagnosed.has(id)) { invalidCoordinatesDiagnosed.add(id); options.onDiagnostic?.('layer_coordinates_invalid', id); }
+        return;
+      }
       const props = feat?.properties || {};
 
       if (layerType === "circle" && geom.type === "Point") {
@@ -761,7 +827,7 @@ function compileMapSpecToSvgBody(
         if (layerType === "fill-extrusion") {
           // 3D 透视压平为平面 fill —— 逐层近似诊断（与产物内
           // data-export-degraded 标记同义，供 content="mixed" 判定）。
-          options.onDiagnostic?.("layer_approximated_extrusion", `layer=${layer.id}`);
+
         }
         const polygons = geom.type === "Polygon" ? [geom.coordinates] : geom.coordinates;
         const defaultColor = layerType === "fill-extrusion" ? "#94a3b8" : "#60a5fa";
@@ -792,7 +858,7 @@ function compileMapSpecToSvgBody(
       } else if (layerType === "heatmap") {
         // 核密度以半透明圆近似（无 kernel 权重）—— 逐层近似诊断，
         // 导出面据此置 data-export-content="mixed"（不静默近似）。
-        options.onDiagnostic?.("layer_approximated_heatmap", `layer=${layer.id}`);
+
         const pts: [number, number][] = [];
         if (geom.type === "Point" && Array.isArray(geom.coordinates)) {
           pts.push(geom.coordinates as [number, number]);
@@ -816,9 +882,9 @@ function compileMapSpecToSvgBody(
         });
       } else if (layerType === "symbol" || layerType === "text") {
         const layout = layer.layout || {};
-        const textFieldPattern = String(layout["text-field"] ?? paint["text-field"] ?? "{name}");
-        const fieldName = textFieldPattern.replace(/^\{|\}$/g, "");
-        const rawText = props?.[fieldName] ?? props?.name ?? props?.label ?? (textFieldPattern.startsWith("{") ? "" : textFieldPattern);
+        const textFieldPattern = layout['text-field'] ?? paint['text-field'] ?? '{name}';
+        const rawText = resolveLabelText(textFieldPattern, props);
+        if (rawText === undefined) options.onDiagnostic?.('label_expression_unsupported', String(layer.id ?? ''));
         if (!rawText) return;
 
         let coord: [number, number] | undefined;
@@ -1086,7 +1152,7 @@ function compileMapSpecToSvgBody(
       );
     }
     if (solution.budgetExceeded) {
-      options.onDiagnostic?.("label_budget_exceeded", String(MAX_LABELS_PER_EXPORT));
+      options.onDiagnostic?.("label_budget_exceeded", String(labelBudget));
     }
     if (parts.length > 0) {
       labelsGroup = `  <g class="mapspec-labels">\n    ${parts.join("\n    ")}\n  </g>\n`;

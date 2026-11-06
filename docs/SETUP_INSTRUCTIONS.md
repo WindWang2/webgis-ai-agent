@@ -130,7 +130,7 @@ cd frontend && npm run dev
 | 命令 | 作用 |
 |------|------|
 | `python manage.py init-db` | 初始化数据库（创建所有表），幂等 |
-| `python manage.py create-admin <user> <email> <password>` | 公开注册关闭后创建 admin 账号（密码 >= 8 位，scrypt 哈希；成功后提示用 `POST /api/v1/auth/login` 获取 JWT） |
+| `python manage.py create-admin <user> <email>` | 隐藏提示输入密码（自动化使用 `--password-stdin`），密码 >= 8 位，scrypt 哈希；成功后用 `POST /api/v1/auth/login` 获取 JWT |
 | `python manage.py check` | 基础设施诊断：Database / Redis / LLM API 连通性 / Celery worker ping，rich 表格输出 |
 | `python manage.py dev` | 一键拉起后端 uvicorn `:18000`（`--reload`）+ Celery worker + 前端 `npm run dev`；启动前强制检查 Redis |
 | `python manage.py server` | 仅后端：`uvicorn app.main:app --host 0.0.0.0 --port 18000 --reload` |

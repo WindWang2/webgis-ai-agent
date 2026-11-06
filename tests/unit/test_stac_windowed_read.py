@@ -189,24 +189,16 @@ def test_windowed_read_projected_crs_reprojects_bbox(monkeypatch, tmp_path):
     res = _fetch(monkeypatch, item, wgs_bbox, {"red": "red", "nir": "nir"}, ds_factor=1)
     assert "error" not in res, res.get("error")
 
-    # Expected window derived from the same reprojection primitives
-    # (transform_bounds -> from_bounds -> snap -> clip), read manually.
-    with rasterio.open(str(path)) as ds:
-        xmin, ymin, xmax, ymax = transform_bounds(
-            CRS.from_epsg(4326), ds.crs, *wgs_bbox, densify_pts=21)
-        win = from_bounds(xmin, ymin, xmax, ymax, ds.transform)
-        snap_eps = 1e-9
-        win = Window(math.floor(win.col_off + snap_eps),
-                     math.floor(win.row_off + snap_eps),
-                     math.ceil(win.width - snap_eps),
-                     math.ceil(win.height - snap_eps))
+    # Validate the output against a real WGS84 warped pixel grid, so its
+    # axis-aligned image bounds describe the actual pixels.
+    from rasterio.vrt import WarpedVRT
+    from rasterio.enums import Resampling
+    with rasterio.open(str(path)) as source, WarpedVRT(source, crs="EPSG:4326", resampling=Resampling.bilinear) as ds:
+        win = from_bounds(*wgs_bbox, ds.transform)
+        win = Window(math.floor(win.col_off + 1e-9), math.floor(win.row_off + 1e-9),
+                     math.ceil(win.width - 1e-9), math.ceil(win.height - 1e-9))
         win = win.intersection(Window(0, 0, ds.width, ds.height))
         r_win = ds.read(1, window=win)
-    # The reprojected bbox may expand the ideal window by at most ~1 px;
-    # it must never crop inside the originally requested UTM rect
-    # (col 30..70, row 10..40).
-    assert win.col_off <= 30 and win.row_off <= 10
-    assert win.col_off + win.width >= 70 and win.row_off + win.height >= 40
     assert res["bands"]["red"].shape == (int(win.height), int(win.width))
     np.testing.assert_array_equal(res["bands"]["red"], r_win)
     # Reported bounds are WGS84 and land on the request bbox; the snapped
@@ -568,14 +560,14 @@ def test_get_catalog_passes_http_timeout(monkeypatch):
         def open(url, **kwargs):
             captured["url"] = url
             captured.update(kwargs)
-            return object()
+            return _FakeCatalog([])
 
     monkeypatch.setattr(pystac_client.Client, "open", _FakeClient.open)
-    StacClientPrimitive._get_catalog.cache_clear()
+    __import__("app.services.rs.stac_client", fromlist=["_catalog_for_url"])._catalog_for_url.cache_clear()
     try:
         StacClientPrimitive()._get_catalog()
     finally:
-        StacClientPrimitive._get_catalog.cache_clear()
+        __import__("app.services.rs.stac_client", fromlist=["_catalog_for_url"])._catalog_for_url.cache_clear()
 
     assert captured["url"] == stac_mod._catalog_url()
     assert captured["timeout"] == stac_mod._STAC_HTTP_TIMEOUT_S

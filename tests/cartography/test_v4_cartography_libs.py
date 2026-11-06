@@ -153,9 +153,9 @@ def test_bivariate_matrices_registry():
     assert len(bivariate_class_colors("BiTealRose", 3)) == 9
     with pytest.raises(ValueError):
         bivariate_class_colors("no_such_matrix", 3)
-    # V4 修复：n=2 取左上子阵（行/列独立截取），不是前 4 元素平铺截断
-    assert bivariate_class_colors("BiPurpleOrange", 2) == [
-        "#e8e8f0", "#cac2e0", "#f0d9c8", "#cfb0a8"]
+    # Two classes retain the low/high corners on both axes.
+    colors = BIVARIATE_MATRICES["BiPurpleOrange"]
+    assert bivariate_class_colors("BiPurpleOrange", 2) == [colors[i] for i in (0, 2, 6, 8)]
     # BiBlueYellow 因 ΔE00 低于系统可分性阈值被移除（不可复活的库存）
     with pytest.raises(ValueError):
         bivariate_class_colors("BiBlueYellow", 3)
@@ -230,7 +230,7 @@ def test_raster_converter_hillshade_mode():
     dem = _demo_dem()
     layer, legend, png = build_raster_layer(
         "src", [0, 0, 1, 1], dem, render_mode="hillshade",
-        render_params={"azimuth": 315.0, "altitude": 45.0},
+        render_params={"azimuth": 315.0, "altitude": 45.0, "cell_size": 30.0},
     )
     assert png is not None and len(png) > 0
     assert legend["palette"] == "Gray"

@@ -36,8 +36,8 @@ class Impedance(BaseModel):
     """Impedance model defining edge cost calculations and penalties."""
     model_config = ConfigDict(extra="ignore")
 
-    name: str = Field(default="length_m", description="Primary impedance field: length_m, travel_time_s, custom")
-    unit: str = Field(default="meters", description="meters, seconds, minutes, kilometers")
+    name: str = Field(default="travel_time_s", description="Primary impedance field: length_m, travel_time_s, custom")
+    unit: str = Field(default="seconds", description="meters, seconds, minutes, kilometers")
     turn_penalty_s: float = Field(default=0.0, description="Turn penalty in seconds")
     barrier_multiplier: float = Field(default=1.0, description="Impedance multiplier for slowed segments")
     directional_strictness: bool = Field(default=True, description="Respect directionality / one-way flags")
@@ -238,7 +238,8 @@ class AccessibilityResult(BaseModel):
     total_demand: float
     served_demand: float
     unserved_demand: float
-    coverage_percentage: float
+    coverage_percentage: Optional[float]
+    warnings: List[str] = Field(default_factory=list)
     average_travel_time_min: float
     per_zone_metrics: List[Dict[str, Any]] = Field(default_factory=list)
     accessibility_layer_geojson: Dict[str, Any] = Field(default_factory=dict)

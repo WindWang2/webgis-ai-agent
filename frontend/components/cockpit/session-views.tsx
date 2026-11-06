@@ -1,4 +1,5 @@
 'use client';
+import { ProjectionStatus } from './cockpit-shared';
 
 /**
  * 会话热路径视图：SkillPolicy 投影 / Evidence-Claim 投影 / runtime trace
@@ -32,6 +33,8 @@ export function SkillView({ enabled, sessionId, ownerToken }: SessionViewProps) 
       getCockpitSessionSkill(sessionId as string, { signal, ownerToken }),
     { enabled: enabled && sessionId != null, resetKey: sessionId ?? 'none' },
   );
+
+  if (skill.error || skill.loading) return <ProjectionStatus projection={skill} />;
 
   if (sessionId == null) {
     return <EmptyState testId="cockpit-skill-no-session">{t('empty.noSession')}</EmptyState>;
@@ -76,6 +79,8 @@ export function EvidenceView({ enabled, sessionId, ownerToken }: SessionViewProp
       getCockpitSessionEvidence(sessionId as string, { signal, ownerToken, limit: 200 }),
     { enabled: enabled && sessionId != null, resetKey: sessionId ?? 'none' },
   );
+
+  if (evidence.error || evidence.loading) return <ProjectionStatus projection={evidence} />;
 
   if (sessionId == null) {
     return <EmptyState testId="cockpit-evidence-no-session">{t('empty.noSession')}</EmptyState>;
@@ -127,6 +132,8 @@ export function TraceView({ enabled, sessionId, ownerToken }: SessionViewProps) 
       getCockpitSessionTrace(sessionId as string, { signal, ownerToken, limit: 64 }),
     { enabled: enabled && sessionId != null, resetKey: sessionId ?? 'none' },
   );
+
+  if (trace.error || trace.loading) return <ProjectionStatus projection={trace} />;
 
   if (sessionId == null) {
     return <EmptyState testId="cockpit-trace-no-session">{t('empty.noSession')}</EmptyState>;

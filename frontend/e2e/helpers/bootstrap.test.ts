@@ -69,11 +69,9 @@ describe('journey authentication bootstrap', () => {
       identifier: 'e2e-admin', password: 'journey-admin-pass-2026',
     });
     expect(addInitScript).toHaveBeenCalledOnce();
-    const [seed, payload] = addInitScript.mock.calls[0];
-    seed(payload);
-    expect(localStorage.setItem).toHaveBeenCalledWith('webgis_auth', JSON.stringify({
-      accessToken: 'issued-by-backend', user: authUser,
-    }));
+    const [, payload] = addInitScript.mock.calls[0];
+    expect(payload).toEqual({ accessToken: 'issued-by-backend', user: authUser });
+    expect(String(addInitScript.mock.calls[0][0])).not.toContain('localStorage');
   });
 
   it('does not seed authentication when the backend rejects the credentials', async () => {

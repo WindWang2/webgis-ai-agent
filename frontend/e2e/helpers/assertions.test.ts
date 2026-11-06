@@ -2,6 +2,7 @@ import type { Page } from 'playwright/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('playwright/test', async () => ({ expect: (await import('vitest')).expect }));
+vi.mock('./bootstrap', () => ({ getJourneyAuth: () => ({ accessToken: 'issued-token' }) }));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -16,7 +17,7 @@ describe('journey export download', () => {
       arrayBuffer: async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0]).buffer,
     }));
     vi.stubGlobal('fetch', fetch);
-    vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify({ accessToken: 'issued-token' }));
+
     const payload = { url: '/api/v1/export/download/map.png', filename: 'map.png' };
     const page = {
       waitForResponse: vi.fn(async () => ({

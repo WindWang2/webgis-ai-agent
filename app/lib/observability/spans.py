@@ -1,4 +1,6 @@
-"""统一 Span 观测树（Platform V4，ADR-0131 D1）。
+"""实验性 Span 观测树（Platform V4，ADR-0131 D1）。
+
+本模块为显式调用接缝，尚未覆盖所有 dispatch/harness 路径；不能作为生产全链路覆盖证明。
 
 把 Quality V3 W10 的"trace ID 传播"升级为**带阶段语义的 span 树**：
 
@@ -80,7 +82,8 @@ def _bounded_attrs(attrs: Optional[Dict[str, Any]]) -> Dict[str, str]:
     for k, v in list(attrs.items())[:_MAX_ATTR_ENTRIES]:
         try:
             out[str(k)[:_MAX_ATTR_KEY_CHARS]] = str(v)[:_MAX_ATTR_VALUE_CHARS]
-        except Exception:  # noqa: BLE001 — __str__ 爆炸项跳过（review R1-m4）
+        except Exception as _exc:  # noqa: BLE001 — __str__ 爆炸项跳过（review R1-m4）
+            logging.getLogger(__name__).debug("spans: optional operation unavailable (%s)", type(_exc).__name__)
             continue
     return out
 
@@ -323,8 +326,8 @@ def start_span(
         try:
             if _CURRENT_SPAN.get() is active:
                 _CURRENT_SPAN.reset(token)
-        except Exception:  # noqa: BLE001 — 跨上下文 reset 的 ValueError
-            pass
+        except Exception as _exc:  # noqa: BLE001 — 跨上下文 reset 的 ValueError
+            logging.getLogger(__name__).debug("spans: optional operation unavailable (%s)", type(_exc).__name__)
         finished = SpanRecord(
             name=record.name,
             stage=record.stage,

@@ -254,17 +254,23 @@ def test_ogc_links_next_cursor(ogc):
 
 
 def test_ogc_datetime_pushdown(ogc):
+    ogc.profile.options["temporal_field"] = "time"
     spec = QuerySpec(limit=5, datetime_range=["2024-01-01", "2024-12-31"])
     ogc.query("parcels", spec)
     call = [c for c in ogc.session.calls if c["url"].endswith("/items")][-1]
     assert call["params"]["datetime"] == "2024-01-01/2024-12-31"
 
 
+def test_ogc_datetime_other_field_is_not_pushed_to_primary_time(ogc):
+    with pytest.raises(InvalidQueryError, match="primary temporal_field"):
+        ogc.query("parcels", QuerySpec(limit=5, datetime_range=["2024-01-01", "2024-12-31"]))
+
+
 def test_ogc_bbox_crs_explicit(ogc):
     ogc.query("parcels", QuerySpec(limit=5, bbox=[100, 20, 110, 30]))
     call = [c for c in ogc.session.calls if c["url"].endswith("/items")][-1]
     assert call["params"]["bbox"] == "100.0,20.0,110.0,30.0"
-    assert "CRS84" in call["params"]["bbox-crs"], "bbox-crs must be explicit (no 4326 assumption)"
+    assert "bbox-crs" not in call["params"], "Part 1 defaults to CRS84 without the optional CRS extension"
 
 
 def test_ogc_has_more_survives_local_remainder_on_full_page(ogc):
@@ -367,6 +373,21 @@ def test_arcgis_count_only_statistics(arcgis):
     call = [c for c in arcgis.session.calls if c["url"].rstrip("/").endswith("/query")][-1]
     assert call["params"]["returnCountOnly"] == "true"
     assert "outFields" not in call["params"] or call["params"].get("outFields") is None
+
+
+def test_arcgis_count_preserves_all_query_predicates(arcgis):
+    arcgis.session.query_response = {"count": 7}
+    result = arcgis.query("0", QuerySpec(
+        limit=1, aggregate=[{"func": "count"}],
+        where={"op": "eq", "field": "pid", "value": 7},
+        bbox=[110, 30, 111, 31], datetime_range=["2024-01-01", "2024-12-31"],
+    ))
+    assert result.data == [{"count": 7}]
+    params = [call["params"] for call in arcgis.session.calls if call["url"].endswith("/query")][-1]
+    assert "pid" in params["where"] and "7" in params["where"]
+    assert "TIMESTAMP '2024-01-01'" in params["where"]
+    assert params["geometry"] == "110.0,30.0,111.0,31.0"
+    assert params["returnCountOnly"] == "true"
 
 
 def test_arcgis_describe_real_extent_and_srs():

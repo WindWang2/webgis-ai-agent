@@ -2,7 +2,8 @@
 Enterprise Geospatial Data Fabric REST Routes
 """
 from collections.abc import Callable, Coroutine
-from typing import TypeVar
+from typing import TypeVar, Literal, Annotated
+from pydantic import BeforeValidator
 
 _ORMResult = TypeVar("_ORMResult")
 import asyncio
@@ -57,6 +58,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_GEOMETRY_TYPES = {name.lower(): name for name in ("Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "GeometryCollection", "Raster", "Table", "Unknown")}
+GeometryFilter = Annotated[Literal["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "GeometryCollection", "Raster", "Table", "Unknown"], BeforeValidator(lambda value: _GEOMETRY_TYPES.get(str(value).lower(), value))]
+
+
+def _literal_catalog_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+class _AdmittedStreamResponse(StreamingResponse):
+    def __init__(self, *args: Any, lease: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._stream_lease = lease
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._stream_lease.close()
+
+
 
 _ANONYMOUS_USER_IDS = {"anonymous", "anon"}
 
@@ -110,6 +131,7 @@ def _tenant_filter(query, user: Optional[Dict[str, Any]]):
             or_(
                 DataSourceModel.org_id == org_id,
                 DataSourceModel.owner_id == user_id,
+                and_(DataSourceModel.org_id.is_(None), DataSourceModel.owner_id.is_(None)),
             )
         )
     # Authenticated user with no org claim (tokens carry org_id only when the
@@ -141,7 +163,7 @@ def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str,
             raise HTTPException(status_code=404, detail="Data source not found")
         return s
     if org_id is not None:
-        if s.org_id == org_id or s.owner_id == user_id:
+        if s.org_id == org_id or s.owner_id == user_id or (s.org_id is None and s.owner_id is None):
             return s
         raise HTTPException(status_code=404, detail="Data source not found")
     # Authenticated, no org claim: own row or truly global.
@@ -196,12 +218,7 @@ def _require_existing_session_owner(
     user: Optional[Dict[str, Any]],
     owner_token: Optional[str],
 ) -> None:
-    """Block materialize into someone else's existing Conversation.
-
-    A session_id with no Conversation row is allowed (same as the first chat
-    turn creating store keys). If the row exists, the caller must match
-    user_id or X-Session-Token — otherwise this is a write-IDOR.
-    """
+    """Require a live owned conversation before materializing any ref."""
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
     from app.models.db_model import Conversation
@@ -209,7 +226,7 @@ def _require_existing_session_owner(
     from app.core.auth import authorize_session_write
 
     conv = db.query(Conversation).filter(Conversation.id == session_id).first()
-    if not authorize_session_write(conv, _real_user_id(user), owner_token):
+    if conv is None or not authorize_session_write(conv, _real_user_id(user), owner_token):
         raise HTTPException(status_code=404, detail="Session not found")
 
 
@@ -628,9 +645,9 @@ async def sync_data_source_catalog(
 
 @router.get("/data-fabric/catalog", tags=["Data Fabric / 数据织网"], response_model=CatalogListResponse)
 async def list_spatial_catalog(
-    q: Optional[str] = Query(None, description="Search keyword query"),
+    q: Optional[str] = Query(None, max_length=128, description="Literal keyword query"),
     source_id: Optional[str] = Query(None, description="Filter by source ID"),
-    geometry_type: Optional[str] = Query(None, description="Filter by geometry type"),
+    geometry_type: Optional[GeometryFilter] = Query(None, description="Exact geometry type"),
     feature_type: Optional[str] = Query(None, description="Filter by feature type (vector/raster)"),
     availability: Optional[str] = Query(
         None, description="Filter by availability: 'available' | 'unavailable' (ADR-0094 §9)"
@@ -666,7 +683,8 @@ async def list_spatial_catalog(
         if source_id:
             query = query.filter(CatalogItemModel.source_id == source_id)
         if geometry_type:
-            query = query.filter(CatalogItemModel.geometry_type.ilike(f"%{geometry_type}%"))
+            from sqlalchemy import func
+            query = query.filter(func.lower(CatalogItemModel.geometry_type) == geometry_type.lower())
         if feature_type:
             query = query.filter(CatalogItemModel.feature_type == feature_type)
         if availability:
@@ -674,11 +692,11 @@ async def list_spatial_catalog(
             # 源消失但保留元数据供 stale 检索）。
             query = query.filter(CatalogItemModel.availability == availability)
         if q:
-            kw = f"%{q}%"
+            kw = f"%{_literal_catalog_like(q)}%"
             query = query.filter(
-                (CatalogItemModel.name.ilike(kw)) |
-                (CatalogItemModel.title.ilike(kw)) |
-                (CatalogItemModel.description.ilike(kw))
+                (CatalogItemModel.name.ilike(kw, escape="\\")) |
+                (CatalogItemModel.title.ilike(kw, escape="\\")) |
+                (CatalogItemModel.description.ilike(kw, escape="\\"))
             )
 
         # Defer the heavy JSON columns at the ORM level so the list query
@@ -1232,7 +1250,7 @@ async def stream_catalog_item_features_http(
     request: Request,
     user: Dict[str, Any] = Depends(get_current_user),
     page_size: int = Query(500, ge=1, le=2000, description="adapter 内部翻页批大小"),
-    limit: int = Query(50_000, ge=1, le=200_000, description="NDJSON 总行数帽（有界响应）"),
+    limit: int = Query(5_000, ge=1, le=50_000, description="NDJSON 总行数帽；更大结果请分区查询"),
     bbox: Optional[str] = Query(None, max_length=128, description="窗口 'w,s,e,n'（经纬度）"),
     fields: Optional[str] = Query(None, max_length=1024, description="字段投影 CSV"),
 ):
@@ -1259,20 +1277,34 @@ async def stream_catalog_item_features_http(
     except FeaturePageError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    from app.services.data_fabric.stream_limits import StreamLease, StreamLimitExceeded
+    try:
+        lease = StreamLease(_real_user_id(user) or "")
+    except StreamLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail={"code": "STREAM_LIMITED", "reason": exc.reason}, headers={"Retry-After": str(exc.retry_after)}) from exc
+
     async def _prep(session: Session):
-        _authorize_catalog_item(session, item_id, user)
+        item = _authorize_catalog_item(session, item_id, user)
+        lease.bind_source(str(item.source_id))
         return data_fabric_manager.resolve_catalog_stream(session, item_id)
 
     try:
         adapter, dataset_name = await _run_async_manager(_prep)
+    except StreamLimitExceeded as exc:
+        lease.close()
+        raise HTTPException(status_code=429, detail={"code": "STREAM_LIMITED", "reason": exc.reason}, headers={"Retry-After": str(exc.retry_after)}) from exc
     except ValueError as e:
+        lease.close()
         raise HTTPException(status_code=404, detail=str(e))
     except UnsupportedSourceError as e:
+        lease.close()
         # 与目录瓦片路由同语义：源类型不支持 → 422（非 502；失败 ≠ 不支持）。
         raise HTTPException(status_code=422, detail=str(e) or "该数据集类型不支持流式取数")
     except DataFabricError as e:
+        lease.close()
         return JSONResponse(status_code=502, content={"success": False, **e.to_dict()})
-    except HTTPException:
+    except BaseException:
+        lease.close()
         raise
 
     spec = QuerySpec(limit=limit, bbox=window_bbox, fields=field_list)
@@ -1315,11 +1347,14 @@ async def stream_catalog_item_features_http(
             ) + "\n"
         finally:
             cancel_token.cancel("stream closed")
-            with contextlib.suppress(Exception):
-                await pump.aclose()
+            try:
+                with contextlib.suppress(Exception):
+                    await pump.aclose()
+            finally:
+                lease.close()
 
-    return StreamingResponse(
-        _ndjson(),
+    return _AdmittedStreamResponse(
+        _ndjson(), lease=lease,
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

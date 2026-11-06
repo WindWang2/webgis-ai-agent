@@ -94,7 +94,9 @@ _SUPPORTED_FUNCS = ("count", "sum", "avg", "min", "max", "stddev", "distinct_cou
 def _hashable(v: Any) -> Any:
     """list → tuple（集合成员化；与原 compute_aggregates 同口径）。"""
     if isinstance(v, list):
-        return tuple(v)
+        return ("list", tuple(_hashable(item) for item in v))
+    if isinstance(v, dict):
+        return ("dict", tuple(sorted((str(key), _hashable(value)) for key, value in v.items())))
     return v
 
 
@@ -182,6 +184,8 @@ class ScalarAccumulator:
                     self._str_min = value if self._str_min is None else min(self._str_min, value)
                     self._str_max = value if self._str_max is None else max(self._str_max, value)
                 return
+            if not math.isfinite(fv):
+                return
             self.n += 1
             self._num_min = fv if self._num_min is None else min(self._num_min, fv)
             self._num_max = fv if self._num_max is None else max(self._num_max, fv)
@@ -189,6 +193,8 @@ class ScalarAccumulator:
         try:
             fv = float(value)
         except (TypeError, ValueError):
+            return
+        if not math.isfinite(fv):
             return
         self.n += 1
         self._sum += fv
@@ -268,7 +274,8 @@ class AggregateDriver:
         self._group_cap = group_count_cap()
 
     def update(self, props: Any) -> None:
-        key = tuple(props.get(g) for g in self.group_by)
+        values = tuple(props.get(g) for g in self.group_by)
+        key = tuple(_hashable(value) for value in values)
         st = self._groups.get(key)
         if st is None:
             if len(self._groups) >= self._group_cap:
@@ -284,7 +291,7 @@ class AggregateDriver:
                         ),
                     },
                 )
-            st = _GroupState(key, [ScalarAccumulator(r.func, r.field) for r in self.requests])
+            st = _GroupState(values, [ScalarAccumulator(r.func, r.field) for r in self.requests])
             self._groups[key] = st
         st.rows += 1
         for req, acc in zip(self.requests, st.accs):
@@ -325,7 +332,7 @@ class AggregateDriver:
             row = {}
             for req in self.requests:
                 name = req.func if req.field is None else f"{req.func}_{req.field}"
-                row[name] = 0 if req.func == "count" else None
+                row[name] = 0 if req.func in ("count", "distinct_count") else None
             out.append(row)
         return out
 

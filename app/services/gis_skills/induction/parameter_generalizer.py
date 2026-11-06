@@ -102,7 +102,8 @@ def _numeric_constraints(key: str, value: float
     if coord_key in _COORDINATE_BOUNDS:
         ge, le = _COORDINATE_BOUNDS[coord_key]
         return "coordinate", "float", {"ge": ge, "le": le}
-    if any(k in lk for k in _THRESHOLD_KEYS):
+    key_tokens = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key).lower()
+    if any(re.search(r"(?:^|[^a-z0-9])" + re.escape(k) + r"(?:$|[^a-z0-9])", key_tokens) for k in _THRESHOLD_KEYS):
         bound = abs(float(value)) * 10.0 or 1.0
         if value >= 0:
             return "threshold", numeric_type, {"ge": 0, "le": bound}
@@ -128,7 +129,7 @@ def _classify(key: str, value: Any) -> Optional[Tuple[str, str, Dict[str, Any]]]
         stripped = value.strip()
         if not stripped or "\n" in value or len(value) > _MAX_TEXT_VALUE:
             return None
-        if _ISO_DATE.match(stripped) or "date" in lk:
+        if _ISO_DATE.fullmatch(stripped):
             return "date", "str", {"pattern": _DATE_PATTERN,
                                    "min_length": 10, "max_length": 10}
         if any(stripped.endswith(s) for s in _ADMIN_SUFFIXES) \
@@ -174,7 +175,8 @@ def _multi_numeric_constraints(
     if coord_key in _COORDINATE_BOUNDS:
         ge, le = _COORDINATE_BOUNDS[coord_key]
         return "coordinate", "float", {"ge": ge, "le": le}
-    if any(k in lk for k in _THRESHOLD_KEYS):
+    key_tokens = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key).lower()
+    if any(re.search(r"(?:^|[^a-z0-9])" + re.escape(k) + r"(?:$|[^a-z0-9])", key_tokens) for k in _THRESHOLD_KEYS):
         bound = abs(hi) * 10.0 or 1.0
         if lo >= 0:
             return "threshold", numeric_type, {"ge": 0, "le": bound}

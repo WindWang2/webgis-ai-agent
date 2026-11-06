@@ -12,6 +12,8 @@ from typing import Optional
 
 from app.services.jobs.cancellation import OperationCancelled
 
+import re
+
 from .models import FailureClass, RecoveryAction
 
 # Message-level signals, matched as lowercased substrings. Scan order inside a
@@ -38,7 +40,12 @@ _EMPTY_MARKERS = (
 
 
 def _has_any(markers: tuple[str, ...], text: str) -> bool:
-    return any(marker in text for marker in markers)
+    for marker in markers:
+        prefix = r"(?<![a-z0-9_])" if marker[0].isascii() and marker[0].isalnum() else ""
+        suffix = r"(?![a-z0-9_])" if marker[-1].isascii() and marker[-1].isalnum() else ""
+        if re.search(prefix + re.escape(marker) + suffix, text):
+            return True
+    return False
 
 
 def classify_error(

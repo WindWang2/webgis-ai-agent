@@ -31,17 +31,14 @@ export function formatGraticuleLabel(
   if (!Number.isFinite(value)) return '';
   const hemi = isLat ? (value >= 0 ? 'N' : 'S') : (value >= 0 ? 'E' : 'W');
   const abs = Math.abs(value);
-  const deg = Math.floor(abs);
-  // 图廓注记等宽惯例：经度固定 3 位（008°），纬度固定 2 位（05°）
+  if (format === 'deg') return `${Math.round(abs)}°${hemi}`;
+  const totalSeconds = format === 'dm' ? Math.round(abs * 60) * 60 : Math.round(abs * 3600);
+  const deg = Math.floor(totalSeconds / 3600);
+  const min = Math.floor(totalSeconds % 3600 / 60);
+  const sec = totalSeconds % 60;
   const degLabel = String(deg).padStart(isLat ? 2 : 3, '0');
-  if (format === 'deg') return `${deg}°${hemi}`;
-  const minFloat = (abs - deg) * 60;
-  const min = Math.floor(minFloat);
   if (format === 'dm') return `${degLabel}°${pad2(min)}′${hemi}`;
-  const sec = Math.round((minFloat - min) * 60);
-  const secNorm = sec === 60 ? 0 : sec;
-  const minNorm = sec === 60 ? min + 1 : min;
-  return `${degLabel}°${pad2(minNorm)}′${pad2(secNorm)}″${hemi}`;
+  return `${degLabel}°${pad2(min)}′${pad2(sec)}″${hemi}`;
 }
 
 /** 图廓注记集合：四角（经度上/下缘、纬度左/右缘）。 */

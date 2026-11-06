@@ -114,6 +114,8 @@ export type SettingsTab = 'llm' | 'skills' | 'rag' | 'map' | 'system' | 'account
 // Workspace V2（Goal C5）：dock 基座 —— 工作区 UI 状态，与语义组件状态分离。
 export type { DockSlice, DockRegion, DockRegionState } from './slices/dockSlice';
 
+export type SystemMessage = string | { text: string; level: 'info' | 'success' | 'error' };
+
 export interface SkillEntry {
   id: string;
   name: string;
@@ -222,9 +224,9 @@ export interface HudState extends WorkbenchSlice {
   /* ─── System Callback ─── */
   // 审计 F35：pendingSystemMessage 现在是队列 -- rapid back-to-back 调用
   // 不再互相覆盖。consumer 调 drainSystemMessage 取下一条。
-  pendingSystemMessage: string | null;
-  _systemMessageQueue: string[];
-  setPendingSystemMessage: (msg: string | null) => void;
+  pendingSystemMessage: SystemMessage | null;
+  _systemMessageQueue: SystemMessage[];
+  setPendingSystemMessage: (msg: string | null, level?: 'info' | 'success' | 'error') => void;
   drainSystemMessage: () => void;
 
   /* ─── Analysis Assets ─── */

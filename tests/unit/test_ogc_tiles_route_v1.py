@@ -63,6 +63,14 @@ def patched_server(monkeypatch):
     server = OgcServiceFakeServer()
     fake_url = server.add_ogc_tiles(collection_ids=("admin",))
     session = session_with_fake(tuple(server.routes))
+    from app.services.data_fabric.security import DataFabricSecurity
+    from urllib.parse import urlparse
+
+    fixture_host = urlparse(server.base_url).hostname
+    original_resolve = DataFabricSecurity._resolve_all
+    monkeypatch.setattr(DataFabricSecurity, "_resolve_all", staticmethod(
+        lambda host: ["93.184.216.34"] if host == fixture_host else original_resolve(host)
+    ))
 
     import app.services.data_fabric.adapters.ogc_tiles_adapter as tiles_mod
     monkeypatch.setattr(tiles_mod, "make_safe_session", lambda *a, **k: session)

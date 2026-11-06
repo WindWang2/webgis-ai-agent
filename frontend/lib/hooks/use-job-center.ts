@@ -1,3 +1,4 @@
+'use client';
 /**
  * 任务中心数据源（ADR-0052，规范 §27 / §31 / §32）。
  *
@@ -13,7 +14,6 @@
  *     两者与当前状态不符则整份丢弃 —— 旧 session 的任务绝不会写进新 session 的
  *     UI（规范 Scenario 10）。
  */
-'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -118,7 +118,8 @@ export function useJobCenter(options: UseJobCenterOptions = {}): UseJobCenterRes
       // 后端已确认终态 → 从「取消中」集合里移除
       setCancelling((prev) => {
         if (prev.size === 0) return prev;
-        const next = new Set(prev);
+        const present = new Set((data.jobs ?? []).map((job) => job.id));
+        const next = new Set([...prev].filter((id) => present.has(id)));
         for (const job of data.jobs ?? []) {
           if (!job.active) next.delete(job.id);
         }

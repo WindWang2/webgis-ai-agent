@@ -31,6 +31,7 @@ V6 分段布局（per session，additive —— V5 单文件布局**读取容忍
   阻断业务。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import gzip
 import json
@@ -249,6 +250,10 @@ def _parse_segment_records(v6_dir: Path, seg: TraceSegment) -> List[TraceChainRe
     return out
 
 
+def _dedup_key(record: TraceChainRecord) -> str:
+    return json.dumps([str(record.get("turn_id") or ""), record.get("total_records")], separators=(",", ":"))
+
+
 def _rewrite_segment(
     v6_dir: Path, seg: TraceSegment, kept: List[Tuple[Optional[int], str, TraceChainRecord]],
 ) -> None:
@@ -264,6 +269,7 @@ def _rewrite_segment(
         tmp.write_text(payload, encoding="utf-8")
     os.replace(tmp, target)
     seg["count"] = len(kept)
+    seg["dedup_keys"] = [_dedup_key(record) for _, _, record in kept]
     seg["protected"] = sum(1 for _, _, r in kept if _is_protected_record(r))
     seqs = [s for s, _, _ in kept if s is not None]
     seg["min_seq"] = min(seqs) if seqs else 0
@@ -318,34 +324,25 @@ def _trim_segments(v6_dir: Path, manifest: TraceManifest) -> None:
         segs.pop(index)
 
     for pass_protected in (False, True):
-        while overflow > 0 and segs:
-            seg = segs[0]
+        index = 0
+        while overflow > 0 and index < len(segs):
+            seg = segs[index]
             count = int(seg.get("count") or 0)
-            if count == 0:
-                # 空段（fresh roll）：绝不弹掉 append 目标（最后一段）
-                if len(segs) > 1:
-                    _pop_seg(0)
-                    continue
-                break
-            seg_protected = int(seg.get("protected") or 0)
-            if not pass_protected and seg_protected >= count:
-                break  # 最旧段全保护 → 本 pass 无可丢（转保护 pass）
-            droppable_in_seg = count if pass_protected else (count - seg_protected)
-            if overflow >= count and seg_protected == 0:
-                # 整段淘汰（零解析）；append 目标（最后一段）不可整删
-                if len(segs) == 1:
-                    break
-                _pop_seg(0)
+            protected = int(seg.get("protected") or 0)
+            droppable = count if pass_protected else count - protected
+            if count == 0 or droppable <= 0:
+                index += 1
+                continue
+            if overflow >= count and protected == 0 and index < len(segs) - 1:
+                _pop_seg(index)
                 overflow -= count
                 continue
-            take = min(droppable_in_seg, overflow)
-            dropped = _drop_oldest_records(
-                v6_dir, seg, take, force=pass_protected)
+            dropped = _drop_oldest_records(v6_dir, seg, min(droppable, overflow), force=pass_protected)
             overflow -= dropped
-            if dropped == 0:
-                break  # 该段无可丢（防御：防死循环）
-            if int(seg.get("count") or 0) == 0 and len(segs) > 1:
-                _pop_seg(0)
+            if int(seg.get("count") or 0) == 0 and index < len(segs) - 1:
+                _pop_seg(index)
+            else:
+                index += 1
         if overflow <= 0:
             break
     # 空段过滤只针对非 append 目标（最后一段必须保留 —— 后续 append 写它）
@@ -426,6 +423,7 @@ def _heal_manifest(v6_dir: Path, manifest: TraceManifest,
                "max_seq": 0}
         recs = _parse_segment_records(v6_dir, seg)
         seg["count"] = len(recs)
+        seg["dedup_keys"] = [_dedup_key(record) for record in recs]
         segs_seqs = [int(r["seq"]) for r in recs
                      if isinstance(r.get("seq"), int)]
         seg["protected"] = sum(1 for r in recs if _is_protected_record(r))
@@ -445,7 +443,7 @@ def _heal_manifest(v6_dir: Path, manifest: TraceManifest,
     try:
         _save_manifest(v6_dir, healed)
     except Exception:  # noqa: BLE001 — 自愈写失败按内存态继续
-        pass
+        observe_optional_failure(__name__)
     return healed
 
 
@@ -478,8 +476,11 @@ def persist_chain(chain_dict: TraceChainRecord, session_id: str = "") -> bool:
             # （扫描 ≤MAX_SEGMENTS 段 + legacy；窗口有界故扫描有界）
             dup_turn = str(chain_dict.get("turn_id") or "")
             dup_total = chain_dict.get("total_records")
+            index_complete = "legacy_dedup_keys" in manifest and all("dedup_keys" in segment for segment in segs)
             if dup_turn and _dup_exists(v6_dir, sid, manifest,
                                         dup_turn, dup_total):
+                if not index_complete:
+                    _save_manifest(v6_dir, manifest)
                 return True
 
             # 单调 seq（legacy 缺 seq 历史不伪造 → 从 1 起）
@@ -503,7 +504,7 @@ def persist_chain(chain_dict: TraceChainRecord, session_id: str = "") -> bool:
                     if isinstance(s, int) and s > last_seq_val:
                         last_seq_val = s
             except Exception:  # noqa: BLE001 — 兜底失败按 manifest 值
-                pass
+                observe_optional_failure(__name__)
             chain_dict = cast(TraceChainRecord, dict(chain_dict))
             chain_dict["seq"] = last_seq_val + 1
 
@@ -528,6 +529,7 @@ def persist_chain(chain_dict: TraceChainRecord, session_id: str = "") -> bool:
                     f.flush()
                     os.fsync(f.fileno())
             current["count"] = int(current.get("count") or 0) + 1
+            current["dedup_keys"] = [*current.get("dedup_keys", []), _dedup_key(chain_dict)]
             if not current.get("min_seq"):
                 current["min_seq"] = chain_dict["seq"]
             current["max_seq"] = chain_dict["seq"]
@@ -551,18 +553,23 @@ def persist_chain(chain_dict: TraceChainRecord, session_id: str = "") -> bool:
 
 def _dup_exists(v6_dir: Path, sid: str, manifest: TraceManifest,
                 turn_id: str, total_records: Any) -> bool:
-    for seg in manifest.get("segments") or []:
-        for rec in _parse_segment_records(v6_dir, seg):
-            if (str(rec.get("turn_id") or "") == turn_id
-                    and rec.get("total_records") == total_records):
-                return True
-    legacy_path = _chains_path(sid)
-    if legacy_path is not None and legacy_path.exists():
-        for _, _, rec in _parse_lines(legacy_path):
-            if (str(rec.get("turn_id") or "") == turn_id
-                    and rec.get("total_records") == total_records):
-                return True
-    return False
+    key = json.dumps([turn_id, total_records], separators=(",", ":"))
+    segments = manifest.get("segments") or []
+    found = False
+    for index, seg in enumerate(segments):
+        keys = seg.get("dedup_keys")
+        # The append target is bounded to one segment. Re-read it to heal an
+        # append→manifest crash; sealed segments use their persistent key index.
+        if keys is None or index == len(segments) - 1:
+            keys = [_dedup_key(record) for record in _parse_segment_records(v6_dir, seg)]
+            seg["dedup_keys"] = keys
+        found = found or key in keys
+    legacy = manifest.get("legacy_dedup_keys")
+    if legacy is None:
+        path = _chains_path(sid)
+        legacy = [_dedup_key(record) for _, _, record in _parse_lines(path)] if path is not None and path.exists() else []
+        manifest["legacy_dedup_keys"] = legacy[-MAX_RECORDS_PER_SESSION:]
+    return found or key in legacy
 
 
 def persist_turn_chain(turn_id: str, session_id: str = "") -> bool:

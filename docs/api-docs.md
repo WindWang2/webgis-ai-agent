@@ -570,6 +570,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/reports/shared/{share_code}/view` | View Shared Report | object |
 | `GET` | `/api/v1/reports/{report_id}` | Get Report | ApiResponse |
 | `GET` | `/api/v1/reports/{report_id}/download` | Download Report | object |
+| `DELETE` | `/api/v1/reports/{report_id}/share` | Revoke Share Link | ApiResponse |
 | `POST` | `/api/v1/reports/{report_id}/share` | Create Share Link | ApiResponse |
 
 ### AI对话
@@ -1167,6 +1168,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：430（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：431（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

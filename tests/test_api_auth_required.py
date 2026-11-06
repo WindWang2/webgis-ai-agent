@@ -11,6 +11,7 @@ mutates data. Intentionally public mutating endpoints live in
 from __future__ import annotations
 
 import ast
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,22 @@ BODY_OWNERSHIP_CHECKS = frozenset(
         "revoke_project_objects",  # lakehouse.py: project owner-scoped revoke
     }
 )
+
+# The shared export gate accepts a live user or verifies anonymous ownership.
+# Pin its actual AST body: merely calling a similarly named helper grants no
+# exemption. Existing route-level negative tests exercise the runtime guard.
+_EXPORT_GATE_AST_SHA256 = "efd923925deee9ea7f0d9996c486d7a07f852be1380509465b03eb8e10263791"
+
+
+def _has_verified_export_gate(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    calls = [n.value for n in ast.walk(fn) if isinstance(n, ast.Await) and isinstance(n.value, ast.Call)]
+    if not any(isinstance(call.func, ast.Name) and call.func.id == "_export_principal" for call in calls):
+        return False
+    source = getattr(fn, "_module_source", "")
+    if not source:
+        return False
+    helper = _get_function(source, "_export_principal")
+    return helper is not None and hashlib.sha256(ast.dump(helper, include_attributes=False).encode()).hexdigest() == _EXPORT_GATE_AST_SHA256
 
 MUTATING_HTTP = frozenset({"post", "put", "delete", "patch"})
 
@@ -163,7 +180,7 @@ def _has_auth_fn(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     deps = _fn_depends(fn)
     if any(d in AUTH_ENFORCING_DEPS for d in deps):
         return True
-    if set(deps) & OPTIONAL_AUTH_DEPS and (_fn_body_names(fn) & BODY_OWNERSHIP_CHECKS):
+    if set(deps) & OPTIONAL_AUTH_DEPS and ((_fn_body_names(fn) & BODY_OWNERSHIP_CHECKS) or _has_verified_export_gate(fn)):
         return True
     return False
 
@@ -172,6 +189,7 @@ def _get_function(source: str, function_name: str) -> ast.FunctionDef | ast.Asyn
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
+            setattr(node, "_module_source", source)
             return node
     return None
 
@@ -200,11 +218,13 @@ def _http_methods(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
 
 
 def _mutating_routes(path: Path) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
     found: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if _http_methods(node) & MUTATING_HTTP:
+                setattr(node, "_module_source", source)
                 found.append(node)
     return found
 
@@ -391,3 +411,15 @@ class TestAllMutatingRoutesAuth:
     def test_allowlist_reasons_are_nonempty(self):
         for key, reason in PUBLIC_MUTATING_ALLOWLIST.items():
             assert reason.strip(), f"{key} allowlist reason is empty"
+
+
+def test_export_helper_name_alone_cannot_authorize_a_route():
+    source = "async def export(user=Depends(get_current_user_optional_with_version)):\n    return await _export_principal(user, sid, token, db)\n"
+    assert not _has_auth(source, "export")
+
+
+def test_export_helper_security_body_is_pinned():
+    source = (ROUTES_DIR / "map.py").read_text()
+    assert _has_auth(source, "export_map_as_pdf")
+    tampered = source.replace("await verify_session_owner(db, session_id, user_id=None, owner_token=token)", "await ignored_probe(db)")
+    assert not _has_auth(tampered, "export_map_as_pdf")

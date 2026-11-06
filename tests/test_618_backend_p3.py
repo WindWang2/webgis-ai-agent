@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.db_model import Organization
+from app.models.db_model import Organization, User
 from app.models.project import Project, Workflow, WorkflowRevision
 from app.schemas.project_schema import WorkflowCreate, WorkflowGraphSpec, WorkflowStepSpec
 from app.services.data_fabric import manager as df_manager
@@ -53,6 +53,8 @@ def db_session():
 def _seed_org(db, org_id=1, slug="org1"):
     org = Organization(id=org_id, name=f"org{org_id}", slug=slug)
     db.add(org)
+    db.flush()
+    db.add(User(id=f"org-owner-{org_id}", username=f"owner-{org_id}", email=f"owner-{org_id}@example.test", org_id=org_id, role="editor", is_active=True))
     db.commit()
     return org
 
@@ -144,7 +146,7 @@ def test_item11_save_workflow_rolls_back_when_revision_fails(db_session, monkeyp
     # F-11（03ea5e537）后 org 项目需同 org 调用方 —— 匿名/跨 org 一律
     # IDOR 拒绝（本测试焦点是 revision 失败回滚，不是访问控制）。
     with pytest.raises(RuntimeError, match="revision publish failed"):
-        ProjectService.save_workflow(db_session, proj.id, _wf_create(), org_id=org.id)
+        ProjectService.save_workflow(db_session, proj.id, _wf_create(), org_id=org.id, user_id=f"org-owner-{org.id}")
 
     assert db_session.execute(select(Workflow)).scalars().all() == []
     assert db_session.execute(select(WorkflowRevision)).scalars().all() == []
@@ -156,7 +158,7 @@ def test_item11_update_workflow_rolls_back_graph_when_revision_fails(db_session,
     db_session.add(proj)
     db_session.commit()
 
-    wf = ProjectService.save_workflow(db_session, proj.id, _wf_create(), org_id=org.id)
+    wf = ProjectService.save_workflow(db_session, proj.id, _wf_create(), org_id=org.id, user_id=f"org-owner-{org.id}")
     old_graph = dict(wf.graph_spec)
     old_rev = wf.current_revision_id
     assert old_rev  # first save published a revision
@@ -173,12 +175,12 @@ def test_item11_update_workflow_rolls_back_graph_when_revision_fails(db_session,
         ]
     }
     with pytest.raises(RuntimeError, match="revision publish failed"):
-        ProjectService.update_workflow(db_session, proj.id, wf.id, graph_spec=new_graph, org_id=org.id)
+        ProjectService.update_workflow(db_session, proj.id, wf.id, graph_spec=new_graph, org_id=org.id, user_id=f"org-owner-{org.id}")
 
     fresh = db_session.get(Workflow, wf.id)
     assert fresh.graph_spec == old_graph
     assert fresh.current_revision_id == old_rev
-    revisions = ProjectService.list_workflow_revisions(db_session, proj.id, wf.id, org_id=org.id)
+    revisions = ProjectService.list_workflow_revisions(db_session, proj.id, wf.id, org_id=org.id, user_id=f"org-owner-{org.id}")
     assert revisions is not None and len(revisions) == 1
 
 

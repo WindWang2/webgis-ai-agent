@@ -22,7 +22,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.errors import DataFabricError, SecurityBlockedError
+from app.services.data_fabric.errors import DataFabricError, SecurityBlockedError, SourceBadResponseError
 from app.services.data_fabric.query.capabilities import get_capabilities
 from app.services.data_fabric.query.evidence import build_evidence
 from app.services.data_fabric.query.normalize import normalize_query_spec
@@ -475,15 +475,20 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
     def _find_entry(
         entries: List[Tuple[int, int, int, int]], tile_id: int
     ) -> Optional[Tuple[int, int, int, int]]:
-        lo, hi = 0, len(entries) - 1
-        while lo <= hi:
+        lo, hi = 0, len(entries)
+        while lo < hi:
             mid = (lo + hi) // 2
-            if entries[mid][0] == tile_id:
-                return entries[mid]
-            if entries[mid][0] < tile_id:
+            if entries[mid][0] <= tile_id:
                 lo = mid + 1
             else:
-                hi = mid - 1
+                hi = mid
+        if lo == 0:
+            return None
+        entry = entries[lo - 1]
+        # Leaf-directory entries (run_length=0) cover the range up to the
+        # next entry; tile runs cover [tile_id, tile_id + run_length).
+        if entry[3] == 0 or tile_id < entry[0] + entry[3]:
+            return entry
         return None
 
     def read_tile_bytes(self, z: int, x: int, y: int) -> Optional[Tuple[bytes, str]]:
@@ -545,6 +550,8 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
         )
         if hdr["tile_compression"] == "gzip":
             tile_buf = _bounded_gzip_decompress(tile_buf, MAX_TILE_DECOMPRESSED_BYTES)
+        elif hdr["tile_compression"] != "none":
+            raise SourceBadResponseError(f"unsupported PMTiles tile compression: {hdr['tile_compression']}")
         return tile_buf, self._tile_content_type(hdr["tile_type_code"])
 
     @staticmethod
@@ -725,7 +732,8 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
                     "z": min_z,
                     "x": x,
                     "y": y,
-                    "url_template": f"{self.endpoint or 'pmtiles://' + dataset_id}/{{z}}/{{x}}/{{y}}",
+                    "archive_uri": self.endpoint or 'pmtiles://' + dataset_id,
+                    "access_method": "PMTiles range reader; archive is not an XYZ endpoint",
                 })
                 if len(sample_tiles) >= limit:
                     break

@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -226,7 +227,7 @@ _SYNONYM_PAIRS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("最近设施", ("closest_facility",)),
     ("选址", ("location_allocation",)),
     ("配送", ("distance_matrix", "route")),
-    (" OD", ("origin_destination", "od")),
+    ("OD", ("origin_destination", "od")),
     ("od", ("origin_destination",)),
     ("路径", ("route", "path")),
     ("导航", ("route", "navigation")),
@@ -393,6 +394,10 @@ def negation_anti_terms(query: str) -> Tuple[str, ...]:
                 break
             start = idx + len(cue)
             rest = q[start:]
+            if cue == "非" and rest.startswith("常"):
+                continue
+            if cue == "无" and rest.startswith("人机"):
+                continue
             if not rest:
                 break
             ch = rest[0]
@@ -473,7 +478,7 @@ _CAPABILITY_ALIASES: Tuple[Tuple[str, str], ...] = (
     ("地理编码", "geocoding"),
     ("批量地址", "geocoding"),
     ("植被指数", "ndvi"),
-    (" NDVI", "ndvi"),
+    ("NDVI", "ndvi"),
     ("ndvi", "ndvi"),
     ("影像分割", "image_segmentation"),
     ("叠加分析", "geometry_overlay"),
@@ -538,7 +543,7 @@ _CAPABILITY_ALIASES: Tuple[Tuple[str, str], ...] = (
     ("gwr", "gwr"),
     ("rates收缩", "rate_smoothing"),
     ("发病粗率", "rate_smoothing"),
-    (" MAD", "raster_change_detection"),
+    ("MAD", "raster_change_detection"),
     ("mad", "raster_change_detection"),
     ("质量筛查", "cloud_qc_advisory"),
     ("影像质检", "cloud_qc_advisory"),
@@ -823,7 +828,16 @@ def _descriptor_corpus_text(desc: Any) -> str:
     return " ".join(p for p in parts if p)[:2048]
 
 
-def embedding_retriever(
+_embedding_state_lock = threading.RLock()
+
+
+def embedding_retriever(registry: Any, query: str, top_k: int = 30) -> Sequence[Any]:
+    """Synchronous worker-thread seam; one model/index build at a time."""
+    with _embedding_state_lock:
+        return _embedding_retriever_locked(registry, query, top_k)
+
+
+def _embedding_retriever_locked(
     registry: Any, query: str, top_k: int = 30,
 ) -> Sequence[Any]:
     """``(registry, query, top_k) -> [RetrievalHit]`` 语义检索实现。
@@ -872,7 +886,10 @@ def embedding_retriever(
         kept: List[str] = []
         for name in names:
             try:
-                texts.append(_descriptor_corpus_text(registry.descriptor(name)))
+                descriptor = registry.descriptor(name)
+                if not getattr(descriptor, "model_visible", True):
+                    continue
+                texts.append(_descriptor_corpus_text(descriptor))
                 kept.append(name)
             except KeyError:
                 continue
@@ -883,7 +900,7 @@ def embedding_retriever(
         _embed_state["fingerprint"] = fingerprint
 
     vectors, kept = _embed_state["index"]
-    q_vec = model.encode([query.strip()], normalize_embeddings=True)
+    q_vec = model.encode([query.strip()[:400]], normalize_embeddings=True)
     q_vec = np.asarray(q_vec, dtype="float32")[0]
     sims = vectors @ q_vec
     order = sorted(range(len(kept)), key=lambda i: (-float(sims[i]), kept[i]))

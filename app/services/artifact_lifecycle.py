@@ -110,6 +110,16 @@ def _safe_rmtree(path: Path) -> bool:
     return False
 
 
+def _remove_confined(path: Path, root: Path, *, directory: bool = False) -> int:
+    """Blocking filesystem confinement and removal; invoke through to_thread."""
+    try:
+        if path.resolve().parent != root.resolve():
+            return 0
+        return int(_safe_rmtree(path) if directory else _safe_unlink(path))
+    except OSError:
+        return 0
+
+
 async def purge_session_artifacts(session_id: str) -> Dict[str, Any]:
     """Session-delete/eviction hook: reclaim session-keyed artifacts.
 
@@ -137,11 +147,7 @@ async def purge_session_artifacts(session_id: str) -> Dict[str, Any]:
                 if fp:
                     # only ever delete inside REPORT_DIR (defense in depth)
                     candidate = Path(fp)
-                    try:
-                        if candidate.resolve().parent == REPORT_DIR.resolve():
-                            _safe_unlink(candidate)
-                    except OSError:
-                        pass
+                    await asyncio.to_thread(_remove_confined, candidate, REPORT_DIR)
                 await db.delete(row)
                 removed += 1
             await db.commit()
@@ -164,11 +170,7 @@ async def purge_session_artifacts(session_id: str) -> Dict[str, Any]:
                 if upload_id:
                     # only ever delete inside UPLOADS_DIR
                     candidate = UPLOADS_DIR / upload_id
-                    try:
-                        if candidate.resolve().parent == UPLOADS_DIR.resolve():
-                            removed_dirs += int(_safe_rmtree(candidate))
-                    except OSError:
-                        pass
+                    removed_dirs += await asyncio.to_thread(_remove_confined, candidate, UPLOADS_DIR, directory=True)
                 await db.delete(row)
                 removed_rows += 1
             await db.commit()
@@ -608,11 +610,7 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
             for row in rows:
                 if row.file_path:
                     candidate = Path(row.file_path)
-                    try:
-                        if candidate.resolve().parent == REPORT_DIR.resolve():
-                            _safe_unlink(candidate)
-                    except OSError:
-                        pass
+                    await asyncio.to_thread(_remove_confined, candidate, REPORT_DIR)
                 await db.delete(row)
                 removed += 1
             await db.commit()
@@ -651,11 +649,7 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
                 upload_id = _upload_id_from_filename(str(row.filename or ""))
                 if upload_id:
                     candidate = UPLOADS_DIR / upload_id
-                    try:
-                        if candidate.resolve().parent == UPLOADS_DIR.resolve():
-                            removed_dirs += int(_safe_rmtree(candidate))
-                    except OSError:
-                        pass
+                    removed_dirs += await asyncio.to_thread(_remove_confined, candidate, UPLOADS_DIR, directory=True)
                 await db.delete(row)
                 removed_rows += 1
             await db.commit()

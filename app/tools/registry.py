@@ -653,6 +653,9 @@ class ToolRegistry:
                         properties[p_name]["description"] = p_desc
             required = schema_json.get("required", [])
 
+        properties = {key: value for key, value in properties.items() if key != "session_id"}
+        required = [key for key in required if key != "session_id"]
+
         schema = {
             "type": "function",
             "function": {
@@ -1418,6 +1421,14 @@ class ToolRegistry:
                     error_type="JSONDecodeError",
                 )
 
+        # The hidden session field is server-owned. Remove caller input before
+        # validation, then inject trusted context when present. Without context,
+        # model defaults remain available and required fields still fail closed.
+        if isinstance(arguments, dict):
+            arguments = {key: value for key, value in arguments.items() if key != "session_id"}
+            if session_id is not None and model is not None and "session_id" in model.model_fields:
+                arguments["session_id"] = session_id
+
         if isinstance(arguments, dict):
             arguments, _norm_repairs = _normalize_with_report(name, arguments, model)
         else:
@@ -1661,20 +1672,15 @@ class ToolRegistry:
         normalization_report_var.set(_norm_repairs)
 
         # 执行函数
-        # 探测函数签名，如果需要 session_id 则传入。dispatch 的第三参是 harness
-        # 注入的上下文 session；工具入参里的 session_id（LLM 显式传入）与之同名时，
-        # 以已存在的非 None 工具参为准，避免用 None 覆盖显式值（composite 工具
-        # 的 session_id 即走此路径，测试 `dispatch(..., {"session_id": "x"})`
-        # 依赖该语义）。
+        # The third dispatch argument is trusted context. Do not overwrite a
+        # validated model/function default with None when context is absent.
         sig = inspect.signature(tool_func)
         has_var_keyword = any(
             p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
         )
-        if "session_id" in sig.parameters:
-            if session_id is not None or "session_id" not in arguments:
-                arguments["session_id"] = session_id
-            # else: keep the explicit tool-arg session_id already in arguments
-        elif not has_var_keyword and isinstance(arguments, dict) and "session_id" in arguments:
+        if "session_id" in sig.parameters and session_id is not None:
+            arguments["session_id"] = session_id
+        elif "session_id" not in sig.parameters and not has_var_keyword and isinstance(arguments, dict) and "session_id" in arguments:
             # Drop injected session_id if the tool doesn't accept session_id or **kwargs
             arguments = {k: v for k, v in arguments.items() if k != "session_id"}
 
@@ -1848,8 +1854,11 @@ class ToolRegistry:
             meta = self._metadata.get(name) or {}
             if meta.get("timeout"):
                 timeout = float(meta["timeout"])
+            from app.services.jobs.celery_origin import origin_headers
+
             task = run_sync_tool_isolated.apply_async(
                 kwargs={"tool_name": name, "arguments": arguments},
+                headers=origin_headers(),
             )
         except Exception as exc:
             # 未投递成功（broker 不可达/连接被拒）——worker 侧不可能有副作用，

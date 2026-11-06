@@ -120,9 +120,9 @@ async def test_discover_does_not_overwrite_explicit_context_query():
 
 
 @pytest.mark.asyncio
-async def test_discover_assesses_at_most_three_sources():
-  """Only the top 3 candidates are scored — quick_assess is the expensive call."""
-  adapter = FakeDiscoverAdapter([_source(str(i)) for i in range(6)])
+async def test_discover_bounds_assessment_then_selects_three_sources():
+  """Score the bounded candidate set before choosing the best three."""
+  adapter = FakeDiscoverAdapter([_source(str(i)) for i in range(40)])
 
   result = await run_discover_stage(
       task_id="t1",
@@ -131,8 +131,9 @@ async def test_discover_assesses_at_most_three_sources():
       adapter=adapter,
   )
 
-  assert len(adapter.assessed) == 3
+  assert len(adapter.assessed) == 32
   assert len(result.data["selected_sources"]) == 3
+  assert result.data["candidates_truncated"] == 8
 
 
 @pytest.mark.asyncio

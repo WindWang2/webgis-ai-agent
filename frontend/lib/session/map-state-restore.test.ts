@@ -103,7 +103,7 @@ describe('buildLayerFromRestored', () => {
     expect(layer.type).toBe('vector');
     expect(layer.opacity).toBe(0.8);
     expect(layer._tileUrl).toBe(
-      'http://localhost:8000/api/v1/layers/data/ref:geojson-1/tiles/{z}/{x}/{y}.mvt?session_id=sid-1'
+      'http://localhost:8000/api/v1/layers/data/ref%3Ageojson-1/tiles/{z}/{x}/{y}.mvt?session_id=sid-1'
     );
     expect(layer._mapspecFingerprint).toBe('carto-fp');
     expect(layer._mapspecLayerId).toBe('mapspec-layer');

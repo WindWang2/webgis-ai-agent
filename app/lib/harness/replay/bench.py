@@ -282,7 +282,7 @@ def compare_results(report: BenchReport, baseline_path: str) -> ComparisonReport
             if base_dd and cur_dd:
                 drift["decisions_digest_drift"] = base_dd != cur_dd
             drifts.append(drift)
-    for sid, base in base_entries.items():
+    for sid, _base in base_entries.items():
         if not any(e["scenario_id"] == sid
                    for e in report.get("entries") or []):
             drifts.append({"scenario_id": sid, "kind": "missing"})
@@ -513,7 +513,7 @@ def write_report(report: BenchReport, fmt: str, output: str) -> None:
 
         buffer = io.StringIO()
         writer = csv.DictWriter(
-            buffer, fieldnames=["scenario_id", "category", "ok",
+            buffer, lineterminator="\n", fieldnames=["scenario_id", "category", "ok",
                                 "replay_digest", "duration_ms",
                                 "exact_diff_count"])
         writer.writeheader()

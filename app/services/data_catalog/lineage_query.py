@@ -128,7 +128,7 @@ class SessionLineageQuery:
         seen: Dict[str, int] = {artifact_id: 0}
         stack = [(p, 1) for p in self.parents(artifact_id)]
         while stack:
-            cur, depth = stack.pop()
+            cur, depth = stack.pop(0)
             if cur in seen or depth > max_depth:
                 continue
             seen[cur] = depth
@@ -141,7 +141,7 @@ class SessionLineageQuery:
         seen: Dict[str, int] = {artifact_id: 0}
         stack = [(c, 1) for c in self.children(artifact_id)]
         while stack:
-            cur, depth = stack.pop()
+            cur, depth = stack.pop(0)
             if cur in seen or depth > max_depth:
                 continue
             seen[cur] = depth
@@ -180,9 +180,15 @@ class SessionLineageQuery:
         nodes: Dict[str, LineageNode] = {}
         edges: List[LineageEdge] = []
         truncated = False
+        visited_up: Dict[str, int] = {}
+        visited_down: Dict[str, int] = {}
+        edge_keys = set()
 
         def _visit_up(aid: str, depth: int) -> None:
             nonlocal truncated
+            if visited_up.get(aid, max_depth + 1) <= depth:
+                return
+            visited_up[aid] = depth
             if len(nodes) >= max_nodes:
                 truncated = True
                 return
@@ -193,11 +199,16 @@ class SessionLineageQuery:
                 truncated = truncated or bool(self.parents(aid))
                 return
             for p in self.parents(aid):
-                edges.append(LineageEdge(from_id=p, to_id=aid, producer_tool=_tool(p)))
+                if (p, aid) not in edge_keys:
+                    edge_keys.add((p, aid))
+                    edges.append(LineageEdge(from_id=p, to_id=aid, producer_tool=_tool(p)))
                 _visit_up(p, depth + 1)
 
         def _visit_down(aid: str, depth: int) -> None:
             nonlocal truncated
+            if visited_down.get(aid, max_depth + 1) <= depth:
+                return
+            visited_down[aid] = depth
             if depth >= max_depth:
                 truncated = truncated or bool(self.children(aid))
                 return
@@ -205,7 +216,9 @@ class SessionLineageQuery:
                 if len(nodes) >= max_nodes:
                     truncated = True
                     return
-                edges.append(LineageEdge(from_id=aid, to_id=c, producer_tool=_tool(aid)))
+                if (aid, c) not in edge_keys:
+                    edge_keys.add((aid, c))
+                    edges.append(LineageEdge(from_id=aid, to_id=c, producer_tool=_tool(aid)))
                 rec = self.records.get(c)
                 if rec is not None and c not in nodes:
                     nodes[c] = _node_from_record(rec, depth + 1)
@@ -249,52 +262,3 @@ async def session_lineage(
     if artifact_id not in records:
         return None
     return SessionLineageQuery(records).view(artifact_id, max_depth=max_depth)
-
-
-def project_lineage(
-    db: Any,
-    artifact_id: str,
-    *,
-    project_id: Optional[str] = None,
-    max_depth: int = 5,
-) -> Dict[str, Any]:
-    """项目作用域只读桥：DB lineage → 归一化视图 dict。
-
-    语义原样保留 ``LineageService.get_lineage_graph``（含 DATA-01 租户
-    过滤 —— ``project_id`` 必须由调用方传入入口 artifact 的归属）。
-    DB 不可用时抛出的异常原样上抛（调用方决定降级），这里不做静默。
-    """
-    from app.services.lineage_service import LineageService
-
-    raw = LineageService.get_lineage_graph(
-        db, artifact_id, max_depth=max_depth, project_id=project_id
-    )
-    parents = [
-        LineageEdge(
-            from_id=p["parent_artifact_id"],
-            to_id=p["artifact_id"],
-            kind="lineage",
-            producer_tool=str(p.get("producing_tool") or ""),
-        ).model_dump()
-        for p in raw.get("parents", [])
-    ]
-    consumers = [
-        LineageEdge(
-            from_id=c["parent_artifact_id"],
-            to_id=c["consumer_artifact_id"],
-            kind="lineage",
-            producer_tool=str(c.get("producing_tool") or ""),
-        ).model_dump()
-        for c in raw.get("consumers", [])
-    ]
-    node_ids = {artifact_id}
-    for e in parents + consumers:
-        node_ids.update((e["from_id"], e["to_id"]))
-    return {
-        "root": artifact_id,
-        "scope": "project",
-        "nodes": sorted(node_ids)[:_MAX_VIEW_NODES],
-        "parent_edges": parents,
-        "consumer_edges": consumers,
-        "truncated": len(node_ids) > _MAX_VIEW_NODES,
-    }

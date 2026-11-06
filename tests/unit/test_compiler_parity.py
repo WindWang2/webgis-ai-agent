@@ -119,6 +119,7 @@ def test_tile_grid_pixel_bounds_parity():
             "r1": {"type": "raster", "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]}
         },
         "layers": [
+            {"id": "extent", "type": "fill", "source": "v1"},
             {"id": "r-base", "type": "raster", "source": "r1", "paint": {"raster-opacity": 0.8}}
         ]
     }

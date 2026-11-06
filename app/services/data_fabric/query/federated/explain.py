@@ -100,9 +100,7 @@ def explain_v6_lines(
     lines.append(f"  plan_hash: {plan.plan_hash}")
     lines.append(f"  estimated_cost: {plan.cost:.0f}")
     lines.append("  plan_tree:")
-    lines += [
-        f"    {ln}" if not ln.startswith("  ") else ln for ln in render_tree(plan.tree)
-    ]
+    lines += [f"    {line}" for line in render_tree(plan.tree)]
     lines.append("  cost_components:")
     for k, v in plan.components.items():
         lines.append(f"    {k}: {v}")

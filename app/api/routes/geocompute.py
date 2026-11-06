@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.geocompute_schema import (  # noqa: F401 - 模块属性保持
     ClusterRunResetRequest,    ClusterSubmitRequest,    ExecutionNodeIn,
-    ExecutionPlanIn,    ExecutePlanRequest,    LedgerLimitsRequest,
+    ExecutionPlanIn,    ExecutePlanRequest,    LedgerLimitsRequest, PlanDriftCheckRequest,
     ClusterMetricsResponse,    ClusterRunResetResponse,    ClusterStuckRunsResponse,
     ClusterWorkersResponse,    LedgerLimitsResponse,    PlanDriftCheckResponse,
     PlanExecuteResponse,    PlanRunCancelResponse,    PlanRunSubmitResponse,
@@ -49,11 +49,17 @@ async def _enforce_org_quota(user):
     """ADR-0139 P5：org 配额三查（速率 + 并发；存储在 lakehouse 写面收口）。
 
     薄封装 org_quota.enforce_for_principal（单一实现纪律）；配额面
-    不可用 fail-open，越限 QUOTA → 429 分类学信封（A 线协调点）。
+    不可用拒绝写入，越限 QUOTA → 429 分类学信封（A 线协调点）。
     """
     from app.services import org_quota
 
     await org_quota.enforce_for_principal(user)
+
+
+def _cluster_failure(code: str, exc: Exception) -> HTTPException:
+    logger.error("GeoCompute control plane unavailable: %s", code,
+                 exc_info=(type(exc), exc, exc.__traceback__))
+    return HTTPException(status_code=503, detail={"code": code, "message": "Cluster service unavailable"})
 
 
 def _plan_from_request(data: ExecutionPlanIn):
@@ -133,9 +139,8 @@ def _authorize_session_write_sync(
     """执行前校验 session_id 的写归属（data_fabric._require_existing_session_owner
     的镜像；在 to_thread 工作线程内跑同步 ORM）。
 
-    Conversation 行不存在 → 允许（首写创建，与首条聊天消息同一语义）；
-    存在则必须 user_id 匹配（匿名行须 X-Session-Token 匹配，legacy
-    NULL/NULL fail closed）→ 否则 404（不区分「不存在」与「他人会话」）。
+    Require an existing owned Conversation before writing scoped results.
+    First-turn creation belongs to chat, which issues the owner receipt.
     """
     from app.core.auth import actor_ids, authorize_session_write
     from app.core.database import SessionLocal
@@ -144,7 +149,7 @@ def _authorize_session_write_sync(
     uid, _ = actor_ids(user)
     with SessionLocal() as db:
         conv = db.query(Conversation).filter(Conversation.id == session_id).first()
-        if not authorize_session_write(conv, uid, owner_token):
+        if conv is None or not authorize_session_write(conv, uid, owner_token):
             raise HTTPException(status_code=404, detail="Session not found")
 
 
@@ -161,20 +166,25 @@ async def validate_execution_plan(
     """
     from app.services.geocompute import graph
 
-    plan = _plan_from_request(plan_in)
-    try:
-        graph.validate_plan(plan)
-    except GeoComputeError as exc:
-        raise HTTPException(status_code=422, detail=exc.to_dict())
-    return {
-        "plan_id": plan.plan_id,
-        "graph_fingerprint": plan.graph_fingerprint(),
-        "node_fingerprints": {n.node_id: n.semantic_fingerprint() for n in plan.nodes},
-        "waves": graph.topo_wave_order(plan),
-        "wired_categories": __import__(
-            "app.services.geocompute.ops", fromlist=["wired_categories"]
-        ).wired_categories(),
-    }
+    def _validate() -> dict:
+        try:
+            plan = _plan_from_request(plan_in)
+            graph.validate_plan(plan)
+            return {
+                "plan_id": plan.plan_id,
+                "graph_fingerprint": plan.graph_fingerprint(),
+                "node_fingerprints": {n.node_id: n.semantic_fingerprint() for n in plan.nodes},
+                "waves": graph.topo_wave_order(plan),
+                "wired_categories": __import__(
+                    "app.services.geocompute.ops", fromlist=["wired_categories"]
+                ).wired_categories(),
+            }
+        except GeoComputeError as exc:
+            raise HTTPException(status_code=422, detail=exc.to_dict()) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return await asyncio.to_thread(_validate)
 
 
 @router.post("/plans/execute", response_model=PlanExecuteResponse, tags=["GeoCompute / 执行平面"])
@@ -192,24 +202,33 @@ async def execute_execution_plan(
     ``GOVERNOR`` 层级准入（tenant/session 作用域 + 全局上限）对两条入口
     一视同仁；此前本路由直连 ``engine.execute_plan`` 完全绕过治理。
     """
+    from app.services import org_quota
     from app.services.geocompute import graph
     from app.services.geocompute.api import run_plan_sync
+    from app.services.geocompute.sync_admission import reserve_sync_execution, execute_reserved
 
-    plan = _plan_from_request(body.plan)
     try:
+        plan = _plan_from_request(body.plan)
         graph.validate_plan(plan)
     except GeoComputeError as exc:
-        raise HTTPException(status_code=422, detail=exc.to_dict())
+        raise HTTPException(status_code=422, detail=exc.to_dict()) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if body.session_id:
+        await asyncio.to_thread(_authorize_session_write_sync, body.session_id, user, owner_token)
+    async def _execute() -> Any:
+        async with org_quota.serialized_admission(user) as org_id:
+            await _enforce_org_quota(user)
+            reservation = await asyncio.to_thread(reserve_sync_execution, plan, org_id=org_id,
+                                                 caller=dict(user), session_id=body.session_id)
+        return await asyncio.to_thread(execute_reserved, reservation, lambda token, run_id: run_plan_sync(
+            plan, session_id=body.session_id, caller=dict(user), cancel_token=token, run_id=run_id))
 
-    def _run():
-        if body.session_id:
-            _authorize_session_write_sync(body.session_id, user, owner_token)
-        return run_plan_sync(
-            plan, session_id=body.session_id, caller=dict(user)
-        )
-
+    # Shield the entire admitted task, including a commit already in flight:
+    # cancelling its HTTP waiter never strands/refunds a live thread's slot.
+    worker = asyncio.create_task(_execute())
     try:
-        run = await asyncio.to_thread(_run)
+        run = await asyncio.shield(worker)
     except BudgetExceededError as exc:
         raise HTTPException(status_code=422, detail=exc.to_dict())
     except GeoComputeError as exc:
@@ -235,122 +254,132 @@ async def submit_execution_plan(
     立即返回 202 + run_id；后续经 ``GET /runs/{id}`` 轮询（活投影来自
     持久行，任意进程可读）。背压：租户/全局 queued 超限 → 429。
     """
-    from app.services.geocompute import graph
-    from app.services.geocompute.cluster.contracts import RunPriority
-    from app.services.geocompute.cluster.errors import (
-        ClusterBackpressureError,
-        PlanSnapshotTooLargeError,
-    )
-    from app.services.geocompute.cluster.store import ClusterRunStore
-
-    try:
-        plan = _plan_from_request(body.plan)
-    except ValueError as exc:
-        # 未知类别/策略词表 → typed 422（execute 端点既有行为是 500，
-        # V6 submit 起按契约诚实映射；不改 execute 避免行为漂移）
-        raise HTTPException(status_code=422, detail={
-            "code": "PLAN_INVALID", "message": str(exc),
-        })
-    try:
-        graph.validate_plan(plan)
-    except GeoComputeError as exc:
-        raise HTTPException(status_code=422, detail=exc.to_dict())
-
-    # ADR-0139 P5：org 配额三查（并发/速率；存储在 lakehouse 写路径收口）。
-    # 查询失败 fail-open（服务层保护性限流不放大故障）；越限 →
-    # QuotaExceededError（category=QUOTA → 429 分类学信封）。
-    await _enforce_org_quota(user)
-
-    def _submit():
-        if body.session_id:
-            _authorize_session_write_sync(body.session_id, user, owner_token)
-        from app.core.auth import actor_ids
-        from app.core import tenancy
-        from app.services.geocompute.durable import queue_for_node
-        from app.services.geocompute.executor import owner_scope_for
-
-        uid, org_id = actor_ids(user)
-        # durable 节点的必需 profile 通道（能力匹配依据；in_process 无要求）。
-        # 默认兜底队列 "celery" 不是能力通道 —— 任何 worker 都消费它，
-        # 保留会让 required_profiles 含未注册词 → 非 eager 下永久留队
-        # （round1 review C2）。
-        from app.services.geocompute.durable import EXECUTION_QUEUE_PROFILES
-
-        profiles = sorted({
-            p for p in (
-                queue_for_node(n).removesuffix("_queue")
-                for n in plan.nodes if n.policy.value == "durable_job"
-            ) if p in EXECUTION_QUEUE_PROFILES
-        })
-        # V7：资源 envelope —— required_profiles 合并语义（架构 round1 #7）：
-        # 最终 = derive(durable 节点) ∪ resource.required_profiles（用户只能
-        # 加宽不能收窄 —— 收窄会把「安全留队」劣化为必然 WORKER_LOSS）；
-        # 用户传入词越界 → typed 422（词表单一来源）。
-        resource_request = None
-        if body.resource:
-            from app.services.geocompute.cluster.contracts import ResourceRequest
-            from app.services.geocompute.cluster.placement import request_digest
-
-            try:
-                req = ResourceRequest(**body.resource)
-            except Exception as exc:
-                raise HTTPException(status_code=422, detail={
-                    "code": "RESOURCE_REQUEST_INVALID",
-                    "message": str(exc)[:200],
-                })
-            unknown = [
-                p for p in req.required_profiles
-                if p not in EXECUTION_QUEUE_PROFILES
-            ]
-            if unknown:
-                raise HTTPException(status_code=422, detail={
-                    "code": "RESOURCE_REQUEST_INVALID",
-                    "message": f"unknown required_profiles: {unknown[:4]}",
-                    "details": {"allowed": sorted(EXECUTION_QUEUE_PROFILES)},
-                })
-            req = req.normalized()
-            req.required_profiles = sorted(
-                set(req.required_profiles) | set(profiles)
-            )
-            resource_request = request_digest(req)
-        store = ClusterRunStore()
-        run_id = store.create_run(
-            plan_snapshot=plan.model_dump(mode="json"),
-            plan_fingerprint=plan.graph_fingerprint(),
-            owner_scope=owner_scope_for(dict(user), body.session_id),
-            session_id=body.session_id,
-            creator_id=str(uid) if uid else None,
-            # ADR-0139：匿名/无 org 提交归 default 隔离桶（org 是 NOT NULL 硬约束）
-            org_id=tenancy.effective_org_in_thread(user),
-            project_id=body.project_id,
-            tenant_raw=str(org_id) if org_id else None,
-            project_raw=body.project_id,
-            priority=RunPriority.coerce(body.priority),
-            required_profiles=profiles,
-            resource_request=resource_request,
+    from app.services import org_quota
+    async with org_quota.serialized_admission(user):
+        from app.services.geocompute import graph
+        from app.services.geocompute.cluster.contracts import RunPriority
+        from app.services.geocompute.cluster.errors import (
+            ClusterBackpressureError,
+            PlanSnapshotTooLargeError,
         )
-        return store.get_run(run_id)
+        from app.services.geocompute.cluster.store import ClusterRunStore
 
-    try:
-        row = await asyncio.to_thread(_submit)
-    except PlanSnapshotTooLargeError as exc:
-        raise HTTPException(status_code=413, detail=exc.to_dict())
-    except ClusterBackpressureError as exc:
-        raise HTTPException(status_code=429, detail=exc.to_dict(),
-                            headers={"Retry-After": "5"})
-    except HTTPException:
-        raise
-    except GeoComputeError as exc:
-        raise HTTPException(status_code=500, detail=exc.to_dict())
-    row = row or {}
-    return {
-        "run_id": row.get("run_id"),
-        "status": row.get("status"),
-        "plan_fingerprint": row.get("plan_fingerprint"),
-        "required_profiles": row.get("required_profiles") or [],
-        "resource": row.get("resource_request"),
-        "source": "cluster",
-    }
+        try:
+            plan = _plan_from_request(body.plan)
+        except ValueError as exc:
+            # 未知类别/策略词表 → typed 422（execute 端点既有行为是 500，
+            # V6 submit 起按契约诚实映射；不改 execute 避免行为漂移）
+            raise HTTPException(status_code=422, detail={
+                "code": "PLAN_INVALID", "message": str(exc),
+            })
+        try:
+            graph.validate_plan(plan)
+        except GeoComputeError as exc:
+            raise HTTPException(status_code=422, detail=exc.to_dict())
+
+        # ADR-0139 P5：org 配额三查（并发/速率；存储在 lakehouse 写路径收口）。
+         # 查询失败拒绝写入；越限 →
+        # QuotaExceededError（category=QUOTA → 429 分类学信封）。
+        await _enforce_org_quota(user)
+
+        def _submit():
+            if body.project_id:
+                from app.core.database import SessionLocal
+                from app.services.project_service import ProjectService
+                with SessionLocal() as project_db:
+                    if ProjectService.get_project_for_write(project_db, body.project_id,
+                            user_id=user.get("user_id"), org_id=user.get("org_id")) is None:
+                        raise HTTPException(status_code=404, detail="Project not found")
+            if body.session_id:
+                _authorize_session_write_sync(body.session_id, user, owner_token)
+            from app.core.auth import actor_ids
+            from app.core import tenancy
+            from app.services.geocompute.durable import queue_for_node
+            from app.services.geocompute.executor import owner_scope_for
+
+            uid, org_id = actor_ids(user)
+            # durable 节点的必需 profile 通道（能力匹配依据；in_process 无要求）。
+            # 默认兜底队列 "celery" 不是能力通道 —— 任何 worker 都消费它，
+            # 保留会让 required_profiles 含未注册词 → 非 eager 下永久留队
+            # （round1 review C2）。
+            from app.services.geocompute.durable import EXECUTION_QUEUE_PROFILES
+
+            profiles = sorted({
+                p for p in (
+                    queue_for_node(n).removesuffix("_queue")
+                    for n in plan.nodes if n.policy.value == "durable_job"
+                ) if p in EXECUTION_QUEUE_PROFILES
+            })
+            # V7：资源 envelope —— required_profiles 合并语义（架构 round1 #7）：
+            # 最终 = derive(durable 节点) ∪ resource.required_profiles（用户只能
+            # 加宽不能收窄 —— 收窄会把「安全留队」劣化为必然 WORKER_LOSS）；
+            # 用户传入词越界 → typed 422（词表单一来源）。
+            resource_request = None
+            if body.resource:
+                from app.services.geocompute.cluster.contracts import ResourceRequest
+                from app.services.geocompute.cluster.placement import request_digest
+
+                try:
+                    req = ResourceRequest(**body.resource)
+                except Exception as exc:
+                    raise HTTPException(status_code=422, detail={
+                        "code": "RESOURCE_REQUEST_INVALID",
+                        "message": str(exc)[:200],
+                    })
+                unknown = [
+                    p for p in req.required_profiles
+                    if p not in EXECUTION_QUEUE_PROFILES
+                ]
+                if unknown:
+                    raise HTTPException(status_code=422, detail={
+                        "code": "RESOURCE_REQUEST_INVALID",
+                        "message": f"unknown required_profiles: {unknown[:4]}",
+                        "details": {"allowed": sorted(EXECUTION_QUEUE_PROFILES)},
+                    })
+                req = req.normalized()
+                req.required_profiles = sorted(
+                    set(req.required_profiles) | set(profiles)
+                )
+                resource_request = request_digest(req)
+            store = ClusterRunStore()
+            run_id = store.create_run(
+                plan_snapshot=plan.model_dump(mode="json"),
+                plan_fingerprint=plan.graph_fingerprint(),
+                owner_scope=owner_scope_for(dict(user), body.session_id),
+                session_id=body.session_id,
+                creator_id=str(uid) if uid else None,
+                # ADR-0139：匿名/无 org 提交归 default 隔离桶（org 是 NOT NULL 硬约束）
+                org_id=tenancy.effective_org_in_thread(user),
+                project_id=body.project_id,
+                tenant_raw=str(org_id) if org_id else None,
+                project_raw=body.project_id,
+                priority=(RunPriority.coerce(body.priority) if user.get("role") == "admin"
+                          else min(RunPriority.NORMAL, RunPriority.coerce(body.priority))),
+                required_profiles=profiles,
+                resource_request=resource_request,
+            )
+            return store.get_run(run_id)
+
+        try:
+            row = await asyncio.to_thread(_submit)
+        except PlanSnapshotTooLargeError as exc:
+            raise HTTPException(status_code=413, detail=exc.to_dict())
+        except ClusterBackpressureError as exc:
+            raise HTTPException(status_code=429, detail=exc.to_dict(),
+                                headers={"Retry-After": "5"})
+        except HTTPException:
+            raise
+        except GeoComputeError as exc:
+            raise HTTPException(status_code=500, detail=exc.to_dict())
+        row = row or {}
+        return {
+            "run_id": row.get("run_id"),
+            "status": row.get("status"),
+            "plan_fingerprint": row.get("plan_fingerprint"),
+            "required_profiles": row.get("required_profiles") or [],
+            "resource": row.get("resource_request"),
+            "source": "cluster",
+        }
 
 
 @router.get("/runs", response_model=RunsListResponse, tags=["GeoCompute / Cluster Runtime V6"])
@@ -393,9 +422,7 @@ async def list_execution_runs(
         items, snapshots = await asyncio.to_thread(_list)
     except Exception as exc:  # noqa: BLE001 - 控制面不可用 → typed 503（M5）
         logger.warning("[geocompute] cluster list store unavailable")
-        raise HTTPException(status_code=503, detail={
-            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
-        })
+        raise _cluster_failure("CLUSTER_UNAVAILABLE", exc) from exc
     return {
         "runs": items,
         "terminal_snapshots": snapshots,
@@ -421,9 +448,7 @@ async def cluster_metrics(
     try:
         return await asyncio.to_thread(_snap)
     except Exception as exc:  # noqa: BLE001 - 集群域不可用 → typed 503
-        raise HTTPException(status_code=503, detail={
-            "code": "CLUSTER_METRICS_UNAVAILABLE", "message": str(exc)[:200],
-        })
+        raise _cluster_failure("CLUSTER_METRICS_UNAVAILABLE", exc) from exc
 
 
 @router.get("/runs/{run_id}", response_model=RunDetailResponse, tags=["GeoCompute / 执行平面"])
@@ -459,9 +484,7 @@ async def get_execution_run(
         row = await asyncio.to_thread(_cluster_row)
     except Exception as exc:  # noqa: BLE001 - 控制面不可用 → typed 503（M5）
         logger.warning("[geocompute] cluster run store unavailable: %s", run_id)
-        raise HTTPException(status_code=503, detail={
-            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
-        })
+        raise _cluster_failure("CLUSTER_UNAVAILABLE", exc) from exc
     if row is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
     # V7：进度读投影（架构 round1 #5 —— done 由事件 DISTINCT 节点投影派生，
@@ -524,7 +547,7 @@ async def cancel_execution_run(
     owner_scope = owner_scope_for(user)
     run = engine.get_run(run_id, owner_scope=owner_scope)
     if run is not None:
-        cancelled = engine.cancel_run(run_id, reason="cancelled via API")
+        cancelled = engine.cancel_run(run_id, reason="cancelled via API", owner_scope=owner_scope)
         # R1-M4：本地命中也**先落持久旗标** —— 若执行进程在本地取消生效前
         # 崩溃，lease 过期 reclaim 后无旗标会把整个 run 静默重跑。旗标幂等
         # 且 cluster 行缺席（纯同步执行路径）时是 no-op。
@@ -569,9 +592,7 @@ async def cancel_execution_run(
     except Exception as exc:  # noqa: BLE001 - 控制面不可用 ≠ run 不存在：
         # 故障必须如实暴露（伪装成 404 会让客户端误判；round2 M5）
         logger.warning("[geocompute] cluster cancel store unavailable: %s", run_id)
-        raise HTTPException(status_code=503, detail={
-            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
-        })
+        raise _cluster_failure("CLUSTER_UNAVAILABLE", exc) from exc
     if observed is None:
         # cluster 行未命中 → 快照回放域校验（终态 run 幂等 no-op 语义），
         # 全未命中才 404。get_run 二次调用此刻走快照回读。
@@ -644,9 +665,7 @@ async def list_run_events(
         events = await asyncio.to_thread(_events)
     except Exception as exc:  # noqa: BLE001 - 控制面不可用 → typed 503（M5 同款）
         logger.warning("[geocompute] events store unavailable: %s", run_id)
-        raise HTTPException(status_code=503, detail={
-            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
-        })
+        raise _cluster_failure("CLUSTER_UNAVAILABLE", exc) from exc
     if events is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
     next_after = events[-1]["id"] if events else int(after_id)
@@ -686,9 +705,7 @@ async def cluster_workers(user: Dict[str, Any] = Depends(require_admin)):
     try:
         workers = await asyncio.to_thread(_workers)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail={
-            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
-        })
+        raise _cluster_failure("CLUSTER_UNAVAILABLE", exc) from exc
     return {"workers": workers[:256], "live": len(workers)}
 
 
@@ -704,9 +721,7 @@ async def cluster_stuck_runs(user: Dict[str, Any] = Depends(require_admin)):
     try:
         runs = await asyncio.to_thread(_stuck)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail={
-            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
-        })
+        raise _cluster_failure("CLUSTER_UNAVAILABLE", exc) from exc
     return {"runs": runs, "count": len(runs)}
 
 
@@ -738,9 +753,7 @@ async def cluster_reset_run(
     try:
         row, outcome = await asyncio.to_thread(_reset)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail={
-            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
-        })
+        raise _cluster_failure("CLUSTER_UNAVAILABLE", exc) from exc
     if outcome is None:
         raise HTTPException(status_code=409, detail={
             "code": "RUN_NOT_RESETTABLE",
@@ -780,9 +793,7 @@ async def cluster_set_ledger_limits(
     try:
         ok = await asyncio.to_thread(_set)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail={
-            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
-        })
+        raise _cluster_failure("CLUSTER_UNAVAILABLE", exc) from exc
     if not ok:
         raise HTTPException(status_code=500, detail={
             "code": "LEDGER_LIMITS_FAILED", "message": "scope upsert failed",
@@ -799,7 +810,7 @@ async def cluster_set_ledger_limits(
 
 @router.post("/plans/drift-check", response_model=PlanDriftCheckResponse, tags=["GeoCompute / 执行平面"])
 async def drift_check(
-    body: Dict[str, Any],
+    body: PlanDriftCheckRequest,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """对持久化计划记录做语义漂移判定（ADR-0096 D7）。
@@ -810,8 +821,11 @@ async def drift_check(
     """
     from app.services.geocompute.drift import check_plan_drift
 
-    stored = body.get("stored")
-    plan_in = body.get("plan")
-    plan = _plan_from_request(ExecutionPlanIn(**plan_in)) if plan_in else None
+    stored = body.stored
+    plan_in = body.plan
+    try:
+        plan = _plan_from_request(plan_in) if plan_in is not None else None
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     verdict = check_plan_drift(stored, plan=plan)
     return verdict.to_dict()

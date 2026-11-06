@@ -1287,14 +1287,12 @@ def build_geodetector() -> List[Dict[str, Any]]:
         for h in ("x", "y"):
             m = sb == h
             ssw2 += float(np.sum((y[m] - y[m].mean()) ** 2))
-        m1, m2 = len(set(sa)), len(set(sb))
+        from scipy.special import betainc
         n_ = len(y)
-        r1 = ssw1 / (n_ - m1)
-        r2 = ssw2 / (n_ - m2)
-        denom = float(np.sqrt(r1**2 / (n_ - m1 - 1) + r2**2 / (n_ - m2 - 1)))
-        t = (r1 - r2) / denom
-        p = float(2.0 * sps.t.sf(abs(t), n_ - 2))
-        return ssw1, ssw2, t, p
+        f = ssw1 / ssw2
+        cdf = float(betainc((n_ - 1) / 2, (n_ - 1) / 2, f / (1 + f)))
+        p = 2 * min(cdf, 1 - cdf)
+        return ssw1, ssw2, f, p
 
     eco_fixtures = [
         ("strong", y_eco, s1_eco, s2_eco),
@@ -1313,7 +1311,7 @@ def build_geodetector() -> List[Dict[str, Any]]:
             np.asarray(sa, dtype=object),
             np.asarray(sb, dtype=object),
         )
-        ssw1_r, ssw2_r, t_r, p_r = _eco_refs(yv, np.asarray(sa_l), np.asarray(sb_l))
+        ssw1_r, ssw2_r, f_r, p_r = _eco_refs(yv, np.asarray(sa_l), np.asarray(sb_l))
         cases.append(
             case(
                 f"ecological_ssw1_{name}",
@@ -1327,13 +1325,13 @@ def build_geodetector() -> List[Dict[str, Any]]:
         )
         cases.append(
             case(
-                f"ecological_t_{name}",
+                f"ecological_f_{name}",
                 "app.lib.geo_analysis.statistics:geodetector_ecological",
-                r9(t_r),
+                r9(f_r),
                 args=[np.asarray(yv, dtype=float).tolist(), sa_l, sb_l],
-                select="t_statistic",
+                select="f_statistic",
                 rtol=1e-8,
-                note="t = [SSW₁/(n−m₁) − SSW₂/(n−m₂)] / sqrt(…) 独立复算",
+                note="F=SSW1/SSW2; independent residual sums and incomplete-beta F CDF",
             )
         )
         cases.append(
@@ -1344,18 +1342,18 @@ def build_geodetector() -> List[Dict[str, Any]]:
                 args=[np.asarray(yv, dtype=float).tolist(), sa_l, sb_l],
                 select="p_value",
                 rtol=1e-8,
-                note="双侧 Student t（df=n−2）独立复算",
+                note="双侧 F(df1=n-1,df2=n-1)，不完全beta函数独立复算",
             )
         )
         cases.append(
             case(
                 f"ecological_df_{name}",
                 "app.lib.geo_analysis.statistics:geodetector_ecological",
-                len(yv) - 2,
+                len(yv) - 1,
                 args=[np.asarray(yv, dtype=float).tolist(), sa_l, sb_l],
                 select="df",
                 kind="exact",
-                note="保守自由度 n−2",
+                note="生态探测器等样本量 F 分布自由度 n−1",
             )
         )
         assert res["decision"] in (
@@ -7533,8 +7531,8 @@ def build_edge_cases() -> List[Dict[str, Any]]:
         ([179.0, 5.0, 180.0, 6.0], "EPSG:32660", "带 60 东缘"),
         (
             [179.5, 10.0, -179.5, 11.0],
-            "EPSG:32631",
-            "反经线 naive 中点 0° → 31 带（行为锚，非环绕解）",
+            "EPSG:32601",
+            "反经线环绕中点为 ±180°，归一到 -180° 后 UTM 1 带",
         ),
         ([12.0, 0.0, 13.0, 1.0], "EPSG:32633", "带边界 12° → 33 带"),
         ([-174.0, 0.0, -173.0, 1.0], "EPSG:32602", "带 2"),
@@ -7559,7 +7557,7 @@ def build_edge_cases() -> List[Dict[str, Any]]:
         ("LOCAL_METRIC_REQUIRED", "projected", False),
         ("LOCAL_METRIC_REQUIRED", "projected_local_metric", True),
         ("LOCAL_METRIC_REQUIRED", "geographic", False),
-        ("PROJECTED_REQUIRED", "projected", True),
+        ("PROJECTED_REQUIRED", "projected", False),
         ("PROJECTED_REQUIRED", "geographic", False),
         ("GEODESIC", "geographic", True),
         ("GEOGRAPHIC_OK", "projected_local_metric", True),
@@ -7605,12 +7603,12 @@ def build_edge_cases() -> List[Dict[str, Any]]:
                 note="world_cells × bbox 球面面积占比 独立复算",
             )
         )
-    # 巨型 bbox 在 res 8 的降分辨率建议（≤1.5M 上限内取 res-1/-2/-3）
+    # 巨型 bbox 在 res 8 的降分辨率建议（≤200k 上限内取 res-1/-2/-3）
     dlon, dlat = 60.0, 60.0
     suggest_ref = []
     for r_ in (7, 6, 5):
         est = int(_h3.get_num_cells(r_) * (abs(dlon) * abs(dlat) / 41253.0))
-        if est <= 1_500_000:
+        if est <= 200_000:
             suggest_ref.append(r_)
     cases.append(
         case(

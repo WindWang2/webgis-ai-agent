@@ -26,6 +26,63 @@ Knobs (ADR-0037 Win 2 + ADR-0089 resource governance):
   amplify peak memory.
 """
 from contextlib import contextmanager
+from os import PathLike
+from typing import Any, Iterator
+
+
+@contextmanager
+def open_raster(uri: Any, *args: Any, **kwargs: Any) -> Iterator[Any]:
+    """Open HTTP rasters through a connection-validated Python range reader.
+
+    Native GDAL/libcurl cannot use Python's DNS guard. Rasterio's public
+    opener API delegates range reads to the hardened fsspec HTTP client and
+    keeps the client alive until the dataset closes. Local opens are unchanged.
+    """
+    import rasterio
+
+    raw = str(uri) if isinstance(uri, (str, PathLike)) else ""
+    if raw:
+        validate_remote_href(raw)
+    target = _extract_remote_target(raw) if raw else None
+    if target is None:
+        if "+http://" in raw or "+https://" in raw:
+            raise ValueError("Remote compound VSI paths require prior local materialization")
+        with rasterio.open(uri, *args, **kwargs) as dataset:
+            yield dataset
+        return
+
+    # A compound archive/VSI name has extra format semantics; never fall back
+    # to libcurl if those semantics cannot be represented by this safe opener.
+    if raw not in (target, f"/vsicurl/{target}", f"/vsicurl_streaming/{target}") \
+            and not raw.startswith("/vsicurl?"):
+        raise ValueError("Remote compound VSI paths require prior local materialization")
+    mode = args[0] if args else kwargs.get("mode", "r")
+    if mode != "r" or "opener" in kwargs:
+        raise ValueError("Remote raster opens are read-only and use the guarded opener")
+
+    from fsspec.implementations.http import HTTPFileSystem
+    from app.services.data_fabric.security import safe_fsspec_http_client
+    import aiohttp
+
+    # VRT and other referencing formats can open additional native-GDAL URLs
+    # from inside the document. Remote COG access accepts TIFF content only.
+    if kwargs.get("driver", "GTiff") != "GTiff":
+        raise ValueError("Remote raster content must be GeoTIFF")
+    kwargs["driver"] = "GTiff"
+
+    filesystem = HTTPFileSystem(
+        get_client=safe_fsspec_http_client,
+        client_kwargs={"allow_private": False, "timeout": aiohttp.ClientTimeout(total=5)},
+        allow_redirects=False,
+        skip_instance_cache=True,
+    )
+    try:
+        with rasterio.open(target, *args, opener=filesystem.open, **kwargs) as dataset:
+            yield dataset
+    finally:
+        session = getattr(filesystem, "_session", None)
+        if session is not None:
+            filesystem.close_session(filesystem.loop, session)
 
 
 def validate_remote_href(uri: str) -> str:
@@ -49,6 +106,14 @@ def validate_remote_href(uri: str) -> str:
     """
     if not uri or not isinstance(uri, str):
         return uri
+    import re
+
+    if uri.lower().startswith(("s3://", "gs://", "gcs://", "az://", "oss://", "swift://")) or re.search(
+        r"/vsi(s3|s3_streaming|gs|gs_streaming|az|az_streaming|adls|oss|swift|hdfs|webhdfs)(/|\?)", uri, re.I
+    ):
+        from app.services.data_fabric.security import DataFabricSecurityError
+
+        raise DataFabricSecurityError("native cloud raster access is not connection-validated; use an authorized guarded HTTPS object URL")
     target = _extract_remote_target(uri)
     if target is None:
         return uri  # 本地路径 / 不含远程目标的 /vsi* / s3 等原样放行

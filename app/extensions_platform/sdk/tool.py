@@ -113,9 +113,9 @@ class ToolExtensionSpec:
         """一等字段 → 核心 register 的描述符 kwargs（None/空集合省略）。"""
         kwargs: dict[str, Any] = {}
         for f in fields(self):
-            if f.name in {"name", "description", "func", "summary", "tier", "domains",
+            if f.name in {"name", "description", "func", "tier", "domains",
                           "execution_policy", "timeout", "version", "contract_version",
-                          "cost", "side_effect", "required_permissions",
+                          "cost", "required_permissions",
                           "param_descriptions", "args_model", "parameters", "field_extras"}:
                 continue
             value = getattr(self, f.name)

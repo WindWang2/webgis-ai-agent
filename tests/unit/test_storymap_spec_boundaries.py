@@ -84,7 +84,7 @@ class TestCameraKeyframeBounds:
         "override",
         [
             {"t": -0.1}, {"t": 1.1},
-            {"zoom": 2.9}, {"zoom": 18.1},
+            {"zoom": -0.1}, {"zoom": 18.1},
             {"center": [116.4]}, {"center": [1.0, 2.0, 3.0]},
             {"easing": "bounce"},
             {"pitch": float("nan")}, {"bearing": float("nan")},
@@ -124,9 +124,9 @@ class TestCameraPlannerSpanRules:
             assert view["pitch"] <= 5.0, role
 
     def test_huge_span_zoom_clamped_to_min(self):
-        # 300° 跨度：log2(360/300)+1 ≈ 1.27 → 钳到 ZOOM_MIN=3.0。
+        # Wide scenes must zoom out far enough to retain their full extent.
         view = plan_camera_for_bbox((0.0, 0.0, 300.0, 10.0), "macro_situation")
-        assert view["zoom"] == 3.0
+        assert view["zoom"] == pytest.approx(1.2630, abs=0.0001)
 
     def test_pitch_base_fallback_and_micro_boost(self):
         mid = (116.0, 39.0, 118.0, 41.0)  # 2° 跨度：无微调

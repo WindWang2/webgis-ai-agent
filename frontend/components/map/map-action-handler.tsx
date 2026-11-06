@@ -100,6 +100,7 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
       };
 
       const finish = (status: MapActionTerminalStatus, extras?: { error?: string; actual?: unknown }) => {
+        runningActionIdRef.current = null;
         reportTerminal(action, status, {
           error: extras?.error,
           actual: extras?.actual,
@@ -135,7 +136,13 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
         try {
           // run() contract (design §6): void → succeeded; MapCommandResult → honored;
           // Promise → awaited, then popped by the settle guard below.
-          result = await entry.run(ctx);
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            result = await Promise.race([
+              Promise.resolve(entry.run(ctx)),
+              new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), 300_000); }),
+            ]);
+          } finally { if (timer) clearTimeout(timer); }
         } catch (error) {
           // /review C10: surface AI command failures to the user via system message
           // instead of swallowing in console — otherwise user sees nothing and

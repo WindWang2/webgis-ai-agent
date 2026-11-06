@@ -504,15 +504,15 @@ def test_analysis_reuse_miss_conditions():
         k1 = compute_analysis_key("raster_calculator", {"raster_a": pa, "expression": "A * 2"})
         k2 = compute_analysis_key("raster_calculator", {"raster_a": pa, "expression": "A * 3"})
         assert k1 != k2  # 不同表达式 → 不同 key
-        fp1 = snapshot_raster_fingerprints({"raster_a": pa})
+        fp1 = snapshot_raster_fingerprints({"raster_a": pa}, allowed_roots=[td])
         assert pa in fp1
         # 内容重写 → 指纹变（复用复核将 miss）
         with rasterio.open(pa, "r+") as src:
             src.write(np.array([[42.0]], dtype="float32"), 1, window=rasterio.windows.Window(0, 0, 1, 1))
-        fp2 = snapshot_raster_fingerprints({"raster_a": pa})
+        fp2 = snapshot_raster_fingerprints({"raster_a": pa}, allowed_roots=[td])
         assert fp2[pa] != fp1[pa]
         # 非栅格参数不进指纹表
-        assert snapshot_raster_fingerprints({"foo": "bar.tif"}) == {}
+        assert snapshot_raster_fingerprints({"foo": "bar.tif"}) == {"bar.tif": "unverifiable"}
     finally:
         os.remove(pa)
 
@@ -736,7 +736,7 @@ def test_calculate_index_exposes_band_map_and_evidence():
         r = NatureResourceAnalyzer.calculate_index(
             f"tmp_v3_tests/{fname}", "ndvi", red_band=1, nir_band=4,
             output_dir="tmp_v3_tests/idx_out",
-        )
+         session_id="numerical-fixture")
         assert r["success"] is True
         assert r["band_map"] == {"red": 1, "nir": 4}
         assert r["index_type"] == "ndvi"
@@ -791,3 +791,10 @@ def test_calculator_categorical_resampling_override():
             raster_calculator(pa, pb, expression="A + B", resampling="magic")
     finally:
         os.remove(pa); os.remove(pb); os.remove(pa.replace(".tif", "_calc.tif"))
+
+
+@pytest.fixture(autouse=True)
+def _numerical_owner_roots(monkeypatch, tmp_path):
+    from pathlib import Path
+    monkeypatch.setattr("app.services.scoped_raster_paths.scoped_raster_roots",
+                        lambda **scope: [tmp_path, Path("data/tmp_v3_tests").resolve()])

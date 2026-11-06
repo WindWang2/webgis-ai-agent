@@ -48,7 +48,7 @@ def test_provenance_replay_identity_stable(service, synthetic_raster, monkeypatc
         polygons=(((118.0, -8.0), (123.0, -8.0), (123.0, -13.0), (118.0, -13.0)),),
         target=None,
     )
-    compiled = service.compile_geo_prompt(artifact.to_payload(), str(synthetic_raster))
+    compiled = service.compile_geo_prompt(artifact.to_payload(), str(synthetic_raster), allowed_roots=[synthetic_raster.parent])
 
     def run_once(session):
         return service.run_inference(_req(
@@ -115,7 +115,7 @@ def test_reference_layer_known_answer_with_nodata(service, synthetic_raster, tmp
     ) as dst:
         dst.write(layer, 1)
     payload = {"reference_layer": {"uri": str(ref), "band": 1, "strategy": "nonzero"}}
-    compiled = service.compile_geo_prompt(payload, str(synthetic_raster))
+    compiled = service.compile_geo_prompt(payload, str(synthetic_raster), allowed_roots=[synthetic_raster.parent])
     result = service.run_inference(_req(
         synthetic_raster, compiled["prompt"], session="ka-ref",
         prompt_artifact_id=compiled["artifact_id"], prompt_audit=compiled["audit"],
@@ -145,7 +145,7 @@ def test_artifact_replay_via_tool_composes(service, synthetic_raster, monkeypatc
         "crs": "EPSG:4326",
         "polygons": [[[118.0, -8.0], [123.0, -8.0], [123.0, -13.0], [118.0, -13.0]]],
     }
-    compiled = service.compile_geo_prompt(artifact, str(synthetic_raster))
+    compiled = service.compile_geo_prompt(artifact, str(synthetic_raster), allowed_roots=[synthetic_raster.parent])
     first = service.run_inference(_req(
         synthetic_raster, compiled["prompt"], session="e2e-compose",
         prompt_artifact_id=compiled["artifact_id"], prompt_audit=compiled["audit"],
@@ -155,7 +155,7 @@ def test_artifact_replay_via_tool_composes(service, synthetic_raster, monkeypatc
     result, meta = service.run_prompt_refine(
         "tiny-promptable-seg", str(synthetic_raster),
         first.outputs["prompt_candidates"]["path"], 0,
-        session_id="e2e-compose",
+        session_id="e2e-compose", allowed_roots=[synthetic_raster.parent],
     )
     assert result.status == "completed"
     assert meta["prior_pixels"] > 0

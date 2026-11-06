@@ -11,7 +11,7 @@ stale viewport、失败修复循环）—— **只报告状态级协调事实**�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Optional, Any, Dict, List
 
 from app.services.gis_situation.contract import GISSituation
 from app.services.gis_situation.facts import STATUS_KNOWN, STATUS_STALE
@@ -31,11 +31,17 @@ class SituationInconsistency:
         return {"code": self.code, "severity": self.severity, "detail": self.detail}
 
 
-def _layer_ids(situation: GISSituation) -> set:
-    fact = situation.map.layers
+def _layer_ids(situation: GISSituation) -> Optional[set[str]]:
+    fact = situation.map.layer_ids
     if fact.status == STATUS_KNOWN and isinstance(fact.value, list):
+        return {str(value) for value in fact.value}
+    fact = situation.map.layers
+    count = situation.map.layer_count
+    if (fact.status == STATUS_KNOWN and isinstance(fact.value, list)
+            and count.status == STATUS_KNOWN and isinstance(count.value, int)
+            and count.value <= len(fact.value)):
         return {str(row.get("id")) for row in fact.value if isinstance(row, dict) and row.get("id")}
-    return set()
+    return None
 
 
 def check_consistency(situation: GISSituation) -> List[SituationInconsistency]:
@@ -66,14 +72,14 @@ def check_consistency(situation: GISSituation) -> List[SituationInconsistency]:
     selected = situation.interaction.selected_feature
     if selected.status == STATUS_KNOWN and isinstance(selected.value, dict):
         layer_id = selected.value.get("layer_id")
-        if layer_id and str(layer_id) not in layer_ids:
+        if layer_ids is not None and layer_id and str(layer_id) not in layer_ids:
             out.append(SituationInconsistency(
                 code="selected_feature_source_removed",
                 severity=SEVERITY_WARNING,
                 detail={"layer_id": str(layer_id)},
             ))
     focus = situation.interaction.focus_layer_id
-    if focus.status == STATUS_KNOWN and focus.value and str(focus.value) not in layer_ids:
+    if layer_ids is not None and focus.status == STATUS_KNOWN and focus.value and str(focus.value) not in layer_ids:
         out.append(SituationInconsistency(
             code="focus_layer_source_removed",
             severity=SEVERITY_WARNING,
@@ -85,7 +91,7 @@ def check_consistency(situation: GISSituation) -> List[SituationInconsistency]:
     hidden = situation.interaction.user_hidden_layers
     if hidden.status == STATUS_KNOWN and isinstance(hidden.value, list):
         for layer_id in hidden.value:
-            if layer_id in layer_ids:
+            if layer_ids is not None and layer_id in layer_ids:
                 out.append(SituationInconsistency(
                     code="user_hidden_layer_conflict",
                     severity=SEVERITY_WARNING,
@@ -147,7 +153,7 @@ def reconcile_fact_views(situation: GISSituation) -> GISSituation:
     selected = situation.interaction.selected_feature
     if selected.status == STATUS_KNOWN and isinstance(selected.value, dict):
         layer_id = selected.value.get("layer_id")
-        if layer_id and str(layer_id) not in layer_ids:
+        if layer_ids is not None and layer_id and str(layer_id) not in layer_ids:
             from app.services.gis_situation.facts import stale as stale_fact
 
             updates["selected_feature"] = stale_fact(
@@ -155,7 +161,7 @@ def reconcile_fact_views(situation: GISSituation) -> GISSituation:
                 source=selected.source,
             )
     focus = situation.interaction.focus_layer_id
-    if focus.status == STATUS_KNOWN and focus.value and str(focus.value) not in layer_ids:
+    if layer_ids is not None and focus.status == STATUS_KNOWN and focus.value and str(focus.value) not in layer_ids:
         from app.services.gis_situation.facts import stale as stale_fact
 
         updates["focus_layer_id"] = stale_fact(focus.value, source=focus.source)

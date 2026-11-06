@@ -94,9 +94,15 @@ def resolve_pi_tool_call(
     registered = set(registered_surface) if registered_surface is not None else None
     if name == EXECUTE_PROXY_NAME:
         inner = args.get("toolName") or args.get("name")
-        inner_args = args.get("arguments") if isinstance(args.get("arguments"), dict) else {}
+        inner_args = args.get("arguments", {})
+        if isinstance(inner_args, str):
+            try:
+                inner_args = json.loads(inner_args)
+            except (TypeError, ValueError):
+                inner_args = None
         if not isinstance(inner_args, dict):
-            inner_args = {}
+            return ResolvedPiCall(kind="reject", name=name, arguments=args,
+                                  error="webgis_execute arguments must be a valid JSON object")
         if not inner or not isinstance(inner, str):
             return ResolvedPiCall(
                 kind="reject",
@@ -787,9 +793,15 @@ def _apply_surface_qualification(
     specs_by_name: Dict[str, Any] = {}
     ordered_specs = []
     compile_failed: list[str] = []
+    from app.services.chat.pi_tool_spec import ToolSpecOverBudget
+    from app.services.chat.pi_surface_receipt import SurfaceDrop
+    budget_drops = []
     for name in names:
         try:
-            spec = compile_tool_spec(registry, name, registry_generation=generation)
+            spec = compile_tool_spec(registry, name, registry_generation=generation, strict_budget=True)
+        except ToolSpecOverBudget:
+            budget_drops.append(SurfaceDrop(name, "spec_over_budget"))
+            continue
         except Exception:  # noqa: BLE001 — 单工具编译失败不裁候选（review P2-1）
             logger.debug("[PiNativeSurface] spec compile skipped for %s", name, exc_info=True)
             spec = None
@@ -802,6 +814,7 @@ def _apply_surface_qualification(
         specs_by_name[name] = spec
         ordered_specs.append(spec)
     selected, drops = qualify_surface(ordered_specs, situation=situation)
+    drops = tuple(drop for drop in (*drops, *budget_drops) if drop.tool not in NATIVE_TOOL_NAME_SET)
     if compile_failed:
         logger.warning(
             "[PiNativeSurface] spec compile failed for %d candidate(s) "
@@ -811,7 +824,7 @@ def _apply_surface_qualification(
     # 未编译成功的候选保持原序保留（master 行为）；已编译候选按资格裁决。
     selected_with_unqualified = [
         name for name in names
-        if name in selected or name in compile_failed
+        if name in selected or name in compile_failed or name in NATIVE_TOOL_NAME_SET
     ]
     dropped = [d.to_dict() for d in drops]
     if dropped:

@@ -338,6 +338,15 @@ class Driver:
                         reason="STALE_RECOMPUTE", event="recompute")
                     if r.ok:
                         states[nid] = C.NodeState.READY
+            failed_optional = {nid for nid, state in states.items()
+                               if optional_map.get(nid, False) and state in (C.NodeState.FAILED, C.NodeState.BLOCKED)}
+            for nid in M.downstream_closure(dag, failed_optional):
+                if nid in failed_optional or states.get(nid) not in (C.NodeState.PENDING, C.NodeState.READY, C.NodeState.BLOCKED, C.NodeState.STALE):
+                    continue
+                transition = await asyncio.to_thread(self.store.transition_node, instance_id, nid,
+                    C.NodeState.SKIPPED, reason="OPTIONAL_UPSTREAM_FAILED", event="skip")
+                if transition.ok:
+                    states[nid] = C.NodeState.SKIPPED
             ready = M.ready_set(dag, states)
             ready, gated = await self._split_retry_gates(instance_id, ready)
             if not ready:

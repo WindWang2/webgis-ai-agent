@@ -161,7 +161,7 @@ async def test_off_mode_disables_gate_entirely(clean_session, monkeypatch):
 
 @pytest.mark.cartography
 @pytest.mark.asyncio
-async def test_bypass_escape_hatch_records_audit_event(clean_session, monkeypatch):
+async def test_client_bypass_cannot_override_server_enforcement(clean_session, monkeypatch):
     monkeypatch.setattr(settings, "MAP_QUALITY_GATE_MODE", "enforce")
     engine = MapSpecLifecycleEngine()
     await engine.apply_mutation(clean_session, InitProjectIntent())
@@ -169,12 +169,11 @@ async def test_bypass_escape_hatch_records_audit_event(clean_session, monkeypatc
         clean_session,
         UpsertLayerIntent(layer=_layer(quality_gate_bypass=True), source_data=_dirty_fc()),
     )
-    assert result.is_error is False  # bypass 逃生舱放行
+    assert result.is_error is True
+    assert result.error_code == "quality_gate_blocked"
     spec = await engine.store.get_mapspec(clean_session)
-    layer = spec["layers"][0]
-    advisories = layer.get("quality_advisories") or []
-    assert any(a.get("code") == "QUALITY_GATE_BLOCK_DOWNGRADED" for a in advisories)
-    assert layer.get("quality_gate_bypass") is True  # 留痕在持久 spec
+    assert not spec.get("layers")
+
 
 
 @pytest.mark.cartography

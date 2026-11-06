@@ -14,6 +14,18 @@ from app.main import app
 
 client = TestClient(app)
 
+@pytest.fixture(autouse=True)
+def _live_route_identities():
+    from app.core.database import Base, Engine, SessionLocal
+    from app.models.db_model import User
+    Base.metadata.create_all(bind=Engine)
+    with SessionLocal() as db:
+        for uid in ['gc-rest-user']:
+            db.merge(User(id=uid, username=uid, email=f"{uid}@example.com",
+                          password_hash="unused", role="editor", is_active=True, token_version=0))
+        db.commit()
+
+
 
 @pytest.fixture(scope="module", autouse=True)
 def _global_db_ready():

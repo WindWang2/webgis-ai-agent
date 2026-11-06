@@ -139,8 +139,6 @@ def classify_crs(crs: Optional[str]) -> CRSDataClass:
     lowered = text.lower()
     if "wgs84" in lowered and "utm" not in lowered and "mercator" not in lowered:
         return "geographic"
-    if lowered.startswith("epsg:4490") or "cgcs2000" in lowered:
-        return "geographic"
     try:  # pyproj 兜底（本地计算，无 I/O）；失败 = unknown（诚实缺省）
         from pyproj import CRS
 
@@ -163,7 +161,7 @@ def classify_crs(crs: Optional[str]) -> CRSDataClass:
     return "unknown"
 
 
-def recommend_metric_crs(bbox: Optional[Tuple[float, float, float, float]]) -> str:
+def recommend_metric_crs(bbox: Optional[Tuple[float, float, float, float]], crs: Optional[str] = None) -> str:
     """从 bbox（minx, miny, maxx, maxy，度）推荐度量 CRS（纯计算）。
 
     极区（|lat|>84）→ UPS 极方位；否则 UTM 分带（中央经线最近原则）。
@@ -174,10 +172,18 @@ def recommend_metric_crs(bbox: Optional[Tuple[float, float, float, float]]) -> s
         return ""
     try:
         minx, miny, maxx, maxy = (float(v) for v in bbox)
+        if crs:
+            from pyproj import Transformer
+
+            minx, miny, maxx, maxy = Transformer.from_crs(crs, "EPSG:4326", always_xy=True).transform_bounds(minx, miny, maxx, maxy)
     except (TypeError, ValueError):
         return ""
+    import math
+
+    if not all(math.isfinite(value) for value in (minx, miny, maxx, maxy)) or abs(minx) > 180 or abs(maxx) > 180 or abs(miny) > 90 or abs(maxy) > 90:
+        return ""
     clat = (miny + maxy) / 2.0
-    clon = (minx + maxx) / 2.0
+    clon = (minx + maxx) / 2.0 if minx <= maxx else ((minx + maxx + 360) / 2 + 180) % 360 - 180
     if clat > 84.0:
         return "EPSG:3413"
     if clat < -80.0:
@@ -201,7 +207,7 @@ def crs_class_allows(crs_class: str, data_class: CRSDataClass) -> bool:
     if crs_class == "GEODESIC":
         return True     # 内部大地测量，度/米输入都正确处理
     if crs_class == "PROJECTED_REQUIRED":
-        return data_class in ("projected", "projected_local_metric")
+        return data_class == "projected_local_metric"
     if crs_class == "LOCAL_METRIC_REQUIRED":
         return data_class == "projected_local_metric"
     return True

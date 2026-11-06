@@ -63,7 +63,7 @@ def job_db(tmp_path, monkeypatch):
             db.close()
 
     # Branch runtime v3: durable job path calls calculate_index while
-    # e2e cases historically mock calculate_ndvi. Bypass the path guards
+    # e2e cases historically mock calculate_index. Bypass the path guards
     # (validate_data_path + exists) and prime calculate_index so the mock
     # is reached regardless of which name the test patches.
     monkeypatch.setattr("app.utils.path.validate_data_path", lambda p, **_: p)
@@ -234,7 +234,7 @@ def test_ndvi_task_completes_and_records_progress(job_db, monkeypatch, tmp_path)
 
     monkeypatch.setattr(
         spatial_tasks.NatureResourceAnalyzer,
-        "calculate_ndvi",
+        "calculate_index",
         staticmethod(
             lambda **kw: {
                 "success": True,
@@ -277,7 +277,7 @@ def test_ndvi_task_cancelled_before_execution_does_no_work(job_db, monkeypatch):
         return {"success": True}
 
     monkeypatch.setattr(
-        spatial_tasks.NatureResourceAnalyzer, "calculate_ndvi", staticmethod(_should_not_run)
+        spatial_tasks.NatureResourceAnalyzer, "calculate_index", staticmethod(_should_not_run)
     )
 
     job_id = _make_ndvi_job(job_db)
@@ -319,7 +319,7 @@ def test_ndvi_task_cancelled_mid_compute_discards_asset(job_db, monkeypatch, tmp
 
     monkeypatch.setattr(
         spatial_tasks.NatureResourceAnalyzer,
-        "calculate_ndvi",
+        "calculate_index",
         staticmethod(_compute_then_cancel),
     )
 
@@ -344,7 +344,7 @@ def test_ndvi_task_failure_is_recorded_without_traceback(job_db, monkeypatch):
 
     monkeypatch.setattr(
         spatial_tasks.NatureResourceAnalyzer,
-        "calculate_ndvi",
+        "calculate_index",
         staticmethod(lambda **kw: {"success": False, "error": "无法确定波段索引"}),
     )
 
@@ -382,7 +382,7 @@ def test_ndvi_task_duplicate_delivery_does_not_recompute(job_db, monkeypatch, tm
         }
 
     monkeypatch.setattr(
-        spatial_tasks.NatureResourceAnalyzer, "calculate_ndvi", staticmethod(_compute)
+        spatial_tasks.NatureResourceAnalyzer, "calculate_index", staticmethod(_compute)
     )
 
     job_id = _make_ndvi_job(job_db)
@@ -407,7 +407,7 @@ def test_ndvi_legacy_path_without_job_id_still_works(job_db, monkeypatch, tmp_pa
     out.write_bytes(b"GEOTIFF")
     monkeypatch.setattr(
         spatial_tasks.NatureResourceAnalyzer,
-        "calculate_ndvi",
+        "calculate_index",
         staticmethod(
             lambda **kw: {
                 "success": True,
@@ -432,7 +432,7 @@ def test_ndvi_task_missing_job_row_is_skipped(job_db, monkeypatch):
 
     monkeypatch.setattr(
         spatial_tasks.NatureResourceAnalyzer,
-        "calculate_ndvi",
+        "calculate_index",
         staticmethod(lambda **kw: {"success": True}),
     )
     result = spatial_tasks.run_ndvi_analysis(

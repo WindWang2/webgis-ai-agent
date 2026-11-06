@@ -12,7 +12,7 @@ fastapi_testclient = pytest.importorskip("fastapi.testclient")
 from fastapi import FastAPI  # noqa: E402
 
 from app.api.routes.map import router as map_router  # noqa: E402
-from app.core.auth import get_current_user_with_version  # noqa: E402
+from app.core.auth import get_current_user_optional_with_version, get_current_user_with_version  # noqa: E402
 from app.services import export_paths  # noqa: E402
 
 
@@ -30,7 +30,7 @@ def client(tmp_path, monkeypatch):
     app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
     app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     app.include_router(map_router, prefix="/api/v1")
-    app.dependency_overrides[get_current_user_with_version] = lambda: {
+    app.dependency_overrides[get_current_user_optional_with_version] = app.dependency_overrides[get_current_user_with_version] = lambda: {
         "user_id": "c14-route-user"}
     return fastapi_testclient.TestClient(app)
 

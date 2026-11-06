@@ -27,6 +27,7 @@ from app.services.project_runtime.contract import (
     ProjectRuntimeSnapshotV1,
     RecoveryPolicy,
     SourceBinding,
+    SENSITIVE,
 )
 from app.services.project_runtime.promotion import (
     DEFAULT_FREEZE_BUDGET_BYTES,
@@ -193,7 +194,7 @@ async def _collect_sensitive_refs(session_id: str) -> set:
 
 async def _dataset_descriptors(
     db: Any, project_id: str, user_id: str = "", org_id: Optional[int] = None
-) -> List[DatasetDescriptor]:
+) -> tuple[List[DatasetDescriptor], int]:
     """项目挂载数据集 → 冻结描述符（version_fingerprint = 恢复比对基准）。
 
     以调用方身份走既有 IDOR 门（list_project_datasets 内部 get_project_with_auth）
@@ -212,7 +213,7 @@ async def _dataset_descriptors(
         )
     except Exception as e:  # noqa: BLE001 — dataset 投影失败按空（诚实）
         logger.info("[RuntimeFreeze] dataset descriptors skipped: %s", e)
-        return []
+        return [], 0
     out: List[DatasetDescriptor] = []
     for row in rows[:DATASET_DESCRIPTOR_LIMIT]:
         try:
@@ -224,7 +225,7 @@ async def _dataset_descriptors(
             ))
         except Exception:  # noqa: BLE001 — 单行失败不阻断
             continue
-    return out
+    return out, max(len(rows), int(_total or 0))
 
 
 async def save_runtime_snapshot(
@@ -289,14 +290,16 @@ async def save_runtime_snapshot(
         )
         if ws is not None:
             workspace_snapshot_id = ws.snapshot_id
-            composed_bytes = sum(
-                int(p.byte_size or 0) for p in ws.durable_pointers.values()
-            )
+            composed_bytes = int(ws.newly_materialized_bytes or 0)
     except Exception as e:  # noqa: BLE001 — 账本权威缺席如实披露（不阻断）
         logger.warning(
             "[RuntimeFreeze] workspace snapshot compose failed: %s", e)
+        raise FreezeError("workspace_snapshot_failed") from e
+    if not workspace_snapshot_id:
+        raise FreezeError("workspace_snapshot_failed")
 
-    spec_refs = extract_spec_refs(mapspec)
+    all_spec_refs = extract_spec_refs(mapspec)
+    spec_refs = all_spec_refs[:64]
     receipt = await plan_and_promote(
         session_id, project_id, spec_refs, db=db,
         budget_bytes=max(0, shared_budget - composed_bytes),
@@ -311,14 +314,26 @@ async def save_runtime_snapshot(
             outcome = PromotionOutcome(
                 promotion_class=EXTERNAL_PINNED, skip_reason="not_session_ref"
             )
-        source_bindings.append(outcome.to_binding(source_id, kind, ref))
+        binding = outcome.to_binding(source_id, kind, ref)
+        if ref and binding.durable_pointer is None and binding.promotion_class != SENSITIVE:
+            try:
+                from app.services.project_artifact_promotion import canonical_dumps, _sha256_of_blob
+                from app.services.session_data import session_data_manager
+
+                payload = await session_data_manager.get(session_id, ref)
+                if payload is not None:
+                    serialized = await asyncio.to_thread(canonical_dumps, payload)
+                    binding.live_payload_sha256 = await asyncio.to_thread(_sha256_of_blob, serialized)
+            except Exception:  # noqa: BLE001 — old/unsupported payload stays explicitly unverifiable
+                logger.info("[RuntimeFreeze] live payload digest unavailable ref=%s", ref)
+        source_bindings.append(binding)
 
     projection = _plan_projection(plan)
     capability_statuses = _capability_freeze_facts(projection)
     projection.capability_statuses = dict(
         list(capability_statuses.items())[:CAPABILITY_LIMIT]
     )
-    datasets = await _dataset_descriptors(
+    datasets, dataset_count = await _dataset_descriptors(
         db, project_id, user_id=user_id, org_id=org_id
     )
 
@@ -344,6 +359,8 @@ async def save_runtime_snapshot(
         disclosure={
             "promotion": receipt.summary(),
             "workspace_snapshot_composed": bool(workspace_snapshot_id),
+            "source_bindings_truncated": max(0, len(all_spec_refs) - len(spec_refs)),
+            "datasets_truncated": max(0, dataset_count - len(datasets)),
         },
     )
     if not await get_project_runtime_store().save(snapshot):

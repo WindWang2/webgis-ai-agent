@@ -364,7 +364,7 @@ def test_workspace_snapshot_materialized_blob_survives_gc(db, monkeypatch, tmp_p
         ref = asyncio.run(session_data_manager.store(sid, payload, prefix="geojson"))
         asyncio.run(register_artifact(sid, artifact_id=ref, producer_tool="buffer"))
         snap = asyncio.run(get_workspace_snapshot_service().save_snapshot(
-            sid, project_id=project_id, materialize="claimed",
+            sid, project_id=project_id, materialize="claimed", owner_id="owner",
         ))
         assert snap is not None and ref in snap.durable_pointers
         ptr = snap.durable_pointers[ref]
@@ -389,7 +389,7 @@ def test_workspace_snapshot_materialized_blob_survives_gc(db, monkeypatch, tmp_p
             "快照物化 blob 绝不因宽限期过期被 GC")
         # manifest 删除 → 保护输入消失 → blob 超龄可删（plan+execute parity）
         deleted = asyncio.run(get_workspace_snapshot_service().delete_snapshot(
-            sid, snap.snapshot_id, project_id=project_id,
+            sid, snap.snapshot_id, project_id=project_id, owner_id="owner",
         ))
         assert deleted is not None and deleted["deleted"] is True
         plan2 = asyncio.run(plan_promotion_store_gc(grace_hours=1.0))

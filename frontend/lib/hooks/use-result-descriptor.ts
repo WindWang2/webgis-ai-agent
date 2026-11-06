@@ -83,8 +83,7 @@ async function fetchDescriptor(
       }
       if (!isApiError(err)) devOnly.warn('[ResultDescriptor] fetch failed', err);
       // Negative-cache briefly to avoid hammering on 404 (session expired).
-      cache.set(key, null);
-      scheduleEvict(key);
+      if (isApiError(err) && err.status === 404) { cache.set(key, null); scheduleEvict(key); }
       return null;
     })
     .finally(() => {

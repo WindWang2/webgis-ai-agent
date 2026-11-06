@@ -79,7 +79,14 @@ def build_memory_projection_sync(inp: MemoryProjectionInput) -> str:
                     limit=inp.limit,
                 ),
             )
-            return render_memory_block(hits)
+            from app.lib.runtime.scoped_text import ScopedText
+            orgs = {str(hit.record.org_id or "") for hit in hits}
+            if not hits or len(orgs) != 1 or not next(iter(orgs)):
+                return ""
+            return ScopedText(render_memory_block(hits), source_scope={
+                "scope": "project", "scope_id": next(iter(orgs)), "org_id": next(iter(orgs)),
+                "sensitivity": "org_scoped",
+            })
     except Exception as exc:  # noqa: BLE001 — fail-open（无记忆退化）
         logger.warning("[GISMemory] projection unavailable: %s", exc)
         return ""

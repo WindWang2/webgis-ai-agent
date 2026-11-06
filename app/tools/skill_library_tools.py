@@ -21,27 +21,17 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 
-# 会话级证据记录器（有界环形；进程级共享，测试可 reset）
-_recorder = None
+from app.services.gis_harness.skills.instances import skill_instance, reset_skill_instance
 
 
 def get_skill_evidence_recorder():
-    """进程级 SkillEvidenceRecorder（惰性单例；测试用 reset 函数清理）。"""
-    global _recorder
-    if _recorder is None:
-        from app.services.gis_harness.skills.evidence import (
-            SkillEvidenceRecorder,
-        )
-        _recorder = SkillEvidenceRecorder()
-    return _recorder
+    from app.services.gis_harness.skills.evidence import SkillEvidenceRecorder
+    return skill_instance('evidence_recorder', SkillEvidenceRecorder)
 
 
 def reset_skill_evidence_recorder() -> None:
-    global _recorder
-    _recorder = None
+    reset_skill_instance('evidence_recorder')
 
-
-# ── args models（typed schema；public contract）─────────────────────────
 
 class SkillSearchArgs(BaseModel):
     query: str = Field(..., description="用户自然语言 GIS 目标（≤200 字）")
@@ -111,7 +101,8 @@ def register_skill_library_tools(registry: ToolRegistry):
             ontology_matches=[t.strip() for t in ontology_tasks.split(",") if t.strip()],
         )
         lib = get_skill_library()
-        result = lib.resolver.resolve(facts)
+        from app.services.gis_harness.skills.policy import TRUSTED_PACKS
+        result = lib.resolver.resolve(facts, packs=TRUSTED_PACKS)
         recorder = get_skill_evidence_recorder()
         if result.selected:
             top = result.top

@@ -328,7 +328,12 @@ async def assemble_gis_context_card(
     #    persisted before render). ``disk_revision`` is the CAS token we
     #    observed on load; every mutation below (invalidation bump,
     #    fingerprint learning, marker reconfirmation) folds into ONE save.
-    obs = observe_session(state, mapspec)
+    try:
+        obs = observe_session(state, mapspec)
+    except Exception as exc:
+        logger.warning("GIS context observation unavailable: %s", exc)
+        receipt.miss_reason = "observation_unavailable"
+        return "", receipt
     snapshot = None
     try:
         from app.services.gis_situation.diff import load_snapshot
@@ -594,7 +599,13 @@ async def assemble_gis_context_card(
     if not text and not receipt.miss_reason:
         receipt.miss_reason = "empty_context"
     _log_receipt(session_id, mission_id, receipt)
-    return text, receipt
+    from app.lib.runtime.scoped_text import ScopedText
+    source = wc.scope_ref()
+    return ScopedText(text, source_scope={
+        "scope": source.tier.value, "scope_id": source.scope_id,
+        "org_id": source.org_id, "project_id": source.project_id,
+        "sensitivity": source.sensitivity.value,
+    }), receipt
 
 
 _log_counter = {"n": 0}
@@ -686,21 +697,12 @@ def scope_renderable(
 async def _resolve_caller_org(session_id: str, *, explicit_org: str = "") -> str:
     """Caller-org resolution for session-only entry points (tool path).
 
-    Order: explicit arg (chat callers) → durable binding org → server-side
+    Order: explicit arg (chat callers) → server-side
     session turn-context tenant. Never model-supplied; "" = unresolvable
     (callers refuse rather than wild-card).
     """
     if explicit_org:
         return str(explicit_org)[:64]
-    try:
-        from app.services.session_data import session_data_manager
-
-        state = await session_data_manager.get_map_state(session_id) or {}
-        binding = _resolve_binding(state if isinstance(state, dict) else None)
-        if binding.get("org_id"):
-            return str(binding["org_id"])[:64]
-    except Exception:  # noqa: BLE001 — fall through to the tenant scan
-        pass
     return _tenant_scan(session_id)
 
 
@@ -733,14 +735,16 @@ def _db_token_resolver(project_id: str):
     return resolve
 
 
-def _find_claim_store(claim_id: str):
-    """Locate the process-local ClaimStore holding ``claim_id``."""
+def _find_claim_store(claim_id: str, *, session_id: str, tenant_id: str):
+    """Read a claim only from the current session's existing tenant context."""
     try:
         from app.services.gis_harness.hotpath_convergence.session_ctx import (
-            find_claim_store,
+            peek_turn_context,
         )
 
-        return find_claim_store(claim_id)
+        ctx = peek_turn_context(session_id, tenant_id=tenant_id)
+        store = ctx.claim_store if ctx is not None else None
+        return store if store is not None and store.get_claim(claim_id) is not None else None
     except Exception:  # noqa: BLE001 — lookup failure is not an upgrade
         return None
 
@@ -787,7 +791,7 @@ async def request_revalidation(
         state = {}
     binding = _resolve_binding(state if isinstance(state, dict) else None)
     mission_id = binding.get("mission_id", "")
-    org = str(org_id or "")[:64] or binding.get("org_id", "") or _tenant_scan(sid)
+    org = str(org_id or "")[:64] or _tenant_scan(sid)
     if not org:
         out["reason"] = "no_org_context"
         return out
@@ -808,6 +812,15 @@ async def request_revalidation(
         out["reason"] = "scope_mismatch"
         return out
 
+    from app.services.mapspec_store import mapspec_store
+    from app.services.gis_context.observation import observe_session
+    try:
+        current_mapspec = await mapspec_store.get_mapspec(sid)
+        current_observation = observe_session(state, current_mapspec)
+    except Exception as exc:
+        logger.warning("Decision basis observation unavailable: %s", exc)
+        current_observation = None
+
     disk_revision = int(wc.revision)
 
     def _run() -> List[Any]:
@@ -821,13 +834,13 @@ async def request_revalidation(
             resolver = _db_token_resolver(project) if project else None
             # Resolve each claim's owning store (per-session stores).
             for cid in claim_ids:
-                store = _find_claim_store(cid)
+                store = _find_claim_store(cid, session_id=sid, tenant_id=org)
                 receipts.extend(revalidate_claims(
                     wc, [cid], claim_store=store, token_resolver=resolver,
                     turn_id=turn_id, max_claims=1))
         if reaffirm_texts:
             receipts.extend(reaffirm_decisions(
-                wc, reaffirm_texts, turn_id=turn_id))
+                wc, reaffirm_texts, turn_id=turn_id, observation=current_observation))
         return receipts
 
     try:

@@ -175,7 +175,9 @@ async def test_materialize_path_counts_in_band_failure(clean_breaker):
     )
     assert res["success"] is False
     assert res["error_type"] == "SOURCE_BAD_RESPONSE"
-    assert clean_breaker.state("src1714b") == CircuitState.OPEN
+    from app.services.data_fabric.health import adapter_health_key
+
+    assert clean_breaker.state(adapter_health_key(adapter)) == CircuitState.OPEN
 
 
 @pytest.mark.asyncio

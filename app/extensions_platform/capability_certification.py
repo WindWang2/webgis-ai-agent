@@ -50,7 +50,7 @@ from typing import Any, Literal, Optional
 
 from .certification_contracts import CapabilityCheckRecord
 
-from .diagnostics import DiagnosticCode, ExtensionDiagnostic
+from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
 from .discovery import CERTIFICATION_FILENAME, compute_fingerprint
 from .host import ExtensionHost, ExtensionState
 
@@ -135,7 +135,7 @@ def _stage_supply_chain(host: ExtensionHost, record) -> list[CapabilityCheckReco
     )
     checks.append(
         _check("supply_chain", "pack",
-               signature.status not in ("invalid", "tampered", "revoked"),
+               signature.status == "signed_verified",
                signature.status
                + (f" (publisher={signature.publisher})" if signature.publisher else "")
                + (f": {signature.detail}" if signature.detail else ""))
@@ -382,11 +382,14 @@ def run_pack_certification(
             "schema_version": REPORT_SCHEMA_VERSION,
             "extension_id": extension_id,
             "certified": False,
+            "trust": "unknown",
+            "execution_mode": "unknown",
             "checks": [
                 _check("discovery", "pack", False, f"unknown extension {extension_id!r}")
             ],
         }
     manifest = record.manifest
+    certified_fingerprint, _initial_diag = compute_fingerprint(record.path)
     checks: list[CapabilityCheckRecord] = []
     checks.extend(_stage_supply_chain(host, record))
     checks.extend(_stage_schema(manifest))
@@ -437,8 +440,11 @@ def run_pack_certification(
         checks.extend(_stage_runtime_probe(host, record))
 
     capabilities = _capability_summary(record)
-    certified = all(c["status"] != "fail" for c in checks)
     fingerprint, _fp_diag = compute_fingerprint(record.path)
+    if not certified_fingerprint or fingerprint != certified_fingerprint:
+        checks.append(_check("supply_chain", "pack", False, "pack changed during certification"))
+    certified = all(c["status"] != "fail" for c in checks)
+    fingerprint = certified_fingerprint
     report: dict[str, Any] = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "extension_id": extension_id,
@@ -458,8 +464,8 @@ def run_pack_certification(
                 sign_key_file=sign_key_file, sign_key_id=sign_key_id,
             )
             report["saved"] = str(CERTIFICATION_FILENAME)
-        except ExtensionDiagnostic as exc:  # _fingerprint 失败等 typed 路径
-            report["saved"] = f"failed: {exc.message}"
+        except ExtensionPlatformError as exc:  # _fingerprint 失败等 typed 路径
+            report["saved"] = f"failed: {exc.diagnostic.message}"
     return report
 
 

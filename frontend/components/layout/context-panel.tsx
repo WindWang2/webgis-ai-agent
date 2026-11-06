@@ -438,6 +438,31 @@ export function ContextPanel({
               <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
             </PanelErrorBoundary>
           )}
+{activeTab === 'lakehouse' && (
+          <PanelErrorBoundary label={t('panel.boundary.lakehouse')}>
+            <LakehouseTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+{activeTab === 'ops' && (
+          <PanelErrorBoundary label={t('panel.boundary.ops')}>
+            <OpsConsole sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+{activeTab === 'cockpit' && (
+          <PanelErrorBoundary label={t('panel.boundary.cockpit')}>
+            <AgentOpsCockpit sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+{activeTab === 'market' && (
+          <PanelErrorBoundary label={t('panel.boundary.market')}>
+            <MarketTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+{activeTab === 'modelops' && (
+          <PanelErrorBoundary label="ModelOps">
+            <ModelOpsTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
         </div>
       </BottomSheet>
     );

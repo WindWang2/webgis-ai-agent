@@ -153,16 +153,19 @@ export function isApiError(err: unknown): err is ApiError {
  * 直接渲染错误状态的 UI 使用。
  */
 export function describeApiError(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) {
-    const body = err.body as { detail?: unknown; message?: unknown } | null;
-    // 双信封兼容（ADR-0138）：v1 旧体 {detail} 与统一信封 {code,success,message,data}
-    if (body && typeof body === 'object' && typeof body.detail === 'string' && body.detail) {
-      return body.detail;
-    }
-    if (body && typeof body === 'object' && typeof body.message === 'string' && body.message) {
-      return body.message;
-    }
-    return `${fallback}（HTTP ${err.status}）`;
+  if (err instanceof ApiError || (err instanceof Error && 'body' in err)) {
+    const body = (err as { body?: unknown }).body as { detail?: unknown; message?: unknown; data?: unknown } | null;
+    const readable = (value: unknown): string | null => {
+      if (typeof value === 'string' && value.trim()) return value;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const record = value as Record<string, unknown>;
+      const message = [record.message, record.detail, record.reason].find((item) => typeof item === 'string' && item.trim());
+      const action = typeof record.action === 'string' ? record.action.trim() : '';
+      return typeof message === 'string' ? `${message}${action ? ` · ${action}` : ''}` : action || null;
+    };
+    const detail = readable(body?.detail) ?? readable(body?.data) ?? readable(body?.message);
+    if (detail) return detail;
+    return err instanceof ApiError ? `${fallback}（HTTP ${err.status}）` : fallback;
   }
   if (err instanceof TypeError) return '网络错误，无法连接服务器';
   if (err instanceof Error && err.message) return err.message;
@@ -414,8 +417,11 @@ export async function apiFetchBlob(
 /** Extract `filename="..."` from a Content-Disposition header, if present. */
 function dispositionFilename(disposition: string | null): string | null {
   if (!disposition) return null;
-  const match = /filename="?([^";]+)"?/.exec(disposition);
-  return match ? decodeURIComponent(match[1]) : null;
+  const extended = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const value = extended?.[1] ?? match?.[1];
+  if (!value) return null;
+  try { return decodeURIComponent(value); } catch { return value; }
 }
 
 /**

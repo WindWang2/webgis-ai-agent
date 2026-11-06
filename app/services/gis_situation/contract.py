@@ -62,7 +62,7 @@ class SituationRevision(BaseModel):
         )
 
     def ge(self, other: "SituationRevision") -> bool:
-        return self.as_tuple() >= other.as_tuple()
+        return all(current >= previous for current, previous in zip(self.as_tuple(), other.as_tuple(), strict=True))
 
 
 class SituationIdentity(BaseModel):
@@ -120,6 +120,7 @@ class MapContext(BaseModel):
     fingerprint: SitFact
     layers: SitFact      # 有界摘要（id/type/visible/role）
     layer_count: SitFact
+    layer_ids: SitFact = Field(default_factory=lambda: SitFact(source="mapspec.layers"))
     sources: SitFact     # 有界摘要
     basemap: SitFact
     observed: SitFact    # runtime 观察阶梯摘要（observation_states 派生）

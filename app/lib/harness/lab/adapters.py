@@ -363,9 +363,8 @@ class VisualFixtureAdapter:
         # 评"，不针对本场景地图内容 —— value 置 None 防止被读成场景得分。
         outcome.contributions.append(DimensionVerdict(
             dimension="cartographic_compliance",
-            status=PASS if report.status == "evaluated" else NOT_EVALUATED,
-            detail="" if report.status == "evaluated" else
-            f"visual judge not_evaluated: {report.reason[:96]}",
+            status=NOT_EVALUATED,
+            detail="Golden fixture validates judge wiring only; scenario map content was not evaluated.",
         ))
         return outcome
 
@@ -382,7 +381,8 @@ def _component_present(mapspec: Dict[str, Any], component: str) -> bool:
                 isinstance(c, dict) and str(c.get("type") or "") == component
                 for c in comps):
             return True
-    for comp in mapspec.get("components") or []:
+    layout = mapspec.get("layout") if isinstance(mapspec.get("layout"), dict) else {}
+    for comp in list(mapspec.get("components") or []) + list(layout.get("components") or []):
         if isinstance(comp, dict) and str(comp.get("type") or "") == component:
             return True
     return False

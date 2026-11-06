@@ -67,7 +67,7 @@ function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }
         </span>
       </div>
 
-      {task.status !== "completed" && task.status !== "failed" && (
+      {task.status !== "completed" && task.status !== "failed" && task.status !== "aborted" && (
         <div className="mt-2">
           <div
             className="h-1.5 rounded-full bg-status-neutral-soft overflow-hidden"

@@ -6,7 +6,6 @@
 - M10: cache_hit_var miss 时重置为 False
 - S46: _periodic_session_cleanup 后台任务存在
 """
-import inspect
 import os
 import pytest
 
@@ -222,25 +221,6 @@ async def test_s46_periodic_cleanup_invokes_cleanup_idle_sessions(monkeypatch):
     assert called["n"] >= 1, "_periodic_session_cleanup 未调用 cleanup_idle_sessions"
 
 
-def test_s46_lifespan_starts_cleanup_task():
-    """S46：lifespan 必须启动 cleanup 后台任务。
-
-    结构性守卫：完整驱动 lifespan 需要真实 init_db / ToolRegistry / DB schema，
-    mock 链路过深且与 S46 的"后台任务启停"无关。此处用源码 inspect 验证 lifespan
-    用 create_task 启动 _periodic_session_cleanup，并在退出时 cancel —— 这是验证
-    后台任务生命周期的最直接方式。
-    """
-    from app import main as main_module
-
-    source = inspect.getsource(main_module.lifespan)
-    assert "_periodic_session_cleanup" in source, "lifespan 未启动 cleanup 任务"
-    assert "create_task" in source, "lifespan 未用 create_task 启动后台任务"
-    # ADR-0052 起 lifespan 管理多个后台任务（session cleanup + stale job sweep），
-    # 退出时在一个循环里统一 cancel。这里断言「cleanup_task 会被 cancel」这个
-    # 不变式，而不是某一行的字面写法 —— 否则每加一个后台任务都要改这个测试。
-    assert "cleanup_task" in source, "lifespan 未持有 cleanup 任务句柄"
-    assert ".cancel()" in source, "lifespan 未在退出时 cancel 后台任务"
-    assert "CancelledError" in source, "lifespan 未在退出时 await 被 cancel 的任务"
 
 
 # ── 孤儿 vshot blob 周期回收接线（deep-review 2026-10-08，S46 同款守卫）─────
@@ -339,17 +319,40 @@ async def test_visual_blob_sweep_swallows_sweep_errors(monkeypatch):
     assert ticks["n"] == 2, "清扫异常不应终止周期循环"
 
 
-def test_visual_blob_sweep_lifespan_wiring():
-    """lifespan 必须启动并持有 visual blob sweep 任务（结构性守卫）。
 
-    完整驱动 lifespan 需要真实 init_db / DB schema，mock 链路过深 —— 与上方
-    S46 守卫同款，用源码 inspect 验证 create_task 启动 + 退出 cancel。
-    """
-    from app import main as main_module
 
-    source = inspect.getsource(main_module.lifespan)
-    assert "_periodic_visual_blob_sweep" in source, (
-        "lifespan 未启动 visual blob sweep 任务"
-    )
-    assert "visual_blob_sweep_task" in source, "lifespan 未持有 sweep 任务句柄"
-    assert ".cancel()" in source, "lifespan 未在退出时 cancel 后台任务"
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["_periodic_session_cleanup", "_periodic_visual_blob_sweep"])
+async def test_lifespan_starts_and_awaits_sweep_shutdown(monkeypatch, target):
+    """A dead mention/create_task in source cannot satisfy task lifecycle."""
+    import asyncio
+    import app.main as main_module
+    import app.core.database as database
+    import app.agent_pi_bridge as pi_bridge
+    import app.lib.gis.runtime_manifest as manifest
+    from app.services.chat import engine_instance
+
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def sweep():
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(main_module, target, sweep)
+    monkeypatch.setattr(database, "init_db", lambda: None)
+    monkeypatch.setattr(pi_bridge, "USE_NEW_AGENT", False)
+    monkeypatch.setenv("GIS_MANIFEST_STRICT", "0")
+    # Restore globals written by startup as well as the patched seam.
+    for module, attribute in ((main_module.chat, "engine"), (main_module.chat, "registry"),
+                              (main_module.chat, "pi_bridge"), (manifest, "_cached_manifest"),
+                              (engine_instance, "_chat_engine"), (engine_instance, "_app_registry")):
+        if hasattr(module, attribute):
+            monkeypatch.setattr(module, attribute, getattr(module, attribute))
+    async with main_module.lifespan(main_module.app):
+        await asyncio.wait_for(started.wait(), timeout=10)
+        assert not stopped.is_set()
+    assert stopped.is_set()

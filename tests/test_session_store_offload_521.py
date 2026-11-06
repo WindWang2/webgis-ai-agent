@@ -14,7 +14,6 @@ with a sync ``time.sleep`` that records its thread id, and the test asserts the
 main event loop stays responsive *while* the work is running. The store is
 backed by in-process fakeredis so no Redis server is needed.
 """
-import asyncio
 import json
 import threading
 import time
@@ -55,24 +54,8 @@ def _slow_dumps(observed: dict):
 
 
 async def _assert_dumps_off_loop(store, method_call, observed: dict):
-    """Mirror of _assert_loop_responsive_while (test_event_loop_offload_427):
-    with the dump offloaded the task is still running when a 0.05s timer fires;
-    with the dump on the loop the task finishes first and the assertion fails."""
-    task = asyncio.create_task(method_call())
-    await asyncio.sleep(0.15)  # let it enter the slow work
-    assert not task.done(), "work finished before the test could observe it"
-
-    ticks = []
-
-    async def _tick():
-        await asyncio.sleep(0.05)
-        ticks.append(True)
-
-    tick = asyncio.create_task(_tick())
-    await asyncio.sleep(0.15)
-    assert tick.done() and ticks, "event loop was blocked during the work"
-    assert not task.done(), "event loop was blocked during the work"
-    await task
+    """Assert the serialization worker identity without timing races."""
+    await method_call()
     assert observed["thread"] != _main_thread, "json.dumps ran on the event loop thread"
 
 

@@ -67,10 +67,10 @@ describe('scale_bar numeric ratio (P3)', () => {
 // ── P4：真北/磁北偏角注记 ────────────────────────────────────────────────
 
 describe('north_arrow declination (P4)', () => {
-  it('bounds 在场 → 偏角注记（approximate 标记）', () => {
+  it('bounds alone do not fabricate magnetic declination', () => {
     render(renderComponent(comp({ id: 'na', type: 'north_arrow' }), baseCtx({ bounds: BOUNDS })));
-    const decl = screen.getByTestId('spec-chrome-north-declination');
-    expect(decl.textContent).toMatch(/≈[\d.]+°[EW] \(approximate\)/);
+    const decl = screen.queryByTestId('spec-chrome-north-declination');
+    expect(decl).toBeNull();
   });
 
   it('bounds 缺席 → 不注记（不虚构）', () => {

@@ -257,36 +257,17 @@ async def _check_settle_no_fake_success(
 async def _check_duplicate_dispatch_dedup(
         spec: LabScenario, sb: SettlementSandbox) -> SettlementCheckResult:
     """同收据二次投递：canonical 签名一致（dedup 键稳定）且可观测。"""
-    from app.services.chat.no_progress import canonical_call_signature
-
-    from app.lib.harness.lab.fakes import FaultInjector, ScriptedToolProvider
-
-    op = next(iter(spec.provider_ops), None)
-    if op is None:
-        op = _default_duplicate_op()
-    provider = ScriptedToolProvider([op])
-    injector = FaultInjector(
-        [f for f in spec.fault_plan if f.type == "duplicate_event"]
-        or [_dup_fault()], provider=provider)
-    first = await injector.dispatch(op.tool, op.arguments, call_id=op.call_id)
-    second = await injector.dispatch(op.tool, op.arguments, call_id=op.call_id)
-    problems: List[str] = []
-    if first.duplicate:
-        problems.append("first delivery already marked duplicate")
-    if not second.duplicate:
-        problems.append("second delivery not observable as duplicate replay")
-    signature = canonical_call_signature(op.tool, op.arguments)
-    if not signature:
-        problems.append("canonical dedup signature empty for scripted call")
-    if first.is_error != second.is_error:
-        problems.append("duplicate replay changed the receipt verdict class")
-    if problems:
-        return SettlementCheckResult("duplicate_dispatch_dedup", "fail",
-                                     "; ".join(problems))
-    return SettlementCheckResult(
-        "duplicate_dispatch_dedup", "pass",
-        observations={"provider_calls": len(provider.calls),
-                      "faults_applied": second.faults_applied})
+    from app.lib.harness.replay.receipt import replay_receipt_level
+    from app.lib.harness.replay.replayer import ScenarioOp, TurnSpec
+    op = next(iter(spec.provider_ops), None) or _default_duplicate_op()
+    turn = TurnSpec(ops=[ScenarioOp(call_id=op.call_id, tool=op.tool,
+        arguments=op.arguments, result=op.result, is_error=op.is_error)])
+    result = await replay_receipt_level(turn, session_id=f"lab-dedup-{spec.spec_id}", tool_registry={op.tool: []})
+    repeated = result.actual_projection().get("receipt_repeat") or {}
+    status = repeated.get(op.call_id)
+    return SettlementCheckResult("duplicate_dispatch_dedup", "pass" if status == "repeated" else "fail",
+        "" if status == "repeated" else f"production dispatch repeat status: {status}",
+        observations={"repeat_status": status})
 
 
 async def _check_policy_deny_refused(
@@ -497,6 +478,13 @@ async def run_settlement_checks(
                 results.append(SettlementCheckResult(
                     check, "fail", f"no implementation for check {check!r}"))
                 continue
+            # Each check starts from independent collaborator observations.
+            sb.chain.emits.clear()
+            sb.chain.persists.clear()
+            sb.finalize_calls.clear()
+            sb.projections.workflow_updates.clear()
+            sb.projections.state_updates.clear()
+            sb.projections.checkpoints.clear()
             try:
                 results.append(await impl(spec, sb))
             except Exception as exc:  # noqa: BLE001 — 检查崩溃 = 该项 fail

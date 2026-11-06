@@ -21,6 +21,7 @@
 - **有界**：≤48 节点、每节点 ≤6 依赖、label ≤80。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -104,7 +105,7 @@ def _row_kind(capability: str, purpose: str) -> Optional[GoalNodeKind]:
         if category in _CATEGORY_TO_KIND:
             return _CATEGORY_TO_KIND[category]
     except Exception:  # noqa: BLE001 — registry 缺席退化为 ANALYZE
-        pass
+        observe_optional_failure(__name__)
     text = f"{capability} {purpose}".lower()
     for marker, kind in (
         # 「aggregat」同时命中 aggregate/aggregation（「aggregation」并不

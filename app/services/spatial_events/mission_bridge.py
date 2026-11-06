@@ -60,8 +60,13 @@ class MissionBridge:
         org = watch.org_id
         unfinished = self.runtime.store.list_unfinished(org_id=org, limit=100)
         scope_project = watch.mission_project_id or event.get("project_id")
+        session_id = watch.session_id or event.get("session_id")
+        if not session_id:
+            return []
         out = []
         for m in unfinished:
+            if session_id not in m.refs.active_session_ids:
+                continue
             if scope_project and m.project_id and m.project_id != scope_project:
                 continue
             if scope_project and not m.project_id:

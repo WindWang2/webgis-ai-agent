@@ -1,4 +1,4 @@
-# E2E Test Infra: WebGIS AI Agent UI/UX Overhaul
+# Test Infrastructure: WebGIS AI Agent
 
 ## Test Philosophy
 - Opaque-box, requirement-driven. Verifies user-visible behavior across light/dark themes, chat streaming markdown & code copy, map GIS toolbar & spatial popovers, tabular data exploration, and responsive layouts.
@@ -20,4 +20,15 @@
 - Vitest + Testing Library React (`frontend/tests/`): Component unit and integration tests.
 - TypeScript compiler (`pnpm typecheck`): Strict type validation.
 - ESLint (`pnpm lint`): Code hygiene and design token rule verification.
-- Next.js Production Build (`pnpm build`): Turbopack production compilation.
+- Next.js Production Build (`pnpm build`): Webpack production compilation (`build:turbopack` is an optional alternative).
+
+
+## Backend verification
+
+- Install the locked environment: `uv pip install -c requirements.lock -r requirements-dev.txt`.
+- Fast regressions: `pytest tests/unit --no-cov -q`; complete backend: `pytest -m "not perf and not cartography and not real_services" --no-cov -q`.
+- Conftest pins safe environment defaults and isolates each worker database in temporary SQLite storage. Set `TEST_DATABASE_URL` only for an intended disposable database.
+- Markers: `cartography` owns deterministic map/compiler checks; `perf` owns isolated performance thresholds; `real_services` requires `REAL_SERVICES=1`, Postgres/PostGIS, Redis and Celery. Browser/LLM tests require their explicit runtime gates.
+- Each of six CI shards uploads raw coverage plus commit/run metadata. `scripts/combine_backend_coverage.py` validates every shard and applies the 75% threshold to the union. Missing, stale or partial shards fail closed.
+- `QUALITY_ORDER_SEED=<integer>` deterministically shuffles backend collection to expose global state leaks; nightly lanes cover the full backend suite.
+- `scripts/ci-local.sh --fast` runs local lint, types, frontend tests and selected backend contracts; the full script adds build, backend, cartography and performance lanes. Docker/service lanes run separately in CI.

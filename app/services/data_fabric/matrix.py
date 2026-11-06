@@ -125,8 +125,6 @@ def _runner_for(scenario: str, primary: str):
 def run_group(source: str, request_type: str, scenario: str, lang: str) -> MatrixRecord:
     group_id = f"{source}|{request_type}|{scenario}|{lang}"
     store = InMemorySnapshotStore()
-    facts_store = fb_mod.breaker_registry  # keep import surface small
-    facts_store.record_success(source) if hasattr(facts_store, "record_success") else None
 
     expected = "plan_ok"
     actual = ""
@@ -143,6 +141,9 @@ def run_group(source: str, request_type: str, scenario: str, lang: str) -> Matri
     else:
         actual = "plan_ok"
 
+    plan_passed = actual == "plan_ok"
+    passed = plan_passed
+    chain_passed = True
     runner = _runner_for(scenario, f"primary_{group_id.replace('|', '_')}")
 
     if request_type == "fallback_chain_query" or scenario != "healthy_primary":
@@ -154,6 +155,7 @@ def run_group(source: str, request_type: str, scenario: str, lang: str) -> Matri
             dataset_key=f"{source}/ds",
             wave="M5",
             max_attempts=2,
+            breaker=fb_mod.CircuitBreakerRegistry(),
         )
         details["decisions"] = [d.trigger for d in chain_result.decisions]
         details["outcome"] = chain_result.fact.outcome
@@ -168,6 +170,7 @@ def run_group(source: str, request_type: str, scenario: str, lang: str) -> Matri
                 or (chain_result.source_used is None and chain_result.fact.outcome == "failed")
             )
             actual = f"used={chain_result.source_used} outcome={chain_result.fact.outcome}"
+        chain_passed = passed
 
     if request_type == "version_pinned_query":
         gate = pin_or_fetch(
@@ -213,9 +216,7 @@ def run_group(source: str, request_type: str, scenario: str, lang: str) -> Matri
             passed = facts.local or facts.source_id.startswith("local_") or facts.protocol in {"gov_portal", "stats_api", "stac"}
             actual = f"local={facts.local}"
 
-    if not passed and actual == "plan_ok":
-        actual = f"expected={expected}"
-        passed = True if expected == "plan_ok" else False
+    passed = bool(passed and plan_passed and chain_passed)
 
     return MatrixRecord(
         group_id=group_id, source=source, request_type=request_type,

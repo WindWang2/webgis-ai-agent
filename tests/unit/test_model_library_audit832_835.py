@@ -149,16 +149,9 @@ class TestAudit835IntentDeadEnds:
         assert intent.scope.name == "武侯区"
 
     def test_needs_admin_units_fallback_declared_and_reason_known(self):
-        """The declared fallback's reason_code is produced by the binding
-        adjudication in webgis_map_product (tools.py). This unit-level check
-        pins the declaration + the producing code path symbol exist."""
+        """Missing admin units must not silently change a choropleth into points."""
         from app.services.gis_harness.recipes import get_recipe_registry
 
         recipe = get_recipe_registry().get("administrative_choropleth")
         assert recipe is not None
-        fb = next(f for f in recipe.fallbacks if f.reason_code == "NEEDS_ADMIN_UNITS")
-        assert fb.use == "point_distribution"
-        # the producer exists in tools.py
-        import inspect
-        from app.services.gis_harness import tools as gis_tools
-        assert "NEEDS_ADMIN_UNITS" in inspect.getsource(gis_tools)
+        assert not any(f.reason_code == "NEEDS_ADMIN_UNITS" for f in recipe.fallbacks)

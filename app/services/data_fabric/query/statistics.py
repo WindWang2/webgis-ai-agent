@@ -424,6 +424,7 @@ class DurableStatisticsStore:
         self._pool: Optional[Any] = None
         self._pool_lock = threading.Lock()
         self._save_count = 0
+        self._db_slots = threading.BoundedSemaphore(2)
 
     def _executor(self) -> Any:
         from concurrent.futures import ThreadPoolExecutor
@@ -435,9 +436,20 @@ class DurableStatisticsStore:
                 )
             return self._pool
 
-    def _call_with_timeout(self, fn, *args):
-
-        return self._executor().submit(fn, *args).result(timeout=self.DB_TIMEOUT_S)
+    def _call_with_timeout(self, fn: Any, *args: Any) -> Any:
+        if not self._db_slots.acquire(blocking=False):
+            raise TimeoutError("statistics database worker capacity exhausted")
+        try:
+            future = self._executor().submit(fn, *args)
+        except Exception:
+            self._db_slots.release()
+            raise
+        future.add_done_callback(lambda _future: self._db_slots.release())
+        try:
+            return future.result(timeout=self.DB_TIMEOUT_S)
+        except TimeoutError:
+            future.cancel()
+            raise
 
     def _session(self) -> Any:
         from app.core.database import SessionLocal

@@ -539,6 +539,7 @@ def evaluate_corpus(
     *,
     k_values: Sequence[int] = (1, 3, 5),
     constraints: Optional[Dict[str, Any]] = None,
+    condition_on_gold: bool = False,
 ) -> Dict[str, Any]:
     """语料级指标：Recall@k / MRR / invalid(trap) rate / abstention。
 
@@ -562,7 +563,7 @@ def evaluate_corpus(
             measure_kind=case.measure_kind,
         )
         result = rank_methods(case.query_zh, facts,
-                              category_id=case.expected_category,
+                              category_id=case.expected_category if condition_on_gold else None,
                               constraints=constraints)
         case_count += 1
         gold = list(case.expected_methods)
@@ -603,9 +604,9 @@ def evaluate_corpus(
             recalls[k].append(1.0 if any(g in topk for g in gold) else 0.0)
         mrr.append(1.0 / rank_of_gold if rank_of_gold else 0.0)
         # lexical-only 基线（prior+lexical 主导）失败但结构化信号救回
-        if rank_of_gold and rank_of_gold > 1:
+        if rank_of_gold != 1:
             lexical_first = _lexical_baseline_pick(case, result)
-            if lexical_first and lexical_first not in gold:
+            if lexical_first in gold:
                 lexical_rescued += 1
     metrics: Dict[str, Any] = {
         "cases": case_count,
@@ -621,6 +622,9 @@ def evaluate_corpus(
         metrics[f"recall@{k}"] = (sum(values) / len(values)
                                    if values else 0.0)
     metrics["mrr"] = (sum(mrr) / len(mrr)) if mrr else 0.0
+    metrics["evaluation_mode"] = "category_conditioned" if condition_on_gold else "end_to_end"
+    if not condition_on_gold:
+        metrics["category_conditioned"] = evaluate_corpus(corpus, k_values=k_values, constraints=constraints, condition_on_gold=True)
     return metrics
 
 

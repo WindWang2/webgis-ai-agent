@@ -17,6 +17,8 @@ here):
 """
 from __future__ import annotations
 
+from app.lib.geo_raster.env import open_raster
+
 import logging
 import time
 from pathlib import Path
@@ -76,7 +78,7 @@ def write_cog(
     tmp = out.with_suffix(f"{out.suffix}.{_uuid.uuid4().hex[:8]}.tmp")
     try:
       with rasterio_env():
-        with rasterio.open(source_uri) as src:
+        with open_raster(source_uri) as src:
             if overviews is None:
                 overviews = overview_ladder(src.width, src.height)
             try:
@@ -117,11 +119,10 @@ def validate_cog(uri: str) -> dict[str, Any]:
     overview can never be cheaper than the one-block read) — legitimately
     has no overviews and is NOT flagged ``no_overviews``/``not_tiled``.
     """
-    import rasterio
 
     report: dict[str, Any] = {"uri": uri, "ok": False, "issues": []}
     try:
-        with rasterio.open(uri) as ds:
+        with open_raster(uri) as ds:
             report["driver"] = ds.driver
             ovs = ds.overviews(1) if ds.count else []
             report["overviews"] = list(ovs)
@@ -150,13 +151,12 @@ def range_read_probe(
     """Read one small window through GDAL — the practical COG range-read
     test (a COG answers this from the first block without scanning the
     file). Advisory: returns shape/elapsed; failures return ok=False."""
-    import rasterio
     from rasterio.windows import Window
 
     col, row, w, h = window
     t0 = time.monotonic()
     try:
-        with rasterio.open(uri) as ds:
+        with open_raster(uri) as ds:
             arr = ds.read(1, window=Window(col, row, w, h))
         return {
             "ok": arr.shape == (h, w),

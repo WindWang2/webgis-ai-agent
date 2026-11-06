@@ -106,8 +106,8 @@ class ExecutionBudget(BaseModel):
     model_config = ConfigDict(extra="forbid")
     deadline_s: float = Field(default=30.0, ge=1.0, le=600.0)
     max_rows: int = Field(default=50_000, ge=1, le=1_000_000)
-    max_bytes: int = Field(default=256 * 1024 * 1024, ge=1024)
-    max_vertices: int = Field(default=50_000_000, ge=1_000)
+    max_bytes: int = Field(default=256 * 1024 * 1024, ge=1024, le=512 * 1024 * 1024)
+    max_vertices: int = Field(default=50_000_000, ge=1_000, le=50_000_000)
     max_pages: int = Field(default=200, ge=1, le=10_000)
 
 
@@ -170,8 +170,11 @@ class QuerySpecV2(BaseModel):
         }
         out = self.output.model_dump()
         d["output"] = {"mode": out["mode"], "crs": out["crs"]}
+        for key in ("max_features", "max_bytes"):
+            if out[key] is not None:
+                d["output"][key] = out[key]
         if self.sample is not None:
-            d["sample"] = self.sample.model_dump(exclude={"seed"})
+            d["sample"] = self.sample.model_dump(exclude_none=True)
         d["execution"] = {
             "max_rows": self.execution.max_rows,
             "max_bytes": self.execution.max_bytes,

@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.lib.gis.action_ir import GISAction, GISActionPlan
+from app.lib.gis.action_ir import GISAction, GISActionPlan, digest_of
 
 __all__ = ["ParamChange", "ActionPlanDiff", "diff_plans", "plans_equal"]
 
@@ -47,12 +47,13 @@ class ActionPlanDiff(BaseModel):
     param_changed: Dict[str, List[ParamChange]] = Field(default_factory=dict)
     side_effect_changed: Dict[str, List[str]] = Field(default_factory=dict)  # id → [before, after]
     tool_changed: Dict[str, List[str]] = Field(default_factory=dict)         # id → [before, after]
+    semantic_changed: Dict[str, List[str]] = Field(default_factory=dict)     # id → field names
     reordered: bool = False
 
     @property
     def empty(self) -> bool:
         return not (self.added or self.removed or self.param_changed
-                    or self.side_effect_changed or self.tool_changed
+                    or self.side_effect_changed or self.tool_changed or self.semantic_changed
                     or self.reordered)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -73,14 +74,14 @@ class ActionPlanDiff(BaseModel):
             parts.append(f"副作用变化 {list(self.side_effect_changed)[:6]}")
         if self.tool_changed:
             parts.append(f"工具变化 {list(self.tool_changed)[:6]}")
+        if self.semantic_changed:
+            parts.append(f"执行语义变化 {list(self.semantic_changed)[:6]}")
         if self.reordered:
             parts.append("顺序变化")
         return "；".join(parts) if parts else "无语义变化"
 
 
 def _param_changes(before: GISAction, after: GISAction) -> List[ParamChange]:
-    from app.lib.gis.action_ir import digest_of
-
     changes: List[ParamChange] = []
     for key in sorted(set(before.params) | set(after.params))[:_MAX_LISTED]:
         b = before.params.get(key)
@@ -109,6 +110,7 @@ def diff_plans(before: GISActionPlan, after: GISActionPlan) -> ActionPlanDiff:
     param_changed: Dict[str, List[ParamChange]] = {}
     side_effect_changed: Dict[str, List[str]] = {}
     tool_changed: Dict[str, List[str]] = {}
+    semantic_changed: Dict[str, List[str]] = {}
     for action in after.actions:
         if action.action_id not in before_by_id:
             continue
@@ -124,6 +126,14 @@ def diff_plans(before: GISActionPlan, after: GISActionPlan) -> ActionPlanDiff:
         if (prev.tool or "") != (action.tool or ""):
             tool_changed[action.action_id] = [
                 (prev.tool or "")[:96], (action.tool or "")[:96]]
+        old_fields, new_fields = prev.model_dump(), action.model_dump()
+        other_changes = [
+            key for key in sorted(new_fields)
+            if key not in {"action_id", "params", "side_effect", "tool"}
+            and digest_of(old_fields[key]) != digest_of(new_fields[key])
+        ]
+        if other_changes:
+            semantic_changed[action.action_id] = other_changes
 
     # 顺序判定：共同动作的相对声明序是否保持（不比较绝对位置 —— 插入
     # 新动作不算 reorder）。
@@ -141,6 +151,7 @@ def diff_plans(before: GISActionPlan, after: GISActionPlan) -> ActionPlanDiff:
         param_changed=param_changed,
         side_effect_changed=side_effect_changed,
         tool_changed=tool_changed,
+        semantic_changed=semantic_changed,
         reordered=reordered,
     )
 

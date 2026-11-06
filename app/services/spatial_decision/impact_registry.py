@@ -45,9 +45,9 @@ class BaseDomainImpactModel(ImpactModel):
             delta_pct = round(exp_pct * 100.0, 4) if base_val != 0.0 else None
 
             rng = MetricRange(
-                min_val=round(base_val * (1.0 + min_pct), 4),
+                min_val=round(min(base_val * (1.0 + min_pct), base_val * (1.0 + max_pct)), 4),
                 expected_val=sim_val,
-                max_val=round(base_val * (1.0 + max_pct), 4),
+                max_val=round(max(base_val * (1.0 + min_pct), base_val * (1.0 + max_pct)), 4),
             )
             return MetricDeltaV2(
                 metric_key=m_key,
@@ -191,8 +191,8 @@ class HospitalFacilityImpactModel(BaseDomainImpactModel):
         assumptions.append(
             Assumption(
                 key="hospital_service_radius",
-                statement="Hospital primary service catchment established at 1500m to 3000m.",
-                value={"primary_m": 1500, "secondary_m": 3000},
+                statement="医院影响圈为模型假设，实际半径以生成的 direct/indirect zones 为准（用户参数与规则可覆盖默认500/1500m）。",
+                value={"default_direct_m": 500, "default_indirect_m": 1500},
                 source="Municipal Health & Spatial Plan",
             )
         )

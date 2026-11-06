@@ -161,7 +161,9 @@ async def test_target_resolver_session_ref():
     }
     
     resolver = TargetAreaResolver(session_store=mock_store)
-    result = await resolver.resolve("ref:layer_shenzhen", session_id="session_001")
+    from app.core.runtime_context import bind_runtime_context
+    with bind_runtime_context(session_id="session_001"):
+        result = await resolver.resolve("ref:layer_shenzhen", session_id="session_001")
     
     assert result.source == "session_ref"
     assert result.confidence == 1.0

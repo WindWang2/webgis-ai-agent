@@ -29,9 +29,20 @@ const ACCEPT = '.txt,.md,.markdown,.json';
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onload = () => {
+      try {
+        const bytes = reader.result as ArrayBuffer;
+        try {
+          resolve(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+        } catch {
+          resolve(new TextDecoder('gb18030', { fatal: true }).decode(bytes));
+        }
+      } catch (error) {
+        reject(error);
+      }
+    };
     reader.onerror = () => reject(reader.error ?? new Error('read failed'));
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   });
 }
 
@@ -103,6 +114,10 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
 
   const submit = useCallback(async () => {
     if (!content.trim() || !title.trim() || state.status === 'busy') return;
+    if (new Blob([content]).size > KNOWLEDGE_MAX_CONTENT_BYTES) {
+      setState({ status: 'error', message: tNow('knowledge.upload.tooLarge', { mib: Math.floor(KNOWLEDGE_MAX_CONTENT_BYTES / (1024 * 1024)) }) });
+      return;
+    }
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -114,6 +129,7 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
       );
       setState({ status: 'done', result });
       setContent('');
+      setTitle('');
       setFileName(null);
       if (inputRef.current) inputRef.current.value = '';
       onUploaded(result);
@@ -197,7 +213,8 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
         <div className="flex flex-col gap-2">
           <textarea
             aria-label={t('kfxup0o')}
-            value={content}
+            value={content.length > 1_000_000 ? content.slice(0, 32_768) : content}
+            readOnly={content.length > 1_000_000}
             onChange={(e) => setContent(e.target.value)}
             disabled={busy}
             rows={5}
@@ -221,7 +238,8 @@ export function KnowledgeUpload({ onUploaded }: KnowledgeUploadProps) {
         <div className="mt-2 flex flex-col gap-2">
           <textarea
             aria-label={t('kbb501i')}
-            value={content}
+            value={content.length > 1_000_000 ? content.slice(0, 32_768) : content}
+            readOnly={content.length > 1_000_000}
             onChange={(e) => setContent(e.target.value)}
             disabled={busy}
             rows={4}

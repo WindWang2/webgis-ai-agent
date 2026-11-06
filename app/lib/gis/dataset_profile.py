@@ -27,6 +27,7 @@ temporalObservationCount、valueVariance、重复坐标证据）。权威规则�
 - 截断/缺席 schema → 只有**非空**清单才发（正向证据）；缺席键 = unknown。
 """
 from __future__ import annotations
+import logging
 
 from typing import Any, Dict, List, Literal, Optional
 
@@ -198,7 +199,7 @@ class DatasetProfile(BaseModel):
 
                 profile["crsClass"] = classify_crs(self.crs)
             except Exception:  # noqa: BLE001 — 分类失败按缺席（消费方兜底）
-                pass
+                logging.getLogger(__name__).warning('CRS classification unavailable; omitting the optional profile classification', exc_info=True)
         if self.has_time_field is not None:
             profile["hasTimeField"] = bool(self.has_time_field)
             if self.has_time_field and self.temporal_observation_count is not None:
@@ -210,7 +211,8 @@ class DatasetProfile(BaseModel):
         if (numeric or authoritative) and self.feature_count is not None:
             # 上界代理（与 min_numeric_samples 的内置 featureCount 回退同值
             # 同语义 —— 显式化仅为证据可读性）。
-            profile["numericSampleCount"] = int(self.feature_count)
+            null_fraction = max((self.null_ratios.get(name, 0.0) for name in numeric), default=0.0)
+            profile["numericSampleCount"] = max(0, int(self.feature_count * (1 - null_fraction)))
         if self.unique_coordinate_count is not None:
             profile["uniqueCoordinateCount"] = int(self.unique_coordinate_count)
         if self.duplicate_coordinate_count is not None:
@@ -251,6 +253,7 @@ class DatasetProfile(BaseModel):
             else None
         )
         if isinstance(field_schema, dict) and field_schema:
+            complete = complete and len(field_schema) <= MAX_PROFILE_FIELDS
             for name, meta in list(field_schema.items())[:MAX_PROFILE_FIELDS]:
                 ftype = "unknown"
                 if isinstance(meta, dict):

@@ -23,6 +23,7 @@ _VALUES = [3.0, 8.0, 13.0, 21.0, 34.0, 55.0, 42.0, 17.0, 5.0, 29.0,
            61.0, 11.0, 47.0, 2.0, 38.0, 26.0]
 
 _RESOLVER_FACTS = {
+    "webgis_layer_remove": dict(tool="webgis_layer_remove", side_effect="state_mutation"),
     "t_acquire": dict(tool="t_acquire", side_effect="cacheable_read"),
     "t_analyze": dict(tool="t_analyze", side_effect="deterministic_compute"),
     "t_upsert": dict(tool="t_upsert", side_effect="state_mutation"),

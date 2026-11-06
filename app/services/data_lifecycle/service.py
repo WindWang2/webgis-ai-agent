@@ -272,54 +272,48 @@ class ArtifactLifecycleService:
         content/schema/crs → recompute）。
         """
         from app.services.artifact_registry import (
-            build_artifact_graph,
-            list_artifacts,
-            update_record_metadata,
+            build_artifact_graph, _load_records, _save_records, MAX_RECORD_METADATA_KEYS,
         )
+        from app.services.distributed_lock import session_lock_registry
+        from app.services.session_data import session_data_manager
 
-        records = {r.artifact_id: r for r in await list_artifacts(session_id)}
-        if source_artifact_id not in records:
-            return PropagationReport(
-                source_artifact_id,
-                staleness_verdict(change, upstream_alive).value,
-                [], [], [source_artifact_id],
-            )
-        graph = build_artifact_graph(records)
-        downstream = graph.dependents(source_artifact_id)
-        verdict = staleness_verdict(change, upstream_alive=upstream_alive)
-        marked: List[str] = []
-        already: List[str] = []
-        now = time.time()
-        for dep_id in downstream:
-            rec = records.get(dep_id)
-            if rec is None:
-                continue
-            if rec.status == "valid":
-                # verdict 为 valid（change=NONE）时只附诊断不改状态。
-                mark_stale = verdict is not staleness_verdict(ChangeClass.NONE)
-                ok = await update_record_metadata(
-                    session_id,
-                    dep_id,
-                    status="stale" if mark_stale else None,
-                    metadata={
-                        _MD_STALE_REASON: str(reason)[:64],
-                        _MD_STALE_SOURCE: str(source_artifact_id)[:96],
-                        _MD_STALE_VERDICT: verdict.value,
-                        _MD_STALE_AT: now,
-                    },
-                )
-                if ok:
+        async with session_lock_registry.lock(session_id):
+            records = await _load_records(session_id, session_data_manager)
+            verdict = staleness_verdict(change, upstream_alive=upstream_alive)
+            if source_artifact_id not in records:
+                return PropagationReport(source_artifact_id, verdict.value,
+                                         [], [], [source_artifact_id])
+            downstream = build_artifact_graph(records).dependents(source_artifact_id)
+            marked: List[str] = []
+            already: List[str] = []
+            now = time.time()
+            changed = False
+            for dep_id in downstream:
+                rec = records.get(dep_id)
+                if rec is None:
+                    continue
+                if rec.status != "valid":
+                    already.append(dep_id)
+                    continue
+                metadata = {
+                    _MD_STALE_REASON: str(reason)[:64],
+                    _MD_STALE_SOURCE: str(source_artifact_id)[:96],
+                    _MD_STALE_VERDICT: verdict.value,
+                    _MD_STALE_AT: now,
+                }
+                metadata.update({key: value for key, value in (rec.metadata or {}).items()
+                                 if key not in metadata})
+                rec.metadata = dict(list(metadata.items())[:MAX_RECORD_METADATA_KEYS])
+                rec.updated_at = now
+                changed = True
+                if verdict is not staleness_verdict(ChangeClass.NONE):
+                    rec.status = "stale"
                     marked.append(dep_id)
-                else:
-                    logger.warning(
-                        "[Lifecycle] staleness mark failed session=%s artifact=%s",
-                        session_id, dep_id,
-                    )
-            else:
-                already.append(dep_id)
-        return PropagationReport(
-            source_artifact_id, verdict.value, marked, already, []
-        )
+            if changed:
+                # Same session lock covers graph read and all mutations. No
+                # nested update_record_metadata lock or stale snapshot write.
+                await _save_records(session_id, records, session_data_manager)
+            return PropagationReport(source_artifact_id, verdict.value, marked, already, [])
 
     # ── 版本链 / 影响分析 ───────────────────────────────────────────
     async def version_history(

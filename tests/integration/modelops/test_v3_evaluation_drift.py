@@ -97,7 +97,7 @@ def test_evaluation_report_has_boundary_and_folds(service, tmp_path):
             num_folds=4,
             model_id="tiny-landcover-seg",
             model_version="1.0.0",
-        )
+        ), allowed_roots=[tmp_path]
     )
     assert report["boundary"]["f1"] > 0.9
     assert report["per_fold"], "4 folds requested → at least one scored"
@@ -141,7 +141,7 @@ def test_drift_report_regions_and_psi(service, tmp_path):
             num_classes=2,
             model_id="tiny-landcover-seg",
             model_version="1.0.0",
-        )
+        ), allowed_roots=[tmp_path]
     )
     assert report["class_distribution_psi"] > 0.5
     assert report["baseline_tags"]["time"] == "2025-01"

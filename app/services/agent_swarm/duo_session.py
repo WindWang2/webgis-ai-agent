@@ -171,8 +171,8 @@ class CartoAuditDuoSession:
                 manifest = await self._aggregator.collect(
                     run_id=run_id,
                     session_id=self._session_id,
-                    receipts=result.receipts,
-                    tasks=[],
+                    receipts={receipt.assignment_id: receipt for receipt in result.receipts},
+                    tasks={},
                 )
                 await self._aggregator.merge(manifest)
             except Exception as exc:  # noqa: BLE001 — 聚合 fail-open（同 SwarmAggregator）

@@ -163,7 +163,8 @@ def _line_candidates(feat: LabelFeature, text_width: float) -> List[LabelCandida
         return []
     seg_len: List[float] = []
     cum: List[float] = [0.0]
-    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+    # Adjacent pairs intentionally omit the unpaired final element.
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:], strict=False):
         d = math.hypot(x2 - x1, y2 - y1)
         seg_len.append(d)
         cum.append(cum[-1] + d)
@@ -210,7 +211,7 @@ def _polygon_candidates(feat: LabelFeature) -> List[LabelCandidate]:
     except Exception:  # 自交/退化环：shapely 抛错则无候选（确定性）
         return []
     cands: List[LabelCandidate] = []
-    if math.isfinite(centroid.x) and math.isfinite(centroid.y):
+    if poly.contains(centroid) and math.isfinite(centroid.x) and math.isfinite(centroid.y):
         cands.append(LabelCandidate(x=centroid.x, y=centroid.y, angle=0.0, cost=0.0))
     if math.isfinite(inside.x) and math.isfinite(inside.y):
         cands.append(LabelCandidate(x=inside.x, y=inside.y, angle=0.0, cost=1.0))
@@ -310,10 +311,18 @@ def solve_labels(payload: LabelEngineInput) -> LabelSolution:
                                              cost=float(len(sorted_cands))),
                               box2, "placed_max_displacement")
                 else:
-                    # callout：允许与已放置标签重叠（引线消歧），视口约束保留
-                    chosen = (LabelCandidate(x=sx, y=sy, angle=0.0,
-                                             cost=float(len(sorted_cands))),
-                              box2, "callout")
+                    # A leader never makes overlapping text readable. Search
+                    # beyond the normal displacement before suppressing.
+                    for radius in (1.5, 2.0, 3.0):
+                        for dx, dy in ((1, 1), (-1, 1), (1, -1), (-1, -1), (1, 0), (-1, 0), (0, 1), (0, -1)):
+                            cx = px + dx * f.max_displacement * radius
+                            cy = py + dy * f.max_displacement * radius
+                            candidate_box = corner_box(cx, cy, w, h)
+                            if inside_viewport(candidate_box, vp) and not grid.collides(candidate_box):
+                                chosen = (LabelCandidate(x=cx, y=cy, angle=0.0, cost=float(len(sorted_cands))), candidate_box, "callout")
+                                break
+                        if chosen is not None:
+                            break
 
         if chosen is None:
             if not cands:

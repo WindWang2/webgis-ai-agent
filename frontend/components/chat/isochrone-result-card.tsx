@@ -35,14 +35,15 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
   const payload = (result.result as IsochroneResultPayload) ?? (result.metadata as IsochroneResultPayload) ?? result;
   // #692 真实性：不再用 ?? 15 / ?? 1 虚构指标——缺数据显示"未知"或不渲染该行
   const travelTime = payload.travel_time_min ?? result.travel_time_min ?? null;
-  const mode = (payload.mode ?? result.mode ?? 'walking').toString().toLowerCase();
+  const mode = (payload.mode ?? result.mode ?? '').toString().toLowerCase();
   const facilityCount = payload.facility_count ?? result.facility_count ?? null;
   const areaKm2 = payload.area_km2 ?? result.area_km2 ?? null;
   const summaryText = payload.summary ?? (typeof result.summary === 'string' ? result.summary : null);
 
   const isDriving = mode === 'driving' || mode === 'car';
   const ModeIcon = isDriving ? Car : Footprints;
-  const modeLabel = isDriving ? t('chat.iso.modeDriving') : t('chat.iso.modeWalking');
+  const modeLabel = isDriving ? t('chat.iso.modeDriving') : t(`chat.iso.${({ walking: 'modeWalking', cycling: 'modeCycling', transit: 'modeTransit' } as Record<string, string>)[mode] ?? 'modeUnknown'}`);
+  const speed = typeof payload.speed_m_per_min === 'number' ? payload.speed_m_per_min : typeof payload.speed_kmh === 'number' ? payload.speed_kmh * 1000 / 60 : null;
 
   return (
     /* C：去掉 backdrop-blur-md，把 bg-white/80 dark:bg-slate-900/80 半透明对
@@ -104,7 +105,7 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
       {/* Action Footer */}
       <div className="flex items-center justify-between pt-1.5 border-t border-edge-subtle text-meta">
         <span className="text-ink-muted font-mono">
-          {t('chat.iso.speedBase')} {isDriving ? '400m/min' : '80m/min'}
+          {speed !== null && Number.isFinite(speed) && <>{t('chat.iso.speedBase')} {Math.round(speed)}m/min</>}
         </span>
         {layerId && onFocus && (
           <button

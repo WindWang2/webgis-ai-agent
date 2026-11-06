@@ -187,6 +187,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "C14 图册 · A"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,
@@ -320,6 +323,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "C14 图册 · B"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,
@@ -453,6 +459,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "C14 图册 · C"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,

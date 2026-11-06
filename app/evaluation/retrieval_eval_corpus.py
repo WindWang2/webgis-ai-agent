@@ -31,7 +31,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
-MIN_EVAL_CORPUS_SIZE = 300
 MIN_EVAL_CORPUS_SIZE = 350
 
 

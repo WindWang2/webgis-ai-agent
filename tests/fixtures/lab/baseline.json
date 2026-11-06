@@ -82,7 +82,7 @@
    },
    "kind": "replay",
    "ok": true,
-   "replay_digest": "5d305caa85efeb9c1eb3f71f0f7c6e7730352688d84f330266463ed723a39c98",
+   "replay_digest": "1e44671a056a26b53608f9f866b1cc7523f69837ae86c9a49dfb4727b3811722",
    "spec_id": "lab-j5-user-midflight-recolor"
   },
   {
@@ -139,6 +139,6 @@
  ],
  "green": 8,
  "kind": "eval_lab_baseline",
- "report_digest": "4c06dd9f9412ece0101394e9f56212071b5c6d7caf0cea28c31e40983256cd71",
+ "report_digest": "bd957a3810f0b9e360c107a6fcae9ed2d0e852de3d5d4336861e52453c27d430",
  "seed": 0
 }

@@ -29,7 +29,16 @@
     "view2DTitle": "View: 2D (click for 3D)",
     "uiTweaks": "UI tweaks",
     "settings": "Settings",
-    "moreActions": "More actions"
+    "moreActions": "More actions",
+    "requestLocation": "Request current location",
+    "locationLoading": "Getting your location…",
+    "locationRetry": "Retry location",
+    "locationErrors": {
+      "unsupported": "This browser does not support location.",
+      "denied": "Location permission was denied. Allow location in your browser settings, then retry.",
+      "unavailable": "Your location is unavailable. Please retry.",
+      "timeout": "Getting your location timed out. Please retry."
+    }
   },
   "tabs": {
     "chat": "Chat",

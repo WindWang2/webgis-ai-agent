@@ -63,7 +63,7 @@ export const exportCommands: Record<string, CommandEntry> = {
         devOnly.error('[export_vector_pdf] unexpected error:', e);
         try {
           getHudState().setPendingSystemMessage(
-            `[系统通知] 矢量 PDF 导出异常。错误原因: ${e}。请向用户致歉并结束流程。`,
+            `[系统通知] 矢量 PDF 导出异常。错误原因: ${e}。请向用户致歉并结束流程。`, 'error',
           );
         } catch {
           /* defensive */
@@ -132,7 +132,7 @@ export const exportCommands: Record<string, CommandEntry> = {
             devOnly.error('[export_map] Unexpected error:', e);
             try {
               getHudState().setPendingSystemMessage(
-                `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`,
+                `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`, 'error',
               );
             } catch {
               /* defensive */

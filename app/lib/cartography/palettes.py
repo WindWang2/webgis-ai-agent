@@ -199,7 +199,7 @@ def heatmap_paint(palette: str = "classic", radius_px: int = 30) -> Dict[str, ob
 
     colors = NATIVE_HEATMAP_COLORS.get(palette, NATIVE_HEATMAP_COLORS["classic"])
     stops: List[object] = []
-    for pos, color in zip(HEATMAP_STOP_POSITIONS, colors):
+    for pos, color in zip(HEATMAP_STOP_POSITIONS, colors, strict=True):
         stops.extend([pos, color])
     try:
         radius = clamp_radius_px(radius_px)
@@ -497,7 +497,7 @@ def print_desaturate(colors: List[str], strength: float = 0.35) -> List[str]:
         target_l = lum_first + (lum_last - lum_first) * t
         target = tuple(int(round(_gamma_encode_linear(target_l) * 255.0)) for _ in (0, 1, 2))
         blended = tuple(
-            int(round(ch + (tg - ch) * strength)) for ch, tg in zip(rgb, target)
+            int(round(ch + (tg - ch) * strength)) for ch, tg in zip(rgb, target, strict=True)
         )
         out.append("#{:02x}{:02x}{:02x}".format(*blended))
     return out
@@ -548,7 +548,7 @@ def perceptual_ramp(n: int) -> List[str]:
         c2 = parse_css_color(anchors[hi])
         if c1 is None or c2 is None:
             return []
-        rgb = tuple(int(round(a + (b - a) * frac)) for a, b in zip(c1, c2))
+        rgb = tuple(int(round(a + (b - a) * frac)) for a, b in zip(c1, c2, strict=True))
         out.append("#{:02x}{:02x}{:02x}".format(*rgb))
     return out
 

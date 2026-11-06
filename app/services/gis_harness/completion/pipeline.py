@@ -1,8 +1,10 @@
 """编排（validate → repair → revalidate，≤ MAX_FINALIZATION_PASSES）+ 章节持久化/披露
 — ADR-0081 / ADR-0091。"""
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import logging
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from .contracts import (
@@ -148,7 +150,7 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
         findings.extend(_vmmc(chapter, mapspec))
         findings.extend(_vlvq(chapter, mapspec))
     except Exception:  # noqa: BLE001 — 增值审计缺席不阻断终验
-        pass
+        observe_optional_failure(__name__)
     # V7（ADR-0134 D5）：地图感知批评（blank map / 出版件完整性 / label
     # collision / 聚合错位 —— 纯函数；增值披露，缺席不阻断终验）。
     try:
@@ -157,7 +159,7 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
         findings.extend(critique_map_state(
             chapter, mapspec, inputs.get("render_observation")))
     except Exception:  # noqa: BLE001 — 增值批评缺席不阻断终验
-        pass
+        observe_optional_failure(__name__)
     # ADR-0211：产品语义完整性并入统一 findings（消费 product_completeness
     # 契约，不建第二验证器）。error 级参与状态阶梯（不撒谎的 complete），
     # 不携带 repair（修复归组装/执行通道）；码前缀 product_ 隔离词表。
@@ -367,13 +369,19 @@ async def run_map_finalization(
         except Exception:  # noqa: BLE001 — 截图索引缺席 = 无截图（诚实缺席）
             _screenshot_entry = None
 
-    visual_findings = _maybe_run_visual_evaluation(
-        inputs["mapspec"], inputs.get("render_observation"), findings,
-        session_id=session_id,
-        mapspec_revision=int(inputs.get("mapspec_revision") or 0),
-        mapspec_fingerprint=_visual_fingerprint,
-        screenshot=_screenshot_entry,
-    )
+    try:
+        visual_findings = await asyncio.wait_for(asyncio.to_thread(
+            _maybe_run_visual_evaluation,
+            inputs["mapspec"], inputs.get("render_observation"), findings,
+            session_id=session_id,
+            mapspec_revision=int(inputs.get("mapspec_revision") or 0),
+            mapspec_fingerprint=_visual_fingerprint,
+            screenshot=_screenshot_entry,
+        ), timeout=30.0)
+    except asyncio.TimeoutError:
+        logger.warning("[MapFinalizer] visual evaluator exceeded finalization budget")
+        visual_findings = []
+
 
     # F15（ADR-0263 决策五）：跨运行 recurrence 记账（纯披露面，
     # fail-open —— 账本任何异常不阻断终验、不改变 findings）。
@@ -410,7 +418,7 @@ async def run_map_finalization(
             try:
                 _uf.observed_revision = _stamp_revision
             except Exception:  # noqa: BLE001 — 盖章失败 = 修复面按过期保守处理
-                pass
+                observe_optional_failure(__name__)
         # plan 面：硬停条目不再进入 planner 消费面（不再反复索要同一修复）。
         result.visual_findings = [
             uf for uf in visual_findings
@@ -547,6 +555,7 @@ async def run_map_finalization(
             result,
             [w for w in chapter.get("methodology_warnings") or [] if isinstance(w, dict)],
             chapter=chapter,
+            cartographic_review=inputs.get("cartographic_review"),
         ).get("verdict") or "")
     except Exception:  # noqa: BLE001 — 快照失败留空（旧路径语义）
         result.product_verdict = ""
@@ -585,7 +594,7 @@ async def run_map_finalization(
 
         await record_critique_findings(session_id, findings=result.findings)
     except Exception:  # noqa: BLE001 — 增值捕获，绝不阻断终验
-        pass
+        observe_optional_failure(__name__)
 
     logger.info(
         "[MapFinalizer] finalization_pass session=%s status=%s passes=%d repairs=%d",
@@ -863,9 +872,10 @@ def map_product_block(
         )
 
         block["product_verdict"] = derive_product_verdict(
-            result, methodology_warnings, chapter=chapter)
+            result, methodology_warnings, chapter=chapter,
+            cartographic_review=cartographic_review)
     except Exception:  # noqa: BLE001 — 裁决是增值投影，绝不阻断 finalization
-        pass
+        observe_optional_failure(__name__)
     # V6 W10/W11：修复计划快照（additive；finding→分类→护栏→计划的证据面）。
     if repair_plan:
         block["repair_plan"] = repair_plan
@@ -906,7 +916,7 @@ def map_product_block(
         block["observation_health"] = build_observation_summary(
             observation, intent_verified=intent_verified)
     except Exception:  # noqa: BLE001 — 摘要是增值投影，绝不阻断
-        pass
+        observe_optional_failure(__name__)
     # V7（ADR-0134 D6 修复评审 F1）：task_complete 随块持久化 —— 此前
     # 只在 read_stored_map_product 读时折叠，生产块上无此键，导致
     # runtime_state_machine 的 COMMITTED 判定与 commit_runtime_context
@@ -914,7 +924,7 @@ def map_product_block(
     try:
         block["task_complete"] = _is_task_complete(block)
     except Exception:  # noqa: BLE001 — 折叠失败按旧形状（缺键）
-        pass
+        observe_optional_failure(__name__)
     # ADR-0183（G5 接线 W2）：goal satisfaction 评估随块持久化 —— 「地图
     # READY ≠ 任务完成」的任务语义层（比较缺位/导出未兑现/证据不足不
     # PASS）。additive 键，旧读者忽略；评估失败绝不阻断 finalization。
@@ -1371,7 +1381,7 @@ async def maybe_finalize_map_product(
     # 为 replan（任务语义缺口：方法不可比/能力缺失）时，路由既有
     # request_replan 生产驱动（durable 记账 + replan_pending）。增值披露，
     # 绝不阻断终验；budget 由 plan_runtime 既有预算约束，不新开循环。
-    if goal_block is not None and str(
+    if goal_block is not None and not (continuation_dict or {}).get("replan") and str(
             goal_block.get("signal") or "") == "replan":
         try:
             from app.services.gis_harness.plan_runtime import request_replan
@@ -1409,7 +1419,7 @@ async def maybe_finalize_map_product(
         if result.repairs_applied:
             _trace.bump(COUNTER_FINALIZATION_REPAIRS, len(result.repairs_applied))
     except Exception:  # noqa: BLE001 — trace 故障不影响业务
-        pass
+        observe_optional_failure(__name__)
     # C13 AUTO_SAFE 自动修复通道（终验落块之后；默认关 —— env 开启才
     # 生效；有界/fail-open，绝不阻断终验返回）。
     if result.status == STATUS_COMPLETE and session_id:
@@ -1551,7 +1561,8 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
                 "required_render_seq": _required_seq,
             }
     except Exception:  # noqa: BLE001 — 确认面缺席按 auto（True）
-        payload["display_confirmed"] = True
+        payload["display_confirmed"] = False
+        logger.warning("Display confirmation unavailable", exc_info=True)
     # ADR-0183（G5 接线 W4）：goal satisfaction 投影随 task_complete 面
     # 下行（additive；块缺席/旧块 → 键省略，零漂移）。
     try:
@@ -1561,7 +1572,7 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
         if gs_payload is not None:
             payload["goal_satisfaction"] = gs_payload
     except Exception:  # noqa: BLE001 — 投影失败只少一键
-        pass
+        observe_optional_failure(__name__)
     # GOAL 05（ADR-0279 M4）：goal verification 对账投影随 task_complete
     # 面下行（additive bounded —— overall/矛盾/未完成面；块缺席键省略）。
     try:
@@ -1580,7 +1591,7 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
                     and s.get("status") == "fail"][:6],
             }
     except Exception:  # noqa: BLE001 — 投影失败只少一键
-        pass
+        observe_optional_failure(__name__)
     return payload
 
 
@@ -1703,7 +1714,7 @@ def finalization_sse_payload(
             if gs_payload is not None:
                 payload["goal_satisfaction"] = gs_payload
         except Exception:  # noqa: BLE001 — 投影失败只少一键
-            pass
+            observe_optional_failure(__name__)
     # GOAL 05（ADR-0279 M4+M6）：对账 + 四段解释随 map_finalization SSE
     # 下行（additive bounded；只读 result.goal_verification 快照；非 clean
     # 处境才携带 —— 全绿零新键）。
@@ -1735,7 +1746,7 @@ def finalization_sse_payload(
                 if exp.situation != "clean":
                     payload["recovery_explanation"] = exp.to_bounded_dict()
         except Exception:  # noqa: BLE001 — 投影失败只少一键
-            pass
+            observe_optional_failure(__name__)
     return payload
 
 

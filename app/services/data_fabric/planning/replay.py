@@ -66,6 +66,9 @@ def replay(
     bbox: Optional[List[float]] = None
     columns: Optional[List[str]] = None
     limit: Optional[int] = None
+    datetime_range = None
+    aggregates = None
+    group_by = None
     for step in plan.steps:
         if step.step_type == "bbox_clip":
             bbox = step.params.get("bbox")
@@ -73,14 +76,25 @@ def replay(
             columns = step.params.get("columns")
         elif step.step_type == "pagination":
             limit = min(limit or max_rows, int(step.params.get("expected_rows") or max_rows))
+        elif step.step_type == "time_filter":
+            datetime_range = step.params.get("range")
+        elif step.step_type == "version_pin":
+            from app.services.data_fabric.errors import InvalidQueryError
+
+            raise InvalidQueryError("this replay adapter does not implement version-pinned reads")
         elif step.step_type == "aggregate_pushdown":
             if not step.params.get("pushed_down"):
-                continue  # local aggregation is the executor's job (DS3+)
+                from app.services.data_fabric.errors import InvalidQueryError
+
+                raise InvalidQueryError("plan replay does not implement local aggregation")
+            aggregates = step.params.get("aggregate")
+            group_by = step.params.get("group_by")
             # aggregate-capable adapters accept the query; others fail typed
     if plan.steps and plan.steps[-1].step_type == "sampling":
         pass  # sampling is applied post-fetch below
 
-    spec = QuerySpec(bbox=bbox, columns=columns, limit=limit or max_rows, offset=0)
+    spec = QuerySpec(bbox=bbox, columns=columns, limit=limit or max_rows, offset=0,
+                     datetime_range=datetime_range, aggregate=aggregates, group_by=group_by)
     result = adapter.query(dataset_id, spec)
     features = result.features if result is not None else []
 

@@ -14,16 +14,21 @@ from app.services.gis_action.service import bind_action_ir
 
 
 def _noop_registry(**meta):
-    class _Reg:
-        def metadata(self, name):
-            if name == "noop":
-                return {"side_effect": "pure", "deterministic": True,
-                        **meta}
-            if name == "legacy_probe":
-                return {"side_effect": "unclassified", "status": "deprecated",
-                        "fallback_tool": "modern_probe", **meta}
-            return None
-    return _Reg()
+    from app.tools.registry import ToolRegistry
+    registry = ToolRegistry()
+    def noop(**_args):
+        return {"success": True}
+    for name, defaults in (
+        ("noop", {"side_effect": "pure", "deterministic": True}),
+        ("legacy_probe", {"side_effect": "unclassified", "status": "deprecated", "deprecation_of": "modern_probe"}),
+    ):
+        descriptor = {**defaults, **meta}
+        successor = descriptor.pop("fallback_tool", None)
+        registry.register(name, name, noop, parameters={"type": "object", "properties": {}}, **descriptor)
+        if successor:
+            registry._metadata[name]["fallback_tool"] = successor
+    return registry
+
 
 
 class TestBindDefaults:

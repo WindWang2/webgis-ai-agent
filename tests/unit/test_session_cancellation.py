@@ -98,7 +98,7 @@ def _install_clear_session_env(
 
     with_turns: 视为「有在途 turn」的会话 id 列表 —— 各配一个假 bridge 并
     进 _active_turns 替身表。happy path 事件序列（s1 在途时）：
-    abort:s1 → lock:s1 → invalidate:s1 → tombstone:s1 → db_clear:s1 →
+    lock:s1 → invalidate:s1 → abort:s1 → tombstone:s1 → db_clear:s1 →
     mapspec_purge:s1 → artifact_purge:s1 → tombstone_write:s1 →
     [leave_active:s1，仅真实 manager 具备该方法时] → resume_clear:s1
     """
@@ -353,16 +353,15 @@ def test_seam_structural_failure_swallowed_and_logged(monkeypatch, caplog):
 # ── 场景 1（端点层）：abort 先于一切清理 —— BUG-18 顺序 oracle ───────────────
 
 
-def test_clear_session_abort_is_first_effectful_step(monkeypatch):
-    """事件序列的第一步必须是 abort（携带被删会话 id）——先于锁、tombstone、
-    DB 删除。"""
+def test_clear_session_lock_precedes_abort(monkeypatch):
+    """Obtain mutation authority before abort; a busy lock must leave the turn running."""
     events, bridges = _install_clear_session_env(monkeypatch, with_turns=["s1"])
 
     response = asyncio.run(_call_clear_session("s1"))
     assert response.status == "ok"
     assert bridges["s1"].calls == [("s1", "system")]
-    assert events[0] == "abort:s1"
-    assert events.index("lock:s1") > events.index("abort:s1")
+    assert events[0] == "lock:s1"
+    assert events.index("lock:s1") < events.index("abort:s1")
 
 
 def test_clear_session_abort_precedes_db_deletion_bug18_order(monkeypatch):

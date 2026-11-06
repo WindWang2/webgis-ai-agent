@@ -72,15 +72,19 @@ async def test_effective_org_anonymous_falls_to_default_bucket(tmp_path,
         await engine.dispose()
 
 
-async def test_effective_org_jwt_claim_wins(tmp_path):
+async def test_effective_org_live_database_overrides_jwt_claim(tmp_path):
     from app.core import tenancy
 
     engine, maker = await _fresh_db(tmp_path)
     try:
         async with maker() as db:
+            from app.models.db_model import User, Organization
+            db.add_all([Organization(id=7, name="live", slug="live"), User(id="u1", org_id=7, username="liveuser", email="live@example.test", role="editor", is_active=True)])
+            await db.commit()
             org = await tenancy.effective_org_id(
                 {"user_id": "u1", "role": "editor", "org_id": 42}, db)
-            assert org == "42"
+            assert org == "7"
+            assert await tenancy.effective_org_id({"user_id": "missing", "org_id": 7}, db) == ""
     finally:
         await engine.dispose()
 

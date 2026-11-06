@@ -39,6 +39,20 @@ class FakeStore:
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         self.aliases[f"{session_id}:{alias}"] = ref_id
 
+    async def set_alias_if_absent(self, session_id: str, ref_id: str, alias: str) -> bool:
+        key = f"{session_id}:{alias}"
+        if key in self.aliases:
+            return False
+        self.aliases[key] = ref_id
+        return True
+
+    async def overwrite(self, session_id: str, ref_id: str, payload: Any, *, expected_revision=None) -> bool:
+        old = self.data.get(ref_id)
+        if old is None or (expected_revision is not None and old.get("revision") != expected_revision):
+            return False
+        self.data[ref_id] = payload
+        return True
+
     async def store(self, session_id: str, payload: Any, prefix: str = "data") -> str:
         self._seq += 1
         ref = f"ref:{prefix}-{self._seq}"

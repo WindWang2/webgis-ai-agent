@@ -59,11 +59,6 @@ function createDeps(
 
 function mockFetchSuccess(url = '/exports/test.png', filename = 'test.png') {
   const mockFetch = vi.fn() as Mock;
-  // First call: dataUrl fetch for PNG → blob
-  mockFetch.mockResolvedValueOnce({
-    ok: true,
-    blob: async () => new Blob(['img-data'], { type: 'image/png' }),
-  });
   // Second call: upload POST → { url, filename }
   mockFetch.mockResolvedValueOnce({
     ok: true,
@@ -184,11 +179,6 @@ describe('runExport', () => {
   it('upload failure returns ok=false with error message', async () => {
     const deps = createDeps();
     const mockFetch = vi.fn() as Mock;
-    // dataUrl fetch
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      blob: async () => new Blob(['img-data']),
-    });
     // upload POST → fail
     mockFetch.mockResolvedValueOnce({
       ok: false,
@@ -255,7 +245,7 @@ describe('runExport — bounded idle wait + degrade contract (#527 / ADR-0157 P1
     expect(outcome.ok).toBe(true);
     expect(outcome.format).toBe('png');
     const msg = hudState.setPendingSystemMessage.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(msg).toContain('高 DPI 重渲染超时，已降级为当前分辨率');
+    expect(msg).toContain('已回退当前分辨率画布');
     expect(msg).toContain('highdpi_rerender_timeout_degraded');
     // pixelRatio：升到 2 → 超时降级在引擎内恢复 1 → finally 兜底再恢复 1（幂等）。
     expect(mockMap.setPixelRatio).toHaveBeenCalledWith(2);

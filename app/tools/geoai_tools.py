@@ -11,6 +11,7 @@ refine 语义：读取先前 run 的 ``prompt_candidates`` GeoJSON，把选定�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -341,9 +342,9 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
             owner_scope=scope,
             task_type="embedding",
         ))
-        items = json.loads(
+        items = await asyncio.to_thread(lambda: json.loads(
             Path(result.outputs["embeddings"]["path"]).read_text(encoding="utf-8")
-        )
+        ))
         per_chip = []
         counter: Dict[str, int] = {}
         for item in items:

@@ -19,6 +19,7 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -161,6 +162,8 @@ _FP_SIDECAR_NAME = "mapspec.json.fp"
 # #1073(F-9)：mutation revision 的磁盘 sidecar —— Redis 状态过期而磁盘 spec
 # 存活时随 get_mapspec 的复活路径一并恢复 CAS 令牌。
 _REV_SIDECAR_NAME = "mapspec.json.rev"
+_PERSISTED_CACHE_LIMIT = 16
+_PERSISTED_CACHE_TTL = 300.0
 
 
 class MapSpecStore:
@@ -176,6 +179,30 @@ class MapSpecStore:
         # 指纹路径（指纹计算虽在线程，但 json.dumps 不释放 GIL，大 spec
         # 仍会造成循环停顿——同一性短路消除了这个最常见的重复保存场景）。
         self._persisted_obj: Dict[str, Dict[str, Any]] = {}
+        self._persisted_seen: Dict[str, float] = {}
+        self._persisted_lock = threading.RLock()
+
+    def _cached_persisted(self, session_id: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        """Bound full-object identity retention by both LRU capacity and idle TTL."""
+        with self._persisted_lock:
+            now = time.monotonic()
+            for sid, seen in list(self._persisted_seen.items()):
+                if now - seen >= _PERSISTED_CACHE_TTL:
+                    self._invalidate_process_cache(sid)
+            if session_id in self._persisted_seen:
+                self._persisted_seen.pop(session_id)
+                self._persisted_seen[session_id] = now
+            return self._persisted_fp.get(session_id), self._persisted_obj.get(session_id)
+
+    def _remember_persisted(self, session_id: str, fp: str, mapspec: Dict[str, Any]) -> None:
+        with self._persisted_lock:
+            self._cached_persisted(session_id)
+            self._invalidate_process_cache(session_id)
+            while len(self._persisted_seen) >= _PERSISTED_CACHE_LIMIT:
+                self._invalidate_process_cache(next(iter(self._persisted_seen)))
+            self._persisted_fp[session_id] = fp
+            self._persisted_obj[session_id] = mapspec
+            self._persisted_seen[session_id] = time.monotonic()
 
     def _session_dir_path(self, session_id: str) -> Path:
         """会话目录路径（只算路径，不创建目录）。"""
@@ -195,8 +222,10 @@ class MapSpecStore:
         否则 (a) 最后一个完整 spec 对象按会话滞留到进程退出（内存单调增长，
         Redis/磁盘/会话层都有回收，唯独这层没有）；(b) 同 session_id 复用时
         进程内指纹短路在 sidecar/Redis 交叉核对之前触发，静默跳过落盘。"""
-        self._persisted_fp.pop(session_id, None)
-        self._persisted_obj.pop(session_id, None)
+        with self._persisted_lock:
+            self._persisted_fp.pop(session_id, None)
+            self._persisted_obj.pop(session_id, None)
+            self._persisted_seen.pop(session_id, None)
 
     async def clear_session_files(self, session_id: str) -> None:
         """Purge durable MapSpec/checkpoint/revision state for one session.
@@ -331,9 +360,10 @@ class MapSpecStore:
         # 定向字段（均 O(1) 读）恢复语义。
         # v2(audit F4): 携带 layer_op 时永不短路 —— layers 写必须发生。
         # 方向 8: 携带 extra_fields 时同理（存证写必须发生）。
+        cached_fp, cached_obj = self._cached_persisted(session_id)
         _has_extra = bool(extra_fields)
         if (layer_op is None and mutation_revision is None and not _has_extra
-                and mapspec is self._persisted_obj.get(session_id)):
+                and mapspec is cached_obj):
             # #1074(F-8): 同一性短路此前完全跳过存活复检（#838 只修了指纹
             # 路径）—— 他 worker 的 clear_session（空闲逐出，无 tombstone）
             # 后本进程同对象再保存会静默不持久化。sidecar + Redis 指纹两个
@@ -348,7 +378,7 @@ class MapSpecStore:
             self._invalidate_process_cache(session_id)
         fp = await asyncio.to_thread(_fingerprint_sync, mapspec)
         if (layer_op is None and mutation_revision is None and not _has_extra
-                and self._persisted_fp.get(session_id) == fp):
+                and cached_fp == fp):
             # audit #838: 进程内指纹命中不再无条件短路 —— sidecar 仍在且指纹
             # 一致才算数。会话在别处被清除/盘上目录被回收后，同 id 复用的等值
             # spec 会在此走到全量落盘，而不是静默跳过（磁盘/Redis 双缺失）。
@@ -368,14 +398,13 @@ class MapSpecStore:
         redis_fp = await _get_fp(session_id) if _get_fp is not None else None
         if (layer_op is None and mutation_revision is None and not _has_extra
                 and sidecar_fp == fp and redis_fp == fp):
-            self._persisted_fp[session_id] = fp
-            self._persisted_obj[session_id] = mapspec
+            self._remember_persisted(session_id, fp, mapspec)
             return {"mapspec": mapspec}
 
         # 原子落盘（mapspec.json + revision 快照 + 指纹 sidecar + 裁剪）
         # 整体卸载到线程。#1073: revision sidecar 同步落盘。
         # #1386 R04: 提交前快照，Redis 失败时回滚磁盘，避免盘领先 cache。
-        cached_spec = self._persisted_obj.get(session_id)
+        _, cached_spec = self._cached_persisted(session_id)
         fp_sidecar = mapspec_path.parent / _FP_SIDECAR_NAME
         rev_sidecar = mapspec_path.parent / _REV_SIDECAR_NAME
 
@@ -459,8 +488,7 @@ class MapSpecStore:
                 )
             self._invalidate_process_cache(session_id)
             raise
-        self._persisted_fp[session_id] = fp
-        self._persisted_obj[session_id] = mapspec
+        self._remember_persisted(session_id, fp, mapspec)
         return {
             "mapspec": mapspec,
             "revision_persisted": revision_persisted,

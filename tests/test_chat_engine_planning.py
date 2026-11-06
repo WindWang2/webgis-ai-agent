@@ -366,6 +366,8 @@ async def test_maybe_plan_new_goal_supersedes_old(engine, monkeypatch):
         steps=[planner_mod.PlanStep(n=1, goal="NDVI", tool_family="raster")],
     )
     planner_mod.set_plan("sess-S1", old)
+    from app.services.chat.plan_orchestrator import plan_orchestrator
+    await plan_orchestrator.flush("sess-S1")
     old_canon = plan_store.peek("sess-S1")
     old_id = old_canon.plan_id
 

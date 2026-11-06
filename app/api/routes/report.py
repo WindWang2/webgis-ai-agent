@@ -20,8 +20,9 @@ from app.schemas.report_schema import (  # noqa: F401 - 模块属性保持（tes
 )
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
-from app.services.report_service import ReportService, REPORT_DIR, serialize_report as _serialize_report, file_ext as _file_ext
+from app.services.report_service import recover_interrupted_report, ReportService, REPORT_DIR, serialize_report as _serialize_report, file_ext as _file_ext
 from app.services.mapspec_store import mapspec_store
+from app.api.report_sharing import limit_public_report_access, public_report_projection
 
 import logging
 
@@ -130,6 +131,8 @@ async def list_reports(
     stmt = select(Report).where(Report.session_id == session_id).order_by(Report.created_at.desc())
     result = await db.execute(stmt.limit(100))
     items = result.scalars().all()
+    if any([recover_interrupted_report(report) for report in items]):
+        await db.commit()
     return ApiResponse.ok(data={
         "total": len(items),
         "items": [_serialize_report(r) for r in items],
@@ -149,7 +152,7 @@ def _share_expired(expires_at: Optional[datetime]) -> bool:
     return expires_at < datetime.now(timezone.utc)
 
 
-@router.get("/shared/{share_code}", response_model=ApiResponse)
+@router.get("/shared/{share_code}", response_model=ApiResponse, dependencies=[Depends(limit_public_report_access)])
 async def get_shared_report_info(share_code: str, db: AsyncSession = Depends(get_async_db)):
     """通过分享码获取报告信息"""
     result = await db.execute(select(Report).where(Report.share_code == share_code))
@@ -160,10 +163,10 @@ async def get_shared_report_info(share_code: str, db: AsyncSession = Depends(get
     if _share_expired(report.share_expires_at):
         return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="分享链接已过期")
 
-    return ApiResponse.ok(data=_serialize_report(report))
+    return ApiResponse.ok(data=public_report_projection(report))
 
 
-@router.get("/shared/{share_code}/view")
+@router.get("/shared/{share_code}/view", dependencies=[Depends(limit_public_report_access)])
 async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_async_db)):
     """通过分享码查看/下载报告文件"""
     result = await db.execute(select(Report).where(Report.share_code == share_code))
@@ -212,6 +215,8 @@ async def _check_report_owner(
     await verify_session_owner(
         db, report.session_id, user_id=user_id, owner_token=owner_token
     )
+    if recover_interrupted_report(report):
+        await db.commit()
     return report
 
 
@@ -256,6 +261,23 @@ async def download_report(
     )
 
 
+@router.delete("/{report_id}/share", response_model=ApiResponse)
+async def revoke_share_link(
+    report_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+) -> ApiResponse:
+    """Revoke both public metadata and download access using normal ownership."""
+    report = await _check_report_owner(
+        db, report_id, _user.get("user_id"), owner_token=owner_token
+    )
+    report.share_code = None
+    report.share_expires_at = None
+    await db.commit()
+    return ApiResponse.ok(data={"revoked": True})
+
+
 @router.post("/{report_id}/share", response_model=ApiResponse)
 async def create_share_link(
     report_id: str,
@@ -283,7 +305,7 @@ async def create_share_link(
 
     return ApiResponse.ok(data={
         "share_code": share_code,
-        "share_url": f"/api/v1/reports/shared/{share_code}",
+        "share_url": f"/api/v1/reports/shared/{share_code}/view",
         "expires_at": expires_at.isoformat(),
         "ttl_days": ttl_days,
     })

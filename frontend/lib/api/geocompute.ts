@@ -284,6 +284,7 @@ export async function executePlan(
   try {
     return await apiFetch<ExecutionRun>('/api/v1/geocompute/plans/execute', {
       method: 'POST',
+      timeoutMs: 315_000,
       body: { plan, session_id: opts.sessionId ?? null },
       ownerToken: opts.ownerToken ?? null,
       signal: opts.signal,

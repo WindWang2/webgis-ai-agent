@@ -187,6 +187,7 @@ export function thinFeaturesForViewport(
     area: number;
   }
   const cells = new Map<number, Candidate[]>();
+  const unsortedCells = new Set<number>();
   for (let i = 0; i < fc.features.length; i++) {
     const feat = fc.features[i];
     const bbox = geometryBBox(feat.geometry);
@@ -203,7 +204,12 @@ export function thinFeaturesForViewport(
     const area = Math.max(bbox[2] - bbox[0], 0) * Math.max(bbox[3] - bbox[1], 0);
     const list = cells.get(cell);
     const candidate = { index: i, cell, area };
-    if (list) list.push(candidate);
+    if (list) {
+      // Equal-area point layers already have the required original order.
+      // Only sort cells with an area inversion, retaining the same winners.
+      if (area > list[list.length - 1].area) unsortedCells.add(cell);
+      list.push(candidate);
+    }
     else cells.set(cell, [candidate]);
   }
 
@@ -214,9 +220,11 @@ export function thinFeaturesForViewport(
   const baseQuota = Math.floor(maxFeatures / nonEmptyCells);
   let remainder = maxFeatures % nonEmptyCells;
   const survivingIndices: number[] = [];
-  for (const list of cells.values()) {
+  for (const [cell, list] of cells) {
     // 面积降序（大要素优先），同面积按原序（稳定 → 无渲染抖动）。
-    list.sort((a, b) => (b.area - a.area) || (a.index - b.index));
+    if (unsortedCells.has(cell)) {
+      list.sort((a, b) => (b.area - a.area) || (a.index - b.index));
+    }
     let quota = baseQuota;
     if (remainder > 0) {
       quota += 1;

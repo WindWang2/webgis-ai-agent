@@ -121,7 +121,7 @@
   "kemjzhh": "Readiness probe",
   "kg2r2v6": "Service version",
   "kjo1f01": "Component status",
-  "apiV1StatusDetailedjwt10s": "/api/v1/status/detailed (JWT, 10s cache)",
+  "apiV1StatusDetailedjwt10s": "/api/v1/status/detailed (admin, 10s cache)",
   "k2mc0vi": "Backend component status",
   "khuy6": "Overall",
   "durable": "Durable queue depth",
@@ -244,5 +244,8 @@
   "waterfallAria": "run {runId} stage waterfall",
   "nodeSpanAria": "{node} {state}{attempts}",
   "attemptLabel": " ({count} attempts)",
-  "running": "Running"
+  "running": "Running",
+  "cancelRunTitle": "Cancel this run?",
+  "cancelRunDescription": "Cancellation stops pending work in this run.",
+  "cancelRunFailed": "Could not cancel the run. Try again."
 }

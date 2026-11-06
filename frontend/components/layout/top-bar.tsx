@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
+  LocateFixed,
+  LoaderCircle,
   PanelLeftClose,
   Menu,
   Compass,
@@ -14,6 +16,7 @@ import {
 import { useHudStore } from '@/lib/store/useHudStore';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
 import { useT } from '@/lib/i18n/useT';
+import type { GeolocationError } from '@/lib/hooks/use-geolocation';
 // #1667：窄档（≤768px）右侧集群折叠为「更多」收纳菜单。布局模式走 ADR-0144
 // 三档唯一真相（matchMedia + useSyncExternalStore）而非裸 CSS 断点 —— 同一
 // 判据在 vitest 里可装 matchMedia mock 直接断言折叠行为（390px 命中测试）。
@@ -23,6 +26,9 @@ import BaselayerSwitcher from '@/components/map/baselayer-switcher';
 interface TopBarProps {
   sessionName?: string;
   onNewSession?: () => void;
+  onRequestLocation?: () => void;
+  locationLoading?: boolean;
+  locationError?: GeolocationError | null;
 }
 
 /** 2D/3D 视角 glyph（内联集群与「更多」收纳菜单共用同一图形）。 */
@@ -38,7 +44,7 @@ function ViewToggleGlyph({ is3D }: { is3D: boolean }) {
   );
 }
 
-export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
+export default function TopBar({ sessionName, onNewSession, onRequestLocation, locationLoading = false, locationError = null }: TopBarProps) {
   const t = useT('layout.topbar');
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
   const toggleLeftPanel = useHudStore((s) => s.toggleLeftPanel);
@@ -95,7 +101,7 @@ export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
   const status = getStatusConfig(aiStatus);
 
   /* scan-line position 0-100%（prefers-reduced-motion 下不启动 rAF） */
-  const [scanX, setScanX] = useState(0);
+  const scanRef = useRef<HTMLDivElement>(null);
   const reducedMotion = usePrefersReducedMotion();
   useEffect(() => {
     if (!isActive || reducedMotion) return;
@@ -105,7 +111,7 @@ export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
     const tick = (ts: number) => {
       if (start === null) start = ts;
       const progress = ((ts - start) % DURATION) / DURATION;
-      setScanX(progress * 100);
+      if (scanRef.current) scanRef.current.style.transform = `translateX(${progress * 250}%)`;
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
@@ -129,10 +135,11 @@ export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
       {isActive && (
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, overflow: 'hidden', pointerEvents: 'none' }}>
           <div
+            ref={scanRef}
             style={{
               background: 'linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--agent-accent) 60%, transparent) 50%, transparent 100%)',
               width: '40%',
-              transform: `translateX(${scanX * 2.5}%)`,
+              transform: 'translateX(0)',
               height: '100%'
             }}
           />
@@ -176,6 +183,21 @@ export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
       {/* spacer */}
       <div className="flex-1 min-w-[4px]" />
 
+      {onRequestLocation && <>
+        <button type="button" onClick={onRequestLocation} disabled={locationLoading}
+          title={t(locationLoading ? 'locationLoading' : locationError ? 'locationRetry' : 'requestLocation')}
+          aria-label={t(locationLoading ? 'locationLoading' : locationError ? 'locationRetry' : 'requestLocation')}
+          aria-busy={locationLoading} aria-describedby={locationError ? 'location-error' : undefined}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-surface-hover disabled:opacity-60">
+          {locationLoading ? <LoaderCircle size={14} className="animate-spin" aria-hidden /> : <LocateFixed size={14} aria-hidden />}
+        </button>
+        <span role="status" className="sr-only">{locationLoading ? t('locationLoading') : ''}</span>
+        {locationError && <div id="location-error" role="alert"
+          className="fixed left-4 right-4 top-14 z-[110] mx-auto max-w-sm rounded-md border border-status-warning-border bg-surface-raised p-3 text-body text-ink shadow-lg">
+          <p>{t(`locationErrors.${locationError}`)}</p>
+          <button type="button" onClick={onRequestLocation} className="mt-2 whitespace-nowrap rounded border border-edge-subtle px-3 py-1 text-ink-secondary">{t('locationRetry')}</button>
+        </div>}
+      </>}
       {/* agent status badge */}
       <span
         className="flex shrink-0 items-center gap-1 rounded-pill px-2 py-0.5 text-meta font-medium"

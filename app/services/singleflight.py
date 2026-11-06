@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import threading
+import copy
 from typing import Any, Callable, Dict, Optional
 
 
@@ -45,9 +46,9 @@ class SingleFlight:
             *, version: Optional[Any] = None) -> Any:
         """执行或共享同 key 构建。
 
-        ``version``（可选）：构建完成时的权威版本快照 —— 返回前由调用方
-        比较当前版本，不一致则弃用结果重建（失效during-build 的处理
-        接口；本模块只负责把它传递出来，不作判定）。
+        ``version`` 只是调用方提供的 opaque 标签，原样附在结果上；
+        本模块不读取当前版本，也不检测构建期间失效。调用方必须自行
+        对比权威 fingerprint/revision 再决定发布结果。
         返回 ``(value, version)`` 元组当 version 参数给出时，否则返回值。
         """
         with self._lock:
@@ -64,12 +65,20 @@ class SingleFlight:
                 direct = False
 
         if not leader and not direct:
+            if entry is None:
+                raise RuntimeError("single-flight follower has no registered entry")
             wait_ok = entry.event.wait(self._wait_timeout)
             if not wait_ok:
                 # 超时：诚实降级为自行重建（不共享未知状态）。
                 return self._build_direct(builder, version)
             if entry.error is not None:
-                raise entry.error
+                try:
+                    follower_error = copy.copy(entry.error)
+                except Exception:
+                    # Uncopyable domain exception: retain causal evidence while
+                    # keeping the leader exception/traceback immutable.
+                    raise RuntimeError("single-flight leader failed") from entry.error
+                raise follower_error.with_traceback(None)
             return self._wrap(entry.result, version)
 
         result, error = self._build(builder)

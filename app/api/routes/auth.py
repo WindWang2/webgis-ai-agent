@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import secrets
 import uuid
@@ -17,7 +16,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.password_policy import (
@@ -34,7 +34,6 @@ from app.core.auth import (
     _DUMMY_STORED,
     create_access_token,
     create_refresh_token,
-    get_current_user,
     get_current_user_with_version,
     hash_password,
     verify_password,
@@ -67,7 +66,8 @@ _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 # CLI 显式创建账号而非开放注册。
 # 注意：lazy 读取，便于测试在每个 case 重置环境变量。
 def _allow_public_register() -> bool:
-    return os.getenv("ALLOW_PUBLIC_REGISTER", "").lower() == "true"
+    from app.core.config import settings
+    return bool(settings.ALLOW_PUBLIC_REGISTER)
 
 
 def _get_client_ip(request: Request) -> str:
@@ -222,7 +222,11 @@ async def register(
         token_version=0,
     )
     db.add(user)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="username 或 email 已被占用") from None
     await db.refresh(user)
 
     return await _new_pair_with_family(db, user)
@@ -318,6 +322,10 @@ async def refresh(
 
     Rate limit: 30 req / 5min per user_id -- 防止 misbehaving client 死循环刷新。
     """
+    from app.core.client_ip import client_ip_from
+    limiter = await get_rate_limiter()
+    if not await limiter.is_allowed(f"auth_refresh_ip:{client_ip_from(request)}", 60, 300):
+        raise HTTPException(429, "刷新请求过于频繁，请稍后重试", headers={"Retry-After": "300"})
     payload = verify_token(req.refresh_token)
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
@@ -402,8 +410,21 @@ async def refresh(
             )
         # 严格 rotation：新 jti 前移家族行，再签新 token 对（行先行，一致）
         new_jti = secrets.token_hex(16)
-        row.current_jti = new_jti
-        row.rotated_at = datetime.now(timezone.utc)
+        changed = await db.execute(
+            update(RefreshTokenFamily).where(
+                RefreshTokenFamily.family_id == str(fam),
+                RefreshTokenFamily.user_id == user_id,
+                RefreshTokenFamily.current_jti == str(tok_jti),
+                RefreshTokenFamily.reuse_detected.is_(False),
+            ).values(current_jti=new_jti, rotated_at=datetime.now(timezone.utc))
+        )
+        if changed.rowcount != 1:
+            await db.rollback()
+            await db.execute(update(RefreshTokenFamily).where(
+                RefreshTokenFamily.family_id == str(fam), RefreshTokenFamily.user_id == user_id,
+            ).values(reuse_detected=True))
+            await db.commit()
+            raise HTTPException(status_code=401, detail="Refresh token replayed; family revoked, please re-login")
         await db.commit()
         return _issue_token_pair(user, family_id=str(fam), refresh_jti=new_jti)
 
@@ -416,7 +437,7 @@ async def refresh(
 
 @router.post("/logout", response_model=LogoutResponse)
 async def logout(
-    current: dict = Depends(get_current_user),
+    current: dict = Depends(get_current_user_with_version),
     db: AsyncSession = Depends(get_async_db),
 ) -> LogoutResponse:
     """登出 - bump `User.token_version` 让所有 access/refresh token 失效。

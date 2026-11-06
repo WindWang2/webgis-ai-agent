@@ -74,7 +74,7 @@ export function adaptLineage(graph: LineageGraph): LineageLayout {
         sourceDatasetId: p.source_dataset_id ?? null,
       });
     }
-    edges.push({ from: p.parent_artifact_id, to: graph.artifact_id, kind: 'parent' });
+    edges.push({ from: p.parent_artifact_id, to: p.artifact_id, kind: 'parent' });
   }
   const consumersByNode = new Map<string, { depth: number; tool: string | null }>();
   for (const c of graph.consumers ?? []) {
@@ -83,7 +83,7 @@ export function adaptLineage(graph: LineageGraph): LineageLayout {
     if (!existing || depth < existing.depth) {
       consumersByNode.set(c.consumer_artifact_id, { depth, tool: c.producing_tool ?? null });
     }
-    edges.push({ from: graph.artifact_id, to: c.consumer_artifact_id, kind: 'consumer' });
+    edges.push({ from: c.parent_artifact_id ?? graph.artifact_id, to: c.consumer_artifact_id, kind: 'consumer' });
   }
 
   for (const [id, meta] of parentsByNode) {

@@ -314,7 +314,7 @@ async def _singleflight_async(key: str, ttl: int, lock_ttl_s: int, compute: Call
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 pass
             except Exception:  # noqa: BLE001 — release is best-effort
-                pass
+                logging.getLogger(__name__).warning('Distributed cache lock release failed; expiry remains the cleanup boundary', exc_info=True)
     # #1113 P3-6: same wait budget as sync path — avoid exhausting to_thread pool.
     cached = await asyncio.to_thread(_wait_for_cached, key, min(float(lock_ttl_s), _SYNC_WAIT_BUDGET_S), time.sleep)
     if cached is not None:

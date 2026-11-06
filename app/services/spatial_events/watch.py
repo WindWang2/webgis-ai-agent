@@ -175,11 +175,12 @@ def evaluate_watch(
     # window 簿记：kind/subject 匹配事件计入窗口（与其余谓词独立）
     window_met = True
     if cond.window_s is not None:
-        times = [
-            t for t in new_state.window_event_times
-            if (now - t).total_seconds() <= cond.window_s
-        ]
-        times.append(now)
+        # Late deliveries must not move the event-time window backwards or
+        # discard newer events that have already arrived. No unseen event is
+        # synthesized: the watermark is derived solely from observed times.
+        observed = [*new_state.window_event_times, now]
+        watermark = max(observed)
+        times = sorted(t for t in observed if 0 <= (watermark - t).total_seconds() <= cond.window_s)
         new_state.window_event_times = times[-_MAX_WINDOW_TIMES:]
         window_met = len(new_state.window_event_times) >= int(
             cond.window_min_events or 1

@@ -150,9 +150,9 @@ class TestCheckDistributionShape:
         r = check_distribution_shape(ctx, ["uniform"])
         assert r.ok is False and r.reason_code == "DISTRIBUTION_UNFIT"
 
-    def test_uniform_allowed(self) -> None:
+    def test_normal_like_allowed(self) -> None:
         ctx = _ctx(distribution={"skew": 0.1, "kurtosis": 2.8, "zero_ratio": 0.0})
-        assert check_distribution_shape(ctx, ["uniform"]).ok is True
+        assert check_distribution_shape(ctx, ["normal_like"]).ok is True
 
     def test_unknown_shape_passes(self) -> None:
         assert check_distribution_shape(_ctx(), ["uniform"]).ok is True

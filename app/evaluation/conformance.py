@@ -687,5 +687,6 @@ def build_conformance_corpus(
     cases.sort(key=lambda c: c.id)
     # 去重断言（构造即校验：id 冲突是语料定义错误，fail fast）
     ids = [c.id for c in cases]
-    assert len(ids) == len(set(ids)), "conformance corpus has duplicate ids"
+    if len(ids) != len(set(ids)):
+        raise ValueError("conformance corpus has duplicate ids")
     return cases

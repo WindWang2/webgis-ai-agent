@@ -8,6 +8,7 @@ Call ``maybe_bind_mission_for_pi_turn`` from the chat route (both stream and
 non-stream) before ``stream_prompt`` / ``prompt``. Flag-gated; fail-open.
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 from typing import Any, Optional
 
@@ -51,7 +52,7 @@ def maybe_bind_mission_for_pi_turn(
                 tenant_id=str(org_id or "")[:64],
             )
         except Exception:  # noqa: BLE001
-            pass
+            observe_optional_failure(__name__)
     return bind
 
 

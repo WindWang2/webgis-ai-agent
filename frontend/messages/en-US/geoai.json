@@ -23,6 +23,7 @@
     "submitPrecondition": "Preview, model and at least one prompt are required",
     "submitFailed": "Submit failed: {err}",
     "refinePrecondition": "No refinable candidates (submit first)",
-    "refineFailed": "Refine failed: {err}"
+    "refineFailed": "Refine failed: {err}",
+    "requestFailed": "Request failed"
   }
 }

@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.core.auth import (
-    get_current_user,
+    get_current_user_with_version as get_current_user,
     require_admin,
 )
 from app.schemas.pagination import Page, clamp_pagination
@@ -42,7 +42,7 @@ router = APIRouter(prefix="/data-lifecycle", tags=["数据生命周期 V9"])
 
 
 class AssessRequest(BaseModel):
-    persist: bool = True
+    persist: bool = False
 
 
 class PolicyUpsertRequest(BaseModel):
@@ -88,7 +88,8 @@ def _map_gc_error(exc: Exception) -> HTTPException:
         text = str(exc)
         code = 400 if "只支持 observe" in text else 409
         return HTTPException(status_code=code, detail=text)
-    raise exc
+    logger.error("data lifecycle operation failed", exc_info=exc)
+    return HTTPException(status_code=503, detail="Data lifecycle operation unavailable")
 
 
 def _is_admin(user: dict) -> bool:
@@ -103,12 +104,44 @@ def _owner_scope_values(user: dict) -> List[str]:
     uid = user.get("user_id")
     org = user.get("org_id")
     if uid:
-        values.append(str(uid)[:128])
         values.append(f"user:{uid}"[:128])
     if org is not None and org != "":
-        values.append(str(org)[:128])
         values.append(f"org:{org}"[:128])
+    from app.core.database import SessionLocal
+    from app.models.db_model import Conversation, User
+    from app.models.project import Project
+
+    with SessionLocal() as db:
+        if org not in (None, "") and _is_admin(user):
+            session_ids = db.execute(select(Conversation.id).join(User, User.id == Conversation.user_id).where(User.org_id == org)).scalars()
+        else:
+            session_ids = db.execute(select(Conversation.id).where(Conversation.user_id == str(uid or ""))).scalars()
+        values.extend(f"session:{sid}" for sid in session_ids)
+        values.extend(f"project:{pid}" for pid in db.execute(select(Project.id).where(Project.owner_id == str(uid or ""))).scalars())
     return values
+
+
+def _plan_visibility(user: dict) -> Any:
+    from app.models.data_lifecycle import GcPlan
+    from sqlalchemy import and_
+
+    org = user.get("org_id")
+    if org not in (None, ""):
+        scope = GcPlan.org_id == org
+    else:
+        scope = GcPlan.org_id.is_(None)
+    if not _is_admin(user) or org in (None, ""):
+        scope = and_(scope, GcPlan.created_by == str(user.get("user_id") or ""))
+    return scope
+
+
+def _require_plan_scope(plan: Any, user: dict) -> None:
+    org = user.get("org_id")
+    plan_org = plan.org_id
+    if str(plan_org or "") != str(org or "") or (
+        (not _is_admin(user) or org in (None, "")) and str(plan.created_by) != str(user.get("user_id") or "")
+    ):
+        raise HTTPException(status_code=404, detail="Plan not found")
 
 
 # ── 对象 / 评估 ──────────────────────────────────────────────────────
@@ -138,10 +171,9 @@ def list_lifecycle_objects(
         if tier:
             stmt = stmt.where(LifecycleObject.tier == tier)
             count_stmt = count_stmt.where(LifecycleObject.tier == tier)
-        if not _is_admin(user):
-            scopes = _owner_scope_values(user)
-            stmt = stmt.where(LifecycleObject.owner_scope.in_(scopes))
-            count_stmt = count_stmt.where(LifecycleObject.owner_scope.in_(scopes))
+        scopes = _owner_scope_values(user)
+        stmt = stmt.where(LifecycleObject.owner_scope.in_(scopes))
+        count_stmt = count_stmt.where(LifecycleObject.owner_scope.in_(scopes))
         total = int(db.execute(count_stmt).scalar_one())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
         items = [
@@ -165,14 +197,14 @@ def list_lifecycle_objects(
 @router.post("/assess")
 def run_assess(
     body: AssessRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_admin),
 ) -> dict:
     from app.core.database import SessionLocal
     from app.services.data_lifecycle.policy import assess
 
     # DATA-03：非 admin 只评估自己的 owner scope（此前任意认证用户可
     # 全局枚举并拿到他人 object_id/文件路径）。
-    owner_scopes = None if _is_admin(user) else _owner_scope_values(user)
+    owner_scopes = _owner_scope_values(user)
     with SessionLocal() as db:
         summary = assess(db, persist=body.persist, owner_scopes=owner_scopes)
     return {"success": True, "summary": summary}
@@ -265,7 +297,8 @@ def create_plan(
                 tiers=body.tiers,
                 created_by=(user.get("user_id") if isinstance(user, dict) else None),
                 # DATA-03：非 admin 的计划候选树只含自己的 owner scope。
-                owner_scopes=None if _is_admin(user) else _owner_scope_values(user),
+                owner_scopes=_owner_scope_values(user),
+                org_id=user.get("org_id"),
             )
             return {"success": True, "plan": _plan_view(plan)}
     except Exception as exc:  # noqa: BLE001 — 映射状态机/词表错误
@@ -290,10 +323,9 @@ def list_plans(
         if status:
             stmt = stmt.where(GcPlan.status == status)
             count_stmt = count_stmt.where(GcPlan.status == status)
-        if not _is_admin(user):
-            uid = user.get("user_id") if isinstance(user, dict) else None
-            stmt = stmt.where(GcPlan.created_by == uid)
-            count_stmt = count_stmt.where(GcPlan.created_by == uid)
+        visibility = _plan_visibility(user)
+        stmt = stmt.where(visibility)
+        count_stmt = count_stmt.where(visibility)
         total = int(db.execute(count_stmt).scalar_one())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
     return Page(
@@ -314,14 +346,12 @@ def get_plan_detail(
         plan = get_plan(db, plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Plan not found")
-        if not _is_admin(user):
-            uid = user.get("user_id") if isinstance(user, dict) else None
-            if plan.created_by != uid:
-                raise HTTPException(status_code=404, detail="Plan not found")
+        _require_plan_scope(plan, user)
         return {"success": True, "plan": _plan_view(plan)}
 
 
-def _admin_action(plan_id: str, action: str, actor: Optional[str]):
+def _admin_action(plan_id: str, action: str, user: dict) -> dict:
+    actor = user.get("user_id")
     from app.core.database import SessionLocal
     from app.services.data_lifecycle.gc_plan import (
         GcPlanError,
@@ -333,6 +363,9 @@ def _admin_action(plan_id: str, action: str, actor: Optional[str]):
         plan = get_plan(db, plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Plan not found")
+        _require_plan_scope(plan, user)
+        from app.services.data_lifecycle.gc_plan import _lock_plan
+        _lock_plan(db, plan)
         try:
             transition(plan, action, actor=actor)
         except GcPlanError as exc:
@@ -344,19 +377,19 @@ def _admin_action(plan_id: str, action: str, actor: Optional[str]):
 @router.post("/gc/plans/{plan_id}/approve")
 def approve_plan(plan_id: str, admin: dict = Depends(require_admin)) -> dict:
     return _admin_action(plan_id, "approve",
-                         admin.get("user_id") if isinstance(admin, dict) else None)
+                         admin)
 
 
 @router.post("/gc/plans/{plan_id}/reject")
 def reject_plan(plan_id: str, admin: dict = Depends(require_admin)) -> dict:
     return _admin_action(plan_id, "reject",
-                         admin.get("user_id") if isinstance(admin, dict) else None)
+                         admin)
 
 
 @router.post("/gc/plans/{plan_id}/cancel")
 def cancel_plan(plan_id: str, admin: dict = Depends(require_admin)) -> dict:
     return _admin_action(plan_id, "cancel",
-                         admin.get("user_id") if isinstance(admin, dict) else None)
+                         admin)
 
 
 @router.post("/gc/plans/{plan_id}/execute")
@@ -371,6 +404,7 @@ def execute_plan_endpoint(plan_id: str, admin: dict = Depends(require_admin)) ->
         plan = get_plan(db, plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Plan not found")
+        _require_plan_scope(plan, admin)
         if plan.status != "approved":
             raise HTTPException(
                 status_code=409,
@@ -384,7 +418,7 @@ def execute_plan_endpoint(plan_id: str, admin: dict = Depends(require_admin)) ->
             params={"plan_id": plan_id},
             task_kwargs={"plan_id": plan_id,
                          "actor": admin.get("user_id") if isinstance(admin, dict) else None},
-            idempotent=False,
+            idempotent=True,
         )
     except GcPlanError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -404,6 +438,7 @@ def rollback_plan_endpoint(plan_id: str, admin: dict = Depends(require_admin)) -
         plan = get_plan(db, plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Plan not found")
+        _require_plan_scope(plan, admin)
         try:
             result = rollback_plan(
                 db, plan,
@@ -417,8 +452,6 @@ def rollback_plan_endpoint(plan_id: str, admin: dict = Depends(require_admin)) -
 @router.post("/gc/plans/{plan_id}/purge")
 def purge_plan_endpoint(plan_id: str, admin: dict = Depends(require_admin)) -> dict:
     """观察期后的物理删（显式；返回 409 若观察期未到）。"""
-    import datetime as _dt
-
     from app.core.database import SessionLocal
     from app.services.data_lifecycle.gc_plan import get_plan, purge_staging
 
@@ -426,16 +459,11 @@ def purge_plan_endpoint(plan_id: str, admin: dict = Depends(require_admin)) -> d
         plan = get_plan(db, plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Plan not found")
-        if plan.status not in ("done", "failed"):
-            raise HTTPException(status_code=409,
-                                detail=f"plan 状态为 '{plan.status}'，仅终态可 purge")
-        if plan.staging_expires_at and plan.staging_expires_at.replace(
-                tzinfo=_dt.timezone.utc) > _dt.datetime.now(_dt.timezone.utc):
-            raise HTTPException(
-                status_code=409,
-                detail=f"staging 观察期未到（{plan.staging_expires_at.isoformat()}）",
-            )
-        result = purge_staging(plan)
+        _require_plan_scope(plan, admin)
+        try:
+            result = purge_staging(plan, db=db)
+        except Exception as exc:
+            raise _map_gc_error(exc)
         return {"success": True, "result": result}
 
 

@@ -104,6 +104,8 @@ def setup_db():
         db.merge(User(id="dq-owner", username="dq-owner",
                       email="dq-owner@example.com", password_hash="x",
                       role="viewer", is_active=True))
+        db.merge(User(id="dq-intruder", username="dq-intruder", email="dq-intruder@example.com",
+                      password_hash="x", role="viewer", is_active=True))
         db.commit()
     yield
 
@@ -250,13 +252,14 @@ def test_submit_foreign_session_is_404():
 
 def test_run_quality_evaluate_reuses_completed_report():
     session_id = "dq-reuse-session"
+    _ensure_session(session_id, user_id="dq-owner")
     import asyncio
 
     ref_id = asyncio.run(session_data_manager.store(session_id, _BAD_FC,
                                                     prefix="dq"))
-    first = run_quality_evaluate(0, session_id=session_id, ref=ref_id)
+    first = run_quality_evaluate(0, session_id=session_id, ref=ref_id, created_by="dq-owner")
     assert first["status"] == "completed" and not first["reused"]
-    second = run_quality_evaluate(0, session_id=session_id, ref=ref_id)
+    second = run_quality_evaluate(0, session_id=session_id, ref=ref_id, created_by="dq-owner")
     assert second["status"] == "completed" and second["reused"]
     assert second["report_id"] == first["report_id"]
 

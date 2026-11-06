@@ -191,8 +191,7 @@ describe('collab client + adopt（mock WS）', () => {
 
   it('认证：匿名会话以 session subprotocol 携带 owner token', () => {
     const ws = lastSocket();
-    expect(ws.protocols?.[0]).toBe('session');
-    expect(ws.protocols?.[1]).toBe('owner-tok');
+    expect(ws.protocols).toEqual(['auth-frame-v1']);
   });
 
   it('F-07: same-sid restart connects once the owner_token arrives late', () => {
@@ -205,7 +204,7 @@ describe('collab client + adopt（mock WS）', () => {
     setMapSpecOwnerToken('sess-late', 'late-tok');
     startWorkbenchCollabV6('sess-late');
     expect(MockWebSocket.instances).toHaveLength(1);
-    expect(lastSocket().protocols).toEqual(['session', 'late-tok']);
+    expect(lastSocket().protocols).toEqual(['auth-frame-v1']);
     // Idempotent while a socket exists.
     startWorkbenchCollabV6('sess-late');
     expect(MockWebSocket.instances).toHaveLength(1);
@@ -220,7 +219,7 @@ describe('collab client + adopt（mock WS）', () => {
     setAuth({ accessToken: 'jwt-1', refreshToken: null }, null);
     try {
       expect(MockWebSocket.instances).toHaveLength(1);
-      expect(lastSocket().protocols).toEqual(['bearer', 'jwt-1']);
+      expect(lastSocket().protocols).toEqual(['auth-frame-v1']);
     } finally {
       clearAuth();
     }

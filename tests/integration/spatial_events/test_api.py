@@ -77,7 +77,7 @@ def api(se_factory, monkeypatch):
 
     app.dependency_overrides[require_admin] = lambda: {"id": "alice", "org_id": "org-a", "role": "admin"}
     yield SimpleNamespace(client=TestClient(app), ledger=ledger, runtime=runtime,
-                          service=service)
+                          service=service, factory=se_factory)
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(require_admin, None)
     reset_mission_runtime_for_tests()
@@ -369,7 +369,15 @@ class TestReplayAPI:
 
 
 class TestPortfolioAPI:
-    def test_summary_projects_detail(self, api):
+    def test_summary_projects_detail(self, api, monkeypatch):
+        from app.models.db_model import User, Organization
+        from app.models.project import Project
+        with api.factory() as db:
+            db.add(Organization(id=1, name="API org", slug="api-org"))
+            db.add(User(id="alice", username="alice-api", email="alice-api@example.test", role="editor", org_id=1, is_active=True))
+            db.add(Project(id="proj-1", org_id=1, owner_id="alice", name="Real project", status="active"))
+            db.commit()
+        monkeypatch.setattr("app.core.database.SessionLocal", api.factory)
         api.client.post("/api/v1/spatial-events/events",
                         json=_ingest_body(project_id="proj-1"))
         s = api.client.get("/api/v1/portfolio/summary").json()

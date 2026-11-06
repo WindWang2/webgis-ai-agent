@@ -50,7 +50,8 @@ def test_cp18_conflict_is_retried(monkeypatch):
         assert v1.version == 1
         _stale_first(monkeypatch, 1)
         v2 = versioning.create_version(db, _TID, {"a": 2})
-        assert v2.version == 2 and v2.parent_version_id == v1.id
+        assert v2.version == 2 and v2.parent_version_id is None
+        assert versioning.resolve_payload(db, v2)[0] == {"a": 2}
 
 
 def test_cp18_exhausted_retries_raise_conflict(monkeypatch):

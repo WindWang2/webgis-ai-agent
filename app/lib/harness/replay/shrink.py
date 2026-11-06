@@ -103,7 +103,7 @@ async def shrink_scenario(
     result.reproduced = await _check(oracle, result.scenario)
     result.rounds = rounds
     result.candidates_tried = candidates
-    result.truncated_by_budget = budget_exceeded
+    result.truncated_by_budget = budget_exceeded or (progressed and rounds >= max_rounds)
     return result
 
 
@@ -120,7 +120,7 @@ async def _shrink_dimension(
 ) -> Dict[str, Any]:
     """单维度 ddmin：粗块 → 粒度减半 → 单元素；采纳即以新序列重开。"""
     while True:
-        if state["candidates"] >= max_candidates or rounds >= max_rounds:
+        if state["candidates"] >= max_candidates or rounds > max_rounds:
             state["exceeded"] = True
             return {"progressed": False,
                     "candidates": state["candidates"], "exceeded": True}
@@ -179,7 +179,7 @@ def _identity_of(scenario: Scenario, dimension: str, index: Any) -> str:
     if dimension == "faults":
         try:
             fault = scenario.faults[int(index)] or {}
-            return str(fault.get("kind") or fault.get("op")
+            return str(fault.get("type")
                        or f"fault[{index}]")
         except (IndexError, TypeError):
             return f"fault[{index}]"
@@ -251,9 +251,21 @@ async def _check(oracle: Oracle, scenario: Scenario) -> bool:
 def replayer_oracle(replayer: Any) -> Oracle:
     """OfflineReplayer 的 ok 判定 oracle：场景重放红（not ok）→ True。"""
 
+    target_signature = None
     async def _oracle(scenario: Scenario) -> bool:
+        nonlocal target_signature
         result = await replayer.replay_scenario(scenario)
-        return not result.ok
+        if result.ok:
+            return False
+        # Diff values and turn positions can change while shrinking. Preserve
+        # the failing contract paths/classes, rather than adopting any red run.
+        signature = frozenset((str(d.get("path")), str(d.get("diff_class")))
+            for turn in result.turns for d in turn.exact_diffs)
+        if not signature:
+            signature = frozenset({("not_run", str(result.not_run))})
+        if target_signature is None:
+            target_signature = signature
+        return signature == target_signature
 
     return _oracle
 

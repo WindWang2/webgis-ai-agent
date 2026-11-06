@@ -412,7 +412,7 @@ async def test_scenario9_interrupt_resume_continue_full_green():
                 for s in restored.gis_chapter["workflow_instance"]["stages"]]
     assert got_caps == caps  # graph mapping 还原（含拓扑序）
     assert restored.gis_chapter["resumed_from"]["source_session_id"] == sid
-    assert result["workflow_verify"]["verdict"] == VERDICT_LIVE  # 行指纹一致
+    assert result["workflow_verify"]["verdict"] == VERDICT_STALE  # Missing restored refs change the actual stage facts
     # 已执行节点的证据随中断丢失 → stale 标记正确并进 recompute
     by_cap = {s["capability"]: s
               for s in restored.gis_chapter["workflow_instance"]["stages"]}

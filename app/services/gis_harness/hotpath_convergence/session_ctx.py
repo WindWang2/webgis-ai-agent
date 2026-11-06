@@ -61,6 +61,12 @@ def get_turn_context(session_id: str, tenant_id: str = "") -> HotpathTurnContext
         return ctx
 
 
+def peek_turn_context(session_id: str, tenant_id: str = "") -> Optional[HotpathTurnContext]:
+    """Read an existing tenant-scoped context without allocating or evicting."""
+    with _LOCK:
+        return _CTX.get(_ctx_key(session_id, tenant_id))
+
+
 def set_skill_bundle(
     session_id: str,
     bundle: Any,
@@ -92,7 +98,7 @@ def get_or_create_claim_store(session_id: str, tenant_id: str = ""):
 
 
 
-def find_claim(claim_id: str):
+def find_claim(claim_id: str, *, tenant_id: str):
     """Locate a claim across process-local turn ClaimStores (#1406).
 
     Knowledge projections carry ``verified_by`` claim ids without a session
@@ -105,6 +111,8 @@ def find_claim(claim_id: str):
         return None
     with _LOCK:
         for ctx in _CTX.values():
+            if ctx.tenant_id != str(tenant_id or "")[:64]:
+                continue
             store = ctx.claim_store
             if store is None:
                 continue
@@ -114,7 +122,7 @@ def find_claim(claim_id: str):
     return None
 
 
-def find_claim_store(claim_id: str):
+def find_claim_store(claim_id: str, *, tenant_id: str):
     """Locate the ClaimStore *holding* a claim (ADR-0215 revalidation path).
 
     Mirrors :func:`find_claim` (bounded scan, fail-closed to None) but
@@ -127,6 +135,8 @@ def find_claim_store(claim_id: str):
         return None
     with _LOCK:
         for ctx in _CTX.values():
+            if ctx.tenant_id != str(tenant_id or "")[:64]:
+                continue
             store = ctx.claim_store
             if store is None:
                 continue
@@ -179,6 +189,7 @@ __all__ = [
     "find_session_tenant",
     "get_or_create_claim_store",
     "get_turn_context",
+    "peek_turn_context",
     "reset_turn_context",
     "set_mission_id",
     "set_skill_bundle",

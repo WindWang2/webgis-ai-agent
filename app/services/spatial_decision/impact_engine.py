@@ -8,7 +8,8 @@ import math
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import geopandas as gpd
-from shapely.geometry import shape, Point, MultiPolygon, box
+from shapely.geometry import shape, Point, box
+from shapely.ops import unary_union
 from app.lib.geo_processor.core import to_utm_gdf
 from app.services.spatial_decision.models import TargetAreaSpec, SpatialImpactZone
 
@@ -42,7 +43,7 @@ class SpatialImpactEngine:
                 geoms = [shape(f["geometry"]) for f in features if f.get("geometry")]
                 if len(geoms) == 1:
                     return geoms[0]
-                return MultiPolygon(geoms) if all(g.geom_type in ("Polygon", "MultiPolygon") for g in geoms) else geoms[0]
+                return unary_union(geoms)
             elif target_area.get("type") == "Feature":
                 return shape(target_area["geometry"])
             elif "type" in target_area:
@@ -255,6 +256,18 @@ class SpatialImpactEngine:
         elif scenario_type == "traffic_restriction":
             direct_r = 2000.0
             indirect_r = 5000.0
+
+        # Explicit user parameters take precedence over scenario and rule defaults.
+        for rule in rules or []:
+            params = getattr(rule, "parameters", None) or {}
+            direct_r = float(params.get("direct_radius_m", direct_r))
+            indirect_r = float(params.get("indirect_radius_m", indirect_r))
+        parameters = parameters or {}
+        direct_r = max(0.0, float(parameters.get("direct_radius_m", direct_r)))
+        indirect_r = max(direct_r, float(parameters.get("indirect_radius_m", indirect_r)))
+        import math
+        if not all(math.isfinite(radius) and 0 <= radius <= 100_000 for radius in (direct_r, indirect_r)):
+            raise ValueError("impact radii must be finite and between 0 and 100000 meters")
 
         return self.generate_impact_zones(
             target_area=target_area,

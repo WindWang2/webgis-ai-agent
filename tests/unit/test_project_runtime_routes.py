@@ -68,6 +68,8 @@ def _setup(tmp_path, monkeypatch):
         s.merge(User(id="rt-owner", username="rt-owner",
                      email="rt-owner@example.com", password_hash="x",
                      role="viewer", is_active=True))
+        s.merge(User(id="someone-else", username="rt-intruder", email="rt-intruder@example.com",
+                     password_hash="x", role="viewer", is_active=True))
         s.merge(Project(id="proj-rt-route", name="route", owner_id="rt-owner"))
         s.merge(ProjectDataset(
             id="ds-rt-route", project_id="proj-rt-route", name="poi",

@@ -11,11 +11,12 @@ from app.services.chat.pi_turn_context import TURN_CONTEXT_MARKER, verify_turn_t
 
 
 @pytest.mark.asyncio
-async def test_prompt_signed_token_shares_single_mint(monkeypatch):
+@pytest.mark.parametrize("other_active", [False, True])
+async def test_prompt_signed_token_shares_single_mint(monkeypatch, other_active):
     """A reminted turn_id after issue_turn_token makes /pi-tools/execute 409.
 
     Drive the shipped prompt() path: incrementing mint + captured RPC payload
-    must share one id with _active_turn_context.
+    must share one id with the actual session-keyed active turn entry.
     """
     minted: list[str] = []
 
@@ -25,6 +26,10 @@ async def test_prompt_signed_token_shares_single_mint(monkeypatch):
         return tid
 
     monkeypatch.setattr(bridge_mod, "_mint_turn_id", counting_mint)
+    if other_active:
+        monkeypatch.setitem(bridge_mod._active_turns, "unrelated-session", bridge_mod._ActiveTurnEntry(
+            "unrelated-session", "unrelated-turn", None, context=("unrelated-session", "unrelated-turn"),
+        ))
 
     captured: dict = {}
 
@@ -34,7 +39,10 @@ async def test_prompt_signed_token_shares_single_mint(monkeypatch):
 
         async def request(self, command: str, data=None):
             captured["data"] = data
-            captured["context"] = bridge_mod._active_turn_context
+            entry = bridge_mod.get_active_turn_entry(data["sessionId"])
+            assert entry is not None
+            captured["context"] = entry.context
+            captured["turn_id"] = entry.turn_id
             await self.events.put({"type": "agent_end", "willRetry": False})
             await self.events.put({"type": "agent_settled"})
             return {}
@@ -51,5 +59,8 @@ async def test_prompt_signed_token_shares_single_mint(monkeypatch):
     assert payload is not None
     assert payload["turn_id"] == "turn-0001"
     assert captured["context"] == ("sess-turn", "turn-0001")
+    assert captured["turn_id"] == payload["turn_id"]
+    if other_active:
+        assert bridge_mod.get_active_turn_entry("unrelated-session").turn_id == "unrelated-turn"
     # mint helper itself still works after the patch is local to this test
     assert _mint_turn_id().startswith("turn-")

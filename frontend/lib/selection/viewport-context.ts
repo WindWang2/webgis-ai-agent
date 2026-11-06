@@ -35,6 +35,7 @@ let currentContext: ViewportContext | null = null;
 let generation = 0;
 let epoch = 0;
 let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingCommit: (() => boolean) | null = null;
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -79,12 +80,18 @@ export function publishViewportContext(
   if (!bbox.every((v) => Number.isFinite(v)) || !Number.isFinite(zoom)) return false;
   const capturedEpoch = epoch;
   if (debounceMs <= 0) {
+    if (pendingTimer) clearTimeout(pendingTimer);
+    pendingTimer = null;
+    pendingCommit = null;
     return commit(bbox, zoom, capturedEpoch);
   }
   if (pendingTimer) clearTimeout(pendingTimer);
+  pendingCommit = () => commit(bbox, zoom, capturedEpoch);
   pendingTimer = setTimeout(() => {
     pendingTimer = null;
-    commit(bbox, zoom, capturedEpoch);
+    const pending = pendingCommit;
+    pendingCommit = null;
+    pending?.();
   }, debounceMs);
   return false;
 }
@@ -99,7 +106,7 @@ function commit(
   if (currentContext && fingerprint(currentContext.bbox, currentContext.zoom) === fp) {
     return false; // 重复指纹抑制
   }
-  currentContext = { bbox: [...bbox] as [number, number, number, number], zoom, generation: ++generation, at: Date.now() };
+  currentContext = { bbox: [...bbox] as [number, number, number, number], zoom, generation: generation + 1, at: Date.now() };
   emit();
   return true;
 }
@@ -110,12 +117,15 @@ export function flushViewportContext(): void {
     clearTimeout(pendingTimer);
     pendingTimer = null;
   }
+  const pending = pendingCommit;
+  pendingCommit = null;
+  pending?.();
 }
 
 /** 会话切换：视口上下文属于当前会话。 */
 export function resetViewportContext(): void {
-  flushViewportContext();
   epoch += 1;
+  flushViewportContext();
   if (currentContext) {
     currentContext = null;
     emit();

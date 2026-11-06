@@ -235,7 +235,7 @@ def select_backend(
     disclosure = _approximation_disclosure(descriptor, chosen, matched)
 
     resource_warnings: List[str] = []
-    estimated_bytes = _estimate_resource_bytes(descriptor, scale, n, resource_warnings)
+    estimated_bytes = _estimate_resource_bytes(descriptor, scale, scale.feature_count, resource_warnings)
 
     if scale.estimated_bytes is not None and scale.estimated_bytes > _MEMORY_NOTE_BYTES:
         rationale = (

@@ -1,11 +1,17 @@
 {
  "category": "district_comparison",
+ "decisions": [],
  "description": "district_comparison 参数变体 1",
  "dispatch_backed": false,
+ "expect_calibration": [],
+ "expect_source": "",
  "faults": [],
+ "receipt_backed": false,
+ "registry_digest": "",
  "scenario_id": "core-district_comparison-01",
  "schema_version": 1,
  "tags": [],
+ "tool_registry": {},
  "turns": [
   {
    "cartography": {
@@ -36,7 +42,7 @@
         116.4,
         39.9
        ],
-       "zoom": 11
+       "zoom": 7.25
       }
      }
     },
@@ -46,7 +52,7 @@
        "id": "district-a-1",
        "paint": {
         "circle-color": "#3182bd",
-        "circle-radius": 5
+        "circle-radius": 4.0
        },
        "source": "src-district-a-1",
        "type": "circle"
@@ -55,7 +61,7 @@
        "id": "district-b-1",
        "paint": {
         "circle-color": "#3182bd",
-        "circle-radius": 5
+        "circle-radius": 4.0
        },
        "source": "src-district-b-1",
        "type": "circle"
@@ -106,7 +112,7 @@
        116.4,
        39.9
       ],
-      "zoom": 11
+      "zoom": 7.25
      }
     },
     "visual_judge": true
@@ -145,6 +151,7 @@
      },
      "call_id": "call-upsert-district-a-1",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -160,6 +167,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {

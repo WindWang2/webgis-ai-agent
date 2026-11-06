@@ -108,6 +108,22 @@ def _not_found():
     return HTTPException(status_code=404, detail="not found")
 
 
+async def _authorize_project_write(project_id: str, user: Dict[str, Any]) -> None:
+    if not project_id:
+        return
+
+    def allowed() -> bool:
+        from app.core.database import SessionLocal
+        from app.services.project_service import ProjectService
+
+        with SessionLocal() as db:
+            return ProjectService.get_project_for_write(
+                db, project_id, user_id=user.get("user_id"), org_id=_org(user)) is not None
+
+    if not await asyncio.to_thread(allowed):
+        raise _not_found()
+
+
 # ── 包 ───────────────────────────────────────────────────────────────────
 
 @router.post("/packages/register", response_model=PackageRegisterResponse)
@@ -118,6 +134,7 @@ async def register_package(
     svc = _svc()
     owner = _owner(user)
     _check_profile(body.profile)
+    await _authorize_project_write(body.project_id, user)
     try:
         result = await asyncio.to_thread(
             svc.compile_and_register, body.query, owner_scope=owner,
@@ -177,30 +194,33 @@ async def create_instance(
     user: Dict[str, Any] = Depends(get_current_user),
     owner_token: Optional[str] = Depends(get_owner_token),
 ):
-    svc = _svc()
-    await _authorize_session(body.session_id, user, owner_token)
-    owner = _owner(user, body.session_id)
-    # ADR-0139 P5：org 配额（并发 + 速率；越限 QUOTA → 429；面不可用放行）
     from app.services import org_quota
+    await _authorize_project_write(body.project_id, user)
+    async with org_quota.serialized_admission(user):
+        svc = _svc()
+        await _authorize_session(body.session_id, user, owner_token)
+        owner = _owner(user, body.session_id)
+        # ADR-0139 P5：org 配额（并发 + 速率；越限 QUOTA → 429；面不可用放行）
+        from app.services import org_quota
 
-    try:
-        org_eff = await org_quota.enforce_for_principal(user)
-    except org_quota.QuotaExceededError:
-        raise
-    except Exception:  # noqa: BLE001
-        org_eff = ""
-    try:
-        inst = await asyncio.to_thread(
-            svc.instantiate, body.package_id, owner_scope=owner,
-            session_id=body.session_id, version=body.version,
-            project_id=body.project_id, org_id=org_eff or _org(user))
-    except SV.WorkflowRuntimeError as e:
-        status = 404 if e.code == "PACKAGE_NOT_FOUND" else 422
-        raise _http(e.code, status, e.detail)
-    nodes = await asyncio.to_thread(svc.store.get_nodes,
-                                    inst["instance_id"])
-    return {"success": True,
-            "instance": PR.instance_projection(inst, nodes)}
+        try:
+            org_eff = await org_quota.enforce_for_principal(user)
+        except org_quota.QuotaExceededError:
+            raise
+        except Exception:  # noqa: BLE001
+            raise
+        try:
+            inst = await asyncio.to_thread(
+                svc.instantiate, body.package_id, owner_scope=owner,
+                session_id=body.session_id, version=body.version,
+                project_id=body.project_id, org_id=org_eff or _org(user))
+        except SV.WorkflowRuntimeError as e:
+            status = 404 if e.code == "PACKAGE_NOT_FOUND" else 422
+            raise _http(e.code, status, e.detail)
+        nodes = await asyncio.to_thread(svc.store.get_nodes,
+                                        inst["instance_id"])
+        return {"success": True,
+                "instance": PR.instance_projection(inst, nodes)}
 
 
 @router.post("/instances/{instance_id}/run", response_model=InstanceRunResponse)

@@ -48,11 +48,17 @@ def geoai_registry():
 
 
 @pytest.fixture()
-def patched_service(service, monkeypatch):
+def patched_service(service, monkeypatch, tmp_path):
     """工具/路由内的 get_modelops_service → 测试夹具实例。"""
     monkeypatch.setattr(
         "app.services.modelops.service.get_modelops_service", lambda *a, **k: service
     )
+    from functools import partial
+    # Direct numerical tool fixture: explicitly trusted in-process input root.
+    # HTTP fixtures retain their independent path gates.
+    monkeypatch.setattr(service, "run_inference_async", partial(service.run_inference_async, allowed_roots=[tmp_path]))
+    monkeypatch.setattr(service, "compile_geo_prompt", partial(service.compile_geo_prompt, allowed_roots=[tmp_path]))
+    monkeypatch.setattr(service, "run_prompt_refine", partial(service.run_prompt_refine, allowed_roots=[tmp_path]))
     return service
 
 
@@ -197,7 +203,7 @@ def api_client(service, monkeypatch, tmp_path):
             return normalize_scope(project_id=pid)
         return {}
 
-    async def _wide_roots(db, scope):
+    async def _wide_roots(db, scope, **kwargs):
         from pathlib import Path as _P
         from app.core.config import settings as _settings
         from app.services.modelops.service import get_modelops_service as _gms
@@ -210,6 +216,12 @@ def api_client(service, monkeypatch, tmp_path):
     monkeypatch.setattr("app.api.routes.geoai._bind_owner_scope", _passthrough_bind)
     monkeypatch.setattr("app.api.routes.geoai._roots_for_scope", _wide_roots)
 
+    from app.core.database import Base, Engine, SessionLocal
+    from app.models.db_model import User
+    Base.metadata.create_all(bind=Engine)
+    with SessionLocal() as db:
+        db.merge(User(id="geoai-tester", username="geoai-tester", email="geoai-tester@example.com", password_hash="x", role="editor", is_active=True))
+        db.commit()
     from app.main import app
 
     with TestClient(app) as client:
@@ -226,6 +238,12 @@ def test_geoai_http_rejects_anonymous(service, monkeypatch, tmp_path):
 
     monkeypatch.setattr(app_settings, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(app_settings, "AUTH_DISABLED", False, raising=False)
+    from app.core.database import Base, Engine, SessionLocal
+    from app.models.db_model import User
+    Base.metadata.create_all(bind=Engine)
+    with SessionLocal() as db:
+        db.merge(User(id="geoai-tester", username="geoai-tester", email="geoai-tester@example.com", password_hash="x", role="editor", is_active=True))
+        db.commit()
     from app.main import app
 
     with TestClient(app) as client:

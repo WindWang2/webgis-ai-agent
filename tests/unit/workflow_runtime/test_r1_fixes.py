@@ -309,7 +309,7 @@ def test_m1_ready_node_binding_failure_goes_blocked():
 
 # ── M2: 跨会话探测自毁修复 + anonymous 同域 ──────────────────────────────
 
-def test_m2_reuse_probe_uses_artifact_session_not_current():
+def test_cross_session_run_recomputes_instead_of_reusing_foreign_ref():
     """产物属会话 A；当前 run 会话 B —— 探测必须用 artifact_session_id
     （旧实现用当前会话探测 → 必失败 → 误删活缓存并重算）。"""
     dag = _chain_dag()
@@ -336,8 +336,8 @@ def test_m2_reuse_probe_uses_artifact_session_not_current():
         package_fingerprint="pf" * 16, package_id="recipe-r1"))
     assert r2["status"] == "succeeded"
     node = env.svc.store.get_node(iid, "transform:buffer:t1")
-    assert (node["reuse"] or {}).get("reused") is True
-    assert env.exec_calls == calls_first  # 未误删未重算
+    assert not (node["reuse"] or {}).get("reused")
+    assert len(env.exec_calls) > len(calls_first)  # 未误删未重算
 
 
 def test_m2_anonymous_domain_find_scoped_by_session(env=None):

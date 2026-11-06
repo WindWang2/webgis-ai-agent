@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import copy
 
 from app.lib.cartography.layout_description import build_layout_ir
 
@@ -54,9 +55,17 @@ def plan_atlas_pages(
             "code": "atlas_truncated",
             "detail": f"场景数 {len(scenarios)} 超上界 {MAX_ATLAS_PAGES}，已截断",
         })
+    used_ids: set[str] = set()
     for idx, scenario in enumerate(scenarios[:MAX_ATLAS_PAGES]):
         sid = str(scenario.get("id") or f"page{idx + 1}")
-        title = str(scenario.get("title") or sid)
+        original_sid = sid
+        suffix = 1
+        while sid in used_ids:
+            sid = f"{original_sid}__{suffix}"
+            suffix += 1
+        used_ids.add(sid)
+        title = str(scenario.get("title") or original_sid)
+        page_title = f"{atlas_title} · {title}" if atlas_title else title
         components: List[Dict[str, Any]] = [
             {"id": f"{sid}__map", "kind": "inset_map", "role": "primary",
              "frame": {"x": 0.03, "y": 0.11, "width": 0.94, "height": 0.8,
@@ -64,13 +73,11 @@ def plan_atlas_pages(
              "style": {"token": f"map.{scenario.get('map_kind', 'default')}"}},
         ]
         for chrome in _SHARED_CHROME:
-            entry = dict(chrome)
+            entry = copy.deepcopy(chrome)
             entry["id"] = f"{sid}__{chrome['id']}"
             if chrome["id"] == "title":
-                entry = dict(entry)
-                entry["typography"] = dict(entry["typography"])
+                entry["content"] = {"text": page_title}
             components.append(entry)
-        page_title = f"{atlas_title} · {title}" if atlas_title else title
         ir = build_layout_ir(
             canvas=canvas, components=components, degradations=list(degradations),
         )

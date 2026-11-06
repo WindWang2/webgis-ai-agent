@@ -226,7 +226,9 @@ def _payload_bbox(payload: Mapping[str, Any]) -> Optional[List[float]]:
             # usable range without inventing a camera outside the contract.
             bounded_zoom = min(30.0, max(-20.0, float(zoom)))
             span = 360.0 / (2.0 ** (bounded_zoom - 1.0))
-            return [x - span / 2.0, y - span / 4.0, x + span / 2.0, y + span / 4.0]
+            # Match the camera planner's default 16:9 latitude constraint.
+            half_lat_span = span / (4.0 * (16.0 / 9.0))
+            return [x - span / 2.0, y - half_lat_span, x + span / 2.0, y + half_lat_span]
         return [x, y, x, y]
     xs: List[float] = []
     ys: List[float] = []
@@ -234,7 +236,10 @@ def _payload_bbox(payload: Mapping[str, Any]) -> Optional[List[float]]:
         xs.append(point[0])
         ys.append(point[1])
     if xs:
-        return [min(xs), min(ys), max(xs), max(ys)]
+        from app.lib.gis.longitude import minimal_longitude_interval
+
+        west, east = minimal_longitude_interval(xs)
+        return [west, min(ys), east, max(ys)]
     return None
 
 
@@ -242,12 +247,22 @@ def _union_bbox(boxes: Sequence[Optional[Sequence[float]]]) -> Optional[List[flo
     boxes = [b for b in boxes if b]
     if not boxes:
         return None
-    # 含跨反子午线盒（e<w）时统一展开到无环绕域再做并集。
-    if any(b[2] < b[0] for b in boxes):
-        boxes = [[b[0], b[1], b[2] + 360.0 if b[2] < b[0] else b[2], b[3]]
-                 for b in boxes]
-    return [min(b[0] for b in boxes), min(b[1] for b in boxes),
-            max(b[2] for b in boxes), max(b[3] for b in boxes)]
+    # Preserve each directed interval's covered interior, including explicitly
+    # broad boxes. Candidate cut points are box western edges; shifting every
+    # interval into the same domain finds the largest uncovered gap.
+    south, north = min(box[1] for box in boxes), max(box[3] for box in boxes)
+    intervals = []
+    for west, _, east, _ in boxes:
+        width = east - west if east >= west else east + 360 - west
+        if width >= 360:
+            return [-180.0, south, 180.0, north]
+        intervals.append((((west + 180) % 360) - 180, width))
+    candidates = []
+    for start in sorted({west for west, _ in intervals}):
+        end = max(start + (west - start) % 360 + width for west, width in intervals)
+        candidates.append((end - start, start, end))
+    width, west, east = min(candidates)
+    return [-180.0, south, 180.0, north] if width >= 360 else [west, south, east, north]
 
 
 def _ref_kind(ref: str) -> str:

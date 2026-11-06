@@ -128,15 +128,11 @@ class CartographyService:
                 # 不做 NaN/Inf 过滤之外的数值约束 —— 分类字段本来就是离散值。
                 if val is None:
                     continue
-                if isinstance(val, bool):
-                    marker = val
-                else:
-                    try:
-                        marker = float(val)
-                        if not np.isfinite(marker):
-                            continue
-                    except (TypeError, ValueError):
-                        marker = val
+                if isinstance(val, (dict, list, tuple)):
+                    continue
+                if isinstance(val, (int, float)) and not isinstance(val, bool) and not np.isfinite(val):
+                    continue
+                marker = val
                 if marker not in seen_categories:
                     seen_categories.add(marker)
                     if len(categorical_values) < k:
@@ -258,7 +254,8 @@ class CartographyService:
             "field": field,
             "breaks": breaks,
             "colors": colors,
-            "legend_labels": legend_labels
+            "legend_labels": legend_labels,
+            "palette": palette,
         }
         if _resolved_decision is not None:
             # AC-03：内部裁决时随附 decision（加键，v1 消费方不受影响）。
@@ -269,7 +266,7 @@ class CartographyService:
     def build_legend_spec(
         cls,
         style_def,
-        palette: str = DEFAULT_PALETTE,
+        palette: Optional[str] = None,
     ):
         """把 build_thematic_style 的输出映射为对外 legend_spec 契约。
 
@@ -283,7 +280,7 @@ class CartographyService:
                 "type": "graduated",
                 "field": style_def.get("field", ""),
                 "breaks": style_def.get("breaks", []),
-                "palette": palette,
+                "palette": palette or style_def.get("palette") or DEFAULT_PALETTE,
                 "palette_colors": style_def.get("colors", []),
             }
         if t == "lisa":

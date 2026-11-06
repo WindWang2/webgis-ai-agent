@@ -185,7 +185,7 @@ def build_extrusion_height_expression(
         p50 = float(stats.get("p50", (min_v + max_v) / 2.0))
         p75 = float(stats.get("p75", p50 + 0.5 * (max_v - p50)))
         domain_points = [min_v, p25, p50, p75, max_v]
-        for q, domain_v in zip(quantiles, domain_points):
+        for q, domain_v in zip(quantiles, domain_points, strict=True):
             vis_h = round(min_h + q * (max_h - min_h), 1)
             stops.append([round(domain_v, precision), vis_h])
     else:

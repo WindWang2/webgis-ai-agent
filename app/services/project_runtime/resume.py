@@ -101,7 +101,14 @@ async def resume_runtime_snapshot(
         raise ResumeBlocked(status, report)
     plan = build_recovery_plan(snapshot, report)
 
-    acquired, holder = store.acquire_resume_lease(project_id, snapshot_id)
+    acquire_task = asyncio.create_task(asyncio.to_thread(store.acquire_resume_lease, project_id, snapshot_id))
+    try:
+        acquired, holder = await asyncio.shield(acquire_task)
+    except asyncio.CancelledError:
+        acquired, _ = await acquire_task
+        if acquired:
+            await asyncio.to_thread(store.release_resume_lease, project_id, snapshot_id)
+        raise
     if not acquired:
         raise ResumeConflict(holder)
     try:
@@ -109,7 +116,7 @@ async def resume_runtime_snapshot(
             db, snapshot=snapshot, report=report, plan=plan, user_id=user_id
         )
     finally:
-        store.release_resume_lease(project_id, snapshot_id)
+        await asyncio.to_thread(store.release_resume_lease, project_id, snapshot_id)
 
 
 async def _execute_resume(
@@ -122,7 +129,7 @@ async def _execute_resume(
 ) -> ResumeReceipt:
     from app.services.session_data import session_data_manager
 
-    new_sid = f"rts-{snapshot.snapshot_id[4:12]}-{uuid.uuid4().hex[:8]}"
+    new_sid = f"rts-{snapshot.snapshot_id[4:12]}-{uuid.uuid4().hex}"
     receipt = ResumeReceipt(
         snapshot_id=snapshot.snapshot_id,
         project_id=snapshot.project_id,
@@ -515,7 +522,7 @@ async def _restore_payloads(
             missing.append(ref)
             continue
         new_ref: Optional[str] = None
-        expected_digest = ""
+        expected_digest = str(binding.live_payload_sha256 or "")
         if binding.durable_pointer is not None:
             new_ref = await _restore_from_pointer(
                 new_sid, ref, binding.durable_pointer)
@@ -535,12 +542,12 @@ async def _restore_payloads(
 async def _register_ledger(
     snapshot: Any, new_sid: str, ref_map: Dict[str, str]
 ) -> Tuple[int, int, List[Dict[str, str]]]:
+    """workspace snapshot 契约 → 新 session 账本（id 重映射 + 诚实过期）。"""
     # sensitive 分类（freeze 判定）在恢复侧同样生效：账本契约补恢复跳过。
     sensitive_refs = {
         str(b.ref) for b in snapshot.source_bindings
         if b.promotion_class == SENSITIVE and b.ref
     }
-    """workspace snapshot 契约 → 新 session 账本（id 重映射 + 诚实过期）。"""
     from app.services.artifact_registry import mark_status, register_artifact
     from app.services.workspace.snapshot import get_workspace_snapshot_service
 

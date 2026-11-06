@@ -14,6 +14,7 @@ regressions beyond tolerance.
 from __future__ import annotations
 
 import uuid
+import threading
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -68,16 +69,20 @@ class FactsStore:
     def __init__(self) -> None:
         self._facts: List[AcquisitionFact] = []
         self._budgets: Dict[Any, CostBudget] = {}
+        self._lock = threading.RLock()
 
     # -- facts ---------------------------------------------------------------
     def record(self, fact: AcquisitionFact) -> AcquisitionFact:
         if not fact.ts:
             fact = fact.model_copy(update={"ts": _now()})
-        self._facts.append(fact)
+        with self._lock:
+            self._facts.append(fact)
+            del self._facts[:-5000]
         return fact
 
     def facts(self, *, source_id: Optional[str] = None, wave: str = "") -> List[AcquisitionFact]:
-        out = self._facts
+        with self._lock:
+            out = list(self._facts)
         if source_id is not None:
             out = [f for f in out if f.source_id == source_id]
         if wave:
@@ -86,7 +91,8 @@ class FactsStore:
 
     # -- budgets ---------------------------------------------------------------
     def set_budget(self, budget: CostBudget) -> None:
-        self._budgets[(budget.source_id, budget.request_type, budget.wave)] = budget
+        with self._lock:
+            self._budgets[(budget.source_id, budget.request_type, budget.wave)] = budget
 
     def check_budget(self, fact: AcquisitionFact, request_type: str) -> List[BudgetAlert]:
         alerts: List[BudgetAlert] = []
@@ -155,8 +161,9 @@ class FactsStore:
         return violations
 
     def clear(self) -> None:
-        self._facts.clear()
-        self._budgets.clear()
+        with self._lock:
+            self._facts.clear()
+            self._budgets.clear()
 
 
 def _p50(values: List[float]) -> float:

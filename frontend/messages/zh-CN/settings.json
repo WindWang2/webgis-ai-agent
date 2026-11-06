@@ -52,14 +52,18 @@
     "serverManaged": "LLM 配置由服务端统一管理，前端保存不会生效。如需修改，请使用管理员账号在服务端完成，之后点击「刷新配置」更新显示",
     "loading": "加载中…",
     "refresh": "刷新配置",
+    "signInRequired": "请先登录，再查看服务端模型配置。",
     "viewForbidden": "需要管理员权限才能查看服务端 LLM 配置",
     "loadFailed": "无法读取服务端 LLM 配置",
     "testForbidden": "需要管理员权限才能测试连接",
     "testFailed": "连接失败",
-    "failedWithDetail": "Connection Failed：{detail}",
+    "failedWithDetail": "连接失败：{detail}",
     "notConfigured": "（未配置）",
     "enabled": "已启用",
-    "disabled": "未启用"
+    "disabled": "未启用",
+    "testing": "正在测试…",
+    "testConnection": "测试连接",
+    "connected": "连接正常"
   },
   "map": {
     "title": "地图配置",
@@ -89,7 +93,15 @@
     "scoreDistNote": "条长 ∝ L2 距离（相对最差命中的线性比例）。L2 距离越小越相关，非相似度百分比。",
     "embeddingNote": "嵌入模型由后端固定（代码常量，无读写配置端点）；此处仅探测检索效果。",
     "openPanel": "打开知识库面板",
-    "panelHint": "上传 / 删除文档与注入对话在面板中完成"
+    "panelHint": "上传 / 删除文档与注入对话在面板中完成",
+    "serverManaged": "向量检索存储由服务端配置管理。此处检查实际服务的连接状态。",
+    "indexedDocuments": "已索引文档",
+    "loading": "加载中…",
+    "connection": "向量检索连接",
+    "testing": "正在测试…",
+    "testConnection": "测试连接",
+    "connected": "连接正常",
+    "failed": "连接失败"
   },
   "skills": {
     "uploaded": "已上传并热加载：{name}",

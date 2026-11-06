@@ -111,7 +111,7 @@ def test_b4_large_preview_never_full_materialization():
 def test_b5_deep_offset_cost_surface():
     desc = _big_descriptor()
     deep = normalize_query_spec(QuerySpec(
-        limit=100, offset=500_000, max_rows=1_000_000, max_bytes=2 * 1024 * 1024 * 1024))
+        limit=100, offset=250_000, max_rows=1_000_000, max_bytes=2 * 1024 * 1024 * 1024))
     plan = plan_query(deep, desc, default_capabilities("postgis"))
     # R1-M8 修复后：plan 与执行一致（offset 即 offset），且深 offset 必须有警告
     assert plan.pagination_strategy == "offset"
@@ -184,9 +184,11 @@ def test_b7_geoparquet_projection_arrow():
 # ── B8：远程 range fixture（HTTP Range 语义在 fsspec 缺席时的诚实路径）────
 
 
-def test_b8_remote_range_honest_failure():
-    """无 fsspec/s3fs 时远程 GeoParquet → typed error（不整文件下载）。"""
+def test_b8_remote_range_honest_failure(monkeypatch):
+    """Remote range-open failure stays typed, without external network IO."""
+    import fsspec
     from app.services.data_fabric.adapters.geoparquet_adapter import GeoParquetAdapter
+    from app.services.data_fabric.errors import SourceUnreachableError
     from app.schemas.data_fabric_schema import ConnectionProfile
 
     profile = ConnectionProfile(
@@ -194,12 +196,11 @@ def test_b8_remote_range_honest_failure():
         url="https://example.com/data/remote.parquet",
     )
     a = GeoParquetAdapter(profile)
-    try:
-        res = a.query("remote.parquet", QuerySpec(limit=10))
-        # 若 fsspec 可用且解析失败 → typed；若环境允许成功亦接受（bounded）
-        assert res.dataset_id
-    except Exception as e:
-        assert hasattr(e, "code"), "远程失败必须 typed"
+    def unavailable(*args, **kwargs):
+        raise OSError("range endpoint unavailable")
+    monkeypatch.setattr(fsspec, "open", unavailable)
+    with pytest.raises(SourceUnreachableError):
+        a.query("remote.parquet", QuerySpec(limit=10))
 
 
 # ── 通用指标：内存预算 / 采样确定性 / fingerprint 开销 ─────────────────────

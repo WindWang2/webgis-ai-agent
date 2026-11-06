@@ -10,6 +10,7 @@ eligibility / fallback 全部是代码侧确定性检查（几何兼容、最小
 必需字段），LLM 只能**建议** recipe，不能取代检查。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import logging
 
@@ -310,11 +311,11 @@ class EligibilityContext(BaseModel):
             return "heavy_tailed"
         if d.skew is not None and abs(d.skew) >= 1.0:
             return "skewed"
-        if (d.unique_value_ratio is not None and d.unique_value_ratio <= 0.05) or (
-                d.skew is not None and abs(d.skew) < 0.2
-                and (d.kurtosis is None or abs(d.kurtosis - 3) < 1.0)
-                and (d.zero_ratio is None or d.zero_ratio < 0.05)):
-            return "uniform"
+        if d.unique_value_ratio is not None and d.unique_value_ratio <= 0.05:
+            return "low_cardinality"
+        # kurtosis is Pearson (normal=3), not excess kurtosis (normal=0).
+        if d.skew is not None and abs(d.skew) < 0.2 and d.kurtosis is not None and abs(d.kurtosis - 3) < 1.0 and (d.zero_ratio is None or d.zero_ratio < 0.05):
+            return "normal_like"
         return "unknown"
 
 
@@ -609,7 +610,7 @@ def _grammar_representation_eligibility(
                     "candidates": list(sd.point_candidates),
                 }
         except Exception:  # noqa: BLE001 — advisory 缺席不影响资格
-            pass
+            observe_optional_failure(__name__)
     return check, None
 
 
@@ -744,7 +745,7 @@ def check_eligibility(
             report.eligible = False
             report.disabled.append(_rep_disabled)
     except Exception:  # noqa: BLE001 — grammar 资格缺席 ≠ 规划失败
-        pass
+        observe_optional_failure(__name__)
 
     # 声明式 fallback → 结构化决策记录：从被禁元素出发，按 reason_code 匹配
     # 声明的回退（此前按 fb.use 比对被禁元素名——那是回退目标永不相等，
@@ -1038,16 +1039,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         primary_cartography="visual_heatmap",
         secondary_cartography=["point_overlay", "administrative_aggregation"],
         default_components=["title", "continuous_colorbar", "north_arrow", "scale_bar", "attribution"],
-        fallbacks=[
-            RecipeFallback(
-                when="point_count < 10", reason_code="INSUFFICIENT_POINTS",
-                use="point_distribution",
-            ),
-            RecipeFallback(
-                when="geometry not point", reason_code="GEOMETRY_NOT_SUPPORTED",
-                disable=["native_heatmap"],
-            ),
-        ],
+        fallbacks=[RecipeFallback(when='point_count < 10', reason_code='INSUFFICIENT_POINTS', use='point_overlay'), RecipeFallback(when='geometry not point', reason_code='GEOMETRY_NOT_SUPPORTED', disable=['native_heatmap'])],
         validation_rules=["point_count>=10 for visual_heatmap", "choropleth requires admin aggregation result"],
         export_profile={"formats": ["png", "pdf"], "chart": True},
         priority=40,
@@ -1071,9 +1063,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         primary_cartography="visual_heatmap",
         secondary_cartography=["hotspot_overlay", "point_overlay"],
         default_components=["title", "continuous_colorbar", "north_arrow", "scale_bar", "attribution"],
-        fallbacks=[
-            RecipeFallback(when="point_count < 10", reason_code="INSUFFICIENT_POINTS", use="point_distribution"),
-        ],
+        fallbacks=[RecipeFallback(when='point_count < 10', reason_code='INSUFFICIENT_POINTS', use='point_overlay')],
         export_profile={"formats": ["png"]},
         priority=40,
     ),
@@ -1096,13 +1086,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         primary_cartography="administrative_choropleth",
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
-        fallbacks=[
-            # NEEDS_ADMIN_UNITS is emitted at bind time (tools.py #835) when
-            # the fill primary is unbound and a circle layer is already bound.
-            # Do not also require Polygon on the *subject* profile — POI
-            # choropleths keep Point as the primary dataset.
-            RecipeFallback(when="no admin units available", reason_code="NEEDS_ADMIN_UNITS", use="point_distribution"),
-        ],
+        fallbacks=[],
         export_profile={"formats": ["png", "pdf", "csv"], "layout": "report"},
         priority=30,
     ),
@@ -1276,12 +1260,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         primary_cartography="aggregate_grid",
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
-        fallbacks=[
-            RecipeFallback(
-                when="point_count < 20", reason_code="INSUFFICIENT_POINTS",
-                use="point_distribution",
-            ),
-        ],
+        fallbacks=[RecipeFallback(when='point_count < 20', reason_code='INSUFFICIENT_POINTS', use='point_overlay')],
         validation_rules=["empty grid cell renders transparent (no-data ≠ zero)"],
         export_profile={"formats": ["png"], "layout": "report"},
         priority=42,
@@ -1301,12 +1280,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         primary_cartography="proportional_symbol",
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
-        fallbacks=[
-            RecipeFallback(
-                when="geometry not point", reason_code="GEOMETRY_NOT_SUPPORTED",
-                use="point_distribution",
-            ),
-        ],
+        fallbacks=[RecipeFallback(when='geometry not point', reason_code='GEOMETRY_NOT_SUPPORTED', use='point_overlay')],
         validation_rules=["radius ∝ sqrt(value); draw descending by value (small on top)"],
         export_profile={"formats": ["png"]},
         priority=55,
@@ -1325,12 +1299,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         primary_cartography="extrusion_3d",
         secondary_cartography=[],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
-        fallbacks=[
-            RecipeFallback(
-                when="geometry not polygon", reason_code="GEOMETRY_NOT_SUPPORTED",
-                use="administrative_choropleth",
-            ),
-        ],
+        fallbacks=[RecipeFallback(when='geometry not polygon', reason_code='GEOMETRY_NOT_SUPPORTED', use='administrative_choropleth')],
         validation_rules=["height field must be numeric; clamp negative heights to 0"],
         export_profile={"formats": ["png", "pdf", "svg"]},
         priority=60,
@@ -1349,12 +1318,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         primary_cartography="isoline_contour",
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "continuous_colorbar", "north_arrow", "scale_bar", "attribution"],
-        fallbacks=[
-            RecipeFallback(
-                when="insufficient points or constant surface", reason_code="CONTOUR_UNAVAILABLE",
-                use="point_density",
-            ),
-        ],
+        fallbacks=[],
         validation_rules=["contour levels must be monotonic and have at least 2 distinct values"],
         export_profile={"formats": ["png", "pdf", "svg"]},
         priority=58,
@@ -1381,13 +1345,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar",
                             "attribution", "statistics_panel"],
-        fallbacks=[
-            RecipeFallback(
-                when="无归一化分母（人口/面积）数据",
-                reason_code="MISSING_DENOMINATOR",
-                use="administrative_choropleth",
-            ),
-        ],
+        fallbacks=[],
         validation_rules=[
             "equity conclusion requires a normalization denominator; "
             "counts-only products must carry the missing-denominator disclosure",
@@ -1413,13 +1371,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar",
                             "attribution", "statistics_panel"],
-        fallbacks=[
-            RecipeFallback(
-                when="无候选方案可评价（仅范围）",
-                reason_code="NO_CANDIDATES",
-                use="proximity_overlay",
-            ),
-        ],
+        fallbacks=[],
         validation_rules=[
             "hard-constraint violations must remain vetoes in any recommendation",
             "criterion values must be evidence-backed or disclosed as assumptions",
@@ -1445,13 +1397,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["proximity_overlay"],
         default_components=["title", "continuous_colorbar", "north_arrow",
                             "scale_bar", "attribution", "statistics_panel"],
-        fallbacks=[
-            RecipeFallback(
-                when="无栅格因子（仅矢量约束）",
-                reason_code="NO_RASTER_FACTORS",
-                use="proximity_overlay",
-            ),
-        ],
+        fallbacks=[],
         validation_rules=[
             "factors must be normalized to a common scale before weighting",
             "suitability map must disclose weight provenance and hard constraints",
@@ -1477,13 +1423,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay", "administrative_choropleth"],
         default_components=["title", "legend", "north_arrow", "scale_bar",
                             "attribution", "statistics_panel"],
-        fallbacks=[
-            RecipeFallback(
-                when="无受体数据（仅危险源）",
-                reason_code="NO_RECEPTORS",
-                use="proximity_overlay",
-            ),
-        ],
+        fallbacks=[],
         validation_rules=[
             "buffer radius must cite a basis (standard/literature/user-declared)",
             "exposure statistics require receptor data; disclose when absent",
@@ -1572,11 +1512,11 @@ class RecipeRegistry:
         wf = recipe.workflow
         if wf is not None:
             self._by_domain.setdefault(wf.domain or "general", []).append(recipe)
-            for kw in list(wf.keywords_zh) + list(wf.keywords_en):
+            for kw in dict.fromkeys(list(wf.keywords_zh) + list(wf.keywords_en)):
                 key = kw.strip().lower()
                 if key:
                     self._keyword_index.setdefault(key, []).append(recipe)
-                    if key.isascii() and key.isalnum():
+                    if key.isascii():
                         # R1-A5/B1：纯 ASCII 词必须整词命中（"sar" 不得命中
                         # "caesar salad"；与 intent.py 的 lookaround 方案同一
                         # 红线）。非 ASCII（中文）词保持子串语义。
@@ -1610,7 +1550,7 @@ class RecipeRegistry:
                 domain_candidates.remove(recipe)
                 if not domain_candidates:
                     self._by_domain.pop(wf.domain or "general", None)
-            for kw in list(wf.keywords_zh) + list(wf.keywords_en):
+            for kw in dict.fromkeys(list(wf.keywords_zh) + list(wf.keywords_en)):
                 key = kw.strip().lower()
                 if not key:
                     continue
@@ -1620,7 +1560,7 @@ class RecipeRegistry:
                     if not hits:
                         self._keyword_index.pop(key, None)
         self._ascii_keywords = {
-            key for key in self._keyword_index if key.isascii() and key.isalnum()
+            key for key in self._keyword_index if key.isascii()
         }
         return True
 

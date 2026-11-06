@@ -7,6 +7,7 @@ chart 协议的行为面：variant 目录权威（coerce_variant）、组件工�
 契约核符号经 import + re-export 保持全部既有 import path（36 引用方零改动）。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import math
 
@@ -52,7 +53,7 @@ def valid_variants_for_type(component_type: str) -> tuple:
         if desc is not None and desc.variants:
             return tuple(desc.variants)
     except Exception:  # noqa: BLE001 - 目录不可用不阻塞组件构造（宽松回退）
-        pass
+        observe_optional_failure(__name__)
     return ()
 
 def coerce_variant(component_type: str, variant: str) -> str:
@@ -67,7 +68,7 @@ def coerce_variant(component_type: str, variant: str) -> str:
         if desc is not None and desc.default_variant:
             return desc.default_variant
     except Exception:  # noqa: BLE001
-        pass
+        observe_optional_failure(__name__)
     return candidates[0]
 
 def north_arrow_component(

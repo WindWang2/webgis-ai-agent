@@ -131,11 +131,11 @@ function mintActionId(): string {
 
 /** SSR / first-client-paint default. Must not read persist — zustand persist
  * rehydrates localStorage synchronously during store create(), so a lazy
- * useState init would paint "ESRI 影像" on the client against SSR "Carto 深色"
+ * useState init would paint "ESRI 影像" on the client against the registered SSR default
  * and Next throws a hydration mismatch. */
 function defaultBaseLayerIndex(): number {
-  const idx = TILE_PROVIDERS.findIndex((p) => p.name === 'Carto 深色');
-  return idx >= 0 ? idx : 1;
+  const idx = TILE_PROVIDERS.findIndex((p) => p.id === 'openfreemap-libre');
+  return idx >= 0 ? idx : 0;
 }
 
 export function MapActionProvider({ children }: { children: React.ReactNode }) {
@@ -150,6 +150,11 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
         const idx = TILE_PROVIDERS.findIndex((p) => p.name === persistedName);
         if (idx >= 0) {
           setSelectedBaseLayer((cur) => (cur === idx ? cur : idx));
+        } else {
+          const fallback = defaultBaseLayerIndex();
+          setSelectedBaseLayer(fallback);
+          const store = useHudStore.getState();
+          store.setBaseLayer?.(TILE_PROVIDERS[fallback]?.name ?? '');
         }
       } catch {
         /* store unavailable in isolated tests */

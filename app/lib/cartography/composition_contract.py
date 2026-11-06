@@ -185,27 +185,10 @@ class ApplyReport(BaseModel):
 
 # ── 用户锁（D4）——单一事实 = W15 workbench doc 锁集 ─────────────────────
 
-_MAX_LOCK_IDS = 64
-
-
 def locked_component_ids_of(spec: Dict[str, Any]) -> List[str]:
-    """组件锁集读取（W15 单一事实：``spec.workbench.lockedComponentIds``）。
-
-    与 ``lifecycle_engine.locked_component_ids_of`` 同一存储、同一口径
-    （缺席/非法 → 空，有界 64）；lib 层不 import services，本地纯读。
-    锁的**执行**仍在引擎守卫（guard_intent_locks）—— 本模块只消费锁集
-    做槽位级跳过决策；锁的**置/解**走 SetWorkbenchStateIntent 既有通道，
-    本模块不提供（agent 不得代替用户置锁 —— user-wins）。
-    """
-    if not isinstance(spec, dict):
-        return []
-    wb = spec.get("workbench")
-    if not isinstance(wb, dict):
-        return []
-    locked = wb.get("lockedComponentIds", [])
-    if not isinstance(locked, list):
-        return []
-    return [x for x in locked[:_MAX_LOCK_IDS] if isinstance(x, str) and x]
+    """Read the complete authoritative workbench lock set through shared guard."""
+    from app.contracts.workbench_locks import locked_component_ids_of as read_locks
+    return read_locks(spec)
 
 
 # ── 指纹 / diff ───────────────────────────────────────────────────────────

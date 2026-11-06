@@ -37,12 +37,12 @@ def test_tools_registry_table_includes_modelops():
 
 def test_estimate_and_compatibility_service(service, synthetic_raster):
     estimate = service.estimate_resources(
-        "tiny-landcover-seg", str(synthetic_raster), session_id="s1"
+        "tiny-landcover-seg", str(synthetic_raster), session_id="s1", allowed_roots=[synthetic_raster.parent]
     )
     assert estimate["device"] == "cpu"
     assert estimate["tiles"] > 0
     compat = service.check_compatibility(
-        "tiny-landcover-seg", str(synthetic_raster), session_id="s1"
+        "tiny-landcover-seg", str(synthetic_raster), session_id="s1", allowed_roots=[synthetic_raster.parent]
     )
     assert compat["compatibility"]["verdict"] in ("compatible", "incompatible")
 
@@ -73,7 +73,7 @@ def test_evaluation_segmentation_roundtrip(service, tmp_path):
             predictions_path=pred_path,
             references_path=ref_path,
             num_classes=2,
-        )
+        ), allowed_roots=[tmp_path]
     )
     metrics = report["metrics"]
     assert metrics["iou_per_class"][0] == pytest.approx(799 / 800, abs=1e-4)
@@ -179,7 +179,7 @@ def test_evaluate_async_gates_confidence_and_regions_paths(service, tmp_path, mo
         num_classes=2,
     )
     # conftest 的 DATA_DIR 夹具已把数据根钉到 tmp_path → 门放行。
-    report = asyncio.run(service.evaluate_async(request))
+    report = asyncio.run(service.evaluate_async(request, allowed_roots=[tmp_path]))
     assert report["metrics"]["iou_per_class"][1] > 0.99
     assert report.get("ece") is not None
 

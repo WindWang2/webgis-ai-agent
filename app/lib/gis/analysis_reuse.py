@@ -33,7 +33,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -122,48 +122,66 @@ def _raster_path_fingerprint(path: str) -> Optional[str]:
     （Raster & RS Runtime V3，ADR-0089 §内容身份）——只对存在的
     .tif/.tiff 计算，成本与一次 inspect 同级，绝不整幅读。
     """
-    if not isinstance(path, str) or not path.lower().endswith(_RASTER_SUFFIXES):
+    if not isinstance(path, str):
         return None
     try:
+        import os
+        import hashlib
+
+        stat = os.stat(path)
+        if not os.path.isfile(path):
+            return None
+        identity = f"{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ino}"
+        if not path.lower().endswith(_RASTER_SUFFIXES):
+            return hashlib.sha256(identity.encode()).hexdigest()
         from app.schemas.raster_spec import raster_content_fingerprint
 
-        return raster_content_fingerprint(path)
+        return hashlib.sha256(f"{identity}:{raster_content_fingerprint(path)}".encode()).hexdigest()
     except Exception:  # noqa: BLE001 — 指纹失败按未知，不阻塞
         return None
 
 
-def snapshot_raster_fingerprints(args: Any, *, max_paths: int = _MAX_RASTER_FPS) -> Dict[str, str]:
-    """args 中的栅格文件路径 → 当前内容指纹（生产时快照；CPU 有界）。
+def snapshot_raster_fingerprints(args: Any, *, max_paths: int = _MAX_RASTER_FPS,
+                                 allowed_roots: Optional[Sequence[str]] = None) -> Dict[str, str]:
+    """Fingerprint only caller-authorized files; unresolved paths force a reuse miss.
 
-    复用复核时重算并比对：源内容变 → miss（§34 cache miss 条件）。
-    任何不可判定（文件缺失/读取失败）→ 该路径不进指纹表（保守：不因
-    指纹缺席阻止命中——路径本身已在 analysis_key 里，删除/改名 → key 变）。
+    None/[] authorize no filesystem IO. Call this bounded blocking helper in a
+    worker thread. Remote objects need a versioned content identity, so this
+    local-file reuse lane marks them unverifiable.
     """
-    import os as _os
-
+    from pathlib import Path
+    import os
+    roots = [Path(root).absolute() for root in (allowed_roots or [])]
     fps: Dict[str, str] = {}
 
-    def _walk(node: Any) -> None:
+    def walk(node: Any) -> None:
         if len(fps) >= max_paths:
             return
         if isinstance(node, str):
-            if node not in fps and _os.path.exists(node):
-                fp = _raster_path_fingerprint(node)
-                if fp is not None:
-                    fps[node] = fp
-            return
-        if isinstance(node, dict):
-            for v in node.values():
-                _walk(v)
+            looks_like_path = node.startswith(("/", "file:", "http://", "https://", "s3://", "gs://")) or node.lower().endswith(_RASTER_SUFFIXES)
+            if node in fps or not looks_like_path:
+                return
+            fps[node] = "unverifiable"
+            if "://" in node or node.startswith("file:"):
+                return
+            candidate = Path(os.path.abspath(node))
+            if not any(candidate.is_relative_to(root) for root in roots):
+                return
+            resolved = candidate.resolve()
+            if not any(resolved.is_relative_to(root.resolve()) for root in roots):
+                return
+            fps[node] = _raster_path_fingerprint(str(resolved)) or "unverifiable"
+        elif isinstance(node, dict):
+            for value in node.values():
+                walk(value)
                 if len(fps) >= max_paths:
                     return
         elif isinstance(node, list):
-            for v in node:
-                _walk(v)
+            for value in node:
+                walk(value)
                 if len(fps) >= max_paths:
                     return
-
-    _walk(args)
+    walk(args)
     return fps
 
 
@@ -362,6 +380,8 @@ async def find_reusable_artifact(
                 cur_desc = await session_data_manager.get_ref_descriptor(session_id, ref)
             except Exception:  # noqa: BLE001
                 return None
+        if cur_desc is None:
+            return None
         # V3：形状相同但 revision 前进 = 载荷被覆写（属性编辑保形状的
         # 盲区）→ miss。旧记录无 input_ref_revisions → 跳过（向后兼容）。
         if isinstance(cur_desc, dict):
@@ -378,13 +398,12 @@ async def find_reusable_artifact(
     # 输入栅格内容复核（V3 §34：different source content → miss）。生产时
     # 记录了 input_raster_fps 的，此处对当前 args 重算指纹并比对；生产时
     # 没有栅格指纹记录的旧产物不因此判 miss（向后兼容）。
-    if raster_fingerprints and isinstance(rec.metadata, dict):
-        recorded = rec.metadata.get("input_raster_fps")
-        if isinstance(recorded, dict) and recorded:
-            for path, expected_fp in list(recorded.items())[:_MAX_RASTER_FPS]:
-                cur_fp = _raster_path_fingerprint(str(path))
-                if cur_fp is None or cur_fp != expected_fp:
-                    return None
+    recorded = rec.metadata.get("input_raster_fps") if isinstance(rec.metadata, dict) else None
+    if recorded or raster_fingerprints:
+        if not isinstance(recorded, dict) or recorded != raster_fingerprints:
+            return None
+        if any(value == "unverifiable" for value in recorded.values()):
+            return None
 
     fc = rec.feature_count if rec.feature_count is not None else out_desc.get("feature_count")
     return {

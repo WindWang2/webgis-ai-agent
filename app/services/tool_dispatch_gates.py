@@ -81,6 +81,9 @@ class _MultiSlotAcquire:
         self._sem = sem
         self._slots = max(1, int(slots))
         self._held = 0
+        if not hasattr(sem, "_webgis_acquire_lock"):
+            sem._webgis_acquire_lock = asyncio.Lock()
+        self._acquire_lock = sem._webgis_acquire_lock
 
     def _release_held(self) -> None:
         for _ in range(self._held):
@@ -89,9 +92,10 @@ class _MultiSlotAcquire:
 
     async def __aenter__(self) -> "_MultiSlotAcquire":
         try:
-            for _ in range(self._slots):
-                await self._sem.acquire()
-                self._held += 1
+            async with self._acquire_lock:
+                for _ in range(self._slots):
+                    await self._sem.acquire()
+                    self._held += 1
         except BaseException:
             # RUN-09: ``async with`` never calls ``__aexit__`` when
             # ``__aenter__`` raises — a cancel while waiting for the 2nd slot
@@ -124,11 +128,18 @@ class _SessionWaveGate:
         self._cap = max(1, int(cap))
         self._held: dict = {}
         self._cond: Optional[asyncio.Condition] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _condition(self) -> asyncio.Condition:
-        # 惰性创建：绑定当前事件循环（多 loop 测试场景安全）。
-        if self._cond is None:
+        # An active gate belongs to one loop. Sequential idle reuse may
+        # rebuild the condition; concurrent cross-loop use must fail loudly.
+        loop = asyncio.get_running_loop()
+        if self._loop is not loop:
+            if self._held or (self._loop is not None and self._loop.is_running()):
+                raise RuntimeError("session wave gate is active on another event loop")
+            self._loop = loop
             self._cond = asyncio.Condition()
+        assert self._cond is not None
         return self._cond
 
     async def acquire(self, session_id: str) -> None:

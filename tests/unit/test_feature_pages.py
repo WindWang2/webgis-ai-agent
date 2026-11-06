@@ -49,7 +49,7 @@ def test_bbox_param_parsing():
     assert parse_bbox_param(None) is None
     assert parse_bbox_param("") is None
     assert parse_bbox_param("104,30,106,32") == (104.0, 30.0, 106.0, 32.0)
-    for bad in ("104,30", "a,b,c,d", "106,30,104,32", "104,32,106,30", "nan,1,2,3"):
+    for bad in ("104,30", "a,b,c,d", "104,32,106,30", "nan,1,2,3"):
         with pytest.raises(FeaturePageError):
             parse_bbox_param(bad)
 

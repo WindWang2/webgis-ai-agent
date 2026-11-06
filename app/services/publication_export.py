@@ -20,7 +20,7 @@ MapSpec → 真矢量 PDF（可选文本、出版级整饰）的同步领域服�
 """
 from __future__ import annotations
 
-from typing import Callable, TypeVar, NoReturn
+from typing import Callable, TypeVar
 
 _RenderResult = TypeVar("_RenderResult")
 import html as _html
@@ -77,7 +77,8 @@ from app.lib.cartography.publication_ir import (  # noqa: E402
 #: vendored CJK 子集字体（无系统 CJK 字体时的 @font-face 内嵌源）。
 _VENDORED_CJK_FONT = "app/lib/cartography/fonts/NotoSansSC-Regular-subset.ttf"
 #: 多帧累积 SVG 字节预算（R2-M5：解析 DOM 前的内存上界锚点）。
-_MAX_TOTAL_SVG_BYTES = 96 * 1024 * 1024
+_MAX_TOTAL_SVG_BYTES = 32 * 1024 * 1024
+_MAX_PAGE_SVG_BYTES = 8 * 1024 * 1024
 #: 系统字体栈（fontconfig 探测 + CSS 双保险；无内嵌字体资产）。
 CSS_FONT_STACK = (
     '"Noto Sans CJK SC", "Noto Sans CJK", "Source Han Sans SC", '
@@ -150,9 +151,13 @@ def compile_publication_page(
     page_w = page.paper.width_mm
     page_h = page.paper.height_mm
     if page.cover:
+        svg = _render_toc_svg(pub_ir, page)
+        byte_count = len(svg.encode("utf-8"))
+        if byte_count > min(svg_budget_remaining, _MAX_PAGE_SVG_BYTES):
+            raise PageCompileFailure("atlas_page_limit_truncated", "cover exceeds SVG byte budget")
         return PageCompileOutcome(
-            svg=_render_toc_svg(pub_ir, page), width_mm=page_w, height_mm=page_h,
-            page=page, svg_bytes=0,
+            svg=svg, width_mm=page_w, height_mm=page_h,
+            page=page, svg_bytes=byte_count,
         )
     # 页文档解析：帧引用 / 过滤页 / 单帧整幅（原循环体逐字）
     if page.frame_index is not None:
@@ -188,7 +193,8 @@ def compile_publication_page(
             f"page {page.page_id}: {type(ex).__name__}",
             exc=ex,
         ) from ex
-    if len(comp.svg) > svg_budget_remaining:
+    svg_bytes = len(comp.svg.encode("utf-8"))
+    if svg_bytes > min(svg_budget_remaining, _MAX_PAGE_SVG_BYTES):
         raise PageCompileFailure(
             "atlas_page_limit_truncated",
             f"svg budget {_MAX_TOTAL_SVG_BYTES} bytes at page {page.page_id}",
@@ -206,7 +212,7 @@ def compile_publication_page(
     ]
     return PageCompileOutcome(
         svg=comp.svg, width_mm=page_w, height_mm=page_h, page=page,
-        svg_bytes=len(comp.svg),
+        svg_bytes=svg_bytes,
         frame_diagnostics=frame_items,
         rendered_component_types=[str(t) for t in (comp.rendered_component_types or [])],
         omitted_components=[dict(o) for o in (comp.omitted_components or [])
@@ -539,7 +545,7 @@ def _page_filtered_doc(doc: Dict[str, Any], page: PageLayoutIR) -> Dict[str, Any
     new_payload = dict(payload)
     if page.feature_offset is not None:
         lo = page.feature_offset
-        hi = lo + (page.feature_limit or 0)
+        hi = lo + page.feature_limit if page.feature_limit is not None else None
         new_payload["features"] = feats[lo:hi]
     elif page.filter_property:
         kept = []
@@ -739,6 +745,23 @@ def clamp_target_dpi(value: Any) -> int:
 
 
 def render_publication_pdf(
+    payload: Dict[str, Any], *, title: str = "", max_frames: int = MAX_SPEC_FRAMES,
+    max_labels: int = MAX_LABELS_PER_EXPORT, target_dpi: int = 300,
+    atlas: Optional[AtlasPolicy] = None,
+) -> PublicationPdfResult:
+    """Render a publication and observe successful and failed export duration."""
+    import time
+    from app.core.sre_metrics import observe_export_duration
+
+    started = time.monotonic()
+    try:
+        return _render_publication_pdf(payload, title=title, max_frames=max_frames,
+            max_labels=max_labels, target_dpi=target_dpi, atlas=atlas)
+    finally:
+        observe_export_duration(time.monotonic() - started)
+
+
+def _render_publication_pdf(
     payload: Dict[str, Any],
     *,
     title: str = "",
@@ -822,6 +845,7 @@ def render_publication_pdf(
     page_specs: List[Tuple[str, str, float, float]] = []  # (page_name, svg, w_mm, h_mm)
     rendered = 0
     skipped = 0
+    _accumulated = 0
     coverage_rendered: set = set()
     coverage_omitted: List[Dict[str, Any]] = []
     _omitted_seen: set = set()
@@ -831,7 +855,6 @@ def render_publication_pdf(
         # C15：逐页编译统一走接缝（compile_publication_page）—— 同步链与
         # atlas batch executor 同一事实源；预算数学（含已累积封面页）与
         # 诊断串逐字保持。
-        _accumulated = sum(len(s) for _n, s, _w, _h in page_specs)
         try:
             outcome = compile_publication_page(
                 doc, page, pub_ir,
@@ -846,6 +869,7 @@ def render_publication_pdf(
             skipped += 1
             sink.add(diagnostic(pcf.code, detail=pcf.detail))
             continue
+        _accumulated += len(outcome.svg.encode("utf-8"))
         page_specs.append((
             f"p{page.page_number - 1}", outcome.svg,
             outcome.width_mm, outcome.height_mm,
@@ -904,5 +928,12 @@ def render_publication_pdf(
     )
 
 
-def _deny_url_fetcher(url: str, *args: Any, **kwargs: Any) -> NoReturn:  # pragma: no cover - 防御断言
+def _deny_url_fetcher(url: str, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover - 防御断言
+    if url.startswith("data:font/ttf;base64,"):
+        import base64
+
+        payload = url.partition(",")[2]
+        if len(payload) > 8 * 1024 * 1024:
+            raise ValueError("embedded publication font exceeds byte budget")
+        return {"string": base64.b64decode(payload, validate=True), "mime_type": "font/ttf"}
     raise ValueError(f"external resource fetch denied in publication pdf: {url!r}")

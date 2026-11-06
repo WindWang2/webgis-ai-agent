@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
 from app.api.routes import map as _mod
-from app.core.auth import get_current_user_with_version
+from app.core.auth import get_current_user_with_version, get_current_user_optional_with_version
 from app.services.artifact_registry import (
     get_artifact,
     is_export_ref,
@@ -78,9 +78,8 @@ async def clean_session():
 def _auth(client):
     # #1441 起 map.py 全路由走 get_current_user_with_version（严格 ver 校验）；
     # 路由级测试直接 override 该依赖（56ca490f 更新遗漏的既有测试同款修复）。
-    client._transport.app.dependency_overrides[get_current_user_with_version] = (
-        lambda: _owner_user
-    )
+    for dependency in (get_current_user_with_version, get_current_user_optional_with_version):
+        client._transport.app.dependency_overrides[dependency] = lambda: _owner_user
 
 
 def _fake_export_file(filename: str) -> str:
@@ -333,7 +332,11 @@ async def test_record_lineage_rejects_oversized_filename(clean_session, _own_ok)
 
 
 async def _upload(client, data):
-    files = {"file": ("map.png", b"png-bytes", "image/png")}
+    import io
+    from PIL import Image
+    image = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(image, "PNG")
+    files = {"file": ("map.png", image.getvalue(), "image/png")}
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         return await client.post("/api/v1/export", files=files, data=data)
@@ -348,7 +351,7 @@ async def test_route_without_session_no_lineage_key(client):
 
 
 @pytest.mark.asyncio
-async def test_route_with_session_discloses_lineage(client, monkeypatch):
+async def test_route_with_session_discloses_lineage(client, monkeypatch, _own_ok):
     _auth(client)
     seen = {}
 
@@ -372,7 +375,7 @@ async def test_route_with_session_discloses_lineage(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_route_lineage_failure_does_not_break_export(client, monkeypatch):
+async def test_route_lineage_failure_does_not_break_export(client, monkeypatch, _own_ok):
     _auth(client)
 
     async def _boom(*a, **kw):
@@ -385,15 +388,16 @@ async def test_route_lineage_failure_does_not_break_export(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_route_unowned_session_skips_lineage_silently(client, monkeypatch):
-    """带 session_id 但属主守卫不过 → 导出 200，无 lineage 键（无存在性泄露）。"""
+async def test_route_unowned_session_exports_uploaded_image_without_lineage(client, monkeypatch):
+    """An authenticated upload remains its user's image; foreign metadata is skipped."""
     _auth(client)
-
-    async def _deny(*a, **kw):
-        return None  # record_export_lineage 内部守卫 skip → None
-
-    monkeypatch.setattr(_mod, "_record_lineage", _deny)
-    resp = await _upload(client, {"session_id": "not-mine"})
-    assert resp.status_code == 200
-    assert resp.json()["success"] is True
-    assert "lineage" not in resp.json()
+    from fastapi import HTTPException
+    from unittest.mock import AsyncMock
+    async def deny_owner(*args, **kwargs):
+        raise HTTPException(404, "Session not found")
+    monkeypatch.setattr("app.services.auth_history_bridge.verify_session_owner", deny_owner)
+    record = AsyncMock(return_value=None)
+    monkeypatch.setattr(_mod, "_record_lineage", record)
+    response = await _upload(client, {"session_id": "not-mine"})
+    assert response.status_code == 200 and response.json()["success"]
+    assert "lineage" not in response.json()

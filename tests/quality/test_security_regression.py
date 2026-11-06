@@ -431,11 +431,14 @@ def _boom_app():
 
 
 class TestErrorOracleProductionGate:
-    def test_dev_response_pins_designed_detail_behavior(self):
-        """默认（ENV=development，conftest 钉扎）：错误细节按设计出口，但路径已消毒。"""
+    def test_dev_response_pins_designed_detail_behavior(self, monkeypatch):
+        """Explicit DEBUG enables diagnostic output with sanitized paths."""
         from fastapi.testclient import TestClient
 
         from app.core.exception import PROJECT_ROOT
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "DEBUG", True)
 
         client = TestClient(_boom_app(), raise_server_exceptions=False)
         resp = client.get("/boom")

@@ -83,7 +83,7 @@ export function applyOrchestration(
       visible: o.visible ?? ch.visible,
     };
   });
-  const orderOf = (ch: StoryChapter): number => orch.overrides[ch.id]?.order ?? ch.messageIndex;
+  const orderOf = (ch: StoryChapter): number => orch.overrides[ch.id]?.order ?? (chapters.length + ch.messageIndex);
   return [...overlaid].sort((a, b) => orderOf(a) - orderOf(b));
 }
 
@@ -95,7 +95,7 @@ export function loadOrchestration(sessionId: string | null): ChapterOrchestratio
     const raw = localStorage.getItem(ORCH_KEY_PREFIX + sessionId);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed || typeof parsed !== 'object' || (parsed as ChapterOrchestration).version !== 1 || !(parsed as ChapterOrchestration).overrides || typeof (parsed as ChapterOrchestration).overrides !== 'object' || Array.isArray((parsed as ChapterOrchestration).overrides)) return null;
     return parsed as ChapterOrchestration;
   } catch {
     return null;

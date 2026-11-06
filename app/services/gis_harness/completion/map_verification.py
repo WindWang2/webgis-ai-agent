@@ -51,12 +51,11 @@ def _planned_layers(chapter: Dict[str, Any]) -> List[Dict[str, Any]]:
             if isinstance(ly, dict) and ly.get("layer_id")]
 
 
+from .geo_bounds import bboxes_intersect, normalize_bbox
+
+
 def _bbox_intersects(a: List[float], b: List[float]) -> bool:
-    """[w, s, e, n] 相交判定（确定性；退化 bbox 视为不相交）。"""
-    try:
-        return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
-    except (IndexError, TypeError):
-        return False
+    return bboxes_intersect(a, b)
 
 
 def _zoom_viewport_bbox(
@@ -98,7 +97,7 @@ def _zoom_viewport_bbox(
         yn = min(max(px / n, 0.0), 1.0)
         return math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * yn))))
 
-    return [_lng_of(x0), _lat_of(y1), _lng_of(x1), _lat_of(y0)]  # [w, s, e, n]
+    return normalize_bbox([_lng_of(x0), _lat_of(y1), _lng_of(x1), _lat_of(y0)])  # [w, s, e, n]
 
 
 def _observation_viewport_bbox(

@@ -16,7 +16,12 @@ import time
 from datetime import datetime, timezone
 import json
 import logging
-import re
+from typing import TYPE_CHECKING
+from app.lib.runtime.ref_cursors import REF_CURSOR_RE as _REF_RE
+from app.services.chat.context_text import message_text
+
+if TYPE_CHECKING:
+    from app.services.chat.context_assembler import ChatContextAssembler
 
 from app.services.session_data import session_data_manager
 from app.services.viewport_naming import (
@@ -24,6 +29,7 @@ from app.services.viewport_naming import (
     schedule_populate as _viewport_name_schedule,
 )
 from app.core.base_layers import format_base_layer_catalog
+from app.services.chat.context.formatters import _finite_number
 
 # Import and expose all sub-module components for backward-compatibility (P3-1)
 from app.services.chat.context import (
@@ -85,7 +91,7 @@ def _env_timestamp(session_id: str) -> str:
     now = time.monotonic()
     hit = _env_ts_cache.get(session_id)
     if hit is None or now - hit[1] >= _ENV_TS_TTL_S:
-        hit = (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), now)
+        hit = (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"), now)
         if len(_env_ts_cache) >= 512:
             _env_ts_cache.pop(next(iter(_env_ts_cache)))
         _env_ts_cache[session_id] = hit
@@ -179,11 +185,12 @@ async def build_map_state_summary(
         if event_log is None:
             event_log = []
 
-    viewport = state.get("viewport") or {}
+    viewport = state.get("viewport")
+    viewport = viewport if isinstance(viewport, dict) else {}
     center = viewport.get("center")
-    zoom = viewport.get("zoom")
-    bearing = viewport.get("bearing", 0) or 0
-    pitch = viewport.get("pitch", 0) or 0
+    zoom = _finite_number(viewport.get("zoom"))
+    bearing = _finite_number(viewport.get("bearing")) or 0
+    pitch = _finite_number(viewport.get("pitch")) or 0
     bounds = viewport.get("bounds")
     base_layer = state.get("base_layer", "OSM 地图")
     is_3d = state.get("is_3d", False)
@@ -196,15 +203,15 @@ async def build_map_state_summary(
     ]
 
     user_location = state.get("user_location")
-    if isinstance(user_location, dict):
+    if isinstance(user_location, dict) and all(_finite_number(user_location.get(key)) is not None for key in ("lng", "lat")):
         lines.append(
             f"- 用户位置: {user_location.get('lng', 0):.6f}, {user_location.get('lat', 0):.6f} "
-            f"(±{user_location.get('accuracy', '?')}m)"
+            f"(±{_finite_number(user_location.get('accuracy')) or '?'}m)"
         )
     else:
         lines.append("- 用户位置: 未授权")
 
-    if isinstance(center, (list, tuple)) and len(center) == 2 and zoom is not None:
+    if isinstance(center, (list, tuple)) and len(center) == 2 and all(_finite_number(value) is not None for value in center) and zoom is not None:
         viewport_line = (
             f"- 视口中心(WGS84 经纬度): lng={center[0]:.4f}, lat={center[1]:.4f}, zoom={zoom:.2f}"
         )
@@ -226,9 +233,11 @@ async def build_map_state_summary(
     else:
         lines.append("- 视口: 未知（前端尚未上报，回答位置类问题前请先告知用户无法获取地图状态）")
 
-    if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
-        w, s, e, n = bounds
-        lines.append(f"- 可视范围: W{w:.3f} S{s:.3f} E{e:.3f} N{n:.3f}")
+    normalized_bounds = None
+    if isinstance(bounds, (list, tuple)) and len(bounds) == 4 and all(_finite_number(value) is not None for value in bounds):
+        normalized_bounds = [float(value) for value in bounds]
+        west, south, east, north = normalized_bounds
+        lines.append(f"- 可视范围: W{west:.3f} S{south:.3f} E{east:.3f} N{north:.3f}")
 
     lines.append(f"- 底图: {_xml_fence(TAG_UNTRUSTED_BASE_LAYER, base_layer)}")
     lines.append(f"- 可切换底图: {format_base_layer_catalog()}")
@@ -251,7 +260,7 @@ async def build_map_state_summary(
         inventory,
         active_layers,
         session_id=session_id,
-        viewport_bounds=bounds if isinstance(bounds, (list, tuple)) and len(bounds) == 4 else None,
+        viewport_bounds=normalized_bounds,
     )
     if layer_lines:
         lines.append("- 活跃图层:")
@@ -286,9 +295,6 @@ async def build_map_state_summary(
     return "\n".join(lines)
 
 
-_REF_RE = re.compile(r"(ref:[\w-]+)")
-
-
 def build_last_analysis_context(messages: list[dict]) -> str:
     """从最近的历史消息中提取分析上下文摘要，帮 LLM 维持追问连贯性。
 
@@ -311,7 +317,7 @@ def build_last_analysis_context(messages: list[dict]) -> str:
 
     for msg in reversed(scan):
         role = msg.get("role", "")
-        content = msg.get("content", "") or ""
+        content = message_text(msg.get("content"))
         if role == "assistant" and content and not last_assistant_msg:
             last_assistant_msg = content[:300]
         elif role == "user" and content and not last_user_msg:

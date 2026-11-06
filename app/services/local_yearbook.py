@@ -505,8 +505,15 @@ def ingest_county_panel(
             adcode = _jsonable(rec.get("区县代码"))
             if adcode is None:
                 continue
+            year_value = _jsonable(rec.get("年份"))
+            if year_value is None:
+                continue
+            try:
+                year = int(year_value)
+            except (ValueError, TypeError, OverflowError):
+                continue
             rows.append((
-                int(_jsonable(rec.get("年份"))),
+                year,
                 str(adcode).zfill(6),
                 rec.get("省份"), rec.get("城市"), rec.get("区县"), rec.get("所属地域"),
                 json.dumps(indicators, ensure_ascii=False),
@@ -590,6 +597,10 @@ def yearbook_catalog() -> Dict[str, Any]:
         conn.close()
 
 
+def _literal_like(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def query_township(
     name: str = "",
     *,
@@ -608,14 +619,14 @@ def query_township(
         sql = "SELECT * FROM township_yearbook WHERE 1=1"
         args: List[Any] = []
         if name:
-            sql += " AND (full_name LIKE ? OR township LIKE ?)"
-            args += [f"%{name}%", f"%{name}%"]
+            sql += " AND (full_name LIKE ? ESCAPE '\\' OR township LIKE ? ESCAPE '\\' )"
+            args += [f"%{_literal_like(name)}%", f"%{_literal_like(name)}%"]
         if district_adcode:
             sql += " AND district_adcode = ?"
             args.append(str(district_adcode).zfill(6))
         if province:
-            sql += " AND province LIKE ?"
-            args.append(f"%{province}%")
+            sql += " AND province LIKE ? ESCAPE '\\'"
+            args.append(f"%{_literal_like(province)}%")
         if pub_year:
             sql += " AND pub_year = ?"
             args.append(int(pub_year))
@@ -660,8 +671,8 @@ def query_county_panel(
             sql += " AND adcode = ?"
             args.append(str(adcode).zfill(6))
         else:
-            sql += " AND county LIKE ?"
-            args.append(f"%{name}%")
+            sql += " AND county LIKE ? ESCAPE '\\'"
+            args.append(f"%{_literal_like(name)}%")
         if year_from:
             sql += " AND year >= ?"
             args.append(int(year_from))

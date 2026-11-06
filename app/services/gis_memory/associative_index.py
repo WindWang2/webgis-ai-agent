@@ -23,7 +23,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from app.services.gis_memory.contract import (
@@ -163,6 +163,7 @@ class MemoryIndexEntry:
     value: Dict = field(default_factory=dict)
     hit_count: int = 0
     last_access: float = 0.0
+    expires_at_ts: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -234,6 +235,8 @@ class _OrgIndex:
         self, bbox: Sequence[float]
     ) -> set:
         cells = _query_cells(bbox)
+        if cells is None:
+            return set(self.entries)
         ids: set = set(self.wide)
         for cell in cells:
             ids |= self.grid.get(cell, set())
@@ -256,7 +259,9 @@ def _bbox_cells(
     （调用方收进 wide 全查列表，避免巨型 AOI 撑爆网格）。"""
     try:
         x0, y0, x1, y1 = (float(v) for v in bbox[:4])
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
         return []
     cx0, cx1 = int(math.floor(x0 / _GRID_CELL_DEG)), int(
         math.floor(x1 / _GRID_CELL_DEG))
@@ -271,15 +276,19 @@ def _bbox_cells(
 
 def _query_cells(
     bbox: Sequence[float],
-) -> List[Tuple[int, int]]:
+) -> Optional[List[Tuple[int, int]]]:
     try:
         x0, y0, x1, y1 = (float(v) for v in bbox[:4])
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
         return []
     cx0 = int(math.floor(min(x0, x1) / _GRID_CELL_DEG)) - 1
     cx1 = int(math.floor(max(x0, x1) / _GRID_CELL_DEG)) + 1
     cy0 = int(math.floor(min(y0, y1) / _GRID_CELL_DEG)) - 1
     cy1 = int(math.floor(max(y0, y1) / _GRID_CELL_DEG)) + 1
+    if (cx1 - cx0 + 1) * (cy1 - cy0 + 1) > _GRID_WIDE_CELLS:
+        return None
     return [(cx, cy) for cx in range(cx0, cx1 + 1)
             for cy in range(cy0, cy1 + 1)]
 
@@ -299,8 +308,8 @@ def parse_validated_ts(iso_text: Optional[str]) -> float:
         dt = datetime.fromisoformat(str(iso_text))
     except ValueError:
         return time.time()
-    if dt.tzinfo:
-        dt = dt.replace(tzinfo=None)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
     return dt.timestamp()
 
 
@@ -327,6 +336,15 @@ class AssociativeIndex:
             if org is not None:
                 org.remove(memory_id)
 
+    def prune_scope(self, org_id: str, scope: str, scope_id: str, live_ids: set[str]) -> None:
+        """Discard authority rows removed, expired or made sensitive since sync."""
+        with self._lock:
+            org = self._orgs.get(org_id)
+            if org is not None:
+                for mid, entry in list(org.entries.items()):
+                    if entry.scope == scope and entry.scope_id == scope_id and mid not in live_ids:
+                        org.remove(mid)
+
     def clear(self, org_id: Optional[str] = None) -> None:
         with self._lock:
             if org_id is None:
@@ -341,7 +359,10 @@ class AssociativeIndex:
             return None
         with self._lock:
             org = self._orgs.get(org_id)
-            return org.entries.get(memory_id) if org else None
+            if org and memory_id in org.entries:
+                org.entries.move_to_end(memory_id)
+                return org.entries[memory_id]
+            return None
 
     def touch(self, org_id: str, memory_ids: Iterable[str]) -> None:
         """命中计数回写（consolidator 晋升判定的输入；进程内，零 SQL）。"""
@@ -355,6 +376,7 @@ class AssociativeIndex:
             for mid in memory_ids:
                 entry = org.entries.get(mid)
                 if entry is not None:
+                    org.entries.move_to_end(mid)
                     entry.hit_count += 1
                     entry.last_access = now
 
@@ -365,6 +387,7 @@ class AssociativeIndex:
         *,
         bbox: Optional[Sequence[float]] = None,
         kinds: Sequence[str] = (),
+        allowed_scopes: Optional[set[tuple[str, str]]] = None,
         limit: int = 8,
         now: Optional[float] = None,
     ) -> List[IndexHit]:
@@ -394,9 +417,11 @@ class AssociativeIndex:
                                MemoryIndexEntry]] = []
             for mid in candidates:
                 entry = org.entries.get(mid)
-                if entry is None:
+                if entry is None or (entry.expires_at_ts is not None and entry.expires_at_ts <= now_ts):
                     continue
                 if kinds and entry.kind not in kinds:
+                    continue
+                if allowed_scopes is not None and (entry.scope, entry.scope_id) not in allowed_scopes:
                     continue
                 total = 0.0
                 for token in unique_tokens:
@@ -431,6 +456,7 @@ class AssociativeIndex:
             hits: List[IndexHit] = []
             for score, sem, geo, decay, prior, entry in scored[
                     : max(1, min(int(limit or 8), HARD_LIMIT_CAP))]:
+                org.entries.move_to_end(entry.memory_id)
                 hits.append(IndexHit(
                     entry=entry, score=score, sem=sem, geo=geo,
                     decay=decay,
@@ -445,6 +471,7 @@ class AssociativeIndex:
         org_id: str,
         *,
         kinds: Sequence[str] = (),
+        allowed_scopes: Optional[set[tuple[str, str]]] = None,
         limit: int = 4,
         now: Optional[float] = None,
     ) -> List[MemoryIndexEntry]:
@@ -462,7 +489,9 @@ class AssociativeIndex:
                 return []
             entries = [
                 e for e in org.entries.values()
-                if not kinds or e.kind in kinds
+                if (e.expires_at_ts is None or e.expires_at_ts > now_ts)
+                and (not kinds or e.kind in kinds)
+                and (allowed_scopes is None or (e.scope, e.scope_id) in allowed_scopes)
             ]
 
             def _rank(e: MemoryIndexEntry) -> Tuple[float, str, str, str]:

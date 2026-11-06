@@ -38,7 +38,7 @@ from app.services.network.od_matrix import NetworkODMatrixService
 
 # 零成本下限：需求点与设施捕捉到同一节点时 OD 成本恰为 0，d^-β 会除零。
 # 以 ε 下限截断（截断后在 limitations 披露）——不丢弃最可达的对。
-_EPS_COST = 1e-6
+_EPS_COST = 1.0  # One second (or one meter) minimum separation for colocated pairs.
 
 # 参数界（与参数契约 gravity_accessibility_analysis / huff_interaction_analysis
 # 的 minimum/maximum 一致 —— 工具层 apply_contract 先拦，服务层兜底）。
@@ -71,6 +71,8 @@ def _cost_matrix_from_od(
     Same single-Dijkstra-per-origin semantics, costs in the active
     impedance's units; inf = unreachable.
     """
+    if len({point.demand_id for point in demand_points}) != len(demand_points):
+        raise ValueError("demand IDs must be unique")
     origins = [(d.geometry["coordinates"][0], d.geometry["coordinates"][1]) for d in demand_points]
     destinations = [(f.geometry["coordinates"][0], f.geometry["coordinates"][1]) for f in facilities]
     res = od_service._compute_od(
@@ -145,7 +147,7 @@ class NetworkInteractionService:
                 "图不连通（或供需被方向隔离）——无势能可算"
             )
 
-        capacities = [max(float(getattr(f, "capacity", 1.0) or 1.0), 0.0) for f in facilities]
+        capacities = [max(float(getattr(f, "capacity", 1.0)), 0.0) for f in facilities]
         mass_terms = [cap ** alpha for cap in capacities]
 
         per_demand: List[Dict[str, Any]] = []
@@ -179,6 +181,7 @@ class NetworkInteractionService:
 
         finite = [s for s in scores if s > 0]
         summary = {
+            "minimum_pair_cost": _EPS_COST,
             "score_min": round(min(scores), 6) if scores else 0.0,
             "score_mean": round(sum(scores) / len(scores), 6) if scores else 0.0,
             "score_max": round(max(scores), 6) if scores else 0.0,
@@ -236,7 +239,7 @@ class NetworkInteractionService:
         unreachable_pairs = sum(1 for i in range(n_dem) for j in range(m_fac)
                                 if costs[i][j] == float("inf"))
 
-        attractiveness = [max(float(getattr(f, "capacity", 1.0) or 1.0), 0.0) for f in facilities]
+        attractiveness = [max(float(getattr(f, "capacity", 1.0)), 0.0) for f in facilities]
 
         per_demand: List[Dict[str, Any]] = []
         market_share = [0.0] * m_fac
@@ -295,6 +298,7 @@ class NetworkInteractionService:
             })
 
         summary = {
+            "minimum_pair_cost": _EPS_COST,
             "total_demand_weight": round(total_weight, 6),
             "assigned_demand_weight": round(assigned_weight, 6),
             "unassigned_count": len(unassigned_ids),

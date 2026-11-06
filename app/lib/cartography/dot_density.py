@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any, Dict, List
 from app.lib.cartography.data_tiers import TIER_SCAN_CAP_FEATURES
@@ -80,6 +81,7 @@ def generate_dot_density_features(
     out_features: List[Dict[str, Any]] = []
     truncated = False
     total = 0
+    shortfall = 0
     # 截断语义 = 按值降序保留（大值面优先保点）；tie 用原始索引保持
     # 确定性。保证 docstring/前置契约『按 value 降序截断』为真。
     indexed = sorted(
@@ -115,7 +117,8 @@ def generate_dot_density_features(
             continue
         try:
             shp = shape(geom)
-        except Exception:
+        except Exception as _exc:
+            logging.getLogger(__name__).debug("dot_density: optional operation unavailable (%s)", type(_exc).__name__)
             continue
         if shp.is_empty or not shp.is_valid:
             continue
@@ -152,6 +155,8 @@ def generate_dot_density_features(
                 if total >= max_total_dots:
                     truncated = True
                     break
+        if placed < n and attempts >= max_attempts:
+            shortfall += n - placed
         # 面级结算：预算/值和同步扣减
         remaining_value_sum = max(0.0, remaining_value_sum - max(0.0, _value_of(feat, value_field)))
         remaining_budget = max(0, max_total_dots - total)
@@ -166,6 +171,8 @@ def generate_dot_density_features(
             "value_field": value_field,
             "total_dots": total,
             "truncated": truncated,
+            "under_placed": shortfall > 0,
+            "placement_shortfall": shortfall,
             # 诚实披露：撒点是面内示意重分布（QGIS dot density 同语义）
             "disclosure_zh": "撒点为面单元内的示意性重分布（Random dot "
                              "within polygon），不代表真实位置",

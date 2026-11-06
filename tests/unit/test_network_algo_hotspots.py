@@ -294,7 +294,7 @@ def test_analyze_trend_still_uses_sens_slope():
 # ── Fingerprint memoization ─────────────────────────────────────────────────
 
 
-def test_fingerprint_memoized_by_object_identity(monkeypatch):
+def test_fingerprint_recomputes_mutable_content(monkeypatch):
     builder = NetworkGraphBuilder()
     dumps_calls = []
 
@@ -310,8 +310,7 @@ def test_fingerprint_memoized_by_object_identity(monkeypatch):
     fp1 = builder.compute_fingerprint(data, None, 1e-5, True)
     fp2 = builder.compute_fingerprint(data, None, 1e-5, True)
     assert fp1 == fp2
-    # the second call must not re-serialize the network
-    assert len(dumps_calls) == 1, f"json.dumps called {len(dumps_calls)} times"
+    assert len(dumps_calls) == 2
 
     # a distinct object with identical content re-serializes but produces the
     # SAME content-based fingerprint (the memo only skips re-serialization of
@@ -319,10 +318,12 @@ def test_fingerprint_memoized_by_object_identity(monkeypatch):
     data2 = {"type": "FeatureCollection", "features": [_line([[0.0, 0.0], [1.0, 1.0]])]}
     fp3 = builder.compute_fingerprint(data2, None, 1e-5, True)
     assert fp3 == fp1
-    assert len(dumps_calls) == 2
+    assert len(dumps_calls) == 3
+    data["features"][0]["properties"]["speed_kmh"] = 5
+    assert builder.compute_fingerprint(data, None, 1e-5, True) != fp1
 
 
-def test_build_graph_cache_hit_skips_reserialization(monkeypatch):
+def test_build_graph_cache_hit_verifies_current_content(monkeypatch):
     builder = NetworkGraphBuilder()
     builder.clear_cache()
     dumps_calls = []
@@ -339,4 +340,4 @@ def test_build_graph_cache_hit_skips_reserialization(monkeypatch):
     g1, _ = builder.build_graph(data, use_cache=True)
     g2, _ = builder.build_graph(data, use_cache=True)
     assert g1 is g2  # cache hit
-    assert len(dumps_calls) == 1  # one serialization for the whole sequence
+    assert len(dumps_calls) == 2

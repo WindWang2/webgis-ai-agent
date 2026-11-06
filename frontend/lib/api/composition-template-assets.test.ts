@@ -93,7 +93,7 @@ describe('compositionTemplateAssetsApi.create', () => {
     const [url, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
     expect(String(url)).toContain('/api/v1/composition-template-assets');
     expect(String(init.method)).toBe('POST');
-    expect(String(init.body)).toContain('我的版式');
+    expect(JSON.parse(init.body)).toEqual({ session_id: 'sess-1', name: '我的版式', visibility: 'private' });
   });
 });
 
@@ -109,7 +109,7 @@ describe('compositionTemplateAssetsApi lifecycle', () => {
     await compositionTemplateAssetsApi.retire('asset.abc', 'done');
     [url, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
     expect(String(url)).toContain('/asset.abc/retire');
-    expect(String(init.body)).toContain('done');
+    expect(JSON.parse(init.body)).toEqual({ note: 'done' });
 
     mockFetch.mockResolvedValueOnce(jsonOk({ success: true, revision: 3 }));
     await compositionTemplateAssetsApi.restore('asset.abc', 1);

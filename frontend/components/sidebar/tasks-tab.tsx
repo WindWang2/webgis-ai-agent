@@ -14,7 +14,7 @@
 'use client';
 
 import { ListChecks, RefreshCw, RotateCcw, X, ClipboardList, ListTree, BookOpen } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useT } from '@/lib/i18n/useT';
 
 import type { JobStatus, JobView } from '@/lib/api/jobs';
@@ -289,7 +289,13 @@ export function TasksTab({ sessionId, ownerToken }: TasksTabProps) {
 
   // 单次读取的时钟基准：同一渲染内所有卡片用同一个 now，避免逐张 Date.now()
   // 造成「已用时长」互相错开一两秒
-  const now = Date.now();
+  const [now, setNow] = useState(() => Date.now());
+  const hasActiveJobs = jobs.some((job) => job.active);
+  useEffect(() => {
+    if (!hasActiveJobs || !leftPanelOpen) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasActiveJobs, leftPanelOpen]);
 
   const { active, finished } = useMemo(() => {
     const a: JobView[] = [];

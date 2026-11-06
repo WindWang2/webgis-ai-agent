@@ -38,13 +38,14 @@ const PREVIEW_LIMIT = 100;
 interface FootprintGeometry {
   points: Array<[number, number]>;
   rings: Array<Array<[number, number]>>;
+  lines?: Array<Array<[number, number]>>;
 }
 
 function collectCoord(coord: unknown, out: Array<[number, number]>): void {
   if (!Array.isArray(coord) || coord.length === 0) return;
   // 坐标对 [x, y]：首元素为数字即叶子；否则视为嵌套环/多多边形继续下钻。
   // 不能用 length<2 判容器——单环 Polygon 的 coordinates 外层长度就是 1。
-  if (typeof coord[0] === 'number' && typeof coord[1] === 'number') {
+  if (typeof coord[0] === 'number' && Number.isFinite(coord[0]) && typeof coord[1] === 'number' && Number.isFinite(coord[1])) {
     out.push([coord[0] as number, coord[1] as number]);
     return;
   }
@@ -55,19 +56,34 @@ function collectCoord(coord: unknown, out: Array<[number, number]>): void {
 export function extractFootprint(features: Array<Record<string, unknown>>): FootprintGeometry {
   const points: Array<[number, number]> = [];
   const rings: Array<Array<[number, number]>> = [];
-  for (const f of features) {
-    const geometry = f.geometry as Record<string, unknown> | null | undefined;
-    const coords: Array<[number, number]> = [];
-    collectCoord(geometry?.coordinates, coords);
-    if (coords.length === 0) continue;
-    const type = String(geometry?.type ?? '');
-    if (type === 'Polygon' || type === 'MultiPolygon') {
-      rings.push(coords);
-    } else {
-      points.push(...coords);
+  const lines: Array<Array<[number, number]>> = [];
+  const addPath = (coordinates: unknown, target: Array<Array<[number, number]>>) => {
+    const path: Array<[number, number]> = [];
+    collectCoord(coordinates, path);
+    if (path.length) target.push(path);
+  };
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    const geometry = value as Record<string, unknown>;
+    const coordinates = Array.isArray(geometry.coordinates) ? geometry.coordinates : [];
+    switch (geometry.type) {
+      case 'GeometryCollection':
+        if (Array.isArray(geometry.geometries)) geometry.geometries.forEach(visit);
+        break;
+      case 'Polygon': coordinates.forEach((ring) => addPath(ring, rings)); break;
+      case 'MultiPolygon':
+        coordinates.forEach((polygon) => {
+          if (Array.isArray(polygon)) polygon.forEach((ring) => addPath(ring, rings));
+        });
+        break;
+      case 'LineString': addPath(coordinates, lines); break;
+      case 'MultiLineString': coordinates.forEach((line) => addPath(line, lines)); break;
+      case 'Point':
+      case 'MultiPoint': collectCoord(coordinates, points); break;
     }
-  }
-  return { points, rings };
+  };
+  for (const feature of features) visit(feature.geometry);
+  return { points, rings, lines };
 }
 
 /** SVG footprint plot — equirectangular bbox projection of preview geometry. */
@@ -76,6 +92,7 @@ export function FootprintMap({ geometry, className }: { geometry: FootprintGeome
   const all: Array<[number, number]> = [
     ...geometry.points,
     ...geometry.rings.flat(),
+    ...(geometry.lines ?? []).flat(),
   ];
   if (all.length === 0) {
     return <p className="px-2 py-3 text-micro text-ink-muted">{t('kjipsmm')}</p>;
@@ -90,11 +107,9 @@ export function FootprintMap({ geometry, className }: { geometry: FootprintGeome
     if (x > maxX) maxX = x;
     if (y > maxY) maxY = y;
   }
-  const w = maxX - minX || 1;
-  const h = maxY - minY || 1;
-  const pad = 0.06;
-  const sx = (x: number) => ((x - minX) / w) * (1 - 2 * pad) * 100 + pad * 100;
-  const sy = (y: number) => (1 - (((y - minY) / h) * (1 - 2 * pad) + pad)) * 100;
+  const span = Math.max(maxX - minX, maxY - minY) || 1;
+  const sx = (x: number) => 50 + ((x - (minX + maxX) / 2) / span) * 88;
+  const sy = (y: number) => 50 - ((y - (minY + maxY) / 2) / span) * 88;
   return (
     <svg
       role="img"
@@ -109,7 +124,7 @@ export function FootprintMap({ geometry, className }: { geometry: FootprintGeome
       preserveAspectRatio="xMidYMid meet"
       className={className}
     >
-      {geometry.rings.map((ring, i) => (
+      {[...geometry.rings, ...(geometry.lines ?? [])].map((ring, i) => (
         <polyline
           key={`ring-${i}`}
           points={ring.map(([x, y]) => `${sx(x).toFixed(2)},${sy(y).toFixed(2)}`).join(' ')}

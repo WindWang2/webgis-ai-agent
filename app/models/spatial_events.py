@@ -48,7 +48,7 @@ class SpatialEventRow(Base):
     source = Column(String(32), nullable=False, default="internal")
     subject_type = Column(String(32), nullable=False)
     subject_key = Column(String(128), nullable=False)
-    session_id = Column(String(64), nullable=True)
+    session_id = Column(String(128), nullable=True)
     project_id = Column(String(64), nullable=True)
     occurred_at = Column(DateTime, nullable=False)
     ingested_at = Column(DateTime, default=_utcnow, nullable=False)
@@ -69,7 +69,7 @@ class SpatialEventRow(Base):
     processed_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("event_id", name="uq_spatial_event_id"),
+        UniqueConstraint("org_id", "event_id", name="uq_spatial_event_id"),
         CheckConstraint(
             "status IN ('pending','processing','processed','failed',"
             "'coalesced','skipped','duplicate')",
@@ -104,7 +104,7 @@ class SpatialWatchRow(Base):
     enabled = Column(Integer, nullable=False, default=1)
     kinds = Column(JSON, nullable=False, default=list)
     subject_key_prefix = Column(String(128), nullable=True)
-    session_id = Column(String(64), nullable=True)
+    session_id = Column(String(128), nullable=True)
     project_id = Column(String(64), nullable=True)
     condition = Column(JSON, nullable=False, default=dict)
     actions = Column(JSON, nullable=False, default=list)
@@ -112,6 +112,7 @@ class SpatialWatchRow(Base):
     mission_goal_template = Column(Text, nullable=True)
     mission_project_id = Column(String(64), nullable=True)
     state = Column(JSON, nullable=False, default=dict)
+    revision = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime, default=_utcnow, nullable=False)
     updated_at = Column(DateTime, default=_utcnow, nullable=False)
 
@@ -138,7 +139,7 @@ class SpatialWatchFireRow(Base):
     detail = Column(JSON, nullable=False, default=dict)
 
     __table_args__ = (
-        UniqueConstraint("watch_id", "event_id", name="uq_spatial_watch_fire"),
+        UniqueConstraint("watch_id", "event_id", "action", name="uq_spatial_watch_fire"),
         Index("idx_spatial_watch_fire_org", "org_id", "fired_at"),
         Index("idx_spatial_watch_fire_watch", "watch_id", "fired_at"),
     )

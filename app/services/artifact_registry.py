@@ -546,6 +546,7 @@ async def register_artifact(
     metadata: Optional[Dict[str, Any]] = None,
     profile_digest: Optional[Dict[str, Any]] = None,
     lock: Any = None,
+    store: Any = None,
 ) -> Optional[ArtifactRecord]:
     """注册/更新一条产物记录（幂等 upsert；同 capability 换 ref 自动 supersede）。
 
@@ -652,11 +653,11 @@ async def register_artifact(
         if lock is not None:
             from app.services.session_data import session_data_manager as sdm
 
-            return await _mutate(sdm)
+            return await _mutate(store if store is not None else sdm)
         async with session_lock_registry.lock(session_id, fail_on_degraded=False):
             from app.services.session_data import session_data_manager as sdm
 
-            return await _mutate(sdm)
+            return await _mutate(store if store is not None else sdm)
     except Exception:  # noqa: BLE001 — 注册失败只影响记录，不影响产物
         logger.warning(
             "[ArtifactRegistry] register failed session=%s artifact=%s",
@@ -1015,10 +1016,16 @@ def _gc_protection_skip(aid: str, records: Dict[str, ArtifactRecord]) -> Optiona
         if str(md.get("persistence_tier") or "") in _GC_PROTECTED_TIERS:
             return f"persistence_tier={md.get('persistence_tier')}"
     valid_inputs: set = set()
-    for other in records.values():
-        if other.status == A_VALID:
-            for parent in other.inputs:
-                valid_inputs.add(parent)
+    pending = [parent for other in records.values() if other.status == A_VALID
+               for parent in other.inputs]
+    while pending:
+        parent = pending.pop()
+        if parent in valid_inputs:
+            continue
+        valid_inputs.add(parent)
+        ancestor = records.get(parent)
+        if ancestor is not None:
+            pending.extend(ancestor.inputs)
     if aid in valid_inputs:
         return "retained lineage root (has live downstream)"
     return None

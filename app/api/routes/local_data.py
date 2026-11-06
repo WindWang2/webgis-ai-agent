@@ -59,7 +59,7 @@ async def get_admin_boundary(
 ) -> AdminBoundaryResponse:
     """GET 查询参数用朴素默认值（直接调用路由函数时 Query() 对象会泄漏为实参）。"""
     if level not in LEVELS:
-        return {"error": f"不支持的级别: {level}（可选 {', '.join(LEVELS)}）"}
+        raise HTTPException(status_code=400, detail=f"不支持的级别: {level}（可选 {', '.join(LEVELS)}）")
     return await asyncio.to_thread(
         query_admin_boundary,
         level, name=name, adcode=adcode, to_wgs84=to_wgs84, simplified=simplified,

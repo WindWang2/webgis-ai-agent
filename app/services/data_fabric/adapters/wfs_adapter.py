@@ -444,7 +444,7 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                 bbox_xml = compile_bbox_fes(v2.spatial.bbox)
                 filter_xml = f'<ogc:And xmlns:ogc="http://www.opengis.net/ogc">{filter_xml}{bbox_xml}</ogc:And>'
                 params.pop("BBOX", None)
-            post_xml = self._build_get_feature_xml(dataset_id, limit, offset if offset_pushed else 0, filter_xml)
+            post_xml = self._build_get_feature_xml(dataset_id, limit, offset if offset_pushed else 0, filter_xml, v2.select)
 
         try:
             if post_xml is not None:
@@ -537,6 +537,13 @@ class WFSAdapter(GeospatialDataSourceAdapter):
             features = [
                 f for f in features if evaluate_predicate(local_filter, f.get("properties") or {})
             ]
+        if v2.temporal is not None:
+            from app.services.data_fabric.query.predicates import evaluate_temporal
+
+            features = [
+                f for f in features
+                if evaluate_temporal(v2.temporal, f.get("properties") or {})
+            ]
         returned = len(features)
         next_link = None
         if isinstance(data, dict):
@@ -554,7 +561,7 @@ class WFSAdapter(GeospatialDataSourceAdapter):
 
         # m1（审计 round1）：拆分活跃（存在本地余项）时 numberMatched 只是
         # 下推半的命中数 → total_matching 如实置 None（截断判定已先行计算）。
-        if local_filter is not None:
+        if local_filter is not None or v2.temporal is not None:
             total_matched = None
 
         evidence = build_evidence(
@@ -586,10 +593,25 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         )
 
     def _build_get_feature_xml(
-        self, dataset_id: str, limit: int, offset: int, filter_xml: str
+        self, dataset_id: str, limit: int, offset: int, filter_xml: str,
+        select: Optional[List[str]] = None,
     ) -> str:
         """模板化 GetFeature POST 体（dataset_id 经实体转义；无用户值拼接）。"""
         from xml.sax.saxutils import escape as _esc
+        from defusedxml.ElementTree import fromstring
+        from xml.etree.ElementTree import Element, tostring
+
+        filter_node = fromstring(filter_xml)
+        filter_ns = "http://www.opengis.net/fes/2.0" if self.version.startswith("2.") else "http://www.opengis.net/ogc"
+        for child in filter_node.iter():
+            if child.tag.startswith("{http://www.opengis.net/ogc}") and self.version.startswith("2."):
+                name = child.tag.rsplit("}", 1)[-1]
+                child.tag = f"{{{filter_ns}}}{'ValueReference' if name == 'PropertyName' else name}"
+            elif child.tag.startswith("{http://www.opengis.net/gml}") and self.version.startswith("2."):
+                child.tag = child.tag.replace("http://www.opengis.net/gml", "http://www.opengis.net/gml/3.2")
+        wrapper = Element(f"{{{filter_ns}}}Filter")
+        wrapper.append(filter_node)
+        filter_xml = tostring(wrapper, encoding="unicode")
 
         wfs_ns = (
             "http://www.opengis.net/wfs/2.0"
@@ -608,8 +630,9 @@ class WFSAdapter(GeospatialDataSourceAdapter):
             parts.append(f' {start_attr}="{int(offset)}"')
         parts.append(">")
         parts.append(
-            f'<wfs:Query {type_attr}="{_esc(dataset_id)}" srsName="{_URN_CRS84}">'
-            f"{filter_xml}</wfs:Query></wfs:GetFeature>"
+            f'<wfs:Query {type_attr}="{_esc(dataset_id, {chr(34): "&quot;"})}" srsName="{_URN_CRS84}">'
+            + "".join(f"<wfs:PropertyName>{_esc(field)}</wfs:PropertyName>" for field in (select or []))
+            + f"{filter_xml}</wfs:Query></wfs:GetFeature>"
         )
         return "".join(parts)
 

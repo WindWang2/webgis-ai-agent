@@ -18,6 +18,7 @@ warnings/engine 标注与既有语义一致。
 from __future__ import annotations
 
 import logging
+import contextvars
 import threading
 import time
 from typing import Callable, Optional
@@ -52,15 +53,18 @@ class EngineFallbackBreaker:
         self._state = EngineBreakerState.CLOSED
         self._opened_at = 0.0
         self._half_open_trial_inflight = False
+        self._trial_owner = None
         self._total_fallbacks = 0
         # RLock：state()/disclosure() 内部复用（disclosure 持锁调 state）。
         self._lock = threading.RLock()
+        self._trial_context = contextvars.ContextVar(f"fabric_engine_trial_{id(self)}", default=None)
 
     # ── 决策 ─────────────────────────────────────────────────────────
 
     def allow_v6(self) -> bool:
         """engine=v6 请求是否允许进入 V6 栈（False = 直接走 V5）。"""
         with self._lock:
+            self._trial_context.set(None)
             if self._state == EngineBreakerState.OPEN:
                 if self._clock() - self._opened_at >= self.cool_down_s:
                     self._state = EngineBreakerState.HALF_OPEN
@@ -71,6 +75,8 @@ class EngineFallbackBreaker:
                 if self._half_open_trial_inflight:
                     return False  # 单 trial：其余请求继续 V5
                 self._half_open_trial_inflight = True
+                self._trial_owner = object()
+                self._trial_context.set(self._trial_owner)
             return True
 
     def release_trial(self) -> None:
@@ -82,7 +88,9 @@ class EngineFallbackBreaker:
         本方法只清 trial 旗标，不改状态机（成功/崩溃仍由 record_* 记账）。
         """
         with self._lock:
-            self._half_open_trial_inflight = False
+            if self._trial_owner is not None and self._trial_context.get() is self._trial_owner:
+                self._half_open_trial_inflight = False
+                self._trial_owner = None
 
     def record_v6_crash(self, exc: BaseException) -> None:
         """V6 非 typed 崩溃（已回退 V5）→ 记账并按阈值开闸。"""

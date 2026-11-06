@@ -57,6 +57,54 @@ env:
   PYTHON_VERSION: '3.12'
 
 jobs:
+  docker-build-smoke:
+    name: Independent Production Image Build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Detect image inputs
+        id: inputs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --quiet "$BASE_SHA" HEAD -- Dockerfile Dockerfile.prod requirements.txt requirements.lock pyproject.toml frontend vendor; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        if: steps.inputs.outputs.changed == 'true'
+      - name: Build runner without waiting for test lanes
+        if: steps.inputs.outputs.changed == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          file: Dockerfile.prod
+          target: runner
+          push: false
+          cache-from: type=gha,scope=docker-smoke
+          cache-to: type=gha,mode=max,scope=docker-smoke
+
+  compose-config:
+    name: Validate Compose Configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Validate dev stack and optional source mounts
+        env:
+          DB_PASSWORD: compose-validation-only
+          REDIS_PASSWORD: compose-validation-only
+        run: |
+          touch .env
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+
   # ============ Stage 1: 代码质量检查 ============
   lint:
     name: Code Quality Check
@@ -884,7 +932,7 @@ jobs:
   # tests/conftest.py 的 QUALITY_ORDER_SEED 支持确定性 shuffle，但此前没有
   # 任何 CI lane 设置它（只在 scripts/quality_runner.py 的本地 profile 里）。
   # 顺序污染因此从未在门禁里现形。选择 nightly 而非 PR lane（成本)：固定
-  # seed 跑单元套件（tests/unit，SQLite + fakeredis，无需 PostGIS），失败可
+  # seed 跑完整后端套件（真实服务由独立 lane 负责），失败可
   # 用同 seed 精确重放（同 seed 顺序可复现）。2 个 seed 并行 matrix，
   # 单 leg 失败不掩盖另一 leg。
   order-randomization:
@@ -921,12 +969,12 @@ jobs:
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
           echo "ADS_FORCE_OFFLINE=1" >> $GITHUB_ENV
-      - name: Run unit suite under fixed shuffle seed
+      - name: Run backend suite under fixed shuffle seed
         # 与 test-backend 同款 marker 排除（perf/cartography/real_services
         # 由专属 lane 拥有），只是以固定 seed 打乱收集顺序。
         env:
           QUALITY_ORDER_SEED: ${{ matrix.seed }}
-        run: pytest tests/unit -m "not perf and not cartography and not real_services" --no-cov --timeout=180 --timeout-method=thread -q
+        run: pytest tests -m "not perf and not cartography and not real_services" --no-cov --timeout=180 --timeout-method=thread -q
 
   test-frontend:
     name: Frontend Tests
@@ -1165,7 +1213,7 @@ jobs:
     # TEST-01：contract-gate（API 契约 / OpenAPI 快照 / api-docs drift /
     # schemathesis）与 perf-budget-gate（quality-e2e 的预算线）此前不在任何
     # 发布 DAG 上 —— master push 可在契约/预算红的情况下直达 deploy。
-    needs: [lint, test-backend-gate, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations, real-services-smoke, contract-gate, perf-budget-gate]
+    needs: [lint, compose-config, test-backend-gate, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations, real-services-smoke, contract-gate, perf-budget-gate]
     steps:
       - name: Release gate passed
         run: echo "All release-blocking checks (quality, backend, frontend, security, perf, cartography, contract, perf-budget) passed."
@@ -1372,7 +1420,8 @@ jobs:
           for i in $(seq 1 30); do
             if curl -sfk https://localhost/health >/dev/null 2>&1 && \
                curl -sfk https://localhost/api/v1/health/live >/dev/null 2>&1 && \
-               curl -sf http://localhost:9093/-/ready >/dev/null 2>&1; then
+               curl -sf http://localhost:9093/-/ready >/dev/null 2>&1 && \
+               curl -sfk https://localhost/ >/dev/null 2>&1; then
               ok=1
               break
             fi
@@ -1518,13 +1567,15 @@ jobs:
           scp .env.Priv ${{ vars.SSH_HOST }}:~/.env.Priv.incoming
           ssh ${{ vars.SSH_HOST }} 'chmod 600 ~/.env.Priv.incoming && mv -f ~/.env.Priv.incoming ~/.env.Priv'
           scp webgis-image.tar ${{ vars.SSH_HOST }}:~/
+          scp deploy/maintenance-upgrade.sh ${{ vars.SSH_HOST }}:~/deploy/
 
           ssh ${{ vars.SSH_HOST }} << 'EOF'
+            set -eu
             docker load < ~/webgis-image.tar
             # redis requirepass 由容器 entrypoint 从环境注入，无需额外渲染；
             # 但 db/redis 的 ${DB_PWD:?...} / ${REDIS_PASSWORD:?...} 插值依赖
             # compose 从 --env-file 读到变量（默认 .env 指向普通开发文件）。
-            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
+            sh deploy/maintenance-upgrade.sh .env.Priv docker-compose.prod.secure.yml
             docker system prune -f
           EOF
 
@@ -1554,7 +1605,7 @@ jobs:
           # （依赖 DB/Redis/Celery/LLM，未就绪返回 503）而不是 /health/live
           # （只证明进程可响应）—— 否则部署带着坏依赖也报绿。
           if [ -n "${{ vars.SSH_HOST }}" ]; then
-            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready || exit 1'
+            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready && curl -sfk https://localhost/ >/dev/null'
           else
             echo "SSH_HOST 未配置，跳过远程健康检查"
           fi
@@ -1748,7 +1799,7 @@ jobs:
           # 同 deploy-prod：通过 SSH 在生产主机上验证。TEST-08：503-aware 的
           # /api/v1/ready（依赖未就绪即红），不再是只证明进程活着的 health/live。
           if [ -n "${{ vars.SSH_HOST }}" ]; then
-            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready'
+            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/ready && curl -sfk https://localhost/ >/dev/null'
           else
             echo "SSH_HOST 未配置，跳过远程健康检查"
           fi

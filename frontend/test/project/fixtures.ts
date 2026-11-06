@@ -262,6 +262,7 @@ export function makeDataUsage(overrides: Partial<DataUsageResponse> = {}): DataU
 
 export function makeGcPlan(overrides: Partial<GcPlanResponse> = {}): GcPlanResponse {
   return {
+    plan_fingerprint: 'reviewed-plan',
     project_id: 'p1',
     scoped_to_project: true,
     retention: {

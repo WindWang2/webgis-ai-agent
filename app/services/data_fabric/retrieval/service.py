@@ -13,6 +13,8 @@ detector's candidate seam, not by sharing internals.
 from __future__ import annotations
 
 import threading
+import hashlib
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -75,6 +77,8 @@ class RetrievalService:
         self._index: Optional[BM25Index] = None
         self._cards: List[DatasetCard] = []
         self._snapshot_mtimes: Optional[Dict[str, float]] = None
+        self._card_vectors: OrderedDict[Tuple[int, str], Any] = OrderedDict()
+        self._embedding_provider: Any = None
 
     # -- index lifecycle ------------------------------------------------------
     def _registry_signature(self) -> Optional[Dict[str, float]]:
@@ -124,8 +128,25 @@ class RetrievalService:
         usable = provider is not None and bool(getattr(provider, "available", lambda: True)())
         degraded = not usable
         emb_query = provider.embed([query])[0] if usable else None
-        card_vecs = provider.embed([c.searchable_text() for c in cards]) if usable else None
-        vec_by_id = {c.card_id: v for c, v in zip(cards, card_vecs)} if usable else {}
+        vec_by_id = {}
+        if usable:
+            texts = [card.searchable_text() for card in cards]
+            keys = [(id(provider), hashlib.sha256(text.encode()).hexdigest()) for text in texts]
+            with self._lock:
+                if self._embedding_provider is not provider:
+                    self._card_vectors.clear()
+                    self._embedding_provider = provider
+                missing = [index for index, key in enumerate(keys) if key not in self._card_vectors]
+            vectors = provider.embed([texts[index] for index in missing]) if missing else []
+            with self._lock:
+                for index, vector in zip(missing, vectors):
+                    self._card_vectors[keys[index]] = vector
+                for card, key in zip(cards, keys):
+                    if key in self._card_vectors:
+                        vec_by_id[card.card_id] = self._card_vectors[key]
+                        self._card_vectors.move_to_end(key)
+                while len(self._card_vectors) > 2048:
+                    self._card_vectors.popitem(last=False)
 
         hits: List[RetrievalHit] = []
         for card_id, bm25_score in bm25:

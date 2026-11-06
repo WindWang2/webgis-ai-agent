@@ -80,8 +80,8 @@ def _feature_ids_for_layer(spec: Optional[Dict[str, Any]], layer_id: str):
     source = sources.get(str(source_ref)) if source_ref is not None else None
     if not isinstance(source, dict):
         return None  # ref 型数据源 → unverified
-    data = source.get("data") if isinstance(source.get("data"), dict) else None
-    if data is None or data.get("type") != "FeatureCollection":
+    data = source.get("data") if isinstance(source.get("data"), dict) else source.get("inlineData")
+    if not isinstance(data, dict) or data.get("type") != "FeatureCollection":
         return None
     ids = set()
     for feat in data.get("features") or []:
@@ -98,6 +98,8 @@ async def evaluate_anchor(
     if anchor.kind in (AnchorKind.LAYER, AnchorKind.FEATURE):
         if anchor.kind is AnchorKind.FEATURE:
             layer_id = anchor.layer_id or ""
+            if not layer_id:
+                return AnchorState.UNVERIFIED
             if layer_id and layer_id not in _layer_ids(mapspec):
                 return AnchorState.STALE
             result = _feature_ids_for_layer(mapspec, layer_id)

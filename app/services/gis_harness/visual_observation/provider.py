@@ -55,6 +55,7 @@ DEFAULT_TIMEOUT_S = 20.0
 _MAX_TIMEOUT_S = 60.0
 _MAX_VLM_CRITIQUES = 12
 _SOURCE = "visual_observation_provider"
+_VLM_SLOTS = threading.BoundedSemaphore(2)
 
 
 def provider_mode() -> str:
@@ -342,6 +343,9 @@ def _run_engine_with_timeout(
     返回 None = 超时/线程失败（fail-closed ``provider_timeout`` 由调用方
     落 not_evaluated）。线程内再无派生 loop —— httpx 自身超时兜底线程寿命。
     """
+    if not _VLM_SLOTS.acquire(blocking=False):
+        logger.warning("[VisualProvider] concurrent evaluation budget exhausted")
+        return None
     outcome: Dict[str, Any] = {"report": None}
 
     def _worker() -> None:
@@ -370,6 +374,8 @@ def _run_engine_with_timeout(
         except Exception:  # noqa: BLE001 — 线程内一切失败 = 无报告
             logger.warning("[VisualProvider] engine thread failed",
                            exc_info=True)
+        finally:
+            _VLM_SLOTS.release()
 
     thread = threading.Thread(target=_worker, daemon=True,
                               name="visual-observation-vlm")

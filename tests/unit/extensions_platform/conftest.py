@@ -266,7 +266,10 @@ def v4_env(tmp_path):
 
     _v4_cleanup_singletons()
 
+    signing_key = tmp_path / "fixture-signing.key"
+    signing_key.write_text("test-fixture-signing-key-with-sufficient-entropy", encoding="utf-8")
     def make_host(roots=None, **policy_kwargs):
+        policy_kwargs.setdefault("trusted_publishers", {"fixture-signing": signing_key})
         tool_registry = ToolRegistry()
         host = ExtensionHost(
             tool_registry=tool_registry,
@@ -280,7 +283,10 @@ def v4_env(tmp_path):
         return host, tool_registry
 
     def build(**kwargs):
-        return _build_v4_pack(tmp_path, **kwargs)
+        from app.extensions_platform.signing import sign_pack
+        pack = _build_v4_pack(tmp_path, **kwargs)
+        sign_pack(pack, "fixture-signing", signing_key)
+        return pack
 
     yield SimpleNamespace(tmp_path=tmp_path, build=build, make_host=make_host)
     _v4_cleanup_singletons()

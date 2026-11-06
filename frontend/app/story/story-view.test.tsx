@@ -83,20 +83,18 @@ describe('StoryView anonymous owner token (F-09)', () => {
     const { installStoryTokenResponder } = await import('@/lib/session/story-token-handoff');
     const uninstall = installStoryTokenResponder((sid) => (sid === 'long48' ? 'owner-long48' : null));
     const origOpener = Object.getOwnPropertyDescriptor(window, 'opener');
-    Object.defineProperty(window, 'opener', {
-      configurable: true,
-      value: {
-        postMessage: (data: unknown) =>
-          window.dispatchEvent(new MessageEvent('message', {
-            data,
-            origin: window.location.origin,
-            source: {
-              postMessage: (reply: unknown) =>
-                window.dispatchEvent(new MessageEvent('message', { data: reply, origin: window.location.origin })),
-            } as unknown as Window,
-          })),
-      },
-    });
+    const opener = {
+      postMessage: (data: unknown) =>
+        window.dispatchEvent(new MessageEvent('message', {
+          data,
+          origin: window.location.origin,
+          source: {
+            postMessage: (reply: unknown) =>
+              window.dispatchEvent(new MessageEvent('message', { data: reply, origin: window.location.origin, source: opener as unknown as Window })),
+          } as unknown as Window,
+        })),
+    };
+    Object.defineProperty(window, 'opener', { configurable: true, value: opener });
     const fetchMock = vi.fn().mockResolvedValue(jsonOk({ messages: [] }));
     vi.stubGlobal('fetch', fetchMock);
     try {

@@ -185,6 +185,13 @@ class PrescriptiveAdvisor:
             return PrescriptionResult(mode="deterministic")
 
         directed = {b.branch_id: self._directed_deltas(b, goals) for b in branches}
+        directed = {bid: values for bid, values in directed.items() if values}
+        if not directed:
+            return PrescriptionResult(
+                mode="deterministic",
+                rationale_causal_chain=["无可评价分支：全部方案缺少可计算指标"],
+                narrative="当前无可评价方案：请先补齐基线证据。",
+            )
         id_by_branch = {b.branch_id: b for b in branches}
 
         # Pareto（共同可评价指标口径）：i 无劣于 j 且至少一项严格优于 j。
@@ -231,7 +238,7 @@ class PrescriptiveAdvisor:
         # ROI 敏感度（按 方案×指标 展开；roi_index = 有向 delta%/100 / 成本代理）。
         roi_rows: List[Dict[str, Any]] = []
         for branch in branches:
-            cost = max(float(branch.cost_proxy), 1e-9)
+            cost = float(branch.cost_proxy)
             for metric in branch.metric_deltas:
                 direction = goals.get(metric.metric_key, "")
                 if not direction or metric.delta_pct is None:
@@ -244,13 +251,13 @@ class PrescriptiveAdvisor:
                         "direction": direction,
                         "delta_pct": round(float(metric.delta_pct), 4),
                         "cost_proxy": branch.cost_proxy,
-                        "roi_index": round(sign * float(metric.delta_pct) / 100.0 / cost, 8),
+                        "roi_index": (round(sign * float(metric.delta_pct) / 100.0 / cost, 8) if cost > 0 else None),
                     }
                 )
 
         best_roi = {
             bid: max(
-                (r["roi_index"] for r in roi_rows if r["branch_id"] == bid),
+                (r["roi_index"] for r in roi_rows if r["branch_id"] == bid and r["roi_index"] is not None),
                 default=0.0,
             )
             for bid in directed

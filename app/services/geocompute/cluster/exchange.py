@@ -6,7 +6,7 @@ BlobStore 的 content-hash/流式原语已存在但 geocompute 从未使用，�
 
 - **spill-to-disk**：executor checkpoint 超过内存预算的载荷落 BlobStore
   （zlib 压缩，钳 64MiB），LRU 里只留 stub —— 大 run 不再挤爆 checkpoint；
-- **content hash**：键 = sha256(logical bytes)（天然全局去重）；落盘字节
+- **content hash**：键 = sha256(owner/org scope + codec + logical bytes)（域内去重）；落盘字节
   经 digest 校验读回（BlobDigestMismatch → 类型化失败）；
 - **retry**：读回有界重试 + 退避（瞬态 IO；digest 不符不重试 —— 内容
   寻址下重试同一份坏字节没有意义，诚实失败）；
@@ -28,11 +28,13 @@ from datetime import timedelta
 from typing import Any, Optional
 
 from sqlalchemy import delete, select, update
+from app.services.org_quota_admission import admit_persistent_write, lock_org_transaction
 
 logger = logging.getLogger(__name__)
 
 #: spill 载荷的压缩上界（超过则原样存 —— zlib 全量驻留内存有界）。
 MAX_COMPRESS_BYTES = 64 * 1024 * 1024
+MAX_LOGICAL_BYTES = 256 * 1024 * 1024
 
 #: 读回重试（瞬态 IO）与退避。
 GET_RETRIES = 2
@@ -46,7 +48,7 @@ CLEANUP_BATCH = 128
 class SpillHandle:
     """spill 条目的最小凭证（进 LRU stub；get 的全部输入）。"""
 
-    key: str          # sha256(logical bytes) hex 64
+    key: str          # sha256(owner/org scope + codec + logical bytes), hex64
     size_bytes: int   # 逻辑字节（解压后）
     codec: str        # raw | zlib
 
@@ -83,7 +85,22 @@ class ArtifactExchange:
     def enabled(self) -> bool:
         return self._store is not None
 
-    # ── 元数据表（geocompute_artifacts；缺席/失败一律 fail-open）───────
+    def authorization_scope(self, owner_scope: Optional[str], run_id: Optional[str] = None) -> str:
+        """Namespace content by caller owner and the immutable run organization."""
+        if not isinstance(owner_scope, str) or not owner_scope.strip():
+            raise PermissionError("artifact access requires an authenticated owner scope")
+        import hashlib
+        from app.core import tenancy
+        from app.models.db_model import GeoComputeClusterRun
+        with self._meta_session() as db:
+            row = db.execute(select(GeoComputeClusterRun.org_id, GeoComputeClusterRun.owner_scope).where(
+                GeoComputeClusterRun.run_id == run_id)).first() if run_id else None
+            if row is not None and row.owner_scope != owner_scope:
+                raise PermissionError("artifact run is outside the caller owner scope")
+            org_id = row.org_id if row is not None else tenancy.get_or_create_default_org_id_sync(db)
+        return hashlib.sha256(f"{org_id}\0{owner_scope}".encode()).hexdigest()[:40]
+
+    # ── Metadata is the read authorization ledger; missing rows deny access. ──
 
     def _meta_session(self):
         if self._factory is None:
@@ -93,7 +110,7 @@ class ArtifactExchange:
         return self._factory()
 
     def _register(self, handle: SpillHandle, *, run_id: Optional[str],
-                  owner_scope: Optional[str], kind: str, codec: str) -> None:
+                  owner_scope: Optional[str], kind: str, codec: str, payload: bytes) -> None:
         try:
             from app.models.db_model import GeoComputeArtifact
             from datetime import datetime, timezone
@@ -113,12 +130,19 @@ class ArtifactExchange:
                             GeoComputeClusterRun.run_id == run_id)
                     ).scalar_one_or_none()
                 if org_id is None:
-                    org_id = tenancy.get_or_create_default_org_id_sync(db)
+                    org_id = tenancy.get_or_create_default_org_id_sync(db, commit=False)
+
+                lock_org_transaction(db, str(org_id))
 
                 existing = db.execute(
                     select(GeoComputeArtifact.id).where(
                         GeoComputeArtifact.artifact_key == handle.key)
                 ).scalar_one_or_none()
+                if existing is None:
+                    admit_persistent_write(db, str(org_id), storage_delta=handle.size_bytes)
+                # Admit before allocating bytes. Quota denial cannot create an
+                # unregistered spill, and dedup does not spend its size twice.
+                result = self._store.put_blob(handle.key, payload, content_type="binary")
                 if existing is None:
                     db.add(GeoComputeArtifact(
                         artifact_key=handle.key, run_id=run_id,
@@ -133,10 +157,25 @@ class ArtifactExchange:
                         .where(GeoComputeArtifact.artifact_key == handle.key)
                         .values(last_hit_at=now, expires_at=expires)
                     )
-                db.commit()
-        except Exception:  # noqa: BLE001 - 元数据失败不影响载荷路径
-            logger.debug("[geocompute-v8] artifact metadata register failed",
-                         exc_info=True)
+                try:
+                    db.commit()
+                except Exception:
+                    if result.put_new:
+                        # Reacquire after rollback before checking/deleting:
+                        # another process may have registered this same key.
+                        try:
+                            db.rollback()
+                            lock_org_transaction(db, str(org_id))
+                            live = db.execute(select(GeoComputeArtifact.id).where(
+                                GeoComputeArtifact.artifact_key == handle.key)).scalar_one_or_none()
+                            if live is None:
+                                self._store.delete_blob(handle.key)
+                        except Exception:
+                            logger.warning("[geocompute] spill compensation could not confirm metadata; retaining bytes", exc_info=True)
+                    raise
+        except Exception:
+            logger.warning("[geocompute-v8] artifact registration rejected", exc_info=True)
+            raise
 
     def _touch(self, key: str) -> None:
         try:
@@ -163,35 +202,28 @@ class ArtifactExchange:
     ) -> SpillHandle:
         """字节 → BlobStore（内容寻址 put-if-absent；返回 spill 凭证）。
 
-        compress=True 且大小 ≤ MAX_COMPRESS_BYTES → zlib 落盘（键仍是
-        **逻辑字节**的 sha256 —— 完整性与去重都以逻辑内容为准）。
+        Deduplication and logical integrity include the authenticated owner/org
+        scope and codec. Metadata is mandatory for every subsequent read.
         """
         if not self.enabled:
             raise RuntimeError("artifact exchange is not enabled")
         import hashlib
 
-        key = hashlib.sha256(data).hexdigest()
+        scope = self.authorization_scope(owner_scope, run_id)
         raw_size = len(data)
+        if raw_size > MAX_LOGICAL_BYTES:
+            raise ValueError("artifact exceeds 256MiB logical byte budget")
+        if kind not in {"spill", "payload", "export"}:
+            raise ValueError("unsupported artifact kind")
         codec = "raw"
         payload = data
         if compress and 0 < len(data) <= MAX_COMPRESS_BYTES:
             payload = zlib.compress(data, level=1)
             codec = "zlib"
-        self._store.put_blob(key, payload, content_type="binary")
+        key = hashlib.sha256(scope.encode() + b"\0" + codec.encode() + b"\0" + data).hexdigest()
         handle = SpillHandle(key=key, size_bytes=raw_size, codec=codec)
-        try:
-            self._register(handle, run_id=run_id, owner_scope=owner_scope,
-                           kind=kind, codec=codec)
-        except Exception:
-            raise
-        # 补偿（评审建议：register fail-open 的 blob 无元数据行 = TTL
-        # 永远扫不到的永久孤儿）。register 内部已吞异常，这里无法区分
-        # 成败 —— 改为可判定版本：直接检查行是否存在，缺席即删字节。
-        if not self._has_row(key):
-            try:
-                self._store.delete_blob(key)
-            except Exception:  # noqa: BLE001 - 补偿失败 = 有界孤儿
-                pass
+        self._register(handle, run_id=run_id, owner_scope=scope,
+                       kind=kind, codec=codec, payload=payload)
         return handle
 
     def _has_row(self, key: str) -> bool:
@@ -203,24 +235,56 @@ class ArtifactExchange:
                     select(GeoComputeArtifact.id).where(
                         GeoComputeArtifact.artifact_key == key)
                 ).scalar_one_or_none() is not None
-        except Exception:  # noqa: BLE001 - 判定失败 = 保留字节（有界孤儿）
-            return True
+        except Exception:  # noqa: BLE001 - authorization metadata is mandatory
+            return False
 
-    def get_bytes(self, handle: SpillHandle) -> bytes:
+    def get_bytes(self, handle: SpillHandle, *, owner_scope: Optional[str] = None,
+                  run_id: Optional[str] = None) -> bytes:
         """凭证 → 字节（digest 校验 + 有界瞬态重试；失败类型化上抛）。"""
         if not self.enabled:
             raise RuntimeError("artifact exchange is not enabled")
         from app.services.durable_blob_store import BlobDigestMismatch
+        from app.models.db_model import GeoComputeArtifact
+        from datetime import datetime, timezone
+        import hashlib
+
+        scope = self.authorization_scope(owner_scope, run_id)
+        if handle.codec not in {"raw", "zlib"} or not 0 <= handle.size_bytes <= MAX_LOGICAL_BYTES:
+            raise ValueError("invalid artifact codec/size budget")
+        with self._meta_session() as db:
+            row = db.execute(select(GeoComputeArtifact).where(GeoComputeArtifact.artifact_key == handle.key)).scalar_one_or_none()
+            if row is None:
+                raise RuntimeError("artifact unreadable: authorization metadata missing")
+            if row.owner_scope != scope:
+                raise PermissionError("artifact is outside the caller owner scope")
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            if row.expires_at is not None and row.expires_at.replace(tzinfo=None) <= now:
+                raise RuntimeError("artifact unreadable: expired")
+            if row.codec != handle.codec or row.size_bytes != handle.size_bytes:
+                raise RuntimeError("artifact corrupt: size mismatch or codec mismatch")
 
         last_exc: Optional[Exception] = None
         for attempt in range(GET_RETRIES + 1):
             try:
-                blob = self._store.get_blob(handle.key)
-                if blob is None:
-                    raise KeyError(
-                        f"artifact {handle.key[:16]} missing from blob store")
+                chunks = []
+                stored_size = 0
+                for chunk in self._store.get_blob_stream(handle.key, chunk_size=65536):
+                    stored_size += len(chunk)
+                    if stored_size > MAX_LOGICAL_BYTES:
+                        raise ValueError("stored artifact exceeds byte budget")
+                    chunks.append(chunk)
+                blob = b"".join(chunks)
+                if not chunks:
+                    if handle.size_bytes != 0:
+                        raise KeyError(f"artifact {handle.key[:16]} missing from blob store")
                 if handle.codec == "zlib":
-                    blob = zlib.decompress(blob)
+                    decoder = zlib.decompressobj()
+                    blob = decoder.decompress(blob, handle.size_bytes + 1)
+                    if len(blob) > handle.size_bytes or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+                        raise ValueError("artifact decompression exceeds declared size or has invalid framing")
+                expected_key = hashlib.sha256(scope.encode() + b"\0" + handle.codec.encode() + b"\0" + blob).hexdigest()
+                if expected_key != handle.key:
+                    raise ValueError("artifact logical digest mismatch")
                 if len(blob) != handle.size_bytes:
                     raise ValueError(
                         f"artifact {handle.key[:16]} size mismatch: "

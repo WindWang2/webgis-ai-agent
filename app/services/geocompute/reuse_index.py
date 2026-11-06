@@ -58,6 +58,7 @@ def record_result(
     session_id: str,
     upstream_fingerprints: Optional[dict[str, str]],
     max_per_owner: int = MAX_RESULTS_PER_OWNER,
+    org_id: Optional[str] = None,
 ) -> bool:
     """记录（或刷新）一条复用索引；写入时把该 owner 剪枝到 ``max_per_owner``。
 
@@ -74,17 +75,19 @@ def record_result(
         return False
     try:
         with session_factory() as db:
-            from app.core import tenancy
-            from app.models.db_model import GeoComputeClusterRun, GeoComputeNodeResult
+            from app.models.db_model import Conversation, User, GeoComputeNodeResult
 
-            # ADR-0139：org 锚定 owner 域 → 关联 run 行真相（同 owner 同 org），
-            # 兜底 default 隔离桶 —— 复用索引行永不为 NULL。
-            org_id = db.execute(
-                select(GeoComputeClusterRun.org_id)
-                .where(GeoComputeClusterRun.owner_scope == owner_scope)
-                .order_by(GeoComputeClusterRun.id.desc())
-                .limit(1)
-            ).scalar_one_or_none() or tenancy.get_or_create_default_org_id_sync(db)
+            # Organization belongs to this operation/session, never the most
+            # recent unrelated run performed by the same user.
+            if org_id is None:
+                identity = db.execute(select(Conversation.id, User.org_id).outerjoin(
+                    User, User.id == Conversation.user_id).where(Conversation.id == session_id)).first()
+                if identity is None:
+                    return False
+                org_id = str(identity[1]) if identity[1] is not None else None
+                if org_id is None:
+                    from app.core import tenancy
+                    org_id = tenancy.get_or_create_default_org_id_sync(db)
 
             # 重写即刷新（LRU 触点 = created_at）：删除该键的全部行后插入
             # 新行（bulk delete 一并清掉竞态重复行）。

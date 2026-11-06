@@ -284,7 +284,13 @@ async def pending_envelope(
     return build_envelope(doc, questions, session_id=session_id)
 
 
-async def collect_turn_clarification(
+async def collect_turn_clarification(session_store: Any, session_id: str, turn_id: str) -> Tuple[Optional[ClarificationEnvelope], str]:
+    from app.services.gis_harness.requirement_ir.service import session_writer_lock
+    async with session_writer_lock(session_id):
+        return await _collect_turn_clarification_unlocked(session_store, session_id, turn_id)
+
+
+async def _collect_turn_clarification_unlocked(
     session_store: Any,
     session_id: str,
     turn_id: str,

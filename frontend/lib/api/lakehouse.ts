@@ -17,7 +17,7 @@
  */
 
 import { apiFetch } from './transport';
-import { fastGet } from './get-fast-path';
+import { invalidateCache, fastGet } from './get-fast-path';
 
 const LABEL = 'Lakehouse API error';
 
@@ -690,7 +690,7 @@ function post<T>(
     signal: creds.signal,
     label: LABEL,
     timeoutMs: options?.timeoutMs,
-  });
+  }).then((result) => { invalidateCache('/api/v1/lakehouse'); return result; });
 }
 
 export const lakehouseApi = {

@@ -48,7 +48,11 @@ def _reject_mode(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _clear_warned():
+def _clear_warned(monkeypatch):
+    async def live_user(user_id):
+        return "ok", (0, True, "viewer", None)
+
+    monkeypatch.setattr(auth, "_load_live_user_state", live_user)
     auth._legacy_warned.clear()
     yield
     auth._legacy_warned.clear()

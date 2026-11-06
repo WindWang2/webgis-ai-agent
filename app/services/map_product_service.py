@@ -97,7 +97,8 @@ def _project_steps(
             "tool_name": s.get("tool_name"),
         }
         if include_args:
-            row["args"] = s.get("args") or {}
+            from app.services.provenance.manifest import redact_provenance_args
+            row["args"] = redact_provenance_args(s.get("args") or {})
         plan.append(row)
     if sort:
         plan.sort(key=lambda r: str(r.get("step_id") or ""))
@@ -221,6 +222,13 @@ class MapProductService:
                     .where(MapProductVersion.project_id == project_id)
                     .order_by(MapProductVersion.version_no.desc())
                 ).scalars().first()
+            # A conflicting writer changed the comparison baseline too.
+            diff_summary = MapProductService.diff_versions(previous, {
+                "input_dataset_fingerprints": input_fps,
+                "run_manifest": manifest,
+                "mapspec_fingerprint": mapspec_fingerprint,
+                "artifact_fingerprints": fingerprints,
+            })
             version_no = (previous.version_no if previous else 0) + 1
             row = MapProductVersion(
                 project_id=project_id,
@@ -411,7 +419,8 @@ class MapProductService:
         恢复后记录的新版本 diff 只含 style 维（机器可证）。走
         RestoreStyleIntent（apply_mutation 的锁/CAS/校验/回滚事务）。
         """
-        row = MapProductService.get_version(db, project_id, version_no)
+        import asyncio
+        row = await asyncio.to_thread(MapProductService.get_version, db, project_id, version_no)
         if row is None:
             raise ValueError(f"map product version not found: {version_no}")
         if not (isinstance(row.mapspec_snapshot, dict) and row.mapspec_snapshot):
@@ -432,12 +441,11 @@ class MapProductService:
         if restore_run_id is not None:
             from app.models.project import WorkflowRun
 
-            run_alive = db.execute(
-                select(WorkflowRun.id).where(
-                    WorkflowRun.id == restore_run_id,
-                    WorkflowRun.project_id == project_id,
-                )
-            ).scalar_one_or_none()
+            def _run_alive() -> Any:
+                return db.execute(select(WorkflowRun.id).where(
+                    WorkflowRun.id == restore_run_id, WorkflowRun.project_id == project_id,
+                )).scalar_one_or_none()
+            run_alive = await asyncio.to_thread(_run_alive)
             if run_alive is None:
                 restore_run_id = None
 
@@ -466,7 +474,7 @@ class MapProductService:
             if getattr(result, "mapspec", None)
             else _copy.deepcopy(row.mapspec_snapshot or {})
         )
-        new_row = MapProductService.record_version(
+        new_row = await asyncio.to_thread(MapProductService.record_version,
             db,
             project_id,
             workflow_run_id=restore_run_id,
@@ -474,7 +482,7 @@ class MapProductService:
             mapspec_revision=getattr(result, "mutation_revision", None),
             recipe_id=row.recipe_id,
             input_dataset_fingerprints=row.input_dataset_fingerprints,
-            run_manifest={"steps": list(row.compute_plan or [])},
+            run_manifest={"steps": _project_steps({"steps": list(row.compute_plan or [])}, include_args=True)},
             mapspec_snapshot=restored_snapshot,
             artifact_ids=list(row.artifact_ids or []),
             artifact_fingerprints=list(row.output_fingerprints or []),
@@ -538,7 +546,7 @@ class MapProductService:
             mapspec_revision=row.mapspec_revision,
             recipe_id=row.recipe_id,
             input_dataset_fingerprints=row.input_dataset_fingerprints,
-            run_manifest={"steps": list(row.compute_plan or [])},
+            run_manifest={"steps": _project_steps({"steps": list(row.compute_plan or [])}, include_args=True)},
             mapspec_snapshot=dict(row.mapspec_snapshot or {})
             if row.mapspec_snapshot else None,
             artifact_ids=list(row.artifact_ids or []),
@@ -653,7 +661,7 @@ class MapProductService:
         def _index(manifest: Dict[str, Any], key: str) -> Dict[str, Any]:
             return {
                 str(s.get("step_id")): (s.get(key) or "")
-                for s in (manifest.get("steps") or [])
+                for s in _project_steps(manifest, include_args=True)
                 if isinstance(s, dict) and s.get("step_id")
             }
 
@@ -735,7 +743,7 @@ class MapProductService:
         with, so a pairwise diff compares like with like)."""
         return {
             "input_dataset_fingerprints": dict(row.input_dataset_fingerprints or {}),
-            "run_manifest": {"steps": list(row.compute_plan or [])},
+            "run_manifest": {"steps": _project_steps({"steps": list(row.compute_plan or [])}, include_args=True)},
             "artifact_fingerprints": list(row.output_fingerprints or []),
             "mapspec_fingerprint": row.mapspec_fingerprint,
         }
@@ -769,7 +777,7 @@ class MapProductService:
         def _index_args(row: MapProductVersion) -> Dict[str, Any]:
             return {
                 str(s.get("step_id")): (s.get("args") or "")
-                for s in (row.compute_plan or [])
+                for s in _project_steps({"steps": row.compute_plan or []}, include_args=True)
                 if isinstance(s, dict) and s.get("step_id")
             }
 
@@ -787,7 +795,7 @@ class MapProductService:
         def _index_algo(row: MapProductVersion) -> Dict[str, str]:
             return {
                 str(s.get("step_id")): str(s.get("algorithm") or "")
-                for s in (row.compute_plan or [])
+                for s in _project_steps({"steps": row.compute_plan or []}, include_args=True)
                 if isinstance(s, dict) and s.get("step_id")
             }
 

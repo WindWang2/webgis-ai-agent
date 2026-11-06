@@ -26,15 +26,11 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 
 def normalize_admin_name(name: str) -> str:
-    """行政区名规范形：去空白、剥常见后缀（迭代剥，如「成都市」→「成都」）。"""
+    """行政区名规范形：去空白、剥常见后缀（只剥一次，如「杭州市」→「杭州」）。"""
     value = _WHITESPACE_RE.sub("", (name or "")).strip()
-    changed = True
-    while changed and value:
-        changed = False
-        for suffix in _ADMIN_SUFFIXES:
-            if len(value) > len(suffix) and value.endswith(suffix):
-                value = value[: -len(suffix)]
-                changed = True
+    for suffix in _ADMIN_SUFFIXES:
+        if value.endswith(suffix) and len(value) - len(suffix) >= 2:
+            return value[:-len(suffix)]
     return value
 
 
@@ -60,14 +56,20 @@ _STATISTIC_TABLE: Tuple[Tuple[Tuple[str, ...], StatisticVocab], ...] = (
 )
 
 
+def _contains(value: str, synonym: str) -> bool:
+    if synonym.isascii():
+        return re.search(r"(?<![a-z0-9_])" + re.escape(synonym) + r"(?![a-z0-9_])", value, re.I) is not None
+    return synonym in value
+
+
 def normalize_statistic(text: str) -> StatisticVocab:
     """统计词规范形；未表达 → ``none``（歧义由 clarify 判定，不猜）。"""
     value = normalize_text(text)
     if not value:
         return "none"
-    for synonyms, statistic in _STATISTIC_TABLE:
+    for synonyms, statistic in sorted(_STATISTIC_TABLE, key=lambda item: -max(map(len, item[0]))):
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return statistic
     return "none"
 
@@ -97,9 +99,9 @@ def normalize_group_by(text: str) -> Tuple[DimensionVocab, str]:
     value = normalize_text(text)
     if not value:
         return ("none", "")
-    for synonyms, dimension, canonical in _GROUP_BY_TABLE:
+    for synonyms, dimension, canonical in sorted(_GROUP_BY_TABLE, key=lambda item: -max(map(len, item[0]))):
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return (dimension, canonical)
     custom = _CUSTOM_GROUP_RE.search(value)
     if custom and custom.group(1).strip():
@@ -124,7 +126,7 @@ def normalize_normalization(text: str) -> NormalizationVocab:
         return "none"
     for synonyms, normalization in _NORMALIZATION_TABLE:
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return normalization
     return "none"
 
@@ -152,7 +154,7 @@ def normalize_time(text: str) -> Tuple[str, str, TimeGranularity, bool]:
         return ("", "", "none", False)
     for synonyms, granularity, series in _TIME_TABLE:
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return ("", "", granularity, series)
     year_values = [m.group(0) for m in _YEAR_RE.finditer(value)]
     if len(year_values) >= 2:
@@ -211,7 +213,7 @@ def normalize_palette(text: str) -> str:
         return ""
     for synonyms, palette in _PALETTE_TABLE:
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return palette
     return value[:48]
 
@@ -240,7 +242,7 @@ def normalize_geometry_kind(text: str) -> str:
         return value[:48]
     for synonyms, kind in _GEOMETRY_KIND_TABLE:
         for synonym in synonyms:
-            if synonym in value:
+            if _contains(value, synonym):
                 return kind
     return value[:48]
 

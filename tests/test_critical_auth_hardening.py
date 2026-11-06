@@ -65,6 +65,16 @@ async def app_and_db(tmp_path, monkeypatch):
                 await s.close()
 
     monkeypatch.setattr(_utils, "async_db_session", override_async_db_session)
+    import app.core.database as core_database
+    from app.core.auth import invalidate_live_user_state
+    monkeypatch.setattr(core_database, "async_db_session", override_async_db_session)
+    invalidate_live_user_state()
+    from app.models.db_model import User
+    async with test_session() as seeded:
+        for uid, role in (("v1", "viewer"), ("a1", "admin"), ("u1", "admin")):
+            seeded.add(User(id=uid, username=f"authority_{uid}", email=f"{uid}@authority.test", role=role, is_active=True))
+        await seeded.commit()
+
     # chat.py / layer.py 都用 `from app.tools._utils import async_db_session` 拷贝名字，
     # 也得 patch 它们自身的引用（否则跨租户校验走的还是原版全局）。
     monkeypatch.setattr("app.api.routes.chat.async_db_session", override_async_db_session)
@@ -131,7 +141,8 @@ async def db(app_and_db):
 @pytest.mark.asyncio
 async def test_s28_register_disabled_by_default(client, monkeypatch):
     """默认 ALLOW_PUBLIC_REGISTER 未设 → 注册返回 503。"""
-    monkeypatch.delenv("ALLOW_PUBLIC_REGISTER", raising=False)
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "ALLOW_PUBLIC_REGISTER", False)
     resp = await client.post("/api/v1/auth/register", json={
         "username": "attacker",
         "email": "a@b.com",
@@ -143,7 +154,8 @@ async def test_s28_register_disabled_by_default(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_s28_register_allowed_when_flag_set(client, monkeypatch):
     """ALLOW_PUBLIC_REGISTER=true 时注册可用。"""
-    monkeypatch.setenv("ALLOW_PUBLIC_REGISTER", "true")
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "ALLOW_PUBLIC_REGISTER", True)
     resp = await client.post("/api/v1/auth/register", json={
         "username": "newuser",
         "email": "newuser@example.com",
@@ -193,15 +205,16 @@ async def test_s29_admin_endpoint_rejects_anonymous(client, app_and_db):
     """/api/v1/chat/tools/execute 是 admin-only —— 未带 token 必须 401。"""
     # app_and_db fixture 没注册 chat router；改测一个直接的 require_admin 行为：
     # 这里在 fixture 外手动验证 require_admin 依赖的行为
-    from app.core.auth import require_admin, get_current_user, get_current_user_with_version
+    from app.core.auth import require_admin
     from fastapi import FastAPI
     from fastapi import Depends
 
     app = FastAPI()
-    # require_admin 现在依赖 get_current_user_with_version（会查 DB）。本测试用
-    # 不存在的 user id ("v1"/"a1") 签 token，故 override 为不查库的
-    # get_current_user，让 role 直接来自 JWT claim。
-    app.dependency_overrides[get_current_user_with_version] = get_current_user
+    # Use the fixture database's real active users; claims cannot substitute
+    # for live role/token-version authority.
+    from app.core.database import get_async_db
+    fixture_app, _ = app_and_db
+    app.dependency_overrides[get_async_db] = fixture_app.dependency_overrides[get_async_db]
 
     @app.get("/test-admin")
     async def _(_u: dict = Depends(require_admin)):
@@ -225,7 +238,7 @@ async def test_s29_admin_endpoint_rejects_anonymous(client, app_and_db):
 
 
 @pytest.mark.asyncio
-async def test_s29_get_current_user_returns_role():
+async def test_s29_get_current_user_returns_role(app_and_db):
     """get_current_user 现在返回 role 字段（之前只返回 user_id，下游 role 检查全部 bypass）。"""
     from app.core.auth import create_access_token, get_current_user
     from fastapi import FastAPI, Depends

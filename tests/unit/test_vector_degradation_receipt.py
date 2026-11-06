@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api.routes import map as _mod
-from app.core.auth import get_current_user_with_version
+from app.core.auth import get_current_user_with_version, get_current_user_optional_with_version
 from app.services import export_paths
 
 _USER = {"user_id": "coverage-owner"}
@@ -49,6 +49,7 @@ def _auth(client):
     client._transport.app.dependency_overrides[get_current_user_with_version] = (
         lambda: _USER
     )
+    client._transport.app.dependency_overrides[get_current_user_optional_with_version] = lambda: _USER
 
 
 def _spec_with_unsupported_component():
@@ -159,7 +160,11 @@ async def test_vector_pdf_writes_diagnostics_sidecar(client):
 async def test_canvas_export_sidecar_shape_unchanged(client):
     """canvas 链 sidecar 旧形状回归锁定（{filename, diagnostics}）。"""
     _auth(client)
-    files = {"file": ("map.png", b"png-bytes", "image/png")}
+    from io import BytesIO
+    from PIL import Image
+    png = BytesIO()
+    Image.new("RGB", (1, 1)).save(png, format="PNG")
+    files = {"file": ("map.png", png.getvalue(), "image/png")}
     data = {"render_diagnostics": json.dumps([
         {"code": "label_truncated", "detail": "演示"}])}
     resp = await client.post("/api/v1/export", files=files, data=data)

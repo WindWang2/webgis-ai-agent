@@ -89,7 +89,7 @@ async def test_747_missing_token_fails_closed(monkeypatch):
 
     ctx_ok = await svc.load_context("s747", owner_token=None, internal_ok=True)
     assert len(ctx_ok.llm_messages) == 1
-    assert ctx_ok.owner_token == "real-token"
+    assert ctx_ok.owner_token is None  # Internal history reads do not recover transport credentials.
 
 
 @pytest.mark.asyncio
@@ -183,8 +183,7 @@ async def test_752_clear_session_degrades_on_redis_error(monkeypatch):
     from app.services.session_data_redis import RedisSessionStore
     import redis.asyncio as aioredis
 
-    store = RedisSessionStore.__new__(RedisSessionStore)
-    object.__setattr__(store, '_l1', {})
+    store = RedisSessionStore("redis://localhost:6379/0")
 
     async def boom():
         raise aioredis.RedisError("black hole")

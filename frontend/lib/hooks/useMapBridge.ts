@@ -27,15 +27,13 @@ const MAX_SEEN_EVENT_IDS = 512;
 function cancellableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener('abort', finish, { once: true });
   });
 }
 
@@ -695,7 +693,7 @@ export function useMapBridge(
       // Fire-and-forget by design (throttled viewport state). Goes through
       // the shared transport so failures carry request id and respect the
       // caller cancellation contract (no timeout on the long body).
-      apiFetch<void>(`/api/v1/chat/sessions/${sessionId}/map-state`, {
+      apiFetch<void>(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-state`, {
         method: 'POST',
         body: {
           viewport: { center, zoom, bearing, pitch },

@@ -25,6 +25,12 @@ def _profile(source_type: str, endpoint: str = "", options: dict | None = None) 
     )
 
 
+@pytest.fixture(autouse=True)
+def declared_local_root(tmp_path, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "DATA_FABRIC_LOCAL_FILE_ROOTS", str(tmp_path))
+
+
 @pytest.fixture
 def gpkg_path(tmp_path: Path) -> Path:
     """A real single-layer GeoPackage with two points."""
@@ -108,6 +114,29 @@ def test_geopackage_bbox_query(gpkg_path):
     assert result.metadata["source"] == "local_gpkg"
 
 
+def test_geopackage_projected_crs_bbox_and_output(gpkg_path):
+    import geopandas as gpd
+
+    projected = gpkg_path.parent / "projected.gpkg"
+    gpd.read_file(gpkg_path).to_crs(3857).to_file(projected, layer="pois", driver="GPKG")
+    adapter = GeoPackageAdapter(_profile("geopackage", endpoint=str(projected)))
+    result = adapter.query("pois", QuerySpec(bbox=[116, 39, 117, 40], fields=["name"], limit=1))
+    assert len(result.features) == 1
+    assert result.features[0]["geometry"]["coordinates"] == pytest.approx([116.4, 39.9])
+    assert result.features[0]["properties"] == {"name": "a"}
+
+
+def test_geopackage_refuses_ignored_predicate_and_discloses_pagination(gpkg_path):
+    from app.services.data_fabric.errors import InvalidQueryError
+
+    adapter = GeoPackageAdapter(_profile("geopackage", endpoint=str(gpkg_path)))
+    with pytest.raises(InvalidQueryError):
+        adapter.query("pois", QuerySpec(where="value = 1"))
+    result = adapter.query("pois", QuerySpec(limit=1))
+    assert result.has_more and result.truncated
+    assert result.total_matching == 2
+
+
 def test_geopackage_missing_is_typed_unreachable(tmp_path):
     adapter = GeoPackageAdapter(_profile("geopackage", options={"base_dir": str(tmp_path / "void")}))
     assert adapter.probe() is False
@@ -147,7 +176,7 @@ def test_local_file_sqlite_roundtrip(sqlite_path):
         QuerySpec(columns=["county", "gdp"], limit=10, offset=0),
     )
     assert len(result.features) == 2
-    assert result.features[0]["county"] == "a"
+    assert result.features[0]["properties"]["county"] == "a"
 
 
 def test_local_file_missing_is_typed(tmp_path):

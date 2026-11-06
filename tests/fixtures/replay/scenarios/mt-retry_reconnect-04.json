@@ -1,16 +1,22 @@
 {
  "category": "retry_reconnect",
+ "decisions": [],
  "description": "失败→重试→恢复（3 轮）",
  "dispatch_backed": false,
+ "expect_calibration": [],
+ "expect_source": "",
  "faults": [
   {
    "target_turn": 0,
    "type": "source_unavailable"
   }
  ],
+ "receipt_backed": false,
+ "registry_digest": "",
  "scenario_id": "mt-retry_reconnect-04",
  "schema_version": 1,
  "tags": [],
+ "tool_registry": {},
  "turns": [
   {
    "cartography": {
@@ -121,6 +127,7 @@
      },
      "call_id": "call-upsert-mt-retry_reconnect-04-base",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "source unavailable",
      "is_error": true,
      "result": {
@@ -136,6 +143,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -263,6 +271,7 @@
      },
      "call_id": "call-retry-4",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -278,6 +287,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -405,6 +415,7 @@
      },
      "call_id": "call-upsert-mt-retry_reconnect-04-base",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -420,6 +431,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {

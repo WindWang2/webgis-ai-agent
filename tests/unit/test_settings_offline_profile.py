@@ -14,6 +14,7 @@ def _settings(**kw) -> Settings:
     base = dict(
         JWT_SECRET_KEY="test-secret",
         LLM_API_KEY="sk-test",
+        LLM_BASE_URL="https://api.stepfun.com/v1",
         DATABASE_URL="sqlite:///./data/webgis.db",
     )
     base.update(kw)

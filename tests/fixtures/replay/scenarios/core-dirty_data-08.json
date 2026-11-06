@@ -1,16 +1,22 @@
 {
  "category": "dirty_data",
+ "decisions": [],
  "description": "脏数据收据失败",
  "dispatch_backed": false,
+ "expect_calibration": [],
+ "expect_source": "",
  "faults": [
   {
    "target": "call-upsert-dirty-8",
    "type": "invalid_tool_result"
   }
  ],
+ "receipt_backed": false,
+ "registry_digest": "",
  "scenario_id": "core-dirty_data-08",
  "schema_version": 1,
  "tags": [],
+ "tool_registry": {},
  "turns": [
   {
    "cartography": {
@@ -118,6 +124,7 @@
      },
      "call_id": "call-upsert-dirty-8",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "source unavailable",
      "is_error": true,
      "result": {
@@ -133,6 +140,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "renderer failure",
      "is_error": true,
      "result": {

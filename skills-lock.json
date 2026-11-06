@@ -554,5 +554,14 @@
       "computedHash": "f5e6c57bdd85178ace4a260c92f46da6b64ddee18215b461d875739c68976f72"
     }
   },
-  "runtime_skills": {}
+  "runtime_skills": {},
+  "repository_skills": {
+    "batch-grill-me": "7ca3ecc5c0214c5084475b453831d4cab81ddadf80180a10635f5d27c3ae3ca2",
+    "design-an-interface": "a2596e9fa2d50e23ba014f64a5b8f9df4eb56b846a52cad152899ef5eb97b085",
+    "edit-article": "e10fba546f45357fe0aaa7494b9e186910d4525818d19f9b2ad6f28cc506aa5e",
+    "obsidian-vault": "7bed1d552aa5e9345e493cd62cb13e65c5d829d153c349afdb2cb91c809fa6c4",
+    "request-refactor-plan": "d59de4ba6cc1fe2dd267e8b9b5a1fd88e3e739e2130bc9dd78061d2a072830b8",
+    "ubiquitous-language": "2449e2345b96b9f1e861c697b5eab50d03ae1254481a4306b6f815684e523b3a",
+    "writing-great-skills": "4d6ccbc3760b1bd4107c495a79872286ea69494003f3b0a719fc95b147457061"
+  }
 }

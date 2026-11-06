@@ -154,12 +154,16 @@ def emit_workflow_package(
         methodology_fingerprint=compilation.methodology_fingerprint[:64],
         compiled_form=compiled,
     )
+    def encoded(value: Any) -> bytes:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True).encode('utf-8')
+    if len(encoded(pkg.compiled_form)) > _MAX_COMPILED_FORM_BYTES:
+        for key in sorted(pkg.compiled_form, key=lambda name: len(encoded(pkg.compiled_form[name])), reverse=True):
+            original = encoded(pkg.compiled_form[key])
+            pkg.compiled_form[key] = {"truncated": True, "reason_codes": ["TRUNCATED"], "content_fingerprint": hashlib.sha256(original).hexdigest()}
+            pkg.compiled_form['truncated'] = True
+            if len(encoded(pkg.compiled_form)) <= _MAX_COMPILED_FORM_BYTES:
+                break
     pkg.fingerprint = _canonical_fingerprint(pkg.compiled_form)
-    # 运行时强制有界（review R2 MINOR-2：常量不再是死字）
-    if len(json.dumps(pkg.compiled_form, ensure_ascii=False)) > _MAX_COMPILED_FORM_BYTES:
-        raise ValueError(
-            "workflow package compiled form exceeds budget "
-            f"({_MAX_COMPILED_FORM_BYTES} bytes) —— 产物必须是摘要")
     return pkg
 
 

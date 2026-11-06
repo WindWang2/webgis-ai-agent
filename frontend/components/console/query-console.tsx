@@ -63,6 +63,8 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
 
   // ── 编辑器 ──
   const [spec, setSpec] = useState<ConsoleSpec>(DEFAULT_SPEC);
+  const [limitText, setLimitText] = useState(String(DEFAULT_SPEC.limit));
+  useEffect(() => setLimitText(String(spec.limit)), [spec.limit]);
   const [searchParams, setSearchParams] = useState<{ text: string; nonce: number }>({
     text: '',
     nonce: 0,
@@ -74,6 +76,11 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
   const [explainError, setExplainError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [resultSpec, setResultSpec] = useState<ConsoleSpec | null>(null);
+  const targetRef = useRef<string | null>(null);
+  targetRef.current = target?.id ?? null;
+  const runSeq = useRef(0);
+  const explainSeq = useRef(0);
   const [runError, setRunError] = useState<string | null>(null);
   const [toMapLoading, setToMapLoading] = useState(false);
 
@@ -133,6 +140,11 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
   }, [searchParams, open, target]);
 
   const handleSelectTarget = useCallback((item: CatalogItem) => {
+    targetRef.current = item.id;
+    runSeq.current += 1;
+    explainSeq.current += 1;
+    setRunning(false);
+    setExplaining(false);
     setTarget(item);
     setResult(null);
     setRunError(null);
@@ -141,28 +153,36 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
   }, []);
 
   const handleExplain = useCallback(async () => {
-    if (!target) return;
+    if (!target || !guard.ok) return;
+    const seq = ++explainSeq.current;
+    const current = () => seq === explainSeq.current && targetRef.current === target.id;
     setExplaining(true);
     setExplainError(null);
     try {
       const res = await dataFabricApi.explainCatalogItem(target.id, toQuerySpec(spec));
+      if (!current()) return;
       setExplainLines(Array.isArray(res.explain) ? res.explain : [String(res.explain ?? '')]);
     } catch (err) {
+      if (!current()) return;
       setExplainLines(null);
       setExplainError(describeApiError(err, t('explainFailed')));
     } finally {
-      setExplaining(false);
+      if (current()) setExplaining(false);
     }
-  }, [target, spec, t]);
+  }, [target, spec, guard.ok, t]);
 
   const handleRun = useCallback(async () => {
     if (!target) return;
     if (!guard.ok) return;
+    const seq = ++runSeq.current;
+    const current = () => seq === runSeq.current && targetRef.current === target.id;
     setRunning(true);
     setRunError(null);
     const entryId = `qh-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     try {
       const res = await dataFabricApi.queryCatalogItem(target.id, toQuerySpec(spec));
+      if (!current()) return;
+      setResultSpec(spec);
       setResult(res);
       setHistory(
         appendHistory({
@@ -178,6 +198,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
         }),
       );
     } catch (err) {
+      if (!current()) return;
       setResult(null);
       const msg = describeApiError(err, t('queryFailed'));
       setRunError(msg);
@@ -193,7 +214,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
         }),
       );
     } finally {
-      setRunning(false);
+      if (current()) setRunning(false);
     }
   }, [target, spec, guard, t]);
 
@@ -207,7 +228,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
   }, [sessionId]);
 
   const handleToMap = useCallback(async () => {
-    if (!target || !result) return;
+    if (!target || !result || !resultSpec) return;
     if (!sessionId) {
       useToastStore.getState().addToast(t('noSessionToast'), 'error');
       return;
@@ -218,7 +239,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
       const res = await dataFabricApi.materializeCatalogItem({
         session_id: sid,
         catalog_item_id: target.id,
-        query_spec: toQuerySpec(spec),
+        query_spec: toQuerySpec(resultSpec),
         ownerToken,
       });
       if (sessionIdRef.current !== sid) return;
@@ -251,7 +272,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
     } finally {
       setToMapLoading(false);
     }
-  }, [target, result, sessionId, ownerToken, spec, t]);
+  }, [target, result, sessionId, ownerToken, resultSpec, t]);
 
   if (!open) return null;
 
@@ -486,10 +507,13 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                     type="number"
                     min={1}
                     max={2000}
-                    value={spec.limit}
-                    onChange={(e) =>
-                      setSpec((s) => ({ ...s, limit: Math.max(1, Math.min(2000, Number(e.target.value) || 100)) }))
-                    }
+                    value={limitText}
+                    onChange={(e) => setLimitText(e.target.value)}
+                    onBlur={() => {
+                      const limit = Math.max(1, Math.min(2000, Math.trunc(Number(limitText) || 100)));
+                      setLimitText(String(limit));
+                      setSpec((s) => ({ ...s, limit }));
+                    }}
                     className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 font-mono text-body-sm text-ink outline-none focus:border-status-accent"
                   />
                   <label className="text-caption font-medium text-ink-muted" htmlFor="console-order">
@@ -532,7 +556,7 @@ export function QueryConsole({ sessionId, ownerToken }: QueryConsoleProps): Reac
                   <button
                     type="button"
                     onClick={() => void handleExplain()}
-                    disabled={explaining}
+                    disabled={explaining || !guard.ok}
                     className="inline-flex items-center gap-1.5 rounded-md border border-edge-subtle px-3 py-1.5 text-body-sm text-ink-secondary hover:bg-surface-hover hover:text-ink disabled:opacity-60"
                     data-testid="console-explain"
                   >

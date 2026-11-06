@@ -1,21 +1,21 @@
 {
  "gates": {
   "contract_drift": {
-   "command": "/home/kevin/project/webgis-ai-agent/.venv/bin/python scripts/gen_drift_report.py --check",
+   "command": "/home/kevin/projects/webgis/webgis-all-issues-review/.venv/bin/python scripts/gen_drift_report.py --check",
    "detail": [
     "drift report up to date"
    ],
    "status": "pass"
   },
   "frontend_behavior": {
-   "command": "/home/kevin/project/webgis-ai-agent/.venv/bin/python scripts/gen_frontend_behavior.py --check",
+   "command": "/home/kevin/projects/webgis/webgis-all-issues-review/.venv/bin/python scripts/gen_frontend_behavior.py --check",
    "detail": [
     "ok: 2 behaviors"
    ],
    "status": "pass"
   },
   "integration_preflight": {
-   "command": "/home/kevin/project/webgis-ai-agent/.venv/bin/python scripts/check_integration_preflight.py --report",
+   "command": "/home/kevin/projects/webgis/webgis-all-issues-review/.venv/bin/python scripts/check_integration_preflight.py --report",
    "detail": [
     "   \"check\": \"generated_hand_edits\",",
     "   \"ok\": true,",
@@ -27,14 +27,14 @@
    "status": "pass"
   },
   "quality_manifest": {
-   "command": "/home/kevin/project/webgis-ai-agent/.venv/bin/python scripts/gen_quality_manifest.py --check",
+   "command": "/home/kevin/projects/webgis/webgis-all-issues-review/.venv/bin/python scripts/gen_quality_manifest.py --check",
    "detail": [
     "quality manifest up to date"
    ],
    "status": "pass"
   }
  },
- "git_commit_generation_time": "e5d147b744696473d3929a668deb1dd4f7650e7b",
+ "git_commit_generation_time": "40cda057a7142e33ba3d2f93cd410c3809507a08",
  "known_gaps": [
   {
    "detail": "real-services 车道为 opt-in 资源纪律；未运行时本报告以 not-run 显式标注，不构成 pass",

@@ -190,6 +190,21 @@ def render_array_to_png(array: np.ndarray, palette: str = DEFAULT_RASTER_PALETTE
 # ─── main entry point ──────────────────────────────────────────────────────
 
 
+def _hillshade_cell_size(params: Dict[str, Any]) -> float:
+  """Require horizontal pixel spacing in the DEM elevation unit.
+
+  WGS84 display bounds cannot supply this metric: guessing one metre per
+  pixel would silently exaggerate slope for typical 10–30 metre DEMs.
+  """
+  size = params.get("cell_size")
+  if isinstance(size, bool) or size is None:
+    raise ValueError("hillshade requires explicit cell_size in the DEM elevation unit")
+  value = float(size)
+  if not np.isfinite(value) or value <= 0:
+    raise ValueError("hillshade cell_size must be finite and positive")
+  return value
+
+
 def _render_hillshade_png(array: np.ndarray, params: Dict[str, Any]) -> bytes:
   """V4 hillshade 模式：DEM 数组 → Horn 法晕渲灰度 PNG（服务端预渲染；
   MapLibre 原生 hillshade 图层（raster-dem 源）未接线 —— 见模型 pitfalls）。"""
@@ -199,7 +214,7 @@ def _render_hillshade_png(array: np.ndarray, params: Dict[str, Any]) -> bytes:
     raise ValueError("hillshade 需要 2D 且 ≥3×3 的 DEM 数组")
   shade = hillshade_array(
       dem,
-      cell_size=float(params.get("cell_size", 1.0)),
+      cell_size=_hillshade_cell_size(params),
       azimuth=float(params.get("azimuth", 315.0)),
       altitude=float(params.get("altitude", 45.0)),
   )
@@ -295,7 +310,7 @@ def _render_hillshade_blend_png(
 
   shade = hillshade_array(
       arr,
-      cell_size=float(params.get("cell_size", 1.0)),
+      cell_size=_hillshade_cell_size(params),
       azimuth=float(params.get("azimuth", 315.0)),
       altitude=float(params.get("altitude", 45.0)),
   )
@@ -349,7 +364,10 @@ def _render_bivariate_png(
   if matrix not in BIVARIATE_MATRICES:
     matrix = DEFAULT_BIVARIATE_MATRIX
   colors = BIVARIATE_MATRICES[matrix]
-  n = int(params.get("n", 3))
+  requested_n = params.get("n", 3)
+  n = 3
+  if isinstance(requested_n, bool) or float(requested_n) != n:
+    raise ValueError("bivariate raster color matrices require n=3")
   fa = a[np.isfinite(a)].tolist()
   fb = b[np.isfinite(b)].tolist()
   br_a = _breaks_quantiles(fa, n)
@@ -428,8 +446,8 @@ def build_raster_layer(
           "type": "continuous",
           "min": 0.0,
           "max": 255.0,
-          "palette": "Gray",
-          "palette_colors": resolve_palette_colors("Gray"),
+          "palette": resolved_palette,
+          "palette_colors": resolve_palette_colors(resolved_palette),
           "hillshade_zh": (
               f"山体晕渲（方位角 {params.get('azimuth', 315.0)}°、"
               f"高度角 {params.get('altitude', 45.0)}°）—— 服务端预渲染灰度"

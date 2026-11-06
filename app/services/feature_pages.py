@@ -192,8 +192,8 @@ def parse_bbox_param(raw: Optional[str]) -> Optional[Tuple[float, float, float, 
         raise FeaturePageError(f"bbox values must be numeric: {e}") from e
     if not all(math.isfinite(v) for v in (w, s, e, n)):
         raise FeaturePageError("bbox values must be finite")
-    if w > e or s > n:
-        raise FeaturePageError("bbox must satisfy w<=e and s<=n")
+    if s > n:
+        raise FeaturePageError("bbox must satisfy s<=n")
     if not (-90.0 <= s <= 90.0 and -90.0 <= n <= 90.0):
         raise FeaturePageError("bbox latitudes must be within [-90, 90] (check lat/lon order)")
     if not (-180.0 <= w <= 180.0 and -180.0 <= e <= 180.0):
@@ -601,7 +601,9 @@ def _feature_intersects_bbox(feature: Any, bbox: Tuple[float, float, float, floa
     if b is None:
         return False
     w, s, e, n = bbox
-    return not (b[2] < w or b[0] > e or b[3] < s or b[1] > n)
+    if b[3] < s or b[1] > n:
+        return False
+    return (b[2] >= w or b[0] <= e) if w > e else not (b[2] < w or b[0] > e)
 
 
 def project_feature(

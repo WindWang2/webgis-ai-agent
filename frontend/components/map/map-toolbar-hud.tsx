@@ -1,4 +1,5 @@
 'use client'
+import { registerEscapeHandler } from '@/lib/utils/escape-stack';
 import { useT } from '@/lib/i18n/useT';
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
@@ -248,11 +249,14 @@ export function MapToolbarHUD({
   // Keyboard shortcut listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       const activeElement = document.activeElement
       const tagName = activeElement?.tagName.toLowerCase()
       if (
         tagName === 'input' ||
         tagName === 'textarea' ||
+        tagName === 'select' ||
+        activeElement?.closest('[role="listbox"]') != null ||
         activeElement?.getAttribute('contenteditable') === 'true'
       ) {
         return
@@ -287,8 +291,10 @@ export function MapToolbarHUD({
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    const unregisterEscape = registerEscapeHandler(30, (event) => { if (!(activeMode !== 'none')) return false; handleKeyDown(event); return event.defaultPrevented; });
+    const nonEscape = (event: KeyboardEvent) => { if (event.key !== 'Escape') handleKeyDown(event); };
+    window.addEventListener('keydown', nonEscape)
+    return () => { unregisterEscape(); window.removeEventListener('keydown', nonEscape); }
   }, [activeMode, handleResetNorthPitch, handleToggle3D, handleZoomIn, handleZoomOut, setMeasureMode, onToggleBrushSelect])
 
   const compassRotation = -bearing

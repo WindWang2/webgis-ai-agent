@@ -4,6 +4,35 @@ from app.adapters.gov.gov_data_adapter import GovDataAdapter
 from app.services.explorer.models import RawContent
 
 
+@pytest.mark.asyncio
+async def test_search_preserves_valid_results_among_malformed_rows(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+    import app.adapters.gov.gov_data_adapter as module
+
+    response = MagicMock()
+    response.status = 200
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=None)
+    response.json = AsyncMock(return_value={"data": {"items": [
+        None,
+        {"id": "a", "title": "A", "row_count": None},
+        {"id": "bad", "title": ["invalid"]},
+        {"id": "b", "title": "B", "row_count": "约1万"},
+        {"id": "c", "title": "C", "row_count": "123"},
+    ]}})
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.get.return_value = response
+    monkeypatch.setattr(module, "create_client_session", AsyncMock(return_value=session))
+    monkeypatch.setattr("app.services.data_fabric.security.DataFabricSecurity.validate_url", lambda *a, **kw: a[0])
+
+    sources = await GovDataAdapter()._search_platform("fixture", {"search_url": "https://example.com/search"}, "query")
+    assert [source.name for source in sources] == ["A", "B", "C"]
+    assert [source.estimated_rows for source in sources] == [0, 0, 123]
+    response.json.assert_awaited_once_with(content_type=None)
+
+
 def test_guess_format():
     adapter = GovDataAdapter()
     assert adapter._guess_format("http://example.com/data.csv") == "csv"

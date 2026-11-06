@@ -55,7 +55,8 @@ async def test_project_knowledge_item_survives_scope_gate(monkeypatch):
     captured = {}
 
     def _fake_block(*a, **k):
-        return "<project_knowledge project=\"proj-1\">条目</project_knowledge>\n"
+        from app.lib.runtime.scoped_text import ScopedText
+        return ScopedText("<project_knowledge project=\"proj-1\">条目</project_knowledge>\n", source_scope={"scope": "project", "scope_id": "proj-1", "project_id": "proj-1", "org_id": "org1", "sensitivity": "project_scoped"})
 
     import app.services.chat.context_assembler as ca
     monkeypatch.setattr(ca, "_build_project_knowledge_block", _fake_block)
@@ -76,7 +77,8 @@ async def test_project_knowledge_item_survives_scope_gate(monkeypatch):
 @pytest.mark.asyncio
 async def test_gis_memory_item_survives_scope_gate(monkeypatch):
     async def _fake_projection(inp):
-        return "[GIS_MEMORY]\n- resolved_place: 示例地点"
+        from app.lib.runtime.scoped_text import ScopedText
+        return ScopedText("[GIS_MEMORY]\n- resolved_place: 示例地点", source_scope={"scope": "project", "scope_id": "org1", "org_id": "org1", "sensitivity": "org_scoped"})
 
     import app.services.gis_memory.queries as q
     monkeypatch.setattr(q, "build_memory_projection", _fake_projection)

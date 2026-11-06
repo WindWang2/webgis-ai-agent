@@ -166,17 +166,24 @@ class ChangeApplier:
         self, instance_id: str, inst: InstanceRecord,
         decision: C.RecomputeDecision,
     ) -> None:
-        """决策环追加（CAS：实例 revision 冲突即放弃本条 —— 有界观测
-        记录的 lost update 可接受，绝不覆盖并发写入的变更标记）。"""
+        """Append a decision with bounded fresh-read CAS retries and exhaustion logging."""
         import asyncio
 
-        decisions = list(inst.get("decisions") or [])
-        decisions.append(decision.to_bounded_dict())
-        await asyncio.to_thread(
-            self.store.update_instance,
-            instance_id, owner_scope=self.owner_scope,
-            expected_revision=inst["revision"],
-            fields={"decisions": decisions[-C.MAX_INSTANCE_DECISIONS:]})
+        for _ in range(3):
+            decisions = list(inst.get("decisions") or [])
+            payload = decision.to_bounded_dict()
+            payload["seq"] = max([int(row.get("seq") or 0) for row in decisions] + [0]) + 1
+            decisions.append(payload)
+            updated = await asyncio.to_thread(
+                self.store.update_instance, instance_id, owner_scope=self.owner_scope,
+                expected_revision=inst["revision"],
+                fields={"decisions": decisions[-C.MAX_INSTANCE_DECISIONS:]})
+            if updated is not None:
+                return
+            inst = await asyncio.to_thread(self.store.get_instance, instance_id, self.owner_scope)
+            if inst is None:
+                break
+        logger.warning("Workflow recompute decision CAS retries exhausted instance=%s", instance_id)
 
     async def drain_pending(
         self, instance_id: str, dag: WorkflowDAG,

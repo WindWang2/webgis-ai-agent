@@ -166,8 +166,8 @@ def create_school_facility_expansion_problem() -> DecisionProblem:
         criteria=criteria,
         constraints=constraints,
         baseline_context=BaselineEvidenceContext(
-            status=BaselineTruthState.OBSERVED,
-            source_refs=["ref:chaoyang_school_age_pop", "ref:noise_corridor_survey"],
+            status=BaselineTruthState.ASSUMED,
+            source_refs=[],
         ),
         mcda_method="wsm",
         random_seed=42,

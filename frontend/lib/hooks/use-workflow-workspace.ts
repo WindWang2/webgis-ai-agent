@@ -1,3 +1,4 @@
+'use client';
 /**
  * Project / workflow / run workspace data.
  *
@@ -9,7 +10,6 @@
  *   - lineage / compare fetched only when requested
  */
 
-'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -145,6 +145,8 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
     workflowGen.current += 1;
     runGen.current += 1;
     actionEpoch.current += 1;
+    setDetailLoading(false);
+    setError(null);
     setSelectedProjectId(id);
     setSelectedWorkflowId('');
     setSelectedRunId('');
@@ -274,6 +276,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
 
   useEffect(() => {
     if (!selectedProjectId || !selectedRunId) {
+      setDetailLoading(false);
       setRunDetail(null);
       return;
     }

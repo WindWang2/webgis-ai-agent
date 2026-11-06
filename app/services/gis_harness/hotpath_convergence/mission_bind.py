@@ -36,9 +36,10 @@ def maybe_bind_mission_for_turn(
     mission_id: str = "",
     project_id: Optional[str] = None,
     runtime: Any = None,
+    enabled: Optional[bool] = None,
 ) -> MissionBindResult:
     """Opt-in Mission bind. No durable writes when hotpath flag is off."""
-    if not mission_hotpath_enabled():
+    if not (mission_hotpath_enabled() if enabled is None else enabled):
         # Pass through explicit mission_id for callers that already have one
         # (swarm bridge still honors it when GIS_MISSION_RUNTIME is on), but
         # do not create/reuse via this hotpath helper.
@@ -62,7 +63,9 @@ def maybe_bind_mission_for_turn(
         mid = str(mission_id or "").strip()
         if mid:
             existing = runtime.store.get_mission(mid, org_id=org)
-            if existing is not None:
+            if (existing is not None and user_id
+                    and str(getattr(existing, "user_id", "")) == str(user_id)
+                    and sid in existing.refs.active_session_ids):
                 return MissionBindResult(mission_id=mid[:64], reused=True)
             # Unknown id under org → create fresh rather than invent ownership.
             mid = ""

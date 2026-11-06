@@ -10,9 +10,10 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,11 +23,21 @@ from app.core.scopes import require_scope
 from app.services import audit as audit_service
 from app.services import org_quota
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/admin", tags=["Security Admin (V9)"])
 
 
 def _trace_id(request: Request) -> Optional[str]:
     return audit_service.trace_id_from_header(request.headers.get("traceparent"))
+
+
+async def _admin_org(user: dict, db: AsyncSession, requested: Optional[str] = None) -> str:
+    from app.core.tenancy import effective_org_id
+    current = await effective_org_id(user, db)
+    if requested is not None and str(requested) != str(current):
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return str(current)
 
 
 class OrgQuotaUpdate(BaseModel):
@@ -44,6 +55,7 @@ async def get_org_quota(
     _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_async_db),
 ) -> Dict[str, Any]:
+    org_id = await _admin_org(_admin, db, org_id)
     limits = await org_quota.effective_limits(db, org_id)
     return {
         "org_id": org_id,
@@ -68,17 +80,24 @@ async def set_org_quota(
     db: AsyncSession = Depends(get_async_db),
 ) -> Dict[str, Any]:
     """per-org 配额覆盖（upsert；admin 动作落审计）。"""
-    from app.models.db_model import OrgQuota
+    from app.models.db_model import OrgQuota, Organization
 
     from sqlalchemy import select
 
+    org_id = await _admin_org(_admin, db, org_id)
+    if not str(org_id).isdigit() or (await db.execute(select(Organization.id).where(Organization.id == int(org_id)))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
     actor = scope_user.get("user_id")
-    row = (await db.execute(
-        select(OrgQuota).where(OrgQuota.org_id == org_id)
-    )).scalar_one_or_none()
+    row = (await db.execute(select(OrgQuota).where(OrgQuota.org_id == org_id))).scalar_one_or_none()
     if row is None:
-        row = OrgQuota(org_id=org_id)
-        db.add(row)
+        from sqlalchemy.exc import IntegrityError
+        try:
+            async with db.begin_nested():
+                db.add(OrgQuota(org_id=org_id))
+                await db.flush()
+        except IntegrityError:
+            logger.debug("concurrent organization quota initialization: %s", org_id)
+        row = (await db.execute(select(OrgQuota).where(OrgQuota.org_id == org_id).with_for_update())).scalar_one()
     row.max_storage_bytes = body.max_storage_bytes
     row.max_concurrent_tasks = body.max_concurrent_tasks
     row.rate_limit_per_min = body.rate_limit_per_min
@@ -112,6 +131,7 @@ async def get_org_quota_usage(
     _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_async_db),
 ) -> Dict[str, Any]:
+    org_id = await _admin_org(_admin, db, org_id)
     return await org_quota.usage_snapshot(db, org_id)
 
 
@@ -128,6 +148,7 @@ async def query_org_audit(
     db: AsyncSession = Depends(get_async_db),
 ) -> Dict[str, Any]:
     """组织审计事件查询（id 降序、有界 ≤500）。"""
+    org_id = await _admin_org(_admin, db, org_id)
     events = await audit_service.query_audit(
         db, org_id=org_id, actor_id=actor_id, action=action,
         limit=limit, before_id=before_id,
@@ -156,7 +177,8 @@ async def query_global_audit(
     _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_async_db),
 ) -> Dict[str, Any]:
-    """跨组织审计查询（全 admin 面；org_id 可选过滤）。"""
+    """当前组织审计查询；默认范围来自实时管理员身份。"""
+    org_id = await _admin_org(_admin, db, org_id)
     events = await audit_service.query_audit(
         db, org_id=org_id, actor_id=actor_id, action=action,
         limit=limit, before_id=before_id,

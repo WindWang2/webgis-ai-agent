@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
+from sqlalchemy.orm import Session
 
 from app.services.chat.context.formatters import _xml_fence
 from app.services.project_knowledge.contract import (
@@ -81,7 +82,7 @@ def _render_entry_line(entry: KnowledgeEntry) -> str:
     if entry.method_key:
         scope_bits.append("method✓")
     scope = f"[{' '.join(scope_bits)}]" if scope_bits else ""
-    authority = f"{entry.authority_store}:{entry.authority_id}"
+    authority = _fence(f"{entry.authority_store}:{entry.authority_id}")
     subject = _fence(entry.subject)
     return f"- {subject} {scope} → {authority}".rstrip()
 
@@ -89,7 +90,7 @@ def _render_entry_line(entry: KnowledgeEntry) -> str:
 def _render_warning_line(entry: KnowledgeEntry) -> str:
     """失败警告行：error_code + 有界摘要 + mission 回指。"""
     detail = _fence(entry.summary or entry.subject)
-    authority = f"{entry.authority_store}:{entry.authority_id}"
+    authority = _fence(f"{entry.authority_store}:{entry.authority_id}")
     code = _fence(entry.subject)
     return f"- ⚠ {code}：{detail} → {authority}"
 
@@ -121,7 +122,7 @@ def render_project_knowledge_card(
     ellipsis = "- …（更多条目已按预算省略）\n"
     footer = "</project_knowledge>\n"
 
-    warnings = [e for e in entries if e.entity_kind == EK_FAILURE_PATTERN]
+    warnings = [e for e in entries if e.entity_kind == EK_FAILURE_PATTERN and e.status == ST_ACTIVE]
     normal = [
         e for e in entries
         if e.entity_kind != EK_FAILURE_PATTERN and e.status == ST_ACTIVE
@@ -201,4 +202,27 @@ def render_project_knowledge_card(
     )
 
 
-__all__ = ["ProjectKnowledgeCard", "render_project_knowledge_card"]
+def load_project_knowledge_card(
+    db: Session, *, org_id: str, project_id: str, project_name: str = "",
+) -> ProjectKnowledgeCard:
+    """Load an authorized project's card only after batched authority checks.
+
+    Projection entries cannot establish their own liveness. All kinds use the
+    authority probes, including workflow/mission/place/preferences/warnings.
+    Caller owns the transaction; demotions are flushed, never committed here.
+    """
+    from app.services.project_knowledge import store as ks
+    from app.services.project_knowledge.liveness import live_version_tokens
+    from app.services.project_knowledge.contract import PROJECT_ROW_BUDGET, REF_TOKEN_MAX
+
+    entries = ks.get_active_entries(db, org_id=org_id, project_id=project_id, limit=PROJECT_ROW_BUDGET)
+    tokens = live_version_tokens(db, project_id=project_id, probes=[
+        (entry.authority_store, entry.authority_id) for entry in entries
+    ])
+    ks.demote_changed_entries(db, org_id=org_id, project_id=project_id, tokens=tokens)
+    live = [entry for entry in entries if tokens.get((entry.authority_store, entry.authority_id)) is not None
+            and str(tokens[(entry.authority_store, entry.authority_id)])[:REF_TOKEN_MAX] == entry.version_token]
+    return render_project_knowledge_card(live, project_id=project_id, project_name=project_name)
+
+
+__all__ = ["ProjectKnowledgeCard", "render_project_knowledge_card", "load_project_knowledge_card"]

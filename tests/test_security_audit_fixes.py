@@ -279,9 +279,9 @@ async def test_F4_rate_limit_middleware_keys_by_forwarded_ip(monkeypatch):
     await _call("/api/v1/chat", "203.0.113.9")
 
     assert seen_keys == [
-        "rate_limit:203.0.113.9",
-        "rate_limit:198.51.100.7",
-        "rate_limit:203.0.113.9",
+        "rate_limit:general:203.0.113.9",
+        "rate_limit:general:198.51.100.7",
+        "rate_limit:general:203.0.113.9",
     ], "keys must derive from the forwarded IP, never the shared proxy peer"
 
 

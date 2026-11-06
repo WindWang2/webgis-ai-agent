@@ -97,5 +97,5 @@ def _build_grid_features(H, xedges, yedges, max_val: float) -> list[dict]:
                 "weight": round(float(count / max_val), 4),
             },
         }
-        for rect, count in zip(rects, counts)
+        for rect, count in zip(rects, counts, strict=True)
     ]

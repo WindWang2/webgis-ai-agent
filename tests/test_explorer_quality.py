@@ -93,3 +93,12 @@ def test_temporal_score_future_timestamp_is_clamped_sane():
     future = datetime.now(timezone.utc) + timedelta(days=365)
     score = engine.calc_temporal_score("education", future)
     assert 0.0 <= score <= 1.0
+
+
+def test_thematic_score_matches_chinese_bigrams_and_normalizes_metadata():
+    engine = QualityEngine()
+    relevant = engine.calc_thematic_score("查询海淀区学校分布", "海淀学校名录", dataset_tags=["学校"])
+    unrelated = engine.calc_thematic_score("查询海淀区学校分布", "上海医院位置", dataset_tags=["医疗"])
+    assert relevant > unrelated
+    assert engine.calc_thematic_score("SCHOOLS", "", dataset_tags=["Schools"]) > 0
+    assert engine.calc_thematic_score("the and", "the and", dataset_tags=["the", "and"]) == 0

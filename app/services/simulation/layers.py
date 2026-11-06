@@ -1,7 +1,7 @@
 """时态产物切片与交付（ADR-0192 D7 / spec §2.3）。
 
 时间片产物 = 每 output_stride 步铸一条 :class:`TemporalLayerProduct`：
-- :class:`InMemoryTemporalSink`：内存记录 + `ref:simulation/<id>` 虚拟提货券；
+- :class:`InMemoryTemporalSink`：仅供显式数值测试的内存记录，不宣称可解析 ref；
 - :class:`GeoParquetTemporalSink`：features → GeoArrow → GeoParquet 落盘；
   **pyarrow 缺席时诚实降级**为内存记录（`format="memory"` + degraded_note），
   绝不虚构 parquet 路径（与 vector_carrier 的 VectorCarrierUnavailable 同纪律）；
@@ -103,8 +103,44 @@ class InMemoryTemporalSink:
         return _product(
             draft,
             format="memory",
-            ref=f"ref:simulation/{draft.product_id}",
+            ref=None,
         )
+
+
+class DurableGeoJSONTemporalSink:
+    """Durable, owner-scoped slices with resolvable paths and no virtual refs."""
+
+    def __init__(self, session_id: str) -> None:
+        import re
+        from app.core.config import settings
+
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id or ""):
+            raise SimulationConfigError("simulation output requires a valid session scope")
+        root = Path(settings.DATA_DIR).resolve()
+        self.output_dir = root / session_id / "simulation"
+        if self.output_dir.resolve() != self.output_dir:
+            raise SimulationConfigError("simulation output directory escapes its owner scope")
+
+    def emit(self, draft: LayerDraft) -> TemporalLayerProduct:
+        import json
+        import os
+        import uuid
+
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,192}", draft.product_id):
+            raise SimulationConfigError("invalid simulation product id")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        path = self.output_dir / f"{draft.product_id}.geojson"
+        tmp = path.with_suffix(f".tmp-{uuid.uuid4().hex}")
+        try:
+            with tmp.open("w", encoding="utf-8") as stream:
+                json.dump({"type": "FeatureCollection", "features": draft.features}, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return _product(draft, format="geojson", ref=None, uri=str(path))
 
 
 class GeoParquetTemporalSink:
@@ -145,7 +181,7 @@ class GeoParquetTemporalSink:
         return _product(
             draft,
             format="geoparquet",
-            ref=f"ref:simulation/{draft.product_id}",
+            ref=None,
             uri=str(path),
         )
 
@@ -154,7 +190,7 @@ class GeoParquetTemporalSink:
         return _product(
             draft,
             format="memory",
-            ref=f"ref:simulation/{draft.product_id}",
+            ref=None,
             degraded_note=note,
         )
 
@@ -179,6 +215,8 @@ def build_mapspec_bundle(result: "SimulationResult") -> TemporalMapSpec:
     for p in products:
         src_id = f"src-{p.product_id}"
         layer_id = f"layer-{p.product_id}"
+        if not p.uri and not p.ref:
+            continue
         sources[src_id] = {
             "type": "geojson",
             "dataPath": p.uri or p.ref,

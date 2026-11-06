@@ -1,6 +1,12 @@
 """Formatters and untrusted value sanitization for LLM prompt context."""
 
+import math
+
 _UNTRUSTED_MAX_LEN = 500
+
+
+def _finite_number(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
 
 # Untrusted source XML fence boundary tag constants
 TAG_UNTRUSTED_LAYER_NAME = "untrusted_layer_name"
@@ -102,16 +108,16 @@ def format_style_summary(style: dict | None) -> str | None:
     stype = style.get("type")
     if stype == "choropleth":
         breaks = style.get("breaks") or []
-        if isinstance(breaks, list) and len(breaks) >= 2:
+        if isinstance(breaks, list) and len(breaks) >= 2 and all(_finite_number(value) is not None for value in (breaks[0], breaks[-1])):
             k = len(breaks) - 1
             br_str = f"{breaks[0]:.2f}~{breaks[-1]:.2f}"
         else:
             k = 0
             br_str = "?"
-        return f"专题图 field={style.get('field','?')} 分级={k} 范围={br_str}"
+        return f"专题图 field={_xml_fence(TAG_UNTRUSTED_FEATURE_PROPERTY, style.get('field', '?'))} 分级={k} 范围={br_str}"
     if stype == "lisa":
-        return f"LISA 空间自相关 field={style.get('field','?')} (HH/LL/HL/LH/NS)"
+        return f"LISA 空间自相关 field={_xml_fence(TAG_UNTRUSTED_FEATURE_PROPERTY, style.get('field', '?'))} (HH/LL/HL/LH/NS)"
     color = style.get("color") or style.get("fill_color")
     if color:
-        return f"色={color}"
+        return f"色={_xml_fence(TAG_UNTRUSTED_FEATURE_PROPERTY, color)}"
     return None

@@ -5,7 +5,7 @@ MCDA, Uncertainty, Sensitivity, Robustness, and RecommendationAdmissibility sche
 """
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.services.spatial_decision.models import (
     TargetAreaSpec,
@@ -155,6 +155,28 @@ class Constraint(BaseModel):
     penalty_weight: float = Field(default=1.0, ge=0.0, description="Penalty multiplier for soft constraint violation")
     description: str = Field(default="", description="Detailed constraint requirement")
 
+    @model_validator(mode="after")
+    def _validate_constraint_contract(self) -> "Constraint":
+        import math
+        if self.category == ConstraintCategory.NUMERIC:
+            if self.operator not in (None, "<=", ">=", "<", ">", "==", "!="):
+                raise ValueError("unsupported numeric constraint operator")
+            if isinstance(self.threshold, bool):
+                raise ValueError("numeric constraint requires a finite threshold")
+            try:
+                threshold = float(self.threshold)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("numeric constraint requires a finite threshold") from exc
+            if not math.isfinite(threshold):
+                raise ValueError("numeric constraint requires a finite threshold")
+            self.threshold = threshold
+        elif self.category == ConstraintCategory.CATEGORICAL:
+            if not isinstance(self.threshold, (list, tuple, set, frozenset)) or self.operator not in (None, "in", "not_in", "outside"):
+                raise ValueError("categorical constraint requires a value collection and in/outside operator")
+        elif self.category == ConstraintCategory.SPATIAL and self.spatial_predicate is None:
+            raise ValueError("spatial constraint requires an explicit spatial predicate")
+        return self
+
 
 class ConstraintEvaluation(BaseModel):
     """Result of evaluating one constraint on one alternative."""
@@ -202,7 +224,7 @@ class UncertainParameter(BaseModel):
     param_id: str = Field(..., description="Parameter identifier")
     name: str = Field(..., description="Parameter name")
     distribution: DistributionType = Field(default=DistributionType.INTERVAL, description="Distribution type")
-    params: Dict[str, float] = Field(
+    params: Dict[str, Any] = Field(
         default_factory=dict,
         description="Distribution parameters (e.g., {'min': 10, 'mode': 15, 'max': 25} or {'mean': 50, 'std': 5})",
     )
@@ -315,8 +337,8 @@ class DecisionProblem(BaseModel):
     problem_id: str = Field(..., description="Unique problem run ID")
     goal: str = Field(..., description="High-level decision objective (e.g. 'Hospital Site Selection')")
     target_area: TargetAreaSpec = Field(..., description="Geographic scope")
-    alternatives: List[Alternative] = Field(..., min_length=1, description="Candidate alternatives to evaluate")
-    criteria: List[Criterion] = Field(..., min_length=1, description="Decision criteria")
+    alternatives: List[Alternative] = Field(..., min_length=1, max_length=128, description="Candidate alternatives to evaluate")
+    criteria: List[Criterion] = Field(..., min_length=1, max_length=64, description="Decision criteria")
     constraints: List[Constraint] = Field(default_factory=list, description="Hard & Soft constraints")
     baseline_context: BaselineEvidenceContext = Field(default_factory=BaselineEvidenceContext, description="Baseline context")
     uncertain_parameters: List[UncertainParameter] = Field(default_factory=list, description="Stochastic parameters")

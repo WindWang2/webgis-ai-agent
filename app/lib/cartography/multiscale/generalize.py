@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Callable
 from shapely.geometry.base import BaseGeometry
 import copy
@@ -111,7 +112,8 @@ def _dataset_origin(features: Sequence[Dict[str, Any]]) -> Tuple[float, float]:
             continue
         try:
             coords = _all_coords(shape(geom))
-        except Exception:  # noqa: BLE001 — 坏几何按无坐标处理
+        except Exception as _exc:  # noqa: BLE001 — 坏几何按无坐标处理
+            logging.getLogger(__name__).debug("generalize: optional operation unavailable (%s)", type(_exc).__name__)
             continue
         for x, y in coords:
             if math.isfinite(x) and math.isfinite(y):
@@ -319,7 +321,8 @@ def _anchor_map(features: Sequence[Dict[str, Any]]) -> Dict[Tuple[float, float],
             continue
         try:
             coords = _all_coords(shape(geom))
-        except Exception:  # noqa: BLE001
+        except Exception as _exc:  # noqa: BLE001
+            logging.getLogger(__name__).debug("generalize: optional operation unavailable (%s)", type(_exc).__name__)
             continue
         seen: FrozenSet[Tuple[float, float]] = frozenset(
             (round(x, 9), round(y, 9)) for x, y in coords
@@ -547,7 +550,8 @@ def _count_retained_anchors(
                 continue
             try:
                 coords = _all_coords(shape(geom))
-            except Exception:  # noqa: BLE001
+            except Exception as _exc:  # noqa: BLE001
+                logging.getLogger(__name__).debug("generalize: optional operation unavailable (%s)", type(_exc).__name__)
                 continue
             if any(abs(px - c[0]) < 1e-9 and abs(py - c[1]) < 1e-9
                    for px, py in coords):

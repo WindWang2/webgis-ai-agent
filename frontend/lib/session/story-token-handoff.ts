@@ -1,3 +1,5 @@
+import { getAccessToken, getAuthUser, setAuth, type AuthUser } from '@/lib/auth/tokenStore';
+import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 /**
  * F-09: hand the anonymous-session owner_token to the Story tab.
  *
@@ -23,6 +25,8 @@ interface TokenResponse {
   sessionId: string;
   nonce: string;
   token: string | null;
+  accessToken?: string | null;
+  user?: AuthUser | null;
 }
 
 /** Opener side: answer Story-tab token requests. Returns an uninstaller. */
@@ -41,6 +45,8 @@ export function installStoryTokenResponder(
       sessionId: data.sessionId,
       nonce: data.nonce,
       token: getToken(data.sessionId),
+      ...(getMapSpecSessionCursor().sessionId === data.sessionId
+        ? { accessToken: getAccessToken(), user: getAuthUser() } : {}),
     };
     source.postMessage(reply, window.location.origin);
   };
@@ -70,9 +76,12 @@ export function requestStoryOwnerToken(sessionId: string, timeoutMs = 1500): Pro
       resolve(token);
     };
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
+      if (event.origin !== window.location.origin || event.source !== opener) return;
       const data = event.data as Partial<TokenResponse> | null;
       if (!data || data.type !== RESPONSE || data.nonce !== nonce || data.sessionId !== sessionId) return;
+      if (typeof data.accessToken === 'string' && data.accessToken && data.user?.id && data.user.username) {
+        setAuth({ accessToken: data.accessToken, refreshToken: null }, data.user);
+      }
       done(typeof data.token === 'string' && data.token ? data.token : null);
     };
     const timer = setTimeout(() => done(null), timeoutMs);

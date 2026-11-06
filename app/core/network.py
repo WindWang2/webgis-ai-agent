@@ -149,34 +149,40 @@ class _PerLoopLockProxy:
     changes.
     """
 
-    async def __aenter__(self):
-        loop = asyncio.get_running_loop()
-        lock = _get_loop_lock(loop)
-        await lock.acquire()
-        self._entered_lock = lock  # type: ignore[attr-defined]
-        return lock
+    def __init__(self) -> None:
+        self._held: weakref.WeakKeyDictionary[asyncio.Task[Any], asyncio.Lock] = weakref.WeakKeyDictionary()
+        self._guard = threading.Lock()
 
-    async def __aexit__(self, exc_type, exc, tb):
-        lock = getattr(self, "_entered_lock", None)
-        if lock is not None:
-            lock.release()
-            self._entered_lock = None  # type: ignore[attr-defined]
+    async def __aenter__(self) -> asyncio.Lock:
+        await self.acquire()
+        return _get_loop_lock(asyncio.get_running_loop())
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        self.release()
         return False
 
-    async def acquire(self):
-        loop = asyncio.get_running_loop()
-        lock = _get_loop_lock(loop)
+    async def acquire(self) -> bool:
+        lock = _get_loop_lock(asyncio.get_running_loop())
         await lock.acquire()
-        self._entered_lock = lock  # type: ignore[attr-defined]
+        task = asyncio.current_task()
+        if task is None:
+            lock.release()
+            raise RuntimeError("lock acquisition requires a task")
+        with self._guard:
+            self._held[task] = lock
         return True
 
-    def release(self):
-        lock = getattr(self, "_entered_lock", None)
-        if lock is not None and lock.locked():
+    def release(self) -> None:
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            return
+        with self._guard:
+            lock = self._held.pop(task, None) if task is not None else None
+        if lock is not None:
             lock.release()
-            self._entered_lock = None  # type: ignore[attr-defined]
 
-    def locked(self):
+    def locked(self) -> bool:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:

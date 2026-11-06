@@ -38,9 +38,12 @@ _active_tasks: set[asyncio.Task] = set()
 _RATE_LIMIT_MAX_PER_MINUTE = 30
 _RATE_WINDOW_SECONDS = 60.0
 _rate_window: "deque[float]" = deque()
+_SESSION_RATE_MAX_PER_MINUTE = 6
+_SESSION_RATE_KEYS_MAX = 1024
+_session_rate_windows: OrderedDict[str, deque[float]] = OrderedDict()
 
 
-def _rate_limit_check() -> bool:
+def _rate_limit_check(session_id: str = "") -> bool:
     """Return True if the current call is allowed under the token bucket.
 
     Sliding 60-second window. Purges expired timestamps lazily on each check.
@@ -51,6 +54,20 @@ def _rate_limit_check() -> bool:
         _rate_window.popleft()
     if len(_rate_window) >= _RATE_LIMIT_MAX_PER_MINUTE:
         return False
+    session_key = session_id or "anonymous"
+    if session_key not in _session_rate_windows:
+        for key, window in list(_session_rate_windows.items()):
+            if not window or window[-1] < cutoff:
+                del _session_rate_windows[key]
+        if len(_session_rate_windows) >= _SESSION_RATE_KEYS_MAX:
+            return False
+        _session_rate_windows[session_key] = deque()
+    window = _session_rate_windows[session_key]
+    while window and window[0] < cutoff:
+        window.popleft()
+    if len(window) >= _SESSION_RATE_MAX_PER_MINUTE:
+        return False
+    window.append(now)
     _rate_window.append(now)
     return True
 
@@ -140,13 +157,13 @@ async def _fetch_nominatim(lng: float, lat: float) -> Optional[str]:
         return None
 
 
-async def _populate(lng: float, lat: float) -> None:
+async def _populate(lng: float, lat: float, session_id: str = "") -> None:
     key = _quantize(lng, lat)
     if key in _cache or key in _in_flight:
         return
     # /review P1-3: global token bucket. If we've already burned this minute's
     # Nominatim budget, skip — better to lose region naming than get IP-banned.
-    if not _rate_limit_check():
+    if not _rate_limit_check(session_id):
         logger.debug(
             f"viewport_naming: rate-limit ({_RATE_LIMIT_MAX_PER_MINUTE}/min) exhausted, "
             f"skipping ({lng:.4f},{lat:.4f})"
@@ -154,14 +171,15 @@ async def _populate(lng: float, lat: float) -> None:
         return
     _in_flight.add(key)
     try:
-        name = await _fetch_nominatim(lng, lat)
+        # The provider needs regional context, not the original precise center.
+        name = await _fetch_nominatim(*key)
         if name:
             _put(key, name)
     finally:
         _in_flight.discard(key)
 
 
-def schedule_populate(lng: float, lat: float) -> None:
+def schedule_populate(lng: float, lat: float, *, session_id: str = "") -> None:
     """触发后台预热。安全在同步代码中调用 —— 没有 running loop 时就静默跳过。"""
     if not (-180 <= lng <= 180 and -90 <= lat <= 90):
         return
@@ -173,7 +191,7 @@ def schedule_populate(lng: float, lat: float) -> None:
     except RuntimeError:
         # 没有运行中的 loop（例如纯同步路径），跳过；下次有 loop 时会再触发
         return
-    task = loop.create_task(_populate(lng, lat))
+    task = loop.create_task(_populate(lng, lat, session_id))
     _active_tasks.add(task)
     task.add_done_callback(_active_tasks.discard)
 
@@ -189,6 +207,7 @@ def clear_cache() -> None:
     _cache.clear()
     _in_flight.clear()
     _rate_window.clear()
+    _session_rate_windows.clear()
     for task in list(_active_tasks):
         if not task.done():
             try:
@@ -198,7 +217,7 @@ def clear_cache() -> None:
     _active_tasks.clear()
 
 
-def schedule_populate_from_map_state(map_state: dict | None) -> None:
+def schedule_populate_from_map_state(map_state: dict | None, *, session_id: str = "") -> None:
     """从 map_state 字典里抽出 viewport.center 并触发预热。
 
     map_state push 路径调用这个就够了，不用关心结构细节。
@@ -216,4 +235,4 @@ def schedule_populate_from_map_state(map_state: dict | None) -> None:
         lat = float(center[1])
     except (ValueError, TypeError):
         return
-    schedule_populate(lng, lat)
+    schedule_populate(lng, lat, session_id=session_id)

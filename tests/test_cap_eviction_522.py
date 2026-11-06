@@ -10,7 +10,7 @@ IntegrityError that `_save_msg_async`'s broad except silently swallowed.
 
 The fix: anonymous sessions bucket by SEC-08 `owner_token` (each anonymous
 session owns a fresh token → per-session buckets, no cross-user eviction at
-all), legacy NULL-token sessions share one grandfather bucket, and every
+all), global anonymous admission rejects overflow without evicting other owners, and every
 eviction runs the clear_session protocol (clearing marker + in-flight turn
 cancel/quiesce + session-data reclaim).
 """
@@ -68,69 +68,48 @@ def _conv(session_id: str, owner_token=None, user_id=None, age_seconds: int = 0)
 
 
 @pytest.mark.asyncio
-async def test_unique_token_anonymous_sessions_never_evict_each_other(db):
-    """Production shape: every new anonymous session mints a fresh SEC-08
-    owner_token, so no two anonymous sessions share a bucket. Creating far
-    more than MAX_SESSIONS anonymous sessions must evict NOTHING (the old
-    code collapsed them all into one IS NULL bucket and evicted the 1001st)."""
+async def test_unique_token_anonymous_sessions_never_evict_each_other(db, monkeypatch):
+    """Admission rejects overflow and retains every existing anonymous owner."""
+    from app.core.errors import PlatformError
+    from app.services import history_service_async as history
+    monkeypatch.setattr(history, "MAX_SESSIONS", 3)
     svc = AsyncHistoryService(db)
-    created = []
-    for i in range(MAX_SESSIONS + 400):
-        conv, made = await svc.get_or_create_conversation_with_created(
-            f"anon-{i}", user_id=None
-        )
-        assert made is True
-        assert conv.owner_token  # every new anon session has its own token
-        created.append(conv.id)
-
-    # Existence check via db.get: get_session() without the owner_token would
-    # return None for a token-bearing anonymous session (SEC-08) even when the
-    # row exists — that is the ownership guard, not eviction.
-    for sid in created:
-        assert await db.get(Conversation, sid) is not None, (
-            f"anonymous session {sid} was evicted by another anonymous session "
-            "— buckets must be per owner_token"
-        )
+    for i in range(3):
+        conv, made = await svc.get_or_create_conversation_with_created(f"anon-{i}", user_id=None)
+        assert made is True and conv.owner_token
+    with pytest.raises(PlatformError, match="anonymous session capacity exhausted"):
+        await svc.get_or_create_conversation_with_created("anon-overflow", user_id=None)
+    await db.commit()  # A caller catching the denial cannot publish its staged row.
+    assert await db.get(Conversation, "anon-overflow") is None
+    for i in range(3):
+        assert await db.get(Conversation, f"anon-{i}") is not None
 
 
 @pytest.mark.asyncio
-async def test_same_owner_token_bucket_evicts_own_oldest_only(db):
-    """Sessions sharing one owner_token share one 1000-slot bucket; overflow
-    evicts ONLY the oldest same-token session, never another token's."""
-    svc = AsyncHistoryService(db)
-    for i in range(MAX_SESSIONS + 1):
-        db.add(_conv(f"tokA-{i}", owner_token="tok-A", age_seconds=MAX_SESSIONS + 1 - i))
-    db.add(_conv("tokB-0", owner_token="tok-B"))
+async def test_same_owner_token_cannot_evade_global_admission(db, monkeypatch):
+    from app.core.errors import PlatformError
+    from app.services import history_service_async as history
+    monkeypatch.setattr(history, "MAX_SESSIONS", 2)
+    db.add_all([_conv("same-a", owner_token="same"), _conv("same-b", owner_token="same"), _conv("other", owner_token="other")])
     await db.commit()
-
-    evicted = await svc._enforce_cap(None, owner_token="tok-A")
-    assert evicted == ["tokA-0"], "overflow must evict the oldest same-token session"
-    await db.commit()  # the create path commits right after _enforce_cap
-
-    # The other token's session and all remaining tok-A sessions survive.
-    assert await db.get(Conversation, "tokB-0") is not None
-    for i in range(1, MAX_SESSIONS + 1):
-        assert await db.get(Conversation, f"tokA-{i}") is not None
+    with pytest.raises(PlatformError, match="anonymous session capacity exhausted"):
+        await AsyncHistoryService(db)._enforce_cap(None, owner_token="same")
+    for identity in ("same-a", "same-b", "other"):
+        assert await db.get(Conversation, identity) is not None
 
 
 @pytest.mark.asyncio
-async def test_legacy_null_token_bucket_isolated_from_token_sessions(db):
-    """Grandfathered NULL-token sessions fall in their own legacy bucket: a
-    token-bearing session's overflow must not evict them, and legacy overflow
-    evicts only the oldest legacy session."""
-    svc = AsyncHistoryService(db)
-    for i in range(MAX_SESSIONS + 1):
-        db.add(_conv(f"legacy-{i}", owner_token=None, age_seconds=MAX_SESSIONS + 1 - i))
-    db.add(_conv("token-0", owner_token="tok-Z"))
+async def test_legacy_overflow_never_evicts_token_owner(db, monkeypatch):
+    from app.core.errors import PlatformError
+    from app.services import history_service_async as history
+    monkeypatch.setattr(history, "MAX_SESSIONS", 2)
+    db.add_all([_conv("legacy-a", owner_token=None), _conv("legacy-b", owner_token=None), _conv("token", owner_token="owned")])
     await db.commit()
-
-    # Token-bearing bucket at 1 → no eviction, legacy bucket untouched.
-    assert await svc._enforce_cap(None, owner_token="tok-Z") == []
-    # Legacy bucket overflows → evicts oldest legacy only.
-    evicted = await svc._enforce_cap(None, owner_token=None)
-    assert evicted == ["legacy-0"]
-    await db.commit()  # the create path commits right after _enforce_cap
-    assert await db.get(Conversation, "token-0") is not None
+    for token in (None, "owned"):
+        with pytest.raises(PlatformError, match="anonymous session capacity exhausted"):
+            await AsyncHistoryService(db)._enforce_cap(None, owner_token=token)
+    for identity in ("legacy-a", "legacy-b", "token"):
+        assert await db.get(Conversation, identity) is not None
 
 
 @pytest.mark.asyncio
@@ -183,14 +162,17 @@ async def test_eviction_runs_clear_session_protocol(db, monkeypatch):
     from app.services.chat import engine_instance as _holder
     monkeypatch.setattr(_holder, "_engine", recorder)
 
+    from app.models.db_model import User
+    db.add(User(id="proto-user", username="proto-user", email="proto@example.test"))
+    await db.flush()
     svc = AsyncHistoryService(db)
     for i in range(MAX_SESSIONS + 1):
-        db.add(_conv(f"proto-{i}", owner_token="tok-P", age_seconds=MAX_SESSIONS + 1 - i))
+        db.add(_conv(f"proto-{i}", user_id="proto-user", age_seconds=MAX_SESSIONS + 1 - i))
     await db.commit()
 
     # Same flow as get_or_create_conversation_with_created after commit:
     # enforce the cap, then run the protocol for each evicted session.
-    evicted = await svc._enforce_cap(None, owner_token="tok-P")
+    evicted = await svc._enforce_cap("proto-user")
     assert evicted == ["proto-0"]
     await db.commit()  # the create path commits right after _enforce_cap
     for evicted_id in evicted:

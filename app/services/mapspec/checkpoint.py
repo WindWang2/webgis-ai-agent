@@ -166,6 +166,7 @@ async def discard_checkpoint(session_dir: Path, checkpoint_id: str) -> None:
     """
     if not checkpoint_id:
         return
+    _validate_checkpoint_id(checkpoint_id)
     import shutil as _shutil
 
     def _remove() -> None:

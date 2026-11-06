@@ -20,9 +20,13 @@ CANDIDATE_WORKFLOWS 载荷、capability_resolution → SELECTED_WORKFLOW
 """
 from __future__ import annotations
 
+import logging
+import math
 import hashlib
 import json
 from typing import Any, Dict, Iterable, Optional
+
+logger = logging.getLogger(__name__)
 
 DECISION_SCHEMA_VERSION = 1
 #: 链记录里的决策标记键（ReplayTrace 提取层据此扫描）。
@@ -150,13 +154,16 @@ def alternative_entry(
             pass
     if status:
         entry["status"] = _bound_str(status, 32)
-    if rank is not None:
-        entry["rank"] = int(rank)
+    if rank is not None and not isinstance(rank, bool):
+        try:
+            entry["rank"] = int(rank)
+        except (TypeError, ValueError, OverflowError):
+            logger.debug("invalid decision rank omitted")
     if factors:
         entry["factors"] = {
             _bound_str(k, 48): round(float(v), 4)
             for k, v in list(factors.items())[:4]
-            if isinstance(v, (int, float))
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
         }
     reason_list = [r for r in reasons if r]
     if reason_list:

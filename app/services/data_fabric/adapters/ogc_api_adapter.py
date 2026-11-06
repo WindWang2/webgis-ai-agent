@@ -3,6 +3,7 @@ OGC API - Features Data Source Adapter
 """
 import time
 import logging
+from urllib.parse import quote
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
@@ -38,6 +39,13 @@ logger = logging.getLogger(__name__)
 
 MAX_PREVIEW_LIMIT = 100
 MAX_QUERY_LIMIT = 10000
+
+
+def _quote_collection_id(dataset_id: str) -> str:
+    value = str(dataset_id)
+    if value in ("", ".", ".."):
+        raise InvalidQueryError("invalid OGC collection identifier")
+    return quote(value, safe="")
 
 
 class OGCAPIAdapter(GeospatialDataSourceAdapter):
@@ -134,9 +142,7 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             return []
         try:
             target_url = self.url.rstrip("/") + "/collections"
-            resp = self.session.get(target_url, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+            data = safe_json_get(self.session, target_url, timeout=10)
             collections = data.get("collections", [])
 
             datasets = []
@@ -162,12 +168,10 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             raise ValueError("OGC API endpoint URL is missing in connection profile")
 
         base = self.url.rstrip("/")
-        col_url = f"{base}/collections/{dataset_id}"
+        col_url = f"{base}/collections/{_quote_collection_id(dataset_id)}"
         
         try:
-            resp = self.session.get(col_url, timeout=10)
-            resp.raise_for_status()
-            col_data = resp.json()
+            col_data = safe_json_get(self.session, col_url, timeout=10)
 
             # Parse bounding box if present
             spatial_bbox = None
@@ -232,13 +236,11 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
         if not self.url:
             return {"schema": {}, "properties": {}, "features": [], "bbox": [-180.0, -90.0, 180.0, 90.0]}
 
-        items_url = f"{self.url.rstrip('/')}/collections/{dataset_id}/items"
+        items_url = f"{self.url.rstrip('/')}/collections/{_quote_collection_id(dataset_id)}/items"
         params = {"limit": bounded_limit}
 
         try:
-            resp = self.session.get(items_url, params=params, timeout=10)
-            resp.raise_for_status()
-            geojson = resp.json()
+            geojson = safe_json_get(self.session, items_url, params=params, timeout=10)
             features = geojson.get("features", [])
 
             sample_props = features[0].get("properties", {}) if features else {}
@@ -303,7 +305,7 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
 
         remote_filter, local_filter = resolve_plan_filter_split(v2.filter, plan)
 
-        items_url = f"{self.url.rstrip('/')}/collections/{dataset_id}/items"
+        items_url = f"{self.url.rstrip('/')}/collections/{_quote_collection_id(dataset_id)}/items"
         params: Dict[str, Any] = {"limit": v2.page.limit}
 
         # offset 非核心参数：仅在 conformance 声明 paging 扩展时发送（否则
@@ -354,10 +356,13 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                 )
             params["bbox"] = ",".join(str(b) for b in v2.spatial.bbox)
             # bbox-crs 显式声明（默认 CRS84）
-            params["bbox-crs"] = "<http://www.opengis.net/def/crs/OGC/1.3/CRS84>"
-            params["crs"] = "<http://www.opengis.net/def/crs/OGC/1.3/CRS84>"
+            # CRS84 is the Part 1 default; no optional CRS extension required.
+
 
         if v2.temporal is not None:
+            primary_time_field = (self.profile.options or {}).get("temporal_field")
+            if v2.temporal.field != primary_time_field:
+                raise InvalidQueryError("datetime pushdown requires a declared matching primary temporal_field")
             if v2.temporal.op == "during":
                 params["datetime"] = f"{v2.temporal.start}/{v2.temporal.end}"
             elif v2.temporal.op == "before":
@@ -388,6 +393,10 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                 params["filter-lang"] = "cql2-text"
 
         try:
+            # A links.next URL owns its query string; avoid duplicate paging,
+            # bbox, filter and limit keys when replaying it.
+            if isinstance(v2.page, CursorPage) and v2.page.cursor:
+                params = {}
             geojson = safe_json_get(
                 self.session, items_url, params=params,
                 timeout=min(v2.execution.deadline_s, 30.0),
@@ -488,23 +497,10 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
 
         try:
             target_url = self.url.rstrip("/") + "/conformance"
-            resp = self.session.get(target_url, timeout=5)
+            conforms = safe_json_get(self.session, target_url, timeout=5).get("conformsTo", [])
             latency = round((time.time() - start_time) * 1000, 2)
-            if resp.status_code == 200:
-                conforms = resp.json().get("conformsTo", [])
-                return DataFabricHealth(
-                    status="healthy",
-                    message="OGC API Features service online and responsive",
-                    details={"conformsTo": conforms[:5]},
-                    latency_ms=latency,
-                )
-            else:
-                return DataFabricHealth(
-                    status="degraded",
-                    message=f"OGC API responded with HTTP status {resp.status_code}",
-                    details={"status_code": resp.status_code},
-                    latency_ms=latency,
-                )
+            return DataFabricHealth(status="healthy", message="OGC API Features service online and responsive",
+                                    details={"conformsTo": conforms[:5]}, latency_ms=latency)
         except Exception as e:
             latency = round((time.time() - start_time) * 1000, 2)
             return DataFabricHealth(

@@ -131,8 +131,9 @@ export async function* parseSSEStream(
    * the done-sentinel terminated the stream. */
   const processChunk = (text: string): { events: SSEStreamEvent[]; done: boolean } => {
     buffer += text;
-    const parts = buffer.split("\n");
-    buffer = parts.pop() ?? ""; // incomplete trailing line carried to next read
+    const trailingCR = buffer.endsWith("\r");
+    const parts = (trailingCR ? buffer.slice(0, -1) : buffer).split(/\r\n|\r|\n/);
+    buffer = (parts.pop() ?? "") + (trailingCR ? "\r" : ""); // incomplete trailing line carried to next read
     const events: SSEStreamEvent[] = [];
     for (const rawLine of parts) {
       const line =
@@ -182,7 +183,7 @@ export async function* parseSSEStream(
         if (tail) buffer += tail;
         const finalEvents: SSEStreamEvent[] = [];
         if (buffer) {
-          if (processLine(buffer, finalEvents)) {
+          if (processLine(buffer.replace(/\r$/, ""), finalEvents)) {
             for (const ev of finalEvents) yield ev;
             return;
           }

@@ -179,11 +179,13 @@ class SkillPolicy:
         shadow_resolver: Optional[SkillResolver] = None,
         quarantine_ids: Optional[Tuple[str, ...]] = None,
         execute_min_confidence: float = _EXECUTE_MIN_CONFIDENCE,
+        enabled: Optional[bool] = None,
     ) -> None:
         self._trusted = trusted_resolver
         self._shadow = shadow_resolver
         self._quarantine = set(quarantine_ids or ())
         self._execute_min = execute_min_confidence
+        self._enabled = enabled
 
     @classmethod
     def from_library(cls, library, *, shadow_resolver: Optional[SkillResolver] = None) -> "SkillPolicy":
@@ -199,7 +201,7 @@ class SkillPolicy:
     ) -> SkillPolicyDecision:
         """事实 → 策略裁决（确定性）。"""
         sig = situation_signature(facts)
-        if not policy_enabled():
+        if not (policy_enabled() if self._enabled is None else self._enabled):
             return SkillPolicyDecision(
                 mode="none",
                 situation_signature=sig,
@@ -256,7 +258,8 @@ class SkillPolicy:
                 eligibility_ok=not bool(rejected_codes),
             )
 
-        top = selection.top
+        eligible = next((candidate for candidate in selection.ranked if candidate.skill_id not in self._quarantine and candidate.confidence >= CONFIDENCE_MEDIUM), None)
+        top = eligible or selection.top
         skill = self._trusted.get(top.skill_id)
         if skill is not None and skill.id in self._quarantine:
             return SkillPolicyDecision(

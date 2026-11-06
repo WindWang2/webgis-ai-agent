@@ -15,7 +15,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     wf,
     auto_fallback,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _RS_RASTER_SUBJECT = subject_role(capability="raster_source",
                                   artifacts=("raster_surface",), geometry=("raster",))
@@ -32,8 +32,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="administrative_choropleth",
         secondary_cartography=["raster_surface"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="admin units unavailable", reason_code="NEEDS_ADMIN_UNITS",
-                                  use="categorical_raster")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=45,
         schema_version=2,

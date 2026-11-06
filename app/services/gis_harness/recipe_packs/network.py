@@ -14,7 +14,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     wf,
     auto_fallback,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _NETWORK_ROLE = role(
     "network", capability="poi_query",
@@ -35,8 +35,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="proximity_overlay",
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_BASE,
-        fallbacks=[RecipeFallback(when="network unavailable", reason_code="NETWORK_DISCONNECTED",
-                                  use="euclidean_proxy")],
+        fallbacks=[],
         export_profile={"formats": ["png"]},
         priority=44,
         schema_version=2,
@@ -67,8 +66,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="proximity_overlay",
         secondary_cartography=["point_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="network unavailable", reason_code="NETWORK_DISCONNECTED",
-                                  use="euclidean_proxy")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=44,
         schema_version=2,

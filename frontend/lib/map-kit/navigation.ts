@@ -261,7 +261,7 @@ export function polygonAreaKm2(coords: [number, number][]): number {
   for (let i = 0; i < count; i++) {
     const [lon1, lat1] = coords[i];
     const [lon2, lat2] = coords[(i + 1) % n];
-    total += (lon2 - lon1) * (Math.PI / 180) *
+    total += (((lon2 - lon1 + 540) % 360) - 180) * (Math.PI / 180) *
       (2 + Math.sin(lat1 * Math.PI / 180) + Math.sin(lat2 * Math.PI / 180));
   }
   return Math.abs(total * R * R / 2);

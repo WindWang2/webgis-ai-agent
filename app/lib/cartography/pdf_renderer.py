@@ -97,7 +97,7 @@ def _draw_north_arrow(fig, ax_map) -> None:
              fontsize=9, fontweight="bold", color="#1e293b", zorder=30)
 
 
-def _draw_scale_bar(fig, ax_map, scale_bar: Dict[str, Any], map_frame: Dict[str, Any]) -> None:
+def _draw_scale_bar(fig, ax_map, scale_bar: Dict[str, Any], map_frame: Dict[str, Any], cjk_font_prop=None) -> None:
     """比例尺（ax 右下）：nice 单源数字 → 图面长度按地图画幅宽换算。"""
     import matplotlib.lines as mlines
 
@@ -123,13 +123,14 @@ def _draw_scale_bar(fig, ax_map, scale_bar: Dict[str, Any], map_frame: Dict[str,
         ))
     fig.text(
         x1, y + 0.010, label, ha="right", va="bottom",
-        fontsize=7.5, color="#1e293b", zorder=30,
+        fontsize=7.5, color="#1e293b", zorder=30, fontproperties=cjk_font_prop,
     )
 
 
-def _draw_legend_box(fig, legend_items: List[Dict[str, str]]) -> None:
+def _draw_legend_box(fig, legend_items: List[Dict[str, str]], cjk_font_prop=None) -> None:
     """图例框（左下）：单源派生条目（label + color 矩形卡）。"""
     from matplotlib.patches import Rectangle
+    from matplotlib.colors import is_color_like
 
     if not legend_items:
         return
@@ -144,14 +145,17 @@ def _draw_legend_box(fig, legend_items: List[Dict[str, str]]) -> None:
     ))
     for i, item in enumerate(items):
         ry = y0 + box_h - 0.026 - i * row_h
+        color = str(item.get("color") or "#94a3b8")
+        if not is_color_like(color):
+            color = "#94a3b8"
         fig.add_artist(Rectangle(
             (x0 + 0.010, ry), 0.016, 0.014,
-            facecolor=str(item.get("color") or "#94a3b8"),
+            facecolor=color,
             edgecolor="#64748b", linewidth=0.4, zorder=30,
         ))
         fig.text(
             x0 + 0.034, ry + 0.006, str(item.get("label") or ""),
-            ha="left", va="center", fontsize=7.5, color="#1e293b", zorder=30,
+            ha="left", va="center", fontsize=7.5, color="#1e293b", zorder=30, fontproperties=cjk_font_prop,
         )
 
 
@@ -284,10 +288,10 @@ def _generate_map_pdf_locked(
         if layout and isinstance(layout.get("scaleBar"), dict):
             _draw_scale_bar(
                 fig, ax_map, layout["scaleBar"],
-                layout.get("mapFrame") if isinstance(layout.get("mapFrame"), dict) else {},
+                layout.get("mapFrame") if isinstance(layout.get("mapFrame"), dict) else {}, cjk_font_prop,
             )
         if legend_items:
-            _draw_legend_box(fig, legend_items)
+            _draw_legend_box(fig, legend_items, cjk_font_prop)
 
         # ── Footer ──
         date_str = time.strftime("%Y-%m-%d")

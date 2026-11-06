@@ -66,7 +66,15 @@ def classify_status_failure(status: int, body_text: str = "") -> FailureKind:
 
 
 def classify_exception(exc: BaseException) -> FailureKind:
-    """异常 → FailureKind（与 llm_client 的重试门同源词汇）。"""
+    """Classify HTTP and transport errors using the provider failure vocabulary."""
+    import httpx
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            body = exc.response.text
+        except (httpx.ResponseNotRead, RuntimeError):
+            body = ""
+        return classify_status_failure(exc.response.status_code, body)
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
     if "connecttimeout" in name or "connecttimeout" in msg:

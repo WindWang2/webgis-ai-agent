@@ -518,3 +518,41 @@ def test_reuse_retrieval_liveness_is_batched_1721(db):
         f"liveness 复核必须批量：{n} 条候选 + 5 个输入指纹只允许 O(权威"
         f"类别) 条语句，实际 {counter['n']} 条"
     )
+
+
+def test_lifecycle_matches_session_and_authority_for_direct_and_tagged_refs(db):
+    from app.models.project_knowledge import ProjectKnowledgeEntry
+
+    for name, authority, session, tags in (
+        ("direct", "session_ref", "session-a", []),
+        ("other-session", "session_ref", "session-b", []),
+        ("legacy", "session_ref", "", []),
+        ("tagged", "artifact", "", [{"authority": "session_ref", "id": "ref:shared", "session_id": "session-a"}]),
+        ("wrong-authority", "artifact", "", [{"authority": "artifact", "id": "ref:shared", "session_id": "session-a"}]),
+    ):
+        db.add(ProjectKnowledgeEntry(
+            id=name, org_id="org:7", project_id=name, entity_kind="artifact",
+            subject=name, authority_store=authority, authority_id="ref:shared",
+            version_token="v1", evidence={"session_id": session}, refs=tags,
+        ))
+    db.flush()
+    assert handle_ref_invalidation_for_session(db, session_id="session-a", ref_id="ref:shared") == 2
+    for name in ("direct", "tagged"):
+        assert db.get(ProjectKnowledgeEntry, name).status == "stale"
+    for name in ("other-session", "legacy", "wrong-authority"):
+        assert db.get(ProjectKnowledgeEntry, name).status == "active"
+
+
+async def test_lifecycle_database_work_runs_off_event_loop(monkeypatch):
+    import asyncio
+    import threading
+    from app.services import project_knowledge
+    from app.services.project_knowledge import invalidation
+
+    observed = []
+    loop_thread = threading.get_ident()
+    monkeypatch.setattr(project_knowledge, "project_knowledge_enabled", lambda: True)
+    monkeypatch.setattr(invalidation, "_invalidate_in_worker", lambda *_: observed.append(threading.get_ident()))
+    invalidation._ref_lifecycle_hook("session-a", "ref:x", "overwrite")
+    await asyncio.gather(*invalidation._invalidation_tasks)
+    assert observed and observed[0] != loop_thread

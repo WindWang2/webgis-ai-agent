@@ -172,7 +172,18 @@ def test_foreign_user_gets_404_not_data(setup_db, flag_on):
 
 
 def test_org_scoped_stamp_prevents_cross_org_reuse(setup_db, flag_on):
-    """org 7 建索引；org 9 携带同一 project_id 也读不到（空集 200）。"""
+    """A live tenant change cannot reuse the old tenant's knowledge projection."""
+    from app.core.database import SessionLocal
+    from app.core.auth import invalidate_live_user_state
+    from app.models.db_model import User, Organization
+    with SessionLocal() as db:
+        for oid in (7, 9):
+            if db.get(Organization, oid) is None:
+                db.add(Organization(id=oid, name=f"Tenant {oid}", slug=f"knowledge-tenant-{oid}"))
+        db.flush()
+        db.get(User, "pkx-owner").org_id = 7
+        db.commit()
+    invalidate_live_user_state("pkx-owner")
     proj_id = _create_project("pkx-owner")
     client.post(
         f"/api/v1/projects/{proj_id}/datasets",
@@ -184,8 +195,10 @@ def test_org_scoped_stamp_prevents_cross_org_reuse(setup_db, flag_on):
         f"/api/v1/projects/{proj_id}/knowledge/rebuild",
         headers=_token("pkx-owner", org_id=7),
     )
-    # org 9：owner 相同（pkx-owner 是 owner），但 effective org 不同 ——
-    # 知识查询的 org 恒等值过滤保证读不到 org:7 的投影行。
+    with SessionLocal() as db:
+        db.get(User, "pkx-owner").org_id = 9
+        db.commit()
+    invalidate_live_user_state("pkx-owner")
     res = client.get(
         f"/api/v1/projects/{proj_id}/knowledge/search",
         headers=_token("pkx-owner", org_id=9),

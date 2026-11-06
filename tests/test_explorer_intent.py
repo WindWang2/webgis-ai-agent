@@ -54,3 +54,17 @@ def test_empty_triggers_no_zero_division():
     )
     assert result is not None
 
+
+
+def test_chinese_layer_topic_matches_without_spaces_but_shared_city_is_insufficient():
+    detector = IntentDetector()
+    layers = [{"name": "海淀区学校名录"}]
+    matching = detector.detect("查询海淀区学校分布", layers, [])
+    other_topic = detector.detect("查询海淀区医院分布", layers, [])
+    assert matching.decision == "skip" and "已有" in matching.reason
+    assert other_topic.decision == "ask_user" and "已有" not in other_topic.reason
+
+
+def test_generic_layer_words_do_not_suppress_exploration():
+    result = IntentDetector().detect("show school locations", [{"name": "the data"}], [])
+    assert "已有" not in result.reason
