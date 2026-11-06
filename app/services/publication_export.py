@@ -313,6 +313,10 @@ class PublicationPdfResult:
     spec_fingerprint: str = ""
     atlas: bool = False
     atlas_pages: List[Dict[str, Any]] = _dc_field(default_factory=list)
+    # Explicit page_profile only. Default exports keep this as not_evaluated
+    # and do not rewrite the compiled document.
+    constraint_layout: Dict[str, Any] = _dc_field(
+        default_factory=lambda: {"constraint_layout": "not_evaluated"})
 
 
 def _probe_cjk_font() -> bool:
@@ -748,15 +752,21 @@ def render_publication_pdf(
     payload: Dict[str, Any], *, title: str = "", max_frames: int = MAX_SPEC_FRAMES,
     max_labels: int = MAX_LABELS_PER_EXPORT, target_dpi: int = 300,
     atlas: Optional[AtlasPolicy] = None,
+    page_profile: Optional[str] = None,
 ) -> PublicationPdfResult:
-    """Render a publication and observe successful and failed export duration."""
+    """Render a publication and observe successful and failed export duration.
+
+    ``page_profile`` is optional. Absent means the constraint solver is not
+    evaluated and the compiled document is the caller's document.
+    """
     import time
     from app.core.sre_metrics import observe_export_duration
 
     started = time.monotonic()
     try:
         return _render_publication_pdf(payload, title=title, max_frames=max_frames,
-            max_labels=max_labels, target_dpi=target_dpi, atlas=atlas)
+            max_labels=max_labels, target_dpi=target_dpi, atlas=atlas,
+            page_profile=page_profile)
     finally:
         observe_export_duration(time.monotonic() - started)
 
@@ -769,6 +779,7 @@ def _render_publication_pdf(
     max_labels: int = MAX_LABELS_PER_EXPORT,
     target_dpi: int = 300,
     atlas: Optional[AtlasPolicy] = None,
+    page_profile: Optional[str] = None,
 ) -> PublicationPdfResult:
     """publication PDF 主入口（同步；CPU/IO 由调用方置于工作线程）。
 
@@ -786,6 +797,11 @@ def _render_publication_pdf(
         )
     parsed = require_parseable_mapspec(payload)
     doc = parsed.document
+    from app.lib.cartography.publication_constraint_layout import (
+        prepare_publication_document,
+    )
+
+    doc, layout_report = prepare_publication_document(doc, page_profile=page_profile)
 
     # R1-M5 / R2-M3+M8：水合**不在本服务发生**（工作线程触碰会话数据面
     # 非线程安全 + sessionId 属主校验面收窄）—— 调用方（路由/报告链）负责
@@ -925,6 +941,7 @@ def _render_publication_pdf(
         spec_fingerprint=_structural_fingerprint(doc),
         atlas=bool(pub_ir.atlas),
         atlas_pages=atlas_pages_summary,
+        constraint_layout=layout_report,
     )
 
 

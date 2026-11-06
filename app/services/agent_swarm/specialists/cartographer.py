@@ -28,9 +28,9 @@ from app.lib.cartography.component_composer import (
     required_components_for,
 )
 from app.lib.cartography.grammar_types import COLLAPSE_KEEP_CLASSES
-from app.lib.cartography.layout_solver import (
-    LayoutParticipantV4,
-    solve_layout_v4,
+from app.lib.cartography.layout_solver import LayoutParticipantV4
+from app.lib.cartography.publication_constraint_layout import (
+    resolve_cartographer_layout,
 )
 from app.lib.cartography.mapspec_schema import canonicalize_mapspec
 from app.lib.cartography.quality_loop import (
@@ -382,7 +382,18 @@ class CartographerAgent(BaseSpecialistAgent):
             )
             for req in plan.required
         ]
-        solution = solve_layout_v4(participants, page_profile="viewport")
+        solution, layout_report = resolve_cartographer_layout(participants, purpose)
+        if layout_report.get("constraint_layout") != "evaluated":
+            warnings.append(
+                "constraint_layout=not_evaluated:"
+                f"{layout_report.get('reason') or 'page_profile_absent'}"
+            )
+        else:
+            for finding in layout_report.get("findings") or []:
+                warnings.append(
+                    "constraint_layout:"
+                    f"{finding.get('code')}:{finding.get('component_id')}"
+                )
         for placement in solution.suppressed:
             warnings.append(
                 f"布局抑制: 组件 {placement.id}（{placement.type}）未能落位"
@@ -469,6 +480,8 @@ class CartographerAgent(BaseSpecialistAgent):
                 },
                 "purpose": purpose,
                 "components": components,
+                "constraint_layout": layout_report.get("constraint_layout"),
+                "constraint_layout_report": layout_report,
             },
             "thresholds": {},
         }
