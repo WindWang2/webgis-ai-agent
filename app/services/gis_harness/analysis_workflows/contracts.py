@@ -193,6 +193,7 @@ class AnalysisArtifactEnvelope(BaseModel):
     raster: Dict[str, Any] = Field(default_factory=dict)  # 栅格事实 ≤8
     aggregation_basis: str = ""                           # AGGREGATION_BASIS_VOCABULARY
     provenance: Dict[str, str] = Field(default_factory=dict)         # ≤6 摘要引用
+    network: dict[str, object] = Field(default_factory=dict)  # bounded measured population facts
     owner_session_id: str = ""
 
 

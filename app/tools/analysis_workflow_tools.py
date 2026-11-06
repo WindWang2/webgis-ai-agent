@@ -23,6 +23,7 @@ from pydantic import JsonValue
 if TYPE_CHECKING:
     from app.services.tool_dispatch_service import ToolDispatchResult
 import hashlib
+import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -52,6 +53,9 @@ from app.services.gis_harness.analysis_workflows.recompute import (
     collect_stale_steps,
     downstream_closure,
     ref_identity,
+)
+from app.services.gis_harness.analysis_workflows.runtime_integrity import (
+    local_raster_identity,
 )
 from app.services.gis_harness.analysis_workflows.state import (
     apply_plan_verdicts,
@@ -217,7 +221,8 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 "{role: {'ref': …, 'qualifier': {'year': 2018}}}；"
                 "temporal 族必须带 qualifier.year；栅格角色需 "
                 "{'ref': …, 'role_kind': 'raster'}"),
-            "params": "步骤参数覆盖 JSON：{step_id: {参数名: 值}}",
+            "params": "步骤参数覆盖 JSON：{step_id: {参数名: 值}}；resample 仅显式 target_resolution 才启用（目标 CRS 单位）",
+            "include_optional_steps": "是否启用可选步骤（resample 仍需显式分辨率）",
             "workflow_id": "复用既有工作流 id（默认按族+内容派生）",
         },
         side_effect="state_mutation",
@@ -238,6 +243,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         params: Optional[str] = None,
         workflow_id: str = "",
         session_id: Optional[str] = None,
+        include_optional_steps: bool = True,
     ) -> dict:
         command = "webgis_analysis_workflow_plan"
         if not session_id:
@@ -254,13 +260,13 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         # P3-1：内容寻址 id（sha256 前 10 hex——str hash 受 PYTHONHASHSEED
         # 随机化，跨进程不稳定，与工具 deterministic=True 声明冲突）
         digest = hashlib.sha256(
-            f"{family}|{role_refs or ''}|{params or ''}".encode(
+            f"{family}|{role_refs or ''}|{params or ''}|optional={include_optional_steps}".encode(
                 "utf-8")).hexdigest()[:10]
         wf_id = workflow_id or f"awf.{family}.{digest}"
         try:
             result = plan_workflow(
                 family, workflow_id=wf_id, bindings=bindings,
-                params_overrides=overrides,
+                params_overrides=overrides, include_optional_steps=include_optional_steps,
                 tool_exists=(lambda n: True),  # run 期再真实校验注册面
             )
         except KeyError:
@@ -501,6 +507,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "layers": [
                 {"step_id": sid, "ref": env.ref,
                  "feature_count": env.feature_count,
+                 "network": dict(env.network),
                  "output_roles": list(env.output_roles)}
                 for sid, env in state.envelopes.items() if env.ref],
             "evidence": summary,
@@ -560,6 +567,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "layers": [
                 {"step_id": sid, "ref": env.ref,
                  "feature_count": env.feature_count,
+                 "network": dict(env.network),
                  "stats": env.stats, "warnings": list(env.warnings)}
                 for sid, env in state.envelopes.items()],
             "receipts": list(state.receipts.keys()),
@@ -651,6 +659,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 contract.family, workflow_id=workflow_id,
                 bindings=merged_bindings, params_overrides=merged_params,
                 recipe_refs=contract.recipe_refs,
+                include_optional_steps=any(step.optional for step in contract.steps),
                 tool_exists=(lambda n: True))
             contract = replan.contract
             state.contract_snapshot = contract.model_dump()
@@ -676,8 +685,11 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                         session_id, binding.ref)
                 except Exception:  # noqa: BLE001 — descriptor 优化面 fail-open
                     desc = None
-                ident = ref_identity(
-                    binding.ref, (desc or {}).get("content_revision"))
+                revision = (desc or {}).get("content_revision")
+                if revision is None and binding.role_kind in ("raster", "table"):
+                    revision = await asyncio.to_thread(
+                        local_raster_identity, binding.ref)
+                ident = ref_identity(binding.ref, revision)
                 for step in contract.steps:
                     for param, source in step.role_inputs.items():
                         if source == f"role:{role}":

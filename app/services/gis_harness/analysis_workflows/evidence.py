@@ -225,6 +225,15 @@ def run_final_gate(state: Any) -> Dict[str, Any]:
     from app.lib.gis.science_final_gate import run_science_final_gate
     result = run_science_final_gate(
         plan=None, execution_evidence=final_gate_execution_evidence(state))
+    for step_id, envelope in state.envelopes.items():
+        count = envelope.network.get("unmatched_demand_count", 0)
+        if count:
+            from app.lib.gis.science_final_gate import ScienceGateFinding
+            detail = f"{count} demand points have no matched route; aggregates describe matched demand only"
+            if len(result.findings) < 16:
+                result.findings.append(ScienceGateFinding(code="AWF_NETWORK_UNMATCHED_DEMAND", subject=step_id, detail=detail))
+            if len(result.disclosures) < 8:
+                result.disclosures.append(detail)
     return {
         "blocked": result.blocked,
         "findings": [

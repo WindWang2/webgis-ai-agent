@@ -154,4 +154,6 @@ def verdict_of(state: WorkflowRunState) -> str:
     if any(s.state in ("pending", "running", "stale") for s in state.steps.values()):
         return "partial" if any(
             s.state == "satisfied" for s in state.steps.values()) else "pending"
+    if any(env.network.get("unmatched_demand_count", 0) for env in state.envelopes.values()):
+        return "partial"
     return "satisfied"

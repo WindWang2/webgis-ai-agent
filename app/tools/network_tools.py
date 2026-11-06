@@ -391,6 +391,37 @@ class OptimizeRouteArgs(BaseModel):
     profile: str = Field(default="driving", description="Travel profile")
 
 
+def _point_items_wgs84(layer: Any) -> Any:
+    """Preserve FC coordinate meaning before unpacking points for the solver."""
+    if not isinstance(layer, dict) or layer.get("type") != "FeatureCollection":
+        return layer
+    from pyproj import CRS, Transformer
+    import math
+    member = layer.get("crs")
+    if isinstance(member, dict):
+        member = (member.get("properties") or {}).get("name")
+        if not member:
+            raise ValueError("explicit point CRS has no valid name")
+    source = CRS.from_user_input(member or "EPSG:4326")
+    transformer = Transformer.from_crs(source, "EPSG:4326", always_xy=True)
+    features = layer.get("features")
+    if not isinstance(features, list):
+        raise ValueError("point FeatureCollection requires a features list")
+    points = []
+    for feature in features:
+        if not isinstance(feature, dict) or not isinstance(feature.get("geometry"), dict):
+            raise ValueError("network endpoints require Point features")
+        geometry = feature["geometry"]
+        coordinates = geometry.get("coordinates")
+        if geometry.get("type") != "Point" or not isinstance(coordinates, (list, tuple)) or len(coordinates) < 2:
+            raise ValueError("network endpoints require Point coordinates")
+        x, y = transformer.transform(float(coordinates[0]), float(coordinates[1]), errcheck=True)
+        if not (math.isfinite(x) and math.isfinite(y) and -180 <= x <= 180 and -90 <= y <= 90):
+            raise ValueError("network endpoint is outside WGS84 longitude/latitude bounds")
+        points.append({**feature, "geometry": {**geometry, "coordinates": [x, y]}})
+    return points
+
+
 def register_network_tools(registry: ToolRegistry):
     """Register Network Analyst V2 tools into ToolRegistry."""
     engine = NetworkGraphEngine()
@@ -539,21 +570,12 @@ def register_network_tools(registry: ToolRegistry):
         cutoff_cost: Optional[float] = None,
         session_id: str = "",
     ) -> dict:
-        def _point_items(layer: Union[List[Any], Dict[str, Any], Any]) -> Any:
-            """FC dict → features 列表（ADR-0282：工作流 role 水合产 FC——
-            引擎 _parse_point/_to_facility 消费要素列表；空 FC=诚实空列表）。"""
-            if isinstance(layer, dict) and layer.get(
-                    "type") == "FeatureCollection":
-                feats = layer.get("features")
-                return list(feats) if isinstance(feats, list) else []
-            return layer
-
         try:
             travel_profile = TravelProfile(name=profile)
             res = await engine.solve_closest_facility(
                 network=network,
-                incidents=_point_items(incidents),
-                facilities=_point_items(facilities),
+                incidents=_point_items_wgs84(incidents),
+                facilities=_point_items_wgs84(facilities),
                 profile=travel_profile,
                 number_to_find=number_to_find,
                 cutoff_cost=cutoff_cost,

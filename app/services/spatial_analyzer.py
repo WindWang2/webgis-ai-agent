@@ -589,6 +589,7 @@ class SpatialAnalyzer:
         target_crs: Optional[str] = None,
         resampling: str = "bilinear",
         callback: Optional[Callable] = None,
+        *, resolution_unit: str = "auto",
     ) -> GeoAnalysisResult:
         validated_paths, err_res = cls._prepare_raster_paths([raster_path])
         if err_res:
@@ -596,7 +597,7 @@ class SpatialAnalyzer:
 
         from app.lib.geo_analysis.raster_math import resample_raster, rasterio_env
         with rasterio_env():
-            result = resample_raster(validated_paths[0], target_resolution, target_crs, resampling)
+            result = resample_raster(validated_paths[0], target_resolution, target_crs, resampling, resolution_unit=resolution_unit)
         summary = f"Resampled raster {raster_path} to resolution {target_resolution} ({resampling})."
         return GeoAnalysisResult(True, result, summary)
 

@@ -593,14 +593,18 @@ def resample_raster(
     target_resolution: float,
     target_crs: Optional[str] = None,
     resampling: str = "bilinear",
+    *, resolution_unit: str = "auto",
 ) -> dict:
     """Resample raster to a new resolution and/or CRS.
 
     Args:
         raster_path: Path to input raster.
-        target_resolution: Target pixel size in meters (for projected CRS) or degrees (for geographic).
+        target_resolution: Target pixel size. With resolution_unit='crs',
+            interpreted strictly in the destination CRS units.
         target_crs: Optional target CRS (e.g., "EPSG:3857"). If None, keeps source CRS.
         resampling: Resampling method: bilinear, cubic, nearest, mode, average.
+        resolution_unit: 'crs' uses destination CRS units; 'auto' preserves
+            the legacy geographic meter/degree inference.
 
     Returns:
         dict with output_path, new_shape, new_transform, and metadata.
@@ -614,7 +618,9 @@ def resample_raster(
         raise ValueError(f"Unsupported resampling method: '{resampling}'. Valid options: {list(RESAMPLING_MAP.keys())}")
     resampling_method = RESAMPLING_MAP[res_key]
 
-    if target_resolution <= 0:
+    if resolution_unit not in ("auto", "crs"):
+        raise ValueError("resolution_unit must be auto or crs")
+    if not np.isfinite(target_resolution) or target_resolution <= 0:
         raise ValueError(f"target_resolution must be positive, got {target_resolution}")
 
     out_path = _suffix_output_path(raster_path, "_resampled.tif")
@@ -629,6 +635,7 @@ def resample_raster(
         "target_resolution": target_resolution,
         "target_crs": target_crs,
         "resampling": resampling,
+        "resolution_unit": resolution_unit,
     }
     cache_key = make_artifact_key(raster_path, "resample", params)
 
@@ -651,9 +658,8 @@ def resample_raster(
             except Exception:
                 pass
 
-            resolution = resolve_geographic_resolution(
-                target_resolution, dst_crs, geo_bounds,
-            )
+            resolution = (target_resolution if resolution_unit == "crs" else
+                          resolve_geographic_resolution(target_resolution, dst_crs, geo_bounds))
 
             if gcps:
                 transform, width, height = calculate_default_transform(
@@ -712,6 +718,7 @@ def resample_raster(
         "output_path": final_path,
         "target_crs": cached_crs,
         "target_resolution": target_resolution,
+        "resolution_unit": resolution_unit,
         "new_shape": [cached_height, cached_width],
         "resampling": resampling,
     }

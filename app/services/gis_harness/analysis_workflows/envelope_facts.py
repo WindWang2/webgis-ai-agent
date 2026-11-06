@@ -38,12 +38,12 @@ _SEMANTICS_BLOCK_KEYS = (
 #: （R1 评审 P3）。
 _RASTER_FACT_KEYS = (
     "nodata", "target_resolution", "band_count", "dtype",
-    "valid_pixel_coverage", "new_shape", "resampling",
+    "valid_pixel_coverage", "new_shape", "resampling", "resolution_unit", "target_crs",
 )
 
 #: 优先保留键（8 键截断时按此序优先——覆盖率/分辨率是科学披露承重键）。
 _RASTER_FACT_PRIORITY = (
-    "valid_pixel_coverage", "nodata", "target_resolution", "band_count",
+    "valid_pixel_coverage", "nodata", "target_resolution", "resolution_unit", "target_crs", "band_count",
 )
 
 #: 聚合基数静态映射（工具名 → 基数语义；参数级覆盖见 aggregation_basis_for）。

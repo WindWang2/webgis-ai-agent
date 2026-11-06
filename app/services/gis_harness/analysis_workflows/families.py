@@ -230,8 +230,8 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
         _step("resample", "raster_resample",
               {"raster_path": "role:subject"},
               capability="raster_resample",
-              params={"target_resolution": 0.002},
-              units={"target_resolution": "unitless"},
+              params={"target_resolution": None, "target_crs": None,
+                      "resampling": "bilinear", "resolution_unit": "crs"},
               optional=True,
               outputs=("resampled_raster",)),
         _step("zonal_stats", "zonal_stats",
@@ -350,15 +350,16 @@ _FAMILY_NOTES: Dict[str, Tuple[str, ...]] = {
         "mask 步骤）；nodata 以逐 zone valid_pixel_coverage 披露——覆盖率低的"
         "分区均值不可与全有效分区同权解读",
         "栅格重采样会改变像元聚合尺度（bilinear 平滑/nearest 保序）——"
-        "分辨率变化即统计口径变化，进入步骤指纹触发重算",
+        "默认直接统计原始栅格；仅显式 target_resolution 启用重采样，"
+        "分辨率严格使用目标 CRS 单位；分辨率变化即统计口径变化，进入步骤指纹触发重算",
     ),
     "network_proximity": (
         "最近设施距离=路网 Dijkstra 通行成本（默认 travel_time 权重）——"
         "不是欧氏距离；速度表近似与端点吸附容差由算法层披露",
         "跨区路线在 intersects 约定下会计入其经过的每个区（M:N 多方属）——"
         "区均成本合计不可当全区独立均值直接平均",
-        "不可达需求点（脱离路网）由算法层保留 origin/destination 并标记"
-        "reachable=False（total_cost=inf 不以欧氏替代）——汇总时 inf 不进均值",
+        "无匹配路线的需求点由 unmatched_demand_count/ids 披露，"
+        "区均成本仅描述匹配需求；工作流保持 partial，不作为完整总体成品",
     ),
 }
 
@@ -415,7 +416,8 @@ def build_contract(
     overrides = params_overrides or {}
     pruned_role_fallbacks: Dict[str, str] = {}
     for base in _STEPS[family]:
-        if base.optional and not include_optional_steps:
+        explicit_resample = (base.step_id == "resample" and "target_resolution" in overrides.get(base.step_id, {}))
+        if (base.optional and not include_optional_steps) or (base.step_id == "resample" and not explicit_resample):
             # ADR-0282 D4：optional 步剔除 → 记录其 role: 输入的首个角色，
             # 供下游 step: 引用回接（rewire——契约 DAG 保持闭合且语义等价：
             # 下游直接消费原始角色而非被剔除的中间产物）。
@@ -443,6 +445,14 @@ def build_contract(
                 step.unit_contract = {
                     param: new_unit for param in step.unit_contract}
             step.step_params.update(step_over)
+        if step.step_id == "resample":
+            import math
+            resolution = step.step_params.get("target_resolution")
+            if (isinstance(resolution, bool) or not isinstance(resolution, (int, float))
+                    or not math.isfinite(resolution) or resolution <= 0):
+                raise ValueError("resample requires a finite positive target_resolution in target CRS units")
+            if step.step_params.get("resolution_unit") != "crs":
+                raise ValueError("workflow resample resolution_unit must be crs (target CRS units)")
         steps.append(step)
     # optional 步骤的依赖若被剔除，须同步修剪（契约 DAG 仍须闭合）
     present = {s.step_id for s in steps}

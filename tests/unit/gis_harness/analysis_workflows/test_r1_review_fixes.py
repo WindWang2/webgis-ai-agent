@@ -223,6 +223,7 @@ async def test_f7_resample_to_zonal_passthrough_chain(registry):
     plan = plan_workflow(
         "raster_zonal_summary",
         workflow_id="awf.f7.chain",
+        params_overrides={"resample": {"target_resolution": 0.002}},
         bindings={
             "subject": DataRoleBinding(
                 role="subject", ref=path, role_kind="raster"),

@@ -55,6 +55,10 @@ from app.services.gis_harness.analysis_workflows.state import (
     verdict_of,
 )
 
+from app.services.gis_harness.analysis_workflows.runtime_integrity import (
+    incomplete_routes, local_raster_identity, network_facts,
+)
+
 logger = logging.getLogger(__name__)
 
 #: 单步骤输入行数预算（任务验收：>10 万 features 必须限额/阻断，不无界加载）。
@@ -261,6 +265,8 @@ class WorkflowExecutor:
                 if binding is not None and binding.role_kind in (
                         "raster", "table"):
                     rev = await self._role_revision(session_id, ref)
+                    if rev is None:
+                        rev = await asyncio.to_thread(local_raster_identity, ref)
                     args[param] = ref
                     identities[param] = ref_identity(ref, rev)
                     continue
@@ -508,6 +514,14 @@ class WorkflowExecutor:
             state.log("step_failed", step=step.step_id, code=entry.reason_code)
             return
 
+        if incomplete_routes(result):
+            entry.state = "blocked"
+            entry.reason_code = "AWF_INCOMPLETE_NETWORK_RESULT"
+            entry.message = "路线结果已截断为预览，不能作为完整需求总体聚合；请缩小输入或使用完整几何结果"
+            entry.touch()
+            state.log("step_blocked", step=step.step_id, code=entry.reason_code)
+            return
+
         # 产物：分发缝已铸 ref（dispatch_ref/结果内 ref:）直接沿用；
         # 未铸（registry 直调路径）才由本层 store（prefix=geojson 同族）。
         fc, trimmed_stub_routes = _extract_fc(result)
@@ -593,6 +607,7 @@ class WorkflowExecutor:
             extent=(fc_facts.extent if fc_facts else ()),
             result_semantics=result_semantics,
             raster=raster_facts,
+            network=network_facts(result),
             aggregation_basis=aggregation_basis_for(
                 step.tool_name, step.step_params),
             owner_session_id=session_id,
@@ -629,6 +644,10 @@ class WorkflowExecutor:
         only_steps: Optional[Set[str]] = None,
     ) -> WorkflowRunState:
         """波次执行（同波无依赖步骤并发；波间严格顺序；失败停波）。"""
+        # These caches are run-local: a caller may reuse this executor after
+        # a source ref was overwritten in place. Always re-read live identity.
+        self._role_cache.clear()
+        self._step_payloads.clear()
         state.status = "running"
         state.touch()
         state.log("workflow_start", turn=self._turn)

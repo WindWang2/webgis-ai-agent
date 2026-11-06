@@ -69,14 +69,18 @@ raster 绑定在 executor **不水合为 dict**：ref/路径字符串直通参�
   subject 词表注释本就含「栅格主题」）→ 矢量结果 ref（MapSpec-ready，
   hints: administrative_choropleth）。optional resample 剔除时 zonal 确定性
   回接 role:subject。角色：subject(required, raster)/boundary(required,
-  polygon)。
+  polygon)。默认跳过 resample，仅在显式提供有限正数 target_resolution 时启用；
+  resolution_unit=crs 严格使用目标 CRS 单位（target_crs 未提供时为源 CRS）。
+  公开 plan 工具允许 include_optional_steps=False 剔除可选步骤。
 - **network_proximity**（链③ 独立族——service_accessibility 的 subject 语义
   是设施点，与最近设施的「需求点」语义冲突，并入会造成角色二义）：
   `nearest_facility`（network_closest_facility：incidents=role:subject、
   facilities=role:facility、network=role:network）→ `accessibility_summary`
   （spatial_aggregate：numerator=Σtotal_cost / count 分母=区均网络成本——
   均值语义，库层 rate_unit=count_ratio_not_rate 反伪装率标签钉住）。
-  角色新增 `facility`（DATA_ROLES additive）。
+  角色新增 `facility`（DATA_ROLES additive）。结果为截断路线预览或摘要几何时
+  typed blocked，不用于总体均值；unmatched demand 计数和有界 id 样本进入
+  envelope.network，缺匹配时工作流 partial、终审披露并拒绝完整成品资格。
 - **service_accessibility 强化**：isochrone 步族默认
   `exclude_unreachable=True`——脱离路网设施的 5m 占位面不进覆盖统计
   （计数进 stats.excluded_unreachable；工具默认 False 保持 master 行为，

@@ -120,7 +120,8 @@ def test_zonal_valid_pixel_coverage_disclosure(raster_path):
 def test_raster_zonal_summary_family_registered_and_valid():
     assert "raster_zonal_summary" in FAMILY_IDS
     contract = build_contract(
-        "raster_zonal_summary", workflow_id="awf.rzs.selfcheck")
+        "raster_zonal_summary", workflow_id="awf.rzs.selfcheck",
+        params_overrides={"resample": {"target_resolution": 0.002}})
     step_ids = [s.step_id for s in contract.steps]
     assert step_ids == ["resample", "zonal_stats"]
     zonal = contract.steps[1]
