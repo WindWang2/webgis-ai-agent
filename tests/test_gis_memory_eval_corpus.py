@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -22,22 +23,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 pytestmark = pytest.mark.cartography
 
 from app.core.database import Base
+from scripts import gis_memory_eval
 from scripts.gis_memory_eval import run_corpus
 
 
 @pytest.fixture(scope="module")
-def report():
-    Base.metadata.create_all(create_engine("sqlite://", poolclass=StaticPool))
+def engine_factory():
+    engines = []
 
-    def engine_factory():
+    def make_engine():
         engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
+        engines.append(engine)
         Base.metadata.create_all(engine)
         return engine
 
+    yield make_engine
+    for engine in engines:
+        engine.dispose()
+
+
+@pytest.fixture(scope="module")
+def report(engine_factory):
     return run_corpus(engine_factory)
 
 
@@ -84,3 +94,62 @@ def test_weighted_score_positive(report):
 def test_context_bytes_and_tool_calls_saved(report):
     assert report["context_bytes_saved"] > 0
     assert report["tool_calls_saved"] == report["useful_reuse"]
+
+
+def test_offline_evaluator_is_not_ignored():
+    """A moved evaluator must be included in clean checkouts, not only on disk."""
+    checked = subprocess.run(
+        ["git", "check-ignore", "-q", "--no-index", "scripts/gis_memory_eval.py"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert checked.returncode == 1, checked.stderr or "offline evaluator is ignored"
+
+
+def test_corpus_reports_cross_tenant_reuse(monkeypatch, engine_factory, report):
+    """Inject a tenant-filter regression at the retrieval seam, not a fake score."""
+    retrieve = gis_memory_eval.latest_resolved_place
+
+    def ignore_tenant(db, **context):
+        context["org_id"] = gis_memory_eval.ORG_A
+        return retrieve(db, **context)
+
+    monkeypatch.setattr(gis_memory_eval, "latest_resolved_place", ignore_tenant)
+    faulty = run_corpus(engine_factory)
+
+    assert faulty["useful_reuse"] == report["useful_reuse"]
+    assert faulty["wrong_reuse"] == 4
+    assert faulty["stale_reuse"] == 0
+    assert faulty["score"] == report["score"] - 16
+    security = [s for s in faulty["per_scenario"] if s["category"] == "security"]
+    assert len(security) == 4
+    assert all(s["wrong"] == 1 and s["failures"] for s in security)
+
+
+def test_corpus_reports_expired_reuse(monkeypatch, engine_factory, report):
+    """A failed expiry sweep must incur stale penalties in all four trajectories."""
+    monkeypatch.setattr(gis_memory_eval.s, "sweep_expired", lambda *a, **kw: 0)
+    faulty = run_corpus(engine_factory)
+
+    assert faulty["useful_reuse"] == report["useful_reuse"]
+    assert faulty["wrong_reuse"] == 0
+    assert faulty["stale_reuse"] == 4
+    assert faulty["score"] == report["score"] - 16
+    expiry = [s for s in faulty["per_scenario"] if s["category"] == "expiry"]
+    assert len(expiry) == 4
+    assert all(s["stale"] == 1 and s["failures"] for s in expiry)
+
+
+def test_corpus_distinguishes_recall_misses(monkeypatch, engine_factory, report):
+    monkeypatch.setattr(gis_memory_eval, "latest_resolved_place", lambda *a, **kw: None)
+    faulty = run_corpus(engine_factory)
+
+    # Four city-reuse and four correction trajectories each consult twice;
+    # four expiry trajectories each have one legitimate pre-expiry consult.
+    assert sum(s["recall_misses"] for s in faulty["per_scenario"]) == 20
+    assert faulty["useful_reuse"] == report["useful_reuse"] - 20
+    assert faulty["wrong_reuse"] == faulty["stale_reuse"] == 0
+    assert faulty["score"] == report["score"] - 60
