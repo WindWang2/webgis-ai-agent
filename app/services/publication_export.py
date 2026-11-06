@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.lib.cartography.atlas_layout import MAX_ATLAS_PAGES
 from app.lib.cartography.label_collision import MAX_LABELS_PER_EXPORT
+from app.lib.cartography.publication_constraint_layout import ConstraintLayoutReport
 from app.lib.cartography.mapspec_schema import (
     MAX_SPEC_FRAMES,
     MapSpecSchemaError,
@@ -315,7 +316,7 @@ class PublicationPdfResult:
     atlas_pages: List[Dict[str, Any]] = _dc_field(default_factory=list)
     # Explicit page_profile only. Default exports keep this as not_evaluated
     # and do not rewrite the compiled document.
-    constraint_layout: Dict[str, Any] = _dc_field(
+    constraint_layout: ConstraintLayoutReport = _dc_field(
         default_factory=lambda: {"constraint_layout": "not_evaluated"})
 
 

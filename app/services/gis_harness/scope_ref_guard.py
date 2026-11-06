@@ -8,10 +8,16 @@ invent geography. A city-level token that does not match is.
 """
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Literal, Mapping, Optional, TypedDict
 
 _CITY_KEYS = ("cityname", "city", "place", "scope", "district", "pname", "query")
 _FEATURE_KEYS = ("cityname", "city", "district", "adname", "pname")
+
+
+class ScopeGeographyVerdict(TypedDict):
+    verdict: Literal["matched", "mismatched", "unverified"]
+    reason: str
+    evidence: Literal["name", "bbox", "none"]
 
 
 def _norm(value: str) -> str:
@@ -261,7 +267,7 @@ def scope_geography_verdict(
     features: Optional[Iterable[Any]] = None,
     ref_bbox: Optional[object] = None,
     scope_bbox: Optional[object] = None,
-) -> dict:
+) -> ScopeGeographyVerdict:
     """matched / mismatched / unverified. Missing evidence is not a mismatch.
 
     Name tokens win. Bbox comparison runs only when no city token exists.
@@ -329,7 +335,7 @@ def product_scope_geography(
     descriptor: Optional[Mapping[str, Any]] = None,
     features: Optional[Iterable[Any]] = None,
     scope_bbox_lookup: Optional[Any] = None,
-) -> dict:
+) -> ScopeGeographyVerdict:
     """Product-path verdict. Admin bbox is resolved only when names are absent."""
     tokens = collect_place_tokens(descriptor, features)
     scope_bbox = None
