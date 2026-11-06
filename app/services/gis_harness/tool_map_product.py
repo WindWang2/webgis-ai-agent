@@ -276,31 +276,53 @@ async def webgis_map_product(
     if (need_heatmap or need_points) and primary_ref:
         # 只在确需补层时取全量数据（get 返回 deepcopy，避免无谓 O(N) 拷贝）
         primary_data = await session_data_manager.get(session_id, primary_ref)
-    if primary_data is not None and getattr(intent.scope, "name", ""):
+    scope_name = str(getattr(intent.scope, "name", "") or "")
+    scope_verdict: Optional[Dict[str, Any]] = None
+    scope_warning = ""
+    if scope_name and primary_ref:
         from app.services.gis_harness.scope_ref_guard import (
             place_evidence_from_payload,
-            scope_ref_mismatch,
+            product_scope_geography,
+            unverified_scope_warning,
         )
+        from app.services.local_first import admin_bbox_wgs84
 
         features = primary_data.get("features") if isinstance(primary_data, dict) else None
-        mismatch = scope_ref_mismatch(
-            str(intent.scope.name),
+        scope_verdict = product_scope_geography(
+            scope_name,
             descriptor=place_evidence_from_payload(
                 primary_descriptor,
                 primary_data if isinstance(primary_data, dict) else None,
             ),
             features=features if isinstance(features, list) else None,
+            scope_bbox_lookup=admin_bbox_wgs84,
         )
-        if mismatch:
+        if scope_verdict["verdict"] == "mismatched":
+            code = (
+                "scope_bbox_disjoint"
+                if scope_verdict.get("evidence") == "bbox"
+                else "scope_ref_mismatch"
+            )
+            message = (
+                f"primary_ref 的范围框与当前范围 {scope_name} 不相交，"
+                "已拒绝把其他地区的数据画到新图上。请重新查询该范围的数据。"
+                if code == "scope_bbox_disjoint"
+                else (
+                    f"primary_ref 的地点与当前范围 {scope_name} 不一致，"
+                    "已拒绝把旧城市数据画到新图上。请重新查询该范围的数据。"
+                )
+            )
             return {
                 "success": False,
-                "code": "scope_ref_mismatch",
-                "message": (
-                    f"primary_ref 的地点与当前范围 {intent.scope.name} 不一致，"
-                    "已拒绝把旧城市数据画到新图上。请重新查询该范围的数据。"
-                ),
-                "reason": mismatch,
+                "code": code,
+                "message": message,
+                "reason": scope_verdict.get("reason"),
+                "scope_geography": scope_verdict,
             }
+        if scope_verdict["verdict"] == "unverified":
+            scope_warning = unverified_scope_warning(scope_name)
+            out.setdefault("warnings", []).append(scope_warning)
+        out["scope_geography"] = scope_verdict
     if primary_data is not None:
         from app.services.analysis_cartography_converter import (
             convert_analysis_to_mapspec_layer,
@@ -1023,6 +1045,7 @@ async def webgis_map_product(
             f"组件 {len(component_dicts)}，fallback {len(plan.fallbacks)} 次"
             + (f"；⚠ {len(authoring_failures)} 项图层/组件提交失败（见 warnings）"
                if authoring_failures else "")
+            + (f"；{scope_warning}" if scope_warning else "")
         ),
     })
     # ADR-0258：语义产品层 additive 键（product_spec/product_views/
@@ -1038,15 +1061,21 @@ async def webgis_map_product(
     if final_spec is not None:
         out["mapspec"] = final_spec
         out = _forward_evidence(layout_res, out)
-    if authoring_failures:
+    if authoring_failures or (
+        isinstance(scope_verdict, dict) and scope_verdict.get("verdict") == "unverified"
+    ):
         # #716: evidence forwarding REPLACES warnings — re-merge the
         # authoring-failure ledger so the failure survives the final
-        # layout forward.
+        # layout forward. scope_unverified is a disclosure, not a failure.
         merged = list(out.get("warnings") or [])
         for msg in authoring_failures:
             if msg not in merged:
                 merged.append(msg)
+        if scope_warning and scope_warning not in merged:
+            merged.append(scope_warning)
         out["warnings"] = merged
+    if isinstance(scope_verdict, dict):
+        out["scope_geography"] = scope_verdict
     return out
 
 

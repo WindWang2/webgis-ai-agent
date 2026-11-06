@@ -480,6 +480,71 @@ from app.services.export_lineage import (  # noqa: E402
 #: 表格卡装配前高度估计（review P2-7：渲染几何同表，消除右下栈重叠估算差）。
 
 
+_HISTORICAL_CHROME_ANCHOR = {
+    "title": "top-center",
+    "subtitle": "top-center",
+    "north_arrow": "top-right",
+    "scale_bar": "bottom-right",
+    "legend": "bottom-left",
+    "categorical_legend": "bottom-left",
+    "attribution": "bottom-left",
+}
+
+
+def _constraint_layout_active(mapspec: Dict[str, Any]) -> bool:
+    layout = mapspec.get("layout") if isinstance(mapspec, dict) else None
+    return isinstance(layout, dict) and layout.get("constraint_layout") == "evaluated"
+
+
+def _constraint_chrome_xy(
+    mapspec: Dict[str, Any],
+    comp: Any,
+    kind: str,
+    canvas_w: float,
+    canvas_h: float,
+    margin: float,
+) -> Optional[tuple]:
+    """Moved chrome only. Historical anchors keep the existing coordinates."""
+    if comp is None or not _constraint_layout_active(mapspec):
+        return None
+    anchor = getattr(comp, "anchor", None)
+    if anchor == _HISTORICAL_CHROME_ANCHOR.get(kind) or anchor in (None, "", "none"):
+        return None
+    corners = {
+        "top-left": (0.0, 0.0),
+        "top-center": (0.5, 0.0),
+        "top-right": (1.0, 0.0),
+        "bottom-left": (0.0, 1.0),
+        "bottom-center": (0.5, 1.0),
+        "bottom-right": (1.0, 1.0),
+    }
+    if anchor not in corners:
+        return None
+    fx, fy = corners[anchor]
+    x = margin + fx * (canvas_w - 2 * margin)
+    y = margin + fy * (canvas_h - 2 * margin)
+    if kind == "north_arrow":
+        x += -30.0 if fx == 1.0 else 30.0 if fx == 0.0 else 0.0
+        y += 30.0 if fy == 0.0 else -30.0
+    elif kind == "scale_bar":
+        if fx == 1.0:
+            x -= 150.0
+        y += 20.0 if fy == 0.0 else -8.0
+    elif kind in ("legend", "categorical_legend"):
+        if fx == 1.0:
+            x -= 160.0
+        y += 8.0 if fy == 0.0 else -80.0
+    elif kind == "attribution":
+        x += -120.0 if fx == 1.0 else 4.0
+        y += 14.0 if fy == 0.0 else -14.0
+    elif kind in ("title", "subtitle"):
+        if fx == 0.0:
+            x += 150.0
+        elif fx == 1.0:
+            x -= 150.0
+    return (x, y)
+
+
 def _render_chrome_groups(
     mapspec: Dict[str, Any],
     geo_bounds: List[float],
@@ -565,31 +630,74 @@ def _render_chrome_groups(
         s_text = subtitle.text if subtitle else ""
         if temporal_note:
             s_text = f"{s_text} — {temporal_note}" if s_text else temporal_note
-        tx = canvas_w / 2.0
-        if t_text and s_text:
-            parts.append(
-                f'<g class="chrome-title" text-anchor="middle">'
-                f'<text x="{_fmt_num(tx)}" y="{_fmt_num(m + 18.0)}" font-family="sans-serif" font-size="22" font-weight="bold" fill="#0f172a">{_escape_svg_attr(t_text)}</text>'
-                f'<text x="{_fmt_num(tx)}" y="{_fmt_num(m + 38.0)}" font-family="sans-serif" font-size="12" fill="#0f172a" opacity="0.75">{_escape_svg_attr(s_text)}</text>'
-                f"</g>"
-            )
-        elif t_text or s_text:
-            parts.append(_render_title_block(canvas_w / 2.0 - 150.0, m, t_text or "", "" if t_text else s_text))
+        moved_title = (
+            _constraint_chrome_xy(mapspec, title, "title", canvas_w, canvas_h, m)
+            if title is not None else None
+        )
+        moved_sub = (
+            _constraint_chrome_xy(mapspec, subtitle, "subtitle", canvas_w, canvas_h, m)
+            if subtitle is not None else None
+        )
+        if moved_title is None and moved_sub is None:
+            tx = canvas_w / 2.0
+            if t_text and s_text:
+                parts.append(
+                    f'<g class="chrome-title" text-anchor="middle">'
+                    f'<text x="{_fmt_num(tx)}" y="{_fmt_num(m + 18.0)}" font-family="sans-serif" font-size="22" font-weight="bold" fill="#0f172a">{_escape_svg_attr(t_text)}</text>'
+                    f'<text x="{_fmt_num(tx)}" y="{_fmt_num(m + 38.0)}" font-family="sans-serif" font-size="12" fill="#0f172a" opacity="0.75">{_escape_svg_attr(s_text)}</text>'
+                    f"</g>"
+                )
+            elif t_text or s_text:
+                parts.append(_render_title_block(
+                    canvas_w / 2.0 - 150.0, m, t_text or "", "" if t_text else s_text,
+                ))
+        else:
+            texts = []
+            if t_text:
+                tx, ty = moved_title if moved_title is not None else (canvas_w / 2.0, m + 18.0)
+                texts.append(
+                    f'<text x="{_fmt_num(tx)}" y="{_fmt_num(ty)}" font-family="sans-serif" font-size="22" font-weight="bold" fill="#0f172a">{_escape_svg_attr(t_text)}</text>'
+                )
+            if s_text:
+                sx, sy = moved_sub if moved_sub is not None else (canvas_w / 2.0, m + 38.0)
+                texts.append(
+                    f'<text x="{_fmt_num(sx)}" y="{_fmt_num(sy)}" font-family="sans-serif" font-size="12" fill="#0f172a" opacity="0.75">{_escape_svg_attr(s_text)}</text>'
+                )
+            if texts:
+                parts.append(
+                    f'<g class="chrome-title" text-anchor="middle">{"".join(texts)}</g>'
+                )
         if t_text:
             _mark_rendered("title")
         if s_text:
             _mark_rendered("subtitle")
 
     # 指北针（右上）
-    if _first_of_type("north_arrow") is not None:
-        parts.append(_render_north_arrow(canvas_w - m - 30.0, m + 30.0))
+    north = _first_of_type("north_arrow")
+    if north is not None:
+        moved_north = _constraint_chrome_xy(
+            mapspec, north, "north_arrow", canvas_w, canvas_h, m,
+        )
+        if moved_north is None:
+            parts.append(_render_north_arrow(canvas_w - m - 30.0, m + 30.0))
+        else:
+            parts.append(_render_north_arrow(moved_north[0], moved_north[1]))
         _mark_rendered("north_arrow")
 
     # 比例尺（右下，投影感知）
-    if _first_of_type("scale_bar") is not None:
-        parts.append(
-            _render_scale_bar(canvas_w - m - 150.0, canvas_h - m - 8.0, geo_bounds, canvas_w)
+    scale = _first_of_type("scale_bar")
+    if scale is not None:
+        moved_scale = _constraint_chrome_xy(
+            mapspec, scale, "scale_bar", canvas_w, canvas_h, m,
         )
+        if moved_scale is None:
+            parts.append(
+                _render_scale_bar(canvas_w - m - 150.0, canvas_h - m - 8.0, geo_bounds, canvas_w)
+            )
+        else:
+            parts.append(
+                _render_scale_bar(moved_scale[0], moved_scale[1], geo_bounds, canvas_w)
+            )
         _mark_rendered("scale_bar")
 
     # 图例族（C14：绑定裁决单源化 —— lib plan_legend_draws，chrome 渲染循环
@@ -603,7 +711,24 @@ def _render_chrome_groups(
                 f"legend entries {legend_plan.entries_total}→{_MAX_LEGEND_ITEMS_PER_BOX}")
         legend_box_y = canvas_h - m - (24.0 * n_entries + 42.0)
         legend_bottom = min(legend_bottom, legend_box_y)
-        parts.append(_render_legend_box(m, legend_box_y, legend_model))
+        legend_comp = next(
+            (c for c in enabled if c.id == legend_plan.component_id), None,
+        )
+        moved_legend = _constraint_chrome_xy(
+            mapspec, legend_comp, legend_plan.component_type,
+            canvas_w, canvas_h, m,
+        )
+        if moved_legend is None:
+            parts.append(_render_legend_box(m, legend_box_y, legend_model))
+        else:
+            box_w, box_h = 176.0, 42.0 + 20.0 * n_entries
+            lx, ly = moved_legend
+            anchor = getattr(legend_comp, "anchor", "")
+            if str(anchor).startswith("bottom"):
+                ly -= box_h
+            lx = min(max(lx, m), max(m, canvas_w - m - box_w))
+            ly = min(max(ly, m), max(m, canvas_h - m - box_h))
+            parts.append(_render_legend_box(lx, ly, legend_model))
         _mark_rendered(legend_plan.component_type)
 
     # 区位插图（locator）
@@ -627,7 +752,13 @@ def _render_chrome_groups(
     # 署名（左下）
     attr = _first_of_type("attribution")
     if attr is not None and attr.text:
-        parts.append(_render_attribution(m + 4.0, canvas_h - m - 14.0, attr.text))
+        moved_attr = _constraint_chrome_xy(
+            mapspec, attr, "attribution", canvas_w, canvas_h, m,
+        )
+        if moved_attr is None:
+            parts.append(_render_attribution(m + 4.0, canvas_h - m - 14.0, attr.text))
+        else:
+            parts.append(_render_attribution(moved_attr[0], moved_attr[1], attr.text))
         _mark_rendered("attribution")
 
     # ── F14 新族：面板/色带/注记（stack 布局，确定性）──────────────────

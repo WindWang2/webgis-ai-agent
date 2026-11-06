@@ -78,6 +78,8 @@ class VectorPdfRequest(BaseModel):
     水合** —— 源内联安全决策不变；会话属主校验失败 → 仅跳过 lineage。"""
     atlas: Optional[AtlasRequestPolicy] = None
     """C14：atlas 多页分页策略（可选；缺省 = 既有单页/显式多帧行为不变）。"""
+    page_profile: Optional[str] = Field(default=None, max_length=32)
+    """显式出版纸型（如 a4_landscape）。缺省不跑约束求解，PDF 字节不变。"""
 
     # 安全决策（R2-M3/M8）：不提供 sessionId 水合 —— ref 载体源由调用方
     # 内联后提交（前端 exporter 内存中已持有数据）；未内联 → 400 typed 拒绝。
@@ -200,6 +202,8 @@ class VectorPdfExportResponse(BaseModel):
     """C14：是否 atlas 多页导出。"""
     atlas_pages: Optional[List[Dict[str, Any]]] = None
     """C14：atlas 页摘要（page_id/title/page_number/cover/bounds；有界）。"""
+    constraint_layout: Optional[Dict[str, Any]] = None
+    """显式 page_profile 才为 evaluated；缺省 not_evaluated，不代表出版级成功。"""
 
 
 class PdfExportResponse(BaseModel):

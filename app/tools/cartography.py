@@ -1014,9 +1014,15 @@ def register_cartography_tools(registry: ToolRegistry):
         if ori not in ("landscape", "portrait"):
             ori = "landscape"
 
+        from app.lib.cartography.publication_constraint_layout import (
+            BROWSER_EXPORT_CONSTRAINT_NOTE,
+        )
+
         return {
             "status": "export_task_created",
             "command": "export_map",
+            "constraint_layout": "not_evaluated",
+            "publication_note": BROWSER_EXPORT_CONSTRAINT_NOTE,
             "params": {
                 "title": title,
                 "subtitle": subtitle,
@@ -1039,6 +1045,7 @@ def register_cartography_tools(registry: ToolRegistry):
                 "前端合成排版（含指北针、比例尺、图例）需要两到三秒时间，"
                 "合成完成后将自动通过 `[系统通知]` 回传带有下载安全链接的高清成果。"
                 "请直接告知用户你正在制图排版合成..."
+                + BROWSER_EXPORT_CONSTRAINT_NOTE
             ),
         }
 
@@ -1126,8 +1133,14 @@ def register_cartography_tools(registry: ToolRegistry):
                 },
             })
 
+        from app.lib.cartography.publication_constraint_layout import (
+            BROWSER_EXPORT_CONSTRAINT_NOTE,
+        )
+
         return {
             "status": "export_batch_task_created",
+            "constraint_layout": "not_evaluated",
+            "publication_note": BROWSER_EXPORT_CONSTRAINT_NOTE,
             "commands": commands,
             # count = 导出张数（fly_to 视图切换指令不计入）
             "count": sum(1 for c in commands if c["command"] == "export_map"),
@@ -1135,6 +1148,7 @@ def register_cartography_tools(registry: ToolRegistry):
                 f"已将 {sum(1 for c in commands if c['command'] == 'export_map')} 张地图的批量导出任务发送至前端，将按顺序合成。"
                 "每张完成后都会通过 `[系统通知]` 回传一条带下载链接的提示。"
                 "请告知用户『批量制图开始，预计耗时约 N 秒』并耐心等待结果。"
+                + BROWSER_EXPORT_CONSTRAINT_NOTE
             ),
         }
 

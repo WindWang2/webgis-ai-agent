@@ -572,6 +572,7 @@ async def export_map_as_vector_pdf(
                     # 直传钳制：None→300 缺省，0/负→72 下限（生效值随响应披露）
                     target_dpi=body.target_dpi,
                     atlas=_atlas_policy,
+                    page_profile=body.page_profile,
                 ),
             ),
             timeout=120.0,
@@ -612,6 +613,7 @@ async def export_map_as_vector_pdf(
             "component_coverage": result.component_coverage or {},
             "layout_version": result.layout_version,
             "spec_fingerprint": result.spec_fingerprint,
+            "constraint_layout": result.constraint_layout,
             **({"atlas_pages": result.atlas_pages} if result.atlas else {}),
         }
         await asyncio.to_thread(
@@ -662,12 +664,20 @@ async def export_map_as_vector_pdf(
         "target_dpi": result.target_dpi,
         "render_diagnostics": result.diagnostics,
         "schema_disclosures": result.disclosures,
-        "message": "矢量 PDF 已生成（文本可选中检索）",
+        "message": (
+            "矢量 PDF 已生成（文本可选中检索）。"
+            + (
+                "约束版面已按显式 page_profile 求解。"
+                if (result.constraint_layout or {}).get("constraint_layout") == "evaluated"
+                else "constraint_layout=not_evaluated，不是出版级约束版面成功。"
+            )
+        ),
         "lineage": lineage.model_dump() if lineage is not None else None,
         "layout_version": result.layout_version,
         "spec_fingerprint": result.spec_fingerprint,
         "atlas": result.atlas,
         "atlas_pages": result.atlas_pages if result.atlas else None,
+        "constraint_layout": result.constraint_layout,
     }
 
 
