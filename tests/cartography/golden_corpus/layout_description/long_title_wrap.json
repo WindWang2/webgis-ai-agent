@@ -1,0 +1,114 @@
+{
+  "name": "layout_description_long_title_wrap",
+  "_provenance": "ADR-0283 D2 —— expected 由 TS 参照实现（frontend/lib/export/layout-description.ts）生成并冻结（UPDATE_LAYOUT_GOLDEN=1 再生）；pytest 镜像（app/lib/cartography/layout_description.py）须逐字段复现。覆盖：超长 CJK/拉丁标题折行、safeAreaMm 增量、cmyk 出血档。",
+  "input": {
+    "paperSize": "A4",
+    "orientation": "landscape",
+    "dpi": 300,
+    "frame": {
+      "width": 2480,
+      "height": 1754
+    },
+    "chromeModel": null,
+    "requestTitle": "二〇二六年秋季华北平原城市群基础教育资源空间分异研究：基于多源地理开放数据的区县级统计与择校可达性综合评估报告（覆盖京津冀鲁豫五省市一百零二个区县、四千三百余所小学与初级中学的分布、师资生均比、择校通勤可达性与学区房价梯度的联合分析）",
+    "requestSubtitle": "A comprehensive spatial analysis of school distribution, district-level statistics and accessibility across the metropolitan region in autumn 2026, covering one hundred and two county-level administrative units, more than four thousand three hundred primary and secondary schools, teacher-student ratios, commuting accessibility and school-district housing price gradients.",
+    "author": "webgis-ai-agent",
+    "metersPerPixel": 20.3,
+    "extent": {
+      "mask": [
+        116.1,
+        39.7,
+        116.7,
+        40.1
+      ],
+      "export": [
+        116.05,
+        39.65,
+        116.75,
+        40.15
+      ],
+      "dataOverflow": false
+    },
+    "colorMode": "cmyk",
+    "safeAreaMm": {
+      "top": 12,
+      "right": 10,
+      "bottom": 15,
+      "left": 10
+    }
+  },
+  "expected": {
+    "version": 1,
+    "page": {
+      "paperSize": "A4",
+      "orientation": "landscape",
+      "dpi": 300,
+      "widthPx": 2480,
+      "heightPx": 1754,
+      "colorMode": "cmyk",
+      "bleedMm": 3,
+      "cropMarks": true,
+      "safeAreaMm": {
+        "top": 12,
+        "right": 10,
+        "bottom": 15,
+        "left": 10
+      }
+    },
+    "mapFrame": {
+      "x": 0,
+      "y": 0,
+      "width": 2480,
+      "height": 1754
+    },
+    "texts": [
+      {
+        "kind": "title",
+        "text": "二〇二六年秋季华北平原城市群基础教育资源空间分异研究：基于多源地理开放数据的区县级统计与择校可达性综合评估报告（覆盖京津冀鲁豫五省市一百零二个区县、四千三百余所小学与初级中学的分布、师资生均比、择校通勤可达性与学区房价梯度的联合分析）",
+        "wrapped": true,
+        "lines": [
+          "二〇二六年秋季华北平原城市群基础教育资源空间分异研究：基于多源地理开放数据的区县级统计与择校可达性综合评估报告（覆盖京津冀鲁豫五省市一百零二个区",
+          "县、四千三百余所小学与初级中学的分布、师资生均比、择校通勤可达性与学区房价梯度的联合分析）"
+        ]
+      },
+      {
+        "kind": "subtitle",
+        "text": "A comprehensive spatial analysis of school distribution, district-level statistics and accessibility across the metropolitan region in autumn 2026, covering one hundred and two county-level administrative units, more than four thousand three hundred primary and secondary schools, teacher-student ratios, commuting accessibility and school-district housing price gradients.",
+        "wrapped": true,
+        "lines": [
+          "A comprehensive spatial analysis of school distribution, district-level statistics and accessibility across the metropolitan region in autumn 2026, covering one",
+          "hundred and two county-level administrative units, more than four thousand three hundred primary and secondary schools, teacher-student ratios, commuting",
+          "accessibility and school-district housing price gradients."
+        ]
+      },
+      {
+        "kind": "author",
+        "text": "webgis-ai-agent"
+      }
+    ],
+    "scaleBar": {
+      "metersPerPixel": 20.3,
+      "nice": {
+        "meters": 2000,
+        "px": 98.52216748768473
+      },
+      "label": "2 km"
+    },
+    "extent": {
+      "mask": [
+        116.1,
+        39.7,
+        116.7,
+        40.1
+      ],
+      "export": [
+        116.05,
+        39.65,
+        116.75,
+        40.15
+      ],
+      "dataOverflow": false
+    },
+    "degradations": []
+  }
+}

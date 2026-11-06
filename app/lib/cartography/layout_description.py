@@ -19,6 +19,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.lib.cartography.label_typography import wrap_label_multilingual
+
 PUBLICATION_LAYOUT_VERSION = 1
 
 #: C2 共享版面描述 IR 版本（V11 W0.1，ADR-0160）。v2 是「整饰组件级」IR：
@@ -289,13 +291,53 @@ class LayoutInput:
     data_overflow: bool = False
     color_mode: str = "srgb"  # 'srgb' | 'cmyk'
     scale_bar_target_px: float = 120.0
+    # ADR-0283 D1：出版版心安全边距（毫米四边；None = 不进 page 投影，
+    # 旧 IR 形态逐字段一致 —— golden 不漂移）。
+    safe_area_mm: Optional[Dict[str, float]] = None
+
+
+#: 关键文本每行上限（code points）与折行预算（ADR-0283 D2）—— 与
+#: frontend/lib/export/layout-description.ts 常量同值同义（每行宽度口径）。
+MAX_TITLE_CODEPOINTS = 120
+MAX_SUBTITLE_CODEPOINTS = 160
+MAX_TITLE_LINES = 2
+MAX_SUBTITLE_LINES = 3
+
+
+def _strip_ws(s: str) -> str:
+    """去除全部空白（与 TS ``replace(/\\s/g, '')`` 同意图的孪生口径）。"""
+    return "".join(s.split())
+
+
+def _key_text_entry(
+    kind: str, text: str, cap: int, max_lines: int
+) -> Dict[str, Any]:
+    """关键文本条目装配（wrap-not-clip，ADR-0283 D2）。
+
+    复用 parity 锁定的多语断行原语
+    :func:`~app.lib.cartography.label_typography.wrap_label_multilingual`
+    （CJK 按字/拉丁按词/auto 占比；超预算末行可见截断）。单行未截断 =
+    旧形态 ``{kind, text}``；折行才携带 ``wrapped``/``lines``，末行截断
+    再携带 ``truncated``（消费端据此发 key_text_wrapped / title_truncated）。
+    """
+    lines = wrap_label_multilingual(text, max_chars=cap, max_lines=max_lines)
+    wrapped = len(lines) > 1
+    lost = _strip_ws("".join(lines)) != _strip_ws(text)
+    if not wrapped and not lost:
+        return {"kind": kind, "text": text}
+    entry: Dict[str, Any] = {"kind": kind, "text": text, "wrapped": wrapped}
+    if wrapped:
+        entry["lines"] = lines
+    if lost:
+        entry["truncated"] = True
+    return entry
 
 
 def build_publication_layout(inp: LayoutInput) -> Dict[str, Any]:
     """装配出版版面描述（确定性、JSON 可序列化 —— golden 对拍面）。"""
     color_mode = inp.color_mode if inp.color_mode in ("srgb", "cmyk") else "srgb"
     bleed_mm = PUBLICATION_BLEED_MM if color_mode == "cmyk" else 0
-    page = {
+    page: Dict[str, Any] = {
         "paperSize": inp.paper_size,
         "orientation": inp.orientation,
         "dpi": inp.dpi,
@@ -305,14 +347,22 @@ def build_publication_layout(inp: LayoutInput) -> Dict[str, Any]:
         "bleedMm": bleed_mm,
         "cropMarks": color_mode == "cmyk",
     }
+    if inp.safe_area_mm is not None:
+        page["safeAreaMm"] = dict(inp.safe_area_mm)
 
     title = inp.request_title or inp.spec_title or ""
     subtitle = inp.request_subtitle or inp.spec_subtitle or ""
-    texts: List[Dict[str, str]] = []
+    texts: List[Dict[str, Any]] = []
     if title:
-        texts.append({"kind": "title", "text": title})
+        texts.append(
+            _key_text_entry("title", title, MAX_TITLE_CODEPOINTS, MAX_TITLE_LINES)
+        )
     if subtitle:
-        texts.append({"kind": "subtitle", "text": subtitle})
+        texts.append(
+            _key_text_entry(
+                "subtitle", subtitle, MAX_SUBTITLE_CODEPOINTS, MAX_SUBTITLE_LINES
+            )
+        )
     if inp.author:
         texts.append({"kind": "author", "text": inp.author})
     if inp.data_source:

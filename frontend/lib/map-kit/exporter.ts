@@ -35,7 +35,7 @@ import { devOnly } from '@/lib/utils/logger';
 import { hydrateMvtLayers } from '@/lib/store/layer-data';
 import { getComparisonExport } from '@/lib/map/comparison-export-registry';
 // ADR-0199：场景证据环（挤出证据门控的降级披露源）。
-import { sceneEvidenceSnapshot } from '@/lib/mapspec-runtime/adapter';
+import { sceneEvidenceSnapshot, tileMissDetail, tileMissSnapshot } from '@/lib/mapspec-runtime/adapter';
 import { metersPerPixelAt } from './meters-per-pixel';
 import type { ExportFrame, FrameLayout } from './frame-composer';
 import { specFramesToExportFrames } from './spec-frames';
@@ -54,6 +54,9 @@ import {
   buildPublicationLayout,
   frameAspectWH,
   type PublicationLayout,
+  type PublicationText,
+  MAX_TITLE_CODEPOINTS, MAX_TITLE_LINES, MAX_SUBTITLE_CODEPOINTS, MAX_SUBTITLE_LINES,
+  projectTitleLines,
 } from '../export/layout-description';
 import {
   ensurePublicationFont,
@@ -266,6 +269,10 @@ export function composeLayout(
     // 收缩）；anchorOrigin 的 y 语义 = 距所属边的 margin 距离。
     const mTopTitle = scalePx(52);
     const mTopSub = scalePx(82);
+    // ADR-0283 D2：折行标题的副标题让位 —— title lines>1 时按行距下移，
+    // 避免第二行与副标题基线重叠（确定性偏移，单行形态不变）。
+    // R9 P3-4：行距取整与 drawChromeText 同口径（round(fontPx×1.3)）。
+    let titleWrapDy = 0;
     const mBottom = scalePx(52);
     const mCompass = scalePx(64);
     const mLegend = scalePx(56);
@@ -296,13 +303,14 @@ export function composeLayout(
 
       // 2. Title / subtitle（anchor 对齐 —— top-center 居中，与 live 一致）
       if (chrome.title?.text) {
-        drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: stackOffset(chrome.title, mTopTitle) });
+        const drawnTitleLines = drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: stackOffset(chrome.title, mTopTitle) });
+        titleWrapDy = scalePx(Math.round(32 * 1.3)) * Math.max(0, drawnTitleLines - 1);
       }
       if (chrome.subtitle?.text) {
         drawChromeText(
           d, chrome.subtitle, 20,
           dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)",
-          { marginX, marginY: stackOffset(chrome.subtitle, mTopSub) },
+          { marginX, marginY: stackOffset(chrome.subtitle, mTopSub) + titleWrapDy },
         );
       }
     }
@@ -954,6 +962,8 @@ export async function exportToPDF(
     dataSource?: string;
     /** W6：'vector'（缺省）画 title/subtitle；'skip' 跳过（画布已栅格化）。 */
     textLayer?: 'vector' | 'skip';
+    /** Frozen publication text projection shared with the canvas/SVG paths. */
+    publicationTexts?: readonly PublicationText[];
     /** W9：多帧图集页（canvas + 每帧标题）。 */
     pages?: Array<{ canvas: HTMLCanvasElement; title?: string }>;
     /** W9：PDF 内部诊断回传（页标题栅格化）。 */
@@ -1001,7 +1011,29 @@ export async function exportToPDF(
   // Map image area（出版档：内容整体外推 bleed —— 版式数学相对 trim 不变）
   const ox = bleed;
   const oy = bleed;
-  const mapTop = 25;
+  const textVector = (options.textLayer ?? 'vector') === 'vector';
+  const textLines = (kind: 'title' | 'subtitle', raw: string, fontSize: number): string[] => {
+    const entry = options.publicationTexts?.find((text) => text.kind === kind);
+    const text = entry?.text ?? raw;
+    if (!text) return [];
+    const projected = entry?.lines ?? projectTitleLines(text,
+      kind === 'title' ? MAX_TITLE_CODEPOINTS : MAX_SUBTITLE_CODEPOINTS,
+      kind === 'title' ? MAX_TITLE_LINES : MAX_SUBTITLE_LINES) ?? [text];
+    doc.setFontSize(fontSize);
+    // Physical paper width can be narrower than the canvas's line projection.
+    // Reflow complete projected lines with the actual PDF font metrics.
+    return projected.flatMap((line) => typeof doc.splitTextToSize === 'function'
+      ? doc.splitTextToSize(line, pageW - margin * 2) as string[] : [line]);
+  };
+  const titleLines = textVector ? textLines('title', title || 'WebGIS AI Agent', 16) : [];
+  const subtitleLines = textVector ? textLines('subtitle', subtitle ?? '', 10) : [];
+  const titleStep = 16 * 25.4 / 72 * 1.3;
+  const subtitleStep = 10 * 25.4 / 72 * 1.3;
+  const titleBottom = 15 + Math.max(0, titleLines.length - 1) * titleStep;
+  const subtitleTop = Math.max(21, titleBottom + 6);
+  const headerBottom = subtitleLines.length
+    ? subtitleTop + (subtitleLines.length - 1) * subtitleStep : titleBottom;
+  const mapTop = textVector ? Math.max(25, headerBottom + 4) : 25;
   const mapBottom = 15;
   const mapW = pageW - margin * 2;
   const mapH = pageH - mapTop - mapBottom;
@@ -1046,17 +1078,20 @@ export async function exportToPDF(
   doc.rect(placedX, placedY, placedW, placedH);
 
   // Title（W6：textLayer='skip' 时已随画布栅格化 —— 文本层不重复书写）
-  const textVector = (options.textLayer ?? 'vector') === 'vector';
   if (textVector) {
     doc.setFontSize(16);
     doc.setTextColor(30, 41, 59);
-    doc.text(title || 'WebGIS AI Agent', pageW / 2 + ox, 15 + oy, { align: 'center' });
+    titleLines.forEach((line, index) => {
+      doc.text(line, pageW / 2 + ox, 15 + oy + index * titleStep, { align: 'center' });
+    });
 
     // Subtitle
-    if (subtitle) {
+    if (subtitleLines.length) {
       doc.setFontSize(10);
       doc.setTextColor(100, 116, 139);
-      doc.text(subtitle, pageW / 2 + ox, 21 + oy, { align: 'center' });
+      subtitleLines.forEach((line, index) => {
+        doc.text(line, pageW / 2 + ox, subtitleTop + oy + index * subtitleStep, { align: 'center' });
+      });
     }
   }
 
@@ -1409,6 +1444,42 @@ export {
   detectRasterSourceIds,
 } from '../export/highdpi';
 export type { HighDpiRenderMode, HighDpiRenderResult } from '../export/highdpi';
+
+/**
+ * ADR-0283 D3（#1910 非重叠验收锚点）：PDF 文本层披露判定 —— 纯函数。
+ *
+ * 诚实语义（前端面）：`pdf_cjk_font_embedded` 仅在字体**确实已嵌入**
+ * （ensurePublicationFont 成功）且文本含非 WinAnsi 字符时发布；字体不可用
+ * → `pdf_text_rasterized_cjk`（栅格化兜底披露）；纯 WinAnsi 文本 → 无条目。
+ * 后端 WeasyPrint 回执的同码语义一致性核对见
+ * tests/cartography/test_pdf_receipt_parity_v1.py（blocked_on_#1910 部分以
+ * self-skip 披露，不冒充通过）。
+ */
+export function decidePdfTextLayerDisclosure(
+  pdfFontEmbedded: boolean,
+  pdfVectorText: boolean,
+  cjkInText: boolean,
+): ExportDegradation[] {
+  if (pdfFontEmbedded && cjkInText) {
+    return [
+      {
+        code: 'pdf_cjk_font_embedded',
+        detail: 'PDF 文本层嵌入 Noto Sans SC 子集字体，中文可选取/可检索',
+      },
+    ];
+  }
+  if (pdfVectorText) return [];
+  // 行为修正（ADR-0283 D3）：纯 WinAnsi 文本 + 文本层关闭时不再发布
+  // pdf_text_rasterized_cjk —— 该 detail 断言"含非 WinAnsi 字符"，对纯
+  // ASCII 标题是事实错误的归因（诚实披露纪律；此前此分支恒发）。
+  if (!cjkInText) return [];
+  return [
+    {
+      code: 'pdf_text_rasterized_cjk',
+      detail: '标题/副标题含非 WinAnsi 字符，已随画布栅格化（PDF 文本层跳过，避免乱码）',
+    },
+  ];
+}
 
 /**
  * W7（ADR-0118）：导出侧 spec 事实源 = live 同一合成器（composeLiveMapSpec）
@@ -2203,6 +2274,14 @@ async function runExportInternal(
         });
       }
     }
+    // ADR-0283 D3：缺瓦片有界披露 —— per-source 计数 + 首 5 样本（z/x/y），
+    // detail 有界（tileMissDetail 截 200）。无缺失 → 无条目（不虚构）。
+    for (const acc of tileMissSnapshot(map, (id) => map.getSource?.(id))) {
+      chromeDegradations.push({
+        code: 'basemap_tiles_missing',
+        detail: tileMissDetail(acc),
+      });
+    }
 
     // ADR-0157 P2：版面描述中间层（单一决策记录）—— canvas 消费
     // chromeModel 字段（既有绘制面不变），SVG/PDF 消费全量字段（texts/
@@ -2260,6 +2339,17 @@ async function runExportInternal(
         detail: truncatedTextKinds.join(','),
       });
     }
+    // ADR-0283 D2：关键文本 wrap-not-clip 折行披露（非截断 —— 内容未
+    // 减少，版面以行数承载；消费方可据此复核行高预算）。
+    const wrappedTextKinds = publicationLayout.texts
+      .filter((t) => t.wrapped)
+      .map((t) => t.kind);
+    if (wrappedTextKinds.length > 0) {
+      chromeDegradations.push({
+        code: 'key_text_wrapped',
+        detail: wrappedTextKinds.join(','),
+      });
+    }
 
     if (fmt === 'svg') {
       // V5（ADR-0118 W5）真矢量优先；ac-08（ADR-0157 P2）版面决策全部
@@ -2311,22 +2401,11 @@ async function runExportInternal(
       // ac-08（ADR-0157 P3）：文本层披露 —— 出版字体嵌入（含 CJK 可检索）
       // 为默认；字体不可用且含 CJK → 栅格化（最后兜底）。
       const cjkInText = hasNonWinAnsiChars(effTitle) || hasNonWinAnsiChars(effSubtitle);
-      const pdfDegradations: ExportDegradation[] =
-        pdfFontEmbedded && cjkInText
-          ? [
-              {
-                code: 'pdf_cjk_font_embedded',
-                detail: 'PDF 文本层嵌入 Noto Sans SC 子集字体，中文可选取/可检索',
-              },
-            ]
-          : pdfVectorText
-            ? []
-            : [
-                {
-                  code: 'pdf_text_rasterized_cjk',
-                  detail: '标题/副标题含非 WinAnsi 字符，已随画布栅格化（PDF 文本层跳过，避免乱码）',
-                },
-              ];
+      const pdfDegradations: ExportDegradation[] = decidePdfTextLayerDisclosure(
+        pdfFontEmbedded,
+        pdfVectorText,
+        cjkInText,
+      );
       // ADR-0081：PDF 文本层 subtitle 与 canvas 同一事实源链（请求参数 >
       // spec 组件 > 空串）—— 此前 PDF 只读请求参数，spec 副标题在 PDF
       // 文本层静默丢失。
@@ -2341,6 +2420,7 @@ async function runExportInternal(
           dataSource,
           textLayer: pdfVectorText ? 'vector' : 'skip',
           fontB64: publicationFontB64,
+          publicationTexts: publicationLayout.texts,
           colorMode,
         },
       );

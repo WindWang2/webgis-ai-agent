@@ -138,6 +138,9 @@ SELFHEAL_ACTIONS: Tuple[SelfHealActionSpec, ...] = (
     _spec("resample", RISK_AUTO_SAFE, SURFACE_RUNTIME, 0.5,
           "重采样：密度超载层的视口抽稀参数调整（呈现级）",
           {"carto.load.ratio", "VISUAL_INFORMATION_DENSITY"}),
+    # R9 P2-2 清偿：撤销 relayout_* 新造动作注册（无执行器分支 = 死端）。
+    # ADR-0283 D4 的版式发现路由直接使用 component_composer.REPAIR_ACTIONS
+    # 既有词表（semantic_checks_layout._FIX_ROUTE），不在此另立动作面。
 )
 
 

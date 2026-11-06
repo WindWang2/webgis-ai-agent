@@ -1,0 +1,84 @@
+{
+  "name": "label_vs_glyph_obstacles",
+  "viewport": [
+    0,
+    0,
+    200,
+    200
+  ],
+  "labels": [
+    {
+      "id": "A",
+      "text": "A",
+      "kind": "point",
+      "x": 100,
+      "y": 100,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    },
+    {
+      "id": "B",
+      "text": "B",
+      "kind": "point",
+      "x": 40,
+      "y": 40,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    },
+    {
+      "id": "C",
+      "text": "C",
+      "kind": "point",
+      "x": 150,
+      "y": 150,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    }
+  ],
+  "obstacles": [
+    [106.5, 90, 130, 126],
+    [25, 25, 55, 55],
+    [163.5, 135, 190, 175]
+  ],
+  "maxLabels": 400,
+  "expected": {
+    "placements": [
+      {
+        "id": "A",
+        "x": 100.0,
+        "y": 92.5,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      },
+      {
+        "id": "B",
+        "x": 40.0,
+        "y": 40.0,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "obstacle"
+      },
+      {
+        "id": "C",
+        "x": 157.5,
+        "y": 157.5,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      }
+    ],
+    "stats": {
+      "total": 3,
+      "placed": 2,
+      "suppressed": 1,
+      "collisions": 0,
+      "obstacle_hits": 1,
+      "obstacles_truncated": 0
+    },
+    "budgetExceeded": false
+  }
+}

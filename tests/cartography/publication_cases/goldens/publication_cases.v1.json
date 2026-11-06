@@ -1,0 +1,3313 @@
+{
+  "name": "publication_cases_v1",
+  "spec_version": "layout_constraint_spec.v1",
+  "_provenance": "ADR-0283 D5 —— 六族出版用例结构 golden。生成器 tests/cartography/publication_cases/generate.py（纯确定性：derive_layout_constraints + solve_layout_v5 + build_publication_layout）；消费方 test_publication_cases_v1.py 逐字段对拍 + 语义不变量断言。",
+  "entries": [
+    {
+      "case": "dot_density_district",
+      "locale": "zh",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_districts",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_schools",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "shrink",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "学校点密度与区级统计"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "dot_density_district",
+      "locale": "zh",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_districts",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_schools",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "shrink",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "学校点密度与区级统计"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "dot_density_district",
+      "locale": "zh",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_districts",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_schools",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "shrink",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "学校点密度与区级统计"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "dot_density_district",
+      "locale": "en",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_districts",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_schools",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "shrink",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "School Density & District Statistics"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "dot_density_district",
+      "locale": "en",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_districts",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_schools",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "shrink",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "School Density & District Statistics"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "dot_density_district",
+      "locale": "en",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_districts",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_schools",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "shrink",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "School Density & District Statistics"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "choropleth_graduated",
+      "locale": "zh",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend_classes",
+            "zone": "bottom-left",
+            "width_units": 2
+          },
+          {
+            "id": "legend_top",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          },
+          {
+            "id": "unc",
+            "zone": "top-left",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "分级设色图"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "choropleth_graduated",
+      "locale": "zh",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend_classes",
+            "zone": "bottom-left",
+            "width_units": 2
+          },
+          {
+            "id": "legend_top",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          },
+          {
+            "id": "unc",
+            "zone": "top-left",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "分级设色图"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "choropleth_graduated",
+      "locale": "zh",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend_classes",
+            "zone": "bottom-left",
+            "width_units": 2
+          },
+          {
+            "id": "legend_top",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          },
+          {
+            "id": "unc",
+            "zone": "top-left",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "分级设色图"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "choropleth_graduated",
+      "locale": "en",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend_classes",
+            "zone": "bottom-left",
+            "width_units": 2
+          },
+          {
+            "id": "legend_top",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          },
+          {
+            "id": "unc",
+            "zone": "top-left",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Graduated Choropleth"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "choropleth_graduated",
+      "locale": "en",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend_classes",
+            "zone": "bottom-left",
+            "width_units": 2
+          },
+          {
+            "id": "legend_top",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          },
+          {
+            "id": "unc",
+            "zone": "top-left",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Graduated Choropleth"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "choropleth_graduated",
+      "locale": "en",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend_classes",
+            "zone": "bottom-left",
+            "width_units": 2
+          },
+          {
+            "id": "legend_top",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          },
+          {
+            "id": "unc",
+            "zone": "top-left",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Graduated Choropleth"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "continuous_raster_colorbar",
+      "locale": "zh",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar",
+            "zone": "top-left",
+            "width_units": 2
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "连续栅格分布"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "continuous_raster_colorbar",
+      "locale": "zh",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar",
+            "zone": "top-left",
+            "width_units": 2
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "连续栅格分布"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "continuous_raster_colorbar",
+      "locale": "zh",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar",
+            "zone": "top-left",
+            "width_units": 2
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "连续栅格分布"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "continuous_raster_colorbar",
+      "locale": "en",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar",
+            "zone": "top-left",
+            "width_units": 2
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Continuous Raster Distribution"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "continuous_raster_colorbar",
+      "locale": "en",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar",
+            "zone": "top-left",
+            "width_units": 2
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Continuous Raster Distribution"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "continuous_raster_colorbar",
+      "locale": "en",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar",
+            "zone": "top-left",
+            "width_units": 2
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Continuous Raster Distribution"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "long_name_labels",
+      "locale": "zh",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "labels",
+            "zone": "none",
+            "width_units": 1
+          },
+          {
+            "id": "legend_admin",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "二〇二六年秋季华北平原城市群基础教育资源空间分异研究：基于多源地理开放数据的区县级统计与择校可达性综合评估报告（覆盖京津冀鲁豫五省市一百零二个区县、四千三百余所小学与初级中学的分布、师资生均比、择校通勤可达性与学区房价梯度的联合分析，并给出分省市政策建议附录）",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "区县级统计口径 · 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent 开放数据"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "long_name_labels",
+      "locale": "zh",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "labels",
+            "zone": "none",
+            "width_units": 1
+          },
+          {
+            "id": "legend_admin",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "二〇二六年秋季华北平原城市群基础教育资源空间分异研究：基于多源地理开放数据的区县级统计与择校可达性综合评估报告（覆盖京津冀鲁豫五省市一百零二个区县、四千三百余所小学与初级中学的分布、师资生均比、择校通勤可达性与学区房价梯度的联合分析，并给出分省市政策建议附录）",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "区县级统计口径 · 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent 开放数据"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "long_name_labels",
+      "locale": "zh",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "labels",
+            "zone": "none",
+            "width_units": 1
+          },
+          {
+            "id": "legend_admin",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "二〇二六年秋季华北平原城市群基础教育资源空间分异研究：基于多源地理开放数据的区县级统计与择校可达性综合评估报告（覆盖京津冀鲁豫五省市一百零二个区县、四千三百余所小学与初级中学的分布、师资生均比、择校通勤可达性与学区房价梯度的联合分析，并给出分省市政策建议附录）",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "区县级统计口径 · 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent 开放数据"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "long_name_labels",
+      "locale": "en",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "labels",
+            "zone": "none",
+            "width_units": 1
+          },
+          {
+            "id": "legend_admin",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Spatial Differentiation of Basic Education Resources across the North China Plain Urban Agglomeration in Autumn 2026: A County-Level Statistical and Accessibility Assessment Covering Five Provinces",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "County-level statistics, 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent open data"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "long_name_labels",
+      "locale": "en",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "labels",
+            "zone": "none",
+            "width_units": 1
+          },
+          {
+            "id": "legend_admin",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Spatial Differentiation of Basic Education Resources across the North China Plain Urban Agglomeration in Autumn 2026: A County-Level Statistical and Accessibility Assessment Covering Five Provinces",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "County-level statistics, 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent open data"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "long_name_labels",
+      "locale": "en",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "labels",
+            "zone": "none",
+            "width_units": 1
+          },
+          {
+            "id": "legend_admin",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Spatial Differentiation of Basic Education Resources across the North China Plain Urban Agglomeration in Autumn 2026: A County-Level Statistical and Accessibility Assessment Covering Five Provinces",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "County-level statistics, 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent open data"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "comparison_two_views",
+      "locale": "zh",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar_b",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_a",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_b",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "双图对比"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "comparison_two_views",
+      "locale": "zh",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar_b",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_a",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_b",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "双图对比"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "comparison_two_views",
+      "locale": "zh",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar_b",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_a",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_b",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "双图对比"
+          },
+          {
+            "kind": "subtitle",
+            "text": "2026 年秋季"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "comparison_two_views",
+      "locale": "en",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar_b",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_a",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_b",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Two-View Comparison"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "comparison_two_views",
+      "locale": "en",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar_b",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_a",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_b",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Two-View Comparison"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "comparison_two_views",
+      "locale": "en",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "colorbar_b",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "legend_a",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "legend_b",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Two-View Comparison"
+          },
+          {
+            "kind": "subtitle",
+            "text": "Autumn 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "research_figure_inset_chart",
+      "locale": "zh",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "annotation",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "inset",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart",
+          "stats"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "change_anchor",
+          "collapse_to_overflow",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "二〇二六年秋季华北平原城市群基础教育资源空间分异研究：基于多源地理开放数据的区县级统计与择校可达性综合评估报告（覆盖京津冀鲁豫五省市一百零二个区县、四千三百余所小学与初级中学的分布、师资生均比、择校通勤可达性与学区房价梯度的联合分析，并给出分省市政策建议附录）",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "区县级统计口径 · 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent 开放数据"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "research_figure_inset_chart",
+      "locale": "zh",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "annotation",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "inset",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart",
+          "stats"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "change_anchor",
+          "collapse_to_overflow",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "二〇二六年秋季华北平原城市群基础教育资源空间分异研究：基于多源地理开放数据的区县级统计与择校可达性综合评估报告（覆盖京津冀鲁豫五省市一百零二个区县、四千三百余所小学与初级中学的分布、师资生均比、择校通勤可达性与学区房价梯度的联合分析，并给出分省市政策建议附录）",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "区县级统计口径 · 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent 开放数据"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "research_figure_inset_chart",
+      "locale": "zh",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "annotation",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "inset",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart",
+          "stats"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "change_anchor",
+          "collapse_to_overflow",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "二〇二六年秋季华北平原城市群基础教育资源空间分异研究：基于多源地理开放数据的区县级统计与择校可达性综合评估报告（覆盖京津冀鲁豫五省市一百零二个区县、四千三百余所小学与初级中学的分布、师资生均比、择校通勤可达性与学区房价梯度的联合分析，并给出分省市政策建议附录）",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "区县级统计口径 · 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent 开放数据"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "research_figure_inset_chart",
+      "locale": "en",
+      "page": "16x9",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "annotation",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "inset",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart",
+          "stats"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "change_anchor",
+          "collapse_to_overflow",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "screen",
+          "orientation": "landscape",
+          "dpi": 96,
+          "widthPx": 1920,
+          "heightPx": 1080,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Spatial Differentiation of Basic Education Resources across the North China Plain Urban Agglomeration in Autumn 2026: A County-Level Statistical and Accessibility Assessment Covering Five Provinces",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "County-level statistics, 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent open data"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "research_figure_inset_chart",
+      "locale": "en",
+      "page": "a4",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "annotation",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "inset",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart",
+          "stats"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "change_anchor",
+          "collapse_to_overflow",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A4",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 3508,
+          "heightPx": 2480,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Spatial Differentiation of Basic Education Resources across the North China Plain Urban Agglomeration in Autumn 2026: A County-Level Statistical and Accessibility Assessment Covering Five Provinces",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "County-level statistics, 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent open data"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    },
+    {
+      "case": "research_figure_inset_chart",
+      "locale": "en",
+      "page": "a3",
+      "layout_solution": {
+        "placements": [
+          {
+            "id": "annotation",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "attr",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "chart",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "inset",
+            "zone": "top-right",
+            "width_units": 1
+          },
+          {
+            "id": "legend",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "method",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "north",
+            "zone": "bottom-left",
+            "width_units": 1
+          },
+          {
+            "id": "scale",
+            "zone": "bottom-right",
+            "width_units": 1
+          },
+          {
+            "id": "stats",
+            "zone": "bottom-center",
+            "width_units": 1
+          },
+          {
+            "id": "subtitle",
+            "zone": "top-left",
+            "width_units": 1
+          },
+          {
+            "id": "title",
+            "zone": "top-center",
+            "width_units": 1
+          }
+        ],
+        "suppressed": [],
+        "collapsed_ids": [
+          "chart",
+          "stats"
+        ],
+        "hidden_ids": [],
+        "repair_actions": [
+          "change_anchor",
+          "change_anchor",
+          "change_anchor",
+          "collapse_to_overflow",
+          "collapse_to_overflow"
+        ],
+        "constraint_findings": []
+      },
+      "publication": {
+        "page": {
+          "paperSize": "A3",
+          "orientation": "landscape",
+          "dpi": 300,
+          "widthPx": 4961,
+          "heightPx": 3508,
+          "colorMode": "srgb",
+          "bleedMm": 0,
+          "cropMarks": false,
+          "safeAreaMm": {
+            "top": 12,
+            "right": 10,
+            "bottom": 15,
+            "left": 10
+          }
+        },
+        "texts": [
+          {
+            "kind": "title",
+            "text": "Spatial Differentiation of Basic Education Resources across the North China Plain Urban Agglomeration in Autumn 2026: A County-Level Statistical and Accessibility Assessment Covering Five Provinces",
+            "wrapped": true,
+            "line_count": 2
+          },
+          {
+            "kind": "subtitle",
+            "text": "County-level statistics, 2026"
+          },
+          {
+            "kind": "attribution",
+            "text": "© webgis-ai-agent open data"
+          }
+        ],
+        "scale_bar_label": "2 km",
+        "degradations": []
+      }
+    }
+  ]
+}

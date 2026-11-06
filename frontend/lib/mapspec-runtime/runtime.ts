@@ -24,7 +24,7 @@ import {
   recordRecompileFallback,
 } from "@/lib/utils/perf-counters";
 import { recordSymbolLawEvidence } from "@/lib/map-kit/symbol-law";
-import { recordSceneEvidence } from "@/lib/mapspec-runtime/adapter";
+import { recordSceneEvidence, recordTileMiss, resetTileMiss } from "@/lib/mapspec-runtime/adapter";
 import { checkMapSpecVersion } from "@/lib/carto-ir/version";
 import { resolveLayerVisibility } from "@/lib/carto-ir/visibility";
 import {
@@ -179,8 +179,18 @@ export class MapSpecRuntime {
   /** #1645（#1597 依赖）：style._loaded 缺席兜底路径只披露一次（每实例）。 */
   private styleLoadedFallbackWarned = false;
 
+  private tileMissSession: string | null = null;
+
+  setSessionScope(sessionId: string | null): void {
+    if (sessionId !== this.tileMissSession) {
+      resetTileMiss(this.map);
+      this.tileMissSession = sessionId;
+    }
+  }
+
   constructor(map: MaplibreMap, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
+    resetTileMiss(map);
     this.onStyleRecovery = options.onStyleRecovery;
     // FE-3: wire the debouncer's FrameStats instrument to the dev/test counter
     // sink (was constructed with no options — findings E5).
@@ -198,6 +208,7 @@ export class MapSpecRuntime {
     // 不再只是控制台错误，`scene_basemap_unavailable` 证据进入 observation/
     // 导出披露面（行动依据：切换可用 provider 或配置本地底图）。
     this.terrainErrorHandler = (e: unknown) => {
+      if (this.disposed) return;
       const srcId = (e as { sourceId?: unknown } | null)?.sourceId;
       if (typeof srcId !== "string") return;
       const terrain = (this.appliedSpec as { scene?: { terrain?: { source?: unknown } } } | null)
@@ -208,6 +219,16 @@ export class MapSpecRuntime {
       }
       if (/^raster-tiles-\d+$/.test(srcId)) {
         recordSceneEvidence("scene_basemap_unavailable", srcId);
+        // MapLibre Tile errors carry tile.tileID.canonical, not a string id.
+        // Keep the string fallback for older adapters; absent coordinates only count.
+        const source = this.map.getSource?.(srcId);
+        if (!source) return; // Ignore late errors from retired source generations.
+        const tile = (e as { tile?: { id?: unknown; tileID?: { canonical?: { z?: unknown; x?: unknown; y?: unknown } } } } | null)?.tile;
+        const canonical = tile?.tileID?.canonical;
+        const coord = canonical && [canonical.z, canonical.x, canonical.y].every(
+          (value) => typeof value === "number" && Number.isInteger(value) && value >= 0,
+        ) ? `${canonical.z}/${canonical.x}/${canonical.y}` : typeof tile?.id === "string" ? tile.id : "";
+        recordTileMiss(srcId, coord, this.map, source);
       }
     };
     // 最小 map 桩（测试/半销毁 map）可能没有事件面 —— 防御性挂载。
@@ -221,6 +242,7 @@ export class MapSpecRuntime {
    * Next reconcile will treat all sources/layers as new and re-apply them.
    */
   invalidateStyle(): void {
+    resetTileMiss(this.map);
     // #459: invalidate any patch whose ops are still queued/running — its
     // completion marker checks this token before advancing appliedSpec.
     this.styleEpoch++;
@@ -932,6 +954,7 @@ export class MapSpecRuntime {
   }
 
   dispose(): void {
+    resetTileMiss(this.map);
     this.disposed = true;
     if (this.pendingTimer) {
       clearTimeout(this.pendingTimer);
@@ -1773,6 +1796,7 @@ export class MapSpecRuntime {
   }
 
   private removeSourceSafe(id: string): void {
+    resetTileMiss(this.map, id);
     // Must remove all layers referencing this source first. diffSpecs already
     // reported dependent layer removes, but defensive: scrub any stragglers.
     // #462: the runtime's own layer→source index replaces the per-removal

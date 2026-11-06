@@ -1,3 +1,4 @@
+import { reflowLines } from '../export/reflow-lines';
 /**
  * V5（ADR-0118 W5）真矢量 SVG 导出；ac-08（ADR-0157 P2）升为版面描述
  * 中间层（layout-description.ts）的一等消费方。
@@ -178,6 +179,14 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
         detail: truncatedTexts.map((t) => t.kind).join(','),
       });
     }
+    // ADR-0283 D2：关键文本折行披露（与画布链同码同源）。
+    const wrappedTexts = input.layout.texts.filter((t) => t.wrapped);
+    if (wrappedTexts.length > 0) {
+      degradations.push({
+        code: 'key_text_wrapped',
+        detail: wrappedTexts.map((t) => t.kind).join(','),
+      });
+    }
     const dataSvg = truncateCompiledLabels(compiled, degradations);
     // 内容态：层近似诊断（heatmap/extrusion）或产物内近似标记在场 → mixed；
     // 纯矢量数据层 → vector（label 截断不算层近似）。
@@ -203,18 +212,37 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     parts.push(dataSvg);
     // 图框
     parts.push(renderSvgFrameBorder({ width, height, margin }));
-    // 标题 / 副标题（layout.texts 单源 —— 与画布 chrome 同回退链）
+    // 标题 / 副标题（layout.texts 单源 —— 与画布 chrome 同回退链；
+    // ADR-0283 D2：wrapped 条目按 lines 逐行绘制 —— 长标题不横向溢出）
     let cursorY = margin + 30;
+    const titleEntry = layout.texts.find((t) => t.kind === 'title');
+    const subtitleEntry = layout.texts.find((t) => t.kind === 'subtitle');
     if (title && (layout.chromeModel?.title || !layout.chromeModel?.fromSpec)) {
-      parts.push(
-        `<text x="${margin + 12}" y="${cursorY}" font-family="sans-serif" font-size="22" font-weight="bold" fill="${ink}">${escapeSvgText(title)}</text>`,
+      const titleLines = reflowLines(
+        titleEntry?.lines?.length ? titleEntry.lines : [title],
+        width - (margin + 12) * 2,
+        (text) => Array.from(text).length * 22,
       );
-      cursorY += 22;
+      const titleStep = 29; // 22px 字号 × 1.3 行距（确定性）
+      titleLines.forEach((line, i) => {
+        parts.push(
+          `<text x="${margin + 12}" y="${cursorY + titleStep * i}" font-family="sans-serif" font-size="22" font-weight="bold" fill="${ink}">${escapeSvgText(line)}</text>`,
+        );
+      });
+      cursorY += 22 + titleStep * (titleLines.length - 1);
     }
     if (subtitle && (layout.chromeModel?.subtitle || !layout.chromeModel?.fromSpec)) {
-      parts.push(
-        `<text x="${margin + 12}" y="${cursorY}" font-family="sans-serif" font-size="12" fill="${ink}" opacity="0.75">${escapeSvgText(subtitle)}</text>`,
+      const subtitleLines = reflowLines(
+        subtitleEntry?.lines?.length ? subtitleEntry.lines : [subtitle],
+        width - (margin + 12) * 2,
+        (text) => Array.from(text).length * 12,
       );
+      const subtitleStep = 16; // 12px 字号 × 1.3 行距
+      subtitleLines.forEach((line, i) => {
+        parts.push(
+          `<text x="${margin + 12}" y="${cursorY + subtitleStep * i}" font-family="sans-serif" font-size="12" fill="${ink}" opacity="0.75">${escapeSvgText(line)}</text>`,
+        );
+      });
     }
     // 指北针（右上；renderSvgNorthArrow 自带 <svg> 根，嵌套合法）
     if (layout.chromeModel?.northArrow || !layout.chromeModel?.fromSpec) parts.push(
