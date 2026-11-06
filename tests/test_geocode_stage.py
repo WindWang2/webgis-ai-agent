@@ -760,3 +760,38 @@ def test_geocode_stage_fans_out_provider_precision_and_fallback_772():
     assert row["_geocode_precision"] == "district"   # precision level kept
     assert row["_geocode_fallback"] is True          # per-row fallback marker
     assert result.summary.multi_provider is True     # truthful summary
+
+
+@pytest.mark.parametrize("reported_rows", [0, 1])
+def test_geocode_uses_stored_rows_despite_stale_count_and_bounds_progress(reported_rows):
+    rows = [{"lat": 10, "lon": 20}, {"lat": 11, "lon": 21}]
+    progress = []
+
+    async def no_geocoding(addresses, **kwargs):
+        pytest.fail("predefined coordinates require no provider call")
+
+    result = _run(geocode_stage(
+        [{"ref_id": "stored", "row_count": reported_rows}],
+        load_ref=lambda ref: {"rows": rows, "mapping": {"lat": "lat", "lon": "lon"}},
+        batch_geocode=no_geocoding, on_progress=progress.append,
+    ))
+    assert result.summary.total == result.summary.predefined == 2
+    assert progress[-1] == 100 and all(0 <= value <= 100 for value in progress)
+
+
+def test_geocode_misaligned_results_fail_without_claiming_deadline(monkeypatch):
+    from app.services.geocode_strategy import GeocodeAddressResult, GeocodeProviderStrategy
+
+    async def truncated(self, addresses, **kwargs):
+        return [GeocodeAddressResult(10, 20, "ok", "amap", None)], False
+
+    monkeypatch.setattr(GeocodeProviderStrategy, "geocode_addresses", truncated)
+    rows = [{"address": "A"}, {"address": "B"}]
+    result = _run(geocode_stage(
+        [{"ref_id": "stored", "row_count": 2}],
+        load_ref=lambda ref: {"rows": rows}, batch_geocode=truncated,
+    ))
+    assert result.summary.failed == 2 and result.summary.skipped == 0
+    assert not result.summary.deadline_exceeded
+    assert all(row["_geocode_status"] == "failed" for row in result.rows)
+    assert all("count mismatch" in row["_geocode_error"] for row in result.rows)

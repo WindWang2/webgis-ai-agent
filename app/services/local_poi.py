@@ -17,6 +17,8 @@ where 下推 SQLite 层，max_features 界定内存），坐标一律 WGS84。
 from __future__ import annotations
 
 import itertools
+import threading
+from collections import OrderedDict
 import contextlib
 import json
 import logging
@@ -155,9 +157,11 @@ def _township_centers(frame: pd.DataFrame) -> List[Tuple[Any, ...]]:
         return []
     sub = frame.loc[mask]
     lng, lat = _parse_location(sub["location"])
+    valid = np.isfinite(lng) & np.isfinite(lat) & (np.abs(lng) < 180) & (np.abs(lat) < 90)
+    sub, lng, lat = sub.loc[valid], lng[valid], lat[valid]
     wlng, wlat = gcj02_to_wgs84_array(lng, lat)
     out = []
-    for rec, wl, wa in zip(sub.to_dict("records"), wlng, wlat):
+    for rec, wl, wa in zip(sub.to_dict("records"), wlng, wlat, strict=True):
         out.append((
             rec.get("name"), rec.get("adcode"), float(wl), float(wa),
             rec.get("pname"), rec.get("cityname"), rec.get("adname"),
@@ -208,7 +212,7 @@ def _flush_chunk(
     """块 → GPKG（首块建层并补 adcode 索引）→ (写入行数, 乡镇中心点行)。"""
     import pyogrio
 
-    frame = pd.DataFrame(chunk, columns=header)
+    frame = pd.DataFrame([(tuple(row) + ("",) * len(header))[:len(header)] for row in chunk], columns=header)
     gdf = _to_geo(frame)
     centers = _township_centers(frame)
     pyogrio.write_dataframe(gdf, gpkg, layer="pois", driver="GPKG", append=append)
@@ -451,7 +455,7 @@ def ingest_gd_poi(
                     chunk: List[Sequence[Any]] = []
                     for row in rows:
                         if len(row) != len(header):
-                            row = tuple(row) + ("",) * (len(header) - len(row))
+                            row = (tuple(row) + ("",) * len(header))[:len(header)]
                         chunk.append(row)
                         if len(chunk) >= _CHUNK_ROWS:
                             n, centers_part = _flush_chunk(
@@ -494,7 +498,18 @@ def ingest_gd_poi(
 # ── 查询面 ────────────────────────────────────────────────────────────────
 
 # 行政区名 → adcode 解析缓存（district.shp 只读一次，名称过滤在毫秒级）。
-_district_codes_cache: Dict[str, List[str]] = {}
+_district_codes_cache: OrderedDict[str, List[str]] = OrderedDict()
+_district_codes_lock = threading.RLock()
+_DISTRICT_CACHE_MAX = 512
+
+
+def _remember_district_codes(key: str, codes: List[str]) -> List[str]:
+    with _district_codes_lock:
+        _district_codes_cache[key] = list(codes)
+        _district_codes_cache.move_to_end(key)
+        while len(_district_codes_cache) > _DISTRICT_CACHE_MAX:
+            _district_codes_cache.popitem(last=False)
+    return list(codes)
 
 
 def _resolve_district_codes(district: str) -> List[str]:
@@ -505,10 +520,12 @@ def _resolve_district_codes(district: str) -> List[str]:
     （OR 连接），与按名查行政区工具的包含语义一致。
     """
     key = str(district).strip()
-    if not key:
+    if not key or len(key) > 128:
         return []
-    if key in _district_codes_cache:
-        return _district_codes_cache[key]
+    with _district_codes_lock:
+        if key in _district_codes_cache:
+            _district_codes_cache.move_to_end(key)
+            return list(_district_codes_cache[key])
     
     # 纯数字编码直接标准化
     if key.isdigit():
@@ -520,8 +537,7 @@ def _resolve_district_codes(district: str) -> List[str]:
             out = [key]
         else:
             out = [key]
-        _district_codes_cache[key] = out
-        return out
+        return _remember_district_codes(key, out)
 
     codes: List[str] = []
     try:
@@ -544,12 +560,11 @@ def _resolve_district_codes(district: str) -> List[str]:
     except Exception as exc:  # noqa: BLE001 - 行政区解析失败不阻塞查询
         logger.warning("[gd-poi] district resolve failed for %r: %s", key, exc)
     out = list(dict.fromkeys(codes))[:60]
-    _district_codes_cache[key] = out
-    return out
+    return _remember_district_codes(key, out)
 
 
 def _coerce_polygon(polygon: Any):
-    """GeoJSON Polygon/MultiPolygon/FeatureCollection（dict/str/ref 或坐标数组）→ shapely 几何；非法返回 None。"""
+    """GeoJSON Polygon/MultiPolygon/FeatureCollection（dict/JSON str 或坐标数组；ref 必须先由带会话授权的调用方解析）→ shapely 几何；非法返回 None。"""
     if polygon is None:
         return None
     try:
@@ -563,14 +578,6 @@ def _coerce_polygon(polygon: Any):
             polygon = polygon.strip()
             if not polygon:
                 return None
-            if polygon.startswith("ref:"):
-                try:
-                    from app.services.ref_cache import get_ref_data
-                    data = get_ref_data(polygon)
-                    if data is not None:
-                        return _coerce_polygon(data)
-                except Exception:
-                    pass
             if polygon.startswith("{") or polygon.startswith("["):
                 try:
                     polygon = json.loads(polygon)
@@ -607,7 +614,9 @@ def _coerce_polygon(polygon: Any):
                 minx, miny, maxx, maxy = polygon
                 return box(minx, miny, maxx, maxy)
             # 裸坐标环 [[ [lng,lat], ... ], ...] → Polygon
-            polygon_dict = {"type": "Polygon", "coordinates": polygon}
+            first = polygon[0] if polygon else []
+            coordinates = [polygon] if first and isinstance(first[0], (int, float)) else polygon
+            polygon_dict = {"type": "Polygon", "coordinates": coordinates}
             geom = shape(polygon_dict)
             return geom if not geom.is_empty else None
         else:

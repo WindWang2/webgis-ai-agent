@@ -17,7 +17,7 @@
  * 纯函数、无副作用；后端镜像 = app/lib/cartography/render_scene.py
  * derive_legend_items，跨语言 parity 由共享 golden fixtures 锁定。
  */
-import { formatLegendValue } from '@/components/map/legends/legend-card';
+import { formatLegendValue } from './format-legend-value';
 import type { LegendSpec } from '@/lib/map-kit/types';
 
 export interface LegendModelEntry {
@@ -134,7 +134,8 @@ export function deriveLegendModel(spec: LegendSpec | undefined | null): LegendMo
     const max = (spec as { max?: unknown }).max;
     if (typeof min === 'number' && typeof max === 'number') {
       const colors = (spec as { palette_colors?: string[] }).palette_colors ?? [];
-      const mid = (min + max) / 2;
+      const center = (spec as { center?: unknown }).center;
+      const mid = spec.type === 'divergent' && typeof center === 'number' ? center : (min + max) / 2;
       entries.push({ label: formatLegendValue(min), color: pickContinuousColor(colors, 0), kind: 'class' });
       entries.push({ label: formatLegendValue(mid), color: pickContinuousColor(colors, 0.5), kind: 'class' });
       entries.push({ label: formatLegendValue(max), color: pickContinuousColor(colors, 1), kind: 'class' });

@@ -53,8 +53,11 @@ export function SearchField({ value, onChange, placeholder, debounceMs = 0, 'ari
           setDraft(e.target.value);
           if (debounceMs <= 0) onChange(e.target.value);
         }}
-        onKeyDown={(e) => {
+        onKeyDownCapture={(e) => {
           if (e.key === 'Escape' && draft) {
+            // Consume the search action before the browser's native search
+            // clear/cancel handling and document-level modal shortcuts.
+            e.preventDefault();
             setDraft('');
             onChange('');
             e.stopPropagation();

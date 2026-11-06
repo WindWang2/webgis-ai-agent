@@ -62,7 +62,7 @@ class SituationRevision(BaseModel):
         )
 
     def ge(self, other: "SituationRevision") -> bool:
-        return self.as_tuple() >= other.as_tuple()
+        return all(current >= previous for current, previous in zip(self.as_tuple(), other.as_tuple(), strict=True))
 
 
 class SituationIdentity(BaseModel):
@@ -120,6 +120,7 @@ class MapContext(BaseModel):
     fingerprint: SitFact
     layers: SitFact      # 有界摘要（id/type/visible/role）
     layer_count: SitFact
+    layer_ids: SitFact = Field(default_factory=lambda: SitFact(source="mapspec.layers"))
     sources: SitFact     # 有界摘要
     basemap: SitFact
     observed: SitFact    # runtime 观察阶梯摘要（observation_states 派生）
@@ -131,6 +132,13 @@ class AnalysisContext(BaseModel):
     plan_progress: SitFact  # {total,ready,running,complete,failed}
     stale_nodes: SitFact
     artifacts: SitFact      # 进度行 bound_ref 去重有界
+    # ADR-0285 D1：当前选择的**声称面**（ClaimedScope 纯派生，零 IO——
+    # kind/layer_id/dataset_ref/feature_ids ≤50/claimed_at_seq）。验证面
+    # （ref 所有权/revision/存活）在 analysis_scope.validate_analysis_scope
+    # 按需执行（工具拉取），编译期不解析大 payload。
+    selection_scope: SitFact = Field(
+        default_factory=lambda: unknown(source="map_state._interaction_ir_ledger")
+    )
 
 
 class CartographicContext(BaseModel):

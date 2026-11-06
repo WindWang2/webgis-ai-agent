@@ -27,11 +27,25 @@ def test_safe_url_fetcher_allows_data_uri():
     assert res is not None
 
 
-def test_safe_url_fetcher_allows_public_https():
-    # Public domain URL should pass security validation without raising ValueError
-    res = safe_url_fetcher("https://tile.openstreetmap.org/0/0/0.png")
-    # Even if weasyprint is not installed, it does not raise ValueError
-    assert res is None or isinstance(res, dict)
+def test_safe_url_fetcher_allows_public_https(monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    import app.services.report_service as reports
+
+    @contextmanager
+    def response(*args, **kwargs):
+        assert kwargs["stream"] is True and kwargs["allow_redirects"] is False
+        yield SimpleNamespace(status_code=200, headers={"Content-Type": "image/png"},
+                              iter_content=lambda size: iter([b"image bytes"]))
+
+    @contextmanager
+    def session(*, allow_private):
+        assert allow_private is False
+        yield SimpleNamespace(get=response)
+
+    monkeypatch.setattr(reports.DataFabricSecurity, "validate_url", lambda *a, **k: None)
+    monkeypatch.setattr(reports, "make_safe_session", session)
+    assert safe_url_fetcher("https://example.com/map.png")["string"] == b"image bytes"
 
 
 def test_sanitize_report_svg_strips_entities_and_xxe():

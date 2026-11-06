@@ -105,7 +105,7 @@ export async function getAnalysisGraph(
   ownerToken?: string | null,
 ): Promise<AnalysisGraph | null> {
   try {
-    return apiFetch<AnalysisGraph>(
+    return await apiFetch<AnalysisGraph>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/analysis-graph`,
       { ownerToken, label: 'AnalysisGraph' },
     );

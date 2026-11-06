@@ -15,6 +15,7 @@ import {
 
 const TEST_ENV: Record<string, string> = {
   NEXT_PUBLIC_TIANDITU_TOKEN: 'TEST-TOKEN',
+  NEXT_PUBLIC_CARTO_BASEMAP_KEY: 'TEST-CARTO-KEY',
   NEXT_PUBLIC_LOCAL_BASEMAP_URL: 'http://tiles.intranet/{z}/{x}/{y}.png',
 };
 

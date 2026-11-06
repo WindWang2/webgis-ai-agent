@@ -103,7 +103,7 @@ def compress_schema(
                             f"{existing} {note}" if isinstance(existing, str) else note
                         )
                 # pydantic 序列化噪音
-                for noise in ("additionalProperties", "format"):
+                for noise in ("additionalProperties",):
                     pval.pop(noise, None)
                 # review R1 minor：$defs 仅在无残留 $ref 时可剥，否则跳过该级
                 if "$defs" in pval and "$ref" not in pval:

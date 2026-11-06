@@ -36,7 +36,9 @@ def run_preflight(repo_root: Path) -> dict:
     from app.lib.integration import adr as adr_mod
     from app.lib.integration import migrations_coord as mig_mod
     from app.lib.integration import ownership as ownership_mod
-    from app.lib.quality.artifact_graph import DECLARED, find_stale, load_recorded
+    from app.lib.quality.artifact_graph import (
+        DECLARED, build_graph_state, find_stale, load_recorded,
+    )
 
     t0 = time.monotonic()
     checks: list[dict] = []
@@ -79,14 +81,16 @@ def run_preflight(repo_root: Path) -> dict:
           "known_dangling": len(adr_mod.load_dangling_baseline(repo_root))})
 
     # 5. 生成物 staleness（复用 V2 闸语义，聚合进同一报告）
-    stale = find_stale(load_recorded())
+    recorded = load_recorded()
+    current = build_graph_state()
+    stale = find_stale(recorded, current=current)
     _add("generated_staleness",
          [f"{a} 输入指纹已变，需再生成" for a in stale],
-         {"artifacts": len(load_recorded())})
+         {"artifacts": len(recorded)})
 
     # 6. 手改检测（W5）：输入未变而产物被编辑 → regenerate-dont-edit 违反
     from app.lib.quality.artifact_graph import find_hand_edits
-    edited = find_hand_edits(load_recorded())
+    edited = find_hand_edits(recorded, current=current)
     _add("generated_hand_edits",
          [f"{a} 输入未变但内容被改（手改将在下次再生成时静默丢失）"
           for a in edited])

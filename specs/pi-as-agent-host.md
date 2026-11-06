@@ -5,7 +5,7 @@
 > reject at the HTTP boundary). Live-LLM E2E of the Chengdu chain is the merge gate.
 > Parent map: GitHub issue “Pi as the agent host”.
 > Glossary: Session, SessionPlan, GIS Harness, MapProductPlan, CartographyRecipe, Tool dispatch, Cartography Verdict, Observed Map, Pi Native Surface.
-> ADRs this spec adds: 0076 (SessionPlan is Pi-path plan truth), 0077 (wrap vendored Pi).
+> ADRs this spec adds: 0076 (SessionPlan is Pi-path plan truth), 0231 (wrap vendored Pi).
 > Does not reopen ADR-0055, 0006, 0071. (ADR-0071 “shared cartography session
 > runtime” currently lives only on the unmerged next-generation-harness line,
 > commit `7955cba`; the shared evaluation seam it records — both hosts
@@ -125,4 +125,20 @@ SessionPlan wire is **stream-only by contract**: `session_plan_updated` / `sessi
 
 ## Further Notes
 
-Parent wayfinder map: GitHub “Pi as the agent host”. Research notes: vendored Pi as non-coding host; Pi vs ChatEngine host seams. Throwaway surface walk lives on git branch `prototype/pi-native-surface`. Next implementation should add ADR-0076 and ADR-0231 as accepted records beside this spec. `/to-spec` does not implement.
+Parent wayfinder map: GitHub “Pi as the agent host”. Research notes: vendored Pi as non-coding host; Pi vs ChatEngine host seams. Throwaway surface walk lives on git branch `prototype/pi-native-surface`. Implementation records: ADR-0076 and ADR-0231. `/to-spec` does not implement.
+
+## Vendor Version Policy（ADR-0282 增补，2026-11-06）
+
+- Pin 只指向经验证的 stable tag（当前 `v1.5.0` = `f9a263655`）；不追踪 main，
+  不用 nightly。移动 pin 的验收证据链：`scripts/pi_doctor.py` 全绿 +
+  `tests/integration/test_pi_vendor_contract.py` 通过 + pi-schema coercion golden
+  活体一致（`tests/fixtures/pi_schema_coercion_golden.json`）。
+- 协议下限唯一声明点：`app/services/chat/pi_compat.py::PI_MIN_VENDOR_TAG`；
+  调整下限必须附 ADR 与契约车道更新。
+- 扩展（`app/extensions/webgis-tools/index.mjs`）依赖的非契约 internals
+  （`setActiveTools`、`before_agent_start` 的 systemPrompt 返回、
+  `ctx.sessionManager.getEntries()`）已在 vendor 契约车道锁定；上游漂移先改
+  适配层并复跑车道，golden 变更必须引用上游 commit/文档。
+- 回退：`git -C vendor/pi checkout <旧pin>` + revert 适配 commit；
+  `USE_NEW_AGENT=false` 是引擎级应急开关。旧 pin（dd6bea41）在当前工具链下
+  无法干净构建（见 ADR-0282 Context），回退需接受该代价。

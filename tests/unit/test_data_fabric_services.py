@@ -127,7 +127,7 @@ def test_data_fabric_health_and_ssrf():
     profile = ConnectionProfile(
         id="safe_profile",
         source_type="wfs",
-        url="https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/World_Cities/FeatureServer/0",
+        url="https://93.184.216.34/arcgis/rest/services/World_Cities/FeatureServer/0",
     )
     h_res = health_checker.check_connection_profile(profile)
     # Truthful health (Section 33/34): a validated URL is NOT "healthy" — the

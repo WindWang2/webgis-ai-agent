@@ -292,8 +292,8 @@ async def load_ledger_state(store: Any, session_id: str) -> LedgerState:
     state = LedgerState(
         events=list(events) if isinstance(events, list) else [],
         clients=dict(clients) if isinstance(clients, dict) else {},
-        server_seq=_as_int((meta or {}).get("server_seq")) if isinstance(meta, dict) else 0,
-        dropped=_as_int((meta or {}).get("dropped")) if isinstance(meta, dict) else 0,
+        server_seq=(_as_int(meta.get("server_seq")) or 0) if isinstance(meta, dict) else 0,
+        dropped=(_as_int(meta.get("dropped")) or 0) if isinstance(meta, dict) else 0,
     )
     state.recalculate_bytes()
     # server_seq 与环尾不一致（手工清过环）时取 max，保证单调不减。
@@ -305,15 +305,15 @@ async def load_ledger_state(store: Any, session_id: str) -> LedgerState:
 async def persist_ledger_state(store: Any, session_id: str, state: LedgerState) -> bool:
     """三键写回（调用方持 session 锁）。任一失败 → False（调用方按降级披露）。"""
     try:
-        ok_ledger = await store.set_map_state(session_id, LEDGER_KEY, state.events)
-        ok_clients = await store.set_map_state(session_id, CLIENTS_KEY, state.clients)
-        ok_meta = await store.set_map_state(
-            session_id, META_KEY,
-            {"server_seq": state.server_seq, "dropped": state.dropped},
-        )
-        return not any(result is False for result in (ok_ledger, ok_clients, ok_meta))
-    except Exception:  # noqa: BLE001 — 增值观察面降级
-        logger.warning("[interaction_ir] state persist failed", exc_info=True)
+        writer = getattr(store, "set_map_state_fields", None)
+        if not callable(writer):
+            return False
+        return await writer(session_id, {
+            LEDGER_KEY: state.events, CLIENTS_KEY: state.clients,
+            META_KEY: {"server_seq": state.server_seq, "dropped": state.dropped},
+        }) is not False
+    except Exception:
+        logger.warning("[interaction_ir] atomic state persist failed", exc_info=True)
         return False
 
 
@@ -339,32 +339,40 @@ async def ingest_interaction_batch(
     幂等语义由水印/查重保证：任何失败重放本批都收敛到同一账面。返回
     ``InteractionIngestResponse`` 兼容 dict。
     """
-    state = await load_ledger_state(store, session_id)
+    from app.services.session_state_atomic import atomic_update_state
+
+    await load_ledger_state(store, session_id)  # fail closed on unreadable authority
     dedup = await load_mutation_dedup(store, session_id)
-    verdicts = [
-        apply_event(state, _raw_of(event), mutation_dedup=dedup)
-        for event in events
-    ]
-    persisted = await persist_ledger_state(store, session_id, state)
+    state = LedgerState()
+    verdicts: list = []
+
+    def fold(snapshot: Any) -> dict:
+        nonlocal state, verdicts
+        meta = snapshot.get(META_KEY) or {}
+        state = LedgerState(events=list(snapshot.get(LEDGER_KEY) or []),
+                            clients=dict(snapshot.get(CLIENTS_KEY) or {}),
+                            server_seq=_as_int(meta.get("server_seq")) or 0,
+                            dropped=_as_int(meta.get("dropped")) or 0)
+        state.recalculate_bytes()
+        if state.events:
+            state.server_seq = max(state.server_seq, _as_int(state.events[-1].get("server_seq")) or 0)
+        verdicts = [apply_event(state, _raw_of(event), mutation_dedup=dedup) for event in events]
+        return {LEDGER_KEY: state.events, CLIENTS_KEY: state.clients,
+                META_KEY: {"server_seq": state.server_seq, "dropped": state.dropped}}
+
+    try:
+        persisted = await atomic_update_state(store, session_id, [LEDGER_KEY, CLIENTS_KEY, META_KEY], fold)
+    except Exception:
+        logger.warning("[interaction_ir] commit unavailable", exc_info=True)
+        persisted = None
+    if persisted is None:
+        return {"accepted": 0, "duplicates": 0, "stale": 0, "rejected": 0,
+                "acks": [], "persist_degraded": True}
     summary = summarize_verdicts(verdicts)
-    response: Dict[str, Any] = {
-        **summary,
-        "acks": [v.to_ack() for v in verdicts],
-    }
-    if persisted:
-        # Review P2-3：水印只在对账成功落库时携带 —— 降级时水印来自内存态，
-        # 客户端据 2xx 弃队会丢事件；降级响应不带水印 + persist_degraded
-        # 让客户端按暂态重试（幂等收敛）。
-        response["watermarks"] = {
-            instance: int(entry.get("acked_seq", 0))
-            for instance, entry in state.clients.items()
-        }
+    response: Dict[str, Any] = {**summary, "acks": [v.to_ack() for v in verdicts],
+        "watermarks": {instance: int(entry.get("acked_seq", 0)) for instance, entry in state.clients.items()}}
     if state.dropped:
         response["dropped"] = state.dropped
-    if not persisted:
-        # 诚实披露：分类已给，但持久化降级 —— 客户端对 accepted 重试是安全的
-        # （重放将命中水印/查重收敛为 stale/duplicate，不双计）。
-        response["persist_degraded"] = True
     return response
 
 

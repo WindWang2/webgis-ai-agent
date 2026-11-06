@@ -133,10 +133,10 @@ def _settings_summary() -> dict[str, str]:
 
 
 def _build_host(root_overrides: list[str]) -> tuple[Any, list[str]]:
-    """构造只读 host：全新 ToolRegistry + settings 派生 HostPolicy。
+    """构造 host：全新 ToolRegistry + settings 派生 HostPolicy。
 
     root_overrides 非空时整体替换 policy.roots（``--root`` 可重复）。绝不
-    调用 activate——扩展在 CLI 进程里只被发现与静态校验。设置解析失败时
+    在构造时调用 activate；certify 命令随后会显式激活扩展并执行其代码。设置解析失败时
     抛 ExtensionPlatformError / ValueError（fail closed，绝不半份配置继续）。
     """
     import logging
@@ -984,7 +984,7 @@ def _cmd_certify(args: argparse.Namespace) -> int:
         return 0 if report["certified"] else 1
     print(
         f"extension: {report['extension_id']}  certified: {report['certified']}  "
-        f"trust: {report['trust']}  mode: {report['execution_mode']}"
+        f"trust: {report.get('trust', 'unknown')}  mode: {report.get('execution_mode', 'unknown')}"
     )
     for check in report["checks"]:
         print(f"  [{check['status']:^4}] {check['check']}: {check['detail']}")
@@ -1011,7 +1011,7 @@ def _cmd_certify_staged(args: argparse.Namespace) -> int:
         return 0 if report["certified"] else 1
     print(
         f"extension: {report['extension_id']}  certified: {report['certified']}  "
-        f"trust: {report['trust']}  mode: {report['execution_mode']}  "
+        f"trust: {report.get('trust', 'unknown')}  mode: {report.get('execution_mode', 'unknown')}  "
         f"fingerprint: {str(report.get('fingerprint'))[:12]}"
     )
     for check in report["checks"]:
@@ -1148,7 +1148,7 @@ def _pack_blob_bytes(pack_dir: Path) -> bytes:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for path in sorted(pack_dir.rglob("*")):
-            if path.is_file() and "__pycache__" not in path.parts and not path.name.endswith(".pyc"):
+            if path.is_file() and not path.is_symlink() and "__pycache__" not in path.parts and not path.name.endswith(".pyc") and path.name != ".certification.json":
                 tar.add(str(path), arcname=str(path.relative_to(pack_dir)))
     return buf.getvalue()
 

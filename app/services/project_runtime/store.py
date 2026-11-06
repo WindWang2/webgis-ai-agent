@@ -17,6 +17,8 @@ import logging
 import os
 import re
 import time
+import threading
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -82,7 +84,7 @@ class UnsupportedSnapshotSchema(Exception):
 
 def _atomic_write_json_sync(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    tmp = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex}")
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False))
@@ -108,6 +110,10 @@ def _read_json_sync(path: Path) -> Optional[dict]:
 
 class ProjectRuntimeStore:
     """runtime snapshot 的落盘 / 读取 / 清单 / 删除 / lease 原语。"""
+
+    def __init__(self) -> None:
+        self._lease_fds: dict[str, int] = {}
+        self._lease_guard = threading.Lock()
 
     async def save(self, snapshot: ProjectRuntimeSnapshotV1) -> bool:
         """原子写 manifest（要么完整，要么不存在）。"""
@@ -225,7 +231,7 @@ class ProjectRuntimeStore:
             return []
 
     async def delete(
-        self, project_id: str, snapshot_id: str, *, owner_id: str = ""
+        self, project_id: str, snapshot_id: str, *, owner_id: str = "", allow_legacy_owner: bool = False
     ) -> Optional[Dict[str, Any]]:
         """定点删除（仅 unlink manifest；blob 归 artifact lifecycle GC 引用计数）。"""
         path = _snapshot_path(project_id, snapshot_id)
@@ -235,19 +241,12 @@ class ProjectRuntimeStore:
         created_by = str(raw.get("created_by") or "")
         # 非本人创建：拒绝（不删别人的项目资产；路由侧已做项目鉴权，
         # 此处是服务侧第二道守卫，与 workspace snapshot delete 同款）。
-        if created_by and owner_id and created_by != str(owner_id):
+        if (created_by and (not owner_id or created_by != str(owner_id))) or (not created_by and not allow_legacy_owner):
             return None
         try:
             await asyncio.to_thread(path.unlink)
         except OSError:
             return None
-        lease = path.with_name(path.name + ".resume-lease")
-        try:
-            await asyncio.to_thread(lease.unlink, True)
-        except OSError:
-            logger.debug(
-                "[RuntimeSnapshot] stale lease cleanup failed: %s", lease
-            )
         return {
             "snapshot_id": snapshot_id,
             "deleted": True,
@@ -266,67 +265,40 @@ class ProjectRuntimeStore:
     def acquire_resume_lease(
         self, project_id: str, snapshot_id: str
     ) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        """O_EXCL 创建 lease；新鲜 lease 在场 → (False, holder) 诚实冲突。"""
+        """Kernel-owned nonblocking lease; process death releases ownership."""
         lease = self._lease_path(project_id, snapshot_id)
         if lease is None:
             return False, {"reason": "invalid ids"}
-        holder: Optional[Dict[str, Any]] = None
         try:
-            lease.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(str(lease), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"pid": os.getpid(), "acquired_at": time.time()}, f)
-            return True, None
-        except FileExistsError:
-            raw = _read_json_sync(lease)
-            if isinstance(raw, dict):
-                age = time.time() - float(raw.get("acquired_at") or 0.0)
-                if age > RESUME_LEASE_TTL_SECONDS:
-                    # 过期 lease：抢占（stale 持有者已死或挂起超时）。
-                    try:
-                        lease.unlink()
-                        fd = os.open(
-                            str(lease), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644
-                        )
-                        with os.fdopen(fd, "w", encoding="utf-8") as f:
-                            json.dump(
-                                {"pid": os.getpid(), "acquired_at": time.time()}, f
-                            )
-                        return True, None
-                    except OSError:
-                        return False, {"reason": "lease contention"}
-                holder = {
-                    "pid": raw.get("pid"),
-                    "age_seconds": round(age, 1),
-                }
-            return False, holder or {"reason": "lease exists"}
-        except OSError as e:
-            logger.warning(
-                "[RuntimeSnapshot] lease acquire failed project=%s: %s",
-                project_id, e,
-            )
-            return False, {"reason": f"lease error: {e}"}
+            import fcntl
+        except ImportError:
+            return False, {"reason": "advisory file locks unavailable"}
+        lease.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lease), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError):
+            os.close(fd)
+            return False, {"reason": "resume already running", **(_read_json_sync(lease) or {})}
+        try:
+            os.ftruncate(fd, 0)
+            os.write(fd, json.dumps({"pid": os.getpid(), "acquired_at": time.time()}).encode())
+            with self._lease_guard:
+                self._lease_fds[str(lease)] = fd
+        except BaseException:
+            os.close(fd)
+            raise
+        return True, None
 
     def release_resume_lease(self, project_id: str, snapshot_id: str) -> None:
-        """释放 lease —— 仅当持有者仍是本进程（review P3：长恢复越过 TTL 被
-        抢占后，无条件 unlink 会误删后继者的 lease，打开第三个并发恢复）。"""
         lease = self._lease_path(project_id, snapshot_id)
         if lease is None:
             return
-        try:
-            holder = _read_json_sync(lease)
-            if (
-                isinstance(holder, dict)
-                and holder.get("pid") is not None
-                and int(holder.get("pid")) != os.getpid()
-            ):
-                return  # 后继者已接管：不删别人的 lease
-            lease.unlink()
-        except (OSError, TypeError, ValueError):
-            logger.debug(
-                "[RuntimeSnapshot] lease release skipped project=%s snapshot=%s",
-                project_id, snapshot_id, exc_info=True,
-            )
+        with self._lease_guard:
+            fd = self._lease_fds.pop(str(lease), None)
+        if fd is not None:
+            os.close(fd)
+
 
 
 _store: Optional[ProjectRuntimeStore] = None

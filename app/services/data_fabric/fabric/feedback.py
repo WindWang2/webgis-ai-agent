@@ -79,6 +79,8 @@ class FabricFeedbackStore:
         self._pool = None
         self._pool_lock = threading.Lock()
         self._save_count = 0
+        self._pending = threading.BoundedSemaphore(2)
+        self._retry_after = 0.0
         if durable_max_rows is None:
             from app.services.data_fabric.fabric.probing import _setting
 
@@ -205,6 +207,9 @@ class FabricFeedbackStore:
 
     def _durable_save(self, feedback: ExecutionFeedback) -> None:
         """append-only 持久化（R2-M1：常驻旁路池 + 硬超时；机会式 prune）。"""
+        if time.monotonic() < self._retry_after or not self._pending.acquire(blocking=False):
+            return
+        submitted = False
         try:
             from datetime import datetime, timedelta, timezone
 
@@ -227,16 +232,24 @@ class FabricFeedbackStore:
                         )
                     )
                     db.commit()
-
-            self._executor().submit(_insert).result(timeout=3.0)
-            self._save_count += 1
-            if self._save_count % 50 == 0:
-                try:
+                with self._pool_lock:
+                    self._save_count += 1
+                    prune_due = self._save_count % 50 == 0
+                if prune_due:
                     self._prune()
-                except Exception:  # noqa: BLE001
-                    pass
+
+            future = self._executor().submit(_insert)
+            submitted = True
+            future.add_done_callback(lambda _future: self._pending.release())
+            future.result(timeout=3.0)
         except Exception as exc:  # noqa: BLE001 - advisory fail-open
+            self._retry_after = time.monotonic() + 30.0
+            if submitted:
+                future.cancel()
             self._on_failure(exc, "durable_save")
+        finally:
+            if not submitted:
+                self._pending.release()
 
     def _executor(self):
         from concurrent.futures import ThreadPoolExecutor

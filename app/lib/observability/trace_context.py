@@ -5,8 +5,7 @@
 （events.py 的 vendor-neutral Sink 协议是未来 OTel 接入点，follow-up）。
 
 设计契约：
-- **严格校验**：``00-{32hex}-{16hex}-{2hex}``；version/trace/span 的
-  全 ff / 全 0 保留值非法（W3C 规范）；非法输入显式返回 None（调用方
+- **严格校验**：``00-{32hex}-{16hex}-{2hex}``；version ff 与 trace/span 全 0 非法（W3C 规范）；非法输入显式返回 None（调用方
   生成新 trace），绝不静默吞半截数据。
 - **纯 ASGI 中间件（universal scope）**：``TraceContextMiddleware`` 同
   时覆盖 http 与 websocket（Subagent-A C-3：BaseHTTPMiddleware 对
@@ -26,7 +25,7 @@ from typing import Iterable, Optional, Tuple
 TRACEPATTERN = re.compile(
     r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
 
-#: W3C 保留值：version ff；id 全 0 / 全 f 非法
+#: W3C 保留值：version ff；id 全 0 非法（全 f 合法，未知 flags 位忽略）。
 _TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _SPAN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 
@@ -73,11 +72,9 @@ def parse_traceparent(header: Optional[str]) -> Optional[TraceContext]:
     version, trace_id, span_id, flags = m.groups()
     if version == "ff":
         return None
-    if flags == "ff":  # W3C 保留值：all-f flags 与 version ff 同判非法
+    if set(trace_id) == {"0"}:
         return None
-    if set(trace_id) in ({"0"}, {"f"}):
-        return None
-    if set(span_id) in ({"0"}, {"f"}):
+    if set(span_id) == {"0"}:
         return None
     return TraceContext(version=version, trace_id=trace_id,
                         span_id=span_id, flags=flags)

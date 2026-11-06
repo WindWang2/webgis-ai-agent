@@ -1,3 +1,4 @@
+import { layerStyleToPaint } from '@/lib/styles/style-paint';
 /**
  * StyleIntent —— typed 样式意图词表（Workbench V4 / Wave 7）。
  *
@@ -147,18 +148,7 @@ export function evaluateStyleIntent(current: LayerStyle, intent: StyleIntent): L
 }
 
 /** LayerStyle → MapSpec paint 投影（与 layer-ops 同款字段族）。 */
-function styleToPaint(style: LayerStyle): Record<string, unknown> {
-  const paint: Record<string, unknown> = {};
-  if (typeof style.color === 'string') paint.color = style.color;
-  if (typeof style.strokeColor === 'string') paint.strokeColor = style.strokeColor;
-  if (typeof style.strokeWidth === 'number') {
-    paint.strokeWidth = style.strokeWidth;
-    paint.width = style.strokeWidth;
-  }
-  if (typeof style.opacity === 'number') paint.opacity = style.opacity;
-  if (typeof style.pointSize === 'number') paint.radius = style.pointSize;
-  return paint;
-}
+
 
 /**
  * 应用意图（唯一收口）：乐观 store 更新 + spec 承载层走 patch_layer_style
@@ -171,8 +161,7 @@ export async function applyStyleIntent(layerId: string, intent: StyleIntent): Pr
   // Review R1（GIS F3 MAJOR）：分级/连续专题层的颜色来自 legend_spec 色带
   // （step/interpolate 表达式）—— 设 flat color 会静默抹平分级编码（图例
   // 与地图分叉）。此类层拒绝绝对/相对色彩意图：如示失败，不是「猜一个」。
-  const thematic = layer.legend_spec?.type != null
-    && layer.legend_spec.type !== 'categorical';
+  const thematic = layer.legend_spec?.type != null;
   if (thematic && (intent.kind === 'set_color' || intent.kind === 'lighten' || intent.kind === 'darken')) {
     return 'thematic_protected';
   }
@@ -181,7 +170,7 @@ export async function applyStyleIntent(layerId: string, intent: StyleIntent): Pr
   useHudStore.getState().updateLayer(layerId, { style: next });
   if (layer._mapspecLayerId) {
     try {
-      await commitLayerStyleAndCommit(layerId, styleToPaint(next));
+      await commitLayerStyleAndCommit(layerId, layerStyleToPaint(next));
     } catch {
       // 提交失败：user-mutation 通道已回滚 + toast；乐观态随之收敛。
     }

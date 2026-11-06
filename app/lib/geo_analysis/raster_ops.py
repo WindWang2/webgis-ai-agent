@@ -135,9 +135,11 @@ def _windowed_zonal_stats(
     whole-band reads for every zone. Each zone reads only its own pixel
     window (bbox → window, clamped to the raster), masks by the polygon,
     and computes the requested statistics in numpy. Semantics preserved
-    from the rasterstats contract: stats keys exactly as requested
+    from the rasterstats contract: statistic keys exactly as requested
     (min/max/mean/sum/count), nodata excluded, ``all_touched=False``-style
-    cell-center membership.
+    cell-center membership. Every row also carries valid_pixel_coverage
+    (None when no zone pixels can be measured); repaired zones additionally
+    carry geometry_repair. These disclosure fields are not extra statistics.
     """
     from rasterio.features import geometry_mask
     from rasterio.windows import from_bounds
@@ -173,13 +175,13 @@ def _windowed_zonal_stats(
         for f in feat_list:
             geom = (f or {}).get("geometry")
             if not geom:
-                out.append({k: None for k in stats})
+                out.append({**{k: None for k in stats}, "valid_pixel_coverage": None})
                 continue
             try:
                 poly = shape(geom)
             except Exception as e:  # noqa: BLE001 — per-zone honest skip
                 logger.warning("zonal: unparseable zone geometry skipped: %s", e)
-                out.append({k: None for k in stats})
+                out.append({**{k: None for k in stats}, "valid_pixel_coverage": None})
                 continue
             # science-v4 W3：无效几何门（strict 拒绝 / 修复+披露，永不静默）。
             from app.lib.geo_analysis.geometry_repair import ensure_valid_geometry
@@ -201,7 +203,7 @@ def _windowed_zonal_stats(
             win = win.round_offsets().round_shape()
             full = _rio.windows.Window(0, 0, meta.width, meta.height)
             if not _rio.windows.intersect([win, full]):
-                out.append({k: None for k in stats})
+                out.append({**{k: None for k in stats}, "valid_pixel_coverage": None})
                 continue
             win = win.intersection(full)
             arr = reader.read_window(
@@ -215,10 +217,17 @@ def _windowed_zonal_stats(
                 [poly], out_shape=arr.shape,
                 transform=reader.window_transform(win), invert=True,
             )
-            vals = arr[mask]
+            vals_all = arr[mask]
             if meta.nodata is not None:
-                vals = vals[vals != meta.nodata]
+                vals = vals_all[vals_all != meta.nodata]
+            else:
+                vals = vals_all
             vals = vals[np.isfinite(vals)]
+            # ADR-0284（断点 9 修复）：逐 zone 有效像元覆盖率披露——
+            # 90% nodata 的 zone 均值与全有效 zone 在产物上不再不可区分。
+            total_masked = int(vals_all.size)
+            coverage = (float(vals.size) / total_masked
+                        if total_masked > 0 else None)
             row: dict = {}
             if repair_rec is not None:
                 row["geometry_repair"] = repair_rec.to_dict()
@@ -244,7 +253,12 @@ def _windowed_zonal_stats(
                     )
                     row[key] = None
             if "count" not in stats and vals.size == 0:
+                repair_rec_kept = row.get("geometry_repair")
                 row = {k: None for k in stats}
+                if repair_rec_kept is not None:
+                    # 修复披露不可被重置丢弃（修复永不静默）
+                    row["geometry_repair"] = repair_rec_kept
+            row["valid_pixel_coverage"] = coverage
             out.append(row)
         return out
     finally:

@@ -99,7 +99,7 @@ def test_derive_phase_replan_pending_before_aborted():
 def test_transition_empty_owner_raises_fencing():
     from app.services.mission_runtime.store import FencingError, MissionStore
 
-    store = MissionStore.__new__(MissionStore)
+    store = MissionStore()
     with pytest.raises(FencingError, match="EMPTY_LEASE_OWNER"):
         store.transition("m1", to_state="running", lease_epoch=0, owner="")
 

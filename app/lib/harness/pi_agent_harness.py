@@ -12,11 +12,12 @@ V2 闭环契约（HARNESS-V2）：
 """
 from __future__ import annotations
 
+from app.lib.runtime.ref_cursors import REF_CURSOR_RE as REF_CURSOR_PATTERN
+
 import copy
 import logging
 import math
 import json
-import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
@@ -37,6 +38,7 @@ from app.lib.harness.evidence import (
     ToolCallEvidenceDict,
 )
 from app.lib.harness.tool_call_event import ToolCallEvent
+from app.lib.tool_result_errors import is_suspicious_result
 from app.lib.cartography.quality_loop import cartographic_fingerprint
 from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
 
@@ -47,7 +49,6 @@ logger = logging.getLogger(__name__)
 # CursorResolutionRate was structurally always 100 (no refs ever detected).
 # V3: heatmap refs are stored by ToolDispatchService (tool_dispatch_service.py)
 # with prefix ``heatmap`` (audit BE-2 finding), so they must be detected too.
-REF_CURSOR_PATTERN = re.compile(r"ref:(?:geojson|raster|table|data|heatmap)-[a-zA-Z0-9_-]+")
 
 MAPSPEC_MUTATION_TOOLS = {
     "webgis_project_init",
@@ -255,7 +256,15 @@ def _slim_args_for_retention(
     ref-cursor 扫描发生在原始参数上（record_tool_call 先存投影再扫原始），
     因此本函数不影响 ref 检测；仅约束 FIFO 驻留内存（≤1000 条 × MiB → 有界）。
     """
-    def _slim(value: Any) -> Any:
+    from itertools import islice
+
+    remaining_nodes = 256
+
+    def _slim(value: Any, depth: int = 0) -> Any:
+        nonlocal remaining_nodes
+        remaining_nodes -= 1
+        if remaining_nodes < 0 or depth > 8:
+            return {"_truncated": True}
         if isinstance(value, str):
             return value if len(value) <= 256 else value[:253] + "…"
         if value is None or isinstance(value, bool):
@@ -263,9 +272,9 @@ def _slim_args_for_retention(
         if isinstance(value, (int, float)):
             return value
         if isinstance(value, dict):
-            return {k: _slim(v) for k, v in list(value.items())[:32]}
+            return {str(k)[:128]: _slim(v, depth + 1) for k, v in islice(value.items(), 32)}
         if isinstance(value, (list, tuple)):
-            return [_slim(v) for v in list(value)[:32]]
+            return [_slim(v, depth + 1) for v in islice(value, 32)]
         return str(value)[:64]
 
     slimmed = _slim(args)
@@ -275,8 +284,20 @@ def _slim_args_for_retention(
         return {"_truncated": True}
     if len(payload.encode("utf-8", "ignore")) <= budget:
         return slimmed
-    keys = sorted(args.keys())[:32] if isinstance(args, dict) else []
+    keys = [str(k)[:128] for k in islice(args, 32)] if isinstance(args, dict) else []
     return {"_keys": keys, "_truncated": True}
+
+
+def _slim_result_for_retention(result: Any) -> Any:
+    """Keep evaluation facts while bounding bulk result retention to 16 KiB."""
+    projection = _slim_args_for_retention(result, budget=16_384)
+    if not isinstance(result, dict) or not isinstance(projection, dict) or not projection.get("_truncated"):
+        return projection
+    for key in ("success", "error", "code", "status", "type", "is_compiled",
+                "mapspec_fingerprint", "runtime_dir", "map_product_evidence"):
+        if key in result:
+            projection[key] = _slim_args_for_retention(result[key], budget=1024)
+    return projection
 
 
 class PiAgentHarness:
@@ -300,12 +321,14 @@ class PiAgentHarness:
         mapspec_validator: Optional[MapSpecValidator] = None,
         cartography_state_reader: Optional[CartographyStateReader] = None,
         map_action_reader: Optional[MapActionReader] = None,
+        result_denies_credit: Callable[[Any], bool] = is_suspicious_result,
     ):
         self.session_id = session_id
         self.ref_resolver = ref_resolver
         self.mapspec_validator = mapspec_validator
         self.cartography_state_reader = cartography_state_reader
         self.map_action_reader = map_action_reader
+        self.result_denies_credit = result_denies_credit
 
         # Raw event buffers (legacy-compatible shape), FIFO-capped.
         self.tool_calls: List[Dict[str, Any]] = []
@@ -418,7 +441,7 @@ class PiAgentHarness:
             self._append_capped(self.mapspec_mutations, {
                 "tool_call_id": tool_call_id,
                 "tool_name": name,
-                "arguments": arguments,
+                "arguments": call_entry["arguments"],
                 "is_valid": False,
                 "run_id": eff_run_id,
                 "turn_id": eff_turn_id,
@@ -451,9 +474,9 @@ class PiAgentHarness:
         result_entry = {
             "tool_call_id": tool_call_id,
             "name": name,
-            "result": result or {},
+            "result": _slim_result_for_retention(result or {}),
             "is_error": is_error,
-            "error_msg": error_msg or "",
+            "error_msg": (error_msg or "")[:2048],
             "run_id": eff_run_id,
             "turn_id": eff_turn_id,
             "session_id": eff_session_id,
@@ -464,7 +487,7 @@ class PiAgentHarness:
             self._append_capped(self.exceptions, {
                 "tool_call_id": tool_call_id,
                 "name": name,
-                "error_msg": error_msg or "",
+                "error_msg": (error_msg or "")[:2048],
                 "run_id": eff_run_id,
                 "turn_id": eff_turn_id,
                 "session_id": eff_session_id,
@@ -548,7 +571,7 @@ class PiAgentHarness:
                         if isinstance(f, dict) and f.get("severity") == "error"
                         and f.get("evaluated", True)
                     ]
-                    mutation["semantic_errors"] = result.get("warnings", []) + cartography_errors
+                    mutation["semantic_errors"] = _slim_args_for_retention(result.get("warnings", []) + cartography_errors)
                     break
         return result_entry
 
@@ -1925,19 +1948,16 @@ class PiAgentHarness:
 
     # ── Legacy float-metric surface (now evidence-honest) ────────────────
 
-    @staticmethod
-    def _result_denies_credit(result: Any) -> bool:
+    def _result_denies_credit(self, result: Any) -> bool:
         """#793: a result that must not earn tool-choice credit — error flag,
         missing result, or a suspicious (empty/error-shaped) payload."""
         if not isinstance(result, dict) or not result:
             return True
         try:
-            # Single authoritative predicate (lazy import: this module must
-            # stay importable without app.services cycles).
-            from app.services.tool_dispatch_service import is_suspicious_result
-            return bool(is_suspicious_result(result))
+            return bool(self.result_denies_credit(result))
         except Exception:  # noqa: BLE001 - a metric must never crash on wiring
-            return False
+            logger.warning("Tool result credit predicate failed; credit denied", exc_info=True)
+            return True
 
     def compute_tool_choice_accuracy(self, expected_tools: List[str]) -> float:
         if not expected_tools:

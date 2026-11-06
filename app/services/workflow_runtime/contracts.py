@@ -389,7 +389,8 @@ def instance_status_from_nodes(
     if any(s == NodeState.CANCELLED for s in statuses.values()):
         return InstanceStatus.CANCELLED
     if all(s in (NodeState.SUCCEEDED, NodeState.SKIPPED)
-           for s in statuses.values()):
+           or optional_nodes.get(nid, False) and s in (NodeState.FAILED, NodeState.BLOCKED)
+           for nid, s in statuses.items()):
         return InstanceStatus.SUCCEEDED
     for node_id, s in statuses.items():
         required = not optional_nodes.get(node_id, False)

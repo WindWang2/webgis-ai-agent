@@ -205,8 +205,8 @@ def _crs_transform_meta(
         left_crs_srid=ls,
         right_crs_srid=rs,
         join_kind=edge.kind,
-        caps_left=left,
-        caps_right=right,
+        caps_left=left.caps,
+        caps_right=right.caps,
         est_left_rows=card_left,
         est_right_rows=card_right,
         allow_server=bool(server_capable[0] or server_capable[1]),
@@ -257,6 +257,8 @@ def dst_of(decision: Any, ls: Optional[int], rs: Optional[int]) -> Optional[int]
 
 def _extent_overlap_ratio(left: SourceFacts, right: SourceFacts) -> Optional[float]:
     """两侧 extent 的重叠积占左 extent 比（无 hist 时的空间跳基数输入）。"""
+    if _parse_srid(left.crs) is None or _parse_srid(left.crs) != _parse_srid(right.crs):
+        return None
     le, re_ = left.extent, right.extent
     if not le or not re_ or len(le) != 4 or len(re_) != 4:
         return None
@@ -567,7 +569,23 @@ def _enumerate_fixed_chain(
     transforms: List[Dict[str, Any]] = []
     acc_out_srid: Optional[int] = _parse_srid(by_id[id_order[0]].crs)
     sources_in: Tuple[str, ...] = (id_order[0],)
-    for i, edge in enumerate(ctx.joins):
+    edges = list(ctx.joins)
+    if not positional:
+        remaining = list(edges)
+        edges = []
+        accumulated_sources = {id_order[0]}
+        for right in id_order[1:]:
+            candidates = [edge for edge in remaining
+                          if edge.right_source_id == right and edge.left_source_id in accumulated_sources]
+            if len(candidates) != 1:
+                from app.services.data_fabric.query.federation import FederatedQueryError
+
+                raise FederatedQueryError(f"id-addressed tree has no unambiguous join into {right}")
+            edge = candidates[0]
+            remaining.remove(edge)
+            edges.append(edge)
+            accumulated_sources.add(right)
+    for i, edge in enumerate(edges):
         right_sid = id_order[i + 1]
         right_src = by_id[right_sid]
         right_rows = _scan_transfer_rows(right_src)
@@ -579,7 +597,7 @@ def _enumerate_fixed_chain(
             edge, left_src, right_src, card, right_rows,
             left_srid=left_srid, right_srid=right_srid,
             server_capable=(
-                _caps_output_crs(left_src),  # 累积侧恒为子树：server 不可行
+                False if len(sources_in) > 1 else _caps_output_crs(left_src),
                 _caps_output_crs(right_src),
             ),
         )
@@ -924,7 +942,10 @@ def aggregate_pushdown_proof(
         return None
     if not edge.group_by_right or edge.join_field_right not in edge.group_by_right:
         return None
-    if edge.left_source_id not in left_sources:
+    # A preceding 1:N join may destroy the source key's uniqueness.
+    # Until cardinality preservation is proven across the whole subtree,
+    # aggregate pushdown is eligible only for a direct source.
+    if edge.left_source_id not in left_sources or len(left_sources) != 1:
         return None
     left_src = by_id.get(edge.left_source_id)
     right_src = by_id.get(edge.right_source_id)

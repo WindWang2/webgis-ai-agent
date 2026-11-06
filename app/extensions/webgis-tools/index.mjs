@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 
 const WEBGIS_API_BASE = process.env.WEBGIS_API_BASE ?? "http://localhost:8000";
 const BRIDGE_SECRET = process.env.WEBGIS_BRIDGE_SECRET ?? "";
-const TURN_CONTEXT_RE = /WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
+const TURN_CONTEXT_SUFFIX_RE = /(?:^|\n\n)\[WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\]\n\n\(Internal routing context; do not quote or modify this marker\.\)\s*$/;
 
 const FALLBACK_NATIVE = [
   "webgis_map_intent",
@@ -34,14 +34,21 @@ const FALLBACK_NATIVE = [
 const EXECUTE_PROXY_NAME = "webgis_execute";
 
 // ADR-0103: per-turn dynamic tool surface. Python attaches the projection to
-// the turn prompt; the last marker wins (same discipline as TURN_CONTEXT).
-const ACTIVE_TOOLS_RE = /\[WEBGIS_ACTIVE_TOOLS:(\[[\s\S]*?\])\]/g;
+// the turn prompt. Only its final control paragraph is authoritative.
+const ACTIVE_TOOLS_SUFFIX_RE = /(?:^|\n\n)\[WEBGIS_ACTIVE_TOOLS:(\[[^\r\n]*?\])\](?:\[工具面(?:提示|资格)\][^\r\n]*)*$/;
 
 const GIS_IDENTITY =
   "You are GeoAgent, a WebGIS spatial analysis agent. You perceive the map, run GIS tools, and produce cartographic insight. Geographic questions use native GIS tools (webgis_map_intent, query_local_poi, get_local_admin_boundary) or webgis_execute for the long tail — never bash, never reading or writing files.";
 
-const CODING_ASSISTANT_OPENING =
-  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+// Vendor preamble openings we strip when injecting the GIS persona. The exact
+// wording changed upstream across pins: v0.81 ("expert coding assistant
+// operating inside pi…") → v1.5.0 ("a coding assistant running inside pi…").
+// Any matched variant is REPLACED by GIS_IDENTITY; an unmatched prompt falls
+// back to prefixing GIS_IDENTITY (behavior unchanged from the original shim).
+const CODING_ASSISTANT_OPENINGS = [
+  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
+  "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.",
+];
 
 // Pi compat: the extension timeout must never undercut the server-side tool
 // budget (registry._TOOL_TIMEOUT_S, default 300s, env TOOL_TIMEOUT_S). The old
@@ -79,29 +86,33 @@ export function loadNativeTools() {
   }
 }
 
-let _pinnedTurnToken = "";
+// Kept as a compatibility export; tokens are never retained across contexts.
+export function _resetPinnedTurnToken() {}
 
-export function _resetPinnedTurnToken() {
-  _pinnedTurnToken = "";
+function routingSuffix(prompt) {
+  const match = prompt.match(TURN_CONTEXT_SUFFIX_RE);
+  return match ? { token: match[1], body: prompt.slice(0, match.index) } : null;
+}
+
+function userEntryText(entry) {
+  if (typeof entry === "string") return entry;
+  const message = entry?.message ?? entry;
+  if (message?.role !== "user") return null;
+  if (typeof message.content === "string") return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content.filter((part) => part?.type === "text" && typeof part.text === "string")
+      .map((part) => part.text).join("\n");
+  }
+  return "";
 }
 
 export function currentTurnToken(ctx) {
   const entries = ctx?.sessionManager?.getEntries?.() ?? [];
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    let serialized = "";
-    try {
-      serialized = JSON.stringify(entries[index]);
-    } catch {
-      continue;
-    }
-    const matches = Array.from(serialized.matchAll(TURN_CONTEXT_RE));
-    if (matches.length) {
-      const token = matches[matches.length - 1][1];
-      _pinnedTurnToken = token;
-      return token;
-    }
+    const text = userEntryText(entries[index]);
+    if (text !== null) return routingSuffix(text)?.token ?? "";
   }
-  return _pinnedTurnToken;
+  return "";
 }
 
 export async function postToBridge(toolCallId, name, args, turnToken, options = {}) {
@@ -150,9 +161,6 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
       body: JSON.stringify(body),
       signal: controller.signal,
     });
-    clearTimeout(timeoutId);
-    cleanupSignal?.();
-
     if (!response.ok) {
       let detailText = "";
       try {
@@ -164,7 +172,8 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
         } else if (errJson && typeof errJson.error === "string") {
           detailText = errJson.error;
         }
-      } catch {
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
         // non-JSON response
       }
 
@@ -198,8 +207,6 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
       isError: result.isError,
     };
   } catch (error) {
-    clearTimeout(timeoutId);
-    cleanupSignal?.();
     if (error?.name === "AbortError" || controller.signal.aborted) {
       const wasExternal = options?.signal?.aborted;
       const timeoutSec = Math.round(timeoutMs / 1000);
@@ -218,6 +225,9 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
       details: { error: message, toolName: name },
       isError: true,
     };
+  } finally {
+    clearTimeout(timeoutId);
+    cleanupSignal?.();
   }
 }
 
@@ -269,8 +279,16 @@ export default function webgisToolsExtension(pi) {
     }
   };
 
-  // Default projection at spawn: the frozen native surface (Phase 1 compat).
-  applyActiveTools(surface.defaultActive, "default");
+  // Default projection: the frozen native surface (Phase 1 compat). Deferred
+  // past extension loading (see session_start handler below); re-applied
+  // lazily on the first before_agent_start in case session_start never fires
+  // in this vendor mode.
+  let defaultProjectionApplied = false;
+  const applyDefaultActiveTools = (why) => {
+    if (defaultProjectionApplied) return;
+    defaultProjectionApplied = true;
+    applyActiveTools(surface.defaultActive, why);
+  };
 
   for (const tool of nativeTools) {
     if (!tool?.name) continue;
@@ -350,20 +368,38 @@ export default function webgisToolsExtension(pi) {
   });
 
   if (typeof pi.on === "function") {
+    // Pi v1.5.0 (≥0.99 two-phase loading): action methods like setActiveTools
+    // cannot run while extensions load ("Extension runtime not initialized"),
+    // so the default surface projection defers to session_start. Registration
+    // above is unaffected (registerTool is load-safe); the per-turn projection
+    // in before_agent_start keeps applying the marker-driven surface.
+    pi.on("session_start", async () => {
+      applyDefaultActiveTools("default(session_start)");
+    });
+
     pi.on("before_agent_start", async (event) => {
       const current = event.systemPrompt || "";
-      const rewritten = current.includes(CODING_ASSISTANT_OPENING)
-        ? current.replace(CODING_ASSISTANT_OPENING, GIS_IDENTITY)
-        : `${GIS_IDENTITY}\n\n${current}`;
+      let rewritten = `${GIS_IDENTITY}\n\n${current}`;
+      for (const opening of CODING_ASSISTANT_OPENINGS) {
+        if (current.includes(opening)) {
+          rewritten = current.replace(opening, GIS_IDENTITY);
+          break;
+        }
+      }
 
       // ADR-0103 Phase 3: apply this turn's projected tool surface before the
       // agent loop starts. Names outside the registered superset are ignored
       // (setActiveToolsByName semantics); the native front door stays active.
       const promptText = typeof event.prompt === "string" ? event.prompt : "";
-      const matches = Array.from(promptText.matchAll(ACTIVE_TOOLS_RE));
-      if (matches.length) {
+      // Reset every turn: an absent/invalid suffix must not inherit a prior
+      // turn's broader surface. Runtime actions still happen only after load.
+      applyActiveTools(surface.defaultActive, "turn-default");
+      defaultProjectionApplied = true;
+      const suffix = routingSuffix(promptText);
+      const match = suffix?.body.match(ACTIVE_TOOLS_SUFFIX_RE);
+      if (match) {
         try {
-          const requested = JSON.parse(matches[matches.length - 1][1]);
+          const requested = JSON.parse(match[1]);
           if (Array.isArray(requested)) {
             applyActiveTools(requested.filter((n) => typeof n === "string"), "turn");
           }
@@ -371,6 +407,7 @@ export default function webgisToolsExtension(pi) {
           console.error("[webgis-tools] WEBGIS_ACTIVE_TOOLS marker parse failed:", err);
         }
       }
+
 
       return { systemPrompt: rewritten };
     });

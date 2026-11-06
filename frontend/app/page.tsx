@@ -12,6 +12,7 @@ import { installStoryTokenResponder } from '@/lib/session/story-token-handoff';
 import { useWorkbenchUndoKeys } from '@/lib/workbench/use-undo';
 import { useSessionPlan } from '@/lib/hooks/use-session-plan';
 import { StreamingChatHost } from '@/components/chat/streaming-chat-host';
+import type { ChatMessage } from '@/lib/store/useChatStore';
 import { useChatStore } from '@/lib/store/useChatStore';
 
 // #553: 会话删除客户端 + 新会话确认守卫
@@ -70,6 +71,10 @@ const MapPanel = dynamic(
 const MemoTopBar = memo(TopBar);
 const MemoNavRail = memo(NavRail);
 const MemoMapPanel = memo(MapPanel);
+const SituationStatusBar = dynamic(
+  () => import('@/components/workbench/situation-status-bar').then((m) => ({ default: m.SituationStatusBar })),
+  { ssr: false },
+);
 const MemoEmbodiedHud = memo(EmbodiedHud);
 const MemoSpatialCrosshair = memo(SpatialCrosshair);
 const MemoFloatingLegend = memo(FloatingLegend);
@@ -126,7 +131,7 @@ export default function Home() {
   // 地图 inset 只在 desktop 档推挤地图（thin 覆盖、mobile 全屏优先）
   const insetOpen = layoutMode === 'desktop' && leftPanelOpen;
 
-  const { location: userLocation } = useGeolocation();
+  const { location: userLocation, requestLocation, loading: locationLoading, error: locationError } = useGeolocation();
 
   // 1. Session and REST Layers Loader Hook
   const {
@@ -153,11 +158,11 @@ export default function Home() {
   // H03 / #1554：useChatStore 是消息**单一 owner** —— page 的恢复/错误写入
   // 只写 store 一处（hook/host 订阅同一 store，不再有 hook useState 镜像
   // 需要经 setMessagesRef 转发；旧的双写会造成 store 读者与 hook 状态分叉）。
-  const messagesRef = useRef<any[]>([]);
-  const handleMessagesChange = useCallback((msgs: any[]) => {
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const handleMessagesChange = useCallback((msgs: ChatMessage[]) => {
     messagesRef.current = msgs;
   }, []);
-  const setMessages = useCallback((updater: any) => {
+  const setMessages = useCallback((updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
     useChatStore.getState().setMessages(updater);
   }, []);
   const onViewportChangeRef = useRef<((center: [number, number], zoom: number, bearing: number, pitch: number) => void) | null>(null);
@@ -197,8 +202,7 @@ export default function Home() {
           : restored
       );
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [autoRestoreFromAnchor, setMessages]);
 
   // #1048: SessionPlan hydrate-then-delta 状态（page 级，与 agentRuntime 同款
   // 下行路径）。增量由 useSSEStream 的分发链驱动，视图经 ContextPanel → ChatTab
@@ -384,6 +388,9 @@ export default function Home() {
       <MemoTopBar
         sessionName={currentSessionTitle}
         onNewSession={handleNewSession}
+        onRequestLocation={requestLocation}
+        locationLoading={locationLoading}
+        locationError={locationError}
       />
 
       <div
@@ -432,6 +439,11 @@ export default function Home() {
             />
             <ExportMask />
             <MemoSpatialCrosshair />
+            {/* ADR-0285 D5：情境状态条（服务端 situation/turn-chain 投影，
+                刷新/重连即时恢复；不依赖 localStorage）。 */}
+            <div className='pointer-events-none absolute left-2 top-2 z-20'>
+              <SituationStatusBar />
+            </div>
             {/* Workspace V2：停靠面板宿主（右/下 dock；面板实例从 chrome
                 面移入停靠区渲染，dock 状态与语义组件状态分离）。 */}
             <PanelDockHost />

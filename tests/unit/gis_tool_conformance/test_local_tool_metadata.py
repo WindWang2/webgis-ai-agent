@@ -287,7 +287,10 @@ async def test_od_dispatch_offloads_full_results_and_enforces_session_scope(
         injected_tc, session_id=other_session, executed_tools=set(),
     )
     assert injected.status == "error"
-    assert injected.raw_result["code"] == "VALIDATION_ERROR"
+    # Caller context is stripped; the trusted other-session context reaches
+    # the tool and cannot resolve the owner's cursor, exactly as without spoofing.
+    assert injected.raw_result["code"] == denied.raw_result["code"] == "tool_error"
+    assert injected.raw_result["message"] == denied.raw_result["message"]
     assert injected.geojson_ref is None
     assert long_id not in injected.llm_payload
 

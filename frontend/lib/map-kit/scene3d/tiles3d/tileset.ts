@@ -38,6 +38,12 @@ export class TilesetParseError extends Error {
 }
 
 export const MAX_TILES_PER_TILESET = 8192;
+/**
+ * tile 树深度上限（评审 B5）：计数门是后序检查 —— 深链在计数生效前先
+ * 递归到底，2MB tileset.json 可构造 ~数万层（V8 栈溢出）。真实数据集
+ * 深度 ≤10 量级，64 已富余；先序抛错不占栈。
+ */
+export const MAX_TILESET_DEPTH = 64;
 
 export interface WorldSphere {
   center: WorldCoord;
@@ -155,7 +161,7 @@ export function parseTileset(
 
   let count = 0;
   // OGC 3D Tiles：tile 未声明 refine 时继承父 tile（根默认 REPLACE）。
-  const root = parseTile(ts.root, '0', opts, rootLocalToEnu, 'REPLACE', (t) => {
+  const root = parseTile(ts.root, '0', opts, rootLocalToEnu, 'REPLACE', 0, (t) => {
     count += 1;
     if (count > MAX_TILES_PER_TILESET) {
       throw new TilesetParseError('budget_exceeded', `tiles > ${MAX_TILES_PER_TILESET}`);
@@ -177,8 +183,16 @@ function parseTile(
   opts: { tilesetUrl: string; anchor: { lng: number; lat: number }; resolveUri: (b: string, u: string) => string | null },
   parentToEnu: Mat4,
   parentRefine: 'REPLACE' | 'ADD',
+  depth: number,
   tick: (t: TileNode) => TileNode,
 ): TileNode {
+  // 深度先序门（评审 B5）：先于子树递归 —— 深链不再触达 V8 栈深。
+  if (depth > MAX_TILESET_DEPTH) {
+    throw new TilesetParseError(
+      'budget_exceeded',
+      `tile tree deeper than ${MAX_TILESET_DEPTH} at ${id}`,
+    );
+  }
   const tileTransform = Array.isArray(raw.transform) && raw.transform.length === 16
     ? (raw.transform.slice() as Mat4)
     : identityMat4();
@@ -248,7 +262,7 @@ function parseTile(
     children: [],
   };
   const children = raw.children ?? [];
-  node.children = children.map((c, i) => parseTile(c, `${id}/${i}`, opts, localToEnu, refine, tick));
+  node.children = children.map((c, i) => parseTile(c, `${id}/${i}`, opts, localToEnu, refine, depth + 1, tick));
   return tick(node);
 }
 

@@ -116,12 +116,17 @@ async def test_llm_forged_session_id_is_overridden(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_without_session_id_errors_honestly(monkeypatch, tmp_path):
+@pytest.mark.parametrize("forged_session", [None, "sess-trust-c"])
+async def test_dispatch_without_session_id_errors_honestly(monkeypatch, tmp_path, forged_session):
     """Without a session the tool reports the missing context honestly instead
     of guessing."""
     conversations = {"sess-trust-c": Conversation(id="sess-trust-c", title="t")}
     reg = _install_tool(monkeypatch, tmp_path, conversations)
 
-    result = await reg.dispatch("generate_analysis_report", {"format": "markdown"})
+    arguments = {"format": "markdown"}
+    if forged_session is not None:
+        arguments["session_id"] = forged_session
+    result = await reg.dispatch("generate_analysis_report", arguments)
     assert isinstance(result, dict) and "error" in result
     assert "会话" in result["error"]
+    assert list(tmp_path.iterdir()) == []

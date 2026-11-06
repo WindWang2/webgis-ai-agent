@@ -386,3 +386,46 @@ async def test_projection_reports_conflict_and_anchor_states(service):
     assert proj2["current_revision"] > proj2["base_revision"]
     for cid, state in proj2["anchor_states"].items():
         assert state == "stale"
+
+
+async def test_submit_cannot_replace_server_revision_without_rebase(service):
+    sid = _sid()
+    _, base = await _seed_layer(sid)
+    proposal = await service.create_proposal(
+        sid, author=_actor(), title='revision-bound', description='', intents=_intents(base),
+    )
+    with pytest.raises(InvalidTransition, match='rebase'):
+        await service.submit(sid, proposal.proposal_id, _actor(), base_revision=base + 1)
+    unchanged = await service.get_proposal(sid, proposal.proposal_id)
+    assert unchanged.base_revision == base
+    assert unchanged.status is ProposalStatus.DRAFT
+
+
+async def test_rebase_rechecks_merge_reservation_inside_proposal_lock(service, monkeypatch):
+    from app.services.gis_world_state.mutation import apply_gis_mutation
+    from app.services.mapspec.lifecycle_engine import SetViewIntent
+    sid = _sid()
+    _, base = await _seed_layer(sid)
+    proposal = await service.create_proposal(sid, author=_actor("u1"), title="rebase race", intents=_intents(base))
+    await service.submit(sid, proposal.proposal_id, _actor("u1"), base_revision=base)
+    await apply_gis_mutation(sid, SetViewIntent(zoom=7), origin="agent", actor="other")
+    real_mutate = service.store.mutate_proposal
+    reserved = False
+
+    async def race(session, proposal_id, mutator):
+        nonlocal reserved
+        if not reserved:
+            reserved = True
+
+            def reserve(current):
+                current.merge_in_progress = True
+                return current
+
+            await real_mutate(session, proposal_id, reserve)
+        return await real_mutate(session, proposal_id, mutator)
+
+    monkeypatch.setattr(service.store, "mutate_proposal", race)
+    with pytest.raises(InvalidTransition, match="changed"):
+        await service.rebase(sid, proposal.proposal_id, _actor("u1"))
+    current = await service.get_proposal(sid, proposal.proposal_id)
+    assert current.merge_in_progress and current.base_revision == base

@@ -14,6 +14,7 @@ import {
   setMapSpecFingerprint,
 } from '@/lib/mapspec/session-cursor';
 import { resetRenderProbes } from '@/lib/telemetry/render-probes';
+import { resetSceneAssetStatus } from '@/lib/map-kit/scene3d';
 import { getLatestRenderWork, resetRenderWorkStore } from '@/lib/render-protocol/render-work';
 import { apiFetch, ApiTimeoutError } from '@/lib/api/transport';
 import {
@@ -93,6 +94,7 @@ export function useCartographicObservation({
   // 停止派发（观测照常上报），告警一次。会话切换随 sessionId 重置。
   const totalRepairsRef = useRef(0)
   const repairBudgetExhaustedWarnedRef = useRef(false)
+  const settleIssueSeqRef = useRef(0)
   const mountedRef = useRef(true)
   const observationAbortRef = useRef<AbortController | null>(null)
   // P9：有界 runtime error 环（map 'error' 事件 → dedup → 随观测上报）。
@@ -132,6 +134,10 @@ export function useCartographicObservation({
     resetRenderProbes()
     // ADR-0225：信封 store 随会话清空（旧会话的执行身份不得进入新会话）。
     resetRenderWorkStore()
+    // D2（评审）：scene3d 资产状态环同纪律 —— 旧会话的 mounted/load_failed
+    // 残留会作为新会话首个观察的 scene3d_assets 证据上行（跨会话同名资产
+    // id 时 A 的失败成为 B 的假证据）。
+    resetSceneAssetStatus()
   }, [sessionId])
 
   const issueCartographicObservation = useCallback(({
@@ -174,6 +180,11 @@ export function useCartographicObservation({
     const fingerprint: string | undefined = generation?._mapspecFingerprint
       ?? (cursorBelongsToSession ? cursorFp : undefined)
       ?? envelopeFp
+    // D5（评审）：观察的归属字段以「签发时刻」为准 —— settle（≤400ms）期间
+    // revision 若已前进，settle 后重读 cursor 会产出「旧指纹 + 新 revision」
+    // 的内部不一致载荷（服务端按指纹门裁决时归属错代）。此处锚定签发时
+    // revision；新一代的观察由其自身 reconcile 再签发。
+    const revisionAtIssue = cursor.revision;
     if (!generation?._mapspecFingerprint && fingerprint) {
       setMapSpecFingerprint(fingerprint)
     }
@@ -197,8 +208,10 @@ export function useCartographicObservation({
     // P9：签发改异步 —— bounded settle 后再采集（MapLibre idle 或超时，
     // 先到为准）。settle 期间的 unmount/会话切换由下方守卫吸收；渲染观察
     // 永不阻塞渲染本身（settle 是 race，无长等待）。
+    const issueSeq = ++settleIssueSeqRef.current
     void (async () => {
       const mapIdle = await waitForRenderSettle(map)
+      if (issueSeq !== settleIssueSeqRef.current) return
       if (!mountedRef.current || cartographicSessionIdRef.current !== sessionId) return
 
       const observation = collectRenderObservation({
@@ -206,7 +219,7 @@ export function useCartographicObservation({
         spec,
         layers,
         mapspecFingerprint: fingerprint,
-        mapspecRevision: getMapSpecSessionCursor().revision,
+        mapspecRevision: revisionAtIssue,
         errorRing: runtimeErrorRingRef.current,
         mapIdle,
         reconcileError: runtimeRef.current?.getLastError() ?? '',

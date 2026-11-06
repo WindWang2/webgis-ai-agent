@@ -131,10 +131,12 @@ def _check_projected_crs(profile: Dict[str, Any]) -> PreconditionResult:
     if not crs:
         return PreconditionResult(rid, "PASS", "crs unknown — deferred", deferred=True)
     data_class = classify_crs(crs)
-    if data_class in ("projected", "projected_local_metric"):
+    if data_class == "unknown":
+        return PreconditionResult(rid, "PASS_WITH_WARNINGS", "CRS is unparseable; metric suitability is unknown", deferred=True)
+    if data_class == "projected_local_metric":
         return PreconditionResult(rid, "PASS", facts_used={"crsClass": data_class})
     bbox = _fact(profile, "bbox", list) or None
-    hint = recommend_metric_crs(bbox)
+    hint = recommend_metric_crs(bbox, crs)
     return PreconditionResult(
         rid, "REQUIRES_TRANSFORM",
         f"CRS {crs} 为地理坐标（度）—— 距离/面积方法需先投影",
@@ -148,10 +150,12 @@ def _check_local_metric_crs(profile: Dict[str, Any]) -> PreconditionResult:
     if not crs:
         return PreconditionResult(rid, "PASS", "crs unknown — deferred", deferred=True)
     data_class = classify_crs(crs)
+    if data_class == "unknown":
+        return PreconditionResult(rid, "PASS_WITH_WARNINGS", "CRS is unparseable; metric suitability is unknown", deferred=True)
     if data_class == "projected_local_metric":
         return PreconditionResult(rid, "PASS", facts_used={"crsClass": data_class})
     bbox = _fact(profile, "bbox", list) or None
-    hint = recommend_metric_crs(bbox)
+    hint = recommend_metric_crs(bbox, crs)
     if data_class == "projected":
         return PreconditionResult(
             rid, "REQUIRES_TRANSFORM",
@@ -238,8 +242,10 @@ def _check_point_support_required(profile: Dict[str, Any]) -> PreconditionResult
     if not types:
         return PreconditionResult(rid, "PASS", "geometry unknown — deferred", deferred=True)
     families = {str(t) for t in types}
-    if families & {"Point", "MultiPoint"}:
+    if families <= {"Point", "MultiPoint"}:
         return PreconditionResult(rid, "PASS", facts_used={"geometryTypes": sorted(families)})
+    if families & {"Point", "MultiPoint"}:
+        return PreconditionResult(rid, "PASS_WITH_WARNINGS", "mixed point/non-point geometry support; restrict inputs to points", facts_used={"geometryTypes": sorted(families)})
     return PreconditionResult(
         rid, "INVALID_METHOD",
         f"几何族 {sorted(families)} 不是点支撑 —— 方法需要点过程支撑")

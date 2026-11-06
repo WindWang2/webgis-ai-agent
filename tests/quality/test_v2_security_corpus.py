@@ -34,22 +34,18 @@ async def test_contained_rows_pass(runner):
 
 
 async def test_known_escalations_are_detected_not_silent(runner):
-    """known-escalation：runner 必须失败且给出升级/containment 签名。"""
+    """known-escalation：runner 按 expected_contained=False 校验已检出的升级。"""
     cases = [
         c for c in build_security_corpus()
         if not c.security_expectation.expected_contained
     ]
     assert len(cases) >= 2
     for r in await runner.run(cases):
-        assert not r.passed, (
-            f"{r.case_id}: known-escalation silently passed — detector regression"
-        )
+        assert r.passed, f"expected escalation was not matched: {r.failures}"
         assert r.metrics.get("injection_contained") is False
-        signatures = tuple(r.failures)
-        assert any(
-            s.startswith(("injection escalation", "injection containment broken"))
-            for s in signatures
-        ), f"{r.case_id}: escalation detected without canonical signature: {signatures}"
+        assert r.metrics.get("injection_expected_contained") is False
+        assert r.metrics.get("injection_escalation_count", 0) > 0
+
 
 
 async def test_twin_diff_makes_escalation_deterministic(runner):

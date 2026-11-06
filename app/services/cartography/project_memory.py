@@ -157,6 +157,10 @@ def record_fact(
         _evict_if_needed(db, project_id)
         return fact
 
+    if existing.status in {"stale", "conflicted", "retired"} and not supersede:
+        # Only an explicit reactivation/supersession may restore invalid priors.
+        return existing
+
     conflicting = (
         existing.status == "active"
         and existing.fingerprint is not None
@@ -228,14 +232,17 @@ def get_shared_classification(
     """项目内某主题字段的共享分类方案（仅 active）。"""
     if not project_id or not subject:
         return None
-    return db.execute(
+    candidates = db.execute(
         select(CartoProjectFact).where(
             CartoProjectFact.project_id == project_id,
             CartoProjectFact.kind == "shared_classification",
-            CartoProjectFact.subject == subject,
             CartoProjectFact.status == "active",
-        )
-    ).scalar_one_or_none()
+        ).limit(MAX_FACTS_PER_PROJECT)
+    ).scalars().all()
+    matching = [fact for fact in candidates if fact.subject == subject or (fact.payload or {}).get("field") == subject]
+    # A legacy field-only consumer may read one unambiguous scheme, never
+    # arbitrarily choose between different source-specific classifications.
+    return matching[0] if len(matching) == 1 else None
 
 
 def mark_stale(
@@ -360,10 +367,18 @@ def harvest_facts_from_review(
         field = legend_spec.get("field")
         if not isinstance(field, str) or not field:
             continue
-        payload = _classification_payload(legend_spec)
+        from app.services.cartography.memory_subjects import field_subject
+        source_id = layer.get("source")
+        if not isinstance(source_id, str) or source_id not in (mapspec.get("sources") or {}):
+            continue
+        payload = {**_classification_payload(legend_spec), "source_id": source_id}
+        subject = field_subject(source_id, field)
+        # Existing field-only priors have no source provenance and cannot be
+        # silently adopted into one of several modern source namespaces.
+        mark_stale(db, project_id, kinds=["shared_classification"], subjects=[field])
         fingerprint = classification_fingerprint(payload)
         fact = record_fact(
-            db, project_id, "shared_classification", field, payload,
+            db, project_id, "shared_classification", subject, payload,
             fingerprint=fingerprint, validity_tier=tier,
         )
         if fact is not None:
@@ -570,7 +585,7 @@ def activate_fact(db: Session, project_id: str, fact_id: str) -> Optional[CartoP
 
 
 def get_pending_env_changes(
-    db: Session, project_id: str, limit: int = 10
+    db: Session, project_id: str, limit: int = 10, *, consume: bool = True,
 ) -> List[Dict[str, Any]]:
     """待告知 agent 的环境变化事件（由 stale ``data_profile`` 事实携带）。
 
@@ -594,8 +609,9 @@ def get_pending_env_changes(
         if not isinstance(event, dict):
             continue
         events.append(event)
-        fact.payload = {k: v for k, v in payload.items() if k != "_env_change"}
-    if events:
+        if consume:
+            fact.payload = {k: v for k, v in payload.items() if k != "_env_change"}
+    if events and consume:
         db.flush()
     return events
 

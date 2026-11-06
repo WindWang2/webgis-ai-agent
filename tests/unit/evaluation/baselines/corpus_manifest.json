@@ -33,7 +33,7 @@
     "count": 104,
     "group": "goal",
     "prefix": "GS-",
-    "version_hash": "befac0b86fe482af0848b61cdaa722bd"
+    "version_hash": "e21558fa2751aa44156f900082b7c967"
   },
   "golden_matrix": {
     "count": 273,
@@ -63,7 +63,7 @@
     "count": 6514,
     "group": "quality",
     "prefix": "QS-",
-    "version_hash": "bfa92f987dc2f57a2304b021f7a67199"
+    "version_hash": "4f71a1bb551b585aca02b1a2f5b61b2a"
   },
   "recovery": {
     "count": 29,
@@ -105,12 +105,12 @@
     "count": 11,
     "group": "benchmark-policy",
     "prefix": "SP-",
-    "version_hash": "70720ff4e331dba3bfa30b51d29edaf6"
+    "version_hash": "a6f2c98dbfe04012322679fb95a5fd62"
   },
   "workflow_contract": {
     "count": 11,
     "group": "anti-claim",
     "prefix": "WC-",
-    "version_hash": "d668016725aad427dfd86e1dba65de2f"
+    "version_hash": "4f2c22440badc0391922e7c0667bb5b2"
   }
 }

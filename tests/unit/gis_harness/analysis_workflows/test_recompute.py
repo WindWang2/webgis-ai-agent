@@ -316,17 +316,17 @@ async def test_plan_rebinding_same_id_is_replan_not_silent_reuse(registry):
     p1 = await reg.dispatch("webgis_analysis_workflow_plan", {
         "family": "admin_facility_distribution", "workflow_id": "awf.b1.fixed",
         "role_refs": _json.dumps({"subject": pr, "boundary": dr}),
-        "session_id": S})
+        "session_id": S}, session_id=S)
     assert p1["success"]
     # plan 2：同 id + 补 denominator → 必须重规划（per_capita ready 持久化）
     p2 = await reg.dispatch("webgis_analysis_workflow_plan", {
         "family": "admin_facility_distribution", "workflow_id": "awf.b1.fixed",
         "role_refs": _json.dumps({"subject": pr, "boundary": dr,
                                   "denominator": dr}),
-        "session_id": S})
+        "session_id": S}, session_id=S)
     assert p2["workflow_id"] == "awf.b1.fixed"
     run = await reg.dispatch("webgis_analysis_workflow_run", {
-        "workflow_id": "awf.b1.fixed", "session_id": S})
+        "workflow_id": "awf.b1.fixed", "session_id": S}, session_id=S)
     assert run["status"] == "satisfied"
     steps = {s["step_id"]: s["state"] for s in run["steps"]}
     assert steps["per_capita_rate"] == "satisfied"   # 新绑定真实生效

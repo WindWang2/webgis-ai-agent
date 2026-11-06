@@ -39,6 +39,10 @@ class TemplateVersionError(Exception):
     """版本操作非法（环/缺模板/缺版本）——路由层映射 4xx。"""
 
 
+class TemplateVersionNotFoundError(TemplateVersionError):
+    """The authorized template/version does not exist, independent of wording."""
+
+
 class TemplateVersionForbiddenError(TemplateVersionError):
     """调用者无权读写目标模板（跨租户 IDOR 守卫）——路由层映射 403。"""
 
@@ -141,8 +145,7 @@ def create_version(
 ) -> TemplateVersion:
     """落新版本快照（version = max+1；component 校验快照；主表前移）。
 
-    ``parent_version_id`` 缺席时，若模板已有版本 → 继承当前最新版
-    （线性链）；首版无父。
+    ``parent_version_id`` 缺席时保存完整快照，允许删除旧键；只有显式父版本参与深合并。
 
     ``can_write`` / ``can_read_parent``（SEC-02）：路由层注入的授权谓词，
     在**读写任何行之前**校验目标模板与父版本所属模板的可见性；返回 False
@@ -152,7 +155,7 @@ def create_version(
 
     template = db.get(CartographyTemplate, template_id)
     if template is None:
-        raise TemplateVersionError(f"template '{template_id}' not found")
+        raise TemplateVersionNotFoundError(f"template '{template_id}' not found")
     if can_write is not None and not can_write(template):
         raise TemplateVersionForbiddenError(
             f"template '{template_id}' is not writable by this caller"
@@ -161,7 +164,7 @@ def create_version(
     if parent_version_id is not None:
         parent = db.get(TemplateVersion, parent_version_id)
         if parent is None:
-            raise TemplateVersionError("parent_version not found")
+            raise TemplateVersionNotFoundError("parent_version not found")
         # #1411: reject cross-template parents — otherwise resolve_payload
         # deep-merges another template's payload into the child's effective
         # (confused-deputy even when the parent row is "visible").
@@ -196,8 +199,6 @@ def create_version(
         )
         next_version = (latest.version + 1) if latest is not None else 1
         parent_version_id = explicit_parent
-        if parent_version_id is None and latest is not None:
-            parent_version_id = latest.id
         candidate = TemplateVersion(
             template_id=str(template_id)[:255],
             version=next_version,
@@ -264,6 +265,8 @@ def resolve_payload(db: Any, version: TemplateVersion) -> Tuple[Dict[str, Any], 
         chain.append(cursor)
         cursor = db.get(TemplateVersion, cursor.parent_version_id) \
             if cursor.parent_version_id else None
+    if cursor is not None:
+        raise TemplateVersionError(f"inheritance chain > {_MAX_CHAIN_DEPTH}")
     effective: Dict[str, Any] = {}
     for node in reversed(chain):          # 祖先 → 自身；后者覆盖前者
         if isinstance(node.payload, dict):
@@ -278,7 +281,7 @@ def get_version(db: Any, template_id: str, version: Optional[int] = None) -> Tem
         if version is None else stmt.filter_by(version=int(version)).first()
     )
     if row is None:
-        raise TemplateVersionError("version not found")
+        raise TemplateVersionNotFoundError("version not found")
     return row
 
 
@@ -301,7 +304,7 @@ def deprecate_version(
     if can_write is not None:
         template = db.get(CartographyTemplate, template_id)
         if template is None:
-            raise TemplateVersionError(f"template '{template_id}' not found")
+            raise TemplateVersionNotFoundError(f"template '{template_id}' not found")
         if not can_write(template):
             raise TemplateVersionForbiddenError(
                 f"template '{template_id}' is not writable by this caller"

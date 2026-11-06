@@ -23,12 +23,14 @@ from pydantic import JsonValue
 if TYPE_CHECKING:
     from app.services.tool_dispatch_service import ToolDispatchResult
 import hashlib
+import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
 from app.services.gis_harness.analysis_workflows.contracts import (
     AWF_UNKNOWN_FAMILY,
+    AnalysisWorkflowContract,
     DataRoleBinding,
     canonical_json,
 )
@@ -53,6 +55,9 @@ from app.services.gis_harness.analysis_workflows.recompute import (
     downstream_closure,
     ref_identity,
 )
+from app.services.gis_harness.analysis_workflows.runtime_integrity import (
+    local_raster_identity,
+)
 from app.services.gis_harness.analysis_workflows.state import (
     apply_plan_verdicts,
     new_state,
@@ -64,6 +69,16 @@ from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
+
+
+class BudgetEstimate(TypedDict):
+    role: str
+    ref: str
+    feature_count: int | None
+    max_features: int
+    over: bool
+    reason_code: str
+
 
 def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
     """注册 4 个分析工作流工具（append-only；不改既有工具）。"""
@@ -118,7 +133,12 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
 
     def _parse_bindings(raw: Optional[str]) -> Dict[str, DataRoleBinding]:
         """role_refs JSON → 绑定（支持 {"role": "ref:..."} 与
-        {"role": {"ref": ..., "qualifier": {...}}} 两种形态）。"""
+        {"role": {"ref": ..., "qualifier": {...}, "role_kind": ...}} 形态）。
+
+        role_kind（ADR-0284 D3）：raster/table 角色必须显式声明
+        （raster_zonal_summary 的 subject 是栅格 ref/路径——不声明会被
+        orchestrator 的 role_kind 门 typed 拒绝并给出指引）。
+        """
         if not raw:
             return {}
         data = json.loads(raw) if isinstance(raw, str) else raw
@@ -133,12 +153,59 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     role=role,
                     ref=str(value.get("ref", "") or ""),
                     qualifier=dict(value.get("qualifier") or {}),
-                    dataset_hint=str(value.get("dataset_hint", "") or ""))
+                    dataset_hint=str(value.get("dataset_hint", "") or ""),
+                    role_kind=str(value.get("role_kind", "vector") or "vector"))
             else:
                 raise ValueError(f"角色 {role} 的绑定形态非法")
         return bindings
 
+    async def _budget_estimates(session_id: str,
+                                contract: AnalysisWorkflowContract) -> List[BudgetEstimate]:
+        """plan 期输入预算估计（ADR-0284 断点4）。
+
+        只对 vector 角色的 ``ref:`` 绑定读 descriptor 行数事实（raster/table
+        角色无行数语义——栅格工具走窗口读纪律）；descriptor 读不到=unknown
+        （不虚报也不拦截——run 期 executor 预算门兜底）。有界：角色数 ≤16。
+        """
+        from app.services.gis_harness.analysis_workflows.contracts import (
+            AWF_BUDGET_EXCEEDED,
+        )
+
+        estimates: List[BudgetEstimate] = []
+        for role, binding in list(contract.data_contracts.items())[:16]:
+            if not isinstance(binding.ref, str) or not binding.ref.startswith(
+                    "ref:") or binding.role_kind != "vector":
+                continue
+            entry: BudgetEstimate = {
+                "role": role, "ref": binding.ref,
+                "feature_count": None, "max_features": DEFAULT_MAX_FEATURES,
+                "over": False, "reason_code": "",
+            }
+            try:
+                descriptor = await session_data_manager.get_ref_descriptor(
+                    session_id, binding.ref)
+            except Exception:  # noqa: BLE001 — descriptor 是优化面
+                descriptor = None
+            if isinstance(descriptor, dict):
+                try:
+                    count = int(descriptor.get("feature_count", 0) or 0)
+                except (TypeError, ValueError):
+                    count = 0
+                entry["feature_count"] = count
+                if count > DEFAULT_MAX_FEATURES:
+                    entry["over"] = True
+                    entry["reason_code"] = AWF_BUDGET_EXCEEDED
+            estimates.append(entry)
+        return estimates
+
     # ── 工具 1：plan ─────────────────────────────────────────────────────
+
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        ContractValidationError,
+    )
+    from app.services.gis_harness.analysis_workflows.discovery import (
+        next_step_for_blocked,
+    )
 
     @tool(
         registry, name="webgis_analysis_workflow_plan",
@@ -148,19 +215,25 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "多步 GIS 分析工作流规划：把用户场景装配成带数据角色合同/科学前置/"
             "单位契约的步骤 DAG，并给出 typed 裁决（缺数据→blocked+获取建议；"
             "无路网→不得给等时数值结论；缺分母→只给计数不伪装密度）。**不执行**。"
-            "\n五族：admin_facility_distribution（行政区设施分布）/ "
+            "\n七族：admin_facility_distribution（行政区设施分布）/ "
             "service_accessibility（路网可达性）/ hazard_exposure（风险暴露）/"
-            " temporal_change（多期变化）/ statistical_zones（统计分区）。"
+            " temporal_change（多期变化）/ statistical_zones（统计分区）/ "
+            "raster_zonal_summary（栅格指数分区汇总——subject 角色需 "
+            "role_kind='raster' 的栅格 ref/路径）/ network_proximity"
+            "（最近设施网络距离→行政汇总——subject=需求点、facility=设施）。"
+            "plan 附输入行数预算估计（超限 typed 指引分块/降采样）。"
             "\n何时不用：单工具即可回答的问题（直接调该工具）；"
             "LLM 自由组合非常规步骤（用 propose_plan）。"
         ),
         param_descriptions={
-            "family": "工作流族 id（五族词表之一）",
+            "family": "工作流族 id（七族词表之一）",
             "role_refs": (
                 "数据角色绑定 JSON：{role: 'ref:geojson-…'} 或 "
                 "{role: {'ref': …, 'qualifier': {'year': 2018}}}；"
-                "temporal 族必须带 qualifier.year"),
-            "params": "步骤参数覆盖 JSON：{step_id: {参数名: 值}}",
+                "temporal 族必须带 qualifier.year；栅格角色需 "
+                "{'ref': …, 'role_kind': 'raster'}"),
+            "params": "步骤参数覆盖 JSON：{step_id: {参数名: 值}}；resample 仅显式 target_resolution 才启用（目标 CRS 单位）",
+            "include_optional_steps": "是否启用可选步骤（resample 仍需显式分辨率）",
             "workflow_id": "复用既有工作流 id（默认按族+内容派生）",
         },
         side_effect="state_mutation",
@@ -181,6 +254,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         params: Optional[str] = None,
         workflow_id: str = "",
         session_id: Optional[str] = None,
+        include_optional_steps: bool = True,
     ) -> dict:
         command = "webgis_analysis_workflow_plan"
         if not session_id:
@@ -197,13 +271,13 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         # P3-1：内容寻址 id（sha256 前 10 hex——str hash 受 PYTHONHASHSEED
         # 随机化，跨进程不稳定，与工具 deterministic=True 声明冲突）
         digest = hashlib.sha256(
-            f"{family}|{role_refs or ''}|{params or ''}".encode(
+            f"{family}|{role_refs or ''}|{params or ''}|optional={include_optional_steps}".encode(
                 "utf-8")).hexdigest()[:10]
         wf_id = workflow_id or f"awf.{family}.{digest}"
         try:
             result = plan_workflow(
                 family, workflow_id=wf_id, bindings=bindings,
-                params_overrides=overrides,
+                params_overrides=overrides, include_optional_steps=include_optional_steps,
                 tool_exists=(lambda n: True),  # run 期再真实校验注册面
             )
         except KeyError:
@@ -211,24 +285,38 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     "reason_code": AWF_UNKNOWN_FAMILY,
                     "message": f"未知族 {family}（词表: {FAMILY_IDS}）",
                     "alternatives": list(FAMILY_IDS)}
+        except ContractValidationError as exc:
+            # R1 评审（P3）：契约级违例（role_kind 越界/语义合同格式等）→
+            # typed declined（含结构化 next_step），不裸 ValueError 冒泡。
+            from app.services.gis_harness.analysis_workflows.discovery import (
+                next_step_for_blocked as _nsb,
+            )
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": exc.code, "message": str(exc),
+                    "next_step": _nsb(exc.code)}
         # P1-2/P3-3：单写者协议——plan 的 load/init/persist 全程持锁；
         # 同 id 同契约指纹的重复 plan 幂等保留既有运行态（envelopes/
         # receipts 不被空状态覆写），指纹变化 = 显式重规划才换新状态。
         from app.services.distributed_lock import session_lock_registry
 
         def _binding_refs(contracts: Any) -> Dict[str, str]:
-            """绑定身份 = ref + qualifier（R2b P3：qualifier 是 temporal 门
-            的唯一裁决输入，同 ref 换 qualifier = 不同绑定解释）。"""
+            """绑定身份 = ref + qualifier + role_kind（R2b P3 + R1 评审 P3：
+            qualifier 是 temporal 门的唯一裁决输入，role_kind 是载荷类型
+            事实——同 ref 换任一 = 不同绑定解释；dict 分支（快照侧）与
+            对象分支（活契约侧）必须同构，否则幂等谓词恒假）。"""
             refs: Dict[str, str] = {}
             for role, binding in (contracts or {}).items():
                 if isinstance(binding, dict):
                     ref = str(binding.get("ref", "") or "")
                     qualifier = binding.get("qualifier") or {}
+                    role_kind = str(binding.get("role_kind", "") or "")
                 else:
                     ref = str(getattr(binding, "ref", "") or "")
                     qualifier = getattr(binding, "qualifier", {}) or {}
+                    role_kind = str(getattr(binding, "role_kind", "") or "")
                 refs[role] = canonical_json(
-                    {"ref": ref, "qualifier": qualifier})
+                    {"ref": ref, "qualifier": qualifier,
+                     "role_kind": role_kind})
             return refs
 
         async with session_lock_registry.lock(
@@ -255,13 +343,26 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     state.log("plan_replanned",
                               reason="binding_or_contract_changed")
             await _persist_state(session_id, state)
+        # ADR-0284（断点4）：plan 期预算估计——ref descriptor 的行数事实
+        # （已知才报；descriptor 缺失=unknown 不虚报）。超限 → typed 不予
+        # runnable + 指引（分块/裁剪/换聚合粒度），run 期 executor 仍是硬门。
+        budget_estimates = await _budget_estimates(
+            session_id, result.contract)
+        runnable = result.runnable
+        blocked_reasons = list(result.blocked_reasons)
+        over_budget = [b for b in budget_estimates if b["over"]]
+        if over_budget and runnable:
+            runnable = False
+            for b in over_budget:
+                blocked_reasons.append(
+                    f"{b['role']}:{b['reason_code']}")
         return {
             "success": True,
             "command": command,
             "workflow_id": wf_id,
             "family": family,
             "family_label": family_label(family),
-            "runnable": result.runnable,
+            "runnable": runnable,
             "steps": [
                 {"step_id": v.step_id, "verdict": v.verdict,
                  "reason_code": v.reason_code, "tool": next(
@@ -269,13 +370,29 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                       if s.step_id == v.step_id), ""),
                  "message": v.message}
                 for v in result.step_verdicts],
-            "blocked_reasons": list(result.blocked_reasons),
+            "blocked_reasons": blocked_reasons,
             "alternatives": list(result.alternatives),
             "visualization_hints": list(result.visualization_hints),
             "risk_notes": list(result.contract.risk_notes),
+            "budget_estimates": budget_estimates,
+            # ADR-0284 B4：blocked/skipped 裁决附结构化 next_step（封闭
+            # action 词表 + 可执行提示——LLM 不靠重复空调用碰运气）。
+            "blocked_next_steps": [
+                {"step_id": v.step_id, "reason_code": v.reason_code,
+                 "next_step": next_step_for_blocked(
+                     v.reason_code,
+                     role=(v.reason_code.split(":", 1)[1].lower()
+                           if v.reason_code.startswith((
+                               "AWF_DATA_ROLE_MISSING",
+                               "AWF_ROLE_KIND_MISMATCH"))
+                           else ""))}
+                for v in result.step_verdicts
+                if v.verdict in ("blocked", "skipped")][:8],
             "next_action": (
-                "webgis_analysis_workflow_run" if result.runnable
-                else "先按 alternatives 补数据角色绑定，再重新 plan"),
+                "webgis_analysis_workflow_run" if runnable
+                else ("输入行数超预算——先分块（bbox 裁剪/聚合粒度提升）或"
+                      "降采样后重绑" if over_budget else
+                      "先按 alternatives 补数据角色绑定，再重新 plan")),
         }
 
     # ── 工具 2：run ──────────────────────────────────────────────────────
@@ -401,6 +518,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "layers": [
                 {"step_id": sid, "ref": env.ref,
                  "feature_count": env.feature_count,
+                 "network": dict(env.network),
                  "output_roles": list(env.output_roles)}
                 for sid, env in state.envelopes.items() if env.ref],
             "evidence": summary,
@@ -449,6 +567,9 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "command": command,
             "workflow_id": workflow_id,
             "status": state.status,
+            # ADR-0284 D5（R1 评审 F-6）：科学终审投影从状态机透出（run 返回
+            # 体的 science_gate 是现场重算；这里是最初 run 终态的持久投影）。
+            "science_validation": dict(state.science_validation),
             "steps": [
                 {"step_id": sid, "state": e.state,
                  "reason_code": e.reason_code, "attempts": e.attempts,
@@ -457,6 +578,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             "layers": [
                 {"step_id": sid, "ref": env.ref,
                  "feature_count": env.feature_count,
+                 "network": dict(env.network),
                  "stats": env.stats, "warnings": list(env.warnings)}
                 for sid, env in state.envelopes.items()],
             "receipts": list(state.receipts.keys()),
@@ -548,6 +670,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 contract.family, workflow_id=workflow_id,
                 bindings=merged_bindings, params_overrides=merged_params,
                 recipe_refs=contract.recipe_refs,
+                include_optional_steps=any(step.optional for step in contract.steps),
                 tool_exists=(lambda n: True))
             contract = replan.contract
             state.contract_snapshot = contract.model_dump()
@@ -573,8 +696,11 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                         session_id, binding.ref)
                 except Exception:  # noqa: BLE001 — descriptor 优化面 fail-open
                     desc = None
-                ident = ref_identity(
-                    binding.ref, (desc or {}).get("content_revision"))
+                revision = (desc or {}).get("content_revision")
+                if revision is None and binding.role_kind in ("raster", "table"):
+                    revision = await asyncio.to_thread(
+                        local_raster_identity, binding.ref)
+                ident = ref_identity(binding.ref, revision)
                 for step in contract.steps:
                     for param, source in step.role_inputs.items():
                         if source == f"role:{role}":
@@ -584,9 +710,20 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     contract, state, current_identities=current_identities):
                 affected.add(drift["step_id"])
                 affected.update(drift.get("downstream") or [])
-            # B2：affected 中的 satisfied 步骤**不**强制 stale——执行器的指纹
-            # 精确裁决负责复用（同身份 → step_reused 零重跑；漂移 → 重跑），
-            # 与工具描述「指纹对账→只重跑受影响子图」一致。
+            # ADR-0284 D5（B2 语义演进）：**指纹实测漂移**的已 satisfied 步骤
+            # 显式落 state=stale——状态机 stale 态由此获得赋值路径（此前只在
+            # 词表）。只标漂移步骤本身（非闭包）：闭包步骤保持 satisfied 让
+            # 执行器按指纹精确裁决（上游未变 → step_reused 零重跑不变）；
+            # 显式变更的直接消费者参数/身份已变，指纹天然不匹配照常重跑。
+            # 若本轮执行中断，持久态如实显示 stale（待重算）而非服旧产物。
+            for drift in collect_stale_steps(
+                    contract, state, current_identities=current_identities):
+                entry = state.steps.get(drift["step_id"])
+                if entry is not None and entry.state == "satisfied":
+                    entry.state = "stale"
+                    entry.reason_code = "INPUT_IDENTITY_DRIFT"
+                    entry.touch()
+                    state.log("step_stale", step=drift["step_id"])
             # 复裁决：数据补齐解除阻断（fresh 非 blocked/skipped 且旧
             # blocked/skipped/failed → pending）；数据仍缺 → 保持 typed
             # blocked/skipped（P1-1）。

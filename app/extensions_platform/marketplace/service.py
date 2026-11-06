@@ -124,9 +124,8 @@ class RegistryService:
             )
         # Mi-2：allowlist 拒绝发生在任何 blob 落盘之前（不产孤儿 blob）。
         if (
-            status.publisher
-            and self._policy.allowed_publishers
-            and status.publisher not in self._policy.allowed_publishers
+            not status.publisher
+            or status.publisher not in self._policy.allowed_publishers
         ):
             raise _store_error(
                 f"publisher {status.publisher!r} is not in the registry allowlist"

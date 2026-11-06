@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -122,3 +123,29 @@ def test_state_is_deterministic_and_serializable(mod, fast_gates):
     b, _ = mod.build_state(None, None)
     assert json.loads(json.dumps(a)) == b
     assert json.loads(json.dumps(a)) == a
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_gate_snapshot_does_not_depend_on_python_install_location(mod, monkeypatch, returncode):
+    calls = []
+
+    def run_gate(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=returncode, stdout="stable gate detail\n")
+
+    monkeypatch.setattr(mod.subprocess, "run", run_gate)
+    snapshots = []
+    for interpreter in ("/host-a/venv/python", "/host-b/venv/python"):
+        monkeypatch.setattr(mod, "sys", SimpleNamespace(executable=interpreter))
+        snapshots.append(mod._run_gate([interpreter, "scripts/example_gate.py", "--check"]))
+
+    assert calls == [
+        ["/host-a/venv/python", "scripts/example_gate.py", "--check"],
+        ["/host-b/venv/python", "scripts/example_gate.py", "--check"],
+    ]
+    assert snapshots[0] == snapshots[1]
+    assert snapshots[0] == {
+        "command": "python scripts/example_gate.py --check",
+        "status": "pass" if returncode == 0 else "fail",
+        "detail": ["stable gate detail"],
+    }

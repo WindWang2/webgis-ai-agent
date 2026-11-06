@@ -38,6 +38,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "总览"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,
@@ -171,6 +174,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "放大"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,

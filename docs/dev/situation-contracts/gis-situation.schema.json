@@ -11,6 +11,9 @@
         },
         "artifacts": {
           "$ref": "#/$defs/SitFact"
+        },
+        "selection_scope": {
+          "$ref": "#/$defs/SitFact"
         }
       },
       "required": [
@@ -195,6 +198,9 @@
           "$ref": "#/$defs/SitFact"
         },
         "layer_count": {
+          "$ref": "#/$defs/SitFact"
+        },
+        "layer_ids": {
           "$ref": "#/$defs/SitFact"
         },
         "sources": {

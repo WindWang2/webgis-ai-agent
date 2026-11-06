@@ -537,6 +537,12 @@ def _op_raster_window_operation(ctx: OperatorContext, node: "ExecutionNode", pay
             node_id=node.node_id,
         )
     params = node.parameters
+    from app.services.scoped_raster_paths import resolve_scoped_raster_path, scoped_raster_roots
+
+    roots = scoped_raster_roots(session_id=ctx.session_id)
+    raster_path = resolve_scoped_raster_path(str(raster_path), roots=roots)
+    if params.get("out_path"):
+        resolve_scoped_raster_path(str(params["out_path"]), roots=roots)
     if op == "raster_calculator":
         from app.lib.geo_analysis.raster_math import raster_calculator
 
@@ -544,6 +550,8 @@ def _op_raster_window_operation(ctx: OperatorContext, node: "ExecutionNode", pay
         if not expression:
             raise NodeExecutionError("raster_calculator requires parameters.expression", node_id=node.node_id)
         second = params.get("raster_path_b") or _raster_from_inputs(payloads, node, index=1)
+        if second:
+            second = resolve_scoped_raster_path(str(second), roots=roots)
         result = raster_calculator(
             raster_a=str(raster_path),
             raster_b=str(second) if second else None,
@@ -812,7 +820,7 @@ def execute_node(ctx: OperatorContext, node: ExecutionNode, payloads: dict[str, 
                 # raster tile：源路径经 node.parameters 注入（coordinator
                 # 在 fan-out 时把上游 raster_path 写进 tile 参数 —— 路径
                 # 字符串是既有的 raster 载荷通货），worker 侧裁剪 halo 窗口。
-                node = _prepare_raster_tile_node(node, part, payloads)
+                node = _prepare_raster_tile_node(node, part, payloads, session_id=ctx.session_id or "")
             payloads, tile_empty = _apply_partition_slice(payloads, part, node)
             if tile_empty:
                 # 空格网 cell 是合法分区（该 cell 无数据）—— 跳过算子直接
@@ -847,6 +855,7 @@ def _prepare_raster_tile_node(
     node: ExecutionNode,
     part: dict[str, Any],
     payloads: dict[str, NodePayload],
+    *, session_id: Optional[str] = None,
 ) -> ExecutionNode:
     """raster tile 的源路径 → 裁剪后 tile 路径（返回参数重写后的节点副本）。
 
@@ -878,6 +887,12 @@ def _prepare_raster_tile_node(
     base, ext = _os.path.splitext(str(src_path))
     tile_path = "{}.tile{}{}".format(base, int(part.get("index", 0)),
                                      ext or ".tif")
+    if session_id is not None:
+        from app.services.scoped_raster_paths import resolve_scoped_raster_path, scoped_raster_roots
+
+        roots = scoped_raster_roots(session_id=session_id)
+        src_path = resolve_scoped_raster_path(str(src_path), roots=roots)
+        tile_path = resolve_scoped_raster_path(tile_path, roots=roots)
     result = crop_raster_window(src_path, dict(part["window"]), tile_path)
     params = {k: v for k, v in node.parameters.items()
               if k not in ("raster_path", "raster_path_b")}

@@ -29,7 +29,16 @@
     "view2DTitle": "视角: 2D (点击切换 3D)",
     "uiTweaks": "UI 调整",
     "settings": "设置",
-    "moreActions": "更多操作"
+    "moreActions": "更多操作",
+    "requestLocation": "请求当前位置",
+    "locationLoading": "正在获取位置…",
+    "locationRetry": "重试定位",
+    "locationErrors": {
+      "unsupported": "当前浏览器不支持定位。",
+      "denied": "定位权限被拒绝。请在浏览器设置中允许定位后重试。",
+      "unavailable": "暂时无法获取位置，请重试。",
+      "timeout": "获取位置超时，请重试。"
+    }
   },
   "tabs": {
     "chat": "对话",

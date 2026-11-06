@@ -105,7 +105,7 @@ class CompositionAssetConflictError(CompositionAssetError):
 
 def _caller_project_ids(db: Any, user_id: Optional[str],
                         org_id: Any) -> List[str]:
-    """调用者可见的项目 id（属主或同 org 项目；有界 64）。"""
+    """调用者可见的完整项目 id（属主或同 org 项目；授权集合不得截断）。"""
     if user_id is None:
         return []
     from app.models.project import Project
@@ -113,7 +113,7 @@ def _caller_project_ids(db: Any, user_id: Optional[str],
     if org_id is not None:
         clauses.append(Project.org_id == org_id)
     rows = db.execute(
-        select(Project.id).where(or_(*clauses)).limit(64)
+        select(Project.id).where(or_(*clauses))
     ).scalars().all()
     return [str(r) for r in rows]
 
@@ -273,7 +273,7 @@ def _new_version(
         raise CompositionAssetConflictError(
             f"concurrent revision creation for asset '{asset.id}'")
     asset.latest_revision = next_revision
-    db.commit()
+    db.flush()
     return row
 
 
@@ -336,9 +336,13 @@ def create_asset(
     db.add(asset)
     db.flush()
     version = _new_version(db, asset, payload, created_by=creator_id)
-    if publish:
-        version = _publish_checked(asset, version)
+    try:
+        if publish:
+            version = _publish_checked(asset, version)
         db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return asset, version
 
 
@@ -395,9 +399,13 @@ def new_version(
         raise CompositionAssetError(
             "asset_payload_error", str(exc)[:160]) from exc
     version = _new_version(db, asset, payload, created_by=user_id)
-    if publish:
-        version = _publish_checked(asset, version)
+    try:
+        if publish:
+            version = _publish_checked(asset, version)
         db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return version
 
 
@@ -438,9 +446,13 @@ def restore_revision(
     source = _require_version(db, asset_id, int(from_revision))
     version = _new_version(
         db, asset, source_payload=source.payload, created_by=user_id)
-    if publish:
-        version = _publish_checked(asset, version)
+    try:
+        if publish:
+            version = _publish_checked(asset, version)
         db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return version
 
 
@@ -638,9 +650,13 @@ def resolve_replay_template(
     manifest 的 requiredness 诚实降级 not_evaluated，不静默、不越权）。
     """
     try:
+        projects = _caller_project_ids(db, user_id, org_id)
+        if revision is None:
+            asset = _get_asset_or_404(db, asset_id, user_id, org_id, role, projects)
+            revision = int(asset.current_revision or 0) or None
         resolved = resolve_asset_for(
             db, asset_id, revision, mode="for_replay",
-            user_id=user_id, org_id=org_id, role=role)
+            user_id=user_id, org_id=org_id, role=role, project_ids=projects)
         return resolved.template
     except CompositionAssetError:
         return None
@@ -661,7 +677,11 @@ def list_assets(
     """调用者可见的 DB 资产（有界；含最新版本指纹）。"""
     project_ids = _caller_project_ids(db, user_id, org_id)
     scope = asset_scope_clause(user_id, org_id, role, project_ids)
-    stmt = select(CompositionTemplateAsset)
+    stmt = select(CompositionTemplateAsset, CompositionTemplateAssetVersion).outerjoin(
+        CompositionTemplateAssetVersion,
+        (CompositionTemplateAssetVersion.asset_id == CompositionTemplateAsset.id)
+        & (CompositionTemplateAssetVersion.revision == CompositionTemplateAsset.latest_revision),
+    )
     if scope is not None:
         stmt = stmt.where(scope)
     if not include_retired:
@@ -671,9 +691,7 @@ def list_assets(
         CompositionTemplateAsset.id,
     ).limit(max(1, min(int(limit), MAX_LIST_ASSETS)))
     out: List[Dict[str, Any]] = []
-    for asset in db.execute(stmt).scalars().all():
-        version = _require_version(db, asset.id, None) \
-            if asset.latest_revision else None
+    for asset, version in db.execute(stmt).all():
         out.append({
             "asset_id": asset.id,
             "name": asset.name,
@@ -755,7 +773,7 @@ def derive_payload_from_spec(spec: Dict[str, Any]) -> TemplateAssetPayload:
             base = candidate
 
     derived_slots: List[Dict[str, Any]] = []
-    seen_slot_ids = set()
+    seen_slot_ids: set[str] = set()
     for comp in raw_components[:_MAX_DERIVED_SLOTS]:
         ctype = str(comp.get("type") or "")
         if not ctype:
@@ -763,7 +781,7 @@ def derive_payload_from_spec(spec: Dict[str, Any]) -> TemplateAssetPayload:
         # 派生 slot id 优先解析到 base 槽位（实例 id 与槽位 id 不同名：
         # 实例 id 走 INSTANCE_ID_BY_TYPE 约定如 legend→legend-main）。
         # 解析不到 → 用组件自身 slot 身份（组件 id/类型）承载。
-        slot_id = _resolve_slot_id(comp, base, ctype)
+        slot_id = _resolve_slot_id(comp, base, ctype, seen_slot_ids)
         if slot_id in seen_slot_ids:
             continue
         seen_slot_ids.add(slot_id)
@@ -816,7 +834,8 @@ def derive_payload_from_spec(spec: Dict[str, Any]) -> TemplateAssetPayload:
     return _inline_payload_from_slots(derived_slots)
 
 
-def _resolve_slot_id(comp: Dict[str, Any], base: Any, ctype: str) -> str:
+def _resolve_slot_id(comp: Dict[str, Any], base: Any, ctype: str,
+                     used: Optional[set[str]] = None) -> str:
     """组件实例 → 基底模板槽位 id（类型匹配首个允许该类型的槽位）。
 
     匹配不到的实例 → 自身 id（承载用户新增组件；上层 unresolved 逻辑
@@ -825,9 +844,15 @@ def _resolve_slot_id(comp: Dict[str, Any], base: Any, ctype: str) -> str:
     """
     if base is not None:
         for slot in base.component_slots:
-            if ctype in (slot.allowed_component_types or []):
+            if ctype in (slot.allowed_component_types or []) and slot.id not in (used or set()):
                 return slot.id
-    return str(comp.get("id") or ctype)[:32]
+    candidate = str(comp.get("id") or ctype)[:32]
+    counter = len(used or set())
+    stem = candidate[:24]
+    while candidate in (used or set()):
+        candidate = f"{stem}-{counter}"
+        counter += 1
+    return candidate
 
 
 def _inline_payload_from_slots(

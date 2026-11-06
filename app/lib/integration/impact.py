@@ -310,7 +310,7 @@ def select_tests(
         target = map_directory_target(rel, root)
         if target is None:
             continue
-        if (root / target).is_dir():
+        if (root / target).is_dir() or (target.startswith('tests/') and (root / target).is_file()):
             mapped_targets.add(target)
         else:
             result.uncovered.append(rel)
@@ -323,19 +323,22 @@ def select_tests(
 
     for rel in app_changed:
         mapped = map_directory_target(rel, root)
-        mapped_ok = bool(mapped) and (root / mapped).is_dir()
+        mapped_ok = mapped is not None and (root / mapped).is_dir()
         if not _import_covered(rel) and not mapped_ok:
             result.uncovered.append(rel)
 
     result.via_import = sorted(imported_targets)
     result.via_mapping = sorted(mapped_targets - imported_targets)
-    merged = sorted(imported_targets | mapped_targets)
+    # Preserve coarse safety mappings before optional fine-grained import
+    # hits consume the bounded target budget on a large integration branch.
+    directories = {target for target in mapped_targets if (root / target).is_dir()}
+    merged = sorted(directories) + sorted((imported_targets | mapped_targets) - directories)
     if len(merged) > max_targets:
         result.warnings.append(
             f"目标数 {len(merged)} 超过上限 {max_targets}，显式截断"
             "（不静默；提高 max_targets 或缩小变更集）")
         merged = merged[:max_targets]
         result.truncated = True
-    result.targets = merged
+    result.targets = sorted(merged)
     result.uncovered = sorted(set(result.uncovered))
     return result

@@ -1,3 +1,4 @@
+import { evaluateFilterBounded, isSupportedFilter } from '../layers/filter-evidence';
 /**
  * MapSpec-to-SVG Compiler Target
  *
@@ -31,11 +32,12 @@ export interface MapSpecToSvgOptions {
 }
 
 import { computeOversampleBoost, resolveOversampledTileGrid, mercY } from "../map-kit/oversample";
-import { wrapLabelMultilingual } from "@/lib/label-geometry";
+import { wrapLabelMultilingual, type Box } from "@/lib/label-geometry";
 import {
   estimateLabelBox,
   fitLabel,
   MAX_LABELS_PER_EXPORT,
+  MAX_OBSTACLES_PER_SOLVE,
   solveExportLabels,
 } from "./label-solver";
 
@@ -120,6 +122,39 @@ function lineRepeatAnchors(
   }
   positions.sort((a, b) => a - b);
   return positions.map((s) => anchorAt(s));
+}
+
+/** W2.2（ADR-0283 D3）：层的显式标注字段引用 —— text-field 花括号
+ *  pattern（symbol/text 层；缺省 {name} 非显式、非花括号 = 字面文本）
+ *  + label.field 策略声明；保序去重。与 Python
+ *  label_field_guard._explicit_label_fields 逐分支孪生。 */
+function explicitLabelFields(layer: {
+  type?: string;
+  layout?: Record<string, unknown>;
+  paint?: Record<string, unknown>;
+  label?: Record<string, unknown>;
+}): string[] {
+  const candidates: string[] = [];
+  if (layer.type === "symbol" || layer.type === "text") {
+    for (const cfg of [layer.layout ?? {}, layer.paint ?? {}]) {
+      const tf = cfg["text-field"];
+      if (typeof tf === "string") {
+        const pattern = tf.trim();
+        if (pattern.startsWith("{") && pattern.endsWith("}") && pattern.length >= 2) {
+          const fname = pattern.slice(1, -1).trim();
+          if (fname) candidates.push(fname);
+        }
+      }
+    }
+  }
+  const labelCfg = layer.label;
+  if (
+    labelCfg && typeof labelCfg === "object" &&
+    typeof labelCfg.field === "string" && labelCfg.field.trim()
+  ) {
+    candidates.push(labelCfg.field.trim());
+  }
+  return [...new Set(candidates)];
 }
 
 /**
@@ -230,6 +265,7 @@ const MAPLIBRE_EXPR_OPS = new Set([
   "step",
   "match",
   "literal",
+  "case",
 ]);
 
 /** Compile-time zoom used to evaluate MapLibre interpolate arrays (#1385 F04). */
@@ -239,7 +275,15 @@ function expressionInput(
   input: unknown,
   props: Record<string, any> | undefined,
   zoom: number,
+  depth = 0,
 ): number | string | undefined {
+  if (depth > 16) return undefined;
+  if (Array.isArray(input) && ['to-number', 'to-string', 'coalesce'].includes(input[0])) {
+    const values = input.slice(1).map((value) => expressionInput(value, props, zoom, depth + 1));
+    if (input[0] === 'to-string') return values[0] === undefined ? undefined : String(values[0]);
+    if (input[0] === 'to-number') return values.map(Number).find(Number.isFinite);
+    return values.find((value) => value !== undefined);
+  }
   if (input === "zoom" || (Array.isArray(input) && input[0] === "zoom")) return zoom;
   if (Array.isArray(input) && input[0] === "get" && typeof input[1] === "string") {
     return props?.[input[1]] as number | string | undefined;
@@ -255,6 +299,10 @@ function evaluateMapLibreExpression(
   fallback: unknown,
 ): unknown {
   const op = val[0];
+  if (op === 'case') {
+    for (let i = 1; i + 1 < val.length; i += 2) if (evaluateFilterBounded(val[i], { properties: props ?? {} }) === true) return val[i + 1];
+    return val[val.length - 1] ?? fallback;
+  }
   if (op === "literal") return val[1] !== undefined ? val[1] : fallback;
   if (op === "interpolate" || op === "interpolate-hcl" || op === "interpolate-lab") {
     const inputVal = Number(expressionInput(val[2], props, zoom));
@@ -293,7 +341,7 @@ function evaluateMapLibreExpression(
     const inputVal = expressionInput(val[1], props, zoom);
     for (let i = 2; i + 1 < val.length - 1; i += 2) {
       const label = val[i];
-      if (inputVal === label || String(inputVal) === String(label)) return val[i + 1];
+      if ((Array.isArray(label) ? label : [label]).some((item) => inputVal === item || String(inputVal) === String(item))) return val[i + 1];
     }
     return val.length >= 3 ? val[val.length - 1] : fallback;
   }
@@ -448,6 +496,31 @@ export function resolvePaintValue(
   return spec.value !== undefined ? spec.value : fallback;
 }
 
+function validGeographicCoordinates(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  if (typeof value[0] === 'number') return value.length >= 2 && Number.isFinite(value[0]) && Number.isFinite(value[1]) && Math.abs(value[0]) <= 180 && Math.abs(value[1]) <= 90;
+  return value.every(validGeographicCoordinates);
+}
+
+function resolveLabelText(value: unknown, properties: Record<string, unknown>, depth = 0): string | undefined {
+  if (depth > 16) return undefined;
+  if (typeof value === 'string') return value.replace(/\{([^{}]+)\}/g, (_, key: string) => String(properties[key] ?? ''));
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (!Array.isArray(value)) return undefined;
+  const [op, ...args] = value;
+  if (op === 'get' && typeof args[0] === 'string') {
+    const found = properties[args[0]];
+    return typeof found === 'string' || typeof found === 'number' || typeof found === 'boolean' ? String(found) : undefined;
+  }
+  if (op === 'to-string' || op === 'literal') return resolveLabelText(args[0], properties, depth + 1);
+  if (op === 'coalesce') return args.map((arg) => resolveLabelText(arg, properties, depth + 1)).find((text) => text !== undefined);
+  if (op === 'concat' || op === 'format') {
+    const parts = (op === 'format' ? args.filter((_, index) => index % 2 === 0) : args).map((arg) => resolveLabelText(arg, properties, depth + 1));
+    return parts.some((part) => part === undefined) ? undefined : parts.join('');
+  }
+  return undefined;
+}
+
 export function compileMapSpecToSvg(
   mapspec: any,
   options: MapSpecToSvgOptions = {}
@@ -482,6 +555,12 @@ function compileMapSpecToSvgBody(
       ? Math.min(Math.floor(specMaxLabels), MAX_LABELS_PER_EXPORT)
       : MAX_LABELS_PER_EXPORT;
   const labelRequests: Array<any> = [];
+  // W2.1（ADR-0283 D3）：点符号图元障碍盒（circle 层；AABB，中心即锚点，
+  // 边长 = 2×(radius + stroke/2)）。每层采样前 200 个点（与求解侧
+  // MAX_OBSTACLES_PER_SOLVE 同值；line/polygon 图元障碍为后续波次）。
+  // Cross-layer circle symbols include the label's own point: every candidate
+  // must avoid their visible ink. Exhaustion suppresses with collision disclosure.
+  const glyphObstacles: Box[] = [];
 
   const scaledWidth = width * dpiScale;
   const scaledHeight = height * dpiScale;
@@ -494,7 +573,14 @@ function compileMapSpecToSvgBody(
     maxY = -Infinity;
 
   const sources = mapspec?.sources || {};
-  Object.values(sources).forEach((src: unknown) => {
+  const renderedSourceIds = new Set((mapspec.layers ?? []).filter((layer: Parameters<typeof resolveLayerVisibility>[0]) => {
+    const visibility = resolveLayerVisibility(layer);
+    if (visibility.visibility === 'none') return false;
+    return (visibility.gate.minzoom === undefined || activeExportZoom >= visibility.gate.minzoom)
+      && (visibility.gate.maxzoom === undefined || activeExportZoom < visibility.gate.maxzoom);
+  }).map((layer: { source?: string }) => layer.source));
+  Object.entries(sources).forEach(([sourceId, src]: [string, unknown]) => {
+    if (!renderedSourceIds.has(sourceId)) return;
     const rec = src as { inlineData?: { type?: string; features?: unknown[] }; data?: { type?: string; features?: unknown[] } } | undefined;
     const geojson = rec?.inlineData ?? rec?.data;
     if (!geojson) return;
@@ -511,7 +597,7 @@ function compileMapSpecToSvgBody(
           typeof c[0] === "number" &&
           typeof c[1] === "number" &&
           Number.isFinite(c[0]) &&
-          Number.isFinite(c[1])
+          Number.isFinite(c[1]) && Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90
         ) {
           minX = Math.min(minX, c[0]);
           maxX = Math.max(maxX, c[0]);
@@ -566,11 +652,77 @@ function compileMapSpecToSvgBody(
 
   // 2. Render Layers to SVG paths
   let elementsSvg = "";
-  const layers = mapspec?.layers || [];
+  const layers = (mapspec?.layers || []).flatMap((layer: { id: string; type: string; layout?: Record<string, unknown>; label?: { field?: string; size?: number; color?: string; haloColor?: string; haloWidth?: number } }) => {
+    if (!layer.label?.field || ['raster', 'heatmap', 'background', 'hillshade', 'symbol', 'text'].includes(layer.type)) return [layer];
+    const label = layer.label;
+    return [layer, { ...layer, id: `${layer.id}-label`, type: 'symbol',
+      layout: { ...layer.layout, 'text-field': ['get', label.field], 'text-size': label.size ?? 12 },
+      paint: { 'text-color': label.color ?? '#000000', 'text-halo-color': label.haloColor ?? '#ffffff', 'text-halo-width': label.haloWidth ?? 1 },
+    }];
+  });
+
+  const invalidCoordinatesDiagnosed = new Set<string>();
+  // W2.2（ADR-0283 D3）：显式标注字段缺失守卫（label_field_missing；与
+  // Python label_field_guard.check_label_fields 孪生）。内联源字段集 =
+  // 前 1000 要素属性键并集（确定性）；ref/瓦片源不可评估 → 诚实跳过。
+  // 显式字段缺失时不以 name/label 替代；守卫补"缺失必须披露"。
+  const guardFieldCache = new Map<string, Set<string> | null>();
+  const sourceFieldsForGuard = (sourceId: string): Set<string> | null => {
+    if (!guardFieldCache.has(sourceId)) {
+      const srcEntry = sources[sourceId] as
+        | { inlineData?: { type?: string; features?: unknown[] }; data?: { type?: string; features?: unknown[] } }
+        | undefined;
+      const srcData = srcEntry?.inlineData ?? srcEntry?.data;
+      let fields: Set<string> | null = null;
+      // R9 P3-2：非对象/数组形态的 inlineData → null（诚实跳过，与 Python
+      // inline_source_field_set 的 dict 判定同语义）—— 此前数组落入
+      // [srcData] 单要素路径产出**空集**，畸形输入下误报 label_field_missing。
+      if (srcData && typeof srcData === "object" && !Array.isArray(srcData)) {
+        const feats: unknown[] =
+          srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
+        if (feats.length > 1000) {
+          guardFieldCache.set(sourceId, null); // Partial samples cannot prove field absence.
+          return null;
+        }
+        fields = new Set<string>();
+        for (const f of feats.slice(0, 1000)) {
+          const p = (f as { properties?: Record<string, unknown> | null } | null)?.properties;
+          if (p && typeof p === "object") {
+            for (const k of Object.keys(p)) fields.add(k);
+          }
+        }
+      }
+      guardFieldCache.set(sourceId, fields);
+    }
+    return guardFieldCache.get(sourceId) ?? null;
+  };
+  for (const rawLayer of mapspec?.layers || []) {
+    const guardLayer = rawLayer as {
+      type?: string; source?: string; id?: string;
+      layout?: Record<string, unknown>; paint?: Record<string, unknown>;
+      label?: Record<string, unknown>;
+    };
+    const guardSrcId = guardLayer.source;
+    if (typeof guardSrcId !== "string" || !guardSrcId) continue;
+    const explicit = explicitLabelFields(guardLayer);
+    if (explicit.length === 0) continue;
+    const fields = sourceFieldsForGuard(guardSrcId);
+    if (!fields) continue;
+    for (const fname of explicit) {
+      if (!fields.has(fname)) {
+        options.onDiagnostic?.(
+          "label_field_missing",
+          `layer=${guardLayer.id} field=${fname}`,
+        );
+      }
+    }
+  }
 
   layers.forEach((rawLayer: unknown) => {
-    const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string; visibility?: unknown; representation?: unknown };
+    const layer = rawLayer as { type?: string; paint?: Record<string, unknown>; source?: string; layout?: Record<string, unknown>; id?: string; visibility?: unknown; representation?: unknown; filter?: unknown };
     let layerType = layer.type || "circle";
+    // W2.1：本层图元障碍采样计数（每层最多取前 200 个点符号）。
+    let layerGlyphObsN = 0;
 
     // v1.6（方向 5 / C6）：导出 = 固定 zoom 的一次裁决 —— 显隐/结构 zoom
     // 门/表达窗口在 export zoom 处求值（与 live 同一 carto-ir resolver；
@@ -687,6 +839,12 @@ function compileMapSpecToSvgBody(
       options.onDiagnostic?.("layer_ref_unavailable", String(layer.id ?? ""));
       return;
     }
+    if (layer.filter && !isSupportedFilter(layer.filter)) {
+      options.onDiagnostic?.('layer_filter_unsupported', String(layer.id ?? ''));
+      return;
+    }
+    if (layerType === 'heatmap') options.onDiagnostic?.('layer_approximated_heatmap', `layer=${layer.id}`);
+    if (layerType === 'fill-extrusion') options.onDiagnostic?.('layer_approximated_extrusion', `layer=${layer.id}`);
     const features: unknown[] = srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
 
     features.forEach((rawFeat: unknown) => {
@@ -694,8 +852,14 @@ function compileMapSpecToSvgBody(
         geometry?: { type?: string; coordinates?: any };
         properties?: Record<string, any>;
       } | null;
+      if (layer.filter && (!feat || evaluateFilterBounded(layer.filter, feat) !== true)) return;
       const geom = feat?.geometry;
       if (!geom) return;
+      if (!validGeographicCoordinates(geom.coordinates)) {
+        const id = String(layer.id ?? '');
+        if (!invalidCoordinatesDiagnosed.has(id)) { invalidCoordinatesDiagnosed.add(id); options.onDiagnostic?.('layer_coordinates_invalid', id); }
+        return;
+      }
       const props = feat?.properties || {};
 
       if (layerType === "circle" && geom.type === "Point") {
@@ -715,6 +879,18 @@ function compileMapSpecToSvgBody(
         }
 
         elementsSvg += `<circle cx="${x}" cy="${y}" r="${radius}" fill="${color}" fill-opacity="${opacity}"${strokeAttr} />\n`;
+
+        // W2.1（ADR-0283 D3）：circle 点符号 → 图元障碍盒（外扩 =
+        // radius + stroke/2；project 返回 fmtNum 字符串，数值用途转
+        // Number）。仅 collision 模式收集（legacy 路径零开销）。
+        if (collisionMode && layerGlyphObsN < MAX_OBSTACLES_PER_SOLVE) {
+          const obsExt =
+            baseRadius * dpiScale + (baseStrokeWidth > 0 ? baseStrokeWidth * dpiScale / 2 : 0);
+          const gx = Number(x);
+          const gy = Number(y);
+          glyphObstacles.push([gx - obsExt, gy - obsExt, gx + obsExt, gy + obsExt]);
+          layerGlyphObsN += 1;
+        }
       } else if (layerType === "line" && (geom.type === "LineString" || geom.type === "MultiLineString")) {
         const layout = layer.layout || {};
         const lines = geom.type === "LineString" ? [geom.coordinates] : geom.coordinates;
@@ -761,7 +937,7 @@ function compileMapSpecToSvgBody(
         if (layerType === "fill-extrusion") {
           // 3D 透视压平为平面 fill —— 逐层近似诊断（与产物内
           // data-export-degraded 标记同义，供 content="mixed" 判定）。
-          options.onDiagnostic?.("layer_approximated_extrusion", `layer=${layer.id}`);
+
         }
         const polygons = geom.type === "Polygon" ? [geom.coordinates] : geom.coordinates;
         const defaultColor = layerType === "fill-extrusion" ? "#94a3b8" : "#60a5fa";
@@ -792,7 +968,7 @@ function compileMapSpecToSvgBody(
       } else if (layerType === "heatmap") {
         // 核密度以半透明圆近似（无 kernel 权重）—— 逐层近似诊断，
         // 导出面据此置 data-export-content="mixed"（不静默近似）。
-        options.onDiagnostic?.("layer_approximated_heatmap", `layer=${layer.id}`);
+
         const pts: [number, number][] = [];
         if (geom.type === "Point" && Array.isArray(geom.coordinates)) {
           pts.push(geom.coordinates as [number, number]);
@@ -816,9 +992,9 @@ function compileMapSpecToSvgBody(
         });
       } else if (layerType === "symbol" || layerType === "text") {
         const layout = layer.layout || {};
-        const textFieldPattern = String(layout["text-field"] ?? paint["text-field"] ?? "{name}");
-        const fieldName = textFieldPattern.replace(/^\{|\}$/g, "");
-        const rawText = props?.[fieldName] ?? props?.name ?? props?.label ?? (textFieldPattern.startsWith("{") ? "" : textFieldPattern);
+        const textFieldPattern = layout['text-field'] ?? paint['text-field'] ?? '{name}';
+        const rawText = resolveLabelText(textFieldPattern, props);
+        if (rawText === undefined) options.onDiagnostic?.('label_expression_unsupported', String(layer.id ?? ''));
         if (!rawText) return;
 
         let coord: [number, number] | undefined;
@@ -1032,6 +1208,7 @@ function compileMapSpecToSvgBody(
       })),
       [0, 0, scaledWidth, scaledHeight],
       labelBudget,
+      glyphObstacles.length > 0 ? glyphObstacles : undefined,
     );
     const byId = new Map(labelRequests.map((r) => [r.id, r]));
     const parts: string[] = [];
@@ -1080,13 +1257,16 @@ function compileMapSpecToSvgBody(
       );
     }
     if (solution.stats.suppressed > 0) {
+      // W2.1：障碍在场时 detail 追加 obstacles 计数（复用既有码；无障碍
+      // 路径 detail 保持 byte-stable）。
+      const obsNote = glyphObstacles.length > 0 ? ` obstacles=${glyphObstacles.length}` : "";
       options.onDiagnostic?.(
         "label_collision_relaxed",
-        `placed=${solution.stats.placed} suppressed=${solution.stats.suppressed}`,
+        `placed=${solution.stats.placed} suppressed=${solution.stats.suppressed}${obsNote}`,
       );
     }
     if (solution.budgetExceeded) {
-      options.onDiagnostic?.("label_budget_exceeded", String(MAX_LABELS_PER_EXPORT));
+      options.onDiagnostic?.("label_budget_exceeded", String(labelBudget));
     }
     if (parts.length > 0) {
       labelsGroup = `  <g class="mapspec-labels">\n    ${parts.join("\n    ")}\n  </g>\n`;

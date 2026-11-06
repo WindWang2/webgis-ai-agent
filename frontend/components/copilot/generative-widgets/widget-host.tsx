@@ -57,7 +57,7 @@ function WidgetCard({ spec }: { spec: WidgetSpec }) {
           ×
         </button>
       </header>
-      {Body ? <Body spec={spec} /> : null}
+      {Body ? <Body spec={spec} onReply={() => dismissCopilotWidget(spec.widget_id)} /> : null}
     </div>
   );
 }

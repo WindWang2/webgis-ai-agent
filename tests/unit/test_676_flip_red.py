@@ -187,7 +187,7 @@ async def test_composite_success_commits_and_has_real_inlineData(registry):
         "layer": {"id": "default_layer", "source": "source_default_layer", "type": "fill", "paint": {}, "legend_spec": {"type": "graduated", "field": "population"}},
     }
     with mock.patch("app.services.mapspec_store.mapspec_store.layer_upsert", new=mock.AsyncMock(return_value=mock_res)) as mock_upsert:
-        result = await registry.dispatch("apply_template", {"template_id": "composite_population_density_analysis", "field": "population", "geojson": SAMPLE_GEOJSON, "session_id": "sess-test-123", "layer_id": "default_layer"})
+        result = await registry.dispatch("apply_template", {"template_id": "composite_population_density_analysis", "field": "population", "geojson": SAMPLE_GEOJSON, "session_id": "sess-test-123", "layer_id": "default_layer"}, "sess-test-123")
         assert result.get("status") == "composite_applied", f"should be composite_applied: {result}"
         assert "error" not in result
         assert "geojson" not in result, f"top-level geojson echo should be removed: {list(result.keys())}"
@@ -250,7 +250,7 @@ async def test_apply_composite_committed_true_symmetry(registry):
         "layer": {"id": "x", "source": "source_x", "type": "fill", "paint": {}},
     }
     with mock.patch("app.services.mapspec_store.mapspec_store.layer_upsert", new=mock.AsyncMock(return_value=mock_res)):
-        result = await registry.dispatch("apply_template", {"template_id": "composite_vegetation_health", "field": "population", "geojson": SAMPLE_GEOJSON, "session_id": "sess-sym-1", "layer_id": "x"})
+        result = await registry.dispatch("apply_template", {"template_id": "composite_vegetation_health", "field": "population", "geojson": SAMPLE_GEOJSON, "session_id": "sess-sym-1", "layer_id": "x"}, "sess-sym-1")
         assert result.get("committed") is True
 
 
@@ -362,7 +362,7 @@ async def test_combine_map_theme_dispatch_accepts_geojson(registry):
             "preset": "academic_research",
             "geojson": SAMPLE_GEOJSON,
             "session_id": "sess-dispatch-combine",
-        })
+        }, "sess-dispatch-combine")
         assert result.get("code") != "VALIDATION_ERROR", f"dispatch 不应拒绝 geojson 参数: {result}"
         assert "error" not in result, f"composite 预设应进入提交分支: {result}"
         assert result.get("status") == "composite_applied", f"应经 mapspec_store 提交: {result}"
@@ -385,7 +385,7 @@ async def test_webgis_map_combine_dispatch_accepts_geojson(registry):
             "preset": "academic_research",
             "geojson": SAMPLE_GEOJSON,
             "session_id": "sess-dispatch-alias",
-        })
+        }, "sess-dispatch-alias")
         assert result.get("code") != "VALIDATION_ERROR", f"别名工具同样不应拒绝 geojson: {result}"
         assert "error" not in result, f"webgis_map_combine 应进入提交分支: {result}"
         assert result.get("committed") is True, f"webgis_map_combine 应 committed: {result}"

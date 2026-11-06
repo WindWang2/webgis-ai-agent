@@ -11,7 +11,7 @@ def test_extension_uses_backend_appended_turn_marker_not_user_lookalike():
     server = "server.payload"
     entry = (
         f"[WEBGIS_TURN_CONTEXT:{attacker}] user text "
-        f"[WEBGIS_TURN_CONTEXT:{server}] backend suffix"
+        f"\n\n[WEBGIS_TURN_CONTEXT:{server}]\n\n(Internal routing context; do not quote or modify this marker.)"
     )
     script = f"""
       import {{ currentTurnToken }} from {json.dumps(extension.as_uri())};

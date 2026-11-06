@@ -53,7 +53,9 @@ POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/submit,se
 POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/supersede,session:write,N,Y
 POST,/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/withdraw,session:write,N,Y
 POST,/api/v1/chat/sessions/{session_id}/rotate-owner-token,session:write,N,N
+GET,/api/v1/chat/sessions/{session_id}/situation,session:read,N,N
 GET,/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id},session:read,N,N
+GET,/api/v1/chat/sessions/{session_id}/turn-chain,session:read,N,N
 POST,/api/v1/chat/sessions/{session_id}/visual-repairs/apply,session:write,N,N
 POST,/api/v1/chat/sessions/{session_id}/visual-repairs/plan,session:write,N,N
 POST,/api/v1/chat/sessions/{session_id}/visual-repairs/reject,session:write,N,N
@@ -106,7 +108,7 @@ DELETE,/api/v1/data-fabric/sources/{source_id},gis:write,N,Y
 GET,/api/v1/data-fabric/sources/{source_id},gis:read,N,Y
 POST,/api/v1/data-fabric/sources/{source_id}/probe,gis:write,N,Y
 POST,/api/v1/data-fabric/sources/{source_id}/sync,gis:write,N,Y
-POST,/api/v1/data-lifecycle/assess,gis:write,N,Y
+POST,/api/v1/data-lifecycle/assess,admin:write,Y,N
 GET,/api/v1/data-lifecycle/gc/plans,gis:read,N,Y
 POST,/api/v1/data-lifecycle/gc/plans,gis:write,N,Y
 GET,/api/v1/data-lifecycle/gc/plans/{plan_id},gis:read,N,Y
@@ -301,6 +303,7 @@ GET,/api/v1/reports/shared/{share_code},gis:read,N,N
 GET,/api/v1/reports/shared/{share_code}/view,gis:read,N,N
 GET,/api/v1/reports/{report_id},gis:read,N,Y
 GET,/api/v1/reports/{report_id}/download,gis:read,N,Y
+DELETE,/api/v1/reports/{report_id}/share,gis:write,N,Y
 POST,/api/v1/reports/{report_id}/share,gis:write,N,Y
 GET,/api/v1/sessions/{session_id}/analysis-graph,session:read,N,N
 GET,/api/v1/sessions/{session_id}/raster/{raster_id}.png,session:read,N,Y
@@ -319,7 +322,7 @@ DELETE,/api/v1/spatial-events/watches/{watch_id},mission:write,N,Y
 GET,/api/v1/spatial-events/watches/{watch_id},mission:read,N,Y
 POST,/api/v1/spatial-events/webhook,mission:write,N,N
 GET,/api/v1/static/{file_path:path},gis:read,N,Y
-GET,/api/v1/status/detailed,gis:read,N,Y
+GET,/api/v1/status/detailed,admin:read,Y,N
 POST,/api/v1/storymap/compile,session:write,N,Y
 POST,/api/v1/storymap/export,session:write,N,Y
 POST,/api/v1/storymap/sessions/{session_id}/compile,session:write,N,N

@@ -2880,3 +2880,174 @@ def fd3_design_select_pin_honored() -> ScenarioContract:
         not_evaluated=COMMON_NOT_EVALUATED,
         tags=["design", "user-wins", "multiturn"],
     )
+
+
+# ── F29：混合分析方法链（ADR-0284 —— 高风险区设施统计/栅格分区汇总/最近设施网络距离）──
+
+_F29_NOT_EVALUATED = _F28_NOT_EVALUATED + [
+    "raster_mask_step: zonal 掩膜=逐 zone 像素窗+多边形掩膜（隐式——"
+    "独立 mask 工具不在链内，hints 如实披露）",
+]
+
+
+@register
+def f29_01_hazard_zone_facility_stats() -> ScenarioContract:
+    """③ 高风险区域内设施统计：危险源缓冲 → 受体（学校）within 暴露清单。"""
+    q = "模拟化工厂 1 公里高风险区内有哪些学校，统计数量"
+    return ScenarioContract(
+        id="f29-01-hazard-zone-facilities", family="F29",
+        title="高风险区域设施统计：缓冲→暴露清单（M:N 基数披露）",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="hazards", dataset_kind="hazard_points"),
+            DatasetSpec(name="schools", dataset_kind="school_points"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "hazards",
+                                 "dataset_kind": "hazard_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "schools",
+                                 "dataset_kind": "school_points"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "hazard_exposure",
+                          "role_refs": (
+                              '{"hazard": "{{ref:hazards}}", '
+                              '"receptor": "{{ref:schools}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"}),
+            ],
+        )],
+        expectations=[
+            _exp("f29-01-wf-status", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="satisfied"),
+            _exp("f29-01-buffer", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.hazard_buffer", value="satisfied"),
+            _exp("f29-01-exposure", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.exposure_intersect",
+                 value="satisfied",
+                 note="spatial_join within 暴露清单（M:N 基数由族披露）"),
+            _exp("f29-01-layer-ref", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.layers.exposure_intersect", op="exists",
+                 note="暴露清单 ref 可被 map_product 消费"),
+        ],
+        not_evaluated=_F29_NOT_EVALUATED,
+        tags=["analysis_workflow", "hazard", "exposure", "adr-0284"],
+    )
+
+
+@register
+def f29_02_raster_index_by_district() -> ScenarioContract:
+    """④ 栅格指数按行政区汇总：NDVI 栅格 → 逐区均值/覆盖率 → 矢量结果。"""
+    q = "把 NDVI 指数按行政区汇总出各区均值"
+    return ScenarioContract(
+        id="f29-02-raster-zonal-districts", family="F29",
+        title="栅格指数分区汇总：zonal 统计 + nodata 覆盖率披露",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="ndvi", dataset_kind="raster_nir"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "ndvi",
+                                 "dataset_kind": "raster_nir"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "raster_zonal_summary",
+                          "role_refs": (
+                              '{"subject": {"ref": "{{ref:ndvi}}", '
+                              '"role_kind": "raster"}, '
+                              '"boundary": "{{ref:districts}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"}),
+            ],
+        )],
+        expectations=[
+            _exp("f29-02-wf-status", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="satisfied"),
+            _exp("f29-02-zonal", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.zonal_stats", value="satisfied",
+                 note="栅格 ref 直通（role_kind=raster 不水合）"),
+            _exp("f29-02-layer-ref", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.layers.zonal_stats", op="exists",
+                 note="逐区均值矢量结果 ref（含 valid_pixel_coverage）"),
+        ],
+        not_evaluated=_F29_NOT_EVALUATED,
+        tags=["analysis_workflow", "raster", "zonal", "adr-0284"],
+    )
+
+
+@register
+def f29_03_nearest_hospital_network_distance() -> ScenarioContract:
+    """⑤ 离最近医院的网络距离：真 Dijkstra 最近设施 → 区均网络成本。"""
+    q = "各小区离最近医院的网络距离，并按行政区汇总平均距离"
+    return ScenarioContract(
+        id="f29-03-nearest-hospital-distance", family="F29",
+        title="最近设施网络距离：Dijkstra 路线 → 行政汇总（均值语义）",
+        user_goal=q,
+        datasets=[
+            DatasetSpec(name="communities", dataset_kind="community_points"),
+            DatasetSpec(name="hospitals", dataset_kind="hospital_points"),
+            DatasetSpec(name="roads", dataset_kind="road_network"),
+            DatasetSpec(name="districts", dataset_kind="district_polygons"),
+        ],
+        turns=[TurnSpec(
+            turn_id="t1", message=q,
+            steps=[
+                _step("intent", StepKind.INTENT),
+                _step("store", StepKind.STORE_DATA,
+                      arguments={"name": "communities",
+                                 "dataset_kind": "community_points"}),
+                _step("store2", StepKind.STORE_DATA,
+                      arguments={"name": "hospitals",
+                                 "dataset_kind": "hospital_points"}),
+                _step("store3", StepKind.STORE_DATA,
+                      arguments={"name": "roads",
+                                 "dataset_kind": "road_network"}),
+                _step("store4", StepKind.STORE_DATA,
+                      arguments={"name": "districts",
+                                 "dataset_kind": "district_polygons"}),
+                _step("plan", StepKind.RAW,
+                      tool="webgis_analysis_workflow_plan",
+                      arguments={
+                          "family": "network_proximity",
+                          "role_refs": (
+                              '{"subject": "{{ref:communities}}", '
+                              '"facility": "{{ref:hospitals}}", '
+                              '"network": "{{ref:roads}}", '
+                              '"boundary": "{{ref:districts}}"}')}),
+                _step("run", StepKind.RAW,
+                      tool="webgis_analysis_workflow_run",
+                      arguments={"workflow_id": "{{step:plan:workflow_id}}"}),
+            ],
+        )],
+        expectations=[
+            _exp("f29-03-wf-status", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.status", value="satisfied"),
+            _exp("f29-03-nearest", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.nearest_facility",
+                 value="satisfied",
+                 note="真实 Dijkstra 最近设施（非欧氏替代）"),
+            _exp("f29-03-summary", Face.METHOD, "analysis_workflow",
+                 "analysis_workflow.steps.accessibility_summary",
+                 value="satisfied",
+                 note="区均网络成本（numerator=Σtotal_cost/count——均值非伪装率）"),
+        ],
+        not_evaluated=_F29_NOT_EVALUATED,
+        tags=["analysis_workflow", "network", "closest-facility", "adr-0284"],
+    )

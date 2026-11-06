@@ -145,11 +145,12 @@ class ModelRouter:
                     continue
                 healthy_chain.append(model)
             else:
-                # 主模型即使冷却也保留为选中（它就是 operator 决定的事实；
-                # 冷却信息以 reason code 披露，由调用方决定是否快速失败）
+                # An explicit per-request operator preference is authoritative.
+                # Configured defaults can yield to a healthy capable fallback.
                 if not self._health.available(self._provider_id, model):
                     reasons.append(f"primary_cooldown:{int(self._health.cooldown_remaining(self._provider_id, model))}s")
-                selected = model
+                if self._health.available(self._provider_id, model) or req.prefer_model:
+                    selected = model
         fallback_chain = healthy_chain + degraded_chain
         if selected is None:
             # 主模型被能力护栏跳过（如 prefer_model 非工具模型 + 要求工具）
@@ -162,7 +163,7 @@ class ModelRouter:
                 reasons.append("no_capable_fallback")
 
         desc = self._registry.resolve(selected, self._provider_id)
-        max_output = desc.max_output or profile.max_output_tokens
+        max_output = min(value for value in (desc.max_output, profile.max_output_tokens, primary_cfg.max_tokens) if value)
         return RouteDecision(
             role=req.role,
             provider_id=self._provider_id,
@@ -188,7 +189,7 @@ class ModelRouter:
                 model=decision.model_id,
                 api_key=cfg.api_key,
                 use_prompt_caching=cfg.use_prompt_caching,
-                max_tokens=decision.estimated_output_tokens or cfg.max_tokens,
+                max_tokens=min(cfg.max_tokens, decision.estimated_output_tokens or cfg.max_tokens),
                 temperature=profile.temperature if profile.temperature is not None else cfg.temperature,
                 timeout_s=profile.timeout_s or cfg.timeout_s,
             )

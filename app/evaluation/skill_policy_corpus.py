@@ -111,7 +111,7 @@ def build_skill_policy_corpus() -> List[GISBenchmarkCase]:
         GISBenchmarkCase(
             id="SP-blocked-quarantined", name="隔离集技能 → blocked",
             group="benchmark-policy", query="成都小学分布情况",
-            description="审定：quarantine_ids 命中所选技能 → blocked + "
+            description="审定：quarantine_ids 覆盖全部匹配候选 → blocked + "
                         "trust_tier=quarantined（fail-closed）",
             plan_only=True, tags=["skill-policy", "mode-blocked", "security"],
             policy_expectation=PolicyExpectation(
@@ -119,7 +119,7 @@ def build_skill_policy_corpus() -> List[GISBenchmarkCase]:
                 expected_mode="blocked",
                 expected_trust_tier="quarantined",
                 expected_selected_skill="point_distribution_analysis",
-                quarantine_ids=["point_distribution_analysis"],
+                quarantine_ids=["point_distribution_analysis", "distribution_map_design"],
                 forbidden_modes=["execute_guided", "guide"],
             ),
         ),

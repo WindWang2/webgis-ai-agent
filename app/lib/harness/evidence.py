@@ -134,7 +134,6 @@ class RefResolutionStatus(str, Enum):
     MALFORMED = "malformed"                 # 不符合 ref:<type>:<id> 语法
     SYNTACTICALLY_VALID = "syntactically_valid"  # 语法合法但未解析
     NOT_FOUND = "not_found"                 # 解析过，session 内不存在
-    WRONG_SESSION = "wrong_session"         # 存在但归属其它 session
     TYPE_MISMATCH = "type_mismatch"         # 存在但 payload 类型与 ref 前缀不符
     RESOLVED = "resolved"                   # 存在 + 归属正确 session + 类型匹配
 
@@ -285,9 +284,9 @@ class CartographicReviewEvidence:
 
     def to_dict(self) -> Dict[str, Any]:
         desired_review = _bounded_cartographic_review(self.desired_review)
-        checks = self.checks[:_MAX_CARTOGRAPHIC_CHECKS]
+        checks = self.checks[-_MAX_CARTOGRAPHIC_CHECKS:]
         repair_attempts = self.repair_attempts[:_MAX_REPAIR_ATTEMPTS]
-        visual_evidence = self.visual_evidence[:_MAX_VISUAL_EVIDENCE]
+        visual_evidence = self.visual_evidence[-_MAX_VISUAL_EVIDENCE:]
         return {
             "stage": "actual_runtime",
             "status": self.status,

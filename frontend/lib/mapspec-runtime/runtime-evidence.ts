@@ -1,6 +1,34 @@
+import { toMapLibrePaint } from './paint-bridge';
+import { heatmapOnlyPaint } from '@/lib/mapspec-compiler/heatmap-paint';
+import { resolveLayerVisibility } from '@/lib/carto-ir/visibility';
+import { resolveRepresentationPlan, rawWindowsOf, MAPLIBRE_ZOOM_MAX } from '@/lib/carto-ir/representation';
 import type { Layer } from "@/lib/types/layer";
 import type { MapSpec, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { SUBLAYER_SEP } from "./adapter";
+
+function expectedNativeLayer(layer: MapSpecLayer, spec: MapSpec): MapSpecLayer {
+  const source = spec.sources[layer.source] as { type?: string; inlineData?: { features?: unknown[] }; ref_id?: string; ref?: string };
+  const featureCount = source?.inlineData?.features?.length;
+  const vis = resolveLayerVisibility(layer);
+  const plan = layer.representation ? resolveRepresentationPlan(layer) : null;
+  const rawWindow = plan?.nonTrivial ? rawWindowsOf(plan)[0] : undefined;
+  const mode = plan?.nonTrivial ? (rawWindow ?? plan.windows[0]).mode : null;
+  const paint = toMapLibrePaint(layer, { featureCount });
+  const heatmap = mode === 'visual_heatmap' && layer.type === 'circle';
+  const layout = { ...layer.layout, visibility: vis.visibility };
+  for (const key of Object.keys(layout)) if (key.startsWith('label')) delete (layout as Record<string, unknown>)[key];
+  const minzoom = Math.max(vis.gate.minzoom ?? -Infinity, plan?.nonTrivial ? rawWindow?.minZoom ?? MAPLIBRE_ZOOM_MAX : -Infinity);
+  const maxzoom = Math.min(vis.gate.maxzoom ?? Infinity, rawWindow?.maxZoom ?? Infinity);
+  const clustered = plan?.nonTrivial && plan.hasCluster && layer.type === 'circle' && source?.type === 'geojson'
+    && spec.layers.filter((candidate) => candidate.source === layer.source).length === 1;
+  return { ...layer, type: heatmap ? 'heatmap' : layer.type,
+    paint: heatmap ? heatmapOnlyPaint(paint, featureCount) : paint, layout,
+    ...(minzoom > -Infinity ? { minzoom: minzoom < maxzoom ? minzoom : MAPLIBRE_ZOOM_MAX } : {}),
+    ...(maxzoom < Infinity && minzoom < maxzoom ? { maxzoom } : {}),
+    ...(clustered && !layer.filter ? { filter: ['!', ['has', 'point_count']] } : {}),
+    ...(source?.type === 'vector' ? { 'source-layer': 'data' } : {}),
+  } as MapSpecLayer;
+}
 
 function equalStructured(left: unknown, right: unknown): boolean {
   if (typeof left === "number" && typeof right === "number") {
@@ -123,7 +151,7 @@ export function collectCartographicRuntimeObservation(
   reconcileError = "",
   applied: MapSpec | null = null,
 ): Record<string, unknown> {
-  const styleLoaded = !!map?.isStyleLoaded?.();
+  const styleLoaded = typeof map?.style?._loaded === "boolean" ? map.style._loaded : !!map?.isStyleLoaded?.();
   // #462: hoisted OUT of the per-candidate convergence check — the old
   // `map.getStyle()` inside `expected.every` deep-cloned the whole style once
   // per candidate layer (worst site: layers × sublayers clones per round).
@@ -150,7 +178,7 @@ export function collectCartographicRuntimeObservation(
       );
       if (matched) seen.add(candidate.id);
       return matched;
-    });
+    }).map((candidate) => expectedNativeLayer(candidate, desired));
     const liveByExpected = expected.map(
       (candidate) => ({ candidate, actual: map.getLayer?.(candidate.id) }),
     );
@@ -240,7 +268,13 @@ export function collectCartographicRuntimeObservation(
       source_status: (() => {
         const missingSource = expected.some(
           (candidate) => !map.getSource?.(candidate.source));
-        if (missingSource && expected.length > 0) return 'error';
+        if (missingSource && expected.length > 0) {
+          const unresolvedRef = expected.some((candidate) => {
+            const source = desired.sources[candidate.source] as { type?: string; inlineData?: { features?: unknown[] }; ref_id?: string; ref?: string };
+            return !map.getSource?.(candidate.source) && source?.ref_id && !source.inlineData;
+          });
+          return unresolvedRef ? 'pending' : 'error';
+        }
         const allLoaded = expected.every(
           (candidate) => map.isSourceLoaded?.(candidate.source) !== false);
         return allLoaded ? 'loaded' : 'pending';

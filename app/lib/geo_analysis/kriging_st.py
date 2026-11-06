@@ -527,6 +527,6 @@ def st_kriging_surface(
         }
         for cell, pred, var, n_used in zip(
             target_cells, result["predictions"], result["variances"],
-            result["n_neighbors"])
+            result["n_neighbors"], strict=True)
     ]
     return {"records": records, "metadata": metadata}

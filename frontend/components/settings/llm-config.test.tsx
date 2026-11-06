@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-// LlmConfig 只读展示服务端配置，不再读写 store —— 模块本身也不 import
-// useHudStore，无需 mock。
+// Server config remains read-only; the store action only opens account settings.
 
 import { LlmConfig } from './llm-config';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 // ── Response doubles（与 transport.test.ts / use-workspace-session.test.ts 同形）──
 const jsonOk = (body: unknown, status = 200) => ({
@@ -34,6 +34,17 @@ const SERVER_CONFIG = {
 };
 
 describe('LlmConfig connectivity test (#390)', () => {
+  it('未登录时说明下一步，登录入口打开账户设置且不发无效连接测试', async () => {
+    fetchMock.mockResolvedValueOnce(jsonErr(401, 'Unauthorized', { message: 'Not authenticated' }));
+    useHudStore.getState().setSettingsTab('llm');
+    const user = userEvent.setup();
+    render(<LlmConfig />);
+    expect(await screen.findByText('请先登录，再查看服务端模型配置。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '测试连接' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '登录' }));
+    expect(useHudStore.getState().settingsTab).toBe('account');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     fetchMock.mockReset();
@@ -55,9 +66,9 @@ describe('LlmConfig connectivity test (#390)', () => {
     render(<LlmConfig />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: /connectivity test/i }));
+    await user.click(screen.getByRole('button', { name: '测试连接' }));
 
-    expect(await screen.findByText(/Connection Failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/连接失败/)).toBeInTheDocument();
     // 错误详情来自真实后端响应，渲染在 UI 上（不是不可达的死分支）
     expect(screen.getByText(/连接失败: 上游返回 HTTP 401/)).toBeInTheDocument();
 
@@ -78,9 +89,9 @@ describe('LlmConfig connectivity test (#390)', () => {
     render(<LlmConfig />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: /connectivity test/i }));
+    await user.click(screen.getByRole('button', { name: '测试连接' }));
 
-    expect(await screen.findByText('Connection OK')).toBeInTheDocument();
+    expect(await screen.findByText('连接正常')).toBeInTheDocument();
   });
 
   it('只读展示服务端配置，并说明前端保存不生效', async () => {

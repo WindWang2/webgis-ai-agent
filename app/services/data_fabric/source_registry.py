@@ -28,6 +28,8 @@ Protocol → adapter mapping:
 """
 from __future__ import annotations
 
+import time
+
 import logging
 import os
 from pathlib import Path
@@ -240,6 +242,7 @@ class SourceRegistryService:
         self._dir = Path(sources_dir) if sources_dir else None
         self._loaded: Dict[str, _LoadedSource] = {}  # source_id → entry
         self._snapshots: Dict[Path, float] = {}
+        self._last_reload_check = 0.0
 
     # -- loading ---------------------------------------------------------------
 
@@ -311,8 +314,12 @@ class SourceRegistryService:
                         "(no plaintext secrets in the registry)",
                     )
 
-    def reload_if_changed(self) -> bool:
+    def reload_if_changed(self, *, force: bool = True) -> bool:
         """Hot reload: true if any file changed/added/removed and reload ran."""
+        now = time.monotonic()
+        if not force and now - self._last_reload_check < 0.5:
+            return False
+        self._last_reload_check = now
         directory = self._resolve_dir()
         if directory is None:
             return False
@@ -329,7 +336,7 @@ class SourceRegistryService:
     # -- access ----------------------------------------------------------------
 
     def get(self, source_id: str) -> SourceDefinition:
-        self.reload_if_changed()
+        self.reload_if_changed(force=False)
         entry = self._loaded.get(source_id)
         if entry is None:
             raise SourceRegistryError(
@@ -339,7 +346,7 @@ class SourceRegistryService:
         return entry.source
 
     def list_sources(self, protocol: Optional[str] = None) -> List[SourceDefinition]:
-        self.reload_if_changed()
+        self.reload_if_changed(force=False)
         sources = [e.source for e in self._loaded.values()]
         if protocol:
             sources = [s for s in sources if s.protocol == protocol]

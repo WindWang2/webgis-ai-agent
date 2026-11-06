@@ -356,7 +356,12 @@ def _resolve_capture_target(
         if isinstance(raw, dict) and raw.get("mission_id"):
             mission_id = str(raw["mission_id"])[:64]
             binding_org = str(raw.get("org_id") or "")[:64]
-    org = org or binding_org
+    if not org:
+        from app.services.gis_context.hotpath import _tenant_scan
+
+        org = _tenant_scan(session_id)[:64]
+    if binding_org and binding_org != org:
+        return "", ""
     if not mission_id:
         try:
             from app.services.gis_harness.hotpath_convergence.session_ctx import (

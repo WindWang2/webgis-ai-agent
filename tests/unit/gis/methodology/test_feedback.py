@@ -30,7 +30,9 @@ def test_writer_appends_when_enabled(monkeypatch, tmp_path) -> None:
     lines = sink.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
     assert "user_correction" in lines[0]
-    assert "p1" in lines[0]
+    import hashlib
+    assert "p1" not in lines[0]
+    assert hashlib.sha256(b"p1").hexdigest() in lines[0]
 
 
 def test_writer_hard_cap_and_truncation_disclosure(monkeypatch, tmp_path) -> None:

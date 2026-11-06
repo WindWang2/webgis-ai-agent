@@ -71,7 +71,11 @@ def _run_gate(cmd: list) -> dict:
     volatile = _re.compile(r"elapsed_s|\d+\.\d+s|\d+\.\d+ ms")
     detail = [ln for ln in (proc.stdout or "").strip().splitlines()
               if not volatile.search(ln)][-6:]
-    return {"command": " ".join(str(c) for c in cmd), "status":
+    # The snapshot travels between developer worktrees and CI interpreters.
+    # Normalize the display only; the gate above still uses the exact executable.
+    display_cmd = ["python" if i == 0 and str(c) == sys.executable else str(c)
+                   for i, c in enumerate(cmd)]
+    return {"command": " ".join(display_cmd), "status":
             "pass" if ok else "fail", "detail": detail}
 
 

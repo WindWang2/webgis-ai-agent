@@ -36,7 +36,7 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 // helper 不得作为页面导出（CI `next build` 拒绝非 Page 导出字段）。
 import { applyStoryMapState, type SessionMapState } from '@/lib/session/map-state-restore';
 import { commitUserScene, mergeSceneRotary } from '@/lib/mapspec/scene-mutation';
-import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import { getCommittedMapSpec, getMapSpecSessionCursor, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import {
   loadSessionStorySpec,
   saveSessionStorySpec,
@@ -216,7 +216,7 @@ export function StoryView(): React.ReactElement {
     if (!playing) return;
     // A late spec can make the current local chapter absent from the spec
     // playlist. Do not reinterpret index -1 as chapter 0 and jump the camera.
-    if (playPos < 0) return;
+    if (playPos < 0) { setPlaying(false); return; }
     if (playlist.length === 0 || playPos >= playlist.length - 1) {
       setPlaying(false);
       return;
@@ -356,6 +356,7 @@ export function StoryView(): React.ReactElement {
           { signal: controller.signal, label: 'Story session error', ownerToken },
         );
         if (controller.signal.aborted) return;
+        setMapSpecSessionCursor(sessionId, 0, ownerToken);
         const msgs = data.messages && data.messages.length > 0 ? data.messages : [];
         setMessages(msgs);
         landFirstChapter(msgs);
@@ -422,7 +423,10 @@ export function StoryView(): React.ReactElement {
       }
     })();
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (getMapSpecSessionCursor().sessionId === sessionId) setMapSpecSessionCursor(undefined, 0, null);
+    };
   }, [sessionId, dispatchAction]);
 
   const togglePlay = useCallback(() => {

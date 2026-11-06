@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { cookies } from "next/headers"
+import { cookies, headers } from "next/headers"
 import { DM_Sans, JetBrains_Mono } from "next/font/google"
 import { ClientProviders } from "@/components/providers/client-providers"
 // RSC 边界注意：layout 是服务端组件，这里绝不能从 "use client" 模块
@@ -66,13 +66,14 @@ export default async function RootLayout({
   // SSR 语言取 cookie（setLocale 每次切换都会写回）：服务端首帧即正确语言，
   // 客户端 store 首帧读 window.__GEOAGENT_LOCALE__（pre-paint 从同一 cookie
   // 写入）—— 两侧一致，无 hydration mismatch、无语言闪白。
+  const nonce = (await headers()).get('x-nonce') ?? undefined
   const cookieStore = await cookies()
   const locale = normalizeLocale(cookieStore.get(LOCALE_COOKIE)?.value)
 
   return (
     <html lang={locale} data-theme="light">
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>
       <body className={`${dmSans.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
         <ClientProviders>{children}</ClientProviders>

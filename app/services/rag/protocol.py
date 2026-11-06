@@ -29,7 +29,7 @@ class VectorStoreProtocol(Protocol):
         """Search top-k most similar chunks using a query vector with optional tenant filtering."""
         ...
 
-    def mark_deleted(self, doc_id: str) -> None:
+    def mark_deleted(self, doc_id: str, *, user_id: Optional[str] = None, org_id: Optional[str] = None, is_admin: bool = False, enforce_tenant: bool = False) -> bool:
         """Mark document chunks as deleted."""
         ...
 

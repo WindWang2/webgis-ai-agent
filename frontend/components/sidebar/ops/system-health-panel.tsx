@@ -14,7 +14,7 @@
  * - 错误分类 top-N：后端无端点 → 诚实空态卡（#607 原则，协调点）。
  * 通道自检卡展示本分区轮询通道的 lastFetchedAt / 连错 / 暂停态。
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { HeartPulse, Database, Radio } from 'lucide-react';
 import { StatusBadge } from '@/components/shared/status-badge';
 import {
@@ -32,6 +32,8 @@ import { useBoundedPoll } from '@/lib/hooks/use-cluster-poll';
 import { useClusterMetrics } from '@/lib/hooks/use-cluster-metrics';
 import { ChannelStateBadge, HonestEmptyCard, MetricTile, OpsCard, formatDuration, formatTime, type OpsChannelState } from './ops-shared';
 import { useT } from '@/lib/i18n/useT';
+import { useAuthUser } from '@/lib/auth/use-auth-user';
+import { ApiError } from '@/lib/api/transport';
 
 const COMPONENT_LABELS: Record<string, string> = {
   db: 'componentDb',
@@ -54,6 +56,11 @@ export function SystemHealthPanel({
   ownerToken?: string | null;
 }) {
   const t = useT('ops');
+  const user = useAuthUser();
+  const identity = `${user?.id ?? ''}:${user?.role ?? ''}`;
+  const [deniedIdentity, setDeniedIdentity] = useState<string | null>(null);
+  useEffect(() => setDeniedIdentity(null), [identity]);
+  const canViewDetails = user?.role === 'admin' && deniedIdentity !== identity;
   const basic = useBoundedPoll<HealthBasic>({
     pollIntervalMs: 10_000,
     fetcher: (signal) => getHealthBasic({ signal }),
@@ -67,8 +74,19 @@ export function SystemHealthPanel({
     fetcher: (signal) => getVersionInfo({ signal }),
   });
   const detailed = useBoundedPoll<DetailedStatus>({
+    enabled: canViewDetails,
+    resetKey: identity,
     pollIntervalMs: 10_000,
-    fetcher: (signal) => getDetailedStatus({ signal }),
+    fetcher: async (signal) => {
+      try {
+        return await getDetailedStatus({ signal });
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          setDeniedIdentity(identity);
+        }
+        throw error;
+      }
+    },
   });
   const ownerQueue = useBoundedPoll<{ active: number; pollAfterMs: number | null }>({
     pollIntervalMs: 6000,
@@ -84,11 +102,11 @@ export function SystemHealthPanel({
       [
         { nameKey: 'channelHealthReady', channel: basic.data ? 'live' : basic.error ? 'error' : 'loading', status: basic.status },
         { nameKey: 'channelVersion', channel: version.data ? 'live' : version.error ? 'error' : 'loading', status: version.status },
-        { nameKey: 'channelStatusDetailed', channel: detailed.data ? 'live' : detailed.error ? 'error' : 'loading', status: detailed.status },
+        { nameKey: 'channelStatusDetailed', channel: !canViewDetails ? 'admin-required' : detailed.data ? 'live' : detailed.error ? 'error' : 'loading', status: detailed.status },
         { nameKey: 'channelTasksJobsOwner', channel: ownerQueue.data ? 'live' : ownerQueue.error ? 'error' : 'loading', status: ownerQueue.status },
         { nameKey: 'channelClusterMetricsGlobal', channel: globalMetrics.channel, status: globalMetrics.status },
       ] as { nameKey: string; channel: OpsChannelState; status: { lastFetchedAt: string | null; consecutiveErrors: number; paused: boolean } }[],
-    [basic.data, basic.error, basic.status, version.data, version.error, version.status, detailed.data, detailed.error, detailed.status, ownerQueue.data, ownerQueue.error, ownerQueue.status, globalMetrics.channel, globalMetrics.status],
+    [basic.data, basic.error, basic.status, version.data, version.error, version.status, canViewDetails, detailed.data, detailed.error, detailed.status, ownerQueue.data, ownerQueue.error, ownerQueue.status, globalMetrics.channel, globalMetrics.status],
   );
 
   return (
@@ -118,10 +136,10 @@ export function SystemHealthPanel({
       <OpsCard
         title={t('kjo1f01')}
         sub={t('apiV1StatusDetailedjwt10s')}
-        actions={<ChannelStateBadge channel={detailed.data ? 'live' : detailed.error ? 'error' : 'loading'} />}
+        actions={<ChannelStateBadge channel={!canViewDetails ? 'admin-required' : detailed.data ? 'live' : detailed.error ? 'error' : 'loading'} />}
         testId="ops-health-components"
       >
-        {detailed.data ? (
+        {canViewDetails && detailed.data ? (
           <>
             <ul className="flex flex-col gap-1" aria-label={t('k2mc0vi')}>
               {Object.entries(detailed.data.components).map(([name, comp]) => (
@@ -149,7 +167,7 @@ export function SystemHealthPanel({
           </>
         ) : (
           <p className="px-2 py-3 text-center text-meta text-ink-muted" role="status">
-            {detailed.error ? t('componentStatusUnavailable', { p0: detailed.error }) : t('probing')}
+            {!canViewDetails ? t('requiresAdminPermission') : detailed.error ? t('componentStatusUnavailable', { p0: detailed.error }) : t('probing')}
           </p>
         )}
       </OpsCard>

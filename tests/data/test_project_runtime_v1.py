@@ -1268,6 +1268,7 @@ class TestEventLoopDiscipline:
         }
         snapshot = ProjectRuntimeSnapshotV1(
             snapshot_id="prs-loop1", project_id="proj-rt1",
+            workspace_snapshot_id="ws-loop-fixture",
             mapspec_doc=doc, mapspec_fingerprint=canonical_fingerprint(doc),
         )
         assert await get_project_runtime_store().save(snapshot)
@@ -1364,3 +1365,19 @@ class TestResumeReceiptHonesty:
         reasons = {d.get("reason") for d in receipt.degraded}
         assert "register_failed" in reasons
         assert receipt.artifacts_registered == 0
+
+
+async def test_workspace_failure_never_writes_runtime_manifest(db, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services.project_runtime.freeze import FreezeError
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+    from app.services.project_runtime.store import get_project_runtime_store
+    await _seed_session("rt-workspace-failure")
+    runtime = get_project_runtime_store()
+    spy = AsyncMock()
+    monkeypatch.setattr(runtime, "save", spy)
+    monkeypatch.setattr(get_workspace_snapshot_service(), "save_snapshot", AsyncMock(side_effect=OSError("disk unavailable")))
+    with pytest.raises(FreezeError) as error:
+        await _freeze(db, "rt-workspace-failure")
+    assert error.value.reason == "workspace_snapshot_failed"
+    spy.assert_not_awaited()

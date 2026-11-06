@@ -7,6 +7,7 @@ Situation 分支（#1275，ADR-0252）未合并：本模块用 typing.Protocol �
 一致），绝不虚构。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
@@ -91,7 +92,7 @@ class SelectionFacts(BaseModel):
                 if r:
                     roles.append(r)
         except Exception:  # noqa: BLE001 - 非契约形态 → 诚实留空
-            pass
+            observe_optional_failure(__name__)
         return cls(
             goal_text=str(getattr(user_goal, "goal_text", "") or ""),
             scope_name=str(getattr(geographic, "scope_name", "") or ""),

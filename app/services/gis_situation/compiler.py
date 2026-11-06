@@ -40,6 +40,7 @@ from app.services.gis_situation.contract import (
     TemporalContext,
     UserGoalContext,
 )
+from app.services.gis_situation.analysis_scope import ClaimedScope, derive_claimed_scope
 from app.services.gis_situation.facts import (
     SitFact,
     known,
@@ -319,7 +320,7 @@ def compile_map(
         evidence.omitted.append(f"map.layers(+{omitted_layers})")
     layers_fact = (
         known(layers_value, source="mapspec.layers", revision=revision)
-        if layers_value else unknown(source="mapspec.layers")
+        if isinstance(mapspec.get("layers"), list) else unknown(source="mapspec.layers")
     )
     layer_count_fact = known(
         len(raw_layers), source="mapspec.layers", revision=revision,
@@ -368,6 +369,11 @@ def compile_map(
     return MapContext(
         desired_revision=rev_fact, fingerprint=fingerprint,
         layers=layers_fact, layer_count=layer_count_fact,
+        layer_ids=(known([str(row["id"]) for row in raw_layers
+                          if isinstance(row, dict) and row.get("id")],
+                         source="mapspec.layers", revision=revision)
+                   if isinstance(mapspec.get("layers"), list)
+                   else unknown(source="mapspec.layers")),
         sources=sources_fact, basemap=basemap, observed=observed,
     )
 
@@ -460,16 +466,27 @@ def compile_interaction(
     # durable user 隐藏决策：与 gis_world_state.state 同裁决（全环派生）。
     provenance = map_state.get(_PROVENANCE_KEY)
     provenance = list(provenance) if isinstance(provenance, list) else []
-    user_hidden = [
-        str(entry.get("target")) for entry in provenance
-        if entry.get("origin") == "user"
-        and entry.get("kind") == _USER_HIDDEN_KIND
-        and entry.get("detail", {}).get("visible") is False
-        and entry.get("target")
-    ]
+    from app.services.gis_world_state.provenance import last_presentation_owner
+
+    targets = {str(entry.get("target")) for entry in provenance
+               if isinstance(entry, dict) and entry.get("target")}
+    for entry in provenance:
+        if not isinstance(entry, dict) or not isinstance(entry.get("detail"), dict):
+            continue
+        for key in ("shown", "hidden"):
+            values = entry["detail"].get(key)
+            if isinstance(values, list):
+                targets.update(str(target) for target in values if isinstance(target, str))
+    user_hidden = []
+    for target in targets:
+        owner = last_presentation_owner(provenance, target)
+        if (owner and owner.get("origin") == "user"
+                and isinstance(owner.get("detail"), dict)
+                and owner["detail"].get("visible") is False):
+            user_hidden.append(target)
     user_hidden_fact = (
         known(sorted(set(user_hidden)), source="map_state._gis_provenance")
-        if user_hidden else unknown(source="map_state._gis_provenance")
+        if isinstance(map_state.get(_PROVENANCE_KEY), list) else unknown(source="map_state._gis_provenance")
     )
 
     pending = []
@@ -554,10 +571,18 @@ def compile_interaction(
 
 def compile_analysis(
     chapter: Dict[str, Any], plan: Any,
+    claimed_scope: Optional[ClaimedScope] = None,
 ) -> AnalysisContext:
     progress = unknown(source="plan_graph")
     stale_nodes: SitFact = unknown(source="workflow_runtime.stale")
     artifacts = unknown(source="session_plan.progress.bound_ref")
+    # ADR-0285 D1：selection_scope 声称面（纯派生零 IO；无选择证据保持
+    # unknown，不猜默认）。
+    scope_fact = unknown(source="map_state._interaction_ir_ledger")
+    if isinstance(claimed_scope, dict) and claimed_scope.get("kind") not in (None, "none"):
+        scope_fact = known(
+            claimed_scope, source="map_state._interaction_ir_ledger",
+        )
     if isinstance(chapter, dict) and chapter:
         graph = _safe(_build_plan_graph, chapter)
         if graph is not None:
@@ -591,6 +616,7 @@ def compile_analysis(
             artifacts = known(refs, source="session_plan.progress.bound_ref")
     return AnalysisContext(
         plan_progress=progress, stale_nodes=stale_nodes, artifacts=artifacts,
+        selection_scope=scope_fact,
     )
 
 
@@ -788,7 +814,27 @@ async def compile_situation(
     chapter = getattr(plan, "gis_chapter", None) if plan is not None else None
     chapter = chapter if isinstance(chapter, dict) else {}
     interaction = compile_interaction(map_state, events)
-    analysis = compile_analysis(chapter, plan)
+    # ADR-0285 D1：ClaimedScope 声称面（IR 投影 + pre-turn 快照 + canvas
+    # affordance 环纯派生，零 IO——验证面由 analysis_scope 工具拉取执行）。
+    try:
+        from app.services.gis_harness.interaction_ir.projection import (
+            interaction_snapshot_from_map_state,
+        )
+
+        ir_snapshot = interaction_snapshot_from_map_state(map_state)
+    except Exception:  # noqa: BLE001 — 声称面是增值上下文，绝不阻断编译
+        ir_snapshot = None
+    pre_turn_selected = (
+        pre_turn.get("selected_feature")
+        if isinstance(pre_turn, dict) else None
+    )
+    affordances = map_state.get("_situation_canvas_affordances")
+    claimed_scope = derive_claimed_scope(
+        ir_snapshot,
+        pre_turn_selected if isinstance(pre_turn_selected, dict) else None,
+        affordance_ring=affordances if isinstance(affordances, list) else None,
+    )
+    analysis = compile_analysis(chapter, plan, claimed_scope=claimed_scope)
     cartographic = compile_cartographic(
         chapter,
         map_state.get("_cartographic_review"),

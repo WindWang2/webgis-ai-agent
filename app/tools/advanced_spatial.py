@@ -61,6 +61,9 @@ class IsochroneAnalysisArgs(BaseModel):
     facilities: Any = Field(..., description="设施点 (GeoJSON 或 ref:xxx)")
     travel_time: float = Field(15, description="行驶/步行时间（单位由路网权重决定，通常为分钟或米）")
     mode: str = Field("walking", description="出行模式: walking, driving, cycling")
+    exclude_unreachable: bool = Field(
+        False, description="剔除脱离路网的设施（算法层标记 reachable=False 并以 5m 占位面披露；"
+        "True=这些占位面不进覆盖统计，计数进 stats.excluded_unreachable——ADR-0284 断点2 修复）")
 
 class FishnetGridArgs(BaseModel):
     bounds: List[float] = Field(..., description="网格范围 [xmin, ymin, xmax, ymax]")
@@ -347,7 +350,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, value_field)
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["kriging_variance"] = round(rec["kriging_variance"], 6)
             feat["properties"]["kriging_stddev"] = round(rec["kriging_stddev"], 6)
 
@@ -776,7 +779,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         geojson_result = h3_to_geojson(pred_records, value_field)
-        for feat, rec in zip(geojson_result["features"], driver["records"]):
+        for feat, rec in zip(geojson_result["features"], driver["records"], strict=True):
             if rec.get("extrapolated"):
                 feat["properties"]["extrapolated"] = True
         geojson_result["summary"] = (
@@ -916,7 +919,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["rk_variance"] = round(rec["rk_variance"], 6)
             feat["properties"]["rk_stddev"] = round(rec["rk_stddev"], 6)
         uncertainty_records = [
@@ -1408,7 +1411,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             params["value_field"],
         )
         thr_sorted = meta["thresholds"]
-        for feat, rec in zip(pred_fc["features"], driver["records"]):
+        for feat, rec in zip(pred_fc["features"], driver["records"], strict=True):
             props = feat["properties"]
             props["p50_threshold"] = rec["p50_threshold"]
             for j, p in (rec.get("probabilities") or {}).items():
@@ -1551,7 +1554,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["ck_variance"] = round(rec["ck_variance"], 6)
             feat["properties"]["ck_stddev"] = round(rec["ck_stddev"], 6)
         uncertainty_records = [
@@ -1800,7 +1803,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["block_variance"] = round(rec["block_variance"], 6)
             feat["properties"]["block_stddev"] = round(rec["block_stddev"], 6)
         uncertainty_records = [
@@ -1920,7 +1923,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["sgs_std"] = round(rec["sgs_std"], 6)
             feat["properties"]["p10"] = round(rec["p10"], 6)
             feat["properties"]["p90"] = round(rec["p90"], 6)
@@ -2052,7 +2055,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["primary_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["ck_variance"] = round(rec["ck_variance"], 6)
             feat["properties"]["ck_stddev"] = round(rec["ck_stddev"], 6)
         prediction_fc.update({
@@ -2182,7 +2185,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
         ]
         prediction_fc = h3_to_geojson(pred_records, params["value_field"])
-        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+        for feat, rec in zip(prediction_fc["features"], driver["records"], strict=True):
             feat["properties"]["st_variance"] = round(rec["st_variance"], 6)
             feat["properties"]["st_stddev"] = round(rec["st_stddev"], 6)
         prediction_fc.update({
@@ -2562,13 +2565,40 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            output_semantic_type="geojson_fc",
            result_size_policy="ref_offload",
            failure_modes=("invalid_args", "missing_data"))
-    def isochrone_network(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking") -> dict:
+    def isochrone_network(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking", exclude_unreachable: bool = False) -> dict:
         net = safe_parse_geojson(network_layer)
         facs = safe_parse_geojson(facilities)
         # #765: forward the parsed FeatureCollections so declared `crs`
         # members reach to_utm_gdf (calculate_isochrones).
         res = SpatialAnalyzer.isochrone_network(net, facs, travel_time, mode)
-        return res.to_llm_response()
+        response = res.to_llm_response()
+        # ADR-0284（断点2 修复）：不可达设施以 5m 占位面 + reachable=False
+        # 披露——exclude_unreachable=True 时占位面不进产物（避免假面进入
+        # 覆盖统计产出错图），计数保留在 stats（部分失败显性化，不静默）。
+        if exclude_unreachable and isinstance(response.get("data"), dict):
+            feats = response["data"].get("features") or []
+            kept = []
+            excluded = 0
+            for f in feats:
+                if isinstance(f, dict) and f.get("properties", {}).get(
+                        "reachable") is False:
+                    excluded += 1
+                    continue
+                kept.append(f)
+            response["data"] = {**response["data"], "features": kept}
+            stats = response.get("stats")
+            stats = dict(stats) if isinstance(stats, dict) else {}
+            stats["facility_polygons"] = len(kept)
+            stats["excluded_unreachable"] = excluded
+            response["stats"] = stats
+            if excluded:
+                response["warnings"] = [
+                    *list(response.get("warnings") or []),
+                    f"{excluded} 个设施脱离路网（不可达）——占位面已按"
+                    " exclude_unreachable 剔除，计数保留于 stats."
+                    "excluded_unreachable",
+                ]
+        return response
 
     @tool(registry, tier=2, domains=["statistics"], name="fishnet_grid",
     anti_examples=("六边形蜂窝网格（用 h3_binning）",),

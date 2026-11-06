@@ -35,7 +35,7 @@ def execute_gc_plan_task(
         plan = get_plan(db, plan_id)
         if plan is None:
             return {"status": "failed", "error": "plan not found"}
-        result = execute_plan(db, plan, actor=actor)
+        result = execute_plan(db, plan, actor=actor, job_id=str(job_id))
         _set_plan_job_link(db, plan_id, str(job_id))
         return {"status": "done" if result.get("ok") else "failed",
                 "plan_id": plan_id, **result}

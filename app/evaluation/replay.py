@@ -8,7 +8,7 @@
 2. **Agent-loop simulation**（``simulate_agent_loop``）：脚本化模型输出
    （工具调用序列，无 LLM），经真实 registry dispatch + 去重哨兵 +
    CallPatternTracker，验证运行时不变量：参数归一化、别名折叠、
-   no-progress 检出、破坏性工具被 tier-3 闸拒绝。
+   no-progress 检出、破坏性工具在 dispatch 前被评测沙箱拒绝。
 
 3. **Trace invariant replay**（``check_trace_invariants``）：对 TurnTrace
    做状态机性质校验（不执行任何副作用）：dispatch_completed 必须有
@@ -155,8 +155,8 @@ async def simulate_agent_loop(
 
     不变量：
     a) 脚本声明的期望错误码/结果形态必须命中（归一化 + 校验链真实行为）；
-    b) 破坏性工具在无 confirm_tier3 上下文时**必须**被拒
-       （TIER3_CONFIRMATION_REQUIRED）—— 任何脚本形态都不允许绕过；
+    b) 破坏性工具由沙箱在 dispatch 前拒绝（TIER3_CONFIRMATION_REQUIRED）；
+       生产确认闸本身的验证由 registry 安全测试负责；
     c) 同签名重复失败触发 no-progress 原因码（模式检测联动）。
     """
     report = SimulationReport()
@@ -166,7 +166,21 @@ async def simulate_agent_loop(
             normalization_report_var,
         )
 
-        result = await registry.dispatch(step.tool, step.arguments, session_id)
+        # Isolation is enforced before dispatch, even if the registry's
+        # production confirmation gate is accidentally bypassed.
+        normalization_report_var.set([])
+        try:
+            descriptor = registry.descriptor(step.tool)
+        except Exception:
+            descriptor = None
+        if descriptor is None:
+            result = {"success": False, "code": "REPLAY_DESCRIPTOR_UNAVAILABLE",
+                      "message": "Cannot safely simulate an unknown tool"}
+        elif descriptor.destructive_level >= 3 or descriptor.effective_security_tier >= 3:
+            result = {"success": False, "code": "TIER3_CONFIRMATION_REQUIRED",
+                      "message": "Destructive execution is blocked by the simulation sandbox"}
+        else:
+            result = await registry.dispatch(step.tool, step.arguments, session_id)
         view = inspect_tool_result(result)
         entry: Dict[str, Any] = {
             "step": idx,
@@ -175,6 +189,7 @@ async def simulate_agent_loop(
             "ok": view.ok,
             "error_code": view.error_code,
             "repairs": [r.as_dict() for r in normalization_report_var.get()],
+            "sandbox_blocked": descriptor is None or descriptor.destructive_level >= 3 or descriptor.effective_security_tier >= 3,
         }
 
         # 不变量 b：破坏性拒绝闸（双保险 —— 即使脚本期望 error）

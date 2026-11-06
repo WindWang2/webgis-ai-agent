@@ -775,9 +775,9 @@
       "code": "MISSING_CRS",
       "op": "crs_transform",
       "mapped": true,
-      "changed_features": 0,
-      "evidence_affected": 0,
-      "verdict": "mapped_no_effect"
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "mapped_effective"
     },
     {
       "code": "MISSING_CRS",
@@ -863,9 +863,9 @@
       "code": "SUSPICIOUS_CRS",
       "op": "crs_transform",
       "mapped": true,
-      "changed_features": 0,
-      "evidence_affected": 0,
-      "verdict": "mapped_no_effect"
+      "changed_features": 2,
+      "evidence_affected": 2,
+      "verdict": "mapped_effective"
     },
     {
       "code": "SUSPICIOUS_CRS",
@@ -1709,8 +1709,8 @@
     }
   ],
   "summary": {
-    "mapped_effective": 12,
-    "mapped_no_effect": 10,
+    "mapped_effective": 14,
+    "mapped_no_effect": 8,
     "unmapped_no_effect": 116,
     "unmapped_side_effect": 71,
     "error": 0

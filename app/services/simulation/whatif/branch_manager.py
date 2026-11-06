@@ -20,6 +20,7 @@ auto checkpoint 与 provenance 环。因此任一分支上的修改/回滚**不�
 from __future__ import annotations
 
 import copy
+import asyncio
 import hashlib
 import json
 import logging
@@ -47,6 +48,7 @@ from .spatial_diff_engine import (
     GeometryDiff,
     build_diff_overlay,
     compute_metric_deltas,
+    _collect_latitudes,
     cost_proxy_of,
     diff_layers,
     evaluate_metrics,
@@ -280,34 +282,35 @@ class ScenarioBranchManager:
         reason: Optional[str] = None,
     ) -> List[MapSpecResult]:
         """对分支施加干预序列（逐 intent 全事务；单条失败不回滚已成功项）。"""
-        meta = await self.get_branch_meta(parent_session_id, branch_id)
-        results: List[MapSpecResult] = []
-        applied_kinds: List[str] = []
-        for intent in intents:
-            result = await apply_gis_mutation(
-                meta.branch_session_id,
-                intent,
-                origin="agent",
-                actor=actor,
-                engine=self._engine,
-                reason=reason,
-            )
-            results.append(result)
-            if not result.is_error and not result.superseded:
-                applied_kinds.append(type(intent).__name__)
-        if applied_kinds or results:
-            registry = await self._load_registry(parent_session_id)
-            entry = registry.get(branch_id)
-            if isinstance(entry, dict):
-                meta = ScenarioBranchMeta.model_validate(entry)
-                meta.intervention_count += len(applied_kinds)
-                meta.last_intervention_summary = (
-                    ", ".join(applied_kinds) if applied_kinds else meta.last_intervention_summary
+        async with session_lock_registry.lock(parent_session_id):
+            meta = await self.get_branch_meta(parent_session_id, branch_id)
+            results: List[MapSpecResult] = []
+            applied_kinds: List[str] = []
+            for intent in intents:
+                result = await apply_gis_mutation(
+                    meta.branch_session_id,
+                    intent,
+                    origin="agent",
+                    actor=actor,
+                    engine=self._engine,
+                    reason=reason,
                 )
-                await self._refresh_meta_revision(meta)
-                entry.update(meta.model_dump())
-                await self._save_registry(parent_session_id, registry)
-        return results
+                results.append(result)
+                if not result.is_error and not result.superseded:
+                    applied_kinds.append(type(intent).__name__)
+            if applied_kinds or results:
+                registry = await self._load_registry(parent_session_id)
+                entry = registry.get(branch_id)
+                if isinstance(entry, dict):
+                    meta = ScenarioBranchMeta.model_validate(entry)
+                    meta.intervention_count += len(applied_kinds)
+                    meta.last_intervention_summary = (
+                        ", ".join(applied_kinds) if applied_kinds else meta.last_intervention_summary
+                    )
+                    await self._refresh_meta_revision(meta)
+                    entry.update(meta.model_dump())
+                    await self._save_registry(parent_session_id, registry)
+            return results
 
     async def rollback_branch(
         self,
@@ -316,30 +319,31 @@ class ScenarioBranchManager:
         checkpoint_id: Optional[str] = None,
     ) -> MapSpecResult:
         """回滚分支到指定 checkpoint（None = 分支最近一个 auto checkpoint）。"""
-        meta = await self.get_branch_meta(parent_session_id, branch_id)
-        target = checkpoint_id or _latest_checkpoint_id(meta.branch_session_id)
-        if not target:
-            raise BranchError(
-                "checkpoint_missing", f"分支 {branch_id} 没有可回滚的 checkpoint"
+        async with session_lock_registry.lock(parent_session_id):
+            meta = await self.get_branch_meta(parent_session_id, branch_id)
+            target = checkpoint_id or _latest_checkpoint_id(meta.branch_session_id)
+            if not target:
+                raise BranchError(
+                    "checkpoint_missing", f"分支 {branch_id} 没有可回滚的 checkpoint"
+                )
+            result = await apply_gis_mutation(
+                meta.branch_session_id,
+                RollbackIntent(checkpoint_id=target),
+                origin="agent",
+                actor="whatif",
+                engine=self._engine,
+                reason=f"whatif rollback branch {branch_id} -> {target}",
             )
-        result = await apply_gis_mutation(
-            meta.branch_session_id,
-            RollbackIntent(checkpoint_id=target),
-            origin="agent",
-            actor="whatif",
-            engine=self._engine,
-            reason=f"whatif rollback branch {branch_id} -> {target}",
-        )
-        registry = await self._load_registry(parent_session_id)
-        entry = registry.get(branch_id)
-        if isinstance(entry, dict) and not result.is_error:
-            meta = ScenarioBranchMeta.model_validate(entry)
-            await self._refresh_meta_revision(meta)
-            entry.update(meta.model_dump())
-            await self._save_registry(parent_session_id, registry)
-        return result
+            registry = await self._load_registry(parent_session_id)
+            entry = registry.get(branch_id)
+            if isinstance(entry, dict) and not result.is_error:
+                meta = ScenarioBranchMeta.model_validate(entry)
+                await self._refresh_meta_revision(meta)
+                entry.update(meta.model_dump())
+                await self._save_registry(parent_session_id, registry)
+            return result
 
-    # ── 感知 ──────────────────────────────────────────────────────────
+        # ── 感知 ──────────────────────────────────────────────────────────
 
     async def get_branch_world_state(
         self, parent_session_id: str, branch_id: str
@@ -357,17 +361,18 @@ class ScenarioBranchManager:
 
         幂等：分支不存在返回 False（不抛）。返回 True = 状态已释放。
         """
-        registry = await self._load_registry(parent_session_id)
-        entry = registry.get(branch_id)
-        if not isinstance(entry, dict):
-            return False
-        meta = ScenarioBranchMeta.model_validate(entry)
-        await session_data_manager.clear_session(meta.branch_session_id)
-        registry.pop(branch_id, None)
-        await self._save_registry(parent_session_id, registry)
-        return True
+        async with session_lock_registry.lock(parent_session_id):
+            registry = await self._load_registry(parent_session_id)
+            entry = registry.get(branch_id)
+            if not isinstance(entry, dict):
+                return False
+            meta = ScenarioBranchMeta.model_validate(entry)
+            await session_data_manager.clear_session(meta.branch_session_id)
+            registry.pop(branch_id, None)
+            await self._save_registry(parent_session_id, registry)
+            return True
 
-    # ── 多方案对比 ────────────────────────────────────────────────────
+        # ── 多方案对比 ────────────────────────────────────────────────────
 
     async def compare_branches(
         self,
@@ -398,42 +403,34 @@ class ScenarioBranchManager:
             baseline_revision = 0
         baseline_fingerprint = fingerprint_mapspec(base_spec)
         base_payloads = extract_layer_payloads(base_spec)
-        baseline_metrics = evaluate_metrics(base_payloads, service_radius_m)
-
-        branch_results: List[BranchDiffResult] = []
+        loaded_branches = []
+        latitudes = _collect_latitudes(base_payloads)
         for branch_id in branch_ids:
             meta = await self.get_branch_meta(parent_session_id, branch_id)
             spec = await mapspec_store_instance.get_mapspec(meta.branch_session_id)
             if not isinstance(spec, dict) or not spec:
-                raise BranchError(
-                    "branch_state_missing", f"分支 {branch_id} 的 MapSpec 缺失（已被清除？）"
-                )
-            branch_payloads = extract_layer_payloads(spec)
-            diffs = diff_layers(
-                base_payloads, branch_payloads, service_radius_m=service_radius_m
-            )
-            deltas = compute_metric_deltas(
-                base_payloads, branch_payloads, service_radius_m=service_radius_m
-            )
-            overlay = build_diff_overlay(diffs)
-            geometry_summary: Dict[str, Any] = {
-                layer_id: value.summary()
-                for layer_id, value in diffs.items()
-                if isinstance(value, GeometryDiff)
-            }
-            if COVERAGE_KEY in diffs:
-                geometry_summary[COVERAGE_KEY] = diffs[COVERAGE_KEY]
-            branch_results.append(
-                BranchDiffResult(
-                    branch_id=branch_id,
-                    title=meta.title,
-                    hypothesis=meta.hypothesis,
-                    metric_deltas=deltas,
-                    geometry_summary=geometry_summary,
-                    overlay_features=overlay.get("features", []),
-                    cost_proxy=cost_proxy_of(diffs),
-                )
-            )
+                raise BranchError("branch_state_missing", f"分支 {branch_id} 的 MapSpec 缺失")
+            payloads = extract_layer_payloads(spec)
+            loaded_branches.append((meta, payloads))
+            latitudes.extend(_collect_latitudes(payloads))
+        shared_lat0 = sum(latitudes) / len(latitudes) if latitudes else 0.0
+
+        def calculate() -> tuple[dict[str, Optional[float]], list[BranchDiffResult]]:
+            baseline = evaluate_metrics(base_payloads, service_radius_m, lat0=shared_lat0)
+            results = []
+            for meta, payloads in loaded_branches:
+                diffs = diff_layers(base_payloads, payloads, service_radius_m=service_radius_m)
+                deltas = compute_metric_deltas(base_payloads, payloads, service_radius_m=service_radius_m, lat0=shared_lat0)
+                summary = {lid: value.summary() for lid, value in diffs.items() if isinstance(value, GeometryDiff)}
+                if COVERAGE_KEY in diffs:
+                    summary[COVERAGE_KEY] = diffs[COVERAGE_KEY]
+                results.append(BranchDiffResult(branch_id=meta.branch_id, title=meta.title,
+                    hypothesis=meta.hypothesis, metric_deltas=deltas,
+                    geometry_summary=summary, overlay_features=build_diff_overlay(diffs).get("features", []),
+                    cost_proxy=cost_proxy_of(diffs)))
+            return baseline, results
+
+        baseline_metrics, branch_results = await asyncio.to_thread(calculate)
 
         comparison = self._advisor.build_comparison(
             baseline_metrics=baseline_metrics,

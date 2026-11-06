@@ -549,7 +549,8 @@ def _find_one_cycle(graph: ComponentGraph, link_type: str) -> Optional[List[Comp
         if color[nid] == WHITE:
             cycle = dfs(nid)
             if cycle:
-                pairs = list(zip(cycle, cycle[1:]))
+                # Adjacent pairs intentionally omit the unpaired final element.
+                pairs = list(zip(cycle, cycle[1:], strict=False))
                 return [link_index[p] for p in pairs if p in link_index]
     return None
 

@@ -1,8 +1,9 @@
 """SpectralRasterEngine - 核心遥感波段分析与地形表面引擎。
 
-深入封装 STAC COG 波段检索、带云掩膜的向量化波段代数、Horn 方法地形推导、
+深入封装 STAC COG 波段检索、向量化波段代数、Horn 方法地形推导、
 以及与 MapSpec type:"raster" 图层的直接对接。
 """
+import uuid
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional
@@ -74,12 +75,20 @@ class SpectralRasterEngine:
                 correction_hint="请放宽日期窗口 (如 1~3 个月) 或扩大部分边界框以容忍有云覆盖。",
             )
 
+        missing_bands = sorted(set(bands_needed_keys) - set(fetch_res["bands"]))
+        if missing_bands:
+            return RasterAnalysisResult(index_type=idx, is_error=True,
+                error_msg=f"STAC item lacks required bands: {', '.join(missing_bands)}",
+                correction_hint="Choose an item containing all required spectral roles.")
+
         try:
             # Band algebra on full band arrays is CPU-bound numpy — offload so
             # multi-million-pixel index math can't block the event loop.
             def _compute_index():
                 arr = compute_index_array(idx, **fetch_res["bands"])
                 stats = compute_raster_stats(arr)
+                stats["cloud_mask_applied"] = False
+                stats["data_quality_note"] = "未应用云和阴影像元掩膜；统计可能包含云、阴影及积雪。"
                 return arr, stats
 
             arr, stats = await asyncio.to_thread(_compute_index)
@@ -228,24 +237,19 @@ class SpectralRasterEngine:
             return {"error": result.error_msg or "无效的栅格数据，无法挂载图层"}
 
         try:
-            from app.services.raster_cartography_converter import render_array_to_png
             from app.services.mapspec_store import mapspec_store
 
-            # Render array into colormap-baked PNG bytes
-            png_bytes = render_array_to_png(result.array)
-            raster_id = f"{result.index_type}_{session_id[:8]}"
-
-            source_data = {
-                "type": "raster",
-                "raster_source": {
-                    "png_bytes": png_bytes,
-                    "bounds": result.bounds,
-                    "image_size": [result.array.shape[1], result.array.shape[0]],
-                }
-            }
-
-            # Store PNG and register raster MapSpec source
-            source_ref = mapspec_store.upsert_source(session_id, raster_id, source_data)
+            raster_id = f"{result.index_type}_{uuid.uuid4().hex[:12]}"
+            source_data = {"type": "raster", "raster_source": {
+                "array": result.array, "bounds": result.bounds,
+            }}
+            # The supported mutation path renders/stores the PNG, validates its
+            # georeferencing, and publishes the source and layer atomically.
+            written = await mapspec_store.layer_upsert(
+                session_id, {"id": raster_id, "type": "raster", "source": raster_id},
+                source_data=source_data, actor="spectral_raster_engine",
+            )
+            source_ref = written.get("source_id", raster_id)
 
             return {
                 "status": "ok",

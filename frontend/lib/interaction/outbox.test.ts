@@ -334,3 +334,16 @@ describe('client 身份与 seq（per-tab）', () => {
     expect(nextClientSeq(storage)).toBe(1);
   });
 });
+
+it('notifies projection invalidation only for a successful durable acknowledgement', async () => {
+  const acknowledged = vi.fn();
+  const h = createHarness({ onAcknowledged: acknowledged });
+  h.respondWith(() => new Response(JSON.stringify({ accepted: 1, persist_degraded: true }), { status: 200 }));
+  h.outbox.enqueue(event(1));
+  await h.advance(500);
+  expect(acknowledged).not.toHaveBeenCalled();
+  h.respondWith(() => new Response(JSON.stringify({ accepted: 1, acks: [] }), { status: 200 }));
+  await h.advance(500);
+  expect(acknowledged).toHaveBeenCalledWith('sess-test');
+  h.outbox.dispose();
+});

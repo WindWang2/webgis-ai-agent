@@ -88,7 +88,7 @@ MIN_WINDOW = 3
 MAX_WINDOW = 101
 
 # Foundation V2（A5）：网格规模护栏（先拒绝、后分配）与射线半径上限。
-MAX_HYDRO_CELLS = 50_000_000
+MAX_HYDRO_CELLS = 2_000_000
 MAX_OPENNESS_RADIUS_CELLS = 100
 MAX_GEOMORPHON_RADIUS_CELLS = 128
 
@@ -662,7 +662,7 @@ def d8_flow(
     receiver = np.full(h * w, -1, dtype=np.int64)
     has_recv = valid & (best_slope > 0)
     rows_f, cols_f = np.nonzero(has_recv)
-    for idx, (_, code, dr, dc) in enumerate(_D8_NEIGHBORS):
+    for _idx, (_, code, dr, dc) in enumerate(_D8_NEIGHBORS):
         sel = direction[rows_f, cols_f] == code
         if sel.any():
             rr = rows_f[sel] + dr
@@ -735,7 +735,7 @@ def flow_accumulation(
     contrib = cells[order]
     recv_flat = receiver[contrib]
     acc_flat = acc.ravel()
-    for src, dst in cancellable(zip(contrib.tolist(), recv_flat.tolist()),
+    for src, dst in cancellable(zip(contrib.tolist(), recv_flat.tolist(), strict=True),
                                 every=4096):
         if dst >= 0:
             acc_flat[dst] += acc_flat[src] + 1
@@ -867,7 +867,7 @@ def extract_contours(
 
     features: List[GeoJSONFeature] = []
     levels_drawn: List[float] = []
-    for level, segments in zip(cs.levels, cs.allsegs):
+    for level, segments in zip(cs.levels, cs.allsegs, strict=True):
         emitted = 0
         for seg in segments:
             if len(seg) < 2:
@@ -877,7 +877,7 @@ def extract_contours(
             xs, ys = _cell_to_world(tf, cols, rows)
             coords = [
                 [round(float(x), 6), round(float(y), 6)]
-                for x, y in zip(xs, ys)
+                for x, y in zip(xs, ys, strict=True)
             ]
             if len(coords) < 2:
                 continue
@@ -1456,7 +1456,7 @@ def stream_order(
         processing_order="descending elevation (receivers are strictly lower; deterministic (row, col) tie-break)",
         stream_cells=int(streams.sum()),
         max_order=int(codes.max()) if codes.size else 0,
-        order_distribution={str(int(o)): int(n) for o, n in zip(unique, counts)},
+        order_distribution={str(int(o)): int(n) for o, n in zip(unique, counts, strict=True)},
     )
     return order, meta
 
@@ -1644,7 +1644,7 @@ def hand(
     vflat = valid.ravel()
     # 升序高程处理（接收者严格更低 → **先**结算，望远镜求和成立）
     _n = 0
-    for parent in _topology_order(z, valid, descending=False).tolist():
+    for parent in _topology_order(np.asarray(d8.get("dem", z)), valid, descending=False).tolist():
         # science-v4 review R1：O(N) 主循环取消检查点（64K 粒度）
         _n += 1
         if _n % 65536 == 0:
@@ -1725,7 +1725,7 @@ def shreve_magnitude(
         stream_cells=int(streams.sum()),
         max_magnitude=int(codes.max()) if codes.size else 0,
         magnitude_distribution_top={
-            str(int(o)): int(n) for o, n in sorted(zip(unique, counts))[-8:]
+            str(int(o)): int(n) for o, n in sorted(zip(unique, counts, strict=True))[-8:]
         },
     )
     return magnitude, meta
@@ -1805,9 +1805,9 @@ def pfafstetter_codes(
         ocol, orow = _world_to_cell(transform, float(outlet[0]), float(outlet[1]))
         row, col = int(round(float(orow))), int(round(float(ocol)))
     else:
-        row, col = int(outlet[0]), int(outlet[1])
+        row, col = int(round(outlet[0])), int(round(outlet[1]))
     out_flat = row * w + col
-    if not (0 <= out_flat < h * w):
+    if not (0 <= row < h and 0 <= col < w):
         raise DegenerateData(
             f"pfafstetter outlet ({row}, {col}) outside grid {(h, w)}",
             correction_hint="pour point 必须落在栅格范围内")
@@ -1870,7 +1870,7 @@ def pfafstetter_codes(
         tributary_codes={str(2 * i + 1): int(acc_flat[c]) for i, (_a, _p, c) in enumerate(chosen)},
         max_tributaries=int(max_tributaries),
         hierarchy_note="single-level (multi-level recursive sub-basin coding not implemented)",
-        code_distribution={str(int(c0)): int(n) for c0, n in zip(unique, counts)},
+        code_distribution={str(int(c0)): int(n) for c0, n in zip(unique, counts, strict=True)},
     )
     return codes, meta
 
@@ -1920,9 +1920,9 @@ def pfafstetter_codes_multilevel(
             transform, float(outlet[0]), float(outlet[1]))
         row, col = int(round(float(orow))), int(round(float(ocol)))
     else:
-        row, col = int(outlet[0]), int(outlet[1])
+        row, col = int(round(outlet[0])), int(round(outlet[1]))
     out_flat = row * w + col
-    if not (0 <= out_flat < h * w):
+    if not (0 <= row < h and 0 <= col < w):
         raise DegenerateData(
             f"pfafstetter outlet ({row}, {col}) outside grid {(h, w)}",
             correction_hint="pour point 必须落在栅格范围内")
@@ -2039,7 +2039,7 @@ def pfafstetter_codes_multilevel(
             f"{_PF_MIN_SEGMENT_CELLS} stream cells not subdivided (counted)"),
         code_distribution={
             str(int(c0)): int(n) for c0, n in
-            sorted(zip(unique, counts), key=lambda kv: -kv[1])[:16]},
+            sorted(zip(unique, counts, strict=True), key=lambda kv: -kv[1])[:16]},
         distinct_codes=int(unique.size),
         level_segments=level_meta,
     )
@@ -2982,7 +2982,7 @@ def geomorphons(
     valid_k = klass[klass > 0]
     unique, counts = np.unique(valid_k, return_counts=True)
     distribution = {GEOMORPHON_CLASSES[int(o) - 1]: int(n)
-                    for o, n in zip(unique, counts)}
+                    for o, n in zip(unique, counts, strict=True)}
     result: GeomorphonResult = {
         "classes": klass,           # 1..10（顺序见 GEOMORPHON_CLASSES）；0 = 无效
         "class_names": GEOMORPHON_CLASSES,
@@ -3108,7 +3108,7 @@ def landform_classification(
     valid_k = klass[klass > 0]
     unique, counts = np.unique(valid_k, return_counts=True)
     distribution = {LANDFORM_CLASSES[int(o) - 1]: int(n)
-                    for o, n in zip(unique, counts)}
+                    for o, n in zip(unique, counts, strict=True)}
     result: LandformResult = {
         "classes": klass,          # 1..10（顺序见 LANDFORM_CLASSES）；0 = 无效
         "class_names": LANDFORM_CLASSES,
@@ -3172,6 +3172,7 @@ def hillshade_multiazimuth(
         raise ValueError(f"combine must be 'mean' or 'min' (got {combine!r})")
 
     z, valid = _prepare(dem, nodata)
+    z = np.where(valid, z, np.nan)
     _guard_cells(z.shape, "terrain.hillshade_multi")
 
     # 与 band_math.compute_hillshade 逐位相同的单方位实现（真相源注释）。
@@ -3192,7 +3193,7 @@ def hillshade_multiazimuth(
         shades.append(np.clip(hs * 255.0, 0.0, 255.0))
 
     stack = np.stack(shades, axis=0)
-    shade = np.mean(stack, axis=0) if combine == "mean" else np.min(stack, axis=0)
+    shade = np.where(valid, np.mean(stack, axis=0) if combine == "mean" else np.min(stack, axis=0), np.nan)
 
     meta = _meta_base(
         "terrain.hillshade_multi", valid,
@@ -3286,6 +3287,7 @@ def solar_radiation(
     返回 ``(insolation (MJ m⁻² day⁻¹), meta)``。
     """
     z, valid = _prepare(dem, nodata)
+    z = np.where(valid, z, np.nan)
     h, w = z.shape
     _guard_cells((h, w), "terrain.solar_radiation")
     if not (-90.0 <= float(latitude_deg) <= 90.0):
@@ -3317,7 +3319,7 @@ def solar_radiation(
     aspect = np.arctan2(-gx, gy)
     # 太阳方位近似：正午太阳方位 = 赤纬决定（北半球夏偏南）；取
     # az_sun = π + delta（弧度，0=北顺时针）作为日积分代表方位（近似披露）。
-    az_sun = math.pi + delta
+    az_sun = math.pi if phi >= delta else 0.0
     # 方位项 = cos(az_sun − aspect)（docstring 公式；两角同为罗盘约定）。
     incidence = np.cos(slope) + np.sin(slope) * np.cos(az_sun - aspect)
     factor = np.clip(incidence, 0.15, None)

@@ -55,7 +55,7 @@ def enqueue_simulation(
         celery_task=run_simulation_forecast,
         task_type="simulation_forecast",
         display_name="时空动态仿真推演",
-        params=params_dump,
+        params={"params": params_dump, "config": config.model_dump(mode="json")},
         task_kwargs={
             "params": params_dump,
             "config": config.model_dump(mode="json"),

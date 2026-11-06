@@ -37,6 +37,7 @@ from app.services.gis_action.legacy_adapter import (
 
 
 _FACTS = {
+    "webgis_layer_remove": ToolResolution(tool="webgis_layer_remove", side_effect="state_mutation"),
     "t": ToolResolution(tool="t", side_effect="deterministic_compute"),
     "t_upsert": ToolResolution(tool="t_upsert", side_effect="state_mutation"),
     "webgis_layer_upsert": ToolResolution(tool="webgis_layer_upsert",

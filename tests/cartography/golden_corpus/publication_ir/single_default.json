@@ -33,6 +33,9 @@
             },
             {
               "constraints": {},
+              "content": {
+                "text": "main"
+              },
               "frame": {
                 "anchor": "top_left",
                 "height": 0.06,

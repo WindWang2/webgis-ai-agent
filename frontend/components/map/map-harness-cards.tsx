@@ -88,7 +88,7 @@ function ReceiptCard(props: {
       const finalReceipt = await commitPendingMapOperation(
         sessionId, receipt.operation_id, ownerToken,
       );
-      updateOperationReceipt(finalReceipt);
+      updateOperationReceipt(finalReceipt, sessionId);
     } catch (err) {
       setError(String((err as Error)?.message || err));
     } finally {

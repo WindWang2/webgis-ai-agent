@@ -1678,6 +1678,11 @@
       "message": "矢量 SVG 不含栅格底图瓦片（仅数据层与图面要素）"
     },
     {
+      "code": "basemap_tiles_missing",
+      "severity": "warning",
+      "message": "底图瓦片缺失（{detail}；计数+样本有界，非全量清单）"
+    },
+    {
       "code": "cartogram_unsupported",
       "severity": "warning",
       "message": "cartogram（变形地图）渲染运行时未实现，按未变形几何导出"
@@ -1748,6 +1753,11 @@
       "message": "山体阴影图层无法以矢量形式表达，已在导出件中省略（layer: {detail}）"
     },
     {
+      "code": "key_text_wrapped",
+      "severity": "info",
+      "message": "关键文本超限折行（wrap-not-clip，内容完整）（{detail}）"
+    },
+    {
       "code": "label_budget_exceeded",
       "severity": "warning",
       "message": "标签数量超出导出预算（{detail}），超出部分未渲染"
@@ -1758,9 +1768,29 @@
       "message": "标签碰撞求解：部分标签位移或省略（{detail}）"
     },
     {
+      "code": "label_expression_unsupported",
+      "severity": "warning",
+      "message": "标注表达式暂不支持，已跳过该文本，避免输出错误标注"
+    },
+    {
+      "code": "label_field_missing",
+      "severity": "warning",
+      "message": "层声明的标注字段不在源字段集，标注按回退链渲染或缺失（{detail}）"
+    },
+    {
       "code": "label_truncated",
       "severity": "warning",
       "message": "标注文本过长，已截断显示（{detail}）"
+    },
+    {
+      "code": "layer_coordinates_invalid",
+      "severity": "warning",
+      "message": "图层包含超出经纬度合法范围的坐标，已跳过无效几何"
+    },
+    {
+      "code": "layer_filter_unsupported",
+      "severity": "warning",
+      "message": "图层过滤表达式不受矢量导出支持，已跳过该图层（{detail}）"
     },
     {
       "code": "layer_gated_by_zoom",

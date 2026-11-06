@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import threading
 from typing import Any, Optional
@@ -134,17 +135,9 @@ def safe_parse(geojson: Any) -> dict | list | None:
             return None
         except (json.JSONDecodeError, TypeError):
             # Try simple repair for truncated strings
-            try:
-                repaired = _repair_json(geojson)
-                parsed = json.loads(repaired)
-                if isinstance(parsed, dict):
-                    return parsed
-                if isinstance(parsed, list):
-                    if not parsed or all(isinstance(x, dict) for x in parsed):
-                        return parsed
-                return None
-            except Exception:
-                return None
+            # Truncated geometry cannot be reconstructed without inventing or
+            # dropping features. Callers must resend complete JSON.
+            return None
     return None
 
 
@@ -281,7 +274,7 @@ def gdf_from_features(fc: dict | list, context: str = "") -> gpd.GeoDataFrame:
             if gdf.crs is not None and not gdf.crs.is_geographic:
                 gdf = gdf.to_crs("EPSG:4326")
         except Exception:
-            pass
+            logging.getLogger(__name__).warning('Declared CRS conversion failed; preserving the original CRS geometry', exc_info=True)
     return gdf
 
 
@@ -351,7 +344,7 @@ def _cache_key_for(geojson: Any, source_crs: Optional[str]) -> Optional[tuple]:
     are parsed-and-discarded so identity caching is unsafe for them.
     """
     if isinstance(geojson, (dict, list)):
-        return (id(geojson), source_crs)
+        return (hashlib.sha256(json.dumps(geojson, sort_keys=True, default=str).encode()).hexdigest(), source_crs)
     return None
 
 
@@ -376,7 +369,7 @@ def _cache_put(key: tuple, geojson_ref: Any, value: tuple) -> None:
         _utm_cache[key] = (geojson_ref, gdf, utm, note)  # 引用钉子：防 id 复用
         _utm_cache_order.append(key)
         # evict LRU entries beyond capacity
-        while len(_utm_cache_order) > _UTM_CACHE_MAX:
+        while _utm_cache_order and (len(_utm_cache_order) > _UTM_CACHE_MAX or sum(int(entry[1].memory_usage(deep=True).sum()) for entry in _utm_cache.values()) > 64 * 1024 * 1024):
             old = _utm_cache_order.pop(0)
             _utm_cache.pop(old, None)
 
@@ -446,7 +439,7 @@ def to_utm_gdf_with_note(
             if s.is_empty:
                 continue
             props = f.get("properties", {}) or {}
-            rows.append({"geometry": s, **props})
+            rows.append({**{("geometry_attr" if key == "geometry" else key): value for key, value in props.items()}, "geometry": s})
         except (ValueError, TypeError):
             continue
 
@@ -502,6 +495,12 @@ def to_utm_gdf_with_note(
     gdf["geometry"] = gdf.geometry.make_valid()
     gdf._original_crs = original_crs_explicit or (str(gdf.crs) if gdf.crs else "EPSG:4326")
 
+    if gdf.crs and gdf.crs.is_projected and (
+        gdf.crs.to_epsg() == 3857 or not gdf.crs.axis_info or abs(float(gdf.crs.axis_info[0].unit_conversion_factor) - 1.0) > 1e-9
+    ):
+        original = gdf._original_crs
+        gdf = gdf.to_crs("EPSG:4326")
+        gdf._original_crs = original
     if gdf.crs and gdf.crs.is_projected:
         result = (gdf, str(gdf.crs))
     else:
@@ -514,28 +513,16 @@ def to_utm_gdf_with_note(
         # case, switch to polar stereographic at the poles, and warn loudly
         # when a single zone cannot represent the extent honestly.
         minx, miny, maxx, maxy = gdf.total_bounds
-        lon_span = float(maxx - minx)
-        crosses_am = lon_span > 180.0
-        if crosses_am:
-            # #709: a dataset straddling ±180 has a raw lon span near 360°,
-            # so bounds-midpoint zone selection picks a Greenwich-centred
-            # zone (opposite side of the globe) and the >6° warning mislabels
-            # a 2° true span as continental. Rewrap per-geometry bounds into
-            # a continuous frame: a geometry that itself crosses AM reports
-            # [maxx, minx+360]; fully-negative lons shift +360. The selected
-            # zone is centered on the true extent; PROJ's TM trig handles the
-            # ±180 wrap on projection.
-            import numpy as np
+        from shapely import get_coordinates
+        from app.lib.gis.longitude import minimal_longitude_interval
 
-            b = gdf.geometry.bounds
-            lo, hi = b["minx"], b["maxx"]
-            am_geom = (hi - lo) > 180.0
-            lo_s = np.where(am_geom, hi, np.where(lo < 0, lo + 360.0, lo))
-            hi_s = np.where(am_geom, lo + 360.0, np.where(hi < 0, hi + 360.0, hi))
-            true_min, true_max = float(lo_s.min()), float(hi_s.max())
-            lon_span = true_max - true_min  # the honest span for the warning
+        true_min, true_max = minimal_longitude_interval(
+            get_coordinates(gdf.geometry.array)[:, 0]
+        )
+        lon_span = true_max - true_min
+        crosses_am = true_max > 180.0 or true_min > float(minx) + 1e-9
         abs_max_lat = max(abs(float(miny)), abs(float(maxy)))
-        polar = abs_max_lat > 84.0
+        polar = float(maxy) > 84.0 or float(miny) < -80.0
 
         utm_crs = None
         result = None  # 跨 AM 分支成功时已填；#1063 守卫读取

@@ -116,7 +116,7 @@ def test_raster_difference_aoi_outside_returns_empty(raster_pair):
     aoi = _aoi(100.0, 100.0, 110.0, 110.0)
     res = engine.raster_difference(p1, p2, aoi_geometry=aoi)
     assert res["pixel_count"] == 0
-    assert res["mean_difference"] == 0.0
+    assert res["mean_difference"] is None  # No overlapping pixels: unknown, not zero change.
 
 
 # ── Alignment validation ────────────────────────────────────────────────────

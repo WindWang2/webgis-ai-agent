@@ -28,6 +28,7 @@ V6 契约：
   abort_with_disclosure —— 不可与「空账本 attempts=0」混淆（#1401）。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import json
 import logging
@@ -111,7 +112,7 @@ class _FileLock:
 
                 fcntl.flock(self._fd, fcntl.LOCK_UN)
             except Exception:  # noqa: BLE001
-                pass
+                observe_optional_failure(__name__)
             finally:
                 os.close(self._fd)
                 self._fd = None
@@ -180,11 +181,16 @@ class RecoveryLedger:
             if new_entries is None:
                 return entries
             data["entries"] = new_entries
-            self._save_locked(session_id, data)
+            if not self._save_locked(session_id, data):
+                from app.services.harness_kernel.metrics import record
+
+                record("recovery_ledger_persist_failed")
+                logger.warning("Recovery ledger write failed; retries unavailable")
+                return None
             try:
                 self._cache.pop(session_id, None)
             except Exception:  # noqa: BLE001
-                pass
+                observe_optional_failure(__name__)
             return new_entries
 
     def _read(self, session_id: str) -> Dict[str, Any]:

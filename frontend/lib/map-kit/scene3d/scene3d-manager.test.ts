@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MapSpec } from '@/lib/mapspec-compiler/types.generated';
-import { buildGlbFixture } from './__fixtures__/glb';
+import { buildGlbFixture, buildTilesetFixture } from './__fixtures__/glb';
 import { Scene3DManager } from './asset-manager';
 import { resetSceneAssetStatusForTests, sceneAssetStatusSnapshot } from './status';
 
@@ -256,6 +256,90 @@ describe('Scene3DManager.sync', () => {
     expect(map.calls.removeLayer).toContain('scene3d-campus');
     expect(mgr.describe()).toEqual([]);
     // 二次 dispose 幂等
+    mgr.dispose();
+  });
+});
+
+describe('tile cache LRU (review B4: unload detaches, re-entry re-attaches without refetch)', () => {
+  it('exiting the render set caches the model; re-entry re-attaches with zero network', async () => {
+    const tilesetUrl = 'https://assets.test/city/tileset.json';
+    const tilesetDoc = buildTilesetFixture();
+    const glb = buildGlbFixture({ triangles: 2 });
+    const fetchCalls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      fetchCalls.push(String(url));
+      if (url === tilesetUrl) {
+        return new Response(JSON.stringify(tilesetDoc), {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'content-length': '1' },
+        });
+      }
+      if (url.endsWith('.glb')) {
+        return new Response(glb, { status: 200, headers: { 'content-length': String(glb.byteLength) } });
+      }
+      return new Response('not found', { status: 404 });
+    }));
+    const map = makeFakeMap();
+    const mgr = new Scene3DManager(map as never);
+    mgr.sync({
+      version: '1.7',
+      sources: { 'tiles-src': { type: 'model3d', format: '3dtiles', url: tilesetUrl, content_revision: 1 } as never },
+      layers: [],
+      scene: {
+        mode: '3d',
+        assets: [{
+          id: 'city', source: 'tiles-src',
+          placement: { anchor: [104.06, 30.67], altitude_m: 0 }, visible: true,
+        }] as never,
+      } as never,
+    } as never);
+    await settle(40);
+    const internals = mgr as unknown as {
+      mounted: Map<string, {
+        group: { children: unknown[] };
+        tiles: Map<string, { tile: { id: string }; model: { root: unknown } | null; attached: boolean }>;
+        prevRender: Set<string>;
+        lastMvp: number[] | null;
+      }>;
+      runSchedule: (m: unknown) => void;
+    };
+    const mounted = internals.mounted.get('city');
+    expect(mounted).toBeTruthy();
+    // 合成 MVP：透视 × 世界平移（把锚点内容移到相机正前 z=-5；eye 在
+    // 锚点上空 ~5 merc-z ≈ 极远 → SSE 极小 → 只选根 tile，不细化）。
+    const mat4 = await import('three').then((m) => m.Matrix4);
+    const perspMat = new mat4().makePerspective(-1, 1, 1, -1, 0.1, 100);
+    const mvpAt = (tx: number, ty: number, tz: number): number[] =>
+      perspMat.clone().multiply(new mat4().makeTranslation(tx, ty, tz)).toArray() as number[];
+    // 锚点 mercator ≈ (0.5128, 0.4122)
+    const persp = mvpAt(-0.5128, -0.4122, -5);
+    mounted!.lastMvp = persp;
+    internals.runSchedule(mounted);
+    const glbFetchesBefore = () => fetchCalls.filter((u) => u.endsWith('.glb')).length;
+    // 根 tile 加载完成后挂载。
+    await settle(60);
+    internals.runSchedule(mounted);
+    await settle(60);
+    const rootEntry = mounted!.tiles.get('0');
+    expect(rootEntry?.model).toBeTruthy();
+    expect(rootEntry?.attached).toBe(true);
+
+    // 相机移开（世界平移出视锥）→ 根退出 render 集：摘挂但模型保留（缓存）。
+    mounted!.lastMvp = mvpAt(-0.5128 - 1000, -0.4122, -5);
+    internals.runSchedule(mounted);
+    expect(mounted!.prevRender.has('0')).toBe(false);
+    expect(rootEntry!.model).toBeTruthy(); // 不销毁 —— 缓存
+    expect(rootEntry!.attached).toBe(false);
+    expect(mounted!.group.children).not.toContain(rootEntry!.model!.root);
+
+    // 相机回归：零网络重取，模型直接复挂。
+    const refetches = glbFetchesBefore();
+    mounted!.lastMvp = persp;
+    internals.runSchedule(mounted);
+    expect(mounted!.prevRender.has('0')).toBe(true);
+    expect(rootEntry?.attached).toBe(true);
+    expect(glbFetchesBefore()).toBe(refetches);
+    expect(mounted!.group.children).toContain(rootEntry!.model!.root);
     mgr.dispose();
   });
 });

@@ -60,11 +60,21 @@ def _feature_props(row: "pd.Series") -> dict:
     ``TypeError: Object of type int64 is not JSON serializable``，整个工具
     调用被误报为执行异常（2026-08-25 会话：h3_lisa 982 校网格即此崩法）。
     """
-    return {
-        k: (v.item() if isinstance(v, np.generic) else v)
-        for k, v in row.items()
-        if k != "geometry"
-    }
+    def clean(value: Any) -> Any:
+        if value is None or value is pd.NA or value is pd.NaT:
+            return None
+        if isinstance(value, np.generic):
+            return clean(value.item())
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        if isinstance(value, dict):
+            return {str(key): clean(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, np.ndarray)):
+            return [clean(item) for item in value]
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return value
+    return {key: clean(value) for key, value in row.items() if key != "geometry"}
 
 
 def _assemble_features(
@@ -1014,19 +1024,6 @@ def hotspot_narrated(
             round(float(v), 6) for v in p_normal]
     features = _assemble_features(gdf_wgs84, extra_props)
         
-    summary = f"Hotspot analysis identified {hot_count} statistically significant hot spots and {cold_count} cold spots."
-    if hot_count > 0 or cold_count > 0:
-        summary += f" Significant clusters of high/low values were detected using a distance band of {bw:.1f} meters."
-    else:
-        summary += " No significant hotspots were detected at the 90% confidence level."
-    # G-6（#870）：多重比较披露 —— 未校正显著数接近随机期望时降级叙述。
-    summary += (
-        f"（BH-FDR 校正后 {fdr_hot_count} 个热点 q<0.05；"
-        f"未校正 α=0.05 下 {len(p_vals)} 个单元的随机期望假阳性 ≈{expected_false_pos} 个）"
-    )
-    if hot_count > 0 and hot_count <= expected_false_pos:
-        summary += " 显著数不高于随机期望，热点结论不可靠，请谨慎叙述。"
-
     data_out = {
         "type": "FeatureCollection",
         "features": features,
@@ -1368,7 +1365,7 @@ def cluster_narrated(
     # JSON-safe cluster counts (E-1): np.int64 dict keys crash json.dumps in
     # the dispatch layer; coerce both keys and counts to native int.
     _uniq_labels, _uniq_counts = np.unique(labels, return_counts=True)
-    cluster_counts = {int(k): int(v) for k, v in zip(_uniq_labels, _uniq_counts)}
+    cluster_counts = {int(k): int(v) for k, v in zip(_uniq_labels, _uniq_counts, strict=True)}
 
     data_out = {
         "type": "FeatureCollection",
@@ -1628,7 +1625,7 @@ def compute_st_distance_matrix(
         _distance_matrix_misses += 1
 
     n = len(coords)
-    if n <= 5000:
+    if n <= 1500:
         from scipy.spatial.distance import pdist, squareform
         d_spatial = squareform(pdist(coords, metric="euclidean"))
         d_temporal = np.abs(t_seconds[:, None] - t_seconds[None, :])
@@ -1654,13 +1651,15 @@ def compute_st_distance_matrix(
     # Caching 16 of those could consume >3GB, risking OOM. Sparse results (n>5000
     # branch) are already small, so always cache those; only cache dense matrices
     # below a size threshold so the LRU's worst-case footprint stays bounded.
-    _DENSE_CACHE_MAX_N = 2000
+    _DENSE_CACHE_MAX_N = 1500
     cacheable = sparse.issparse(d_mat) or n <= _DENSE_CACHE_MAX_N
 
     with _distance_matrix_lock:
         if cacheable:
             _distance_matrix_cache[key_raw] = d_mat
-            if len(_distance_matrix_cache) > _distance_matrix_maxsize:
+            def _matrix_bytes(matrix: Any) -> int:
+                return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes if sparse.issparse(matrix) else matrix.nbytes
+            while _distance_matrix_cache and (len(_distance_matrix_cache) > _distance_matrix_maxsize or sum(_matrix_bytes(matrix) for matrix in _distance_matrix_cache.values()) > 64 * 1024 * 1024):
                 _distance_matrix_cache.popitem(last=False)
 
     return d_mat
@@ -2058,12 +2057,16 @@ def local_moran_narrated(
     # 置换期望：z 均值中心化 → E[lag_i] = 行和·mean(z) = 0 → E[I_i] ≈ 0。
     rng = np.random.default_rng(_PERMUTATION_SEED)
     extreme = np.zeros(n, dtype=np.int64)
+    # Conditional randomization keeps z_i fixed and samples neighbor values
+    # without replacement from all other observations. Reuse random index
+    # ranks across rows, as esda does, while excluding each row's own index.
+    csr = w.tocsr()
+    local_rank = np.arange(len(i_idx)) - np.repeat(csr.indptr[:-1], np.diff(csr.indptr))
     for _ in cancellable(range(perms)):
-        pz = rng.permutation(z)
-        # 对角恒 0（include_self=False 的四套权重方案）→ 置换位置 i 的值
-        # 不进入 lag_i，全局置换即 esda crand 的条件随机化。置换统计量与
-        # 观测同式（同 scale）。
-        lag_perm = np.bincount(i_idx, weights=w_vals * pz[j_idx], minlength=n)
+        permutation = rng.permutation(n - 1)
+        source = permutation[local_rank]
+        source = source + (source >= i_idx)
+        lag_perm = np.bincount(i_idx, weights=w_vals * z[source], minlength=n)
         extreme += np.abs(scale * z * lag_perm) >= np.abs(i_obs)
     p_vals = (extreme + 1) / (perms + 1)
     p_adj = multiple_testing_correction(p_vals, correction)
@@ -2232,7 +2235,7 @@ def join_count_narrated(
     n_ww = float(np.sum(wu_v * (1.0 - b[wu_i]) * (1.0 - b[wu_j])))
     n_bw = joins - n_bb - n_ww
 
-    def _free_sampling(observed: float, num2: float, num4: float) -> dict:
+    def _free_sampling(observed: float, num2: float, num4: float, num3: float) -> dict:
         """non-free sampling 期望/方差（Cliff-Ord 1973 条件于边际）。
 
         p = num2/(n(n−1))（不放回：两次抽中同类的一阶矩），
@@ -2249,8 +2252,14 @@ def join_count_narrated(
         # 下可能为负 —— 经典式把所有 join 对当端点不相交，漏掉共享顶点
         # 的交叉矩。负方差钳零并报 p=1 是**伪造的「无证据」答案**
         # （评审 R2 MAJOR-2）：这里改为类型化拒绝解析推断，要求置换。
-        var = joins * p * (1.0 - p) + 2.0 * joins * (joins - 1.0) * (
-            num4 / den4 - p * p)
+        # Expand E[(sum_e w_e I_e)^2] by identical, shared-vertex,
+        # and disjoint edge pairs (fixed label margins).
+        sq = float(np.sum(wu_v ** 2))
+        degree = np.bincount(wu_i, weights=wu_v, minlength=n) + np.bincount(wu_j, weights=wu_v, minlength=n)
+        shared = float(np.sum(degree ** 2) - 2 * sq)
+        disjoint = joins ** 2 - sq - shared
+        p3 = num3 / (n * (n - 1.0) * (n - 2.0))
+        var = sq * p + shared * p3 + disjoint * num4 / den4 - expected ** 2
         if var <= 0.0:
             # 经典式漏共享顶点交叉矩，稀少类别（m<4 → num4=0）下可为负；
             # 钳零并报 p=1 是伪造的「无证据」答案（评审 R2 MAJOR-2）。
@@ -2271,11 +2280,11 @@ def join_count_narrated(
         }
 
     stats_bb = _free_sampling(n_bb, black * (black - 1.0),
-                              black * (black - 1.0) * (black - 2.0) * (black - 3.0))
+                              black * (black - 1.0) * (black - 2.0) * (black - 3.0), black * (black - 1.0) * (black - 2.0))
     stats_ww = _free_sampling(n_ww, white * (white - 1.0),
-                              white * (white - 1.0) * (white - 2.0) * (white - 3.0))
+                              white * (white - 1.0) * (white - 2.0) * (white - 3.0), white * (white - 1.0) * (white - 2.0))
     stats_bw = _free_sampling(n_bw, 2.0 * black * white,
-                              4.0 * black * (black - 1.0) * white * (white - 1.0))
+                              4.0 * black * (black - 1.0) * white * (white - 1.0), black * white * (n - 2.0))
 
     perm_p = None
     perms = int(permutations or 0)
@@ -2370,7 +2379,7 @@ def join_count_narrated(
         return f"p={s['p_value']:.4f}" if s["p_value"] is not None else "p=不可用"
 
     summary = (
-        f"Join Count（{wm.scheme}，{joins:.0f} 个无序连接，B={black:.0f}/W={white:.0f}）："
+        f"Join Count（non-free sampling，{wm.scheme}，{joins:.0f} 个无序连接，B={black:.0f}/W={white:.0f}）："
         f"n_BB={n_bb:.0f}（期望 {stats_bb['expected']:.1f}，{_fmt_p(stats_bb)}）、"
         f"n_BW={n_bw:.0f}（期望 {stats_bw['expected']:.1f}，{_fmt_p(stats_bw)}）、"
         f"n_WW={n_ww:.0f}（期望 {stats_ww['expected']:.1f}，{_fmt_p(stats_ww)}）。")
@@ -2403,7 +2412,7 @@ def bivariate_join_count_narrated(
     n_BB（同类连接）/ n_BW（异类连接）/ n_WW；期望/方差按 non-free
     sampling（Cliff-Ord 1973，条件于类别边际的解析矩，与 join_count 同
     式）计算，z + 双侧正态 p；``permutations > 0`` 时附加固定种子 42 的
-    置换复核。non-free sampling 近似忽略权重结构细节（只含连接数 J），
+    置换复核。non-free sampling 近似按相同边、共享顶点与不相交边对计算，
     在 meta 中显式披露。
     """
     gdf, values = validated_numeric_frame(
@@ -2481,7 +2490,7 @@ def bivariate_join_count_narrated(
     n_ww = float(np.sum(wu_v * (1.0 - b[wu_i]) * (1.0 - b[wu_j])))
     n_bw = joins - n_bb - n_ww
 
-    def _free_sampling(observed: float, num2: float, num4: float) -> dict:
+    def _free_sampling(observed: float, num2: float, num4: float, num3: float) -> dict:
         """non-free sampling 期望/方差（Cliff-Ord 1973；与 join_count 同式）。
 
         p = num2/(n(n−1))，Var = J·p(1−p) + 2J(J−1)(q − p²)；二阶矩为负时
@@ -2493,8 +2502,14 @@ def bivariate_join_count_narrated(
         den4 = den2 * (n - 2.0) * (n - 3.0)
         p = num2 / den2
         expected = joins * p
-        var = joins * p * (1.0 - p) + 2.0 * joins * (joins - 1.0) * (
-            num4 / den4 - p * p)
+        # Expand E[(sum_e w_e I_e)^2] by identical, shared-vertex,
+        # and disjoint edge pairs (fixed label margins).
+        sq = float(np.sum(wu_v ** 2))
+        degree = np.bincount(wu_i, weights=wu_v, minlength=n) + np.bincount(wu_j, weights=wu_v, minlength=n)
+        shared = float(np.sum(degree ** 2) - 2 * sq)
+        disjoint = joins ** 2 - sq - shared
+        p3 = num3 / (n * (n - 1.0) * (n - 2.0))
+        var = sq * p + shared * p3 + disjoint * num4 / den4 - expected ** 2
         if var <= 0.0:
             return {
                 "observed": float(observed), "expected": float(expected),
@@ -2511,11 +2526,11 @@ def bivariate_join_count_narrated(
         }
 
     stats_bb = _free_sampling(n_bb, black * (black - 1.0),
-                              black * (black - 1.0) * (black - 2.0) * (black - 3.0))
+                              black * (black - 1.0) * (black - 2.0) * (black - 3.0), black * (black - 1.0) * (black - 2.0))
     stats_ww = _free_sampling(n_ww, white * (white - 1.0),
-                              white * (white - 1.0) * (white - 2.0) * (white - 3.0))
+                              white * (white - 1.0) * (white - 2.0) * (white - 3.0), white * (white - 1.0) * (white - 2.0))
     stats_bw = _free_sampling(n_bw, 2.0 * black * white,
-                              4.0 * black * (black - 1.0) * white * (white - 1.0))
+                              4.0 * black * (black - 1.0) * white * (white - 1.0), black * white * (n - 2.0))
 
     perm_p = None
     perms = int(permutations or 0)
@@ -2578,7 +2593,7 @@ def bivariate_join_count_narrated(
                              "n_ww": stats_ww["p_value"]},
         "assumptions_disclosed": [
             "non-free sampling：期望/方差条件于两类别边际的 Cliff-Ord 1973 "
-            "解析矩（不放回），忽略权重结构细节（只含连接数 J）",
+            "解析矩（不放回），按相同边、共享顶点与不相交边对计算",
         ],
         "pattern": pattern,
         "weights": wm.metadata(),
@@ -2627,7 +2642,7 @@ def bivariate_join_count_narrated(
         summary += "（解析方差简并，判别基于置换检验）"
     elif pattern == "random":
         summary += " 与 non-free sampling 零假设无显著差异。"
-    summary += "（non-free sampling 假设：条件于类别边际，忽略权重结构细节）"
+    summary += "（non-free sampling 假设：条件于类别边际，保留边对拓扑矩）"
     return GeoAnalysisResult(True, data_out, summary)
 
 
@@ -3361,7 +3376,7 @@ def weights_sensitivity_narrated(
 
 # ── Foundation V3：地理探测器生态/风险探测器 ─────────────────────────
 # Wang et al. (2010) 探测器家族的其余两件：生态探测器（两分层解释力的
-# SSW 比较 t 检验）与风险探测器（逐分层对均值差的 Welch t + 可选置换）。
+# SSW 比较 F 检验）与风险探测器（逐分层对均值差的 Welch t + 可选置换）。
 
 
 def _ssw(values: "np.ndarray", labels: "np.ndarray") -> float:
@@ -3379,14 +3394,9 @@ def geodetector_ecological(
 ) -> dict:
     """生态探测器（Wang et al. 2010）：两个分层对 y 的解释力比较。
 
-    SSW_j = Σ_h Σ_{i∈h} (y_i − ȳ_h)²；t 统计量（Wang 2010 族）：
-    t = [SSW₁/(n−m₁) − SSW₂/(n−m₂)] / sqrt( (SSW₁/(n−m₁))²/(n−m₁−1)
-         + (SSW₂/(n−m₂))²/(n−m₂−1) )。
-    **自由度披露**：双侧 p 用 Student t、df = n − 2 —— Wang 2010 原文未
-    规定统一的合成自由度，n−2 是可复核的固定选择；注意它并非严格保守
-    （Welch–Satterthwaite 有效自由度可以更小）（分层自由度不同的
-    精确合成需 Behrens-Fisher 类近似，超出本实现）。
-    |Y₁| 显著解释占优 ⟺ 其 SSW 显著更小（t > 0 且 p < 0.05）。
+    F = SSW1 / SSW2 for equal sample sizes, with degrees of freedom
+    (N-1, N-1). Two-sided F tails compare unexplained spatial variation.
+    See Wang et al. (2017), GeoDetector: principle and prospective.
     """
     y = np.asarray(y, dtype=float)
     s1 = np.asarray(x1_strata, dtype=object)
@@ -3420,30 +3430,22 @@ def geodetector_ecological(
         )
     ssw1 = _ssw(y, s1)
     ssw2 = _ssw(y, s2)
-    n1_rate = ssw1 / (n - m1)
-    n2_rate = ssw2 / (n - m2)
-    denom = float(np.sqrt(n1_rate ** 2 / (n - m1 - 1)
-                          + n2_rate ** 2 / (n - m2 - 1)))
-    if denom <= 0:
-        # 两个分层都完全决定 y（SSW 双零）：t 无定义，诚实置 0、p=1
-        t_stat, p_value = 0.0, 1.0
+    # Published GeoDetector ecological F statistic; both factors use the same N.
+    if ssw1 == 0 and ssw2 == 0:
+        f_stat, p_value = 1.0, 1.0
+    elif ssw2 == 0:
+        f_stat, p_value = None, 0.0
     else:
-        t_stat = float((n1_rate - n2_rate) / denom)
-        df = n - 2
-        p_value = float(2.0 * sps.t.sf(abs(t_stat), df))
-    if p_value < 0.05 and n1_rate < n2_rate:
-        decision = "Y1_significantly_dominant"
-    elif p_value < 0.05 and n2_rate < n1_rate:
-        decision = "Y2_significantly_dominant"
-    else:
-        decision = "no_significant_difference"
-    return {
-        "n": int(n), "m1": int(m1), "m2": int(m2),
-        "ssw1": float(ssw1), "ssw2": float(ssw2),
-        "rate1": float(n1_rate), "rate2": float(n2_rate),
-        "t_statistic": float(t_stat), "df": int(n - 2),
-        "p_value": float(p_value), "decision": decision,
-    }
+        f_stat = float(ssw1 / ssw2)
+        p_value = float(min(1.0, 2 * min(sps.f.cdf(f_stat, n - 1, n - 1), sps.f.sf(f_stat, n - 1, n - 1))))
+    decision = "no_significant_difference"
+    if p_value < 0.05:
+        decision = "Y1_significantly_dominant" if ssw1 < ssw2 else "Y2_significantly_dominant"
+    return {"n": n, "m1": m1, "m2": m2, "ssw1": float(ssw1), "ssw2": float(ssw2),
+            "rate1": float(ssw1 / (n - m1)), "rate2": float(ssw2 / (n - m2)),
+            "f_statistic": f_stat, "df1": n - 1, "df2": n - 1,
+            "t_statistic": None, "df": n - 1,
+            "p_value": p_value, "decision": decision}
 
 
 def geodetector_ecological_narrated(
@@ -3453,10 +3455,9 @@ def geodetector_ecological_narrated(
     strata_field_2: str,
     bins: int = 0,
 ) -> GeoAnalysisResult:
-    """生态探测器（stats.geodetector_ecological）：两分层 SSW 的 t 比较。
+    """生态探测器（stats.geodetector_ecological）：两分层 SSW 的 F 比较。
 
-    |Y₁| 的 SSW 显著更小 → Y₁ 显著解释占优。df = n−2 的固定选择（非严格
-    保守，见 docstring 披露）、SSW
+    |Y₁| 的 SSW 显著更小 → Y₁ 显著解释占优。F 自由度为 (N-1,N-1)；SSW
     只度量分层解释力不构成因果证据，均在叙事/meta 披露。
     """
     vsi = validated_input(
@@ -3511,26 +3512,25 @@ def geodetector_ecological_narrated(
         "ssw_2": round(out["ssw2"], 6),
         "n_strata_1": out["m1"],
         "n_strata_2": out["m2"],
-        "t_statistic": round(out["t_statistic"], 6),
+        "f_statistic": round(out["f_statistic"], 6) if out["f_statistic"] is not None else None,
+        "t_statistic": None,
+        "df1": out["df1"], "df2": out["df2"],
         "df": out["df"],
         "p_value": round(out["p_value"], 6),
         "decision": out["decision"],
-        "df_disclosure": (
-            "双侧 p 用 Student t、df=n−2：Wang 2010 未规定合成自由度，"
-            "该固定选择并非严格保守（有效自由度可更小），"
-            "n−2 是保守可复核的选择"),
+        "df_disclosure": "GeoDetector ecological F test: df1=df2=N-1 for equal-sample stratifications; two-sided tail comparison.",
         "uncertainty": StatisticalSignificance(
             target="geodetector_ecological",
-            statistic_name="t of SSW comparison (Y1 vs Y2 stratifications)",
-            statistic_value=float(out["t_statistic"]),
+            statistic_name="F of SSW comparison (Y1 vs Y2 stratifications)",
+            statistic_value=out["f_statistic"],
             p_value=float(out["p_value"]),
-            method="analytic_normal",
+            method="analytic_f",
             alternative="two-sided",
         ).to_evidence(),
     }
     summary = (
         f"生态探测器：SSW({strata_field_1})={out['ssw1']:.4f} vs "
-        f"SSW({strata_field_2})={out['ssw2']:.4f}；t={out['t_statistic']:.4f}"
+        f"SSW({strata_field_2})={out['ssw2']:.4f}；F={out['f_statistic']}"
         f"（df={out['df']}，双侧 p={out['p_value']:.4f}）—— {decision_txt}。"
         "SSW 只度量分层解释力，不是因果证据。")
     return GeoAnalysisResult(True, data_out, summary)
@@ -3612,6 +3612,12 @@ def geodetector_risk(
             else "lower" if sig and entry["mean_diff"] < 0
             else "not_significant")
         pairs.append(entry)
+    valid_pairs = [entry for entry in pairs if entry["p_value"] is not None]
+    adjusted = _bh_qvalues(np.asarray([entry["p_value"] for entry in valid_pairs]))
+    for entry, adjusted_p in zip(valid_pairs, adjusted, strict=True):
+        entry["p_value_adjusted"] = float(adjusted_p)
+        entry["multiple_testing"] = "BH-FDR"
+        entry["direction"] = ("higher" if entry["mean_diff"] > 0 else "lower") if adjusted_p < 0.05 else "not_significant"
     matrix = {a: {} for a in levels}
     for entry in pairs:
         # 方向矩阵按有序对存：matrix[a][b] 是「a 相对 b」的方向（a 显著

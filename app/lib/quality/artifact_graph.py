@@ -18,7 +18,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
 #: 生成物账本自身（也是本图的派生物之一）
 ARTIFACT_GRAPH_PATH = "docs/quality/generated-artifacts.json"
@@ -50,7 +50,7 @@ def _expand(entry: str) -> List[Tuple[str, Path]]:
     """单条输入声明 → [(rel_path, path)]；目录递归展开（有界）。"""
     path = REPO_ROOT / entry
     if path.is_dir():
-        files = sorted(p for p in path.rglob("*.py") if p.is_file())
+        files = sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in {".py", ".ts", ".tsx", ".js", ".mjs", ".json", ".yaml", ".yml", ".toml"})
         if len(files) > _MAX_DIR_FILES:
             # R2 review：静默截断 = 新增文件不计入指纹（staleness 盲区）
             # —— 超限必须显式失败，逼迫把目录拆细或上调上限（需 ADR）。
@@ -59,6 +59,18 @@ def _expand(entry: str) -> List[Tuple[str, Path]]:
                 f"超过有界上限 {_MAX_DIR_FILES}；请拆分声明或显式上调上限")
         return [(f.relative_to(REPO_ROOT).as_posix(), f) for f in files]
     return [(entry, path)]
+
+
+class ArtifactDeclaration(TypedDict):
+    generator: str
+    inputs: List[str]
+    scope: str
+    generator_version: int
+
+
+class ArtifactState(ArtifactDeclaration):
+    input_fingerprint: str
+    content_fingerprint: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -72,7 +84,7 @@ class GeneratedEntry:
     scope: str = "global"
     generator_version: int = 1
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> ArtifactDeclaration:
         return {
             "generator": self.generator,
             "inputs": list(self.inputs),
@@ -235,7 +247,7 @@ def content_fingerprint(artifact: str) -> Optional[str]:
     return _file_hash(path)
 
 
-def build_graph_state() -> Dict[str, Any]:
+def build_graph_state() -> Dict[str, ArtifactState]:
     """{artifact: {generator, inputs, scope, generator_version,
     input_fingerprint, content_fingerprint}}（确定性）。
 
@@ -243,7 +255,7 @@ def build_graph_state() -> Dict[str, Any]:
     输入指纹变 = 正常再生成；输入不变而内容变 = 手改（regenerate-dont-edit
     被违反）或生成器非确定（由 DETERMINISM 认证另行覆盖）。
     """
-    out: Dict[str, Any] = {}
+    out: Dict[str, ArtifactState] = {}
     for entry in DECLARED:
         out[entry.artifact] = {
             **entry.as_dict(),
@@ -253,14 +265,15 @@ def build_graph_state() -> Dict[str, Any]:
     return out
 
 
-def find_hand_edits(recorded: Dict[str, Any]) -> List[str]:
+def find_hand_edits(recorded: Dict[str, Any], *, current: Optional[Dict[str, ArtifactState]] = None) -> List[str]:
     """手改检测（Quality V3 W5）：输入指纹未变而生成物内容已变的产物。
 
     与 find_stale 正交：stale = 输入变（须再生成）；hand-edit = 输入没变
     但产物被直接编辑（regenerate-dont-edit 违反，改动会随下次再生成静默
     丢失，必须显式 waiver 或改为修改生成器输入）。
     """
-    current = build_graph_state()
+    if current is None:
+        current = build_graph_state()
     edited: List[str] = []
     for artifact, state in sorted(current.items()):
         rec = recorded.get(artifact)
@@ -277,9 +290,10 @@ def find_hand_edits(recorded: Dict[str, Any]) -> List[str]:
     return edited
 
 
-def find_stale(recorded: Dict[str, Any]) -> List[str]:
+def find_stale(recorded: Dict[str, Any], *, current: Optional[Dict[str, ArtifactState]] = None) -> List[str]:
     """指纹不符 / 账本缺失登记的生成物列表（升序）。"""
-    current = build_graph_state()
+    if current is None:
+        current = build_graph_state()
     stale: List[str] = []
     for artifact, state in sorted(current.items()):
         rec = recorded.get(artifact)

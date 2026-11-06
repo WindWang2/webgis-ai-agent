@@ -154,6 +154,17 @@ export class JourneyWorld {
   datasets: Array<Record<string, unknown>> = [];
   /** Request log for contract assertions (method+path), most recent last. */
   requests: Array<{ method: string; path: string }> = [];
+  /**
+   * ADR-0285：IR 事件上行记录（POST /interaction-events 的 body 事件，
+   * journeys 断言 kind/payload 契约）；situation/turn-chain 投影面由各
+   * journey 可配置（默认空 scope）。
+   */
+  interactionEvents: Array<{
+    kind: string; actor: string; payload: Record<string, unknown>;
+    client_instance_id?: string; client_seq?: number;
+  }> = [];
+  situationView: Record<string, unknown> | null = null;
+  turnChainView: Record<string, unknown> | null = null;
 
   job(id: string): JobRecord | undefined {
     return this.jobs.find((j) => j.id === id);
@@ -286,6 +297,77 @@ export async function installJourneyStubs(page: Page, world: JourneyWorld): Prom
 
   // ── sessions / map state ────────────────────────────────────────────────
   await api(/\/api\/v1\/chat\/sessions\/[^/]+\/map-state(\?|$)/, async () => world.mapState);
+  // ── ADR-0285：交互闭环端点（IR 摄入/投影 + situation/turn-chain 只读面）──
+  await api(/\/api\/v1\/chat\/sessions\/[^/]+\/interaction-events(\?|$)/, async (_url: URL, method: string, body: string) => {
+    if (method !== 'POST') {
+      return {
+        schema_version: 'interaction_ir.v1', projection: {
+          viewport: null, selection: null, active_aoi: null,
+          chart_selection: null, temporal_window: null,
+          user_overrides: [], attempted_not_applied: [],
+          recent_interactions: [], event_count: world.interactionEvents.length,
+        },
+      };
+    }
+    let accepted = 0;
+    let rejected = 0;
+    try {
+      const parsed = JSON.parse(body) as {
+        events?: Array<{
+          kind?: string; actor?: string; payload?: Record<string, unknown>;
+          client_instance_id?: string; client_seq?: number;
+        }>;
+      };
+      for (const event of parsed.events ?? []) {
+        if (!event.kind) { rejected += 1; continue; }
+        world.interactionEvents.push({
+          kind: event.kind,
+          actor: event.actor ?? 'user',
+          payload: event.payload ?? {},
+          client_instance_id: event.client_instance_id,
+          client_seq: event.client_seq,
+        });
+        accepted += 1;
+      }
+    } catch { rejected += 1; }
+    return {
+      accepted, duplicates: 0, stale: 0, rejected,
+      acks: [], dropped: 0, persist_degraded: false,
+    };
+  });
+  await api(/\/api\/v1\/chat\/sessions\/[^/]+\/situation(\?|$)/, async (_url: URL, method: string, body: string) => {
+    if (world.situationView) return world.situationView;
+    // 默认合成面：claimed_scope=none + 空史（j14+ 可覆盖）。
+    let preTurnSelected: Record<string, unknown> | null = null;
+    try {
+      const parsed = JSON.parse(body) as { map_state?: { selected_feature?: Record<string, unknown> } };
+      preTurnSelected = parsed.map_state?.selected_feature ?? null;
+    } catch { /* 非 JSON body 不在此端点出现 */ }
+    return {
+      schema_version: 'situation_view.v1',
+      session_id: 's-j1',
+      situation: {},
+      inconsistencies: [],
+      interaction_snapshot: { selection: null, attempted_not_applied: [] },
+      selection_history: [],
+      claimed_scope: preTurnSelected
+        ? {
+          kind: 'feature_single',
+          layer_id: String(preTurnSelected.layer_id ?? ''),
+          dataset_ref: preTurnSelected.dataset_ref ?? null,
+          feature_ids: [String(preTurnSelected.feature_id ?? '')].filter(Boolean),
+          claimed_at_seq: null, sources: ['pre_turn'],
+        }
+        : { kind: 'none', sources: [] },
+    };
+  });
+  await api(/\/api\/v1\/chat\/sessions\/[^/]+\/turn-chain(\?|$)/, async () =>
+    world.turnChainView ?? {
+      schema_version: 'situation_turn_chain.v1', turns: [],
+      observed_revision: null, counts: {
+        user_explicit: 0, agent_receipts: 0, agent_pending: 0, executed_observed: 0,
+      },
+    });
   await api(/\/api\/v1\/chat\/sessions\/[^/]+(\?|$)/, async () => world.sessionDetail);
   await api(/\/api\/v1\/chat\/sessions(\?|$)/, () => ({ sessions: [{ session_id: 's-j1', title: '旅程会话', updated_at: NOW, message_count: 1 }] }));
   await api(/\/api\/v1\/chat\/skills(\?|$)/, () => ({ skills: [] }));

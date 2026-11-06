@@ -12,11 +12,11 @@
  * - 地图效应：opsLog 图层类操作（add/remove/toggle/style/reorder）近 8 条；
  * 刷新：手动（不轮询 —— 投影端点是会话级快照）。
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { RefreshCw, Wrench, Package, Map as MapIcon, AlertTriangle, ListTree } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { getAnalysisGraph, type ExecutionNode } from '@/lib/api/analysis-graph';
-import { getSessionIdentity } from '@/lib/store/session-identity';
+import { getSessionIdentity, subscribeSessionIdentity } from '@/lib/store/session-identity';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import type { MapToolId } from '@/lib/store/slices/toolSlice';
@@ -72,6 +72,7 @@ function ExecutionRow({ node }: { node: ExecutionNode }) {
 export function AgentRunPanel() {
   const t = useT('agent');
   const aiStatus = useHudStore((s) => s.aiStatus);
+  const activeSessionId = useSyncExternalStore(subscribeSessionIdentity, () => getSessionIdentity().sessionId, () => undefined);
   const activeTool = useHudStore((s) => s.activeMapTool);
   const results = useHudStore((s) => s.results);
   const selectResult = useHudStore((s) => s.selectResult);
@@ -93,14 +94,20 @@ export function AgentRunPanel() {
     const seq = ++graphSeqRef.current;
     setLoadingGraph(true);
     const g = await getAnalysisGraph(sessionId, ownerToken ?? null);
-    if (seq !== graphSeqRef.current) return; // superseded
+    if (seq !== graphSeqRef.current || getSessionIdentity().sessionId !== sessionId) return; // superseded
     setGraph(g);
     setLoadingGraph(false);
   }, []);
 
   useEffect(() => {
+    graphSeqRef.current += 1;
+    setGraph(null);
     void refreshGraph();
-  }, [refreshGraph]);
+  }, [refreshGraph, activeSessionId]);
+
+  useEffect(() => {
+    if (aiStatus === 'done') void refreshGraph();
+  }, [aiStatus, refreshGraph]);
 
   const executionNodes = useMemo(
     () => (graph?.nodes ?? []).filter((n): n is ExecutionNode => n.kind === 'analysis').slice(0, 6),

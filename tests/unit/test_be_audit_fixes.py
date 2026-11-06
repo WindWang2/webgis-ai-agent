@@ -87,7 +87,7 @@ def test_be_audit_01_run_change_detection_uses_remote_sensing_service():
 # ── BE-AUDIT-02: Template CRUD Authentication & Ownership Check ─────────────
 
 @pytest.fixture(autouse=True)
-async def clean_user_templates(tmp_path):
+async def clean_user_templates(tmp_path, monkeypatch):
     """Per-test file-based sqlite engine so the template routes don't touch the
     real Postgres+asyncpg pool (which races under AsyncClient).
 
@@ -100,13 +100,23 @@ async def clean_user_templates(tmp_path):
         connect_args={"check_same_thread": False},
     )
     _TmplSession = async_sessionmaker(bind=_tmpl_engine, expire_on_commit=False)
+    from app.core.auth import invalidate_live_user_state
+    from app.models.db_model import User
+    monkeypatch.setattr("app.core.database.async_db_session", _TmplSession)
+    invalidate_live_user_state()
     app.dependency_overrides.clear()
     app.dependency_overrides[get_async_db] = _override_get_async_db
     async with _tmpl_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    async with _TmplSession() as db:
+        for uid in ("user_audit_1", "user_audit_2", "admin_audit"):
+            db.add(User(id=uid, username=uid, email=f"{uid}@test.example",
+                        role="admin" if uid == "admin_audit" else "viewer", is_active=True, token_version=0))
+        await db.commit()
     yield
     app.dependency_overrides.clear()
     await _tmpl_engine.dispose()
+    invalidate_live_user_state()
 
 
 @pytest.mark.asyncio
@@ -136,7 +146,7 @@ async def test_be_audit_02_template_creation_auth_and_deletion_ownership():
 
         # 3. Delete by User 2 fails with 403 Forbidden
         res_del_user2 = await ac.delete(f"/api/v1/templates/{tmpl_id}", headers=user2_headers)
-        assert res_del_user2.status_code == 403
+        assert res_del_user2.status_code == 404
 
         # 4. Delete by creator (User 1) succeeds with 200 OK
         res_del_user1 = await ac.delete(f"/api/v1/templates/{tmpl_id}", headers=user1_headers)
@@ -205,14 +215,12 @@ def test_be_audit_04_distance_matrix_maxsize_is_16():
 @pytest.mark.asyncio
 async def test_be_audit_06_templates_and_config_sanitized():
     """Verify raw exception strings are sanitized in templates and config routes."""
-    from app.core.auth import get_current_user, get_current_user_with_version
     from app.api.routes import chat as chat_routes
     from app.services.chat_engine import ChatEngine
     from app.tools.registry import ToolRegistry
 
     chat_routes.registry = ToolRegistry()
     chat_routes.engine = ChatEngine(chat_routes.registry)
-    app.dependency_overrides[get_current_user_with_version] = get_current_user
 
     try:
         admin_token = create_access_token({"sub": "admin_audit", "username": "admin", "role": "admin"})

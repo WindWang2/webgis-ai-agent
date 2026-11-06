@@ -61,7 +61,7 @@ class VisualBBox(BaseModel):
                 isinstance(v, (int, float)) and not isinstance(v, bool) for v in data
             ):
                 raise ValueError("bbox must be 4 numbers [ymin, xmin, ymax, xmax]")
-            data = dict(zip(("ymin", "xmin", "ymax", "xmax"), (float(v) for v in data)))
+            data = dict(zip(("ymin", "xmin", "ymax", "xmax"), (float(v) for v in data), strict=True))
         return data
 
     @model_validator(mode="after")

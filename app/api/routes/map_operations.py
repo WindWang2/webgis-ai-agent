@@ -108,7 +108,6 @@ async def commit_pending_map_operation(
         MapOperationRequest,
         commit_map_operation,
         get_operation_receipt,
-        read_current_revision,
     )
 
     client_ip = client_ip_from(request)
@@ -147,7 +146,7 @@ async def commit_pending_map_operation(
             effects=raw_effects,
             expected_revision=req.expected_revision
             if req.expected_revision is not None
-            else await read_current_revision(session_id),
+            else stored_request.get("expected_revision"),
             actor="owner_commit",
             user_ack=True,
             note=(stored_request.get("note") or None),

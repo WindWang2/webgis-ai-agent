@@ -33,6 +33,7 @@ from app.lib.geo_analysis.raster_grid import iter_bounded_windows
 from app.lib.geo_analysis.raster_windowed import WindowedRasterWriter, build_output_profile
 from app.lib.artifact_cache import (
     _chunk_cache_cap,
+    _chunk_meta_path,
     _evict_chunks_if_needed,
     clear_chunk_cache,
     get_chunk,
@@ -266,7 +267,11 @@ class TestExecuteWindowedHooks:
 
 @pytest.fixture()
 def chunk_cache_env(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)  # data/artifacts/chunks lands in tmp
+    from app.lib import artifact_cache
+    monkeypatch.chdir(tmp_path)
+    # Cache roots are now absolute/configured; chdir alone does not isolate
+    # this fixture from another test's (or the developer's) chunk cache.
+    monkeypatch.setattr(artifact_cache, "CHUNK_DIR", str(tmp_path / "chunks"))
     clear_chunk_cache()
     yield tmp_path
     clear_chunk_cache()
@@ -311,6 +316,7 @@ class TestChunkCache:
                                   window_size=(128, 128), dst_dtype="float64",
                                   chunk_cache=cache)
             first_calls = calls["n"]
+            calls["n"] = 0  # same computational closure state as the cold call
             hook_count = {"n": 0}
             r2 = execute_windowed(
                 reader, AlgorithmProfile(), fn,
@@ -319,7 +325,7 @@ class TestChunkCache:
                     "n", hook_count["n"] + 1),
             )
         assert first_calls == 16  # cold: every chunk computed
-        assert calls["n"] == 16  # warm: fn NEVER re-invoked
+        assert calls["n"] == 0  # warm: fn NEVER re-invoked
         assert hook_count["n"] == 16  # progress hook still fires per chunk
         np.testing.assert_array_equal(r1.array, r2.array)
         np.testing.assert_array_equal(r2.array, data.astype(np.float64) * 3)
@@ -395,12 +401,14 @@ class TestChunkCache:
                 execute_windowed(reader, AlgorithmProfile(global_stat_required=True),
                                  lambda a, c, r: a, chunk_cache=cache)
 
-    def test_dedicated_cap_eviction_oldest_first(self, chunk_cache_env, monkeypatch):
+    def test_dedicated_cap_eviction_oldest_first(self, chunk_cache_env, monkeypatch, tmp_path):
+        source = tmp_path / "s.tif"
+        source.write_bytes(b"fixture")
         keys = []
         monkeypatch.setenv("WEBGIS_CHUNK_CACHE_BYTES", "4096")  # publish unevicted
         for i in range(4):
-            k = make_chunk_cache_key("s.tif", {"i": i}, "op")
-            publish_chunk(k, b"y" * 256, source_path="s.tif")
+            k = make_chunk_cache_key(str(source), {"i": i}, "op")
+            publish_chunk(k, b"y" * 256, source_path=str(source))
             keys.append(k)
         assert all(get_chunk(k) is not None for k in keys)
         # pin deterministic mtimes (oldest first), then shrink the cap
@@ -408,7 +416,7 @@ class TestChunkCache:
 
         base = _time.time() - 1000
         for i, k in enumerate(keys):
-            os.utime(os.path.join("data", "artifacts", "chunks", f"{k}.meta"),
+            os.utime(_chunk_meta_path(k),
                      (base + i, base + i))
         monkeypatch.setenv("WEBGIS_CHUNK_CACHE_BYTES", str(int(256 * 2.5)))
         assert _chunk_cache_cap() == 640

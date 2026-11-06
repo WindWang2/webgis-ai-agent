@@ -20,8 +20,8 @@ from app.services.jobs.redaction import SENSITIVE_KEY_PARTS
 from app.services.provenance.fingerprint import canonical_dumps, _sha256
 
 # Keys whose values are typically large inline payloads — excluded from the
-# fingerprint projection (and trimmed in stored summaries) so the manifest stays
-# compact and the fingerprint stable & cheap to compute.
+# stored summaries. Full canonical inputs are separately digested before
+# trimming so omitted geometry or late string/list differences retain identity.
 _LARGE_KEYS = frozenset(
     {"geojson", "data", "features", "geometry", "coordinates", "raster_source", "summary"}
 )
@@ -208,7 +208,8 @@ def build_run_manifest(
     manifest = {
         "workflow_revision_id": workflow_revision_id,
         "graph_fingerprint": graph_fingerprint,
-        "inputs": _trim(input_bindings or {}),
+        "inputs": _trim(redact_provenance_args(input_bindings or {})),
+        "inputs_digest": _sha256(canonical_dumps(input_bindings or {})),
         "input_dataset_fingerprints": dict(input_dataset_fingerprints or {}),
         "steps": steps_list,
         "tool_versions": dict(tool_versions or {}),
@@ -270,7 +271,7 @@ def _stable_projection(manifest: Dict[str, Any]) -> Dict[str, Any]:
         for s in manifest.get("steps", [])
     ]
     steps.sort(key=lambda s: (s.get("step_id") or "",))
-    return {
+    projection = {
         "graph_fingerprint": manifest.get("graph_fingerprint"),
         "inputs": manifest.get("inputs"),
         "input_dataset_fingerprints": dict(
@@ -279,6 +280,11 @@ def _stable_projection(manifest: Dict[str, Any]) -> Dict[str, Any]:
         "steps": steps,
         "tool_versions": dict(sorted((manifest.get("tool_versions") or {}).items())),
     }
+    # Historical manifests did not carry this digest. Preserve their projection
+    # so validating an already persisted legacy manifest remains deterministic.
+    if "inputs_digest" in manifest:
+        projection["inputs_digest"] = manifest["inputs_digest"]
+    return projection
 
 
 def compute_run_fingerprint(manifest: Dict[str, Any]) -> str:

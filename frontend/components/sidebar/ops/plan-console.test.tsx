@@ -91,6 +91,8 @@ describe('PlanConsole（P4）', () => {
     expect(String(eventCalls[0][0])).toContain('after_id=0');
     // 取消按钮存在并可点
     fireEvent.click(screen.getByTestId('plan-cancel-run'));
+    expect(fn.mock.calls.some((c) => String(c[0]).endsWith('/runs/run-cluster-400/cancel'))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '确认' }));
     await waitFor(() => {
       expect(fn.mock.calls.some((c) => String(c[0]).endsWith('/runs/run-cluster-400/cancel'))).toBe(true);
     });

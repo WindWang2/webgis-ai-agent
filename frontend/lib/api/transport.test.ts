@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { apiFetch, ApiError, ApiTimeoutError, isIdempotentMethod } from './transport';
+import { apiFetch, ApiError, ApiTimeoutError, isIdempotentMethod, describeApiError } from './transport';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -204,4 +204,10 @@ describe('transport (F-FE-3)', () => {
       await expect(apiFetch('/x', { parseJson: false })).resolves.toBeUndefined();
     });
   });
+});
+
+
+it('preserves actionable nested errors in the unified envelope (#1694 API06)', () => {
+  expect(describeApiError(new ApiError(409, 'Conflict', { message: 'Request failed', data: { code: 'GC_PLAN_STALE', message: 'Preview the plan again', action: 'Refresh preview' } }), 'Failed'))
+    .toBe('Preview the plan again · Refresh preview');
 });

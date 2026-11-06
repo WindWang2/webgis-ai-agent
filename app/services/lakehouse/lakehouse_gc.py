@@ -363,8 +363,9 @@ def execute_gc(
     # 「非候选 manifest」引用集（blobs + virtual children id）直接从
     # recheck 的**单次解析缓存**导出（评审 R2-4：零重枚举/重读）。
     live_refs: Set[str] = set()
+    candidate_set = set(candidates)
     for mid, meta in scan.items():
-        if mid in set(candidates):
+        if mid in candidate_set:
             continue
         live_refs.update(d for d in meta.get("blobs", []) if len(d) == 64)
         live_refs.update(meta.get("children", []))

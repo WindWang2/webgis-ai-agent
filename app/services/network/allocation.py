@@ -215,6 +215,8 @@ def solve_p_median_milp(
         bounds=Bounds(np.zeros(n_vars), np.ones(n_vars)),
     )
 
+    if not res.success or res.x is None or not np.isfinite(res.x).all():
+        raise UnsupportedMethod("MILP solver did not produce an optimal finite solution", correction_hint="use a smaller model or the heuristic solver")
     y = np.asarray(res.x[:m_fac], dtype=float)
     selected = tuple(int(j) for j in np.where(y > 0.5)[0])
     # 从整数解按枚举同语义重算目标（可指派需求的有限最小成本加权和）；
@@ -324,6 +326,8 @@ def solve_p_center_milp(
         bounds=Bounds(np.zeros(n_vars), bounds_ub),
     )
 
+    if not res.success or res.x is None or not np.isfinite(res.x).all():
+        raise UnsupportedMethod("MILP solver did not produce an optimal finite solution", correction_hint="use a smaller model or the heuristic solver")
     y = np.asarray(res.x[1:1 + m_fac], dtype=float)
     selected = tuple(int(j) for j in np.where(y > 0.5)[0])
     # 与既有 p_center_objective 同语义重算：max 只覆盖可指派需求（打平的
@@ -427,6 +431,8 @@ def solve_max_coverage_milp(
         bounds=Bounds(np.zeros(n_vars), np.ones(n_vars)),
     )
 
+    if not res.success or res.x is None or not np.isfinite(res.x).all():
+        raise UnsupportedMethod("MILP solver did not produce an optimal finite solution", correction_hint="use a smaller model or the heuristic solver")
     y = np.asarray(res.x[:m_fac], dtype=float)
     selected = tuple(int(j) for j in np.where(y > 0.5)[0])
     # 与枚举同语义重算覆盖目标（求解器原值经 solve_stats/lp_objective 披露）；
@@ -629,6 +635,8 @@ class NetworkLocationAllocationService:
         location_allocation（枚举/启发式）与精确 MILP 路径共用同一 OD
         语义 —— 同一请求两条路径的代价输入逐位一致。
         """
+        if len({point.demand_id for point in demand_points}) != len(demand_points):
+            raise ValueError("demand IDs must be unique")
         orig_coords = [(d.geometry["coordinates"][0], d.geometry["coordinates"][1]) for d in demand_points]
         dest_coords = [(f.geometry["coordinates"][0], f.geometry["coordinates"][1]) for f in candidate_facilities]
 
@@ -859,7 +867,7 @@ class NetworkLocationAllocationService:
 
             for i in range(n_dem):
                 best_cost = min(cost_matrix[i][j] for j in best_subset)
-                if best_cost == float("inf"):
+                if best_cost == float("inf") or (problem_norm == "max_coverage" and best_cost > cutoff):
                     # 不可达需求点统一在后置遍历收进 unassigned_ids（此处
                     # 跳过；曾有一段只对首个设施生效的死分支，已删——#693）
                     continue
@@ -879,7 +887,7 @@ class NetworkLocationAllocationService:
 
         for i in range(n_dem):
             best_cost = min(cost_matrix[i][j] for j in best_subset) if best_subset else float("inf")
-            if best_cost == float("inf"):
+            if best_cost == float("inf") or (problem_norm == "max_coverage" and best_cost > cutoff):
                 unassigned_ids.append(demand_points[i].demand_id)
 
         summary = {
@@ -898,6 +906,12 @@ class NetworkLocationAllocationService:
         if solver != "auto":
             # 显式请求的求解路径如实回显（auto 历史行为不新增键）。
             summary["solver_request"] = solver
+        if problem_norm == "max_coverage":
+            summary["covered_weight"] = sum(
+                demand_weights[i] for i in range(n_dem)
+                if best_subset and min(cost_matrix[i][j] for j in best_subset) <= cutoff
+            )
+            summary["uncovered_count"] = len(unassigned_ids)
 
         if problem_norm == "p_center":
             # p-center 披露：目标值 = 可达需求的最大服务成本（不可达需求已

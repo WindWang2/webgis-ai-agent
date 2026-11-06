@@ -1,16 +1,22 @@
 {
  "category": "data_version_drift",
+ "decisions": [],
  "description": "数据版本漂移→superseded→重绘（4 轮）",
  "dispatch_backed": false,
+ "expect_calibration": [],
+ "expect_source": "",
  "faults": [
   {
    "target_turn": 1,
    "type": "stale_ref"
   }
  ],
+ "receipt_backed": false,
+ "registry_digest": "",
  "scenario_id": "mt-data_version_drift-03",
  "schema_version": 1,
  "tags": [],
+ "tool_registry": {},
  "turns": [
   {
    "cartography": {
@@ -117,6 +123,7 @@
      },
      "call_id": "call-upsert-mt-data_version_drift-03-base",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -132,6 +139,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -251,6 +259,7 @@
      },
      "call_id": "call-drift-3",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -374,6 +383,7 @@
      },
      "call_id": "call-upsert-mt-data_version_drift-03-base",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -389,6 +399,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -512,6 +523,7 @@
      },
      "call_id": "call-upsert-mt-data_version_drift-03-base",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -527,6 +539,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {

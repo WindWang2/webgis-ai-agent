@@ -112,8 +112,8 @@ describe('离线/内网部署底图（ADR-0197）', () => {
     });
     const available = mod.getAvailableTileProviders();
     expect(available.map((p: { id: string }) => p.id)).toEqual(['local-xyz']);
-    // 全量注册表仍保留（AI 关键字索引消费完整表），过滤只发生在可用面
-    expect(mod.TILE_PROVIDERS.length).toBeGreaterThan(1);
+    // AI command lookup and map styles share the deployment-filtered catalogue.
+    expect(mod.TILE_PROVIDERS.map((p) => p.id)).toEqual(['local-xyz']);
   });
 
   it('air_gapped 且未配置本地底图：available 为空数组', async () => {

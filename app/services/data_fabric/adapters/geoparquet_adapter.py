@@ -209,6 +209,13 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         """
         if self.endpoint.startswith(_REMOTE_SCHEMES):
             url = self.endpoint
+            if url.startswith(("s3://", "gs://", "minio://")):
+                from app.core.egress import current_policy
+
+                if not self.allow_private or current_policy().mode != "unrestricted":
+                    raise SecurityBlockedError(
+                        "provider SDK range reads require an explicitly trusted allow_private profile and unrestricted egress; use a guarded HTTPS object URL"
+                    )
             try:
                 url = DataFabricSecurity.validate_url(
                     url, allow_private=self.allow_private
@@ -235,7 +242,16 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                         details={"hint": "install fsspec and s3fs for remote GeoParquet"},
                     ) from e
             try:
-                of = fsspec.open(url, "rb")
+                options = {}
+                if url.startswith(("http://", "https://")):
+                    from app.services.data_fabric.security import safe_fsspec_http_client
+
+                    options = {
+                        "get_client": safe_fsspec_http_client,
+                        "client_kwargs": {"allow_private": self.allow_private},
+                        "allow_redirects": False,
+                    }
+                of = fsspec.open(url, "rb", **options)
                 fobj = of.open()
                 return fobj, fobj
             except DataFabricError:
@@ -274,8 +290,16 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
                 resp = self.session.head(safe_url, timeout=5)
                 return resp.status_code in (200, 206)
-            elif os.path.isfile(self.endpoint):
-                with open(self.endpoint, "rb") as f:
+            elif self.endpoint.startswith(("s3://", "gs://", "minio://")):
+                src, closer = self._open_source()
+                try:
+                    return src.read(4) == b"PAR1"
+                finally:
+                    if closer is not None:
+                        closer.close()
+            else:
+                resolved = resolve_safe_local_path(self.endpoint, _local_file_roots_from_settings(), _local_file_max_bytes_from_settings())
+                with open(resolved, "rb") as f:
                     magic = f.read(4)
                     return magic == b"PAR1"
             # Endpoint configured but neither a real local file nor http URL.
@@ -384,8 +408,7 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         col_meta = (geo_meta.get("columns") or {}).get(primary_geom, {}) if geo_meta else {}
         # 诚实默认：geo 元数据未声明 → None（未知），绝不伪造全球 bbox/EPSG:4326
         bbox = col_meta.get("bbox") or None
-        crs_info = col_meta.get("crs")
-        crs_str = crs_info.get("name") if isinstance(crs_info, dict) else None
+        crs_str = self._result_crs(geo_meta, primary_geom)
         geom_types = col_meta.get("geometry_types") or []
         geom_type = next((g for g in geom_types if g), None)
 
@@ -443,6 +466,8 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         """
         try:
             col_meta = (geo_meta.get("columns") or {}).get(primary_geom) or {}
+            if primary_geom in (geo_meta.get("columns") or {}) and "crs" not in col_meta:
+                return "OGC:CRS84"
             crs_info = col_meta.get("crs")
             if isinstance(crs_info, dict):
                 # schema_info["crs"] 契约是 str：优先 "AUTHORITY:code"（机器
@@ -599,7 +624,7 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             # 全列读取时传 None（pyarrow 语义：全部列）
             if set(cols) >= set(schema_names):
                 return None
-            return cols or None
+            return cols if mode == ResultMode.STATISTICS else (cols or None)
 
         read_geometry = has_geom and (
             mode in (ResultMode.FEATURES, ResultMode.SAMPLE, ResultMode.MATERIALIZE)
@@ -1288,74 +1313,10 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         descriptor: DatasetDescriptor,
         src: Any,
     ) -> QueryResult:
-        """pyarrow 流式路径不可用时的回退：gpd.read_parquet(columns/bbox)。
-
-        仍有界（limit+offset 截断）；真实端点失败 → typed 错误，绝不 fixture。
-        """
-        try:
-            import geopandas as gpd
-        except ImportError as e:
-            raise SourceBadResponseError(
-                "GeoParquet read requires pyarrow (preferred) or geopandas",
-                details={"hint": "install pyarrow"},
-            ) from e
-
-        query_bbox = self._require_bbox(v2)
-        page = v2.page
-        offset = page.offset if isinstance(page, OffsetPage) else 0
-        limit = page.limit
-
-        read_cols = None
-        if v2.select is not None:
-            read_cols = list(v2.select)
-
-        kwargs: Dict[str, Any] = {}
-        if read_cols:
-            kwargs["columns"] = read_cols
-        if query_bbox:
-            kwargs["bbox"] = tuple(query_bbox)
-        try:
-            gdf = gpd.read_parquet(src, **kwargs)
-        except TypeError:
-            # 老版本引擎不支持 bbox kwarg → 读后本地过滤
-            gdf = gpd.read_parquet(src, columns=read_cols)
-            if query_bbox and not gdf.empty:
-                minx, miny, maxx, maxy = query_bbox
-                gdf = gdf.cx[minx:maxx, miny:maxy]
-
-        if v2.filter is not None:
-            keep = gdf.apply(lambda r: evaluate_predicate(v2.filter, dict(r.drop(labels=gdf.geometry.name, errors="ignore"))), axis=1)
-            gdf = gdf[keep]
-
-        sliced = gdf.iloc[offset: offset + limit]
-        data = json.loads(sliced.to_json())
-        features = data.get("features", [])
-        has_more = len(gdf) > offset + limit
-
-        evidence = build_evidence(
-            plan, started_at=started, result_count=len(features),
-            total_matching=int(len(gdf)) if not has_more else None,
-            truncated=has_more, rows_fetched=len(gdf), rows_returned=len(features),
-        )
-        return QueryResult(
-            dataset_id=dataset_id,
-            features=features,
-            data=data,
-            total_count=len(features),
-            total_matching=None if has_more else int(len(gdf)),
-            returned_count=len(features),
-            truncated=has_more,
-            has_more=has_more,
-            result_mode="features",
-            execution_time_seconds=round(time.monotonic() - started, 4),
-            schema_info={"columns": list(sliced.columns), "dataset_bbox": descriptor.bbox},
-            metadata=self._metadata(plan, evidence, started, extra={
-                "is_demo": False,
-                "source": "remote",
-                "column_projection": bool(v2.select),
-                "engine": "geopandas-fallback",
-                "execution_lane": "dict",
-            }),
+        """Reject unbounded whole-file readers when the streaming engine is absent."""
+        raise SourceBadResponseError(
+            "Bounded GeoParquet execution requires pyarrow streaming; whole-file geopandas fallback is disabled",
+            details={"hint": "install pyarrow and retry; narrow columns and predicates on the streaming path"},
         )
 
     # ── demo 模式（无端点；显式标注）───────────────────────────────────

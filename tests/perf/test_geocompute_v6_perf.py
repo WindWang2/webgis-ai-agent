@@ -61,6 +61,12 @@ def env(tmp_path):
 
     Base.metadata.create_all(eng)
     factory = sessionmaker(bind=eng, expire_on_commit=False)
+    from app.models.db_model import Organization, OrgQuota
+    with factory() as db:
+        db.add(Organization(id=1, name="perf", slug="default"))
+        db.add(OrgQuota(org_id="1", max_concurrent_tasks=10000))
+        db.commit()
+
     store = ClusterRunStore(factory)
     yield store, factory, eng
     eng.dispose()

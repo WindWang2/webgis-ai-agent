@@ -141,13 +141,14 @@ def _load_sync(path: Path) -> List[TransformationRecord]:
 
 
 def _append_sync(path: Path, record: TransformationRecord) -> int:
-    """有界重写（读-合-写 ring）。
+    """Serialize the complete bounded ring transaction across threads/processes."""
+    from app.services.dataset_semantics.locking import dataset_write_lock
 
-    并发纪律（review R1 P2）：executor 线程池可并发执行同 session 的两个
-    ARTIFACT_REGISTER —— 临时文件必须 per-writer 唯一（mkstemp）且原子
-    替换（os.replace），与 store._atomic_write_sync 同纪律；跨写者仍可能
-    后写覆盖（丢一条记录 = 证据面诚实降级，不损坏文件）。
-    """
+    with dataset_write_lock(path.with_suffix(".lock")):
+        return _append_locked_sync(path, record)
+
+
+def _append_locked_sync(path: Path, record: TransformationRecord) -> int:
     import os
     import tempfile
 

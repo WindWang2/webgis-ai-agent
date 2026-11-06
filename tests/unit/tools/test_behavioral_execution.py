@@ -52,11 +52,7 @@ async def test_execute_execution_plan_behavioral(registry):
     assert "unknown node category" in (unknown.get("message") or "")
 
     # happy path：filter 真实执行 → completed + 有界证据
-    out = await registry.dispatch("execute_execution_plan", {
-        "plan_id": "p-behavioral",
-        "nodes": _filter_plan_nodes(),
-        "session_id": "bdx-exec",
-    })
+    out = await registry.dispatch('execute_execution_plan', {'plan_id': 'p-behavioral', 'nodes': _filter_plan_nodes()}, session_id='bdx-exec')
     assert out.get("status") == "completed", out
     run_id = out.get("run_id")
     assert isinstance(run_id, str) and run_id
@@ -80,21 +76,13 @@ async def test_execute_execution_plan_rejects_foreign_session(registry):
     )
     try:
         # 他人会话 id → typed 拒绝（不是静默透传去写别人的 session 存储）。
-        denied = await registry.dispatch("execute_execution_plan", {
-            "plan_id": "p-foreign",
-            "nodes": _filter_plan_nodes(),
-            "session_id": "sess-someone-else",
-        })
+        denied = await registry.dispatch('execute_execution_plan', {'plan_id': 'p-foreign', 'nodes': _filter_plan_nodes()}, session_id='sess-someone-else')
         assert denied.get("success") is False, denied
         assert denied.get("error_type") == "AuthorizationError", denied
         assert denied.get("code") == "TOOL_ERROR", denied
 
         # 一致 → 放行。
-        ok = await registry.dispatch("execute_execution_plan", {
-            "plan_id": "p-mine",
-            "nodes": _filter_plan_nodes(),
-            "session_id": "sess-mine",
-        })
+        ok = await registry.dispatch('execute_execution_plan', {'plan_id': 'p-mine', 'nodes': _filter_plan_nodes()}, session_id='sess-mine')
         assert ok.get("status") == "completed", ok
 
         # 省略 session_id → 从执行上下文取（materialize 策略必需）。
@@ -107,14 +95,13 @@ async def test_execute_execution_plan_rejects_foreign_session(registry):
 
 
 def test_execute_execution_plan_session_param_promise(registry):
-    """#1708（SEC）：param_descriptions 的会话承诺必须与实现同口径 ——
-    明写「不一致即拒绝」，不再宣称「原样透传」。"""
+    """The caller session is injected by the server, never chosen by the LLM."""
     schema = next(
         s for s in registry.get_schemas()
         if s["function"]["name"] == "execute_execution_plan"
     )
-    desc = schema["function"]["parameters"]["properties"]["session_id"]["description"]
-    assert "一致" in desc and "拒绝" in desc, desc
+    assert "session_id" not in schema["function"]["parameters"]["properties"]
+    assert "session_id" not in schema["function"]["parameters"].get("required", [])
 
 
 @pytest.mark.asyncio

@@ -33,7 +33,7 @@ from app.core.auth import get_current_user
 from app.core.database import get_async_db
 from app.services.auth_history_bridge import require_owned_session
 from app.services.gis_harness.hotpath_convergence.session_ctx import (
-    get_turn_context,
+    peek_turn_context,
 )
 from app.services.mission_runtime.service import (
     get_mission_runtime,
@@ -270,11 +270,11 @@ def session_skill(
     进程内 session-scoped：无 bundle 返回 ``present=false``，绝不伪造。
     Mission runtime 关停时本端点仍可用 —— hotpath 技能绑定独立于开关。
     """
-    ctx = get_turn_context(session_id)
+    ctx = peek_turn_context(session_id, tenant_id=_effective_org(_user))
     # 生产写序（tools.py）：skill_guidance = bundle.to_bounded_dict()。
     # 防御性回退：guidance 为空但 bundle 在场时直接向 bundle 要有界视图，
     # 兼容未来只存 bundle 的调用方；两者皆缺 ⇒ present=false，绝不伪造。
-    raw = ctx.skill_guidance if isinstance(ctx.skill_guidance, dict) else None
+    raw = ctx.skill_guidance if ctx is not None and isinstance(ctx.skill_guidance, dict) else None
     if not raw:
         to_bounded = getattr(getattr(ctx, "skill_bundle", None), "to_bounded_dict", None)
         raw = to_bounded() if callable(to_bounded) else None
@@ -283,7 +283,7 @@ def session_skill(
         session_id=session_id,
         present=present,
         guidance=raw if present else None,
-        mission_id=ctx.mission_id,
+        mission_id=getattr(ctx, "mission_id", ""),
     )
 
 
@@ -298,7 +298,7 @@ def session_evidence(
 
     只读：绝不 ``get_or_create`` —— 只读路径不得改变进程内状态。
     """
-    ctx = get_turn_context(session_id)
+    ctx = peek_turn_context(session_id, tenant_id=_effective_org(_user))
     store = getattr(ctx, "claim_store", None)
     if store is None:
         return _envelope(

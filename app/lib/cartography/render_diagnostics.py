@@ -60,6 +60,14 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "component_skipped_invalid", "warning",
             "组件配置无效，已跳过渲染",
         ),
+        RenderDiagnosticSpec(
+            "label_expression_unsupported", "warning",
+            "标注表达式暂不支持，已跳过该文本，避免输出错误标注",
+        ),
+        RenderDiagnosticSpec(
+            "layer_coordinates_invalid", "warning",
+            "图层包含超出经纬度合法范围的坐标，已跳过无效几何",
+        ),
         # —— label engine V5（长文本不再静默溢出）——
         # review-r1：移除 label_suppressed_too_long —— 词表内唯一无发射器的
         # 死码（孪生编译器只截断不省略，fit_label_text 无"放不下"路径；
@@ -118,6 +126,10 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
         RenderDiagnosticSpec(
             "comparison_export_composed", "info",
             "对比模式导出为显式左右组合（分界位于 {detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "layer_filter_unsupported", "warning",
+            "图层过滤表达式不受矢量导出支持，已跳过该图层（{detail}）",
         ),
         # —— 多画幅运行时诚实降级 ——
         RenderDiagnosticSpec(
@@ -207,6 +219,12 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "label_budget_exceeded", "warning",
             "标签数量超出导出预算（{detail}），超出部分未渲染",
         ),
+        # —— W2.2（ADR-0283 D3）显式标注字段缺失守卫（双端孪生发射）——
+        RenderDiagnosticSpec(
+            "label_field_missing", "warning",
+            "层声明的标注字段不在源字段集，标注按回退链渲染或缺失"
+            "（{detail}）",
+        ),
         # —— 高 DPI 渲染策略（ADR-0157 P1）——
         RenderDiagnosticSpec(
             "highdpi_rerender_timeout_degraded", "warning",
@@ -262,6 +280,17 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
         RenderDiagnosticSpec(
             "title_truncated", "warning",
             "标题/副标题超出确定性上限已截断（{detail}）",
+        ),
+        # —— ADR-0283 D2 关键文本 wrap-not-clip 折行披露（内容未减少，
+        # 版面以行数承载；发射器 exporter.ts / vector-svg-export.ts）——
+        RenderDiagnosticSpec(
+            "key_text_wrapped", "info",
+            "关键文本超限折行（wrap-not-clip，内容完整）（{detail}）",
+        ),
+        # —— ADR-0283 D3 缺瓦片有界披露（per-source 计数 + 首 5 样本）——
+        RenderDiagnosticSpec(
+            "basemap_tiles_missing", "warning",
+            "底图瓦片缺失（{detail}；计数+样本有界，非全量清单）",
         ),
         RenderDiagnosticSpec(
             "vector_pdf_unavailable", "warning",
@@ -346,6 +375,8 @@ def catalog_section() -> List[Dict[str, str]]:
 #: 新增诊断码必须同时登记 ≥1 个真实发射点，否则契约测试红灯
 #: （ADR-0118 D1 死码禁止的自动化收口，取代仅注释级约束）。
 EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
+    "label_expression_unsupported": ("app.services.mapspec_to_svg",),
+    "layer_coordinates_invalid": ("app.services.mapspec_to_svg",),
     "chart_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
     "table_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
     "chart_kind_unsupported_export": ("frontend/lib/map-kit/export-chrome.ts",),
@@ -496,6 +527,12 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "app.services.mapspec_to_svg",
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
+    # W2.2（ADR-0283 D3）：显式标注字段缺失守卫（双端孪生发射；
+    # 词表镜像 frontend/lib/map-kit/export-chrome.ts）。
+    "label_field_missing": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
     "raster_layer_unavailable_vector_pdf": ("app.services.publication_export",),
     "pdf_font_fallback": ("app.services.publication_export",),
     # vector_pdf_unavailable 的发射器是导出路由（503 结构化错误回退提示）
@@ -509,6 +546,10 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
     # H02（任务书 §D）：SVG 矢量链 ref 未水合的层省略披露（双端孪生发射）
+    "layer_filter_unsupported": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
     "layer_ref_unavailable": (
         "app.services.mapspec_to_svg",
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
@@ -523,6 +564,18 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "title_truncated": (
         "frontend/lib/map-kit/exporter.ts",
         "frontend/lib/map-kit/vector-svg-export.ts",
+    ),
+    # ADR-0283 D2：关键文本折行披露（exporter/vector-svg-export 发射；
+    # layout-description 置 wrapped 标记为单源决策点）
+    "key_text_wrapped": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/vector-svg-export.ts",
+    ),
+    # ADR-0283 D3：缺瓦片有界披露（码发射方 = exporter 汇入；记账链
+    # runtime.ts handler → adapter 账目是数据源非码发射点 —— 死码门要求
+    # 发射点文件引用码串，故只登记 exporter）
+    "basemap_tiles_missing": (
+        "frontend/lib/map-kit/exporter.ts",
     ),
 }
 

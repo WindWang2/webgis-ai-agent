@@ -2,6 +2,8 @@
 
 **用自然语言完成空间分析、遥感计算与专业制图的 AI GIS 工作台。**
 
+[位置数据与外部服务隐私说明](docs/privacy.md)
+
 WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS + rasterio)结合:
 你用中文或英文描述任务("分析北京学校分布并出一张专题图"),Agent 规划工具调用链,
 在后端执行真实的地理计算,并通过 SSE 流式把图层、进度与结果推回地图工作台。
@@ -103,7 +105,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 | 层 | 技术选型 | 说明 |
 |---|---|---|
 | 前端 | Next.js 16 · React 19 · MapLibre GL · Zustand · Tailwind | App Router,双 tsconfig 严格类型 |
-| 网关 | FastAPI · uvicorn · PyJWT · prometheus-instrumentator | 全路由挂 `/api/v1`,SSE 流式 |
+| 网关 | FastAPI · uvicorn · PyJWT · prometheus-instrumentator | 主要业务路由挂 `/api/v1`，另有 v2 与根级端点；SSE 流式 |
 | Agent | OpenAI 兼容 LLM 客户端(httpx)· ChatEngine · Pi agent 桥 | 默认阶跃 Step Plan,支持推理模型与流式 tool-call |
 | 计算 | Celery · Redis · GeoPandas · rasterio · scikit-learn | 重算力全部出离事件循环 |
 | 存储 | SQLAlchemy 2 · Alembic · PostGIS / SQLite | 单迁移链,漂移由 CI 测试守护 |
@@ -129,9 +131,9 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 │   ├── components/          # chat / map / hud / sidebar / explorer / report / settings
 │   ├── lib/                 # Zustand store · map-kit · SSE 解析 · MapSpec 编译器
 │   └── test/                # vitest + 设计系统契约测试 + 视觉回归
-├── migrations/              # Alembic 迁移链(67 个 revision)
+├── migrations/              # Alembic 迁移链(见 migrations/versions/)
 ├── deploy/                  # nginx / k8s kustomize / redis / prometheus / grafana
-├── docs/                    # 文档与 ADR(254 篇决策记录)
+├── docs/                    # 文档与 ADR(见 docs/adr/)
 ├── tests/                   # pytest:根回归 + unit + jobs + cartography + perf + benchmarks
 ├── manage.py                # 开发运维 CLI(dev / server / worker / check / init-db / create-admin)
 ├── docker-compose.yml       # 开发栈(db / redis / api / celery)
@@ -145,7 +147,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 
 ### 环境要求
 
-- Python ≥ 3.12,< 3.14(#1558:容器 3.12 + 开发机 3.13 已验证窗口),Node ≥ 22
+- Python ≥ 3.12,< 3.14(#1558:容器 3.12 + 开发机 3.13 已验证窗口),Node ≥ 22.19.0（vendored Pi 的最低版本）
 - Redis(本地 16379 或 Docker 起)
 - LLM API Key(默认对接阶跃 Step Plan,任何 OpenAI 兼容端点均可)
 
@@ -158,7 +160,7 @@ cd webgis-ai-agent
 # vendor/pi 是 Pi agent 宿主子模块（JSON-RPC 子进程）。已 clone（未带子模块）
 # 或子模块未初始化时补跑：
 #   git submodule update --init --recursive
-# 缺 vendor/pi/packages/coding-agent/dist/rpc-entry.js 时应用**不会报错**，
+# 缺 vendor/pi/packages/coding-agent/dist/bundle/rpc-entry.js 及 dist 回退入口时应用**不会报错**，
 # 而是静默回退旧 ChatEngine（USE_NEW_AGENT=true 名存实亡，日志有告警）——
 # 默认 agent 宿主与回退引擎行为不同。clone 后先确认该文件存在。
 
@@ -230,7 +232,7 @@ python manage.py dev           # 一键拉起 后端:18000 + Celery worker + 前
 
 ```bash
 scripts/ci-local.sh          # 全量:lint + typecheck + vitest + 后端/perf/cartography pytest
-scripts/ci-local.sh --fast   # 快速:ruff + eslint + typecheck + vitest
+scripts/ci-local.sh --fast   # 快速:ruff + eslint + typecheck + vitest + 后端契约快速集
 ```
 
 脚本命令与 [`production.yml`](.github/workflows/production.yml) 逐字对齐,漂移由
@@ -243,17 +245,18 @@ ruff check app/ tests/ main.py manage.py   # lint(仓级,与 CI 同)
 
 # 前端(vitest 覆盖率闸 75/70/75/60)
 cd frontend
-npx vitest run
-npm run typecheck && npm run lint
-npx next build                             # 构建是页面导出的最终门禁
+pnpm exec vitest run
+pnpm run typecheck && pnpm run lint
+pnpm run build                             # 构建是页面导出的最终门禁
 ```
 
-CI([`.github/workflows/production.yml`](.github/workflows/production.yml))PR 必须全绿合并的 11 项门禁:
+CI([`.github/workflows/production.yml`](.github/workflows/production.yml))的 12 项发布门禁:
 
 | 门禁 | 内容 |
 |---|---|
-| Code Quality | ruff + ESLint(0 warning) |
-| Backend Tests | PostGIS + Redis service 容器,`--cov-fail-under=75` |
+| Code Quality | ruff（含 scripts/）+ mypy 白名单 + 债务/依赖/import 边界 + skills/source registry + ESLint(0 warning) |
+| Compose Configuration | 渲染开发 Compose 配置及可选源码挂载配置 |
+| Backend Tests | SQLite / fakeredis / eager-Celery 分片，合并覆盖率后执行 75% 阈值；真实服务见专属门禁 |
 | Frontend Tests | vitest + 双 tsconfig typecheck + next build |
 | Security Scan | bandit(`-ll -ii` 阻塞)+ 依赖 CVE 审计(非阻塞) |
 | Performance Gate | perf 基线锚定,回归即失败 |
@@ -274,7 +277,7 @@ seeded 测试顺序轮换(`QUALITY_ORDER_SEED` 两个固定 seed)。运行时场
 | 形态 | 文件 | 适用场景 |
 |---|---|---|
 | 开发栈 | `docker-compose.yml` | 本地开发(db/redis/api/celery) |
-| 生产栈 | `docker-compose.prod.yml` | 单机生产,含 nginx + Prometheus + Grafana + exporters(10 服务) |
+| 生产栈 | `docker-compose.prod.yml` | 单机生产,含 nginx + Prometheus + Alertmanager + Grafana + exporters(11 服务) |
 | 安全栈 | `docker-compose.prod.secure.yml` | 公网远程部署:db/redis 不暴露端口,CI preview/deploy/rollback 实际使用 |
 | Kubernetes | `deploy/k8s/`(kustomize) | 云上伸缩,initContainer 自动迁移,HPA/PDB |
 
@@ -291,7 +294,7 @@ CI 在 release-gate 通过后自动构建镜像推送 `ghcr.io`,并支持 PR 预
 | [架构文档](docs/architecture.md) | 分层架构、核心链路、扩展纪律 |
 | [API 文档](docs/api-docs.md) | REST / SSE / WS 契约与事件目录 |
 | [数据库设计](docs/database-design.md) | 模型表结构、Redis 键布局、迁移链 |
-| [部署手册](docs/DEPLOYMENT.md) | 四种部署形态、CI/CD、监控与运维 |
+| [部署手册](docs/DEPLOYMENT.md) | 五种部署形态、CI/CD、监控与运维 |
 | [本地开发手册](docs/SETUP_INSTRUCTIONS.md) | 环境搭建、启动路径、排错 |
 | [Fetch-on-Demand](docs/data-fetcher.md) | 大数据提货券机制与 MVT 瓦片 |
 | [制图闭环规范](docs/cartographic-closed-loop.md) | L1–L5 制图质量分级与评审 |
@@ -299,7 +302,7 @@ CI 在 release-gate 通过后自动构建镜像推送 `ghcr.io`,并支持 PR 预
 | [前端文档](frontend/README.md) | Visual System V4 设计系统与组件架构 |
 | [工程纪律](CODE_REVIEW.md) | 代码红线与历史缺陷修补录 |
 | [变更日志](CHANGELOG.md) | 逐版本变更记录 |
-| [ADR](docs/adr/) | 254 篇架构决策记录 |
+| [ADR](docs/adr/) | 架构决策记录（以目录内容为准） |
 
 <a id="roadmap"></a>
 
@@ -321,7 +324,7 @@ CI 在 release-gate 通过后自动构建镜像推送 `ghcr.io`,并支持 PR 预
 
 ## 🤝 贡献指南
 
-1. Fork 并从 `master` 拉特性分支;PR 需通过上表全部 11 项门禁
+1. Fork 并从 `master` 拉特性分支;按上表全部 12 项门禁检查 PR
 2. 遵守[工程纪律](CODE_REVIEW.md)四条红线:
    - **Pydantic Type Guard**:工具参数用最严格的 `pydantic.Field` 约束
    - **Zero Big Data in Context**:禁止把 FeatureCollection 塞进 LLM 上下文,一律走 `ref:` 提货券

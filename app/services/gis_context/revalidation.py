@@ -272,6 +272,7 @@ def reaffirm_decisions(
     *,
     turn_id: str = "",
     max_decisions: int = 4,
+    observation: Optional[SessionObservation] = None,
 ) -> List[RevalidationReceipt]:
     """Re-accept stale decisions by exact text match (match-only)."""
     receipts: List[RevalidationReceipt] = []
@@ -295,6 +296,18 @@ def reaffirm_decisions(
             receipts.append(_rejected(
                 wc, kind=KIND_DECISION, target=target,
                 reason=REJECT_NOT_STALE, turn_id=turn_id))
+            continue
+        fields = list(hit.stale_reasons)
+        if observation is None or not fields or any(
+            not _obs_knows_field(wc, field, observation)[0] for field in fields
+        ):
+            receipts.append(_rejected(wc, kind=KIND_DECISION, target=target,
+                reason=REJECT_FIELD_UNOBSERVED, turn_id=turn_id))
+            continue
+        if any(f.status == "stale" and (not f.stale_reasons or set(fields).intersection(f.stale_reasons))
+               for f in wc.findings):
+            receipts.append(_rejected(wc, kind=KIND_DECISION, target=target,
+                reason=REJECT_ATTRIBUTED_STALE_REMAINING, turn_id=turn_id))
             continue
         wc.revision = int(wc.revision) + 1
         hit.stale_basis = False

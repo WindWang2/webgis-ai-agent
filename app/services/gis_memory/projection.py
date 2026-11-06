@@ -56,7 +56,7 @@ def _age_text(last_validated_at: Optional[str], now: datetime) -> str:
     except ValueError:
         return "时间未知"
     if validated.tzinfo:
-        validated = validated.replace(tzinfo=None)
+        validated = validated.astimezone(timezone.utc).replace(tzinfo=None)
     age_days = max((now - validated).total_seconds(), 0.0) / 86400.0
     if age_days < 1.0:
         return "今日验证"
@@ -114,7 +114,7 @@ def _render_line(hit: RetrievedMemory, now: datetime) -> Optional[str]:
         detail = subject
     return (
         f"- {label} · {detail}"
-        f"（来源 {rec.evidence.get('source', '?')}，"
+        f"（来源 {_xml_fence(_TAG_UNTRUSTED_MEMORY, rec.evidence.get('source', '?'))}，"
         f"置信 {rec.confidence:.2f}，{_age_text(rec.last_validated_at, now)}）"
     )
 
@@ -132,7 +132,9 @@ def render_memory_block(
     """
     if not hits:
         return ""
-    current = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo:
+        current = current.astimezone(timezone.utc).replace(tzinfo=None)
     lines: List[str] = []
     for hit in hits:
         # 纵深防御：检索层已剔除 sensitive；渲染层再拦一道（防止未来调用方

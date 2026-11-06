@@ -52,6 +52,13 @@
   "snapshot_id": "string",
   "status": "string"
  },
+ "DELETE /api/v1/reports/{report_id}/share": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
  "DELETE /api/v1/tasks/jobs/{job_id}": {
   "__model__": "JobCancelResponse",
   "cancel_requested": "boolean",
@@ -361,6 +368,7 @@
  "GET /api/v1/health": {
   "__model__": "HealthResponse",
   "agent_runtime": "string",
+  "pi_vendor": "null|string",
   "pi_workers_alive": "null|string",
   "service": "string",
   "status": "string",

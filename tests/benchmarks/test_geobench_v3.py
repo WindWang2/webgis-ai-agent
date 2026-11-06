@@ -77,7 +77,7 @@ from app.services.data_fabric.query.capabilities import default_capabilities
 from app.services.data_fabric.query.normalize import normalize_query_spec
 from app.services.data_fabric.query.planner import plan_query
 from app.services.geocompute import ops
-from app.services.geocompute.executor import GeoExecutionEngine
+from app.services.geocompute.executor import GeoExecutionEngine, owner_scope_for
 from app.services.geocompute.plan import ExecutionNode, ExecutionPlan, NodeCategory
 
 
@@ -325,13 +325,21 @@ def test_executor_dag_scaling_and_determinism(monkeypatch: pytest.MonkeyPatch):
     sizes = (5_000, 20_000)
     features = {n: _point_features(n) for n in (*sizes, 1_000)}
     _inject_source(monkeypatch, features)
+    session_id = "geobench-dag-scaling"
+    owner = owner_scope_for(None, session_id)
+    other_owner = owner_scope_for(None, "geobench-dag-scaling-other")
 
     def run_once(n: int):
         # retain_outputs: determinism assertions read payloads post-run
         engine = GeoExecutionEngine(retain_outputs=True)  # fresh engine: no cross-run reuse pollution
         t0 = time.perf_counter()
-        run = engine.execute_plan(_dag_plan(n))
-        return run, engine.get_node_output(run.run_id, "agg"), time.perf_counter() - t0
+        run = engine.execute_plan(_dag_plan(n), session_id=session_id)
+        out = engine.get_node_output(run.run_id, "agg", owner_scope=owner)
+        dt = time.perf_counter() - t0
+        assert out is not None
+        assert engine.get_node_output(run.run_id, "agg") is None
+        assert engine.get_node_output(run.run_id, "agg", owner_scope=other_owner) is None
+        return run, out, dt
 
     run_once(1_000)  # warm-up: one-time operator imports must not skew the ratio
 

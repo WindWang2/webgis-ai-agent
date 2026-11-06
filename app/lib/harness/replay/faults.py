@@ -136,7 +136,7 @@ def assert_fault_contract(
             degraded = (
                 ok is False
                 or gate.get("overall_passed") is False
-                or goal.get("status") != "pass"
+                or goal.get("status") in ("fail", "failed", "degraded", "blocked")
                 or any(isinstance(c, dict) and c.get("passed") is False
                        for c in gate_checks.values())
             )

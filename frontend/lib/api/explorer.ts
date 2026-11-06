@@ -44,7 +44,7 @@ export async function getExplorerStatus(
     status: string;
     progress: number;
     result: unknown;
-  }>(`/api/v1/explorer/status/${taskId}`, {
+  }>(`/api/v1/explorer/status/${encodeURIComponent(taskId)}`, {
     signal: opts?.signal,
     // Status is a polling endpoint — 1s cache to dedupe near-simultaneous polls.
     ttlMs: 1_000,
@@ -55,7 +55,7 @@ export async function getExplorerStatus(
 
 export async function abortExploration(taskId: string): Promise<{ task_id: string; aborted: boolean }> {
   return apiFetch<{ task_id: string; aborted: boolean }>(
-    `/api/v1/explorer/abort/${taskId}`,
+    `/api/v1/explorer/abort/${encodeURIComponent(taskId)}`,
     {
       method: 'POST',
       label: `${EXPLORER_LABEL} (abort)`,
@@ -71,7 +71,7 @@ export async function* streamExplorerProgress(
   data: Record<string, unknown>;
 }> {
   const response = await openStream(
-    `/api/v1/explorer/stream/${taskId}`,
+    `/api/v1/explorer/stream/${encodeURIComponent(taskId)}`,
     { signal, label: `${EXPLORER_LABEL} (stream)` }
   );
   if (!response.body) throw new Error('No response body');

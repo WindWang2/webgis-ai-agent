@@ -25,7 +25,7 @@ describe('story owner-token handoff (F-09)', () => {
             origin: window.location.origin,
             source: {
               postMessage: (reply: unknown) =>
-                window.dispatchEvent(new MessageEvent('message', { data: reply, origin: window.location.origin })),
+                window.dispatchEvent(new MessageEvent('message', { data: reply, origin: window.location.origin, source: opener as unknown as Window })),
             } as unknown as Window,
           }),
         );

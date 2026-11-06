@@ -95,8 +95,6 @@ def branch_not_taken(step: Any, decisions: List[Any]) -> Optional[tuple]:
             continue
         if not dec.selected_option:
             continue  # 未裁决；default 的 skipped 语义由调用方处理
-        if dec.resolved_by == "default":
-            continue  # 无结构信号走缺省 —— 由 decision_defaulted 集合处理
         # plan_content 选中（含选中缺省选项）：不含本步骤 = 分支未走
         if step.step_id not in dec.option_step_ids(dec.selected_option):
             return (dec.node_id, dec.selected_option)
@@ -694,12 +692,8 @@ def enforce_procedure_binding(
         #    不在计划；条件步骤走缺省分支不算违例 —— skipped_declared
         #    语义，coverage 对账）。
         if step.required and step.status == "capability_absent":
-            default_covered = any(
-                d.node_id in step.conditional_on
-                and d.resolved_by == "default"
-                for d in binding.decisions)
             not_taken = branch_not_taken(step, binding.decisions) is not None
-            if not default_covered and not not_taken:
+            if not not_taken:
                 check.violations.append(ProcedureViolation(
                     code="required_step_unplanned",
                     subject=step.step_id,

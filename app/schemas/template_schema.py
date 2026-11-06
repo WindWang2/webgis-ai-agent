@@ -1334,13 +1334,15 @@ class CreateTemplateRequest(BaseModel):
         default_factory=list, max_length=_MAX_KEYWORDS, description="搜索关键词标签"
     )
     payload: Dict[str, Any] = Field(..., description="对应 kind 的样式/配置 payload")
-    thumbnail_url: Optional[str] = Field(None, description="缩略图 URL")
+    thumbnail_url: Optional[str] = Field(None, max_length=2048, description="缩略图 URL")
 
     @model_validator(mode="after")
     def _cap_payload_size(self) -> "CreateTemplateRequest":
         # #1648：payload 为调用方可控自由结构，64KB 序列化帽（拒绝式，
         # 不静默截断）—— 样式配置语义上远小于此限。
         _cap_template_payload(self.payload)
+        from app.schemas.payload_bounds import thumbnail_url
+        self.thumbnail_url = thumbnail_url(self.thumbnail_url)
         return self
 
 

@@ -307,4 +307,4 @@ def extract_spec_refs(mapspec: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                     kind,
                     value[:160],
                 ))
-    return out[:64]
+    return out

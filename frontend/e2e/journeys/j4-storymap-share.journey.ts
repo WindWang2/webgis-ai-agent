@@ -7,7 +7,7 @@
  * the same story — that is the sharing contract.
  */
 import { test, expect } from 'playwright/test';
-import { defaultWorld, loginViaApi } from '../helpers/bootstrap';
+import { copyJourneyAuth, defaultWorld, loginViaApi } from '../helpers/bootstrap';
 import { seedConversationViaApi } from '../helpers/real-chat';
 import { installJourneyStubs } from '../fixtures/api-stubs';
 import storySeed from '../fixtures/story-seed.json';
@@ -72,6 +72,7 @@ test.describe('journey-4 StoryMap 分享回放', () => {
 
     // 回放：分享链接在全新页面打开 → 同一会话内容再次渲染。
     const replay = await page.context().newPage();
+    await copyJourneyAuth(page, replay);
     await installJourneyStubs(replay, storyWorld());
     await replay.goto(clip);
     await expect(
@@ -108,6 +109,7 @@ test.describe('journey-4 StoryMap 分享回放', () => {
     expect(clip).toContain('/story');
     expect(clip).toContain(`session_id=${sessionId}`);
     const replay = await page.context().newPage();
+    await copyJourneyAuth(page, replay);
     await replay.goto(clip);
     await expect(replay.locator('[data-story-narrator]')).toBeVisible({ timeout: 20_000 });
     await expect(

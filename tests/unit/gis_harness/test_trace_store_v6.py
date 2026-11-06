@@ -116,3 +116,27 @@ def test_corrupt_segment_tolerated(store_dir):
     recs = trace_store.read_chains("corrupt")
     assert {r["turn_id"] for r in recs} >= {"good-1", "good-2"}
     assert trace_store.last_seq("corrupt") == 2
+
+
+def test_legacy_manifest_dedup_index_is_persisted_on_duplicate(store_dir, monkeypatch):
+    for index in range(20):
+        assert trace_store.persist_chain(_rec(f"t{index}"), session_id="index-review")
+    directory = store_dir / ".webgis-agent" / "index-review" / "trace_v6"
+    path = directory / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest.pop("legacy_dedup_keys", None)
+    for segment in manifest["segments"]:
+        segment.pop("dedup_keys", None)
+    path.write_text(json.dumps(manifest))
+    assert trace_store.persist_chain(_rec("t0"), session_id="index-review")
+    migrated = json.loads(path.read_text())
+    assert "legacy_dedup_keys" in migrated
+    assert all("dedup_keys" in segment for segment in migrated["segments"])
+    reads = []
+    original = trace_store._read_segment_text
+    def record(path):
+        reads.append(path.name)
+        return original(path)
+    monkeypatch.setattr(trace_store, "_read_segment_text", record)
+    assert trace_store.persist_chain(_rec("t0"), session_id="index-review")
+    assert not any(name.endswith(".gz") for name in reads)

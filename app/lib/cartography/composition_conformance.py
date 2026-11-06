@@ -154,7 +154,7 @@ def _export_parity_issues(
     by_type = {ctype: sorted(ids) for ctype, ids in by_type.items()}
     targets = _export_targets_of(contract, export_targets)
     renderer_reg = get_component_renderer_registry()
-    exempt = set(EXPORT_PARITY_EXEMPT_TYPES)
+    exempt = set(EXPORT_PARITY_EXEMPT_TYPES) | {"design_candidates"}
     issues: List[ConformanceIssue] = []
     for ctype in sorted(by_type):
         if ctype in exempt:
@@ -173,6 +173,8 @@ def _export_parity_issues(
             ))
             continue
         for target in targets:
+            if target == "interactive" and ctype == "export_layout":
+                continue
             if _type_supports_target(renderer_reg, ctype, target):
                 continue
             ids = by_type[ctype]

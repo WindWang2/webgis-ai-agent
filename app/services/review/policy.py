@@ -34,6 +34,7 @@ TRANSITIONS: dict[ProposalStatus, frozenset[ProposalStatus]] = {
     ),
     ProposalStatus.SUBMITTED: frozenset(
         {
+            ProposalStatus.SUBMITTED,
             ProposalStatus.CHANGES_REQUESTED,
             ProposalStatus.APPROVED,
             ProposalStatus.REJECTED,
@@ -46,6 +47,7 @@ TRANSITIONS: dict[ProposalStatus, frozenset[ProposalStatus]] = {
     ),
     ProposalStatus.APPROVED: frozenset(
         {
+            ProposalStatus.SUBMITTED,
             ProposalStatus.MERGED,
             ProposalStatus.REJECTED,
             ProposalStatus.SUPERSEDED,
@@ -91,7 +93,13 @@ class PolicyVerdict:
 
 @dataclass
 class ApprovalPolicy:
-    """v1 默认策略（部署常量；不做 per-proposal 覆盖 —— 审批语义要可预期）。"""
+    """v1 默认策略（部署常量；不做 per-proposal 覆盖）。
+
+    Low-risk human-authored proposals allow explicit self-approval, as an
+    intentional confirmation workflow. High-risk proposals require another
+    human reviewer; agent-authored proposals always require human approval.
+    This default is not a universal four-eyes policy.
+    """
 
     version: str = "v1"
     min_approvals_low: int = 1

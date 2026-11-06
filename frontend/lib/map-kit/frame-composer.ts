@@ -132,9 +132,11 @@ export async function composeFrames(
     try {
       if (frame.where) {
         const { layerId, field, equal } = frame.where;
-        const ids = [layerId, `${layerId}-label`].filter(
-          (id) => !!map.getLayer(id),
-        );
+        const ids = Array.from(new Set([
+          layerId, `${layerId}-label`,
+          ...(map.getStyle?.()?.layers ?? []).filter((layer) => layer.id.startsWith(`${layerId}__`)).map((layer) => layer.id),
+        ])).filter((id) => !!map.getLayer(id));
+        if (!ids.length) throw new Error(`Frame filter target ${layerId} is absent`);
         for (const id of ids) {
           let saved: SavedFilter = { existed: false };
           try {
@@ -144,7 +146,8 @@ export async function composeFrames(
             /* 图层无 filter 可读 → 按不存在恢复 */
           }
           touched.push({ id, saved });
-          map.setFilter(id, ['==', ['get', field], equal]);
+          const condition = ['==', ['get', field], equal];
+          map.setFilter(id, saved.existed && saved.filter ? ['all', saved.filter, condition] as any : condition as any);
         }
       }
 

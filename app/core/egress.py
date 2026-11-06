@@ -21,10 +21,10 @@
 - requests：``app/services/data_fabric/security.py::SSRFSafeHTTPAdapter.send()``
   （每跳 redirect 都过守卫）。
 
-已知边界（文档面）：pystac-client 与 rasterio /vsicurl 在第三方库内部建连，
-不经本守卫；vendor/pi 子进程的 LLM 调用同样不可从 Python 层拦截。这两类由
-NetworkDependencyCatalog 登记 + preflight 在 air-gapped 下报 typed
-unavailable，最终防线是部署网络层（防火墙/netns）。
+STAC 目录客户端通过受保护的 requests session 检查目录、分页和重定向；
+远程 GeoTIFF 通过受保护的 Python opener 检查连接目标。vendor/pi 子进程
+的 LLM 调用仍不经 Python 网络客户端，由 NetworkDependencyCatalog 登记
+并通过 preflight 报告可用性；部署网络层（防火墙/netns）提供最终隔离。
 
 本模块顶层只 import 标准库——``app.core.config`` 的 validator 会复用决策
 函数，不得构成 import 环。
@@ -51,7 +51,7 @@ __all__ = [
 ]
 
 #: 守卫覆盖的出网协议面。file:/ref:/data: 等不构成 HTTP 出网，放行。
-_EGRESS_SCHEMES = frozenset({"http", "https", "ws", "wss"})
+_EGRESS_SCHEMES = frozenset({"http", "https", "ws", "wss", "postgresql", "postgres", "s3", "minio", "gs"})
 
 #: 无 DNS 分类即可判为"内网形态"的主机后缀/名字。字面 IP 走 ipaddress。
 _PRIVATE_HOSTNAME_SUFFIXES = (".local", ".internal")

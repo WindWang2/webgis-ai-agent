@@ -316,12 +316,16 @@ def test_zonal_supports_std_and_warns_unknown(tiled_raster):
 
 
 def test_zonal_returns_only_requested_keys(tiled_raster):
+    """Only requested statistics plus the mandatory scientific disclosure."""
     from app.lib.geo_analysis.raster_ops import zonal_statistics
 
     path, _ = tiled_raster
     fc = _zone_fc((505000, 3950000, 515000, 3960000), (990000, 990000, 991000, 991000))
-    for row in zonal_statistics(fc, str(path), stats=["mean"]):
-        assert set(row.keys()) == {"mean"}
+    rows = zonal_statistics(fc, str(path), stats=["mean"])
+    for row in rows:
+        assert set(row.keys()) == {"mean", "valid_pixel_coverage"}
+    assert 0 <= rows[0]["valid_pixel_coverage"] <= 1
+    assert rows[1]["valid_pixel_coverage"] is None
 
 
 def test_reader_holds_env_for_lifetime(tiled_raster):

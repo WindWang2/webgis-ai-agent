@@ -176,7 +176,7 @@ def assert_valid_code(code: str) -> None:
 
 
 def resolve_name(name: str) -> str | None:
-    """名称/简称/别名 → 6 位行政区划码（省级优先，其次地级）。"""
+    """全称优先，随后仅解析无歧义的多字简称。"""
     raw = (name or "").strip()
     if not raw:
         return None
@@ -184,6 +184,14 @@ def resolve_name(name: str) -> str | None:
         PROVINCE_CODES_BY_SHORT_NAME,
     )
 
+    for code, (full_name, _aliases, _center) in _admin.PROVINCES.items():
+        if raw == full_name:
+            return code + "0000"
+    for code, (full_name, _province) in _admin.PREFECTURES.items():
+        if raw == full_name:
+            return code + "00"
+    if len(raw) == 1:
+        return None
     if raw in PROVINCE_CODES_BY_SHORT_NAME:
         return PROVINCE_CODES_BY_SHORT_NAME[raw] + "0000"
     for suffix in ("特别行政区", "维吾尔自治区", "壮族自治区", "回族自治区",

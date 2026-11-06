@@ -134,6 +134,7 @@ class CatalogFilter(BaseModel):
     """目录过滤器（全部条件 AND 语义；None = 不过滤该轴）。"""
 
     keyword: str = ""                       # 命中 name/subtype/source_ref/produced_by
+    entry_id: str = ""
     category: str = ""                      # 粗类 token
     role: str = ""                          # LogicalRole
     crs: str = ""
@@ -157,14 +158,22 @@ class CatalogFilter(BaseModel):
             raise ValueError("bbox values must be numeric")
 
     def matches(self, entry: CatalogEntry) -> bool:
+        if self.entry_id and entry.entry_id != self.entry_id:
+            return False
         if self.scope and entry.scope != self.scope:
             return False
         if self.category and entry.category != self.category:
             return False
         if self.role and entry.logical_role != self.role:
             return False
-        if self.crs and entry.crs != self.crs:
-            return False
+        if self.crs:
+            from pyproj import CRS
+
+            try:
+                if not entry.crs or CRS.from_user_input(entry.crs) != CRS.from_user_input(self.crs):
+                    return False
+            except ValueError:
+                return False
         if self.status and entry.status != self.status:
             return False
         if self.lifecycle and entry.lifecycle != self.lifecycle:
@@ -178,7 +187,15 @@ class CatalogFilter(BaseModel):
         if self.bbox is not None:
             if entry.extent is None:
                 return False  # 无法判定 ≠ 匹配（bbox 查询只返回可判定者）
-            if not _bbox_intersects(self.bbox, entry.extent):
+            from pyproj import Transformer
+
+            if not entry.crs:
+                return False
+            try:
+                extent = Transformer.from_crs(entry.crs, "EPSG:4326", always_xy=True).transform_bounds(*entry.extent)
+            except ValueError:
+                return False
+            if not _bbox_intersects(self.bbox, extent):
                 return False
         if self.keyword:
             kw = self.keyword.lower()
@@ -353,6 +370,8 @@ class DataCatalog:
         作用域过滤；无 owner 时不查询 fabric（联邦来源不在无归属上下文暴露）。
         """
         flt = filter_ or CatalogFilter()
+        if flt.scope == "project":
+            raise ValueError("project catalog search requires the project catalog API; session federation has no project source")
         limit = max(1, min(int(limit or _DEFAULT_LIMIT), _MAX_LIMIT))
         entries: List[CatalogEntry] = []
         sources: List[SourceStatus] = []
@@ -406,13 +425,35 @@ class DataCatalog:
         owner: Optional[str] = None,
     ) -> Optional[CatalogEntry]:
         """单条目查询（§十八 describe_artifact 的目录侧）。"""
-        result = await self.search(
-            session_id=session_id, filter_=CatalogFilter(keyword=entry_id),
-            limit=_MAX_LIMIT, owner=owner,
-        )
-        for e in result.entries:
-            if e.entry_id == entry_id:
-                return e
+        if entry_id.startswith("upload:"):
+            if not session_id:
+                return None
+            def load_upload() -> Optional[CatalogEntry]:
+                from app.models.upload import UploadRecord
+                from app.tools._utils import db_session
+
+                raw_id = entry_id.removeprefix("upload:")
+                if not raw_id.isdecimal():
+                    return None
+                with db_session() as db:
+                    row = db.query(UploadRecord).filter(
+                        UploadRecord.id == int(raw_id), UploadRecord.session_id == session_id,
+                    ).first()
+                    return _entry_from_upload_record(row) if row is not None else None
+            return await asyncio.to_thread(load_upload)
+        if entry_id.startswith("fabric:"):
+            if owner is None:
+                return None
+            from app.services.data_fabric.spatial_catalog import spatial_catalog_service
+
+            descriptor = spatial_catalog_service.get_dataset(entry_id.removeprefix("fabric:"), owner=owner)
+            return _entry_from_fabric_descriptor(descriptor) if descriptor is not None else None
+        if session_id:
+            # Exact identity lookup is not subject to search's relevance/window
+            # caps; even an old record after the first 2000 remains describable.
+            for record in await self._session_records_loader(session_id):
+                if record.artifact_id == entry_id:
+                    return _entry_from_artifact_record(record)
         return None
 
 

@@ -492,11 +492,16 @@ class SessionLockRegistry:
         session_id: str,
         ttl_ms: int = _DEFAULT_TTL_MS,
         acquire_timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S,
-        fail_on_degraded: bool = False,
-        fail_on_lost: bool = False,
+        fail_on_degraded: Optional[bool] = None,
+        fail_on_lost: Optional[bool] = None,
     ):
         """Return an async context manager mutually exclusive for ``session_id``."""
         client = self._get_client()
+        configured = self._is_redis_configured()
+        if fail_on_degraded is None:
+            fail_on_degraded = configured
+        if fail_on_lost is None:
+            fail_on_lost = configured
         fallback = self._fallback_lock(session_id)
         return _ResilientSessionLock(
             client,
@@ -520,8 +525,8 @@ def session_lock(
     session_id: str,
     ttl_ms: int = _DEFAULT_TTL_MS,
     acquire_timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S,
-    fail_on_degraded: bool = False,
-    fail_on_lost: bool = False,
+    fail_on_degraded: Optional[bool] = None,
+    fail_on_lost: Optional[bool] = None,
 ) -> _ResilientSessionLock:
     """Return an async context manager mutually exclusive for session_id."""
     return session_lock_registry.lock(

@@ -211,7 +211,7 @@ def job_from_agent_task(task: Any, *, background_job_ids: list[str] | None = Non
         error=error,
         step_count=len(steps),
         created_at=_iso(getattr(task, "created_at", None)),
-        started_at=_iso(getattr(task, "created_at", None)),
+        started_at=_iso(getattr(task, "started_at", None)),
         finished_at=_iso(getattr(task, "finished_at", None)),
     )
 

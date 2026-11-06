@@ -12,7 +12,7 @@ class TestHandleSendStaleClosure:
         source = _read_source()
 
         # Find the handleSend guard line
-        assert "isLoadingRef.current" in source, (
+        assert "loadingGuardRef.current || sendingRef.current" in source, (
             "handleSend guard must use isLoadingRef.current (live ref) "
             "instead of isLoading (stale closure variable). "
             "This prevents dropped messages during render-cycle gaps."
@@ -21,6 +21,6 @@ class TestHandleSendStaleClosure:
     def test_isLoading_ref_is_kept_in_sync(self):
         """The ref must be synchronized with isLoading on every render."""
         source = _read_source()
-        assert "isLoadingRef.current = isLoading" in source, (
+        assert "loadingGuardRef.current = isLoading" in source, (
             "isLoadingRef must be assigned isLoading on every render to stay in sync."
         )

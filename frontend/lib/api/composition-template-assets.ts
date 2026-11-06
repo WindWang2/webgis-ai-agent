@@ -123,7 +123,7 @@ export const compositionTemplateAssetsApi = {
   ): Promise<CreateCompositionAssetResult> {
     const res = await apiFetch<CreateCompositionAssetResult>(
       '/api/v1/composition-template-assets',
-      { method: 'POST', body: JSON.stringify(req) }
+      { method: 'POST', body: req }
     );
     invalidateCache('/api/v1/composition-template-assets');
     return res;
@@ -133,7 +133,7 @@ export const compositionTemplateAssetsApi = {
     const res = await apiFetch<unknown>(
       `/api/v1/composition-template-assets/${encodeURIComponent(assetId)}`
       + `/versions/${revision}/publish`,
-      { method: 'POST', body: JSON.stringify({}) }
+      { method: 'POST', body: {} }
     );
     invalidateCache('/api/v1/composition-template-assets');
     return res;
@@ -142,7 +142,7 @@ export const compositionTemplateAssetsApi = {
   async retire(assetId: string, note?: string): Promise<unknown> {
     const res = await apiFetch<unknown>(
       `/api/v1/composition-template-assets/${encodeURIComponent(assetId)}/retire`,
-      { method: 'POST', body: JSON.stringify({ note: note ?? '' }) }
+      { method: 'POST', body: { note: note ?? '' } }
     );
     invalidateCache('/api/v1/composition-template-assets');
     return res;
@@ -152,7 +152,7 @@ export const compositionTemplateAssetsApi = {
     const res = await apiFetch<unknown>(
       `/api/v1/composition-template-assets/${encodeURIComponent(assetId)}`
       + `/restore/${revision}`,
-      { method: 'POST', body: JSON.stringify({}) }
+      { method: 'POST', body: {} }
     );
     invalidateCache('/api/v1/composition-template-assets');
     return res;

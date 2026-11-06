@@ -7,21 +7,29 @@ client that disconnects mid-stream. Asserts the
 module-level dedup sets and dispatch-result cache return to baseline after
 every turn, and that gc/tracemalloc don't accumulate retained tool results.
 
-RED on the pre-fix code: neither _session_executed_sets[""] nor
+RED on the pre-fix code: neither the session execution bucket nor
 _dispatch_result_cache is cleaned at turn end (only at the *next* turn start,
 keyed by the real session id), so both grow monotonically across sessions.
 """
 import asyncio
 import gc
 import tracemalloc
+import weakref
 from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 
 import pytest
+from pydantic import BaseModel
 
 from app import agent_pi_bridge as bridge_mod
 from app.agent_pi_bridge import PiBridge, PiToolRequest, dispatch_tool
 from app.services.tool_dispatch_service import ToolDispatchResult
 from tests.fixtures.pi_mocks import make_token_event
+
+
+class _QueryMapFeaturesArgs(BaseModel):
+    location: list[float]
+    buffer_m: float = 10
 
 
 class _StubRegistry:
@@ -30,6 +38,12 @@ class _StubRegistry:
 
     def metadata(self, name):
         return {"tier": 1}
+
+    def args_model(self, name):
+        # Match the real query tool's parameter seam. An incomplete stub here
+        # raises inside PiInputGate; DEBUG exc_info capture then owns traceback
+        # frames (and their dispatch results), which is unrelated to cache GC.
+        return _QueryMapFeaturesArgs if name == "query_map_features" else None
 
 
 def _make_event_rpc(events):
@@ -48,7 +62,17 @@ def _make_event_rpc(events):
 
 
 @pytest.fixture(autouse=True)
-def _clean_state():
+def _clean_state(monkeypatch):
+    # A production bridge has an initialized tracker. Exception-log capture
+    # retains traceback frames by design and is not the memory owner measured
+    # here; observability failures have a dedicated behavior test.
+    import app.services.chat.engine_instance as engines
+    tracker = SimpleNamespace(
+        create=lambda sid, message: SimpleNamespace(id=f"task-{sid}"),
+        list_by_session=lambda sid: [], cancel=lambda tid: None,
+        fail_task=lambda tid, reason: None, complete_task=lambda tid: None,
+    )
+    monkeypatch.setattr(engines, "try_get_chat_engine", lambda: SimpleNamespace(tracker=tracker))
     bridge_mod._session_executed_sets.clear()
     bridge_mod._dispatch_result_cache.clear()
     yield
@@ -82,6 +106,25 @@ async def _fake_dispatch(self, tc, session_id, executed):
     )
 
 
+@pytest.fixture
+def _dispatch_results(monkeypatch):
+    """Observe only results created by this workload without retaining them."""
+    observed = []
+
+    async def dispatch(self, tc, session_id, executed):
+        result = await _fake_dispatch(self, tc, session_id, executed)
+        observed.append(weakref.ref(result))
+        return result
+
+    monkeypatch.setattr(bridge_mod.ToolDispatchService, "dispatch", dispatch)
+    return observed
+
+
+def _assert_results_released(observed):
+    retained = sum(reference() is not None for reference in observed)
+    assert retained <= 5, f"{retained} newly created ToolDispatchResult objects retained after sessions"
+
+
 async def _run_one_session(i, monkeypatch):
     """One chat session: two Pi tool dispatches + a stream the client abandons."""
     rpc = _make_event_rpc([make_token_event("hello")])
@@ -98,7 +141,7 @@ async def _run_one_session(i, monkeypatch):
                 toolCallId=f"tc-{i}-{j}",
                 arguments={
                     "toolName": "query_map_features",
-                    "arguments": {"bbox": [116.0, 39.0, 116.1, 39.1]},
+                    "arguments": {"location": [116.0, 39.0], "buffer_m": 10},
                 },
                 # Long-tail tools use the proxy; a rejected bare name would
                 # never call _fake_dispatch and make this leak guard vacuous.
@@ -128,9 +171,8 @@ async def test_turn_state_returns_to_baseline_across_many_sessions(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_no_retained_objects_or_memory_growth(monkeypatch, _gc_schedule):
+async def test_no_retained_objects_or_memory_growth(monkeypatch, _gc_schedule, _dispatch_results, caplog):
     monkeypatch.setattr(bridge_mod, "get_tool_registry", lambda: _StubRegistry())
-    monkeypatch.setattr(bridge_mod.ToolDispatchService, "dispatch", _fake_dispatch)
 
     # 预热：会话循环内的首次惰性导入（scipy/networkx/子模块可达数十 MB）
     # 不是泄漏 —— tracemalloc 必须在导入完成**之后**启动，测的才是保留
@@ -151,11 +193,36 @@ async def test_no_retained_objects_or_memory_growth(monkeypatch, _gc_schedule):
     finally:
         tracemalloc.stop()
 
-    retained = [o for o in gc.get_objects() if isinstance(o, ToolDispatchResult)]
-    assert len(retained) <= 5, f"{len(retained)} ToolDispatchResult objects retained after 50 sessions"
+    # Count the actual 106 results of this workload, including warmup. Live
+    # results owned by earlier tests/caches cannot inflate this measurement;
+    # weak references also avoid keeping the measured objects alive ourselves.
+    assert len(_dispatch_results) == 106
+    _assert_results_released(_dispatch_results)
+    assert not any(record.exc_info and record.name == "app.services.chat.pi_input_gate"
+                   for record in caplog.records), "the registry fixture must not trigger captured gate tracebacks"
     # 4.5MB（2026-10-17 二次校准）：澄清闭环 envelope + settle coordinator
     # 收据台账 + representation 绑定投影并入后，50 会话合法常驻足迹实测
     # ~3.95MB（CI 3.12，2026-10-17 run：current=3948367，retained ≤5 守卫绿）。
     # 校准史：2.5MB（初始）→ 3.0MB（2026-09-14，ADR-0180-0184）→ 4.5MB。
     # 真正的泄漏守卫是上方 retained ≤5 断言 —— 字节上限只锁"足迹量级不漂移"。
     assert current < 4_500_000, f"tracemalloc current={current} bytes after 50 sessions"
+
+
+@pytest.mark.asyncio
+async def test_result_probe_excludes_old_objects_but_rejects_six_new_cached_results(_dispatch_results):
+    # Existing reachable results from another workload are legitimate baseline.
+    unrelated = [ToolDispatchResult("ok", "old", {}, None, {}, None) for _ in range(10)]
+    service = bridge_mod.ToolDispatchService(registry=_StubRegistry())
+    for index in range(6):
+        result = await service.dispatch({"function": {
+            "name": "query_map_features", "arguments": {"location": [116.0, 39.0]},
+        }}, "leak-probe", set())
+        bridge_mod.cache_dispatch_result(f"new-{index}", result, "leak-probe")
+    del result
+    assert len(_dispatch_results) == 6
+    with pytest.raises(AssertionError, match="6 newly created ToolDispatchResult"):
+        _assert_results_released(_dispatch_results)
+    bridge_mod._clear_dispatch_cache("leak-probe")
+    gc.collect()
+    _assert_results_released(_dispatch_results)
+    assert len(unrelated) == 10  # Still reachable; excluded rather than cleared.

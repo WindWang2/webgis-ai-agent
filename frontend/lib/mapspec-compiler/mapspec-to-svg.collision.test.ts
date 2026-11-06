@@ -80,4 +80,62 @@ describe('TS 孪生 label collision（W6）', () => {
     });
     expect(diags.some(([c, d]) => c === 'label_budget_exceeded' && d === '400')).toBe(true);
   });
+
+  // ── W2.1（ADR-0283 D3）：circle 点符号 → 图元障碍接线 ──────────────────
+  function glyphSpec(circleRadius: number | null) {
+    const features = [
+      { type: 'Feature', geometry: { type: 'Point', coordinates: [115.8, 38.8] }, properties: {} },
+      { type: 'Feature', geometry: { type: 'Point', coordinates: [116.8, 39.6] }, properties: { other: 1 } },
+      { type: 'Feature', geometry: { type: 'Point', coordinates: [116.0, 39.0] }, properties: { name: '北京' } },
+    ];
+    const layers: Array<Record<string, unknown>> = [];
+    if (circleRadius !== null) {
+      layers.push({
+        id: 'pts_circle', source: 'pts', type: 'circle',
+        paint: { 'circle-radius': circleRadius, 'circle-color': '#3b82f6' },
+      });
+    }
+    layers.push({
+      id: 'pts_sym', source: 'pts', type: 'symbol',
+      layout: { 'text-field': '{name}', 'text-size': 14 },
+    });
+    const spec: Record<string, any> = {
+      version: '1.1',
+      view: { center: [116, 39], zoom: 10 },
+      sources: { pts: { type: 'geojson', inlineData: { type: 'FeatureCollection', features } } },
+      layers,
+      layout: { labels: { collision: 'deterministic' } },
+    };
+    return spec;
+  }
+
+  it('大半径 circle 符号成障碍 → 标签抑制 + 披露含 obstacles 计数', () => {
+    const diags: Array<[string, string]> = [];
+    const svg = compileMapSpecToSvg(glyphSpec(30), {
+      targetDpi: 72, width: 400, height: 300, padding: 10,
+      onDiagnostic: (code, detail) => diags.push([code, detail]),
+    });
+    expect(svg).not.toContain('北京');
+    const relaxed = diags.filter(([c]) => c === 'label_collision_relaxed');
+    expect(relaxed.length).toBeGreaterThan(0);
+    expect(relaxed[0][1]).toContain('obstacles=3');
+    expect(relaxed[0][1]).toContain('suppressed=1');
+  });
+
+  it('小半径 circle 符号不达候选盒 → 标签照常放置', () => {
+    const svg = compileMapSpecToSvg(glyphSpec(5), {
+      targetDpi: 72, width: 400, height: 300, padding: 10,
+    });
+    expect(svg).toContain('北京');
+  });
+
+  it('无 circle 层 → 障碍集空 → 不产生 obstacles 披露', () => {
+    const diags: Array<[string, string]> = [];
+    const svg = compileMapSpecToSvg(glyphSpec(null), {
+      targetDpi: 72, width: 400, height: 300, padding: 10,
+      onDiagnostic: (code, detail) => diags.push([code, detail]),
+    });
+    expect(svg).toContain('北京');
+    expect(diags.some(([c]) => c === 'label_collision_relaxed')).toBe(false);
+  });
 });

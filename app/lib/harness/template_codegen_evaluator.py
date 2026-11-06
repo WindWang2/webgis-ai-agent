@@ -101,6 +101,9 @@ def _extract_composition_template_id(
         value = layout.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    composition = layout.get("composition")
+    if isinstance(composition, dict):
+        return str(composition.get("template_id") or "").strip()
     return ""
 
 

@@ -131,7 +131,7 @@ def evaluate_payload(
             outcome = RuleOutcome(status="error", message=f"rule raised: {type(exc).__name__}")
             error = str(exc)[:200]
         duration_ms = int((time.perf_counter() - t0) * 1000)
-        dq_metrics.observe_rule(spec.rule_id, outcome.status, duration_ms)
+        dq_metrics.observe_rule(spec.rule_type, outcome.status, duration_ms)
         entry = {
             "rule_id": spec.rule_id,
             "rule_type": spec.rule_type,
@@ -251,8 +251,8 @@ def persist_report(
 def _worker_session_owned(session_id: str, created_by: Optional[str]) -> bool:
     """Worker-side ownership check (HTTP already verified on POST /reports).
 
-    Conversation with user_id must match created_by. Missing Conversation
-    (direct engine tests / anonymous) is allowed.
+    A persisted Conversation with a matching user is required; anonymous or
+    missing rows are not authority to read a session ref.
     """
     from app.core.database import SessionLocal
     from app.models.db_model import Conversation
@@ -260,10 +260,11 @@ def _worker_session_owned(session_id: str, created_by: Optional[str]) -> bool:
     try:
         with SessionLocal() as db:
             conv = db.get(Conversation, str(session_id)[:255] if session_id else "")
-    except Exception:  # noqa: BLE001 — lookup failure must not crash the job
-        return True
+    except Exception:  # noqa: BLE001 — deny when authority is unavailable
+        logger.warning("quality worker ownership lookup failed", exc_info=True)
+        return False
     if conv is None or not getattr(conv, "user_id", None):
-        return True
+        return False
     return bool(created_by) and str(conv.user_id) == str(created_by)
 
 
@@ -293,32 +294,12 @@ def run_quality_evaluate(
     ruleset = ruleset_digest(
         parse_rule_defs(rule_defs) if rule_defs else list(DEFAULT_RULES)
     )
-    with SessionLocal() as db:
-        existing = db.execute(
-            select(QualityReport)
-            .where(
-                QualityReport.session_id == (str(session_id)[:255] if session_id else None),
-                QualityReport.target_ref == str(ref)[:255],
-                QualityReport.ruleset_digest == ruleset,
-                QualityReport.status == "completed",
-            )
-            .order_by(QualityReport.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        if existing is not None:
-            dq_metrics.observe_reuse()
-            return {
-                "status": "completed", "reused": True,
-                "report_id": existing.id,
-                "overall_status": existing.overall_status,
-            }
-
     # 载荷读取（session 域；失败 → failed 报告 + job 失败）
     # HTTP POST /reports already called verify_session_owner. This worker
     # path has no request: session_data_manager.get is unauthenticated, so
     # refuse when Conversation.user_id is set and does not match created_by
     # (forged task kwargs must not read another user's session refs).
-    # Missing Conversation (direct engine tests / anonymous) is allowed.
+    # Missing or unavailable authority is denied.
     if not _worker_session_owned(session_id, created_by):
         with SessionLocal() as db:
             row = QualityReport(
@@ -338,6 +319,28 @@ def run_quality_evaluate(
         if job_id:
             _mark_job_failed(job_id, "payload unreadable: session not owned")
         return {"status": "failed", "report_id": report_id}
+
+    with SessionLocal() as db:
+        existing = db.execute(
+            select(QualityReport)
+            .where(
+                QualityReport.session_id == (str(session_id)[:255] if session_id else None),
+                QualityReport.target_ref == str(ref)[:255],
+                QualityReport.ruleset_digest == ruleset,
+                QualityReport.status == "completed",
+            )
+            .order_by(QualityReport.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if existing is not None:
+            dq_metrics.observe_reuse()
+            if job_id:
+                _mark_job_completed(job_id, existing.id, existing.overall_status)
+            return {
+                "status": "completed", "reused": True,
+                "report_id": existing.id,
+                "overall_status": existing.overall_status,
+            }
 
     from app.core.async_runner import run_sync
 

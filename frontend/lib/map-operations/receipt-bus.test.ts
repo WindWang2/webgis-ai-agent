@@ -3,6 +3,7 @@
  * 幂等去重 / 状态更新 / 订阅通知。
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import {
   dismissOperationReceipt,
   getOperationReceipts,
@@ -86,4 +87,129 @@ describe('receipt-bus', () => {
     expect(listener).toHaveBeenCalled();
     unsubscribe();
   });
+});
+
+// ── ADR-0285 D6：agent 可逆回执 → undo 栈录制 ─────────────────────────
+
+describe('agent receipt undo recording (ADR-0285 D6)', () => {
+  beforeEach(() => {
+    setMapSpecSessionCursor('sess-rb');
+    setReceiptBusSession(null);
+    setReceiptBusSession('sess-rb');
+  });
+
+  it('records presentationCommand per applied invertible effect', async () => {
+    const undoMod = await import('@/lib/workbench/undo');
+    const recordSpy = vi.spyOn(undoMod, 'presentationCommand').mockImplementation(() => {});
+    const ok = pushOperationReceipt({
+      operation_id: 'op-agent-1',
+      status: 'committed',
+      origin: 'agent',
+      invertible: true,
+      effects: [
+        {
+          index: 0, kind: 'set_layer_visibility', targets: ['heatmap'],
+          state: 'applied', before: { visible: true }, after: { visible: false },
+        },
+        {
+          index: 1, kind: 'set_layer_opacity', targets: ['schools'],
+          state: 'applied', before: { opacity: 1 }, after: { opacity: 0.5 },
+        },
+      ],
+    }, 'sess-rb');
+    expect(ok).toBe(true);
+    await vi.waitFor(() => {
+      expect(recordSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(recordSpy).toHaveBeenCalledWith(
+      expect.stringContaining('agent:'),
+      'heatmap', 'agent',
+      { visible: true }, { visible: false },
+    );
+    recordSpy.mockRestore();
+  });
+
+  it('skips non-invertible or user-origin receipts', async () => {
+    const undoMod = await import('@/lib/workbench/undo');
+    const recordSpy = vi.spyOn(undoMod, 'presentationCommand').mockImplementation(() => {});
+    pushOperationReceipt({
+      operation_id: 'op-agent-2', status: 'committed', origin: 'agent',
+      invertible: false,
+      effects: [{ index: 0, kind: 'remove_layer', targets: ['x'], state: 'applied' }],
+    }, 'sess-rb');
+    pushOperationReceipt({
+      operation_id: 'op-user-1', status: 'committed', origin: 'user',
+      invertible: true,
+      effects: [{
+        index: 0, kind: 'set_layer_visibility', targets: ['y'],
+        state: 'applied', before: { visible: true }, after: { visible: false },
+      }],
+    }, 'sess-rb');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recordSpy).not.toHaveBeenCalled();
+    recordSpy.mockRestore();
+  });
+});
+
+describe('owner confirm path undo recording (review P2-6)', () => {
+  beforeEach(() => {
+    setMapSpecSessionCursor('sess-rb2');
+    setReceiptBusSession(null);
+    setReceiptBusSession('sess-rb2');
+  });
+
+  it('records undo when pending receipt transitions to committed via updateOperationReceipt', async () => {
+    const undoMod = await import('@/lib/workbench/undo');
+    const recordSpy = vi.spyOn(undoMod, 'presentationCommand').mockImplementation(() => {});
+    const pending = {
+      operation_id: 'op-confirm-1', status: 'confirmation_required', origin: 'agent',
+      invertible: true, effects: [{
+        index: 0, kind: 'set_layer_visibility', targets: ['heatmap'],
+        state: 'applied', before: { visible: true }, after: { visible: false },
+      }],
+    };
+    pushOperationReceipt(pending, 'sess-rb2');
+    const committed = { ...pending, status: 'committed' };
+    updateOperationReceipt(committed);
+    await vi.waitFor(() => {
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+    });
+    // 同 op 重放（SSE 重连）不双录。
+    updateOperationReceipt(committed);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    recordSpy.mockRestore();
+  });
+});
+
+
+it('drops deferred undo recording after session change and permits the same operation id in a new session', async () => {
+  const undo = await import('@/lib/workbench/undo');
+  const spy = vi.spyOn(undo, 'presentationCommand').mockImplementation(() => {});
+  setMapSpecSessionCursor('race-a'); setReceiptBusSession('race-a');
+  const r = { operation_id: 'same-id', status: 'committed', origin: 'agent', invertible: true,
+    effects: [{ index: 0, kind: 'set_layer_visibility', targets: ['a'], state: 'applied', before: { visible: true }, after: { visible: false } }] };
+  pushOperationReceipt(r, 'race-a');
+  setMapSpecSessionCursor('race-b'); setReceiptBusSession('race-b');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(spy).not.toHaveBeenCalled();
+  expect(updateOperationReceipt(r, 'race-a')).toBe(false);
+  pushOperationReceipt(r, 'race-b');
+  await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  spy.mockRestore();
+});
+
+it('bounds undo replay deduplication and releases old operation identities', async () => {
+  const undo = await import('@/lib/workbench/undo');
+  const spy = vi.spyOn(undo, 'presentationCommand').mockImplementation(() => {});
+  setMapSpecSessionCursor('bounds'); setReceiptBusSession('bounds');
+  for (let i = 0; i < 130; i++) {
+    pushOperationReceipt({ operation_id: `bounded-${i}`, status: 'committed', origin: 'agent', invertible: true,
+      effects: [{ index: 0, kind: 'set_layer_visibility', targets: ['a'], state: 'applied', before: { visible: true }, after: { visible: false } }] }, 'bounds');
+  }
+  await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(130));
+  pushOperationReceipt({ operation_id: 'bounded-0', status: 'committed', origin: 'agent', invertible: true,
+    effects: [{ index: 0, kind: 'set_layer_visibility', targets: ['a'], state: 'applied', before: { visible: true }, after: { visible: false } }] }, 'bounds');
+  await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(131));
+  spy.mockRestore();
 });

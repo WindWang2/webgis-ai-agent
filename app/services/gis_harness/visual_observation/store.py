@@ -14,8 +14,10 @@ C13 生命周期硬化（F15 review P2-1/P2-2/P2-5 收口）：
 - **stale 硬门**：:func:`latest_screenshot_for` 严格匹配 revision + 指纹。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import logging
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -97,6 +99,12 @@ def validate_screenshot_bytes(data: bytes) -> Tuple[int, int]:
         raise ScreenshotRejected("oversized")
     if not data.startswith(_PNG_MAGIC):
         raise ScreenshotRejected("not_png")
+    if len(data) < 33 or data[12:16] != b"IHDR" or int.from_bytes(data[8:12], "big") != 13:
+        raise ScreenshotRejected("invalid_png_header")
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
+    if not (0 < width <= 4096 and 0 < height <= 4096):
+        raise ScreenshotRejected("pixel_budget_exceeded")
     return size, 0
 
 
@@ -115,56 +123,46 @@ async def register_visual_screenshot(
     mapspec_fingerprint: str = "",
 ) -> ScreenshotEntry:
     """入库（内容寻址）+ 会话索引 FIFO 推进；返回 ref-only 条目。"""
-    from app.services.durable_blob_store import get_filesystem_blob_store
     from app.services.durable_blob_store import sha256_of_bytes
     from app.services.session_data import session_data_manager
 
     size, _ = validate_screenshot_bytes(data)
     sha = sha256_of_bytes(data)
     key = blob_key_for(sha)
-    store = get_filesystem_blob_store()
-    if not store.exists(key):
-        store.put_blob(key, data, "binary")
+    from app.services.gis_harness.visual_observation.blob_refs import store_screenshot_ref, release_blob_ref
+    from app.services.session_state_atomic import atomic_update_state
+
+    if not await asyncio.to_thread(store_screenshot_ref, sha, session_id, data):
+        raise ScreenshotRejected("reference_commit_unavailable")
 
     entry = ScreenshotEntry(
         ref=key, sha256=sha, size=size, width=int(width),
         height=int(height), mapspec_revision=int(mapspec_revision),
         mapspec_fingerprint=str(mapspec_fingerprint or "")[:96],
     )
-    index = await load_screenshot_index(session_id)
-    # 内容寻址去重：同 sha 刷新位置（最新优先），不重复占 FIFO 槽；
-    # refcount 只在**首次**入库时 +1（刷新路径不重复计数）。
-    had_same_sha = any(e.sha256 == sha for e in index)
-    entries = [e for e in index if e.sha256 != sha]
-    entries.append(entry)
     evicted: List[ScreenshotEntry] = []
-    while len(entries) > MAX_SCREENSHOTS_PER_SESSION:
-        evicted.append(entries.pop(0))
-    await session_data_manager.set_map_state(
-        session_id, SCREENSHOT_INDEX_KEY,
-        [e.to_dict() for e in entries],
-    )
-    if not had_same_sha:
-        try:
-            from app.services.gis_harness.visual_observation.blob_refs import (
-                add_blob_ref,
-            )
+    had_same_sha = False
 
-            add_blob_ref(sha, session_id)
-        except Exception:  # noqa: BLE001 — 记账失败不阻断入库（sweep 兜底）
-            logger.debug("[VisualStore] refcount add failed sha=%s",
-                         sha[:12], exc_info=True)
+    def update(snapshot: Any) -> dict:
+        nonlocal evicted, had_same_sha
+        raw = snapshot.get(SCREENSHOT_INDEX_KEY) or []
+        index = [item for value in raw if (item := ScreenshotEntry.from_dict(value)) is not None]
+        had_same_sha = any(item.sha256 == sha for item in index)
+        entries = [item for item in index if item.sha256 != sha] + [entry]
+        evicted = entries[:-MAX_SCREENSHOTS_PER_SESSION]
+        return {SCREENSHOT_INDEX_KEY: [item.to_dict() for item in entries[-MAX_SCREENSHOTS_PER_SESSION:]]}
+
+    try:
+        committed = await atomic_update_state(session_data_manager, session_id, [SCREENSHOT_INDEX_KEY], update)
+        if committed is None:
+            raise ScreenshotRejected("index_commit_unavailable")
+    except BaseException:
+        await asyncio.to_thread(release_blob_ref, sha, session_id)
+        raise
+    if had_same_sha:
+        await asyncio.to_thread(release_blob_ref, sha, session_id)
     for old in evicted:
-        # C13：淘汰 = 释放**本会话**引用；他会话仍引用时字节存活。
-        try:
-            from app.services.gis_harness.visual_observation.blob_refs import (
-                release_blob_ref,
-            )
-
-            release_blob_ref(old.sha256, session_id)
-        except Exception:  # noqa: BLE001 — 清理失败不影响主流程
-            logger.debug("[VisualStore] refcount release failed ref=%s",
-                         old.ref[:24], exc_info=True)
+        await asyncio.to_thread(release_blob_ref, old.sha256, session_id)
     return entry
 
 
@@ -234,8 +232,9 @@ def resolve_visual_screenshot(
                     "[VisualStore] cross-session ref refused sha=%s sid=%s",
                     entry.sha256[:12], str(session_id)[:24])
                 return None
-        except Exception:  # noqa: BLE001 — 护栏失败按放行（旧数据兼容）
-            pass
+        except Exception:  # noqa: BLE001 — ownership verification fails closed
+            observe_optional_failure(__name__)
+            return None
     try:
         store = get_filesystem_blob_store()
         if not store.exists(entry.ref):

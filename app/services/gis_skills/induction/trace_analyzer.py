@@ -198,6 +198,8 @@ def merge_analyses(analyses: List[TraceAnalysis]) -> Tuple[TraceAnalysis,
                               rejection_codes=["IND_EMPTY_STEPS"]),
                 ["IND_EMPTY_STEPS"])
     base = analyses[0]
+    if any(not analysis.accepted for analysis in analyses):
+        return base, ["IND_MEMBER_REJECTED"]
     codes: List[str] = []
     base_tools = [s.tool_name for s in base.steps]
     for other in analyses[1:]:

@@ -103,6 +103,15 @@ async def app_and_db(tmp_path, monkeypatch):
     app.include_router(upload_routes.router, prefix="/api/v1")
     app.include_router(report_routes.router, prefix="/api/v1")
     app.include_router(layer_routes.router, prefix="/api/v1")
+    # Every live authentication path must read the same isolated user rows.
+    from app.core.auth import invalidate_live_user_state
+    @asynccontextmanager
+    async def auth_session():
+        async with test_session() as session:
+            yield session
+    monkeypatch.setattr("app.core.database.async_db_session", auth_session)
+    monkeypatch.setattr("app.core.async_runner.current_loop_async_session", auth_session)
+    invalidate_live_user_state()
     app.dependency_overrides[get_async_db] = override_get_async_db
     try:
         yield app, test_session

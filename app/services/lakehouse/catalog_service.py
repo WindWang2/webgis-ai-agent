@@ -28,6 +28,7 @@ from sqlalchemy import func, select, or_, and_, not_
 from sqlalchemy.exc import IntegrityError
 
 from app.models.lakehouse_catalog import LakehouseCatalogItem
+from app.services.org_quota_admission import admit_persistent_write, lock_org_transaction, quota_byte_size
 
 logger = logging.getLogger(__name__)
 
@@ -132,17 +133,30 @@ def upsert_catalog_entry(db, fields: Mapping[str, Any]) -> Dict[str, Any]:
     owner_type = str(fields["owner_type"])
     owner_id = str(fields["owner_id"])
     content_sha256 = str(fields["content_sha256"])
+    row_fields = dict(fields)
+    if not row_fields.get("org_id"):
+        from app.services.lakehouse.dataset_registry import _resolve_org_for_owner
+        row_fields["org_id"] = _resolve_org_for_owner(db, owner_type, owner_id)
+    org_id = str(row_fields["org_id"])
+    row_fields["org_id"] = org_id
+    lock_org_transaction(db, org_id)
     existing = (
         db.execute(
             select(LakehouseCatalogItem).where(
                 LakehouseCatalogItem.owner_type == owner_type,
                 LakehouseCatalogItem.owner_id == owner_id,
                 LakehouseCatalogItem.content_sha256 == content_sha256,
-            )
+            ).with_for_update().execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
+    incoming = quota_byte_size(row_fields.get("byte_size", existing.byte_size if existing is not None else 0))
+    row_fields["byte_size"] = incoming
+    status = str(row_fields.get("status") or (existing.status if existing is not None else "active"))
+    row_fields["status"] = status
+    credit = (int(existing.byte_size or 0) if existing is not None and existing.org_id == org_id and existing.status == "active" else 0)
+    admit_persistent_write(db, org_id, storage_delta=(incoming if status == "active" else 0) - max(0, credit))
     if existing is not None:
-        for key, value in fields.items():
+        for key, value in row_fields.items():
             if key in ("id", "created_at"):
                 continue
             setattr(existing, key, value)
@@ -152,15 +166,6 @@ def upsert_catalog_entry(db, fields: Mapping[str, Any]) -> Dict[str, Any]:
     # 拦截时只回退**本插入**（savepoint），绝不 db.rollback() 丢弃调用方
     # 同事务里的 Artifact/Revision 写入；随后回退为更新既有行。
     nested = db.begin_nested()
-    row_fields = dict(fields)
-    # ADR-0139：org 自 owner 域锚定（缺席时派生；调用方显式给的优先）。
-    if not row_fields.get("org_id"):
-        from app.services.lakehouse.dataset_registry import (
-            _resolve_org_for_owner,
-        )
-
-        row_fields["org_id"] = _resolve_org_for_owner(
-            db, owner_type, owner_id)
     row = LakehouseCatalogItem(id=str(_uuid.uuid4()), **row_fields)
     db.add(row)
     try:
@@ -179,7 +184,7 @@ def upsert_catalog_entry(db, fields: Mapping[str, Any]) -> Dict[str, Any]:
         ).scalar_one_or_none()
         if existing is None:
             raise
-        for key, value in fields.items():
+        for key, value in row_fields.items():
             if key in ("id", "created_at"):
                 continue
             setattr(existing, key, value)
@@ -256,6 +261,19 @@ def search_catalog(
                     LakehouseCatalogItem.time_end <= parsed_to,
                 ),
             ))
+    wanted = [str(tag) for tag in (tags or [])]
+    if wanted:
+        from sqlalchemy import exists
+        dialect = db.get_bind().dialect.name
+        for tag in wanted:
+            if dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import JSONB
+                conds.append(LakehouseCatalogItem.tags_json.cast(JSONB).contains([tag]))
+            elif dialect == "sqlite":
+                values = func.json_each(LakehouseCatalogItem.tags_json).table_valued("value")
+                conds.append(exists(select(1).select_from(values).where(values.c.value == tag)))
+            else:
+                raise CatalogError("tag filtering is unsupported by this database dialect")
     base = select(LakehouseCatalogItem).where(*conds)
     rows = (
         db.execute(
@@ -274,19 +292,7 @@ def search_catalog(
     total = int(total_rows or 0)
     total_bounded = total > MAX_TOTAL_SCAN
     items = [row.to_dict() for row in rows]
-    wanted = [str(t) for t in (tags or [])]
-    if wanted:
-        # 行集级 tags 过滤（方言退化诚实化：SQL 已命中 ≤ limit 行）。
-        # 分页语义（评审 R1-9）：过滤后页可能不满，但只要**原始页**满
-        # 就继续给 next_offset —— 宁可空页也不提前终止；响应披露
-        # tags_filtered 供调用方区分"没有更多"与"本页被过滤为空"。
-        items = [
-            it for it in items
-            if all(t in set(it["tags"]) for t in wanted)
-        ]
-        raw_page_full = len(rows) == limit
-    else:
-        raw_page_full = len(items) == limit
+    raw_page_full = len(rows) == limit
     return {
         "items": items,
         "count": len(items),

@@ -1,4 +1,5 @@
 'use client';
+import { bboxIntersects, geometryBBox } from '@/lib/utils/geo';
 import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ChartData } from '@/lib/types';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
@@ -20,6 +21,7 @@ import {
   publishSelection,
   subscribeSelection,
 } from '@/lib/selection/selection-store';
+import { emitChartSelectionChanged } from '@/lib/interaction/bus';
 import {
   getViewportContext,
   getViewportGeneration,
@@ -96,25 +98,9 @@ function contentHeight(variant: string, panelHeight: number | undefined): number
 
 /** 要素几何是否与 bbox 相交（有界采样：坐标序列取前 64 点近似）。导出仅供测试。 */
 export function geometryIntersectsBbox(geometry: unknown, bbox: [number, number, number, number]): boolean {
-  const [w, s, e, n] = bbox;
-  const inBox = (x: number, y: number) => x >= w && x <= e && y >= s && y <= n;
-  const coords = (c: unknown, depth = 0): number[] | null => {
-    if (typeof c !== 'object' || c === null) return null;
-    if (Array.isArray(c)) {
-      if (typeof c[0] === 'number' && typeof c[1] === 'number') {
-        return inBox(c[0], c[1]) ? [c[0], c[1]] : null;
-      }
-      if (depth > 3) return null;
-      for (const item of c.slice(0, 64)) {
-        const hit = coords(item, depth + 1);
-        if (hit) return hit;
-      }
-    }
-    return null;
-  };
-  const geom = geometry as { type?: string; coordinates?: unknown } | null;
-  if (!geom?.coordinates) return false;
-  return coords(geom.coordinates) !== null;
+  const geom = geometry as { type: string; coordinates: unknown } | null;
+  const bounds = geometryBBox(geom);
+  return bounds !== null && bboxIntersects(bounds, bbox);
 }
 
 /** 视口内命中要素的 selectionField 值集（有界 ≤ 512）。导出仅供测试。 */
@@ -195,7 +181,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     };
   }, [chartRef]);
 
-  const state: ChartState = chartRef ? refChartState(chartRef, fetched) : inlineChartState(patched);
+  const state: ChartState = React.useMemo(() => chartRef ? refChartState(chartRef, fetched) : inlineChartState(patched), [chartRef, fetched, patched]);
 
   // Workspace V2（Goal D）：map ↔ chart 共享选择。
   // - chart→map（D3）：类别点击发布 select（layer_id + filter_field 协议），
@@ -213,7 +199,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
   const boundLayerId = typeof options['layerId'] === 'string' ? (options['layerId'] as string) : '';
 
   // Workbench V4（Wave 5）：视野联动（显式 opt-in：options.extentLinked）。
-  useSyncExternalStore(subscribeViewportContext, getViewportGeneration);
+  const viewportGeneration = useSyncExternalStore(subscribeViewportContext, getViewportGeneration);
   const extentLinked = options['extentLinked'] === true;
   const extentFilterField = selectionField;
 
@@ -258,6 +244,11 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
             && currentCategories[0] === name;
           if (toggleOff) {
             publishSelection('clear_selection', { source: 'chart', layer_id: boundLayerId });
+            emitChartSelectionChanged({
+              layerId: boundLayerId,
+              field: selectionField || undefined,
+              action: 'clear',
+            });
             return;
           }
           publishSelection('select', {
@@ -266,6 +257,12 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
             selected_categories: [name],
             filter_field: selectionField || undefined,
             artifact_ref: chartRef || undefined,
+          });
+          // ADR-0285 D2：图表类别选择上行 IR（Agent 可见「图表里选了哪类」）。
+          emitChartSelectionChanged({
+            layerId: boundLayerId,
+            field: selectionField || undefined,
+            categories: [name],
           });
         }
       : null;
@@ -283,6 +280,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     boundLayerId ? s.layers.find((row: { _mapspecLayerId?: string; id: string }) =>
       row.id === boundLayerId || row._mapspecLayerId === boundLayerId) : undefined);
   const extentFilteredChart = React.useMemo(() => {
+    void viewportGeneration; // External viewport store changes invalidate this projection.
     if (state.status !== 'ready' || !extentLinked || !extentFilterField || !boundRow) {
       return state.status === 'ready' ? state.chart : null;
     }
@@ -293,7 +291,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     const filtered = state.chart.data.filter((p) => values.has(p.name));
     // 全不命中 = 视野内无该图层要素 —— 保留全量并降级（避免清空面板抖动）。
     return filtered.length > 0 ? { ...state.chart, data: filtered } : state.chart;
-  }, [state, extentLinked, extentFilterField, boundRow]);
+  }, [state, extentLinked, extentFilterField, boundRow, viewportGeneration]);
 
   // ── Track B（M7/M8）：MVT 层的视口统计走服务端聚合 ───────────────────
   // inline 层保留 Wave 5 本地过滤（≤5000 有界采样，上方 extentFilteredChart）；

@@ -223,7 +223,7 @@ class TestDiscover:
         adapter = STACAdapter(
             ConnectionProfile(source_type="stac", endpoint_url=url, name="stac-cog")
         )
-        result = _run(discover_stac_cog_assets(adapter, bbox=[100.0, 20.0, 105.0, 25.0]))
+        result = _run(discover_stac_cog_assets(adapter, collection_id="ads-fixture-cog", bbox=[100.0, 20.0, 105.0, 25.0]))
         assert result["total_items"] == 1
         item = result["items"][0]
         assert item["item_id"] == "scene-001"

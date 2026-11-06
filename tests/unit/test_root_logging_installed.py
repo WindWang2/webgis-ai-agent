@@ -166,7 +166,7 @@ def _run_probe(*, log_format: str | None = None) -> subprocess.CompletedProcess:
 
 def test_app_info_records_reach_stderr_in_production_shape():
     """issue #1686 的验收：修复前该探针输出 0 行（INFO 被 lastResort 丢弃）。"""
-    result = _run_probe()
+    result = _run_probe(log_format="text")
     assert PROBE_MARKER in result.stderr, (
         "app.* 的 INFO 记录未到达 stderr —— root handler 仍未挂接\n"
         f"stdout: {result.stdout[-500:]}\nstderr: {result.stderr[-500:]}"
@@ -245,3 +245,39 @@ def test_module_level_loggers_are_lazy_but_available():
     assert lc.celery_logger.name == "celery"
     with pytest.raises(AttributeError):
         lc.definitely_not_a_logger
+
+
+def test_uvicorn_access_log_omits_entire_query_with_existing_root_handler():
+    import io
+    from uvicorn.logging import AccessFormatter
+
+    output = io.StringIO()
+    access = logging.getLogger('uvicorn.access')
+    handler = logging.StreamHandler(output)
+    handler.setFormatter(AccessFormatter('%(request_line)s %(status_code)s', use_colors=False))
+    before_handlers, before_filters, before_level, before_propagate = access.handlers[:], access.filters[:], access.level, access.propagate
+    try:
+        access.handlers = [handler]
+        access.filters = []
+        access.propagate = False
+        access.setLevel(logging.INFO)
+        with _bare_root() as root:
+            root.addHandler(logging.NullHandler())
+            _install_root_logging()
+            _install_root_logging()
+        access.info('%s - "%s %s HTTP/%s" %d', '127.0.0.1:5000', 'GET', '/tiles/1/2/3.pbf?session_id=private-session&owner_token=secret&sig=secret-signature', '1.1', 200)
+        assert output.getvalue().strip() == 'GET /tiles/1/2/3.pbf HTTP/1.1 200 OK'
+        from app.core.logging_config import _TRANSPORT_QUERY_FILTER
+        assert access.filters.count(_TRANSPORT_QUERY_FILTER) == 1
+    finally:
+        access.handlers, access.filters, access.level, access.propagate = before_handlers, before_filters, before_level, before_propagate
+
+
+def test_websocket_transport_log_redacts_query_without_changing_status():
+    from app.core.logging_config import TransportQueryFilter
+
+    record = logging.LogRecord('uvicorn.error', logging.INFO, __file__, 0,
+                               '%s - "WebSocket %s" [accepted]',
+                               ('127.0.0.1:5000', '/ws/map?session_id=private&token=secret'), None)
+    assert TransportQueryFilter().filter(record)
+    assert record.getMessage() == '127.0.0.1:5000 - "WebSocket /ws/map" [accepted]'

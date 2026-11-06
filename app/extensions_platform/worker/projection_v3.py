@@ -308,7 +308,7 @@ def project_worker_providers(
         if execution is not None:
             stream_budget = {
                 "idle_timeout_s": execution.call_timeout_s,
-                "max_events": 10000,
+                "max_events": min(execution.max_stream_events, host._policy.max_stream_events),
                 "per_frame_max_bytes": execution.max_output_bytes,
             }
         adapter_cls = make_worker_provider_class(worker, entry, stream_budget=stream_budget)

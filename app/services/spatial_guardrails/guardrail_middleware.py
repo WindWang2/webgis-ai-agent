@@ -71,6 +71,7 @@ _ADMIN_KEYS = {
     "adcode", "admin_code", "city_code", "county_code", "district_code",
     "province_code", "area_code", "region_code",
 }
+_STRICT_ADMIN_KEYS = {"adcode", "admin_code"}
 _FACILITY_KEYS = {"kind", "facility", "facility_kind", "facility_type",
                   "poi_type", "poi_kind", "category"}
 _LATLNG_KEYS = {"lng": "lat", "lon": "lat", "longitude": "latitude"}
@@ -84,12 +85,25 @@ class _ScanState:
         self.config = config
         self.issues: list[GuardrailIssue] = []
         self.mutated = False
+        self.network_fetch = False
+        self.point_checks = 0
+
+    def take_point(self) -> bool:
+        self.point_checks += 1
+        if self.point_checks == 501:
+            self.warn(GuardLevel.L3_LANDMASK_PLAUSIBILITY, "GUARDRAIL_SCAN_TRUNCATED",
+                      "地理合理性仅检查前 500 个点，其余点未检查", "$", {"limit": 500})
+        return self.point_checks <= 500
 
     def blocking_issues(self) -> list[GuardrailIssue]:
         return [i for i in self.issues if i.mode == DefenseMode.BLOCK]
 
     def block(self, level: GuardLevel, code: str, message: str,
               location: str, evidence: dict) -> None:
+        if len(self.issues) >= 199:
+            if self.blocking_issues():
+                return
+            self.issues.pop()
         self.issues.append(GuardrailIssue(
             level=level, mode=DefenseMode.BLOCK, code=code,
             message=message, location=location, evidence=evidence,
@@ -97,6 +111,8 @@ class _ScanState:
 
     def warn(self, level: GuardLevel, code: str, message: str,
              location: str, evidence: dict) -> None:
+        if len(self.issues) >= 199:
+            return
         self.issues.append(GuardrailIssue(
             level=level, mode=DefenseMode.WARN_DEGRADE, code=code,
             message=message, location=location, evidence=evidence,
@@ -121,7 +137,7 @@ class SpatialGuardrails:
     # ------------------------------------------------------------------
     # 公共入口
     # ------------------------------------------------------------------
-    def check_tool_args(self, tool_name: str, args) -> GuardrailVerdict:
+    def check_tool_args(self, tool_name: str, args, *, network_fetch: bool = False) -> GuardrailVerdict:
         """工具参数全层校验（L1–L4）。BLOCK → 调用方拒绝执行工具；
         AUTO_FLIP → 参数已就地纠偏（verdict.mutated=True）。"""
         t0 = time.perf_counter()
@@ -130,6 +146,7 @@ class SpatialGuardrails:
             verdict.duration_ms = (time.perf_counter() - t0) * 1000.0
             return verdict
         state = _ScanState(self._config)
+        state.network_fetch = network_fetch
         try:
             if isinstance(args, dict):
                 self._scan_value(args, "$", state, facility=None)
@@ -239,12 +256,13 @@ class SpatialGuardrails:
         if isinstance(value, dict):
             geo_type = value.get("type")
             if isinstance(geo_type, str) and geo_type in _GEOJSON_TYPES:
-                self._scan_geojson(value, path, state, facility)
+                self._scan_geojson(value, path, state, facility=facility)
                 return
             kind = self._detect_facility(value, facility)
             for key in _ADMIN_KEYS:
                 if key in value:
-                    self._check_admin_code(value[key], f"{path}.{key}", state)
+                    self._check_admin_code(value[key], f"{path}.{key}", state,
+                                           strict=key in _STRICT_ADMIN_KEYS)
             for key in _BBOX_KEYS:
                 raw = value.get(key)
                 if isinstance(raw, (list, tuple)) and len(raw) == 4 and all(_is_number(v) for v in raw):
@@ -292,7 +310,7 @@ class SpatialGuardrails:
                 for key in _ADMIN_KEYS:
                     if key in props:
                         self._check_admin_code(props[key], f"{path}.properties.{key}",
-                                               state)
+                                               state, strict=key in _STRICT_ADMIN_KEYS)
             self._scan_geojson(geo.get("geometry"), f"{path}.geometry", state,
                                facility=kind)
             return
@@ -326,13 +344,15 @@ class SpatialGuardrails:
     # ------------------------------------------------------------------
     # 单项校验
     # ------------------------------------------------------------------
-    def _check_admin_code(self, raw, path: str, state: _ScanState) -> None:
+    def _check_admin_code(self, raw, path: str, state: _ScanState, *, strict: bool = True) -> None:
         if isinstance(raw, bool) or not isinstance(raw, (str, int)):
             return
         code = str(raw).strip()
+        if len(code) == 12 and code.isdigit():
+            code = code[:6]
         report = verify_code(code)
         if not report.ok:
-            state.block(
+            (state.block if strict else state.warn)(
                 GuardLevel.L1_FORMAT_CRS,
                 CODE_FABRICATED_ADMIN_CODE,
                 f"行政区划代码 {code!r} 在第一道防线被截获：{report.suggestion}",
@@ -363,8 +383,11 @@ class SpatialGuardrails:
             )
             return
         try:
-            self._redlines.check_bbox(bbox, action="fetch")
-            check_area_budget(bbox, max_km2=self._config.max_bbox_km2)
+            # Geometry/view bounds alone do not imply external acquisition.
+            # Source-specific fetch boundaries enforce their own quotas.
+            self._redlines.check_bbox(bbox, action="fetch" if state.network_fetch else "view")
+            if state.network_fetch:
+                check_area_budget(bbox, max_km2=self._config.max_bbox_km2)
         except SpatialGuardrailError as exc:
             state.issues.append(exc.issue)
             if exc.issue.code == CODE_BBOX_AREA_BUDGET_EXCEEDED:
@@ -389,13 +412,15 @@ class SpatialGuardrails:
                 {"pair": [a, b]},
             )
             return
+        if not state.take_point():
+            return
         report = detect_pair([a, b], ocean_confirm_km=self._config.ocean_confirm_km)
         lng, lat = a, b
         suspicious_inversion = False
         if report.is_inverted:
             if report.confidence >= self._config.auto_flip_min_confidence:
                 lng, lat = report.corrected
-                container[key] = [lng, lat]
+                container[key] = [lng, lat, *pair[2:]]
                 state.mutated = True
                 state.issues.append(GuardrailIssue(
                     level=GuardLevel.L1_FORMAT_CRS,
@@ -439,6 +464,8 @@ class SpatialGuardrails:
                 location,
                 {"pair": [a, b]},
             )
+            return
+        if not state.take_point():
             return
         report = detect_pair([a, b], ocean_confirm_km=self._config.ocean_confirm_km)
         lng, lat = a, b
@@ -510,8 +537,9 @@ class SpatialGuardrails:
             )
             return
         try:
-            validate_linestring(line, teleport_km=self._config.teleport_km,
-                                location=path)
+            state.issues.extend(validate_linestring(
+                line, teleport_km=self._config.teleport_km, location=path,
+            ))
         except SpatialGuardrailError as exc:
             state.issues.append(exc.issue)
             return
@@ -558,7 +586,9 @@ class SpatialGuardrails:
         if not pts:
             return
         step = max(1, len(pts) // 16)
-        sampled = pts[::step]
+        sampled = [point for point in pts[::step] if state.take_point()]
+        if not sampled:
+            return
         zones = [classify_point(x, y, ocean_confirm_km=self._config.ocean_confirm_km)
                  for x, y in sampled]
         ocean_cnt = sum(1 for z in zones if z == SurfaceZone.OCEAN_CONFIDENT)
@@ -588,7 +618,8 @@ class SpatialGuardrails:
     @staticmethod
     def _finalize(verdict: GuardrailVerdict, state: _ScanState,
                   t0: float) -> None:
-        verdict.issues = state.issues
+        # Keep blocking status even if repeated findings exceed the response cap.
+        verdict.issues = state.issues[:200]
         verdict.mutated = state.mutated
         verdict.passed = not state.blocking_issues()
         verdict.duration_ms = (time.perf_counter() - t0) * 1000.0

@@ -369,18 +369,23 @@ export function reorderCommand(
     kind: 'reorder',
     actor,
     layerIds: beforeOrder.slice(0, 5).map((l) => l.id),
-    undo: () => void replayReorder(beforeOrder),
-    redo: () => void replayReorder(afterOrder),
+    undo: () => void replayReorder(beforeOrder.map((layer) => layer.id)),
+    redo: () => void replayReorder(afterOrder.map((layer) => layer.id)),
   });
 }
 
-function replayReorder(order: { id: string; _mapspecLayerId?: string }[]): void {
+function replayReorder(order: string[]): void {
+  const current = useHudStore.getState().layers;
+  const byId = new Map(current.map((layer) => [layer.id, layer]));
+  const ordered = order.flatMap((id) => byId.has(id) ? [byId.get(id)!] : []);
+  let index = 0;
+  const next = current.map((layer) => order.includes(layer.id) ? ordered[index++] : layer);
   Promise.all([
-    useHudStore.getState().reorderLayers(order as never),
+    useHudStore.getState().reorderLayers(next),
     loadUserMutation().then(({ commitMapSpecMutation }) =>
       commitMapSpecMutation({
         intent: 'reorder_layers',
-        layer_ids: order.map((layer) => String(layer._mapspecLayerId || layer.id)),
+        layer_ids: next.map((layer) => String(layer._mapspecLayerId || layer.id)),
       }),
     ),
   ]).catch((err) => devOnly.warn('[undo] reorder replay failed:', err));

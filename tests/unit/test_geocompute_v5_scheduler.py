@@ -18,6 +18,7 @@ eager + 临时 SQLite；不覆盖跨进程 broker 投递。
 from __future__ import annotations
 
 import contextlib
+from pathlib import Path
 import threading
 import time
 
@@ -50,6 +51,18 @@ from app.services.geocompute.executor import engine, owner_scope_for
 
 client = TestClient(app)
 
+@pytest.fixture(autouse=True)
+def _live_route_identities():
+    from app.core.database import Base, Engine, SessionLocal
+    from app.models.db_model import User
+    Base.metadata.create_all(bind=Engine)
+    with SessionLocal() as db:
+        for uid in ['v5-canceller', 'v5-cancel-other', 'v5-cancel-owner', 'v5-cancel-done-owner', 'v5-snap-rest-user', 'v5-someone-else']:
+            db.merge(User(id=uid, username=uid, email=f"{uid}@example.com",
+                          password_hash="unused", role="editor", is_active=True, token_version=0))
+        db.commit()
+
+
 
 def _fc(n: int = 4) -> list[dict]:
     return [
@@ -79,6 +92,12 @@ def v5_env(tmp_path, monkeypatch):
 
     Base.metadata.create_all(eng)
     Sess = sessionmaker(bind=eng)
+    from app.models.db_model import Conversation
+    import re
+    with Sess() as db:
+        for sid in set(re.findall(r'["\'](v5-[A-Za-z0-9_-]+)["\']', Path(__file__).read_text())):
+            db.add(Conversation(id=sid))
+        db.commit()
 
     @contextlib.contextmanager
     def fake_db_session():
@@ -486,6 +505,7 @@ class TestDurableReuseIndex:
         # 篡改索引里的上游输出指纹 = 「上游重算后内容已变化」。
         owner = owner_scope_for(None, "v5-stale-sess")
         assert reuse_index.record_result(
+            org_id="org-fixture",
             owner_scope=owner,
             node_fingerprint=dfilter.semantic_fingerprint(),
             result_ref=first.evidence["df"].output_ref,
@@ -533,6 +553,7 @@ class TestDurableReuseIndex:
         owner = owner_scope_for(None, "v5-deadref-sess")
         node_fp = _durable_node().semantic_fingerprint()
         assert reuse_index.record_result(
+            org_id="org-fixture",
             owner_scope=owner, node_fingerprint=node_fp,
             result_ref="ref:gone-000000", session_id="v5-deadref-sess",
             upstream_fingerprints={},
@@ -556,6 +577,7 @@ class TestDurableReuseIndex:
         owner = "u:lru-cap-owner"
         for i in range(70):
             assert reuse_index.record_result(
+            org_id="org-fixture",
                 owner_scope=owner,
                 node_fingerprint=f"fp{i:04d}",
                 result_ref=f"ref:{i}",
@@ -576,6 +598,7 @@ class TestDurableReuseIndex:
             assert "fp0069" in fps, "newest entry kept"
             # 重写即刷新：同 (owner, fp) 再写不产生第二行。
             assert reuse_index.record_result(
+            org_id="org-fixture",
                 owner_scope=owner,
                 node_fingerprint="fp0069",
                 result_ref="ref:69b",
@@ -595,6 +618,7 @@ class TestDurableReuseIndex:
 
         node_fp = _durable_node().semantic_fingerprint()
         assert reuse_index.record_result(
+            org_id="org-fixture",
             owner_scope="u:alice", node_fingerprint=node_fp,
             result_ref="ref:a", session_id="sess-a", upstream_fingerprints={},
         )

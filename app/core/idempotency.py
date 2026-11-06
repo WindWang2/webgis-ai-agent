@@ -1,6 +1,6 @@
 """HTTP 幂等中间件（V9 契约基石，ADR-0138 / P5）。
 
-语义：携带 ``Idempotency-Key`` 头的 POST 请求，在 key + method + path +
+语义：携带 ``Idempotency-Key`` 头的 POST 请求，在 key + method + path/query +
 body hash 维度上 24h 内重放返回**首次响应**（状态码 + content-type + 体）；
 并发同 key 单飞（Redis SET NX 锁，借鉴 app/lib/tool_cache.py）。
 
@@ -17,7 +17,8 @@ body hash 维度上 24h 内重放返回**首次响应**（状态码 + content-ty
 - **按调用方身份隔离**（security F-05）：重放发生在路由/认证之前，key 必须
   混入调用方凭证摘要（Authorization / X-Session-Token），否则任何人用同
   key + 同 body 即可取回他人的首次响应；``/auth/*`` 凭证面整体不参与幂等；
-  只缓存 2xx 且不带 ``Set-Cookie`` 的响应。
+  只缓存 2xx 且不带 ``Set-Cookie`` 的响应。缓存访问前还验证实时用户/会话
+  authority stamp；撤销、停用及角色/组织变化不能复用旧响应。
 - **无凭证调用方不参与读写**（security F-05 加固，评审 #1640）：摘要只混入
   Authorization / X-Session-Token 两个头，均缺席时 digest 输入恒为
   ``"\\x00\\x00"`` —— 摘要恒定，匿名调用方之间零隔离，同 key + 同 body
@@ -29,6 +30,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
+import inspect
 import json
 import logging
 import time
@@ -38,7 +41,7 @@ from typing import TYPE_CHECKING, Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from app.core.config import settings
 from app.core.exception import unified_error_envelope
@@ -80,7 +83,7 @@ _RESP_PREFIX = "idem:resp:"
 
 
 #: 凭证签发面：响应体含 access/refresh token，绝不缓存/重放（F-05）。
-_EXCLUDED_PATH_MARKERS = ("/auth/",)
+_EXCLUDED_PATH_MARKERS = ("/auth/", "/rotate-owner-token")
 
 
 def caller_principal_digest(request: Request) -> str:
@@ -190,8 +193,14 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         body = await request.body()
         if len(body) > MAX_BUFFER_BYTES:
             return await call_next(request)
+        from app.core.idempotency_identity import replay_authority
+        authority = await replay_authority(request, body)
+        if authority is None:
+            return await call_next(request)
+        request.state.idempotency_authority = authority
+        target = request.url.path + ("?" + request.url.query if request.url.query else "")
         idem_key = compute_idempotency_key(
-            header_key, request.method, request.url.path, body,
+            header_key, request.method, target, body,
             principal=caller_principal_digest(request),
         )
 
@@ -199,14 +208,16 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             redis = await self._redis.client()
             stored = await redis.get(f"{_RESP_PREFIX}{idem_key}")
             if stored is not None:
-                return self._replay(stored)
-            return await self._singleflight(redis, idem_key, request, call_next)
+                return self._replay(stored, authority=authority)
         except Exception as exc:  # noqa: BLE001 — fail-open（C-F10 同源）
             logger.warning(
                 "[Idempotency] Redis unavailable (%s: %s); failing open",
                 type(exc).__name__, exc,
             )
             return await call_next(request)
+        # Application failures are not Redis failures: never call a mutating
+        # handler a second time just because its first execution raised.
+        return await self._singleflight(redis, idem_key, request, call_next)
 
     # ── 单飞 ─────────────────────────────────────────────────────────
     async def _singleflight(self, redis, idem_key: str, request: Request, call_next):
@@ -221,11 +232,17 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if not acquired and redis is not None:
             replay = await self._wait_for_response(redis, idem_key)
             if replay is not None:
-                return self._replay(replay)
-            # 首个处理者异常退出（锁消失、响应缺席）→ 本请求兜底处理
+                return self._replay(replay, authority=request.state.idempotency_authority)
+            # Only a newly acquired lock can authorize another execution.
+            acquired = await redis.set(lock_key, token, nx=True, ex=LOCK_TTL_S)
+            if not acquired:
+                return JSONResponse(
+                    status_code=409, content={"detail": "Idempotent request is still in progress"},
+                    headers={"Retry-After": "1"},
+                )
         response = await call_next(request)
         if redis is not None:
-            return await self._store_response(redis, idem_key, lock_key, token, response)
+            return await self._store_response(redis, idem_key, lock_key, token, response, principal=caller_principal_digest(request), authority=request.state.idempotency_authority)
         return response
 
     async def _wait_for_response(self, redis, idem_key: str) -> Optional[str]:
@@ -244,11 +261,13 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
     async def _release_lock(self, redis: "aioredis.Redis", lock_key: str, token: str) -> None:
         """只释放自己持有的锁（token 校验语义，Lua 原子比较删除）。"""
         try:
-            await redis.eval(_RELEASE_LOCK_LUA, 1, lock_key, token)
+            released = redis.eval(_RELEASE_LOCK_LUA, 1, lock_key, token)
+            if inspect.isawaitable(released):
+                await released
         except Exception:  # noqa: BLE001 — 释放失败不改变响应语义
             pass
 
-    async def _store_response(self, redis, idem_key: str, lock_key: str, token: str, response):
+    async def _store_response(self, redis, idem_key: str, lock_key: str, token: str, response, *, principal: str = "internal", authority: str = ""):
         """缓冲 JSON 响应入 Redis；返回给客户端的是重组后的响应
         （body_iterator 已被消费，原响应不可复用）。非 JSON 不缓冲原样返回。
         超限（> ``MAX_BUFFER_BYTES``）响应不缓冲不重放，**原样透传**
@@ -270,21 +289,22 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         buffered: Optional[bytes] = None
         oversize_prefix: Optional[bytes] = None
         try:
-            body = b""
+            body = bytearray()
             async for chunk in response.body_iterator:
-                body += chunk
+                body.extend(chunk)
                 if len(body) > MAX_BUFFER_BYTES:
                     # 流式中途才发现超限：不再入缓存，改透传（见 _passthrough）
-                    oversize_prefix = body
+                    oversize_prefix = bytes(body)
                     break
             else:
-                buffered = body
+                buffered = bytes(body)
                 if not (200 <= response.status_code < 300) or (
                     "set-cookie" in {k.lower() for k in response.headers.keys()}
                 ):
                     # F-05：失败响应可重试、带凭证的响应不入共享缓存
                     raise _SkipStore()
                 record = json.dumps({
+                    "authority": authority,
                     "status": response.status_code,
                     "content_type": content_type,
                     # 任务书 P5：重放含「状态码与头」—— 保存可安全复制的
@@ -297,7 +317,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                     },
                     "body": body.decode("utf-8", errors="replace"),
                 })
-                await redis.set(f"{_RESP_PREFIX}{idem_key}", record, ex=RESPONSE_TTL_S)
+                from app.core.idempotency_cache import store_replay
+                await store_replay(redis, f"{_RESP_PREFIX}{idem_key}", record, RESPONSE_TTL_S, principal)
         except _SkipStore:
             logger.debug("[Idempotency] response not cacheable; store skipped")
         except Exception as exc:  # noqa: BLE001 — 缓冲失败不改变响应语义
@@ -357,7 +378,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             headers=passthrough_headers,
         )
 
-    def _replay(self, record_json: str) -> Response:
+    def _replay(self, record_json: str, *, authority: Optional[str] = None) -> Response:
         try:
             record = json.loads(record_json)
         except (TypeError, ValueError):
@@ -369,6 +390,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 ).encode("utf-8"),
                 media_type="application/json",
             )
+        if authority is not None and not hmac.compare_digest(str(record.get("authority") or ""), authority):
+            return JSONResponse(status_code=403, content={"detail": "Idempotent result is no longer authorized"})
         headers = dict(record.get("headers") or {})
         headers["Idempotent-Replay"] = "true"
         return Response(

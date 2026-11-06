@@ -83,6 +83,9 @@ _SHRINK_BY_OP = {
 
 def _coords_iter(node: Any):
     if isinstance(node, (list, tuple)):
+        if len(node) >= 2 and all(isinstance(value, (int, float)) for value in node[:2]):
+            yield from node[:2]
+            return
         for x in node:
             yield from _coords_iter(x)
     else:
@@ -125,11 +128,13 @@ def _parse_srid(crs: Optional[str]) -> Optional[int]:
     if s.startswith("EPSG:"):
         body = s[5:]
         return int(body) if body.isdigit() else None
+    if "EPSG" in s and s.rsplit(":", 1)[-1].isdigit():
+        return int(s.rsplit(":", 1)[-1])
     return int(s) if s.isdigit() else None
 
 
 def is_geographic_srid(srid: Optional[int]) -> bool:
-    return srid == 4326
+    return srid in (4326, 4490, 4269, 4258, 4214, 4610)
 
 
 def _histogram_of(stats: Optional[DatasetStatistics]) -> Optional[SpatialGridHistogram]:

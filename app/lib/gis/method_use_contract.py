@@ -16,6 +16,7 @@
 投影失败诚实缺省（空串/空表 + findings），绝不虚构、绝不抛错阻断调用方。
 """
 from __future__ import annotations
+import logging
 
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -105,6 +106,7 @@ def _capability_reverse_map() -> Dict[str, List[str]]:
             for algo in reg.algorithms_for_capability(cid):
                 reverse.setdefault(algo.id, []).append(cid)
         except Exception:  # noqa: BLE001 — 投影是增值，注册表异常不阻断
+            logging.getLogger(__name__).warning('Algorithm capability projection failed; skipping this capability', exc_info=True)
             continue
     return reverse
 
@@ -121,7 +123,7 @@ def build_method_use_contract(algorithm_id: str) -> MethodUseContract:
             findings=[f"unknown_algorithm:{algorithm_id}"],
         )
 
-    capabilities = sorted(_capability_reverse_map().get(algorithm_id, []))
+    capabilities = sorted(algo.capabilities)
     if not capabilities:
         findings.append("no_capability_binding")
 

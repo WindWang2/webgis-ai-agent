@@ -18,6 +18,7 @@ import uuid
 from typing import Any, List
 
 import pytest
+from app.tools.registry import ToolRegistry
 
 from app.services.agent_swarm.delegation import (
     DelegationContractError,
@@ -610,8 +611,8 @@ class TestAdapterParity:
                 )
 
         monkeypatch.setattr(subagent_mod, "SubagentDispatcher", StubDispatcher)
-        result, snapshot = await run_single_delegation(object(), "parity-sess",
-                                                       task="做点事", role="r1")
+        result, snapshot = await run_single_delegation(ToolRegistry(), "parity-sess",
+                                                       task="做点事", role="cartography_reviewer")
         d = result.to_dict()
         assert set(d) == {
             "success", "summary", "refs", "reasoning", "error",
@@ -687,7 +688,7 @@ class TestAdapterParity:
                 return subagent_mod.SubagentResult(success=True, summary="")
 
         monkeypatch.setattr(subagent_mod, "SubagentDispatcher", StubDispatcher)
-        result, snapshot = await run_single_delegation(object(), "receipt-sess",
+        result, snapshot = await run_single_delegation(ToolRegistry(), "receipt-sess",
                                                        task="做点事")
         d = result.to_dict()
         assert d["success"] is False

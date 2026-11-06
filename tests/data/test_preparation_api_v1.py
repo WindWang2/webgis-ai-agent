@@ -1,7 +1,7 @@
 """数据准备域 API V1 —— M5 单测（鉴权/越权负例 + 全端点正例 + typed 错误面）。
 
 鉴权纪律镜像 uploads：会话不存在/不属于调用方一律 404（不泄露存在性）；
-匿名会话带 X-Session-Token（SEC-08）；首写会话（无 Conversation 行）放行。
+匿名会话带 X-Session-Token（SEC-08）；每个请求都要求已持久化的会话归属。
 """
 from __future__ import annotations
 
@@ -60,14 +60,22 @@ def _school_payload(n=20, bad_every=0):
 
 async def _seed_ref(session_id, payload=None):
     from app.services.session_data import session_data_manager
+    from app.models.db_model import Conversation
+    from app.tools._utils import async_db_session
+    async with async_db_session() as db:
+        if await db.get(Conversation, session_id) is None:
+            await _seed_conversation(session_id, user_id="test-user")
     payload = payload or _school_payload()
     return await session_data_manager.store(session_id, payload, prefix="test")
 
 
 async def _seed_conversation(session_id, user_id="other-user", owner_token=None):
-    from app.models.db_model import Conversation
+    from app.models.db_model import Conversation, User
     from app.tools._utils import async_db_session
     async with async_db_session() as db:
+        if user_id and await db.get(User, user_id) is None:
+            db.add(User(id=user_id, username=user_id, email=f"{user_id}@example.com", role="viewer", is_active=True))
+            await db.flush()
         db.add(Conversation(id=session_id, user_id=user_id,
                             owner_token=owner_token))
         await db.commit()
@@ -111,6 +119,7 @@ class TestAuthNegatives:
     async def test_cross_session_ref_isolated(self, client):
         # ref 属于会话 A 的命名空间；会话 B（首写、同用户）也读不到它
         ref = await _seed_ref("sess-a-1")
+        await _seed_conversation("sess-b-1", user_id="test-user")
         resp = await client.post(
             "/api/v1/data-preparation/inspect",
             json={"session_id": "sess-b-1", "source_ref": ref})

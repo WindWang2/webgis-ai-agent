@@ -214,6 +214,7 @@ export class DataPlaneScheduler {
   }
 
   request(req: RefFetchRequest): Promise<RefFetchResult> {
+    if (req.signal?.aborted) return Promise.resolve({ status: 'cancelled' });
     const key = refCacheKey(req.sessionId, req.refId, req.dataRevision);
     const forceRevalidate = req.revalidate === true;
     const entry = this.cache.get(key);
@@ -246,7 +247,10 @@ export class DataPlaneScheduler {
     if (existingGroup && (this.inflight.has(key) || this.queue.some((q) => q.key === key))) {
       this.counters.deduped += 1;
       this.onEvent?.('deduped', { refId: req.refId, sessionId: req.sessionId });
-      return new Promise((resolve) => existingGroup.waiters.push(resolve));
+      if (existingGroup.item.cancelled) {
+        return new Promise((resolve) => existingGroup.waiters.push(() => resolve(this.request(req))));
+      }
+      return this.joinWaiter(existingGroup, req.signal);
     }
 
     const controller = new AbortController();
@@ -258,26 +262,32 @@ export class DataPlaneScheduler {
       controller,
       cancelled: false,
     };
-    if (req.signal) {
-      const onAbort = () => this.cancelItem(item);
-      if (req.signal.aborted) onAbort();
-      else req.signal.addEventListener('abort', onAbort, { once: true });
-      item.externalAbortHandler = onAbort;
-    }
-    if (item.cancelled) {
-      return Promise.resolve({ status: 'cancelled' });
-    }
-
     this.counters.enqueued += 1;
+    const group: WaiterGroup = { item, waiters: [] };
+    this.pending.set(key, group);
+    const result = this.joinWaiter(group, req.signal);
+    this.queue.push(item);
+    this.pump();
+    return result;
+  }
+
+  private joinWaiter(group: WaiterGroup, signal?: AbortSignal): Promise<RefFetchResult> {
     return new Promise((resolve) => {
-      const group = this.pending.get(key);
-      if (group) {
-        group.waiters.push(resolve);
-      } else {
-        this.pending.set(key, { item, waiters: [resolve] });
-      }
-      this.queue.push(item);
-      this.pump();
+      let done = false;
+      const finish = (result: RefFetchResult) => {
+        if (done) return;
+        done = true;
+        signal?.removeEventListener('abort', onAbort);
+        group.waiters = group.waiters.filter((waiter) => waiter !== finish);
+        resolve(result);
+      };
+      const onAbort = () => {
+        finish({ status: 'cancelled' });
+        if (group.waiters.length === 0) this.cancelItem(group.item);
+      };
+      group.waiters.push(finish);
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener('abort', onAbort, { once: true });
     });
   }
 

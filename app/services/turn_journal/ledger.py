@@ -9,7 +9,7 @@ workflow InstanceStore）；``factory`` 可注入（测试用临时 SQLite）。
 有界性：所有查询 limit 硬帽 ``MAX_JOURNAL_QUERY=200``；compaction 把已
 终局 turn 的非凭证行折叠为一行 ``turn_compacted`` 摘要（map_mutated /
 带 payload_ref 行永不压缩——mutation receipt 链是凭证，必须保留全量）；
-retention 按 ``occurred_at`` 删除。因果查询在压缩后仍 turn 粒度正确。
+retention 按整个 turn 的最新 ``occurred_at`` 删除。因果查询在压缩后仍 turn 粒度正确。
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, delete, func, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.lib.runtime.clock import from_db_utc, to_db_utc, utc_now
@@ -239,10 +239,8 @@ class TurnEventLedger:
                 )
                 .group_by(TurnEventRow.turn_id)
                 .having(
-                    func.sum(case(
-                        (TurnEventRow.kind == TERMINAL_TURN_KIND, 1),
-                        else_=0,
-                    )) > 0
+                    func.sum(case((TurnEventRow.kind == TERMINAL_TURN_KIND, 1), else_=0)) > 0,
+                    func.sum(case((TurnEventRow.kind == "turn_compacted", 1), else_=0)) == 0,
                 )
                 .order_by(func.min(TurnEventRow.id))
                 .limit(max(1, min(limit, COMPACTION_BATCH_TURNS)))
@@ -358,23 +356,23 @@ class TurnEventLedger:
     def _sweep_retention_sync(
         self, *, older_than: datetime, limit: int
     ) -> int:
-        """按年龄删行。``status IN`` 谓词让 ``idx_turn_event_sweep``
-        前导列可用（review P2-3：两值覆盖全部行，语义不变）。"""
+        """Expire entire turns only when their newest event predates cutoff."""
         cutoff = to_db_utc(older_than)
         with self._factory() as db:
-            rows = db.execute(
-                select(TurnEventRow)
-                .where(
-                    TurnEventRow.occurred_at < cutoff,
-                    TurnEventRow.status.in_(("recorded", "compacted")),
-                )
-                .order_by(TurnEventRow.id)
+            turns = db.execute(
+                select(TurnEventRow.session_id, TurnEventRow.turn_id)
+                .group_by(TurnEventRow.session_id, TurnEventRow.turn_id)
+                .having(func.max(TurnEventRow.occurred_at) < cutoff)
+                .order_by(func.max(TurnEventRow.occurred_at))
                 .limit(max(1, min(limit, 1000)))
-            ).scalars().all()
-            for row in rows:
-                db.delete(row)
+            ).all()
+            if not turns:
+                return 0
+            result = db.execute(delete(TurnEventRow).where(
+                tuple_(TurnEventRow.session_id, TurnEventRow.turn_id).in_([tuple(row) for row in turns])
+            ))
             db.commit()
-            return len(rows)
+            return int(result.rowcount or 0)
 
     async def compact_and_sweep(
         self,

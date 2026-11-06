@@ -509,9 +509,7 @@ class AlgorithmRegistry:
         # 的半截派生态把平台工具带进复用/回填语义。
         from app.lib.gis.capability_registry import get_capability_registry
 
-        capabilities = get_capability_registry().descriptors() \
-            if hasattr(get_capability_registry(), "descriptors") \
-            else {}
+        capabilities = get_capability_registry()
         ordered = sorted(self._by_id.values(), key=lambda a: (a.priority, a.id))
         mapping: Dict[str, List[str]] = {}
         for algo in ordered:

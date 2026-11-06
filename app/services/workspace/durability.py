@@ -136,6 +136,7 @@ async def materialize_ref_payload(
             "content_payload_sha256": digest,
             "content_type": "binary",
             "byte_size": len(data),
+            "new_bytes": len(data) if result.put_new else 0,
         }, None
     if is_fabric_parquet_ref(ref):
         # V6（ADR-0249）：GeoParquet 磁盘工件 —— binary lane 与 raster PNG
@@ -173,6 +174,7 @@ async def materialize_ref_payload(
             "content_payload_sha256": digest,
             "content_type": "binary",
             "byte_size": len(data),
+            "new_bytes": len(data) if result.put_new else 0,
         }, None
     if is_cube_ref(ref):
         # V6（ADR-0249）：lakehouse cube —— **manifest lane**。cube 是目录树，
@@ -183,11 +185,11 @@ async def materialize_ref_payload(
         if store_dir is None or not store_dir.is_dir():
             return None, None
         if budget_bytes is not None:
-            total = 0
+            def measure_cube() -> int:
+                return sum(p.stat().st_size for p in store_dir.rglob("*") if p.is_file())
+
             try:
-                for p in store_dir.rglob("*"):
-                    if p.is_file():
-                        total += p.stat().st_size
+                total = await asyncio.to_thread(measure_cube)
             except OSError:
                 return None, None
             if total > int(budget_bytes):
@@ -237,20 +239,18 @@ async def materialize_ref_payload(
         return None, "budget"
     digest = await asyncio.to_thread(_sha256_of_text, blob)
     try:
-        from app.services.project_artifact_promotion import materialize_blob
-
-        location = await asyncio.to_thread(materialize_blob, digest, blob)
-    except Exception as e:  # noqa: BLE001
+        result = await asyncio.to_thread(store.put_blob, digest, blob.encode("utf-8"), "json")
+    except Exception as e:  # noqa: BLE001 — disclose absent durable pointer
         logger.warning("[workspace.durability] json put failed for %s: %s", ref, e)
         return None, None
-    if not location:
-        return None, None
     return {
-        "content_location": location,
+        "content_location": result.location,
         "content_payload_sha256": digest,
         "content_type": "json",
         "byte_size": blob_size,
+        "new_bytes": blob_size if result.put_new else 0,
     }, None
+
 
 
 # ── 校验 / 读回（restore + verify 侧；verify-before-write）────────────

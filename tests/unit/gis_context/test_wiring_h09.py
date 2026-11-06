@@ -279,6 +279,7 @@ def test_capture_resolves_mission_without_caller_state(wc_store, monkeypatch):
         return state
 
     monkeypatch.setattr(mg, "_session_state", fake_session_state)
+    monkeypatch.setattr("app.services.gis_context.hotpath._tenant_scan", lambda session_id: "org-1")
     monkeypatch.setattr(
         "app.services.gis_context.store.WorkingContextStore",
         lambda: wc_store)
@@ -323,6 +324,7 @@ def _patch_capture(monkeypatch, store, *, state, mapspec):
         return mapspec
 
     monkeypatch.setattr(mg, "_session_state", fake_session_state)
+    monkeypatch.setattr("app.services.gis_context.hotpath._tenant_scan", lambda session_id: "org-1")
     monkeypatch.setattr(
         "app.services.gis_context.store.WorkingContextStore", lambda: store)
     monkeypatch.setattr(

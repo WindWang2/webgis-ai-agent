@@ -107,8 +107,7 @@ def replay_procedure(
     for step in skill.procedure.steps:
         matched: List[str] = []
         # 能力踪迹：步骤声明的 capability 与计划能力面有交集
-        cap_traced = (not step.capability_refs) or (
-            set(step.capability_refs) & capabilities)
+        cap_traced = bool(set(step.capability_refs) & capabilities)
         # 证据踪迹：步骤要求的证据种类已在场
         ev_hits = [ev.evidence_kind for ev in step.evidence_requirements
                    if ev.evidence_kind in produced_evidence]
@@ -139,7 +138,7 @@ def replay_procedure(
                 detail = "required 步骤无计划与证据踪迹" if step.required else \
                     "可选步骤无踪迹"
         else:
-            if cap_traced:
+            if cap_traced or (step_declared and not step.capability_refs):
                 state = "covered"
                 detail = ""
             elif step_declared:

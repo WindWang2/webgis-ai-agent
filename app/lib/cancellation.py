@@ -127,9 +127,18 @@ class CancellationToken:
             with self._lock:
                 self._waiters = [w for w in self._waiters if w[1] is not ev]
 
-    def link(self, child: "CancellationToken") -> None:
-        """父 token 取消时级联取消 child（agent task → 其派生的 durable job）。"""
-        self.add_callback(lambda parent: child.cancel(parent.reason or "parent cancelled"))
+    def remove_callback(self, callback: Callable[[CancellationToken], None]) -> None:
+        with self._lock:
+            self._callbacks = [item for item in self._callbacks if item is not callback]
+
+    def link(self, child: "CancellationToken") -> Callable[[], None]:
+        """Cascade cancellation; return an idempotent unlink for child teardown."""
+        def cancel_child(parent: CancellationToken) -> None:
+            child.cancel(parent.reason or "parent cancelled")
+        self.add_callback(cancel_child)
+        def unlink() -> None:
+            self.remove_callback(cancel_child)
+        return unlink
 
     def __repr__(self) -> str:  # pragma: no cover - 诊断用
         return f"<CancellationToken job={self._job_id} cancelled={self.cancelled}>"

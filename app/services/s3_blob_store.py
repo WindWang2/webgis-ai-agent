@@ -204,7 +204,8 @@ class S3BlobStore(BlobStore):
         digest = sha256_of_bytes(data)
         final_key = self._object_key(key, content_type)
         location = self.location(key, content_type)
-        if self._head(client, final_key) is not None:
+        head = self._head(client, final_key)
+        if head is not None:
             # put-if-absent：信任前先验（FS store 同纪律 —— 绝不把坏字节或
             # 外来内容当命中）。sidecar digest 先比（廉价），长度再比（head），
             # 两者都过才整读验证 —— 外部覆写/损坏占位（含同长度覆写，sidecar
@@ -218,7 +219,6 @@ class S3BlobStore(BlobStore):
                 except (ValueError, UnicodeDecodeError):
                     existing_digest = ""
             if existing_digest == digest:
-                head = self._head(client, final_key) or {}
                 if int(head.get("ContentLength", -1)) == len(data):
                     existing = self._get_bytes(client, final_key)
                     if existing is not None and sha256_of_bytes(existing) == digest:
@@ -313,9 +313,14 @@ class S3BlobStore(BlobStore):
             resp = client.get_object(Bucket=self._bucket, Key=object_key)
             body = resp["Body"]
             try:
-                return bytes(body.read())
+                data = bytes(body.read(MAX_BLOB_READ_BYTES + 1))
+                if len(data) > MAX_BLOB_READ_BYTES:
+                    raise BlobSizeExceeded(object_key[:32], len(data))
+                return data
             finally:
                 _close_quietly(body)
+        except BlobSizeExceeded:
+            raise
         except Exception as e:
             if self._is_absent(e):
                 return None
@@ -338,7 +343,7 @@ class S3BlobStore(BlobStore):
                 logger.warning(
                     "[s3_blob_store] digest mismatch for %s — refusing", key,
                 )
-                return None
+                continue
             return raw
         return None
 
@@ -438,9 +443,15 @@ class S3BlobStore(BlobStore):
         if self._head(client, final_key) is not None:
             existing = self.read_meta(key) or {}
             head = self._head(client, final_key) or {}
-            if (existing.get("sha256") == digest
-                    and int(head.get("ContentLength", -1)) == total):
-                return PutResult(put_new=False, location=location)
+            if existing.get("sha256") == digest and int(head.get("ContentLength", -1)) == total:
+                from app.services.durable_blob_store import BlobDigestMismatch
+                try:
+                    for _chunk in self.get_blob_stream(key, expected_sha256=digest):
+                        pass
+                except BlobDigestMismatch:
+                    logger.warning("Existing S3 blob %s failed digest verification; rewriting", key)
+                else:
+                    return PutResult(put_new=False, location=location)
         from app.services.durable_blob_store import BlobDigestMismatch
 
         content_addressed = len(key) == 64 and all(
@@ -517,11 +528,27 @@ class S3BlobStore(BlobStore):
             if buffer:
                 yield bytes(buffer)
 
-        etag = self._multipart_upload(
-            client, key, final_key, content_type, _parts(),
-            max_parts=max_parts, max_total_bytes=max_total_bytes,
-            metadata=None,
-        )
+        def verify_stream() -> None:
+            if len(key) == 64 and all(c in "0123456789abcdef" for c in key):
+                if state["digest"].hexdigest() != key:
+                    from app.services.durable_blob_store import BlobDigestMismatch
+                    raise BlobDigestMismatch(key)
+
+        try:
+            etag = self._multipart_upload(
+                client, key, final_key, content_type, _parts(),
+                max_parts=max_parts, max_total_bytes=max_total_bytes,
+                metadata=None, before_complete=verify_stream, if_none_match=True,
+            )
+        except Exception as exc:
+            response = getattr(exc, "response", {})
+            code = str((response.get("Error") or {}).get("Code", "")) if isinstance(response, dict) else ""
+            if code not in {"PreconditionFailed", "412"} and "412" not in str(exc):
+                raise
+            # Another writer won. Verify the complete object before acknowledging dedup.
+            for _chunk in self.get_blob_stream(key, expected_sha256=state["digest"].hexdigest()):
+                pass
+            return PutResult(put_new=False, location=location)
         self._put_meta(client, self._meta_key(final_key), content_type,
                        state["total"], state["digest"].hexdigest(), etag=etag)
         return PutResult(put_new=True, location=location)
@@ -531,6 +558,7 @@ class S3BlobStore(BlobStore):
         parts, *, max_parts: int, max_total_bytes: Optional[int],
         metadata: Optional[dict],
         before_complete: Optional[Any] = None,
+        if_none_match: bool = False,
     ) -> str:
         """multipart 核心：create → 逐 part upload_part（重试）→ complete；
         任一环节终败 → abort（无残留）。返回 ETag。
@@ -576,6 +604,7 @@ class S3BlobStore(BlobStore):
                     {"ETag": p["ETag"], "PartNumber": p["PartNumber"]}
                     for p in parts_sent
                 ]},
+                **({"IfNoneMatch": "*"} if if_none_match else {}),
             )
             return str(complete.get("ETag", ""))
         except Exception:
@@ -618,6 +647,8 @@ class S3BlobStore(BlobStore):
     ):
         """blob → 字节迭代器（流式 digest；尾部判定，不符 typed 异常）。"""
         import hashlib as _hashlib
+        from app.services.durable_blob_store import BlobDigestMismatch
+        mismatch = False
 
         key = safe_blob_key(key)
         client = self._require_client()
@@ -631,24 +662,33 @@ class S3BlobStore(BlobStore):
                 raise S3StoreUnavailable(
                     f"s3 get failed for {object_key[:64]}: {e}"
                 ) from e
+            # Verify before exposing any bytes; spool large objects to disk.
+            from tempfile import SpooledTemporaryFile
             hasher = _hashlib.sha256()
+            expected = expected_sha256
             body = resp["Body"]
-            # 审查 B3：消费方提前停止（客户端断开 / GeneratorExit / 摘要
-            # 不符）时也必须归还 urllib3 连接，否则连接池耗尽。
-            try:
+            with SpooledTemporaryFile(max_size=chunk_size) as verified:
+                try:
+                    while True:
+                        chunk = body.read(chunk_size)
+                        if not chunk:
+                            break
+                        hasher.update(chunk)
+                        verified.write(chunk)
+                finally:
+                    _close_quietly(body)
+                if expected and hasher.hexdigest() != expected:
+                    mismatch = True
+                    continue
+                verified.seek(0)
                 while True:
-                    chunk = body.read(chunk_size)
+                    chunk = verified.read(chunk_size)
                     if not chunk:
                         break
-                    hasher.update(chunk)
                     yield chunk
-            finally:
-                _close_quietly(body)
-            if expected_sha256 and hasher.hexdigest() != expected_sha256:
-                from app.services.durable_blob_store import BlobDigestMismatch
-
-                raise BlobDigestMismatch(key)
-            return
+                return
+        if mismatch:
+            raise BlobDigestMismatch(key)
 
     @property
     def supports_enumeration(self) -> bool:
@@ -708,12 +748,15 @@ class S3BlobStore(BlobStore):
         aborted: list = []
         kept = 0
         token: Optional[str] = None
+        upload_marker: Optional[str] = None
         while len(aborted) < cap:
             kwargs: dict = {"Bucket": self._bucket, "MaxUploads": 1000}
             if prefix:
                 kwargs["Prefix"] = prefix
             if token:
                 kwargs["KeyMarker"] = token
+                if upload_marker:
+                    kwargs["UploadIdMarker"] = upload_marker
             resp = _with_retries(lambda: client.list_multipart_uploads(**kwargs))
             for u in resp.get("Uploads") or []:
                 started = u.get("Started")
@@ -733,6 +776,7 @@ class S3BlobStore(BlobStore):
             if not resp.get("IsTruncated"):
                 break
             token = resp.get("NextKeyMarker")
+            upload_marker = resp.get("NextUploadIdMarker")
             if not token:
                 break
         return {
@@ -814,7 +858,21 @@ def build_s3_client_from_env() -> Any:
     from app.services.data_fabric.security import DataFabricSecurity
 
     try:
-        DataFabricSecurity.validate_url(cfg["endpoint_url"])
+        import os
+        allow_private = os.getenv("WEBGIS_S3_ALLOW_PRIVATE_ENDPOINT", "false").lower() in {"1", "true", "yes"}
+        if allow_private:
+            import ipaddress
+            import socket
+            from urllib.parse import urlsplit
+            from app.core.egress import EgressPolicy
+            host = urlsplit(cfg["endpoint_url"]).hostname or ""
+            decision = EgressPolicy.from_params(profile="offline", mode="allowlist", allow_raw=host, allow_private=True).decide(cfg["endpoint_url"])
+            if not decision.allowed:
+                raise ValueError("cloud metadata endpoint is forbidden")
+            for address in socket.getaddrinfo(host, None):
+                if ipaddress.ip_address(address[4][0]).is_link_local:
+                    raise ValueError("link-local object store endpoint is forbidden")
+        DataFabricSecurity.validate_url(cfg["endpoint_url"], allow_private=allow_private)
     except Exception as e:  # noqa: BLE001 — SSRF 门拒绝 = 配置错误，typed 暴露
         raise S3StoreUnavailable(f"s3 endpoint rejected by SSRF gate: {e}") from e
     try:

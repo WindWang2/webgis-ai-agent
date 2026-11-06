@@ -58,6 +58,13 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    # Interpreter upgrades require matching binary wheels and COPY paths.
+    # Keep digest/patch security updates automated within the supported line.
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions 自身
   - package-ecosystem: "github-actions"

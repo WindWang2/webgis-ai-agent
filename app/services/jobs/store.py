@@ -123,7 +123,15 @@ def _is_reusable(job: AnalysisTask) -> bool:
     status = coerce_status(job.status)
     if not is_terminal(status):
         return True
-    return status == JobStatus.completed
+    if status != JobStatus.completed:
+        return False
+    stamp = job.completed_at or job.updated_at
+    if stamp is None:
+        return False
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    ttl_s = max(0, int(os.getenv("DURABLE_JOB_REUSE_TTL_S", "3600")))
+    return (datetime.now(timezone.utc) - stamp).total_seconds() <= ttl_s
 
 
 class DurableJobStore:
@@ -221,11 +229,11 @@ class DurableJobStore:
                 await db.flush()
 
         job = DurableJobStore.build(**kwargs)
-        db.add(job)
         try:
-            await db.flush()
+            async with db.begin_nested():
+                db.add(job)
+                await db.flush()
         except IntegrityError:
-            await db.rollback()
             if idem:
                 existing = await DurableJobStore.get_by_idempotency_key(db, idem)
                 if existing is not None:
@@ -257,11 +265,11 @@ class DurableJobStore:
                 existing.idempotency_key = None
                 db.flush()
         job = DurableJobStore.build(**kwargs)
-        db.add(job)
         try:
-            db.flush()
+            with db.begin_nested():
+                db.add(job)
+                db.flush()
         except IntegrityError:
-            db.rollback()
             if idem:
                 existing = db.execute(
                     select(AnalysisTask).where(AnalysisTask.idempotency_key == idem)

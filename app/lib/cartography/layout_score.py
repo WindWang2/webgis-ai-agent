@@ -80,7 +80,7 @@ def score_layout(
 
     # hierarchy：主件不与其它组件同锚堆叠
     anchor_counts: Dict[str, int] = {}
-    for t, a in anchored:
+    for _t, a in anchored:
         anchor_counts[a] = anchor_counts.get(a, 0) + 1
     primaries = [(t, a) for t, a in anchored if t in _PRIMARY_TYPES]
     if not primaries:

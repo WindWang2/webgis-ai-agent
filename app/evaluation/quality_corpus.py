@@ -624,7 +624,7 @@ _STATE_CONTRACTS: Dict[Tuple[str, str], Tuple[str, Dict[str, str]]] = {
     ('kriging-explicit', 'geometry_line'): ('degraded', {}),  # 克里金插值分析气温（数据为线要素）
     ('kriging-explicit', 'bad_crs'): ('preferred', {}),  # 克里金插值分析气温（数据坐标系为WGS84经纬度）
     ('kriging-explicit', 'missing_required_field'): ('degraded', {}),  # 克里金插值分析气温（数据没有数值字段）
-    ('kriging-explicit', 'too_few_samples'): ('preferred', {}),  # 克里金插值分析气温（样本只有3条）
+    ('kriging-explicit', 'too_few_samples'): ('degraded', {}),  # 克里金插值分析气温（样本只有3条）
     ('kriging-explicit', 'zero_variance'): ('preferred', {}),  # 克里金插值分析气温（数值字段全为常数）
     ('kriging-explicit', 'large_data'): ('preferred', {}),  # 克里金插值分析气温（数据量约45万条）
     ('kriging-explicit', 'empty_dataset'): ('degraded', {}),  # 克里金插值分析气温（数据为空）
@@ -636,7 +636,7 @@ _STATE_CONTRACTS: Dict[Tuple[str, str], Tuple[str, Dict[str, str]]] = {
     ('interpolation-generic', 'geometry_line'): ('degraded', {}),  # 气温插值成面（数据为线要素）
     ('interpolation-generic', 'bad_crs'): ('preferred', {}),  # 气温插值成面（数据坐标系为WGS84经纬度）
     ('interpolation-generic', 'missing_required_field'): ('degraded', {}),  # 气温插值成面（数据没有数值字段）
-    ('interpolation-generic', 'too_few_samples'): ('preferred', {}),  # 气温插值成面（样本只有3条）
+    ('interpolation-generic', 'too_few_samples'): ('degraded', {}),  # 气温插值成面（样本只有3条）
     ('interpolation-generic', 'zero_variance'): ('preferred', {}),  # 气温插值成面（数值字段全为常数）
     ('interpolation-generic', 'large_data'): ('preferred', {}),  # 气温插值成面（数据量约45万条）
     ('interpolation-generic', 'empty_dataset'): ('degraded', {}),  # 气温插值成面（数据为空）
@@ -744,7 +744,7 @@ _STATE_CONTRACTS: Dict[Tuple[str, str], Tuple[str, Dict[str, str]]] = {
     ('landcover-map', 'geometry_line'): ('degraded', {}),  # 土地利用影像分类图（数据为线要素）
     ('landcover-map', 'bad_crs'): ('degraded', {}),  # 土地利用影像分类图（数据坐标系为WGS84经纬度）
     ('landcover-map', 'missing_required_field'): ('degraded', {}),  # 土地利用影像分类图（数据没有数值字段）
-    ('landcover-map', 'too_few_samples'): ('preferred', {}),  # 土地利用影像分类图（样本只有3条）
+    ('landcover-map', 'too_few_samples'): ('degraded', {}),  # 土地利用影像分类图（样本只有3条）
     ('landcover-map', 'zero_variance'): ('preferred', {}),  # 土地利用影像分类图（数值字段全为常数）
     ('landcover-map', 'large_data'): ('preferred', {}),  # 土地利用影像分类图（数据量约45万条）
     ('landcover-map', 'empty_dataset'): ('degraded', {}),  # 土地利用影像分类图（数据为空）
@@ -1177,7 +1177,7 @@ _STATE_CONTRACTS: Dict[Tuple[str, str], Tuple[str, Dict[str, str]]] = {
     ('interpolation-uncertainty', 'geometry_line'): ('degraded', {}),  # 插值预测不确定性（数据为线要素）
     ('interpolation-uncertainty', 'bad_crs'): ('preferred', {}),  # 插值预测不确定性（数据坐标系为WGS84经纬度）
     ('interpolation-uncertainty', 'missing_required_field'): ('degraded', {}),  # 插值预测不确定性（数据没有数值字段）
-    ('interpolation-uncertainty', 'too_few_samples'): ('preferred', {}),  # 插值预测不确定性（样本只有3条）
+    ('interpolation-uncertainty', 'too_few_samples'): ('degraded', {}),  # 插值预测不确定性（样本只有3条）
     ('interpolation-uncertainty', 'zero_variance'): ('preferred', {}),  # 插值预测不确定性（数值字段全为常数）
     ('interpolation-uncertainty', 'large_data'): ('preferred', {}),  # 插值预测不确定性（数据量约45万条）
     ('interpolation-uncertainty', 'empty_dataset'): ('degraded', {}),  # 插值预测不确定性（数据为空）
@@ -1211,7 +1211,8 @@ def _expansion_queries(family_phrase: str, state: DataStateProfile) -> List[str]
         scope_text = _EXPANSION_SCOPES[i // len(_EXPANSION_UTTERANCES)][0]
         queries.append(_zh_wrap(family_phrase, scope_text, zh_tpl) + state.query_suffix)
     # 同族同态下查询唯一（句式模板互异保证）
-    assert len(set(queries)) == len(queries), "expansion queries must be unique"
+    if not (len(set(queries)) == len(queries)):
+        raise ValueError("expansion queries must be unique")
     return queries
 
 
@@ -1334,8 +1335,8 @@ def build_quality_scenario_corpus() -> List[GISBenchmarkCase]:
             cases.append(_conformance_reference_case(family, state))
             ref_query = _reference_query(family.phrases_zh[0], state)
             # 反垃圾护栏：参考查询按 (family, state) 唯一（声明后缀消歧）
-            assert ref_query not in seen_ref_queries, \
-                f"duplicate reference query: {ref_query}"
+            if ref_query in seen_ref_queries:
+                raise ValueError(f"duplicate reference query: {ref_query}")
             seen_ref_queries.add(ref_query)
             for seq, query in enumerate(
                     _expansion_queries(family.phrases_zh[0], state)):
@@ -1345,8 +1346,10 @@ def build_quality_scenario_corpus() -> List[GISBenchmarkCase]:
     cases.sort(key=lambda c: c.id)
     # 反垃圾护栏（构造即校验，fail fast）
     ids = [c.id for c in cases]
-    assert len(ids) == len(set(ids)), "quality corpus has duplicate ids"
-    assert len(DATA_STATE_PROFILES) <= 64, "per-family profile variants must stay <= 64"
+    if not (len(ids) == len(set(ids))):
+        raise ValueError("quality corpus has duplicate ids")
+    if not (len(DATA_STATE_PROFILES) <= 64):
+        raise ValueError("per-family profile variants must stay <= 64")
     return cases
 
 

@@ -212,19 +212,21 @@ export function frustumPlanesFromMat4(m: Mat4): FrustumPlane[] {
 
 /**
  * 视锥平面从 world 空间变换到模型局部空间（localToWorld = local→world）。
- * 平面按齐次协变变换：p_local = (M⁻ᵀ)·p_world。
+ * 平面按协变规则变换：x_W = M·x_L ⇒ n_L = Aᵀ·n_W、d_L = t·n_W + d_W
+ * （曾误用 M⁻¹ 作用 —— 旋转下等价，但含平移/缩放的 placement 会把 d 折算
+ * 成「过锚点的平面」，视锥剔除实际相对锚点而非相机）。
  */
 export function planeToLocalSpace(
   plane: FrustumPlane,
   localToWorld: Mat4,
 ): FrustumPlane {
-  const inv = invertMat4(localToWorld);
-  if (!inv) return plane;
-  // inv 的转置作用于平面向量（nx, ny, nz, d）
-  const nx = inv[0] * plane.normal.x + inv[4] * plane.normal.y + inv[8] * plane.normal.z;
-  const ny = inv[1] * plane.normal.x + inv[5] * plane.normal.y + inv[9] * plane.normal.z;
-  const nz = inv[2] * plane.normal.x + inv[6] * plane.normal.y + inv[10] * plane.normal.z;
-  const d = inv[3] * plane.normal.x + inv[7] * plane.normal.y + inv[11] * plane.normal.z + inv[15] * plane.d;
+  const m = localToWorld;
+  // n_L = Aᵀ n（列主序存储：n_L(r) = Σⱼ m[r*4+j]·nⱼ）
+  const nx = m[0] * plane.normal.x + m[1] * plane.normal.y + m[2] * plane.normal.z;
+  const ny = m[4] * plane.normal.x + m[5] * plane.normal.y + m[6] * plane.normal.z;
+  const nz = m[8] * plane.normal.x + m[9] * plane.normal.y + m[10] * plane.normal.z;
+  // d_L = t·n + d（M 的平移列点乘世界法线）
+  const d = m[12] * plane.normal.x + m[13] * plane.normal.y + m[14] * plane.normal.z + m[15] * plane.d;
   const len = Math.hypot(nx, ny, nz) || 1;
   return { normal: { x: nx / len, y: ny / len, z: nz / len }, d: d / len };
 }

@@ -274,6 +274,9 @@ def test_project_knowledge_block_renders_when_entries(monkeypatch):
         org_id = 1
 
     class _FakeDB:
+        def commit(self):
+            return None
+
         def __enter__(self):
             return self
 
@@ -305,11 +308,11 @@ def test_project_knowledge_block_renders_when_entries(monkeypatch):
         status="active",
     )
 
-    import app.services.project_knowledge.store as ks
+    import app.services.project_knowledge.card as card
 
     monkeypatch.setattr(
-        ks, "get_active_entries",
-        lambda db, **kw: [entry],
+        card, "load_project_knowledge_card",
+        lambda db, **kw: card.render_project_knowledge_card([entry], project_id=kw["project_id"]),
     )
 
     text = ca._build_project_knowledge_block(

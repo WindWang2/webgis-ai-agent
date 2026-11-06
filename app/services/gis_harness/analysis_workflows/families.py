@@ -40,6 +40,8 @@ FAMILY_IDS = (
     "hazard_exposure",
     "temporal_change",
     "statistical_zones",
+    "raster_zonal_summary",
+    "network_proximity",
 )
 
 _FAMILY_LABELS: Dict[str, str] = {
@@ -48,6 +50,8 @@ _FAMILY_LABELS: Dict[str, str] = {
     "hazard_exposure": "风险暴露分析",
     "temporal_change": "多期区域变化分析",
     "statistical_zones": "自适应统计分区分析",
+    "raster_zonal_summary": "栅格指数分区汇总分析",
+    "network_proximity": "最近设施网络距离分析",
 }
 
 
@@ -56,13 +60,16 @@ def _step(step_id: str, tool: str, inputs: Dict[str, str], *,
           units: Optional[Dict[str, str]] = None,
           deps: Tuple[str, ...] = (), preconds: Tuple[str, ...] = (),
           outputs: Tuple[str, ...] = (), fallback: str = "",
-          optional: bool = False) -> AnalysisStepSpec:
+          optional: bool = False,
+          semantic_contract: Optional[Dict[str, str]] = None,
+          ) -> AnalysisStepSpec:
     return AnalysisStepSpec(
         step_id=step_id, tool_name=tool, capability=capability,
         role_inputs=dict(inputs), step_params=dict(params or {}),
         unit_contract=dict(units or {}), depends_on=deps,
         preconditions=preconds, output_roles=outputs,
         fallback=fallback, optional=optional,
+        semantic_contract=dict(semantic_contract or {}),
     )
 
 
@@ -77,6 +84,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               {"points": "role:subject", "polygons": "role:boundary"},
               capability="admin_aggregation",
               params={"count_field": "facility_count"},
+              semantic_contract={"points": "geometry_kind:point"},
               outputs=("aggregate_zones",)),
         # 面积密度：几何自足分母（km²），无需外部数据，合法；
         # 单位合同钉死（denominator_kind=area 的输出单位约定）。
@@ -85,6 +93,7 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               capability="admin_aggregation",
               params={"denominator_kind": "area"},
               deps=("zones_count",),
+              semantic_contract={"points": "geometry_kind:point"},
               outputs=("density_zones",)),
         # 每万人密度：分母 = 带人口字段的区面层（role:denominator 绑定，
         # qualifier.field 指明字段名）。缺失 → typed skipped，
@@ -94,15 +103,22 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               capability="admin_aggregation",
               params={"denominator_kind": "field", "denominator": "population"},
               deps=("zones_count",),
+              semantic_contract={"points": "geometry_kind:point"},
               optional=True,
               outputs=("rate_zones",)),
     ),
     "service_accessibility": (
+        # ADR-0284（断点2）：族默认 exclude_unreachable=True——脱离路网的
+        # 设施 5m 占位面不进覆盖统计（计数进 stats，部分失败显性化）；
+        # 需要占位面原样输出的调用方以参数覆盖回 False（工具默认保持
+        # master 行为）。
         _step("isochrone", "isochrone_network",
               {"network_layer": "role:network", "facilities": "role:subject"},
               capability="service_area",
-              params={"travel_time": 15.0, "mode": "walking"},
+              params={"travel_time": 15.0, "mode": "walking",
+                      "exclude_unreachable": True},
               units={"travel_time": "min"},
+              semantic_contract={"facilities": "geometry_kind:point"},
               outputs=("service_area",)),
         _step("coverage_zones", "overlay_analysis",
               {"layer_a": "step:isochrone", "layer_b": "role:boundary"},
@@ -116,6 +132,27 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               deps=("coverage_zones",),
               optional=True,
               outputs=("covered_population",)),
+    ),
+    # 链③（ADR-0284 D4）：最近设施网络距离 → 行政汇总。
+    # subject=需求点（incidents，如居民点/小区），facility=服务设施（医院/
+    # 消防站）；汇总 rate = Σtotal_cost / 路线数 = 区均网络成本（均值语义，
+    # aggregate_with_denominator 的 count 分母通道——不是伪装率）。
+    "network_proximity": (
+        _step("nearest_facility", "network_closest_facility",
+              {"network": "role:network", "incidents": "role:subject",
+               "facilities": "role:facility"},
+              capability="closest_facility",
+              params={"profile": "driving", "number_to_find": 1},
+              semantic_contract={"incidents": "geometry_kind:point",
+                                 "facilities": "geometry_kind:point"},
+              outputs=("nearest_routes",)),
+        _step("accessibility_summary", "spatial_aggregate",
+              {"points": "step:nearest_facility", "polygons": "role:boundary"},
+              capability="admin_aggregation",
+              params={"denominator_kind": "count",
+                      "numerator_field": "total_cost"},
+              deps=("nearest_facility",),
+              outputs=("district_accessibility",)),
     ),
     "hazard_exposure": (
         _step("hazard_buffer", "buffer_analysis",
@@ -159,14 +196,19 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               capability="grid_binning",
               params={"resolution": 8, "stat_method": "count"},
               preconds=("point_support_required",),
+              # point_support_required 前置的执行期对偶（R1 评审 F-5：
+              # 声明接线——非点几何在执行期被 typed 拒而非静默质心化）
+              semantic_contract={"geojson": "geometry_kind:point"},
               outputs=("grid_zones",)),
-        # 网格率：网格分母（同一网格的 population 聚合）必须网格身份一致
-        # （grid_identity_match 前置——G02 既有科学前置，防虚假归属）。
+        # 网格率（ADR-0284 断点1 修复）：真率语义走显式分母通道——
+        # 分母=网格内 subject 计数（grid_stats 输出的 count 字段，网格身份
+        # 一致由 grid_identity_match 前置保证），分子=网格内 population 计数
+        # → rate=人口/设施（人均服务负荷；设施/人口为其倒数，numerator/
+        # denominator 两列都在，消费方可显式取用）。不再是改名计数。
         _step("grid_rate", "spatial_aggregate",
               {"points": "role:population", "polygons": "step:grid_stats"},
               capability="admin_aggregation",
-              params={"denominator_kind": "count",
-                      "count_field": "population_count"},
+              params={"denominator_kind": "field", "denominator": "count"},
               deps=("grid_stats",),
               preconds=("grid_identity_match",),
               optional=True,
@@ -178,6 +220,26 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               deps=("grid_stats",),
               optional=True,
               outputs=("hotspot_zones",)),
+    ),
+    # 链②（ADR-0284 D4）：栅格指数 → 行政分区统计 → 矢量结果。
+    # subject 是 raster 角色（role_kind="raster"——ref/路径直通，不水合）；
+    # 掩膜语义由 zonal 的窗口读隐式完成（逐 zone 只读自己的像素窗+多边形
+    # 掩膜），不引入独立 mask 工具；nodata 以 valid_pixel_coverage 逐 zone
+    # 披露（raster_ops 断点 9 修复）。
+    "raster_zonal_summary": (
+        _step("resample", "raster_resample",
+              {"raster_path": "role:subject"},
+              capability="raster_resample",
+              params={"target_resolution": None, "target_crs": None,
+                      "resampling": "bilinear", "resolution_unit": "crs"},
+              optional=True,
+              outputs=("resampled_raster",)),
+        _step("zonal_stats", "zonal_stats",
+              {"geojson": "role:boundary",
+               "raster_path": "step:resample"},
+              capability="zonal_statistics",
+              deps=("resample",),
+              outputs=("zonal_zones",)),
     ),
 }
 
@@ -232,6 +294,31 @@ _ROLE_REQUIREMENTS: Dict[str, List[DataRoleRequirement]] = {
                             missing_policy="degrade",
                             note="网格分母——缺失时只给计数网格，不给率"),
     ],
+    # 链②：subject 为栅格主题（role_kind=raster——DataRoleBinding 的
+    # role_kind 由本族 build 时按 geometry_kinds=["raster"] 自动铺默认）。
+    "raster_zonal_summary": [
+        DataRoleRequirement(role="subject", required=True,
+                            geometry_kinds=["raster"], missing_policy="block",
+                            note="栅格指数图层（NDVI/DEM/降雨等——ref 或本地路径）"),
+        DataRoleRequirement(role="boundary", required=True,
+                            geometry_kinds=["polygon"], missing_policy="block",
+                            note="统计分区（行政区/流域等面域）"),
+    ],
+    "network_proximity": [
+        DataRoleRequirement(role="subject", required=True,
+                            geometry_kinds=["point"], missing_policy="block",
+                            note="需求点（incidents——居民点/小区/事故点）"),
+        DataRoleRequirement(role="facility", required=True,
+                            geometry_kinds=["point"], missing_policy="block",
+                            note="服务设施点（医院/消防站/学校）"),
+        DataRoleRequirement(role="network", required=True,
+                            geometry_kinds=["line", "network"],
+                            missing_policy="block",
+                            note="真实路网——缺失时不得给网络距离结论"),
+        DataRoleRequirement(role="boundary", required=True,
+                            geometry_kinds=["polygon"], missing_policy="block",
+                            note="汇总分区（行政区）"),
+    ],
 }
 
 #: 各族风险与披露（进入契约 risk_notes / 必披露面）。
@@ -257,6 +344,22 @@ _FAMILY_NOTES: Dict[str, Tuple[str, ...]] = {
     "statistical_zones": (
         "网格率要求分子分母同一网格身份（grid_identity_match）；"
         "热点检验受多重比较影响——小样本/低计数网格的显著性须按伪 p 披露",
+    ),
+    "raster_zonal_summary": (
+        "zonal 统计的掩膜语义=逐 zone 像素窗+多边形掩膜（隐式掩膜，非独立"
+        "mask 步骤）；nodata 以逐 zone valid_pixel_coverage 披露——覆盖率低的"
+        "分区均值不可与全有效分区同权解读",
+        "栅格重采样会改变像元聚合尺度（bilinear 平滑/nearest 保序）——"
+        "默认直接统计原始栅格；仅显式 target_resolution 启用重采样，"
+        "分辨率严格使用目标 CRS 单位；分辨率变化即统计口径变化，进入步骤指纹触发重算",
+    ),
+    "network_proximity": (
+        "最近设施距离=路网 Dijkstra 通行成本（默认 travel_time 权重）——"
+        "不是欧氏距离；速度表近似与端点吸附容差由算法层披露",
+        "跨区路线在 intersects 约定下会计入其经过的每个区（M:N 多方属）——"
+        "区均成本合计不可当全区独立均值直接平均",
+        "无匹配路线的需求点由 unmatched_demand_count/ids 披露，"
+        "区均成本仅描述匹配需求；工作流保持 partial，不作为完整总体成品",
     ),
 }
 
@@ -298,10 +401,30 @@ def build_contract(
         for req in _ROLE_REQUIREMENTS.get(family, [])
     }
     contracts.update(dict(bindings or {}))
+    # ADR-0284 D3：角色需求的 geometry_kinds 表达 raster/table 载荷类型时，
+    # **模板占位绑定**（无 ref）铺默认 role_kind，让契约自带类型事实；
+    # 调用方显式绑定不覆写——role_kind 与需求不符由 orchestrator plan 门
+    # typed 裁决（调用方声明的事实优先，绝不静默改写）。
+    for req in _ROLE_REQUIREMENTS.get(family, []):
+        binding = contracts.get(req.role)
+        if binding is None or binding.ref or binding.role_kind != "vector":
+            continue
+        kinds = set(req.geometry_kinds or ())
+        if kinds and kinds <= {"raster", "table"}:
+            binding.role_kind = next(iter(kinds))
     steps: List[AnalysisStepSpec] = []
     overrides = params_overrides or {}
+    pruned_role_fallbacks: Dict[str, str] = {}
     for base in _STEPS[family]:
-        if base.optional and not include_optional_steps:
+        explicit_resample = (base.step_id == "resample" and "target_resolution" in overrides.get(base.step_id, {}))
+        if (base.optional and not include_optional_steps) or (base.step_id == "resample" and not explicit_resample):
+            # ADR-0284 D4：optional 步剔除 → 记录其 role: 输入的首个角色，
+            # 供下游 step: 引用回接（rewire——契约 DAG 保持闭合且语义等价：
+            # 下游直接消费原始角色而非被剔除的中间产物）。
+            for source in base.role_inputs.values():
+                if source.startswith("role:"):
+                    pruned_role_fallbacks[base.step_id] = source
+                    break
             continue
         step = base.model_copy(deep=True)
         step_over = overrides.get(step.step_id)
@@ -322,11 +445,41 @@ def build_contract(
                 step.unit_contract = {
                     param: new_unit for param in step.unit_contract}
             step.step_params.update(step_over)
+        if step.step_id == "resample":
+            import math
+            resolution = step.step_params.get("target_resolution")
+            if (isinstance(resolution, bool) or not isinstance(resolution, (int, float))
+                    or not math.isfinite(resolution) or resolution <= 0):
+                raise ValueError("resample requires a finite positive target_resolution in target CRS units")
+            if step.step_params.get("resolution_unit") != "crs":
+                raise ValueError("workflow resample resolution_unit must be crs (target CRS units)")
         steps.append(step)
     # optional 步骤的依赖若被剔除，须同步修剪（契约 DAG 仍须闭合）
     present = {s.step_id for s in steps}
     for step in steps:
         step.depends_on = tuple(d for d in step.depends_on if d in present)
+        for param, source in list(step.role_inputs.items()):
+            if not source.startswith("step:"):
+                continue
+            upstream = source.removeprefix("step:")
+            if upstream not in present and upstream in pruned_role_fallbacks:
+                step.role_inputs[param] = pruned_role_fallbacks[upstream]
+    # ADR-0284 D4（R1 评审 F-2 修复）：denominator_kind=field 的步骤，分母
+    # 字段名**只**从 role:denominator 绑定的 qualifier.field 解析（该角色的
+    # 语义就是"带分母字段的图层"）——其它角色的 qualifier（subject 的
+    # field、population 的 fields）绝不可劫持分母列名（评审实测复现：
+    # population.fields 声明曾致 grid_rate 假 skip、subject.field 曾把
+    # per_capita 分母静默改列）。无画像时保持模板默认（行为兼容 master）。
+    # fields 清单的 plan 期校验在 orchestrator（同样只认 denominator 角色）。
+    for step in steps:
+        if step.step_params.get("denominator_kind") != "field":
+            continue
+        binding = contracts.get("denominator")
+        if binding is None or not binding.ref:
+            continue
+        field = binding.qualifier.get("field")
+        if isinstance(field, str) and field:
+            step.step_params["denominator"] = field
     return AnalysisWorkflowContract(
         workflow_id=workflow_id,
         family=family,
@@ -376,5 +529,12 @@ def visualization_hints(family: str) -> Tuple[str, ...]:
         "statistical_zones": (
             "grid_zones → h3_hexbin",
             "hotspot_zones → hotspot_significance",
+        ),
+        "raster_zonal_summary": (
+            "zonal_zones → administrative_choropleth（指数均值/分区统计）",
+        ),
+        "network_proximity": (
+            "nearest_routes → flow_od_arc / line（需求点→设施路线）",
+            "district_accessibility → administrative_choropleth（区均网络成本）",
         ),
     }.get(family, ())

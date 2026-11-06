@@ -107,7 +107,9 @@ async def client(env):
 async def _register_dem(env, session_id: str, *, datum="EGM96") -> str:
     from app.services.terrain_ingest import register_session_terrain_source
 
-    dem = _write_dem(env["tmp"] / f"dem-{session_id}.tif")
+    directory = env["tmp"] / session_id
+    directory.mkdir(parents=True, exist_ok=True)
+    dem = _write_dem(directory / "dem.tif")
     out = await register_session_terrain_source(
         session_id, dem,
         declared_vertical_datum=datum, declared_vertical_unit="m",
@@ -129,6 +131,26 @@ SESSION = "sess-tilejson-auth-0001"
 
 
 class TestTileJsonContract:
+    async def test_wrapped_receipt_uses_non_wrapped_tile_envelope(self, client, env, monkeypatch):
+        import io
+        import sys
+        from PIL import Image
+
+        monkeypatch.setattr(sys.modules[__name__], "_BBOX", (170.0, 10.0, 190.0, 12.0))
+        sid = "sess-antimeridian-tilejson"
+        await _seed_conversation(env["db"], sid, user_id=_MOCK_USER["user_id"])
+        ref_id = await _register_dem(env, sid)
+        response = await client.get(f"/api/v1/layers/data/{ref_id}/terrain-tiles.json?session_id={sid}")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["bounds"] == pytest.approx([-180, 10, 180, 12])
+        assert body["terrain"]["coverage_bbox_epsg4326"] == pytest.approx([170, 10, -170, 12])
+        assert body["terrain"]["tile_bounds_policy"] == "antimeridian_envelope"
+        tile = await client.get(body["tiles"][0].format(z=5, x=31, y=15))
+        assert tile.status_code == 200, tile.text
+        with Image.open(io.BytesIO(tile.content)) as image:
+            assert image.convert("RGBA").getchannel("A").getextrema()[1] > 0
+
     async def test_receipt_driven_tilejson_and_tile_chain(self, client, env):
         await _seed_conversation(env["db"], SESSION, user_id=_MOCK_USER["user_id"])
         ref_id = await _register_dem(env, SESSION)
@@ -162,15 +184,32 @@ class TestTileJsonContract:
         assert rt.status_code == 200, rt.text
         assert rt.headers["content-type"] == "image/png"
 
-    async def test_etag_304(self, client, env):
+    async def test_etag_304(self, client, env, monkeypatch):
+        from types import SimpleNamespace
+        from app.core import signing
+        from urllib.parse import parse_qs, urlsplit
+
+        clock = [120010]
+        monkeypatch.setattr(signing, 'time', SimpleNamespace(time=lambda: clock[0]))
         await _seed_conversation(env["db"], SESSION + "b", user_id=_MOCK_USER["user_id"])
         ref_id = await _register_dem(env, SESSION + "b")
         url = f"/api/v1/layers/data/{ref_id}/terrain-tiles.json?session_id={SESSION}b"
         r1 = await client.get(url)
         assert r1.status_code == 200
         etag = r1.headers["ETag"]
+        clock[0] += 1
         r2 = await client.get(url, headers={"If-None-Match": etag})
         assert r2.status_code == 304
+        clock[0] = 120061
+        r3 = await client.get(url, headers={"If-None-Match": etag})
+        assert r3.status_code == 200
+        assert r3.headers['ETag'] != etag
+        old = parse_qs(urlsplit(r1.json()['tiles'][0]).query)
+        assert signing.verify_signature(signing.terrain_capability_path(SESSION + 'b', ref_id),
+                                        old['exp'][0], old['sig'][0])
+        clock[0] = int(old['exp'][0]) + 1
+        assert not signing.verify_signature(signing.terrain_capability_path(SESSION + 'b', ref_id),
+                                            old['exp'][0], old['sig'][0])
 
     async def test_cross_session_404(self, client, env):
         await _seed_conversation(env["db"], SESSION + "c", user_id=_MOCK_USER["user_id"])
@@ -195,10 +234,14 @@ class TestTileJsonContract:
         # 错 token → 404
         r1 = await client.get(f"{base}?session_id={sid}&token=wrong")
         assert r1.status_code == 404
-        # 对 token → 200 且 tiles URL 携带 token（MapLibre 可直接消费）
+        # Correct owner token issues a short-lived capability without exposing it.
         r2 = await client.get(f"{base}?session_id={sid}&token=tok-anon-123")
         assert r2.status_code == 200, r2.text
-        assert "&token=tok-anon-123" in r2.json()["tiles"][0]
+        tile_url = r2.json()["tiles"][0]
+        assert "&sig=" in tile_url
+        assert "tok-anon-123" not in tile_url and "token=" not in tile_url
+        signed_tile = await client.get(tile_url.format(z=0, x=0, y=0))
+        assert signed_tile.status_code == 200, signed_tile.text
 
     async def test_retired_ref_404(self, client, env):
         sid = "sess-tilejson-retire-01"
@@ -214,7 +257,8 @@ class TestTileJsonContract:
         sid = "sess-tilejson-nocrs-01"
         await _seed_conversation(env["db"], sid, user_id=_MOCK_USER["user_id"])
         # 无 CRS 的裸 GeoTIFF ref（模拟工具产物/旧路径注册），TileJSON fail-closed
-        p = env["tmp"] / "bare.tif"
+        p = env["tmp"] / sid / "bare.tif"
+        p.parent.mkdir(parents=True, exist_ok=True)
         with rasterio.open(
             p, "w", driver="GTiff", width=64, height=64, count=1, dtype="float32",
             transform=from_bounds(0, 0, 1, 1, width=64, height=64),
@@ -255,7 +299,8 @@ class TestNonIngestedRefErrorCodes:
         ) as dst:
             for b in range(1, 4):
                 dst.write(np.zeros((32, 32), dtype="float32"), b)
-        p = env["tmp"] / "rgb.tif"
+        p = env["tmp"] / sid / "rgb.tif"
+        p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(buf.getvalue())
         ref_id = await env["manager"].store(sid, {"file_path": str(p)}, prefix="raster")
         r = await client.get(
@@ -270,7 +315,8 @@ class TestNonIngestedRefErrorCodes:
         from rasterio.transform import Affine
 
         rot = Affine.translation(0, 1) * Affine.rotation(30.0) * Affine.scale(0.01, -0.01)
-        p = env["tmp"] / "rot.tif"
+        p = env["tmp"] / sid / "rot.tif"
+        p.parent.mkdir(parents=True, exist_ok=True)
         with rasterio.open(
             p, "w", driver="GTiff", width=64, height=64, count=1, dtype="float32",
             crs="EPSG:4326", transform=rot,

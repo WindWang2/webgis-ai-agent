@@ -209,6 +209,7 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
   };
 
   const map: any = {
+    style: { _loaded: true },
     // ─── Viewport (mutable) ────────────────────────────────────────────────
     getCenter: vi.fn(() => ({ lng: viewport.center[0], lat: viewport.center[1] })),
     getZoom: vi.fn(() => viewport.zoom),

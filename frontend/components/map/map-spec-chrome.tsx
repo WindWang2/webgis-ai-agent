@@ -5,7 +5,7 @@ import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { renderComponent } from './map-components';
 import { buildBottomSlotIndexes, stackedBottomStyle } from './map-components/helpers';
 import { buildTopSlotIndexes } from './map-components/helpers';
-import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
+export { computeScale } from './map-decorations';
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
 import { composeMapLayout } from '@/lib/layout/compose';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -13,14 +13,6 @@ import { useHudStore } from '@/lib/store/useHudStore';
 // U-2（#884）同槽堆叠原语经 helpers 供渲染器与测试复用
 export { buildBottomSlotIndexes, stackedBottomStyle };
 
-export function computeScale(zoom: number, lat: number): { meters: number; pixels: number } {
-  const metersPerPixel = metersPerPixelAt(zoom, lat);
-  const targetMeters = metersPerPixel * 100;
-  const candidates = [50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000];
-  let best = candidates[0];
-  for (const c of candidates) if (c <= targetMeters) best = c;
-  return { meters: best, pixels: best / metersPerPixel };
-}
 
 interface ChromeProps {
   components: MapSpecComponent[];

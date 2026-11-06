@@ -29,16 +29,16 @@ _OWNED_SESSIONS = {
 
 
 @pytest.fixture()
-def client():
+def client(monkeypatch):
     """最小 app + 保真所有权守卫 fake：deny 抛 404（同 verify_session_owner
     语义），allow 返回带 session_id 的 conv —— POST 的 body session_id 与
     守卫的绑定关系真实受测。"""
     async def fake_verify(db, session_id, **kw):
         if session_id not in _OWNED_SESSIONS:
             raise HTTPException(status_code=404, detail="Session not found")
-        return SimpleNamespace(session_id=session_id)
+        return SimpleNamespace(id=session_id, session_id=session_id)
 
-    lakehouse_mod.verify_session_owner = fake_verify
+    monkeypatch.setattr(lakehouse_mod, "verify_session_owner", fake_verify)
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
 

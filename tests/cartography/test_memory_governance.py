@@ -194,6 +194,9 @@ def project_with_facts():
 def _patched_route(monkeypatch, db_session):
     """让路由的 get_db 依赖指向测试内存库（dependency_overrides——
     FastAPI 在装饰期绑定依赖函数，事后 patch 模块属性无效）。"""
+    async def live_identity(user_id, payload):
+        return {"user_id": user_id, "role": payload.get("role", "viewer"), "org_id": payload.get("org_id")}
+    monkeypatch.setattr("app.core.auth._live_identity", live_identity)
     from app.core.database import get_db
 
     def override_get_db():

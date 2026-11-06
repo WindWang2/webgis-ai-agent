@@ -324,6 +324,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         // 残留在 session B 的 AnalysisTab 里。store 内部的 fetchAnalysisAssets
         // 走统一 listUploads（Fast Path + 集中错误/超时处理）。
         try {
+          if (signal.aborted) return;
           await useHudStore.getState().fetchAnalysisAssets(sid);
         } catch (e) {
           if (!isApiError(e)) devOnly.warn('[fetchAnalysisAssets] failed on session switch:', e);

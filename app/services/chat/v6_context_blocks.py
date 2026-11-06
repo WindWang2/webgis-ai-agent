@@ -70,10 +70,13 @@ def _clip(value: Any, limit: int = _MAX_TEXT_CHARS) -> str:
 
 def _cap_text(text: str, cap: int) -> Tuple[str, bool]:
     """字节级 hard cap：超限按 UTF-8 边界截断并留痕（截断标记计入 cap）。"""
+    cap = max(0, cap)
     raw = text.encode("utf-8")
     if len(raw) <= cap:
         return text, False
     marker = _TRUNC_SUFFIX_FMT.format(orig=len(raw), cap=cap)
+    if len(marker.encode("utf-8")) > cap:
+        return raw[:cap].decode("utf-8", errors="ignore"), True
     budget = max(0, cap - len(marker.encode("utf-8")))
     cut = raw[:budget].decode("utf-8", errors="ignore")
     return cut + marker, True
@@ -229,8 +232,9 @@ def _matched_obligations(
         )
         hay = f"{oid} {kind} {code} {prov}"
         if (cap and cap in hay) or (alg and alg in hay):
-            if oid and oid not in matched:
-                matched.append(_clip(oid, 64))
+            clipped = _clip(oid, 64)
+            if clipped and clipped not in matched:
+                matched.append(clipped)
         if len(matched) >= 3:
             break
     return matched

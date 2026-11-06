@@ -303,6 +303,53 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
 
         remote_filter, local_filter = resolve_plan_filter_split(v2.filter, plan)
         split_active = local_predicates_present(plan)
+        params = self._base_params(v2)
+        # where：AST 编译（单引号 doubling）。V5：拆分计划只编译下推半。
+        where_sql = "1=1"
+        if remote_filter is not None:
+            allowed = [f["name"] for f in descriptor.fields if f.get("name")]
+            from app.services.data_fabric.query.predicates import validate_predicate_fields
+
+            validate_predicate_fields(remote_filter, allowed)
+            where_sql = compile_predicate_arcgis(remote_filter)
+
+        # temporal → where 片段（AND 连接；值经 _arcgis_quote 转义）
+        if v2.temporal is not None:
+            from app.services.data_fabric.query.compilers import _arcgis_quote
+
+            def _iso(s: str) -> str:
+                return s.replace("Z", "")
+
+            t = v2.temporal
+            if t.op == "during":
+                frag = (f"{t.field} >= TIMESTAMP {_arcgis_quote(_iso(t.start))} AND "
+                        f"{t.field} <= TIMESTAMP {_arcgis_quote(_iso(t.end))}")
+            elif t.op == "before":
+                frag = f"{t.field} < TIMESTAMP {_arcgis_quote(_iso(t.value))}"
+            else:
+                frag = f"{t.field} > TIMESTAMP {_arcgis_quote(_iso(t.value))}"
+            where_sql = f"({where_sql}) AND ({frag})"
+
+        params["where"] = where_sql
+
+        # bbox envelope
+        if v2.spatial is not None:
+            if v2.spatial.op != "bbox":
+                raise InvalidQueryError(
+                    f"ArcGIS adapter supports bbox envelope pushdown only "
+                    f"(got '{v2.spatial.op}'); use bbox or a PostGIS source"
+                )
+            from app.services.data_fabric.query.predicates import bbox_crosses_antimeridian
+
+            if bbox_crosses_antimeridian(v2.spatial.bbox):
+                raise InvalidQueryError("antimeridian-crossing bbox not supported by ArcGIS envelope")
+            minx, miny, maxx, maxy = v2.spatial.bbox
+            params["geometry"] = f"{minx},{miny},{maxx},{maxy}"
+            params["geometryType"] = "esriGeometryEnvelope"
+            params["inSR"] = "4326"
+            params["spatialRel"] = "esriSpatialRelIntersects"
+
+
         # STATISTICS：count-only（returnCountOnly，零几何传输）
         if plan.result_mode == ResultMode.STATISTICS:
             if split_active:
@@ -313,7 +360,6 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
                     details={"hint": "avoid ops declared in filter_ops_local for counts"},
                 )
             if v2.aggregate and len(v2.aggregate) == 1 and v2.aggregate[0].func == "count" and not v2.group_by:
-                params = self._base_params(v2)
                 params["returnCountOnly"] = "true"
                 params.pop("resultRecordCount", None)
                 params.pop("resultOffset", None)
@@ -357,12 +403,13 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         limit = min(page.limit, max_record_count)  # 页大小钳制到服务上限
         offset = page.offset if isinstance(page, OffsetPage) else 0
 
-        params = self._base_params(v2)
         local_slice = None
         if offset and supports_pagination:
             params["resultOffset"] = offset
             params["resultRecordCount"] = limit
         elif offset:
+            if offset + limit > max_record_count:
+                raise InvalidQueryError("ArcGIS layer does not support pagination; offset+limit exceeds maxRecordCount, narrow the predicate")
             # R2-M7：服务不支持分页 → 多取 offset+limit 条本地切片
             local_slice = (offset, limit)
             params["resultRecordCount"] = offset + limit
@@ -373,34 +420,6 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
             })
         else:
             params["resultRecordCount"] = limit
-
-        # where：AST 编译（单引号 doubling）。V5：拆分计划只编译下推半。
-        where_sql = "1=1"
-        if remote_filter is not None:
-            allowed = [f["name"] for f in descriptor.fields if f.get("name")]
-            from app.services.data_fabric.query.predicates import validate_predicate_fields
-
-            validate_predicate_fields(remote_filter, allowed)
-            where_sql = compile_predicate_arcgis(remote_filter)
-
-        # temporal → where 片段（AND 连接；值经 _arcgis_quote 转义）
-        if v2.temporal is not None:
-            from app.services.data_fabric.query.compilers import _arcgis_quote
-
-            def _iso(s: str) -> str:
-                return s.replace("Z", "")
-
-            t = v2.temporal
-            if t.op == "during":
-                frag = (f"{t.field} >= TIMESTAMP {_arcgis_quote(_iso(t.start))} AND "
-                        f"{t.field} <= TIMESTAMP {_arcgis_quote(_iso(t.end))}")
-            elif t.op == "before":
-                frag = f"{t.field} < TIMESTAMP {_arcgis_quote(_iso(t.value))}"
-            else:
-                frag = f"{t.field} > TIMESTAMP {_arcgis_quote(_iso(t.value))}"
-            where_sql = f"({where_sql}) AND ({frag})"
-
-        params["where"] = where_sql
 
         # outFields 投影（R1-M9：未知字段 typed，不再静默丢弃/回退 *）
         if v2.select is not None:
@@ -424,23 +443,6 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         if not order_parts:
             order_parts.append(f"{oid_field} ASC")
         params["orderByFields"] = ",".join(order_parts)
-
-        # bbox envelope
-        if v2.spatial is not None:
-            if v2.spatial.op != "bbox":
-                raise InvalidQueryError(
-                    f"ArcGIS adapter supports bbox envelope pushdown only "
-                    f"(got '{v2.spatial.op}'); use bbox or a PostGIS source"
-                )
-            from app.services.data_fabric.query.predicates import bbox_crosses_antimeridian
-
-            if bbox_crosses_antimeridian(v2.spatial.bbox):
-                raise InvalidQueryError("antimeridian-crossing bbox not supported by ArcGIS envelope")
-            minx, miny, maxx, maxy = v2.spatial.bbox
-            params["geometry"] = f"{minx},{miny},{maxx},{maxy}"
-            params["geometryType"] = "esriGeometryEnvelope"
-            params["inSR"] = "4326"
-            params["spatialRel"] = "esriSpatialRelIntersects"
 
         query_url = f"{self.url.rstrip('/')}/{layer_id}/query"
         try:

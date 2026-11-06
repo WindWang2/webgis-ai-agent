@@ -1,4 +1,5 @@
 {
+  "loading": "Loading…",
   "title": "Agent Ops Cockpit",
   "subtitle": "Mission / skill / evidence / resources / trace — all read from backend projections",
   "disabled": "Mission Runtime is disabled (GIS_MISSION_RUNTIME=0): the cockpit projection surface is unavailable. This is the honest presentation of a server-side kill switch, not a frontend failure.",

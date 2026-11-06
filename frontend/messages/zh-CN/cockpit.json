@@ -1,4 +1,5 @@
 {
+  "loading": "正在加载…",
   "title": "Agent 运行控制台",
   "subtitle": "Mission / 技能 / 证据 / 资源 / 回放 —— 全部读自后端投影",
   "disabled": "Mission Runtime 已关停（GIS_MISSION_RUNTIME=0）：控制台投影面不可用。这是服务端开关的诚实呈现，不是前端故障。",

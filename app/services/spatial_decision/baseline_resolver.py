@@ -128,12 +128,12 @@ class BaselineResolver:
         if isinstance(stored_data, dict):
             if "metrics" in stored_data and isinstance(stored_data["metrics"], dict):
                 for k, v in stored_data["metrics"].items():
-                    if isinstance(v, (int, float)):
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
                         extracted_raw_metrics[k] = float(v)
             else:
                 # Top level numeric dict
                 for k, v in stored_data.items():
-                    if isinstance(v, (int, float)):
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
                         extracted_raw_metrics[k] = float(v)
 
         # Attempt spatial feature attribute aggregation if stored_data is GeoJSON FeatureCollection
@@ -203,13 +203,15 @@ class BaselineResolver:
         features: List[Dict[str, Any]],
         target_area: TargetAreaSpec
     ) -> Dict[str, float]:
-        """Spatially filters features within target_area and averages numeric properties."""
+        """Filter intersecting features; sum known population/area totals, mean other numeric fields without area weighting."""
         target_shape = None
         if target_area.geometry:
             try:
                 target_shape = shape(target_area.geometry)
             except Exception:
-                pass
+                return {}
+        if target_shape is None or target_shape.is_empty or not target_shape.is_valid:
+            return {}
 
         matching_features = []
         for feat in features:
@@ -221,7 +223,7 @@ class BaselineResolver:
                     if not target_shape.intersects(feat_geom):
                         continue
                 except Exception:
-                    pass
+                    continue
             matching_features.append(feat)
 
         if not matching_features:
@@ -236,7 +238,7 @@ class BaselineResolver:
             if not isinstance(props, dict):
                 continue
             for k, v in props.items():
-                if isinstance(v, (int, float)):
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
                     prop_sums[k] = prop_sums.get(k, 0.0) + float(v)
                     prop_counts[k] = prop_counts.get(k, 0) + 1
 
@@ -244,7 +246,10 @@ class BaselineResolver:
         for k, total in prop_sums.items():
             cnt = prop_counts[k]
             if cnt > 0:
-                averages[k] = round(total / cnt, 4)
+                # Extensive quantities add across intersecting features; other metrics
+                # use the documented unweighted arithmetic mean (no area weights).
+                additive = k.lower() in {"population", "pop", "population_total", "total_population", "人口", "人口数", "人口总数", "area", "area_m2", "area_km2", "面积"}
+                averages[k] = round(total if additive else total / cnt, 4)
 
         return averages
 

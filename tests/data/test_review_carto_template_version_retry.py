@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
-from sqlalchemy.orm import Query
+from collections.abc import Iterator
+from pathlib import Path
 
-from app.core.database import Base, Engine, SessionLocal
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Query, Session, sessionmaker
+
+from app.core.database import Base
 from app.models.db_model import CartographyTemplate
 from app.models.template_version import TemplateVersion
 from app.services.templates import versioning
@@ -13,20 +17,21 @@ from app.services.templates import versioning
 _TID = "tmpl_cp18_retry"
 
 
-@pytest.fixture(autouse=True)
-def _setup():
-    Base.metadata.create_all(bind=Engine)
-    with SessionLocal() as db:
-        db.merge(CartographyTemplate(
-            id=_TID, kind="layout", name="cp18", category="layout", keywords=[],
-            description="", payload={}, is_builtin=False, version=1, creator_id="u",
-        ))
-        db.commit()
-    yield
-    with SessionLocal() as db:
-        db.query(TemplateVersion).filter_by(template_id=_TID).delete()
-        db.query(CartographyTemplate).filter_by(id=_TID).delete()
-        db.commit()
+@pytest.fixture
+def session_factory(tmp_path: Path) -> Iterator[sessionmaker[Session]]:
+    engine = create_engine(f"sqlite:///{tmp_path / 'cp18.db'}")
+    factory = sessionmaker(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+        with factory() as db:
+            db.add(CartographyTemplate(
+                id=_TID, kind="layout", name="cp18", category="layout", keywords=[],
+                description="", payload={}, is_builtin=False, version=1, creator_id="u",
+            ))
+            db.commit()
+        yield factory
+    finally:
+        engine.dispose()
 
 
 def _stale_first(monkeypatch, stale_reads: int):
@@ -44,17 +49,18 @@ def _stale_first(monkeypatch, stale_reads: int):
     monkeypatch.setattr(Query, "first", first)
 
 
-def test_cp18_conflict_is_retried(monkeypatch):
-    with SessionLocal() as db:
+def test_cp18_conflict_is_retried(monkeypatch, session_factory):
+    with session_factory() as db:
         v1 = versioning.create_version(db, _TID, {"a": 1})
         assert v1.version == 1
         _stale_first(monkeypatch, 1)
         v2 = versioning.create_version(db, _TID, {"a": 2})
-        assert v2.version == 2 and v2.parent_version_id == v1.id
+        assert v2.version == 2 and v2.parent_version_id is None
+        assert versioning.resolve_payload(db, v2)[0] == {"a": 2}
 
 
-def test_cp18_exhausted_retries_raise_conflict(monkeypatch):
-    with SessionLocal() as db:
+def test_cp18_exhausted_retries_raise_conflict(monkeypatch, session_factory):
+    with session_factory() as db:
         versioning.create_version(db, _TID, {"a": 1})
         _stale_first(monkeypatch, 99)
         with pytest.raises(versioning.TemplateVersionConflictError):

@@ -1,13 +1,18 @@
 {
   "version": "1.0",
   "view": {
-    "center": [0, 5],
+    "center": [
+      0,
+      5
+    ],
     "zoom": 2
   },
   "sources": {
     "pts": {
       "type": "vector",
-      "tiles": ["__ORIGIN__/tiles/{z}/{x}/{y}.mvt"],
+      "tiles": [
+        "__ORIGIN__/tiles/{z}/{x}/{y}.mvt"
+      ],
       "minzoom": 0,
       "maxzoom": 2
     }
@@ -23,12 +28,19 @@
           "method": "match",
           "field": "kind",
           "cases": [
-            ["a", "#e41a1c"],
-            ["b", "#377eb8"]
+            [
+              "a",
+              "#e41a1c"
+            ],
+            [
+              "b",
+              "#377eb8"
+            ]
           ],
           "default": "#999999"
         },
-        "radius": 8
+        "radius": 8,
+        "opacity": 1
       }
     }
   ]

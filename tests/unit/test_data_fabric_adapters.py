@@ -55,7 +55,7 @@ def test_postgis_adapter_interface():
 def test_ogc_api_adapter_interface():
     profile = ConnectionProfile(
         source_type="ogc_api",
-        endpoint_url="https://demo.ldproxy.net/dusseldorf",
+        endpoint_url="https://93.184.216.34/ogc",
         name="test_ogc",
     )
     adapter = OGCApiFeaturesAdapter(profile)
@@ -65,7 +65,7 @@ def test_ogc_api_adapter_interface():
 def test_wfs_adapter_interface():
     profile = ConnectionProfile(
         source_type="wfs",
-        endpoint_url="https://demo.mapserver.org/cgi-bin/wfs",
+        endpoint_url="https://93.184.216.34/wfs",
         name="test_wfs",
     )
     adapter = WFSAdapter(profile)
@@ -75,7 +75,7 @@ def test_wfs_adapter_interface():
 def test_wms_wmts_adapter_interface():
     profile = ConnectionProfile(
         source_type="wms",
-        endpoint_url="https://demo.mapserver.org/cgi-bin/wms",
+        endpoint_url="https://93.184.216.34/wms",
         name="test_wms",
     )
     adapter = WMSWMTSAdapter(profile)
@@ -85,7 +85,7 @@ def test_wms_wmts_adapter_interface():
 def test_arcgis_adapter_interface():
     profile = ConnectionProfile(
         source_type="arcgis",
-        endpoint_url="https://services.arcgis.com/World_Cities/FeatureServer/0",
+        endpoint_url="https://93.184.216.34/FeatureServer/0",
         name="test_arcgis",
     )
     adapter = ArcGISRESTAdapter(profile)

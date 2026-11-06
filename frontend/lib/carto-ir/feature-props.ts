@@ -1,3 +1,4 @@
+import { resolveFeatureId, FEATURE_ID_KEYS } from '@/lib/layers/feature-id';
 /**
  * 要素属性 typed 访问面（C11，issue #1556）。
  *
@@ -30,7 +31,7 @@ export interface FeatureLike {
  * FEATURE_ID_KEYS / use-feature-selection 既有裁决一致（`id` 优先，
  * OBJECTID 为 ESRI 导出链回退）。
  */
-export const FEATURE_ID_FIELDS = ["id", "OBJECTID", "fid", "FID"] as const;
+export const FEATURE_ID_FIELDS = FEATURE_ID_KEYS;
 
 /** typed 读取：properties 缺失/类型不符 → undefined，绝不抛。 */
 export function propOf(feature: FeatureLike | undefined | null, key: string): FeaturePropertyValue {
@@ -46,9 +47,5 @@ export function propOf(feature: FeatureLike | undefined | null, key: string): Fe
 /** 要素标识：id 字段（ESRI 链 OBJECTID 优先，同 #1556 既有语义），typed。
  *  null 视为"字段存在但无值"—— 回落下一候选（`??` 链语义一致）。 */
 export function featureIdOf(feature: FeatureLike | undefined | null): FeaturePropertyValue {
-  for (const key of FEATURE_ID_FIELDS) {
-    const v = propOf(feature, key);
-    if (v != null) return v;
-  }
-  return undefined;
+  return resolveFeatureId(feature?.properties, feature?.id) ?? undefined;
 }

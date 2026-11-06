@@ -244,6 +244,10 @@ class MapSpecStore:
     ) -> Dict[str, Any]:
         from app.services.spatial_meta_profiler import profile_geojson_source
         descriptor: Optional[Dict[str, Any]] = None
+        if not isinstance(geojson_data, dict) and not (
+            isinstance(geojson_data, str) and geojson_data.startswith("ref:")
+        ):
+            raise ValueError("source profile requires inline GeoJSON or a session-owned ref")
         if isinstance(geojson_data, str) and geojson_data.startswith("ref:"):
             canonical_ref = await session_data_manager.resolve_alias(session_id, geojson_data)
             descriptor = await session_data_manager.get_ref_descriptor(
@@ -489,17 +493,8 @@ class MapSpecStore:
         mapspec = await self.get_mapspec(session_id)
         if not mapspec:
             return {"success": False, "message": "MapSpec not found", "errors": ["MapSpec not initialized"]}
-        from app.services.mapspec.coordinator import validate
-        from app.lib.cartography.quality_loop import review_cartography
-        from app.lib.cartography.grammar_propagation import grammar_auditor_for_mapspec
-        result = validate(mapspec)
-        # F10：层携带 grammar 决策工件 → 只读对账（缺失 → None，不评不阻断）。
-        cartographic_review = review_cartography(
-            mapspec, grammar_decision=grammar_auditor_for_mapspec(mapspec),
-        ).to_dict()
-        result["mapspec_fingerprint"] = cartographic_review["final_fingerprint"]
-        result["cartographic_review"] = cartographic_review
-        return result
+        from app.services.mapspec.validation_review import validate_snapshot
+        return await asyncio.to_thread(validate_snapshot, mapspec)
 
     async def set_basemap(
         self, session_id: str, provider_id: str,

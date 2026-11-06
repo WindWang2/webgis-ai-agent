@@ -73,6 +73,8 @@ export function useStuckRuns(options: UseStuckRunsOptions = {}): UseStuckRunsRes
     [],
   );
 
+  useEffect(() => { epochRef.current += 1; setResetting(new Set()); setReceipts([]); }, [ownerToken]);
+
   const { refresh: refreshStuck } = poll;
 
   const resetRun = useCallback(

@@ -36,6 +36,8 @@ class FakeRegistry:
 
 
 _RESOLVER_FACTS = {
+    "webgis_layer_remove": dict(tool="webgis_layer_remove", side_effect="state_mutation"),
+    "webgis_component_update": dict(tool="webgis_component_update", side_effect="state_mutation"),
     "t_upsert": dict(tool="t_upsert", side_effect="state_mutation"),
     "t_analyze": dict(tool="t_analyze", side_effect="deterministic_compute"),
     "t_export": dict(tool="t_export", side_effect="external_side_effect"),
@@ -268,3 +270,43 @@ class TestReceiptBounds:
         dump = receipt.model_dump_json()
         assert len(dump) < 8000
         assert receipt.step_receipts[0].result_digest
+
+
+async def test_best_effort_failure_skips_dependent_chain_but_runs_independent_step():
+    registry = FakeRegistry(script={"t_upsert": {"success": False}})
+    compilation = _compile(
+        _mutation_step("act-failed", failure="best_effort"),
+        GISAction(action_id="act-child", kind="analyze", tool="t_analyze", depends_on=["act-failed"]),
+        GISAction(action_id="act-grandchild", kind="analyze", tool="t_analyze", depends_on=["act-child"]),
+        GISAction(action_id="act-independent", kind="analyze", tool="t_analyze"),
+    )
+    assert not compilation.blocked
+    result = await ActionPlanExecutor(registry=registry).run(compilation)
+    by_id = {receipt.action_id: receipt for receipt in result.step_receipts}
+    assert by_id["act-child"].code == by_id["act-grandchild"].code == "DEPENDENCY_FAILED"
+    assert by_id["act-independent"].status == "applied"
+    assert [name for name, _ in registry.calls] == ["t_upsert", "t_analyze"]
+
+
+async def test_component_compensation_uses_registered_action_and_component_id():
+    registry = FakeRegistry(script={"t_analyze": {"success": False}})
+    compilation = _compile(
+        _mutation_step("act-component", compensation=Compensation(kind="remove_component", target="legend")),
+        GISAction(action_id="act-fail", kind="analyze", tool="t_analyze", failure="compensate"),
+    )
+    assert not compilation.blocked
+    receipt = await ActionPlanExecutor(registry=registry).run(compilation)
+    assert receipt.compensation_receipts[0].status == "compensated"
+    assert registry.calls[-1] == ("webgis_component_update", {"component_id": "legend", "action": "remove"})
+
+
+def test_unregistered_compensation_is_rejected_before_any_effect():
+    class MissingUndo(_FakeResolver):
+        def resolve_tool(self, name):
+            return None if name == "webgis_component_update" else super().resolve_tool(name)
+
+    plan = GISActionPlan(plan_id="gap-missing", actions=[
+        _mutation_step(compensation=Compensation(kind="remove_component", target="legend"))])
+    compilation = compile_actions(plan, resolver=MissingUndo())
+    assert compilation.blocked
+    assert "COMPENSATION_UNRESOLVED" in [finding.code for finding in compilation.findings]

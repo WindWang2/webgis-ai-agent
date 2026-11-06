@@ -145,9 +145,9 @@ const t = useT();
           <p className="text-[11px] text-[var(--theme-text-muted)]">{t('sidebar.wf.noSteps')}</p>
         ) : (
           <ol className="space-y-1">
-            {steps.map((s) => (
+            {steps.map((s, index) => (
               <li
-                key={s.step_id ?? s.tool_name}
+                key={`${s.step_id ?? s.tool_name}-${index}`}
                 className="flex items-center justify-between gap-2 rounded border border-[var(--theme-border)] px-2 py-1"
               >
                 <span className="min-w-0 truncate text-[11px] text-[var(--theme-text-primary)]">
@@ -229,7 +229,7 @@ const t = useT();
             {perf.total_duration_seconds != null && (
               <div>{t('sidebar.wf.duration')} {String(perf.total_duration_seconds)}s</div>
             )}
-            {perf.elapsed_ms != null && <div>{t('sidebar.wf.duration')} {String(perf.elapsed_ms)}ms</div>}
+            {perf.total_duration_seconds == null && perf.elapsed_ms != null && <div>{t('sidebar.wf.duration')} {String(perf.elapsed_ms)}ms</div>}
           </div>
         )}
       </section>

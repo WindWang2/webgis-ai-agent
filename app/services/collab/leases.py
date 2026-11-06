@@ -23,6 +23,14 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+def _safe_client(value: str) -> str:
+    return "".join(char for char in str(value) if ord(char) >= 32 and ord(char) != 127 and char not in ('"', "\\"))[:120]
+
+
+class LeaseBackendUnavailable(RuntimeError):
+    """Configured shared coordination is temporarily unavailable."""
+
+
 LEASE_TTL_S = 60
 RENEW_INTERVAL_S = 20
 MAX_LEASES_PER_CLIENT = 16
@@ -59,7 +67,12 @@ for i = 1, #members, 2 do
 end
 if #expired > 0 then redis.call('HDEL', key, unpack(expired)) end
 if holder then
-  return {0, holder}
+  local okh, h = pcall(cjson.decode, holder)
+  if not okh or h.client ~= client then return {0, holder} end
+  local value = '{"client":"' .. client .. '","label":"' .. label .. '","exp":' .. tostring(math.floor(now + ttl)) .. '}'
+  redis.call('HSET', key, lock_key, value)
+  redis.call('PEXPIRE', key, ttl_ms)
+  return {1, value}
 end
 if mine >= max_per_client then
   return {0, 'client_limit'}
@@ -168,8 +181,8 @@ class LeaseRegistry:
             return {"granted": False, "reason": "invalid_lock_key"}
         now = time.time()
         # Lua 内拼接 JSON（acquire 脚本）：字段先去引义字符，防注入破坏 JSON。
-        safe_client = str(client_id).replace('"', "").replace("\\", "")[:120]
-        safe_label = str(label).replace('"', "").replace("\\", "")[:120]
+        safe_client = _safe_client(client_id)
+        safe_label = _safe_client(label)
         client = self._redis()
         if client is not None:
             try:
@@ -201,7 +214,11 @@ class LeaseRegistry:
                 # #1386 R05: Redis 配置在但出错时不得 fail-open 到进程内锁
                 #（跨 worker 会双人同持一层）。无 Redis 才走 local。
                 return {"granted": False, "reason": "redis_unavailable"}
-        return self._acquire_local(str(session_id), key, str(client_id), str(label)[:120], now)
+        try:
+            self._require_shared_backend(client)
+        except LeaseBackendUnavailable:
+            return {"granted": False, "reason": "redis_unavailable"}
+        return self._acquire_local(str(session_id), key, safe_client, safe_label, now)
 
     def _acquire_local(
         self, session_id: str, key: str, client_id: str, label: str, now: float
@@ -222,12 +239,19 @@ class LeaseRegistry:
         bucket[key] = {"client": client_id, "label": label, "exp": now + self._ttl_s}
         return {"granted": True}
 
+    def _require_shared_backend(self, client: Any) -> None:
+        from app.core.config import settings
+        if client is None and getattr(settings, "USE_REDIS", False):
+            raise LeaseBackendUnavailable("redis_unavailable")
+
     async def renew(self, session_id: str, lock_key: str, client_id: str) -> bool:
+        client_id = _safe_client(client_id)
         key = normalize_lock_key(lock_key)
         if key is None:
             return False
         now = time.time()
         client = self._redis()
+        self._require_shared_backend(client)
         if client is not None:
             try:
                 return bool(
@@ -239,6 +263,7 @@ class LeaseRegistry:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[collab-lease] redis renew failed: %s", exc)
                 self._drop()
+                raise LeaseBackendUnavailable("redis_unavailable") from exc
         bucket = self._sweep_local(session_id, now)
         record = (bucket or {}).get(key)
         if record is None or record.get("client") != client_id:
@@ -247,10 +272,12 @@ class LeaseRegistry:
         return True
 
     async def release(self, session_id: str, lock_key: str, client_id: str) -> bool:
+        client_id = _safe_client(client_id)
         key = normalize_lock_key(lock_key)
         if key is None:
             return False
         client = self._redis()
+        self._require_shared_backend(client)
         if client is not None:
             try:
                 return bool(
@@ -262,6 +289,7 @@ class LeaseRegistry:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[collab-lease] redis release failed: %s", exc)
                 self._drop()
+                raise LeaseBackendUnavailable("redis_unavailable") from exc
         bucket = self._local.get(session_id)
         record = (bucket or {}).get(key)
         if record is None or record.get("client") != client_id:
@@ -273,6 +301,7 @@ class LeaseRegistry:
 
     async def release_all(self, session_id: str, client_id: str) -> int:
         """断连清理：释放该 client 的全部租约。返回释放数。"""
+        client_id = _safe_client(client_id)
         released = 0
         for record in await self.snapshot(session_id):
             if record.get("client") == client_id and record.get("lockKey"):
@@ -285,6 +314,7 @@ class LeaseRegistry:
     async def snapshot(self, session_id: str) -> List[Dict[str, Any]]:
         now = time.time()
         client = self._redis()
+        self._require_shared_backend(client)
         if client is not None:
             try:
                 raw = await self._client.hgetall(_KEY.format(sid=str(session_id)))
@@ -303,6 +333,7 @@ class LeaseRegistry:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[collab-lease] redis snapshot failed: %s", exc)
                 self._drop()
+                raise LeaseBackendUnavailable("redis_unavailable") from exc
         bucket = self._sweep_local(session_id, now)
         if not bucket:
             return []

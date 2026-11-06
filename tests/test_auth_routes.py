@@ -16,6 +16,8 @@ os.environ.setdefault("ALLOW_PUBLIC_REGISTER", "true")
 
 @pytest_asyncio.fixture
 async def app_and_db(tmp_path, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "ALLOW_PUBLIC_REGISTER", True)
     """每个 test 用一个独立的 sqlite 文件 + 干净 schema，via dep override。
 
     同时把 rate limiter 替换为永远放行的 stub —— register/login 限速本身由
@@ -220,7 +222,8 @@ async def test_me_with_valid_token_returns_user(client):
 @pytest.mark.asyncio
 async def test_register_disabled_by_default(client, monkeypatch):
     """审计 S28：默认关闭公开注册 —— 防止匿名铸造合法 JWT 后访问所有 admin 端点。"""
-    monkeypatch.delenv("ALLOW_PUBLIC_REGISTER", raising=False)
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "ALLOW_PUBLIC_REGISTER", False)
     resp = await client.post("/api/v1/auth/register", json={
         "username": "attacker",
         "email": "attacker@example.com",

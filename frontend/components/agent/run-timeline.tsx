@@ -9,7 +9,7 @@
  * 「无事件」；503 = 控制面暂不可用。不轮询（任务中心的 3s 轮询驱动展开
  * 时机；手动刷新按钮补一手）。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import {
   getRunEvents,
@@ -59,23 +59,30 @@ export function RunTimeline({ runId }: { runId: string }) {
   const [error, setError] = useState<'not_found' | 'unavailable' | 'network' | null>(null);
   const [loading, setLoading] = useState(false);
   const [afterId, setAfterId] = useState(0);
+  const sequence = useRef(0);
+  const activeRun = useRef(runId);
+  activeRun.current = runId;
   /** 后端已无可读事件（page.count === 0）—— 续读按钮收起。 */
   const [exhausted, setExhausted] = useState(false);
 
   const load = useCallback(async (cursor: number, append: boolean) => {
+    const seq = ++sequence.current;
+    const current = () => seq === sequence.current && activeRun.current === runId;
     setLoading(true);
     setError(null);
     try {
       const page = await getRunEvents(runId, { afterId: cursor, limit: 200 });
+      if (!current()) return;
       setEvents((prev) => (append && prev ? [...prev, ...page.events] : page.events));
       setAfterId(page.after_id);
       // after_id 是升序游标 —— 追加的是**更晚**事件；count 为 0 即耗尽。
       setExhausted(page.count === 0);
     } catch (err) {
+      if (!current()) return;
       if (err instanceof RunEventsUnavailableError) setError(err.reason);
       else setError('network');
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
   }, [runId]);
 
@@ -84,19 +91,20 @@ export function RunTimeline({ runId }: { runId: string }) {
     setAfterId(0);
     setExhausted(false);
     void load(0, false);
+    return () => { sequence.current += 1; };
   }, [load]);
 
   const hasMore = events != null && events.length > 0 && afterId > 0
     && events[events.length - 1].id === afterId;
 
-  if (error === 'not_found') {
+  if (error === 'not_found' && !events?.length) {
     return (
       <InlineNotice variant="info">
         {t('timeline.unavailable')}
       </InlineNotice>
     );
   }
-  if (error === 'unavailable' || error === 'network') {
+  if ((error === 'unavailable' || error === 'network') && !events?.length) {
     return (
       <InlineNotice variant="error">
         {error === 'unavailable' ? t('timeline.controlPlaneUnavailable') : t('timeline.loadFailed')}
@@ -115,12 +123,14 @@ export function RunTimeline({ runId }: { runId: string }) {
         <button
           type="button"
           aria-label={t('timeline.refresh')}
+          disabled={loading}
           className="ml-auto rounded-xs p-0.5 text-ink-muted hover:bg-surface-hover hover:text-ink"
           onClick={() => void load(0, false)}
         >
           <RefreshCw aria-hidden size={11} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
+      {error && <InlineNotice variant="error">{error === 'not_found' ? t('timeline.unavailable') : error === 'unavailable' ? t('timeline.controlPlaneUnavailable') : t('timeline.loadFailed')}</InlineNotice>}
       <ol className="m-0 list-none space-y-0.5 p-0">
         {events.map((e) => (
           <li key={e.id} className="flex items-start gap-1.5 px-2 py-0.5" data-testid={`run-event-${e.id}`}>
@@ -148,6 +158,7 @@ export function RunTimeline({ runId }: { runId: string }) {
         <button
           type="button"
           className="mx-2 rounded-xs border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-hover"
+          disabled={loading}
           onClick={() => void load(afterId, true)}
         >
           {t('timeline.loadMore')}

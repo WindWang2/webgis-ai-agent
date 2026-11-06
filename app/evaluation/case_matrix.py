@@ -608,7 +608,8 @@ def build_matrix_cases() -> List[GISBenchmarkCase]:
     cases.extend(_style_cases())
     # 去重保险（同 id 二次注册是编程错误）
     ids = [c.id for c in cases]
-    assert len(ids) == len(set(ids)), "duplicate matrix case ids"
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate matrix case ids")
     for case in cases:
         if case.query in _TASK_OVERRIDES:
             case.expected_task = _TASK_OVERRIDES[case.query]

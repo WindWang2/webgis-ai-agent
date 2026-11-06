@@ -269,9 +269,6 @@ def test_vsicurl_gate_non_http_passes_untouched():
     untouched = [
         "/data/local/scene.tif",
         "C:\\gis\\scene.tif",
-        "/vsis3/my-bucket/scene.tif",
-        "/vsigs/bucket/scene.tif",
-        "s3://my-bucket/scene.tif",
         "ref:raster/abc",
         "",
     ]
@@ -320,6 +317,10 @@ def test_raster_reader_open_local_path_passes_gate(monkeypatch):
 
     class _FakeDS:
         closed = True
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
 
     opened: list[str] = []
 
@@ -340,6 +341,10 @@ def test_raster_reader_open_public_href_passes_gate(monkeypatch):
 
     class _FakeDS:
         closed = True
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
 
     opened: list[str] = []
 
@@ -378,7 +383,7 @@ def test_stac_api_url_settings_field_default():
     from app.core.config import settings
     from app.services.rs import stac_client
 
-    assert settings.STAC_API_URL == "https://earth-search.aws.element84.com/v1"
+    assert type(settings).model_fields["STAC_API_URL"].default == "https://earth-search.aws.element84.com/v1"
     assert stac_client._catalog_url() == settings.STAC_API_URL
 
 
@@ -409,9 +414,8 @@ def test_stac_asset_href_validation_passes_public_and_non_http():
     public = f"http://{PUBLIC_IPV4}/scene.tif"
     assert stac_client._validate_asset_href(public) == public
     # 非 http(s)（本地路径 / /vsis3）原样放行
-    assert stac_client._validate_asset_href("/vsis3/sentinel-s2-l2a/scene.tif") == (
-        "/vsis3/sentinel-s2-l2a/scene.tif"
-    )
+    with pytest.raises(DataFabricSecurityError):
+        stac_client._validate_asset_href("/vsis3/sentinel-s2-l2a/scene.tif")
 
 
 # ── 4) WMS/WMTS query()/preview() 诚实性 + 凭证脱敏 + 有界下载 ─────────────
@@ -453,7 +457,7 @@ class TestWmsQueryPreviewTruthfulness:
         adapter = _wms_adapter(WMS_130_CAPS)
         res = adapter.query("terrain", QuerySpec(limit=1))
         url = res.metadata["getmap_url"]
-        assert "BBOX=-15.0,30.0,35.0,65.0" in url
+        assert "BBOX=30.0,-15.0,65.0,35.0" in url  # WMS1.3 EPSG4326 is lat/lon
         assert res.metadata["axis_order_note"]
 
     def test_preview_never_returns_fabricated_world_bbox(self):
@@ -563,7 +567,8 @@ class TestVsICurlBypassForms:
     def test_local_and_s3_untouched(self):
         from app.lib.geo_raster.env import validate_remote_href
 
-        assert validate_remote_href("/vsis3/bucket/key.tif") == "/vsis3/bucket/key.tif"
+        with pytest.raises(DataFabricSecurityError):
+            validate_remote_href("/vsis3/bucket/key.tif")
         assert validate_remote_href("/data/local/a.tif") == "/data/local/a.tif"
         assert validate_remote_href("a.tif") == "a.tif"
 

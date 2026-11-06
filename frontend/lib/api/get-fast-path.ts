@@ -241,6 +241,8 @@ export async function fastGet<T = unknown>(
     ttl > 0 &&
     now - existing.insertedAt < ttl
   ) {
+    cache.delete(key);
+    cache.set(key, existing);
     return {
       data: existing.value as T,
       cached: true,

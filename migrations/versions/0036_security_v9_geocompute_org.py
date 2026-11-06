@@ -75,13 +75,19 @@ def _is_sqlite() -> bool:
 _BACKFILL_BATCH = 5000
 
 
+def _quote_identifier(name: str) -> str:
+    """Identifiers come from the static migration table lists, quoted by dialect."""
+    return op.get_bind().dialect.identifier_preparer.quote_identifier(name)
+
+
 def _exec_update_batched(table: str, set_clause: str, where_clause: str) -> None:
     """PostgreSQL 按 ctid 分批 UPDATE；SQLite 全量一次。
 
     每批 ``autocommit_block``，缩短锁持有窗口（#1306）。
     """
+    table = _quote_identifier(table)
     if _is_sqlite():
-        op.execute(f"UPDATE {table} SET {set_clause} WHERE {where_clause}")
+        op.execute(sa.text(f"UPDATE {table} SET {set_clause} WHERE {where_clause}"))
         return
     sql = (
         f"UPDATE {table} SET {set_clause} "
@@ -100,7 +106,8 @@ def _exec_update_batched(table: str, set_clause: str, where_clause: str) -> None
 
 def _pg_create_index_concurrently(index_name: str, table: str, cols: list) -> None:
     """CREATE INDEX CONCURRENTLY（事务外；#1306）。"""
-    col_sql = ", ".join(cols)
+    col_sql = ", ".join(_quote_identifier(column) for column in cols)
+    table, index_name = _quote_identifier(table), _quote_identifier(index_name)
     with op.get_context().autocommit_block():
         op.execute(
             f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} "
@@ -152,7 +159,7 @@ def _backfill() -> None:
             child,
             f"org_id = ("
             f"  SELECT r.org_id FROM geocompute_runs r"
-            f"  WHERE r.run_id = {child}.{run_id_col}"
+            f"  WHERE r.run_id = {_quote_identifier(child)}.{_quote_identifier(run_id_col)}"
             ")",
             "org_id IS NULL",
         )
@@ -176,7 +183,6 @@ def _backfill() -> None:
 
 def _enforce_not_null_and_indexes() -> None:
     for index_name, table, cols in INDEXES:
-        col_sql = ", ".join(cols)
         if _is_sqlite():
             with op.batch_alter_table(table, schema=None) as batch_op:
                 if table != 'geocompute_artifacts':
@@ -193,7 +199,7 @@ def _enforce_not_null_and_indexes() -> None:
             with op.batch_alter_table(table, schema=None) as batch_op:
                 batch_op.alter_column('org_id', existing_type=sa.String(length=255), nullable=False)
         else:
-            op.execute(f"ALTER TABLE {table} ALTER COLUMN org_id SET NOT NULL")
+            op.execute(f"ALTER TABLE {_quote_identifier(table)} ALTER COLUMN org_id SET NOT NULL")
 
     # artifacts 的 NOT NULL 与索引顺序：batch recreate 一次完成两者，避免二次重建
     if _is_sqlite():
@@ -218,14 +224,14 @@ def downgrade() -> None:
             with op.batch_alter_table(table, schema=None) as batch_op:
                 batch_op.drop_index(index_name)
         else:
-            op.execute(f"DROP INDEX IF EXISTS {index_name}")
+            op.execute(f"DROP INDEX IF EXISTS {_quote_identifier(index_name)}")
 
     for table in CONTROL_TABLES:
         if _is_sqlite():
             with op.batch_alter_table(table, schema=None) as batch_op:
                 batch_op.drop_column('org_id')
         else:
-            op.execute(f"ALTER TABLE {table} DROP COLUMN IF EXISTS org_id")
+            op.execute(f"ALTER TABLE {_quote_identifier(table)} DROP COLUMN IF EXISTS org_id")
 
     for table, _tenant, _ts in reversed(
         [t for t in TENANT_TABLES if t[0] != 'geocompute_runs']
@@ -234,7 +240,7 @@ def downgrade() -> None:
             with op.batch_alter_table(table, schema=None) as batch_op:
                 batch_op.drop_column('org_id')
         else:
-            op.execute(f"ALTER TABLE {table} DROP COLUMN IF EXISTS org_id")
+            op.execute(f"ALTER TABLE {_quote_identifier(table)} DROP COLUMN IF EXISTS org_id")
 
     # runs 回 0033 形态（nullable，不删列——列是 0033 引入的）
     if _is_sqlite():

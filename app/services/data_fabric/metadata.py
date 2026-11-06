@@ -115,10 +115,10 @@ def normalize_crs(raw: Any) -> Optional[str]:
 
     up = val.upper()
     if up.startswith("EPSG:") or up.startswith("ESRI:") or up == "CRS84":
-        return val if up != "CRS84" else "CRS84"
+        return up
 
     # OGC CRS84 URI (http://www.opengis.net/def/crs/OGC/1.3/CRS84) → CRS84.
-    if up.endswith("/CRS84"):
+    if up.endswith(("/CRS84", ":CRS84")):
         return "CRS84"
 
     # OGC CRS URI → EPSG:NNNN (CRS84 stays CRS84).

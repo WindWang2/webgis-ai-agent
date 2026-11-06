@@ -33,7 +33,12 @@ def service(isolated_blobs, tmp_path, monkeypatch):
     from app.services.modelops.service import ModelOpsService
 
     settings = ModelOpsSettings(registry_dir=tmp_path / "modelops")
-    return ModelOpsService(settings)
+    instance = ModelOpsService(settings)
+    # Direct synchronous tests own these generated temporary files. HTTP and
+    # async tests still exercise their independently supplied scoped roots.
+    from functools import partial
+    instance.run_inference = partial(instance.run_inference, allowed_roots=[tmp_path])
+    return instance
 
 
 @pytest.fixture()

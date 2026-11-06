@@ -6,7 +6,7 @@ import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import type { MapActionAck } from '@/lib/api/map-action-acks';
 
 // Persist may already hold a non-default layer (e.g. ESRI 影像). First paint
-// must still match the SSR default (Carto 深色) or Next throws a hydration
+// must still match the SSR default (OpenFreeMap Libre) or Next throws a hydration
 // mismatch. The mock persist value is intentionally NOT the default.
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: {
@@ -18,7 +18,7 @@ vi.mock('@/lib/store/useHudStore', () => ({
 vi.mock('@/lib/providers', () => ({
   TILE_PROVIDERS: [
     { name: 'Carto 浅色', keywords: ['carto', 'light', '浅色'] },
-    { name: 'Carto 深色', keywords: ['dark', '深色'] },
+    { id: 'openfreemap-libre', name: 'OpenFreeMap Libre', keywords: ['openfreemap'] },
     { name: 'ESRI 影像', keywords: ['satellite', '卫星'] },
   ],
 }));

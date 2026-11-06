@@ -4,8 +4,9 @@ Detects contradictory regulations, checks temporal expiration, evaluates evidenc
 and prevents silent averaging of conflicting empirical observations.
 """
 import logging
-from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+from app.lib.runtime.clock import utc_now
 
 from app.services.spatial_decision.models import DomainRule, EvidenceItem
 
@@ -31,13 +32,19 @@ def detect_rule_conflicts(
     Does NOT silently resolve conflicts; returns detailed audit evidence.
     """
     conflicts: List[Dict[str, Any]] = []
-    now_str = reference_date or datetime.now().strftime("%Y-%m-%d")
+    now_str = reference_date or utc_now().date().isoformat()
 
     # 1. Temporal Validity Check
     for r in rules:
         p = r.parameters or {}
         valid_until = p.get("valid_until")
-        if valid_until and str(valid_until) < now_str:
+        try:
+            reference_day = datetime.fromisoformat(str(now_str).replace("/", "-").replace("Z", "+00:00")).date()
+            expiry_day = datetime.fromisoformat(str(valid_until).replace("/", "-").replace("Z", "+00:00")).date() if valid_until else None
+        except ValueError:
+            conflicts.append({"type": "temporal_invalid", "rule_id": r.id, "message": "Rule validity date is unparseable; explicit review required."})
+            continue
+        if expiry_day and expiry_day < reference_day:
             conflicts.append({
                 "type": "temporal_expired",
                 "rule_id": r.id,
@@ -116,7 +123,7 @@ def evaluate_evidence_quality_and_conflicts(
         if len(observations) > 1:
             vals = [obs[1] for obs in observations]
             min_v, max_v = min(vals), max(vals)
-            diff_ratio = (max_v - min_v) / max(abs(min_v), 1e-6)
+            diff_ratio = (max_v - min_v) / max(abs(min_v), abs(max_v), 1e-6)
             if diff_ratio > 0.30:
                 # Contradictory evidence detected
                 conflicts.append({

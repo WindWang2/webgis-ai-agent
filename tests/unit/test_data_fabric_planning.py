@@ -221,7 +221,7 @@ def test_replay_same_plan_same_hash(patched_safe_sessions, fake_source_server):
         ConnectionProfile(source_type="ogc_api", endpoint_url=fake_source_server.base_url + "/ogc", name="replay_test")
     )
 
-    req = _req(version="rev-42", limit=16)
+    req = _req(version="latest", limit=16)
     plan = PlanCompiler().compile(req, _facts("ogc_api", pushdown={"bbox": True}))
     r1 = replay(plan, adapter=adapter)
     r2 = replay(plan, adapter=adapter)
@@ -230,10 +230,12 @@ def test_replay_same_plan_same_hash(patched_safe_sessions, fake_source_server):
     # exactly 4 grid points (the fake source now filters server-side)
     assert r1["rows"] == r2["rows"] == 4
 
-    # a different version pin yields a different hash (version participates)
+    # A label is not proof of a pinned read; unsupported pinning must fail.
     other = PlanCompiler().compile(_req(version="rev-43", limit=16), _facts("ogc_api", pushdown={"bbox": True}))
-    r3 = replay(other, adapter=adapter)
-    assert r3["hash"] != r1["hash"]
+    from app.services.data_fabric.errors import InvalidQueryError
+
+    with pytest.raises(InvalidQueryError, match="version-pinned"):
+        replay(other, adapter=adapter)
 
 
 def test_facts_from_registry_source():

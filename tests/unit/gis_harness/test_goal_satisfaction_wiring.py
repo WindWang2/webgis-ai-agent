@@ -175,7 +175,7 @@ def test_real_cartographic_review_shape_drives_repair():
         "overall_passed": False,
     }
     evidence = build_evidence_registry(_chapter(), product, real_shape)
-    carto = [e for e in evidence if e.id == "cartography_review"]
+    carto = [e for e in evidence if e.id == "cartographic_review:checks"]
     assert carto and carto[0].status.value == "failed"
     report = evaluate_goal_satisfaction(
         _chapter(), map_product=product,

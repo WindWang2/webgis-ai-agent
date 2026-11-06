@@ -43,7 +43,7 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
     }
   }, [open]);
 
-  const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || t('baselayer.fallbackLight');
+  const currentLabel = TILE_PROVIDERS.length ? TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || t('baselayer.fallbackLight') : t('baselayer.unavailable');
 
   // Sync index from session-loaded baseLayer name (async SDM sets the name; index defaults to 1).
   // #550: baseLayer can carry a STALE legacy name (pre-fix demo vocabulary like
@@ -125,6 +125,7 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
           tabIndex={0}
           onKeyDown={(e) => {
             const n = TILE_PROVIDERS.length;
+            if (n === 0) return;
             if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
               e.preventDefault();
               setActiveIdx((prev) => {

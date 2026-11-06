@@ -321,7 +321,7 @@ def test_install_interruption_recovery(tmp_path):
     staging_root.mkdir(parents=True)
     staging = staging_root / "acme.target-1.0.0-deadbeef"
     safe_extract_package(blob, staging)
-    assert recover_pending_swaps(tmp_path / "install") == [staging.name]
+    assert recover_pending_swaps(tmp_path / "install", trust_store=trust) == [staging.name]
     active = tmp_path / "install" / "extensions" / "acme.target" / "manifest.json"
     assert json.loads(active.read_text())["version"] == "1.0.0"
     del privs

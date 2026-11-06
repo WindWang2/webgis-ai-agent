@@ -1,5 +1,6 @@
 """Production Telemetry Digest REST API (/api/v1/metrics/digest)."""
 import logging
+import os
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
@@ -37,6 +38,7 @@ async def get_metrics_digest(_user: dict = Depends(require_admin)) -> Dict[str, 
     return {
         "success": True,
         "tool_metrics": snapshot,
+        "tool_metrics_scope": {"scope": "process", "process_id": os.getpid()},
         "spatial_cache": spatial_info,
         "harness_enabled": harness_metrics is not None,
         "harness_metrics": harness_metrics,

@@ -16,7 +16,8 @@ export const heatmapCommands: Record<string, CommandEntry> = {
     requiredParams: (p) => typeof p.url === 'string' || typeof p.image === 'string',
     run(ctx) {
       const { map, params } = ctx;
-      const { image, bbox, opacity, layerId } = params || {};
+      const { bbox, opacity, layerId } = params || {};
+      const image = params?.image ?? params?.url;
       // V3: missing payload data → explicit failed result (was a silent return).
       if (!image) return { status: 'failed', error: 'invalid_params' };
       if (!bbox) return { status: 'failed', error: 'invalid_params' };
@@ -39,7 +40,7 @@ export const heatmapCommands: Record<string, CommandEntry> = {
         id,
         type: 'raster',
         source: id,
-        paint: { 'raster-opacity': opacity || 0.7 }
+        paint: { 'raster-opacity': opacity ?? 0.7 }
       });
       // #1078(G-1): setStyle 后重挂登记（与 add_raster_layer 同型）。
       rememberCustomOverlay(id, (m) => {
@@ -48,7 +49,7 @@ export const heatmapCommands: Record<string, CommandEntry> = {
           id,
           type: 'raster',
           source: id,
-          paint: { 'raster-opacity': opacity || 0.7 },
+          paint: { 'raster-opacity': opacity ?? 0.7 },
         });
       });
 

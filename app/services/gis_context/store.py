@@ -75,7 +75,7 @@ class WorkingContextStore:
                 return GISWorkingContext.from_payload(dict(row.payload or {}))
         except OperationalError as exc:
             logger.warning("[gis_context] load failed for %s: %s", mid, type(exc).__name__)
-            return None
+            raise WorkingContextConflict("working_context_unavailable") from exc
         except ValueError:
             # Corrupted payload (schema drift / truncation) — treat as
             # absent rather than poisoning the turn; next save re-grounds.
@@ -128,7 +128,7 @@ class WorkingContextStore:
                         # Row belongs to another org — never overwrite.
                         raise WorkingContextConflict("org_mismatch")
                     current = int(row.revision or 1)
-                    if expected_revision is not None and current != int(expected_revision):
+                    if expected_revision is None or current != int(expected_revision):
                         continue  # CAS lost → re-base below
                     if row.state != "active":
                         raise WorkingContextConflict("working_context_purged")
@@ -157,9 +157,9 @@ class WorkingContextStore:
             raise WorkingContextConflict("working_context_vanished")
         rebased = _rebase(stored, wc)
         rebased = rebased.next_revision()
-        return self._save_final(rebased)
+        return self._save_final(rebased, expected_revision=stored.revision)
 
-    def _save_final(self, wc: GISWorkingContext) -> GISWorkingContext:
+    def _save_final(self, wc: GISWorkingContext, *, expected_revision: int) -> GISWorkingContext:
         mid = wc.mission_id
         payload = wc.payload()
         try:
@@ -177,6 +177,9 @@ class WorkingContextStore:
                     raise WorkingContextConflict("working_context_vanished")
                 if row.state != "active":
                     raise WorkingContextConflict("working_context_purged")
+                if int(row.revision or 1) != expected_revision:
+                    wc = _rebase(GISWorkingContext.from_payload(dict(row.payload or {})), wc).next_revision()
+                    payload = wc.payload()
                 row.payload = payload
                 row.revision = wc.revision
                 row.goal_revision_mirror = int(wc.goal_revision_mirror)
@@ -248,6 +251,7 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
     ``seq`` is an ordering hint, not identity).
     """
     merged = stored.model_copy(deep=True)
+    merged.revision = max(int(stored.revision), int(incoming.revision))
     merged.basis = incoming.basis.model_copy(deep=True)
     merged.stale = dict(incoming.stale)
     merged.updated_turn_id = incoming.updated_turn_id
@@ -276,7 +280,7 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
         return existing
 
     def _cap(items, cap):
-        return items[:cap]
+        return items[-cap:]
 
     merged.accepted_assumptions = _cap(
         _union_decisions(merged.accepted_assumptions, incoming.accepted_assumptions),
@@ -322,7 +326,7 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
         cur = facts_by_key.get(f.key())
         if cur is None or int(f.basis_revision) > int(cur.basis_revision):
             facts_by_key[f.key()] = f
-    merged.facts = list(facts_by_key.values())[:MAX_FACTS]
+    merged.facts = list(facts_by_key.values())[-MAX_FACTS:]
     df_by_id = {d.finding_id: d for d in merged.derived_findings}
     for d in incoming.derived_findings:
         cur = df_by_id.get(d.finding_id)
@@ -333,7 +337,7 @@ def _rebase(stored: GISWorkingContext, incoming: GISWorkingContext) -> GISWorkin
         elif int(d.generation) == int(cur.generation) and _DF_SAFER_STATUS.get(
                 d.status, 0) > _DF_SAFER_STATUS.get(cur.status, 0):
             df_by_id[d.finding_id] = d
-    merged.derived_findings = list(df_by_id.values())[:MAX_DERIVED_FINDINGS]
+    merged.derived_findings = sorted(df_by_id.values(), key=lambda item: (item.status != "stale", item.generation))[-MAX_DERIVED_FINDINGS:]
     return merged
 
 

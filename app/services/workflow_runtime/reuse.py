@@ -161,8 +161,7 @@ class ReuseIndex:
                     == reuse_fingerprint[:32],
                 )
                 if session_scope:
-                    q = q.filter(WorkflowNodeReuseRow.session_scope.in_(
-                        ("", session_scope[:40])))
+                    q = q.filter(WorkflowNodeReuseRow.session_scope == session_scope[:40])
                 row = q.first()
                 if row is None:
                     return None
@@ -246,7 +245,7 @@ def evaluate_eligibility(
 def anonymous_session_scope(owner_scope: str, session_id: str) -> str:
     """anonymous 域内的复用作用域 [R1-MINOR-5]：真实用户域 = ""（跨会话
     共享），anonymous 域 = session 哈希（同会话内才可复用）。"""
-    if owner_scope == "anonymous" and session_id:
+    if session_id:
         return F.canonical_fingerprint(session_id)[:32]
     return ""
 

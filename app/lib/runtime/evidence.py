@@ -145,6 +145,7 @@ class TurnEvidence:
         self.sse_events = 0
         self.map_actions_issued = 0
         self.map_actions_acked = 0
+        self.unmatched_acks = 0
         self.artifacts = 0
         # audit4 #985: provider token usage 记账（此前全链路丢弃，成本不可观测）
         self.prompt_tokens = 0
@@ -279,11 +280,13 @@ class TurnEvidence:
         if not action_id:
             return
         with self._lock:
-            self.map_actions_acked += 1
             track = self._map_actions.get(action_id)
-            if track is not None:
-                track.status = status
-                track.ack_wait_ms = (time.monotonic() - track.issued_at) * 1000.0
+            if track is None or track.status is not None:
+                self.unmatched_acks += 1
+                return
+            self.map_actions_acked += 1
+            track.status = status
+            track.ack_wait_ms = (time.monotonic() - track.issued_at) * 1000.0
 
     # ── warnings / outcome ───────────────────────────────────────────────────
     def add_warning(self, code: str, detail: str = "") -> None:
@@ -343,6 +346,7 @@ class TurnEvidence:
                 "sse_events": self.sse_events,
                 "map_actions_issued": self.map_actions_issued,
                 "map_actions_acked": self.map_actions_acked,
+                "unmatched_acks": self.unmatched_acks,
                 "map_actions_unacked": unacked,
                 "artifacts": self.artifacts,
             },

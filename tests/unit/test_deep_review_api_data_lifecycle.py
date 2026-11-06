@@ -129,7 +129,7 @@ def _seed_cold_cog(root):
         os.utime(path, (old, old))
 
 
-def test_non_admin_assess_and_gc_plan_scoped_to_owner(tmp_path, monkeypatch):
+def test_assess_requires_admin_and_gc_plan_scoped_to_owner(tmp_path, monkeypatch):
     """DATA-03：非 admin 不得经 assess/GC plan 看到他人对象路径。"""
     from app.models.data_lifecycle import LifecyclePolicy
     from app.services.data_lifecycle import adapters
@@ -141,6 +141,14 @@ def test_non_admin_assess_and_gc_plan_scoped_to_owner(tmp_path, monkeypatch):
         roots[name] = root
         monkeypatch.setattr(adapters, name, lambda root=root: root)
     _seed_cold_cog(roots["_cog_root"])
+    from app.models.db_model import Conversation, User, Organization
+    with SessionLocal() as db:
+        db.merge(Organization(id=89, name="lc-review", slug="lc-review"))
+        db.flush()
+        db.merge(User(id="lc-admin", username="lc-admin", email="lc-admin@example.com", org_id=89, role="admin", is_active=True))
+        db.merge(User(id="lc-user", username="lc-user", email="lc-user@example.com", password_hash="x", org_id=89, role="viewer", is_active=True))
+        db.merge(Conversation(id="lc-user", user_id="lc-user"))
+        db.commit()
     monkeypatch.setattr(
         "app.services.data_lifecycle.gc_plan.STAGING_DIR", tmp_path / ".gc-staging",
     )
@@ -158,7 +166,10 @@ def test_non_admin_assess_and_gc_plan_scoped_to_owner(tmp_path, monkeypatch):
 
     viewer = _lifecycle_client({"user_id": "lc-user", "role": "viewer"})
     assessed = viewer.post("/api/v1/data-lifecycle/assess", json={"persist": True})
-    assert assessed.status_code == 200
+    assert assessed.status_code == 403
+    administrator = _lifecycle_client({"user_id": "lc-admin", "role": "admin", "org_id": 89})
+    assessed = administrator.post("/api/v1/data-lifecycle/assess", json={"persist": True})
+    assert assessed.status_code == 200, assessed.text
     cog = assessed.json()["summary"]["kinds"]["cog_output"]
     ids = {c["object_id"] for c in cog["candidates"]}
     assert ids == {"lc-user/cold.tif"}, ids
@@ -181,4 +192,4 @@ def test_non_admin_assess_and_gc_plan_scoped_to_owner(tmp_path, monkeypatch):
         c["object_id"]
         for c in admin_body["summary"]["kinds"]["cog_output"]["candidates"]
     }
-    assert admin_ids == {"lc-user/cold.tif", "other-user/cold.tif"}
+    assert admin_ids == set(), "admin has no authority over either session"

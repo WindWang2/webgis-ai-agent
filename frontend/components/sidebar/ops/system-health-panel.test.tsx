@@ -2,8 +2,9 @@
  * 系统健康分区测试（P5，ADR-0142 D6）—— ok/degraded 两态 / 组件级状态 /
  * 队列深度双口径 / 错误分类诚实空态 / 通道自检。
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import { setAuth, clearAuth } from '@/lib/auth/tokenStore';
 import { SystemHealthPanel } from './system-health-panel';
 import {
   healthBasicFixture,
@@ -34,7 +35,18 @@ function stubFetch(map: { health?: unknown; ready?: unknown; detailed?: unknown;
 }
 
 describe('SystemHealthPanel（P5）', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  beforeEach(() => setAuth({ accessToken: 'admin-token', refreshToken: null }, { id: 'admin', username: 'admin', role: 'admin' }));
+  afterEach(() => { vi.unstubAllGlobals(); clearAuth(); });
+
+  it('普通用户保留基础健康信息，组件详情显示权限态且不轮询', async () => {
+    setAuth({ accessToken: 'viewer-token', refreshToken: null }, { id: 'viewer', username: 'viewer', role: 'viewer' });
+    stubFetch({});
+    render(<SystemHealthPanel />);
+    await waitFor(() => expect(screen.getByTestId('ops-health-basic')).toHaveTextContent('healthy'));
+    expect(within(screen.getByTestId('ops-health-components')).getByRole('status')).toHaveTextContent('需管理员权限');
+    expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes('/status/detailed'))).toHaveLength(0);
+    expect(screen.getByTestId('ops-health-components')).not.toHaveTextContent('db');
+  });
 
   it('健康卡：状态 / 就绪 / runtime / 版本', async () => {
     stubFetch({});

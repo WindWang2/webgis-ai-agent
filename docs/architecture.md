@@ -150,7 +150,7 @@ MapRequestIntent ──► Recipe/Template 选择 ──► MapProductPlanner（
 | Pi agent 桥 | `app/agent_pi_bridge.py` | `USE_NEW_AGENT` 默认 true:以 JSON-RPC 子进程驱动 bundled Pi(默认宿主);置 false 或进程死亡时回退/降级 ChatEngine;传输职责（收敛进行中，制图运行时已抽出） |
 | cartography_runtime | `app/services/cartography_runtime.py` | **共享**制图会话运行时（ADR-0071）:harness 注册表、desired vs observed 评估、上下文水化、runtime repair |
 | GISWorldState | `app/services/gis_world_state/` | 统一读模型快照、GISMutation 门面、provenance 决策链、user-wins 守卫（ADR-0072） |
-| 工具注册中心 | `app/tools/registry.py` + `app/tools/` | 75 个 `@tool` 静态注册 + `app/skills/*.md` 动态技能;`ref:` 参数自动解引用 |
+| 工具注册中心 | `app/tools/registry.py` + `app/tools/` | 静态注册工具 + `app/skills/*.md` 动态技能（当前目录见 `docs/catalog/execution-catalog/`）;`ref:` 参数自动解引用 |
 | ToolDispatchService | `app/services/tool_dispatch_service.py` | 两 runtime 共用的统一分发入口（ADR-0068）:dedup、ref 落存、MapSpec authoring、error 契约 |
 | GIS Harness | `app/services/gis_harness/` + `app/lib/cartography/` | 意图→recipe→planner→组件装配的领域层;模型库/分类/色板/组合语法知识库 |
 | Cartographic Planner | `app/lib/cartography/visualization_plan.py` | 分布驱动分类裁决、VisualizationPlan 一等工件（ADR-0073） |
@@ -193,9 +193,9 @@ MapRequestIntent ──► Recipe/Template 选择 ──► MapProductPlanner（
 ## 6. 部署拓扑
 
 - **本地开发**:SQLite + 本地/容器 Redis,Celery eager 或本机 worker(`manage.py dev`)。
-- **Docker Compose**:开发栈 4 服务;生产栈 10 服务;安全栈 9 服务(nginx 唯一公网入口)。
+- **Docker Compose**:开发栈 4 服务;生产栈 11 服务;安全栈 10 个常驻服务 + 1 个 TLS 初始化服务(nginx 唯一公网入口)。
 - **Kubernetes**:initContainer `alembic upgrade head`,HPA/PDB。
-- **CI/CD**:PR 9 项门禁 → release-gate → ghcr.io → 预览/生产/回滚;本地等价 gate:`scripts/ci-local.sh`(`--fast` 快速通道)。
+- **CI/CD**:12 项发布门禁 → release-gate → ghcr.io → 预览/生产/回滚;本地 gate:`scripts/ci-local.sh`(`--fast` 快速通道，Docker/真实服务门禁另行执行)。
 
 ## 6.5 模块依赖边界（ADR-0216）
 
@@ -216,4 +216,4 @@ MapRequestIntent ──► Recipe/Template 选择 ──► MapProductPlanner（
 4. **MapSpec 是唯一 desired state** — 直接操作 MapLibre 或 Zustand 而不更新 desired state 的旁路禁止;新 mutation 经 `apply_gis_mutation` 门面(记录 provenance)。
 5. **失败要诚实** — `{"error": ...}` 显式返回;QA 无证据报 not_evaluated。
 6. **样式 ≠ 数据** — 栅格样式改动必须走 RasterStyleSpec(换缓存键),不得触发重计算。
-7. **架构级变更先写 ADR** — `docs/adr/` 已有 75 篇决策记录,新决策先立字据再动代码。
+7. **架构级变更先写 ADR** — `docs/adr/` 保存现有决策记录（篇数以目录为准）,新决策先立字据再动代码。

@@ -86,7 +86,7 @@ function patchCommittedSpecLayer(
       layout?: Record<string, unknown>;
       paint?: Record<string, unknown>;
     };
-    if (candidate.id !== layerId) return layer;
+    if (candidate.id !== layerId && !candidate.id?.startsWith(layerId + '__')) return layer;
     changed = true;
     const next: Record<string, unknown> = { ...layer };
     if (visible !== undefined) {
@@ -182,6 +182,7 @@ export async function reconcileWorkbenchState(): Promise<boolean> {
       `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/workbench/state`,
       { ownerToken: ownerToken ?? null },
     );
+    if (getMapSpecSessionCursor().sessionId !== sessionId) return false;
     if (typeof data.revision === 'number') {
       setCollabKnownRevision(data.revision);
       if (data.doc != null) adoptRemoteDoc(data.doc, data.revision);
@@ -204,6 +205,7 @@ export async function reconcileArtifactStatus(): Promise<void> {
       `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/workbench/artifact-status`,
       { ownerToken: ownerToken ?? null },
     );
+    if (getMapSpecSessionCursor().sessionId !== sessionId) return;
     const stale = (data.artifacts ?? [])
       .filter((a) => a.status != null && a.status !== 'valid' && typeof a.artifactId === 'string')
       .map((a) => a.artifactId as string);

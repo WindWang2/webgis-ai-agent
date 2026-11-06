@@ -1,4 +1,5 @@
 """Raster math operations: reclassify, calculator, resample."""
+import logging
 import math
 from pathlib import Path
 from typing import Optional, Tuple, Union
@@ -109,6 +110,38 @@ def _suffix_output_path(raster_path: str, suffix: str) -> str:
     return str(p.parent / f"{p.stem}{suffix}")
 
 
+def _validate_raster_expression(expression: str) -> None:
+    import ast
+
+    functions = {"where", "sqrt", "abs", "log", "log10", "exp", "sin", "cos", "tan",
+                 "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "minimum", "maximum"}
+    allowed = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Compare, ast.Call,
+               ast.Name, ast.Load, ast.Constant, ast.Add, ast.Sub, ast.Mult,
+               ast.Div, ast.Pow, ast.Mod, ast.USub, ast.UAdd, ast.Invert,
+               ast.BitAnd, ast.BitOr, ast.BitXor, ast.Eq, ast.NotEq, ast.Lt,
+               ast.LtE, ast.Gt, ast.GtE)
+    if not isinstance(expression, str) or len(expression) > 4096:
+        raise ValueError("raster expression exceeds length budget")
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except (SyntaxError, RecursionError) as exc:
+        raise ValueError("invalid raster expression") from exc
+    nodes = list(ast.walk(tree))
+    if len(nodes) > 512:
+        raise ValueError("raster expression exceeds complexity budget")
+    for node in nodes:
+        if not isinstance(node, allowed):
+            raise ValueError("unsupported raster expression syntax")
+        if isinstance(node, ast.Name) and node.id not in {"A", "B", *functions}:
+            raise ValueError(f"unknown raster expression name: {node.id}")
+        if isinstance(node, ast.Call) and (
+            not isinstance(node.func, ast.Name) or node.func.id not in functions or node.keywords
+        ):
+            raise ValueError("unsupported raster expression function")
+        if isinstance(node, ast.Constant) and type(node.value) not in (int, float, bool):
+            raise ValueError("raster expression constants must be numeric")
+
+
 def _validate_scheme(scheme: list[dict]) -> None:
     """Validate reclassify scheme items. Raises ValueError on invalid input."""
     if not scheme:
@@ -138,7 +171,7 @@ def _crs_is_geographic(crs) -> bool:
         if flag is not None:
             return bool(flag)
     except Exception:
-        pass
+        logging.getLogger(__name__).warning('CRS flag lookup failed; reparsing the CRS declaration', exc_info=True)
     try:
         from rasterio.crs import CRS
 
@@ -419,6 +452,7 @@ def raster_calculator(
     """
     import numexpr as ne
 
+    _validate_raster_expression(expression)
     out_path = _suffix_output_path(raster_a, "_calc.tif")
 
     with rasterio.open(raster_a) as src_a:
@@ -593,14 +627,18 @@ def resample_raster(
     target_resolution: float,
     target_crs: Optional[str] = None,
     resampling: str = "bilinear",
+    *, resolution_unit: str = "auto",
 ) -> dict:
     """Resample raster to a new resolution and/or CRS.
 
     Args:
         raster_path: Path to input raster.
-        target_resolution: Target pixel size in meters (for projected CRS) or degrees (for geographic).
+        target_resolution: Target pixel size. With resolution_unit='crs',
+            interpreted strictly in the destination CRS units.
         target_crs: Optional target CRS (e.g., "EPSG:3857"). If None, keeps source CRS.
         resampling: Resampling method: bilinear, cubic, nearest, mode, average.
+        resolution_unit: 'crs' uses destination CRS units; 'auto' preserves
+            the legacy geographic meter/degree inference.
 
     Returns:
         dict with output_path, new_shape, new_transform, and metadata.
@@ -614,7 +652,9 @@ def resample_raster(
         raise ValueError(f"Unsupported resampling method: '{resampling}'. Valid options: {list(RESAMPLING_MAP.keys())}")
     resampling_method = RESAMPLING_MAP[res_key]
 
-    if target_resolution <= 0:
+    if resolution_unit not in ("auto", "crs"):
+        raise ValueError("resolution_unit must be auto or crs")
+    if not np.isfinite(target_resolution) or target_resolution <= 0:
         raise ValueError(f"target_resolution must be positive, got {target_resolution}")
 
     out_path = _suffix_output_path(raster_path, "_resampled.tif")
@@ -629,6 +669,7 @@ def resample_raster(
         "target_resolution": target_resolution,
         "target_crs": target_crs,
         "resampling": resampling,
+        "resolution_unit": resolution_unit,
     }
     cache_key = make_artifact_key(raster_path, "resample", params)
 
@@ -649,11 +690,10 @@ def resample_raster(
                 if src_crs is not None and dst_crs is not None and src_crs != dst_crs:
                     geo_bounds = transform_bounds(src_crs, dst_crs, *geo_bounds)
             except Exception:
-                pass
+                raise ValueError("Cannot transform raster bounds into the target CRS")
 
-            resolution = resolve_geographic_resolution(
-                target_resolution, dst_crs, geo_bounds,
-            )
+            resolution = (target_resolution if resolution_unit == "crs" else
+                          resolve_geographic_resolution(target_resolution, dst_crs, geo_bounds))
 
             if gcps:
                 transform, width, height = calculate_default_transform(
@@ -712,6 +752,7 @@ def resample_raster(
         "output_path": final_path,
         "target_crs": cached_crs,
         "target_resolution": target_resolution,
+        "resolution_unit": resolution_unit,
         "new_shape": [cached_height, cached_width],
         "resampling": resampling,
     }

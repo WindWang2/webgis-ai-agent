@@ -132,3 +132,11 @@ export function LiveDot({ active, reducedMotion }: { active: boolean; reducedMot
     </span>
   );
 }
+
+
+export function ProjectionStatus({ projection }: { projection: { error: string | null; loading: boolean } }) {
+  const t = useT('cockpit');
+  if (projection.error) return <div role="alert" className="text-meta text-status-critical">{projection.error}</div>;
+  if (projection.loading) return <div role="status" className="text-meta text-ink-muted">{t('loading')}</div>;
+  return null;
+}

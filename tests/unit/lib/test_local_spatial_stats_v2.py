@@ -203,21 +203,15 @@ def test_join_count_checkerboard_golden():
     assert res8.data["pattern"] == "negative_spatial_autocorrelation"
 
 
-def test_join_count_degenerate_variance_discloses_not_fabricates():
-    """评审 R2 MAJOR-2 锁：free-sampling 方差非正时解析 z/p 显式不可用，
-    绝不伪造 p=1；有置换时判别基于置换 p（8×8 棋盘 BB 解析方差 < 0）。"""
+def test_join_count_fixed_margin_variance_matches_exhaustive_four_cycle():
+    # Four-cycle, exactly two black vertices: four adjacent pairs give BB=1,
+    # two opposite pairs BB=0. Exact variance=2/9; z=(0-2/3)/sqrt(2/9).
     fc2 = _grid_fc(2, 2, lambda r, c: float((r + c) % 2))
     res = join_count_narrated(fc2, "val", weights_scheme="rook")
-    assert res.data["z"]["n_bb"] is None
-    assert res.data["p_value_analytic"]["n_bb"] is None
-    assert res.data["pattern"] == "analytic_inference_unavailable"
-    assert any("方差非正" in note for note in res.data["analytic_notes"])
-
+    assert res.data["z"]["n_bb"] == pytest.approx(-np.sqrt(2.0))
+    assert res.data["p_value_analytic"]["n_bb"] is not None
     fc8 = _grid_fc(8, 8, lambda r, c: float((r + c) % 2))
-    res8 = join_count_narrated(fc8, "val", weights_scheme="rook",
-                               permutations=99)
-    # BB 解析简并 → 置换判别仍给出正确的负关联结论
-    assert res8.data["z"]["n_bb"] is None
+    res8 = join_count_narrated(fc8, "val", weights_scheme="rook", permutations=99)
     assert res8.data["pattern"] == "negative_spatial_autocorrelation"
     assert res8.data["p_value_permutation"]["n_bw"] < 0.05
 

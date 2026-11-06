@@ -30,6 +30,7 @@ describe('IsochroneResultCard', () => {
     const mockResult = {
       travel_time_min: 30,
       mode: 'driving',
+      speed_kmh: 40,
       facility_count: 1,
       area_km2: 45.8,
     };
@@ -38,7 +39,7 @@ describe('IsochroneResultCard', () => {
 
     expect(screen.getByText('等时圈网络分析 (30 分钟)')).toBeInTheDocument();
     expect(screen.getByText('驾车模式')).toBeInTheDocument();
-    expect(screen.getByText('速度基准: 400m/min')).toBeInTheDocument();
+    expect(screen.getByText('速度基准: 667m/min')).toBeInTheDocument();
   });
 
   it('triggers onFocus callback when clicked', () => {

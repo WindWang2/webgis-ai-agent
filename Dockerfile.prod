@@ -35,6 +35,9 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 # cross-origin backend.
 ARG NEXT_PUBLIC_WS_URL=""
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+# Optional public browser key; enables the credential-gated CARTO profiles.
+ARG NEXT_PUBLIC_CARTO_BASEMAP_KEY=""
+ENV NEXT_PUBLIC_CARTO_BASEMAP_KEY=$NEXT_PUBLIC_CARTO_BASEMAP_KEY
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_RUNTIME=nodejs
@@ -42,11 +45,25 @@ RUN pnpm run build
 
 # Stage 2b: Node runtime for the runner stage
 # PLT-03：Debian bookworm 的 `nodejs` apt 包是 18.x，而 Next 16 要求
-# >=20.9（frontend/package.json engines；CVE 修复也要求新版）。从官方
+# >=20.9（Next.js 16 运行时要求；CVE 修复也要求新版）。从官方
 # node:26-bookworm-slim（与 runner 同 glibc 基线；alpine 的 musl 二进制
 # 不可用）只复制 node 单二进制 —— 运行时只需 `node server.js` 与 Pi RPC
 # 的 `node rpc-entry.js`，npm/corepack 不入镜像以控制体积。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
+
+# Stage 2c: Pi RPC runtime builder（goal-pi-native-host-vnext / #400 根因清偿）
+# 此前镜像只 COPY vendor/ 源码而从未构建 dist —— USE_NEW_AGENT=true 时
+# bridge 找不到 rpc-entry.js 而静默回退旧引擎。Pi v1.5.0 的 RPC bundle
+# 仍需锁定的外部 jiti 加载 WebGIS 扩展；两者一起复制到运行镜像。
+# 本地等价命令：scripts/build-vendor-pi.sh。
+FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS pi-builder
+WORKDIR /app
+# 层缓存次序：先 manifest + npm ci（源码不变时命中缓存），再拷源码构建。
+COPY vendor/pi/package.json vendor/pi/package-lock.json ./vendor/pi/
+RUN cd vendor/pi && npm ci --no-audit --no-fund && rm -rf node_modules
+COPY vendor/pi/ ./vendor/pi/
+RUN cd vendor/pi && npm ci --no-audit --no-fund && npm run build \
+    && test -f packages/coding-agent/dist/bundle/rpc-entry.js
 
 # Stage 3: Backend Python Dependencies
 # 与 .python-version / requirements.lock 及下方 site-packages COPY 保持 3.12；
@@ -108,6 +125,7 @@ COPY main.py ./
 # 生产形态首次部署后无任何 admin 引导通道。
 COPY manage.py ./
 COPY app/ ./app/
+COPY skills-lock.json ./
 COPY alembic.ini ./
 COPY migrations/ ./migrations/
 # #476: 镜像一直带着 alembic.ini + migrations/ 却没有任何路径执行它 ——
@@ -116,10 +134,12 @@ COPY migrations/ ./migrations/
 # celery-worker 服务用，避免与 api 并发 upgrade 竞争 alembic_version）。
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-# #400: pi RPC 入口是仓库相对路径 vendor/pi/packages/coding-agent/dist/rpc-entry.js
-# （pi_rpc_client.PI_RPC_ENTRY）。CI 以 submodules:recursive 检出，但产物从未
-# 进入镜像 —— USE_NEW_AGENT=true 时 bridge 初始化失败并静默回退旧引擎。
+# #400: pi RPC 入口是仓库相对路径 vendor/pi/packages/coding-agent/dist/（pi_rpc_client
+# 解析顺序 bundle → dist）。CI 以 submodules:recursive 检出；自 pi-builder 阶段起
+# 构建产物随镜像分发 —— USE_NEW_AGENT=true 不再静默回退旧引擎。
 COPY vendor/ ./vendor/
+COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
+COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules/jiti
 
 # Create non root user
 RUN groupadd --system --gid 1001 appgroup && \
@@ -147,10 +167,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # #476: tini 仍是 PID 1（信号收割），entrypoint 在 exec CMD 前执行
 # `alembic upgrade head`（迁移失败 = 容器失败，不带旧 schema 起服务）。
 ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
-# 审计 I9：trap-kill-wait 模式让 SIGTERM 正确传播给两个子进程。
-# 之前 sh -c "A & B" 在 tini 下：sh 不 wait 任何子进程，uvicorn OOM 后
-# 容器仍"健康"（node 还活），SIGTERM 也不传播 → 滚动更新脏退出。
-# #1694 SEC-13：--ws-max-size 与 app/api/routes/ws.py:29 / ws_collab.py:51 的
-# _MAX_INBOUND_BYTES=16*1024 对齐（应用层长度检查在整帧 receive_text() 缓冲之后，
-# 协议层先限 size 才不会把超大帧整体读进内存）。与 Dockerfile / k8s args 一致。
-CMD ["sh", "-c", "trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws-max-size 16384 & node frontend/.next/standalone/server.js -p 3000 & wait"]
+# The supervisor forwards shutdown to both service groups and exits if either
+# service stops; a surviving sibling cannot conceal a failed container.
+# Its uvicorn command enforces the 16KiB WebSocket frame boundary.
+CMD ["python", "-m", "app.lib.runtime.service_supervisor"]

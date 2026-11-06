@@ -160,6 +160,9 @@ class DurableSourceFactsStore:
         self._pool_lock = threading.Lock()
         self._failure_count = 0
         self._warned = False
+        self._save_counter = 0
+        self._pending = threading.BoundedSemaphore(4)
+        self._retry_after = 0.0
 
     def _executor(self):
         from concurrent.futures import ThreadPoolExecutor
@@ -170,7 +173,20 @@ class DurableSourceFactsStore:
             return self._pool
 
     def _call_with_timeout(self, fn, *args):
-        return self._executor().submit(fn, *args).result(timeout=self.DB_TIMEOUT_S)
+        if time.monotonic() < self._retry_after or not self._pending.acquire(blocking=False):
+            raise TimeoutError("durable facts temporarily unavailable or queue full")
+        try:
+            future = self._executor().submit(fn, *args)
+        except Exception:
+            self._pending.release()
+            raise
+        future.add_done_callback(lambda _future: self._pending.release())
+        try:
+            return future.result(timeout=self.DB_TIMEOUT_S)
+        except Exception:
+            self._retry_after = time.monotonic() + 30.0
+            future.cancel()
+            raise
 
     def _on_failure(self, exc: Exception, op: str) -> None:
         self._failure_count += 1
@@ -243,6 +259,11 @@ class DurableSourceFactsStore:
                         )
                     )
                     db.commit()
+                with self._pool_lock:
+                    self._save_counter += 1
+                    prune_due = self._save_counter % 128 == 0
+                if prune_due:
+                    self.prune()
 
             self._call_with_timeout(_insert)
             return True
@@ -389,6 +410,27 @@ class SourceFactsService:
         except Exception as exc:  # noqa: BLE001 - 事实收割绝不阻断查询
             logger.debug("[source-facts] observe count failed: %s", exc)
             return False
+
+    def invalidate_profile(self, profile_id: str, *, connection: Any = None) -> int:
+        from sqlalchemy import delete
+        from app.models.data_fabric import SourceFactsRecordModel
+        from app.core.database import SessionLocal
+
+        with self._lock:
+            keys = [key for key, facts in self._entries.items()
+                    if facts.profile_id == str(profile_id)]
+            for key in keys:
+                self._entries.pop(key, None)
+        statement = delete(SourceFactsRecordModel).where(
+            SourceFactsRecordModel.profile_id == str(profile_id),
+        )
+        if connection is not None:
+            result = connection.execute(statement)
+        else:
+            with SessionLocal() as db:
+                result = db.execute(statement)
+                db.commit()
+        return len(keys) + int(result.rowcount or 0)
 
     def invalidate(self, fingerprint: Optional[str] = None) -> int:
         removed = 0

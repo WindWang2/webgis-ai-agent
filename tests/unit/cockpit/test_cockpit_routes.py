@@ -36,6 +36,9 @@ def _auth(user_id: str, org_claim=1, role: str = "editor") -> dict[str, str]:
 @pytest.fixture()
 def cockpit_env(monkeypatch):
     """Hermetic cockpit env: in-memory mission store + fixed org mapping."""
+    async def live_identity(user_id, payload):
+        return {"user_id": user_id, "role": payload.get("role", "viewer"), "org_id": payload.get("org_id")}
+    monkeypatch.setattr("app.core.auth._live_identity", live_identity)
     from app.core.database import Base
     from app.models import mission as _mission_models  # noqa: F401 — register tables
     from app.services.mission_runtime.service import MissionRuntimeService
@@ -249,8 +252,8 @@ def test_skill_view_absent_then_present(cockpit_env):
 
     bounded = _Bundle().to_bounded_dict()
     # production write order (tools.py): set_skill_bundle(sid, bundle, bounded)
-    set_skill_bundle("sess-1", _Bundle(), bounded)
-    set_mission_id("sess-1", "m-123")
+    set_skill_bundle("sess-1", _Bundle(), bounded, tenant_id="org-a")
+    set_mission_id("sess-1", "m-123", tenant_id="org-a")
     body = client.get(
         "/api/v1/cockpit/sessions/sess-1/skill", headers=_auth("u1")
     ).json()
@@ -275,7 +278,7 @@ def test_evidence_view_empty_and_populated(cockpit_env):
         get_or_create_claim_store,
     )
 
-    store = get_or_create_claim_store("sess-1")
+    store = get_or_create_claim_store("sess-1", tenant_id="org-a")
     ev = store.upsert_evidence(EvidenceNode(
         evidence_id="e1", kind=EvidenceKind.STATISTIC, ref="ref:ds/1"))
     assert ev.evidence_id == "e1"

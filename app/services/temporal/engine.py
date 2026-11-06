@@ -372,6 +372,17 @@ class TemporalEngine:
         analysis branches in analyze_raster_series."""
         def _sync_run():
             from app.services.temporal.models import TemporalAnalysisResult
+            from app.services.scoped_raster_paths import resolve_scoped_raster_path, scoped_raster_roots
+
+            roots = None
+            for item in raster_series:
+                if not isinstance(item, dict):
+                    raise ValueError("raster series entries must be objects")
+                for key in ("path", "raster_path", "file"):
+                    if item.get(key):
+                        if roots is None:
+                            roots = scoped_raster_roots(session_id=session_id)
+                        resolve_scoped_raster_path(item[key], roots=roots)
             raster_res = self.analyze_raster_series(
                 raster_series=raster_series,
                 aoi_geometry=aoi_geometry,

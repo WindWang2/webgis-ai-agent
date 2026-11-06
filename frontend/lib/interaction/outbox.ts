@@ -48,6 +48,8 @@ export interface InteractionOutboxOptions {
   random?: () => number;
   now?: () => number;
   fetchImpl?: typeof fetch;
+  /** Called only after a successful, durable server acknowledgement. */
+  onAcknowledged?: (sessionId: string) => void;
   /** 测试缝：sessionStorage 替身。 */
   storage?: Pick<Storage, 'getItem' | 'setItem'> | null;
 }
@@ -187,6 +189,7 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
     random = Math.random,
     now = () => Date.now(),
     fetchImpl,
+    onAcknowledged,
     storage,
   } = options;
 
@@ -378,6 +381,7 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
           settleBatch(items, { transient: true, permanent: false }, gen);
           return;
         }
+        try { onAcknowledged?.(sessionId); } catch { logEvent("projection invalidation failed", {}); }
         settleBatch(items, { transient: false, permanent: false }, gen);
         return;
       }

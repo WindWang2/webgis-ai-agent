@@ -116,7 +116,7 @@ def evaluate_capability_policy(fact: CapabilityPolicyFact) -> CapabilityPolicyDe
     cert_state = (fact.certification_state or "").strip().lower()
     if cert_state in _CERT_BLOCKING:
         reasons.append(REASON_CERTIFICATION_STALE)
-    elif cert_state == "unknown" and fact.fail_closed:
+    elif cert_state in ("unknown", "", "missing") and fact.fail_closed:
         reasons.append(REASON_CERTIFICATION_STALE)
     if fact.health_state == "open":
         reasons.append(REASON_PROVIDER_UNHEALTHY)

@@ -13,9 +13,10 @@ STAC (SpatioTemporal Asset Catalog) Data Source Adapter — V2 (ADR-0094 Wave F)
   ExecutionBudget.deadline。
 """
 import logging
+import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
 import requests
 
@@ -27,6 +28,7 @@ from app.services.data_fabric.errors import (
     SOURCE_UNREACHABLE,
     DataFabricError,
     InvalidQueryError,
+    QueryBudgetExceededError,
     SourceAuthFailedError,
     SourceBadResponseError,
     SourceRateLimitedError,
@@ -366,7 +368,7 @@ class STACAdapter(GeospatialDataSourceAdapter):
         error_message: Optional[str] = None
         try:
             safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
-            coll_url = urljoin(safe_url + "/", f"collections/{dataset_id}")
+            coll_url = urljoin(safe_url + "/", f"collections/{quote(dataset_id, safe=chr(0)[:0])}")
             try:
                 c = safe_json_get(self.session, coll_url, timeout=8)
             except requests.exceptions.HTTPError as he:
@@ -430,7 +432,7 @@ class STACAdapter(GeospatialDataSourceAdapter):
             "schema": {"collection": dataset_id, "format": "stac_item_geojson"},
             "properties": q_res.features[0].get("properties", {}) if q_res.features else {},
             "features": q_res.features[:bounded_limit],
-            "bbox": [-180.0, -90.0, 180.0, 90.0],
+            "bbox": None,
         }
 
     # ── 查询主路径（V2）────────────────────────────────────────────────
@@ -485,14 +487,28 @@ class STACAdapter(GeospatialDataSourceAdapter):
         page = v2.page
         limit = page.limit
         offset = page.offset if isinstance(page, OffsetPage) else 0
+        if offset:
+            raise InvalidQueryError("STAC Item Search requires links.next cursor pagination; offset is unsupported")
 
         payload: Dict[str, Any] = {
             "collections": [dataset_id],
             "limit": limit,
         }
+        cursor_request = None
+        request_method = "POST"
         # 游标（links.next token 或 next URL；与写入侧 encode_cursor 成对）
         if isinstance(page, CursorPage) and page.cursor:
-            decoded = self._decode_next_token(page.cursor)
+            raw_cursor = decode_cursor(page.cursor)
+            if raw_cursor and isinstance(raw_cursor[0], dict):
+                cursor_request = raw_cursor[0]
+                request_method = str(cursor_request.get("method", "GET")).upper()
+                if request_method not in {"GET", "POST"}:
+                    raise InvalidQueryError("STAC cursor method must be GET or POST")
+                from app.services.data_fabric.security import ensure_same_origin_url
+                search_url = ensure_same_origin_url(str(cursor_request.get("href", "")), self.endpoint)
+                decoded = (None, None)
+            else:
+                decoded = self._decode_next_token(page.cursor)
             if decoded is None:
                 raise InvalidQueryError("malformed STAC cursor (expected links.next token)")
             next_url, token = decoded
@@ -504,8 +520,6 @@ class STACAdapter(GeospatialDataSourceAdapter):
                 from app.services.data_fabric.security import ensure_same_origin_url
 
                 search_url = ensure_same_origin_url(next_url, self.endpoint)
-        elif offset:
-            payload["page"] = offset // max(limit, 1) + 1
 
         if v2.spatial is not None:
             payload["bbox"] = list(v2.spatial.bbox)
@@ -540,18 +554,34 @@ class STACAdapter(GeospatialDataSourceAdapter):
             payload["filter-lang"] = "cql2-json"
             pushed = True
 
-        # POST /search 保持原状（不引入新参数）；timeout 取自 ExecutionBudget
-        resp = self.session.post(
-            search_url, json=payload, timeout=min(v2.execution.deadline_s, 30.0),
-        )
-        if resp.status_code != 200:
-            # 真实源失败 → typed raise（绝不 fixture 冒充、绝不 in-band 空成功）
-            raise self._http_error(resp.status_code)
-
+        if cursor_request and request_method == "POST":
+            body = cursor_request.get("body") or {}
+            if not isinstance(body, dict):
+                raise InvalidQueryError("STAC next body must be an object")
+            payload = {**payload, **body} if cursor_request.get("merge") else body
+        if request_method == "GET":
+            resp = self.session.get(search_url, timeout=min(v2.execution.deadline_s, 30.0), stream=True)
+        else:
+            resp = self.session.post(search_url, json=payload, timeout=min(v2.execution.deadline_s, 30.0), stream=True)
         try:
-            data = resp.json()
+            if resp.status_code != 200:
+                raise self._http_error(resp.status_code)
+            cap = min(v2.execution.max_bytes, 8 * 1024 * 1024)
+            content_length = resp.headers.get("Content-Length", "")
+            if str(content_length).isdigit() and int(content_length) > cap:
+                raise QueryBudgetExceededError("STAC search body exceeds byte budget")
+            chunks = []
+            total = 0
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                total += len(chunk)
+                if total > cap:
+                    raise QueryBudgetExceededError("STAC search decompressed body exceeds byte budget")
+                chunks.append(chunk)
+            data = json.loads(b"".join(chunks))
         except ValueError as e:
             raise SourceBadResponseError(f"STAC search returned non-JSON body: {e}") from e
+        finally:
+            resp.close()
         features = data.get("features", []) if isinstance(data, dict) else []
         if not isinstance(features, list):
             features = []
@@ -581,6 +611,13 @@ class STACAdapter(GeospatialDataSourceAdapter):
             truncated = truncated or matched > offset + returned
         truncated = truncated or bool(next_link)
         next_cursor = encode_cursor([next_link]) if (truncated and next_link) else None
+        for link in data.get("links", []) or []:
+            if isinstance(link, dict) and link.get("rel") == "next" and link.get("href"):
+                cursor_link = {"href": urljoin(search_url, str(link["href"])),
+                               "method": str(link.get("method", "GET")).upper(),
+                               "body": link.get("body"), "merge": bool(link.get("merge", False))}
+                next_cursor = encode_cursor([cursor_link]) if truncated else None
+                break
 
         # 属性谓词本地求值（V7 前恒本地；现在仅本地余项 —— pushed 时余项
         # 通常为空）。V5：拆分计划时只求值本地余项（历史路径 = 整个
@@ -610,6 +647,8 @@ class STACAdapter(GeospatialDataSourceAdapter):
             returned = len(features)
 
         if v2.output.mode == ResultMode.STATISTICS and v2.aggregate:
+            if truncated:
+                raise QueryBudgetExceededError("STAC aggregate requires a complete item set; search page was truncated")
             rows = compute_aggregates(
                 [f.get("properties") or {} for f in features], v2.aggregate, v2.group_by,
             )

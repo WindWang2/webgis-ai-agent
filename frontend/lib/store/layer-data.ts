@@ -79,10 +79,8 @@ export async function ensureLayerData(
         const matchesLayer =
           !selLayerId ||
           selLayerId === layerId ||
-          selLayerId.startsWith(layerId) ||
-          layerId.startsWith(selLayerId) ||
-          selLayerId.includes(layerId) ||
-          layerId.includes(selLayerId);
+          selLayerId.startsWith(layerId + '__') ||
+          layerId.startsWith(selLayerId + '__');
         if (matchesLayer) {
           fid = sel.featureId;
           if (fid == null && sel.properties && typeof sel.properties === 'object') {

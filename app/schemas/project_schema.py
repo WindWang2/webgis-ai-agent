@@ -2,9 +2,10 @@
 Project Workspace, Persistent Workflow, Artifact, Lineage, and Quality API Schemas
 """
 import json
-from typing import Literal, Optional, List, Dict, Any
+from typing import Literal, Optional, List, Dict, Any, Annotated
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+from app.schemas.payload_bounds import BoundedJson, cap_json
 
 #: run 输入覆盖（input_bindings：dataset/AOI/parameters 引用，进 run
 #: manifest 的自由结构）序列化字节帽 —— 与 ChatRequest map_state 256KB
@@ -23,15 +24,15 @@ def _cap_input_bindings(bindings: Dict[str, Any]) -> None:
 
 class ProjectCreate(BaseModel):
     name: str = Field(..., max_length=255, description="项目名称")
-    description: Optional[str] = Field(None, description="项目描述")
-    metadata_json: Optional[Dict[str, Any]] = Field(default_factory=dict, description="扩展元数据")
+    description: Optional[str] = Field(None, max_length=16000, description="项目描述")
+    metadata_json: Optional[BoundedJson] = Field(default_factory=dict, description="扩展元数据")
 
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
-    description: Optional[str] = None
-    status: Optional[str] = Field(None, description="active / archived")
-    metadata_json: Optional[Dict[str, Any]] = None
+    description: Optional[str] = Field(None, max_length=16000)
+    status: Optional[str] = Field(None, pattern="^(active|archived)$", description="active / archived")
+    metadata_json: Optional[BoundedJson] = None
 
 
 class ProjectResponse(BaseModel):
@@ -51,8 +52,8 @@ class ProjectResponse(BaseModel):
 class DatasetAttach(BaseModel):
     name: str = Field(..., max_length=255)
     source_type: str = Field(..., description="upload / layer / external / vector / raster")
-    source_ref: Optional[str] = Field(None, description="UploadRecord ID or Layer ID or URL")
-    schema_profile: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    source_ref: Optional[str] = Field(None, max_length=255, description="UploadRecord ID or Layer ID or URL")
+    schema_profile: Optional[BoundedJson] = Field(default_factory=dict)
     crs: str = Field(default="EPSG:4326")
 
 
@@ -98,16 +99,34 @@ class WorkflowStepSpec(BaseModel):
 
 
 class WorkflowGraphSpec(BaseModel):
-    steps: List[WorkflowStepSpec] = Field(default_factory=list)
-    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    steps: List[WorkflowStepSpec] = Field(default_factory=list, max_length=200)
+    metadata: Optional[BoundedJson] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _bounded_graph(self) -> "WorkflowGraphSpec":
+        cap_json(self.model_dump(mode="json"), limit=1024 * 1024, name="workflow graph")
+        return self
 
 
 class WorkflowCreate(BaseModel):
     name: str = Field(..., max_length=255)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=16000)
     graph_spec: WorkflowGraphSpec
-    inputs_schema: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    inputs_schema: Optional[BoundedJson] = Field(default_factory=dict)
     created_from_session: Optional[str] = None
+
+
+class QualityAuditRequest(BaseModel):
+    geojson: dict[str, object]
+
+    @field_validator("geojson")
+    @classmethod
+    def _bounded_geojson(cls, value: dict[str, object]) -> dict[str, object]:
+        features = value.get("features")
+        if isinstance(features, list) and len(features) > 10000:
+            raise ValueError("quality audit accepts at most 10000 features")
+        cap_json(value, limit=2 * 1024 * 1024, name="quality audit GeoJSON")
+        return value
 
 
 class WorkflowResponse(BaseModel):
@@ -226,12 +245,17 @@ class MapProductVersionCreate(BaseModel):
     mapspec_fingerprint: Optional[str] = None
     mapspec_revision: Optional[int] = None
     recipe_id: Optional[str] = None
-    artifact_ids: List[str] = Field(default_factory=list)
-    input_dataset_fingerprints: Dict[str, str] = Field(default_factory=dict)
+    artifact_ids: List[Annotated[str, Field(max_length=128)]] = Field(default_factory=list, max_length=64)
+    input_dataset_fingerprints: Dict[str, str] = Field(default_factory=dict, max_length=256)
     # ADR-0236: 显式记录时可选携带会话 —— 服务端从该会话抓取 MapSpec
     # 快照（restore/open 的授权依据）与操作者标记。
     session_id: Optional[str] = None
     label: Optional[str] = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _bounded_version(self) -> "MapProductVersionCreate":
+        cap_json(self.model_dump(mode="json"), name="map product version")
+        return self
 
 
 def _none_to_dict(v: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -268,6 +292,12 @@ class MapProductVersionResponse(BaseModel):
     lineage_kind: Optional[str] = None
     parent_version_no: Optional[int] = None
     snapshot_available: bool = False
+
+    @field_validator("compute_plan", mode="after")
+    @classmethod
+    def _redact_historical_plan(cls, value: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        from app.services.map_product_service import MapProductService
+        return MapProductService.bounded_compute_plan({"steps": value})
 
     # Nullable backing columns must never 500 the response on a NULL row.
     @field_validator(
@@ -342,6 +372,7 @@ class DataGcExecuteRequest(BaseModel):
     """POST data-gc/execute body：显式 confirm 才执行破坏性清理（缺省 false
     → 400，dry-run parity 纪律 —— 计划先行，执行必须显式表态）。"""
     confirm: bool = False
+    expected_plan_fingerprint: Optional[str] = Field(default=None, min_length=64, max_length=64)
 
 
 class ArtifactResponse(BaseModel):

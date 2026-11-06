@@ -161,6 +161,7 @@ def entry_from_record(
             SCOPE_USER: 0.55,
         }.get(record.scope, 0.5),
         last_validated_ts=ai.parse_validated_ts(record.last_validated_at),
+        expires_at_ts=ai.parse_validated_ts(record.expires_at) if record.expires_at else None,
         value=value,
     )
 
@@ -303,7 +304,7 @@ class ProactiveRetriever:
         self.index = index or ai.AssociativeIndex()
         self._db_factory = db_factory
         self._staleness_s = float(staleness_s)
-        self._last_sync: Dict[str, float] = {}
+        self._last_sync: Dict[tuple, float] = {}
         self._lock = threading.RLock()
 
     # ── 配置与生命周期 ────────────────────────────────────────────
@@ -324,17 +325,17 @@ class ProactiveRetriever:
 
     # ── 回源同步 ──────────────────────────────────────────────────
 
-    def _stale(self, org_id: str) -> bool:
-        last = self._last_sync.get(org_id)
+    def _stale(self, org_id: str, session_id: Optional[str] = None, project_id: Optional[str] = None, user_id: Optional[str] = None) -> bool:
+        last = self._last_sync.get((org_id, session_id, project_id, user_id))
         return last is None or (time.monotonic() - last) >= self._staleness_s
 
     def _load_scope(self, db, org_id: str, scope: str, scope_id: str) -> int:
         from app.services.gis_memory.store import get_active_memories
 
         loaded = 0
-        for record in get_active_memories(
-            db, org_id, scope, scope_id, limit=200
-        ):
+        records = get_active_memories(db, org_id, scope, scope_id, limit=200)
+        self.index.prune_scope(org_id, scope, scope_id, {record.id for record in records})
+        for record in records:
             entry = entry_from_record(record)
             # 重温不丢命中计数：优先沿用进程内计数，否则回退上次持久化的
             # value.hit_count（跨进程重启的弱恢复）。
@@ -389,7 +390,7 @@ class ProactiveRetriever:
             if user_id:
                 loaded += self._load_scope(db, org_id, SCOPE_USER, user_id)
             with self._lock:
-                self._last_sync[org_id] = time.monotonic()
+                self._last_sync[(org_id, session_id, project_id, user_id)] = time.monotonic()
             return loaded
         except Exception as exc:  # noqa: BLE001 — 同步失败降级用现有索引
             logger.debug("[GISMemory] sync_org failed org=%s: %s", org_id, exc)
@@ -402,6 +403,32 @@ class ProactiveRetriever:
                     pass
 
     # ── 主动唤醒 ──────────────────────────────────────────────────
+
+    def _live_hits(self, hits: List[ai.IndexHit], org_id: str, allowed_scopes: set) -> List[ai.IndexHit]:
+        """Validate cached candidates against durable revocation before reuse."""
+        if not hits:
+            return []
+        from datetime import datetime, timezone
+        from sqlalchemy import or_, select
+        from app.models.spatial_memory import GISSpatialMemory
+
+        try:
+            factory = self._session_factory()
+            if factory is None:
+                return []
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            with factory() as db:
+                rows = db.execute(select(GISSpatialMemory).where(
+                    GISSpatialMemory.id.in_([hit.entry.memory_id for hit in hits]),
+                    GISSpatialMemory.org_id == org_id,
+                    GISSpatialMemory.status == "active",
+                    or_(GISSpatialMemory.expires_at.is_(None), GISSpatialMemory.expires_at > now),
+                )).scalars().all()
+                active = {row.id for row in rows if (row.scope, row.scope_id) in allowed_scopes}
+            return [hit for hit in hits if hit.entry.memory_id in active]
+        except Exception:
+            logger.warning("Proactive memory authority unavailable; recall omitted", exc_info=True)
+            return []
 
     def awake(
         self,
@@ -424,7 +451,7 @@ class ProactiveRetriever:
                 signals=[], latency_ms=0.0, trace={"reason": "no_org"},
             )
         trace: Dict[str, Any] = {}
-        if sync and self._stale(org_id):
+        if sync and self._stale(org_id, session_id, project_id, user_id):
             loaded = self.sync_org(
                 org_id, session_id=session_id, project_id=project_id,
                 user_id=user_id,
@@ -432,8 +459,14 @@ class ProactiveRetriever:
             trace["synced"] = loaded
         now_ts = float(now) if now is not None else time.time()
         signals = vague_reference_signals(query)
+        allowed_scopes = {
+            (scope, str(scope_id))
+            for scope, scope_id in (
+                (SCOPE_SESSION, session_id), (SCOPE_PROJECT, project_id), (SCOPE_USER, user_id),
+            ) if scope_id
+        }
         hits = self.index.search(
-            org_id, query or "", bbox=bbox,
+            org_id, query or "", bbox=bbox, allowed_scopes=allowed_scopes,
             limit=max(int(limit or 6) * 3, 12), now=now_ts,
         )
         if hits and not any(h.sem > 0 for h in hits):
@@ -446,7 +479,7 @@ class ProactiveRetriever:
             present = {h.entry.memory_id for h in hits}
             fallback: List[ai.IndexHit] = []
             for entry in self.index.recent_entries(
-                org_id, kinds=PLACE_KINDS, limit=4, now=now_ts,
+                org_id, kinds=PLACE_KINDS, limit=4, now=now_ts, allowed_scopes=allowed_scopes,
             ):
                 if entry.memory_id in present:
                     continue
@@ -474,6 +507,9 @@ class ProactiveRetriever:
                         h.entry.memory_id,
                     ),
                 )
+        candidates = len(hits)
+        hits = self._live_hits(hits, org_id, allowed_scopes)
+        trace["invalidated_candidates"] = candidates - len(hits)
         cards = [card_from_hit(h) for h in hits[: max(1, int(limit or 6))]]
         if cards:
             self.index.touch(

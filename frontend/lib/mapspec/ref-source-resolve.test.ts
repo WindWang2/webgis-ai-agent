@@ -185,3 +185,112 @@ describe('ref-source-resolver — 兜底拉取与注入', () => {
     warnSpy.mockRestore();
   });
 });
+
+
+describe('ref source content revisions (#1826 S7a-019)', () => {
+  it('refetches edited source data instead of reusing the old revision', async () => {
+    resetRefSourceCache();
+    setMapSpecSessionCursor('s1');
+    const makeSpec = (revision: number): MapSpec => ({
+      version: '1.0',
+      sources: { s: { type: 'geojson', ref_id: 'ref:geojson-revision', content_revision: revision } } as unknown as MapSpec['sources'],
+      layers: [layer('l', 's')],
+    });
+    apiFetchMock.mockResolvedValueOnce(POI_FC);
+    injectResolvedRefSources(makeSpec(1), { sessionId: 's1', ownerToken: null });
+    await vi.waitFor(() => expect((injectResolvedRefSources(makeSpec(1), null).sources.s as { inlineData?: unknown }).inlineData).toEqual(POI_FC));
+    const edited = { type: 'FeatureCollection', features: [] };
+    apiFetchMock.mockResolvedValueOnce(edited);
+    const changed = injectResolvedRefSources(makeSpec(2), { sessionId: 's1', ownerToken: null });
+    expect((changed.sources.s as { inlineData?: unknown }).inlineData).toBeUndefined();
+    await vi.waitFor(() => expect((injectResolvedRefSources(makeSpec(2), null).sources.s as { inlineData?: unknown }).inlineData).toEqual(edited));
+  });
+});
+
+describe('active reference lifecycle after independent review', () => {
+  function activeSpec(count: number, revision?: number): MapSpec {
+    return {
+      version: '1.0',
+      sources: Object.fromEntries(Array.from({ length: count }, (_, i) => [`s${i}`, {
+        type: 'geojson', ref_id: `ref:active-${i}`, ...(revision === undefined ? {} : { content_revision: revision }),
+      }])),
+      layers: Array.from({ length: count }, (_, i) => layer(`l${i}`, `s${i}`)),
+    } as unknown as MapSpec;
+  }
+
+  it.each([24, 25])('deduplicates all %i pending active refs across reconciliations and reuses completed data', async (count) => {
+    setMapSpecSessionCursor('s1');
+    const completions: Array<(value: typeof POI_FC) => void> = [];
+    apiFetchMock.mockImplementation(() => new Promise((resolve) => completions.push(resolve)));
+    const spec = activeSpec(count, 1);
+    const context = { sessionId: 's1', ownerToken: null };
+    for (let round = 0; round < 4; round++) injectResolvedRefSources(spec, context);
+    expect(apiFetchMock).toHaveBeenCalledTimes(count);
+    for (const resolve of completions) resolve(POI_FC);
+    await vi.waitFor(() => {
+      const result = injectResolvedRefSources(spec, context);
+      expect(Object.values(result.sources).every((source) => 'inlineData' in source)).toBe(true);
+    });
+    for (let round = 0; round < 4; round++) injectResolvedRefSources(spec, context);
+    expect(apiFetchMock).toHaveBeenCalledTimes(count);
+  });
+
+  it('does not invent revision changes from missing metadata; actual change supersedes the old promise', async () => {
+    setMapSpecSessionCursor('s1');
+    const completions: Array<(value: typeof POI_FC) => void> = [];
+    apiFetchMock.mockImplementation(() => new Promise((resolve) => completions.push(resolve)));
+    const context = { sessionId: 's1', ownerToken: null };
+    injectResolvedRefSources(activeSpec(1), context);
+    injectResolvedRefSources(activeSpec(1, 1), context);
+    injectResolvedRefSources(activeSpec(1), context);
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    injectResolvedRefSources(activeSpec(1, 2), context);
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+    expect(apiFetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    completions[0](POI_FC);
+    await Promise.resolve();
+    expect('inlineData' in injectResolvedRefSources(activeSpec(1, 2), context).sources.s0).toBe(false);
+    const edited = { ...POI_FC, features: [] };
+    completions[1](edited);
+    await vi.waitFor(() => expect(injectResolvedRefSources(activeSpec(1, 2), context).sources.s0).toMatchObject({ inlineData: edited }));
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds active refs explicitly and cancels retired requests without negative caching them', async () => {
+    const { getRefSourceBudget, MAX_ACTIVE_REF_SOURCES } = await import('./ref-source-resolver');
+    setMapSpecSessionCursor('s1');
+    apiFetchMock.mockImplementation(() => new Promise(() => {}));
+    const context = { sessionId: 's1', ownerToken: null };
+    injectResolvedRefSources(activeSpec(MAX_ACTIVE_REF_SOURCES + 1), context);
+    expect(apiFetchMock).toHaveBeenCalledTimes(MAX_ACTIVE_REF_SOURCES);
+    expect(getRefSourceBudget()).toEqual({ limit: MAX_ACTIVE_REF_SOURCES, omitted: 1 });
+    const retiredSignals = apiFetchMock.mock.calls.map((call) => call[1]?.signal);
+    injectResolvedRefSources({ version: '1.0', sources: {}, layers: [] }, context);
+    expect(retiredSignals.every((signal) => signal?.aborted)).toBe(true);
+    injectResolvedRefSources(activeSpec(1), context);
+    expect(apiFetchMock).toHaveBeenCalledTimes(MAX_ACTIVE_REF_SOURCES + 1);
+  });
+  it('keeps only24 cold values and admits an omitted active ref when a slot is freed', async () => {
+    const { getRefSourceState, getRefSourceBudget } = await import('./ref-source-resolver');
+    const context = { sessionId: 's1', ownerToken: null };
+    setMapSpecSessionCursor('s1');
+    apiFetchMock.mockResolvedValue(POI_FC);
+    injectResolvedRefSources(activeSpec(25, 1), context);
+    await vi.waitFor(() => expect(getRefSourceState('ref:active-24')).toBe('resolved'));
+    injectResolvedRefSources({ version: '1.0', sources: {}, layers: [] }, context);
+    expect(getRefSourceState('ref:active-0')).toBe('unresolved');
+    expect(getRefSourceState('ref:active-1')).toBe('resolved');
+    resetRefSourceCache();
+    apiFetchMock.mockClear();
+    apiFetchMock.mockImplementation(() => new Promise(() => {}));
+    const crowded = activeSpec(65, 1);
+    injectResolvedRefSources(crowded, context);
+    expect(getRefSourceBudget().omitted).toBe(1);
+    injectResolvedRefSources({ ...crowded, layers: crowded.layers.slice(1) }, context);
+    expect(apiFetchMock).toHaveBeenCalledTimes(65);
+    expect(getRefSourceBudget().omitted).toBe(0);
+    expect(apiFetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(apiFetchMock.mock.calls[64][0]).toContain(encodeURIComponent('ref:active-64'));
+  });
+
+});

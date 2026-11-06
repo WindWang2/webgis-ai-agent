@@ -89,7 +89,7 @@ def test_row_budget_fail_fast():
                       right_source_id="audit"),
         ],
         limit=10_000, engine="v6",
-        budget=ExecutionBudget(max_rows=500, max_bytes=10**9, max_vertices=10**9,
+        budget=ExecutionBudget(max_rows=500, max_bytes=512 * 1024 * 1024, max_vertices=50_000_000,
                                deadline_s=60.0),
     )
     executor = FederatedExecutor(lambda sid: adapters.get(sid))

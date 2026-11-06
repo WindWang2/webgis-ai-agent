@@ -24,6 +24,8 @@ os.environ.setdefault("ALLOW_PUBLIC_REGISTER", "true")
 
 @pytest_asyncio.fixture
 async def app_and_db(tmp_path, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "ALLOW_PUBLIC_REGISTER", True)
     """每个 test 一个独立 sqlite + 干净 schema + NoOp limiter。"""
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from app.models.db_model import Base
@@ -458,8 +460,9 @@ async def test_refresh_rate_limit_triggers_429(client, app_and_db, monkeypatch):
 
     class _CountingLimiter:
         async def is_allowed(self, key, max_requests, window_seconds):
-            call_count["n"] += 1
-            # refresh 路径的 key 是 auth_refresh:<user_id>
+            # Count only the per-user bucket; IP admission is a separate gate.
+            if key.startswith("auth_refresh:"):
+                call_count["n"] += 1
             if key.startswith("auth_refresh:") and call_count["n"] > 30:
                 return False
             return True

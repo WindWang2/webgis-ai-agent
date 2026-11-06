@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import contextlib
+import random
 import logging
 import os
 import threading
@@ -52,8 +53,8 @@ from app.lib.runtime import context as rt_ctx
 
 logger = logging.getLogger(__name__)
 
-#: 取消探针轮询周期。500ms 足够让用户感知「点了就停」，又不会把 DB 打满。
-CANCEL_POLL_INTERVAL_S = 0.5
+#: 取消探针轮询周期。2.5s 加抖动，避免大量并发任务同步轮询数据库。
+CANCEL_POLL_INTERVAL_S = 2.5
 #: 无进度时的心跳周期。远小于 DEFAULT_STALE_AFTER_S(300s)。
 HEARTBEAT_INTERVAL_S = 30.0
 
@@ -295,9 +296,8 @@ class _CancelWatchdog:
 
     def _run(self) -> None:
         last_heartbeat = time.monotonic()
-        while not self._stop.wait(self._poll_interval):
-            if self.poll_once():
-                return  # token 已点燃，无需继续轮询
+        while not self._stop.wait(self._poll_interval * random.uniform(0.8, 1.2)):
+            self.poll_once()  # Cancellation stops work, not the live worker heartbeat.
             now = time.monotonic()
             if now - last_heartbeat >= self._heartbeat_interval:
                 last_heartbeat = now

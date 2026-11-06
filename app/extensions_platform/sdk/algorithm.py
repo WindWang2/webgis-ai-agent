@@ -203,8 +203,19 @@ def run_authoring_checks(
 
     全部确定性、无网络、无 LLM。供 `ext scaffold` 生成的测试与 CI 复用。
     """
+    import math
     diagnostics: list[ExtensionDiagnostic] = []
+    def feature_count(value: Any) -> int:
+        if isinstance(value, dict):
+            return sum(len(item) if key == "features" and isinstance(item, list) else feature_count(item) for key, item in value.items())
+        if isinstance(value, (list, tuple)):
+            return sum(feature_count(item) for item in value)
+        return 0
     for case in spec.smoke_cases:
+        if spec.scale_guard_features is not None and feature_count(case.arguments) > spec.scale_guard_features:
+            diagnostics.append(ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_INVALID, "authoring smoke input exceeds scale_guard_features"))
+            continue
         try:
             result = implementation(**case.arguments)
         except Exception as exc:  # noqa: BLE001 - harness 收集而非中断
@@ -217,8 +228,8 @@ def run_authoring_checks(
             )
             continue
         actual = result.get(case.expect_key) if isinstance(result, dict) else None
-        if isinstance(case.expect_value, float) and isinstance(actual, (int, float)):
-            if abs(float(actual) - case.expect_value) > case.tolerance:
+        if isinstance(case.expect_value, (int, float)) and not isinstance(case.expect_value, bool) and isinstance(actual, (int, float)) and not isinstance(actual, bool):
+            if not all(math.isfinite(float(value)) for value in (actual, case.expect_value, case.tolerance)) or case.tolerance < 0 or abs(float(actual) - case.expect_value) > case.tolerance:
                 diagnostics.append(
                     ExtensionDiagnostic.error(
                         DiagnosticCode.MANIFEST_INVALID,
@@ -234,7 +245,7 @@ def run_authoring_checks(
                     f"{case.expect_key}={case.expect_value!r}, got {actual!r}",
                 )
             )
-    if spec.scale_guard_features and spec.cancellation_probe is not None:
+    if spec.cancellation_probe is not None:
         try:
             spec.cancellation_probe()
         except Exception as exc:  # noqa: BLE001

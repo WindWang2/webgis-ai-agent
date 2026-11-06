@@ -68,12 +68,12 @@ def test_listed_skill_loads_and_tampered_skill_blocked(tmp_path):
     assert reg2.marker == "MISSING", "哈希不符的技能必须被 quarantine"
 
 
-def test_no_lock_means_no_enforcement(tmp_path):
-    """无锁文件 = 旧部署语义：.py 直接加载（向后兼容）。"""
+def test_missing_lock_quarantines_python_skills(tmp_path):
+    """#1806: a missing deployment lock must never execute unapproved code."""
     (tmp_path / "free.py").write_text(GOOD_SKILL, encoding="utf-8")
     reg = _Reg()
     skills_mod.load_skills(reg, skills_dir=str(tmp_path))
-    assert reg.marker == "LOADED"
+    assert reg.marker == "MISSING"
 
 
 def test_invalid_lock_json_quarantines_all(tmp_path):

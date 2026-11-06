@@ -219,6 +219,18 @@ export function _resetSceneEvidenceForTests(): void {
   sceneEvidenceRing = [];
 }
 
+// ── ADR-0283 D3：缺瓦片有界账目（per-source 计数 + 首 N 样本）──────────
+// scene_basemap_unavailable 只证「有失效」；本账目回答「缺多少、缺哪些」——
+// 导出披露据此给 basemap_tiles_missing（count + 样本 z/x/y；detail ≤200）。
+// 有界三重：样本 ≤5/源、源 ≤8、无坐标的失败只计数不进样本。确定性：快照
+// 按 sourceId 字典序（无墙钟入序）。
+// 计数语义（R9 P3-3 诚实登记）：**会话累计**（provider 健康度信号 ——
+// 跨导出持续缺瓦片的源每次导出都如实披露累计值），非单次导出窗口值；
+// 账目按 map/session/source generation 隔离；源重建、样式重置与销毁均清理。
+// _resetTileMissForTests 仅供测试。
+export { recordTileMiss, tileMissSnapshot, tileMissDetail, resetTileMiss, _resetTileMissForTests } from './tile-miss-account';
+export type { TileMissAccount } from './tile-miss-account';
+
 /** 挤出证据检查（ADR-0199 fail-closed）：显式契约 > 要素 height 数值字段。 */
 function extrusionEvidenceOf(layer: Layer, profile: GeometryProfile): {
   evidenced: boolean;
@@ -325,7 +337,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     const filterField = thematicField(layer.legend_spec) ?? srcMetaField;
     const filterRanges = activeFilters[layer.id];
     const buildLayerFilter = (baseType: string): unknown[] => {
-      const base: unknown[] = ["==", "$type", baseType];
+      const base: unknown[] = ["==", ["geometry-type"], baseType];
       const parts: unknown[] = [base];
       // Issue #393: imperative filters (APPLY_LAYER_FILTER) are persisted on the
       // store layer — without this merge the reconcile would emit only the $type
@@ -610,7 +622,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
       id: `${sourceId}${SUBLAYER_SEP}point`,
       source: sourceId,
       type: "circle",
-      filter: ["==", "$type", "Point"],
+      filter: ["==", ["geometry-type"], "Point"],
       paint: {
         "circle-radius": 4,
         "circle-color": "rgba(22, 163, 74, 0.3)",

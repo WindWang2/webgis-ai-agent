@@ -215,3 +215,30 @@ async def test_confirm_tier3_once_is_one_shot_and_tool_scoped_review_f6():
     r1, r2 = await t1, await t2
     ok = [r for r in (r1, r2) if isinstance(r, dict) and r.get("value") == "ran"]
     assert len(ok) == 1, (r1, r2)
+
+
+async def test_mutating_arguments_invalidates_pending_confirmation():
+    reg = _tier3_registry()
+    sid = "sec03-argument-change"
+    plan_id = await _store_tier3_plan(sid)
+    pending = await plan_svc.execute_plan_async(sid, plan_id, reg)
+    plan = await plan_svc.load_plan(sid, plan_id)
+    steps = plan["steps"]
+    steps[0]["args"] = {"x": "changed target"}
+    await plan_svc.update_plan_status(sid, plan_id, steps=steps)
+    rejected = await plan_svc.approve_destructive_confirmation(sid, plan_id, pending["challenge_id"])
+    assert rejected["code"] == "CONFIRMATION_MISMATCH"
+    assert not (await plan_svc.load_plan(sid, plan_id)).get("__step_results__")
+
+
+async def test_tier3_cannot_approve_dynamic_target_from_upstream():
+    reg = _tier3_registry()
+    plan = plan_svc.PlanProposal(title='dynamic target', steps=[
+        plan_svc.PlanStep(id='read', tool='read_data', args={}),
+        plan_svc.PlanStep(id='d1', tool='sec03_danger', args={'x': '${read.target}'}),
+    ])
+    sid = 'sec03-dynamic-target'
+    plan_id = await plan_svc.store_plan(sid, plan)
+    blocked = await plan_svc.execute_plan_async(sid, plan_id, reg)
+    assert blocked['code'] == 'DESTRUCTIVE_ARGUMENTS_REQUIRE_LITERAL_VALUES'
+    assert blocked['executed'] == []

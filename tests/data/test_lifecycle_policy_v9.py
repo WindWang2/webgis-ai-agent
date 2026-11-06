@@ -135,10 +135,10 @@ def test_adapters_enumerate_real_mechanisms(roots):
     (roots["cog"] / "s" / "b.tif").write_bytes(b"y")
     art = adapters.enumerate_artifacts()
     cog = adapters.enumerate_cog()
-    assert [o.object_id for o in art.objects] == ["a"]
+    assert [o.object_id for o in art.objects] == ["a.tif"]
     assert art.objects[0].byte_size == 1
     assert [o.object_id for o in cog.objects] == ["s/b.tif"]
-    assert cog.objects[0].owner_scope == "s"
+    assert cog.objects[0].owner_scope == "session:s"
 
 
 def test_revive_object_promotes_to_hot(roots):
@@ -215,8 +215,8 @@ def test_gc_full_loop_approve_execute_rollback_purge(roots, monkeypatch):
         # 观察期（staging_hours=0）已过 → purge 允许且 no-op（目录已空）
         p = rollback_plan  # noqa: F841 — 语义占位
         from app.services.data_lifecycle.gc_plan import purge_staging
-        purge_result = purge_staging(plan)
-        assert purge_result["purged"] is True
+        with pytest.raises(GcPlanError):
+            purge_staging(plan)
 
 
 def test_gc_state_machine_full_matrix(roots, monkeypatch):

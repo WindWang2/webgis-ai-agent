@@ -176,7 +176,7 @@ def build_binding_proposals(
     ) -> RepresentationBinding:
         fingerprint = binding_fingerprint({
             "doc": doc.document_id, "path": path, "target": target_kind,
-            "payload": payload,
+            "payload": payload, "mapspec_revision": expected_revision,
         })
         return RepresentationBinding(
             binding_id=f"rb-{fingerprint}",
@@ -524,8 +524,8 @@ async def apply_pending_bindings(
     # 发布 pin 快照（同进程后续 sync 工具的 grammar face 消费面）。
     publish_pin_snapshot(session_id, doc)
 
-    async def _one_pass(base_revision: Optional[int]) -> List[RepresentationBinding]:
-        proposals = build_binding_proposals(doc, mapspec, expected_revision=base_revision)
+    async def _one_pass(base_revision: Optional[int], current_mapspec: Any) -> List[RepresentationBinding]:
+        proposals = build_binding_proposals(doc, current_mapspec, expected_revision=base_revision)
         outcomes: List[RepresentationBinding] = []
         # 批内 CAS 链：每条成功 apply 推进 revision，下一条以最新回执为基线
         # （同批自陷 stale 的反面——review P1#1）。
@@ -542,12 +542,12 @@ async def apply_pending_bindings(
             outcomes.append(outcome)
         return outcomes
 
-    outcomes = await _one_pass(revision or None)
+    outcomes = await _one_pass(revision or None, mapspec)
     superseded = [b for b in outcomes if b.status == BindingStatus.SUPERSEDED]
     if superseded and _MAX_RETRIES >= 1:
         # CAS 过期（并发 mutation）：以新基线重放一次（有界重试）。
         fresh = await _mapspec_state(session_id)
-        outcomes = await _one_pass(_current_mapspec_revision(fresh) or None)
+        outcomes = await _one_pass(_current_mapspec_revision(fresh) or None, fresh.get("mapspec"))
 
     report: Dict[str, Any] = {
         "document": "ok",

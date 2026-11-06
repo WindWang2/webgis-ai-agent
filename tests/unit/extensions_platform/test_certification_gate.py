@@ -93,6 +93,8 @@ class TestGateOn:
         # 认证后修改包内容（指纹漂移；.certification.json 不入指纹）。
         main_py = v4_env.tmp_path / "certv4-pack" / "main.py"
         main_py.write_text(main_py.read_text(encoding="utf-8") + "\n# touched\n", encoding="utf-8")
+        from app.extensions_platform.signing import sign_pack
+        sign_pack(main_py.parent, "fixture-signing", v4_env.tmp_path / "fixture-signing.key")
         host.discover()
         diagnostics = host.activate(EXTENSION_ID)
         assert any(d.code.value == "certification_stale" for d in diagnostics)

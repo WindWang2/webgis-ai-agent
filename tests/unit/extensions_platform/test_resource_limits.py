@@ -217,6 +217,10 @@ class TestDegradation:
         fake = type(sys)("fake_resource")
         fake.RLIMIT_AS = 5
         fake.RLIMIT_CPU = 6
+        fake.RUSAGE_SELF = 0
+        fake.RLIM_INFINITY = -1
+        fake.getrusage = lambda _: type("Usage", (), {"ru_utime": 0, "ru_stime": 0})()
+        fake.getrlimit = lambda _: (-1, -1)
 
         def _boom(*_a, **_kw):
             raise OSError("rlimit denied by container")
@@ -248,4 +252,19 @@ class TestDegradation:
         record = host.get_record(EXTENSION_ID)
         assert record is not None and record.worker is not None
         assert record.worker.alive
+        host.reset()
+
+
+def test_many_legal_calls_do_not_exhaust_lifetime_cpu_budget(tmp_path):
+    pack = _make_pack(tmp_path, max_cpu_seconds=1, call_timeout_s=20.0)
+    main = pack / "main.py"
+    source = main.read_text().replace("def _noop() -> dict:\n    return {}", "def _noop() -> dict:\n    import time\n    started = time.process_time()\n    while time.process_time() - started < .25:\n        pass\n    return {}")
+    main.write_text(source)
+    host, registry = _host(tmp_path)
+    try:
+        assert not has_errors(host.activate(EXTENSION_ID))
+        for _ in range(8):
+            assert registry._tools["acme_noop"]() == {}
+        assert host.get_record(EXTENSION_ID).worker_crash_count == 0
+    finally:
         host.reset()

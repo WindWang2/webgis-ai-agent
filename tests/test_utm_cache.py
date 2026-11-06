@@ -1,4 +1,4 @@
-"""Tests for to_utm_gdf identity-based memoization (Phase 4 perf)."""
+"""Tests for to_utm_gdf content-based memoization (Phase 4 perf)."""
 from app.lib.geo_processor.core import (
     to_utm_gdf,
     clear_utm_cache,
@@ -44,13 +44,13 @@ def test_cache_returns_copy_not_alias():
     assert "extra_col" not in g2.columns
 
 
-def test_different_objects_get_different_entries():
+def test_equal_content_objects_share_one_entry():
     clear_utm_cache()
     fc_a = _sample_fc()
     fc_b = _sample_fc()  # same content, different identity
     to_utm_gdf(fc_a)
     to_utm_gdf(fc_b)
-    assert get_utm_cache_info()["size"] == 2
+    assert get_utm_cache_info()["size"] == 1
 
 
 def test_original_crs_preserved_on_hit():
@@ -63,7 +63,7 @@ def test_original_crs_preserved_on_hit():
 
 
 def test_string_input_not_cached():
-    """Strings are parsed-and-discarded; identity caching is unsafe, must bypass."""
+    """String input bypasses the object-pinning cache."""
     clear_utm_cache()
     import json
     s = json.dumps(_sample_fc())
@@ -106,14 +106,14 @@ def test_cache_pins_geojson_reference_preventing_id_reuse():
     (hotspot classification got another test's data).
     """
     import gc
-    from app.lib.geo_processor.core import _utm_cache, _utm_cache_lock, _UTM_CACHE_MAX
+    from app.lib.geo_processor.core import _utm_cache, _utm_cache_lock, _UTM_CACHE_MAX, _cache_key_for
 
     clear_utm_cache()
     fc = _sample_fc()
     to_utm_gdf(fc)
 
     with _utm_cache_lock:
-        entry = _utm_cache.get((id(fc), None))
+        entry = _utm_cache.get(_cache_key_for(fc, None))
     assert entry is not None
     pinned = entry[0]
     assert pinned is fc, "缓存条目必须持有 geojson 引用（防 id 复用）"
@@ -133,3 +133,4 @@ def test_cache_pins_geojson_reference_preventing_id_reuse():
         g, _crs = to_utm_gdf(obj)
         # 每个对象的结果都应与其自身内容一致（id 冲突会破坏这一点）
         assert g is not None
+        assert g.iloc[0]["v"] == i

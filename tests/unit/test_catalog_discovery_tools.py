@@ -12,10 +12,18 @@ from app.tools import init_tools
 from app.tools.registry import ToolRegistry
 
 
-@pytest.fixture(scope="module")
-def registry():
+@pytest.fixture()
+def registry(monkeypatch):
     reg = ToolRegistry()
     init_tools(reg)
+    # Production discovery reads only the lifespan-injected registry. Supply
+    # that authority instead of relying on a removed private fallback.
+    import app.agent_pi_bridge as bridge
+    import app.tools.catalog_discovery_tools as discovery
+    from app.lib.gis.execution_catalog import get_execution_catalog
+    monkeypatch.setattr(bridge, "_tool_registry", reg)
+    catalog = get_execution_catalog(tool_registry=reg)
+    monkeypatch.setattr(discovery, "_get_catalog", lambda refresh=False: catalog)
     return reg
 
 

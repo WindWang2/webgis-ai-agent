@@ -86,6 +86,7 @@ def test_record_result_refresh_dedupes_existing_rows(idx_env):
         db.commit()
 
     ok = reuse_index.record_result(
+            org_id="org-fixture",
         owner_scope="u:h2", node_fingerprint="fp2",
         result_ref="ref:fresh", session_id="s1",
         upstream_fingerprints={"up": "fp-up"},
@@ -108,6 +109,7 @@ def test_find_result_owner_isolated(idx_env):
 
     factory, _ = idx_env
     assert reuse_index.record_result(
+            org_id="org-fixture",
         owner_scope="u:h3", node_fingerprint="fp3",
         result_ref="ref:mine", session_id="s1",
         upstream_fingerprints=None,

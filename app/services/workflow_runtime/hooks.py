@@ -50,7 +50,7 @@ async def owner_scope_for_session(session_id: str) -> str:
         uid = None
     from app.services.geocompute.executor import owner_scope_for as _osf
 
-    return _osf({"user_id": uid} if uid else None, None)
+    return _osf({"user_id": uid} if uid else None, session_id)
 
 
 async def org_id_for_session(session_id: str) -> Optional[str]:

@@ -164,7 +164,7 @@ def test_cache_write_through_and_distributed_hit():
     cache.invalidate()
     hit = cache.get(key)
     assert hit is not None
-    assert hit["result_cache"]["basis"] == "ttl+fingerprint+distributed"
+    assert hit["result_cache"]["basis"] == "ttl+descriptor_fingerprint+distributed"
     assert hit["rows"] == [{"a": 1}]
 
 

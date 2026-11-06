@@ -28,6 +28,7 @@ from app.lib.cartography.render_work_envelope import (
     MAX_DATA_DEPENDENCIES,
     MAX_DIAGNOSTICS,
     MAX_LAYER_WORK,
+    MAX_SCENE_WORK,
     RENDER_WORK_SCHEMA_VERSION,
     _SOURCE_KINDS,
     project_render_work_envelope,
@@ -60,6 +61,9 @@ class TestContractManifestParity:
         assert block["max_layer_work"] == MAX_LAYER_WORK
         assert block["max_component_work"] == MAX_COMPONENT_WORK
         assert block["max_diagnostics"] == MAX_DIAGNOSTICS
+        # D4（评审）：G3DV2-B M1 新增预算此前漏锁 —— TS 侧有断言而 Python
+        # 侧无，锁链不闭合（手改 JSON 或 Python 常量时无人报错）。
+        assert block["max_scene_work"] == MAX_SCENE_WORK
         assert block["source_kinds"] == sorted(_SOURCE_KINDS)
 
     def test_apply_ack_block(self, manifest):

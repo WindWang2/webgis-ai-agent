@@ -62,6 +62,42 @@ class RuntimeCorrelationFilter(logging.Filter):
 
 _RUNTIME_CORRELATION_FILTER = RuntimeCorrelationFilter()
 
+
+class TransportQueryFilter(logging.Filter):
+    """Omit query strings from Uvicorn HTTP and WebSocket transport logs.
+
+    The query remains available to routing/authorization. Log only its path,
+    as the edge proxy does, so capability tokens and session selectors never
+    leak through the server's separate access logger.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple):
+            return True
+        index = None
+        if record.name == "uvicorn.access" and len(args) == 5:
+            index = 2
+        elif record.name == "uvicorn.error" and '"WebSocket %s"' in str(record.msg) and len(args) >= 2:
+            index = 1
+        if index is not None:
+            path = args[index]
+            if isinstance(path, str):
+                clean = list(args)
+                clean[index] = path.partition("?")[0].partition("#")[0]
+                record.args = tuple(clean)
+        return True
+
+
+_TRANSPORT_QUERY_FILTER = TransportQueryFilter()
+
+
+def install_transport_log_redaction() -> None:
+    for name in ("uvicorn.access", "uvicorn.error"):
+        logger = logging.getLogger(name)
+        if _TRANSPORT_QUERY_FILTER not in logger.filters:
+            logger.addFilter(_TRANSPORT_QUERY_FILTER)
+
 # 定义日志格式（#691：带关联字段；未绑定时为 "-"，可按 turn_id/session_id 直接 grep）
 LOG_FORMATTER = logging.Formatter(
     fmt="%(asctime)s [%(levelname)-8s] [req=%(request_id)s sess=%(session_id)s turn=%(turn_id)s run=%(run_id)s proj=%(project_id)s] %(name)-20s: %(message)s",

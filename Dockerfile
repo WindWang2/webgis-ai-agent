@@ -29,6 +29,9 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 # cross-origin backend.
 ARG NEXT_PUBLIC_WS_URL=""
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+# Optional public browser key; enables the credential-gated CARTO profiles.
+ARG NEXT_PUBLIC_CARTO_BASEMAP_KEY=""
+ENV NEXT_PUBLIC_CARTO_BASEMAP_KEY=$NEXT_PUBLIC_CARTO_BASEMAP_KEY
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build
 
@@ -56,15 +59,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=backend-deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-deps /usr/local/bin /usr/local/bin
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY requirements.txt ./
 COPY main.py ./
+COPY manage.py alembic.ini ./
+COPY migrations/ ./migrations/
 COPY app/ ./app/
-# #618-37: Pi RPC entry is vendor/pi/packages/coding-agent/dist/rpc-entry.js
-# (pi_rpc_client.PI_RPC_ENTRY). compose api uses this stage as target and
-# celery defaults to runner (COPY --from=backend-builder /app). Without this
-# COPY, USE_NEW_AGENT cannot find the entry and silently falls back.
-# Same path Dockerfile.prod copies; runtime needs vendor/ (submodule).
+COPY skills-lock.json ./
+COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Pi RPC's bundle and locked external extension loader serve both compose api
+# (backend-builder) and runner; migration and entrypoint assets remain present.
 COPY vendor/ ./vendor/
+COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
+COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules/jiti
 
 # Stage 4b: Node runtime for the runner stage
 # PLT-03（#1750）：Debian bookworm 的 `nodejs` apt 包是 18.x，而 Next 16
@@ -75,6 +83,17 @@ COPY vendor/ ./vendor/
 # `node server.js` 与 Pi RPC 的 `node rpc-entry.js`，npm/corepack 不入
 # 镜像以控制体积。digest 与 Dockerfile.prod 的 node-runtime 阶段一致。
 FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
+
+# Stage 4c: Pi RPC runtime builder（ADR-0282；同 Dockerfile.prod 的
+# pi-builder —— bundle 及其锁定的 jiti 扩展加载器；backend-builder（compose api 目标）
+# 与 runner 两个消费者都复制该目录）。
+FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS pi-builder
+WORKDIR /app
+COPY vendor/pi/package.json vendor/pi/package-lock.json ./vendor/pi/
+RUN cd vendor/pi && npm ci --no-audit --no-fund && rm -rf node_modules
+COPY vendor/pi/ ./vendor/pi/
+RUN cd vendor/pi && npm ci --no-audit --no-fund && npm run build \
+    && test -f packages/coding-agent/dist/bundle/rpc-entry.js
 
 # Stage 5: Runner
 FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runner
@@ -116,15 +135,25 @@ COPY --from=backend-builder /app ./
 # Copy installed Python packages and binaries
 COPY --from=backend-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-builder /usr/local/bin /usr/local/bin
+# Pi v1.5.0 RPC bundle（pi-builder 构建产物）—— 覆盖 COPY vendor/
+# 源码中不存在的 dist 产物，保证 USE_NEW_AGENT=true 时入口可执行。
+COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
+COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules/jiti
 
 # Create non-root user
-RUN addgroup --system --gid 1001 appgroup && adduser --system --uid 1001 appuser
+RUN addgroup --system --gid 1001 appgroup && adduser --system --uid 1001 --ingroup appgroup appuser \
+    && mkdir -p /app/data /app/.cache /app/.pi \
+    && chown -R appuser:appgroup /app/data /app/.cache /app/.pi
+
+ENV HOME=/app
 
 USER appuser
 
 EXPOSE 3000 8000
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
 # #1694 SEC-13：--ws-max-size 与 app/api/routes/ws.py:29 / ws_collab.py:51 的
 # _MAX_INBOUND_BYTES=16*1024 对齐（应用层长度检查在整帧 receive_text() 缓冲之后，
 # 协议层先限 size 才不会把超大帧整体读进内存）。与 Dockerfile.prod 的 CMD 一致。
-CMD ["sh", "-c", "trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws-max-size 16384 & node frontend/.next/standalone/server.js -p 3000 & wait"]
+CMD ["python", "-m", "app.lib.runtime.service_supervisor"]

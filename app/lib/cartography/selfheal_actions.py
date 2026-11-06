@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import logging
 import copy
 import os
 from dataclasses import dataclass
@@ -137,6 +138,9 @@ SELFHEAL_ACTIONS: Tuple[SelfHealActionSpec, ...] = (
     _spec("resample", RISK_AUTO_SAFE, SURFACE_RUNTIME, 0.5,
           "重采样：密度超载层的视口抽稀参数调整（呈现级）",
           {"carto.load.ratio", "VISUAL_INFORMATION_DENSITY"}),
+    # R9 P2-2 清偿：撤销 relayout_* 新造动作注册（无执行器分支 = 死端）。
+    # ADR-0283 D4 的版式发现路由直接使用 component_composer.REPAIR_ACTIONS
+    # 既有词表（semantic_checks_layout._FIX_ROUTE），不在此另立动作面。
 )
 
 
@@ -325,15 +329,15 @@ def _rotate_step_colors(paint_spec: Dict[str, Any], colors: List[str]) -> None:
             rest = colors[1:]
         else:
             rest = colors
-        for stop, color in zip(paint_spec.get("stops") or [], rest):
+        for stop, color in zip(paint_spec.get("stops") or [], rest, strict=True):
             if isinstance(stop, (list, tuple)) and len(stop) >= 2:
                 stop[1] = color
     elif method == "interpolate":
-        for stop, color in zip(paint_spec.get("stops") or [], colors):
+        for stop, color in zip(paint_spec.get("stops") or [], colors, strict=True):
             if isinstance(stop, (list, tuple)) and len(stop) >= 2:
                 stop[1] = color
     elif method == "match":
-        for case, color in zip(paint_spec.get("cases") or [], colors):
+        for case, color in zip(paint_spec.get("cases") or [], colors, strict=True):
             if isinstance(case, (list, tuple)) and len(case) >= 2:
                 case[1] = color
 
@@ -367,7 +371,8 @@ def _build_palette_rotation(layer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             continue
         try:
             colors = resolve_palette_colors(name)
-        except Exception:  # noqa: BLE001 — 单个候选失败不阻塞
+        except Exception as _exc:  # noqa: BLE001 — 单个候选失败不阻塞
+            logging.getLogger(__name__).debug("selfheal_actions: optional operation unavailable (%s)", type(_exc).__name__)
             continue
         if len(colors) < n:
             continue
@@ -393,7 +398,7 @@ def _build_palette_rotation(layer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     categories = legend_spec.get("categories")
     if isinstance(categories, list) and len(categories) == len(best_colors):
         new_categories = []
-        for category, color in zip(categories, best_colors):
+        for category, color in zip(categories, best_colors, strict=True):
             if isinstance(category, dict):
                 new_categories.append({**category, "color": color})
             else:

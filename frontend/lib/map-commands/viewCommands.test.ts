@@ -32,6 +32,23 @@ describe('viewCommands camera commands (V3 Promise<MapCommandResult> contract)',
     _resetCameraArbitrationForTests();
   });
 
+  it('fly_to preserves zoom 0 (world view) instead of silently coercing to 12', () => {
+    // 评审 C6：`zoom || 12` 把合法的全球视野目标（zoom 0）静默改成 12 且
+    // 收敛核对镜像同一错误 —— ACK 谎报 SUCCEEDED。现在仅 undefined 回退。
+    const map = makeMockMaplibreMap();
+    void viewCommands.fly_to.run(makeCtx(map, { center: [116, 39], zoom: 0 }));
+    expect(map._calls.flyTo).toHaveLength(1);
+    expect(map._calls.flyTo[0]).toMatchObject({ zoom: 0 });
+  });
+
+  it('fly_camera validator accepts center array and rejects malformed center', () => {
+    // 评审 C16：旧谓词恒真式错乱（要求 target 存在/center 非数组）。
+    expect(viewCommands.fly_camera.requiredParams({ session_id: 's' })).toBe(true);
+    expect(viewCommands.fly_camera.requiredParams({ center: [116, 39] })).toBe(true);
+    expect(viewCommands.fly_camera.requiredParams({ center: 'x' })).toBe(false);
+    expect(viewCommands.fly_camera.requiredParams({ center: [116] })).toBe(false);
+  });
+
   it('fly_to starts the animation (stop() first, then flyTo())', () => {
     const map = makeMockMaplibreMap();
     void viewCommands.fly_to.run(makeCtx(map, { center: [116, 39], zoom: 12 }));

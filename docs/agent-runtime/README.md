@@ -57,3 +57,9 @@ Pi / Agent Host
 6. 大结果 = ref + 有界摘要；模型永不见原始巨载荷。
 7. LLM provider 健康与 geodata 健康是两个故障域，绝不混用实例。
 8. 路由确定性 —— 理由码全量留痕，绝不静默能力降级。
+9. （ADR-0282）vendored Pi 只固定在经验证 stable tag（当前 v1.5.0）；协议下限
+   `pi_compat.PI_MIN_VENDOR_TAG` 是唯一声明点；pi-schema 类型归一化是单一事实
+   归一化层，`pi_input_gate` 严格校验是归一化后最终门；
+   `additionalProperties`/边界/`required`/`enum` 在 Pi 侧先行拒绝。
+10. （ADR-0282）运行身份可对账：`/api/v1/health` 的 `pi_vendor` 为 None 而 `agent_runtime`
+    徽章为 pi 即状态不一致信号；`scripts/pi_doctor.py` 分域诊断，升级/回退必跑。

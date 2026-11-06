@@ -30,8 +30,7 @@ class TestSafeParseGeojson:
     def test_list_input(self):
         assert _safe_parse_geojson([1, 2, 3]) is None
 
-    def test_truncated_geojson_repair(self):
+    def test_truncated_geojson_rejected_without_inventing_features(self):
         truncated = '{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[0,0]},"properties":{}}'
         result = _safe_parse_geojson(truncated)
-        assert result is not None
-        assert "features" in result
+        assert result is None

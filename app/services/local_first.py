@@ -302,9 +302,11 @@ def polygon_to_bbox(polygon: Any) -> Optional[List[float]]:
 
 
 def _radius_bbox(lng: float, lat: float, radius_m: float) -> List[float]:
-    dlat = float(radius_m) / 111_000.0
-    clat = max(0.2, abs(math.cos(math.radians(lat))))
-    dlng = float(radius_m) / (111_000.0 * clat)
+    # Conservative WGS84 candidate bounds; exact distance is checked afterwards.
+    dlat = float(radius_m) / 110_000.0
+    edge_lat = min(89.9999, abs(float(lat)) + dlat)
+    clat = max(1e-6, abs(math.cos(math.radians(edge_lat))))
+    dlng = float(radius_m) / (110_000.0 * clat)
     return [lng - dlng, lat - dlat, lng + dlng, lat + dlat]
 
 
@@ -486,6 +488,60 @@ def _local_poi_chain(
     return _poi_collection(osm, bbox)
 
 
+def _spatial_poi_query(
+    bbox: Sequence[float], *, keyword: str = "", types: str = "", limit: int = 50,
+    polygon: Any = None, center: Optional[Sequence[float]] = None, radius_m: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    """Filter a bounded candidate window with the requested actual spatial predicate."""
+    from app.services.local_poi import _coerce_polygon
+    from shapely.geometry import Point
+    from pyproj import Geod
+
+    geometry = _coerce_polygon(polygon) if polygon is not None else None
+    if polygon is not None and (geometry is None or not geometry.is_valid):
+        return None
+    if geometry is not None:
+        bbox = list(geometry.bounds)  # Unsimplified authority bounds, not the coarse admin envelope.
+    if geometry is None and center is None:
+        return None  # Administrative geometry is unavailable; do not pretend bbox=boundary.
+    if center is not None and (radius_m is None or not math.isfinite(radius_m) or radius_m <= 0):
+        return None
+    limit = max(1, min(int(limit), 5000))
+    scan_limit = min(5000, max(1000, limit * 4))
+    hit = _local_poi_chain(bbox, keyword=keyword, types=types, limit=scan_limit)
+    if hit is None:
+        return None
+    candidates = hit.get("features") or []
+    filtered = []
+    geod = Geod(ellps="WGS84") if center is not None else None
+    for feature in candidates:
+        raw = feature.get("geometry") or {}
+        if raw.get("type") != "Point":
+            continue
+        try:
+            x, y = map(float, raw["coordinates"][:2])
+            if not all(math.isfinite(value) for value in (x, y)):
+                continue
+            if geometry is not None and not geometry.covers(Point(x, y)):
+                continue
+            if geod is not None and abs(geod.inv(float(center[0]), float(center[1]), x, y)[2]) > float(radius_m):
+                continue
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        filtered.append(feature)
+    if not filtered:
+        return None
+    out = dict(hit)
+    out["features"] = filtered[:limit]
+    out["count"] = len(out["features"])
+    out["spatial_filter_applied"] = "geodesic_radius" if center is not None else "polygon"
+    out["candidate_count"] = len(candidates)
+    out["candidate_total_matched"] = out.pop("total_matched", None)
+    out["truncated"] = bool(hit.get("truncated")) or len(candidates) >= scan_limit or len(filtered) > limit
+    out["count_basis"] = "bounded_spatial_candidate_window" if out["truncated"] else "spatially_filtered_candidates"
+    return out
+
+
 def try_local_admin_division(
     keywords: str,
     child_level: int = 0,
@@ -543,7 +599,7 @@ def try_local_osm_poi(
     bbox = admin_bbox_wgs84(clean)
     if bbox is None:
         return None
-    osm = _local_poi_chain(bbox, keyword=category, limit=limit)
+    osm = _spatial_poi_query(bbox, keyword=category, limit=limit, polygon=resolve_local_admin(clean, to_wgs84=True, simplified=False))
     if osm is None:
         return None
     south_west_north_east = f"{bbox[1]},{bbox[0]},{bbox[3]},{bbox[2]}"
@@ -551,7 +607,8 @@ def try_local_osm_poi(
     # 这里又丢一次），query_osm_poi 的调用方（LLM/统计下游）可感知样本完整性。
     disclosure = {
         k: osm[k]
-        for k in ("total_matched", "truncated", "notes")
+        for k in ("total_matched", "truncated", "notes", "candidate_total_matched",
+                  "candidate_count", "count_basis", "spatial_filter_applied")
         if osm.get(k) is not None
     }
     return {
@@ -641,7 +698,7 @@ def try_local_search_poi(
     bbox = admin_bbox_wgs84(place)
     if bbox is None or not _is_china_bbox(bbox):
         return None
-    hit = _local_poi_chain(bbox, keyword=kw, limit=limit)
+    hit = _spatial_poi_query(bbox, keyword=kw, limit=limit, polygon=resolve_local_admin(place, to_wgs84=True, simplified=False))
     if hit is None:
         return None
     return hit
@@ -655,10 +712,12 @@ def try_local_search_poi_polygon(
 ) -> Optional[Dict[str, Any]]:
     if not local_query_first_enabled() or (not keyword and not types):
         return None
-    bbox = polygon_to_bbox(polygon)
+    from app.services.local_poi import _coerce_polygon
+    geometry = _coerce_polygon(polygon)
+    bbox = list(geometry.bounds) if geometry is not None else None
     if bbox is None or not _is_china_bbox(bbox):
         return None
-    hit = _local_poi_chain(bbox, keyword=keyword, types=types, limit=limit)
+    hit = _spatial_poi_query(bbox, keyword=keyword, types=types, limit=limit, polygon=geometry)
     if hit is None:
         return None
     return hit
@@ -675,10 +734,12 @@ def try_local_search_poi_around(
         return None
     if not keyword and not types:
         return None
+    if not all(math.isfinite(float(value)) for value in [*center, radius_m]) or radius_m <= 0:
+        return None
     bbox = _radius_bbox(float(center[0]), float(center[1]), float(radius_m))
     if not _is_china_bbox(bbox):
         return None
-    hit = _local_poi_chain(bbox, keyword=keyword, types=types, limit=limit)
+    hit = _spatial_poi_query(bbox, keyword=keyword, types=types, limit=limit, center=center, radius_m=float(radius_m))
     if hit is None:
         return None
     return hit
@@ -694,7 +755,7 @@ def try_local_web_poi(query: str, limit: int = 20) -> Optional[Dict[str, Any]]:
     bbox = admin_bbox_wgs84(place)
     if bbox is None or not _is_china_bbox(bbox):
         return None
-    hit = _local_poi_chain(bbox, keyword=rest or query, limit=limit)
+    hit = _spatial_poi_query(bbox, keyword=rest or query, limit=limit, polygon=resolve_local_admin(place, to_wgs84=True, simplified=False))
     if hit is None:
         return None
     out = dict(hit)

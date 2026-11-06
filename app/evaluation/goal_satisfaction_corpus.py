@@ -977,7 +977,7 @@ def _family_combinations() -> List[GoalSatisfactionCase]:
         ),
         GoalSatisfactionCase(
             case_id="GC-edge-many-rows-bounded",
-            name="有界性：30 行章节 → 契约 ≤24 需求，评估不崩、全绿 satisfied",
+            name="有界性：30 行章节 → 契约 ≤24 需求，截断部分未知，不得 satisfied",
             family="combinations",
             chapter={
                 "query": "有界",
@@ -987,7 +987,7 @@ def _family_combinations() -> List[GoalSatisfactionCase]:
                 ],
             },
             map_product=_product(),
-            expected_global="satisfied",
+            expected_global="partial",
         ),
         GoalSatisfactionCase(
             case_id="GC-edge-cap-squeeze-export-survives",

@@ -510,6 +510,7 @@ def _patch_layer_presentation(
 ) -> Dict[str, Any]:
     patched = dict(layer)
     if visible is not None:
+        patched.pop("visible", None)
         layout = dict(patched.get("layout") or {})
         layout["visibility"] = "visible" if visible else "none"
         patched["layout"] = layout

@@ -235,6 +235,15 @@ async def retry_job(
     record = await _durable_or_404(db, job_id, owner_id=owner_id, owner_token=owner_token)
 
     spec = record.dispatch_spec if isinstance(record.dispatch_spec, dict) else None
+    retry_kwargs = dict((spec or {}).get("kwargs") or {})
+    if (spec or {}).get("task") == "app.services.geocompute.tasks.run_geocompute_node" and retry_kwargs.get("caller") is not None:
+        from app.services.geocompute.task_identity import sign_task_identity, project_task_caller
+        original_uid = str((retry_kwargs.get("caller") or {}).get("user_id") or "")
+        current_uid = str((user or {}).get("user_id") or "")
+        if original_uid and original_uid != current_uid:
+            raise HTTPException(status_code=403, detail="Retry requires the original caller")
+        retry_kwargs["caller"] = project_task_caller(user or {})
+        retry_kwargs["caller_identity"] = sign_task_identity(retry_kwargs)
     ok, reason = await DurableJobStore.start_retry(db, record.id)
     await db.commit()
 
@@ -269,7 +278,7 @@ async def retry_job(
                 celery_app.send_task,
                 spec["task"],
                 args=list(spec.get("args") or []),
-                kwargs={**(spec.get("kwargs") or {}), "job_id": int(record.id)},
+                kwargs={**retry_kwargs, "job_id": int(record.id)},
                 **({"queue": retry_queue} if retry_queue else {}),
                 **({"headers": _retry_headers} if _retry_headers else {}),
             )

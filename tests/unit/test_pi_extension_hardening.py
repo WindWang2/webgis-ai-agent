@@ -3,7 +3,7 @@
 Validates:
 1. postToBridge 409/503 recovery guidance and fetch timeout.
 2. loadNativeTools loud logging and error handling.
-3. currentTurnToken scanning past 24 entries and pinned fallback.
+3. currentTurnToken scanning past 24 entries and no cross-context fallback.
 4. write_native_tools_file atomic write.
 5. NATIVE_TOOL_NAMES contract pinning Python, extension, and registry schema dump.
 """
@@ -56,7 +56,7 @@ requires_node = pytest.mark.skipif(
 def test_current_turn_token_scans_past_24_entries():
     """Item 3: A tool-heavy turn (>24 entries) must not age out the turn marker."""
     server_token = "valid.turn_token"
-    first_entry = f"User query [WEBGIS_TURN_CONTEXT:{server_token}]"
+    first_entry = f"User query\n\n[WEBGIS_TURN_CONTEXT:{server_token}]\n\n(Internal routing context; do not quote or modify this marker.)"
     other_entries = [{"role": "assistant", "content": f"tool_step_{i}"} for i in range(35)]
     all_entries = [first_entry] + other_entries
     assert len(all_entries) == 36
@@ -71,10 +71,10 @@ def test_current_turn_token_scans_past_24_entries():
 
 
 @requires_node
-def test_current_turn_token_falls_back_to_pinned():
-    """Item 3: Pinned token persists if entries are later pruned or empty."""
+def test_current_turn_token_does_not_reuse_a_pruned_context():
+    """Item 3: A pruned or empty context cannot inherit the prior session token."""
     server_token = "pinned.turn_token"
-    entry = f"[WEBGIS_TURN_CONTEXT:{server_token}]"
+    entry = f"[WEBGIS_TURN_CONTEXT:{server_token}]\n\n(Internal routing context; do not quote or modify this marker.)"
 
     script = f"""
       import {{ currentTurnToken, _resetPinnedTurnToken }} from {json.dumps(EXTENSION_PATH.as_uri())};
@@ -88,7 +88,7 @@ def test_current_turn_token_falls_back_to_pinned():
     res = _run_node_script(script)
     data = json.loads(res.stdout)
     assert data["token1"] == server_token
-    assert data["token2"] == server_token
+    assert data["token2"] == ""
 
 
 @requires_node
@@ -335,3 +335,188 @@ def test_post_to_bridge_includes_tool_fingerprint_when_provided():
     """
     res = _run_node_script(script)
     assert res.stdout == "FP123"
+
+
+# ── vendor v1.5.0 适配（goal-pi-native-host-vnext）：两阶段加载下的默认表面延迟 ──
+# Pi ≥0.99 在扩展加载期禁用 action 方法（setActiveTools 抛
+# "Extension runtime not initialized"）。默认投影必须延迟到 session_start，
+# 且在 session_start 不发射的形态下由首轮 before_agent_start 兜底。
+
+_MINIMAL_DUMP = {
+    "version": 3,
+    "abi": {"version": 1, "policy": "pi_tool_spec.v1"},
+    "registry_generation": "gen-t",
+    "surface_fingerprint": "fp-t",
+    "tools": [
+        {
+            "name": "webgis_map_intent",
+            "label": "Map Intent",
+            "description": "parse intent",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            "spec": {"fingerprint": "fp-map-intent", "version": 1, "policy": "pi_tool_spec.v1"},
+        },
+        {
+            "name": "webgis_cartography_status",
+            "label": "Status",
+            "description": "zero-arg status",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            "spec": {"fingerprint": "fp-status", "version": 1, "policy": "pi_tool_spec.v1"},
+        },
+    ],
+    "default_active": ["webgis_map_intent", "webgis_cartography_status"],
+    "execute_proxy": "webgis_execute",
+}
+
+
+def _mock_pi_harness_script(dump_path: Path, events: dict) -> str:
+    """Invoke the extension with a mock pi; return a JSON transcript of calls."""
+    return f"""
+      import webgisExt from {json.dumps(EXTENSION_PATH.as_uri())};
+      process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(str(dump_path))};
+      const calls = {{ setActiveTools: [], registered: [], handlers: {{}} }};
+      const pi = {{
+        registerTool: (t) => calls.registered.push(t.name),
+        setActiveTools: (names) => calls.setActiveTools.push(names),
+        on: (event, handler) => {{ calls.handlers[event] = handler; }},
+      }};
+      webgisExt(pi);
+      calls.loadPhaseActiveCalls = calls.setActiveTools.length;
+      calls.handlers["session_start"]?.();
+      calls.afterSessionStartActiveCalls = calls.setActiveTools.length;
+      calls.handlers["before_agent_start"]?.({{ systemPrompt: "x", prompt: "hello" }});
+      calls.afterFirstTurnActiveCalls = calls.setActiveTools.length;
+      process.stderr.write(JSON.stringify(calls));
+    """
+
+
+@requires_node
+def test_extension_defers_default_surface_past_load(tmp_path: Path):
+    """Pi v1.5.0: no setActiveTools during load; session_start applies default;
+    each turn resets the default so prior projections cannot leak."""
+    dump = tmp_path / "native-tools.json"
+    dump.write_text(json.dumps(_MINIMAL_DUMP), encoding="utf-8")
+    res = _run_node_script(_mock_pi_harness_script(dump, {}))
+    data = json.loads(res.stderr.strip().splitlines()[-1])
+    # 加载期零调用（旧实现在这里直接抛 not-initialized）
+    assert data["loadPhaseActiveCalls"] == 0
+    # session_start → 默认投影（7 natives + execute proxy）
+    assert data["afterSessionStartActiveCalls"] == 1
+    assert len(data["setActiveTools"][0]) == 8
+    # Each turn resets authority even after session_start initialized the runtime.
+    assert data["afterFirstTurnActiveCalls"] == 2
+    assert data["setActiveTools"][1] == data["setActiveTools"][0]
+
+
+@requires_node
+def test_extension_applies_default_lazily_without_session_start(tmp_path: Path):
+    """session_start 从未发射（回退旧 vendor 形态）时，首轮 before_agent_start
+    兜底应用默认表面。"""
+    dump = tmp_path / "native-tools.json"
+    dump.write_text(json.dumps(_MINIMAL_DUMP), encoding="utf-8")
+    script = f"""
+      import webgisExt from {json.dumps(EXTENSION_PATH.as_uri())};
+      process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(str(dump))};
+      const active = [];
+      const pi = {{
+        registerTool: () => {{}},
+        setActiveTools: (names) => active.push(names),
+        on: (event, handler) => {{ if (event === "before_agent_start") handler({{ systemPrompt: "s", prompt: "hi" }}); }},
+      }};
+      webgisExt(pi);
+      process.stderr.write(JSON.stringify(active));
+    """
+    res = _run_node_script(script)
+    data = json.loads(res.stderr.strip().splitlines()[-1])
+    assert len(data) == 1 and len(data[0]) == 8
+
+
+@requires_node
+def test_before_agent_start_replaces_both_vendor_openings(tmp_path: Path):
+    """v0.81 与 v1.5.0 两种上游 preamble 都被整段替换为 GIS 身份（非前缀）。"""
+    dump = tmp_path / "native-tools.json"
+    dump.write_text(json.dumps(_MINIMAL_DUMP), encoding="utf-8")
+    openings = [
+        "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
+        "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.",
+    ]
+    script = f"""
+      import webgisExt from {json.dumps(EXTENSION_PATH.as_uri())};
+      process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(str(dump))};
+      const openings = {json.dumps(openings)};
+      const pi = {{
+        registerTool: () => {{}},
+        setActiveTools: () => {{}},
+        on: (event, handler) => {{ pi._h = handler; }},
+      }};
+      webgisExt(pi);
+      const results = [];
+      for (const opening of openings) {{
+        const out = await pi._h({{ systemPrompt: opening + " Extra guidance.", prompt: "q" }});
+        results.push({{ replaced: !out.systemPrompt.includes(opening),
+                 headed: out.systemPrompt.startsWith("You are GeoAgent"),
+                 extraKept: out.systemPrompt.includes("Extra guidance.") }});
+      }}
+      process.stderr.write(JSON.stringify(results));
+    """
+    res = _run_node_script(script)
+    for row in json.loads(res.stderr.strip().splitlines()[-1]):
+        assert row["replaced"], "coding opening must be replaced, not retained"
+        assert row["headed"], "GIS identity must lead the rewritten prompt"
+        assert row["extraKept"], "non-opening prompt content must survive"
+
+
+@requires_node
+def test_before_agent_start_prefixes_unknown_opening(tmp_path: Path):
+    """未识别的 preamble（未来上游再改写）仍走前缀兜底 —— 行为与原 shim 一致。"""
+    dump = tmp_path / "native-tools.json"
+    dump.write_text(json.dumps(_MINIMAL_DUMP), encoding="utf-8")
+    unknown = "You are a harness of a different vendor entirely."
+    script = f"""
+      import webgisExt from {json.dumps(EXTENSION_PATH.as_uri())};
+      process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(str(dump))};
+      const pi = {{
+        registerTool: () => {{}},
+        setActiveTools: () => {{}},
+        on: (event, handler) => {{ pi._h = handler; }},
+      }};
+      webgisExt(pi);
+      const out = await pi._h({{ systemPrompt: {json.dumps(unknown)}, prompt: "q" }});
+      process.stderr.write(out.systemPrompt);
+    """
+    res = _run_node_script(script)
+    text = res.stderr.strip()
+    assert text.splitlines()[0].startswith("You are GeoAgent")
+    assert unknown in text
+
+
+@requires_node
+def test_before_agent_start_malformed_marker_falls_back_to_default(tmp_path: Path):
+    """畸形 [WEBGIS_ACTIVE_TOOLS:...] marker（JSON 解析失败/非数组）必须回落
+    默认投影 —— 不得让全注册超集保持 active（review P3-7 回归锁）。"""
+    dump = tmp_path / "native-tools.json"
+    dump.write_text(json.dumps(_MINIMAL_DUMP), encoding="utf-8")
+    malformed = "[WEBGIS_ACTIVE_TOOLS:[not-json]]"
+    script = f"""
+      import webgisExt from {json.dumps(EXTENSION_PATH.as_uri())};
+      process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(str(dump))};
+      const active = [];
+      const pi = {{
+        registerTool: () => {{}},
+        setActiveTools: (names) => active.push(names),
+        on: (event, handler) => {{ pi._h = handler; }},
+      }};
+      webgisExt(pi);
+      await pi._h({{ systemPrompt: "s", prompt: {json.dumps(malformed)} }});
+      process.stderr.write(JSON.stringify(active));
+    """
+    res = _run_node_script(script)
+    data = json.loads(res.stderr.strip().splitlines()[-1])
+    assert len(data) == 1 and len(data[0]) == 8, (
+        "malformed marker must apply the default 8-tool projection, got "
+        f"{data}"
+    )

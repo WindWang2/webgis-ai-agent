@@ -109,6 +109,14 @@ class Settings(BaseSettings):
     # 默认 earth-search；自建/私有 STAC 目录经 env 覆盖。
     STAC_API_URL: str = "https://earth-search.aws.element84.com/v1"
 
+    @field_validator("ENV", mode="before")
+    @classmethod
+    def _canonical_environment(cls, value: str) -> str:
+        canonical = str(value).strip().lower()
+        if canonical not in {"development", "test", "staging", "production"}:
+            raise ValueError("ENV must be development, test, staging or production")
+        return canonical
+
     def is_production(self) -> bool:
         """判断是否为生产环境"""
         return self.ENV.lower() == "production"
@@ -208,6 +216,8 @@ class Settings(BaseSettings):
     # 兼容逐 case 重置的测试；登记目的是可发现/可审计/模板可见）。
     # 安全面：公开注册开关 —— 生产环境为 true 时下方 fail-fast 校验直接拒绝启动。
     ALLOW_PUBLIC_REGISTER: bool = False
+    # Admin uploads execute Python in-process; development opt-in only.
+    ALLOW_RUNTIME_SKILL_UPLOAD: bool = False
     TOOL_TIMEOUT_S: float = 300.0
     SESSION_CACHE_SIZE: int = 200
     SESSION_MESSAGE_CAP: int = 200
@@ -357,6 +367,11 @@ class Settings(BaseSettings):
     # ADR-0203 空间审查/会签工作流（Map Review）总开关：关闭时 review 路由
     # 返回 404，其余行为不变（additive feature-off 语义）。
     REVIEW_WORKFLOW_ENABLED: bool = True
+
+    # ADR-0284 D6：分析工作流产品最终门（partial ≠ final）——webgis_map_product
+    # 拒绝把非 satisfied run / 科学终局 blocked 的工作流产物 ref 当成品层
+    # （外科式降级 + 警告）。False = bit 级回退 master 行为（不门控）。
+    GIS_AWF_PRODUCT_GATE: bool = True
 
     # #662：RAG embedding 模型离线加载（local_files_only）。开启后未缓存的
     # 首次加载秒级失败（有界），而不是无超时的 HF 下载把 to_thread worker
@@ -541,7 +556,7 @@ class Settings(BaseSettings):
         if self.is_production() and "*" in self.CORS_ORIGINS:
             raise RuntimeError(
                 "CORS_ORIGINS=['*'] is not allowed in production. "
-                "Set an explicit allow-list (e.g. CORS_ORIGINS=https://your.app)."
+                'Set an explicit JSON allow-list (e.g. CORS_ORIGINS=["https://your.app"]).'
             )
         return self
 
@@ -569,17 +584,24 @@ class Settings(BaseSettings):
         """
         for attr in ("OVERPASS_API_URL", "NOMINATIM_URL"):
             url = getattr(self, attr)
-            self._validate_no_ssrf(url, field=attr)
+            self._validate_no_ssrf(url, field=attr, resolve_dns=False)
         # #1694 SEC-07：STAC_API_URL 此前不在校验列 —— 它是出网白名单覆盖面上
         # 的洞（stac_client 直接检索该目录，与 Overpass/Nominatim 同为外部
         # 数据源）。默认值是公网 earth-search，过校验无副作用。
-        self._validate_no_ssrf(getattr(self, "STAC_API_URL"), field="STAC_API_URL")
-        self._validate_no_ssrf(getattr(self, "LLM_BASE_URL"), field="LLM_BASE_URL", allow_private=True)
+        self._validate_no_ssrf(getattr(self, "STAC_API_URL"), field="STAC_API_URL", resolve_dns=False)
+        self._validate_no_ssrf(getattr(self, "LLM_BASE_URL"), field="LLM_BASE_URL", allow_private=True, resolve_dns=False)
         return self
 
     @staticmethod
-    def _validate_no_ssrf(url: str, field: str = "URL", allow_private: bool = False) -> None:
-        """校验单个 URL 不允许指向内网/元数据/非 HTTP 协议。"""
+    def _validate_no_ssrf(
+        url: str, field: str = "URL", allow_private: bool = False,
+        *, resolve_dns: bool = True,
+    ) -> None:
+        """Validate syntax/literal addresses without startup network I/O.
+
+        Runtime callers may resolve DNS in a worker thread. Actual network
+        clients still enforce connection-local destination validation.
+        """
         parsed = urlparse(url)
 
         # 只允许 http / https 协议
@@ -654,6 +676,9 @@ class Settings(BaseSettings):
                         f"{field}='{url}' uses blocked domain pattern '{pat}'."
                     )
 
+            if not resolve_dns:
+                return
+
             # 审计 SEC-07：DNS 解析 — 阻止域名解析到私有 IP。
             # 之前只做字符串模式匹配，攻击者可用解析到 169.254.169.254 的域名绕过。
             # 注意：这是静态检查（validate 时解析一次）。真正的 DNS rebinding TOCTOU
@@ -696,15 +721,8 @@ class Settings(BaseSettings):
                         f"{field}='{url}' hostname '{hostname}' resolves to "
                         f"private/reserved IP {resolved_ip}. Blocked (SSRF)."
                     )
-            except socket.gaierror:
-                # DNS 解析失败 — 不阻断（可能是开发环境临时域名），
-                # 但 log warning 让运维知道。
-                import logging
-                logging.getLogger(__name__).warning(
-                    "SEC-07: DNS resolution failed for %s in %s — "
-                    "cannot verify SSRF safety, allowing with warning",
-                    hostname, field,
-                )
+            except socket.gaierror as exc:
+                raise ValueError(f"{field}: destination DNS validation unavailable") from exc
 
 
     @model_validator(mode="after")

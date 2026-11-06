@@ -299,3 +299,31 @@ def test_cp10_content_recheck_happens_before_exec(tmp_path, trusted):
     else:
         assert record.state is ExtensionState.DEGRADED
         assert any(d.code is DiagnosticCode.FINGERPRINT_CHANGED for d in diags)
+
+
+@pytest.mark.parametrize("worker_mode", [False, True])
+def test_production_untrusted_cannot_execute_without_namespace(tmp_path, worker_mode):
+    import json
+    from app.extensions_platform.diagnostics import DiagnosticCode
+    from app.extensions_platform.host import ExtensionHost, ExtensionState, HostPolicy
+    from app.tools.registry import ToolRegistry
+    pack = _write_inproc_pack(tmp_path)
+    if worker_mode:
+        manifest_path = pack / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["api_version"] = "1.1.0"
+        manifest["execution"] = {"mode": "worker"}
+        manifest_path.write_text(json.dumps(manifest))
+    host = ExtensionHost(tool_registry=ToolRegistry(), policy=HostPolicy(
+        roots=(tmp_path,), require_namespace_for_untrusted=True, isolation_backend="process"))
+    host.discover()
+    diagnostics = host.activate("acme.pack")
+    assert host.get_record("acme.pack").state is ExtensionState.FAILED
+    assert any(d.code is DiagnosticCode.ISOLATION_UNAVAILABLE for d in diagnostics)
+    assert not (pack.parent / "RAN").exists()
+
+
+def test_production_auto_never_falls_back_to_plain_process(monkeypatch):
+    from app.extensions_platform.settings_bridge import _parse_isolation_backend
+    monkeypatch.setattr("app.extensions_platform.worker.isolation.probe_bubblewrap", lambda **kw: None)
+    assert _parse_isolation_backend("auto", production=True) == "bubblewrap"

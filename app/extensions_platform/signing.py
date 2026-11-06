@@ -384,6 +384,11 @@ def _verify_with_trust_store(
             publisher=publisher,
             detail="package/fingerprint is revoked in the trust store",
         )
+    if key_id in trust_store.revoked_key_ids:
+        return SignatureStatus(
+            STATUS_REVOKED, publisher=publisher,
+            detail=f"signing key {key_id!r} is revoked",
+        )
     if algorithm == SIGNATURE_ALGORITHM_ED25519:
         return _verify_ed25519(pack_dir, doc, key_id, publisher, fingerprint, trust_store)
     # hmac-sha256 + trust store：HMAC 密钥不在 trust store 模型内，沿用

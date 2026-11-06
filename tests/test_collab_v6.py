@@ -49,6 +49,13 @@ from app.services.mapspec.lifecycle_engine import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _live_ws_database(monkeypatch):
+    # Authentication and ownership consult the same hermetic user/session store.
+    from app.tools import _utils
+    monkeypatch.setattr("app.core.database.async_db_session", lambda: _utils.async_db_session())
+
+
 # ─── delta 纯函数 ────────────────────────────────────────────────────────────
 
 def _doc():
@@ -390,8 +397,8 @@ async def test_engine_agent_lock_guard_single_and_family():
     # agent 删除锁定层 → 拒绝（error_code=layer_locked）
     res = await engine.apply_mutation(sid, RemoveLayerIntent(layer_id="layer-b"), origin="agent")
     assert res.is_error is True and res.error_code == "layer_locked"
-    # family 语义：layer-b 的子层族同样拒绝
-    res2 = await engine.apply_mutation(sid, RemoveLayerIntent(layer_id="layer-b-child"), origin="agent")
+    # 显式 __ 物理层族同样拒绝；普通连字符不是族分隔符。
+    res2 = await engine.apply_mutation(sid, RemoveLayerIntent(layer_id="layer-b__child"), origin="agent")
     assert res2.is_error is True and res2.error_code == "layer_locked"
     # agent upsert 锁定层（重建）→ 拒绝
     res3 = await engine.apply_mutation(
@@ -563,6 +570,7 @@ def _make_collab_app(sessions: list[tuple[str, str | None, str | None]]):
     import app.tools._utils as _utils
     import app.core.rate_limiter as rl_module
     from app.api.routes.ws_collab import router as collab_router
+    from app.core.owner_tokens import owner_token_digest
 
     tmpdir = tempfile.mkdtemp()
     _TMPDIRS.append(tmpdir)
@@ -587,7 +595,9 @@ def _make_collab_app(sessions: list[tuple[str, str | None, str | None]]):
             )
         conn.execute(
             "INSERT INTO conversations (id, user_id, owner_token, title) VALUES (?, ?, ?, 't')",
-            (sid, uid, otk),
+            # Raw SQL bypasses OwnerTokenColumn's bind processor. Seed the
+            # same one-way verifier a real ORM insert/migration persists.
+            (sid, uid, owner_token_digest(otk) if otk is not None else None),
         )
     conn.commit()
     conn.close()
@@ -667,6 +677,15 @@ def test_collab_ws_auth_matrix():
     ) as ws:
         hello = _receive_hello(ws)
         assert hello["data"]["clientId"]
+    # Reading the persisted database verifier must not grant transport access.
+    from app.core.owner_tokens import owner_token_digest
+    with pytest.raises(WebSocketDisconnect) as replay:
+        with client.websocket_connect(
+            "/api/v1/ws/collab/sess-anon",
+            subprotocols=["session", owner_token_digest("tok-correct")],
+        ):
+            pass
+    assert replay.value.code == 4003
     # 5) 匿名错误 token → 4003
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(
@@ -939,3 +958,47 @@ async def test_ref_invalidation_publishes_artifact_event():
     assert len(artifact_events) == 1
     assert artifact_events[0]["data"]["refId"] == "ref:zz-1"
     assert artifact_events[0]["data"]["reason"] == "OVERWRITE"
+
+
+def test_collab_auth_frame_credentials_never_enter_handshake():
+    from app.core.auth import create_access_token
+
+    application = _make_collab_app([("frame-session", "user-123", None)])
+    with TestClient(application).websocket_connect(
+        "/api/v1/ws/collab/frame-session", subprotocols=["auth-frame-v1"]
+    ) as ws:
+        ws.send_json({"type": "auth", "mode": "bearer", "token": create_access_token({"sub": "user-123"})})
+        assert _receive_hello(ws)["event"] == "hello"
+
+
+def test_collab_rejects_non_auth_first_frame():
+    application = _make_collab_app([("frame-session-deny", "user-123", None)])
+    with TestClient(application).websocket_connect(
+        "/api/v1/ws/collab/frame-session-deny", subprotocols=["auth-frame-v1"]
+    ) as ws:
+        ws.send_json({"event": "ping"})
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
+
+
+def test_full_collaboration_room_spectator_cannot_write_presence_or_leases(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.core.auth import create_access_token
+    import app.api.routes.ws_collab as route
+    app = _make_collab_app([("sess-full-readonly", "user-123", None)])
+    join = AsyncMock(return_value=None)
+    heartbeat = AsyncMock()
+    acquire = AsyncMock(return_value={"granted": False})
+    monkeypatch.setattr(route.presence_registry, "join", join)
+    monkeypatch.setattr(route.presence_registry, "heartbeat", heartbeat)
+    monkeypatch.setattr(route.lease_registry, "acquire", acquire)
+    token = create_access_token({"sub": "user-123", "role": "viewer"})
+    with TestClient(app).websocket_connect("/api/v1/ws/collab/sess-full-readonly", subprotocols=["bearer", token]) as websocket:
+        assert _receive_hello(websocket)["event"] == "hello"
+        websocket.send_json({"event": "presence", "data": {"label": "extra participant"}})
+        websocket.send_json({"event": "lease_acquire", "data": {"lockKey": "layer:roads"}})
+        websocket.send_json({"event": "ping"})
+        while websocket.receive_json().get("event") != "pong":
+            pass
+    heartbeat.assert_not_awaited()
+    acquire.assert_not_awaited()

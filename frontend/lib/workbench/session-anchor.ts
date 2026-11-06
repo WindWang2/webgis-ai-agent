@@ -7,7 +7,7 @@
  * 会话的 owner_token 是内存持有的会话能力，刷新即失效 —— 不为恢复便利
  * 把它写进 localStorage（不新增凭据持久化面）。
  */
-import { getAccessToken } from '@/lib/auth/tokenStore';
+import { getAccessToken, getAuthUser } from '@/lib/auth/tokenStore';
 
 const ANCHOR_KEY = 'wb5:session-anchor';
 
@@ -15,6 +15,7 @@ export interface SessionAnchor {
   sessionId: string;
   /** 锚创建时是否认证会话（匿名会话不自动恢复 —— 见模块头）。 */
   authed: boolean;
+  userId?: string;
   savedAt: number;
 }
 
@@ -28,6 +29,7 @@ export function readSessionAnchor(): SessionAnchor | null {
     return {
       sessionId: parsed.sessionId,
       authed: parsed.authed === true,
+      userId: typeof parsed.userId === 'string' ? parsed.userId : undefined,
       savedAt: parsed.savedAt,
     };
   } catch {
@@ -40,6 +42,7 @@ export function writeSessionAnchor(sessionId: string): void {
     const anchor: SessionAnchor = {
       sessionId,
       authed: getAccessToken() != null,
+      userId: getAuthUser()?.id,
       savedAt: Date.now(),
     };
     window.localStorage.setItem(ANCHOR_KEY, JSON.stringify(anchor));
@@ -68,6 +71,7 @@ export function restorableSessionAnchor(): SessionAnchor | null {
   if (!anchor) return null;
   if (!anchor.authed) return null;
   if (getAccessToken() == null) return null;
+  if (!anchor.userId || anchor.userId !== getAuthUser()?.id) return null;
   if (Date.now() - anchor.savedAt > ANCHOR_TTL_MS) return null;
   return anchor;
 }

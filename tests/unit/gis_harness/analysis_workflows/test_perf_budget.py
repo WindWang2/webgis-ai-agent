@@ -58,10 +58,10 @@ async def test_100k_features_budget_blocked_not_loaded(registry):
         "family": "admin_facility_distribution",
         "role_refs": json.dumps({"subject": big_ref,
                                  "boundary": dist_ref}),
-        "session_id": SESSION})
+        "session_id": SESSION}, session_id=SESSION)
     assert plan["success"]
     run = await registry.dispatch("webgis_analysis_workflow_run", {
-        "workflow_id": plan["workflow_id"], "session_id": SESSION})
+        "workflow_id": plan["workflow_id"], "session_id": SESSION}, session_id=SESSION)
     # typed 阻断：预算门在 descriptor 层拦截——大数据不进内存/上下文
     assert run["status"] == "blocked"
     steps = {s["step_id"]: s for s in run["steps"]}

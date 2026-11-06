@@ -19,7 +19,11 @@ from app.contracts.workflow import (
 )
 
 import logging
-from typing import Any, Dict, List
+import asyncio
+from typing import Any, Dict, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from matplotlib.path import Path
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +76,43 @@ def _feature_xy(feature: Dict[str, Any]) -> tuple:
     return [], []
 
 
+def _polygon_path(rings: object) -> Path | None:
+    """Preserve separate rings and normalize winding for nonzero hole fill."""
+    import math
+    from matplotlib.path import Path
+
+    if not isinstance(rings, (list, tuple)):
+        return None
+    vertices: list[tuple[float, float]] = []
+    codes: list[int] = []
+    for index, ring in enumerate(rings):
+        if not isinstance(ring, (list, tuple)):
+            continue
+        points: list[tuple[float, float]] = []
+        for coordinate in ring:
+            if (not isinstance(coordinate, (list, tuple)) or len(coordinate) < 2
+                    or isinstance(coordinate[0], bool) or isinstance(coordinate[1], bool)
+                    or not isinstance(coordinate[0], (int, float))
+                    or not isinstance(coordinate[1], (int, float))):
+                continue
+            x, y = float(coordinate[0]), float(coordinate[1])
+            if math.isfinite(x) and math.isfinite(y):
+                points.append((x, y))
+        if len(points) > 1 and points[-1] == points[0]:
+            points.pop()
+        if len(points) < 3:
+            if index == 0:
+                return None
+            continue
+        area = sum(a[0] * b[1] - b[0] * a[1]
+                   for a, b in zip(points, points[1:] + points[:1]))
+        if (index == 0 and area < 0) or (index > 0 and area > 0):
+            points.reverse()
+        vertices.extend(points + points[:1])
+        codes.extend([int(Path.MOVETO)] + [int(Path.LINETO)] * (len(points) - 1) + [int(Path.CLOSEPOLY)])
+    return Path(vertices, codes) if vertices else None
+
+
 def _render_features_png(features: List[Dict[str, Any]], *,
                          title: str, field: str) -> bytes:
     """要素 → 主题图 PNG（Point 散点 / Polygon 填色，按 field 着色 + 图例）。"""
@@ -81,7 +122,7 @@ def _render_features_png(features: List[Dict[str, Any]], *,
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
-    from matplotlib.patches import Polygon as MplPolygon
+    from matplotlib.patches import PathPatch
 
     feats = features[:20000]
     cats: List[str] = []
@@ -89,33 +130,41 @@ def _render_features_png(features: List[Dict[str, Any]], *,
         val = (f.get("properties") or {}).get(field, "n/a")
         cats.append(str(val))
     uniq = sorted(set(cats))
+    if len(uniq) > 64:
+        retained = set(uniq[:63])
+        cats = [cat if cat in retained else "其他（合并）" for cat in cats]
+        uniq = sorted(set(cats))
+    grouped: Dict[str, List[Dict[str, Any]]] = {cat: [] for cat in uniq}
+    for feature, cat in zip(feats, cats):
+        grouped[cat].append(feature)
     colors = {c: _palette()[i % len(_palette())] for i, c in enumerate(uniq)}
 
     fig, ax = plt.subplots(figsize=(8, 6), dpi=120)
     point_handles: List[Line2D] = []
     for cat in uniq:
-        polys: List[List[float]] = []
+        polygon_count = 0
         pts_x: List[float] = []
         pts_y: List[float] = []
-        for f, c in zip(feats, cats):
-            if c != cat:
-                continue
+        for f in grouped[cat]:
             gtype = str((f.get("geometry") or {}).get("type") or "")
+            if gtype in ("Polygon", "MultiPolygon"):
+                coordinates = (f.get("geometry") or {}).get("coordinates") or []
+                polygons = [coordinates] if gtype == "Polygon" else coordinates
+                for polygon in polygons:
+                    if polygon_count >= 5000:
+                        break
+                    path = _polygon_path(polygon)
+                    if path is not None:
+                        ax.add_patch(PathPatch(path, facecolor=colors[cat],
+                                               edgecolor=colors[cat], alpha=0.45,
+                                               linewidth=0.5))
+                        polygon_count += 1
+                continue
             xs, ys = _feature_xy(f)
             if not xs:
                 continue
-            if gtype == "Polygon":
-                polys.append(list(zip(xs, ys)))
-            elif gtype == "MultiPolygon":
-                polys.append(list(zip(xs, ys)))
-            else:
-                pts_x.extend(xs)
-                pts_y.extend(ys)
-        if polys:
-            for ring in polys[:5000]:
-                ax.add_patch(MplPolygon(ring, closed=True, facecolor=colors[cat],
-                                        edgecolor=colors[cat], alpha=0.45,
-                                        linewidth=0.5))
+            pts_x.extend(xs)
+            pts_y.extend(ys)
         if pts_x:
             ax.scatter(pts_x, pts_y, s=18, c=colors[cat], alpha=0.85,
                        edgecolors="none")
@@ -126,6 +175,7 @@ def _render_features_png(features: List[Dict[str, Any]], *,
     if point_handles:
         ax.legend(handles=point_handles[:10], loc="best", fontsize=8,
                   title=field[:24], title_fontsize=8)
+    ax.autoscale_view()
     ax.set_title(title[:80], fontsize=13)
     ax.set_xlabel("lon")
     ax.set_ylabel("lat")
@@ -196,11 +246,11 @@ async def execute_cartography_node(
                     or "Workflow 专题图")
         field = str(params.get("field") or params.get("value_field")
                     or "category")
-        png_bytes = _render(payload, title=title, field=field)
+        png_bytes = await asyncio.to_thread(_render, payload, title=title, field=field)
 
         from app.lib.cartography.pdf_renderer import generate_map_pdf
 
-        pdf_bytes = generate_map_pdf(
+        pdf_bytes = await asyncio.to_thread(generate_map_pdf,
             png_bytes, title=title,
             subtitle=str(params.get("subtitle") or ""),
             scale_text=str(params.get("scale_text") or ""))
@@ -213,7 +263,7 @@ async def execute_cartography_node(
 
         key = safe_blob_key(
             f"wf-cartography-{sha256_of_bytes(pdf_bytes)[:32]}.pdf")
-        get_filesystem_blob_store().put_blob(
+        await asyncio.to_thread(get_filesystem_blob_store().put_blob,
             key, pdf_bytes, content_type="application/pdf")
         return CartographyOutcome(
             ok=True, output_ref=f"blob:{key}",

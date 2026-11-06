@@ -31,7 +31,7 @@
 | uncertainty_panel | ✓ | ✓ | ✓ | ✓ | — | V3：不确定性披露（区间/置信度/样本限制）live + canvas 导出同链（native） |
 
 已知限制（诚实登记，ADR-0238 D6）：
-- `table_panel` 仅 interactive —— 工作区交互面不是制图产物面（Runtime V4 产品决策）。
+- `table_panel` 与披露面板支持 interactive/png/pdf/svg；导出遵循矩阵声明。
 - 报告 vector SVG（python 孪生 mapspec_to_svg）不含 chrome marginalia；
   画布导出（png/pdf/svg-包装）的 chrome 由 exporter/composeLayout 承载。
 - `basemap` 是类型占位（底图逻辑在 map-panel，非 chrome 渲染）。

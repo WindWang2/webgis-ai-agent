@@ -6,7 +6,7 @@ location_allocation (p_median / max_coverage / p_center), optimize_route,
 network_gravity_access, network_huff_interaction, and network_centrality.
 """
 import logging
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
@@ -287,8 +287,10 @@ class NetworkODMatrixArgs(BaseModel):
 
 class NetworkClosestFacilityArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
-    incidents: List[Any] = Field(..., description="Incident / demand points needing service")
-    facilities: List[Any] = Field(..., description="Facility locations")
+    incidents: Union[List[Any], Dict[str, object]] = Field(
+        ..., description="Incident / demand points needing service（FeatureCollection 或要素列表）")
+    facilities: Union[List[Any], Dict[str, object]] = Field(
+        ..., description="Facility locations（FeatureCollection 或要素列表）")
     profile: TravelProfileName = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
     number_to_find: int = Field(1, description="Number of closest facilities to return per incident")
     cutoff_cost: Optional[float] = Field(
@@ -387,6 +389,37 @@ class OptimizeRouteArgs(BaseModel):
     depot: Any = Field(..., description="Starting depot point")
     stops: List[Any] = Field(..., description=f"Intermediate stops to visit (max {MAX_OPTIMIZE_STOPS} — the 2-opt local search is super-linear; larger requests must be split into smaller tours)")
     profile: str = Field(default="driving", description="Travel profile")
+
+
+def _point_items_wgs84(layer: Any) -> Any:
+    """Preserve FC coordinate meaning before unpacking points for the solver."""
+    if not isinstance(layer, dict) or layer.get("type") != "FeatureCollection":
+        return layer
+    from pyproj import CRS, Transformer
+    import math
+    member = layer.get("crs")
+    if isinstance(member, dict):
+        member = (member.get("properties") or {}).get("name")
+        if not member:
+            raise ValueError("explicit point CRS has no valid name")
+    source = CRS.from_user_input(member or "EPSG:4326")
+    transformer = Transformer.from_crs(source, "EPSG:4326", always_xy=True)
+    features = layer.get("features")
+    if not isinstance(features, list):
+        raise ValueError("point FeatureCollection requires a features list")
+    points = []
+    for feature in features:
+        if not isinstance(feature, dict) or not isinstance(feature.get("geometry"), dict):
+            raise ValueError("network endpoints require Point features")
+        geometry = feature["geometry"]
+        coordinates = geometry.get("coordinates")
+        if geometry.get("type") != "Point" or not isinstance(coordinates, (list, tuple)) or len(coordinates) < 2:
+            raise ValueError("network endpoints require Point coordinates")
+        x, y = transformer.transform(float(coordinates[0]), float(coordinates[1]), errcheck=True)
+        if not (math.isfinite(x) and math.isfinite(y) and -180 <= x <= 180 and -90 <= y <= 90):
+            raise ValueError("network endpoint is outside WGS84 longitude/latitude bounds")
+        points.append({**feature, "geometry": {**geometry, "coordinates": [x, y]}})
+    return points
 
 
 def register_network_tools(registry: ToolRegistry):
@@ -530,8 +563,8 @@ def register_network_tools(registry: ToolRegistry):
     )
     async def network_closest_facility(
         network: Any,
-        incidents: List[Any],
-        facilities: List[Any],
+        incidents: Union[List[Any], Dict[str, object]],
+        facilities: Union[List[Any], Dict[str, object]],
         profile: str = "driving",
         number_to_find: int = 1,
         cutoff_cost: Optional[float] = None,
@@ -541,8 +574,8 @@ def register_network_tools(registry: ToolRegistry):
             travel_profile = TravelProfile(name=profile)
             res = await engine.solve_closest_facility(
                 network=network,
-                incidents=incidents,
-                facilities=facilities,
+                incidents=_point_items_wgs84(incidents),
+                facilities=_point_items_wgs84(facilities),
                 profile=travel_profile,
                 number_to_find=number_to_find,
                 cutoff_cost=cutoff_cost,

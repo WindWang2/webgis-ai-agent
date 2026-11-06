@@ -28,21 +28,21 @@ def _find_skills_lock(skills_dir: str) -> Path | None:
     return None
 
 
-def _runtime_skill_hashes(skills_dir: str) -> dict[str, str] | None:
+def _runtime_skill_hashes(skills_dir: str) -> dict[str, str]:
     """锁文件 runtime_skills 段 → {filename: sha256}。
 
-    ``None`` = 锁文件不存在（未启用完整性校验，向后兼容旧部署）；
-    ``{}``  = 文件存在但 JSON 无效 / runtime_skills 缺失或非 dict /
-              段为空 —— 一切 .py 都按 quarantine 处理（fail-closed）。
+    锁文件缺失、无效或 runtime_skills 缺失时返回空表，所有 .py
+    都按 quarantine 处理（fail-closed）。
     """
     lock = _find_skills_lock(skills_dir)
     if lock is None:
-        return None
+        logger.error("Missing skills-lock.json: runtime Python skills quarantined")
+        return {}
     try:
         data = json.loads(lock.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    section = data.get("runtime_skills")
+    section = data.get("runtime_skills") if isinstance(data, dict) else None
     return dict(section) if isinstance(section, dict) else {}
 
 
@@ -65,14 +65,18 @@ def approve_runtime_skill(filename: str, file_path: str,
         return False
     try:
         data = json.loads(lock.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return False
+        section = data.setdefault("runtime_skills", {})
+        if not isinstance(section, dict):
+            return False
+        section[filename] = _sha256_file(file_path)
+        lock.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     except (OSError, ValueError):
         return False
-    section = data.setdefault("runtime_skills", {})
-    section[filename] = _sha256_file(file_path)
-    lock.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
     return True
 
 _BLOCKED_IMPORTS = {
@@ -549,6 +553,8 @@ def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str,
                        lock_hashes: dict[str, str] | None = None):
     """Load or reload a single skill file into the registry."""
     # audit ISSUE-011：锁启用时先做完整性闸 —— 未登记/篡改的 .py 永不执行。
+    if lock_hashes is None:
+        lock_hashes = _runtime_skill_hashes(str(Path(file_path).parent))
     if lock_hashes is not None:
         expected = lock_hashes.get(filename)
         actual = _sha256_file(file_path)

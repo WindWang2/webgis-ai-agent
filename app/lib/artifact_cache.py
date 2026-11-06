@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 # Where cached artifacts live (under the project data/ dir so validate_data_path
 # accepts the returned path). Created lazily on first write.
-ARTIFACT_DIR = os.path.join("data", "artifacts")
+ARTIFACT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "artifacts")
 
 # Total bytes cap for the artifact cache. ~5 GiB is generous for a dev/single-
 # host box; tune via env for production. LRU evicts oldest when exceeded.
@@ -313,6 +313,8 @@ def publish_chunk(
     sidecar carries the source identity for the fresh check in
     :func:`get_chunk`. Best-effort: callers treat failure as a future miss.
     """
+    if source_path and not os.path.isfile(source_path):
+        return None
     os.makedirs(CHUNK_DIR, exist_ok=True)
     final = _chunk_path(key)
     fd, tmp = tempfile.mkstemp(suffix=".npy", dir=CHUNK_DIR)
@@ -669,7 +671,10 @@ def sweep_orphan_disk_artifacts(*, now: Optional[float] = None) -> dict:
         elif ext == "meta" and _KEY_RE.match(stem):
             meta_keys.add(stem)
         else:
-            # 非 <16hex>.tif/.meta 命名 = publish 临时件遗留（宽限期内跳过）
+            # Only our mkstemp namespace is eligible. Unknown operator files
+            # are not cache-owned and must never be deleted by inference.
+            if not re.fullmatch(r"tmp[A-Za-z0-9_-]+\.tif", name):
+                continue
             p = os.path.join(ARTIFACT_DIR, name)
             try:
                 if os.path.isfile(p) and os.stat(p).st_mtime < grace_cutoff:

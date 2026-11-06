@@ -105,6 +105,29 @@ def _viewport_line(value: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _scope_line(v: Any) -> str:
+    """ClaimedScope 有界单行渲染（ADR-0285 D1；ids 截断披露，不含几何本体）。"""
+    if not isinstance(v, dict):
+        return _UNKNOWN_TEXT
+    kind = str(v.get("kind") or "none")
+    if kind == "none":
+        return "无"
+    parts = [f"kind={kind}"]
+    if v.get("layer_id"):
+        parts.append(f"layer={str(v['layer_id'])[:48]}")
+    if v.get("dataset_ref"):
+        parts.append(f"ref={str(v['dataset_ref'])[:48]}")
+    ids = v.get("feature_ids")
+    if isinstance(ids, list) and ids:
+        shown = [str(x)[:24] for x in ids[:4]]
+        more = len(ids) - len(shown)
+        parts.append(f"ids={len(ids)}[{','.join(shown)}{'…' if more > 0 else ''}]")
+    if kind == "aoi" and isinstance(v.get("bbox"), list) and len(v["bbox"]) == 4:
+        bbox = v["bbox"]
+        parts.append(f"bbox=W{bbox[0]:.2f},S{bbox[1]:.2f},E{bbox[2]:.2f},N{bbox[3]:.2f}")
+    return " ".join(parts)
+
+
 def _fact_status_suffix(fact: SitFact) -> str:
     if fact.status == STATUS_STALE:
         return f"（{_STALE_TEXT}）"
@@ -119,7 +142,7 @@ def _dataset_lines(value: Any) -> List[str]:
     for row in rows[:_MAX_LIST_ITEMS]:
         if not isinstance(row, dict):
             continue
-        parts = [str(row.get("ref_id") or "")]
+        parts = [_xml_fence("ref", _clip(row.get("ref_id") or "", 128))]
         alias = row.get("alias")
         if alias:
             # alias 是用户上传命名（任意文本）→ 转义 fence。
@@ -128,7 +151,7 @@ def _dataset_lines(value: Any) -> List[str]:
         if row.get("feature_count") is not None:
             extras.append(f"要素{_fmt_num(row['feature_count'])}")
         if row.get("crs"):
-            extras.append(f"CRS={_clip(row['crs'], 24)}")
+            extras.append(f"CRS={_xml_fence('crs', _clip(row['crs'], 24))}")
         if row.get("bbox") and isinstance(row["bbox"], list):
             bbox = row["bbox"]
             if len(bbox) == 4:
@@ -195,7 +218,10 @@ class _Renderer:
         """known → 渲染一行；unknown → 按策略显式/缺席。返回是否成行。"""
         marker = "*" if (ctx, name) in self.changed else ""
         if fact.status == STATUS_KNOWN:
-            body = render(fact.value)
+            try:
+                body = render(fact.value)
+            except (TypeError, ValueError, OverflowError, IndexError, KeyError):
+                body = _compact(fact.value)
             if body is None:
                 return False
             if untrusted and fence_tag:
@@ -313,7 +339,8 @@ def render_situation_for_context(
                     f" (±{v.get('accuracy', '?')}m)"
                     if isinstance(v, dict) else _clip(_compact(v))
                 ), fence_tag="user_action", untrusted=True)
-    r.fact_line("geographic", "crs", geo.crs, "数据 CRS", lambda v: str(v))
+    r.fact_line("geographic", "crs", geo.crs, "数据 CRS", lambda v: str(v),
+                fence_tag="crs", untrusted=True)
     r.fact_line("geographic", "framed_view", geo.framed_view, "agent 取景",
                 lambda v: _compact(v))
 
@@ -328,7 +355,8 @@ def render_situation_for_context(
         r.fact_line("data", "active_roles", data.active_roles, "角色数据",
                     lambda v: ",".join(
                         f"{k}={v}" for k, v in sorted(v.items())[:_MAX_LIST_ITEMS]
-                    ) if isinstance(v, dict) else None)
+                    ) if isinstance(v, dict) else None,
+                    fence_tag="roles", untrusted=True)
         r.fact_line("data", "freshness", data.freshness, "数据版本",
                     lambda v: f"content_revision={v}")
 
@@ -358,7 +386,8 @@ def render_situation_for_context(
 
     # ── 分析 ─────────────────────────────────────────────────────────
     an = situation.analysis
-    if an.plan_progress.status == STATUS_KNOWN:
+    scope_known = an.selection_scope.status == STATUS_KNOWN
+    if an.plan_progress.status == STATUS_KNOWN or scope_known:
         r.line("[分析]")
         r.fact_line("analysis", "plan_progress", an.plan_progress, "计划图",
                     lambda v: _compact(v))
@@ -366,6 +395,10 @@ def render_situation_for_context(
                     lambda v: ",".join(str(x) for x in v))
         r.fact_line("analysis", "artifacts", an.artifacts, "产物 refs",
                     lambda v: ",".join(str(x) for x in v))
+        # ADR-0285 D1：selection 声称面一行（验证由 webgis_selection_scope
+        # 按需执行——投影只声称，不宣称已验证）。
+        r.fact_line("analysis", "selection_scope", an.selection_scope,
+                    "选择 scope(未验证)", _scope_line)
 
     # ── 制图：**不在本投影渲染**（决策 DC-3）──────────────────────────
     # verdict 由 [CARTOGRAPHY_VERDICT]（chat.py cartography_context）与 V6

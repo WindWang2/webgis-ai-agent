@@ -9,6 +9,7 @@ TOCTOU window where a delayed callback can be attributed to the next turn.
 from __future__ import annotations
 
 import base64
+import asyncio
 import hashlib
 import hmac
 import json
@@ -104,7 +105,9 @@ def _neutralize_active_tools_markers(message: str) -> str:
     """
     if not message:
         return message
-    return message.replace(f"[{ACTIVE_TOOLS_MARKER}:", f"[{ACTIVE_TOOLS_MARKER}_NEUTRALIZED:")
+    return message.replace(
+        f"[{ACTIVE_TOOLS_MARKER}:", f"[{ACTIVE_TOOLS_MARKER}_NEUTRALIZED:"
+    ).replace(f"[{TURN_CONTEXT_MARKER}:", f"[{TURN_CONTEXT_MARKER}_NEUTRALIZED:")
 
 
 def attach_turn_context(
@@ -242,6 +245,7 @@ async def bind_turn_prompt(
     """
     from app.services.context_assembly.flags import typed_context_assembly_enabled
 
+    from app.services.context_assembly.contract import ContextAssemblyRejected
     if typed_context_assembly_enabled():
         try:
             from app.services.context_assembly.assembly import assemble_turn_context
@@ -261,7 +265,9 @@ async def bind_turn_prompt(
             )
             assembled, _receipt = await assemble_turn_context(req)
             return assembled
-        except Exception:  # noqa: BLE001 — typed 装配失败回落 legacy，绝不丢 turn
+        except ContextAssemblyRejected:
+            raise
+        except Exception:  # noqa: BLE001 — unexpected typed failure may use legacy
             logger.exception(
                 "[PiTurn] typed context assembly failed; legacy fallback session=%s",
                 session_id,
@@ -422,8 +428,8 @@ async def _active_tools_block_for(
             except Exception:  # noqa: BLE001 — situation 缺席 = unknown = 不排除
                 situation = None
         disclosure: dict = {}
-        names = compute_turn_active_tools(
-            message or "",
+        names = await asyncio.to_thread(
+            compute_turn_active_tools, message or "",
             active_capabilities=capabilities,
             workflow_stage=str(getattr(surface, "phase", "") or ""),
             disclosure=disclosure,
@@ -536,7 +542,7 @@ class PiTurnRegistry:
             except Exception as e:
                 logger.warning("PiTurnRegistry: Redis register failed for %s: %s", session_id, e)
 
-    async def unregister_turn(self, session_id: str, turn_id: str) -> None:
+    async def unregister_turn(self, session_id: str, turn_id: str) -> bool:
         if isinstance(self._local_context, dict):
             if self._local_context.get(session_id) == turn_id:
                 self._local_context.pop(session_id, None)
@@ -553,6 +559,8 @@ class PiTurnRegistry:
                 await client.eval(script, 1, f"webgis:pi:active_turn:{session_id}", turn_id)
             except Exception as e:
                 logger.warning("PiTurnRegistry: Redis unregister failed for %s: %s", session_id, e)
+                return False
+        return True
 
     async def is_active(self, session_id: str, turn_id: str) -> bool:
         if isinstance(self._local_context, dict):

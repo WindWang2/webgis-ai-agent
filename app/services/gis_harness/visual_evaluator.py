@@ -24,6 +24,9 @@
 from __future__ import annotations
 
 import importlib
+import asyncio
+import inspect
+import threading
 import logging
 import os
 from typing import Any, Callable, Dict, List, Optional
@@ -118,6 +121,9 @@ def _sanitize_finding(raw: Any) -> Optional[UnifiedFinding]:
     )
 
 
+_EVALUATION_SLOTS = threading.BoundedSemaphore(2)
+
+
 def run_visual_evaluation(
     evaluator: Optional[Callable[..., Any]],
     snapshot: Dict[str, Any],
@@ -128,13 +134,19 @@ def run_visual_evaluation(
     scene oracle 摘要）——本函数不读取任何会话状态、不触碰 MapSpec。
     evaluator 为 None（未配置）或抛错 → 空列表（deterministic 层不受影响）。
     """
-    if evaluator is None:
+    if evaluator is None or not _EVALUATION_SLOTS.acquire(blocking=False):
         return []
     try:
         raw = evaluator(snapshot)
+        if inspect.isawaitable(raw):
+            async def resolve() -> Any:
+                return await asyncio.wait_for(raw, timeout=30.0)
+            raw = asyncio.run(resolve())
     except Exception:  # noqa: BLE001 — 评估失败 = 无视觉发现（诚实降级）
         logger.warning("[VisualEvaluator] evaluation failed", exc_info=True)
         return []
+    finally:
+        _EVALUATION_SLOTS.release()
     if not isinstance(raw, (list, tuple)):
         return []
     out: List[UnifiedFinding] = []

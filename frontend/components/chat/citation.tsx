@@ -91,6 +91,32 @@ export function citeTextPreprocess(body: string, sources: CitationSource[]): str
   });
 }
 
+interface CitationNode { type: string; value?: string; url?: string; children?: CitationNode[] }
+
+/** Rewrite only Markdown text nodes: code and existing links retain their contents. */
+export function citationRemark(sources: CitationSource[] = []) {
+  const known = new Set(sources.map((source) => source.n));
+  return () => (tree: unknown) => {
+    const visit = (node: CitationNode) => {
+      if (!node.children || ['code', 'inlineCode', 'link', 'linkReference', 'html'].includes(node.type)) return;
+      node.children = node.children.flatMap((child) => {
+        if (child.type !== 'text' || !child.value) { visit(child); return [child]; }
+        const nodes: CitationNode[] = [];
+        let end = 0;
+        for (const match of child.value.matchAll(/\[(\d+)\]/g)) {
+          if (!known.has(Number(match[1]))) continue;
+          if (match.index! > end) nodes.push({ type: 'text', value: child.value.slice(end, match.index) });
+          nodes.push({ type: 'link', url: `#cite-${match[1]}`, children: [{ type: 'text', value: match[0] }] });
+          end = match.index! + match[0].length;
+        }
+        if (end < child.value.length) nodes.push({ type: 'text', value: child.value.slice(end) });
+        return nodes.length ? nodes : [child];
+      });
+    };
+    visit(tree as CitationNode);
+  };
+}
+
 export function isCitationHref(href?: string): boolean {
   return typeof href === 'string' && /^#cite-\d+$/.test(href);
 }
@@ -238,13 +264,15 @@ export function CitationArea({
   renderMarkdown,
 }: {
   text: string;
-  renderMarkdown: (body: string) => ReactNode;
+  renderMarkdown: (body: string, sources?: CitationSource[]) => ReactNode;
 }) {
-  const { body, sources } = splitCitationBlocks(text);
-  const prepared = citeTextPreprocess(body, sources);
+  const inherited = useContext(CitationSourcesContext);
+  const own = splitCitationBlocks(text);
+  const { body } = own;
+  const sources = own.sources.length ? own.sources : inherited;
   return (
     <CitationSourcesProvider sources={sources}>
-      {renderMarkdown(prepared)}
+      {renderMarkdown(body, sources)}
       <CitationSourceList sources={sources} />
     </CitationSourcesProvider>
   );

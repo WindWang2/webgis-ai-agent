@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from app.services.gis_harness.analysis_workflows.contracts import (
     AWF_DENOMINATOR_MISSING,
     AWF_NO_NETWORK_FOR_ACCESSIBILITY,
+    AWF_ROLE_KIND_MISMATCH,
     AWF_TEMPORAL_MISMATCH,
     AnalysisStepSpec,
     AnalysisWorkflowContract,
@@ -39,6 +40,9 @@ from app.services.gis_harness.analysis_workflows.families import (
     family_exists,
     role_requirements,
     visualization_hints,
+)
+from app.services.gis_harness.analysis_workflows.semantic_gate import (
+    check_role_qualifier,
 )
 
 #: 各角色的获取建议（alternatives 文案；通道语义对齐 ACQUISITION_CHANNELS）。
@@ -60,6 +64,10 @@ _ROLE_ALTERNATIVES: Dict[str, Tuple[str, ...]] = {
     "receptor": (
         "用本地建筑/POI 数据充当承灾体",
         "请用户上传资产/人口分布（user_upload）",
+    ),
+    "facility": (
+        "用本地 POI 工具获取设施点（get_local_pois / local_osm 提取）",
+        "请用户上传设施点数据（user_upload）",
     ),
     "baseline": ("请提供基期（较早一期）数据",),
     "target_time": ("请提供目标期（较近一期）数据",),
@@ -141,6 +149,38 @@ def _temporal_gate(
     return None
 
 
+def _denominator_field_gate(
+    step: AnalysisStepSpec,
+    contract: AnalysisWorkflowContract,
+) -> Optional[Tuple[str, str]]:
+    """分母字段 plan 期校验（ADR-0284 D4；断点 6 修复）。
+
+    qualifier.fields（可用列清单，上游数据画像写入）声明而步骤将使用的
+    分母列不在其中 → typed skipped（AWF_DENOMINATOR_MISSING）——
+    列清单是事实，缺列的分母请求在 plan 期就诚实拒绝，绝不运行期
+    MissingRequiredField failed；fields 未声明=不拦截（权威在工具）。
+
+    R1 评审 F-2 修复：**只认 role:denominator 绑定**（分母字段的语义载体）
+    ——其它角色（subject/population）的 fields 清单描述的是各自图层列，
+    不是分母列清单（评审实测：population.fields 曾致 grid_rate 假 skip）。
+    """
+    if step.step_params.get("denominator_kind") != "field":
+        return None
+    target = str(step.step_params.get("denominator") or "")
+    binding = contract.data_contracts.get("denominator")
+    if binding is None or _binding_missing(binding):
+        return None
+    fields = binding.qualifier.get("fields")
+    if (isinstance(fields, (list, tuple)) and fields
+            and target not in fields):
+        return (
+            AWF_DENOMINATOR_MISSING,
+            f"分母角色 denominator 声明的字段清单 "
+            f"{sorted(map(str, fields))}不含目标列 {target!r}"
+            "——分母不可用，typed skipped（只给计数/面积密度，不伪装率）")
+    return None
+
+
 def plan_workflow(
     family: str,
     *,
@@ -149,16 +189,18 @@ def plan_workflow(
     params_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
     recipe_refs: Tuple[str, ...] = (),
     tool_exists: Optional[Callable[[str], bool]] = None,
+    include_optional_steps: bool = True,
 ) -> WorkflowPlanResult:
     """族 → 契约 + 逐步骤 typed 裁决（纯函数，零 IO）。"""
     if not family_exists(family):
         raise KeyError(
             f"未知工作流族 {family!r}（词表: admin_facility_distribution / "
             "service_accessibility / hazard_exposure / temporal_change / "
-            "statistical_zones）")
+            "statistical_zones / raster_zonal_summary / network_proximity）")
     contract = build_contract(
         family, workflow_id=workflow_id, bindings=bindings,
-        recipe_refs=recipe_refs, params_overrides=params_overrides)
+        recipe_refs=recipe_refs, params_overrides=params_overrides,
+        include_optional_steps=include_optional_steps)
     warnings = validate_workflow_contract(
         contract, tool_exists=tool_exists, family_exists=family_exists)
 
@@ -222,13 +264,15 @@ def plan_workflow(
                 and req_by_role[r].missing_policy == "block"
             ]
             if required_missing:
-                # 族特定码：可达性无路网 = 专属码 + 显式替代语义
-                if (family == "service_accessibility"
+                # 族特定码：可达性/邻近族无路网 = 专属码 + 显式替代语义
+                if (family in ("service_accessibility", "network_proximity")
                         and "network" in required_missing
-                        and step.step_id == "isochrone"):
+                        and any(v == "role:network"
+                                for v in step.role_inputs.values())):
                     code = AWF_NO_NETWORK_FOR_ACCESSIBILITY
-                    msg = ("无真实路网数据——不得给出『15 分钟可达』类数值结论；"
-                           "可用 buffer 替代但科学含义不同（欧氏距离≠通达时间）")
+                    msg = ("无真实路网数据——不得给出『15 分钟可达』/『最近设施"
+                           "网络距离』类数值结论；可用 buffer 替代但科学含义"
+                           "不同（欧氏距离≠通达时间）")
                     alts = _ROLE_ALTERNATIVES["network"]
                 else:
                     role = required_missing[0]
@@ -264,6 +308,72 @@ def plan_workflow(
                 alternatives=_ROLE_ALTERNATIVES.get(role, ()))
             blocked_reasons.append(
                 f"{step.step_id}:{role_missing_code(role)}")
+            runnable = False
+            continue
+        # ADR-0284 D4：分母字段 plan 期校验（列清单是画像事实）——
+        # 目标列不在清单 → typed skipped（不运行期 failed、不伪装率）。
+        denom_fail = _denominator_field_gate(step, contract)
+        if denom_fail is not None:
+            code, msg = denom_fail
+            verdict_map[step.step_id] = StepPlanVerdict(
+                step_id=step.step_id, verdict="skipped",
+                reason_code=code, message=msg)
+            continue
+        # ADR-0284 D3：role_kind 门——角色需求声明 raster/table 载荷类型
+        # 而绑定携带其它类型（或反之）→ typed blocked（栅格 ref 不能被
+        # 当 vector 水合、vector FC 不能直通 raster_path 参数）。
+        kind_block: Optional[Tuple[str, str]] = None
+        for role in _roles_of_step(step):
+            req = req_by_role.get(role)
+            binding = contract.data_contracts.get(role)
+            if req is None or binding is None or _binding_missing(binding):
+                continue
+            req_kinds = set(req.geometry_kinds or ())
+            if not (req_kinds and req_kinds <= {"raster", "table"}):
+                continue
+            if binding.role_kind not in req_kinds:
+                kind_block = (
+                    f"{AWF_ROLE_KIND_MISMATCH}:{role.upper()}",
+                    f"角色 {role} 需要载荷类型 {sorted(req_kinds)}"
+                    f"（绑定声明 {binding.role_kind!r}）——栅格/矢量类型"
+                    "不通，typed 拒绝（绑定需 role_kind=raster 的 ref/路径）")
+                break
+        if kind_block is not None:
+            code, msg = kind_block
+            verdict_map[step.step_id] = StepPlanVerdict(
+                step_id=step.step_id, verdict="blocked",
+                reason_code=code, message=msg)
+            blocked_reasons.append(f"{step.step_id}:{code}")
+            runnable = False
+            continue
+        # ADR-0284 D2：角色几何画像门——事实在且冲突 → typed blocked
+        # （画像来自上游数据事实，非猜测）；事实缺失 → 警告披露（不阻断，
+        # 执行期衔接门与工具级 preflight 兜底——不虚构事实也不假装校验过）。
+        semantic_block = None
+        for role in _roles_of_step(step):
+            req = req_by_role.get(role)
+            binding = contract.data_contracts.get(role)
+            if req is None or binding is None or _binding_missing(binding):
+                continue
+            finding = check_role_qualifier(
+                {"role": role, "geometry_kinds": req.geometry_kinds}, binding)
+            if finding is not None:
+                semantic_block = finding
+                break
+            if req.geometry_kinds and not (
+                    isinstance(binding.qualifier.get("geometry_types"),
+                               (list, tuple))
+                    and binding.qualifier.get("geometry_types")):
+                warnings.append(
+                    f"角色 {role} 几何画像缺失（qualifier.geometry_types）"
+                    "——plan 期未核验，执行期衔接门兜底")
+        if semantic_block is not None:
+            verdict_map[step.step_id] = StepPlanVerdict(
+                step_id=step.step_id, verdict="blocked",
+                reason_code=semantic_block.code,
+                message=semantic_block.message)
+            blocked_reasons.append(
+                f"{step.step_id}:{semantic_block.code}")
             runnable = False
             continue
         verdict_map[step.step_id] = StepPlanVerdict(

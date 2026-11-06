@@ -56,3 +56,34 @@ async def test_discover_progress_reports() -> None:
     await run_discover_stage("t4", "成都 POI", {"query": "成都 POI"},
                              adapter=_Adapter(1), on_progress=seen.append)
     assert seen[0] == 10 and seen[-1] == 100
+
+
+@pytest.mark.asyncio
+async def test_discover_scores_later_candidates_and_isolates_one_failure() -> None:
+    import asyncio
+
+    class Adapter(_Adapter):
+        active = 0
+        peak = 0
+
+        async def quick_assess(self, query, source):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            try:
+                await asyncio.sleep(0)
+                if source.id == "s0":
+                    raise ValueError("invalid candidate")
+                score = int(source.id[1:]) / 10
+                return DataSourceQualityScore(
+                    temporal_score=score, thematic_score=score, spatial_score=score,
+                    field_score=score, precision_score=score, overall=score,
+                )
+            finally:
+                self.active -= 1
+
+    adapter = Adapter(8)
+    result = await run_discover_stage("rank-review", "schools", {}, adapter=adapter)
+    assert result.success
+    assert [item["source"]["id"] for item in result.data["selected_sources"]] == ["s7", "s6", "s5"]
+    assert result.data["assessment_failures"] == 1
+    assert adapter.peak == 4

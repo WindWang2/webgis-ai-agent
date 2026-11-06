@@ -71,7 +71,7 @@ def _artifact_root() -> Path:
 
 
 def _cog_root() -> Path:
-    return Path("data") / "cog"
+    return _data_root() / "cog"
 
 
 def _data_root() -> Path:
@@ -147,15 +147,21 @@ def enumerate_fabric(limit: int = MAX_OBJECTS_PER_KIND) -> AdapterReport:
         roots: list[tuple[Path, str]] = [(spill_root, "spill"), (data_root, "data")]
 
         seen = 0
+        visited = 0
+        traversal_cap = max(1, int(limit)) * 16
         seen_resolved: set[str] = set()
         for root, root_kind in roots:
             if not root.exists():
                 continue
             for path in root.rglob("*"):
+                visited += 1
+                if visited > traversal_cap:
+                    report.diagnostics.append("bounded_skip: traversal cap hit")
+                    break
                 if seen >= limit:
                     report.diagnostics.append("bounded_skip: enumeration cap hit")
                     break
-                if not path.is_file():
+                if ".gc-staging" in path.parts or not path.is_file():
                     continue
                 try:
                     resolved = str(path.resolve())
@@ -191,14 +197,14 @@ def enumerate_fabric(limit: int = MAX_OBJECTS_PER_KIND) -> AdapterReport:
                 report.objects.append(LCObject(
                     kind="fabric_materialization",
                     object_id=path.relative_to(root).as_posix()[:255],  # POSIX 斜杠：跨平台稳定自然键
-                    owner_scope=(path.parent.parent.name
+                    owner_scope="session:" + (path.parent.parent.name
                                  if is_fabric and path.parent.parent != root
-                                 else path.parent.name)[:128],
+                                 else path.parent.name)[:120],
                     byte_size=int(stat.st_size),
                     last_used_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-                    info={"lane": "ref_spill" if is_spill else "fabric_geoparquet"},
+                    info={"lane": "spill" if root_kind == "spill" else "data"},
                 ))
-            if seen >= limit:
+            if seen >= limit or visited > traversal_cap:
                 break
     except Exception as exc:  # noqa: BLE001
         report.available = False
@@ -227,9 +233,9 @@ def enumerate_artifacts(limit: int = MAX_OBJECTS_PER_KIND) -> AdapterReport:
                     continue
                 report.objects.append(LCObject(
                     kind="artifact_cache",
-                    object_id=path.stem[:255],
+                    object_id=path.name[:255],
                     byte_size=int(stat.st_size),
-                    last_used_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                    last_used_at=datetime.fromtimestamp(max(stat.st_mtime, path.with_suffix(".meta").stat().st_mtime if path.with_suffix(".meta").exists() else stat.st_mtime), tz=timezone.utc),
                     info={"has_meta": path.with_suffix(".meta").exists()},
                 ))
     except Exception as exc:  # noqa: BLE001
@@ -265,7 +271,7 @@ def enumerate_cog(limit: int = MAX_OBJECTS_PER_KIND) -> AdapterReport:
                 report.objects.append(LCObject(
                     kind="cog_output",
                     object_id=path.relative_to(root).as_posix()[:255],  # POSIX 斜杠：跨平台稳定自然键
-                    owner_scope=session_dir[:128],
+                    owner_scope=f"session:{session_dir}" if session_dir else "",
                     byte_size=int(stat.st_size),
                     last_used_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
                     info={},

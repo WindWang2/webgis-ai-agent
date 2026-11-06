@@ -9,12 +9,12 @@
   "edge_cases.json": {
    "case_count": 87,
    "domain": "edge_cases",
-   "sha256": "cb98be8c5145f3dd1032fdcac1394213ece1f846287c9e0e5a8fdbcdaa9bd405"
+   "sha256": "9710d834619184e8f3b9b8d8132cf50863f750058351458f54ceb535cef02252"
   },
   "geodetector.json": {
    "case_count": 43,
    "domain": "geodetector",
-   "sha256": "fd693a1dc0b5a845c42635603ade6f5469de461215e1afeee974e38104a24200"
+   "sha256": "e7f4ddc6b5c949e9323f3785e90258a5c31ba6d32a569a19171018f6111912f0"
   },
   "geostat.json": {
    "case_count": 253,

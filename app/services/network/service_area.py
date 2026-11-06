@@ -203,7 +203,7 @@ class NetworkServiceAreaService:
 
         for fac, (start_node_id, fac_coords) in zip(normalized_facilities, resolved_starts):
             if start_node_id not in graph_view:
-                continue
+                continue  # Public engine reports this facility in unreachable_facilities.
 
             max_break = sorted_breaks[-1]
             max_cutoff = _break_to_cutoff(max_break, break_unit, impedance)
@@ -409,6 +409,8 @@ class NetworkServiceAreaService:
                 )
             elif isinstance(item, dict):
                 f_id = item.get("facility_id", item.get("id", f"f_{i}"))
-                geom = item.get("geometry", {"type": "Point", "coordinates": [0.0, 0.0]})
+                geom = item.get("geometry")
+                if not isinstance(geom, dict) or not geom.get("coordinates"):
+                    raise ValueError(f"facility {f_id} requires a declared point geometry")
                 res.append(Facility(facility_id=str(f_id), geometry=dict(geom)))
         return res

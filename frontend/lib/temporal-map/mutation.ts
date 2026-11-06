@@ -8,10 +8,12 @@
  * Agent 面控制不经过本模块（工具 → 服务端 → SSE work echo → spec bump）。
  */
 import { apiFetch } from '@/lib/api/transport';
+import { emitTemporalWindowSettled } from '@/lib/interaction/bus';
 import {
   commitMapSpecDocument,
   getMapSpecSessionCursor,
   setMapSpecRevision,
+  subscribeMapSpecLive,
 } from '@/lib/mapspec/session-cursor';
 import { enqueueUserMutation, newMutationId } from '@/lib/mapspec/user-mutation';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
@@ -43,9 +45,16 @@ export type TemporalCommitOutcome =
 export function commitUserTemporal(patch: TemporalPatch): Promise<TemporalCommitOutcome> {
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   const mutationId = newMutationId();
+  // Remember a detach even if A→B→A finishes before this request settles.
+  let detached = !enqueuedSessionId;
+  const unsubscribe = subscribeMapSpecLive(() => {
+    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) detached = true;
+  });
+  const isAttached = () => !detached
+    && getMapSpecSessionCursor().sessionId === enqueuedSessionId;
   return enqueueUserMutation(async (): Promise<TemporalCommitOutcome> => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
-    if (!sessionId || sessionId !== enqueuedSessionId) {
+    if (!sessionId || !isAttached()) {
       return { outcome: 'failed', error: new Error('session detached') };
     }
     try {
@@ -64,7 +73,7 @@ export function commitUserTemporal(patch: TemporalPatch): Promise<TemporalCommit
           label: 'MapSpec temporal mutation',
         },
       );
-      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) {
+      if (!isAttached()) {
         return { outcome: 'failed', error: new Error('session detached') };
       }
       if (typeof data.mutation_revision === 'number') {
@@ -73,13 +82,50 @@ export function commitUserTemporal(patch: TemporalPatch): Promise<TemporalCommit
       if (data.mapspec) {
         commitMapSpecDocument(data.mapspec, data.mutation_revision);
       }
+      emitTemporalIr(patch, mutationId, 'committed', data.mutation_revision);
       return { outcome: 'committed', revision: data.mutation_revision };
     } catch (err) {
+      if (!isAttached()) {
+        return { outcome: 'failed', error: new Error('session detached') };
+      }
       if (err && typeof err === 'object' && 'status' in err
         && (err as { status?: number }).status === 409) {
+        emitTemporalIr(patch, mutationId, 'superseded');
         return { outcome: 'superseded' };
       }
+      emitTemporalIr(patch, mutationId, 'failed');
       return { outcome: 'failed', error: err instanceof Error ? err : new Error(String(err)) };
     }
-  });
+  }).finally(unsubscribe);
+}
+
+/**
+ * temporal settle 的 IR 上行（ADR-0285 D2）：只报已知事实——游标帧/播放/
+ * 锁定；不虚构 mode/field/extent（spec time 面的字段不在 patch 上下文里）。
+ * 观察层事件绝不阻塞提交链路（emit 内部已 try/catch 静默）。
+ */
+function emitTemporalIr(
+  patch: TemporalPatch,
+  mutationId: string,
+  outcome: 'committed' | 'superseded' | 'failed',
+  mutationRevision?: number,
+): void {
+  try {
+    emitTemporalWindowSettled(
+      {
+        ...(patch.cursor_frame !== undefined ? { current: patch.cursor_frame } : {}),
+        ...(patch.playback?.playing !== undefined
+          ? { mode: patch.playback.playing ? 'playback' : 'pause' }
+          : {}),
+        ...(patch.user_pinned !== undefined ? { pinned: patch.user_pinned } : {}),
+      },
+      {
+        clientMutationId: mutationId,
+        outcome,
+        mutationRevision,
+      },
+    );
+  } catch {
+    // 观察层绝不阻塞 mutation 链路。
+  }
 }

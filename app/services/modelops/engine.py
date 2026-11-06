@@ -102,6 +102,7 @@ logger = logging.getLogger(__name__)
 
 #: merge 缓冲的 RAM 上限（bytes）；超出 → memmap 兜底（磁盘，有界）。
 MERGE_RAM_BUDGET_BYTES = 256 * 1024 * 1024
+FINAL_OUTPUT_RAM_BUDGET_BYTES = 256 * 1024 * 1024
 #: memmap 兜底的硬上限（bytes；超过 = typed 拒绝，不无界落盘）。
 MERGE_DISK_HARD_CAP_BYTES = 64 * 1024**3
 #: extension worker 单帧输出上限（R1-M5：FRAME_MAX_BYTES 68MiB 留余量）。
@@ -757,9 +758,11 @@ class InferenceEngine:
 
             # ── 任务执行 ────────────────────────────────────────────
             _emit(progress, stage="infer", run_id=run_id, tiles_total=len(tile_plan))
-            output_dir = Path(
-                request.output_dir or (self._settings.registry_dir / "outputs" / run_id)
-            )
+            scope_key = "_".join(f"{key}-{value}" for key, value in sorted(request.owner_scope.items()))
+            output_root = (self._settings.registry_dir / "outputs" / scope_key).resolve()
+            output_dir = Path(request.output_dir).resolve() if request.output_dir else output_root / run_id
+            if not output_dir.is_relative_to(output_root):
+                raise ModelOpsError("output_dir must be within the owner model output root")
             output_dir.mkdir(parents=True, exist_ok=True)
             if task == TASK_PROMPTABLE_SEGMENTATION:
                 outputs = self._run_promptable(
@@ -1147,6 +1150,15 @@ class InferenceEngine:
                 inst_path, request, role="instances", descriptor=descriptor
             )
             if merged.polygon_geojson is not None:
+                from affine import Affine
+                from app.lib.modelops.stitching import _polygonize
+
+                inst_transform = reader.dataset.transform
+                if roi_origin is not None:
+                    inst_transform = inst_transform * Affine.translation(*roi_origin)
+                merged.polygon_geojson = _polygonize(
+                    merged.instance_ids, transform=inst_transform, crs=reader.dataset.crs,
+                )
                 poly_path = write_geojson_output(
                     output_dir / "instances.geojson", merged.polygon_geojson
                 )
@@ -1382,7 +1394,7 @@ class InferenceEngine:
             candidates_summary: list[CandidateSetRecord] = []
             canvas: Optional[np.ndarray] = None
             # 掩膜画布（可负担时）：整幅发布；超大栅格只发 GeoJSON（诚实降级）。
-            if meta.height * meta.width <= 256 * 1024 * 1024:
+            if meta.height * meta.width <= min(256 * 1024 * 1024, MERGE_RAM_BUDGET_BYTES):
                 canvas = np.zeros((meta.height, meta.width), dtype=np.uint8)
             wants_candidates = bool(
                 request.return_candidates
@@ -1844,7 +1856,10 @@ class InferenceEngine:
         if request.input_data_object_id:
             from app.services.lakehouse.data_object import resolve_data_object
 
+            from app.services.lakehouse.data_object import owner_scope_allows
             manifest = resolve_data_object(request.input_data_object_id)
+            if not isinstance(manifest, dict) or not owner_scope_allows(manifest, **request.owner_scope):
+                raise ModelOpsError("input data object is unavailable in the owner scope")
             payload = manifest.get("payload") or {}
             content_sha = payload.get("content_sha256") or manifest.get("content_sha256")
             if content_sha:
@@ -2134,6 +2149,9 @@ class _StackAccumulator:
 
     def finalize(self) -> np.ndarray:
         # 拷出（memmap 路径视图会锁住映射 → Windows rmtree 失败泄漏）。
+        if self._canvas.nbytes > FINAL_OUTPUT_RAM_BUDGET_BYTES:
+            self.close()
+            raise ResourceUnavailable("super-resolution output exceeds bounded finalization RAM; reduce input extent")
         canvas = np.array(self._canvas, dtype=np.float32, copy=True)
         self.close()
         return canvas
@@ -2273,6 +2291,10 @@ class _SegmentationAccumulator:
         confidence_floor: float,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
         want_probs = bool(getattr(self._policy, "output_probabilities", False))
+        final_bytes = self._h * self._w * (6 + (self._k * 4 if want_probs else 0))
+        if final_bytes > FINAL_OUTPUT_RAM_BUDGET_BYTES:
+            self.close()
+            raise ResourceUnavailable("segmentation output exceeds bounded finalization RAM; reduce input extent")
         if want_probs:
             need = self._k * self._h * self._w * 4
             if need > MERGE_RAM_BUDGET_BYTES:

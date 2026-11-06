@@ -7,7 +7,7 @@ durable job 执行（staging 二段式）→ 回滚。
           │                     │                  │                   │
           ├──reject──▶ rejected │              rollback──────────────┘
           └──cancel──▶ cancelled└──cancel──▶ cancelled    │（物理删前可回滚）
-                                       executing/done ──rollback──▶ rolled_back
+                                       failed/done ──rollback──▶ rolled_back
 
 安全红线：
 
@@ -47,12 +47,18 @@ _TRANSITIONS: Dict[str, Dict[str, str]] = {
     "start_execute": {"approved": "executing"},
     "finish_done": {"executing": "done"},
     "finish_failed": {"executing": "failed"},
-    "rollback": {"executing": "rolled_back", "done": "rolled_back",
+    "rollback": {"done": "rolled_back",
                  "failed": "rolled_back"},
 }
 
 #: staging 区根（与被治理目录同一卷，rename 原子）。
 STAGING_DIR = Path("data") / ".gc-staging"
+_DEFAULT_STAGING_DIR = STAGING_DIR
+
+
+def _staging_root() -> Path:
+    from app.services.data_lifecycle.adapters import _data_root
+    return _data_root() / ".gc-staging" if STAGING_DIR == _DEFAULT_STAGING_DIR else STAGING_DIR
 
 #: 只读对象类：V9 内不允许任何删除动作（行为保持，ADR-0140 附录）。
 OBSERVE_ONLY_KINDS = frozenset({"lakehouse_dataset"})
@@ -118,6 +124,7 @@ def create_gc_plan(
                     "tier": cand.get("tier"),
                     "reason": cand.get("reason"),
                     "dependencies": _dependencies_of(kind, cand),
+                    "lane": cand.get("lane"),
                 })
 
     scope = {"kinds": sorted(kinds), "tiers": sorted(tiers)}
@@ -141,7 +148,8 @@ def create_gc_plan(
     open_states = ("pending_approval", "approved", "executing")
     existing = (
         db.query(GcPlan)
-        .filter(GcPlan.plan_digest == digest, GcPlan.status.in_(open_states))
+        .filter(GcPlan.plan_digest == digest, GcPlan.status.in_(open_states),
+                GcPlan.org_id == org_id, GcPlan.created_by == created_by)
         .order_by(GcPlan.created_at.desc())
         .first()
     )
@@ -155,6 +163,7 @@ def create_gc_plan(
         (int(p.staging_hours or 0) for p in policy_rows if p.action != "observe"),
         default=72,
     )
+    scope["staging_hours"] = staging_hours
     plan = GcPlan(
         org_id=org_id,
         created_by=(str(created_by)[:255] if created_by else None),
@@ -217,53 +226,131 @@ def get_plan(db: Any, plan_id: str) -> Optional[GcPlan]:
 # ── 执行（staging 二段式） ────────────────────────────────────────────
 
 
-def execute_plan(db: Any, plan: GcPlan, *, actor: Optional[str] = None) -> Dict[str, Any]:
+def _lock_plan(db: Any, plan: GcPlan) -> None:
+    # A write obtains a row lock on PostgreSQL and the writer lock on SQLite.
+    # Refresh only after ownership so a waiter evaluates the committed state.
+    from sqlalchemy import update
+
+    db.execute(update(GcPlan).where(GcPlan.id == plan.id).values(id=GcPlan.id))
+    db.refresh(plan)
+
+
+def execute_plan(db: Any, plan: GcPlan, *, actor: Optional[str] = None,
+                 job_id: Optional[str] = None) -> dict[str, object]:
+    from app.services.data_lifecycle.gc_recovery import plan_guard
+
+    with plan_guard(db, plan.id, _staging_root()):
+        return _execute_plan_locked(db, plan, actor=actor, job_id=job_id)
+
+
+def _require_recoverable(plan: GcPlan) -> None:
+    if ((plan.result or {}).get("_execution_protocol") == 2
+            and not (plan.result or {}).get("purged_at")
+            and not (_staging_root() / plan.id / ".recovery.json").is_file()):
+        raise GcPlanError("GC recovery evidence is unavailable on this storage host; retain plan and reconcile the original staging volume")
+    if plan.status == "executing" and (plan.result or {}).get("_execution_protocol") != 2:
+        raise GcPlanError("legacy executing plan liveness is unverified; retain staging and reconcile the original worker")
+
+
+def _check_execution_fence(db: Any, plan: GcPlan, token: str) -> None:
+    _lock_plan(db, plan)
+    if plan.status != "executing" or (plan.result or {}).get("_execution_token") != token:
+        db.rollback()
+        raise GcPlanError("GC execution ownership lost")
+
+
+def _execute_plan_locked(db: Any, plan: GcPlan, *, actor: Optional[str] = None,
+                         job_id: Optional[str] = None) -> Dict[str, Any]:
     """approved → executing：按固化的 plan_tree 把对象移入 staging。
 
     - 文件类（cog_output / artifact_cache / fabric spill）：``move`` 进
       ``data/.gc-staging/<plan_id>/``（保留相对路径以便回滚）；
     - worker_cache：删除注册表行（fail-open 语义 = miss 重物化）；
-    - 中断恢复：重新调用本函数（approved 态重入）按清单跳过已处理条目
-      （幂等）—— 中断在 executing 态时先 rollback 再重新 approve 执行，
-      或由 stale 清扫兜底。
+    - approved → executing CAS excludes simultaneous execution. An executing
+      plan cannot be rolled back; interruption requires job reconciliation to
+      reach a terminal state before rollback is allowed.
     """
-    transition(plan, "start_execute", actor=actor)
+    import uuid
+    from app.services.data_lifecycle.gc_revalidation import candidate_still_cold
+    from app.services.data_lifecycle.gc_recovery import prepare_origins
+
+    _lock_plan(db, plan)
+    if plan.status == "done":
+        return dict(plan.result or {})
+    _require_recoverable(plan)
+    if plan.status not in ("approved", "executing"):
+        raise GcPlanError("plan is not approved for execution")
+    recovered = plan.status == "executing"
+    plan_dir = _staging_root() / plan.id
+    origins = prepare_origins(db, plan, plan_dir)
+    origin_lanes = {(item['kind'], item['object_id']): item.get('lane') for item in origins}
+    token = uuid.uuid4().hex
+    plan.status = "executing"
+    plan.executed_by = str(actor)[:255] if actor else None
+    plan.result = {**(plan.result or {}), "_execution_protocol": 2,
+                   "_execution_token": token, "recovered_execution": recovered}
+    if job_id:
+        plan.job_id = str(job_id)[:64]
+    if not recovered:
+        plan.staging_expires_at = datetime.now(timezone.utc) + timedelta(hours=int((plan.scope or {}).get("staging_hours", 72)))
     db.commit()
     tree = plan.plan_tree or {}
     staged: List[Dict[str, Any]] = []
     errors: List[str] = []
-    plan_dir = STAGING_DIR / plan.id
-    for entry in tree.get("objects", []):
+    skipped: list[dict[str, str]] = []
+    plan_dir = _staging_root() / plan.id
+    for raw_entry in tree.get("objects", [])[:MAX_TREE_OBJECTS]:
+        _check_execution_fence(db, plan, token)
+        entry = dict(raw_entry)
         kind = entry.get("kind")
         object_id = str(entry.get("object_id") or "")
+        entry["lane"] = origin_lanes.get((kind, object_id), entry.get("lane"))
         try:
-            if kind in ("cog_output", "artifact_cache", "fabric_materialization"):
-                _stage_file(kind, object_id, plan_dir, staged)
-            elif kind == "worker_cache":
-                _reclaim_worker_cache_row(db, object_id)
-                staged.append({"kind": kind, "object_id": object_id,
-                               "mode": "registry_row_deleted"})
+            staged_path = plan_dir / str(kind) / (entry.get("lane") or "default") / object_id
+            if kind in ("cog_output", "artifact_cache", "fabric_materialization") and staged_path.is_file():
+                staged.append({"kind": kind, "object_id": object_id, "lane": entry.get("lane"),
+                               "mode": "already_staged", "bytes": staged_path.stat().st_size})
             else:
-                errors.append(f"{kind}:{object_id}: kind not executable")
-        except Exception as exc:  # noqa: BLE001 — 单对象失败不中断整批
+                path = _resolve_file_path(kind, object_id, lane=entry.get("lane")) if kind != "worker_cache" else None
+                eligible, reason = candidate_still_cold(db, entry, path)
+                if not eligible:
+                    skipped.append({"kind": kind, "object_id": object_id, "reason": reason})
+                elif kind in ("cog_output", "artifact_cache", "fabric_materialization"):
+                    _stage_file(kind, object_id, plan_dir, staged, lane=entry.get("lane"))
+                elif kind == "worker_cache":
+                    _reclaim_worker_cache_row(db, object_id)
+                    staged.append({"kind": kind, "object_id": object_id, "mode": "registry_row_deleted"})
+                else:
+                    errors.append(f"{kind}:{object_id}: kind not executable")
+        except Exception as exc:  # noqa: BLE001 — preserve per-object failures
             errors.append(f"{kind}:{object_id}: {type(exc).__name__}")
+        plan.result = {**(plan.result or {}), "staged": staged[:64], "errors": errors[:16]}
+        db.commit()
+    _check_execution_fence(db, plan, token)
     result = {
+        "_execution_protocol": 2, "_execution_token": token, "recovered_execution": recovered,
         "staged_count": len(staged),
+        "skipped_count": len(skipped),
+        "skipped": skipped[:64],
+        "moved_count": sum(item.get("mode") == "moved_to_staging" for item in staged),
+        "warnings": ["all candidates were already absent"] if staged and all(item.get("mode") == "already_gone" for item in staged) else [],
         "staged": staged[:64],
         "errors": errors[:16],
         "ok": not errors,
-        "staging_dir": str(plan_dir),
         "staging_expires_at": plan.staging_expires_at.isoformat()
         if plan.staging_expires_at else None,
     }
+    if skipped:
+        result["warnings"].append(f"{len(skipped)} candidates skipped after fresh assessment")
     transition(plan, "finish_done" if not errors else "finish_failed",
                actor=actor, result=result)
     db.commit()
-    lc_metrics.observe_executed(plan.candidate_count, plan.candidate_bytes)
+    moved = [item for item in staged if item.get("mode") == "moved_to_staging"]
+    lc_metrics.observe_executed(len(moved), sum(int(item.get("bytes") or 0) for item in moved))
     return result
 
 
-def _resolve_file_path(kind: str, object_id: str) -> Optional[Path]:
+def _resolve_file_path(kind: str, object_id: str, *, lane: Optional[str] = None) -> Optional[Path]:
     from app.services.data_lifecycle.adapters import (
         _artifact_root,
         _cog_root,
@@ -271,33 +358,39 @@ def _resolve_file_path(kind: str, object_id: str) -> Optional[Path]:
         _spill_root,
     )
 
+    if not object_id or Path(object_id).is_absolute() or ".." in Path(object_id).parts:
+        raise GcPlanError("invalid GC object path")
     if kind == "artifact_cache":
-        return _artifact_root() / object_id
+        return _artifact_root() / (object_id if Path(object_id).suffix else object_id + ".tif")
     if kind == "cog_output":
         return _cog_root() / object_id
     if kind == "fabric_materialization":
-        candidate = _spill_root() / object_id
-        if candidate.exists():
-            return candidate
-        return _data_root() / object_id
+        if lane == "spill":
+            return _spill_root() / object_id
+        if lane == "data":
+            return _data_root() / object_id
+        raise GcPlanError("fabric origin needs trusted spill/data evidence; preserve this plan and staging")
     return None
 
 
 def _stage_file(kind: str, object_id: str, plan_dir: Path,
-                staged: List[Dict[str, Any]]) -> None:
-    src = _resolve_file_path(kind, object_id)
+                staged: List[Dict[str, Any]], *, lane: Optional[str] = None) -> None:
+    src = _resolve_file_path(kind, object_id, lane=lane)
     if src is None or not src.exists():
         staged.append({"kind": kind, "object_id": object_id,
                        "mode": "already_gone"})
         return
-    dst = plan_dir / kind / object_id
+    dst = plan_dir / kind / (lane or "default") / object_id
     if dst.exists():
         staged.append({"kind": kind, "object_id": object_id,
                        "mode": "already_staged"})
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
+    size = src.stat().st_size
     shutil.move(str(src), str(dst))
-    staged.append({"kind": kind, "object_id": object_id, "mode": "moved_to_staging"})
+    if kind == "artifact_cache" and src.with_suffix(".meta").exists():
+        shutil.move(str(src.with_suffix(".meta")), str(dst.with_suffix(".meta")))
+    staged.append({"kind": kind, "object_id": object_id, "lane": lane, "mode": "moved_to_staging", "bytes": size})
 
 
 def _reclaim_worker_cache_row(db: Any, object_id: str) -> None:
@@ -309,50 +402,106 @@ def _reclaim_worker_cache_row(db: Any, object_id: str) -> None:
     ).one_or_none()
     if row is not None:
         db.delete(row)
-        db.commit()
+        db.flush()
 
 
-def rollback_plan(db: Any, plan: GcPlan, *, actor: Optional[str] = None) -> Dict[str, Any]:
+def rollback_plan(db: Any, plan: GcPlan, *, actor: Optional[str] = None) -> dict[str, object]:
+    from app.services.data_lifecycle.gc_recovery import plan_guard
+
+    with plan_guard(db, plan.id, _staging_root()):
+        return _rollback_plan_locked(db, plan, actor=actor)
+
+
+def _rollback_plan_locked(db: Any, plan: GcPlan, *, actor: Optional[str] = None) -> Dict[str, Any]:
     """staging 区对象搬回原位（观察期内）；DB 行类无法回滚（诚实披露）。"""
-    plan_dir = STAGING_DIR / plan.id
+    _lock_plan(db, plan)
+    from app.services.data_lifecycle.gc_recovery import restore_target
+    _require_recoverable(plan)
+    if plan.status == "executing":
+        # Exclusive liveness locks prove the protocol-2 executor has ended.
+        plan.status = "failed"
+        db.commit()
+        _lock_plan(db, plan)
+    if (plan.result or {}).get("purged_at"):
+        raise GcPlanError("purged plan cannot be rolled back")
+    if plan.status not in _TRANSITIONS["rollback"]:
+        raise GcPlanError(f"rollback not allowed from {plan.status}")
+    plan_dir = _staging_root() / plan.id
     restored: List[Dict[str, Any]] = []
     errors: List[str] = []
     if plan_dir.exists():
         for kind_dir in plan_dir.iterdir():
-            kind = kind_dir.name
+            if not kind_dir.is_dir():
+                continue  # bounded recovery manifest is not an object payload
             for path in kind_dir.rglob("*"):
                 if not path.is_file():
                     continue
-                rel = path.relative_to(kind_dir)
-                dst = _resolve_file_path(kind, str(rel))
-                if dst is None:
-                    errors.append(f"{kind}:{rel}: unresolvable path")
-                    continue
                 try:
+                    dst = restore_target(db, plan, plan_dir, path)
+                    if dst.exists():
+                        raise GcPlanError("original target is occupied; preserved staged bytes")
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(path), str(dst))
-                    restored.append({"kind": kind, "object_id": str(rel)})
-                except OSError as exc:
-                    errors.append(f"{kind}:{rel}: {exc}")
+                    restored.append({"kind": kind_dir.name, "object_id": str(path.relative_to(kind_dir))})
+                except (OSError, GcPlanError) as exc:
+                    errors.append(f"{kind_dir.name}:{path.name}: {exc}")
     result = {
+        "rollback_partial": bool(errors),
         "restored_count": len(restored),
         "restored": restored[:64],
         "errors": errors[:16],
         "note": "worker_cache 注册表行为逻辑回收（fail-open），不参与文件回滚",
     }
-    transition(plan, "rollback", actor=actor, result=result)
+    if errors:
+        # A partial/ambiguous restore remains recoverable on the SAME plan.
+        plan.status = "failed"
+        plan.result = {**(plan.result or {}), **result, "rollback_partial": True}
+    else:
+        transition(plan, "rollback", actor=actor, result={**(plan.result or {}), **result})
     db.commit()
     lc_metrics.observe_rolled_back(len(restored))
     return result
 
 
-def purge_staging(plan: GcPlan) -> Dict[str, Any]:
-    """观察期后物理删除 staging 区（显式调用；无后台 sweeper——部署自主调度）。"""
-    plan_dir = STAGING_DIR / plan.id
-    if not plan_dir.exists():
-        return {"purged": False, "reason": "no staging dir"}
-    shutil.rmtree(plan_dir, ignore_errors=True)
-    return {"purged": True, "staging_dir": str(plan_dir)}
+def purge_staging(plan: GcPlan, *, db: Any = None) -> dict[str, object]:
+    from sqlalchemy.orm import object_session
+    from app.services.data_lifecycle.gc_recovery import plan_guard
+
+    db = db if db is not None else object_session(plan)
+    if db is None:
+        raise GcPlanError("purge requires a persistent transaction")
+    with plan_guard(db, plan.id, _staging_root()):
+        return _purge_staging_locked(plan, db=db)
+
+
+def _purge_staging_locked(plan: GcPlan, *, db: Any = None) -> Dict[str, Any]:
+    """Permanently purge an expired terminal plan; serialize with rollback."""
+    if db is None:
+        from sqlalchemy.orm import object_session
+        db = object_session(plan)
+    if db is None:
+        raise GcPlanError("purge requires a persistent transaction")
+    _lock_plan(db, plan)
+    if plan.status not in ("done", "failed"):
+        raise GcPlanError(f"purge not allowed from {plan.status}")
+    if (plan.result or {}).get("rollback_partial"):
+        raise GcPlanError("partial recovery must be resolved before purge")
+    _require_recoverable(plan)
+    if (plan.result or {}).get("purged_at"):
+        return {"purged": True, "already_purged": True}
+    expires = plan.staging_expires_at
+    if expires is not None:
+        expires = expires.replace(tzinfo=timezone.utc) if expires.tzinfo is None else expires.astimezone(timezone.utc)
+        if expires > datetime.now(timezone.utc):
+            raise GcPlanError("staging observation period has not expired")
+    plan_dir = _staging_root() / plan.id
+    existed = plan_dir.exists()
+    if existed:
+        shutil.rmtree(plan_dir)
+    result = {**(plan.result or {}), "purged_at": datetime.now(timezone.utc).isoformat(), "rollback_available": False}
+    plan.result = result
+    db.commit()
+    return {"purged": True, "had_staging": existed, "purged_at": result["purged_at"]}
 
 
 __all__ = [

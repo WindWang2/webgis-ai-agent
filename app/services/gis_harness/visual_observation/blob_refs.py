@@ -9,26 +9,24 @@ F15 遗留窗口（其 review P2-1/P2-2/P2-5）在此收口：
   无需改本模块）。
 - **会话绑定**：``resolve`` 的护栏面 —— 请求会话不在 live refs 里 →
   诚实缺席（无按 ref 读字节的公开端点，唯一消费方是 provider 评估
-  瞬间）；两个例外方向：vref 缺席 = 旧数据放行；引用 cap 触顶时
-  fail-open（无法区分 cap 拒绝与跨会话猜测，防同像素多会话自伤）。
+  瞬间）；vref 缺席、损坏或引用 cap 触顶均拒绝未知会话。
 - **GC**：FIFO 淘汰 / 会话清理 → ``release_blob_ref``；计数归 0 才删
   字节；``sweep_orphan_screenshots`` 清扫无引用且超龄的 vshot，并对
   「引用非空但租约整体超龄」按陈旧租约回收（并发丢减量的泄漏面）。
   详见下方并发语义披露。
 
-并发语义（诚实披露，C13 review P2-1 修正口径）：vref 读改写用 put_blob
-原子替换（last-writer-wins）—— 并发交错最坏**丢一次增量或一次减量**：
+并发语义：文件系统后端的 vref 更新与 GC 共用按内容哈希的 flock，
+同进程线程使用有界分条锁。会话索引通过 memory 锁 / Redis WATCH 原子更新，
+注册与清理的文件 I/O 经工作线程执行。未知所有权保持 fail-closed。
 
-- 丢减量 → 泄漏：引用少记，字节多留（安全方向）；陈旧租约 sweep 回收；
-- 丢增量 → 过早回收：仍被引用的字节可能被删，消费侧 ``resolve`` 得到
-  诚实缺席（内容寻址无错配风险）—— 可用性损失，绝不产生错误数据。
-
-全部操作 fail-open（失败记日志不抛）—— GC 是增值面，绝不阻断观察/
-评估/修复主链。
+GC 操作失败记日志不抛；读取授权守卫则 fail-closed。
 """
 from __future__ import annotations
+from app.services.gis_harness.failure_observation import observe_optional_failure
 
 import json
+import asyncio
+from app.services.gis_harness.visual_observation.blob_lock import blob_ref_lock
 import logging
 import time
 from typing import Any, Dict, Optional
@@ -117,6 +115,11 @@ def add_blob_ref(sha256: str, session_id: str) -> bool:
     sid = str(session_id or "")[:64]
     if not sha or not sid:
         return False
+    with blob_ref_lock(_blob_store(), sha):
+        return _add_ref_locked(sha, sid)
+
+
+def _add_ref_locked(sha: str, sid: str) -> bool:
     refs = _load_refs(sha)
     if sid not in refs and len(refs) >= MAX_SESSIONS_PER_BLOB:
         logger.warning(
@@ -127,58 +130,65 @@ def add_blob_ref(sha256: str, session_id: str) -> bool:
     return _save_refs(sha, refs)
 
 
+def store_screenshot_ref(sha: str, session_id: str, data: bytes) -> bool:
+    store = _blob_store()
+    sid = str(session_id)[:64]
+    with blob_ref_lock(store, sha):
+        key = f"{_SHOT_PREFIX}{sha}"
+        if not store.exists(key):
+            store.put_blob(key, data, "binary")
+        return _add_ref_locked(sha, sid)
+
+
 def release_blob_ref(sha256: str, session_id: str) -> bool:
     """会话引用 -1；归零删字节（返回 True = 字节已删除）。"""
     sha = _sha_of_ref(str(sha256 or ""))
     sid = str(session_id or "")[:64]
     if not sha or not sid:
         return False
-    refs = _load_refs(sha)
-    if sid not in refs:
-        return False
-    remaining = refs[sid] - 1
-    if remaining > 0:
-        refs[sid] = remaining
-        _save_refs(sha, refs)
-        return False
-    refs.pop(sid, None)
-    if refs:
-        _save_refs(sha, refs)
-        return False
-    # 引用清零：索引与字节一起回收（fail-open）。
-    try:
-        _blob_store().delete_blob(ref_key_for(sha))
-    except Exception:  # noqa: BLE001
-        logger.debug("[VisualBlobRefs] vref delete failed sha=%s",
-                     sha[:12], exc_info=True)
-    try:
-        from app.services.gis_harness.visual_observation.store import (
-            blob_key_for,
-        )
+    with blob_ref_lock(_blob_store(), sha):
+        refs = _load_refs(sha)
+        if sid not in refs:
+            return False
+        remaining = refs[sid] - 1
+        if remaining > 0:
+            refs[sid] = remaining
+            _save_refs(sha, refs)
+            return False
+        refs.pop(sid, None)
+        if refs:
+            _save_refs(sha, refs)
+            return False
+        # 引用清零：索引与字节一起回收（fail-open）。
+        try:
+            _blob_store().delete_blob(ref_key_for(sha))
+        except Exception:  # noqa: BLE001
+            logger.debug("[VisualBlobRefs] vref delete failed sha=%s",
+                         sha[:12], exc_info=True)
+        try:
+            from app.services.gis_harness.visual_observation.store import (
+                blob_key_for,
+            )
 
-        return bool(_blob_store().delete_blob(blob_key_for(sha)))
-    except Exception:  # noqa: BLE001 — 字节删除失败留给 sweep
-        logger.debug("[VisualBlobRefs] blob delete failed sha=%s",
-                     sha[:12], exc_info=True)
-        return False
+            return bool(_blob_store().delete_blob(blob_key_for(sha)))
+        except Exception:  # noqa: BLE001 — 字节删除失败留给 sweep
+            logger.debug("[VisualBlobRefs] blob delete failed sha=%s",
+                         sha[:12], exc_info=True)
+            return False
 
 
 def blob_has_live_ref(sha256: str, session_id: str) -> bool:
-    """会话绑定护栏：请求会话是否持有 live ref（vref 缺席 = 旧数据放行）。"""
+    """会话绑定护栏：请求会话是否持有 live ref（无所有权证据即拒绝）。"""
     sha = _sha_of_ref(str(sha256 or ""))
     sid = str(session_id or "")[:64]
     if not sha or not sid:
-        return True
+        return False
     refs = _load_refs(sha)
     if not refs:
-        return True          # 旧数据 / vref 损坏：不惩罚历史
+        return False         # Missing or corrupt ownership evidence is not authorization.
     if sid in refs:
         return True
-    # cap 触顶时 add 会拒绝新引用 —— 此刻无法区分「本会话注册被 cap 拒」
-    # 与「真跨会话猜测」，fail-open（同像素多会话场景下否则自伤；
-    # C13 review P2-2）。
-    if len(refs) >= MAX_SESSIONS_PER_BLOB:
-        return True
+
     return False
 
 
@@ -194,7 +204,7 @@ async def release_session_screenshots(session_id: str) -> int:
     """
     from app.services.gis_harness.visual_observation.store import (
         SCREENSHOT_INDEX_KEY,
-        load_screenshot_index,
+        ScreenshotEntry,
     )
     from app.services.session_data import session_data_manager
 
@@ -203,16 +213,24 @@ async def release_session_screenshots(session_id: str) -> int:
         return 0
     released = 0
     try:
-        entries = await load_screenshot_index(sid)
+        from app.services.session_state_atomic import atomic_update_state
+
+        entries: list[ScreenshotEntry] = []
+        def drain(snapshot: Any) -> dict:
+            nonlocal entries
+            entries = [entry for raw in snapshot.get(SCREENSHOT_INDEX_KEY) or []
+                       if (entry := ScreenshotEntry.from_dict(raw)) is not None]
+            return {SCREENSHOT_INDEX_KEY: []}
+
+        if await atomic_update_state(session_data_manager, sid, [SCREENSHOT_INDEX_KEY], drain) is None:
+            return 0
         for entry in entries:
             try:
-                release_blob_ref(entry.sha256, sid)
+                await asyncio.to_thread(release_blob_ref, entry.sha256, sid)
                 released += 1
             except Exception:  # noqa: BLE001 — 单条失败继续
                 logger.debug("[VisualBlobRefs] release failed sha=%s",
                              entry.sha256[:12], exc_info=True)
-        await session_data_manager.set_map_state(
-            sid, SCREENSHOT_INDEX_KEY, [])
     except Exception:  # noqa: BLE001 — 回收失败不阻断会话清理
         logger.warning("[VisualBlobRefs] session release failed sid=%s",
                        sid[:24], exc_info=True)
@@ -259,28 +277,29 @@ def sweep_orphan_screenshots(
                 age = ts - path.stat().st_mtime
             except OSError:
                 continue
-            refs, ref_ts = _load_entry(sha)
-            if refs:
-                # 陈旧租约：引用非空但 vref 自上次写起整体超龄（并发丢减量
-                # 的永久泄漏面，P2-1）—— 按无引用回收。租约 TTL 与字节
-                # TTL 同宽（sweep max_age_s）。
-                lease_age = ts - ref_ts if ref_ts > 0 else age
-                if lease_age < max_age_s:
-                    kept_refed += 1
+            with blob_ref_lock(store, sha):
+                refs, ref_ts = _load_entry(sha)
+                if refs:
+                    # 陈旧租约：引用非空但 vref 自上次写起整体超龄（并发丢减量
+                    # 的永久泄漏面，P2-1）—— 按无引用回收。租约 TTL 与字节
+                    # TTL 同宽（sweep max_age_s）。
+                    lease_age = ts - ref_ts if ref_ts > 0 else age
+                    if lease_age < max_age_s:
+                        kept_refed += 1
+                        continue
+                elif age < max_age_s:
+                    kept_young += 1
                     continue
-            elif age < max_age_s:
-                kept_young += 1
-                continue
-            try:
-                store.delete_blob(ref_key_for(sha))
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                store.delete_blob(f"{_SHOT_PREFIX}{sha}")
-                swept += 1
-            except Exception:  # noqa: BLE001 — 单条失败继续
-                logger.debug("[VisualBlobRefs] sweep delete failed sha=%s",
-                             sha[:12], exc_info=True)
+                try:
+                    store.delete_blob(ref_key_for(sha))
+                except Exception:  # noqa: BLE001
+                    observe_optional_failure(__name__)
+                try:
+                    store.delete_blob(f"{_SHOT_PREFIX}{sha}")
+                    swept += 1
+                except Exception:  # noqa: BLE001 — 单条失败继续
+                    logger.debug("[VisualBlobRefs] sweep delete failed sha=%s",
+                                 sha[:12], exc_info=True)
     return {"swept": swept, "scanned": scanned,
             "kept_refed": kept_refed, "kept_young": kept_young}
 

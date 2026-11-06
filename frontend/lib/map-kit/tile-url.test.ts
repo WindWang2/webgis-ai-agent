@@ -25,13 +25,13 @@ beforeEach(() => {
 describe('buildMvtTileUrl', () => {
   it('builds the session-scoped template when the session id is present', () => {
     expect(buildMvtTileUrl('ref:geojson-1', 'sess-abc')).toBe(
-      'http://localhost:8001/api/v1/layers/data/ref:geojson-1/tiles/{z}/{x}/{y}.mvt?session_id=sess-abc',
+      'http://localhost:8001/api/v1/layers/data/ref%3Ageojson-1/tiles/{z}/{x}/{y}.mvt?session_id=sess-abc',
     );
   });
 
   it('appends the content revision as a cache-busting param (#1112)', () => {
     expect(buildMvtTileUrl('ref:geojson-1', 'sess-abc', 7)).toBe(
-      'http://localhost:8001/api/v1/layers/data/ref:geojson-1/tiles/{z}/{x}/{y}.mvt?session_id=sess-abc&v=7',
+      'http://localhost:8001/api/v1/layers/data/ref%3Ageojson-1/tiles/{z}/{x}/{y}.mvt?session_id=sess-abc&v=7',
     );
     // 0 / null / undefined revisions add no param (unchanged contract).
     expect(buildMvtTileUrl('ref:geojson-1', 'sess-abc', 0)).not.toContain('&v=');

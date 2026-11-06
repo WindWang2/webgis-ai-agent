@@ -17,7 +17,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     wf,
     auto_fallback,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _HAZARD_ONLY_FALLBACK = fb(
     "RISK_RECEPTORS_UNCONFIRMED", frm="risk_map", to="hazard_map",
@@ -39,8 +39,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="raster_surface",
         secondary_cartography=["proximity_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="receptors unconfirmed", reason_code="RISK_RECEPTORS_UNCONFIRMED",
-                                  use="hazard_map")],
+        fallbacks=[],
         export_profile={"formats": ["png"], "chart": True},
         priority=44,
         schema_version=2,
@@ -80,8 +79,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="raster_surface",
         secondary_cartography=["proximity_overlay"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="receptors unconfirmed", reason_code="RISK_RECEPTORS_UNCONFIRMED",
-                                  use="hazard_map")],
+        fallbacks=[],
         export_profile={"formats": ["png"], "chart": True},
         priority=44,
         schema_version=2,
@@ -119,8 +117,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="proximity_overlay",
         secondary_cartography=["administrative_choropleth"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="receptors unconfirmed", reason_code="RISK_RECEPTORS_UNCONFIRMED",
-                                  use="hazard_map")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=47,
         schema_version=2,
@@ -192,8 +189,7 @@ _RECIPES: List[CartographyRecipe] = [
         primary_cartography="proximity_overlay",
         secondary_cartography=["administrative_choropleth"],
         default_components=MAP_COMPONENTS_CHART,
-        fallbacks=[RecipeFallback(when="receptors unconfirmed", reason_code="RISK_RECEPTORS_UNCONFIRMED",
-                                  use="hazard_map")],
+        fallbacks=[],
         export_profile={"formats": ["png", "csv"], "chart": True},
         priority=43,
         schema_version=2,

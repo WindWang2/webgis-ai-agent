@@ -63,8 +63,20 @@ def detect_contradictions(
     claims = sorted(claims, key=lambda c: c.claim_id)
     results: List[ContradictionResult] = []
 
-    for i, a in enumerate(claims):
-        for b in claims[i + 1 :]:
+    by_subject = {}
+    highest = {}
+    for claim in claims:
+        by_subject.setdefault((claim.claim_type, claim.subject), []).append(claim)
+        if claim.comparator == "highest":
+            highest.setdefault(claim.claim_type, []).append(claim)
+    for a in claims:
+        candidates = {c.claim_id: c for c in by_subject[(a.claim_type, a.subject)]}
+        # Competing highest claims can concern different subjects.
+        if a.comparator == "highest":
+            candidates.update({c.claim_id: c for c in highest[a.claim_type]})
+        for b in sorted(candidates.values(), key=lambda c: c.claim_id):
+            if b.claim_id <= a.claim_id:
+                continue
             if not _same_metric_axis(a, b):
                 continue
             if a.tenant_id and b.tenant_id and a.tenant_id != b.tenant_id:

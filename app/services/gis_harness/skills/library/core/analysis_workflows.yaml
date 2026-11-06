@@ -1,21 +1,21 @@
 # GIS Core Skills — Analysis Workflows（goal-02 / ADR-0182 语义）
-# 五个多步分析工作流族的作业过程与质量义务声明：本包只声明「怎么组合、
+# 六个多步分析工作流族的作业过程与质量义务声明：本包只声明「怎么组合、
 # 何时阻断、何时降级披露」，不重新实现算法——执行真相在 ToolRegistry 工具
 # （编排面 webgis_analysis_workflow_plan/run/status/recompute）。
 skills:
   - id: analysis_workflow_orchestration
     name: 多步分析工作流编排
-    description: 把「按区统计+可达性+暴露/变化/分区」类多图层分析装配为带数据角色合同与科学前置的步骤链；缺数据 typed 阻断、缺分母不伪装率、无路网不冒充可达、双期不对齐拒绝差分。
+    description: 把「按区统计+可达性+暴露/变化/分区+栅格分区汇总」类多图层分析装配为带数据角色合同与科学前置的步骤链；缺数据 typed 阻断、缺分母不伪装率、无路网不冒充可达、双期不对齐拒绝差分、栅格分区统计带 nodata 覆盖率披露。
     domain: vector_analysis
     pack: core
-    version: 1.0.0
+    version: 1.1.0
     intent_patterns: [分析工作流, 多步分析, 组合分析, 多图层分析, 串联分析, 局部重算, analysis workflow, multi-step analysis, multi-layer analysis]
     # 编排元技能不声明领域本体任务——本体信号归各领域技能（resolver 语义）
-    task_types: [administrative_statistic, accessibility_analysis, risk_exposure, change_detection, spatial_autocorrelation]
-    when_to_use: 用户场景需要 ≥3 个空间工具按依赖串联（如「按区统计+可达性+低覆盖」复合目标），或明确要求组合成工作流/局部重算/证据链。单目标分析场景由各领域技能承接（可达性→network_accessibility_analysis 等）。
+    task_types: [administrative_statistic, accessibility_analysis, risk_exposure, change_detection, spatial_autocorrelation, raster_distribution]
+    when_to_use: 用户场景需要 ≥3 个空间工具按依赖串联（如「按区统计+可达性+低覆盖」「栅格指数按行政区汇总」复合目标），或明确要求组合成工作流/局部重算/证据链。单目标分析场景由各领域技能承接（可达性→network_accessibility_analysis 等）。
     when_not_to_use: 单工具即可回答（直接调该工具）；LLM 自由组合非常规步骤（propose_plan 通用计划通道）。
     required_situation:
-      geometry_kinds: [point, line, polygon]
+      geometry_kinds: [point, line, polygon, raster]
       data_roles: [subject]
     optional_situation:
       data_roles: [boundary, network, denominator, population, hazard, receptor, baseline, target_time]
@@ -38,6 +38,14 @@ skills:
         hard_gate: false
       - capability_id: grid_binning
         purpose: H3 网格聚合（分区族）
+        criticality: optional
+        hard_gate: false
+      - capability_id: zonal_statistics
+        purpose: 栅格指数分区统计（raster_zonal_summary 族；nodata 逐 zone 覆盖率披露）
+        criticality: optional
+        hard_gate: false
+      - capability_id: raster_resample
+        purpose: 栅格重采样预处理（可选步——分辨率变化即统计口径变化）
         criticality: optional
         hard_gate: false
     input_roles: [subject, boundary, network, hazard, receptor, baseline, target_time]

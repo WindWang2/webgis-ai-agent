@@ -1,9 +1,9 @@
-from urllib.parse import urlparse
-from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError
 """
 报告生成服务 - 从会话历史生成 PDF/HTML/Markdown 报告
 使用 Jinja2 模板渲染 HTML，WeasyPrint 转换为 PDF
 """
+from urllib.parse import urlparse
+from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError, make_safe_session
 import asyncio
 from app.core.async_runner import run_sync
 import html as html_mod
@@ -26,6 +26,7 @@ from app.models.db_model import Conversation, Message
 from app.services.mapspec_to_svg import (
     compile_mapspec_to_svg_detailed,
     resolve_spec_timeout_ms,
+    _resolve_export_thresholds,
 )
 from app.lib.cartography.layout_description import (
     LayoutInput,
@@ -86,7 +87,9 @@ except (ImportError, OSError):
 
 logger = logging.getLogger(__name__)
 
-REPORT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "reports")
+from app.core.config import settings
+
+REPORT_DIR = os.path.join(settings.DATA_DIR, "reports")
 
 # W4：SVG 编译超时的诚实降级占位 —— 编译超过 spec 同口径预算时，报告不再
 # 无界阻塞（WeasyPrint 内联路径原本无任何超时保护），也不伪成功：占位图以
@@ -126,6 +129,20 @@ def serialize_report(r: Report) -> dict:
     }
 
 
+def recover_interrupted_report(report: Report, *, now: Optional[datetime] = None) -> bool:
+    """Expire orphaned processing rows on authorized reads after 30 minutes."""
+    if report.status not in ("pending", REPORT_STATUS_IN_PROGRESS) or not report.created_at:
+        return False
+    created = report.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    if ((now or datetime.now(timezone.utc)) - created).total_seconds() <= 1800:
+        return False
+    report.status = "failed"
+    report.error_message = "Report generation was interrupted or exceeded its recovery window."
+    return True
+
+
 @dataclass
 class ReportSagaResult:
     success: bool
@@ -145,13 +162,25 @@ def safe_url_fetcher(url: str, timeout: int = 10, ssl_context=None):
         return {"string": b"", "mime_type": "image/svg+xml"}
     if scheme not in ("http", "https"):
         raise ValueError(f"Disallowed URL scheme in PDF renderer: {scheme}")
+    # The safe adapter pins the validated DNS answer at connection time. Hand
+    # bytes to WeasyPrint so its default fetcher cannot resolve/fetch it again.
     try:
         DataFabricSecurity.validate_url(url, allow_private=False)
-    except DataFabricSecurityError as err:
-        raise ValueError(f"Blocked URL in PDF renderer: {err}") from err
-    if weasyprint is not None and hasattr(weasyprint, "default_url_fetcher"):
-        return weasyprint.default_url_fetcher(url, timeout=timeout, ssl_context=ssl_context)
-    return None
+    except DataFabricSecurityError as exc:
+        raise ValueError(f"Blocked URL in PDF renderer: {exc}") from exc
+    with make_safe_session(allow_private=False) as session:
+        with session.get(url, timeout=timeout, stream=True, allow_redirects=False) as response:
+            if not 200 <= response.status_code < 300:
+                raise ValueError("Report resource fetch failed or redirected")
+            chunks = []
+            size = 0
+            for chunk in response.iter_content(65536):
+                size += len(chunk)
+                if size > 16 * 1024 * 1024:
+                    raise ValueError("Report resource exceeds byte budget")
+                chunks.append(chunk)
+            return {"string": b"".join(chunks), "mime_type": response.headers.get("Content-Type", "application/octet-stream").split(";", 1)[0], "redirected_url": url}
+
 
 
 _SVG_NS = "http://www.w3.org/2000/svg"
@@ -180,12 +209,6 @@ def _svg_url_allowed(value: str) -> bool:
     if not norm or norm.startswith("#"):
         return True
     if _SAFE_DATA_IMAGE_RE.match(norm):
-        return True
-    if norm.startswith(("http://", "https://")):
-        try:
-            DataFabricSecurity.validate_url(value.strip(), allow_private=False)
-        except Exception:
-            return False
         return True
     return False
 
@@ -391,9 +414,9 @@ class ReportService:
                 mapspec=mapspec,
             )
 
-            if success and os.path.exists(file_path):
+            if success and await asyncio.to_thread(os.path.exists, file_path):
                 final_status = "completed"
-                final_size = os.path.getsize(file_path)
+                final_size = await asyncio.to_thread(os.path.getsize, file_path)
                 final_error = None
         except Exception as e:
             logger.error(f"Report generation error: {e}", exc_info=True)
@@ -402,18 +425,29 @@ class ReportService:
             from app.core.database import AsyncSessionLocal
             session_factory = AsyncSessionLocal
 
-        async with session_factory() as db2:
-            db2_report = await db2.get(Report, report_id)
-            if db2_report is not None:
-                db2_report.status = final_status
-                db2_report.error_message = final_error
-                if final_size is not None:
-                    db2_report.file_size = final_size
-                await db2.commit()
+        persisted = False
+        for attempt in range(2):
+            try:
+                async with session_factory() as db2:
+                    db2_report = await db2.get(Report, report_id)
+                    if db2_report is None:
+                        raise LookupError("Report row disappeared during generation")
+                    db2_report.status = final_status
+                    db2_report.error_message = final_error
+                    if final_size is not None:
+                        db2_report.file_size = final_size
+                    await db2.commit()
                 report.status = final_status
                 report.error_message = final_error
                 if final_size is not None:
                     report.file_size = final_size
+                persisted = True
+                break
+            except Exception:  # noqa: BLE001 — retry through a fresh transaction
+                logger.exception("Report final status persistence failed attempt=%s", attempt + 1)
+        if not persisted:
+            report.status = "failed"
+            report.error_message = "Report final status could not be saved; retry generation."
 
         report_serialized = serialize_report(report)
 
@@ -639,14 +673,20 @@ class ReportService:
         ir = build_publication_layout(_report_layout_input(mapspec))
         width = 1200
         height = int(round(width * ir["page"]["heightPx"] / ir["page"]["widthPx"]))
+        from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES
+
+        max_features, spec_timeout_ms = _resolve_export_thresholds(mapspec, None, None)
+        timeout_ms = min(spec_timeout_ms, 30_000.0)
         return await asyncio.wait_for(
             asyncio.to_thread(
                 compile_mapspec_to_svg_detailed, mapspec, 300,
+                max_features=min(max_features, TIER_EXPORT_FEATURES),
+                timeout_ms=timeout_ms,
                 width=width,
                 height=height,
                 include_chrome=True,
             ),
-            timeout=timeout_s,
+            timeout=min(timeout_s, timeout_ms / 1000.0),
         )
 
     def _compile_vector_svg_for_report(self, mapspec: dict[str, Any]) -> str:
@@ -655,7 +695,7 @@ class ReportService:
         spec.thresholds.timeoutMs > 30000）。两条降级路径都走**既有 warning
         通道**（logger.warning）并诚实降级：wall-clock 超时嵌占位图；
         编译器协作式超时（timed_out）产物可能不完整，同样披露。"""
-        timeout_ms = resolve_spec_timeout_ms(mapspec)
+        timeout_ms = min(resolve_spec_timeout_ms(mapspec), 30_000.0)
         try:
             comp = run_sync(
                 self._compile_vector_svg_bounded(mapspec, timeout_ms / 1000.0)
@@ -781,18 +821,13 @@ class ReportService:
             )
         # V6 R1-M6：write_pdf 进程级互斥（官方无线程安全承诺）——
         # 与 publication 矢量 PDF 端点共用同一串行槽位。
-        from app.services.publication_export import PublicationBusyError, render_pdf_exclusive
+        from app.services.publication_export import render_pdf_exclusive
 
-        try:
-            render_pdf_exclusive(
-                lambda: weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
-            )
-        except PublicationBusyError:
-            # 报告链是排队型业务：忙时阻塞等待而非拒绝（与导出端点 429 语义区分）
-            from app.services.publication_export import _WEASYPRINT_LOCK
-
-            with _WEASYPRINT_LOCK:
-                weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
+        # Busy is an explicit retryable failure. Never occupy an executor
+        # thread waiting indefinitely for another export's process-local slot.
+        render_pdf_exclusive(
+            lambda: weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
+        )
 
     # ------------------------------------------------------------------
     # Helpers

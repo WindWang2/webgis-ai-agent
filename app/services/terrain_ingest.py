@@ -149,12 +149,15 @@ def _vertical_datum_from_crs(crs: Any) -> Optional[str]:
         from pyproj import CRS as PyprojCRS
 
         parsed = PyprojCRS.from_wkt(crs.to_wkt())
-        if not parsed.is_vertical:
-            for sub in getattr(parsed, "sub_crs_list", []) or []:
-                if getattr(sub, "is_vertical", False):
-                    return str(sub.name)
-            return None
-        return str(parsed.name)
+        # A6（评审）：compound CRS（如 "WGS 84 + EGM96 height"）实测
+        # is_vertical == True —— 先短路整体名会返回复合名而非垂直分量。
+        # 先取 sub_crs_list 的垂直分量名；纯垂直/无分量信息再回落整体名。
+        for sub in getattr(parsed, "sub_crs_list", []) or []:
+            if getattr(sub, "is_vertical", False):
+                return str(sub.name)
+        if parsed.is_vertical:
+            return str(parsed.name)
+        return None
     except Exception:  # noqa: BLE001 — best-effort 元数据读取，失败=不可用
         return None
 
@@ -204,9 +207,26 @@ def _convert_to_meters(
     - tags（含 SYNTHETIC_DEM）原样拷贝，副本保持自描述；
     - 原子发布：先写 .tmp 再 os.replace（#1634 同纪律）。
     """
+    tmp_path = out_path.with_name(f".{out_path.name}.tmp")
+    # A5（评审）：写副本中途失败时清理 .tmp —— 异常被 register 车道的
+    # 兜底 except 吞掉后，孤儿 .dem-m.tif.tmp 会随上传目录永久残留
+    #（上界 200MB）。
+    try:
+        _convert_to_meters_write(src_path, tmp_path, out_path, factor, declared_nodata)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _convert_to_meters_write(
+    src_path: Path,
+    tmp_path: Path,
+    out_path: Path,
+    factor: float,
+    declared_nodata: Optional[float],
+) -> None:
     import os
 
-    tmp_path = out_path.with_name(f".{out_path.name}.tmp")
     with rasterio.open(src_path) as src:
         profile = src.profile.copy()
         profile.update(dtype="float32", nodata=-9999.0)
@@ -413,7 +433,24 @@ def validate_dem(
 
         # —— 空间披露（antimeridian / 极区） ——
         minx, miny, maxx, maxy = bbox_4326
-        if minx > maxx:
+        # A2（评审）：地理 CRS 连续经度存储（如 170→190）—— transform_bounds
+        # 原样返回，东界 190 超出 TileJSON/MapLibre 的 [-180,180] 域（消费方
+        # 把 190 wrap 成 -170 会得到覆盖全球的错误区间）。归一化进域并如实
+        # 披露：wrap 后西>东 = 跨子午线表示；负侧半幅瓦片窗口与源网格不相
+        # 交、暂不可渲染 —— 不静默减半覆盖也不伪造可见性。
+        _continuous_lng = False
+        if maxx > 180.0 + 1e-9 or minx < -180.0 - 1e-9:
+            minx = ((minx + 180.0) % 360.0) - 180.0
+            maxx = ((maxx + 180.0) % 360.0) - 180.0
+            bbox_4326 = (minx, miny, maxx, maxy)
+            _continuous_lng = True
+            reasons.append(QualificationReason(
+                code="ANTIMERIDIAN_CROSSING",
+                detail="地理 CRS 连续经度越过 ±180：bbox 已 wrap 归一化发布"
+                       "（西界>东界 = 跨子午线表示）；负侧半幅瓦片窗口与源网格"
+                       "不相交、暂不可见（数据保留，不伪造覆盖）",
+            ))
+        if minx > maxx and not _continuous_lng:
             reasons.append(QualificationReason(
                 code="ANTIMERIDIAN_CROSSING",
                 detail="覆盖跨反子午线（4326 左界>右界）；按瓦片局部重投影处理，无伪造",

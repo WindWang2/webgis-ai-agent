@@ -45,7 +45,7 @@ def _restore_patched_module_state():
 
 
 def _make_app_with_session(session_id: str = "sess-valid", user_id: str = "user-123",
-                           user_token_version: int = 0):
+                           user_token_version: int = 0, additional_user_id: str | None = None):
     """Create a FastAPI app + temp DB with a user and owned session.
 
     Uses sync sqlite3 for setup (avoids event loop conflicts with TestClient).
@@ -82,6 +82,8 @@ def _make_app_with_session(session_id: str = "sess-valid", user_id: str = "user-
     )""")
     conn.execute("INSERT INTO users (id, username, email, role, is_active, token_version) VALUES (?, ?, ?, ?, 1, ?)",
                  (user_id, "testuser", "test@example.com", "viewer", user_token_version))
+    if additional_user_id:
+        conn.execute("INSERT INTO users (id, username, email, role, is_active, token_version) VALUES (?, ?, ?, ?, 1, 0)", (additional_user_id, "other", "other@example.com", "viewer"))
     conn.execute("INSERT INTO conversations (id, user_id, title) VALUES (?, ?, ?)",
                  (session_id, user_id, "Test"))
     conn.commit()
@@ -158,7 +160,7 @@ def test_ws_connect_with_valid_token_and_owned_session_is_accepted():
 
 def test_ws_connect_with_valid_token_but_unowned_session_rejected():
     """SEC-03: Valid token but session belongs to another user = 拒绝 (code 4003)."""
-    app = _make_app_with_session()
+    app = _make_app_with_session(additional_user_id="user-456")
     client = TestClient(app)
     other_token = create_access_token({"sub": "user-456", "role": "viewer"})
     with pytest.raises(WebSocketDisconnect) as exc_info:
@@ -355,3 +357,13 @@ def test_viewport_nonfinite_dropped(monkeypatch):
     asyncio.run(ws_service.handle_viewport_change("s", {"center": ["nan", 1], "zoom": 3}))
     asyncio.run(ws_service.handle_viewport_change("s", {"center": [1e309, 1], "zoom": 3}))
     assert seen == []
+
+
+def test_token_only_subprotocol_does_not_select_unoffered_bearer():
+    app = _make_app_with_session()
+    client = TestClient(app)
+    token = create_access_token({"sub": "user-123", "role": "viewer"})
+    with client.websocket_connect("/api/v1/ws/sess-valid", subprotocols=[token]) as websocket:
+        assert websocket.accepted_subprotocol is None
+        websocket.send_json({"event": "ping"})
+        assert websocket.receive_json() == {"event": "pong"}

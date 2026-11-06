@@ -82,6 +82,8 @@ def _value_compatible(claim: Claim, evidence_meta: Dict[str, Any]) -> tuple[bool
         return False, "evidence_value_not_finite"
     if abs(ev - cv) > 1e-9 * max(1.0, abs(cv)):
         return False, f"value_mismatch:{cv} vs {ev}"
+    if evidence_meta.get("proof_source") == "self_attested_metadata":
+        return False, "value_self_attested"
     return True, "value_bound"
 
 

@@ -35,7 +35,7 @@ Standing preferences: fail-fast on missing env vars, async-first patterns, timez
 ## Not yet specified
 
 - P3 low-priority items (type annotation consistency, TODOs, import style, error boundaries) — out of scope for this hardening pass
-- Test coverage improvement beyond existing 1,104 backend + 267 frontend tests — separate effort
+- Test coverage improvement beyond existing backend and frontend suites (use pytest --collect-only and pnpm exec vitest list for current counts) — separate effort
 - Performance profiling beyond identified anti-patterns — separate effort
 - Real LLM integration for `spatial_reasoning._call_llm` — planned, mock in place
 

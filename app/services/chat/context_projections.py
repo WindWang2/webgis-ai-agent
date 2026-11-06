@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -34,11 +35,44 @@ T = TypeVar("T")
 # ---------------------------------------------------------------------------
 
 def bound_text(text: str, max_chars: int, *, suffix: str = "…(truncated)") -> str:
-    """字符级有界化；超长时保头 + 明确截断标记（模型可感知被裁）。"""
+    """Bound a prefix while preserving generated XML safety-fence boundaries."""
+    max_chars = max(0, max_chars)
     if len(text) <= max_chars:
         return text
-    keep = max(0, max_chars - len(suffix))
-    return text[:keep].rstrip() + suffix
+    suffix = suffix[:max_chars]
+    low, high = 0, max(0, max_chars - len(suffix))
+    result = suffix
+    while low <= high:
+        mid = (low + high) // 2
+        prefix, closing = _closed_prefix(text, mid)
+        candidate = prefix + suffix + closing
+        if len(candidate) <= max_chars:
+            result = candidate
+            low = mid + 1
+        else:
+            high = mid - 1
+    return result
+
+
+_XML_TAG = re.compile(r"<(/?)([A-Za-z_][\w:.-]*)(?:\s[^<>]*)?\s*(/?)>")
+
+
+def _closed_prefix(text: str, limit: int) -> tuple[str, str]:
+    prefix = text[:limit].rstrip()
+    if prefix.rfind("<") > prefix.rfind(">"):
+        prefix = prefix[:prefix.rfind("<")].rstrip()
+    # Do not split an escaped entity emitted by the untrusted-value fence.
+    if re.search(r"&(?:[A-Za-z]*|#\d*|#x[0-9A-Fa-f]*)$", prefix):
+        prefix = prefix[:prefix.rfind("&")]
+    stack: list[str] = []
+    for match in _XML_TAG.finditer(prefix):
+        close, tag, self_close = match.groups()
+        if close:
+            if stack and stack[-1] == tag:
+                stack.pop()
+        elif not self_close and not match.group(0).endswith("/>"):
+            stack.append(tag)
+    return prefix, "".join(f"</{tag}>" for tag in reversed(stack))
 
 
 def bound_lines(
@@ -168,11 +202,14 @@ class ProjectionCache:
         # 构建耗时被无谓吃掉）。
         built_at = time.monotonic()
         with self._lock:
-            if len(self._store) >= self._max:
+            if self._max <= 0:
+                return value, False
+            if cache_key not in self._store and len(self._store) >= self._max:
                 # 确定性逐出：过期优先，其次字典序首个（进程内缓存无需花哨 LRU）
                 expired = [k for k, v in self._store.items() if v.expires_at <= built_at]
                 evict = expired[0] if expired else sorted(self._store.keys())[0]
                 self._store.pop(evict, None)
+                self._fps.pop(evict, None)
             self._store[cache_key] = _CacheEntry(value, built_at + self._ttl)
             self._fps[(namespace, key)] = fingerprint
         return value, False

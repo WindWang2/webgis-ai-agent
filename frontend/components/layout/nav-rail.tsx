@@ -36,6 +36,7 @@ import {
   Activity,
   Store,
   Radar,
+  Cpu,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
@@ -73,7 +74,7 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
   // V9（ADR-0145）：智能资产面板（append-only 追加，不重排既有组）。
   [
     { key: 'market', icon: Store },
-    { key: 'modelops', icon: Boxes },
+    { key: 'modelops', icon: Cpu },
   ],
   // ADR-0142：运维控制台（ops-console-v9）—— append-only 注册行，与 D/F/H/J 同规则。
   [{ key: 'ops', icon: Activity }],

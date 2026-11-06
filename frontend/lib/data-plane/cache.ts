@@ -44,12 +44,34 @@ export interface RefDataCacheOpts {
 /** 粗粒度确定性字节估算：特征数 × 每特征常数 + 结构底价。
  *  显示通道预算不需要精确序列化字节 —— 需要的是**单调、确定性、
  *  与规模正相关**的信号；精确值只有服务端知道。 */
-const ESTIMATED_BYTES_PER_FEATURE = 200;
 const ESTIMATED_BASE_BYTES = 512;
 
 export function estimateFeatureCollectionBytes(fc: FeatureCollectionLike | undefined | null): number {
   if (!fc || !Array.isArray(fc.features)) return 0;
-  return ESTIMATED_BASE_BYTES + fc.features.length * ESTIMATED_BYTES_PER_FEATURE;
+  const seen = new WeakSet<object>();
+  const estimate = (value: unknown, depth = 0): number => {
+    if (typeof value === 'number') return 8;
+    if (typeof value === 'string') return 2 * value.length;
+    if (typeof value === 'boolean' || value == null) return 4;
+    if (typeof value !== 'object' || depth > 32 || seen.has(value)) return 0;
+    seen.add(value);
+    let bytes = Array.isArray(value) ? 24 : 32;
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i += 1) {
+        if (i in value) bytes += estimate(value[i], depth + 1);
+      }
+    } else {
+      // Avoid materializing an entries array and one tuple per property for
+      // every feature. Re-estimate each write so in-place edits still count.
+      for (const key in value) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+          bytes += key.length * 2 + estimate((value as Record<string, unknown>)[key], depth + 1);
+        }
+      }
+    }
+    return bytes;
+  };
+  return ESTIMATED_BASE_BYTES + estimate(fc.features);
 }
 
 export class RefDataCache {

@@ -42,20 +42,11 @@ def test_string_geojson_parsed():
     assert out == fc
 
 
-def test_truncated_json_string_repaired():
-    """A truncated JSON string is repaired via safe_parse delegation.
-
-    This is the new behavior from ADR-0037 Win 5: to_feature_collection now
-    delegates string parsing to safe_parse, gaining its _repair_json logic.
-    Previously it silently returned an empty FC on a truncated string.
-    """
-    # A complete FC, then truncated mid-feature.
+def test_truncated_json_string_does_not_publish_repaired_partial_features():
+    """Incomplete serialized artifacts must not become apparently complete GeoJSON."""
     complete = {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"a": 1}}]}
-    truncated = json.dumps(complete).rsplit("}", 1)[0]  # drop the final closing brace
-    out = to_feature_collection(truncated)
-    # safe_parse repairs the missing brace → we get the FC back, not an empty one.
-    assert out["type"] == "FeatureCollection"
-    assert len(out["features"]) == 1
+    truncated = json.dumps(complete).rsplit("}", 1)[0]
+    assert to_feature_collection(truncated) == {"type": "FeatureCollection", "features": []}
 
 
 def test_empty_inputs_yield_empty_fc():

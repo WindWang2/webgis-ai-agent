@@ -91,7 +91,7 @@ function tokenizeLine(line: string, lang: string): Token[] {
   while (i < len) {
     // 1. Comments
     if (isPython || isBash) {
-      if (line[i] === '#') {
+      if (line[i] === '#' && (i === 0 || /\s/.test(line[i - 1]))) {
         tokens.push({ type: 'comment', value: line.slice(i) });
         break;
       }
@@ -154,14 +154,22 @@ function tokenizeLine(line: string, lang: string): Token[] {
       }
     }
 
-    // 4. Numbers
-    if (/[0-9]/.test(line[i]) || (line[i] === '-' && i + 1 < len && /[0-9]/.test(line[i + 1]))) {
-      let j = i;
-      if (line[j] === '-') j++;
-      while (j < len && /[0-9.eExXa-fA-F_]/.test(line[j])) j++;
-      tokens.push({ type: 'number', value: line.slice(i, j) });
-      i = j;
-      continue;
+    // A minus after a value is subtraction; radix digits cannot consume letters
+    // from a following identifier (e.g. `123abc`).
+    let unary = false;
+    if (line[i] === '-') {
+      let previousIndex = tokens.length - 1;
+      while (previousIndex >= 0 && !tokens[previousIndex].value.trim()) previousIndex -= 1;
+      const previous = tokens[previousIndex];
+      unary = !previous || previous.type === 'operator' || /^[([{,:;=<>+*/%!&|^~?-]$/.test(previous.value);
+    }
+    if (/[0-9]/.test(line[i]) || (line[i] === '-' && unary && /[0-9]/.test(line[i + 1] ?? ''))) {
+      const match = line.slice(i).match(/^-?(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:[0-9][0-9_]*)(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?)/);
+      if (match) {
+        tokens.push({ type: 'number', value: match[0] });
+        i += match[0].length;
+        continue;
+      }
     }
 
     // 5. Identifiers / Keywords / Function calls

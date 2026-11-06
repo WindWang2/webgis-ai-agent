@@ -110,6 +110,7 @@ export function VisualRepairCard(props: {
   }, [base, ownerToken, sessionId])
 
   const approve = useCallback(async (plan: VisualRepairPlanResponse) => {
+    if (!Number.isInteger(plan.base_revision)) return
     if (!plan.proposal_id) return
     setPhase({ kind: 'applying', plan })
     try {
@@ -151,6 +152,8 @@ export function VisualRepairCard(props: {
     } catch (error) {
       // 拒绝回执失败不打断用户 —— 下次 plan 会重新提案（保守方向）。
       devOnly.warn('[visual-repair-card] reject failed', error)
+      setPhase({ kind: 'error' })
+      return
     }
     setPhase({ kind: 'idle' })
     setOpen(false)
@@ -293,6 +296,7 @@ export function VisualRepairCard(props: {
               <button
                 type="button"
                 data-testid="visual-repair-approve"
+                disabled={!Number.isInteger(plan.base_revision)}
                 onClick={() => void approve(plan)}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded bg-status-accent px-2 py-1.5 text-caption font-semibold text-ink-on-accent hover:opacity-90"
               >

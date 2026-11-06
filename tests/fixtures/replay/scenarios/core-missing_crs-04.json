@@ -1,11 +1,17 @@
 {
  "category": "missing_crs",
+ "decisions": [],
  "description": "缺 CRS 证据被拦截",
  "dispatch_backed": false,
+ "expect_calibration": [],
+ "expect_source": "",
  "faults": [],
+ "receipt_backed": false,
+ "registry_digest": "",
  "scenario_id": "core-missing_crs-04",
  "schema_version": 1,
  "tags": [],
+ "tool_registry": {},
  "turns": [
   {
    "cartography": {
@@ -111,6 +117,7 @@
      },
      "call_id": "call-upsert-nocrs-4",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {
@@ -126,6 +133,7 @@
      },
      "call_id": "call-validate",
      "duration_ms": 0.0,
+     "error_code": "",
      "error_msg": "",
      "is_error": false,
      "result": {

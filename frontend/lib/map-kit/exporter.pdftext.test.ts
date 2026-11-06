@@ -37,6 +37,7 @@ interface JsPdfFake {
   text: ReturnType<typeof vi.fn>;
   setProperties: ReturnType<typeof vi.fn>;
   output: ReturnType<typeof vi.fn>;
+  splitTextToSize?: (text: string, width: number) => string[];
   addFileToVFS?: ReturnType<typeof vi.fn>;
   addFont?: ReturnType<typeof vi.fn>;
   setFont?: ReturnType<typeof vi.fn>;
@@ -224,5 +225,65 @@ describe('runExport → exportToPDF 集成通道', () => {
     expect(opts['colorMode']).toBe('srgb');
     // 字体加载失败（jsdom fetch stub 非 TTF）→ fontB64 null 但键在
     expect('fontB64' in opts).toBe(true);
+  });
+});
+
+
+describe('publication text projection reaches actual PDF drawing', () => {
+  it('draws projected lines and reserves header height before the map image', async () => {
+    const { fake } = makeJsPdfMock();
+    currentFake = fake;
+    const canvas = document.createElement('canvas');
+    canvas.width = 800; canvas.height = 600;
+    const texts = [
+      { kind: 'title' as const, text: 'original full title', wrapped: true, lines: ['title line one', 'title line two'] },
+      { kind: 'subtitle' as const, text: 'original subtitle', wrapped: true, lines: ['subtitle one', 'subtitle two'] },
+    ];
+    await exportToPDF(canvas, 'unprojected title', 'unprojected subtitle', { publicationTexts: texts });
+    const draws = fake.text.mock.calls as Array<[string, number, number]>;
+    expect(draws.map(row => row[0])).toContain('title line one');
+    expect(draws.map(row => row[0])).toContain('title line two');
+    expect(draws.map(row => row[0])).not.toContain('unprojected title');
+    const lastTitle = draws.find(row => row[0] === 'title line two')![2];
+    const firstSub = draws.find(row => row[0] === 'subtitle one')![2];
+    const lastSub = draws.find(row => row[0] === 'subtitle two')![2];
+    expect(firstSub).toBeGreaterThan(lastTitle);
+    expect(fake.addImage.mock.calls[0][3]).toBeGreaterThan(lastSub);
+  });
+  it('uses actual PDF font-width reflow for a narrower physical page', async () => {
+    const { fake } = makeJsPdfMock({ pageW: 210, pageH: 297 });
+    currentFake = fake;
+    const split = vi.fn(() => ['physical line one', 'physical line two']);
+    fake.splitTextToSize = split;
+    const canvas = document.createElement('canvas'); canvas.width = 800; canvas.height = 600;
+    await exportToPDF(canvas, 'projected long title', undefined);
+    expect(split).toHaveBeenCalledWith('projected long title', 190);
+    expect(fake.text.mock.calls.map(row => row[0])).toContain('physical line two');
+  });
+  it('fits wide Latin glyphs using real jsPDF font metrics without losing content', async () => {
+    const { default: JsPDF } = await vi.importActual<typeof import('jspdf')>('jspdf');
+    const metrics = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    const { fake } = makeJsPdfMock({ pageW: 210, pageH: 297 });
+    currentFake = fake;
+    fake.setFontSize.mockImplementation((size: number) => metrics.setFontSize(size));
+    fake.splitTextToSize = (text, width) => metrics.splitTextToSize(text, width) as string[];
+    const title = 'W'.repeat(180);
+    const canvas = document.createElement('canvas'); canvas.width = 800; canvas.height = 600;
+    await exportToPDF(canvas, title);
+    const drawnTitle = fake.text.mock.calls.map(row => String(row[0])).filter(text => /^W+$/.test(text));
+    expect(drawnTitle.length).toBeGreaterThan(2);
+    expect(drawnTitle.join('')).toBe(title);
+    metrics.setFontSize(16);
+    expect(drawnTitle.every(line => metrics.getTextWidth(line) <= 190)).toBe(true);
+  });
+  it('runExport forwards its frozen IR lines rather than only original text', async () => {
+    const spy = vi.spyOn(MapExporterEngine, 'exportToPDF').mockResolvedValue(new Blob(['pdf']));
+    stubUpload();
+    const title = 'school distribution and regional accessibility '.repeat(4);
+    expect((await runExport(createDeps(), { title, format: 'pdf' })).ok).toBe(true);
+    const texts = spy.mock.calls[0][3]!.publicationTexts!;
+    const projected = texts.find(row => row.kind === 'title')!;
+    expect(projected.text).toBe(title);
+    expect(projected.lines!.length).toBeGreaterThan(1);
   });
 });

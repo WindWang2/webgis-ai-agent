@@ -48,6 +48,8 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
   const addToast = useToastStore((s) => s.addToast);
   const { history, favorites, record, toggleFavorite, isFavorite } = useLakehouseHistory();
 
+  const hintConsumedRef = useRef(onHintConsumed);
+  hintConsumedRef.current = onHintConsumed;
   const reqRef = useRef<{ controller: AbortController | null }>({ controller: null });
   // 卸载中止在途查询（tab 切换即卸载 —— ContextPanel 语义）。
   useEffect(() => () => reqRef.current?.controller?.abort(), []);
@@ -73,12 +75,12 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
         if (!cancelled) setHint(t('query.hint.resolveFailed'));
       })
       .finally(() => {
-        onHintConsumed?.();
+        if (!cancelled) hintConsumedRef.current?.();
       });
     return () => {
       cancelled = true;
     };
-  }, [objectIdHint, sessionId, ownerToken, onHintConsumed, t]);
+  }, [objectIdHint, sessionId, ownerToken, t]);
 
   const execute = useCallback(async () => {
     setFormError(null);

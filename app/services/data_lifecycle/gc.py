@@ -75,6 +75,7 @@ async def plan_session_gc(
         _load_chapter_fresh,
         _load_mapspec_fresh,
         _TERMINAL_GC_STATUSES,
+        _gc_protection_skip,
         list_artifacts,
         load_records_for_plan,
     )
@@ -91,14 +92,6 @@ async def plan_session_gc(
         mapspec = await _load_mapspec_fresh(session_id)
     live = await load_records_for_plan(session_id, chapter, mapspec)
     plan.live_reference_ids = len(live)
-
-    # 血缘根保留集：valid 记录的全部上游（上游被删则下游血缘断链）
-    retained_roots: set = set()
-    for rec in records.values():
-        if getattr(rec, "status", "") == "valid":
-            for parent in (getattr(rec, "inputs", None) or []):
-                if parent in records:
-                    retained_roots.add(parent)
 
     for aid, rec in records.items():
         status = getattr(rec, "status", "")
@@ -118,16 +111,10 @@ async def plan_session_gc(
                 reason="still referenced by plan/mapspec/component",
             ))
             continue
-        if tier in _PROTECTED_TIERS:
+        protection = _gc_protection_skip(aid, records)
+        if protection:
             plan.protected.append(GCProtection(
-                artifact_id=aid, status=status,
-                reason=f"persistence_tier={tier}",
-            ))
-            continue
-        if aid in retained_roots:
-            plan.protected.append(GCProtection(
-                artifact_id=aid, status=status,
-                reason="retained lineage root (has live downstream)",
+                artifact_id=aid, status=status, reason=protection,
             ))
             continue
         plan.candidates.append(GCCandidate(

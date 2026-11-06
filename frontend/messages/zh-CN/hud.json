@@ -22,7 +22,8 @@
   },
   "telemetry": {
     "basemap": "底图",
-    "layers": "图层"
+    "layers": "图层",
+    "coordinates": "显示坐标"
   },
   "agentRun": {
     "toggleAria": "切换执行详情面板（Agent 意图 / 执行链 / 产物 / 地图效应）",
@@ -79,5 +80,9 @@
     "reset": "重置样式",
     "commitFailed": "样式修改未生效（已恢复）：{reason}",
     "networkError": "网络错误"
+  },
+  "signal": {
+    "active": "智能体正在运行",
+    "idle": "智能体空闲"
   }
 }

@@ -63,9 +63,11 @@ export function useVirtualRows(
     if (el) setScrollTop(el.scrollTop);
   }, []);
 
+  rowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
+  itemCount = Math.max(0, Math.floor(itemCount));
   const firstVisible = Math.floor(scrollTop / rowHeight);
-  const start = Math.max(0, firstVisible - overscan);
   const visibleCount = Math.ceil(viewportH / rowHeight) + overscan * 2;
+  const start = Math.min(Math.max(0, firstVisible - overscan), Math.max(0, itemCount - visibleCount));
   const end = Math.min(itemCount, start + visibleCount);
 
   return {

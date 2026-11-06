@@ -148,6 +148,10 @@ class PlanCompiler:
             local=facts.local,
             requests_per_minute=facts.requests_per_minute,
         )
+        if 0.0 < request.sample_rate < 1.0 and not request.aggregate and cost.rows is not None:
+            # Sampling here is post-fetch. Output rows shrink; transfer bytes,
+            # requests and latency retain the full scan cost (no fake savings).
+            cost.rows = int(cost.rows * request.sample_rate)
         # carrier cap for the plan cost (A7 policy consumed from V11's
         # data_tiers single point — §8.1.1 adaptation, no local literal)
         if cost.rows and cost.rows > TIER_EXPORT_FEATURES and not request.aggregate:

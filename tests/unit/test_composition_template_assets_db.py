@@ -479,3 +479,64 @@ def test_project_asset_foreign_project_rejected(db):
         db, payload=_payload(), creator_id="u1", org_id=1,
         visibility="project", project_id="proj-same-org")
     assert asset.project_id == "proj-same-org"
+
+
+def test_failed_create_publish_leaves_no_asset_or_version(db):
+    from app.models.composition_template_asset import CompositionTemplateAsset, CompositionTemplateAssetVersion
+    with pytest.raises(svc.CompositionAssetError, match="asset_publish_gate_failed"):
+        svc.create_asset(db, payload=_payload(base_template_id="missing.template"), creator_id="u1", publish=True)
+    db.commit()  # Even an outer caller mistakenly committing cannot publish a failed draft.
+    assert db.query(CompositionTemplateAsset).count() == 0
+    assert db.query(CompositionTemplateAssetVersion).count() == 0
+
+
+def test_project_visibility_not_truncated_and_replay_uses_published_revision(db):
+    from app.models.project import Project
+    for i in range(70):
+        db.add(Project(id=f"p{i:03}", name="project", owner_id="owner", org_id=3))
+    db.commit()
+    asset, version = svc.create_asset(db, payload=_payload(), creator_id="owner", org_id=3,
+                                     visibility="project", project_id="p069", publish=True)
+    svc.new_version(db, asset.id, _payload(name="unpublished"), user_id="owner")
+    assert "p069" in svc._caller_project_ids(db, "member", 3)
+    resolved = svc.resolve_replay_template(db, asset.id, user_id="member", org_id=3)
+    assert resolved is not None and resolved.name == version.payload["name"]
+
+
+def test_slot_matching_allocates_distinct_instances_before_inline_fallback():
+    from types import SimpleNamespace
+    base = SimpleNamespace(component_slots=[SimpleNamespace(id="text1", allowed_component_types=["text"]),
+                                            SimpleNamespace(id="text2", allowed_component_types=["text"])])
+    assert svc._resolve_slot_id({"id": "instance1"}, base, "text", set()) == "text1"
+    assert svc._resolve_slot_id({"id": "instance2"}, base, "text", {"text1"}) == "text2"
+    assert svc._resolve_slot_id({"id": "instance3"}, base, "text", {"text1", "text2"}) == "instance3"
+
+
+def test_repeated_component_types_are_saved_without_loss():
+    payload = svc.derive_payload_from_spec({"layout": {
+        "composition": {"template_id": "composition.standard_analysis", "template_version": "1.0.0"},
+        "components": [{"id": "custom-title-a", "type": "title", "enabled": True},
+                       {"id": "custom-title-b", "type": "title", "enabled": True}],
+    }})
+    assert payload.inline_template is not None
+    slots = payload.inline_template["component_slots"]
+    assert len(slots) == 2 and len({slot["id"] for slot in slots}) == 2
+
+
+def test_listing_latest_versions_is_one_join_not_per_asset_queries(db):
+    from sqlalchemy import event
+    for i in range(4):
+        svc.create_asset(db, payload=_payload(name=f"asset{i}"), creator_id="u1")
+    queries = []
+
+    def observe(_conn, _cursor, statement, *_args):
+        if statement.lstrip().lower().startswith("select"):
+            queries.append(statement)
+
+    event.listen(db.bind, "before_cursor_execute", observe)
+    try:
+        rows = svc.list_assets(db, user_id="u1", org_id=None)
+    finally:
+        event.remove(db.bind, "before_cursor_execute", observe)
+    assert len(rows) == 4
+    assert len(queries) == 2  # Complete project authorization set + joined asset/version snapshot.

@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import re
 import threading
 
 from app.services.spatial_guardrails.data import admin_divisions as _admin
@@ -49,9 +50,10 @@ def _prefecture_short_name(name: str) -> str:
     for suffix in ("市", "地区", "盟"):
         if name.endswith(suffix) and len(name) > len(suffix):
             return name[: -len(suffix)]
-    # 自治州：取首两字简称（如 "海西蒙古族藏族自治州" → "海西"）
-    if name.endswith("自治州") or "自治州" in name:
-        return name[:2]
+    if name.endswith("自治州"):
+        stem = name[:-3]
+        ethnic = r"蒙古族|蒙古|土家族|苗族|布依族|侗族|白族|傣族|景颇族|傈僳族|哈尼族|彝族|藏族|羌族|回族|哈萨克|柯尔克孜|朝鲜族|壮族"
+        return re.split(ethnic, stem, maxsplit=1)[0]
     return name
 
 

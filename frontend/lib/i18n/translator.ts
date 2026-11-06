@@ -1,3 +1,4 @@
+import { devOnly } from '@/lib/utils/logger';
 /**
  * 翻译函数层（ADR-0144）。
  *
@@ -33,7 +34,7 @@ function onError(error: unknown): void {
   ) {
     return
   }
-  console.error('[i18n]', error)
+  devOnly.error('[i18n]', error)
 }
 
 /** 取指定语言的 translator（缓存；ICU formatter 按语言复用）。 */

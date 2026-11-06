@@ -151,6 +151,22 @@ class _CountingRegistry:
         return {"success": True, "ref_id": f"ref:out-{len(self.calls)}", "feature_count": 3}
 
 
+class _StoredCountingRegistry(_CountingRegistry):
+    """Replay fixture with real session-owned physical payloads."""
+
+    async def dispatch(self, name, args, session_id=None):
+        from app.services.session_data import session_data_manager
+        assert session_id
+        result = await super().dispatch(name, args, session_id=session_id)
+        result["ref_id"] = await session_data_manager.store(session_id, {
+            "type": "FeatureCollection", "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [i, i]},
+                 "properties": {"value": i}} for i in range(3)
+            ],
+        }, prefix="replay-fixture")
+        return result
+
+
 # ── A1: promotion converter ───────────────────────────────────────────────
 
 
@@ -259,11 +275,12 @@ def test_rerun_from_step_invalidates_only_descendants(db):
 
     project_id, workflow_id = f"proj_{uuid.uuid4().hex[:8]}", f"wf_{uuid.uuid4().hex[:8]}"
     _mk_project_and_workflow(project_id, workflow_id, _three_step_spec())
-    reg = _CountingRegistry()
+    reg = _StoredCountingRegistry()
+    session_id = "replay-" + uuid.uuid4().hex
 
     with SessionLocal() as db:
         run1 = asyncio.run(WorkflowEngine.execute_workflow_run(
-            db=db, workflow_id=workflow_id, tool_registry=reg, expected_project_id=project_id
+            db=db, workflow_id=workflow_id, tool_registry=reg, session_id=session_id, expected_project_id=project_id
         ))
     assert run1.status == "completed"
     first_pass_calls = list(reg.calls)
@@ -273,7 +290,7 @@ def test_rerun_from_step_invalidates_only_descendants(db):
     with SessionLocal() as db:
         run2 = asyncio.run(WorkflowEngine.rerun_from_step(
             db=db, prior_run_id=run1.id, tool_registry=reg, from_step="s2",
-            expected_project_id=project_id,
+            session_id=session_id, expected_project_id=project_id,
         ))
     assert run2.status == "completed"
     assert reg.calls[len(first_pass_calls):] == ["aggregate_admin_regions", "generate_chart"], \
@@ -368,18 +385,19 @@ def test_rerun_from_step_unavailable_resolution_keeps_honest_reuse(db):
     ]
     project_id, workflow_id = f"proj_{uuid.uuid4().hex[:8]}", f"wf_{uuid.uuid4().hex[:8]}"
     _mk_project_and_workflow(project_id, workflow_id, steps)
-    reg = _CountingRegistry()
+    reg = _StoredCountingRegistry()
+    session_id = "replay-" + uuid.uuid4().hex
 
     with SessionLocal() as db:
         run1 = asyncio.run(WorkflowEngine.execute_workflow_run(
-            db=db, workflow_id=workflow_id, tool_registry=reg, expected_project_id=project_id,
+            db=db, workflow_id=workflow_id, tool_registry=reg, session_id=session_id, expected_project_id=project_id,
         ))
     assert run1.status == "completed"
 
     # Registry's tool set changes so poi_query no longer resolves (resolver
     # cannot confirm the recorded algorithm) — reuse stays honest via the
     # unavailable-resolution path, i.e. s1 is NOT marked stale, just reused.
-    class _NoPoi(_CountingRegistry):
+    class _NoPoi(_StoredCountingRegistry):
         def list_tools(self):  # noqa: D102 — narrow view; dispatch shares reg
             return ["aggregate_admin_regions", "legacy_tool"]
 
@@ -388,7 +406,7 @@ def test_rerun_from_step_unavailable_resolution_keeps_honest_reuse(db):
     with SessionLocal() as db:
         run2 = asyncio.run(WorkflowEngine.rerun_from_step(
             db=db, prior_run_id=run1.id, tool_registry=noop, from_step="s2",
-            expected_project_id=project_id,
+            session_id=session_id, expected_project_id=project_id,
         ))
     assert run2.status == "completed"
     # s1 reused (resolver unavailable → honest reuse, no fabricated staleness).

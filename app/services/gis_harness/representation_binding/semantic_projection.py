@@ -42,11 +42,9 @@ def _turn_of(turn_id: Optional[str]) -> int:
     """envelope.turn_id（str）→ IR turn（int；无数字信息时 0，诚实降级）。"""
     if not turn_id:
         return 0
-    digits = "".join(ch for ch in turn_id if ch.isdigit())
-    try:
-        return int(digits) if digits else 0
-    except ValueError:
-        return 0
+    import re
+    match = re.fullmatch(r"(?:turn[-_:]?)?(\d{1,9})", str(turn_id), re.I)
+    return int(match[1]) if match else 0
 
 
 def _layer_base_id(layer_id: str) -> str:

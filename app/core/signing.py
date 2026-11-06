@@ -22,7 +22,9 @@ _INFO = b"webgis:static-url-signing:v1"
 
 
 def _secret() -> bytes:
-    base = (settings.JWT_SECRET_KEY or "").encode("utf-8")
+    if not settings.JWT_SECRET_KEY:
+        raise RuntimeError("JWT_SECRET_KEY is required for URL signing")
+    base = settings.JWT_SECRET_KEY.encode("utf-8")
     # extract-then-expand（单块）：prk = HMAC(base, salt=info)，key = HMAC(prk, info||0x01)
     prk = hmac.new(_INFO, base, _ALG).digest()
     return hmac.new(prk, _INFO + b"\x01", _ALG).digest()
@@ -65,3 +67,20 @@ def verify_signature(path: str, exp: int | str, sig: str) -> bool:
         return False
     expected = make_signature(path, exp_int)
     return hmac.compare_digest(expected, sig or "")
+
+
+def terrain_capability_path(session_id: str, ref_id: str) -> str:
+    """Resource-bound capability, independent of any tile coordinate."""
+    return f"terrain:{session_id}:{ref_id}"
+
+
+def signed_terrain_query(session_id: str, ref_id: str) -> str:
+    """Read capability for one ref, valid for nine to ten minutes.
+
+    Minute issuance windows keep TileJSON bytes/ETags stable across adjacent
+    requests without extending the ten-minute authority lifetime.
+    """
+    from urllib.parse import urlencode
+    exp = (int(time.time()) // 60) * 60 + 600
+    sig = make_signature(terrain_capability_path(session_id, ref_id), exp)
+    return "?" + urlencode({"session_id": session_id, "exp": exp, "sig": sig})

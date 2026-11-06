@@ -232,9 +232,10 @@ class ProjectArtifactRasterSource(RasterSource):
         except Exception as e:  # pragma: no cover - import guard
             raise RasterSourceError(f"artifact resolution unavailable: {e}") from e
         artifact_id = self.uri.rsplit("/", 1)[-1]
+        project_id = self.uri.removeprefix("artifact://").split("/", 1)[0]
         with SessionLocal() as db:
             row = db.get(Artifact, artifact_id)
-            if row is None or not row.storage_ref:
+            if row is None or str(row.project_id) != project_id or not row.storage_ref:
                 raise RasterSourceError(
                     f"project artifact {artifact_id!r} not found or has no storage"
                 )
