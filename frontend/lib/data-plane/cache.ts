@@ -41,14 +41,18 @@ export interface RefDataCacheOpts {
   now?: () => number;
 }
 
-/** 粗粒度确定性字节估算：特征数 × 每特征常数 + 结构底价。
- *  显示通道预算不需要精确序列化字节 —— 需要的是**单调、确定性、
- *  与规模正相关**的信号；精确值只有服务端知道。 */
+/** Deterministic retained-size estimate over the complete feature graph.
+ * Counts property/coordinate growth and shared objects once; this is a cache
+ * budget signal, not an exact serialized size or a sampled feature average. */
 const ESTIMATED_BASE_BYTES = 512;
 
 export function estimateFeatureCollectionBytes(fc: FeatureCollectionLike | undefined | null): number {
   if (!fc || !Array.isArray(fc.features)) return 0;
-  const seen = new WeakSet<object>();
+  // The graph is already strongly reachable during this synchronous walk.
+  // A call-local Set avoids WeakSet's expensive weak-table GC bookkeeping on
+  // million-feature graphs (especially Node 22 under V8 coverage), without
+  // changing cycle/shared-object accounting or caching across mutable writes.
+  const seen = new Set<object>();
   const estimate = (value: unknown, depth = 0): number => {
     if (typeof value === 'number') return 8;
     if (typeof value === 'string') return 2 * value.length;
