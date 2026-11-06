@@ -1424,6 +1424,9 @@ class PiBridge:
     _active_turn_sid: Optional[str] = None
     # #1108: current lock owner lease (class-level default for __new__ tests).
     _lock_lease: Optional["_TurnLease"] = None
+    # GIS session last bound to this worker's in-memory Pi AgentSession.
+    # Vendor ``prompt`` ignores sessionId; a change must ``new_session`` first.
+    _bound_gis_session_id: Optional[str] = None
 
     def __init__(
         self,
@@ -1458,6 +1461,25 @@ class PiBridge:
         self._last_respawn_attempt: float = 0.0
         self._respawn_backoff_s: float = 1.0
         self._consecutive_respawn_failures: int = 0
+        self._bound_gis_session_id = None
+
+    async def _isolate_vendor_session(self, turn_sid: str) -> None:
+        """Reset the vendored AgentSession when the GIS session changes.
+
+        ``prompt`` has no session field (v1.5.0 ignores a ``sessionId`` key).
+        Same-session follow-ups keep the transcript. A different session must
+        not see the previous session's questions or tool results. A failed
+        reset does not update the bound id and must not be followed by prompt.
+        """
+        if not turn_sid:
+            return
+        previous = self._bound_gis_session_id
+        if previous == turn_sid:
+            return
+        if previous:
+            await self._rpc.request("new_session", {})
+            await self._drain_stale_events()
+        self._bound_gis_session_id = turn_sid
 
     async def _acquire_turn_lease(self, turn_id: str, session_id: Optional[str], *, owner: Optional[asyncio.Task] = None) -> "_TurnLease":
         """Acquire the turn lock and bind it to an explicit ownership lease.
@@ -2096,6 +2118,7 @@ class PiBridge:
                         query_text=context_query_text or "",
                     )
                     try:
+                        await self._isolate_vendor_session(turn_sid)
                         prompt_resp = await self._rpc.request("prompt", data)
                     except PiRpcError as send_exc:
                         # #790 (B-6 parity with stream_prompt's ``send_failed``): the
@@ -2617,6 +2640,7 @@ class PiBridge:
 
                     # Send prompt command
                     try:
+                        await self._isolate_vendor_session(turn_sid)
                         prompt_resp = await self._rpc.request("prompt", data)
                     except PiRpcError as e:
                         logger.error(f"[PiBridge] stream_prompt send failed: {e}")

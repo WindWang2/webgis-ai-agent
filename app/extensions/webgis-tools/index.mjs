@@ -312,9 +312,10 @@ export default function webgisToolsExtension(pi) {
     name: "webgis_execute",
     label: "WebGIS Tool Executor",
     description: [
-      "Execute a long-tail registered Python GIS tool that is not native.",
-      `Native tools (${FALLBACK_NATIVE.join(", ")}) must be called directly — never wrapped here.`,
-      "Distribution / density / heatmap (e.g. 成都市小学分布): first call webgis_map_intent with {query: the user text}. Then get_local_admin_boundary and query_local_poi (district + subtype). Then heatmap_data or h3_binning via this proxy. Then webgis_map_product.",
+      "Execute a registered Python GIS tool that is not one of the frozen native tools.",
+      `Frozen native tools (${FALLBACK_NATIVE.join(", ")}) must be called directly — never wrapped here.`,
+      "Distribution / density / heatmap (e.g. 成都市小学分布): first call webgis_map_intent with {query: the user text}. Then get_local_admin_boundary and query_local_poi (district + subtype). Then call heatmap_data or h3_binning directly if they are in your tool list; otherwise webgis_execute({toolName, arguments}). Then webgis_map_product.",
+      "Restyle (color, legend position, title) uses webgis_component_update, not a new POI query.",
       "webgis_cartography_status is a ZERO-argument read of the server cartography verdict AFTER the map has changed. Call it as webgis_cartography_status {}. It does not accept city, topic, scope, or query.",
     ].join("\n"),
     promptSnippet:
@@ -343,7 +344,7 @@ export default function webgisToolsExtension(pi) {
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
       const toolName = params?.toolName;
       const args = params?.arguments || {};
-      if (toolName && nativeNames.has(toolName)) {
+      if (toolName && FALLBACK_NATIVE.includes(toolName)) {
         return {
           content: [{
             type: "text",

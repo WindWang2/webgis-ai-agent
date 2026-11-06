@@ -48,7 +48,7 @@ _LABELS = {
 _SNIPPETS = {
     "webgis_map_intent": "First GIS step for 分布/密度. Pass {query: the user text}.",
     "webgis_map_product": "Assemble the map after data tools return. Same SessionPlan envelope.",
-    "webgis_component_update": "Restyle one map component. Does not start a new city analysis.",
+    "webgis_component_update": "Restyle one map component or heatmap palette. Does not re-query data.",
     "webgis_cartography_status": "Zero-argument verdict pull AFTER the map changed. Call with {}.",
     "query_local_poi": "China POI. district + subtype, e.g. 成都市 + 小学.",
     "get_local_admin_boundary": "China admin boundary. name e.g. 成都市.",

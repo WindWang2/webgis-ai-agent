@@ -36,6 +36,28 @@ if TYPE_CHECKING:  # pragma: no cover — 仅类型标注；运行时延迟导�
 logger = logging.getLogger(__name__)
 
 
+def _stale_surface_recovery(tool_name: str, mismatch: str) -> str:
+    """Recovery text that matches the extension wrap rule.
+
+    Frozen natives cannot be wrapped. Registered analysis tools may be
+    called directly when active, or via webgis_execute when they are not.
+    """
+    from app.services.chat.pi_native_surface import NATIVE_TOOL_NAME_SET
+
+    prefix = (
+        f"Tool surface for this turn is stale ({mismatch}): "
+        "the registered tool contract changed or the call belongs to a "
+        "superseded surface. "
+    )
+    if tool_name in NATIVE_TOOL_NAME_SET:
+        return prefix + f"Call {tool_name} directly. Do not wrap it in webgis_execute."
+    return (
+        prefix
+        + f"Call {tool_name} directly if it is in the active tool list; "
+        "otherwise re-discover via list_available_tools and call webgis_execute."
+    )
+
+
 def evict_turn_receipts(turn_sid: str) -> None:
     """Turn 终态时清理该 session 的 SurfaceReceipt（对照真相随 turn 回收）。
 
@@ -95,12 +117,7 @@ def stale_surface_gate(
             toolCallId=request.toolCallId,
             content=[{
                 "type": "text",
-                "text": (
-                    f"Tool surface for this turn is stale ({mismatch}): "
-                    "the registered tool contract changed or the call "
-                    "belongs to a superseded surface. Re-discover via "
-                    "list_available_tools, then call webgis_execute."
-                ),
+                "text": _stale_surface_recovery(tool_name, mismatch),
             }],
             details={
                 "error": "surface_stale",
