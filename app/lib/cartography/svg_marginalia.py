@@ -167,21 +167,34 @@ def render_scale_bar(x: float, y: float, bounds: List[float], canvas_width: floa
 
 def render_legend_box(x: float, y: float, legend: Dict[str, Any], *,
                       max_items: int = 12, width: float = 176.0) -> str:
-    """图例卡：title + entries（超出 max_items 截断 + 披露由调用方发）。"""
+    """图例卡：title (+unit 行) + entries（超出 max_items 截断 + 披露由调用方发）。
+
+    G04（CM-04 单位与样式匹配）：``legend.unit`` 在场时以标题下弱化小字行
+    披露（与 live legends.tsx 的 unit 后缀行同语义）；缺席时输出与历史
+    逐字节一致（不加行、不改高度）。
+    """
     entries: List[Dict[str, str]] = legend.get("entries") or []
     shown = entries[:max_items]
     if not shown:
         return ""
     item_h = 20.0
     padding = 12.0
-    height = padding * 2 + 18.0 + len(shown) * item_h
+    unit = str(legend.get("unit") or "").strip()
+    unit_dy = 13.0 if unit else 0.0
+    height = padding * 2 + 18.0 + unit_dy + len(shown) * item_h
     title = legend.get("title") or "图例"
     parts = [
         f'<rect x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(width)}" height="{_fmt(height)}" fill="rgba(255, 255, 255, 0.9)" stroke="#cbd5e1" stroke-width="1" rx="6" />',
         f'<text x="{_fmt(x + padding)}" y="{_fmt(y + padding + 10)}" font-family="sans-serif" font-size="12" font-weight="bold" fill="#1e293b">{escape_svg_text(title)}</text>',
     ]
+    if unit:
+        parts.append(
+            f'<text x="{_fmt(x + padding)}" y="{_fmt(y + padding + 24)}" '
+            f'font-family="sans-serif" font-size="10" fill="#64748b">'
+            f'{escape_svg_text(f"单位：{unit}")}</text>'
+        )
     for i, e in enumerate(shown):
-        iy = y + padding + 22.0 + i * item_h
+        iy = y + padding + 22.0 + unit_dy + i * item_h
         parts.append(
             f'<rect x="{_fmt(x + padding)}" y="{_fmt(iy - 10)}" width="14" height="10" '
             f'fill="{escape_svg_text(e.get("color", "#888"))}" rx="1" />'
