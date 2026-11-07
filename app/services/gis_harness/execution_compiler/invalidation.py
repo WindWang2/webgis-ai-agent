@@ -92,9 +92,14 @@ def patch_invalidation_scope(
 
     角色失效推导：
 
-    - aoi 变化 → **全量角色**（数据是 AOI 切片的产物；跨城市主 ref/
-      overlay ref/图层 id 全部失效，不假匹配）；
-    - subject 变化 → subject（+facility：同为主题数据面）；
+    - aoi 变化 → **全量角色**（``workflow_schema.DATA_ROLES`` 派生——
+      review-B P1-3：硬编码清单缺 elevation/constraint 等 6 角色；
+      有契约时取 data_contracts ∪ 词表全集——同会话其他族运行的角色
+      一并失效）；
+    - subject 变化 → 主题侧角色并集 {subject, facility, hazard,
+      receptor}（hazard_exposure 的主题面是 hazard/receptor——review-B
+      P1-3：换危险源主题时 hazard 步骤不得落入 preserved）；
+    - scene_data 变化（维度/地形/3D 分析目标）→ elevation（DEM 供给面）；
     - measure/statistics 变化 → normalization 进入 per_capita/rate 时
       含 denominator，否则 denominator 不失效（计数→面积密度只动
       boundary 派生步骤，不动 subject ref）；
@@ -110,19 +115,25 @@ def patch_invalidation_scope(
     reasons = []
 
     if classes["aoi"]:
-        # 全量角色：旧城市数据 ref 不可假匹配新城市（GC-06）
+        # 全量角色（DATA_ROLES 词表派生 + 契约角色并集）：旧城市数据
+        # ref 不可假匹配新城市（GC-06）。角色粒度覆盖全部词表角色；
+        # ref/图层 id 粒度的失效由执行层（recompute 内容指纹）承接。
+        try:
+            from app.services.gis_harness.workflow_schema import DATA_ROLES
+
+            invalidated.update(str(r) for r in DATA_ROLES)
+        except Exception:  # noqa: BLE001 — 词表缺席退化为契约角色
+            pass
         if contract is not None:
             invalidated.update(contract.data_contracts)
-        else:
-            invalidated.update(
-                {"subject", "boundary", "network", "facility", "hazard",
-                 "receptor", "baseline", "target_time", "denominator",
-                 "population"})
         reasons.append("aoi_changed: all data roles invalidated "
                        "(cross-city refs never match by assumption)")
     if classes["subject"]:
-        invalidated.update({"subject", "facility"})
+        invalidated.update({"subject", "facility", "hazard", "receptor"})
         reasons.append("subject_changed")
+    if classes["scene_data"]:
+        invalidated.add("elevation")
+        reasons.append("scene_data_changed")
     if classes["measure"]:
         new_norm = str(new_doc.intent.statistics.normalization or "none")
         new_stat = tuple(

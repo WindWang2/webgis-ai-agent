@@ -420,7 +420,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 "'geometry_types': [...]}}——表达候选适用性裁决输入，"
                 "缺席时 suitable=unknown（不虚构）"),
         },
-        side_effect="pure",
+        side_effect="deterministic_compute",
         network=False,
         deterministic=True,
         latency_class="fast",

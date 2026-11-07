@@ -172,10 +172,10 @@ temporal 年份对齐（`AWF_TEMPORAL_MISMATCH`）、role_kind（`AWF_ROLE_KIND_
   `analysis:<capability>` 需求、`build_evidence_registry` 把行状态造为
   deterministic `TOOL_RECEIPT` 证据、`_eval_row_requirement` 裁决——
   **节点成功（步骤 complete）≠ 目标达成**（map/export 义务仍按既有规则）。
-- 接线现状注记：该函数定义于 `execution_compiler/acceptance_bridge.py`；
-  `execution_compiler/__init__.py` 当前未 re-export 它，pipeline 的包级导入
-  落在 try/except 降级路径（按原 chapter 评估，零漂移，桥暂不生效）——
-  需后续 commit 在 `__init__.py` 补 re-export。
+- 接线现状注记：`evaluation_view_with_workflow_rows` /
+  `load_workflow_runs` 已在 `execution_compiler/__init__.py` re-export
+  （review-B 发现的静默 ImportError 已修复并有 oracles 测试钉死）；
+  finalizer 锁外预取运行清单（P2-4），锁内纯内存合并。
 
 ### 4.6 工具面（`app/tools/analysis_workflow_tools.py`）
 

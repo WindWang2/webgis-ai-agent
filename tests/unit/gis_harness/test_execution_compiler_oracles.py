@@ -6,6 +6,8 @@ golden 任务结构化产物、重复执行确定性、局部风格改变不重�
 """
 from __future__ import annotations
 
+from typing import Dict
+
 
 from app.services.gis_harness.analysis_workflows.contracts import (
     DataRoleBinding,
@@ -15,6 +17,7 @@ from app.services.gis_harness.analysis_workflows.families import (
     build_contract,
 )
 from app.services.gis_harness.analysis_workflows.state import (
+    WorkflowRunState,
     new_state,
 )
 from app.services.gis_harness.execution_compiler import (
@@ -101,8 +104,15 @@ class TestDeterminism:
         for candidate in comp.family_candidates:
             for signal in candidate.signals:
                 assert signal.path
-                assert getattr_signal(doc.intent, signal.path) is not None, (
-                    f"悬空信号路径: {signal.path}")
+                if ".*." in signal.path:
+                    # 聚合通配路径（measures.*.statistic）：容器非空即可解析
+                    container = signal.path.partition(".*.")[0]
+                    assert getattr(doc.intent, container), (
+                        f"悬空信号容器: {signal.path}")
+                else:
+                    assert getattr_signal(
+                        doc.intent, signal.path) is not None, (
+                        f"悬空信号路径: {signal.path}")
 
 
 # ── O2: fail-closed 与词表封闭 ───────────────────────────────────────────
@@ -474,3 +484,129 @@ class TestBridgeLoaderEndToEnd:
             "ec-bridge-empty-session", chapter)
         assert merged is chapter
         assert disclosures == []
+
+
+# ── review-B P1 回归钉（独立评审发现的三项必修）──────────────────────────
+
+
+class TestReviewBP1Regressions:
+    def _state(self, workflow_id: str, statuses: Dict[str, str],
+               updated_at: float = 0.0) -> WorkflowRunState:
+        contract = build_contract(
+            "admin_facility_distribution", workflow_id=workflow_id)
+        state = new_state(contract, contract_fingerprint=workflow_id)
+        for step_id, st in statuses.items():
+            state.steps[step_id].state = st
+        state.updated_at = updated_at
+        return state
+
+    def test_p1_1_stale_run_does_not_mask_newer_run(self):
+        """P1-1：同族旧失败运行不得遮蔽新成功运行（capability 去重让
+        最新运行获胜——否则 goal 误判 + 反复驱动 replan）。"""
+        stale = self._state("awf.admin.old", {
+            "zones_count": "failed", "area_density": "failed",
+            "per_capita_rate": "failed"}, updated_at=1.0)
+        fresh = self._state("awf.admin.new", {
+            "zones_count": "satisfied", "area_density": "satisfied",
+            "per_capita_rate": "satisfied"}, updated_at=2.0)
+        # 加载器返回序（新优先）即合并序——首见获胜 = 最新获胜
+        merged = merge_workflow_rows(
+            {"plan_id": "p", "query": "q", "intent": {}},
+            [(fresh, None), (stale, None)])
+        by_cap = {r["capability"]: r for r in merged["analysis_steps"]}
+        assert by_cap["awf.admin_facility_distribution.zones_count"][
+            "status"] == "complete", "新成功运行必须胜出陈旧失败运行"
+
+    async def test_p1_1_loader_selects_latest_per_family(self, tmp_path, monkeypatch):
+        """加载器真实 store 路径：同族多运行 → 只保留 updated_at 最新。"""
+        from app.services.gis_harness.analysis_workflows.state import (
+            state_alias,
+            state_to_payload,
+        )
+        from app.services.session_data import session_data_manager
+
+        monkeypatch.chdir(tmp_path)
+        session = "ec-p1-stale-masking"
+        for wid, at in (("awf.admin.aaa", 1.0), ("awf.admin.zzz", 2.0)):
+            st = self._state(wid, {"zones_count": "satisfied"}, updated_at=at)
+            ref = await session_data_manager.store(
+                session, state_to_payload(st), prefix="awf-state")
+            await session_data_manager.set_alias(session, ref, state_alias(wid))
+
+        from app.services.gis_harness.execution_compiler import (
+            load_workflow_runs,
+        )
+
+        runs = await load_workflow_runs(session)
+        assert len(runs) == 1, "每族只保留最新运行"
+        assert runs[0].workflow_id == "awf.admin.zzz"
+
+    def test_p1_2_recent_time_word_not_near(self):
+        """P1-2：「最近三年」是时间词不是邻近语义——不得误置 near/
+        导向 network_proximity 族（「最近医院」仍正确命中）。"""
+        core = resolve_map_request_intent("成都最近三年的小学数量变化")
+        doc = build_document("成都最近三年的小学数量变化", core)
+        assert doc.intent.spatial_relation.kind != "near"
+        comp = compile_requirement_to_tasks(doc)
+        if comp.family_candidates:
+            assert comp.family_candidates[0].family != "network_proximity"
+        # 对照：最近设施语义仍命中
+        near_doc = build_document(
+            "成都各区居民点到最近医院的网络距离分析",
+            resolve_map_request_intent(
+                "成都各区居民点到最近医院的网络距离分析"))
+        assert near_doc.intent.spatial_relation.kind == "near"
+        # 对照：邻近城市（行政邻接）不命中
+        adj_doc = build_document(
+            "成都与邻近城市的对比",
+            resolve_map_request_intent("成都与邻近城市的对比"))
+        assert adj_doc.intent.spatial_relation.kind != "near"
+
+    def test_p1_3_city_switch_invalidates_full_data_roles_vocabulary(self):
+        """P1-3：换城全量失效必须覆盖 DATA_ROLES 词表全集（16 角色，
+        非硬编码 10）——elevation/constraint 等同样失效。"""
+        old = build_document(
+            "统计成都各区小学数量",
+            resolve_map_request_intent("统计成都各区小学数量"))
+        new = build_document(
+            "统计北京各区小学数量",
+            resolve_map_request_intent("统计北京各区小学数量"))
+        scope = patch_invalidation_scope(old, new)  # 无契约回退路径
+        from app.services.gis_harness.workflow_schema import DATA_ROLES
+
+        assert set(scope.invalidated_roles) >= set(DATA_ROLES)
+
+    def test_p1_3_subject_change_invalidates_hazard_roles(self):
+        """P1-3：subject 变化 → hazard/receptor 主题角色并集失效
+        （hazard_exposure 族的主题面）。"""
+        old = build_document(
+            "统计成都各区小学数量",
+            resolve_map_request_intent("统计成都各区小学数量"))
+        new = build_document(
+            "统计成都各区医院数量",
+            resolve_map_request_intent("统计成都各区医院数量"))
+        scope = patch_invalidation_scope(old, new)
+        assert {"subject", "facility", "hazard", "receptor"} <= set(
+            scope.invalidated_roles)
+
+    def test_p2_1_no_signal_blocked_is_naturally_reachable(self):
+        """P2-1：无统计/无口径/无分组信号时 admin 不再吃默认值分——
+        no_family_signal_match 自然路径可达（非仅人为空 allowlist）。"""
+        doc = build_document(
+            "成都", resolve_map_request_intent("成都"))
+        comp = compile_requirement_to_tasks(doc)
+        # 无任何肯定信号（无 measure/dimension/relation/task 映射）→ blocked
+        if not comp.family_candidates:
+            assert comp.verdict == "blocked"
+            assert "no_family_signal_match" in comp.block_reasons
+
+    def test_p2_3_heatmap_insufficient_reason_is_readable(self):
+        """P2-3：数据不足时披露串语义正确（feature_count=5 < 30）。"""
+        doc = build_document(
+            "成都小学热力图", resolve_map_request_intent("成都小学热力图"))
+        comp = compile_requirement_to_tasks(doc, data_facts={
+            "subject": {"feature_count": 5}})
+        heat = [c for c in comp.expression_candidates
+                if c.kind == "heatmap"][0]
+        assert heat.suitable is False
+        assert any("feature_count=5 <" in r for r in heat.reasons)

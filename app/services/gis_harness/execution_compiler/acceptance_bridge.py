@@ -164,8 +164,18 @@ def workflow_disclosures(
 async def load_workflow_runs(
     session_id: str, *, limit: int = 8,
 ) -> List[WorkflowRunState]:
-    """会话 store → 族运行态清单（确定性序；失败诚实空——评估面 fail-open，
-    披露由 goal_satisfaction 的证据缺席语义承载）。"""
+    """会话 store → 族运行态清单（**每族最新运行**；确定性序）。
+
+    review-B P1-1 修复：workflow_id 是内容摘要——换绑/改参产生新持久
+    状态且旧状态永不清除。按 alias 字典序取前 N 会用**陈旧运行**遮蔽
+    新运行（旧失败行挤掉新成功行 → goal 误判 + 反复驱动 replan）。
+    本加载器改为：枚举全部运行（硬上限 16，防无界）→ **每族只保留
+    updated_at 最新**（tie-break workflow_id 降序）→ 新运行优先返回。
+
+    已知边界（诚实披露）：WorkflowRunState 不携带目标身份（goal_key），
+    超替后的新目标无法在运行面上区分旧目标——按「每族最新」收敛污染面
+    （≤7 族 × 1 运行）；goal 级运行关联是后续工作（需在 plan 工具面
+    写 goal 键，非本层单方面可修）。"""
     if not session_id:
         return []
     try:
@@ -182,7 +192,7 @@ async def load_workflow_runs(
     candidates = sorted(
         (alias, ref) for ref, alias in (refs or {}).items()
         if str(alias).startswith("analysis_workflow.v1:")
-    )[: max(0, limit)]
+    )[:16]                                  # 枚举硬上限（防无界 store 扫描）
     for alias, ref in candidates:
         try:
             resolved = await session_data_manager.resolve_alias(
@@ -196,8 +206,18 @@ async def load_workflow_runs(
         state = state_from_payload(payload if isinstance(payload, dict) else {})
         if state is not None:
             workflows.append(state)
-    workflows.sort(key=lambda s: s.workflow_id)
-    return workflows
+    # 每族最新运行获胜（updated_at 降序，tie-break workflow_id 降序——
+    # 同 updated_at（未 touch 的持久态）时字典序大的内容派生视为更新）。
+    latest_by_family: Dict[str, WorkflowRunState] = {}
+    for state in workflows:
+        current = latest_by_family.get(state.family)
+        if current is None or (
+                (state.updated_at, state.workflow_id)
+                > (current.updated_at, current.workflow_id)):
+            latest_by_family[state.family] = state
+    return sorted(
+        latest_by_family.values(),
+        key=lambda s: (-s.updated_at, s.workflow_id))[: max(0, limit)]
 
 
 async def evaluation_view_with_workflow_rows(

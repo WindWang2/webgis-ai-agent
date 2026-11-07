@@ -1186,6 +1186,20 @@ async def maybe_finalize_map_product(
     validated_goal = goal_key(chapter, plan.user_goal)
     revision_after_run = await _current_mapspec_revision(session_id)
 
+    # G02-GIS-EXECUTION-COMPILER（C2 验收桥，review-B P2-4）：族运行加载
+    # 只依赖 session_id（与 chapter 无依赖）——在会话锁**外**预取，避免
+    # 拉长最热锁的持锁时间（1 次 list_refs + ≤8 次别名解析/get）。
+    awf_runs: List[Any] = []
+    try:
+        from app.services.gis_harness.execution_compiler import (
+            load_workflow_runs,
+        )
+
+        awf_runs = await load_workflow_runs(session_id)
+    except Exception:  # noqa: BLE001 — 桥失败按零运行（零漂移评估）
+        logger.debug("[MapFinalizer] workflow runs preload failed",
+                     exc_info=True)
+
     # V6 W10/W11：修复计划（findings 统一投影 → 护栏 → 计划 → 账本落账）。
     # 增值披露：任何失败不影响块写入；锁集读自 mapspec workbench doc。
     repair_plan_dict: Optional[Dict[str, Any]] = None
@@ -1301,20 +1315,27 @@ async def maybe_finalize_map_product(
                 # 节点成功≠目标达成）。合并只进 map_product_block 的评估
                 # 输入，不写回持久 chapter（行指纹守卫消费的是
                 # fresh.gis_chapter 原面）；零运行/桥失败 → 零漂移。
+                # 运行清单已在锁外预取（awf_runs）——锁内零 store IO。
                 awf_eval_chapter = fresh.gis_chapter
                 awf_disclosures: List[str] = []
-                try:
-                    from app.services.gis_harness.execution_compiler import (
-                        evaluation_view_with_workflow_rows,
-                    )
+                if awf_runs:
+                    try:
+                        from app.services.gis_harness.execution_compiler import (
+                            merge_workflow_rows,
+                            workflow_disclosures,
+                        )
 
-                    awf_eval_chapter, awf_disclosures = (
-                        await evaluation_view_with_workflow_rows(
-                            session_id, fresh.gis_chapter))
-                except Exception:  # noqa: BLE001 — 桥失败按原 chapter 评估
-                    logger.debug(
-                        "[MapFinalizer] workflow bridge unavailable",
-                        exc_info=True)
+                        awf_eval_chapter = merge_workflow_rows(
+                            fresh.gis_chapter,
+                            [(run, None) for run in awf_runs])
+                        for run in awf_runs:
+                            awf_disclosures.extend(
+                                workflow_disclosures(run))
+                        awf_disclosures = awf_disclosures[:8]
+                    except Exception:  # noqa: BLE001 — 桥失败按原 chapter 评估
+                        logger.debug(
+                            "[MapFinalizer] workflow bridge merge failed",
+                            exc_info=True)
                 fresh.gis_chapter["map_product"] = map_product_block(
                     result,
                     revision_after_run,

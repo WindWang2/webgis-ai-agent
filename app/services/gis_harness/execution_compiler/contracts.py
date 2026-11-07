@@ -12,12 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 #: 编译裁决词表（封闭；三态——伪成功不允许）。
 CompileVerdict = Literal["compilable", "needs_clarification", "blocked"]
 
-#: 单位义务裁决词表（封闭）。
+#: 单位义务裁决词表（封闭；review-B P2-2：静态层真实可达三态——
+#: 「声明与事实矛盾」的 violated 形态发生在运行期证据面，由
+#: run_final_gate/science_final_gate 承载，不在静态层虚构第四态）。
 UnitObligationVerdict = Literal[
     "satisfied",           # 语义/单位链路闭合（几何自足或分母在证）
     "missing_denominator", # 率/人均语义但分母数据事实缺席 → 只给计数+披露
-    "violated",            # 声明语义与可用事实矛盾（如计数被许诺为率）
-    "not_applicable",      # 无量纲语义（纯定位/查看类）
+    "not_applicable",      # 无量纲语义（纯定位/查看类）或事实未注入
 ]
 
 #: 单位义务的语义类别（统计词表 → 量纲语义的规范投影）。

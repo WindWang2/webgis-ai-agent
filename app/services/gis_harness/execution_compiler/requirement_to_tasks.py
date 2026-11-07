@@ -70,12 +70,12 @@ _TASK_TYPE_FAMILY: Dict[str, Tuple[str, float]] = {
 
 #: geometry_kind（用户显式表达词表）→ 表达候选 kind。
 _GEOMETRY_KIND_EXPRESSION: Dict[str, str] = {
+    # review-B P2-7：isoline/flow 无对应推导表达（此前错标 area_density/
+    # point_map）——未映射 kind 经「user 点名不在推导集」路径原样保留披露。
     "heatmap": "heatmap",
     "choropleth": "admin_choropleth",
     "proportional_symbol": "admin_choropleth",
     "point": "point_map",
-    "isoline": "area_density",
-    "flow": "point_map",
 }
 
 
@@ -99,7 +99,7 @@ def _signals_of(doc: RequirementDocument) -> List[SignalEvidence]:
     add("subject.type", spec.subject.type, 1.5)
     add("subject.category", spec.subject.category, 1.0)
     for m in spec.measures[:2]:
-        add(f"measures.{m.id}.statistic", m.statistic, 1.5)
+        add(f"measures.{m.id}.statistic", m.statistic, 1.5)  # noqa: B007
     add("statistics.dimension", spec.statistics.dimension, 2.0)
     add("statistics.group_by", spec.statistics.group_by, 0.5)
     add("statistics.normalization", spec.statistics.normalization, 1.5)
@@ -125,13 +125,25 @@ def _family_score(
     score = 0.0
 
     def hit(path: str, predicate, weight: float) -> None:
-        value = by_path.get(path) or getattr_signal(spec, path)
-        if value and predicate(value):
-            matched.append(SignalEvidence(
-                path=path, value=str(value)[:64], origin="rule",
-                weight=weight))
-            nonlocal score
-            score += weight
+        values: List[str] = []
+        if path == "measures.statistic":
+            # 全 measure 聚合命中面（edit 增补的 m2+ 同样参与——
+            # review-B P2-7：硬编码 m1 使编辑态统计词对评分不可见）。
+            values = [str(m.statistic) for m in spec.measures
+                      if str(m.statistic or "none") != "none"]
+        else:
+            single = by_path.get(path) or getattr_signal(spec, path)
+            values = [single] if single else []
+        for value in values:
+            if value and predicate(value):
+                matched.append(SignalEvidence(
+                    path=path if path != "measures.statistic"
+                    else "measures.*.statistic",
+                    value=str(value)[:64], origin="rule",
+                    weight=weight))
+                nonlocal score
+                score += weight
+                break
 
     task_type = str(spec.task.task_type or "")
     mapped = _TASK_TYPE_FAMILY.get(task_type)
@@ -139,11 +151,14 @@ def _family_score(
         hit("task.task_type", lambda _v: True, mapped[1])
 
     if family == "admin_facility_distribution":
+        # review-B P2-1：默认值（"none"）不是肯定信号——此前把无统计/
+        # 无口径也计分，no_family_signal_match 自然路径不可达（blocked
+        # 只剩人为空 allowlist）。只认显式统计/口径词面。
         hit("statistics.dimension", lambda v: v == "administrative", 2.0)
-        hit("measures.m1.statistic",
-            lambda v: v in ("count", "sum", "share", "density", "none"), 1.0)
+        hit("measures.statistic",
+            lambda v: v in ("count", "sum", "share", "density"), 1.0)
         hit("statistics.normalization",
-            lambda v: v in ("per_area", "per_capita", "none"), 1.0)
+            lambda v: v in ("per_area", "per_capita"), 1.0)
         if task_type == "distribution_overview" and \
                 str(spec.subject.type) == "poi":
             hit("subject.type", lambda v: v == "poi", 1.5)
@@ -165,7 +180,7 @@ def _family_score(
         hit("time.compare_start", lambda v: bool(v), 3.0)
     elif family == "statistical_zones":
         hit("statistics.dimension", lambda v: v == "grid", 3.0)
-        hit("measures.m1.statistic",
+        hit("measures.statistic",
             lambda v: v in ("rate", "ratio", "index", "density"), 2.0)
     elif family == "raster_zonal_summary":
         # 栅格主题是载荷类型事实：矢量族的水合路径消费不了 raster ref
@@ -214,7 +229,10 @@ def _expression_candidates(
     spec = doc.intent
     facts = data_facts or {}
     subject_facts = facts.get("subject") or {}
-    point_count = int(subject_facts.get("feature_count") or 0)
+    try:
+        point_count = int(subject_facts.get("feature_count") or 0)
+    except (TypeError, ValueError):
+        point_count = 0
     facts_present = bool(subject_facts)
     subject_type = str(spec.subject.type or "unknown")
     geometry_expectation = str(spec.core.geometry_expectation or "")
@@ -234,9 +252,10 @@ def _expression_candidates(
             return (point_count > 0, (f"subject feature_count={point_count}",))
         if kind in ("heatmap", "grid_density"):
             enough = point_count >= MIN_DENSITY_POINTS
+            relation = ">=" if enough else "<"
             return enough, (
-                f"subject feature_count={point_count} "
-                f">={'MIN_DENSITY_POINTS' if enough else '>'}",)
+                f"subject feature_count={point_count} {relation} "
+                f"MIN_DENSITY_POINTS={MIN_DENSITY_POINTS}",)
         if kind in ("admin_choropleth", "area_density",
                     "per_capita_choropleth", "change_map"):
             boundary = facts.get("boundary") or {}

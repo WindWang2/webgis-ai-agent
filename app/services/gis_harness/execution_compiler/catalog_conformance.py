@@ -147,12 +147,9 @@ def _audit_step(
                 family=family, step_id=step.step_id, tool=step.tool_name,
                 verdict="fail", reason_code=FC_UNIT_OUT_OF_VOCAB,
                 detail=f"参数 {param} 单位 {unit} 越界（词表 {UNIT_VOCABULARY}）")
-        # 单位合同与步骤参数值量纲对账（#2005 形态静态守卫——声明面）
-        raw_value = step.step_params.get(param)
-        if isinstance(raw_value, (int, float)) and not isinstance(raw_value, bool):
-            # 数值参数本身无量纲声明——量纲混淆发生在消费面（envelope
-            # units vs 参数合同），此处只校验词表成员。
-            continue
+        # （量纲混淆的声明面守卫即词表成员校验；消费面[envelope units vs
+        # 参数合同]由运行期 run_final_gate 承载——数值参数无量纲声明，
+        # 此处不重复空转扫描。）
     try:
         from app.lib.gis.scientific_preconditions import (
             precondition_exists as _pc,

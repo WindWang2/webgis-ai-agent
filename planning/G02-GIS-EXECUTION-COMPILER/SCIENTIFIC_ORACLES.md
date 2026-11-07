@@ -46,12 +46,12 @@
   `rate/ratio→rate(field)`、`share→share(total)` 等。
 - **验证入口**：`units.build_unit_obligations` → `UnitObligation.verdict`；
   测试 `test_count_statistic_never_promised_as_rate`（计数义务不得出现
-  rate 语义 + violated）、
+  rate 语义 + 分母缺席三态裁决——静态层无 violated 态[1]）、
   `test_per_capita_without_denominator_is_disclosed_not_fabricated`
   （每万人请求必须产生义务；分母缺席必须进 `TaskCompilation.disclosures`）。
 - **fail 形态**：`per_capita/rate/ratio` 语义而 `data_facts["denominator"]`
   缺席 → `missing_denominator`（detail：「只输出原始计数并披露，不得伪装率」）；
-  声明语义与事实矛盾 → `violated`；无分母义务语义（count/none）→ `satisfied`；
+  分母数据事实缺席 → `missing_denominator`；无分母义务语义（count）→ `satisfied`；事实未注入 → `not_applicable`；
   无量纲任务 → `not_applicable`（`UnitObligationVerdict` 封闭四态）。
 - **pass 判据**：分母角色数据事实在场（`data_facts["denominator"]` 非空）→
   `satisfied`（「per-capita 率可计算」）。
@@ -119,7 +119,7 @@
   披露（工作流整体判 `partial`，不作完整总体成品）。
 - **静态层角色**：编译器不裁决本条（无 IR 信号可判路网真伪）——只在族候选
   信号面（`spatial_relation.kind ∈ {near, service_area}` →
-  `network_proximity`/`service_accessibility` 权重 4.0）把需求导向正确族。
+  `network_proximity`/`service_accessibility` 权重 6.0——空间关系是 IR 权威语义裁决）把需求导向正确族（时间词「最近三年」假阳性已由负向先行排除，review-B P1-2）。
 
 ### U6 M:N 多方属披露
 
@@ -166,7 +166,7 @@
   （如 `"ft"`）→ False；族步骤单位合同 × IR 统计词的交叉对账（拒绝
   「距离义务被行程秒数满足」的 #2005 形态组合）。
 - U2 反例语料：rate 语义 + 分母事实缺席 → `missing_denominator` + 披露文案
-  断言；violated 组合（计数被许诺为率）→ 编译期拒绝。
+  断言；「计数被许诺为率」在静态层表现为 per-capita 义务 + 分母缺席 →   missing_denominator + 披露（运行期矛盾裁决由 run_final_gate 承载）。
 - U3 数据规模语料：`feature_count<30` → 密度候选 `suitable=False`；
   缺席 → None+披露；用户点名热力图数据不足 → 保留候选 + 不适合披露
   （不静默丢）。
@@ -196,3 +196,10 @@
 3. **词表对齐**：`UNIT_DIMENSIONS` 是 `UNIT_VOCABULARY` 的量纲视角超集
    （多 s/m2/km2/percent/ratio 派生单位）；扩展走 additive，两表通过成员
    名对齐，不另造单位语义。
+
+
+---
+[1] review-B P2-2 修正：静态对账层真实可达三态（satisfied /
+missing_denominator / not_applicable）——「声明与运行事实矛盾」发生在
+执行证据面（science_final_gate / G-FALLBACK-SEMANTICS 族），静态层不
+虚构第四态。

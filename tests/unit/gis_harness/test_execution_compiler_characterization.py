@@ -15,18 +15,14 @@
 """
 from __future__ import annotations
 
-import pytest
 
 from app.services.gis_harness.analysis_workflows.contracts import (
     DataRoleBinding,
 )
 from app.services.gis_harness.analysis_workflows.families import (
-    FAMILY_IDS,
     build_contract,
 )
 from app.services.gis_harness.analysis_workflows.state import (
-    StepStateEntry,
-    WorkflowRunState,
     new_state,
 )
 from app.services.gis_harness.intent import resolve_map_request_intent
@@ -80,9 +76,8 @@ class TestRequirementToTaskCompilation:
         comp = compile_requirement_to_tasks(doc)
         kinds = [c.kind for c in comp.expression_candidates]
         assert kinds, "必须有表达候选"
-        assert all(not c.user_requested for c in comp.expression_candidates) or \
-            any(c.user_requested for c in comp.expression_candidates)
-        # 未显式点名表达时不得出现 user_requested=True
+        # 未显式点名表达时不得出现 user_requested=True（review-B P2-7：
+        # 此前 all(...) or any(...) 恒真——测试剧场，删除）
         assert not any(c.user_requested for c in comp.expression_candidates)
 
     def test_user_pinned_geometry_kind_wins(self):

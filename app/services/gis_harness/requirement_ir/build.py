@@ -102,7 +102,9 @@ def derive_sections(
     # analysis_intents 词表无该 cue，IR 从不携带 → 编译器无法区分欧氏
     # 冒充）。封闭词表收割，词面命中才置 near；既有 kind 非空（分析
     # 意图已判）不覆盖；diff 路径不传 query → 零漂移。
-    if query and sr_kind == "none" and _NEAR_CUE_RE.search(query):
+    if (query and sr_kind == "none" and _NEAR_CUE_RE.search(query)
+            and not _NEAR_TIME_RE.search(query)
+            and not _NEAR_ADMIN_RE.search(query)):
         sr_kind = "near"
     # 输出面
     formats = tuple(core.export_intents)
@@ -441,6 +443,12 @@ _LAYER_HIDE_RE = re.compile(r"隐藏\s*([^,，。;；！!?？]{1,24}?)(图层|�
 _LAYER_SHOW_RE = re.compile(r"(?:显示|取消隐藏|恢复)\s*([^,，。;；！!?？]{1,24}?)(图层|层|layer)")
 _COLOR_CHANGE_RE = re.compile(r"(换成|改成|改为|换为|涂成|recolor to|change .* to)")
 #: 最近设施/网络邻近语义的封闭词面（GC-01 genesis 收割；命中才置 near）。
+#: review-B P1-2 修复：「最近」作时间词（最近三年/最近一个月）与
+#: 「邻近」作行政邻接（邻近城市/邻近区域）是假阳性——负向先行排除
+#: 这两类句式；锚定到设施/要素语义（距离/可达/设施名词跟随）才收割。
+_NEAR_TIME_RE = re.compile(
+    r"最近[^，。;；,]{0,3}(?:年|月|日|天|周|季|小时|分钟|个小时)")
+_NEAR_ADMIN_RE = re.compile(r"邻近(?:城市|区域|县|省份|地区|行政区|小区)")
 _NEAR_CUE_RE = re.compile(r"(最近|网络距离|邻近)")
 _COLOR_WORD_RE = re.compile(
     r"(蓝色|红色|绿色|橙色|紫色|暖色|冷色|灰度|viridis|blue|red|green|orange|purple)")
