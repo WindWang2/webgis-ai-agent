@@ -173,11 +173,18 @@ def test_default_publication_document_is_not_rewritten():
     same, report = prepare_publication_document(document, page_profile=None)
     assert same is document
     assert report["constraint_layout"] == "not_evaluated"
+    # G04（CM-05）：a3_landscape 已入求解器词表（与 PublicationIR 纸张几何
+    # 对齐）—— 不支持档用词表外值（如 letter）断言。
     unsupported, report = prepare_publication_document(
-        document, page_profile="a3_landscape",
+        document, page_profile="letter_portrait",
     )
     assert unsupported is document
     assert report["reason"] == "profile_unsupported"
+    a3_clone, a3_report = prepare_publication_document(
+        document, page_profile="a3_landscape",
+    )
+    assert a3_clone is not document
+    assert a3_report["constraint_layout"] == "evaluated"
 
 
 def test_explicit_a4_landscape_evaluates_existing_solver():
