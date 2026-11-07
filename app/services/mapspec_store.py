@@ -404,7 +404,10 @@ class MapSpecStore:
                 )
 
                 current_scope_fp = scope_fingerprint_from_task_scope(task_scope)
-            except Exception:  # noqa: BLE001 — 范围指纹失败按未声明
+            except Exception:  # noqa: BLE001 — 范围指纹失败按未声明（有痕）
+                logger.warning(
+                    "[mapspec_store] task scope fingerprint skipped",
+                    exc_info=True)
                 current_scope_fp = ""
             if current_scope_fp:
                 source["task_scope_fingerprint"] = current_scope_fp

@@ -16,6 +16,9 @@ def rows_to_feature_collection(rows: List[dict]) -> Optional[dict]:
     只有坐标有限的行成为要素（geocode 失败/跳过的行不进 FC，不虚构点位）；
     ``_`` 前缀 magic keys（_lat/_lon/_geocode_status…）剥离出 properties。
     零有效行 → None（诚实零要素，由调用方决定不铸语义身份）。
+
+    评审 F11：字符串坐标行（既有坐标列原样拷入的形态）按无坐标跳过并
+    debug 日志——诚实缺席，不静默不痕。
     """
     features: List[dict] = []
     for row in rows:
@@ -23,6 +26,10 @@ def rows_to_feature_collection(rows: List[dict]) -> Optional[dict]:
             continue
         lat, lon = row.get("_lat"), row.get("_lon")
         if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            if lat is not None or lon is not None:
+                logger.debug(
+                    "[rows_to_fc] row with non-numeric _lat/_lon skipped "
+                    "(types: %s/%s)", type(lat).__name__, type(lon).__name__)
             continue
         if isinstance(lat, bool) or isinstance(lon, bool):
             continue

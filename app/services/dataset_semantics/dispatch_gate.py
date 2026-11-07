@@ -101,6 +101,18 @@ def collect_gate_refs(args: Any) -> List[str]:
     return seen
 
 
+def _refs_capped(args: Any) -> bool:
+    """参数树中的候选 ref 是否超过扫描上限（评审 F9：截断必须可观测）。"""
+    total = 0
+    for ref in _iter_ref_strings(args):
+        if ref.startswith(EXEMPT_REF_PREFIXES):
+            continue
+        total += 1
+        if total > MAX_GATE_REFS:
+            return True
+    return False
+
+
 def _context_from_descriptor(descriptor: Any) -> Dict[str, Any]:
     """descriptor → 有界数据事实（放行时的模型可见上下文）。"""
     ctx: Dict[str, Any] = {
@@ -201,6 +213,10 @@ async def evaluate_dispatch_data_gate(
                     tool_name=verdict.tool_name,
                 )
             verdict.disclosure[ref] = "descriptor_missing"
+    if _refs_capped(args):
+        # 评审 F9：超过扫描上限的 ref 不检查——截断必须披露，不得静默。
+        verdict.disclosure["__refs_capped__"] = (
+            f">{MAX_GATE_REFS} data refs; beyond cap not checked")
     return verdict
 
 

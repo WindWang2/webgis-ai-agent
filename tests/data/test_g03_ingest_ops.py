@@ -74,7 +74,6 @@ class TestGd06Cancellation:
             state["cancelled"] = True  # store 完成 → 取消在下一检查点生效
             return ref
 
-        import app.services.data_ingest.pipeline as pipe_mod
 
         # pipeline 在方法内 import session_data_manager → patch 模块属性
         from app.services import session_data as sd_mod

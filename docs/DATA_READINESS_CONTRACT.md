@@ -30,7 +30,7 @@ CapabilityRegistry 对账，非平行词表。
 | 维度 | observed | inferred | unknown |
 |---|---|---|---|
 | geometry_type / feature_count / bbox | 实际扫描 | — | 无扫描证据 |
-| crs | 载荷声明/来源声明 | 坐标域识别（推导入口显式传入） | 未声明（**不虚构 4326**） |
+| crs | 载荷声明/来源声明 | 坐标域识别（推导入口显式传入；**reserved——本 PR 尚无生产者传 inferred，坐标域识别入口接入时启用**） | 未声明（**不虚构 4326**） |
 | fields | fields_status=explicit | — | unknown |
 | temporal | has_time_field=True | — | 无证据 |
 | license / attribution | 声明通道非空 | — | 缺省（"" ≠ 未知许可证名） |

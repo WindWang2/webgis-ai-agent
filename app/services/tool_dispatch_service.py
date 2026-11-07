@@ -683,10 +683,8 @@ class ToolDispatchService:
                 ctx={"tool": tool_name},
             ):
                 from app.services.dataset_semantics.dispatch_gate import (
+                    collect_gate_refs,
                     evaluate_dispatch_data_gate,
-                )
-                from app.services.dataset_semantics.qualification_bridge import (
-                    recorded_fingerprints,
                 )
 
                 try:
@@ -699,7 +697,15 @@ class ToolDispatchService:
                     )
                 except (json.JSONDecodeError, TypeError):
                     _gate_args = None
-                if isinstance(_gate_args, dict) and session_id:
+                if isinstance(_gate_args, dict) and session_id and collect_gate_refs(
+                    _gate_args
+                ):
+                    # 评审 F8：无数据 ref 的调用先短路——避免每次 dispatch
+                    # 无谓读 recovery state。
+                    from app.services.dataset_semantics.qualification_bridge import (
+                        recorded_fingerprints,
+                    )
+
                     _gate_verdict = await evaluate_dispatch_data_gate(
                         session_id,
                         tool_name,

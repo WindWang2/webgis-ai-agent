@@ -26,12 +26,20 @@ SCOPE_FINGERPRINT_PREFIX = "scope-"
 
 
 def _normalize_bbox(bbox: Any) -> Optional[list]:
-    """bbox → [minx, miny, maxx, maxy]（float，round 6；坏形状 → None）。"""
+    """bbox → [minx, miny, maxx, maxy]（float，round 6；坏形状 → None）。
+
+    非有限分量（NaN/±Inf）→ None（评审 F3：NaN 与任何值比较恒 False，
+    会伪通过 min/max 序检查并让范围判据伪报 pass——必须显式拒绝）。
+    """
+    import math
+
     if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return None
     try:
         out = [round(float(b), 6) for b in bbox]
     except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(b) for b in out):
         return None
     if out[0] > out[2] or out[1] > out[3]:
         return None

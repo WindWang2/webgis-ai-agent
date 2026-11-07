@@ -30,9 +30,12 @@ Explorer 探索产出无语义身份、远程 GeoJSON URL 无真实 adapter、pr
 ### D2 license/attribution 进入 ingest 契约（GD-01/GD-07）
 
 `IngestPipeline.ingest(..., license=None, attribution=None)`：非空时透传
-descriptor（`dimension_provenance.license=observed`），参与 descriptor 指纹
-（语义变化可检测）；upload 路由表单新增同名可选字段。空值 → unknown，
-不虚构。
+descriptor（`dimension_provenance.license=observed`）与 artifact metadata
+（如实登记）。**不入 descriptor 指纹**（与 ADR-0265 对 license/attribution
+的既有排除一致：补填许可不改变数据语义身份，不误判 stale——测试
+`test_license_metadata_change_keeps_semantic_identity` 锁定）；license 的
+**消费面**变化走 source 绑定透传与披露（H08 license_propagates）而非指纹。
+upload 路由表单新增同名可选字段。空值 → unknown，不虚构。
 
 ### D3 Explorer→语义链桥接（GD-01，断链 1）
 

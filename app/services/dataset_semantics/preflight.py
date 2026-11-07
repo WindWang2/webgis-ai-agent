@@ -491,11 +491,28 @@ def preflight_task_scope_check(
     SCOPE_UNVERIFIABLE（披露不可验证，不硬失败）；相交 → pass。
     返回 (result, gaps, check_dict)。
     """
-    from app.services.dataset_semantics.task_scope import task_scope_from_dict
+    from app.services.dataset_semantics.task_scope import (
+        task_scope_from_dict,
+        _normalize_bbox,
+    )
 
     scope = task_scope_from_dict(task_scope)
     scope_bbox = scope.get("bbox")
     if not scope_bbox:
+        declared_but_bad = (
+            isinstance(task_scope, dict)
+            and task_scope.get("bbox") is not None
+            and _normalize_bbox(task_scope.get("bbox")) is None
+        )
+        if declared_but_bad:
+            # 评审 F14：声明过但不可解析（形状/非有限分量坏）≠ 未声明——
+            # 如实披露，不静默降级为"不检查"。
+            return "unknown", [PreflightGap(
+                code=CODE_SCOPE_UNVERIFIABLE,
+                detail="任务范围 bbox 已声明但不可解析（形状错误或含"
+                       "NaN/±Inf）——范围一致性无法判定，不虚构结论",
+            )], {"check": "task_scope", "result": "unknown",
+                 "detail": "declared bbox unparseable"}
         return "pass", [], {"check": "task_scope", "result": "pass",
                             "detail": "任务范围未声明 bbox——不检查（兼容）"}
     scope_place = str(scope.get("place") or "")

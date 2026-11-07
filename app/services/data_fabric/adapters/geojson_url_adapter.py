@@ -89,9 +89,15 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
                 "geojson_url source has no URL declared",
                 details={"hint": "declare url in config/sources/*.yaml"},
             )
+        # 评审 F13：慢滴服务器在字节帽内可拖长总时长——deadline 以
+        # (字节帽 / chunk) × per-read 超时 封顶（120s 硬顶），防慢速 DoS。
+        per_read_timeout = query_timeout()
+        overall_deadline = time.monotonic() + min(
+            (max_response_bytes() // (64 * 1024) + 1) * per_read_timeout, 120.0
+        )
         try:
             resp = self.session.get(
-                self.url, timeout=query_timeout(), stream=True,
+                self.url, timeout=per_read_timeout, stream=True,
             )
         except Exception as e:  # noqa: BLE001 — 网络面统一 typed 不可达
             raise SourceUnreachableError(
@@ -111,6 +117,10 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
         chunks: List[bytes] = []
         total = 0
         for chunk in resp.iter_content(chunk_size=64 * 1024):
+            if time.monotonic() > overall_deadline:
+                raise SourceBadResponseError(
+                    "geojson url fetch exceeded overall deadline "
+                    "(slow-drip source)", details={"url": self.url[:200]})
             if not chunk:
                 continue
             total += len(chunk)
@@ -142,7 +152,8 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
         doc = self._fetch_fc()
         features = doc.get("features") or []
         total = len(features)
-        cap = min(int(limit), max_features())
+        # 评审 F7：负数 limit 会变尾部切片——钳到 [0, cap]。
+        cap = min(max(int(limit), 0), max_features())
         bounded = list(features[:cap])
         return bounded, total > cap, total
 
@@ -155,7 +166,8 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
             return False
 
     def capabilities(self) -> List[str]:
-        return ["limit", "projection"]
+        # 评审 F6：单文件源不做列裁剪/谓词下推——只声明真实能力。
+        return ["limit"]
 
     def list_datasets(self) -> List[Dict[str, Any]]:
         doc = self._fetch_fc()
@@ -186,7 +198,8 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
             source_type="geojson_url",
             source_id=self.profile.id,
             title=str(self.options.get("name") or "remote GeoJSON"),
-            geometry_type=geom_types[0] if geom_types else "Unknown",
+            # 评审 F15：混合几何 FC 不得以首见类型代表——join 披露。
+            geometry_type="+".join(geom_types) if geom_types else "Unknown",
             srs="EPSG:4326" if self.options.get("assume_wgs84") else None,
             bbox=list(bbox) if isinstance(bbox, (list, tuple)) else None,
             feature_count=len(features),
@@ -221,7 +234,12 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
             is_pushed_down=False,  # 截断发生在取回后（诚实披露）
             payload_type="geojson",
             execution_time_seconds=round(_time.monotonic() - t0, 3),
-            metadata={"source_url": self.url[:200], "bounded_by": "feature_cap"},
+            metadata={
+                "source_url": self.url[:200],
+                "bounded_by": "feature_cap",
+                # 评审 F6：单文件 GeoJSON 无服务端谓词——如实披露未求值。
+                "filters_not_evaluated": True,
+            },
         )
 
     def health(self) -> DataFabricHealth:

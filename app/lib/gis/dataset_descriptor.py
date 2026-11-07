@@ -23,6 +23,7 @@ schema / 字段类型 / 单位 / 角色 / CRS / 时间语义任一变化都产�
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator
@@ -393,9 +394,14 @@ class GISDatasetDescriptor(BaseModel):
         if v is None or len(v) != 4:
             return None
         try:
-            return [float(b) for b in v]
+            out = [float(b) for b in v]
         except (TypeError, ValueError):
             return None
+        # 评审 F3（G03）：非有限分量（NaN/±Inf）与任何比较恒 False，会让
+        # 下游范围判据伪报 pass——按无证据处理（None），绝不入库。
+        if not all(math.isfinite(b) for b in out):
+            return None
+        return out
 
     # ── 指纹（确定性；derived_at 不入哈希）────────────────────────────
     def fingerprint_payload(self) -> Dict[str, Any]:
