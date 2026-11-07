@@ -18,8 +18,8 @@
 | M0 | complete | 实时 SHA、50 个合并 PR、开放 PR/Reviews/Issues、分支与冲突矩阵，写入 BASELINE |
 | M1 | complete | 既有资产/模式映射与 239 项基线通过；缺口锁定为关联投影、模式披露和实证，不重建框架 |
 | M2 | complete | additive 八阶段证据投影、关联/时序/跨会话检查、诊断 CLI 与 Explain 接入；10 项 focused 通过 |
-| M3 | in_progress | 至少 12 组黄金任务，明确四种执行模式、成功/失败 Oracle、科学/守恒/量纲性质 |
-| M4 | pending | cancel/late/disconnect/lock loss/timeout 等故障注入，跨 session 与终态一致性 |
+| M3 | complete | 12 组 manifest；30 个真实 dispatch 场景全绿；选择截断防线与 mode-aware CLI |
+| M4 | in_progress | cancel/late/disconnect/lock loss/timeout 等故障注入，跨 session 与终态一致性 |
 | M5 | pending | 至少 4 组恢复对照，权限与副作用边界、真实 replay+dispatch 复验 |
 | M6 | pending | 固定环境 benchmark 原始汇总；至少 2 个热点实测改善或“不改善”结论 |
 | M7 | pending | 既有 ratchet/metrics store 接入、分层车道、趋势输出、完整质量与本地运行文档 |

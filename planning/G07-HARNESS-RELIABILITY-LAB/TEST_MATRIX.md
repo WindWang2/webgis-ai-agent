@@ -34,3 +34,14 @@
 | `pytest tests/unit/gis_harness/recovery_policy tests/unit/evaluation/test_recovery_corpus.py tests/unit/lib/test_goal_verification_reconcile.py --no-cov -q -p no:cacheprovider` | 195 passed | 真实 TDS + fake registry/工具；不是 live provider |
 | `mypy app/lib/harness/replay/journey.py app/lib/harness/result_contracts.py --no-incremental` | Success, 0 issues | 两文件已加入标准 mypy whitelist |
 | Ruff changed files + `git diff --check` | 通过 | 无样式/空白错误 |
+
+## M3 实际执行
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pytest tests/acceptance/gis_agent/test_reliability_golden.py::test_all_selected_acceptance_scenarios_pass` | 1 passed（30 场景，19.44s） | 真实 dispatch_tool/TDS/MapSpec/settle；scripted LLM，本地合成数据 |
+| `python scripts/harness_reliability_golden.py --out reports/g07/golden.json` | 30/30 passed，报告落盘 | 首次 30/30 Redis 环境失败已修复；browser/live 均 not_run |
+| focused usability/layout/network/interaction/selection tests | 255 passed, 6 warnings | 生产纯函数/真实算法；无公网 |
+| `pytest tests/unit/gis_harness/test_reliability_selection_scope.py` | 11 passed | normalize→projection→derive→validate 全链；含 ownership fail-closed |
+| `pytest tests/acceptance/gis_agent/test_reliability_cli.py` | 1 passed | 真实 CLI 子进程与 JSON 报告 |
+| `pytest tests/acceptance/gis_agent/test_reliability_golden.py::test_manifest_has_twelve_complete_oracle_pairs` | 1 passed | 12 类、期望 ID、科学不变量、focused path 完整 |

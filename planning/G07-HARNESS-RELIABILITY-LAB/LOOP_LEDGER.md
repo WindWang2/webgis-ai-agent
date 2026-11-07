@@ -24,3 +24,13 @@
 - 修复：逐切片最小实现；类型守卫统一；正向 fixture 的 artifact 顺序错误修正而非放宽乱序断言。
 - 本地验证：journey/diagnostic/explain **10 passed**；recovery **195 passed**；Mypy 两个目标文件零问题；Ruff 与 `git diff --check` 通过。
 - 未验证：该投影尚不证明真实浏览器或 live services；`correlation_id/goal_id/operation_id` 缺席仍如实显示，不伪造全链覆盖。
+
+## Loop 3 — M3 十二组黄金任务（完成）
+
+- 输入：既有 72 个真实 dispatch 场景、golden benchmark、科学 oracle；跨城/选择/A4/指北针开放 Issue。
+- 决定：用 `golden_tasks.json` 选择 12 能力组并引用 expectation ID；新增薄 CLI；仅对直接阻断输入可信性的 #2004 做 additive 修复。
+- 代码差异：`lab/golden.py` manifest 校验、12 组引用、`harness_reliability_golden.py` 报告、selection omitted→projection→claimed/validated 全链 stale。
+- 失败：manifest loader/CLI 缺席预期红；projection 丢 omitted 的集成测试先红；完整 CLI 初次 30/30 `LockDegradedError`。
+- 修复：一行只读 passthrough；CLI 在 app import 前初始化离线环境；不重跑 Redis、不改锁。
+- 本地验证：30/30 场景通过（报告 `reports/g07/golden.json`）；focused **255 passed**；selection 全链 **11 passed**；CLI 子进程契约 1 passed；Ruff 通过。
+- 未验证：browser/live 均 not_run；#1999/#2001/#2003/#2005/#2006 保持开放，不作为本线修复成果。
