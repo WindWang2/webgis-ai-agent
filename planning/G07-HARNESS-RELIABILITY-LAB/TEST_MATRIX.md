@@ -77,6 +77,13 @@
 |---|---|---|
 | `pytest tests/lab tests/harness_replay --no-cov -q -p no:cacheprovider` | 268 passed, 4 warnings, 54.31s | 全量既有+新增 Replay/Lab；非全仓 CI |
 | `pytest tests/benchmarks/test_harness_reliability_bench.py -m perf` | 6 passed, 6.29s | UTF-8/resume 语义与宽松冒烟，不是精确性能 gate |
-| `python scripts/perf/bench_harness_reliability.py` | resume p50 435.446→254.462ms；140/140 green | 同一进程 warm before/after；原始 JSON 在 docs/quality/evidence |
+| `python scripts/perf/bench_harness_reliability.py` | 最新 resume p50 468.510→265.073ms；140/140 green | 同一进程 warm before/after；原始 JSON 在 docs/quality/evidence |
 | `python -m mypy --no-incremental` | Success, 38 files | 新模块已加入 whitelist |
 | Ruff + `git diff --check` | 通过 | 无格式/空白错误 |
+
+## 浏览器补充证据（非稳定生产门）
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pnpm exec playwright test --grep @smoke`（首跑） | 7 passed, 2 skipped, 35.5s | 真实 MapLibre + mock API；不是生产后端验证 |
+| 同命令第二跑 | 6 passed, 1 failed, 2 skipped | J9 三维资产 `mounted` 15s 未出现；既有前端时序/flaky，未修改无关 UI，未作为稳定通过证据 |

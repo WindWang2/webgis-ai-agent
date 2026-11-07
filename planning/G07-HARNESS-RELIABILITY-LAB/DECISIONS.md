@@ -18,3 +18,8 @@
 | M6 | resume 默认 flush_interval=16，interval=1 保留旧每场景写语义 | 实测 1.71×；中断最多重算 15 条同 seed 确定性场景，JSON 形状/跳过语义不变 |
 | M6 | UTF-8 计量修正不宣称提速；deepcopy/sha256 不优化 | 微基准 canonical_json 更慢但计量正确；隔离数据显示其他候选非瓶颈，避免为指标硬优化 |
 | M7 | 新 journey 指标只 record-only，active baseline 不动 | 防止未成熟维度变成新质量门；跨会话/科学错误仍硬失败 |
+
+| M8/P2 | selected_ids_omitted 计入既有 512B payload 预算 | 新计数约 25B 可使贴边 payload 从接受变 `rejected_payload`，这是有意的 fail-closed 兼容变化；测试覆盖 500B→525B，绝不静默超帽 |
+| M8/P2 | inline 成功结果同样需要 artifact 证据才能整体 pass | 独立 review 发现 pass 与 artifact_persisted=false 矛盾；成功 inline 结果无 artifact 也报 `artifact_persistence_unverified`，纯问答不因此伪造地图完成 |
+| M8/P2 | benchmark 明示未测维度 | artifact bytes、生产 SSE events、渲染 frames、Redis mutation scaling 均标 `not_evaluated`，不把 payload bytes 或 replay 场景数改名替代 |
+| M8/P2 | 独立 float 参照实现 canonical 归一但不 import 生产函数 | >6 位小数、-0.0、NaN/Inf 的计量与 digest 一致；固定 0.123456789 样例硬编码 14B |

@@ -70,7 +70,7 @@
 - 代码差异：`bench.py` 单生产改动、独立非 ASCII 测试、flush 次数/恢复语义测试、可复现 benchmark 脚本与原始 JSON。
 - 失败：UTF-8 固定样例旧口径红（52≠61）；flush 参数不存在红；均最小实现后转绿。
 - 本地验证：全量 Replay/Lab **268 passed**；focused perf **6 passed**；C 的 focused 测试另双跑通过；标准 Mypy/Ruff 通过。
-- 实证：resume before p50 435.446ms / after 254.462ms（1.71×），small/medium/large 140/140 green；canonical_json 计量未提速（0.146→0.247ms/call），deepcopy/sha256 明确不优化；T2 疑似 O(N²) 未验证（无 Redis）。
+- 实证：最新原始报告 resume before p50 468.510ms / after 265.073ms（约 1.77×），small/medium/large 140/140 green；canonical_json 计量未提速（0.154→0.262ms/call），deepcopy/sha256 明确不优化；T2 疑似 O(N²) 未验证（无 Redis）。
 
 ## Loop 8 — M7 文档与交付准备（完成）
 
