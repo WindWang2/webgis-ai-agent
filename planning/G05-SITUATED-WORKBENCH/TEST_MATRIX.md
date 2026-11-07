@@ -8,7 +8,7 @@
 | 套件 | 命令 | 结果（2026-11-08） |
 |---|---|---|
 | IR + situation 域 | `pytest tests/unit/gis_harness/interaction_ir/ tests/test_gis_situation_*.py tests/unit/test_interaction_scope_tool.py tests/unit/gis_harness/map_operations/` | **191 → 219+ 全绿**（含新增；详见各 commit） |
-| 回放金标 | `pytest tests/unit/gis_harness/interaction_ir/test_replay_corpus.py` | **29 passed**（17 场景双跑 + present） |
+| 回放金标 | `pytest tests/unit/gis_harness/interaction_ir/test_replay_corpus.py` | **31 passed**（18 场景 × 双跑 + present） |
 | map_operations | `pytest tests/unit/gis_harness/map_operations/` | **68 passed**（含 SW-04 3 新） |
 | 旅程级（E5 多轮） | `pytest tests/acceptance/gis_agent/test_e5_multiturn_journeys.py` | 回归绿（全域跑） |
 | 竞态（SSE chaos） | `pytest tests/test_adversarial_sse_chaos.py` | 回归绿（全域跑） |

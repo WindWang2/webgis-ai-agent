@@ -30,8 +30,10 @@ G05 审计（planning/G05-SITUATED-WORKBENCH/BASELINE.md）发现"地图—对�
 ### D1 选择范围披露契约（interaction_ir.v1 additive）
 
 - `feature_selected` / `table_selection_changed` 白名单 +
-  `matched_count`（真实命中数，有界整数 ≤10^7）与 `ids_truncated`
-  （**服务端权威派生**——以归一化前原始 id 数对比上限，客户端申报一律
+  `matched_count`（真实命中数，有界整数 ≤10^7；pre-turn 快照路径在
+  `_scope_disclosure` 同界收敛）与 `ids_truncated`（**服务端权威派生**，
+  双判据满足其一即 True：① 归一化前原始 id 数 > 上限；② matched_count
+  > 实际携带数——前端 selection-store 预截样本路径。客户端申报一律
   覆写；仅当 selected_ids 实际保留于载荷时派生，防幽灵标记）。
 - `selected_ids` 专属元素上限 **50**，三方对齐：前端 selection-store
   `MAX_SELECTED_IDS` = IR `MAX_SELECTED_IDS_PAYLOAD` = analysis_scope
@@ -61,7 +63,9 @@ G05 审计（planning/G05-SITUATED-WORKBENCH/BASELINE.md）发现"地图—对�
 
 `FinalAcceptanceLine`（被动无交互）：任何确认模式下，渲染观察代次 +
 用户确认态必须可见——auto 模式明确披露"自动确认（auto 模式，未请求用户
-确认）"，required ack 后呈现"用户已确认显示"，无裁决时"暂无裁决"。
+确认）"；required+pending 披露"等待用户确认"（与交互确认卡同屏，行承载
+状态、卡承载动作）；required ack 后呈现"用户已确认显示"；无裁决时
+"暂无裁决"。
 四层终态各归其位：工具执行/MapSpec 接受由 ReceiptCard 承载（status/
 revision/effects），渲染观察/用户确认由本行承载——不聚合出第二真相。
 auto 模式的代次复查由 MapSpec live generation 事件驱动（非轮询）。
@@ -78,8 +82,10 @@ auto 模式的代次复查由 MapSpec live generation 事件驱动（非轮询�
 
 - **兼容**：全部 additive（新白名单键/新常量/新 UI 元素）；旧事件
   （无披露键）按缺席语义处理（单选/旧多选不变）；manifest 双闸同步。
-- **预算**：单事件最坏 4KB（选择 kind）；ledger 环 96KB 预算不变
-  （最坏 24 条满载事件 + dropped 披露）。
+- **预算**：单事件最坏 4KB（选择 kind）；单条 ledger 记录预算同层取宽
+  （`_MAX_RECORD_BYTES = 4096+512`，复审 P0-1——否则 accepted-but-dropped
+  重现 #2004 静默丢失形态，关系由测试钉扎）；ledger 环 96KB 预算不变
+  （最坏 ~21 条满载事件 + dropped 披露）。
 - **不做**：不改 display-confirmation 默认 auto（部署级 env 决策，本 ADR
   只保证 auto 下诚实披露）；不建视口史代（"上一张图"留待后续）；redo
   仍限命令级（workbench redoStack），map-op 服务端无 redo 语义。

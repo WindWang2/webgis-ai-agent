@@ -211,4 +211,24 @@ describe('MapHarnessCards', () => {
       vi.useRealTimers();
     }
   });
+
+  it('discloses awaiting-user state under required+pending (review P1-1)', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValue(fetchJson({
+        session_id: 's1', mode: 'required', confirmed: false, pending: true,
+        required_render_seq: 7, latest_observation_seq: 7, verdict_present: true,
+      }));
+      render(<MapHarnessCards sessionId="s1" />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+      // 交互卡（动作）与披露行（状态）同屏：行必须说"等待用户确认"，
+      // 绝不能显示"自动确认"（required 模式下从未自动确认过）。
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+      const line = screen.getByTestId('final-acceptance-line');
+      expect(line.textContent).toContain('等待用户确认');
+      expect(line.textContent).not.toContain('自动确认');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

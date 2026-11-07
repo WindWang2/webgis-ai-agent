@@ -430,6 +430,7 @@
     "later": "Later",
     "notConfirmed": "Confirmation not accepted (generation may have moved); retry.",
     "acceptanceAuto": "Final check: render observed (seq {seq}) · auto-confirmed (auto mode, user not asked)",
+    "acceptancePending": "Final check: render observed (seq {seq}) · awaiting user confirmation",
     "acceptanceConfirmed": "Final check: render observed (seq {seq}) · user confirmed the display",
     "acceptanceNoVerdict": "Final check: no verdict yet (map still evolving)"
   },

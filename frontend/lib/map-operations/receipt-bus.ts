@@ -155,6 +155,9 @@ function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
           for (const [k, v] of Object.entries(after)) {
             if (typeof v === 'number' && Number.isFinite(v)) numericAfter[k] = v;
           }
+          // 复审 P3-10：after 与 before 同严格——任一键非数值即整效果不录
+          // （防御不对称时 redo 可能提交空 patch 静默 no-op）。
+          if (Object.keys(numericAfter).length !== Object.keys(after).length) continue;
           if (!invertible) continue;
           styleCommand(label, layerId, 'agent', numericBefore, numericAfter);
           continue;

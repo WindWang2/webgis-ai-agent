@@ -8,7 +8,10 @@
       "client_seq": 1,
       "kind": "viewport_settled",
       "payload": {
-        "center": [104.06, 30.66],
+        "center": [
+          104.06,
+          30.66
+        ],
         "zoom": 12
       }
     },
@@ -22,13 +25,34 @@
         "dataset_ref": "ref:geojson-schools-cd",
         "id_field": "osm_id",
         "selected_ids": [
-          "sch-0001", "sch-0002", "sch-0003", "sch-0004", "sch-0005",
-          "sch-0006", "sch-0007", "sch-0008", "sch-0009", "sch-0010",
-          "sch-0011", "sch-0012", "sch-0013", "sch-0014", "sch-0015",
-          "sch-0016", "sch-0017", "sch-0018", "sch-0019", "sch-0020"
+          "node/1234567890abcdefghij000001x",
+          "node/1234567890abcdefghij000002x",
+          "node/1234567890abcdefghij000003x",
+          "node/1234567890abcdefghij000004x",
+          "node/1234567890abcdefghij000005x",
+          "node/1234567890abcdefghij000006x",
+          "node/1234567890abcdefghij000007x",
+          "node/1234567890abcdefghij000008x",
+          "node/1234567890abcdefghij000009x",
+          "node/1234567890abcdefghij000010x",
+          "node/1234567890abcdefghij000011x",
+          "node/1234567890abcdefghij000012x",
+          "node/1234567890abcdefghij000013x",
+          "node/1234567890abcdefghij000014x",
+          "node/1234567890abcdefghij000015x",
+          "node/1234567890abcdefghij000016x",
+          "node/1234567890abcdefghij000017x",
+          "node/1234567890abcdefghij000018x",
+          "node/1234567890abcdefghij000019x",
+          "node/1234567890abcdefghij000020x"
         ],
         "matched_count": 20,
-        "bbox": [104.04, 30.65, 104.08, 30.68]
+        "bbox": [
+          104.04,
+          30.65,
+          104.08,
+          30.68
+        ]
       }
     }
   ],
@@ -40,12 +64,33 @@
         "matched_count": 20,
         "ids_truncated": false,
         "selected_ids": [
-          "sch-0001", "sch-0002", "sch-0003", "sch-0004", "sch-0005",
-          "sch-0006", "sch-0007", "sch-0008", "sch-0009", "sch-0010",
-          "sch-0011", "sch-0012", "sch-0013", "sch-0014", "sch-0015",
-          "sch-0016", "sch-0017", "sch-0018", "sch-0019", "sch-0020"
+          "node/1234567890abcdefghij000001x",
+          "node/1234567890abcdefghij000002x",
+          "node/1234567890abcdefghij000003x",
+          "node/1234567890abcdefghij000004x",
+          "node/1234567890abcdefghij000005x",
+          "node/1234567890abcdefghij000006x",
+          "node/1234567890abcdefghij000007x",
+          "node/1234567890abcdefghij000008x",
+          "node/1234567890abcdefghij000009x",
+          "node/1234567890abcdefghij000010x",
+          "node/1234567890abcdefghij000011x",
+          "node/1234567890abcdefghij000012x",
+          "node/1234567890abcdefghij000013x",
+          "node/1234567890abcdefghij000014x",
+          "node/1234567890abcdefghij000015x",
+          "node/1234567890abcdefghij000016x",
+          "node/1234567890abcdefghij000017x",
+          "node/1234567890abcdefghij000018x",
+          "node/1234567890abcdefghij000019x",
+          "node/1234567890abcdefghij000020x"
         ],
-        "bbox": [104.04, 30.65, 104.08, 30.68]
+        "bbox": [
+          104.04,
+          30.65,
+          104.08,
+          30.68
+        ]
       }
     }
   }

@@ -431,7 +431,7 @@ async def test_commit_presentation_only_receipt_is_invertible():
     assert receipt["invertible"] is True
 
 
-async def test_commit_mixed_kinds_receipt_not_invertible():
+async def test_commit_mixed_kinds_receipt_invertible_with_numeric_before():
     """SW-04：presentation + symbol（before 数值在场）现在**可逆**
     （undo 反演经 patch_layer_style 用户通道）；不可逆的是
     before 缺值（无从恢复"原缺失"语义）与视图/组件/删除族。"""

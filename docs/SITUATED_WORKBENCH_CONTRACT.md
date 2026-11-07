@@ -45,8 +45,10 @@ interaction 快照 + 选择史 + claimed scope。
 - 图表类别上行 ≤20（对齐 selection-store `selected_categories`）；
   通用 list ≤8 纪律不变。
 - 字节预算：选择 kind（feature_selected/table_selection_changed/
-  chart_selection_changed）4096B；通用 512B。超预算整事件拒收
-  （rejected_payload，不静默）。
+  chart_selection_changed）4096B；通用 512B。超载荷预算整事件拒收
+  （rejected_payload）；单条 ledger 记录预算与载荷预算同层（复审 P0-1
+  钉扎：`_MAX_RECORD_BYTES ≥ MAX_PAYLOAD_BYTES_SELECTION`——消
+  accepted-but-dropped 静默丢失）。
 
 ### 2.2 两段式 scope 验证（ADR-0285 D1，本 PR 补披露透传）
 
@@ -56,7 +58,9 @@ interaction 快照 + 选择史 + claimed scope。
 - `validate_analysis_scope`（IO 壳，fail-closed）：ref 所有权（跨会话 ref
   拒绝）→ 宿主层在架 → revision 一致（漂移→stale）→ 要素存活
   （≤20k 逐点核对）→ 有界披露。`checks.features` 含
-  `truncated_sample`（样本截断披露）。
+  `truncated_sample`（样本截断披露）；框选范围独立键 `selection_bbox`
+  透传（`bbox` 键保留数据集描述符语义——两者分义，空间工具 extent
+  兜底必须用 selection_bbox）。
 - 空间工具隐式消费：经验证 scope 失败 = 报错，不静默整层分析
   （`app/tools/_spatial_selection.py`）。
 

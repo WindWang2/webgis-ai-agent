@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, Tuple
 
@@ -278,6 +279,16 @@ def normalize_payload(kind: str, payload: Any) -> Dict[str, Any] | None:
         if is_selection_kind and key == "ids_truncated":
             continue  # 服务端派生键 —— 客户端申报一律不透传
         value = payload[key]
+        if key == "bbox" and isinstance(value, list):
+            # 复审 P3-1：bbox 摄入即收敛为 4 元有限数值（宽进严出对称——
+            # 畸形 bbox 不进 ledger/投影；此前仅消费侧 _bbox4 收敛）。
+            numbers = [
+                float(v) for v in value
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(float(v))
+            ]
+            out[key] = numbers if len(numbers) == 4 and len(value) == 4 else []
+            continue
         if key == "matched_count" and is_selection_kind:
             count = _as_bounded_int(value, MAX_MATCHED_COUNT)
             if count is not None:

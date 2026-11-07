@@ -118,6 +118,136 @@ def test_contradictory_disclosure_not_flagged():
     assert out["matched_count"] == 3
 
 
+# ── 4. 复审 P0-1：记录预算与宽载荷预算同层（防 accepted-but-dropped）──
+
+
+def test_real_frontend_path_32char_ids_survive_ingest():
+    """复审 P0-1 钉扎：真实前端路径（emit clip 32 字符 × 50 + matched=80
+    + 完整框选键）必须 accepted **且入环**——修复前 _MAX_RECORD_BYTES=1536
+    导致 accepted-but-dropped（ack 谎报 accepted、Agent 看到零个）。"""
+    ids = [(f"node/1234567890abcdefghij{i:06d}" + "x" * 32)[:32] for i in range(1, 51)]
+    state = LedgerState()
+    event = {
+        "event_id": "evt-p0-pin-00001",
+        "client_instance_id": "tab-p0pin001",
+        "client_seq": 1,
+        "kind": "feature_selected",
+        "actor": "user",
+        "payload": {
+            "layer_id": "schools",
+            "dataset_ref": "ref:geojson-schools-cd",
+            "id_field": "osm_id",
+            "selected_ids": ids,
+            "matched_count": 80,
+            "ids_truncated": True,
+            "bbox": [104.02, 30.64, 104.1, 30.7],
+        },
+    }
+    verdict = apply_event(state, event)
+    assert verdict.verdict == VERDICT_ACCEPTED
+    assert len(state.events) == 1, "事件必须入环（accepted-but-dropped 即 #2004 形态）"
+    assert state.dropped == 0
+    snapshot = project_interaction_snapshot(state.events)
+    selection = snapshot["selection"]
+    assert selection is not None
+    assert len(selection["selected_ids"]) == 50
+    assert selection["matched_count"] == 80
+    assert selection["ids_truncated"] is True
+
+
+def test_record_budget_covers_widest_normalized_payload():
+    """预算分层不变量：单条记录预算 ≥ 最宽载荷预算 + 信封余量。
+
+    normalize 放行而 ledger 丢弃 = 静默丢失（accepted-but-dropped）。
+    """
+    from app.services.gis_harness.interaction_ir.contracts import (
+        MAX_PAYLOAD_BYTES_SELECTION,
+    )
+    from app.services.gis_harness.interaction_ir.ingest import _MAX_RECORD_BYTES
+
+    assert _MAX_RECORD_BYTES >= MAX_PAYLOAD_BYTES_SELECTION
+
+
+# ── 5. 复审 P1-2/P2-2：验证面 bbox 分义 + pre-turn 披露上界 ─────────────
+
+
+def test_selection_bbox_survives_validation_distinct_from_dataset_bbox():
+    """复审 P1-2：框选范围经验证面独立键（selection_bbox）透传——
+    bbox 键保留数据集描述符语义，二者不得混用（范围放大误导）。"""
+    import asyncio
+
+    from app.services.gis_situation.analysis_scope import validate_analysis_scope
+
+    claimed = {
+        "kind": "feature_ids",
+        "layer_id": "schools",
+        "dataset_ref": "ref:geojson-schools-cd",
+        "feature_ids": [f"sch-{i:04d}" for i in range(1, 6)],
+        "matched_count": 5,
+        "ids_truncated": False,
+        "bbox": [104.04, 30.65, 104.06, 30.67],  # 框选街区范围
+        "sources": ["ir_ledger"],
+    }
+
+    class _FakeStore:
+        async def resolve_alias(self, _sid, ref):
+            return ref
+
+        async def get(self, _sid, ref):
+            return {
+                "geojson": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [104.05, 30.66]},
+                         "properties": {"osm_id": f"sch-{i:04d}"}} for i in range(1, 6)
+                    ],
+                }
+            }
+
+        async def get_ref_descriptor(self, _sid, ref):
+            return {
+                "content_revision": 3,
+                "feature_count": 5,
+                "crs": "EPSG:4326",
+                "bbox": [103.9, 30.5, 104.2, 30.9],  # 数据集全量范围（全成都量级）
+            }
+
+    class _FakeSpecStore:
+        async def get_mapspec(self, _sid):
+            return {
+                "layers": [{
+                    "id": "schools", "source": "src-schools",
+                    "provenance": {"content_revision": 3},
+                }],
+                "sources": {"src-schools": {"ref": "ref:geojson-schools-cd"}},
+            }
+
+    validated = asyncio.run(validate_analysis_scope(
+        "sess-p12", claimed, store=_FakeStore(), mapspec_store=_FakeSpecStore(),
+    ))
+    assert validated["status"] == "usable", validated
+    assert validated["bbox"] == [103.9, 30.5, 104.2, 30.9]  # 数据集语义保留
+    assert validated["selection_bbox"] == [104.04, 30.65, 104.06, 30.67]  # 框选范围独立
+
+
+def test_pre_turn_matched_count_upper_bounded():
+    """复审 P2-2：pre-turn 快照路径（不经 IR 摄入）的 matched_count 同受
+    ≤10M 上界（在 _scope_disclosure 收敛，不改 chat.py —— #2012 避让）。"""
+    snapshot = {
+        "event_count": 1,
+        "selection": {
+            "layer_id": "schools",
+            "dataset_ref": "ref:geojson-schools-cd",
+            "selected_ids": ["sch-1", "sch-2"],
+            "matched_count": 10 ** 12,  # 伪造巨数（pre-turn 观察路径可携带）
+            "source": {"server_seq": 1},
+        },
+    }
+    claimed = derive_claimed_scope(snapshot, None)
+    # 巨数不是有界披露 —— 丢键不猜，回退携带数（2），不得直达 scope 输出。
+    assert claimed.get("matched_count") == 2
+
+
 def test_server_rewrites_false_truncation_claim():
     """客户端申报 ids_truncated=False 但实际送 60 → 服务端覆写为 True。"""
     out = normalize_payload(

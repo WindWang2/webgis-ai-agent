@@ -208,11 +208,16 @@ function ReceiptCard(props: {
 function FinalAcceptanceLine(props: { status: DisplayConfirmationStatus }) {
   const { status } = props;
   const t = useT();
+  // 复审 P1-1：required+pending（裁决在场、等待用户 ack）必须如实披露
+  // "等待用户确认"——该态与交互卡同屏（卡承载动作、行承载状态），
+  // 绝不能显示"自动确认"。
   const line = !status.verdict_present
     ? t('map.finalAck.acceptanceNoVerdict')
-    : status.confirmed && status.mode === 'required'
-      ? t('map.finalAck.acceptanceConfirmed', { seq: status.latest_observation_seq })
-      : t('map.finalAck.acceptanceAuto', { seq: status.latest_observation_seq });
+    : status.pending
+      ? t('map.finalAck.acceptancePending', { seq: status.latest_observation_seq })
+      : status.confirmed && status.mode === 'required'
+        ? t('map.finalAck.acceptanceConfirmed', { seq: status.latest_observation_seq })
+        : t('map.finalAck.acceptanceAuto', { seq: status.latest_observation_seq });
   return (
     <p
       data-testid="final-acceptance-line"
@@ -379,9 +384,9 @@ export function MapHarnessCards(props: {
 
   const visibleReceipts = receipts.slice(0, 3);
   // SW-09：确认状态一旦水合（任意模式）即呈现终验收口行 —— auto 披露
-  // "自动确认"，required 在 pending 由交互卡承载、ack 后由本行收口。
-  const showAcceptanceLine = confirmStatus !== null
-    && (!confirmStatus.pending || confirmStatus.verdict_present);
+  // "自动确认"；required+pending 披露"等待用户确认"（与交互卡同屏）；
+  // ack 后收口为"用户已确认"。
+  const showAcceptanceLine = confirmStatus !== null;
 
   if (visibleReceipts.length === 0 && !confirmStatus?.pending && !showAcceptanceLine) {
     return null;

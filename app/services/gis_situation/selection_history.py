@@ -111,6 +111,10 @@ def project_selection_history(
             # 摄入层服务端派生的截断披露优先；缺席（旧事件）保持 False。
             # 不用 id_count < matched_count 推断 —— 部分取消是用户显式决策，
             # 不是静默截断（两者必须可区分）。
+            # 复审 P3-2：truncated（环内自截标志）在真实链路恒 False——
+            # IR 摄入已保证 selected_ids ≤50（=MAX_HISTORY_IDS），本投影层
+            # 再截只在防御性场景（手工构造 ledger）触发；消费方应读
+            # ids_truncated（摄入层权威披露），不要读 truncated。
             ingested_truncated = payload.get("ids_truncated")
             epochs.append({
                 "epoch_seq": seq,

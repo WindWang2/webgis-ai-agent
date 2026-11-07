@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional
 from app.services.gis_harness.interaction_ir.contracts import (
     MAX_LEDGER_BYTES,
     MAX_LEDGER_EVENTS,
+    MAX_PAYLOAD_BYTES_SELECTION,
     MAX_TRACKED_CLIENTS,
     SCHEMA_VERSION,
     LedgerState,
@@ -56,8 +57,11 @@ VERDICT_DUPLICATE = "duplicate"
 VERDICT_STALE_SEQ = "stale_seq"
 VERDICT_REJECTED = "rejected"
 
-#: 单条 ledger 记录的序列化字节上限（规范化 payload ≤512B + 信封字段）。
-_MAX_RECORD_BYTES = 1536
+#: 单条 ledger 记录的序列化字节上限。SW-02（#2004）/复审 P0-1：必须随
+#: 载荷预算分层取宽值（选择 kind 4096B + 信封/服务端盖章字段余量）——
+#: 若低于 normalize 层放行的最大载荷，会出现 accepted-but-dropped（ack
+#: 谎报 accepted 而事件不入环），恰是 #2004 族的静默丢失形态。
+_MAX_RECORD_BYTES = MAX_PAYLOAD_BYTES_SELECTION + 512
 
 
 class EventVerdict:

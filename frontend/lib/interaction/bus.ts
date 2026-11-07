@@ -212,7 +212,10 @@ export function emitFeatureSelected(info: {
   const digest = bboxDigest(info.bbox);
   const idField = selectionIdField(info.layerId, info.selectedIds ?? [info.featureId]);
   const rawIds = (info.selectedIds ?? [])
-    .map((id) => String(id).slice(0, 32))
+    // 复审 P3-4：64 字符与 brush/selection-store 的 id 解析裁剪对齐
+    // （32 会造成 33~64 字符真实 id 在 IR 与数据面身份漂移 → 存活核对
+    // all_missing）。预算：50×66≈3.3KB < 选择 kind 4096B。
+    .map((id) => String(id).slice(0, 64))
     .filter(Boolean);
   const selectedIds = rawIds.slice(0, MAX_SELECTED_IDS_EVENT);
   // 服务端会按同一上限权威复核截断并覆写标记；这里先行披露是为了让
@@ -351,7 +354,7 @@ export function emitTableSelectionChanged(info: {
 }): void {
   const idField = selectionIdField(info.layerId, info.selectedIds ?? [info.featureId]);
   const rawIds = (info.selectedIds ?? [])
-    .map((id) => String(id).slice(0, 32))
+    .map((id) => String(id).slice(0, 64))  // 复审 P3-4：与 brush 解析 64 对齐（防身份漂移）
     .filter(Boolean);
   const selectedIds = rawIds.slice(0, MAX_SELECTED_IDS_EVENT);
   const truncated = rawIds.length > MAX_SELECTED_IDS_EVENT

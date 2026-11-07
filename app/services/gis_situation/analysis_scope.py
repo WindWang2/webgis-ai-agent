@@ -57,6 +57,10 @@ class ValidatedScope(TypedDict, total=False):
     # 必须能对用户诚实说"分析的是前 N 个/共 M 个"）。
     matched_count: int
     ids_truncated: bool
+    # 复审 P1-2：框选 bbox 谓词（用户框选范围）独立键 —— 与 bbox（数据集
+    # 描述符范围）分义；空间工具 extent 兜底必须用本键，不得把数据集
+    # 全量范围当框选范围（#2004 族"范围静默改变"的放大方向重现）。
+    selection_bbox: list[float]
 
 
 def record_fields(value: object) -> Mapping[str, object]:
@@ -220,10 +224,20 @@ def _scope_disclosure(
     - ``ids_truncated``：摄入层服务端派生的样本截断标记；
     - 兜底：披露缺席但 ids 已知时 matched_count=len(ids)（声称面自洽，
       不虚构更早的命中数 —— 披露缺席说明事件链上从未有该事实）。
+
+    复审 P2-2：本函数也是 pre-turn 快照路径（不经 IR 摄入的
+    ``_cartographic_context_observation``）的唯一披露入口 —— 上界
+    ≤ :data:`MAX_MATCHED_COUNT` 与 IR 摄入同纪律（在进入 ClaimedScope
+    前拒收巨数，丢键不猜）。
     """
+    from app.services.gis_harness.interaction_ir.contracts import MAX_MATCHED_COUNT
+
     disclosure: ClaimedScope = {}
     matched = source.get("matched_count")
-    if isinstance(matched, int) and not isinstance(matched, bool) and matched >= 0:
+    if (
+        isinstance(matched, int) and not isinstance(matched, bool)
+        and 0 <= matched <= MAX_MATCHED_COUNT
+    ):
         disclosure["matched_count"] = matched
     elif feature_ids:
         disclosure["matched_count"] = len(feature_ids)
@@ -301,6 +315,8 @@ async def validate_analysis_scope(
         "checks": {},
         **({"matched_count": claimed["matched_count"]} if isinstance(claimed.get("matched_count"), int) else {}),
         **({"ids_truncated": claimed["ids_truncated"]} if isinstance(claimed.get("ids_truncated"), bool) else {}),
+        # 复审 P1-2：框选范围独立透传（bbox 键保留数据集描述符语义）。
+        **({"selection_bbox": list(claimed["bbox"])} if _bbox4(claimed.get("bbox")) is not None else {}),
     }
     if kind == "none":
         return result

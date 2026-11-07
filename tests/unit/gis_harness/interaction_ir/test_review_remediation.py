@@ -233,10 +233,18 @@ async def test_ledger_read_failure_maps_to_503():
 
 def test_record_budget_constant_relation():
     """_MAX_RECORD_BYTES 必须容纳"全信封字段顶满 + payload 顶满"的最大
-    记录 —— 关系破坏（新增信封字段）时此断言先红，而不是线上
-    accepted-but-dropped。"""
+    记录 —— 关系破坏（新增信封字段/预算分层变化）时此断言先红，而不是线上
+    accepted-but-dropped。
+
+    SW-02/复审 P0-1：选择 kind 载荷预算 4096B（50×32 字符 id 集），
+    记录预算必须同层取宽（此前 1536 < 4096 导致真实前端 32 字符 id 框选
+    事件 accepted-but-dropped —— 复审实测 35 个 32 字符 id 即触发）。"""
+    from app.services.gis_harness.interaction_ir.contracts import (
+        MAX_PAYLOAD_BYTES_SELECTION,
+    )
     from app.services.gis_harness.interaction_ir.ingest import _MAX_RECORD_BYTES
 
     envelope_overhead = 512  # 全 optional 字段（ids/fingerprint/refs）经验上界
     assert _MAX_RECORD_BYTES >= MAX_PAYLOAD_BYTES + envelope_overhead
-    assert _MAX_RECORD_BYTES == 1536
+    assert _MAX_RECORD_BYTES >= MAX_PAYLOAD_BYTES_SELECTION
+    assert _MAX_RECORD_BYTES == MAX_PAYLOAD_BYTES_SELECTION + 512

@@ -430,6 +430,7 @@
     "later": "稍后再说",
     "notConfirmed": "确认未生效（代次可能已变化），请重试。",
     "acceptanceAuto": "终验：渲染已观察（代次 {seq}）· 自动确认（auto 模式，未请求用户确认）",
+    "acceptancePending": "终验：渲染已观察（代次 {seq}）· 等待用户确认",
     "acceptanceConfirmed": "终验：渲染已观察（代次 {seq}）· 用户已确认显示",
     "acceptanceNoVerdict": "终验：暂无裁决（地图尚在演进）"
   },
