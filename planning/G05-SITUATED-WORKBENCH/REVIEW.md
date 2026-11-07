@@ -35,6 +35,23 @@
 - 复审确认的有意设计：单选不上行 matched_count（不虚报）；矛盾披露
   matched<ids 原样透传（可能去重，见 D15）；recharts 内核键盘化不做（D10）。
 
-## R2（同员复审清偿结果）
+## R2（同员复审清偿结果，2026-11-08）
 
-（待 R2 结论）
+- **结论：SHIP（P0=0，P1=0）**。
+- R1 全部 P0/P1/P2 验证清偿（各有钉扎测试，非仅改码）：P0 复现脚本重跑
+  32 字符 id ×20/30/35/40/50/60 全部 accepted+入环；P1-1 pending 分支
+  组件测试断言"不含自动确认"；P1-2 FakeStore 双断言两 bbox 分义；
+  P2-1 前端闸断言；P2-2 巨数/负数/bool 收敛实测。
+- R2 遗留非阻塞 3 项 → 已当场清偿（见下）。
+
+## R2 遗留清偿（N-1/N-2/N-3）
+
+| 发现 | 清偿 |
+|---|---|
+| N-1 (P2) 满信封伪造仍 accepted-but-dropped | `_append_bounded` 返回 bool；超记录预算 → **rejected/record_budget 诚实裁决**（不再谎报 accepted）；钉扎测试（伪造满信封 64 字符 id → rejected+reason） |
+| N-2 (P3) clip 64 后文档/测试注释滞后 | 测试改名 `..._full_width_ids_...` 并改 64 字符（钉扎最宽真实 id）；ADR 50×64 措辞 |
+| N-3 (P3) bbox 非 list 绕过收敛 | 非 list bbox 摄入即丢键；钉扎测试（字符串/dict/int 三类） |
+
+最终状态：R1+R2 全部发现（P0×1/P1×3/P2×3/P3×11）清偿或记录为
+有意设计/follow-up（P3-3 categories 披露键、P3-5 pre-turn 镜像
+——chat.py 属 #2012 避让面）。

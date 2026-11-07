@@ -20,6 +20,7 @@ from app.services.gis_harness.interaction_ir.contracts import (
 )
 from app.services.gis_harness.interaction_ir.ingest import (
     VERDICT_ACCEPTED,
+    VERDICT_REJECTED,
     LedgerState,
     apply_event,
 )
@@ -121,11 +122,12 @@ def test_contradictory_disclosure_not_flagged():
 # ── 4. 复审 P0-1：记录预算与宽载荷预算同层（防 accepted-but-dropped）──
 
 
-def test_real_frontend_path_32char_ids_survive_ingest():
-    """复审 P0-1 钉扎：真实前端路径（emit clip 32 字符 × 50 + matched=80
+def test_real_frontend_path_full_width_ids_survive_ingest():
+    """复审 P0-1 钉扎：真实前端路径（emit clip 64 字符 × 50 + matched=80
     + 完整框选键）必须 accepted **且入环**——修复前 _MAX_RECORD_BYTES=1536
-    导致 accepted-but-dropped（ack 谎报 accepted、Agent 看到零个）。"""
-    ids = [(f"node/1234567890abcdefghij{i:06d}" + "x" * 32)[:32] for i in range(1, 51)]
+    导致 accepted-but-dropped（ack 谎报 accepted、Agent 看到零个）；
+    64 字符为当前 emit clip 上限（R2 N-2：钉扎最宽真实 id 路径）。"""
+    ids = [(f"node/1234567890abcdefghijklmnop{i:06d}" + "x" * 64)[:64] for i in range(1, 51)]
     state = LedgerState()
     event = {
         "event_id": "evt-p0-pin-00001",
@@ -153,6 +155,55 @@ def test_real_frontend_path_32char_ids_survive_ingest():
     assert len(selection["selected_ids"]) == 50
     assert selection["matched_count"] == 80
     assert selection["ids_truncated"] is True
+
+
+def test_oversized_record_is_honestly_rejected_not_accepted_dropped():
+    """R2 N-1：超记录预算 → rejected/record_budget（诚实裁决），
+    绝不 accepted-but-dropped（伪造满信封 64 字符 id 场景）。"""
+    from app.services.gis_harness.interaction_ir.contracts import (
+        MAX_SELECTED_IDS_PAYLOAD,
+    )
+    ids = [("y" * 128)[:64] for _ in range(MAX_SELECTED_IDS_PAYLOAD)]
+    state = LedgerState()
+    event = {
+        "event_id": "evt-n1-pin-00001",
+        "client_instance_id": "tab-n1pin0001",
+        "client_seq": 1,
+        "kind": "feature_selected",
+        "actor": "user",
+        # 满 optional 信封（9×128B）+ 50×64 字符 id → record > 4608B。
+        "causation_id": "c" * 128,
+        "correlation_id": "c" * 128,
+        "turn_id": "t" * 128,
+        "client_mutation_id": "m" * 128,
+        "mapspec_fingerprint": "f" * 128,
+        "created_at": "2026-11-08T00:00:00.000000+00:00",
+        "payload": {
+            "layer_id": "schools",
+            "dataset_ref": "ref:geojson-schools-" + "d" * 100,
+            "id_field": "osm_id",
+            "selected_ids": ids,
+            "matched_count": 80,
+            "bbox": [104.02, 30.64, 104.1, 30.7],
+        },
+    }
+    verdict = apply_event(state, event)
+    assert verdict.verdict == VERDICT_REJECTED
+    assert verdict.reason == "record_budget"
+    assert len(state.events) == 0
+    assert state.dropped == 1
+
+
+def test_bbox_non_list_values_dropped_at_ingest():
+    """R2 N-3：非 list bbox（字符串/dict）摄入即丢键，不透传进 ledger。"""
+    for bad in ("abcd", {"w": 1}, 42):
+        out = normalize_payload("feature_selected", {
+            "layer_id": "schools",
+            "selected_ids": _ids(3),
+            "bbox": bad,
+        })
+        assert out is not None
+        assert "bbox" not in out, bad
 
 
 def test_record_budget_covers_widest_normalized_payload():

@@ -279,9 +279,11 @@ def normalize_payload(kind: str, payload: Any) -> Dict[str, Any] | None:
         if is_selection_kind and key == "ids_truncated":
             continue  # 服务端派生键 —— 客户端申报一律不透传
         value = payload[key]
-        if key == "bbox" and isinstance(value, list):
-            # 复审 P3-1：bbox 摄入即收敛为 4 元有限数值（宽进严出对称——
-            # 畸形 bbox 不进 ledger/投影；此前仅消费侧 _bbox4 收敛）。
+        if key == "bbox":
+            # 复审 P3-1/R2 N-3：bbox 摄入即收敛为 4 元有限数值（宽进严出
+            # 对称——畸形 bbox 不进 ledger/投影；非 list 值直接丢键）。
+            if not isinstance(value, list):
+                continue
             numbers = [
                 float(v) for v in value
                 if isinstance(v, (int, float)) and not isinstance(v, bool)

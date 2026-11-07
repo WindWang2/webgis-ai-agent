@@ -190,7 +190,9 @@ def apply_event(
             record["mutation_verified"] = False
 
     _bump_client(state, instance, client_seq, watermark)
-    _append_bounded(state, record)
+    if not _append_bounded(state, record):
+        # R2 N-1：超记录预算 → 诚实拒绝（客户端可见，不重试同尺寸事件）。
+        return EventVerdict(event_id, client_seq, VERDICT_REJECTED, "record_budget")
 
     if gap_from is not None:
         return EventVerdict(
@@ -218,12 +220,18 @@ def _bump_client(
     entry["last_seen"] = state.server_seq + 1
 
 
-def _append_bounded(state: LedgerState, record: Dict[str, Any]) -> None:
+def _append_bounded(state: LedgerState, record: Dict[str, Any]) -> bool:
+    """入环（有界）。返回是否成功入环。
+
+    R2 N-1：超单条记录预算 → 返回 False（调用方回 ``rejected/
+    record_budget`` 诚实裁决）—— 绝不 accepted-but-dropped（ack 谎报
+    accepted 而事件不入环，是 #2004 族的静默丢失形态）。环淘汰（容量/
+    字节预算）仍属诚实披露（``dropped`` 计数 + 快照 ``dropped_events``）。
+    """
     record_bytes = len(canonical_event_blob(record).encode("utf-8"))
     if record_bytes > _MAX_RECORD_BYTES:
-        # 规范化后仍超单条预算（理论上不可达 —— payload ≤512B）：诚实丢弃。
         state.dropped += 1
-        return
+        return False
     state.events.append(record)
     state.total_bytes += record_bytes
     evicted = 0
@@ -236,6 +244,7 @@ def _append_bounded(state: LedgerState, record: Dict[str, Any]) -> None:
         state.total_bytes -= len(canonical_event_blob(dropped_record).encode("utf-8"))
     if evicted:
         state.dropped += evicted
+    return True
 
 
 def _as_int(value: Any) -> Optional[int]:
