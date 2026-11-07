@@ -10,3 +10,5 @@
 | 6 | M6 | W4 增量语义(改色不重跑)+7 黄金案例 | 3+7 新测试绿 | 通过 | 全量回归 |
 | 7 | M7 | 全量×2 + 质量门 + 依赖隔离修复(dompurify 错配→自装 node_modules) | cartography 3333×2;前端 534 文件/5003 测试;ruff/eslint/mypy(基线) 绿;a3 断言更新后 harness 3828 绿 | 通过 | 独立 review |
 | 8 | M7d | 子代理 B 冷读 review 派发 | (进行中) | — | review 结论→修复→PR |
+| 9 | M7d | 子代理 B 冷读 review:APPROVE-WITH-FIXES(16 声明属实,0×P0,2×P1,5×P2,5×P3) | REVIEW.md | 通过(评审) | 清偿 |
+| 10 | M7d | 清偿 commit f4996822e(P1×2+P2×4+P3×5 修,2 项记账) | cartography 3335 绿;前端 17+typecheck+eslint 绿;ruff 零告警 | 通过 | 复审→PR |
