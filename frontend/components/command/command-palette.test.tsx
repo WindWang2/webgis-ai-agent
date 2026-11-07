@@ -55,6 +55,27 @@ describe('CommandPalette（APG combobox）', () => {
     expect(options[0]).toHaveTextContent('free 命令');
   });
 
+  it('rechecks session-dependent commands when opening after restore and after clearing the session', () => {
+    let sessionId: string | undefined;
+    const run = vi.fn();
+    registerCommands([cmd({
+      id: 'session.story', title: '在故事视图打开当前会话',
+      when: () => Boolean(sessionId), run,
+    })]);
+    render(<CommandPalette />);
+
+    // Home registers while no session is active. History updates its ref,
+    // without changing the command registry or remounting the palette.
+    sessionId = 'restored-owner-session';
+    act(() => useCommandPaletteStore.getState().open('palette'));
+    fireEvent.click(screen.getByRole('option', { name: '在故事视图打开当前会话' }));
+    expect(run).toHaveBeenCalledOnce();
+
+    sessionId = undefined;
+    act(() => useCommandPaletteStore.getState().open('palette'));
+    expect(screen.queryByRole('option', { name: '在故事视图打开当前会话' })).toBeNull();
+  });
+
   it('ArrowDown/Up/Home/End 全导航 + Enter 执行并关闭', async () => {
     const run = vi.fn();
     registerCommands([

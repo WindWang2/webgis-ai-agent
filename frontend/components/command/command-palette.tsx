@@ -94,7 +94,10 @@ export function CommandPalette(): React.ReactElement | null {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const snapshot = useSyncExternalStore(subscribeCommands, getCommandsSnapshot, getCommandsSnapshot);
-  const commands = useMemo(() => snapshot.filter((c) => !c.when || c.when()), [snapshot]);
+  // Availability can depend on live refs (e.g. the session restored through
+  // History), not registry membership. Recheck on render/open/query instead
+  // of freezing the initial when() result until commands are re-registered.
+  const commands = snapshot.filter((c) => !c.when || c.when());
   const byId = useMemo(() => new Map(commands.map((c) => [c.id, c])), [commands]);
 
   const rows = useMemo<Row[]>(() => {
