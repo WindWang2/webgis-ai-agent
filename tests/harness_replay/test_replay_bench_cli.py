@@ -38,6 +38,11 @@ class TestExplain:
         assert "missing_evidence" in explanation["disclosures"]
         md = render_markdown(explanation)
         assert md.startswith("# Trace Explainability")
+        journey = explanation["journey_evidence"]
+        assert journey["schema_version"] == "gis_journey_evidence.v1"
+        assert journey["overall"] == "fail"
+        assert journey["completion_claims"]["map_rendered_and_observed"] is False
+        assert "Journey: `fail`" in md
 
     @pytest.mark.asyncio
     async def test_replay_bundle_and_markdown(self):

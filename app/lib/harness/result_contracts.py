@@ -191,6 +191,67 @@ class BenchReport(TypedDict, total=False):
     fault_contract_violations: list[str]
 
 
+JourneyStage = Literal[
+    "intent", "plan", "tool_dispatch", "data_result", "mutation",
+    "render_observation", "export", "settlement",
+]
+JourneyStatus = Literal["pass", "fail", "blocked", "partial", "not_evaluated"]
+JourneyMode = Literal[
+    "offline_replay", "live_dispatch_stub_llm", "browser_renderer",
+    "live_services_opt_in",
+]
+
+
+class JourneyIdentity(TypedDict):
+    session_id: str
+    turn_id: str
+    goal_id: str
+    operation_id: str
+    correlation_id: str
+    request_id: str
+    run_id: str
+
+
+class JourneyStageEvidence(TypedDict):
+    stage: JourneyStage
+    ordinal: int
+    status: JourneyStatus
+    observed_ordinal: int | None
+    evidence_refs: list[str]
+    source_fingerprint: str
+    reason_code: str
+
+
+class JourneyFinding(TypedDict):
+    code: str
+    stage: JourneyStage
+    detail: str
+
+
+class JourneyCompletionClaims(TypedDict):
+    command_accepted: bool
+    tool_dispatched: bool
+    tool_result_validated: bool
+    artifact_persisted: bool
+    mapspec_applied: bool
+    map_rendered_and_observed: bool
+    goal_satisfied: bool
+    publication_export_verified: bool
+
+
+class EndToEndJourneyEvidence(TypedDict):
+    schema_version: str
+    mode: JourneyMode
+    identity: JourneyIdentity
+    stages: list[JourneyStageEvidence]
+    completion_claims: JourneyCompletionClaims
+    findings: list[JourneyFinding]
+    last_valid_stage: JourneyStage | None
+    overall: JourneyStatus
+    sequence_basis: str
+    runtime_fingerprint: dict[str, Any]
+
+
 class ResumeState(TypedDict, total=False):
     seed: int
     profile: str
