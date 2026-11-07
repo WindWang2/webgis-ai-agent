@@ -83,8 +83,9 @@ def _env(monkeypatch):
         return [], mp
 
     monkeypatch.setattr(hks, "run_settle_effects", _settle_effects)
-    # 事件循环内的 clean 投影经包级 re-export 解析 —— 两个绑定点都打桩。
-    monkeypatch.setattr("app.services.harness_kernel.run_settle_effects", _settle_effects)
+    # 事件循环内的 clean 投影经包级 re-export 解析 —— 两个绑定点都打桩
+    # （包级打桩用保真恢复，防物化污染 PEP562 惰性委托）。
+    _pkg_restore = _patch_pkg_settle_effects(monkeypatch, _settle_effects)
     monkeypatch.setattr(hks, "resolve_turn_refusal", AsyncMock(return_value=None))
 
     import app.services.harness_kernel as hk
@@ -116,9 +117,36 @@ def _env(monkeypatch):
     psm.reset_for_tests()
     yield SimpleNamespace(summaries=summaries, map_products=map_products,
                           kernel_ends=kernel_ends)
+    _pkg_restore.teardown()
     hks.reset_for_tests()
     psm.reset_for_tests()
 
+
+
+def _patch_pkg_settle_effects(monkeypatch, fake):
+    """打桩包级 run_settle_effects 且保真恢复 PEP562 惰性委托。
+
+    直接 monkeypatch.setattr 包属性会物化 __dict__ 中的普通函数，revert 后
+    惰性委托（__getattr__ → settle.py）永久丢失——污染同会话后续只 patch
+    settle.py 的存量测试。此处物化前先记录、恢复时按需删除。"""
+    import app.services.harness_kernel as _hk_pkg
+    had = "run_settle_effects" in _hk_pkg.__dict__
+    saved = getattr(_hk_pkg, "run_settle_effects")
+    # 不经 monkeypatch：其恢复机制会把物化函数写回 __dict__，重新污染。
+    setattr(_hk_pkg, "run_settle_effects", fake)
+
+    class _Restore:
+        def __init__(self):
+            self._done = False
+        def teardown(self):
+            if self._done:
+                return
+            self._done = True
+            if had:
+                setattr(_hk_pkg, "run_settle_effects", saved)
+            else:
+                _hk_pkg.__dict__.pop("run_settle_effects", None)
+    return _Restore()
 
 def _sse_events_of(raw_events: list, name: str) -> list[dict]:
     """从原始 SSE 块（每个元素可含多行）提取指定事件名的 data 负载。"""

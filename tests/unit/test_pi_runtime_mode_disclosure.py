@@ -108,6 +108,28 @@ def test_health_native_mode(monkeypatch):
 
 # ── W3-3：task_start 携带 runtime_mode ─────────────────────────────────────
 
+
+def _patch_pkg_settle_effects(monkeypatch, fake):
+    """打桩包级 run_settle_effects 且保真恢复 PEP562 惰性委托（防物化污染）。"""
+    import app.services.harness_kernel as _hk_pkg
+    had = "run_settle_effects" in _hk_pkg.__dict__
+    saved = getattr(_hk_pkg, "run_settle_effects")
+    # 不经 monkeypatch：其恢复机制会把物化函数写回 __dict__，重新污染。
+    setattr(_hk_pkg, "run_settle_effects", fake)
+
+    class _Restore:
+        def __init__(self):
+            self._done = False
+        def teardown(self):
+            if self._done:
+                return
+            self._done = True
+            if had:
+                setattr(_hk_pkg, "run_settle_effects", saved)
+            else:
+                _hk_pkg.__dict__.pop("run_settle_effects", None)
+    return _Restore()
+
 def _make_rpc():
     rpc = MagicMock()
     rpc.events = asyncio.Queue()
@@ -158,7 +180,7 @@ def _env(monkeypatch):
         return [], None
 
     monkeypatch.setattr(hks, "run_settle_effects", _se)
-    monkeypatch.setattr("app.services.harness_kernel.run_settle_effects", _se)
+    _pkg_restore = _patch_pkg_settle_effects(monkeypatch, _se)
     monkeypatch.setattr(hks, "resolve_turn_refusal", AsyncMock(return_value=None))
 
     import app.services.harness_kernel as hk
@@ -182,6 +204,7 @@ def _env(monkeypatch):
     monkeypatch.setattr(bridge_mod, "_clear_dispatch_cache", lambda sid=None: None)
     hks.reset_for_tests()
     yield
+    _pkg_restore.teardown()
     hks.reset_for_tests()
 
 

@@ -113,6 +113,28 @@ class TestPiBridgePerformance:
         assert elapsed_ms < 100, f"stream_prompt first event took {elapsed_ms:.1f}ms"
 
 
+
+def _patch_pkg_settle_effects(monkeypatch, fake):
+    """打桩包级 run_settle_effects 且保真恢复 PEP562 惰性委托（防物化污染）。"""
+    import app.services.harness_kernel as _hk_pkg
+    had = "run_settle_effects" in _hk_pkg.__dict__
+    saved = getattr(_hk_pkg, "run_settle_effects")
+    # 不经 monkeypatch：其恢复机制会把物化函数写回 __dict__，重新污染。
+    setattr(_hk_pkg, "run_settle_effects", fake)
+
+    class _Restore:
+        def __init__(self):
+            self._done = False
+        def teardown(self):
+            if self._done:
+                return
+            self._done = True
+            if had:
+                setattr(_hk_pkg, "run_settle_effects", saved)
+            else:
+                _hk_pkg.__dict__.pop("run_settle_effects", None)
+    return _Restore()
+
 class TestPiRuntimeTimingLanes:
     """PI-08（ADR-0286 D4）：冷/热启动与 TTFT 聚合车道（mock RPC 上界）。
 
@@ -209,7 +231,7 @@ class TestPiRuntimeTimingLanes:
             return [], None
 
         monkeypatch.setattr(hks, "run_settle_effects", _se)
-        monkeypatch.setattr("app.services.harness_kernel.run_settle_effects", _se)
+        _pkg_restore = _patch_pkg_settle_effects(monkeypatch, _se)
         monkeypatch.setattr(hks, "resolve_turn_refusal", AM(return_value=None))
         import app.services.harness_kernel as hk
         import app.services.harness_kernel.runtime as hkr
@@ -248,6 +270,7 @@ class TestPiRuntimeTimingLanes:
         start = time.perf_counter()
         _ = [ev async for ev in bridge.stream_prompt("Hi", session_id="sess-perf-lane")]
         elapsed_ms = (time.perf_counter() - start) * 1000
+        _pkg_restore.teardown()
         hks.reset_for_tests()
 
         assert elapsed_ms < 2000, f"scripted turn took {elapsed_ms:.1f}ms (blocking I/O?)"
