@@ -33,7 +33,7 @@ from app.services.mapspec.checkpoint import (
     snapshot as create_checkpoint,
     discard_checkpoint,
 )
-from app.services.distributed_lock import session_lock_registry
+from app.services.distributed_lock import mutation_session_lock, session_lock_registry
 # ADR-0186 视觉自愈编译器：纯函数层，无 service 依赖（无环）。锁内重规划 +
 # 事务应用见 ApplyVisualHealPatchIntent 分支与 apply_visual_heal_patch 入口。
 from app.services.mapspec.visual_healer import (
@@ -326,10 +326,11 @@ class MapSpecLifecycleEngine:
                 return MapSpecResult(is_error=True, origin=origin,
                                      error_code="spatial_guard_unavailable",
                                      error_msg="空间校验暂不可用，请稍后重试。")
-        _lock = session_lock_registry.lock(
-            session_id, fail_on_degraded=True, fail_on_lost=True,
+        _scope = mutation_session_lock(
+            session_id, registry=session_lock_registry,
+            fail_on_degraded=True, fail_on_lost=True,
         )
-        async with _lock:
+        async with _scope as _lock:
             invalidate = getattr(session_data_manager, "invalidate_local_cache", None)
             if callable(invalidate):
                 invalidate(session_id)
@@ -989,10 +990,11 @@ class MapSpecLifecycleEngine:
         全部 refused/not_found → 不落盘不递增（no-op 批）。异常 → 与
         apply_mutation 同款回滚（spec 未变时丢弃候选）。
         """
-        _lock = session_lock_registry.lock(
-            session_id, fail_on_degraded=True, fail_on_lost=True,
+        _scope = mutation_session_lock(
+            session_id, registry=session_lock_registry,
+            fail_on_degraded=True, fail_on_lost=True,
         )
-        async with _lock:
+        async with _scope as _lock:
             invalidate = getattr(session_data_manager, "invalidate_local_cache", None)
             if callable(invalidate):
                 invalidate(session_id)
