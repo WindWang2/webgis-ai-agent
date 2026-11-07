@@ -5,14 +5,14 @@
 | 文件 | 数量 | 覆盖（Oracle） |
 |---|---|---|
 | `tests/unit/gis_harness/test_execution_compiler_characterization.py` | 19 | C1 IR→族/表达/义务编译（确定性/信号溯源/user-vs-recommended/blocked/needs_clarification）；C2 验收桥（行投影/节点成功≠目标/failed 诚实）；C3 conformance（live/悬空/指纹）；C4 失效面（style 零失效/换城全量/统计最小集）；C5 单位（计数≠率/每万人披露/时间距离互斥/密度义务） |
-| `tests/unit/gis_harness/test_execution_compiler_oracles.py` | 30 | O8 语料 runner 23 类 + 重复确定性 + 报告产物；O1 零悬空信号；O2 fail-closed（allowlist 空/词表封闭/悬空工具/live 全 pass）；O5 秒≠米/#2006 形态/密度门槛数据驱动；O6/O7 最小重算/换城全量；O4 生产桥可达/幂等/披露；M7 对抗（空文档/巨型输入/控制字符/并发纯度/损坏态退化） |
+| `tests/unit/gis_harness/test_execution_compiler_oracles.py` | 34 | O8 语料 runner 23 类 + 重复确定性 + 报告产物；O1 零悬空信号；O2 fail-closed（allowlist 空/词表封闭/悬空工具/live 全 pass）；O5 秒≠米/#2006 形态/密度门槛数据驱动；O6/O7 最小重算/换城全量；O4 生产桥可达/幂等/披露；M7 对抗（空文档/巨型输入/控制字符/并发纯度/损坏态退化）；工具面 dispatch 全链路 e2e ×2；验收桥生产加载器 e2e ×2（session store 别名枚举/零运行零漂移） |
 
 ## 命令
 
 ```bash
 .venv/bin/python -m pytest tests/unit/gis_harness/test_execution_compiler_characterization.py \
   tests/unit/gis_harness/test_execution_compiler_oracles.py -q --no-cov
-# → 49 passed
+# → 53 passed（19 characterization + 34 oracles）
 
 .venv/bin/python -m python -m app.services.gis_harness.execution_compiler.corpus \
   reports/execution_compiler_benchmark.md   # planner 评估报告（23 用例逐条解释）
