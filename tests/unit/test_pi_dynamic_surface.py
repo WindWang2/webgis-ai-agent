@@ -218,3 +218,23 @@ def test_dispatch_classification_uses_registered_surface(registry):
     surface = set(registered_surface_names(registry))
     assert resolve_pi_tool_call("spatial_aggregate", {}, registered_surface=surface).kind == "execute"
     assert resolve_pi_tool_call("spatial_aggregate", {}, registered_surface=frozenset()).kind == "reject"
+
+
+def test_dormant_tool_definition_carries_real_parameters():
+    """G01-PI-NATIVE-RUNTIME（PI-03/PI-09）：长尾 dormant 工具的 pi 投影必须
+    携带真实参数 schema —— 此前误传未解包 schema 条目，全部长尾工具投影成
+    空 properties + additionalProperties:false，vendor 按注册 schema 拒绝
+    一切参数（裸名长尾面整体不可调用，PI-09 旅程发现）。"""
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+    from app.services.chat.pi_native_surface import _pi_tool_definition
+
+    reg = ToolRegistry()
+    init_tools(reg)
+    d = _pi_tool_definition(reg, "nearest_facility", dormant=True)
+    assert d is not None
+    props = d["parameters"]["properties"]
+    assert "source_points" in props and "target_points" in props
+    # 空参数 + closed schema 的病态形状绝不再出现
+    assert d["parameters"]["additionalProperties"] is False
+    assert props  # 非空
