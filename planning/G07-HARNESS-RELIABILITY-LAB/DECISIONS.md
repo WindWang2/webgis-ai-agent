@@ -14,3 +14,7 @@
 | M3 | 跨城、A4、旋转指北针、秒/米与 summary 缺口保留为显式未验证边界 | 避免把本线变成独立 issue 抢修；普通 guard/export 通过不宣称这些生产问题已修复 |
 | M3 | 黄金 CLI 在导入 app 前初始化 tests 离线环境 | 裸进程首次因 Redis LockDegradedError 30/30 失败；改后 30/30 通过，失败与修复均记录 |
 | M3 | 复用 72 个既有场景并只写引用 manifest | 避免第二执行器和静态 fixture 复制；focused tests 单独标执行状态 |
+
+| M6 | resume 默认 flush_interval=16，interval=1 保留旧每场景写语义 | 实测 1.71×；中断最多重算 15 条同 seed 确定性场景，JSON 形状/跳过语义不变 |
+| M6 | UTF-8 计量修正不宣称提速；deepcopy/sha256 不优化 | 微基准 canonical_json 更慢但计量正确；隔离数据显示其他候选非瓶颈，避免为指标硬优化 |
+| M7 | 新 journey 指标只 record-only，active baseline 不动 | 防止未成熟维度变成新质量门；跨会话/科学错误仍硬失败 |

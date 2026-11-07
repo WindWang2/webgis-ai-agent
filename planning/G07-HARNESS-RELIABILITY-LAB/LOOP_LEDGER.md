@@ -53,3 +53,27 @@
 - 失败：测试 fixture 初次 SyntaxError，修正字面量后 4/4 通过；无生产缺陷被发现。
 - 本地验证：缺观察 reobserve 后 pass；503 retry_with_backoff 后真实 dispatch 成功；跨城需新数据；持久编辑无幂等不得自动 replay。恢复域合计 **199 passed**，Ruff 通过。
 - 限制：跨城实验使用 eligibility/scope 既有语义，不伪造自动修复；未运行付费模型或外部服务。
+
+## Loop 6 — M7 证据接入与真实 Pi 模式（进行中）
+
+- 输入：既有 ratchet/metrics store、quality manifest、Pi v1.5.0 固定 pin、浏览器车道文档。
+- 决定：新指标只 record-only；不修改 #2007 生成物；单独交付 G07 质量文档与 failure taxonomy。
+- 代码差异：journey_overall/render_observed/journey_findings/cross_session_violations 接入 replay metrics；补 artifact ref 持久化完整性；新增两个只读 CLI 和质量/运行文档。
+- 失败：新指标三例先红；ref 无 artifact 的正向误报 pass，补独立负例后修正；两个正向 fixture 阶段顺序错误按规范修正，未放宽断言。
+- 本地验证：journey 相关 **26 passed**；metrics/ratchet/schema **27 passed**；固定 Pi `pi_doctor --json` 全 PASS；显式 `PI_JOURNEY_E2E=1` 真实 Pi + stub 旅程 **1 passed, 32.17s**。
+- 限制：默认 Pi 旅程先显式 skip，已记录 opt-in 原因；未运行浏览器/live services；不把 stub 当真实模型。
+
+## Loop 7 — M6 实证性能（完成）
+
+- 输入：C 的基线定位：UTF-8 字符误计、resume 每场景全量重写 O(N²)、deepcopy/sha256 不值得优化。
+- 决定：canonical_json UTF-8 计量；resume 默认每 16 条 flush + 收尾强制 flush，interval=1 保留旧行为；不改预算阈值。
+- 代码差异：`bench.py` 单生产改动、独立非 ASCII 测试、flush 次数/恢复语义测试、可复现 benchmark 脚本与原始 JSON。
+- 失败：UTF-8 固定样例旧口径红（52≠61）；flush 参数不存在红；均最小实现后转绿。
+- 本地验证：全量 Replay/Lab **268 passed**；focused perf **6 passed**；C 的 focused 测试另双跑通过；标准 Mypy/Ruff 通过。
+- 实证：resume before p50 435.446ms / after 254.462ms（1.71×），small/medium/large 140/140 green；canonical_json 计量未提速（0.146→0.247ms/call），deepcopy/sha256 明确不优化；T2 疑似 O(N²) 未验证（无 Redis）。
+
+## Loop 8 — M7 文档与交付准备（完成）
+
+- `docs/quality/GIS_HARNESS_RELIABILITY.md`、failure taxonomy、benchmark 报告和原始 JSON 已落盘；record-only 指标接入完成。
+- 真实 Pi doctor 与 opt-in stub 旅程均通过，browser/live 未运行，未验证维度明确。
+- 开始 M8 独立冷审，不提前宣称复审通过。

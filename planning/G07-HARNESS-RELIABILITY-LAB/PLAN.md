@@ -21,9 +21,9 @@
 | M3 | complete | 12 组 manifest；30 个真实 dispatch 场景全绿；选择截断防线与 mode-aware CLI |
 | M4 | complete | 20 项跨边界故障测试 + 89 项既有 fault/lock/SSE 回归；终态 typed reason 完整 |
 | M5 | complete | 4 组恢复实验链 + 199 项恢复回归；动作/权限/终态可复现 |
-| M6 | in_progress | 固定环境 benchmark 原始汇总；至少 2 个热点实测改善或“不改善”结论 |
-| M7 | pending | 既有 ratchet/metrics store 接入、分层车道、趋势输出、完整质量与本地运行文档 |
-| M8 | pending | 独立 reviewer 冷读全 diff；P0/P1 修复并二次复审，P2 明示 |
+| M6 | complete | resume p50 435.4→254.5ms（1.71×）；UTF-8 修正明确非提速；原始报告完整 |
+| M7 | complete | record-only 指标、分层车道、质量文档、真实 Pi 证据；全量 268 项回归通过 |
+| M8 | in_progress | 独立 reviewer 冷读全 diff；P0/P1 修复并二次复审，P2 明示 |
 | M9 | pending | 重取 master、必要集成、双次关键验收、语义化 commits、push 与唯一 PR |
 
 ## Oracle 对账

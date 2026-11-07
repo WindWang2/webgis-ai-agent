@@ -60,3 +60,23 @@
 |---|---|---|
 | `pytest tests/unit/gis_harness/recovery_policy/test_reliability_recovery_experiments.py` | 4 passed | 缺观察、瞬态读失败、跨城不一致、持久编辑四组对照 |
 | `pytest tests/unit/gis_harness/recovery_policy tests/unit/evaluation/test_recovery_corpus.py tests/unit/lib/test_goal_verification_reconcile.py` | 199 passed | 真实 TDS/policy/GoalVerification；工具 provider 为本地 fake |
+
+## M7 实际执行（持续更新）
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| journey evidence/fault/diagnostic/metrics/Explain | 26 passed | 含 artifact ref 持久化完整性、record-only 指标 |
+| `pytest tests/harness_replay/test_journey_metrics.py tests/harness_replay/test_replay_ratchet.py tests/harness_replay/test_replay_schema.py` | 27 passed | 原 ratchet/store 不变；新行 record-only |
+| `python scripts/pi_doctor.py --json` | vendor/build/extension/surface/rpc/env 全 PASS | 固定 v1.5.0 pin；真实 RPC handshake/turn/settled |
+| `PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_stub_llm_journeys.py` | 1 passed, 32.17s | 真实 Pi + stub LLM；非真实模型质量；默认 skip 原因已记录 |
+| `pytest tests/integration/test_pi_stub_llm_journeys.py`（默认） | 1 skipped | opt-in 门控 `PI_JOURNEY_E2E=1`，不是通过证据 |
+
+## M6/M7 最终执行
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pytest tests/lab tests/harness_replay --no-cov -q -p no:cacheprovider` | 268 passed, 4 warnings, 54.31s | 全量既有+新增 Replay/Lab；非全仓 CI |
+| `pytest tests/benchmarks/test_harness_reliability_bench.py -m perf` | 6 passed, 6.29s | UTF-8/resume 语义与宽松冒烟，不是精确性能 gate |
+| `python scripts/perf/bench_harness_reliability.py` | resume p50 435.446→254.462ms；140/140 green | 同一进程 warm before/after；原始 JSON 在 docs/quality/evidence |
+| `python -m mypy --no-incremental` | Success, 38 files | 新模块已加入 whitelist |
+| Ruff + `git diff --check` | 通过 | 无格式/空白错误 |
