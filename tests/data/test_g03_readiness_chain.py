@@ -188,11 +188,16 @@ class TestB2DispatchQualificationGate:
         )
 
         sid = "g03-b2f"
-        ref = await _ingest(sid)
+        ref = await _ingest(sid, crs="EPSG:4326")
         verdict = await evaluate_dispatch_data_gate(sid, "buffer_analysis", {"data": ref})
         assert verdict.status == "pass"
         ctx = verdict.qualification_context.get(ref)
-        assert ctx and ctx.get("crs"), "放行也必须携带可见的数据事实"
+        assert ctx and ctx.get("crs") == "EPSG:4326", "放行也必须携带可见的数据事实"
+        # 未声明 CRS 的数据 → crs 诚实为空串（不虚构），事实照样可见
+        ref2 = await _ingest(f"{sid}-x")
+        v2 = await evaluate_dispatch_data_gate(f"{sid}-x", "buffer_analysis", {"data": ref2})
+        assert v2.status == "pass"
+        assert v2.qualification_context[ref2]["crs"] == ""
 
     async def test_kill_switch_disables_gate(self, sem_store, monkeypatch):
         """DATA_QUALIFICATION_GATE=0 → 一键回滚旧行为（全放行）。"""
@@ -237,6 +242,84 @@ class TestB2DispatchQualificationGate:
         )
         assert strict.status == "blocked"
         assert "MISSING" in strict.code.upper()
+
+
+class TestB2DispatchWiring:
+    """dispatch() 全路径接线证明：闸门在执行前拦截 stale 数据。"""
+
+    async def test_dispatch_blocks_stale_ref_before_execution(self, sem_store, monkeypatch):
+        import json as _json
+
+        from app.services.dataset_semantics import qualification_bridge
+        from app.services.tool_dispatch_service import ToolDispatchService
+        from app.tools.registry import ToolRegistry
+        from app.tools.spatial import register_spatial_tools
+
+        sid = "g03-b2w"
+        ref = await _ingest(sid, crs="EPSG:4326")
+
+        async def _wrong_expectation(session_id):
+            return {ref: "f" * 32}  # 记录面期望与语义记录不一致 → stale
+
+        monkeypatch.setattr(
+            qualification_bridge, "recorded_fingerprints", _wrong_expectation)
+
+        registry = ToolRegistry()
+        register_spatial_tools(registry)
+        svc = ToolDispatchService(registry=registry)
+        tc = {
+            "id": "call-g03-w1",
+            "function": {
+                "name": "query_map_features",
+                "arguments": _json.dumps({
+                    "data": ref, "location": [116.4, 39.9], "buffer_m": 20,
+                }),
+            },
+        }
+        result = await svc.dispatch(tc, sid, executed_tools=set())
+        assert result.status == "error"
+        assert result.error_msg == "DATA_QUALIFICATION_STALE", (
+            f"分发面必须在执行前拦截 stale 数据，实际 {result.error_msg}"
+        )
+        assert result.raw_result["code"] == "DATA_QUALIFICATION_STALE"
+
+    async def test_dispatch_gate_kill_switch_restores_old_behavior(
+        self, sem_store, monkeypatch
+    ):
+        """DATA_QUALIFICATION_GATE=0 → 同样的 stale 场景不再被闸门拦截。"""
+        import json as _json
+
+        from app.services.dataset_semantics import qualification_bridge
+        from app.services.tool_dispatch_service import ToolDispatchService
+        from app.tools.registry import ToolRegistry
+        from app.tools.spatial import register_spatial_tools
+
+        sid = "g03-b2wk"
+        ref = await _ingest(sid, crs="EPSG:4326")
+
+        async def _wrong_expectation(session_id):
+            return {ref: "f" * 32}
+
+        monkeypatch.setattr(
+            qualification_bridge, "recorded_fingerprints", _wrong_expectation)
+        monkeypatch.setenv("DATA_QUALIFICATION_GATE", "0")
+
+        registry = ToolRegistry()
+        register_spatial_tools(registry)
+        svc = ToolDispatchService(registry=registry)
+        tc = {
+            "id": "call-g03-w2",
+            "function": {
+                "name": "query_map_features",
+                "arguments": _json.dumps({
+                    "data": ref, "location": [116.4, 39.9], "buffer_m": 20,
+                }),
+            },
+        }
+        result = await svc.dispatch(tc, sid, executed_tools=set())
+        assert result.error_msg != "DATA_QUALIFICATION_STALE", (
+            "kill switch 关闭后不得再因资格闸拦截"
+        )
 
 
 # ═══════════════════ B3 远程 GeoJSON URL adapter（红灯） ═══════════════════

@@ -112,6 +112,8 @@ async def upload_files(
     register_ref: bool = Form(False, description="注册到会话产物台账（矢量走 V3 摄入管线；栅格走 DEM 摄入车道；失败不阻断上传）"),
     vertical_datum: Optional[str] = Form(None, description="DEM 垂直基准声明（如 EGM96/EGM2008/ellipsoid(WGS84)/local）。不声明且文件不可读出时仅显示，绝不偷换"),
     vertical_unit: Optional[str] = Form(None, description="DEM 高程单位声明（m/ft/us_survey_ft）。非米单位生成换算副本并留证据"),
+    license: Optional[str] = Form(None, description="数据许可证声明（如 CC-BY-4.0）。非空时进入数据集语义身份证（observed）；缺省如实 unknown，不虚构"),
+    attribution: Optional[str] = Form(None, description="数据归因/来源署名声明。随 license 一同进入语义身份证与产物台账"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id", description="存在即视为请求 register_ref（值不作为会话来源——归属一律以已校验的 session_id 表单为准）"),
     _user: dict = Depends(get_current_user_optional_with_version),
@@ -475,6 +477,8 @@ async def upload_files(
                 meta=meta,
                 filename=filename,
                 declared_crs=crs,
+                license=license,
+                attribution=attribution,
             )
             session_ref = lane_out["session_ref"]
             profile_summary = lane_out["profile_summary"]
@@ -519,6 +523,8 @@ async def _run_ingest_lane(
     meta: Dict[str, Any],
     filename: str,
     declared_crs: Optional[str],
+    license: Optional[str] = None,
+    attribution: Optional[str] = None,
 ) -> Dict[str, Any]:
     """把已解析的矢量 FC 送入 V3 摄入管线（store/dedup/profile/quality/register）。
 
@@ -562,6 +568,8 @@ async def _run_ingest_lane(
             crs=confirmed_crs,
             source_type="upload",
             prefix="upload",
+            license=str(license or "").strip() or None,
+            attribution=str(attribution or "").strip() or None,
         )
         if result.ok:
             out["session_ref"] = result.ref_id

@@ -129,8 +129,16 @@ class IngestPipeline:
         prefix: str = "ingest",
         materialize: bool = False,
         dedup: bool = True,
+        license: Optional[str] = None,
+        attribution: Optional[str] = None,
     ) -> IngestResult:
-        """数据 → 会话产物（§二十五全流程；失败补偿回滚）。"""
+        """数据 → 会话产物（§二十五全流程；失败补偿回滚）。
+
+        ``license``/``attribution``（G03 GD-01/GD-07）：权利元数据声明通道
+        ——非空时透传 descriptor（dimension_provenance.license=observed）；
+        空/缺省 = unknown，绝不虚构。元数据不入语义指纹（补填许可不误判
+        stale），artifact metadata 如实登记。
+        """
         result = IngestResult()
         if not session_id:
             result.error_code = "NO_SESSION"
@@ -220,6 +228,8 @@ class IngestPipeline:
                 source_refs=[SourceRef(type="ref", ref=ref_id,
                                        fingerprint=fingerprint)],
                 provenance=[{"producer": "ingest_pipeline", "method": "profile_v3"}],
+                license=str(license or "").strip(),
+                attribution=str(attribution or "").strip(),
             )
             put = await get_dataset_semantic_store().put(session_id, ref_id, descriptor)
             if put.ok:
@@ -241,6 +251,10 @@ class IngestPipeline:
             }
             if descriptor_fingerprint:
                 artifact_metadata["descriptor_fingerprint"] = descriptor_fingerprint
+            if license:
+                artifact_metadata["license"] = str(license)[:128]
+            if attribution:
+                artifact_metadata["attribution"] = str(attribution)[:256]
             rec = await register_artifact(
                 session_id,
                 artifact_id=ref_id,

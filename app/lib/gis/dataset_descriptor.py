@@ -45,6 +45,9 @@ MAX_GEOMETRY_TYPES = 8                # 与 DatasetProfile 同值同源
 MAX_SOURCE_REFS = 8
 MAX_QUALITY_SIGNALS = 16
 MAX_PROVENANCE = 8
+#: dimension_provenance 合法值域（稳定契约；三态封闭——G03 GD-01）。
+PROVENANCE_STATES = ("observed", "inferred", "unknown")
+MAX_DIM_PROVENANCE = 16
 MAX_FIELD_ROLES = 6
 MAX_FIELD_EVIDENCE = 6
 MAX_FIELD_CHECKS = 4
@@ -325,9 +328,27 @@ class GISDatasetDescriptor(BaseModel):
     license: str = ""                               # 许可证标识（"" = 无证据，不虚构）
     attribution: str = ""                           # 归因文本（来源要求署名时的权威字符串）
 
+    # 维度级证据三态（G03 GD-01 / ADR-0286 D1）：observed = 直接证据；
+    # inferred = 规则推断（如坐标域识别 CRS）；unknown = 无证据（绝不虚构）。
+    # 字段级置信仍在 FieldEntry（role_confidence 等）—— 本字段是维度级
+    # 汇总，不是替代。不入指纹：证据分级变化不改变语义身份（同 license
+    # 理由——分级翻转而维度值不变时，语义身份本就不该变）。
+    dimension_provenance: Dict[str, str] = Field(default_factory=dict)
+
     derived_at: str = ""                            # 易变字段：不入指纹
     schema_fingerprint: str = ""
     descriptor_fingerprint: str = ""
+
+    @field_validator("dimension_provenance")
+    @classmethod
+    def _dim_provenance(cls, v: Dict[str, str]) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        for k, val in list(v.items())[:MAX_DIM_PROVENANCE]:
+            key = str(k)[:32]
+            state = str(val)
+            if state in PROVENANCE_STATES:
+                out[key] = state
+        return out
 
     @field_validator("geometry_types")
     @classmethod
@@ -455,6 +476,7 @@ class GISDatasetDescriptor(BaseModel):
             "provenance": self.provenance,
             "license": str(self.license)[:128],
             "attribution": str(self.attribution)[:256],
+            "dimension_provenance": dict(self.dimension_provenance),
             "derived_at": self.derived_at,
             "schema_fingerprint": self.schema_fingerprint,
             "descriptor_fingerprint": self.descriptor_fingerprint,
@@ -577,6 +599,11 @@ class GISDatasetDescriptor(BaseModel):
             ],
             license=str(data.get("license") or "")[:128],
             attribution=str(data.get("attribution") or "")[:256],
+            dimension_provenance={
+                str(k)[:32]: str(v)
+                for k, v in (data.get("dimension_provenance") or {}).items()
+                if str(v) in PROVENANCE_STATES
+            } if isinstance(data.get("dimension_provenance"), dict) else {},
             derived_at=str(data.get("derived_at") or "")[:64],
             schema_fingerprint=str(data.get("schema_fingerprint") or "")[:96],
             descriptor_fingerprint=str(data.get("descriptor_fingerprint") or "")[:96],
