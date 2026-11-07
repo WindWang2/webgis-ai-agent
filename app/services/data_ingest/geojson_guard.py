@@ -122,6 +122,31 @@ def _check_properties(node: Any) -> None:
                 stack.append((v, depth + 1))
 
 
+def _scan_geometry(geom: Any, feature_index: int) -> None:
+    """扫描单个 geometry 的坐标树（含 GeometryCollection 成员递归）。
+
+    复审 N1：GeometryCollection 的成员在 ``geometries`` 数组——此前完全
+    逃逸坐标扫描（内层 NaN 可入库）；现在迭代展开（规范上 Geometry-
+    Collection 不可嵌套，但防御性支持），每个成员的 coordinates 独立走
+    _check_coordinates（各自独立预算，成员间不共享）。
+    """
+    pending: list = [geom]
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, dict):
+            continue
+        coords = node.get("coordinates")
+        if coords is not None:
+            try:
+                _check_coordinates(coords)
+            except GeojsonGuardError as e:
+                e.feature_index = feature_index
+                raise
+        members = node.get("geometries")
+        if isinstance(members, list):
+            pending.extend(members)
+
+
 def validate_feature_collection(fc: Any) -> None:
     """FC 形状守卫入口（O(features) 有界；拒绝 → GeojsonGuardError）。
 
@@ -139,13 +164,7 @@ def validate_feature_collection(fc: Any) -> None:
             continue
         geom = feature.get("geometry")
         if isinstance(geom, dict):
-            coords = geom.get("coordinates")
-            if coords is not None:
-                try:
-                    _check_coordinates(coords)
-                except GeojsonGuardError as e:
-                    e.feature_index = idx
-                    raise
+            _scan_geometry(geom, idx)
         props = feature.get("properties")
         if props is not None:
             try:

@@ -95,12 +95,16 @@ geocode 成功行（`_lat/_lon` 有限值）转换 FC 经 IngestPipeline 铸语�
 `app/services/data_ingest/geojson_guard.py`：IngestPipeline 在 detect 与
 validate 之间插入 `validate_feature_collection(fc)`：
 
-- 非有限坐标（NaN/±Inf）→ `INVALID_COORDINATES_NONFINITE`；
-- 嵌套深度 > 64 → `STRUCTURE_TOO_DEEP`；
+- 非有限坐标（NaN/±Inf；含 GeometryCollection 内层成员）→
+  `INVALID_COORDINATES_NONFINITE`；
+- 嵌套深度 > 64（属性树与坐标树共用）→ `STRUCTURE_TOO_DEEP`；
 - 单属性字符串 > 256KB → `PROPERTY_STRING_OVERSIZED`；
-- 守卫为 O(features) 串行扫描、每要素有界步数（深度帽剪枝），5 万要素
-  守卫耗时秒级；拒绝 = 类型化 error_code + 无 ref 铸造（失败补偿不适用
-  ——拒绝发生在 store 之前）。
+- 病态宽结构烧穿预算 → `GUARD_BUDGET_EXCEEDED`（类型化拒绝，绝不静默
+  跳过——评审 F1：预算耗尽静默 return 会把恶意值藏在垫料后绕过）；
+- 坐标扫描（1M 步/要素 ≈33 万顶点，真实重几何不误拒）与属性扫描
+  （20k 步/要素）独立预算；O(features) 单遍，5 万要素守卫 <1s；
+- 拒绝 = 类型化 error_code + 无 ref 铸造（发生在 store 之前，无补偿
+  回滚对象）。
 
 ## 迁移与回滚
 

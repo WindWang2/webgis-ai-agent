@@ -116,20 +116,30 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
         max_bytes = max_response_bytes()
         chunks: List[bytes] = []
         total = 0
-        for chunk in resp.iter_content(chunk_size=64 * 1024):
-            if time.monotonic() > overall_deadline:
-                raise SourceBadResponseError(
-                    "geojson url fetch exceeded overall deadline "
-                    "(slow-drip source)", details={"url": self.url[:200]})
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > max_bytes:
-                raise SourceBadResponseError(
-                    f"geojson url body exceeds budget ({max_bytes // (1024*1024)}MiB)",
-                    details={"hint": "declare a smaller file or a paginated source"},
-                )
-            chunks.append(chunk)
+        # 复审 N4：流中断/超时抛原生 requests 异常——统一 typed 不可达，
+        # 直连调用者（preview/query 面）不暴露传输细节。
+        try:
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                if time.monotonic() > overall_deadline:
+                    raise SourceBadResponseError(
+                        "geojson url fetch exceeded overall deadline "
+                        "(slow-drip source)", details={"url": self.url[:200]})
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > max_bytes:
+                    raise SourceBadResponseError(
+                        f"geojson url body exceeds budget "
+                        f"({max_bytes // (1024*1024)}MiB)",
+                        details={"hint": "declare a smaller file or a "
+                                         "paginated source"},
+                    )
+                chunks.append(chunk)
+        except SourceBadResponseError:
+            raise
+        except Exception as e:  # noqa: BLE001 — 断流/超时统一 typed
+            raise SourceUnreachableError(
+                f"geojson url stream interrupted: {e}") from e
         try:
             doc = json.loads(b"".join(chunks))
         except ValueError as e:

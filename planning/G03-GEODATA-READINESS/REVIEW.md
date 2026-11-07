@@ -39,3 +39,28 @@ fail-open 与 dedup 槽释放/取消回滚幂等/性能不变量机器无关/jou
 - ruff（改动面）/mypy（新模块）全绿。
 
 （轮次 2 复审结论见下节，复审后追加。）
+
+## 评审轮次 2（复审，2026-11-08）
+
+对象：修复 commit 88a56ff75。方法：全量重读 + 新守卫 6 组对抗形状独立
+再攻击 + F3 三面闭环实测。
+
+**结论：F1-F15 全部 fixed（逐项实证复核）；修复未引入性能回归/None
+properties 问题。可合并（附带一条建议同 PR 快修的 P2）。**
+
+新发现与清偿（同 PR 完成）：
+- N1（P2，GeometryCollection 内层 NaN 逃逸，实证）→ `_scan_geometry`
+  迭代展开 geometries 数组（防御性支持嵌套），成员坐标独立走扫描；
+  反例测试（内层 NaN 拒绝 + 合法集合不误拒）已加。
+- N2（P3，契约文档 §5 漂移）→ 守卫表补 GUARD_BUDGET_EXCEEDED/双预算/
+  坐标树深度帽；ADR D7 同步。
+- N3（P3，preflight 数据侧 isfinite 防御纵深）→ 判别分量全 isfinite，
+  非有限 → unverifiable。
+- N4（P3，iter_content 原生异常）→ 断流/超时统一 typed
+  SourceUnreachableError。
+
+观察项（接受，不阻断）：单要素 >33 万顶点合法重几何 → GUARD_BUDGET_
+EXCEEDED 类型化拒收（fail-closed 且披露；50MB 帽内可达的极端海岸线
+形状，可辩护权衡）。
+
+最终：**无未处理 P0/P1；N1-N4 已清偿；独立评审签结可合并。**

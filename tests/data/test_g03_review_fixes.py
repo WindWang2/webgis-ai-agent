@@ -132,6 +132,33 @@ class TestF1GuardBudgetBypass:
         assert result.error_code == "INVALID_COORDINATES_NONFINITE"
         assert result.ref_id == ""
 
+    def test_geometry_collection_inner_nan_rejected(self):
+        """复审 N1 反例：GeometryCollection 内层 Point NaN → 必须拒绝。"""
+        gc = {
+            "type": "GeometryCollection",
+            "geometries": [
+                {"type": "Point", "coordinates": [116.0, 39.0]},
+                {"type": "Point", "coordinates": [float("nan"), 30.6]},
+            ],
+        }
+        fc = _fc([{"type": "Feature", "geometry": gc, "properties": {}}])
+        with pytest.raises(GeojsonGuardError) as ei:
+            validate_feature_collection(fc)
+        assert ei.value.code == "INVALID_COORDINATES_NONFINITE"
+
+    def test_geometry_collection_valid_passes(self):
+        """合法 GeometryCollection 不误拒。"""
+        gc = {
+            "type": "GeometryCollection",
+            "geometries": [
+                {"type": "Point", "coordinates": [116.0, 39.0]},
+                {"type": "LineString",
+                 "coordinates": [[116.0, 39.0], [116.1, 39.1]]},
+            ],
+        }
+        validate_feature_collection(
+            _fc([{"type": "Feature", "geometry": gc, "properties": {}}]))
+
 
 # ═══════════════════ F3：NaN/Inf bbox 伪 pass ════════════════════════════
 

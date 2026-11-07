@@ -74,12 +74,15 @@ CapabilityRegistry 对账，非平行词表。
 
 | 输入 | 拒绝码 |
 |---|---|
-| NaN/±Inf 坐标 | `INVALID_COORDINATES_NONFINITE` |
-| 嵌套深度 > 64 | `STRUCTURE_TOO_DEEP` |
+| NaN/±Inf 坐标（含 GeometryCollection 内层成员，复审 N1） | `INVALID_COORDINATES_NONFINITE` |
+| 嵌套深度 > 64（属性树 **与** 坐标树共用） | `STRUCTURE_TOO_DEEP` |
 | 单属性字符串 > 256KB | `PROPERTY_STRING_OVERSIZED` |
+| 病态宽结构烧穿扫描预算 | `GUARD_BUDGET_EXCEEDED`（类型化拒绝，绝不静默跳过） |
 
-拒绝发生在 store 之前（无 ref 铸造）；O(features) 有界（深度帽剪枝 +
-每要素步数帽 20k）。
+预算语义（评审 F1 修复后）：坐标扫描（1,000,000 步/要素 ≈33 万顶点，
+真实重几何不误拒）与属性扫描（20,000 步/要素）**独立预算**；任一耗尽
+即类型化拒绝——不存在静默跳过检查的路径（LIFO 垫料绕过已封）。
+拒绝发生在 store 之前（无 ref 铸造）。
 
 ## 6. 协作取消与幂等（GD-06）
 

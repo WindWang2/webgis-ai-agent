@@ -529,6 +529,13 @@ def preflight_task_scope_check(
         except (TypeError, ValueError):
             unverifiable.append(k)
             continue
+        # 复审 N3：非 pydantic 对象直传时 NaN 分量与比较恒 False 会伪
+        # pass——防御纵深（descriptor 校验器已关闭持久化面）。
+        import math as _math
+
+        if not all(_math.isfinite(v) for v in (dminx, dminy, dmaxx, dmaxy)):
+            unverifiable.append(k)
+            continue
         disjoint = (
             dmaxx < scope_bbox[0] or scope_bbox[2] < dminx
             or dmaxy < scope_bbox[1] or scope_bbox[3] < dminy
