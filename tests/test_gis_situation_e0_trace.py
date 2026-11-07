@@ -82,8 +82,9 @@ def test_op1_point_select_reaches_projection_and_situation():
 
 def test_op2_brush_select_ids_are_bounded_and_bbox_dropped():
     """框选多选（SW-02/#2004 期望语义）：selected_ids 有界但与选择面三方
-    对齐（≤50），12 个 id 完整保留 + 披露截断标记为 False；bbox/几何本体
-    仍不在白名单（框选几何走 canvas affordance 环，非 IR 载荷）。"""
+    对齐（≤50），12 个 id 完整保留 + 披露截断标记为 False；bbox 谓词随
+    选择上行（SW-02 残余：框选区域作为空间范围可指代；几何本体仍走
+    canvas affordance 环，不进 IR）。"""
     normalized = normalize_payload("feature_selected", {
         "layer_id": "schools",
         "selected_ids": [f"sch-{i}" for i in range(12)],
@@ -94,7 +95,7 @@ def test_op2_brush_select_ids_are_bounded_and_bbox_dropped():
     assert len(normalized["selected_ids"]) == 12  # 新界内完整保留（旧 ≤8 为 #2004 断点）
     assert normalized["ids_truncated"] is False
     assert normalized["matched_count"] == 12
-    assert "bbox" not in normalized  # 白名单丢弃（几何走 affordance 环）
+    assert normalized["bbox"] == [104.0, 30.6, 104.1, 30.7]  # SW-02：bbox 谓词进白名单
 
     overflow = normalize_payload("feature_selected", {
         "layer_id": "schools",
@@ -303,13 +304,13 @@ def test_guard_payload_budget_rejects_oversize():
     if len(blob.encode()) <= MAX_PAYLOAD_BYTES_SELECTION:
         pytest.skip("构造未超宽预算，换更大载荷")
     assert normalize_payload("feature_selected", big_selection) is None
-    big_chart = {
-        "layer_id": "C" * 128, "field": "F" * 64,
-        "categories": [str(i) + "c" * 126 for i in range(8)],
+    big_style = {
+        "layer_id": "C" * 128,
+        "attribute_names": [str(i) + "a" * 126 for i in range(8)],
     }
-    if len(json.dumps(big_chart)) <= MAX_PAYLOAD_BYTES:
+    if len(json.dumps(big_style)) <= MAX_PAYLOAD_BYTES:
         pytest.skip("构造未超预算，换更大载荷")
-    assert normalize_payload("chart_selection_changed", big_chart) is None
+    assert normalize_payload("layer_style_changed", big_style) is None
 
 
 def test_map_state_snapshot_roundtrip_with_dropped_disclosure():

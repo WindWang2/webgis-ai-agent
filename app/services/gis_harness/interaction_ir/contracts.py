@@ -113,7 +113,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     # selection-store / analysis_scope.MAX_SCOPE_FEATURE_IDS）。
     _k(
         "feature_selected",
-        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field", "matched_count", "ids_truncated"),
+        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field", "matched_count", "ids_truncated", "bbox"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
     _k(
@@ -216,14 +216,20 @@ MAX_TRACKED_CLIENTS = 8
 MAX_PAYLOAD_BYTES = 512
 #: SW-02（#2004）：selection kind 的载荷字节预算 —— 50×32 字符 id 集
 #: ≈1.9KB，512B 会把"截断"恶化成"整事件拒绝"（Agent 连样本都看不到）。
-#: 预算仍严格有界（4KB），且只对 :data:`SELECTION_ID_KINDS` 放宽。
+#: 预算仍严格有界（4KB），且只对 :data:`WIDE_BUDGET_KINDS` 放宽。
 MAX_PAYLOAD_BYTES_SELECTION = 4096
-#: 携带要素 id 集的 kind（selected_ids 专属上限 + 宽预算适用面）。
+#: 携带要素 id 集的 kind（selected_ids 专属上限 + matched_count/ids_truncated
+#: 披露派生面）。
 SELECTION_ID_KINDS = frozenset({"feature_selected", "table_selection_changed"})
+#: 宽载荷预算适用面（id 集/类别集的有界大载荷 kind：ids 50×32、类别 20×32）。
+WIDE_BUDGET_KINDS = frozenset(SELECTION_ID_KINDS | {"chart_selection_changed"})
 #: selected_ids 元素上限（三方对齐：前端 selection-store MAX_SELECTED_IDS
 #: 与 gis_situation.analysis_scope.MAX_SCOPE_FEATURE_IDS —— 声称面/验证面
 #: /摄入面同一数字，跨面漂移由 manifest 闸锁定）。
 MAX_SELECTED_IDS_PAYLOAD = 50
+#: categories 元素上限（SW-02：与前端 selection-store selected_categories ≤20
+#: 对齐——图表类别上行不再退化为 ≤8 静默截断）。
+MAX_CATEGORIES_PAYLOAD = 20
 #: matched_count 合法域上限（框选命中数披露；超域丢弃该键，不猜默认）。
 MAX_MATCHED_COUNT = 10_000_000
 #: payload 字符串值长度上限。
@@ -234,8 +240,11 @@ _MAX_NESTED_KEYS = 8
 _MAX_KIND_CHARS = 48
 #: list 值元素数默认上限（通用纪律，保持不变）。
 _MAX_LIST_ITEMS = 8
-#: per-key list 上限覆写（selected_ids 专属，其余键仍走默认 8）。
-_LIST_ITEM_CAPS: Dict[str, int] = {"selected_ids": MAX_SELECTED_IDS_PAYLOAD}
+#: per-key list 上限覆写（selected_ids/categories 专属，其余键仍走默认 8）。
+_LIST_ITEM_CAPS: Dict[str, int] = {
+    "selected_ids": MAX_SELECTED_IDS_PAYLOAD,
+    "categories": MAX_CATEGORIES_PAYLOAD,
+}
 
 
 def spec_for(kind: str) -> KindSpec | None:
@@ -294,7 +303,7 @@ def normalize_payload(kind: str, payload: Any) -> Dict[str, Any] | None:
         ) > MAX_SELECTED_IDS_PAYLOAD
     if not out and not spec.allow_empty_payload:
         return None
-    budget = MAX_PAYLOAD_BYTES_SELECTION if is_selection_kind else MAX_PAYLOAD_BYTES
+    budget = MAX_PAYLOAD_BYTES_SELECTION if kind in WIDE_BUDGET_KINDS else MAX_PAYLOAD_BYTES
     blob = json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if len(blob.encode("utf-8")) > budget:
         return None

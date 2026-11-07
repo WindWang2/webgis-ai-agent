@@ -167,6 +167,11 @@ def derive_claimed_scope(
             **({"id_field": id_field[:64]} if isinstance(id_field, str) else {}),
             **_scope_disclosure(source, feature_ids),
         }
+        # SW-02：框选 bbox 谓词随选择上行（"这些学校/刚才框选的"作为空间
+        # 范围可解析——空间工具可用 extent 兜底而不必从 ids 反推）。
+        selection_bbox = _bbox4(source.get("bbox"))
+        if selection_bbox is not None:
+            claimed["bbox"] = selection_bbox
         if claimed["kind"] != "none":
             return claimed
 

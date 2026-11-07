@@ -72,17 +72,17 @@ afterEach(() => {
 });
 
 describe('emitChartSelectionChanged', () => {
-  it('carries layer/field/categories bounded to 8', () => {
+  it('carries layer/field/categories bounded to 20 (SW-02: aligned with selection-store)', () => {
     emitChartSelectionChanged({
       layerId: 'districts',
       field: 'type',
-      categories: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'],
+      categories: Array.from({ length: 24 }, (_, i) => `cat-${i}`),
     });
     expect(captured).toHaveLength(1);
     const event = captured[0];
     expect(event.kind).toBe('chart_selection_changed');
     expect(event.payload.layer_id).toBe('districts');
-    expect((event.payload.categories as string[]).length).toBe(8);
+    expect((event.payload.categories as string[]).length).toBe(20);
     expect(event.payload.action).toBe('select');
   });
 

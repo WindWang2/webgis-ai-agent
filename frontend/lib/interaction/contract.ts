@@ -105,6 +105,10 @@ export const MAX_EVENTS_PER_BATCH = 50;
  * + ids_truncated 披露（服务端权威复核）。 */
 export const MAX_SELECTED_IDS_EVENT = 50;
 
+/** SW-02：图表类别选择上行上限（= 后端 MAX_CATEGORIES_PAYLOAD
+ * = selection-store selected_categories ≤20）。 */
+export const MAX_CATEGORIES_EVENT = 20;
+
 /** 服务端 ack 单条裁决。 */
 export type InteractionVerdict =
   | 'accepted'

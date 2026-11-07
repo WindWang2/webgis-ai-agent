@@ -115,16 +115,17 @@ def test_selection_kinds_get_wider_byte_budget():
 
 
 def test_generic_lists_remain_capped_at_8():
-    """非 selected_ids 的通用 list（如 categories）仍守 ≤8 纪律。"""
+    """非覆写键的通用 list（如 field_names）仍守 ≤8 纪律
+    （selected_ids/categories 是 per-key 覆写，不放松通用面）。"""
     out = normalize_payload(
-        "chart_selection_changed", {
+        "feature_selected", {
             "layer_id": "schools",
-            "field": "district",
-            "categories": [f"cat-{i}" for i in range(20)],
+            "selected_ids": _ids(3),
+            "field_names": [f"field_{i}" for i in range(20)],
         }
     )
     assert out is not None
-    assert len(out["categories"]) == 8
+    assert len(out["field_names"]) == 8
 
 
 def test_matched_count_bounded_and_coerced():
@@ -191,3 +192,58 @@ def test_table_selection_same_range_semantics():
     )
     assert out is not None
     assert len(out["selected_ids"]) == 15
+
+
+# ── 3. SW-02 残余：chart categories 对齐 + bbox 谓词进 IR ────────────────
+
+
+def test_chart_categories_aligned_to_selection_store_bound():
+    """图表类别上行与 selection-store selected_categories ≤20 对齐。
+
+    现状（基线）：前端 emit 截 8 + 后端 list 面纪律 8 —— 图表 12 个类别
+    的联动对 Agent 只见 8 个。新语义：20 对齐 + 宽预算承载。
+    """
+    out = normalize_payload(
+        "chart_selection_changed", {
+            "layer_id": "schools",
+            "field": "district",
+            "categories": [f"cat-{i:02d}" for i in range(24)],
+        }
+    )
+    assert out is not None
+    assert len(out["categories"]) == 20
+
+
+def test_brush_bbox_predicate_whitelisted_and_claimed():
+    """框选 bbox 谓词进 IR："刚才框选的区域"作为空间范围可解析。"""
+    out = normalize_payload(
+        "feature_selected", {
+            "layer_id": "schools",
+            "selected_ids": _ids(5),
+            "matched_count": 5,
+            "bbox": [104.04, 30.65, 104.1, 30.71],
+        }
+    )
+    assert out is not None
+    assert out["bbox"] == [104.04, 30.65, 104.1, 30.71]
+    # 声称面合并 bbox（空间工具可用 extent 兜底）。
+    state = LedgerState()
+    event = {
+        "event_id": "evt-bbox-0001",
+        "client_instance_id": "tab-range0001",
+        "client_seq": 1,
+        "kind": "feature_selected",
+        "actor": "user",
+        "payload": {
+            "layer_id": "schools",
+            "selected_ids": _ids(5),
+            "matched_count": 5,
+            "bbox": [104.04, 30.65, 104.1, 30.71],
+        },
+    }
+    verdict = apply_event(state, event)
+    assert verdict.verdict == VERDICT_ACCEPTED, verdict
+    snapshot = project_interaction_snapshot(state.events)
+    claimed = derive_claimed_scope(snapshot, None)
+    assert claimed["bbox"] == [104.04, 30.65, 104.1, 30.71]
+    assert claimed["kind"] == "feature_ids"

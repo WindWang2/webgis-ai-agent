@@ -16,6 +16,7 @@ import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { getSelection } from '@/lib/selection/selection-store';
 import {
   INTERACTION_SCHEMA_VERSION,
+  MAX_CATEGORIES_EVENT,
   MAX_SELECTED_IDS_EVENT,
   type InteractionEventKind,
   type InteractionEventV1,
@@ -231,6 +232,10 @@ export function emitFeatureSelected(info: {
       ? { matched_count: Math.min(Math.floor(matchedCount), 10_000_000) }
       : {}),
     ...(selectedIds.length > 1 && matchedCount !== undefined ? { ids_truncated: truncated } : {}),
+    // SW-02：框选 bbox 谓词上行（6 位小数；服务端消费侧 _bbox4 数值校验）。
+    ...(info.bbox && info.bbox.every((v) => Number.isFinite(v))
+      ? { bbox: info.bbox.map((v) => Math.round(v * 1e6) / 1e6) }
+      : {}),
   });
 }
 
@@ -315,7 +320,8 @@ export function emitComparisonModeChanged(enabled: boolean, mode?: string): void
 // ── ADR-0285 D2 三连收 emitter（钩子：chart-panel onClick / table-panel
 //    行点选 / temporal controller settle→commitUserTemporal）────────────
 
-/** 图表类别选择（类别谓词，非要素 id 集；categories ≤8×32 字符）。 */
+/** 图表类别选择（类别谓词，非要素 id 集；categories ≤20×32 字符 ——
+ * SW-02：与 selection-store selected_categories ≤20 对齐，不再截 8）。 */
 export function emitChartSelectionChanged(info: {
   layerId: string;
   field?: string;
@@ -325,7 +331,7 @@ export function emitChartSelectionChanged(info: {
   const categories = (info.categories ?? [])
     .map((c) => String(c).slice(0, 32))
     .filter(Boolean)
-    .slice(0, 8);
+    .slice(0, MAX_CATEGORIES_EVENT);
   emitInteraction('chart_selection_changed', {
     layer_id: info.layerId,
     ...(info.field ? { field: info.field.slice(0, 64) } : {}),

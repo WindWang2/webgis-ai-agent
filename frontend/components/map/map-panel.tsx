@@ -1477,12 +1477,14 @@ export function MapPanel({
           datasetRef: brushRef?.startsWith('ref:') ? brushRef : undefined,
           selectedIds: projection.selected_ids,
           matchedCount: projection.matched_count,
+          bbox,
         })
       } else if (projection.matched_count > 0) {
         emitFeatureSelected({
           layerId: family,
           datasetRef: brushRef?.startsWith('ref:') ? brushRef : undefined,
           matchedCount: projection.matched_count,
+          bbox,
         })
       }
       if (!projection.id_field) {

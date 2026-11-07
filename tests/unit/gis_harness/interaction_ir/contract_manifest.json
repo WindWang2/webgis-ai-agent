@@ -1,5 +1,6 @@
 {
   "bounds": {
+    "max_categories_payload": 20,
     "max_events_per_batch": 50,
     "max_ledger_bytes": 98304,
     "max_ledger_events": 128,
@@ -83,6 +84,7 @@
       "authority": "observation",
       "coalesce": "none",
       "payload_keys": [
+        "bbox",
         "dataset_ref",
         "feature_id",
         "field_names",

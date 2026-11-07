@@ -47,9 +47,9 @@ def test_manifest_kind_specs_match_registry():
 
 def test_manifest_bounds_match_constants():
     from app.services.gis_harness.interaction_ir.contracts import (
-        MAX_EVENTS_PER_BATCH, MAX_LEDGER_BYTES, MAX_LEDGER_EVENTS,
-        MAX_PAYLOAD_BYTES_SELECTION, MAX_SELECTED_IDS_PAYLOAD,
-        MAX_TRACKED_CLIENTS,
+        MAX_CATEGORIES_PAYLOAD, MAX_EVENTS_PER_BATCH, MAX_LEDGER_BYTES,
+        MAX_LEDGER_EVENTS, MAX_PAYLOAD_BYTES_SELECTION,
+        MAX_SELECTED_IDS_PAYLOAD, MAX_TRACKED_CLIENTS,
     )
     assert _manifest()["bounds"] == {
         "max_events_per_batch": MAX_EVENTS_PER_BATCH,
@@ -59,6 +59,7 @@ def test_manifest_bounds_match_constants():
         "max_payload_bytes": MAX_PAYLOAD_BYTES,
         "max_payload_bytes_selection": MAX_PAYLOAD_BYTES_SELECTION,
         "max_selected_ids_payload": MAX_SELECTED_IDS_PAYLOAD,
+        "max_categories_payload": MAX_CATEGORIES_PAYLOAD,
     }
 
 
@@ -114,15 +115,14 @@ def test_normalize_payload_byte_budget():
     assert out is not None  # ~600B ≤ 4096B（选择 kind 宽预算内）
     blob = json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     assert len(blob.encode()) <= MAX_PAYLOAD_BYTES_SELECTION
-    # 非 selection kind 的 fat 载荷超预算仍整事件拒收（纪律不放松）。
-    # chart_selection_changed 不在 SELECTION_ID_KINDS：categories 8×128
-    # 字符 ≈1.1KB > 512B 通用预算 → 整事件拒收。
-    fat_chart = {
-        "layer_id": "C" * 128,
-        "field": "F" * 64,
-        "categories": [str(i) + "c" * 126 for i in range(8)],
+    # 非 wide-budget kind 的 fat 载荷超预算仍整事件拒收（纪律不放松）。
+    # layer_style_changed 不在 WIDE_BUDGET_KINDS：attribute_names 8×128
+    # 字符 ≈1.2KB > 512B 通用预算 → 整事件拒收。
+    fat_style = {
+        "layer_id": "L" * 128,
+        "attribute_names": [str(i) + "a" * 126 for i in range(8)],
     }
-    assert normalize_payload("chart_selection_changed", fat_chart) is None
+    assert normalize_payload("layer_style_changed", fat_style) is None
     # 边界内通过。
     ok = normalize_payload("feature_selected", {"feature_id": "x" * 100})
     assert ok is not None
