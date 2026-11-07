@@ -34,3 +34,13 @@
 - 修复：一行只读 passthrough；CLI 在 app import 前初始化离线环境；不重跑 Redis、不改锁。
 - 本地验证：30/30 场景通过（报告 `reports/g07/golden.json`）；focused **255 passed**；selection 全链 **11 passed**；CLI 子进程契约 1 passed；Ruff 通过。
 - 未验证：browser/live 均 not_run；#1999/#2001/#2003/#2005/#2006 保持开放，不作为本线修复成果。
+
+## Loop 4 — M4 故障注入与终态一致性（完成）
+
+- 输入：既有 10 类 replay faults、J7 settlement、#2009 锁修复、跨边界投影。
+- 决定：不重写锁/完结门；在只读投影补 typed terminal reasons 与重复/迟到/动态卸载/渲染/导出关联负例。
+- 代码差异：lock_lost/cancel/timeout、renderer_context_lost/tiles_missing、postgis_unavailable/export_failed、duplicate vs conflicting callback、dispatch_denials、late turn。
+- 失败：lock loss 误报 pass；WebGL/缺 tiles/export ref 误报 pass；动态卸载和重复冲突未检出；均先红。
+- 修复：终态原因先于 task_complete；render/export 独立裁决；相同重复=partial、冲突重复=fail；拒绝后不得完成。
+- 本地验证：新/相关 journey **20 passed**；既有 fault/lock/dynamic/usability **89 passed**；Mypy/Ruff 通过。
+- 限制：真实 Pi RPC 重连、真实 PostGIS/浏览器故障仍未运行；这些测试是录制证据与本地生产接缝的负例，不冒充线上 chaos。

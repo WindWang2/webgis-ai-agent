@@ -45,3 +45,11 @@
 | `pytest tests/unit/gis_harness/test_reliability_selection_scope.py` | 11 passed | normalize→projection→derive→validate 全链；含 ownership fail-closed |
 | `pytest tests/acceptance/gis_agent/test_reliability_cli.py` | 1 passed | 真实 CLI 子进程与 JSON 报告 |
 | `pytest tests/acceptance/gis_agent/test_reliability_golden.py::test_manifest_has_twelve_complete_oracle_pairs` | 1 passed | 12 类、期望 ID、科学不变量、focused path 完整 |
+
+## M4 实际执行
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pytest tests/harness_replay/test_journey_faults.py tests/harness_replay/test_journey_evidence.py tests/harness_replay/test_journey_diagnostic.py` | 20 passed | lock/cancel/timeout/disconnect、renderer/tiles/PostGIS/export、duplicate/late/dynamic tool |
+| `pytest tests/harness_replay/test_replay_faults.py tests/lab/test_lab_settlement.py tests/unit/test_nested_session_mutations.py tests/unit/test_pi_dynamic_surface.py tests/unit/test_pi_gis_usability_fixes.py` | 89 passed | 既有生产 seam；锁实现未改 |
+| Mypy journey/result_contracts + Ruff | 通过 | 类型/样式无回归 |
