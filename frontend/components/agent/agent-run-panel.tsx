@@ -10,13 +10,15 @@
  * - 产物（results registry，step_id 键）：状态/警告/图层绑定，点击直达
  *   结果工作台检视（provenance 在 registry 内，不建第二 lineage）；
  * - 地图效应：opsLog 图层类操作（add/remove/toggle/style/reorder）近 8 条；
- * 刷新：手动（不轮询 —— 投影端点是会话级快照）。
+ * 刷新：手动 + 事件驱动（SW-05：interaction ack / 情境失效广播经
+ *   projection-invalidations 通道 500ms 防抖刷新；会话身份复核，非轮询）。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { RefreshCw, Wrench, Package, Map as MapIcon, AlertTriangle, ListTree } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { getAnalysisGraph, type ExecutionNode } from '@/lib/api/analysis-graph';
 import { getSessionIdentity, subscribeSessionIdentity } from '@/lib/store/session-identity';
+import { subscribeSituationInvalidation } from '@/lib/interaction/projection-invalidations';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import type { MapToolId } from '@/lib/store/slices/toolSlice';
@@ -108,6 +110,23 @@ export function AgentRunPanel() {
   useEffect(() => {
     if (aiStatus === 'done') void refreshGraph();
   }, [aiStatus, refreshGraph]);
+
+  // SW-05：情境失效事件驱动刷新（interaction ack / 投影失效广播）——
+  // 面板从"手动快照"升级为事件驱动（同源 invalidations 通道，非轮询）。
+  // 只响应当前会话的失效；会话切换守卫在 refreshGraph 内（seq + 身份复核）。
+  useEffect(() => {
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = subscribeSituationInvalidation((sessionId) => {
+      const current = getSessionIdentity().sessionId;
+      if (!current || sessionId !== current) return;
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => { void refreshGraph(); }, 500);
+    });
+    return () => {
+      unsubscribe();
+      if (debounce) clearTimeout(debounce);
+    };
+  }, [refreshGraph]);
 
   const executionNodes = useMemo(
     () => (graph?.nodes ?? []).filter((n): n is ExecutionNode => n.kind === 'analysis').slice(0, 6),
