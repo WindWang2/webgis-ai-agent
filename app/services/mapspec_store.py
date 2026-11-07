@@ -247,7 +247,13 @@ class MapSpecStore:
         *,
         origin: str = "agent",
         actor: str = "mapspec_adapter",
+        task_scope: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """``task_scope``（G03 GD-05，可选）：``{place?, bbox?}`` 任务范围
+        声明——记录在 source 绑定（``task_scope_fingerprint``），重绑定时
+        与既有绑定对账；城市/视口切换 → 复用裁决 RECOMPUTE +
+        TASK_SCOPE_CHANGED（旧范围资格不得凭指纹复用）。缺省不记录、
+        不对账（向后兼容）。"""
         from app.services.spatial_meta_profiler import profile_geojson_source
         descriptor: Optional[Dict[str, Any]] = None
         if not isinstance(geojson_data, dict) and not (
@@ -388,7 +394,22 @@ class MapSpecStore:
         # 解析的 descriptor）经 evaluate_reuse_with_history 语义对账 → 有界
         # 复用裁决随 source 落图面（数据语义变了 → stale/recompute + 字段级
         # delta；首次绑定 / 证据缺席 → 无对账键，诚实缺席，绝不虚构裁决）。
+        # G03 GD-05：本次声明的 task_scope → 范围指纹记录 + 与旧绑定范围
+        # 对账（evaluate_scoped_reuse；城市切换 → RECOMPUTE/TASK_SCOPE_CHANGED）。
+        current_scope_fp = ""
+        if isinstance(task_scope, dict) and task_scope:
+            try:
+                from app.services.dataset_semantics.task_scope import (
+                    scope_fingerprint_from_task_scope,
+                )
+
+                current_scope_fp = scope_fingerprint_from_task_scope(task_scope)
+            except Exception:  # noqa: BLE001 — 范围指纹失败按未声明
+                current_scope_fp = ""
+            if current_scope_fp:
+                source["task_scope_fingerprint"] = current_scope_fp
         recorded_fp = ""
+        recorded_scope_fp = ""
         try:
             spec = await self.get_mapspec(session_id)
             prev_sources = (spec or {}).get("sources")
@@ -398,6 +419,7 @@ class MapSpecStore:
             )
             if isinstance(prev, dict):
                 recorded_fp = str(prev.get("descriptor_fingerprint") or "")
+                recorded_scope_fp = str(prev.get("task_scope_fingerprint") or "")
         except Exception:  # noqa: BLE001 — 读旧绑定失败按无记录（有痕）
             logger.warning(
                 "[mapspec_store] previous binding fingerprint read skipped",
@@ -409,13 +431,29 @@ class MapSpecStore:
                     evaluate_reuse_with_history,
                     get_dataset_semantic_store as _get_store,
                 )
+                from app.services.dataset_semantics.reuse import (
+                    evaluate_scoped_reuse,
+                )
 
                 reuse_store = _get_store()
                 current_rec = await reuse_store.get(session_id, ref_id)
-                decision = await evaluate_reuse_with_history(
+                scoped = evaluate_scoped_reuse(
                     recorded_fp, current_rec,
-                    store=reuse_store, session_id=session_id, dataset_key=ref_id,
+                    recorded_scope_fingerprint=recorded_scope_fp,
+                    current_scope_fingerprint=current_scope_fp,
                 )
+                if scoped.verdict == "recompute" and any(
+                    c == "TASK_SCOPE_CHANGED" for c in scoped.reason_codes
+                ):
+                    # 范围变化：数据指纹可能未变，但旧范围资格已过期 ——
+                    # 直接落 recompute 裁决（无需历史 delta 回查）。
+                    decision = scoped
+                else:
+                    decision = await evaluate_reuse_with_history(
+                        recorded_fp, current_rec,
+                        store=reuse_store, session_id=session_id,
+                        dataset_key=ref_id,
+                    )
                 if decision.verdict != "valid" or decision.delta is not None:
                     source["descriptor_reuse"] = decision.to_bounded_dict()
             except Exception:  # noqa: BLE001 — 对账失败按无键（不阻断制图链）

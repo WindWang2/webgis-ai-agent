@@ -31,6 +31,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -41,6 +42,29 @@ from app.services.data_profile.profiler import get_dataset_profiler
 logger = logging.getLogger(__name__)
 
 _DEDUP_META_KEY = "ingest_content_sha256"
+
+#: G03 GD-06：协作取消码（阶段边界检查；store 后取消先回滚孤儿 ref）。
+CODE_CANCELLED = "INGEST_CANCELLED"
+
+
+def _is_cancelled(cancel_event: Any) -> bool:
+    """取消判定：asyncio.Event / threading.Event / callable / None 兼容。"""
+    if cancel_event is None:
+        return False
+    if callable(cancel_event) and not hasattr(cancel_event, "is_set"):
+        try:
+            return bool(cancel_event())
+        except Exception:  # noqa: BLE001 — 取消面自身异常不放大失败
+            return False
+    is_set = getattr(cancel_event, "is_set", None)
+    return bool(is_set()) if callable(is_set) else False
+
+
+def _cancelled_result(result: "IngestResult") -> "IngestResult":
+    result.ok = False
+    result.error_code = CODE_CANCELLED
+    result.error = "ingest cancelled at phase boundary (idempotent retry via fingerprint dedup)"
+    return result
 
 
 @dataclass
@@ -56,6 +80,10 @@ class IngestResult:
     profile_summary: Dict[str, Any] = field(default_factory=dict)
     quality_summary: Dict[str, Any] = field(default_factory=dict)
     steps_completed: List[str] = field(default_factory=list)
+    # G03 GD-10：步级耗时观测（毫秒；{step: elapsed_ms}，最后一步含失败步）。
+    step_timings_ms: Dict[str, float] = field(default_factory=dict)
+    # G03 GD-10：端到端墙钟（毫秒）。
+    elapsed_ms: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -68,6 +96,8 @@ class IngestResult:
             "steps_completed": list(self.steps_completed),
             "profile": self.profile_summary or None,
             "quality": self.quality_summary or None,
+            "step_timings_ms": dict(self.step_timings_ms) or None,
+            "elapsed_ms": self.elapsed_ms or None,
         }
 
 
@@ -131,6 +161,7 @@ class IngestPipeline:
         dedup: bool = True,
         license: Optional[str] = None,
         attribution: Optional[str] = None,
+        cancel_event: Optional[Any] = None,
     ) -> IngestResult:
         """数据 → 会话产物（§二十五全流程；失败补偿回滚）。
 
@@ -138,7 +169,39 @@ class IngestPipeline:
         ——非空时透传 descriptor（dimension_provenance.license=observed）；
         空/缺省 = unknown，绝不虚构。元数据不入语义指纹（补填许可不误判
         stale），artifact metadata 如实登记。
+
+        ``cancel_event``（G03 GD-06）：协作取消（asyncio.Event 或返回布尔
+        的 callable）——在阶段边界检查；store 之后取消会先回滚 ref（无孤儿
+        产物），取消码 INGEST_CANCELLED；重试经指纹 dedup 幂等复用。
+
+        G03 GD-10：端到端墙钟与步级耗时如实记录在结果（不虚构速度）。
         """
+        _wall0 = time.monotonic()
+        result = await self._ingest_impl(
+            session_id, data, name=name, crs=crs, source_type=source_type,
+            logical_role=logical_role, prefix=prefix, materialize=materialize,
+            dedup=dedup, license=license, attribution=attribution,
+            cancel_event=cancel_event,
+        )
+        result.elapsed_ms = round((time.monotonic() - _wall0) * 1000, 2)
+        return result
+
+    async def _ingest_impl(
+        self,
+        session_id: str,
+        data: Any,
+        *,
+        name: str = "",
+        crs: str = "",
+        source_type: str = "inline",
+        logical_role: Optional[str] = None,
+        prefix: str = "ingest",
+        materialize: bool = False,
+        dedup: bool = True,
+        license: Optional[str] = None,
+        attribution: Optional[str] = None,
+        cancel_event: Optional[Any] = None,
+    ) -> IngestResult:
         result = IngestResult()
         if not session_id:
             result.error_code = "NO_SESSION"
@@ -152,6 +215,8 @@ class IngestPipeline:
             result.error = "only FeatureCollection payloads are ingestable here"
             return result
         result.steps_completed.append("detect")
+        if _is_cancelled(cancel_event):
+            return _cancelled_result(result)
 
         # 1b) G03 GD-09 恶意输入守卫：NaN/±Inf 坐标、超深结构、超大属性
         # 串——类型化拒绝发生在 store 之前（无 ref 铸造、无回滚对象）。
@@ -173,8 +238,12 @@ class IngestPipeline:
 
         # 2) Validate：载荷指纹（去重键）+ 基本形状（大载荷 O(n) 串行化
         # 与哈希卸载到线程 —— 不阻塞事件循环）。
+        _t = time.monotonic()
         fingerprint = await _asyncio.to_thread(compute_payload_fingerprint, data)
+        result.step_timings_ms["validate"] = round((time.monotonic() - _t) * 1000, 2)
         result.steps_completed.append("validate")
+        if _is_cancelled(cancel_event):
+            return _cancelled_result(result)
 
         from app.services.session_data import session_data_manager
 
@@ -191,6 +260,7 @@ class IngestPipeline:
         result.steps_completed.append("dedup-miss")
 
         # 4) Profile（有界）+ Quality
+        _t = time.monotonic()
         features = fc.get("features") if isinstance(fc.get("features"), list) else []
         declared_crs = _normalize_crs(
             crs
@@ -208,8 +278,11 @@ class IngestPipeline:
             source_fingerprint=fingerprint,
         )
         report = await asyncio.to_thread(run_quality_checks, profile)
+        result.step_timings_ms["profile"] = round((time.monotonic() - _t) * 1000, 2)
         result.steps_completed.append("profile")
         result.steps_completed.append("quality")
+        if _is_cancelled(cancel_event):
+            return _cancelled_result(result)  # store 之前：无孤儿 ref
 
         # 5) Store（ref 铸造；失败即终止，无回滚对象）
         try:
@@ -225,6 +298,12 @@ class IngestPipeline:
             return result
         result.ref_id = ref_id
         result.steps_completed.append("store")
+        if _is_cancelled(cancel_event):
+            # store 之后取消：回滚孤儿 ref（与 register 失败补偿同纪律）。
+            await self._rollback_ref(session_id, ref_id)
+            result.ref_id = ""
+            result.steps_completed.append("rollback-on-cancel")
+            return _cancelled_result(result)
 
         # 5b) Dataset semantic descriptor（ADR-0265）：语义契约铸造 + 有界持久化。
         # additive evidence —— descriptor 任一步失败只少一个指纹键，绝不阻断
