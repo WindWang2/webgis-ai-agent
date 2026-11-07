@@ -1,0 +1,52 @@
+{
+  "name": "box_select_20_range_faithful",
+  "description": "SW-02/J1 金标：框选 20 所学校（matched_count=20）→ 投影 selection 保留完整 20 个 id + matched_count=20 + ids_truncated=false —— 「选 20 分析 20」，UI 反馈与 Agent 事实一致（#2004 修复前投影只见 8 个）。",
+  "events": [
+    {
+      "event_id": "box20-faith-0001",
+      "client_instance_id": "tab-box20001",
+      "client_seq": 1,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [104.06, 30.66],
+        "zoom": 12
+      }
+    },
+    {
+      "event_id": "box20-faith-0002",
+      "client_instance_id": "tab-box20001",
+      "client_seq": 2,
+      "kind": "feature_selected",
+      "payload": {
+        "layer_id": "schools",
+        "dataset_ref": "ref:geojson-schools-cd",
+        "id_field": "osm_id",
+        "selected_ids": [
+          "sch-0001", "sch-0002", "sch-0003", "sch-0004", "sch-0005",
+          "sch-0006", "sch-0007", "sch-0008", "sch-0009", "sch-0010",
+          "sch-0011", "sch-0012", "sch-0013", "sch-0014", "sch-0015",
+          "sch-0016", "sch-0017", "sch-0018", "sch-0019", "sch-0020"
+        ],
+        "matched_count": 20,
+        "bbox": [104.04, 30.65, 104.08, 30.68]
+      }
+    }
+  ],
+  "expect": {
+    "verdicts": "all_accepted",
+    "projection": {
+      "selection": {
+        "layer_id": "schools",
+        "matched_count": 20,
+        "ids_truncated": false,
+        "selected_ids": [
+          "sch-0001", "sch-0002", "sch-0003", "sch-0004", "sch-0005",
+          "sch-0006", "sch-0007", "sch-0008", "sch-0009", "sch-0010",
+          "sch-0011", "sch-0012", "sch-0013", "sch-0014", "sch-0015",
+          "sch-0016", "sch-0017", "sch-0018", "sch-0019", "sch-0020"
+        ],
+        "bbox": [104.04, 30.65, 104.08, 30.68]
+      }
+    }
+  }
+}
