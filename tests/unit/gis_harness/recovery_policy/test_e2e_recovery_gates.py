@@ -102,8 +102,10 @@ async def test_e2e2_eligibility_gap_never_auto_retries(monkeypatch, tmp_path):
     r1 = await svc.dispatch(_tc("analyze_schools"), sid, set())
     assert r1.status == "error"
     rec = r1.raw_result["recovery"]
-    assert rec["diagnostic"]["disposition"] in (
-        "needs_user_data", "repairable")
+    # characterization 钉死：缺字段 → data_invalid + needs_user_data
+    # （既有 diagnose 的 data_error/missing required 词表映射）。
+    assert rec["diagnostic"]["reason"] == "data_invalid"
+    assert rec["diagnostic"]["disposition"] == "needs_user_data"
     assert rec["decision"]["auto_retry"] is False
     assert "needs_you=data" in r1.llm_payload
 
@@ -231,6 +233,64 @@ async def test_stop2_destructive_and_cancel_zero_actions(monkeypatch,
     assert dec.auto_retry is False
     assert dec.allowed_actions == ()
     assert dec.terminal is True
+
+    await session_data_manager.clear_session(sid)
+
+
+# ───────────── recovery.diagnostic.attribution 身份保留 ─────────────
+
+@pytest.mark.asyncio
+async def test_recovery_attribution_carries_identity(monkeypatch, tmp_path):
+    """统一错误分支的 attribution 如实保留本次调用已确证的身份：
+
+    - tool_call_id 恒来自 tc.id（双引擎同一入口）；
+    - capability 仅从 capability bind 的既有 evidence 真实键取
+      （rank_capability → capabilities[0]），缺席留空；
+    - turn_id 只在 current_turn_evidence() 在场时填 —— Pi 独立 HTTP
+      task 无 ContextVar → 诚实留空，不虚构。
+    """
+    import app.services.gis_harness.hotpath_convergence as hotpath
+    from app.lib.runtime.evidence import TurnEvidence, bind_turn_evidence
+    from app.services.gis_harness.hotpath_convergence.capability_bind import (
+        CapabilityBindOutcome,
+    )
+
+    sid = "e2e-attribution"
+    await session_data_manager.clear_session(sid)
+
+    async def fail(tool_name, tool_args_raw, session_id=None,
+                   executed_tools=None):
+        return {"success": False, "error": "HTTP 503 Service Unavailable"}
+
+    svc, _ = await _mk_svc(monkeypatch, tmp_path, fail)
+    monkeypatch.setattr(
+        hotpath, "bind_tool_capability",
+        lambda *a, **k: CapabilityBindOutcome(
+            decision=None,
+            evidence={"tool": "query_pois", "action": "allowed",
+                      "rank_capability": "poi_query", "rank": 0}),
+    )
+
+    # 段 1：turn evidence 在场（legacy 流任务路径）→ 三身份齐全
+    ev = TurnEvidence(request_id=None, session_id=sid, turn_id="turn-42",
+                      run_id=None)
+    with bind_turn_evidence(ev):
+        r = await svc.dispatch(_tc("query_pois", tc_id="call_attr"), sid, set())
+    assert r.status == "error"
+    attr = r.raw_result["recovery"]["diagnostic"]["attribution"]
+    assert attr["tool_call_id"] == "call_attr"
+    assert attr["capability"] == "poi_query"
+    assert attr["turn_id"] == "turn-42"
+
+    # 段 2：无 turn evidence（Pi 独立 HTTP task）→ turn_id 留空，
+    # 但 tool_call_id / capability 不受影响
+    r2 = await svc.dispatch(_tc("query_pois", {"q": "x"}, tc_id="call_attr2"),
+                            sid, set())
+    assert r2.status == "error"
+    attr2 = r2.raw_result["recovery"]["diagnostic"]["attribution"]
+    assert attr2["tool_call_id"] == "call_attr2"
+    assert attr2["capability"] == "poi_query"
+    assert attr2["turn_id"] == ""
 
     await session_data_manager.clear_session(sid)
 
