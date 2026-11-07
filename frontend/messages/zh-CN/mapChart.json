@@ -7,5 +7,7 @@
     "overLimit": "数据量超出聚合上限，视口统计不可用",
     "error": "视口统计获取失败",
     "loading": "视口统计中…"
-  }
+  },
+  "keyboardSelect": "选择类别（键盘）",
+  "keyboardSelectNone": "未选择（清除联动）"
 }

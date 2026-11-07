@@ -372,6 +372,47 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
             highlightedCategories={highlightedCategories}
             onSelectCategory={handleSelectCategory}
           />
+          {/* SW-08：键盘可达的类别选择 —— recharts SVG 无键盘路径，原生
+              select 提供 Tab/方向键/Enter 全等价入口；与点击同链
+              （publishSelection + IR 上行），空值项 = 清除选择。 */}
+          {handleSelectCategory && (displayChart.data?.length ?? 0) > 0 ? (
+            <label
+              className="mt-1 flex items-center gap-1.5 text-micro text-map-chrome-ink-muted"
+              data-testid="chart-category-keyboard-row"
+            >
+              <span className="shrink-0">{mc('keyboardSelect')}</span>
+              <select
+                data-testid="chart-category-keyboard-select"
+                className="min-w-0 flex-1 rounded-xs border border-map-chrome-edge bg-map-chrome-surface px-1 py-0.5 text-micro text-map-chrome-ink"
+                value={
+                  highlightedCategories?.[0]
+                  ?? (selection?.source === 'chart' && selectionMatchesLayer
+                    ? selection.selected_categories[0] ?? ''
+                    : '')
+                }
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (!value) {
+                    if (boundLayerId) {
+                      publishSelection('clear_selection', { source: 'chart', layer_id: boundLayerId });
+                      emitChartSelectionChanged({
+                        layerId: boundLayerId,
+                        field: selectionField || undefined,
+                        action: 'clear',
+                      });
+                    }
+                    return;
+                  }
+                  handleSelectCategory(value);
+                }}
+              >
+                <option value="">{mc('keyboardSelectNone')}</option>
+                {displayChart.data.map((d) => (
+                  <option key={String(d.name)} value={String(d.name)}>{String(d.name)}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {mvtAggregateMode && viewportAgg.status === 'ready' && (
             <div
               data-testid="chart-agg-evidence"
