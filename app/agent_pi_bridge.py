@@ -1709,6 +1709,25 @@ class PiBridge:
                 session_id, turn_id,
                 refusal.get("reason_code", ""), refusal.get("question", "")[:80],
             )
+        # PI-05（ADR-0286 D5）：非 clean 终态 → 撤销该 turn 名下排队中的
+        # durable job（晚到后台计算不得对着已取消的 turn 继续跑/提交）。
+        # never-raise：撤销失败绝不影响 settle 终态；clean/refused 不撤销
+        # （后台产物按 SSE background_job_ids 披露继续）。
+        if session_id and status in ("cancelled", "aborted", "failed", "interrupted"):
+            try:
+                from app.services.chat.pi_durable_cancel import (
+                    revoke_turn_durable_jobs,
+                )
+
+                await revoke_turn_durable_jobs(
+                    session_id, turn_id,
+                    reason=f"turn_settled_{status}",
+                )
+            except Exception:  # noqa: BLE001 — 防御层（模块内已 never-raise）
+                logger.debug(
+                    "[PiBridge] durable job revoke skipped session=%s turn=%s",
+                    session_id, turn_id, exc_info=True,
+                )
         if phase is not None:
             phase.record_terminal_status(status)
         return status
