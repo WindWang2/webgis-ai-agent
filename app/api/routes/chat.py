@@ -747,6 +747,15 @@ async def _ensure_pi_bridge_available(session_id: Optional[str] = None) -> bool:
     if candidate is None:
         return False
     if _bridge_alive(candidate):
+        # PI-03（ADR-0286 D4）：registry 代漂移在 turn 边界回收（动态注册的
+        # 新工具对下一 turn 可见，无需进程重启）。回收失败/延迟（在飞 turn）
+        # 时仍以当前 worker 服务本 turn（诚实可用——per-turn 激活面继续工作）。
+        try:
+            recycle_fn = getattr(candidate, "recycle_if_surface_stale", None)
+            if recycle_fn and callable(recycle_fn):
+                await recycle_fn()
+        except Exception:  # noqa: BLE001 — 增值回收绝不阻断 turn 准入
+            logger.warning("[chat] surface recycle check failed", exc_info=True)
         return True
     # Attempt lazy respawn if dead
     respawn_fn = getattr(candidate, "respawn_if_dead", None)

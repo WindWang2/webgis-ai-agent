@@ -1787,6 +1787,66 @@ class PiBridge:
 
     # ── Public API ──────────────────────────────────────────────
 
+    def surface_generation_stale(self) -> bool:
+        """PI-03（ADR-0286 D4）：registry 代漂移检测。
+
+        spawn dump 的 ``registry_generation``（rpc 客户端在 start() 记录）
+        与当前 runtime manifest 指纹不一致 → 已运行子进程的工具面落后于
+        registry（动态注册的新工具对模型不可见）。fail-open：无世代事实
+        （v2 dump / 探测失败 / kill switch 关闭）一律 False。
+        """
+        import os
+
+        if os.getenv("PI_SURFACE_HOT_RECYCLE", "1").strip().lower() in ("0", "false", "off", "no"):
+            return False
+        spawned = getattr(self._rpc, "spawn_surface_generation", None)
+        if not spawned:
+            return False
+        try:
+            from app.services.chat.pi_tool_spec import current_registry_generation
+
+            current = current_registry_generation()
+        except Exception:  # noqa: BLE001 — 观测面绝不阻断
+            return False
+        return bool(current) and current != spawned
+
+    async def recycle_if_surface_stale(self) -> bool:
+        """PI-03（ADR-0286 D4）：代漂移 → turn 边界回收 worker。
+
+        无在飞 turn 时 stop+start（下一次 spawn 重建 dump，新工具对下一
+        turn 可见——进程不重启）；有在飞 turn 时延迟（本 turn 用旧面跑完，
+        绝不杀活 turn）。返回 True 表示执行了回收。
+        """
+        if not self.surface_generation_stale():
+            return False
+        async with self._respawn_lock:
+            if not self.surface_generation_stale():  # 双检：并发下他人已回收
+                return False
+            if self._active_turn_sid is not None or self._lock.locked():
+                logger.info(
+                    "[PiBridge] Deferring surface recycle: a turn is still "
+                    "running on the stale-generation worker (session=%s)",
+                    self._active_turn_sid,
+                )
+                return False
+            logger.info(
+                "[PiBridge] Recycling Pi worker for surface generation drift "
+                "(registry tools changed since spawn)",
+            )
+            try:
+                await self.stop()
+                await self.start()
+            except Exception:  # noqa: BLE001 — 回收失败留给既有 lazy respawn 兜底
+                logger.exception("[PiBridge] surface recycle failed; lazy respawn will retry")
+                return False
+            try:
+                from app.services.chat.pi_surface_metrics import record_surface_recycle
+
+                record_surface_recycle("registry_generation_drift")
+            except Exception:  # noqa: BLE001
+                pass
+            return True
+
     async def start(self) -> None:
         """Start the Pi subprocess (delegates to the RPC client)."""
         await self._rpc.start()
@@ -2436,7 +2496,16 @@ class PiBridge:
                     self._release_turn_lease(lease)
                     await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                     rt_ev.mark_ended()
-                    emit_turn_summary(rt_ev)
+                    _turn_summary = emit_turn_summary(rt_ev)
+                    # PI-08（ADR-0286 D4）：TTFT 进进程级聚合（有界窗口）。
+                    try:
+                        from app.services.chat.pi_surface_metrics import record_timing
+
+                        _fe = (_turn_summary or {}).get("timing_ms", {}).get("first_event")
+                        if _fe is not None:
+                            record_timing("ttft_ms", _fe)
+                    except Exception:  # noqa: BLE001 — 聚合绝不阻断收口
+                        pass
                     # R10（ADR-0256）：env-gated 轨迹录制（默认关闸 no-op；
                     # never-raises；记录面绝不阻断 settle）——非流式 prompt 路径。
                     try:
@@ -3152,7 +3221,16 @@ class PiBridge:
                     else:
                         rt_ev.settle(Outcome.SUCCEEDED)
                     rt_ev.mark_ended()
-                    emit_turn_summary(rt_ev)
+                    _turn_summary = emit_turn_summary(rt_ev)
+                    # PI-08（ADR-0286 D4）：TTFT 进进程级聚合（有界窗口）。
+                    try:
+                        from app.services.chat.pi_surface_metrics import record_timing
+
+                        _fe = (_turn_summary or {}).get("timing_ms", {}).get("first_event")
+                        if _fe is not None:
+                            record_timing("ttft_ms", _fe)
+                    except Exception:  # noqa: BLE001 — 聚合绝不阻断收口
+                        pass
                     # R10（ADR-0256）：env-gated 轨迹录制（默认关闸 no-op；
                     # never-raises；只读收集本 turn 的 chain/summary/product
                     # 打包为离线重放 artifact）。记录面绝不阻断 settle。
