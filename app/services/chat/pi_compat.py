@@ -225,6 +225,7 @@ RUNTIME_MODE_REASONS = (
     "bridge_not_initialized",  # 桥对象未创建（import/spawn 失败）
     "vendor_entry_unbuilt",    # vendor dist 未构建（#400 静默降级根因）
     "pi_process_down",     # 桥在场但子进程不活（crash/OOM/坏扩展）
+    "probe_failed",        # 事实探测自身失败（/health 专用；真值未知）
 )
 
 

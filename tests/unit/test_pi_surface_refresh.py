@@ -259,9 +259,11 @@ async def test_bridge_turn_records_ttft(_metrics, monkeypatch):
 
     rpc.request = AsyncMock(side_effect=scripted)
     bridge = PiBridge(rpc=rpc)
-    _ = [ev async for ev in bridge.stream_prompt("hi", session_id="sess-ttft")]
-    _pkg_restore.teardown()
-    hks.reset_for_tests()
+    try:
+        _ = [ev async for ev in bridge.stream_prompt("hi", session_id="sess-ttft")]
+    finally:
+        _pkg_restore.teardown()
+        hks.reset_for_tests()
     snap = _metrics.snapshot()
     assert snap["timings"]["ttft_samples"] == 1
     assert snap["timings"]["ttft_p50_ms"] > 0

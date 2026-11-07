@@ -253,3 +253,23 @@ def test_pi_doctor_reports_runtime_mode():
     from app.services.chat.pi_compat import RUNTIME_MODES
 
     assert mode in RUNTIME_MODES
+
+
+def test_health_probe_failed_reason(monkeypatch):
+    """nP2-1：探测自身失败 → probe_failed 原因码（有界词表内，不误报
+    pi_disabled）。"""
+    client = _health_client(monkeypatch, dict(
+        enabled=True, bridge_present=True, alive=True, entry_built=True,
+        probe_ok=False,
+    ))
+    resp = client.get("/api/v1/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["agent_runtime_mode"] == "unavailable"
+    assert body["agent_runtime_reason"] == "probe_failed"
+
+
+def test_probe_failed_reason_in_bounded_vocabulary():
+    from app.services.chat.pi_compat import RUNTIME_MODE_REASONS
+
+    assert "probe_failed" in RUNTIME_MODE_REASONS

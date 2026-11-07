@@ -47,14 +47,20 @@ M0 实时审计（子代理 A 逐文件深读，证据 文件:行号 见 BASELIN
 
 ## Review 意见与清偿（Independent Review）
 
-- Reviewer：子代理 B（独立冷读，与实现者不同判断链），逐文件 review `git diff origin/master...HEAD`。
-- 结论与逐条清偿：见下方填充。
+- Reviewer：子代理 B（独立冷读，与实现者不同判断链），逐文件 review `git diff origin/master...HEAD`（含 7 项特别审查：去重集生命周期/resume 一致性、durable 撤销时长、pool 亲和、相位机早退收口、pi_doctor JSON 破坏面、legacy 零影响、投影预算）。
+- R1（986895304 时点）：**P0×0 / P1×3 / P2×10，需修复** → 逐条清偿（commit 50c517161）：
+  - `P1-1 回收失败仍返回可用→502` → chat 准入回收后复检 `_bridge_alive`，死 worker 走既有 lazy respawn/降级 + 回归测试
+  - `P1-2 回收 check-then-act 竞窗可杀在飞 turn` → recycle 折入 turn 锁临界区（1s 有界获取；锁序经全仓调用图核实 `_respawn_lock→_lock` 唯一向，无死锁）+ 回归测试
+  - `P1-3 durable 撤销无预算拖长锁持有` → `wait_for(PI_DURABLE_REVOKE_TIMEOUT_S=5s)`（与 abort RPC 同口径；常量可测）+ 超时测试
+  - P2×10 全清偿（门闩空串防御/probe_failed 原因码/pi_doctor breaking 标注/benchmark 真跑 start()/SQL 编译断言/deque 并发防护/docstring 措辞/契约幂等范围限定/J6 注释/怪表达式/TEST_MATRIX 对齐）
+- R2（50c517161 时点）：**P0×0 / P1×0 / P2(新)×3，放行** —— P1×3 认定实质清偿（级联完整/锁序无反向/预算同口径）；新 nP2×3 随手清偿 2.5 项（probe_failed 入有界词表+测试、契约句删除、teardown try/finally），nP2-3 的 helper 四处去重记为后续测试基建项。
+- 未清偿项：① `AnalysisTask (session_id, turn_id)` 复合索引（DB 迁移超出本方向所有权——jobs/gis_harness 域；5s 撤销预算已界损害，jobs lifecycle 终态不可迁移规则兜底晚到结果；建议后续方向处理）；② `_patch_pkg_settle_effects` 测试 helper 收敛到共享 conftest（测试基建重构，四处行为一致）；③ R2 附注：P1-2 的 1s 有界获取+临界区双检路径与 fast-path 预检行为等价，可选加固锁中途释放变体。
 
 ## 风险与回滚（Compatibility & Rollback）
 
 - 兼容性：全部 additive（HealthResponse 新可选字段、task_start 新键、pi_doctor JSON list→dict——仓库内无自动消费方（已 grep 核实）；seam 新参数带默认值，旧调用语义不变）。schema/DB 无迁移。
 - 回滚开关：`PI_SURFACE_HOT_RECYCLE=0`（关闭代漂移回收）；相位机/去重/撤销为默认行为，revert 对应单 commit 即可（W1/W2/W5 独立成 commit）。
-- 残余风险：① durable 撤销在 seam 内 await DB（有 try/except never-raise + 类型化 error 摘要；DB 慢只拖 settle 尾部，不影响 turn 语义）；② 代漂移回收的 stop+start 使该 worker 会话 vendor 上下文重建（与既有 respawn_if_dead 同机制）；③ 全栈旅程的跨线程 SSE 取消窗口在本 sandbox 不稳定 → 取消语义由确定性车道锁定（test_runtime_chaos_pi 16 项 + 单元级），已在契约文档 §11 诚实披露。
+- 残余风险：① durable 撤销在 seam 内 await DB（`wait_for` 5s 有界预算 + never-raise + 类型化 error 摘要；超时放行，晚到 job 由 lifecycle 终态不可迁移规则兜底；`(session_id, turn_id)` 复合索引为后续项——当前全表扫描被预算界定）；② 代漂移回收的 stop+start 使该 worker 会话 vendor 上下文重建（与既有 respawn_if_dead 同机制）；③ 全栈旅程的跨线程 SSE 取消窗口在本 sandbox 不稳定 → 取消语义由确定性车道锁定（test_runtime_chaos_pi 16 项 + 单元级），已在契约文档 §11 诚实披露。
 
 ## Out of Scope
 

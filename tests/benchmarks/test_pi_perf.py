@@ -278,10 +278,12 @@ class TestPiRuntimeTimingLanes:
         bridge = PiBridge(rpc=rpc)
 
         start = time.perf_counter()
-        _ = [ev async for ev in bridge.stream_prompt("Hi", session_id="sess-perf-lane")]
+        try:
+            _ = [ev async for ev in bridge.stream_prompt("Hi", session_id="sess-perf-lane")]
+        finally:
+            _pkg_restore.teardown()
+            hks.reset_for_tests()
         elapsed_ms = (time.perf_counter() - start) * 1000
-        _pkg_restore.teardown()
-        hks.reset_for_tests()
 
         assert elapsed_ms < 2000, f"scripted turn took {elapsed_ms:.1f}ms (blocking I/O?)"
         snap = psm.snapshot()

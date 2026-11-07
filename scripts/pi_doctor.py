@@ -496,8 +496,8 @@ def main() -> int:
 
     try:
         mode, reason = _runtime_mode_block()
-    except Exception as exc:  # noqa: BLE001 — 汇总面绝不阻断
-        mode, reason = "unavailable", f"probe_failed:{type(exc).__name__}"
+    except Exception:  # noqa: BLE001 — 汇总面绝不阻断；原因码有界（词表）
+        mode, reason = "unavailable", "probe_failed"
 
     if args.json:
         print(json.dumps(

@@ -76,8 +76,8 @@ CREATED → STARTING → RUNNING ⇄ TOOL_WAIT
   `tool_execution_end` turn 内首见放行、重复丢弃（metrics
   `duplicate_tool_end_dropped` + evidence warning）；重复 `agent_settled`
   只结算一次（相位门闩）。非流式 drain 循环不消费该事件类型（无去重必要）；
-  无 `toolCallId` 的畸形事件不进去重集（不可区分，按原样处理并记 warning
-  于重复发生时）。重放/resume 由路由层 ring buffer 承担，不经事件循环。
+  无 `toolCallId` 的畸形事件不进去重集（不可区分，按原样处理）。重放/resume
+  由路由层 ring buffer 承担，不经事件循环。
 - 断线重连：`Last-Event-ID`（turn 内单调 id）ring 重放 + gap marker；
   过期/不存在 buffer → 明确 error 事件（`resumed:false`）。
 - 披露不丢失：错误/警告/范围未验证信息跨 summary/details/stream 经
