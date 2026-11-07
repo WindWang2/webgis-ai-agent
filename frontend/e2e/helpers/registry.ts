@@ -52,7 +52,7 @@ export const JOURNEYS: JourneyEntry[] = [
     id: 'j4',
     file: 'journeys/j4-storymap-share.journey.ts',
     title: 'StoryMap 播放→分享链接→回放',
-    smoke: false,
+    smoke: true,
     modes: ['mock', 'real'],
     owner: 'quality-e2e-v9',
   },
@@ -86,7 +86,7 @@ export const JOURNEYS: JourneyEntry[] = [
     title: '移动档（≤768px）chat→分析→出图',
     // mock-only：mobile 档布局契约由 mock 档完整覆盖（fixtures 即传输层），
     // real 档无额外断言面 —— modes 是档面声明，不是覆盖率自评。
-    smoke: false,
+    smoke: true,
     modes: ['mock'],
     owner: 'quality-e2e-v9',
   },

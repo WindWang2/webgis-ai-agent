@@ -14,36 +14,18 @@ interface JourneyAuth {
   user: { id: string; username: string; role?: string };
 }
 const journeyAuth = new WeakMap<Page, JourneyAuth>();
+const journeyCredentials = new WeakMap<Page, { identifier: string; password: string }>();
 
 /** Test-runner credential state; never browser storage. */
 export function getJourneyAuth(page: Page): JourneyAuth | undefined {
   return journeyAuth.get(page);
 }
 
-async function prepareAuth(page: Page, auth: JourneyAuth): Promise<void> {
+function prepareAuth(page: Page, auth: JourneyAuth): void {
+  // Credentials stay in the runner until the real Account form installs them.
+  // In particular, never forge window.opener: MessageEvent.source requires a
+  // real WindowProxy in Chromium, and Story must use the production handshake.
   journeyAuth.set(page, auth);
-  // Story routes have no account panel. Emulate the documented opener
-  // handshake there, so the production receiver installs tokens in memory.
-  await page.addInitScript((seed) => {
-    if (window.location.pathname !== '/story' || window.opener) return;
-    const opener = {
-      postMessage(request: { type: string; sessionId: string; nonce: string }) {
-        if (request.type !== 'webgis:story-owner-token:request') return;
-        window.dispatchEvent(new MessageEvent('message', {
-          source: opener as unknown as Window,
-          origin: window.location.origin,
-          data: { type: 'webgis:story-owner-token:response', sessionId: request.sessionId,
-            nonce: request.nonce, token: null, accessToken: seed.accessToken, user: seed.user },
-        }));
-      },
-    };
-    Object.defineProperty(window, 'opener', { configurable: true, value: opener });
-  }, auth);
-}
-
-export async function copyJourneyAuth(source: Page, target: Page): Promise<void> {
-  const auth = journeyAuth.get(source);
-  if (auth) await prepareAuth(target, auth);
 }
 
 /**
@@ -82,14 +64,16 @@ export async function loginViaApi(page: Page): Promise<string> {
     access_token: string;
     user: { id: string; username: string; display_name?: string; roles?: string[] };
   };
-  await prepareAuth(page, { accessToken: tokens.access_token, user: tokens.user });
+  prepareAuth(page, { accessToken: tokens.access_token, user: tokens.user });
+  journeyCredentials.set(page, { identifier: user, password });
   // API fixture setup needs the same authenticated owner as the browser.
   return tokens.access_token;
 }
 
 /** Queue a mock login response; the app consumes it through its Account form. */
 export async function seedAuthUser(page: Page): Promise<void> {
-  await prepareAuth(page, {
+  journeyCredentials.delete(page);
+  prepareAuth(page, {
     accessToken: 'e2e-journey-token',
     user: { id: 'u-e2e', username: 'e2e', role: 'user' },
   });
@@ -103,19 +87,34 @@ export async function awaitShellReady(page: Page): Promise<void> {
   await expect(
     page.locator('textarea[aria-label="输入空间分析指令"]'),
   ).toBeVisible({ timeout: 30_000 });
+  await authenticateShell(page);
+}
+
+/** Sign in before opening a modal work surface (e.g. the mobile chat sheet).
+ * Does not require the composer to be visible: mobile starts with it closed. */
+export async function authenticateShell(page: Page): Promise<void> {
   const auth = journeyAuth.get(page);
   if (auth) {
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.locator('#settings-tab-account').click();
     const loginForm = page.locator('#auth-identifier');
     if (await loginForm.isVisible()) {
-      await page.route('**/api/v1/auth/login', (route) => route.fulfill({
-        status: 200, contentType: 'application/json',
-        body: JSON.stringify({ access_token: auth.accessToken, token_type: 'bearer', expires_in: 1800, user: auth.user }),
-      }), { times: 1 });
-      await loginForm.fill(auth.user.username);
-      await page.locator('#auth-password').fill('journey-fixture-login');
+      const credentials = journeyCredentials.get(page);
+      if (!credentials) {
+        await page.route('**/api/v1/auth/login', (route) => route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ access_token: auth.accessToken, token_type: 'bearer', expires_in: 1800, user: auth.user }),
+        }), { times: 1 });
+      }
+      const login = page.waitForResponse((response) =>
+        response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/auth/login');
+      await loginForm.fill(credentials?.identifier ?? auth.user.username);
+      await page.locator('#auth-password').fill(credentials?.password ?? 'journey-fixture-login');
       await page.getByRole('button', { name: '登录', exact: true }).click();
+      const response = await login;
+      expect(response.status()).toBe(200);
+      const tokens = await response.json() as { access_token: string; user: JourneyAuth['user'] };
+      prepareAuth(page, { accessToken: tokens.access_token, user: tokens.user });
       await expect(page.getByRole('button', { name: '退出登录', exact: true })).toBeVisible();
     }
     await page.getByRole('button', { name: '关闭设置', exact: true }).click();

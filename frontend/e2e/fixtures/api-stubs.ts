@@ -13,7 +13,7 @@
  *  - state transitions only happen when the journey performs the user action
  *    (cancel click → DELETE handler flips the job), never on a clock.
  */
-import type { Page } from 'playwright/test';
+import type { BrowserContext, Page } from 'playwright/test';
 import { TILE_PROVIDERS } from '../../lib/providers';
 import { analysisTurn, completingTurn, failingTurn, hangingTurn } from './sse';
 import { EMPTY_MVT_HEADERS, SAMPLE_GEOJSON, TINY_PNG } from './files';
@@ -252,7 +252,7 @@ export function raw(status: number, contentType: string, body: string | Buffer, 
  * Install every stub route. Must be awaited before page.goto — Playwright
  * routes only affect requests issued after installation.
  */
-export async function installJourneyStubs(page: Page, world: JourneyWorld): Promise<void> {
+export async function installJourneyStubs(page: Page | BrowserContext, world: JourneyWorld): Promise<void> {
   // Playwright uses last-registered-first-matched precedence. Keep the broad
   // external fallback first so typed fixtures and product APIs win over it.
   await page.route(/^https?:\/\/(?!localhost|127\.0\.0\.1)/, (route) =>
@@ -394,7 +394,7 @@ export async function installJourneyStubs(page: Page, world: JourneyWorld): Prom
       },
     });
   await api(/\/api\/v1\/chat\/sessions\/[^/]+(\?|$)/, async () => world.sessionDetail);
-  await api(/\/api\/v1\/chat\/sessions(\?|$)/, () => ({ sessions: [{ session_id: 's-j1', title: '旅程会话', updated_at: NOW, message_count: 1 }] }));
+  await api(/\/api\/v1\/chat\/sessions(\?|$)/, () => ({ sessions: [{ id: world.sessionDetail.session_id, title: world.sessionDetail.title, createdAt: Date.parse(NOW), messages: world.sessionDetail.messages }] }));
   await api(/\/api\/v1\/chat\/skills(\?|$)/, () => ({ skills: [] }));
 
   // ── tasks ────────────────────────────────────────────────────────────────

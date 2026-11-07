@@ -6,8 +6,8 @@
  * handleShare → clipboard). The share link opened in a fresh page must replay
  * the same story — that is the sharing contract.
  */
-import { test, expect } from 'playwright/test';
-import { copyJourneyAuth, defaultWorld, loginViaApi } from '../helpers/bootstrap';
+import { test, expect, type Page } from 'playwright/test';
+import { awaitShellReady, defaultWorld, getJourneyAuth, loginViaApi, seedAuthUser } from '../helpers/bootstrap';
 import { seedConversationViaApi } from '../helpers/real-chat';
 import { installJourneyStubs } from '../fixtures/api-stubs';
 import storySeed from '../fixtures/story-seed.json';
@@ -34,25 +34,81 @@ function storyWorld() {
   return world;
 }
 
-async function openStory(page: import('playwright/test').Page, sessionId: string): Promise<void> {
-  await page.goto(`/story?session_id=${sessionId}`);
+/** Restore the owner's session through History so the production responder
+ * is scoped to that exact session. No token-store or session-cursor writes. */
+async function restoreWorkspace(page: Page, sessionId: string): Promise<void> {
+  await page.goto('/');
+  await awaitShellReady(page);
+  const listing = page.waitForResponse((response) =>
+    response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/v1/chat/sessions');
+  await page.getByRole('button', { name: '历史记录', exact: true }).click();
+  const response = await listing;
+  expect(response.status()).toBe(200);
+  const { sessions } = await response.json() as { sessions: Array<{ id: string; title: string }> };
+  const index = sessions.findIndex((session) => session.id === sessionId);
+  expect(index, 'the seeded owner session must be listed').toBeGreaterThanOrEqual(0);
+  const drawer = page.locator('[role="dialog"][aria-labelledby="history-drawer-title"]');
+  const rows = drawer.getByRole('listitem');
+  await expect(rows).toHaveCount(sessions.length);
+  const selected = page.waitForResponse((item) =>
+    item.request().method() === 'GET' && new URL(item.url()).pathname === `/api/v1/chat/sessions/${sessionId}`);
+  await rows.nth(index).getByRole('button').first().click();
+  expect((await selected).status()).toBe(200);
+  await expect(drawer).not.toBeVisible();
+  await expect(page.getByText('15 分钟等时圈', { exact: false }).first()).toBeVisible();
+}
+
+/** A real UI-created popup supplies a real WindowProxy as message source. */
+async function openStory(page: Page, sessionId: string): Promise<Page> {
+  await page.keyboard.press('ControlOrMeta+k');
+  await page.getByTestId('command-palette-input').fill('在故事视图打开当前会话');
+  const popup = page.waitForEvent('popup');
+  const sessionResponse = page.context().waitForEvent('response', { predicate: (response) =>
+    response.request().method() === 'GET' && new URL(response.url()).pathname === `/api/v1/chat/sessions/${sessionId}` });
+  await page.getByRole('option', { name: /在故事视图打开当前会话/ }).click();
+  const story = await popup;
+  const response = await sessionResponse;
+  expect(response.request().frame().page()).toBe(story);
+  expect(response.request().headers().authorization).toBe(`Bearer ${getJourneyAuth(page)!.accessToken}`);
+  expect(response.status()).toBe(200);
+  expect(await story.opener()).toBe(page);
+  await expectStory(story);
+  return story;
+}
+
+async function expectStory(page: Page): Promise<void> {
   if (MODE === 'real') {
-    // The backend compiler replaces the local-message fallback asynchronously.
-    // Assert the stable compiled view, not headings that briefly appear before it.
+    // Assert the stable compiled view, not transient local fallback headings.
     await expect(page.locator('[data-story-narrator]')).toBeVisible({ timeout: 20_000 });
   }
-  // Both the local mock view and the compiled real view retain this heading.
-  await expect(
-    page.getByRole('heading', { name: '商业 POI 空间分布' }),
-  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: '商业 POI 空间分布' })).toBeVisible({ timeout: 20_000 });
+}
+
+/** The copied link is owner-bound, not a public authorization grant. Reload it
+ * in another UI-opened Story tab; the owner's workspace performs a new real
+ * handshake after navigation (no credential copy, URL token, or fake opener). */
+async function replayLink(workspace: Page, sessionId: string, clip: string): Promise<void> {
+  const replay = await openStory(workspace, sessionId);
+  const sessionResponse = replay.waitForResponse((response) =>
+    response.request().method() === 'GET' && new URL(response.url()).pathname === `/api/v1/chat/sessions/${sessionId}`);
+  await replay.goto(clip);
+  const response = await sessionResponse;
+  expect(response.request().headers().authorization).toBe(`Bearer ${getJourneyAuth(workspace)!.accessToken}`);
+  expect(response.status()).toBe(200);
+  await expectStory(replay);
+  await expect(replay.getByRole('heading', { name: '15 分钟等时圈' })).toBeVisible();
+  await replay.close();
 }
 
 test.describe('journey-4 StoryMap 分享回放', () => {
-  test('mock：播放推进 → 分享复制链接 → 新开链接可回放', async ({ page }) => {
+  test('@smoke mock：真实 opener 认证 → 播放推进 → 分享链接回放', async ({ page: workspace }) => {
     test.skip(MODE !== 'mock', 'mock-mode variant');
     const world = storyWorld();
-    await installJourneyStubs(page, world);
-    await openStory(page, SESSION_ID);
+    await seedAuthUser(workspace);
+    // Context routes cover the UI-created popup from its very first request.
+    await installJourneyStubs(workspace.context(), world);
+    await restoreWorkspace(workspace, SESSION_ID);
+    const page = await openStory(workspace, SESSION_ID);
 
     // 播放：逐条自动推进（播放按钮切换为暂停即处于播放态）。
     const play = page.locator('button[aria-label="播放"]').first();
@@ -70,28 +126,22 @@ test.describe('journey-4 StoryMap 分享回放', () => {
     expect(clip).toContain('/story');
     expect(clip).toContain(`session_id=${SESSION_ID}`);
 
-    // 回放：分享链接在全新页面打开 → 同一会话内容再次渲染。
-    const replay = await page.context().newPage();
-    await copyJourneyAuth(page, replay);
-    await installJourneyStubs(replay, storyWorld());
-    await replay.goto(clip);
-    await expect(
-      replay.getByRole('heading', { name: '商业 POI 空间分布' }),
-    ).toBeVisible({ timeout: 20_000 });
-    await replay.close();
+    await replayLink(workspace, SESSION_ID, clip);
+    await page.close();
   });
 
-  test('real：播放推进 → 分享链接回放', async ({ page }) => {
+  test('real：播放推进 → 分享链接回放', async ({ page: workspace }) => {
     test.skip(MODE !== 'real', REAL_ONLY_REASON);
     // Self-seeding: create the story session through the real (stub-backed)
     // chat API — two turns produce user+assistant messages server-side; the
     // scripted LLM answers with deterministic markdown.
-    const accessToken = await loginViaApi(page);
+    const accessToken = await loginViaApi(workspace);
     // The compiler uses first/last message for the two-chapter fallback. Keep
     // the first prompt's heading on its own markdown line in both views.
     const turns = storySeed.map((turn) => turn.message);
-    const sessionId = await seedConversationViaApi(page.request, accessToken, turns);
-    await openStory(page, sessionId);
+    const sessionId = await seedConversationViaApi(workspace.request, accessToken, turns);
+    await restoreWorkspace(workspace, sessionId);
+    const page = await openStory(workspace, sessionId);
     await expect(page.getByRole('heading', { name: '15 分钟等时圈' })).toBeVisible();
     const play = page.locator('button[aria-label="播放"]').first();
     await expect(play).toBeEnabled({ timeout: 15_000 });
@@ -108,14 +158,17 @@ test.describe('journey-4 StoryMap 分享回放', () => {
     // guaranteed red (or a vacuous pass if the constant ever leaked into real).
     expect(clip).toContain('/story');
     expect(clip).toContain(`session_id=${sessionId}`);
-    const replay = await page.context().newPage();
-    await copyJourneyAuth(page, replay);
-    await replay.goto(clip);
-    await expect(replay.locator('[data-story-narrator]')).toBeVisible({ timeout: 20_000 });
-    await expect(
-      replay.getByRole('heading', { name: '商业 POI 空间分布' }),
-    ).toBeVisible({ timeout: 20_000 });
-    await expect(replay.getByRole('heading', { name: '15 分钟等时圈' })).toBeVisible();
-    await replay.close();
+    await replayLink(workspace, sessionId, clip);
+    // A copied URL alone must not bypass session ownership.
+    const outsider = await workspace.context().newPage();
+    const denied = outsider.waitForResponse((response) =>
+      response.request().method() === 'GET' && new URL(response.url()).pathname === `/api/v1/chat/sessions/${sessionId}`);
+    await outsider.goto(clip);
+    const response = await denied;
+    expect(response.request().headers().authorization).toBeUndefined();
+    expect([401, 403, 404]).toContain(response.status());
+    await expect(outsider.getByRole('heading', { name: '商业 POI 空间分布' })).not.toBeVisible();
+    await outsider.close();
+    await page.close();
   });
 });
