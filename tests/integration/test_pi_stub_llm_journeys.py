@@ -201,9 +201,9 @@ TURN_SCRIPTS = {
     ],
     "重新开始": [{"text": "重新开始：这是取消后的新一轮，未携带上一轮结果。"}],
     "这是一条普通问答": [{"text": "这是一条不涉及地图的普通问答。"}],
-    # J6（PI-09）：框选后的邻近性分析 —— 长尾工具经 webgis_execute 代理
-    # （PI-03 代理车道），nearest_facility 双集合最近邻 + 内联
-    # FeatureCollection 驱动真实空间计算（离地铁站距离，米）。
+    # J6（PI-09）：wrap-native 负面 oracle —— 注册面（dump 超集）工具嵌套
+    # 进 webgis_execute 会被扩展侧双端拒绝（"do not wrap native tool"）；
+    # 真实邻近计算在 J6b 裸名路径完成（见下）。
     "框选这块的学校离地铁站多远": [
         {"tool": "webgis_map_intent", "args": {"query": "成都学校到地铁站邻近性"}},
         {"tool": "webgis_execute", "args": {

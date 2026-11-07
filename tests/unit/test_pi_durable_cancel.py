@@ -277,7 +277,7 @@ def test_forged_turn_token_fails_signature():
     # 篡改 token
     assert verify_turn_token(secret, real[:-4] + "aaaa") is None
     # 过期（max_age 之外）：拒绝
-    assert verify_turn_token(secret, real, now=__import__("time").time.__self__ and 0) is None
+    assert verify_turn_token(secret, real, now=0) is None
 
 
 # ── W5-4：短预算边界（~100ms 级）──────────────────────────────────────────
@@ -304,3 +304,58 @@ async def test_short_budget_cancel_honest_terminal(_seam_env, monkeypatch):
         await bridge.prompt("hi", session_id="sess-short")
     assert _seam_env.kernel_ends[-1][1] == "failed"
     assert len(_seam_env.revoked) == 1  # failed settle 也撤销 durable job
+
+
+# ── review P2-5 / P1-3：SQL 过滤断言 + 撤销有界预算 ────────────────────────
+
+@pytest.mark.asyncio
+async def test_revoke_sql_filters_session_and_turn(monkeypatch):
+    """P2-5：查询语句本身限定 (session_id, turn_id) —— 不只依赖 Python 侧防御。"""
+    import app.services.chat.pi_durable_cancel as pdc
+
+    captured: list = []
+
+    class FakeRow:
+        def __init__(self):
+            self.id = 9
+            self.status = "queued"
+            self.turn_id = "turn-a"
+            self.session_id = "sess-1"
+
+    class FakeResult:
+        def scalars(self):
+            return SimpleNamespace(all=lambda: [FakeRow()])
+
+    class FakeDB:
+        async def execute(self, stmt):
+            captured.append(stmt)
+            return FakeResult()
+
+    async def _fake_cancel(db, job_id):
+        return True, "cancelling"
+
+    monkeypatch.setattr(pdc.DurableJobStore, "request_cancel", staticmethod(_fake_cancel))
+    await pdc.revoke_turn_durable_jobs("sess-1", "turn-a", db=FakeDB())
+    assert captured, "query not executed"
+    compiled = captured[0].compile(compile_kwargs={"literal_binds": True})
+    sql = str(compiled)
+    assert "session_id" in sql and "turn_id" in sql
+    assert "sess-1" in sql and "turn-a" in sql  # literal binds 内联了两列过滤值
+
+
+@pytest.mark.asyncio
+async def test_seam_revoke_bounded_by_timeout(_seam_env, monkeypatch):
+    """P1-3：撤销被 wait_for 有界预算包裹 —— 超时放行 settle，不悬挂。"""
+    import app.services.chat.pi_durable_cancel as pdc
+
+    monkeypatch.setattr(bridge_mod, "PI_DURABLE_REVOKE_TIMEOUT_S", 0.05)
+
+    async def _slow_revoke(*a, **k):
+        await asyncio.sleep(2.0)
+
+    monkeypatch.setattr(pdc, "revoke_turn_durable_jobs", _slow_revoke)
+    rpc = _make_rpc()
+    bridge = PiBridge(rpc=rpc)
+    # 撤销慢于 0.05s 预算 → settle 仍按期完成（cancelled），不被 DB 拖住
+    status = await _seam_call(bridge, cancelled=True)
+    assert status == "cancelled"

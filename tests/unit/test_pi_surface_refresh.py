@@ -265,3 +265,48 @@ async def test_bridge_turn_records_ttft(_metrics, monkeypatch):
     snap = _metrics.snapshot()
     assert snap["timings"]["ttft_samples"] == 1
     assert snap["timings"]["ttft_p50_ms"] > 0
+
+
+# ── review P1-1/P1-2：回收路径的回归锁 ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_recycle_failure_keeps_worker_alive_checked(_metrics, monkeypatch):
+    """P1-1：回收 stop 成功但 start 失败 → worker 死；调用方（chat 准入）必须
+    复检活性而非沿用回收前的 True。本测试锁 bridge 侧行为：recycle 返回
+    False 且 worker 处于 stopped 状态（不复活）。"""
+    from app.agent_pi_bridge import PiBridge
+
+    monkeypatch.setattr(
+        "app.services.chat.pi_tool_spec.current_registry_generation",
+        lambda: "gen-2",
+    )
+    rpc = _make_rpc(spawn_generation="gen-1")
+
+    async def _start_boom():
+        raise RuntimeError("spawn failed")
+
+    rpc.start = AsyncMock(side_effect=_start_boom)
+    bridge = PiBridge(rpc=rpc)
+    recycled = await bridge.recycle_if_surface_stale()
+    assert recycled is False
+    rpc.stop.assert_awaited()  # stop 已发生
+
+
+@pytest.mark.asyncio
+async def test_recycle_defers_when_turn_lock_held(_metrics, monkeypatch):
+    """P1-2：turn 锁被持（并发准入的 turn 在飞/刚起步）→ 有界等待超时 →
+    延迟回收，绝不 stop 在飞 turn 的 worker。"""
+    from app.agent_pi_bridge import PiBridge
+
+    monkeypatch.setattr(
+        "app.services.chat.pi_tool_spec.current_registry_generation",
+        lambda: "gen-2",
+    )
+    rpc = _make_rpc(spawn_generation="gen-1")
+    bridge = PiBridge(rpc=rpc)
+    bridge._active_turn_sid = None
+    async with bridge._lock:
+        # 持锁模拟在飞 turn；_active_turn_sid 置空以证明守卫来自锁本身
+        recycled = await bridge.recycle_if_surface_stale()
+    assert recycled is False
+    rpc.stop.assert_not_awaited()

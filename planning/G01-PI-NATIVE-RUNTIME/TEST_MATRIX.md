@@ -43,8 +43,8 @@
 
 | # | Oracle | 验证 |
 |---|---|---|
-| W4-1 | registry 世代变化 → 下一次 spawn 使用新 dump（含新工具） | 代际计数器 |
-| W4-2 | 未变化世代不重建 dump（缓存命中） | |
+| W4-1 | registry 世代变化 → turn 边界回收 worker，下一次 spawn 重建 dump（新工具对下一 turn 可见） | recycle 单元测试（R1 复审后对齐实现语义） |
+| W4-2 | 未变化世代不回收；kill switch/无世代事实 fail-open | 同上 |
 | W4-3 | TTFT/冷热启动/事件去重计数进 pi_surface_metrics.snapshot() 聚合 | |
 | W4-4 | 冷启动（spawn→ready）与热启动（复用）延迟车道有量化断言（mock RPC 上界） | benchmark 车道 |
 

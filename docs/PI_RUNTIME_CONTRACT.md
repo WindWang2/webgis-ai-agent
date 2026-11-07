@@ -72,9 +72,12 @@ CREATED → STARTING → RUNNING ⇄ TOOL_WAIT
 
 - RPC→SSE：`map_event_to_sse` 纯函数零状态；`agent_settled` 是唯一终判
   （`agent_end` 非终——willRetry/compaction 续跑）。
-- **幂等**：同一 `toolCallId` 的 `tool_execution_end` turn 内首见放行、重复
-  丢弃（metrics `duplicate_tool_end_dropped` + evidence warning）；重复
-  `agent_settled` 只结算一次（相位门闩）。
+- **幂等（SSE 泵送路径，即 stream 事件循环）**：同一 `toolCallId` 的
+  `tool_execution_end` turn 内首见放行、重复丢弃（metrics
+  `duplicate_tool_end_dropped` + evidence warning）；重复 `agent_settled`
+  只结算一次（相位门闩）。非流式 drain 循环不消费该事件类型（无去重必要）；
+  无 `toolCallId` 的畸形事件不进去重集（不可区分，按原样处理并记 warning
+  于重复发生时）。重放/resume 由路由层 ring buffer 承担，不经事件循环。
 - 断线重连：`Last-Event-ID`（turn 内单调 id）ring 重放 + gap marker；
   过期/不存在 buffer → 明确 error 事件（`resumed:false`）。
 - 披露不丢失：错误/警告/范围未验证信息跨 summary/details/stream 经
@@ -108,6 +111,9 @@ CREATED → STARTING → RUNNING ⇄ TOOL_WAIT
   native**（`agent_runtime` 徽章与 mode 一致）。
 - `pi_doctor` 6 域（vendor/build/extension/surface/rpc/env）；Docker 无凭据
   启动经 `--offline` + env stub 验真（build 缺失 FAIL 而非静默绿）。
+  **breaking（本 PR）**：`--json` 顶层从 list 变为
+  `{"runtime_mode": {...}, "domains": [...]}`（仓内无旧格式消费方，grep
+  核实；仓外消费者需按新结构解析）。
 - 测试：`test_pi_runtime_mode_disclosure.py` / `test_pi_status_fail_closed.py`。
 
 ## 8. 安全边界（PI-07）

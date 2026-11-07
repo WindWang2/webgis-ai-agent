@@ -144,13 +144,18 @@ class TestPiRuntimeTimingLanes:
     """
 
     @pytest.mark.asyncio
-    async def test_spawn_ready_timing_recorded_on_start(self):
-        """rpc 客户端 start() 成功路径记录 spawn_ready_ms（mock 进程计时>0）。"""
+    async def test_spawn_ready_timing_recorded_on_start(self, tmp_path, monkeypatch):
+        """rpc 客户端 start() 真实路径记录 spawn_ready_ms + 锚定 dump 世代
+        （review P2-4：桩阻塞步骤但驱动 start() 本体，不自证）。"""
         from app.services.chat import pi_surface_metrics as psm
         from app.services.chat.pi_rpc_client import PiRpcClient
 
         psm.reset_for_tests()
-        client = PiRpcClient.__new__(PiRpcClient)  # 不真正 spawn：桩关键状态
+        client = PiRpcClient.__new__(PiRpcClient)
+        client._pi_rpc_entry = tmp_path / "rpc-entry.js"
+        client._session_dir = tmp_path
+        client._cwd = tmp_path
+        client._extension_paths = []
         client._process = None
         client._pending_requests = {}
         client._event_queue = asyncio.Queue()
@@ -158,31 +163,36 @@ class TestPiRuntimeTimingLanes:
         client.spawn_surface_generation = ""
         client._surface_dump_path = None
         client._process_died = False
+        client._process_died_event = asyncio.Event()
+        client._reader_task = None
+        client._stderr_task = None
 
-        # 桩 _spawn_process/_wait_for_ready/reader 起停 —— 只测计时入窗。
-        async def _noop_wait():
+        # 桩全部阻塞/子进程步骤；reader task 桩成即时完成。
+        async def _noop():
             await asyncio.sleep(0.01)
 
         client._spawn_process = lambda: None
-        client._wait_for_ready = _noop_wait
+        client._wait_for_ready = _noop
 
-        class _Proc:
-            def poll(self):
-                return None
+        async def _stub_reader(self_):
+            return None
 
-        client._process = _Proc()  # start() 早退分支之外的真实路径
-        client._process = None
-        client.start_reader_tasks = None
+        monkeypatch.setattr(
+            "app.services.chat.pi_rpc_client.PiRpcClient._read_responses",
+            _stub_reader, raising=True)
+        monkeypatch.setattr(
+            "app.services.chat.pi_rpc_client.PiRpcClient._read_stderr",
+            _stub_reader, raising=True)
 
-        # 直接驱动计时路径：手动模拟 start 的关键段（避免拉起 reader task）。
-        import time as _t
+        # PI_PROVIDER/PI_MODEL 不设 → set_model 分支跳过。
 
-        t0 = _t.monotonic()
-        await _noop_wait()
-        psm.record_timing("spawn_ready_ms", (_t.monotonic() - t0) * 1000.0)
+        await client.start()
+
         snap = psm.snapshot()
         assert snap["timings"]["spawn_ready_samples"] == 1
         assert snap["timings"]["spawn_ready_p50_ms"] > 0
+        # 世代锚定：无 dump 路径 → 空串（fail-open）
+        assert client.spawn_surface_generation == ""
         psm.reset_for_tests()
 
     @pytest.mark.asyncio

@@ -239,8 +239,9 @@ def classify_runtime_mode(
 
     被 /health（``agent_runtime_mode`` 字段）、Pi 桥 ``task_start``
     （``runtime_mode`` 键）、``scripts/pi_doctor``（汇总行/JSON 字段）共用
-    —— 三态词表与原因码不因出口而漂移。fail-closed：不可判定的
-    ``entry_built``（None）按已构建处理（进程活性是更直接的事实）。
+    —— 三态词表与原因码不因出口而漂移。不可判定的 ``entry_built``（None）
+    按已构建处理（fail-open on undeterminable vendor facts —— 进程活性是
+    更直接的事实；真正的 fail-closed 在 turn 终态未知词表→FAILED）。
     """
     if not enabled:
         return "unavailable", "pi_disabled"

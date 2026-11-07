@@ -136,10 +136,21 @@ def _percentile(sorted_vals: list, q: float) -> float:
     return sorted_vals[idx]
 
 
+def _snapshot_list(seq) -> list:
+    """review P2-6：deque 并发 append 与读侧迭代可抛 mutated-during-iteration
+    —— 捕获后重试一次（bounded deque，两次仍失败按当前快照空窗处理）。"""
+    for _ in range(2):
+        try:
+            return list(seq)
+        except RuntimeError:
+            continue
+    return []
+
+
 def _timings_snapshot() -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for kind in TIMING_KINDS:
-        vals = sorted(_timing_samples.get(kind, ()))
+        vals = sorted(_snapshot_list(_timing_samples.get(kind, ())))
         short = kind[:-3] if kind.endswith("_ms") else kind  # "ttft_ms" → "ttft"
         out[f"{short}_samples"] = len(vals)
         if vals:
@@ -179,7 +190,7 @@ def snapshot() -> Dict[str, Any]:
         round(out["proxy_wrapped"] / total, 4) if total else 0.0
     )
     out["last_surface_projection"] = dict(_last_surface)
-    out["recent_rejects"] = list(_reject_samples)
+    out["recent_rejects"] = _snapshot_list(_reject_samples)
     # PI-08（ADR-0286 D4）：时延聚合（有界窗口百分位）。
     out["timings"] = _timings_snapshot()
     return out

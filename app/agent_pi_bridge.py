@@ -1247,6 +1247,10 @@ _TURN_ABORT_SOURCES_MAX = 64
 #: system/policy 停止属 aborted 语义 —— models.TurnStatus 词表注释）。
 _ABORT_SOURCE_STATUS = {"user": "cancelled", "system": "aborted", "policy": "aborted"}
 
+#: PI-05（review P1-3）：settle seam 内 durable job 撤销的有界预算（与
+#: abort RPC 的 5s 同款；DB 慢/挂不得拖长 turn 锁持有）。
+PI_DURABLE_REVOKE_TIMEOUT_S = 5.0
+
 
 def record_turn_abort_source(turn_id: str, source: str) -> None:
     """Record why a turn is being aborted (bounded; latest source wins).
@@ -1614,11 +1618,15 @@ class PiBridge:
 
         if phase is not None and not phase.begin_settlement():
             # 第二次结算：直接返回首次记录的 kernel status（no-op）。
+            # review P2-1：首次结算仍在途（尚未 record_terminal_status）时
+            # last_settlement_status 为空 —— 防御性回落 failed（空串会被
+            # 下游 else 分支误判成 SUCCEEDED），绝不冒充成功。
+            _recorded = phase.last_settlement_status or "failed"
             logger.warning(
                 "[PiBridge] duplicate settle blocked by phase latch turn=%s "
-                "(recorded status=%r)", turn_id, phase.last_settlement_status,
+                "(recorded status=%r)", turn_id, _recorded,
             )
-            return phase.last_settlement_status
+            return _recorded
 
         abort_source = pop_turn_abort_source(turn_id)
         if phase is not None and (cancelled or abort_source):
@@ -1714,14 +1722,27 @@ class PiBridge:
         # never-raise：撤销失败绝不影响 settle 终态；clean/refused 不撤销
         # （后台产物按 SSE background_job_ids 披露继续）。
         if session_id and status in ("cancelled", "aborted", "failed", "interrupted"):
+            # review P1-3：撤销有界预算（与 abort RPC 的 5s 同款）—— DB 慢/挂
+            # 时不得拖长 turn 锁持有与 SSE 生成器收口；超时放弃本轮撤销（剩余
+            # 非终态 job 由 lifecycle 终态不可迁移规则兜底，晚到结果不得提交）。
             try:
                 from app.services.chat.pi_durable_cancel import (
                     revoke_turn_durable_jobs,
                 )
 
-                await revoke_turn_durable_jobs(
+                await asyncio.wait_for(
+                    revoke_turn_durable_jobs(
+                        session_id, turn_id,
+                        reason=f"turn_settled_{status}",
+                    ),
+                    timeout=PI_DURABLE_REVOKE_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[PiBridge] durable job revoke timed out (5s) session=%s "
+                    "turn=%s — releasing turn; late jobs stay gated by "
+                    "lifecycle terminal-state rules",
                     session_id, turn_id,
-                    reason=f"turn_settled_{status}",
                 )
             except Exception:  # noqa: BLE001 — 防御层（模块内已 never-raise）
                 logger.debug(
@@ -1848,22 +1869,41 @@ class PiBridge:
                     self._active_turn_sid,
                 )
                 return False
-            logger.info(
-                "[PiBridge] Recycling Pi worker for surface generation drift "
-                "(registry tools changed since spawn)",
-            )
+            # review P1-2：活 turn 检查与 stop() 之间存在 check-then-act 竞窗
+            # —— 并发准入的请求 B 可能恰在此间获得 turn 锁开始 turn，被 stop
+            # 误杀成 process_died。回收必须持 turn 锁做（与 turn 准入互斥）；
+            # 有界等待：锁被持 = 有在飞 turn = 延迟回收（不阻塞准入路径）。
             try:
-                await self.stop()
-                await self.start()
-            except Exception:  # noqa: BLE001 — 回收失败留给既有 lazy respawn 兜底
-                logger.exception("[PiBridge] surface recycle failed; lazy respawn will retry")
+                # 普通锁协议（非 turn lease）：回收不注册 writer/台账，只与
+                # turn 准入互斥；owner 语义由「谁持锁谁释放」的临界区保证。
+                await asyncio.wait_for(self._lock.acquire(), timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                logger.info(
+                    "[PiBridge] Deferring surface recycle: turn lock busy "
+                    "(a turn is starting or running)",
+                )
                 return False
+            try:
+                if self._active_turn_sid is not None:
+                    return False  # 双检：临界区内再确认（锁内新 turn 不会出现）
+                logger.info(
+                    "[PiBridge] Recycling Pi worker for surface generation drift "
+                    "(registry tools changed since spawn)",
+                )
+                try:
+                    await self.stop()
+                    await self.start()
+                except Exception:  # noqa: BLE001 — 回收失败留给既有 lazy respawn 兜底
+                    logger.exception("[PiBridge] surface recycle failed; lazy respawn will retry")
+                    return False
+            finally:
+                self._lock.release()
             try:
                 from app.services.chat.pi_surface_metrics import record_surface_recycle
 
                 record_surface_recycle("registry_generation_drift")
             except Exception:  # noqa: BLE001
-                pass
+                logger.debug("[PiBridge] surface recycle metric record failed", exc_info=True)
             return True
 
     async def start(self) -> None:

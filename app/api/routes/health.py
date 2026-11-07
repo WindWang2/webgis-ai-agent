@@ -116,6 +116,7 @@ def _pi_mode_facts() -> dict:
     enabled = False
     bridge_present = False
     alive = False
+    probe_ok = True
     try:
         from app.services.chat.pi_compat import pi_vendor_identity
 
@@ -129,9 +130,10 @@ def _pi_mode_facts() -> dict:
     except Exception:
         logger.warning("pi mode facts probe failed", exc_info=True)
         entry_built = None
+        probe_ok = False  # review P2-2：探测失败≠pi_disabled（假情报）
     return dict(
         enabled=enabled, bridge_present=bridge_present,
-        alive=alive, entry_built=entry_built,
+        alive=alive, entry_built=entry_built, probe_ok=probe_ok,
     )
 
 
@@ -140,7 +142,12 @@ def _live_agent_runtime_mode() -> tuple[str, str]:
     from app.services.chat.pi_compat import classify_runtime_mode
 
     try:
-        return classify_runtime_mode(**_pi_mode_facts())
+        facts = _pi_mode_facts()
+        if not facts.get("probe_ok", True):
+            # 探测自身失败：诚实报 probe_failed（不得误报 pi_disabled）。
+            return "unavailable", "probe_failed"
+        facts.pop("probe_ok", None)
+        return classify_runtime_mode(**facts)
     except Exception:
         logger.warning("agent_runtime_mode probe failed", exc_info=True)
         return "unavailable", "bridge_not_initialized"

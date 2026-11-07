@@ -11,3 +11,4 @@
 > .claude 文件 + 保留外来 stash@{0} 不动。**纪律：本仓库永不使用 git stash**。
 | 7 | W6a: PI-09 旅程扩展（J6 wrap 拒绝/J6b 两段式邻近真实计算/J7 resume 零 LLM）+ 发现并修复长尾 dormant 工具参数投影 P0（schema 未解包→空 closed schema→vendor 拒参） | 旅程连跑两遍 1 passed（33.6s/32.9s）；vendor contract+golden 9；surface 族 54；commit 5ab9333bc | 通过 | W6b 文档 |
 | 8 | W6b: PI_RUNTIME_CONTRACT.md + PI_UPSTREAM_COMPAT_MATRIX.md 落盘（每条带测试锚点） | 文档与代码同步 | 通过 | M8 独立 review |
+| 9 | M9 预备：全量 Pi 回归 5 批 590 passed + 新测试批 135；发现并修复本方向引入的测试污染（包级 run_settle_effects 打桩物化 PEP562 惰性委托，monkeypatch 恢复机制反噬）→ 手工保真恢复 | batch5 修复后 135 passed（此前 134+1 failed）；pi_doctor 6 域全 PASS + runtime mode 行；全 diff ruff 干净；repo mypy 门绿（35 files）；diff --check 干净；commit 7e6c0e7e5 | 通过 | M8 review 结论 → 修复 → PR |
