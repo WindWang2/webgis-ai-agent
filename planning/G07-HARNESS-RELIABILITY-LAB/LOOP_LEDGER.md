@@ -44,3 +44,12 @@
 - 修复：终态原因先于 task_complete；render/export 独立裁决；相同重复=partial、冲突重复=fail；拒绝后不得完成。
 - 本地验证：新/相关 journey **20 passed**；既有 fault/lock/dynamic/usability **89 passed**；Mypy/Ruff 通过。
 - 限制：真实 Pi RPC 重连、真实 PostGIS/浏览器故障仍未运行；这些测试是录制证据与本地生产接缝的负例，不冒充线上 chaos。
+
+## Loop 5 — M5 受控恢复实验（完成）
+
+- 输入：既有 GoalVerification、RecoveryPolicy、scope guard、真实 TDS。
+- 决定：不写新恢复引擎；以四组公开生产 seam 实验链证明 diagnosis→safe action proposal→re-observation/terminal。
+- 代码差异：仅新增四组实验测试，无生产策略变化。
+- 失败：测试 fixture 初次 SyntaxError，修正字面量后 4/4 通过；无生产缺陷被发现。
+- 本地验证：缺观察 reobserve 后 pass；503 retry_with_backoff 后真实 dispatch 成功；跨城需新数据；持久编辑无幂等不得自动 replay。恢复域合计 **199 passed**，Ruff 通过。
+- 限制：跨城实验使用 eligibility/scope 既有语义，不伪造自动修复；未运行付费模型或外部服务。
