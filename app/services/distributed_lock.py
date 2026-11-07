@@ -183,8 +183,6 @@ class _ResilientSessionLock:
 
     @property
     def is_locked(self) -> bool:
-        if not self._held:
-            return False
         if self._mode == "redis":
             return bool(self._token and not self._lost)
         return self._fallback._lock.locked()
@@ -588,6 +586,7 @@ def bind_session_lock(session_id: str, lock: object) -> _SessionLockBinding:
     if (
         isinstance(lock, _ResilientSessionLock)
         and lock._key == f"webgis:sessionlock:{session_id}"
+        and lock._held
         and lock.is_locked
     ):
         scope = _SessionLockScope(session_id, lock)

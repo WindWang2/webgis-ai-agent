@@ -114,7 +114,7 @@ async def test_released_object_is_not_owned_when_successor_holds_fallback(regist
     async with old:
         pass
     async with registry.lock("same"):
-        assert not old.locked()
+        assert not old._held
         token = bind_engine_lock("same", old)
         try:
             assert dl.current_session_lock("same") is None
