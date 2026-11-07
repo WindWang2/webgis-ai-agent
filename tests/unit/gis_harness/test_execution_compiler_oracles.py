@@ -418,3 +418,59 @@ class TestCompileToolEndToEnd:
             session_id="ec-compile-tool-no-doc")
         assert result["success"] is False
         assert result["reason_code"] == "REQUIREMENT_DOCUMENT_ABSENT"
+
+
+# ── 验收桥生产加载器 e2e（真实 session store 别名枚举）────────────────────
+
+
+class TestBridgeLoaderEndToEnd:
+    async def test_load_workflow_runs_via_session_store_aliases(self, tmp_path, monkeypatch):
+        """真实 session_data_manager：persist_state 同款别名写入 →
+        load_workflow_runs 枚举/解析/反序列化（生产 finalizer 同路径）。"""
+        from app.services.gis_harness.analysis_workflows.state import (
+            state_alias,
+            state_to_payload,
+        )
+        from app.services.session_data import session_data_manager
+
+        monkeypatch.chdir(tmp_path)
+        session = "ec-bridge-loader-e2e"
+        contract = build_contract(
+            "admin_facility_distribution", workflow_id="awf.admin.t-e2e")
+        state = new_state(contract, contract_fingerprint="fp")
+        for entry in state.steps.values():
+            entry.state = "satisfied"
+        ref = await session_data_manager.store(
+            session, state_to_payload(state), prefix="awf-state")
+        await session_data_manager.set_alias(
+            session, ref, state_alias(state.workflow_id))
+
+        from app.services.gis_harness.execution_compiler import (
+            evaluation_view_with_workflow_rows,
+            load_workflow_runs,
+        )
+
+        runs = await load_workflow_runs(session)
+        assert len(runs) == 1
+        assert runs[0].workflow_id == "awf.admin.t-e2e"
+        assert all(e.state == "satisfied"
+                   for e in runs[0].steps.values())
+
+        merged, disclosures = await evaluation_view_with_workflow_rows(
+            session, {"plan_id": "p", "query": "q", "intent": {}})
+        caps = [r["capability"] for r in merged.get("analysis_steps", [])]
+        assert "awf.admin_facility_distribution.zones_count" in caps
+        assert merged.get("analysis_workflow_row_count") == len(caps)
+
+    async def test_loader_empty_session_is_zero_drift(self, tmp_path, monkeypatch):
+        """零运行会话 → 原样返回（既有评估行为零漂移）。"""
+        from app.services.gis_harness.execution_compiler import (
+            evaluation_view_with_workflow_rows,
+        )
+
+        monkeypatch.chdir(tmp_path)
+        chapter = {"plan_id": "p", "analysis_steps": [{"capability": "x"}]}
+        merged, disclosures = await evaluation_view_with_workflow_rows(
+            "ec-bridge-empty-session", chapter)
+        assert merged is chapter
+        assert disclosures == []
