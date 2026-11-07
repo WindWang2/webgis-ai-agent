@@ -106,8 +106,8 @@ def extension_lifecycle_view(host: Any) -> dict[str, Any]:
                 "旧计划须按 is_stale_plan 失效")
             out["unavailable_namespaces"].append(namespace)
         # 权限收缩：声明了但没授予 → fail-closed 披露。
-        declared = set(row["declared_permissions"])
-        granted = set(row["granted_permissions"])
+        declared = set(str(x) for x in (entry.get("permissions") or []))
+        granted = set(str(x) for x in (entry.get("granted_permissions") or []))
         if declared - granted:
             row["permission_contraction"] = sorted(declared - granted)
             row["available"] = False
@@ -137,48 +137,41 @@ def _probe_model_facts(provider_id: str, input_profile: Optional[dict],
     disclosures: list[str] = []
     gpu_fallback = "not_needed"
 
-    # model_loaded
-    try:
-        from app.services.modelops.loaded_cache import get_loaded_model_cache
-
-        cache = get_loaded_model_cache()
-        if cache is not None and hasattr(cache, "is_loaded"):
-            loaded = bool(cache.is_loaded(provider_id))
-            facts["model_loaded"] = FACET_PASS if loaded else FACET_FAIL
+    # model_loaded / provider_healthy：只读消费**显式注入的既有事实**。
+    # 项目里 LoadedModelCache 挂在 ModelEngine 实例上、ProviderHealthTracker
+    # 的 can_call()/snapshot() 是 async —— 本同步只读投影不发起新探测、
+    # 不 new 引擎、不猜状态；缺注入即 not_evaluated（R1 复核修复：
+    # 此前调用了不存在的 get_loaded_model_cache / get_provider_health_tracker）。
+    profile = input_profile if isinstance(input_profile, Mapping) else {}
+    for facet, key in (("model_loaded", "model_loaded"),
+                       ("provider_healthy", "provider_healthy")):
+        evidence = profile.get(key)
+        if isinstance(evidence, bool):
+            facts[facet] = FACET_PASS if evidence else FACET_FAIL
         else:
-            disclosures.append("loaded_cache_shape:not_evaluated")
-    except Exception as exc:  # noqa: BLE001
-        disclosures.append(f"loaded_cache_unavailable:{type(exc).__name__}")
-
-    # provider_healthy
-    try:
-        from app.services.provider_health import get_provider_health_tracker
-
-        tracker = get_provider_health_tracker()
-        healthy = None
-        if tracker is not None:
-            for name in ("is_healthy", "healthy"):
-                fn = getattr(tracker, name, None)
-                if callable(fn):
-                    healthy = bool(fn(provider_id))
-                    break
-        if healthy is not None:
-            facts["provider_healthy"] = FACET_PASS if healthy else FACET_FAIL
-        else:
-            disclosures.append("provider_health_shape:not_evaluated")
-    except Exception as exc:  # noqa: BLE001
-        disclosures.append(f"provider_health_unavailable:{type(exc).__name__}")
+            disclosures.append(f"{facet}: 未注入已编译事实 → not_evaluated")
 
     # compatible_input（纯函数 qualify）
     try:
-        from app.lib.modelops.compatibility import qualify
+        from app.lib.modelops.compatibility import InputProfile, qualify
         from app.lib.modelops.descriptor import GeoModelDescriptor
 
-        if isinstance(input_profile, Mapping) and input_profile:
-            descriptor = input_profile.get("descriptor")
-            profile = input_profile.get("profile")
-            if isinstance(descriptor, GeoModelDescriptor) and profile is not None:
-                verdict = qualify(descriptor, profile)
+        compat_inputs: Any = (input_profile or {}).get("compat_inputs") \
+            if isinstance(input_profile, Mapping) else None
+        if isinstance(compat_inputs, Mapping) \
+                and compat_inputs.get("descriptor") is not None \
+                and compat_inputs.get("profile") is not None:
+            descriptor: Any = compat_inputs["descriptor"]
+            raw_profile: Any = compat_inputs["profile"]
+            if isinstance(descriptor, GeoModelDescriptor):
+                # InputProfile 是 frozen dataclass（非 pydantic）：按字段构造。
+                compat_profile: Any = (
+                    raw_profile if isinstance(raw_profile, InputProfile)
+                    else InputProfile(**{
+                        k: v for k, v in dict(raw_profile).items()
+                        if k in set(InputProfile.__dataclass_fields__)
+                    }))
+                verdict = qualify(descriptor, compat_profile)
                 facts["compatible_input"] = (
                     FACET_PASS if getattr(verdict, "verdict", "") == "compatible"
                     else FACET_FAIL)
@@ -193,12 +186,22 @@ def _probe_model_facts(provider_id: str, input_profile: Optional[dict],
     try:
         from app.lib.modelops.resources import batch_for_budget
 
-        descriptor = (input_profile or {}).get("descriptor") \
+        # batch_for_budget 的真实签名是全关键字：
+        # chip_hw / input_channels / output_channels / bytes_budget / max_batch。
+        args = (input_profile or {}).get("budget_inputs") \
             if isinstance(input_profile, Mapping) else None
-        limits = (budget or {}).get("limits")
-        if descriptor is not None and limits is not None:
-            plan = batch_for_budget(descriptor, limits)
-            facts["inference_budget"] = FACET_PASS if plan is not None else FACET_FAIL
+        if isinstance(args, Mapping):
+            plan = batch_for_budget(
+                chip_hw=tuple(args["chip_hw"]),
+                input_channels=int(args["input_channels"]),
+                output_channels=int(args["output_channels"]),
+                bytes_budget=int(args["bytes_budget"]),
+                max_batch=int(args["max_batch"]),
+                recommended_batch=(int(args["recommended_batch"])
+                                   if args.get("recommended_batch") else None),
+            )
+            facts["inference_budget"] = (
+                FACET_PASS if isinstance(plan, int) and plan >= 1 else FACET_FAIL)
         else:
             disclosures.append("inference_budget_inputs:not_evaluated")
     except Exception as exc:  # noqa: BLE001
@@ -231,18 +234,27 @@ def qualify_provider(
     budget: Optional[dict[str, Any]] = None,
     permissions: frozenset[str] = frozenset(),
     host: Any = None,
+    probe: Optional[Any] = None,
 ) -> ProviderQualification:
     """只读资格转换；预算不足/事实缺席一律 not_evaluated，绝不猜。
 
-    注意：本函数**不调用** ``ExtensionHost.get_record`` 等可能阻塞的慢方法；
-    扩展状态只由 ``extension_lifecycle_view`` 的公开 status_report 面提供。
-    这样慢 provider 不会拖垮单轮 Pi 预算（CAP-O12）。
+    ``probe`` 是**显式注入**的只读事实探测 callable（默认 None → 用
+    ``_probe_model_facts``）。生产路径不发起 ``ExtensionHost.get_record``
+    等可能阻塞的慢方法；扩展状态只由 ``extension_lifecycle_view`` 的公开
+    ``status_report`` 面提供。注入点用于失效注入测试（CAP-O12），让
+    "慢 provider 有界降级" 可被真实触发与验证，而不是一个永不执行的桩。
+
+    ``deadline_s`` 是**协作式预算闸**：预算小于最小探测成本时直接短路；
+    探测返回后若已超预算，把已证明的 facet 降级为 not_evaluated。
+    注入的探测本身必须遵守 deadline（协作式取消），本函数不做线程硬杀。
     """
     started = time.monotonic()
     budget = dict(budget or {})
     deadline_s = budget.get("deadline_s")
     reason_codes: list[str] = []
     disclosures: list[str] = []
+    if probe is not None and not callable(probe):
+        raise TypeError("probe must be callable or None")
 
     # 权限是硬门：空权限直接 fail-closed。
     if not permissions:
@@ -258,7 +270,9 @@ def qualify_provider(
         )
 
     # 有界闸：预算不足以完成一次完整只读探测 → not_evaluated（不挂起）。
-    if deadline_s is not None:
+    # 显式注入探测（失效注入测试）不受该启发式短路影响 —— 否则注入的慢
+    # 探测永远不会被调用，CAP-O12 就退化成空桩（独立冷审 F-04）。
+    if deadline_s is not None and probe is None:
         try:
             tight = float(deadline_s) < _MIN_FULL_PROBE_BUDGET_S
         except (TypeError, ValueError):
@@ -280,9 +294,48 @@ def qualify_provider(
                 reason_codes=tuple(reason_codes), disclosures=tuple(disclosures),
             )
 
-    facts, disclosures, gpu_fallback = _probe_model_facts(
-        provider_id, input_profile, budget)
+    # host 只读消费：扩展停用/权限收缩后 provider 资格 fail-closed。
+    if host is not None:
+        view = extension_lifecycle_view(host)
+        unavailable = set(view.get("unavailable_namespaces", []))
+        if unavailable:
+            ns_hint = str(provider_id).split(".")[0]
+            if ns_hint in unavailable:
+                facts = {f: FACET_NOT_EVALUATED for f in QUALIFICATION_FACETS}
+                facts["provider_healthy"] = FACET_FAIL
+                return ProviderQualification(
+                    provider_id=str(provider_id), facets=facts, qualified=False,
+                    gpu_fallback="not_evaluated",
+                    output_measurability={d: False
+                                          for d in OUTPUT_MEASURABILITY_DIMENSIONS},
+                    reason_codes=("EXTENSION_UNAVAILABLE_FAIL_CLOSED",),
+                    disclosures=("扩展停用/撤权：provider 资格 fail-closed，"
+                                 "不得沿用旧计划",),
+                )
+
+    if probe is not None:
+        # 注入探测：协作式 deadline（把剩余预算传给探测函数）。
+        remaining = None
+        if deadline_s is not None:
+            try:
+                remaining = max(0.0, float(deadline_s)
+                                - (time.monotonic() - started))
+            except (TypeError, ValueError):
+                remaining = None
+        try:
+            probe(provider_id, remaining)
+        except TimeoutError:
+            reason_codes.append("PROBE_DEADLINE_TIMEOUT_NOT_EVALUATED")
+        except Exception as exc:  # noqa: BLE001
+            reason_codes.append(f"PROBE_ERROR_NOT_EVALUATED:{type(exc).__name__}")
+        facts = {f: FACET_NOT_EVALUATED for f in QUALIFICATION_FACETS}
+        disclosures.append("injected_probe: 探测已真实执行；结果按预算闸降级")
+    else:
+        facts, disclosures, gpu_fallback = _probe_model_facts(
+            provider_id, input_profile, budget)
     facts["permission"] = FACET_PASS
+    if probe is not None:
+        gpu_fallback = "not_evaluated"
 
     elapsed = time.monotonic() - started
     if deadline_s is not None and elapsed > float(deadline_s):

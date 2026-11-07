@@ -174,6 +174,19 @@ def _count_like(obj: Any, _depth: int = 0) -> list[float]:
     return out
 
 
+def _allowed_raster_path(name: str) -> Path:
+    """栅格必须落在 ``validate_data_path`` 的合法工作区 ./tmp（既有工具同闸）。
+
+    R1 独立冷审 F-01 修复后，新原语复用 ``app/utils/path.validate_data_path``
+    拒绝目录遍历 / symlink 逃逸 / /vsi* 远端读取；pytest 的 ``tmp_path``
+    在 /tmp/pytest-* 不在允许范围内，因此这里写到仓库 ./tmp 工作区
+    （``.gitignore`` 的 ``/tmp/`` 已忽略，不污染提交）。
+    """
+    base = Path.cwd() / "tmp" / "g06_capability_tests"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / name
+
+
 def _write_raster(path: Path) -> np.ndarray:
     """10x10 float32 真实 GeoTIFF，含 nodata；返回写入的数组（已知答案源）。"""
     data = np.arange(100, dtype="float32").reshape(10, 10)
@@ -211,7 +224,7 @@ def test_cap_o08_conditional_quantile_zonal_stats(tmp_path: Path):
     reg = _registry()
     assert "conditional_quantile_zonal_stats" in reg.tool_names()
 
-    raster_path = tmp_path / "grid.tif"
+    raster_path = _allowed_raster_path(f"grid_{tmp_path.name}.tif")
     data = _write_raster(raster_path)
     args: dict[str, Any] = {
         "zones": _O08_ZONES,
@@ -351,6 +364,111 @@ def test_cap_o06_network_seconds_distance_returns_typed_error():
         any(k in t for k in ("UNIT", "DIMENSION", "SECOND", "DISTANCE"))
         for t in typed_errors), (
         "typed 错误应携带量纲冲突语义，而非泛化的参数校验失败")
+
+
+# ── R1 独立冷审 P1 修复回归（F-01 / F-02 / F-03）─────────────────────
+
+
+def test_r1_f01_raster_path_guard_rejects_escape_and_remote():
+    """F-01：拒绝目录遍历 / 绝对路径越界 / GDAL /vsi* 远端读取。"""
+    assert not MISSING, RED
+    reg = _registry()
+    cases = [
+        "../../etc/passwd",
+        "/etc/passwd",
+        "/vsicurl/https://example.com/grid.tif",
+        "https://example.com/grid.tif",
+        "/vsis3/bucket/grid.tif",
+    ]
+    for bad in cases:
+        result = asyncio.run(reg.dispatch(
+            "conditional_quantile_zonal_stats", {
+                "zones": _O08_ZONES, "raster_path": bad,
+                "quantiles": [0.5], "where": "",
+            }))
+        d = _as_dict(result)
+        text = json.dumps(d, default=str).upper()
+        assert not all(k in d for k in _ENV_KEYS), (
+            f"非法路径 {bad!r} 不得返回成功封套")
+        assert "FORBIDDEN" in text or "UNREADABLE" in text or "ERROR" in text, (
+            f"非法路径 {bad!r} 必须 typed 拒绝，实际 {text[:200]}")
+
+
+def test_r1_f02_time_mode_requires_real_time_cost():
+    """F-02：时间模式不得把几何长度当秒；缺时间成本须 not_evaluated。"""
+    assert not MISSING, RED
+    reg = _registry()
+
+    # 主路径：cost_unit=seconds 且边无时间属性 → typed not_evaluated，
+    # 绝不伪称 time dimension / 绝不返回完整成功封套。
+    result = asyncio.run(reg.dispatch(
+        "network_service_coverage_consistency", {
+            "network": _O09_NETWORK, "facilities": _O09_FACILITIES,
+            "cutoff": 2.0, "cost_unit": "seconds",
+        }))
+    d = _as_dict(result)
+    text = json.dumps(d, default=str).upper()
+    assert "TIME_COST_NOT_EVALUATED" in text, (
+        f"时间模式主路径必须 typed not_evaluated，实际 {text[:250]}")
+    assert not all(k in d for k in _ENV_KEYS)
+
+    # 提供真实秒数 → 走真实计算，且 science 明确 time dimension。
+    timed_network = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature",
+             "properties": {"edge": f"e{i+1}", "travel_time_s": 1.0},
+             "geometry": f["geometry"]}
+            for i, f in enumerate(_O09_NETWORK["features"])
+        ],
+    }
+    ok = asyncio.run(reg.dispatch(
+        "network_service_coverage_consistency", {
+            "network": timed_network, "facilities": _O09_FACILITIES,
+            "cutoff": 2.0, "cost_unit": "seconds",
+        }))
+    env = _envelope(ok)
+    assert env["science"]["cost_dimension"] == "time"
+    assert env["science"]["unit_contract"]["time_unit"] == "seconds"
+    assert env["science"]["unit_contract"]["distance_unit"] is None
+    assert env["science"]["time_cost_source"].startswith("edge travel_time_s")
+    assert any(abs(n - 1.0) < 1e-6 for n in _numeric_values(env["data"]))
+
+
+def test_r1_f03_large_raster_rejected_before_read(monkeypatch):
+    """F-03：超预算栅格必须在 read() 之前被拒，不得先分配整幅波段。"""
+    assert not MISSING, RED
+    from unittest.mock import MagicMock
+
+    reg = _registry()
+    allowed = _allowed_raster_path("f03_probe.tif")
+    # 只需一个位于允许目录内的占位路径，真实栅格由 mock dataset 提供。
+    allowed.write_bytes(b"placeholder")
+
+    fake_ds = MagicMock()
+    fake_ds.width = 10_000
+    fake_ds.height = 10_000       # 100M cells > MAX_RASTER_CELLS(40M)
+    fake_ds.crs = "EPSG:3857"
+    fake_ds.transform = from_origin(0, 10, 1, 1)
+    fake_ds.nodata = -9999.0
+    fake_ds.read.side_effect = AssertionError(
+        "read(1) 被调用 —— 判界没有发生在分配之前")
+    fake_ds.__enter__.return_value = fake_ds
+    fake_ds.__exit__.return_value = False
+    # rasterio 在函数体内惰性 import，因此 patch 真正的 rasterio.open。
+    monkeypatch.setattr(rasterio, "open", lambda *a, **k: fake_ds)
+
+    result = asyncio.run(reg.dispatch(
+        "conditional_quantile_zonal_stats", {
+            "zones": _O08_ZONES, "raster_path": str(allowed),
+            "quantiles": [0.5], "where": "",
+        }))
+    d = _as_dict(result)
+    text = json.dumps(d, default=str, ensure_ascii=False)
+    assert "BUDGET_EXCEEDED" in text, (
+        f"超预算栅格必须 typed 拒绝，实际 {text[:250]}")
+    assert "读取前拒绝" in text, "必须明确披露是读取前拒绝"
+    fake_ds.read.assert_not_called()
 
 
 # ── CAP-O10 扩展包全链 ────────────────────────────────────────────────

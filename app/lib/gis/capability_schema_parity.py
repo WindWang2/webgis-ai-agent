@@ -117,6 +117,17 @@ def parity_report(
         schemas = registry.get_schemas()
     except Exception:  # noqa: BLE001
         schemas = []
+    # F-07（独立冷审）：单次扫描预建 name → required，避免 399 工具 O(n²)。
+    schema_required: dict[str, set[str]] = {}
+    for schema_entry in (schemas.values() if isinstance(schemas, dict)
+                         else (schemas or [])):
+        fn = (schema_entry.get("function", schema_entry)
+              if isinstance(schema_entry, Mapping) else {})
+        nm = fn.get("name") if isinstance(fn, Mapping) else None
+        params = fn.get("parameters", {}) if isinstance(fn, Mapping) else {}
+        if nm and isinstance(params, Mapping) and "required" in params:
+            schema_required[str(nm)] = set(
+                str(x) for x in (params.get("required") or []))
 
     tools: dict[str, Any] = {}
     diagnostics: list[str] = []
@@ -127,7 +138,7 @@ def parity_report(
         except Exception:  # noqa: BLE001
             pass
         required = _required_from_model(model) if model is not None else set()
-        schema_required = _schema_required(schemas, name)
+        declared_required = schema_required.get(name)
         desc_required: set[str] = set()
         unit = ""
         summary = ""
@@ -148,9 +159,9 @@ def parity_report(
             "summary": summary,
             "drift_codes": [],
         }
-        if schema_required is not None and schema_required != required:
+        if declared_required is not None and declared_required != required:
             entry["drift_codes"].append(CODE_SCHEMA_DRIFT)
-            entry["schema_required"] = sorted(schema_required)
+            entry["schema_required"] = sorted(declared_required)
             diagnostics.append(f"{CODE_SCHEMA_DRIFT}:{name}")
         if desc_required and not desc_required.issubset(required):
             entry["drift_codes"].append("DESCRIPTOR_REQUIRED_SUPERSET")

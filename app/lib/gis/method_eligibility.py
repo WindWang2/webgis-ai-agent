@@ -47,21 +47,35 @@ REASON_DEFERRED_EVIDENCE = "DEFERRED_EVIDENCE_NOT_EVALUATED"
 REASON_PRECONDITION_FAILED = "SCIENTIFIC_PRECONDITION_FAILED"
 
 #: 时间量纲词表（来自 PARAM_UNIT_VOCABULARY 与路网成本字段口径）。
+#: F-06（独立冷审）：补齐常见时间单位/字段名，避免封闭词表漏检落到 eligible。
 TIME_UNITS = frozenset({
-    "seconds", "second", "s", "sec", "minutes", "minute", "min",
-    "hours", "hour", "h", "time", "travel_time", "duration_s",
+    "seconds", "second", "s", "sec", "secs", "minutes", "minute", "min",
+    "mins", "hours", "hour", "h", "hrs", "time", "travel_time",
+    "duration_s", "duration", "traveltime", "time_s", "time_cost",
 })
 #: 线性距离/面积量纲词表。
 LENGTH_UNITS = frozenset({
     "meters", "meter", "m", "km", "kilometers", "kilometer",
     "m2", "km2", "ha", "distance", "metres", "metre",
+    "miles", "mile", "mi", "feet", "foot", "ft", "cm", "mm",
+    "nautical_miles", "nm", "yd", "yards",
 })
 UNIT_KEYS = (
     "unit", "units", "distance_unit", "area_unit", "cost_unit",
     "output_unit", "numerator_unit", "denominator_unit",
     "requested_unit", "resolution_unit", "distance_units",
+    "radius_units", "radius_unit", "length_unit", "speed_unit",
+    "buffer_unit", "time_unit", "duration_unit",
 )
-CRS_KEYS = ("crs_class", "source_crs_class", "crs")
+CRS_KEYS = (
+    "crs_class", "source_crs_class", "crs", "source_crs",
+    "working_crs", "crs_type", "coordinate_system",
+)
+GEOGRAPHIC_CRS_MARKERS = (
+    "geographic", "geodetic", "wgs84", "wgs 84", "epsg:4326", "4326",
+    "crs:84", "lonlat", "longlat", "latitude_longitude", "degree",
+    "degrees", "gcj02", "cgcs2000_geo",
+)
 
 
 @dataclass(frozen=True)
@@ -242,9 +256,7 @@ def preflight_method(
 
     # ── 硬门 2：经纬度不按米直接计算 ────────────────────────────────
     crs_class = _crs_class(space, params)
-    geographic = crs_class in (
-        "geographic", "geodetic", "wgs84", "epsg:4326", "crs:84", "lonlat",
-    )
+    geographic = any(m in crs_class for m in GEOGRAPHIC_CRS_MARKERS)
     linear_required = _requires_linear(params, space)
     geo_conflict = geographic and linear_required
 
@@ -276,13 +288,19 @@ def preflight_method(
         verdict = "ineligible"
         reason_codes.append(REASON_PRECONDITION_FAILED)
         reason_codes.append(combined)
-    elif deferred_any or combined in ("REQUIRES_TRANSFORM",) and not allow_transform:
+    elif deferred_any or combined == "REQUIRES_TRANSFORM":
+        # F-05（独立冷审）：修掉 `or` / `and` 优先级 bug。
+        # 本函数是纯只读预检，**不执行任何变换**；因此 REQUIRES_TRANSFORM
+        # 在 allow_transform=True 时同样不得判 eligible（除非调用方真的
+        # 变换后重新预检）。allow_transform 只控制提示措辞，不改变结论。
         verdict = "not_evaluated"
         reason_codes.append(REASON_DEFERRED_EVIDENCE)
         if combined == "REQUIRES_TRANSFORM":
             reason_codes.append(REASON_REQUIRES_TRANSFORM)
             transform_hint = (
-                "重投影到方法声明要求的 CRS 类后重新预检（allow_transform=False 时不自动变换）")
+                "重投影到方法声明要求的 CRS 类后**重新调用 preflight_method**"
+                + ("（已请求 allow_transform，但本函数不执行变换）"
+                   if allow_transform else "（allow_transform=False 不自动变换）"))
     else:
         verdict = "eligible"
 

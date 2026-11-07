@@ -58,7 +58,11 @@ def run() -> dict:
     init_tools(reg)
     out: dict = {"scenario": "nodata + 条件分位数 + 秒≠米量纲冲突（离线）"}
 
-    with tempfile.TemporaryDirectory() as td:
+    # 新原语复用既有 validate_data_path（只允许 ./data 与 ./tmp），
+    # 因此把离线 fixture 写在仓库 ./tmp 工作区（.gitignore 已忽略）。
+    work = Path(__file__).resolve().parents[2] / "tmp" / "g06_demo"
+    work.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=str(work)) as td:
         path = Path(td) / "grid.tif"
         data = np.arange(100, dtype="float32").reshape(10, 10)
         data[0, 0] = -9999.0   # nodata

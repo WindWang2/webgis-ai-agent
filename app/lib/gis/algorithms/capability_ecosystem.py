@@ -2,9 +2,9 @@
 
 纪律：``ALGORITHMS`` 保持**空表** —— 本方向不新增算法描述符，
 避免改变既有 AlgorithmRegistry 的 253 条硬断言与 catalog 生成物；
-新原语是 ToolRegistry 的真实执行能力，其科学元数据通过
-``app/lib/gis/capability_ecosystem_primitives.py`` 的只读投影提供
-（见 docs/dev/GIS_TOOL_AUTHORING_CONTRACT.md）。
+新原语是 ToolRegistry 的真实执行能力，其科学元数据由
+``app/tools/capability_ecosystem_tools.py`` 结果封套的 ``science`` 字段
+与 ``docs/dev/GIS_TOOL_AUTHORING_CONTRACT.md`` 提供（F-12：修正悬空引用）。
 
 ``PARAMETER_CONTRACTS`` 经既有 ``iter_contract_packs()`` 汇入唯一的
 ``ParameterContractRegistry``，工具侧用 ``apply_contract`` 严格校验。

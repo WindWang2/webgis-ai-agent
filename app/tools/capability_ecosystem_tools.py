@@ -30,7 +30,7 @@ import json
 import math
 import re
 import time
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from pydantic import BaseModel, Field
 
@@ -287,19 +287,55 @@ def _conditional_quantile_zonal_stats_impl(
     except ValueError as exc:
         return _error("INVALID_ZONES", str(exc))
 
+    # F-01（独立冷审）：复用既有 validate_data_path —— 拒绝目录遍历 /
+    # symlink 逃逸；显式拒绝 GDAL 虚拟文件系统（/vsi* 可发起网络请求）与
+    # 任何 URL，避免 descriptor 标 network=False 却实际可出网（SSRF）。
+    # 与既有 zonal_stats / ecology_tools / SpatialAnalyzer._prepare_raster_paths
+    # 同一权威路径闸，不另造一套。测试用 tmp_path 在允许范围外时由调用方
+    # 显式把 fixture 写到 ./tmp（validate_data_path 的合法工作区）。
+    if not isinstance(raster_path, str) or not raster_path.strip():
+        return _error("INVALID_RASTER_PATH", "raster_path must be a non-empty string")
+    if raster_path.startswith("/vsi") or "://" in raster_path:
+        return _error(
+            "RASTER_PATH_FORBIDDEN",
+            "GDAL 虚拟文件系统 / 远端 URL 不允许；仅接受本地作用域内文件",
+            "使用 ./data 或 ./tmp 下的本地栅格路径")
     try:
-        with rasterio.open(raster_path) as ds:
+        from app.utils.path import validate_data_path
+
+        safe_path = validate_data_path(raster_path)
+    except ValueError as exc:
+        return _error("RASTER_PATH_FORBIDDEN", str(exc),
+                      "把栅格放到 ./data 或 ./tmp 允许目录内")
+
+    # F-03（独立冷审）：先读 metadata 判界，再分配整幅波段，避免超大栅格
+    # 在 read() 时就 OOM；同时用既有 RasterResourceGuard 的输出预算口径。
+    try:
+        with rasterio.open(safe_path) as ds:
+            width, height = int(ds.width), int(ds.height)
+            cells = width * height
+            if cells > MAX_RASTER_CELLS:
+                return _error(
+                    "BUDGET_EXCEEDED",
+                    f"raster has {cells} cells > {MAX_RASTER_CELLS}（读取前拒绝）")
+            from app.lib.geo_analysis.raster_guard import (
+                RasterResourceExceededError, RasterResourceGuard,
+            )
+
+            try:
+                RasterResourceGuard.check_grid(width, height, bytes_per_pixel=8,
+                                               num_bands=1)
+            except RasterResourceExceededError as exc:
+                return _error(exc.error_code, exc.message,
+                              "缩小栅格范围或降采样后重试")
             source_crs = str(ds.crs or "")
             transform = ds.transform
             band = ds.read(1).astype("float64")
             ds_nodata = ds.nodata
-            cells = int(band.size)
     except Exception as exc:  # noqa: BLE001 — 路径/栅格错误是 typed 失败
+        if isinstance(exc, (ValueError,)) and "BUDGET" in str(type(exc).__name__):
+            raise
         return _error("RASTER_UNREADABLE", f"cannot open raster: {exc}")
-
-    if cells > MAX_RASTER_CELLS:
-        return _error("BUDGET_EXCEEDED",
-                      f"raster has {cells} cells > {MAX_RASTER_CELLS}")
     # 经纬度 CRS 不得按米解释面积/长度（CAP-O06）。
     geographic = bool(source_crs) and (
         "4326" in source_crs or "longlat" in source_crs.lower()
@@ -401,8 +437,37 @@ def _edge_key(a, b) -> tuple:
                          tuple(round(float(x), 6) for x in b))))
 
 
-def _build_graph(feats: list[dict[str, Any]]) -> tuple[Any, dict, float]:
-    """把线要素构建为 networkx 图，边权 = 长度（米制）或时间（显式秒）。"""
+class TimeCostMissing(ValueError):
+    """时间量纲模式缺少真实时间成本证据 —— 绝不把几何长度当秒。"""
+
+
+def _edge_time_cost(props: Mapping[str, Any], length: float) -> Optional[float]:
+    """时间模式：只接受显式时间成本属性或显式速度换算。
+
+    * ``travel_time_s`` / ``duration_s`` / ``cost_s``：直接秒数；
+    * ``speed_mps``：秒 = 长度(米) / 速度(米每秒)；
+    * 都没有 → None（调用方必须返回 not_evaluated，不能猜）。
+    """
+    for key in ("travel_time_s", "duration_s", "cost_s", "time_s"):
+        value = props.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) \
+                and math.isfinite(float(value)) and float(value) >= 0:
+            return float(value)
+    speed = props.get("speed_mps")
+    if isinstance(speed, (int, float)) and not isinstance(speed, bool) \
+            and math.isfinite(float(speed)) and float(speed) > 0:
+        return float(length) / float(speed)
+    return None
+
+
+def _build_graph(feats: list[dict[str, Any]], *, time_mode: bool = False
+                 ) -> tuple[Any, dict, float]:
+    """把线要素构建为 networkx 图。
+
+    米制模式：边权 = 几何长度（米）。
+    时间模式：边权 = **显式时间成本**（秒），由边属性提供；缺失即抛
+    ``TimeCostMissing``，绝不退化成几何长度（CAP-O06 秒≠米红线）。
+    """
     import networkx as nx
 
     graph = nx.Graph()
@@ -421,11 +486,19 @@ def _build_graph(feats: list[dict[str, Any]]) -> tuple[Any, dict, float]:
                 length = math.hypot(b[0] - a[0], b[1] - a[1])
                 if not math.isfinite(length):
                     continue
+                props = feat.get("properties", {}) or {}
+                if time_mode:
+                    cost = _edge_time_cost(props, length)
+                    if cost is None:
+                        raise TimeCostMissing(
+                            "时间量纲模式要求每条边提供 travel_time_s/duration_s/"
+                            "cost_s 或 speed_mps；几何长度不是时间，拒绝换算")
+                else:
+                    cost = length
                 key = _edge_key(a, b)
                 eid = f"e{i}_{len(edges)}"
-                props = feat.get("properties", {}) or {}
-                edges[key] = (eid, length, str(props.get("scheme", "") or ""))
-                graph.add_edge(key[0], key[1], length=length, edge_id=eid)
+                edges[key] = (eid, cost, str(props.get("scheme", "") or ""))
+                graph.add_edge(key[0], key[1], length=cost, edge_id=eid)
     return graph, edges, sum(v[1] for v in edges.values())
 
 
@@ -463,7 +536,18 @@ def _network_coverage_consistency_impl(
     except ValueError as exc:
         return _error("INVALID_NETWORK_OR_FACILITIES", str(exc))
 
-    graph, edges, total_length = _build_graph(feats)
+    time_mode = unit in _TIME_UNITS
+    try:
+        graph, edges, total_length = _build_graph(feats, time_mode=time_mode)
+    except TimeCostMissing as exc:
+        # F-02（独立冷审）：时间模式缺真实时间成本证据 → typed
+        # not_evaluated，绝不把几何长度当秒，也绝不伪称 time dimension。
+        return _error(
+            "TIME_COST_NOT_EVALUATED",
+            f"cost_unit={cost_unit!r} 是时间量纲，但线网未提供真实时间成本：{exc}。"
+            "缺依赖 = not_evaluated，不能猜；秒≠米",
+            "为每条边提供 travel_time_s（或 speed_mps + 米制长度），"
+            "或改用 cost_unit=meters 走米制长度模式")
     if graph.number_of_edges() == 0:
         return _error("DISCONNECTED_NETWORK", "线网无有效边，无法计算覆盖")
 
@@ -496,10 +580,21 @@ def _network_coverage_consistency_impl(
         coverage[scheme] = covered
 
     names = sorted(coverage)
+    # F-11（独立冷审）：>2 方案时不再静默只比前两个。这里计算**两两
+    # Jaccard 矩阵**，主结果取全局最低一致性（最保守），并显式披露方案数。
+    pairwise: dict[str, float] = {}
+    for i, n1 in enumerate(names):
+        for n2 in names[i + 1:]:
+            s1, s2 = coverage[n1], coverage[n2]
+            union_pair = s1 | s2
+            pairwise[f"{n1}|{n2}"] = round(
+                float(len(s1 & s2) / len(union_pair)) if union_pair else 1.0, 6)
     if len(names) >= 2:
         a, b = coverage[names[0]], coverage[names[1]]
         union = a | b
         jaccard = float(len(a & b) / len(union)) if union else 1.0
+        if pairwise:
+            jaccard = min(jaccard, min(pairwise.values()))
         only_a, only_b = sorted(a - b), sorted(b - a)
     else:
         only = next(iter(coverage.values())) if coverage else set()
@@ -523,6 +618,8 @@ def _network_coverage_consistency_impl(
         "only_b_count": len(only_b),
         "coverage_ratio_a": (round(len(a) / len(edges), 6) if edges else 0.0),
         "consistent": bool(jaccard >= 1.0 - 1e-9),
+        "pairwise_jaccard": pairwise,
+        "scheme_count": len(names),
     }
     artifact = _ref("network_service_coverage_consistency", data)
     artifact["rows"] = len(edges)
@@ -530,17 +627,31 @@ def _network_coverage_consistency_impl(
         "method": "multi-scheme network service coverage consistency (Dijkstra)",
         "consistency_metric": "Jaccard over covered edge-id sets (set equality when identical)",
         "cost_unit": unit,
-        "cost_dimension": "time" if unit in _TIME_UNITS else "length",
+        # time_mode 只有在边属性带真实秒数时才可达；伪称被
+        # TIME_COST_NOT_EVALUATED 前置拒绝后不会走到这里。
+        "cost_dimension": "time" if time_mode else "length",
         "cutoff": cutoff,
+        "cutoff_unit": ("秒（真实时间成本）" if time_mode else "米（平面长度）"),
+        "time_cost_source": (
+            "edge travel_time_s/duration_s/cost_s 或 speed_mps 换算"
+            if time_mode else "not_applicable"),
         "distance_vs_time": (
             "严格区分：时间成本(秒)不得解释为空间距离(米)；"
-            "两方案量纲不一致时返回 UNIT_DIMENSION_CONFLICT"),
+            "时间模式缺真实时间成本即 not_evaluated，请求米制输出即 "
+            "UNIT_DIMENSION_CONFLICT"),
         "unit_contract": {
-            "numerator": "edge length" if unit in _LENGTH_UNITS else "travel time",
+            "numerator": "travel time (s)" if time_mode else "edge length (m)",
             "denominator": "none",
-            "distance_unit": unit if unit in _LENGTH_UNITS else None,
-            "time_unit": unit if unit in _TIME_UNITS else None,
+            "distance_unit": unit if not time_mode else None,
+            "time_unit": unit if time_mode else None,
         },
+        "scheme_scope": (
+            f"共 {len(names)} 个方案；两两 Jaccard 全量计算，"
+            "consistency 取最保守的最小值；pairwise_jaccard 给出完整矩阵"),
+        "assumptions": [
+            "边权单位与 cost_unit 一致",
+            "输入为投影/米制平面坐标（时间模式由边属性提供秒数，不用几何长度换算）",
+        ],
         "uncertainty": (
             "Dijkstra 在静态无向图上确定性可达；不建模拥堵/转向惩罚，"
             "若需转向成本应改用 network_service_area 并披露 approximations"),
@@ -556,7 +667,8 @@ def _network_coverage_consistency_impl(
         "network_edges": len(edges),
         "facilities": len(facs),
         "schemes": len(names),
-        "total_edge_length": round(total_length, 6),
+        "total_edge_cost": round(total_length, 6),
+        "cost_dimension": "time_seconds" if time_mode else "length_meters",
         "elapsed_ms": round(elapsed * 1000, 3),
         "truncated": len(feats) >= MAX_NETWORK_EDGES or len(facs) >= MAX_FACILITIES,
     }

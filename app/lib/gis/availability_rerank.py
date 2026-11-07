@@ -11,13 +11,15 @@
    hallucinated 工具名一律拒绝。
 3. 结果有界：``max_candidates`` 是硬上限，截断时 ``bounded=True`` 并披露。
 
-中英 GIS 术语黄金语料见 ``app/lib/data/capability_lexicon_golden.json``：
+中英 GIS 术语黄金语料见 ``app/lib/data/capability_lexicon_golden.json``
+（置于 .gitignore 白名单目录，注释见 .gitignore:217-225）：
 正例（缓冲 / 空间连接 / 分区统计 / 路网时间 / 等时圈 / 密度 / 通视 / 插值 /
 地理综合）+ 负例（秒≠米、停用扩展的高相似度工具、hallucinated 工具名）。
 """
 from __future__ import annotations
 
 import json
+from itertools import islice
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
@@ -29,6 +31,8 @@ from app.lib.gis.capability_availability import (
 # 诊断/离线对拍允许宽面（<=512），生产 Pi 面由调用方传更小的 max_candidates
 # （CAP-02 的「有界候选」由调用方预算决定，此处是防御性硬上限）。
 _MAX_CANDIDATES = 512
+# F-09（独立冷审）：输入侧也必须有界，防止超大/无限 iterable 被全量物化。
+_MAX_INPUT_CANDIDATES = 4096
 # 语料放在 .gitignore 白名单目录 app/lib/data/（未锚定的 data/ 规则会
 # 静默吞掉任意同名子目录 —— 见 .gitignore:216-223 的历史事故注释）。
 _GOLDEN_PATH = (Path(__file__).resolve().parents[1] / "data"
@@ -160,7 +164,9 @@ def rerank_candidates(
     scored: list[RankedCandidate] = []
     seen: set[str] = set()
 
-    for name, base_score in _normalized(candidates):
+    # 先对输入做硬上界切片，再物化（islice 对生成器也有效）。
+    bounded_input = islice(iter(candidates), _MAX_INPUT_CANDIDATES)
+    for name, base_score in _normalized(bounded_input):
         if name in seen:
             continue
         seen.add(name)

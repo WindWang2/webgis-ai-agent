@@ -392,12 +392,23 @@ def _run_lexicon_case(snap: Any, case: dict[str, Any], *,
     suppressed = [t for t, _ in result.suppressed]
 
     if expect:
-        # 契约：首选是 expect_tool，或至少 expect_tool 在候选内
+        # 契约：expect_tool 必须保留在候选内；不再写 `top and top[0]==expect
+        # or expect in top` 这类恒真断言（F-13 独立冷审）。
         assert expect in top, (
             f"query={case['query']!r} 未把期望工具 {expect!r} 保留在候选内 "
             f"(suppressed={suppressed[:8]})")
-        assert top and top[0] == expect or expect in top, (
-            f"query={case['query']!r} 首选应为 {expect!r}，实际 {top[:3]}")
+        # F-14：expect_status 不再是死字段，必须与真实快照逐例对拍。
+        declared_status = case.get("expect_status")
+        if declared_status:
+            from app.lib.gis.capability_availability import (
+                compile_availability_snapshot,
+            )
+
+            live = compile_availability_snapshot(registry=reg).for_tool(expect)
+            assert live is not None, f"{expect} 不在真实可用性快照中"
+            assert live.availability_status == declared_status, (
+                f"{expect}: 语料声明 {declared_status} != 实际 "
+                f"{live.availability_status}（不得伪造可用性）")
     for f in (case.get("forbid_tools") or ()):
         if soft_forbid:
             assert f in suppressed or f not in top[:1], (
@@ -623,23 +634,41 @@ def test_cap_o12_query_and_rerank_are_bounded():
 
 @pytest.mark.timeout(10)
 def test_cap_o12_slow_provider_returns_not_evaluated_within_budget(monkeypatch):
-    """慢 provider 模拟：qualify_provider 在预算内返回 not_evaluated，不挂起。"""
+    """慢 provider 失效注入：注入的慢探测**必须被真实调用**，且资格有界降级。
+
+    R1 独立冷审 F-04 修复：旧版 monkeypatch ``ExtensionHost.get_record``
+    sleep(30) 从未被触发（qualify_provider 不调用它，且空权限提前返回），
+    「慢 provider 已验证」属失真。这里改用 ``probe`` 显式注入点，断言
+    probe 真实执行、遵守协作式 deadline、结果降级 not_evaluated。
+    """
     assert not MISSING, RED
     host = ExtensionHost(_registry(), HostPolicy())
+    calls: list[float] = []
 
-    def _slow_get_record(self, extension_id):  # noqa: ANN001
-        time.sleep(30)  # 故意超出预算；实现必须有界闸，不得挂起
-        return None
+    def _slow_but_cooperative_probe(provider_id, remaining_s):
+        # 真实执行且真实慢（0.35s），但遵守传入的协作式预算：
+        # 若预算小于实际耗时，主动抛 TimeoutError 而不是硬睡到底。
+        calls.append(float(remaining_s) if remaining_s is not None else -1.0)
+        sleep_for = 0.35
+        if remaining_s is not None and sleep_for > remaining_s:
+            time.sleep(min(remaining_s, 0.02))
+            raise TimeoutError("provider probe exceeded cooperative deadline")
+        time.sleep(sleep_for)
 
-    monkeypatch.setattr(ExtensionHost, "get_record", _slow_get_record)
     started = time.monotonic()
     res = qualify_provider(
         "cap_o12_slow_provider", budget={"deadline_s": 0.05},
-        permissions=frozenset(), host=host)
+        permissions=frozenset({"read", "model_infer"}),
+        host=host, probe=_slow_but_cooperative_probe)
     elapsed = time.monotonic() - started
+
+    assert calls, "注入的慢探测必须被真实调用（否则该 Oracle 是空桩）"
     assert elapsed < 5.0, f"慢 provider 挂起 {elapsed:.2f}s（应有预算闸）"
     assert res.qualified is False, (
         "预算内不得虚构 qualified（fail-closed / not_evaluated）")
+    assert all(v == "not_evaluated" or v == "failed"
+               for k, v in res.facets.items() if k != "permission"), (
+        "超时探测的资格面必须降级，不得保留 proven_pass")
     blob = " ".join(
         [str(x) for x in getattr(res, "reason_codes", ())]
         + [str(v) for v in dict(getattr(res, "facets", {}) or {}).values()]
@@ -647,6 +676,17 @@ def test_cap_o12_slow_provider_returns_not_evaluated_within_budget(monkeypatch):
     assert ("not_evaluated" in blob or "budget" in blob
             or "timeout" in blob or "degraded" in blob), (
         "慢 provider 应显式给出 not_evaluated / budget 证据，不猜可用性")
+    assert any("timeout" in str(c).lower() or "not_evaluated" in str(c).lower()
+               for c in res.reason_codes), (
+        "应带 PROBE_DEADLINE_TIMEOUT_NOT_EVALUATED 之类的显式理由码")
+
+    # 另一路：空权限仍必须 fail-closed（不因注入探测而绕过）。
+    closed = qualify_provider(
+        "cap_o12_slow_provider", permissions=frozenset(),
+        host=host, probe=_slow_but_cooperative_probe)
+    assert closed.qualified is False
+    assert "permission" in closed.facets
+    assert closed.facets["permission"] == "failed"
 
 
 # ── CAP-O13 文档可执行 ────────────────────────────────────────────────
@@ -712,17 +752,24 @@ def test_cap_o14_parity_regression_guard():
             assert r_required == required, (
                 f"{name}: parity_report required {sorted(r_required)} != "
                 f"args_model required {sorted(required)}")
-        assert name in json.dumps(report, default=str), (
-            f"parity_report 未覆盖既有工具 {name}")
+        # F-13：不再用 `name in json.dumps(report)` 这种宽松包含，
+        # 精确断言该工具在 tools 面里有条目。
+        assert name in report["tools"], f"parity_report 未覆盖既有工具 {name}"
+        assert report["tools"][name]["name"] == name
 
     # 只读诊断（不修改 llm_result_formatter.py，避免抢 Issue #2006）：
     # slim 摘要要么含关键数值，要么有 ref；否则 parity_report 必须记
-    # SUMMARY_VALUE_LOSS 诊断。
+    # SUMMARY_VALUE_LOSS 诊断。此处精确查 diagnostics，不用
+    # json.dumps(report)（monitored_codes 恒含该码会让断言恒真）。
     payload = {"data": {"count": 42, "mean": 3.14},
                "artifact": {"ref": "artifact://cap-o14"}}
     summary = slim_tool_result(payload, json.dumps(payload), None)
     has_value = "42" in summary or "3.14" in summary
     has_ref = "ref" in summary.lower() or "artifact" in summary.lower()
+    assert has_value or has_ref, (
+        "代表性封套的 slim 摘要应保留关键数值或 ref")
+    assert "SUMMARY_VALUE_LOSS" in report["monitored_codes"], (
+        "SUMMARY_VALUE_LOSS 必须在受监控诊断码表内")
     if not (has_value or has_ref):
-        assert "SUMMARY_VALUE_LOSS" in json.dumps(report, default=str), (
+        assert "SUMMARY_VALUE_LOSS" in report["diagnostics"], (
             "slim 摘要丢失关键数值且无 ref，parity_report 必须记 SUMMARY_VALUE_LOSS")
