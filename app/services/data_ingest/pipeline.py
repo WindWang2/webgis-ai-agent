@@ -153,10 +153,26 @@ class IngestPipeline:
             return result
         result.steps_completed.append("detect")
 
-        # 2) Validate：载荷指纹（去重键）+ 基本形状（大载荷 O(n) 串行化
-        # 与哈希卸载到线程 —— 不阻塞事件循环）。
+        # 1b) G03 GD-09 恶意输入守卫：NaN/±Inf 坐标、超深结构、超大属性
+        # 串——类型化拒绝发生在 store 之前（无 ref 铸造、无回滚对象）。
+        # O(features) 有界，与指纹同卸载到线程。
         import asyncio as _asyncio
 
+        from app.services.data_ingest.geojson_guard import (
+            GeojsonGuardError,
+            validate_feature_collection,
+        )
+
+        try:
+            await _asyncio.to_thread(validate_feature_collection, fc)
+        except GeojsonGuardError as e:
+            result.error_code = e.code
+            result.error = str(e)
+            return result
+        result.steps_completed.append("guard")
+
+        # 2) Validate：载荷指纹（去重键）+ 基本形状（大载荷 O(n) 串行化
+        # 与哈希卸载到线程 —— 不阻塞事件循环）。
         fingerprint = await _asyncio.to_thread(compute_payload_fingerprint, data)
         result.steps_completed.append("validate")
 

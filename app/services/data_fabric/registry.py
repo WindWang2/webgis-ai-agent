@@ -123,6 +123,7 @@ def _build_registry() -> AdapterRegistry:
         FlatGeobufAdapter,
         GeoPackageAdapter,
         GeoParquetAdapter,
+        GeojsonUrlAdapter,
         LocalFileAdapter,
         OGCAPIAdapter,
         OGCCoveragesAdapter,
@@ -195,6 +196,13 @@ def _build_registry() -> AdapterRegistry:
                     aliases=("local_sqlite",),
                     supports_projection=True,
                     notes="declared local files (GeoJSON / sqlite); typed-unavailable when missing"),
+        # G03 GD-02（ADR-0286 D5）：远程单文件 GeoJSON（FC）真实实现。
+        # #767 移除的是无实现的空 geojson alias（静默合成要素）；本条目
+        # 是受控取回 + 预算截断 + typed 错误的真实数据源——声明式源专用。
+        AdapterSpec("geojson_url", GeojsonUrlAdapter,
+                    aliases=("remote_geojson",),
+                    supports_projection=True,
+                    notes="declared remote GeoJSON files (SSRF-guarded GET, budgeted fetch, honest truncation)"),
         AdapterSpec("cog", COGAdapter,
                     aliases=("cog_tiff", "geotiff"),
                     is_raster_tile=True,

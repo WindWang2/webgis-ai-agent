@@ -330,12 +330,12 @@ class TestB3GeojsonUrlAdapter:
         from app.services.data_fabric.registry import resolve_adapter_spec
 
         spec = resolve_adapter_spec("geojson_url")
-        assert spec.source_type == "geojson_url"
+        assert spec.canonical == "geojson_url"
         assert not getattr(spec, "is_demo", False), "真实 adapter，非 demo"
 
-    def test_query_respects_feature_cap(self, monkeypatch):
+    def test_query_respects_feature_cap(self, patched_safe_sessions):
         """远程 FC 超要素帽 → 截断并披露 truncated，不无界拉取。"""
-        from tests.data.fabric_fixtures import FakeSourceServer, patched_safe_sessions
+        from tests.data.fabric_fixtures import FakeSourceServer
 
         from app.schemas.data_fabric_schema import ConnectionProfile
         from app.services.data_fabric.adapters.geojson_url_adapter import (
@@ -362,7 +362,7 @@ class TestB3GeojsonUrlAdapter:
             )
 
         server._add("/data.geojson", _handler)
-        patched_safe_sessions(monkeypatch)(server)
+        patched_safe_sessions(server)
 
         adapter = GeojsonUrlAdapter(ConnectionProfile(
             id="gj_url", source_type="geojson_url", url=server.base_url + "/data.geojson",
@@ -372,9 +372,9 @@ class TestB3GeojsonUrlAdapter:
         assert len(preview.get("features", [])) == 10, "要素帽必须生效"
         assert preview.get("truncated") is True
 
-    def test_non_fc_content_typed_error(self, monkeypatch):
+    def test_non_fc_content_typed_error(self, patched_safe_sessions):
         """假 Content-Type / 非 FC 体 → 类型化错误，不静默空结果。"""
-        from tests.data.fabric_fixtures import FakeSourceServer, patched_safe_sessions
+        from tests.data.fabric_fixtures import FakeSourceServer
 
         from app.schemas.data_fabric_schema import ConnectionProfile
         from app.services.data_fabric.adapters.geojson_url_adapter import (
@@ -394,14 +394,17 @@ class TestB3GeojsonUrlAdapter:
             )
 
         server._add("/notfc.geojson", _handler)
-        patched_safe_sessions(monkeypatch)(server)
+        patched_safe_sessions(server)
 
         adapter = GeojsonUrlAdapter(ConnectionProfile(
             id="gj_bad", source_type="geojson_url",
             url=server.base_url + "/notfc.geojson",
         ))
+        # probe 契约：永不抛错，不可用 → False（诚实，不静默空成功）
+        assert adapter.probe() is False
+        # typed 错误从查询面浮出（绝不静默空结果）
         with pytest.raises(SourceBadResponseError):
-            adapter.probe()
+            adapter.preview("default", limit=5)
 
 
 # ═══════════════════ B5 preflight 任务范围（红灯） ═════════════════════════
@@ -534,7 +537,7 @@ class TestB9MaliciousGeojsonGuard:
             node = node["child"]
         result = await get_ingest_pipeline().ingest("g03-b9b", fc)
         assert not result.ok
-        assert "DEPTH" in (result.error_code or "").upper()
+        assert result.error_code == "STRUCTURE_TOO_DEEP"
 
     async def test_oversized_property_string_rejected(self, sem_store):
         fc = _fc(1)
