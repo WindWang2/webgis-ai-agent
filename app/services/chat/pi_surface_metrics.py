@@ -30,6 +30,7 @@ _counters: Dict[str, int] = {
     "schema_validation_rejected": 0,
     "proxy_wrapped": 0,
     "direct_surface": 0,
+    "duplicate_tool_end_dropped": 0,
 }
 _reject_samples: deque = deque(maxlen=_REJECT_SAMPLE_MAX)
 _last_surface: Dict[str, Any] = {}
@@ -69,6 +70,24 @@ def record_surface_call(*, proxied: bool, tool: str = "") -> None:
         return
     key = "proxy_wrapped" if proxied else "direct_surface"
     _counters[key] += 1
+
+
+def record_duplicate_tool_end(tool_call_id: str = "") -> None:
+    """PI-04（ADR-0286 D2）：重复 ``tool_execution_end`` 被丢弃的计数。
+
+    Pi 重复回传同一 toolCallId 的终结事件时（vendor 重试/协议重发），
+    dispatch cache 已单次消费，第二份走 cache-miss 会向客户端补发降级
+    ``step_result`` —— bridge 层去重后在此计数（观测重复是否真实发生）。
+    """
+    if not _enabled():
+        return
+    _counters["duplicate_tool_end_dropped"] += 1
+    _reject_samples.append({
+        "kind": "duplicate_tool_end_dropped",
+        "tool": str(tool_call_id)[:96],
+        "reason": "duplicate terminal tool event suppressed",
+        "ts": time.time(),
+    })
 
 
 def record_surface_projection(

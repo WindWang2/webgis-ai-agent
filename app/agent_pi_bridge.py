@@ -2778,6 +2778,13 @@ class PiBridge:
                     # audit #820: turn-scoped counters（_turn_tool_steps /
                     # _turn_final_text / _turn_map_product）已随 flags 块
                     # 前置初始化 —— send-failed 早退路径也有诚实缺省值。
+                    # PI-04（ADR-0286 D2）：turn 内 toolCallId 终结事件去重集。
+                    # dispatch cache 单次消费后，Pi 重复回传同一
+                    # tool_execution_end 会走 cache-miss 降级路径补发第二条
+                    # step_result —— 首见放行、重复丢弃并计数。有界：超限后
+                    # 停止去重（正常 turn 的工具步数远低于该界）。
+                    _seen_tool_end_ids: set = set()
+                    _tool_end_dedup_overflow = False
                     get_task = asyncio.ensure_future(self._rpc.events.get())
                     died_task = asyncio.ensure_future(process_died_event.wait())
                     pending = {get_task, died_task}
@@ -2808,10 +2815,43 @@ class PiBridge:
                                 # PI-01（ADR-0286）：tool_execution_start/end 驱动
                                 # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
                                 _phase.observe_tool_event(str(event.get("type") or ""))
+                                # PI-04（ADR-0286 D2）：重复终结事件去重 —— 同一
+                                # toolCallId 的 tool_execution_end 首见放行、重复
+                                # 丢弃（不再补发降级 step_result、不重复计数）。
+                                _duplicate_tool_end = False
+                                if event.get("type") == "tool_execution_end":
+                                    _tcid = str(event.get("toolCallId") or "")
+                                    if _tcid:
+                                        if _tcid in _seen_tool_end_ids:
+                                            _duplicate_tool_end = True
+                                            rt_ev.add_warning(
+                                                "duplicate_tool_execution_end",
+                                                f"toolCallId={_tcid} 重复终结事件已丢弃",
+                                            )
+                                            try:
+                                                from app.services.chat.pi_surface_metrics import (
+                                                    record_duplicate_tool_end,
+                                                )
+                                                record_duplicate_tool_end(_tcid)
+                                            except Exception:  # noqa: BLE001 — 计数绝不阻断
+                                                pass
+                                            logger.warning(
+                                                "[PiBridge] duplicate tool_execution_end "
+                                                "dropped turn=%s toolCallId=%s",
+                                                turn_id, _tcid,
+                                            )
+                                        elif len(_seen_tool_end_ids) < 1024:
+                                            _seen_tool_end_ids.add(_tcid)
+                                        elif not _tool_end_dedup_overflow:
+                                            _tool_end_dedup_overflow = True
+                                            rt_ev.add_warning(
+                                                "tool_end_dedup_overflow",
+                                                "去重集超界（1024），后续终结事件不再去重",
+                                            )
                                 # audit #820: truthful task_complete counters — count
                                 # executed tool steps and accumulate the final text
                                 # the vendor streams (message.content snapshots).
-                                if event.get("type") == "tool_execution_end":
+                                if event.get("type") == "tool_execution_end" and not _duplicate_tool_end:
                                     _turn_tool_steps += 1
                                 if event.get("type") == "message_update":
                                     _snap = _extract_text_from_event(event)
@@ -2859,7 +2899,7 @@ class PiBridge:
                                             reason="turn_settled",
                                         )
                                         _projections_settled = True
-                                sse = map_event_to_sse(
+                                sse = "" if _duplicate_tool_end else map_event_to_sse(
                                     event,
                                     turn_sid,
                                     cache_lookup=lookup_result,
@@ -2879,7 +2919,7 @@ class PiBridge:
                                     turn_harness.record_sse_event({
                                         **event, "run_id": run_id, "turn_id": turn_id,
                                     })
-                                if event.get("type") == "tool_execution_end":
+                                if event.get("type") == "tool_execution_end" and not _duplicate_tool_end:
                                     extra_plan = take_session_plan_sse(
                                         str(event.get("toolCallId") or ""), turn_sid,
                                     )
