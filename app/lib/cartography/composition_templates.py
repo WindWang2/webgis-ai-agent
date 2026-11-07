@@ -38,10 +38,11 @@ class ComponentSlot(BaseModel):
     conditions: Dict[str, Any] = Field(default_factory=dict)
     stack_behavior: str = "exclusive"
 
-    # G04（CM-02）：cardinality 是机器契约的主词 —— 声明面大量存在
+    # G04（CM-02）：cardinality 是机器契约的主词 —— 声明面普遍存在
     # ``cardinality="required", required=True`` 而缺省 ``min_count=0`` 的
-    # 自相矛盾（168 处：min_count=0 让「必需」在机读面等于可选）。构造期
-    # 归一：required ⇒ min_count ≥ 1；forbidden ⇒ max_count = 0。声明值
+    # 自相矛盾（min_count=0 让「必需」在机读面等于可选；当前注册表
+    # 35 模板/326 槽中 204 个 required 槽依赖此归一）。构造期归一：
+    # required ⇒ min_count ≥ 1；forbidden ⇒ max_count = 0。声明值
     # 只在比语义下界更严时保留（如 required 且显式 min_count=2）。
     @model_validator(mode="after")
     def _normalize_cardinality(self) -> "ComponentSlot":

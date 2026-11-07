@@ -85,6 +85,21 @@ describe('applyConstraintLayoutToSpec · 求解区域写回', () => {
     expect(comps[1].enabled).toBe(true);
   });
 
+  it('浮动件即便在 suppressed_ids 中也保持在场(与后端矢量链同语义)', () => {
+    const input = spec([
+      { id: 'float-chart', type: 'chart_panel', enabled: true,
+        placement: { mode: 'floating', x: 12, y: 24 } },
+      { id: 'docked-ann', type: 'annotation', enabled: true, position: 'top-left' },
+    ]);
+    const out = applyConstraintLayoutToSpec(
+      input,
+      evaluatedReport({}, ['float-chart', 'docked-ann']),
+    ) as typeof input;
+    const comps = (out.layout as { components: Comp[] }).components;
+    expect(comps[0].enabled).toBe(true);   // 浮动件豁免抑制
+    expect(comps[1].enabled).toBe(false);  // 锚定件照常抑制
+  });
+
   it('用户锁（含 __ 族派生实例）零触碰：不挪位、不抑制', () => {
     const input = spec([
       { id: 'zz-chart', type: 'chart_panel', enabled: true, position: 'bottom-right' },

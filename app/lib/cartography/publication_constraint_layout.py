@@ -219,7 +219,8 @@ def prepare_publication_document(
     if not isinstance(cloned_layout, dict):
         cloned_layout = {}
         cloned["layout"] = cloned_layout
-    cloned_layout["constraint_layout"] = "evaluated"
+    # review P3-2:不再向克隆写 constraint_layout 标记(全仓零消费方的
+    # 死数据;#2000 标记退役的同一叙事)。page_profile 保留(渲染面读档)。
     cloned_layout["page_profile"] = report["page_profile"]
     workbench_value = cloned.get("workbench")
     workbench = workbench_value if isinstance(workbench_value, dict) else {}

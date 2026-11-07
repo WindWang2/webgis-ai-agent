@@ -86,6 +86,11 @@ def _print_constraint_payload(
     if components is None:
         report = not_evaluated(page_profile, "no_session_mapspec")
         return report, {}
+    if not components:
+        # review P2-3:空组件面不虚构 evaluated —— 零参与者求解没有
+        # 挪位/抑制决策,如实 not_evaluated(不虚构求解原则)。
+        report = not_evaluated(page_profile, "no_components")
+        return report, {}
     report = evaluate_constraint_layout(components, page_profile=page_profile)
     fe_payload = {
         "constraint_layout": report["constraint_layout"],

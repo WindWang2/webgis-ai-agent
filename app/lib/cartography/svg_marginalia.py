@@ -180,7 +180,7 @@ def render_legend_box(x: float, y: float, legend: Dict[str, Any], *,
     item_h = 20.0
     padding = 12.0
     unit = str(legend.get("unit") or "").strip()
-    unit_dy = 13.0 if unit else 0.0
+    unit_dy = 15.0 if unit else 0.0  # review P3-4:降部字母余量
     height = padding * 2 + 18.0 + unit_dy + len(shown) * item_h
     title = legend.get("title") or "图例"
     parts = [

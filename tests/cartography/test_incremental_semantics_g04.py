@@ -143,12 +143,11 @@ async def test_update_unknown_instance_is_typed_not_decorated(registry, clean_se
         "component_id": "ghost-panel-42",
         "variant": "default",
     }, session_id=sid)
-    # 缺席实例 → 列示当前组件的 typed 响应(create=False 语义)
-    assert out.get("success") is False or out.get("status") == "missing"
-    current = out.get("current_components") or out.get("components") or []
-    if current:
-        assert any("north" in str(c.get("id", "")) or
-                   c.get("type") == "north_arrow" for c in current)
+    # 缺席实例 → typed 拒绝 + correction_hint 列示在场组件(不静默创建)
+    assert out.get("success") is False
+    assert "未找到组件" in str(out.get("message"))
+    hint = str(out.get("correction_hint") or "")
+    assert "north" in hint or "north_arrow" in hint
     spec_after = await mapspec_store.get_mapspec(sid)
     assert spec_after["layout"]["components"] == \
         spec_before["layout"]["components"]

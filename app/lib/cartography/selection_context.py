@@ -105,8 +105,6 @@ def geometry_kind_of(
     category = collapse_geometry_types(geometry_types)
     if category in ("point", "line", "polygon"):
         return category
-    if category == "raster":
-        return "raster"
     expectation = str(geometry_expectation or "").strip().lower()
     if expectation in ("point", "line", "polygon", "raster"):
         return expectation
@@ -241,10 +239,14 @@ def project_selection_facts(
         ) else "count"
     )
     feature_count = prof.get("featureCount")
-    point_count = int(feature_count) if (
-        geometry_kind == "point"
-        and isinstance(feature_count, int) and not isinstance(feature_count, bool)
-    ) else 0
+    # review P2-4:JSON 反序列化可能给 float(24.0)—— 数值即计数,宽容
+    # coerce(截断取整);非数值(字符串等)归零 + basis=unknown(不猜)。
+    count_value: Optional[int] = None
+    if isinstance(feature_count, (int, float)) and not isinstance(feature_count, bool):
+        coerced = int(feature_count)
+        if coerced >= 0 and float(feature_count) == float(coerced):
+            count_value = coerced
+    point_count = (count_value or 0) if geometry_kind == "point" else 0
     return SelectionFacts(
         task_categories=TASK_CATEGORY_BY_INTENT.get(task, _FALLBACK_CATEGORY),
         geometry_kind=geometry_kind,
@@ -264,11 +266,8 @@ def project_selection_facts(
         output_target=str(output_target or "interactive"),
         point_count=point_count,
         point_count_basis=(
-            "profile" if (
-                geometry_kind == "point"
-                and isinstance(feature_count, int)
-                and not isinstance(feature_count, bool)
-            ) else "unknown"
+            "profile" if geometry_kind == "point" and count_value is not None
+            else "unknown"
         ),
         temporal_periods=int(temporal_periods or 0),
         user_requested_models=tuple(dict.fromkeys(

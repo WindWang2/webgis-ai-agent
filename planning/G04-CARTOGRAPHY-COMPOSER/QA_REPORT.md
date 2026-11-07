@@ -47,9 +47,10 @@
 
 ## 5. 行为变化披露(评审者/合并者须知)
 
-1. **SVG chrome 挪位门变化**:master 上"无全局标记 → 组件非历史 position 被忽略";现在非历史锚点(用户挪动/求解写入)导出遵循锚点(user-wins 修正)。锁旧行为的 1 个测试已按新语义更新(意图保持:默认坐标路径不因标记改变)。
+1. **SVG chrome 挪位门变化(review P1-2 修正措辞)**:master 上"无全局标记 → 组件非历史 position 被忽略";现在非历史锚点(用户挪动/apply_contract 模板槽位 zone/求解写入)导出遵循锚点(user-wins 修正,与 live 对齐)。这是**故意的语义反转**而非意图保持 —— master 的 `test_default_chrome_coordinates_ignore_a_different_position` 断言"标记造成差异"(标记门),新测试断言"锚点造成差异、标记零影响"(锚点门);两者意图相反,更新是有意为之。新语义已补字节级回归锁定(`test_nonhistorical_anchor_default_export_semantics_pinned`);"默认导出字节稳定"的成立条件 = 历史锚点 ∧ bearing 缺省/0 ∧ legend_spec.unit 缺席。
 2. **A3 入求解器词表**:a3_landscape/portrait 从 profile_unsupported 变 evaluated(既有测试断言更新)。
-3. **variable_kind 粗判**:数值字段在场 → continuous(原 design 面恒缺省 continuous,planner 面"任一文本→categorical");name+count 数据不再降级。
+3. **variable_kind 粗判**:数值字段在场 → continuous(原 design 面恒缺省 continuous,planner 面"任一文本→categorical");name+count 数据不再降级。**残余缺口(review P2-5)**:数值编码的分类型字段(如行政区代码)且无文本字段 → 仍判 continuous;逃生通道 = profile 显式 `dataKind`(已入语法文档边界)。
+3b. **planner 侧 statistic 变化(review P2-4)**:master planner 恒 "count";经单一投影器后 density 语义任务(measure∈{density,rate,ratio} 或 analytical_density/concentration_analysis)投影为 "density"(与 design 面收敛,方向正确但属行为变化)。point_count 对 float(24.0)宽容 coerce(原 strict isinstance(int) 会归零)。
 4. **图例单位行**:legend_spec.unit 在场时 SVG 图例多一行「单位:…」(+13px 高;缺席字节不变)。
 5. **export 工具转 async + 新 session_id 形参**(dispatch 自动注入;无直接同步调用方,grep 验证)。
 

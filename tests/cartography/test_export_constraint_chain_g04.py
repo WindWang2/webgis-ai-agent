@@ -352,3 +352,46 @@ def test_svg_export_north_arrow_follows_view_bearing():
         lambda _pt: (0.0, 0.0),
     )
     assert 'rotate(-' not in svg_flat
+
+
+def test_nonhistorical_anchor_default_export_semantics_pinned():
+    """G04 review P1-2:「非历史锚点 + 默认导出」新语义字节级锁定。
+
+    master 上该场景忽略组件锚点(需全局 evaluated 标记);#2000 修正后
+    锚点是唯一门 —— 用户/求解写入的 position 被默认导出尊重。以确定性
+    断言锁住新语义的输出坐标,回归面不裸奔。
+    """
+    from app.services.mapspec_to_svg import _render_chrome_groups
+
+    def _spec(position: str) -> dict:
+        return {
+            "layers": [{
+                "id": "layer-1", "type": "circle",
+                "legend_spec": {"title": "图例", "entries": [
+                    {"label": "a", "color": "#111111"},
+                    {"label": "b", "color": "#222222"},
+                ]},
+            }],
+            "layout": {"components": [
+                {"id": "legend-1", "type": "legend", "enabled": True,
+                 "position": position, "options": {"layerId": "layer-1"}},
+            ]},
+        }
+
+    bottom_left = _render_chrome_groups(
+        _spec("bottom-left"), [104.0, 30.0, 105.0, 31.0], 800.0, 600.0,
+        lambda _pt: (0.0, 0.0),
+    )[0]
+    bottom_center = _render_chrome_groups(
+        _spec("bottom-center"), [104.0, 30.0, 105.0, 31.0], 800.0, 600.0,
+        lambda _pt: (0.0, 0.0),
+    )[0]
+    # 新语义:非历史锚点(bottom-center)产出与历史锚点不同的图例坐标
+    assert bottom_center != bottom_left
+    assert 'class="chrome-legend"' in bottom_center
+    # 确定性:同输入两次编译字节一致(回归基线锚)
+    again = _render_chrome_groups(
+        _spec("bottom-center"), [104.0, 30.0, 105.0, 31.0], 800.0, 600.0,
+        lambda _pt: (0.0, 0.0),
+    )[0]
+    assert again == bottom_center

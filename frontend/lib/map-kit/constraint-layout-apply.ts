@@ -95,8 +95,10 @@ export function applyConstraintLayoutToSpec(
         next.placement = { ...placement, anchor: zone };
       }
     }
-    // 2) 溢出抑制（key 组件与锁实例保持在场）
-    if (suppressed.has(id) && !keys.has(id) && !isLocked) {
+    // 2) 溢出抑制（key 组件、锁实例与浮动件保持在场 —— 与后端
+    //    prepare_publication_document 同语义：浮动件在抑制检查前豁免，
+    //    双链同档同图）
+    if (suppressed.has(id) && !keys.has(id) && !isLocked && !floating) {
       next = { ...(next ?? comp), enabled: false };
     }
     return next ?? comp;

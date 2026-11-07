@@ -14,9 +14,8 @@ from app.services.mapspec_svg_chrome_layout import (
 )
 
 
-@pytest.mark.parametrize("mapspec", [None, [], {}, {"layout": []}, {"layout": {"constraint_layout": "evaluated"}}])
-def test_historical_anchors_keep_default_coordinates(mapspec):
-    """历史锚点 → None（默认坐标路径），与是否携带 evaluated 标记无关。"""
+def test_historical_anchors_keep_default_coordinates():
+    """历史锚点 → None（默认坐标路径）；锚点唯一门下无 mapspec 输入。"""
     component = resolve_component({"id": "n", "type": "north_arrow", "position": "top-right"})
     assert _constraint_chrome_xy(component, "north_arrow", 800, 600, 20) is None
 

@@ -33,4 +33,4 @@
 
 - 单求解器 `solve_layout_v5`;单 MapSpec;单组件实例 id 惯例;不碰 `requirement_ir/`、`execution_compiler/`(PR #2011 域);不碰 Pi Bridge/Data Fabric。
 - 资源:pytest 无 `-n` 或受控;前端 vitest 分批;-j4 上限。
-- 默认导出字节稳定是契约(#2000 修复不得改变既有默认输出)。
+- 默认导出字节稳定是契约(#2000 修复不得改变既有默认输出;成立条件 = 历史锚点 ∧ bearing 缺省/0 ∧ legend unit 缺席,见 QA_REPORT §5.1)。

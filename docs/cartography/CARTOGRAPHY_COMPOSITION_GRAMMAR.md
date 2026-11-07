@@ -27,7 +27,7 @@ MapSpec layout.components(实例 id 惯例 = component_abi.INSTANCE_ID_BY_TYPE)
 ## 1. 判选输入语法(①):结构化事实,不是关键词
 
 **输入**(全部结构化,无 query 字符串):
-- `intent_task`(18 词表,`TASK_CATEGORY_BY_INTENT` → 组合类目;表外兜底 `thematic_cartography`)
+- `intent_task`(17 键审定词表 `TASK_CATEGORY_BY_INTENT` → 组合类目;表外兜底 `thematic_cartography`)
 - `geometry_types`(原始几何类型列表)→ `collapse_geometry_types`(计数最大类)→ geometry_kind(point/line/polygon/raster)
 - `variable_kind`(测量层级:none/categorical/ordinal/continuous/rate):profile `dataKind` 显式优先;粗判口径 = **数值字段在场 → continuous,仅文本/类别 → categorical,无字段 → continuous**(name+count 数据不因伴生文本降级)
 - `statistic`:density ⟸ measure∈{density,rate,ratio} 或 task∈{analytical_density,concentration_analysis};否则 count

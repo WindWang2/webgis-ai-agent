@@ -201,7 +201,10 @@ def test_explicit_a4_landscape_evaluates_existing_solver():
     )
     assert cloned is not document
     assert document["layout"].get("constraint_layout") is None
-    assert cloned["layout"]["constraint_layout"] == "evaluated"
+    # review P3-2:克隆不再携带已退役的 constraint_layout 标记(零消费方
+    # 死数据);page_profile 保留供渲染面读档。
+    assert "constraint_layout" not in cloned["layout"]
+    assert cloned["layout"]["page_profile"] == "a4_landscape"
     assert report["constraint_layout"] == "evaluated"
     assert report["page_profile"] == "a4_landscape"
     assert {item["id"] for item in report["placements"]} >= {"title-1", "legend-1"}
