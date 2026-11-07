@@ -9,3 +9,5 @@
 > 弹出了其他 worktree（codex/all-issues-deep-review）的共享 stash 造成 UU 冲突。
 > 处置：`git reset --hard HEAD`（仅本 worktree，4 个提交无损）+ 恢复误删的被跟踪
 > .claude 文件 + 保留外来 stash@{0} 不动。**纪律：本仓库永不使用 git stash**。
+| 7 | W6a: PI-09 旅程扩展（J6 wrap 拒绝/J6b 两段式邻近真实计算/J7 resume 零 LLM）+ 发现并修复长尾 dormant 工具参数投影 P0（schema 未解包→空 closed schema→vendor 拒参） | 旅程连跑两遍 1 passed（33.6s/32.9s）；vendor contract+golden 9；surface 族 54；commit 5ab9333bc | 通过 | W6b 文档 |
+| 8 | W6b: PI_RUNTIME_CONTRACT.md + PI_UPSTREAM_COMPAT_MATRIX.md 落盘（每条带测试锚点） | 文档与代码同步 | 通过 | M8 独立 review |
