@@ -23,10 +23,10 @@
 
 ## 证据
 
-- 后端全域（situation+IR+harness+scope 工具+E5 多轮旅程+SSE chaos）：**3488 passed, 4 skipped**
-- 回放金标：**31 passed**（18 场景 × 双跑 + present）
-- 前端全量 vitest：**5008 passed**（534 files；1 expected fail 为基线）+ tsc 0 + eslint 0
-- 新增测试：后端 19 + 语料 5；前端 13
+- 后端全域（situation+IR+harness+scope 工具+E5 多轮旅程+SSE chaos）：复审清偿后 **3423 passed, 4 skipped**（清偿前 3488 基线亦全绿）
+- 回放金标：**31 passed**（18 场景 × 双跑 + present；2 条 32 字符 id 真实路径）
+- 前端全量 vitest：**5011 passed**（1 expected fail 为基线）+ tsc 0 + eslint 0 + i18n 双语
+- 新增测试：后端 24+（含复审钉扎）+ 语料 5；前端 13
 - 契约文档：`docs/SITUATED_WORKBENCH_CONTRACT.md`、`docs/INTERACTION_REPLAY_GOLDENS.md`、`docs/UX_JOURNEY_EVIDENCE.md`（J1–J8 → 测试证据映射）；ADR-0287
 - 本地复现命令见 `planning/G05-SITUATED-WORKBENCH/TEST_MATRIX.md`
 
@@ -43,4 +43,4 @@ cd frontend && pnpm vitest run && pnpm typecheck && pnpm lint
 - e2e 真浏览器档（playwright real）未跑（需夜间账号；mock 档回归绿）——诚实披露于 UX_JOURNEY_EVIDENCE。
 - `test_quality_manifest_gate`/`test_generated_artifact_graph` 在干净 master 同样失败（Issue #2007 基线已坏，实测归因，非本 PR 引入，未抢修）。
 - 冲突面：与在途 #2011（execution compiler）/#2012（Pi native runtime）零文件交叠（BASELINE 冲突矩阵）。
-- 独立复审：R1 → 清偿 → R2 结论见 `planning/G05-SITUATED-WORKBENCH/REVIEW.md`。
+- 独立复审：R1（BLOCK P0×1/P1×3，含实测复现的记录预算脱节 accepted-but-dropped）→ 全清偿 → **R2 SHIP（P0=0/P1=0）**；R2 遗留 3 项非阻塞亦当场清偿（诚实拒绝裁决/64 字符钉扎/bbox 非 list 丢键）。详见 `planning/G05-SITUATED-WORKBENCH/REVIEW.md`。
