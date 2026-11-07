@@ -164,3 +164,25 @@ def test_secondary_geometry_kinds_exclude_primary():
     facts = _facts(overlay_geometry_kinds=("polygon", "line", "polygon"))
     assert facts.geometry_kind == "polygon"
     assert facts.secondary_geometry_kinds == ("line",)
+
+
+def test_point_count_coerces_integral_floats():
+    """review P2-4 微测:24.0 → 24/profile(积分性校验,24.5 → unknown)。"""
+    integral = _facts(
+        intent_task="distribution_overview",
+        profile={"geometryTypes": ["Point"], "featureCount": 24.0},
+    )
+    assert integral.point_count == 24
+    assert integral.point_count_basis == "profile"
+    fractional = _facts(
+        intent_task="distribution_overview",
+        profile={"geometryTypes": ["Point"], "featureCount": 24.5},
+    )
+    assert fractional.point_count == 0
+    assert fractional.point_count_basis == "unknown"
+    stringy = _facts(
+        intent_task="distribution_overview",
+        profile={"geometryTypes": ["Point"], "featureCount": "24"},
+    )
+    assert stringy.point_count == 0
+    assert stringy.point_count_basis == "unknown"

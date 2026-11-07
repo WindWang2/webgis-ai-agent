@@ -395,3 +395,18 @@ def test_nonhistorical_anchor_default_export_semantics_pinned():
         lambda _pt: (0.0, 0.0),
     )[0]
     assert again == bottom_center
+
+
+@pytest.mark.asyncio
+async def test_empty_component_face_does_not_claim_evaluated(registry, clean_session):
+    """review P2-3 微测:空组件面 → not_evaluated(no_components),不虚构求解。"""
+    session_id = clean_session
+    await mapspec_store.save_mapspec(session_id, {
+        "version": "1.6", "layers": [], "layout": {"components": []},
+    })
+    out = await registry.dispatch("export_thematic_map", {
+        "title": "t", "format": "png", "paper_size": "a4",
+    }, session_id=session_id)
+    assert out["constraint_layout"] == "not_evaluated"
+    assert out["constraint_layout_report"]["reason"] == "no_components"
+    assert "constraint_layout" not in out["params"]

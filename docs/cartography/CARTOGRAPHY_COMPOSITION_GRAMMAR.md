@@ -29,7 +29,7 @@ MapSpec layout.components(实例 id 惯例 = component_abi.INSTANCE_ID_BY_TYPE)
 **输入**(全部结构化,无 query 字符串):
 - `intent_task`(17 键审定词表 `TASK_CATEGORY_BY_INTENT` → 组合类目;表外兜底 `thematic_cartography`)
 - `geometry_types`(原始几何类型列表)→ `collapse_geometry_types`(计数最大类)→ geometry_kind(point/line/polygon/raster)
-- `variable_kind`(测量层级:none/categorical/ordinal/continuous/rate):profile `dataKind` 显式优先;粗判口径 = **数值字段在场 → continuous,仅文本/类别 → categorical,无字段 → continuous**(name+count 数据不因伴生文本降级)
+- `variable_kind`(测量层级:none/categorical/ordinal/continuous/rate):profile `dataKind` 显式优先;粗判口径 = **数值字段在场 → continuous,仅文本/类别 → categorical,无字段 → continuous**(name+count 数据不因伴生文本降级)**粗判边界**:数值编码的分类型字段(如行政区代码)且无文本字段 → 仍判 continuous;逃生通道 = profile 显式 `dataKind`。
 - `statistic`:density ⟸ measure∈{density,rate,ratio} 或 task∈{analytical_density,concentration_analysis};否则 count
 - `artifact_types`:profile 显式声明(≤12)优先;否则 `GEOMETRY_KIND_ARTIFACTS` 几何派生;overlay 面证据在场追加 `admin_boundary_set`
 - 增量证据:overlay 次几何、分母字段(DENOMINATOR_FIELD_HINTS 命中,宁缺毋滥)、时相双期(声明+字段双证据)、用户 pin(grammar_face_pins / bare_density_visual)

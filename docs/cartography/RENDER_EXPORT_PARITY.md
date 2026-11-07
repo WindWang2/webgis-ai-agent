@@ -34,7 +34,7 @@
 
 1. **词表三方门**(`app/lib/cartography/render_diagnostics.py`):每个诊断码必须注册 + 发射器真实存在 + 前端镜像(`ExportDegradationCode`)——死码即测试失败(`test_diagnostics_dead_code_gate`)。
 2. **渲染支持矩阵**(`component_renderers._SUPPORT_MATRIX`):类型 × live/canvas/publication 三通道真值;descriptor 声明与矩阵互账,契约撒谎 = validate 失败。
-3. **结构 golden**:36 条出版用例 × zh/en × 16:9/A4/A3(`tests/cartography/publication_cases/`)锁 SVG 结构;golden 链测试(golden_corpus + publication_ir + publication_cases)单次运行 646 用例全绿锁编译面。
+3. **结构 golden**:36 条出版用例 × zh/en × 16:9/A4/A3(`tests/cartography/publication_cases/`)锁 SVG 结构;golden 链(golden_corpus 595 个 golden 文件 + publication_cases 36 条结构用例等,合计 100 个测试项)全绿锁编译面。
 4. **语义语料对账**(`export_semantic_corpus.expected_semantics`):SVG 实际渲染 vs 期望语义逐条比对(zoom 门/表达窗口/图例条目数)。
 5. **像素 diff**(`golden_diff.py`):±16/通道、≥98% 像素通过 —— 只用于受控样本,不用于 live 页面批准(已知边界)。
 
