@@ -47,3 +47,12 @@
 - display-confirmation required 模式的端到端（env 翻转）不在默认测试环境；
   组件级 3 测试覆盖其状态机。
 - 线上 CI：按任务书不等待、不宣称。
+
+## 基线已坏（非本 PR 引入，实测归因）
+
+- `tests/quality/test_quality_manifest_gate.py::test_committed_manifest_is_current`
+  与 `test_generated_artifact_graph.py::test_ledger_is_current`：在干净
+  origin/master（585812ee4）上同样失败 —— 即 Issue #2007（生成质量文档
+  过期）。归因=基线已坏；不在本 PR 抢修（任务书明示不抢独立 issues，
+  再生成会产生大片无关 diff）。本 PR 新增 docs 将随该 issue 的修复被
+  生成器自然收录。
