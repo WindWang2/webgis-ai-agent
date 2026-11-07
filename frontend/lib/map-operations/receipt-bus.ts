@@ -99,10 +99,11 @@ export function pushOperationReceipt(
 
 
 /**
- * ADR-0285 D6：agent 可逆回执 → undo 栈录制（反向重放既有 CAS 通道）。
- * 只录 presentation 族（后端 ``invertible`` 披露为 true）；用户可用
- * Ctrl+Z 撤销 agent 的显隐/透明度操作。undo 语义 = 再提交一次反向
- * mutation（ADR-0278「不虚构强原子」）；不可逆效果不录（数据层撤销归
+ * ADR-0285 D6 + SW-04：agent 可逆回执 → undo 栈录制（反向重放既有 CAS
+ * 通道）。录 presentation 族（显隐/透明度）与持久样式族（paint/符号尺寸
+ * —— 后端 ``invertible`` 披露为 true 且 before 数值在场）；用户可用
+ * Ctrl+Z 撤销，redo 反向重放。undo 语义 = 再提交一次反向 mutation
+ * （ADR-0278「不虚构强原子」）；不可逆效果不录（数据层撤销归
  * feature-edit /undo）。
  */
 function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
@@ -115,7 +116,12 @@ function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
     if (undoRecordedOps.has(opKey)) return;
     const applied = (receipt.effects ?? []).filter(
       (e) => e.state === 'applied' && (e.targets?.length ?? 0) > 0
-        && (e.kind === 'set_layer_visibility' || e.kind === 'set_layer_opacity')
+        && (
+          e.kind === 'set_layer_visibility'
+          || e.kind === 'set_layer_opacity'
+          || e.kind === 'set_layer_paint'
+          || e.kind === 'set_layer_symbol'
+        )
         && e.before && e.after,
     );
     if (!applied.length || !currentSessionId) return;
@@ -127,12 +133,32 @@ function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
       if (oldest !== undefined) undoRecordedOps.delete(oldest);
     }
     // 多效果回执逐层录制（每层独立可撤销；undo 栈有序）。
-    void import('@/lib/workbench/undo').then(({ presentationCommand }) => {
+    void import('@/lib/workbench/undo').then(({ presentationCommand, styleCommand }) => {
       if (generation !== sessionGeneration || currentSessionId !== sid
           || getMapSpecSessionCursor().sessionId !== sid) return;
       for (const effect of applied) {
         const layerId = String(effect.targets?.[0] ?? '');
         if (!layerId) continue;
+        const label = `agent:${receipt.operation_id?.slice(0, 12) ?? 'op'}`;
+        if (effect.kind === 'set_layer_paint' || effect.kind === 'set_layer_symbol') {
+          const before = effect.before as Record<string, unknown> | undefined;
+          const after = effect.after as Record<string, unknown> | undefined;
+          if (!before || !after) continue;
+          // before 数值全在场才可反演（缺值 = 无从恢复"原本缺失"，不录）。
+          const numericBefore: Record<string, number> = {};
+          let invertible = Object.keys(before).length > 0;
+          for (const [k, v] of Object.entries(before)) {
+            if (typeof v === 'number' && Number.isFinite(v)) numericBefore[k] = v;
+            else invertible = false;
+          }
+          const numericAfter: Record<string, number> = {};
+          for (const [k, v] of Object.entries(after)) {
+            if (typeof v === 'number' && Number.isFinite(v)) numericAfter[k] = v;
+          }
+          if (!invertible) continue;
+          styleCommand(label, layerId, 'agent', numericBefore, numericAfter);
+          continue;
+        }
         const before = effect.before as
           | { visible?: boolean; opacity?: number }
           | undefined;
@@ -140,13 +166,7 @@ function recordAgentReceiptUndo(receipt: MapOperationReceiptView): void {
           | { visible?: boolean; opacity?: number }
           | undefined;
         if (!before || !after) continue;
-        presentationCommand(
-          `agent:${receipt.operation_id?.slice(0, 12) ?? 'op'}`,
-          layerId,
-          'agent',
-          before,
-          after,
-        );
+        presentationCommand(label, layerId, 'agent', before, after);
       }
     }).catch(() => {
       if (generation === sessionGeneration) undoRecordedOps.delete(opKey);
