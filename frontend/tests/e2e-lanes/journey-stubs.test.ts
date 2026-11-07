@@ -8,14 +8,13 @@ import { TILE_PROVIDERS } from '../../lib/providers';
 type Matcher = Parameters<Page['route']>[0];
 type Handler = Parameters<Page['route']>[1];
 
-async function responseFor(url: string) {
+async function responseFor(url: string, world = defaultWorld()) {
   const routes: Array<{ matcher: Matcher; handler: Handler }> = [];
   const page = {
     route: async (matcher: Matcher, handler: Handler) => {
       routes.push({ matcher, handler });
     },
   } as unknown as Page;
-  const world = defaultWorld();
   await installJourneyStubs(page, world);
   const match = routes.reverse().find(({ matcher }) => {
     if (typeof matcher === 'string') return matcher === url;
@@ -36,6 +35,21 @@ async function responseFor(url: string) {
 }
 
 describe('journey mock route precedence', () => {
+  it('lists the configured Story session using the production History contract', async () => {
+    const world = defaultWorld();
+    world.sessionDetail = {
+      session_id: 's-story-owner', title: 'Owned Story',
+      messages: [{ role: 'assistant', content: 'Story chapter', created_at: '2026-01-01T00:00:00Z' }],
+    };
+    const { response } = await responseFor('http://localhost:8001/api/v1/chat/sessions', world);
+    const { sessions } = JSON.parse(response.body);
+    expect(sessions).toEqual([{
+      id: 's-story-owner', title: 'Owned Story',
+      createdAt: expect.any(Number), messages: world.sessionDetail.messages,
+    }]);
+    expect(Number.isFinite(sessions[0].createdAt)).toBe(true);
+  });
+
   it.each(TILE_PROVIDERS.filter((p) => p.type === 'vector'))(
     '$id returns a loadable offline style rather than the external fallback',
     async ({ url }) => {

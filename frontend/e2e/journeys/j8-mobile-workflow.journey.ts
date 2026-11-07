@@ -30,7 +30,7 @@
  *   档折叠为「更多」收纳菜单，见下方 390px 溢出断言。
  */
 import { test, expect } from 'playwright/test';
-import { bootstrapMock, defaultWorld, awaitShellReady, sendChat } from '../helpers/bootstrap';
+import { bootstrapMock, defaultWorld, authenticateShell, getJourneyAuth, sendChat } from '../helpers/bootstrap';
 import { analysisTurn } from '../fixtures/sse';
 import { expectMapReady, expectResultsArrived } from '../helpers/assertions';
 import { MODE, MOCK_ONLY_REASON } from '../helpers/mode';
@@ -41,7 +41,7 @@ const MOBILE = { width: 390, height: 844 };
 test.describe('journey-8 移动档主流程（≤768px）', () => {
   test.use({ viewport: MOBILE, hasTouch: true });
 
-  test('mock：mobile 档布局 → chat bottom-sheet → 分析出图 → 地图全屏无 inset', async ({ page }) => {
+  test('@smoke mock：mobile 档布局 → chat bottom-sheet → 分析出图 → 地图全屏无 inset', async ({ page }) => {
     test.skip(MODE !== 'mock', MOCK_ONLY_REASON);
     const world = defaultWorld();
     // 缓冲区分析回合：与桌面档同一条生产 SSE 契约（fixtures/sse.ts）——
@@ -60,6 +60,10 @@ test.describe('journey-8 移动档主流程（≤768px）', () => {
     await expect(page.locator('html')).toHaveAttribute('data-layout-mode', 'mobile', {
       timeout: 15_000,
     });
+
+    // Authenticate while the top bar is reachable, before the modal sheet's
+    // scrim correctly blocks background Settings clicks.
+    await authenticateShell(page);
 
     // 2) NavRail 折叠为底部横栏（safe-area 内边距由组件自负责）
     const rail = page.locator('nav[data-rail-variant="bottom"]');
@@ -89,8 +93,10 @@ test.describe('journey-8 移动档主流程（≤768px）', () => {
     await expect(sheet).toHaveAttribute('data-snap', 'half');
 
     // 4) 发送指令 → SSE 回放 → 结果卡片落地图（生产 step_result 路径）
-    await awaitShellReady(page);
+    const chatRequest = page.waitForRequest((request) =>
+      request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/chat/stream');
     await sendChat(page, '生成北京市海淀区缓冲区分析');
+    expect((await chatRequest).headers().authorization).toBe(`Bearer ${getJourneyAuth(page)!.accessToken}`);
     await expect(page.getByText(/缓冲区/).first()).toBeVisible();
     await expectResultsArrived(page);
 

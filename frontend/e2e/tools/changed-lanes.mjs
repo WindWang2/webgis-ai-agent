@@ -14,7 +14,7 @@
  * Prints one JSON line: { run, reason, projects, grep, journeys }.
  */
 
-export const SMOKE_JOURNEYS = ['j1-upload-analyze-export', 'j5-theme-persistence'];
+export const SMOKE_JOURNEYS = ['j1-upload-analyze-export', 'j4-storymap-share', 'j5-theme-persistence', 'j8-mobile-workflow'];
 
 /** Ordered by specificity: first match wins (most specific prefixes first). */
 const PREFIX_MAP = [
