@@ -2751,6 +2751,10 @@ class PiBridge:
                         "session_id": turn_sid,
                         "turn_id": turn_id,
                         "agent_runtime": "pi",
+                        # PI-06（ADR-0286 D3）：统一三态披露（本事件仅在真
+                        # Pi RPC 承载的 turn 上发射 → 恒为 native；fallback
+                        # 由 /health.agent_runtime_mode 与降级日志披露）。
+                        "runtime_mode": "native",
                     })
 
                     # G: watch the subprocess death signal alongside the event queue so

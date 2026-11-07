@@ -37,6 +37,10 @@ class HealthResponse(BaseModel):
     # 未构建或不可判读 —— agent_runtime=pi 而本字段为 None 即「徽章与事实
     # 不一致」的信号（与 pi_workers_alive 同为 V5-B 可对账披露）。
     pi_vendor: Optional[str] = None
+    # PI-06（ADR-0286 D3）：运行时三态 native/fallback/unavailable + 有界
+    # 原因码（pi_compat.classify_runtime_mode 单一定义点；降级不冒充）。
+    agent_runtime_mode: Optional[str] = None
+    agent_runtime_reason: Optional[str] = None
 
 
 class LivenessResponse(BaseModel):
