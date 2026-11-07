@@ -12,3 +12,5 @@
 | 8 | M7d | 子代理 B 冷读 review 派发 | (进行中) | — | review 结论→修复→PR |
 | 9 | M7d | 子代理 B 冷读 review:APPROVE-WITH-FIXES(16 声明属实,0×P0,2×P1,5×P2,5×P3) | REVIEW.md | 通过(评审) | 清偿 |
 | 10 | M7d | 清偿 commit f4996822e(P1×2+P2×4+P3×5 修,2 项记账) | cartography 3335 绿;前端 17+typecheck+eslint 绿;ruff 零告警 | 通过 | 复审→PR |
+| 11 | 复审 | 复审 APPROVE(可合并);3 非阻断小项清偿(GRAMMAR 边界落地/2 微测/646 措辞) | 25 tests + cartography 3337 绿 | 通过 | 推送 |
+| 12 | M8 | 推送 + PR #2015 创建(10 commits);前端全量二次 534/5004 绿 | gh pr create | 通过 | 完成 |

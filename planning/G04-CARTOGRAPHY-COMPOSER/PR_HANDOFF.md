@@ -3,7 +3,7 @@
 - base/head:master ← `zcode/goal-intelligent-carto-composer-20261107`(基于 585812ee4,实时复查无移动)
 - worktree:`../webgis-wt-intelligent-carto-composer-20261107`
 - commits:32eeb3992(W1 断链清偿)/ 972d47ddf(W2 组合语法)/ 8b12cc473(W3 一致性证据)/ 956e7da0a(W4 增量+黄金)/ 0aefaba57(a3 断言更新)/ e9a8f33af(质量门)
-- PR URL:(创建后填)
+- PR URL:**https://github.com/WindWang2/webgis-ai-agent/pull/2015**
 
 ## PR Body 要点(创建时使用)
 
