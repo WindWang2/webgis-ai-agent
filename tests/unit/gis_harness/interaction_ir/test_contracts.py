@@ -48,6 +48,7 @@ def test_manifest_kind_specs_match_registry():
 def test_manifest_bounds_match_constants():
     from app.services.gis_harness.interaction_ir.contracts import (
         MAX_EVENTS_PER_BATCH, MAX_LEDGER_BYTES, MAX_LEDGER_EVENTS,
+        MAX_PAYLOAD_BYTES_SELECTION, MAX_SELECTED_IDS_PAYLOAD,
         MAX_TRACKED_CLIENTS,
     )
     assert _manifest()["bounds"] == {
@@ -56,6 +57,8 @@ def test_manifest_bounds_match_constants():
         "max_ledger_bytes": MAX_LEDGER_BYTES,
         "max_tracked_clients": MAX_TRACKED_CLIENTS,
         "max_payload_bytes": MAX_PAYLOAD_BYTES,
+        "max_payload_bytes_selection": MAX_PAYLOAD_BYTES_SELECTION,
+        "max_selected_ids_payload": MAX_SELECTED_IDS_PAYLOAD,
     }
 
 
@@ -92,22 +95,39 @@ def test_normalize_payload_empty_rules():
 
 
 def test_normalize_payload_byte_budget():
+    from app.services.gis_harness.interaction_ir.contracts import (
+        MAX_PAYLOAD_BYTES_SELECTION,
+    )
     # 单值超长先截断（128 字符）再过预算 —— 通过。
     clipped = normalize_payload("feature_selected", {"feature_id": "x" * 600})
     assert clipped is not None and len(clipped["feature_id"]) == 128
-    # 多个白名单字段都截断到上限后仍超 512B 总预算 → 拒收。
-    fat = {
+    # SW-02（#2004）：feature_selected/table_selection_changed 是 selection
+    # kind —— 字节预算放宽到 MAX_PAYLOAD_BYTES_SELECTION（50 ids 集），
+    # 但仍有界。旧 512B 纪律用非选择 kind（viewport_settled）继续钉扎。
+    fat_feature = {
         "layer_id": "L" * 128,
         "feature_id": "F" * 128,
         "geometry_digest": "G" * 128,
         "dataset_ref": "D" * 128,
     }
-    assert normalize_payload("feature_selected", fat) is None
+    out = normalize_payload("feature_selected", fat_feature)
+    assert out is not None  # ~600B ≤ 4096B（选择 kind 宽预算内）
+    blob = json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    assert len(blob.encode()) <= MAX_PAYLOAD_BYTES_SELECTION
+    # 非 selection kind 的 fat 载荷超预算仍整事件拒收（纪律不放松）。
+    # chart_selection_changed 不在 SELECTION_ID_KINDS：categories 8×128
+    # 字符 ≈1.1KB > 512B 通用预算 → 整事件拒收。
+    fat_chart = {
+        "layer_id": "C" * 128,
+        "field": "F" * 64,
+        "categories": [str(i) + "c" * 126 for i in range(8)],
+    }
+    assert normalize_payload("chart_selection_changed", fat_chart) is None
     # 边界内通过。
     ok = normalize_payload("feature_selected", {"feature_id": "x" * 100})
     assert ok is not None
     blob = json.dumps(ok, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    assert len(blob.encode()) <= MAX_PAYLOAD_BYTES
+    assert len(blob.encode()) <= MAX_PAYLOAD_BYTES_SELECTION
 
 
 def test_normalize_payload_clips_long_strings_and_lists():

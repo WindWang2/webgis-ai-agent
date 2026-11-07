@@ -1464,16 +1464,25 @@ export function MapPanel({
         bbox,
       })
       // /goal 03：框选多要素对 Agent 可见（ADR-0227 feature_selected 的
-      // selected_ids additive 扩展；无稳定 id 字段时不上行——语义为空集）。
+      // selected_ids additive 扩展）。SW-02（#2004）：matched_count 与 UI
+      // 反馈同源上行 —— Agent 看到的范围与用户框选范围一致；无稳定 id
+      // 字段的图层不再零上行（count-only 事件，模型对框选不再失明）。
+      const brushRef = useHudStore.getState().layers.find(
+        (l) => l.id === family && typeof l._refId === 'string',
+      )?._refId as string | undefined
       if (projection.id_field && projection.selected_ids.length > 0) {
-        const brushRef = useHudStore.getState().layers.find(
-          (l) => l.id === family && typeof l._refId === 'string',
-        )?._refId as string | undefined
         emitFeatureSelected({
           layerId: family,
           featureId: projection.selected_ids[0],
           datasetRef: brushRef?.startsWith('ref:') ? brushRef : undefined,
           selectedIds: projection.selected_ids,
+          matchedCount: projection.matched_count,
+        })
+      } else if (projection.matched_count > 0) {
+        emitFeatureSelected({
+          layerId: family,
+          datasetRef: brushRef?.startsWith('ref:') ? brushRef : undefined,
+          matchedCount: projection.matched_count,
         })
       }
       if (!projection.id_field) {

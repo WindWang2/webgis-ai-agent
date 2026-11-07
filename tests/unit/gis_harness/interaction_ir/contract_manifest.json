@@ -4,6 +4,8 @@
     "max_ledger_bytes": 98304,
     "max_ledger_events": 128,
     "max_payload_bytes": 512,
+    "max_payload_bytes_selection": 4096,
+    "max_selected_ids_payload": 50,
     "max_tracked_clients": 8
   },
   "contract": "interaction_ir_manifest.v1",
@@ -86,7 +88,9 @@
         "field_names",
         "geometry_digest",
         "id_field",
+        "ids_truncated",
         "layer_id",
+        "matched_count",
         "selected_ids"
       ],
       "sensitivity": "limited",
@@ -169,7 +173,9 @@
         "dataset_ref",
         "feature_id",
         "id_field",
+        "ids_truncated",
         "layer_id",
+        "matched_count",
         "selected_ids"
       ],
       "sensitivity": "limited",

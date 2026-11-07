@@ -16,6 +16,7 @@ import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { getSelection } from '@/lib/selection/selection-store';
 import {
   INTERACTION_SCHEMA_VERSION,
+  MAX_SELECTED_IDS_EVENT,
   type InteractionEventKind,
   type InteractionEventV1,
   type InteractionEventRefs,
@@ -198,18 +199,26 @@ export function emitFeatureSelected(info: {
   bbox?: [number, number, number, number] | null;
   datasetRef?: string;
   /** 多选集（/goal 03 additive）：与 featureId 同源解析的选中 id 集；
-   * 服务端 list 面纪律 ≤8 标量元素，这里额外按 32 字符裁剪保 512B 载荷预算。 */
+   * SW-02（#2004）：上限与 selection-store / 后端摄入三方对齐（50），
+   * 32 字符裁剪；selection kind 载荷预算 4096B（后端契约镜像）。 */
   selectedIds?: ReadonlyArray<string | number>;
+  /** 真实命中数（框选 matched_count）——与 UI 反馈同源的范围披露。 */
+  matchedCount?: number;
 }): void {
   // review P3-2：几何摘要只用 bbox（geometry 参数从未被消费 —— 删除，
   // 调用方不再白传全量几何）。
   const names = fieldNamesOf(info.properties);
   const digest = bboxDigest(info.bbox);
   const idField = selectionIdField(info.layerId, info.selectedIds ?? [info.featureId]);
-  const selectedIds = (info.selectedIds ?? [])
+  const rawIds = (info.selectedIds ?? [])
     .map((id) => String(id).slice(0, 32))
-    .filter(Boolean)
-    .slice(0, 8);
+    .filter(Boolean);
+  const selectedIds = rawIds.slice(0, MAX_SELECTED_IDS_EVENT);
+  // 服务端会按同一上限权威复核截断并覆写标记；这里先行披露是为了让
+  // 重放/本地投影与服务器裁决一致（防御性冗余，非信任边界）。
+  const truncated = rawIds.length > MAX_SELECTED_IDS_EVENT
+    || (info.matchedCount !== undefined && info.matchedCount > selectedIds.length);
+  const matchedCount = info.matchedCount ?? (selectedIds.length > 1 ? selectedIds.length : undefined);
   emitInteraction('feature_selected', {
     layer_id: info.layerId,
     ...(info.featureId !== undefined ? { feature_id: String(info.featureId).slice(0, 128) } : {}),
@@ -218,6 +227,10 @@ export function emitFeatureSelected(info: {
     ...(info.datasetRef ? { dataset_ref: info.datasetRef } : {}),
     ...(idField ? { id_field: idField } : {}),
     ...(selectedIds.length > 1 ? { selected_ids: selectedIds } : {}),
+    ...(matchedCount !== undefined && Number.isFinite(matchedCount) && matchedCount >= 0
+      ? { matched_count: Math.min(Math.floor(matchedCount), 10_000_000) }
+      : {}),
+    ...(selectedIds.length > 1 && matchedCount !== undefined ? { ids_truncated: truncated } : {}),
   });
 }
 
@@ -327,18 +340,27 @@ export function emitTableSelectionChanged(info: {
   featureId?: string | number;
   selectedIds?: ReadonlyArray<string | number>;
   action?: 'select' | 'clear';
+  /** 真实命中数（SW-02/#2004 范围披露，与 feature_selected 同语义）。 */
+  matchedCount?: number;
 }): void {
   const idField = selectionIdField(info.layerId, info.selectedIds ?? [info.featureId]);
-  const selectedIds = (info.selectedIds ?? [])
+  const rawIds = (info.selectedIds ?? [])
     .map((id) => String(id).slice(0, 32))
-    .filter(Boolean)
-    .slice(0, 8);
+    .filter(Boolean);
+  const selectedIds = rawIds.slice(0, MAX_SELECTED_IDS_EVENT);
+  const truncated = rawIds.length > MAX_SELECTED_IDS_EVENT
+    || (info.matchedCount !== undefined && info.matchedCount > selectedIds.length);
+  const matchedCount = info.matchedCount ?? (selectedIds.length > 1 ? selectedIds.length : undefined);
   emitInteraction('table_selection_changed', {
     layer_id: info.layerId,
     ...(info.featureId !== undefined ? { feature_id: String(info.featureId).slice(0, 128) } : {}),
     ...(selectedIds.length > 0 ? { selected_ids: selectedIds } : {}),
     ...(idField && info.action !== 'clear' ? { id_field: idField } : {}),
     action: info.action ?? 'select',
+    ...(matchedCount !== undefined && Number.isFinite(matchedCount) && matchedCount >= 0
+      ? { matched_count: Math.min(Math.floor(matchedCount), 10_000_000) }
+      : {}),
+    ...(selectedIds.length > 0 && matchedCount !== undefined ? { ids_truncated: truncated } : {}),
   });
 }
 

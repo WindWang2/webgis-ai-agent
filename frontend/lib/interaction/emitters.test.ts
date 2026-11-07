@@ -116,6 +116,57 @@ describe('emitTableSelectionChanged', () => {
   });
 });
 
+describe('SW-02 selection range disclosure (#2004)', () => {
+  it('box-select of 20 features carries all 20 ids + matched_count', () => {
+    const ids = Array.from({ length: 20 }, (_, i) => `sch-${i + 1}`);
+    emitFeatureSelected({
+      layerId: 'schools',
+      featureId: 'sch-1',
+      selectedIds: ids,
+      matchedCount: 20,
+    });
+    const event = captured[0];
+    expect(event.kind).toBe('feature_selected');
+    expect((event.payload.selected_ids as string[]).length).toBe(20);
+    expect(event.payload.matched_count).toBe(20);
+    expect(event.payload.ids_truncated).toBe(false);
+  });
+
+  it('caps ids at 50 (three-way aligned bound) and discloses truncation', () => {
+    const ids = Array.from({ length: 60 }, (_, i) => `sch-${i + 1}`);
+    emitFeatureSelected({ layerId: 'schools', selectedIds: ids, matchedCount: 60 });
+    const event = captured[0];
+    expect((event.payload.selected_ids as string[]).length).toBe(50);
+    expect(event.payload.matched_count).toBe(60);
+    expect(event.payload.ids_truncated).toBe(true);
+  });
+
+  it('matched_count without selected_ids (no-stable-id layer) is no longer a silent zero', () => {
+    emitFeatureSelected({ layerId: 'photos', matchedCount: 23 });
+    const event = captured[0];
+    expect(event.kind).toBe('feature_selected');
+    expect(event.payload.matched_count).toBe(23);
+    expect(event.payload.selected_ids).toBeUndefined();
+  });
+
+  it('table selection carries the same range semantics', () => {
+    const ids = Array.from({ length: 12 }, (_, i) => `sch-${i + 1}`);
+    emitTableSelectionChanged({ layerId: 'schools', selectedIds: ids, matchedCount: 12 });
+    const event = captured[0];
+    expect((event.payload.selected_ids as string[]).length).toBe(12);
+    expect(event.payload.matched_count).toBe(12);
+    expect(event.payload.ids_truncated).toBe(false);
+  });
+
+  it('single click does not fabricate multi-select disclosure', () => {
+    emitFeatureSelected({ layerId: 'schools', featureId: 'sch-1' });
+    const event = captured[0];
+    expect(event.payload.selected_ids).toBeUndefined();
+    expect(event.payload.matched_count).toBeUndefined();
+    expect(event.payload.ids_truncated).toBeUndefined();
+  });
+});
+
 describe('emitTemporalWindowSettled', () => {
   it('is mutation-linked with outcome and coalesced kind', () => {
     expect(KIND_COALESCE_POLICY.temporal_window_settled).toBe('replace_pending');

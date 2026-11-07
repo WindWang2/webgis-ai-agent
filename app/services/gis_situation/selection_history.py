@@ -25,6 +25,11 @@ class SelectionEpoch(TypedDict):
     truncated: bool
     superseded: bool
     cleared: bool
+    # SW-02（#2004）：真实命中数（IR matched_count；缺席=ids 数）——历史
+    # 指代的范围披露与当前代同权（"刚才那 23 个"不能变成"刚才那 8 个"）。
+    matched_count: int
+    # 摄入层截断披露（服务端派生 ids_truncated 的镜像；旧事件 False）。
+    ids_truncated: bool
 
 __all__ = [
     "project_selection_history",
@@ -35,8 +40,9 @@ __all__ = [
 
 #: 选择史条数上限（有界；更早选择被环淘汰即如实消失）。
 MAX_HISTORY_ENTRIES = 6
-#: 每代 ids 展示上限（IR payload 本身 ≤8/条——多选上行同界）。
-MAX_HISTORY_IDS = 8
+#: 每代 ids 展示上限（SW-02/#2004：与 IR 摄入 selected_ids 专属上限三方
+#: 对齐—— 多选上行不再退化为 ≤8 静默样本）。
+MAX_HISTORY_IDS = 50
 
 _SELECTION_OPENERS = frozenset({"feature_selected", "table_selection_changed"})
 # table clear 的终结在 opener 分支内联处理（无 id 事件），不在 closer 词表。
@@ -97,6 +103,15 @@ def project_selection_history(
                 if not prev["superseded"] and not prev["cleared"]:
                     prev["superseded"] = True
             raw_multi = payload.get("selected_ids")
+            matched = payload.get("matched_count")
+            matched_count = (
+                int(matched) if isinstance(matched, int) and not isinstance(matched, bool) and matched >= 0
+                else len(ids)
+            )
+            # 摄入层服务端派生的截断披露优先；缺席（旧事件）保持 False。
+            # 不用 id_count < matched_count 推断 —— 部分取消是用户显式决策，
+            # 不是静默截断（两者必须可区分）。
+            ingested_truncated = payload.get("ids_truncated")
             epochs.append({
                 "epoch_seq": seq,
                 "kinds": [kind],
@@ -109,6 +124,8 @@ def project_selection_history(
                 ),
                 "superseded": False,
                 "cleared": False,
+                "matched_count": matched_count,
+                "ids_truncated": bool(ingested_truncated),
             })
         elif kind in _SELECTION_CLOSERS and epochs:
             payload_ids = _ids_of(payload)
@@ -172,4 +189,6 @@ def resolve_selection_ref(
         "feature_ids": list(entry["feature_ids"]),
         "claimed_at_seq": entry.get("epoch_seq"),
         "sources": ["selection_history"],
+        "matched_count": entry.get("matched_count", entry["id_count"]),
+        "ids_truncated": bool(entry.get("ids_truncated", False)),
     }

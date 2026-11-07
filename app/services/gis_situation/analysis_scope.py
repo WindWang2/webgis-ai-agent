@@ -34,6 +34,10 @@ class ClaimedScope(TypedDict, total=False):
     id_field: str
     bbox: list[float]
     geometry: Mapping[str, object]
+    # SW-02（#2004）additive：范围披露面 —— matched_count=真实命中数
+    # （UI 同源），ids_truncated=True 表示 feature_ids 是有界样本而非全量。
+    matched_count: int
+    ids_truncated: bool
 
 
 class ValidatedScope(TypedDict, total=False):
@@ -49,6 +53,10 @@ class ValidatedScope(TypedDict, total=False):
     bbox: list[float] | None
     geometry: Mapping[str, object]
     checks: dict[str, str]
+    # SW-02：透传披露面（truncated_sample 进 checks.features —— 消费方
+    # 必须能对用户诚实说"分析的是前 N 个/共 M 个"）。
+    matched_count: int
+    ids_truncated: bool
 
 
 def record_fields(value: object) -> Mapping[str, object]:
@@ -157,6 +165,7 @@ def derive_claimed_scope(
             "claimed_at_seq": claimed_seq,
             "sources": sources,
             **({"id_field": id_field[:64]} if isinstance(id_field, str) else {}),
+            **_scope_disclosure(source, feature_ids),
         }
         if claimed["kind"] != "none":
             return claimed
@@ -195,6 +204,28 @@ def derive_claimed_scope(
         "kind": "none", "layer_id": None, "dataset_ref": None,
         "feature_ids": None, "claimed_at_seq": None, "sources": [],
     }
+
+
+def _scope_disclosure(
+    source: Mapping[str, object], feature_ids: List[str]
+) -> ClaimedScope:
+    """SW-02（#2004）：从选择投影提取范围披露面。
+
+    - ``matched_count``：真实命中数（IR 摄入白名单键；有界整数才透传）；
+    - ``ids_truncated``：摄入层服务端派生的样本截断标记；
+    - 兜底：披露缺席但 ids 已知时 matched_count=len(ids)（声称面自洽，
+      不虚构更早的命中数 —— 披露缺席说明事件链上从未有该事实）。
+    """
+    disclosure: ClaimedScope = {}
+    matched = source.get("matched_count")
+    if isinstance(matched, int) and not isinstance(matched, bool) and matched >= 0:
+        disclosure["matched_count"] = matched
+    elif feature_ids:
+        disclosure["matched_count"] = len(feature_ids)
+    truncated = source.get("ids_truncated")
+    if isinstance(truncated, bool):
+        disclosure["ids_truncated"] = truncated
+    return disclosure
 
 
 def _spec_layer(spec: Mapping[str, object], layer_id: Optional[str]) -> Optional[Mapping[str, object]]:
@@ -263,6 +294,8 @@ async def validate_analysis_scope(
         "crs": None,
         "bbox": None,
         "checks": {},
+        **({"matched_count": claimed["matched_count"]} if isinstance(claimed.get("matched_count"), int) else {}),
+        **({"ids_truncated": claimed["ids_truncated"]} if isinstance(claimed.get("ids_truncated"), bool) else {}),
     }
     if kind == "none":
         return result
@@ -407,6 +440,12 @@ async def validate_analysis_scope(
         return result
     result["feature_ids"] = present
     result["checks"]["features"] = "partial_missing" if missing else "ok"
+    # SW-02：样本截断披露 —— feature_ids 是 ≤50 的有界样本而非全量命中集
+    # 时，验证面显式标注（消费方必须能对用户说"分析的是样本/共 M 个"）。
+    if result.get("ids_truncated") is True:
+        result["checks"]["features"] = (
+            "truncated_sample+partial_missing" if missing else "truncated_sample"
+        )
     result["status"] = _STATUS_USABLE
     result["reason"] = SCOPE_REASON_OK
     return result

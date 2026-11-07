@@ -99,6 +99,12 @@ export const KIND_COALESCE_POLICY: Record<InteractionEventKind, CoalescePolicy> 
 /** 单批事件上限（= 后端 MAX_EVENTS_PER_BATCH）。 */
 export const MAX_EVENTS_PER_BATCH = 50;
 
+/** SW-02（#2004）：选择事件 selected_ids 上限（= 后端
+ * MAX_SELECTED_IDS_PAYLOAD = selection-store MAX_SELECTED_IDS —— 三方对齐，
+ * manifest 双闸锁定）。框选 >8 要素不再静默截断：超上限走 matched_count
+ * + ids_truncated 披露（服务端权威复核）。 */
+export const MAX_SELECTED_IDS_EVENT = 50;
+
 /** 服务端 ack 单条裁决。 */
 export type InteractionVerdict =
   | 'accepted'
