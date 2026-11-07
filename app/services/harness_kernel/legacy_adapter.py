@@ -20,10 +20,14 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
-from contextvars import ContextVar, Token
 from typing import AsyncIterator, Any, List, Optional
 
-from app.services.distributed_lock import session_lock_registry
+from app.services.distributed_lock import (
+    session_lock_registry,
+    bind_session_lock as bind_engine_lock,  # noqa: F401 — compatibility export
+    unbind_session_lock as unbind_engine_lock,  # noqa: F401 — compatibility export
+    current_session_lock as _current_lock,
+)
 from app.services.harness_kernel import metrics as hk_metrics
 from app.services.harness_kernel.models import (
     MAX_DECISIONS,
@@ -68,37 +72,7 @@ LEGACY_STEP_ID_FMT = "l{}"
 #: 从宽；超时后 shield 内的结算继续完成，宿主清理路径不被拖死）。
 _SETTLE_AFTER_LOCK_BUDGET_S = 30.0
 
-# ── 环境锁绑定（engine 已持会话锁的透传通道）─────────────────────────────
-# legacy 引擎在整个 turn 期间持有 ``session_lock``（非重入）；kernel/adapter
-# 挂点分布在该作用域内的多个嵌套函数里（_maybe_plan/_flush_plan/turn 边界），
-# 逐点传 lock 对象侵入面太大。engine 进入锁作用域时 bind，finally reset；
-# adapter 各入口经 ``_current_lock`` 解析 —— 会话匹配则锁透传，否则自取。
-_ENGINE_LOCK: ContextVar[Any] = ContextVar("hk_engine_lock", default=None)
-
-
-def bind_engine_lock(session_id: str, lock: Any) -> Token:
-    return _ENGINE_LOCK.set((session_id, lock))
-
-
-def unbind_engine_lock(token: Token) -> None:
-    try:
-        _ENGINE_LOCK.reset(token)
-    except ValueError:
-        # 取消/断连时 turn 收尾可能在另一个 task context 上执行
-        # （生成器在别处被 close / task 被取消），token 与当前 context
-        # 不匹配 → reset 抛 ValueError。ContextVar 在单事件循环内没有
-        # 跨 context 的解绑原语，置回默认值即等价于解绑（本通道每 turn
-        # 只 bind 一次，不存在需要保留的外层绑定）。
-        _ENGINE_LOCK.set(None)
-
-
-def _current_lock(session_id: str) -> Any:
-    held = _ENGINE_LOCK.get()
-    if held is not None and held[0] == session_id:
-        return held[1]
-    return None
-
-
+# The neutral lock module owns validation and revocation of turn bindings.
 def _resolve_lock(session_id: str, lock: Any) -> Any:
     return lock if lock is not None else _current_lock(session_id)
 

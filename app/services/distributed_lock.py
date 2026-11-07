@@ -26,7 +26,10 @@ import logging
 import secrets
 import threading
 import weakref
-from typing import Dict, Optional
+from contextlib import asynccontextmanager
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
+from typing import AsyncIterator, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +157,9 @@ class _ResilientSessionLock:
         self._token: Optional[str] = None
         self._renewer: Optional[asyncio.Task] = None
         self._lost: bool = False
+        # Object-local ownership, unlike fallback.locked() (which may be held
+        # by a different acquisition after this one has been released).
+        self._held: bool = False
 
     @property
     def mode(self) -> str:
@@ -177,6 +183,8 @@ class _ResilientSessionLock:
 
     @property
     def is_locked(self) -> bool:
+        if not self._held:
+            return False
         if self._mode == "redis":
             return bool(self._token and not self._lost)
         return self._fallback._lock.locked()
@@ -195,6 +203,7 @@ class _ResilientSessionLock:
         return await self.__aenter__()
 
     def release(self) -> None:
+        self._held = False
         if self._mode == "redis":
             if self._renewer:
                 self._renewer.cancel()
@@ -245,6 +254,7 @@ class _ResilientSessionLock:
                     )
                     if ok:
                         self._mode = "redis"
+                        self._held = True
                         self._renewer = asyncio.create_task(self._renew_loop())
                         return self
                     if asyncio.get_running_loop().time() > deadline:
@@ -280,9 +290,11 @@ class _ResilientSessionLock:
 
         # In-process fallback (also the path when no client is configured).
         await self._fallback.acquire(timeout_s=self._acquire_timeout_s)
+        self._held = True
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
+        self._held = False
         if self._mode == "redis":
             if self._renewer:
                 self._renewer.cancel()
@@ -536,6 +548,124 @@ def session_lock(
         fail_on_degraded=fail_on_degraded,
         fail_on_lost=fail_on_lost,
     )
+
+
+class _SessionLockScope:
+    """Revocable capability inherited only by work spawned inside a turn."""
+
+    def __init__(self, session_id: str, lock: _ResilientSessionLock) -> None:
+        self.session_id = session_id
+        self.lock = lock
+        self.active = True
+        # Tool tasks in one turn still need to serialize read/modify/write.
+        self.mutex = asyncio.Lock()
+        self.borrower: Optional[asyncio.Task] = None
+
+    @property
+    def lost(self) -> bool:
+        return not self.active or not self.lock._held or self.lock.lost
+
+
+_BOUND_SESSION_LOCK: ContextVar[Optional[_SessionLockScope]] = ContextVar(
+    "bound_session_lock", default=None,
+)
+
+
+@dataclass(frozen=True)
+class _SessionLockBinding:
+    token: Token
+    scope: Optional[_SessionLockScope]
+
+
+def bind_session_lock(session_id: str, lock: object) -> _SessionLockBinding:
+    """Publish a real, already acquired same-session lock to turn descendants.
+
+    A session name, arbitrary object, or another owner's locked fallback is
+    not proof of ownership. Stream acquisition may run in a helper task, so
+    validation uses the actual acquisition object, not asyncio.current_task().
+    """
+    scope = None
+    if (
+        isinstance(lock, _ResilientSessionLock)
+        and lock._key == f"webgis:sessionlock:{session_id}"
+        and lock.is_locked
+    ):
+        scope = _SessionLockScope(session_id, lock)
+    return _SessionLockBinding(_BOUND_SESSION_LOCK.set(scope), scope)
+
+
+def unbind_session_lock(binding: _SessionLockBinding) -> None:
+    scope = binding.scope
+    if scope is not None:
+        # ContextVar.reset alone does not revoke copies in detached child tasks.
+        scope.active = False
+    try:
+        _BOUND_SESSION_LOCK.reset(binding.token)
+    except ValueError:
+        # Generator close can run in a different task context. Do not erase
+        # an unrelated turn binding in the closer's context.
+        if _BOUND_SESSION_LOCK.get() is scope:
+            _BOUND_SESSION_LOCK.set(None)
+
+
+def current_session_lock(session_id: str) -> Optional[_ResilientSessionLock]:
+    scope = _BOUND_SESSION_LOCK.get()
+    if scope is not None and scope.session_id == session_id and not scope.lost:
+        return scope.lock
+    return None
+
+
+@asynccontextmanager
+async def mutation_session_lock(
+    session_id: str, *, registry: Optional[SessionLockRegistry] = None,
+    fail_on_degraded: bool = True, fail_on_lost: bool = True,
+) -> AsyncIterator[_ResilientSessionLock | _SessionLockScope]:
+    """Borrow a verified turn lock, or acquire normally outside that turn.
+
+    Opt-in for nested mutations only: ordinary registry.lock() remains
+    non-reentrant and independent requests still contend on the real lock.
+    Inner scopes never renew in the background or release the outer lock.
+    """
+    scope = _BOUND_SESSION_LOCK.get()
+    if scope is None or scope.session_id != session_id or not scope.active:
+        async with (registry or session_lock_registry).lock(
+            session_id, fail_on_degraded=fail_on_degraded, fail_on_lost=fail_on_lost,
+        ) as lock:
+            yield lock
+        return
+
+    task = asyncio.current_task()
+    nested = scope.borrower is task
+    if not nested:
+        await scope.mutex.acquire()
+        scope.borrower = task
+    try:
+        lock = scope.lock
+        if scope.lost:
+            raise LockLostError(f"session lock ownership for {session_id} was lost")
+        if fail_on_degraded and lock.is_degraded:
+            raise LockDegradedError(f"session lock for {session_id} is degraded")
+        if lock.is_redis_backed:
+            # Check the token at reuse time, rather than trusting a renewer that
+            # might not have run since a long event-loop stall or Redis expiry.
+            try:
+                owned = await lock._client.eval(
+                    _RENEW_SCRIPT, 1, lock._key, lock._token, lock._ttl_ms,
+                )
+            except Exception as exc:
+                raise LockLostError(f"cannot verify session lock for {session_id}") from exc
+            if not owned:
+                lock._lost = True
+                raise LockLostError(f"session lock ownership for {session_id} was lost")
+        if scope.lost:
+            raise LockLostError(f"session lock ownership for {session_id} was lost")
+        yield scope
+        if fail_on_lost and scope.lost:
+            raise LockLostError(f"session lock ownership for {session_id} was lost")
+    finally:
+        if not nested:
+            scope.borrower = None
+            scope.mutex.release()
 
 
 class NoOpSessionLock:

@@ -560,7 +560,7 @@ async def register_artifact(
     ``metadata["profile_ref"]`` —— ArtifactContract.profile_ref 由此获得
     真实生产方。缺席 → 不写（诚实缺省，绝不虚构）。
     """
-    from app.services.distributed_lock import session_lock_registry
+    from app.services.distributed_lock import mutation_session_lock
 
     if not session_id or not artifact_id:
         return None
@@ -646,6 +646,8 @@ async def register_artifact(
                 records[prev].updated_at = now
                 rec.replaces = prev
         records[artifact_id] = rec
+        if lock is not None and getattr(lock, "lost", False):
+            return None
         await _save_records(session_id, _evict(records), backend)
         return rec
 
@@ -654,7 +656,7 @@ async def register_artifact(
             from app.services.session_data import session_data_manager as sdm
 
             return await _mutate(store if store is not None else sdm)
-        async with session_lock_registry.lock(session_id, fail_on_degraded=False):
+        async with mutation_session_lock(session_id, fail_on_degraded=False) as lock:
             from app.services.session_data import session_data_manager as sdm
 
             return await _mutate(store if store is not None else sdm)
