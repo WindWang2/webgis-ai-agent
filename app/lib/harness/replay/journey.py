@@ -162,10 +162,28 @@ def project_journey_evidence(
         "pass" if by_stage["plan"] or trace.get("selected_workflow") else "not_evaluated",
         "recorded" if by_stage["plan"] or trace.get("selected_workflow") else "plan_absent")
 
-    dispatch_ok = bool(by_stage["tool_dispatch"] or trace.get("tool_calls"))
+    command_accepted = bool(by_stage["tool_dispatch"] or trace.get("tool_calls"))
+    dispatch_denials = [
+        d for d in (trace.get("dispatch_evidence") or [])
+        if isinstance(d, dict)
+        and (d.get("allowed") is False or str(d.get("action") or "") == "refused")
+    ]
+    dispatch_ok = command_accepted and not dispatch_denials
+    for denial in dispatch_denials:
+        raw_reason = str(
+            denial.get("reason") or denial.get("code") or "tool_dispatch_denied"
+        ).lower()
+        reason_code = "".join(
+            char if char.isalnum() or char == "_" else "_" for char in raw_reason
+        ).strip("_")[:48] or "tool_dispatch_denied"
+        findings.append({
+            "code": reason_code, "stage": "tool_dispatch",
+            "detail": "tool dispatch was refused by the capability/surface gate",
+        })
     stages["tool_dispatch"] = _status_records(
         "tool_dispatch", by_stage["tool_dispatch"],
-        "pass" if dispatch_ok else "not_evaluated",
+        "fail" if dispatch_denials else "pass" if dispatch_ok else "not_evaluated",
+        "dispatch_refused" if dispatch_denials else
         "dispatched" if dispatch_ok else "tool_dispatch_absent")
 
     result_records = by_stage["data_result"]
@@ -196,13 +214,57 @@ def project_journey_evidence(
         and not r.get("is_error")
         and (r.get("geojson_ref") or r.get("ref") or r.get("result"))
     ]
+    seen_results: Dict[str, str] = {}
+    duplicate_delivery = False
+    conflicting_results: List[Dict[str, Any]] = []
+    for result in result_records:
+        call_id = str(result.get("call_id") or result.get("tool_call_id") or "")
+        if not call_id:
+            continue
+        fingerprint = sha256_of({
+            key: value for key, value in result.items()
+            if key not in ("ts", "latency_ms", "duration_ms")
+        })
+        if call_id in seen_results:
+            if seen_results[call_id] == fingerprint:
+                duplicate_delivery = True
+            else:
+                conflicting_results.append(result)
+        else:
+            seen_results[call_id] = fingerprint
+    if duplicate_delivery:
+        findings.append({
+            "code": "duplicate_tool_callback", "stage": "data_result",
+            "detail": "identical callback evidence indicates at-least-once delivery",
+        })
+    if conflicting_results:
+        findings.append({
+            "code": "conflicting_tool_result", "stage": "data_result",
+            "detail": "one tool call has conflicting terminal result payloads",
+        })
     result_status: JourneyStatus = (
-        "fail" if dangling_results else
+        "fail" if dangling_results or conflicting_results else
+        "partial" if duplicate_delivery else
         "pass" if successful_results else
         "fail" if any(r.get("is_error") or str(r.get("status") or "").lower()
                       in ("error", "failed") for r in result_records) else
         "not_evaluated"
     )
+    for result in result_records:
+        if not result.get("is_error") and str(result.get("status") or "").lower() \
+                not in ("error", "failed"):
+            continue
+        raw_code = str(
+            result.get("error_code") or result.get("code") or "tool_result_error"
+        ).lower()
+        typed_code = "".join(
+            char if char.isalnum() or char == "_" else "_" for char in raw_code
+        ).strip("_")[:48] or "tool_result_error"
+        findings.append({
+            "code": typed_code,
+            "stage": "data_result",
+            "detail": "tool result carries a terminal error contract",
+        })
     stages["data_result"] = _status_records(
         "data_result", result_records, result_status,
         "dangling_tool_result" if dangling_results else
@@ -231,15 +293,42 @@ def project_journey_evidence(
         "pass" if mutation_ok else "not_evaluated",
         "mapspec_applied" if mutation_ok else "mapspec_application_unverified")
 
-    render_ok = any(
+    context_lost = any(
+        r.get("context_lost") is True or r.get("style_loaded") is False
+        or bool(r.get("reconcile_error")) or bool(r.get("runtime_errors"))
+        or str(r.get("status") or r.get("aggregate") or "").lower()
+        in ("error", "failed", "context_lost", "webgl_context_lost")
+        for r in by_stage["render_observation"]
+    )
+    missing_tiles = any(
+        bool(r.get("missing_tiles") or r.get("tiles_missing") or r.get("tile_errors"))
+        for r in by_stage["render_observation"]
+    )
+    render_ok = not context_lost and not missing_tiles and any(
         r.get("map_idle") is True
         or str(r.get("status") or r.get("aggregate") or "").lower() in _SUCCESS
         for r in by_stage["render_observation"]
     )
+    render_status: JourneyStatus = (
+        "fail" if context_lost else
+        "partial" if missing_tiles else
+        "pass" if render_ok else "not_evaluated"
+    )
+    if context_lost:
+        findings.append({
+            "code": "renderer_context_lost", "stage": "render_observation",
+            "detail": "renderer observation carries a fatal runtime/context error",
+        })
+    if missing_tiles:
+        findings.append({
+            "code": "tiles_missing", "stage": "render_observation",
+            "detail": "map observation is incomplete because tiles are missing",
+        })
     stages["render_observation"] = _status_records(
-        "render_observation", by_stage["render_observation"],
-        "pass" if render_ok else "not_evaluated",
-        "observed" if render_ok else "render_observation_absent")
+        "render_observation", by_stage["render_observation"], render_status,
+        "observed" if render_ok else
+        "renderer_context_lost" if context_lost else
+        "tiles_missing" if missing_tiles else "render_observation_absent")
 
     export_records = [
         r for r in artifact_records
@@ -248,18 +337,63 @@ def project_journey_evidence(
         and (r.get("ref") or r.get("artifact_id") or r.get("digest"))
     ]
     export_product = product.get("export") or product.get("publication") or {}
-    export_ok = bool(export_records) or (
+    export_failed = any(
+        r.get("success") is False or str(r.get("status") or "").lower()
+        in ("error", "failed", "cancelled") for r in export_records
+    ) or (
+        isinstance(export_product, dict)
+        and str(export_product.get("status") or "").lower()
+        in ("error", "failed", "cancelled")
+    )
+    export_ok = not export_failed and (bool(export_records) or (
         isinstance(export_product, dict)
         and str(export_product.get("status") or "").lower() in _SUCCESS
-        and bool(export_product.get("artifact_id") or export_product.get("digest")))
+        and bool(export_product.get("artifact_id") or export_product.get("digest"))))
+    if export_failed:
+        findings.append({
+            "code": "export_failed", "stage": "export",
+            "detail": "export/publication did not reach a verified terminal artifact",
+        })
     stages["export"] = _status_records(
-        "export", [], "pass" if export_ok else "not_evaluated",
+        "export", [], "fail" if export_failed else "pass" if export_ok else "not_evaluated",
+        "export_failed" if export_failed else
         "export_verified" if export_ok else "export_not_verified")
 
     task_complete = product.get("task_complete") is True
-    outcome = str((trace.get("outcome") or {}).get("outcome") or "")
+    outcome_block = _mapping(trace.get("outcome"))
+    outcome = str(outcome_block.get("outcome") or "")
+    failure_class = str(outcome_block.get("failure_class") or "").lower()
+    terminal_reason = ""
+    if outcome == "cancelled":
+        terminal_reason = "cancelled"
+    elif outcome == "superseded":
+        terminal_reason = "superseded"
+    elif outcome == "partial":
+        terminal_reason = "partial"
+    elif outcome == "failed":
+        terminal_reason = "timeout" if "timeout" in failure_class else "outcome_failed"
+    if terminal_reason:
+        findings.append({
+            "code": terminal_reason,
+            "stage": "settlement",
+            "detail": f"terminal outcome prevents completion: {terminal_reason}",
+        })
+    lock_lost = "lock" in failure_class and "lost" in failure_class
+    for warning in (trace.get("warnings") or []):
+        if not isinstance(warning, dict):
+            continue
+        code = str(warning.get("code") or "").lower()
+        if "lock" in code and "lost" in code:
+            lock_lost = True
+    if lock_lost:
+        findings.append({
+            "code": "lock_lost",
+            "stage": "settlement",
+            "detail": "session lock ownership was lost before settlement",
+        })
     settlement_status: JourneyStatus = "not_evaluated"
-    if identity_conflicts or sequence_conflicts:
+    if identity_conflicts or sequence_conflicts or lock_lost \
+            or conflicting_results or dispatch_denials:
         settlement_status = "fail"
     elif task_complete and not render_ok:
         settlement_status = "fail"
@@ -268,8 +402,12 @@ def project_journey_evidence(
             "stage": "settlement",
             "detail": "task_complete was recorded without a verified map observation",
         })
-    elif task_complete and render_ok and outcome in ("", "succeeded"):
+    elif task_complete and render_ok and outcome in ("", "succeeded") \
+            and not duplicate_delivery:
         settlement_status = "pass"
+    elif duplicate_delivery and task_complete and render_ok \
+            and outcome in ("", "succeeded"):
+        settlement_status = "partial"
     elif outcome in ("failed", "cancelled", "superseded", "partial"):
         settlement_status = "blocked" if outcome == "cancelled" else "fail"
     stages["settlement"] = _status_records(
@@ -283,7 +421,7 @@ def project_journey_evidence(
             stages[name]["observed_ordinal"] = positions[id(stage_records[0])]
 
     claims: JourneyCompletionClaims = {
-        "command_accepted": dispatch_ok,
+        "command_accepted": command_accepted,
         "tool_dispatched": dispatch_ok,
         "tool_result_validated": bool(successful_results),
         "artifact_persisted": artifact_ok,
