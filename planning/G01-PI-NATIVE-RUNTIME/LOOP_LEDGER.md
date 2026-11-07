@@ -14,3 +14,6 @@
 | 9 | M9 预备：全量 Pi 回归 5 批 590 passed + 新测试批 135；发现并修复本方向引入的测试污染（包级 run_settle_effects 打桩物化 PEP562 惰性委托，monkeypatch 恢复机制反噬）→ 手工保真恢复 | batch5 修复后 135 passed（此前 134+1 failed）；pi_doctor 6 域全 PASS + runtime mode 行；全 diff ruff 干净；repo mypy 门绿（35 files）；diff --check 干净；commit 7e6c0e7e5 | 通过 | M8 review 结论 → 修复 → PR |
 | 10 | M8-R1 复审（子代理 B 冷读全 diff）：P0×0/P1×3/P2×10 → 清偿 P1-1（回收后活复检）/P1-2（recycle 折入 turn 锁临界区，锁序核实无死锁）/P1-3（撤销 5s 预算）+ P2×10（commit 50c517161） | 新测试 53 passed；受影响回归 77；旅程 1 passed | 通过 | R2 |
 | 11 | M8-R2 复审：P0×0/P1×0/P2(新)×3 放行；随手清偿 probe_failed 词表+测试/契约句/teardown try/finally | disclosure+refresh+perf 26 passed | 通过 | M9 PR |
+| 12 | M9：master 零漂移复查（585812ee4 不变）→ 推送分支 → gh pr create → **PR #2012** | PR OPEN（未 merge，未等线上 CI） | 通过 | 完结 |
+
+完结 | G01-PI-NATIVE-RUNTIME | PR #2012 | Oracle 全满足（见总账完结行） | 2026-11-07
