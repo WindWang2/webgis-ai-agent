@@ -295,12 +295,20 @@ def normalize_payload(kind: str, payload: Any) -> Dict[str, Any] | None:
         else:
             out[key] = _clip(value)
     if is_selection_kind and "selected_ids" in out:
-        # 服务端权威派生：以归一化前的原始 id 数对比上限（显式 False 与
-        # 缺席语义不同 —— 缺席=单选/旧事件兼容，在场=多选集有界披露）。
-        # 仅在 selected_ids 实际保留于载荷时派生（防"只剩标记"的幽灵载荷）。
+        # 服务端权威派生（两条独立判据，满足其一即截断）：
+        # 1. 原始 id 数超上限（服务端裁掉了尾部 —— 显式 False 与缺席语义
+        #    不同：缺席=单选/旧事件兼容，在场=多选集有界披露）；
+        # 2. matched_count（真实命中数）大于实际携带数 —— 前端 selection-store
+        #    在上行前已按同界截断（50 ids + matched_count=80）时，携带集
+        #    本身就是样本。仅在 selected_ids 实际保留于载荷时派生
+        #    （防"只剩标记"的幽灵载荷）。
+        carried = out["selected_ids"]
+        matched_val = out.get("matched_count")
         out["ids_truncated"] = (
-            raw_id_count if isinstance(raw_id_count, int) else len(out["selected_ids"])
-        ) > MAX_SELECTED_IDS_PAYLOAD
+            (raw_id_count if isinstance(raw_id_count, int) else len(carried))
+            > MAX_SELECTED_IDS_PAYLOAD
+            or (isinstance(matched_val, int) and matched_val > len(carried))
+        )
     if not out and not spec.allow_empty_payload:
         return None
     budget = MAX_PAYLOAD_BYTES_SELECTION if kind in WIDE_BUDGET_KINDS else MAX_PAYLOAD_BYTES

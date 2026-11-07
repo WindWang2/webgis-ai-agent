@@ -6,14 +6,15 @@
 > **与生产摄入共用 `apply_event`/`project_interaction_snapshot`**（非平行
 > 实现），每个场景双跑逐位一致（确定性：无 wall-clock/随机/LLM）。
 
-## 金标清单（17 场景）
+## 金标清单（18 场景）
 
 ### 范围正确性族（本 PR 新增，SW-02/#2004）
 
 | 语料 | 场景 | 关键断言 |
 |---|---|---|
 | `box_select_20_range_faithful` | **J1 核心**：框选 20 所学校（成都视口） | 投影 selection 保留全部 20 id + `matched_count=20` + `ids_truncated=false` + `bbox` —— UI 反馈与 Agent 事实一致 |
-| `box_select_80_truncated_disclosed` | 框选 80 要素 | 50 样本 + 服务端派生 `ids_truncated=true` + `matched_count=80` 全量披露（截断可披露而非静默） |
+| `box_select_80_truncated_disclosed` | 框选 80 要素（原始超限） | 50 样本 + 服务端派生 `ids_truncated=true` + `matched_count=80` 全量披露（截断可披露而非静默） |
+| `box_select_frontend_capped_50_sample` | **真实前端路径**：selection-store 上行前已截 50（50 ids + matched=80） | 判据 2（matched > 携带数）派生 `ids_truncated=true` —— 携带集是样本，不误判完整集 |
 | `chart_categories_20_aligned` | 图表 24 类别选择 | 投影 chart_selection.categories = 前 20（与 selection-store ≤20 对齐；修复前截 8） |
 | `no_id_layer_box_count_only` | 无稳定 id 图层框选 | count-only feature_selected 被接受且 selection 携带 matched_count=23 + bbox（修复前零上行=模型失明） |
 
@@ -48,7 +49,7 @@
 
 ```bash
 .venv/bin/python -m pytest tests/unit/gis_harness/interaction_ir/test_replay_corpus.py -q
-# 29 passed（17 场景 × 双跑确定性 + corpus_present）
+# 31 passed（18 场景 × 双跑确定性 + corpus_present）
 ```
 
 新增金标纪律（ADR-0227）：每个新交互语义必须先加语料（events + expect

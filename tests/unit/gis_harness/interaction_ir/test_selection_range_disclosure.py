@@ -85,6 +85,39 @@ def test_ids_truncated_false_when_not_truncated():
     assert out["ids_truncated"] is False
 
 
+def test_frontend_precapped_sample_is_disclosed_as_truncated():
+    """真实前端路径：selection-store 上行前已截到 50（50 ids + matched=80）
+    —— 携带集是样本，服务端判据 2（matched > 携带数）必须派生 True，
+    不得误判为完整集（否则 truncated_sample 披露永不触发）。"""
+    out = normalize_payload(
+        "feature_selected", _selection_payload(50, matched_count=80)
+    )
+    assert out is not None
+    assert len(out["selected_ids"]) == 50
+    assert out["ids_truncated"] is True
+    # 声称面 → 验证面链路同样披露（validate 的 checks.features 依据）。
+    claimed = derive_claimed_scope(
+        {"selection": {"selected_ids": _ids(50), "matched_count": 80,
+                        "ids_truncated": True, "layer_id": "schools",
+                        "dataset_ref": "ref:geojson-schools",
+                        "source": {"server_seq": 1}}, "event_count": 1},
+        None,
+    )
+    assert claimed["matched_count"] == 80
+    assert claimed["ids_truncated"] is True
+
+
+def test_contradictory_disclosure_not_flagged():
+    """矛盾披露（matched_count=3 < 携带 50）：不是截断（可能去重），
+    不虚报 True；matched_count 原样保留供消费方自行判断。"""
+    out = normalize_payload(
+        "feature_selected", _selection_payload(50, matched_count=3)
+    )
+    assert out is not None
+    assert out["ids_truncated"] is False
+    assert out["matched_count"] == 3
+
+
 def test_server_rewrites_false_truncation_claim():
     """客户端申报 ids_truncated=False 但实际送 60 → 服务端覆写为 True。"""
     out = normalize_payload(
