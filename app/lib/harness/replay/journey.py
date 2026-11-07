@@ -275,8 +275,36 @@ def project_journey_evidence(
         r for r in records if str(r.get("stage") or "") == "ARTIFACT_CREATION"
     ]
     artifacts = _mapping(trace.get("artifacts"))
-    artifact_ok = any(r.get("ref") or r.get("artifact_id") for r in artifact_records) or bool(
-        artifacts.get("ref") or artifacts.get("artifact_id"))
+    result_refs = {
+        str(r.get("geojson_ref") or r.get("ref"))
+        for r in successful_results if r.get("geojson_ref") or r.get("ref")
+    }
+    for call in (trace.get("tool_calls") or []):
+        if not isinstance(call, dict) or call.get("is_error"):
+            continue
+        result_ref = call.get("result_ref")
+        if isinstance(result_ref, dict) and result_ref.get("geojson_ref"):
+            result_refs.add(str(result_ref["geojson_ref"]))
+        elif isinstance(result_ref, str) and result_ref.startswith("ref:"):
+            result_refs.add(result_ref)
+    artifact_refs = {
+        str(r.get("ref") or r.get("artifact_id"))
+        for r in artifact_records if r.get("ref") or r.get("artifact_id")
+    }
+    for key in ("ref", "artifact_id"):
+        if artifacts.get(key):
+            artifact_refs.add(str(artifacts[key]))
+    missing_artifacts = result_refs - artifact_refs
+    artifact_ok = not missing_artifacts if result_refs else bool(artifact_refs)
+    if missing_artifacts:
+        findings.append({
+            "code": "artifact_persistence_unverified", "stage": "data_result",
+            "detail": "a tool result ref has no matching persisted artifact evidence",
+        })
+        result_status = "fail"
+        stages["data_result"] = _status_records(
+            "data_result", result_records, result_status,
+            "artifact_persistence_unverified")
     stages["data_result"]["evidence_refs"].extend(
         f"artifact:{str(r.get('ref') or r.get('artifact_id'))[:96]}"
         for r in artifact_records[:4] if r.get("ref") or r.get("artifact_id"))
@@ -393,7 +421,7 @@ def project_journey_evidence(
         })
     settlement_status: JourneyStatus = "not_evaluated"
     if identity_conflicts or sequence_conflicts or lock_lost \
-            or conflicting_results or dispatch_denials:
+            or conflicting_results or dispatch_denials or missing_artifacts:
         settlement_status = "fail"
     elif task_complete and not render_ok:
         settlement_status = "fail"

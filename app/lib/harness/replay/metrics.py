@@ -154,4 +154,28 @@ def project_metrics(
     if isinstance(ratio, (int, float)):
         _add("replay.plan_cost_ratio", float(ratio))
 
+    from app.lib.harness.replay.journey import project_journey_evidence
+
+    journey = project_journey_evidence(trace)
+    overall = journey["overall"]
+    if overall in ("pass", "fail", "blocked", "partial"):
+        _add("gate.replay.journey_overall", _bool01(overall == "pass"))
+    findings = journey["findings"]
+    _add("replay.journey_findings", float(len(findings)))
+    identity_codes = {
+        "session_mismatch", "turn_mismatch", "goal_mismatch",
+        "operation_mismatch", "correlation_mismatch",
+    }
+    _add("replay.cross_session_violations", float(sum(
+        1 for finding in findings if finding["code"] in identity_codes
+    )))
+    render = next(
+        stage for stage in journey["stages"]
+        if stage["stage"] == "render_observation"
+    )
+    if render["status"] != "not_evaluated":
+        _add("gate.replay.render_observed", {
+            "pass": 1.0, "partial": 0.5, "fail": 0.0,
+        }.get(render["status"], 0.0))
+
     return rows

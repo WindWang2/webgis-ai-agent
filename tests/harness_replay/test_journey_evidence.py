@@ -134,3 +134,21 @@ def test_fully_observed_journey_can_pass_without_model_text_evidence():
     assert all(report["completion_claims"].values())
     assert report["last_valid_stage"] == "settlement"
     assert report["mode"] == "browser_renderer"
+
+
+def test_ref_result_without_artifact_persistence_cannot_pass():
+    from tests.harness_replay.test_replay_schema import _build
+    from app.lib.runtime.gis_trace import Stage
+
+    trace = _build().to_dict()
+    trace["chain"]["stages"].insert(-1, {
+        "stage": Stage.MAP_OBSERVATION.name, "sequence": 3, "map_idle": True,
+    })
+
+    report = project_journey_evidence(trace)
+
+    assert report["overall"] == "fail"
+    assert report["completion_claims"]["artifact_persisted"] is False
+    assert "artifact_persistence_unverified" in {
+        finding["code"] for finding in report["findings"]
+    }
