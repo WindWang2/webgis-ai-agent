@@ -12,10 +12,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.services.gis_harness.execution_compiler.contracts import (
     ObligationSemantics,
     UnitObligation,
+    UnitObligationVerdict,
 )
 from app.services.gis_harness.requirement_ir.contracts import (
     GISIntentSpec,
-    StatisticVocab,
 )
 
 #: 单位 → 量纲维度（封闭；与 families UNIT_VOCABULARY 对齐 + 派生单位）。
@@ -143,7 +143,7 @@ def build_unit_obligations(
 def _adjudicate_denominator(
     semantics: ObligationSemantics, denom_kind: str,
     facts: Dict[str, Dict[str, Any]],
-) -> Tuple[str, str]:
+) -> Tuple[UnitObligationVerdict, str]:
     """分母在证裁决（closed verdict；数据事实缺席 = 披露而非虚构）。"""
     if semantics in ("per_capita", "rate"):
         denom = facts.get("denominator") or {}

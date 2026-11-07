@@ -157,8 +157,10 @@
 
 ### 3.2 `tests/unit/gis_harness/test_execution_compiler_oracles.py`
 
-**由本 PR 后续 commit 添加——当前 worktree 尚不存在**（不得声称已存在）。
-计划覆盖面（对齐 `PLAN.md` Oracle 表 O1–O7 的语料断言部分）：
+**已存在**（30 测试全绿：golden 语料 23 用例 runner + 重复执行确定性 +
+报告产物 + 悬空信号探测 + fail-closed/live conformance + U1–U4 定向 +
+最小重算 + 生产桥可达性/幂等 + 对抗输入有界性/并发纯度/损坏态退化）。
+覆盖面（对齐 `PLAN.md` Oracle 表 O1–O8）：
 
 - U1 定向语料：`dimensions_compatible("km","min") is False`、词表外单位
   （如 `"ft"`）→ False；族步骤单位合同 × IR 统计词的交叉对账（拒绝

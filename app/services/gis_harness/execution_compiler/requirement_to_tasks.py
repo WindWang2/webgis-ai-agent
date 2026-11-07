@@ -24,6 +24,7 @@ from app.services.gis_harness.analysis_workflows.families import (
     role_requirements,
 )
 from app.services.gis_harness.execution_compiler.contracts import (
+    CompileVerdict,
     ExpressionCandidate,
     FamilyCandidate,
     RoleNeed,
@@ -182,12 +183,20 @@ def _family_score(
 
 
 def getattr_signal(spec: Any, path: str) -> Optional[str]:
-    """信号路径 → 当前值（点路径只走两级；未知路径 None）。"""
+    """信号路径 → 当前值（点路径；list 段按 item.id 寻址——如
+    ``measures.m1.statistic``；未知路径 None——悬空信号探测面）。"""
     parts = path.split(".")
     cur: Any = spec
     for part in parts:
         if isinstance(cur, dict):
             cur = cur.get(part)
+        elif isinstance(cur, (list, tuple)):
+            cur = next(
+                (item for item in cur
+                 if isinstance(item, dict) and str(item.get("id")) == part),
+                None) or next(
+                (item for item in cur
+                 if getattr(item, "id", None) == part), None)
         else:
             cur = getattr(cur, part, None)
         if cur is None:
@@ -351,7 +360,7 @@ def compile_requirement_to_tasks(
 
     expressions = _expression_candidates(doc, data_facts)
 
-    verdict = "compilable"
+    verdict: CompileVerdict = "compilable"
     clarification: Tuple[str, ...] = ()
     if blocking_ambiguities:
         verdict = "needs_clarification"

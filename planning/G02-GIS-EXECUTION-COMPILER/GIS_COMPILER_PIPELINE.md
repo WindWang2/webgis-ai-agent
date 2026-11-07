@@ -246,8 +246,11 @@ registry dispatch chokepoint。
 | `FC_UNIT_OUT_OF_VOCAB` | `unit_contract` 单位 ∉ `UNIT_VOCABULARY`（m/km/min/h/unitless） | 发射 |
 | `FC_PRECONDITION_DANGLING` | 科学前置 `precondition_exists` 未注册 | 发射 |
 | `FC_ROLE_OUT_OF_VOCAB` | 族角色 ∉ `DATA_ROLES`（`workflow_schema`） | 发射 |
-| `FC_BASIS_OUT_OF_VOCAB` | aggregation_basis 词表对账（`AGGREGATION_BASIS_VOCABULARY`） | 常量已声明，当前对账循环未发射（保留面） |
-| `FC_UNIT_DIMENSION_MISMATCH` | envelope 实测单位量纲 vs 参数合同（`units.dimensions_compatible`） | 常量已导入，当前对账循环未发射（保留面；数值参数仅做词表成员校验） |
+
+（envelope 实测口径的对账——aggregation_basis 词表/实测单位量纲——属运行期
+证据面，由 `run_final_gate` / envelope v2 `result_semantics` 承载，静态层不保留
+死常量；量纲互斥守卫在 `units.dimensions_compatible`（SCIENTIFIC_ORACLES.md
+U1），声明面单位词表校验即上表 `FC_UNIT_OUT_OF_VOCAB`。）
 
 ### 6.2 registry 视图与三态裁决
 

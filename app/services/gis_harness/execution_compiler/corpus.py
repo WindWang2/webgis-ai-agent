@@ -332,7 +332,7 @@ def run_corpus() -> List[CaseResult]:
             elif case.followup_expect == "aoi_all":
                 _check(result,
                        scope.aoi_changed
-                       and scope.invalidated_roles,
+                       and bool(scope.invalidated_roles),
                        "city-switch: all data roles invalidated")
             elif case.followup_expect == "measure_minimal":
                 _check(result,
@@ -359,7 +359,7 @@ def write_benchmark_report(path: str) -> Dict[str, Any]:
         "",
         f"- cases: {len(results)}（任务类 {len({r.task_class for r in results})}）",
         f"- passed: {passed} / {len(results)}",
-        f"- determinism: rerun-safe（纯函数；同输入同输出）",
+        "- determinism: rerun-safe（纯函数；同输入同输出）",
         "",
         "| case | task_class | verdict | top_family | checks | failures |",
         "|---|---|---|---|---|---|",
@@ -385,4 +385,5 @@ if __name__ == "__main__":  # 本地报告生成入口（python -m）
 
     out = sys.argv[1] if len(sys.argv) > 1 else \
         "reports/execution_compiler_benchmark.md"
-    print(json.dumps(write_benchmark_report(out), ensure_ascii=False))
+    print(json.dumps(write_benchmark_report(out),  # noqa: T201 — CLI
+                     ensure_ascii=False))

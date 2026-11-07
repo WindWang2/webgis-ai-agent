@@ -146,7 +146,9 @@ def workflow_disclosures(
             f"(findings_n={gate.get('findings_n', 0)})")
     unmatched = 0
     for envelope in run_state.envelopes.values():
-        unmatched += int(envelope.network.get("unmatched_demand_count") or 0)
+        raw_unmatched = envelope.network.get("unmatched_demand_count")
+        if isinstance(raw_unmatched, (int, float)):
+            unmatched += int(raw_unmatched)
     if unmatched:
         out.append(f"unmatched_demand_count={unmatched}（部分总体，"
                    "不得当作完整覆盖结论）")
@@ -169,7 +171,6 @@ async def load_workflow_runs(
     try:
         from app.services.session_data import session_data_manager
         from app.services.gis_harness.analysis_workflows.state import (
-            state_alias,
             state_from_payload,
         )
 

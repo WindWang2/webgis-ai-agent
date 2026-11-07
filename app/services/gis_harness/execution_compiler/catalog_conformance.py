@@ -170,7 +170,7 @@ def _audit_step(
             detail="scientific_preconditions registry unavailable")
     return StepConformanceVerdict(
         family=family, step_id=step.step_id, tool=step.tool_name,
-        verdict="pass")
+        verdict="pass", detail="")
 
 
 def audit_family_conformance(

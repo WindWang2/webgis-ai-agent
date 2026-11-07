@@ -10,7 +10,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set
 
 from app.services.gis_harness.analysis_workflows.contracts import (
     AnalysisWorkflowContract,
@@ -82,10 +82,6 @@ def _change_classes(
     }
 
 
-def _semantic_change(classes: Dict[str, bool]) -> bool:
-    return any(v for k, v in classes.items() if k != "style")
-
-
 def patch_invalidation_scope(
     old_doc: RequirementDocument,
     new_doc: RequirementDocument,
@@ -109,7 +105,6 @@ def patch_invalidation_scope(
     步骤（denominator_kind）+ 下游闭包；其余步骤进入 preserved（复用面）。
     """
     classes = _change_classes(old_doc, new_doc)
-    semantic_changed = _semantic_change(classes)
 
     invalidated: Set[str] = set()
     reasons = []

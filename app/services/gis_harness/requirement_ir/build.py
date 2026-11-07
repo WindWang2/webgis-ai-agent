@@ -173,14 +173,16 @@ def derive_sections(
             spec.representation = spec.representation.model_copy(
                 update={"geometry_kind": harvested_kind})
             spec.field_provenance["representation.geometry_kind"] = \
-                Provenance(origin="user", evidence_refs=("query",))
+                Provenance(origin="user", turn=None, rationale="",
+                           evidence_refs=("query",))
         harvested_norm = norm.normalize_normalization(query)
         if harvested_norm != "none" and \
                 spec.statistics.normalization == "none":
             spec.statistics = spec.statistics.model_copy(
                 update={"normalization": harvested_norm})
             spec.field_provenance["statistics.normalization"] = \
-                Provenance(origin="user", evidence_refs=("query",))
+                Provenance(origin="user", turn=None, rationale="",
+                           evidence_refs=("query",))
     # G3D04：genesis 话语的 3D cue → SceneSpec（用户显式表达 → 字段级
     # origin=user，user-wins 从第一轮即生效；无 cue → 全默认零推断）。
     if _apply_scene_cues_to_spec(spec, query):
