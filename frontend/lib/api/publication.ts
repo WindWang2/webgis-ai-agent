@@ -47,6 +47,8 @@ export interface VectorPdfExportParams {
   targetDpi?: number;
   sessionId?: string;
   atlas?: AtlasRequestPolicy;
+  /** G04（#1999）：打印档求解 profile（a4_landscape 等；缺席 = not_evaluated）。 */
+  pageProfile?: string;
 }
 
 export function exportVectorPdf(
@@ -60,6 +62,7 @@ export function exportVectorPdf(
       target_dpi: params.targetDpi,
       ...(params.sessionId ? { session_id: params.sessionId } : {}),
       ...(params.atlas ? { atlas: params.atlas } : {}),
+      ...(params.pageProfile ? { page_profile: params.pageProfile } : {}),
     },
     timeoutMs: 150_000, // 路由 wait_for 120s + 余量（多页 atlas 最坏链路）
     label: 'Vector PDF export error',

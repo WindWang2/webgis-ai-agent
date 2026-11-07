@@ -1,4 +1,8 @@
-"""The extracted SVG chrome helper preserves coordinates, escaping and coverage."""
+"""The extracted SVG chrome helper preserves coordinates, escaping and coverage.
+
+G04（#2000）：chrome 挪位以组件锚点为唯一门 —— 历史锚点保持历史坐标
+（全局 ``constraint_layout`` 标记不再是门），非历史锚点按角比例落位。
+"""
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -6,16 +10,15 @@ import pytest
 from app.lib.cartography.render_scene import resolve_component
 from app.services.mapspec_svg_chrome_layout import (
     _constraint_chrome_xy,
-    _constraint_layout_active,
     _render_title_chrome,
 )
 
 
-@pytest.mark.parametrize("mapspec", [None, [], {}, {"layout": []}, {"layout": {"constraint_layout": "not_evaluated"}}])
-def test_constraint_helpers_require_explicit_evaluation(mapspec):
-    component = resolve_component({"id": "n", "type": "north_arrow", "position": "bottom-left"})
-    assert not _constraint_layout_active(mapspec)
-    assert _constraint_chrome_xy(mapspec, component, "north_arrow", 800, 600, 20) is None
+@pytest.mark.parametrize("mapspec", [None, [], {}, {"layout": []}, {"layout": {"constraint_layout": "evaluated"}}])
+def test_historical_anchors_keep_default_coordinates(mapspec):
+    """历史锚点 → None（默认坐标路径），与是否携带 evaluated 标记无关。"""
+    component = resolve_component({"id": "n", "type": "north_arrow", "position": "top-right"})
+    assert _constraint_chrome_xy(component, "north_arrow", 800, 600, 20) is None
 
 
 @pytest.mark.parametrize("kind, anchor, expected", [
@@ -27,18 +30,20 @@ def test_constraint_helpers_require_explicit_evaluation(mapspec):
     ("title", "bottom-left", (170.0, 580.0)),
     ("subtitle", "bottom-right", (630.0, 580.0)),
 ])
-def test_constraint_anchor_coordinates_stay_unchanged(kind, anchor, expected):
+def test_anchor_coordinates_stay_unchanged(kind, anchor, expected):
     component = resolve_component({"id": "c", "type": kind, "position": anchor})
-    assert _constraint_chrome_xy(
-        {"layout": {"constraint_layout": "evaluated"}}, component, kind, 800, 600, 20,
-    ) == expected
+    assert _constraint_chrome_xy(component, kind, 800, 600, 20) == expected
+
+
+def test_none_component_returns_none():
+    assert _constraint_chrome_xy(None, "legend", 800, 600, 20) is None
 
 
 def test_title_markup_escapes_text_and_reports_only_nonempty_types():
     title_text = '<script>alert("x")</script>&'
     title = resolve_component({"id": "t", "type": "title", "options": {"text": title_text}})
     subtitle = resolve_component({"id": "s", "type": "subtitle", "options": {"text": ""}})
-    parts, rendered = _render_title_chrome({}, title, subtitle, 800, 600, 20)
+    parts, rendered = _render_title_chrome(title, subtitle, 800, 600, 20)
     root = ET.fromstring(parts[0])
     assert rendered == ["title"]
     assert root.find("text").text == title_text
@@ -47,17 +52,11 @@ def test_title_markup_escapes_text_and_reports_only_nonempty_types():
 
 
 def test_temporal_title_keeps_coverage_without_title_components():
-    parts, rendered = _render_title_chrome({
-        "temporal": {
-            "enabled": True,
-            "cursor_frame": "f",
-            "granularity": "day",
-            "frames": [{"id": "f", "label": "Day <1>", "start": "2026-01-01", "end": "2026-01-02"}],
-        },
-    }, None, None, 800, 600, 20)
+    note = "时间: Day <1>（粒度 day，窗口 [2026-01-01 ~ 2026-01-02]）"
+    parts, rendered = _render_title_chrome(None, None, 800, 600, 20, temporal_note=note)
     root = ET.fromstring(parts[0])
     assert rendered == ["subtitle"]
     assert "时间: Day <1>" in "".join(root.itertext())
     assert "2026-01-01" in parts[0] and "2026-01-02" in parts[0]
     assert "&lt;1&gt;" in parts[0]
-    assert _render_title_chrome({}, None, None, 800, 600, 20) == ([], [])
+    assert _render_title_chrome(None, None, 800, 600, 20) == ([], [])

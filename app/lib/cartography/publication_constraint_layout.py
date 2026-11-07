@@ -223,10 +223,15 @@ def prepare_publication_document(
     cloned_layout["page_profile"] = report["page_profile"]
     workbench_value = cloned.get("workbench")
     workbench = workbench_value if isinstance(workbench_value, dict) else {}
-    locked = {
+    # #2002：锁命中走共享族谓词（`__` 双向派生语义，与 lifecycle/repair
+    # 同一事实）—— 锁 `legend` 必须保护 `legend__1`，不留换 id 拼法绕过
+    # 用户锁的缺口。
+    from app.contracts.workbench_locks import is_entity_locked
+
+    locked = frozenset(
         str(item) for item in (workbench.get("lockedComponentIds") or [])
         if isinstance(item, str)
-    }
+    )
     zones = report.get("placement_zones") or {
         item["id"]: item.get("zone") for item in report.get("placements") or []
     }
@@ -241,7 +246,7 @@ def prepare_publication_document(
         cid = str(comp.get("id") or "")
         placement_value = comp.get("placement")
         placement = placement_value if isinstance(placement_value, dict) else {}
-        if placement.get("mode") == "floating" or cid in locked:
+        if placement.get("mode") == "floating" or is_entity_locked(cid, locked):
             if cid:
                 kept_locks.append(cid)
             continue

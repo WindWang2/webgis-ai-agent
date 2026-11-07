@@ -54,6 +54,11 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
     "viewport":          {"multiplier": 1, "top_budget": 3, "bottom_budget": 3},
     "a4_portrait":       {"multiplier": 1, "top_budget": 3, "bottom_budget": 4},
     "a4_landscape":      {"multiplier": 2, "top_budget": 4, "bottom_budget": 4},
+    # G04（CM-05 高清图幅）：A3 与 PublicationIR.PAGE_PROFILES 的纸张几何
+    # 对齐（297×420 / 420×297mm）—— 前端/工具面早已接受 A3，求解器补上
+    # 同档容量（仍单求解器；预算按画幅线性外推取整）。
+    "a3_portrait":       {"multiplier": 2, "top_budget": 4, "bottom_budget": 5},
+    "a3_landscape":      {"multiplier": 3, "top_budget": 5, "bottom_budget": 5},
     "presentation_16x9": {"multiplier": 2, "top_budget": 4, "bottom_budget": 3},
     "academic_figure":   {"multiplier": 2, "top_budget": 3, "bottom_budget": 4},
 }

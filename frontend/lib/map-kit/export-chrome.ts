@@ -206,7 +206,10 @@ export type ExportDegradationCode =
   /* ADR-0157 P5：出版档栅格件 CMYK 近似披露。 */
   | 'cmyk_approximate_raster'
   /* ADR-0157 P3：PDF 出版字体嵌入（中文文本层可选取可检索）。 */
-  | 'pdf_cjk_font_embedded';
+  | 'pdf_cjk_font_embedded'
+  /* G04（#1999）：画布打印档约束求解回执（发射器 exporter.ts —— 应用
+   * solve_layout_v5 zones 后上报；词表权威 render_diagnostics.py）。 */
+  | 'constraint_layout_evaluated';
 
 export interface ExportDegradation {
   code: ExportDegradationCode;

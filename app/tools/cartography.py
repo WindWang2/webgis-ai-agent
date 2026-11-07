@@ -47,6 +47,49 @@ def _geometry_kind_of_features(features: list) -> str:
     return "polygon"
 
 
+async def _session_layout_components(session_id: object) -> list | None:
+    """会话 MapSpec 的 layout.components（缺席/无会话 → None，不虚构）。
+
+    G04（#1999）：打印档导出任务创建时读取**已提交**组件面做出版约束求解。
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return None
+    from app.services.mapspec_store import mapspec_store
+
+    spec = await mapspec_store.get_mapspec(sid) or {}
+    layout = spec.get("layout") if isinstance(spec, dict) else None
+    comps = layout.get("components") if isinstance(layout, dict) else None
+    if not isinstance(comps, list):
+        return None
+    return comps
+
+
+def _print_constraint_payload(components: list | None, page_profile: str) -> tuple[dict, dict]:
+    """打印档求解 → (完整有界报告, 前端可消费子集)。
+
+    无组件面（无会话/无 MapSpec）→ ``no_session_mapspec`` 诚实缺省，
+    绝不把无参与者的求解冒充 evaluated。
+    """
+    from app.lib.cartography.publication_constraint_layout import (
+        evaluate_constraint_layout,
+        not_evaluated,
+    )
+
+    if components is None:
+        report = not_evaluated(page_profile, "no_session_mapspec")
+        return report, {}
+    report = evaluate_constraint_layout(components, page_profile=page_profile)
+    fe_payload = {
+        "constraint_layout": report["constraint_layout"],
+        "page_profile": report.get("page_profile", page_profile),
+        "placement_zones": report.get("placement_zones") or {},
+        "suppressed_ids": report.get("suppressed_ids") or [],
+        "key_component_ids": report.get("key_component_ids") or [],
+    }
+    return report, fe_payload
+
+
 def _requirement_grammar_pins() -> dict:
     """ADR-0219 C3（grammar face）：读取 requirement 文档中用户显式 pin
     的表达面（palette / representation / channels）。
@@ -949,7 +992,7 @@ def register_cartography_tools(registry: ToolRegistry):
            map_mutations=("map_product",),
            data_mutations=("artifact_write",),
            failure_modes=("invalid_args",))
-    def export_thematic_map(
+    async def export_thematic_map(
         title: str,
         subtitle: str = "",
         include_legend: bool = True,
@@ -963,6 +1006,7 @@ def register_cartography_tools(registry: ToolRegistry):
         fit_to_frame: bool = True,
         color_mode: str = "srgb",
         frames: list[dict] | None = None,
+        session_id: str = "",
     ) -> dict:
         fmt = (format or "png").lower().strip()
         if fmt not in ("png", "pdf", "svg"):
@@ -1018,11 +1062,42 @@ def register_cartography_tools(registry: ToolRegistry):
             BROWSER_EXPORT_CONSTRAINT_NOTE,
         )
 
+        # G04（#1999）：显式打印档（A4/A3）在任务创建时对会话 MapSpec 组件
+        # 真实求解（solve_layout_v5 唯一求解器），结果随任务下发前端画布链
+        # 应用；屏幕档保持诚实 not_evaluated。
+        fe_constraint: dict = {}
+        if ps in ("a4", "a3"):
+            page_profile = f"{ps}_{ori}"
+            components = await _session_layout_components(session_id)
+            constraint_report, fe_constraint = _print_constraint_payload(
+                components, page_profile,
+            )
+            constraint_status: str = constraint_report["constraint_layout"]
+            if constraint_status == "evaluated":
+                note = (
+                    f"constraint_layout=evaluated（page_profile={page_profile}，"
+                    "solve_layout_v5 已在任务创建时对会话组件求解；"
+                    "前端导出副本按 zones 应用，用户锁优先）。"
+                )
+            else:
+                note = (
+                    f"constraint_layout=not_evaluated（{constraint_report.get('reason')}）："
+                    "本次打印档未运行出版约束求解，不能称为出版级约束版面成功。"
+                )
+        else:
+            constraint_status = "not_evaluated"
+            constraint_report = {
+                "constraint_layout": "not_evaluated",
+                "reason": "page_profile_absent",
+            }
+            note = BROWSER_EXPORT_CONSTRAINT_NOTE
+
         return {
             "status": "export_task_created",
             "command": "export_map",
-            "constraint_layout": "not_evaluated",
-            "publication_note": BROWSER_EXPORT_CONSTRAINT_NOTE,
+            "constraint_layout": constraint_status,
+            "constraint_layout_report": constraint_report,
+            "publication_note": note,
             "params": {
                 "title": title,
                 "subtitle": subtitle,
@@ -1036,6 +1111,8 @@ def register_cartography_tools(registry: ToolRegistry):
                 "dpi": dpi,
                 "fit_to_frame": bool(fit_to_frame),
                 "color_mode": cm,
+                **({"page_profile": page_profile} if ps in ("a4", "a3") else {}),
+                **({"constraint_layout": fe_constraint} if fe_constraint else {}),
                 **({"frames": norm_frames} if norm_frames else {}),
             },
             "system_message": (
@@ -1045,7 +1122,7 @@ def register_cartography_tools(registry: ToolRegistry):
                 "前端合成排版（含指北针、比例尺、图例）需要两到三秒时间，"
                 "合成完成后将自动通过 `[系统通知]` 回传带有下载安全链接的高清成果。"
                 "请直接告知用户你正在制图排版合成..."
-                + BROWSER_EXPORT_CONSTRAINT_NOTE
+                + note
             ),
         }
 
@@ -1072,7 +1149,7 @@ def register_cartography_tools(registry: ToolRegistry):
            map_mutations=("map_product", "camera"),
            data_mutations=("artifact_write",),
            failure_modes=("invalid_args", "partial_coverage"))
-    def export_batch_maps(
+    async def export_batch_maps(
         titles: list[str],
         views: list[dict] | None = None,
         subtitle: str = "",
@@ -1083,6 +1160,7 @@ def register_cartography_tools(registry: ToolRegistry):
         paper_size: str = "screen",
         orientation: str = "landscape",
         dpi: int = 96,
+        session_id: str = "",
     ) -> dict:
         if not titles:
             return {"error": "titles 不能为空"}
@@ -1096,6 +1174,30 @@ def register_cartography_tools(registry: ToolRegistry):
         ori = (orientation or "landscape").lower().strip()
         if ori not in ("landscape", "portrait"):
             ori = "landscape"
+
+        # G04（#1999）：批量打印档同单张口径 —— 任务创建时真实求解一次，
+        # 逐张任务共享同一份 zones（同一会话组件面）。
+        fe_constraint: dict = {}
+        if ps in ("a4", "a3"):
+            page_profile = f"{ps}_{ori}"
+            components = await _session_layout_components(session_id)
+            constraint_report, fe_constraint = _print_constraint_payload(
+                components, page_profile,
+            )
+            constraint_status: str = constraint_report["constraint_layout"]
+            note = (
+                f"constraint_layout={constraint_status}"
+                + (f"（page_profile={page_profile}）" if constraint_status == "evaluated"
+                   else f"（{constraint_report.get('reason')}）")
+                + "。"
+            )
+        else:
+            constraint_status = "not_evaluated"
+            constraint_report = {
+                "constraint_layout": "not_evaluated",
+                "reason": "page_profile_absent",
+            }
+            note = ""
 
         commands = []
         # #725: per-export views emit an interleaved fly_to before each
@@ -1130,6 +1232,8 @@ def register_cartography_tools(registry: ToolRegistry):
                     "paperSize": ps_frontend,
                     "orientation": ori,
                     "dpi": dpi,
+                    **({"page_profile": page_profile} if ps in ("a4", "a3") else {}),
+                    **({"constraint_layout": fe_constraint} if fe_constraint else {}),
                 },
             })
 
@@ -1139,8 +1243,9 @@ def register_cartography_tools(registry: ToolRegistry):
 
         return {
             "status": "export_batch_task_created",
-            "constraint_layout": "not_evaluated",
-            "publication_note": BROWSER_EXPORT_CONSTRAINT_NOTE,
+            "constraint_layout": constraint_status,
+            "constraint_layout_report": constraint_report,
+            "publication_note": note or BROWSER_EXPORT_CONSTRAINT_NOTE,
             "commands": commands,
             # count = 导出张数（fly_to 视图切换指令不计入）
             "count": sum(1 for c in commands if c["command"] == "export_map"),
@@ -1148,7 +1253,7 @@ def register_cartography_tools(registry: ToolRegistry):
                 f"已将 {sum(1 for c in commands if c['command'] == 'export_map')} 张地图的批量导出任务发送至前端，将按顺序合成。"
                 "每张完成后都会通过 `[系统通知]` 回传一条带下载链接的提示。"
                 "请告知用户『批量制图开始，预计耗时约 N 秒』并耐心等待结果。"
-                + BROWSER_EXPORT_CONSTRAINT_NOTE
+                + (note or BROWSER_EXPORT_CONSTRAINT_NOTE)
             ),
         }
 
