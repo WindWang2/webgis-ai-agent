@@ -125,12 +125,6 @@ def _composition_alternatives_evidence(
     return {}
 
 
-#: intent task 词表 → 组合选择类目（CM-01：单一事实源下移 lib
-#: selection_context.TASK_CATEGORY_BY_INTENT；此别名保持既有 import 面）。
-from app.lib.cartography.selection_context import (  # noqa: E402
-    TASK_CATEGORY_BY_INTENT as _TASK_CATEGORY_BY_INTENT,
-)
-
 
 def _record_chain_exhausted_failure(recipe: Any) -> None:
     """V11 W1.3（评审 finding）：链穷尽 → 该配方记一次失败（降权面）。

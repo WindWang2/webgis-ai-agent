@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 #: intent task 词表 → 组合选择类目（审定静态映射；自 planner 下移的单一
 #: 事实源 —— 表外类目兜底 thematic_cartography，与 composition_selection

@@ -309,7 +309,7 @@ def test_golden_empty_state_is_honest_not_decorated():
     facts = project_selection_facts(
         intent_task="distribution_overview", profile={},
     )
-    cand = generate_design_candidates(
+    generate_design_candidates(
         DesignTaskContext(**facts.design_ctx_kwargs()),
     )
     # 无数据事实 → 候选仍在(资格面),但 point_count=0/basis=unknown(不虚构)

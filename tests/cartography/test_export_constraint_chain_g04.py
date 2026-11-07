@@ -18,7 +18,6 @@ import uuid
 import pytest
 
 from app.lib.cartography.publication_constraint_layout import (
-    evaluate_constraint_layout,
     prepare_publication_document,
 )
 from app.services.agent_swarm.specialists.cartographer import CartographerAgent

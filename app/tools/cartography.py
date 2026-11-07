@@ -4,10 +4,15 @@
 import json
 import logging
 import math
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+
+if TYPE_CHECKING:  # 仅类型检查面(运行时零依赖,函数内保持惰性 import)
+    from app.lib.cartography.publication_constraint_layout import (
+        ConstraintLayoutReport,
+    )
 from app.utils.best_effort import best_effort
 
 logger = logging.getLogger(__name__)
@@ -65,7 +70,9 @@ async def _session_layout_components(session_id: object) -> list | None:
     return comps
 
 
-def _print_constraint_payload(components: list | None, page_profile: str) -> tuple[dict, dict]:
+def _print_constraint_payload(
+    components: list | None, page_profile: str,
+) -> "tuple[ConstraintLayoutReport, dict]":
     """打印档求解 → (完整有界报告, 前端可消费子集)。
 
     无组件面（无会话/无 MapSpec）→ ``no_session_mapspec`` 诚实缺省，
