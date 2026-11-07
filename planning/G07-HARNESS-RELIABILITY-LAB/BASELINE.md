@@ -91,3 +91,11 @@ ADR-0256 已定义 ReplayTrace 为打包层、T1/T2/T3 与 provisional ratchet�
 - `live_dispatch_stub_llm`：真实 ToolDispatchService/GIS fixture；stub 只替模型/外部 provider，必须逐层标明。
 - `browser_renderer`：真实本地 MapLibre 观察才可证明 render；合成截图/FakeVLM 仅证裁判接线。
 - `live_services_opt_in`：外部数据/模型/服务；默认不运行，不作为本地 PR 通过条件。
+
+## M9 最终在途接触点（复审时刷新）
+
+- `origin/master` 再次 fetch 仍为 `585812ee4e2d75612f2b124e6fe6587af3deca5c`，无需 rebase。
+- #2013（G03）也修改 `app/services/tool_dispatch_service.py`，其新增位于数据资格闸（约 671 行）和结果字段（约 1609 行）；本线仅复用既有 recovery payload 参数（约 1046 行），代码块和语义均不冲突。
+- #2012（G01）修改 `scripts/pi_doctor.py` 与 `tests/integration/test_pi_stub_llm_journeys.py`，本线未改这些文件；未来 master 合并后需重跑 Pi doctor/stub 验证，不提前声称其新测试通过。
+- #2011（G02）与本线无重叠文件。Dependabot 的 pyproject 依赖变更与本线 mypy whitelist 不同块，需在最终 merge 时正常冲突审查。
+- 不读取或等待这些 PR 的线上 CI；其失败/成功状态不作为本线证据。

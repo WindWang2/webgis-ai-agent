@@ -23,8 +23,8 @@
 | M5 | complete | 4 组恢复实验链 + 199 项恢复回归；动作/权限/终态可复现 |
 | M6 | complete | resume p50 435.4→254.5ms（1.71×）；UTF-8 修正明确非提速；原始报告完整 |
 | M7 | complete | record-only 指标、分层车道、质量文档、真实 Pi 证据；全量 268 项回归通过 |
-| M8 | in_progress | 独立 reviewer 冷读全 diff；P0/P1 修复并二次复审，P2 明示 |
-| M9 | pending | 重取 master、必要集成、双次关键验收、语义化 commits、push 与唯一 PR |
+| M8 | complete | 冷审 P0/P1=0；4 项 P2 全修复；二次复审通过；全量 270 项复跑满足附带条件 |
+| M9 | in_progress | 重取 master、必要集成、双次关键验收、语义化 commits、push 与唯一 PR |
 
 ## Oracle 对账
 

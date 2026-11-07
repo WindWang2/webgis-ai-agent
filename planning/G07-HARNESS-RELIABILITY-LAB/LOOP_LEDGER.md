@@ -77,3 +77,11 @@
 - `docs/quality/GIS_HARNESS_RELIABILITY.md`、failure taxonomy、benchmark 报告和原始 JSON 已落盘；record-only 指标接入完成。
 - 真实 Pi doctor 与 opt-in stub 旅程均通过，browser/live 未运行，未验证维度明确。
 - 开始 M8 独立冷审，不提前宣称复审通过。
+
+## Loop 8 — M8 独立冷审、Fix、二次复审（完成）
+
+- 冷审：P0/P1=0；P2 四项：inline artifact、float 参照、512B 边界、未测维度。
+- Fix：逐项先红后绿；artifact 缺证据不再给 inline 结果背书；独立 float cleaner；500B→525B 拒绝测试与决策披露；unmeasured 全部 not_evaluated。
+- 二次复审：四项全关闭，appendix A1/A5 解决，无新问题，83 项独立复跑通过。
+- 附带条件：修复后全量 Replay/Lab 已由主 Agent `270 passed, 4 warnings, 107.24s` 满足。
+- 结论：独立二次复审通过，进入 M9 最终双次验收与 PR。

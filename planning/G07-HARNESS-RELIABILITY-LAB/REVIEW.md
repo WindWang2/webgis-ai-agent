@@ -1,6 +1,6 @@
 # 独立 Review 与修复记录
 
-当前状态：独立冷审完成，P2 修复与复验进行中；尚无二次复审通过结论。
+当前状态：二次独立复审通过。P0/P1 为零，四项 P2 全部关闭；修复后全量 Replay/Lab 270 项复跑满足附带条件。
 
 ## 冷审输入与独立性
 
@@ -27,4 +27,13 @@ P0/P1：均无。
 
 ## 二次 Review
 
-待 reviewer B 对 P2 修复后的完整 diff 复审。只有全部 P0/P1 保持为零、P2 修复与复验完成后才能填写通过结论。
+Reviewer B 对修复后的完整 diff 复审结论：**通过**。逐项结果：
+
+- P2-1：inline 与无关 artifact 均 fail，匹配 ref 的正向仍 pass，纯问答不会伪造地图完成。
+- P2-2：额外四类 float/嵌套样例与独立 cleaner 逐字节一致。
+- P2-3：500B→525B 边界拒绝成立，伪造 omitted 不可注入，ownership 优先不变。
+- P2-4：证据 JSON 与文档每个数字一致，unmeasured 全部 `not_evaluated`。
+- A1/A5 已解决；A2/A3/A4 保持保守边界，不扩大实现。
+- 独立复跑 83 项全绿，未发现修复引入的新问题。
+
+附带条件“ce3706e 后补跑全量 Replay/Lab”已由主 Agent 的 `270 passed, 4 warnings, 107.24s` 满足并记录。可以进入 M9。
