@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 SlotCardinality = Literal["required", "recommended", "optional", "conditional", "forbidden"]
 CollisionPolicy = Literal["exclusive", "stack_vertical", "stack_horizontal", "allow_overlap"]
@@ -37,6 +37,19 @@ class ComponentSlot(BaseModel):
     bind_scope: str = "primary"
     conditions: Dict[str, Any] = Field(default_factory=dict)
     stack_behavior: str = "exclusive"
+
+    # G04（CM-02）：cardinality 是机器契约的主词 —— 声明面大量存在
+    # ``cardinality="required", required=True`` 而缺省 ``min_count=0`` 的
+    # 自相矛盾（168 处：min_count=0 让「必需」在机读面等于可选）。构造期
+    # 归一：required ⇒ min_count ≥ 1；forbidden ⇒ max_count = 0。声明值
+    # 只在比语义下界更严时保留（如 required 且显式 min_count=2）。
+    @model_validator(mode="after")
+    def _normalize_cardinality(self) -> "ComponentSlot":
+        if self.cardinality == "required":
+            self.min_count = max(self.min_count, 1)
+        elif self.cardinality == "forbidden":
+            self.max_count = 0
+        return self
 
 
 class MapCompositionTemplate(BaseModel):

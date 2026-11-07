@@ -104,83 +104,32 @@ def _composition_alternatives_evidence(
             TaskCartographyContext,
             composition_alternatives_payload,
         )
-        intent = getattr(plan, "intent", None)
-        task = str(getattr(intent, "task", "") or "")
-        geometry_kind = "polygon"
-        geom_types = (profile or {}).get("geometryTypes") or []
-        if geom_types:
-            from app.services.gis_harness.recipes import _geometry_category
-            category = _geometry_category(list(geom_types))
-            geometry_kind = {"point": "point", "line": "line"}.get(category, "polygon")
-        # data_kind 来源（评审 finding：intent 无 data_kind 字段）：profile
-        # 显式声明优先，其次自 profile 字段类型粗判（数值 → continuous、
-        # 文本/类别 → categorical），缺省 continuous。
-        data_kind = str((profile or {}).get("dataKind") or "")
-        if not data_kind:
-            field_types = [
-                str((spec or {}).get("type") or "")
-                for spec in ((profile or {}).get("fields") or {}).values()
-                if isinstance(spec, dict)
-            ] if isinstance((profile or {}).get("fields"), dict) else []
-            data_kind = "categorical" if any(
-                t in ("text", "string", "category") for t in field_types
-            ) else "sequential"
-        variable_kind = {
-            "sequential": "continuous", "diverging": "continuous",
-            "categorical": "categorical", "qualitative": "categorical",
-        }.get(data_kind, "continuous")
-        # 产物集投影（评审 finding：profile.artifactTypes 无生产者，恒空——
-        # 改为「数据在手可产出什么」的几何事实派生；profile 显式声明仍优先）。
-        explicit_artifacts = tuple(
-            t for t in (profile or {}).get("artifactTypes") or []
-        )[:12]
-        if explicit_artifacts:
-            artifact_types = explicit_artifacts
-        else:
-            artifact_types = {
-                "point": ("point_feature_set", "admin_aggregate_table"),
-                "line": ("line_feature_set", "admin_aggregate_table"),
-                "polygon": ("polygon_feature_set", "admin_aggregate_table"),
-                "raster": ("raster_surface",),
-            }.get(geometry_kind, ("admin_aggregate_table",))
-        ctx = TaskCartographyContext(
-            task_categories=_TASK_CATEGORY_BY_INTENT.get(
-                task, ("thematic_cartography",)),
-            geometry_kind=geometry_kind,
-            variable_kind=variable_kind,
-            statistic="count",
-            scale_hint=str(getattr(getattr(intent, "scope", None), "level", "") or ""),
-            output_target="interactive",
-            artifact_types=artifact_types,
+        from app.lib.cartography.selection_context import (
+            project_selection_facts,
         )
+        intent = getattr(plan, "intent", None)
+        # CM-01（G04）：判选输入经唯一投影器 —— 与 tool_map_product 的
+        # design 侧消费同一 SelectionFacts（variable_kind/statistic/几何
+        # 坍缩不再两套口径）。
+        facts = project_selection_facts(
+            intent_task=str(getattr(intent, "task", "") or ""),
+            profile=profile,
+            geometry_expectation=str(
+                getattr(intent, "geometry_expectation", "") or ""),
+            measure=str(getattr(intent, "measure", "") or ""),
+            scale_hint=str(
+                getattr(getattr(intent, "scope", None), "level", "") or ""),
+        )
+        ctx = TaskCartographyContext(**facts.task_ctx_kwargs())
         return composition_alternatives_payload(ctx)
     return {}
 
 
-#: intent task 词表 → 组合选择类目（审定静态映射；表外类目兜底
-#: thematic_cartography —— 与 composition_selection 的类目词表对齐）。
-_TASK_CATEGORY_BY_INTENT = {
-    "distribution_overview": ("spatial_distribution",),
-    "density_analysis": ("density",),
-    # carto-design（评审 P2-5）：真实任务族此前落入 thematic_cartography
-    # 兜底——定量密度/集中度语义应路由 density 类目（候选引擎类目质量
-    # 依赖本表；density_analysis 为历史 key 保留）。
-    "analytical_density": ("density",),
-    "concentration_analysis": ("density", "hotspot"),
-    "aggregation_overview": ("administrative_aggregation",),
-    "hotspot_analysis": ("hotspot",),
-    "clustering_analysis": ("clustering",),
-    "comparison_analysis": ("comparison",),
-    "change_detection": ("change_detection", "spatiotemporal_pattern"),
-    "terrain_analysis": ("terrain",),
-    "interpolation_analysis": ("interpolation",),
-    "accessibility_analysis": ("accessibility_network",),
-    "proximity_analysis": ("proximity",),
-    "multi_criteria_analysis": ("multi_criteria",),
-    "suitability_analysis": ("suitability",),
-    "overlay_analysis": ("overlay",),
-    "remote_sensing_extraction": ("remote_sensing_extraction",),
-}
+#: intent task 词表 → 组合选择类目（CM-01：单一事实源下移 lib
+#: selection_context.TASK_CATEGORY_BY_INTENT；此别名保持既有 import 面）。
+from app.lib.cartography.selection_context import (  # noqa: E402
+    TASK_CATEGORY_BY_INTENT as _TASK_CATEGORY_BY_INTENT,
+)
 
 
 def _record_chain_exhausted_failure(recipe: Any) -> None:
