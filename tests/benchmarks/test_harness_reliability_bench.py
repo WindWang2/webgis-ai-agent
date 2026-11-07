@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 
 import pytest
@@ -33,10 +34,35 @@ pytestmark = [pytest.mark.perf, pytest.mark.cartography]
 SEED = 11
 
 
+def test_benchmark_report_discloses_unmeasured_dimensions():
+    from pathlib import Path
+
+    report = json.loads((Path(__file__).resolve().parents[2] /
+        "docs/quality/evidence/harness_reliability_bench_report.json")
+        .read_text(encoding="utf-8"))
+    dimensions = {entry["dimension"] for entry in report["unmeasured"]}
+    assert {"artifact_bytes", "emitted_events", "rendering_frames"}.issubset(dimensions)
+    assert all(entry["status"] == "not_evaluated" for entry in report["unmeasured"])
+
+
+def _independent_clean(value):
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return str(value)
+        if value == 0.0:
+            return 0.0
+        return round(value, 6)
+    if isinstance(value, dict):
+        return {str(key): _independent_clean(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_independent_clean(item) for item in value]
+    return value
+
+
 def _independent_utf8_bytes(turns) -> int:
     return sum(
-        len(json.dumps(op.arguments, ensure_ascii=False, sort_keys=True,
-                       separators=(",", ":")).encode("utf-8"))
+        len(json.dumps(_independent_clean(op.arguments), ensure_ascii=False,
+                       sort_keys=True, separators=(",", ":")).encode("utf-8"))
         for t in turns for op in t.ops
     )
 

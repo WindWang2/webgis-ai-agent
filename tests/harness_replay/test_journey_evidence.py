@@ -152,3 +152,27 @@ def test_ref_result_without_artifact_persistence_cannot_pass():
     assert "artifact_persistence_unverified" in {
         finding["code"] for finding in report["findings"]
     }
+
+
+def test_inline_result_without_artifact_cannot_claim_full_journey():
+    from tests.harness_replay.test_journey_faults import _complete_trace
+
+    trace = _complete_trace()
+    trace["chain"]["stages"] = [
+        record for record in trace["chain"]["stages"]
+        if record["stage"] != "ARTIFACT_CREATION"
+    ]
+    result = next(
+        record for record in trace["chain"]["stages"]
+        if record["stage"] == "TOOL_RESULTS"
+    )
+    result.pop("geojson_ref", None)
+    result["result"] = {"value": 42}
+
+    report = project_journey_evidence(trace)
+
+    assert report["overall"] == "fail"
+    assert report["completion_claims"]["artifact_persisted"] is False
+    assert "artifact_persistence_unverified" in {
+        finding["code"] for finding in report["findings"]
+    }

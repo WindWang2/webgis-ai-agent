@@ -35,7 +35,7 @@
 
 ## 诊断数据最小化
 
-`scripts/harness_journey_diagnose.py` 只接受本地 ReplayTrace JSON（最大 2 MiB），必须同时给 `--session-id` 与 `--turn-id`。报告不含工具参数、token、URL、用户文本或 FeatureCollection；其他 owner 的 ID 不回显。默认输出最多 32 KiB，硬上限 64 KiB，按真实 UTF-8 bytes 计算。CLI 不持久化报告，因此没有新增 retention store 或 TTL 状态。
+`scripts/harness_journey_diagnose.py` 只接受本地、schema-packed ReplayTrace JSON（最大 2 MiB），必须同时给 `--session-id` 与 `--turn-id`。原始未打包 GisTrace 若缺 call ID/mutation 字段，关联检查只会保守判缺证据，不能当作完整链。报告不含工具参数、token、URL、用户文本或 FeatureCollection；其他 owner 的 ID 不回显。默认输出最多 32 KiB，硬上限 64 KiB，按真实 UTF-8 bytes 计算。CLI 不持久化报告，因此没有新增 retention store 或 TTL 状态。
 
 参考实现与测试：
 

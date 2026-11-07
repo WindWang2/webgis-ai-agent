@@ -44,9 +44,9 @@ python scripts/harness_journey_diagnose.py \
 
 当前实测：
 
-- 12 个黄金能力组共 **30 个真实 dispatch 场景全部通过**，报告 `reports/g07/golden.json`；数据为固定种子的本地合成 fixture。
+- 12 个黄金能力组共 **30 个真实 dispatch 场景全部通过**，报告 `reports/g07/golden.json`；其中 10 组由双侧场景构成，跨城与超限选择由 focused 车道补齐。数据为固定种子的本地合成 fixture。
 - Pi v1.5.0 固定 pin 已构建，`python scripts/pi_doctor.py --json` 的 vendor/build/extension/surface/rpc/env 全部 PASS，含真实 handshake、turn 和 settled。显式 `PI_JOURNEY_E2E=1` 的真实 Pi + stub LLM 旅程亦 **1 passed, 32.17s**；默认 skip 的门控原因已记录。Pi 升级不是本线功能。
-- 浏览器 renderer 与外部服务均 `not_run`；未据此声明生产地图或线上数据验证完成。
+- 真实浏览器 smoke 首跑 **7 passed / 2 skipped**，但第二跑 J9 三维资产出现 `mounted` 15s 超时（6 passed / 1 failed / 2 skipped），因此不作为稳定生产门；API 为 mock，真实后端未验证。外部 live services 为 `not_run`。
 
 ## 3. 十二组黄金任务
 

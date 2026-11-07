@@ -6,10 +6,10 @@
 
 | 切片 | before (p50) | after (p50) | 判定 |
 |---|---|---|---|
-| resume `_save()` 每场景全量重写（140 场景 suite） | 435.4 ms | 254.5 ms | **改善 ~1.71×**（真实运行，同一脚本内 flush_interval=1 vs 16） |
-| `context_bytes_proxy` UTF-8 口径修正 | str() 0.146 ms/调用 | canonical_json 0.247 ms/调用 | **未改善速度（如预期）**：这是计量正确性修正，不是优化 |
-| suite wall 缩放（warm, seed=11） | small 223.8 / medium 290.4 / large 578.9 ms | 同左（基线） | 基线数据，无回归声明 |
-| 冷态首跑（capability graph 一次性投影） | 4200 ms（2 场景 warm-up） | — | 一次性成本，不进 before/after；drift.py 记忆化已生效 |
+| resume `_save()` 每场景全量重写（140 场景 suite） | 468.5 ms | 265.1 ms | **改善 ~1.77×**（真实运行，同一脚本内 flush_interval=1 vs 16） |
+| `context_bytes_proxy` UTF-8 口径修正 | str() 0.154 ms/调用 | canonical_json 0.262 ms/调用 | **未改善速度（如预期）**：这是计量正确性修正，不是优化 |
+| suite wall 缩放（warm, seed=11） | small 256.4 / medium 330.2 / large 598.8 ms | 同左（基线） | 基线数据，无回归声明 |
+| 冷态首跑（capability graph 一次性投影） | 4504 ms（2 场景 warm-up） | — | 一次性成本，不进 before/after；drift.py 记忆化已生效 |
 
 ## 1. context_bytes_proxy 计量修正
 
@@ -29,8 +29,8 @@
   独立的 compact-JSON UTF-8 参照公式（旧版本用 `len(str(...))` 自证）。
 - `tests/benchmarks/test_harness_reliability_bench.py::TestContextProxyUtf8`。
 
-**性能影响（如实记录）**：纯计量函数微基准 str 0.146 ms vs canonical_json
-0.247 ms（large profile、~131 KB payload/场景）。**未改善、也未劣化到可感知
+**性能影响（如实记录）**：纯计量函数微基准 str 0.154 ms vs canonical_json
+0.262 ms（large profile、~131 KB payload/场景）。**未改善、也未劣化到可感知
 程度**（suite 级差异 < 0.1 ms/场景，淹没于 run_one 的其他成本）；该修正
 的价值在计量正确性。ASCII filler 下 str() 因 `", "` 分隔符反而比 compact
 JSON 长 13 字节（131310 vs 131297），进一步说明 str 口径从来不是 bytes。
@@ -51,9 +51,9 @@ JSON 长 13 字节（131310 vs 131297），进一步说明 str 口径从来不�
 **真实 before/after**（`scripts/perf/bench_harness_reliability.py`，全量
 corpus 140 场景、seed=11、5 次重复、顺序执行）：
 - before（`flush_interval=1` = 旧每场景重写语义的精确等价）：
-  wall p50 **435.4 ms** / p95 437.9 ms
-- after（`flush_interval=16`）：wall p50 **254.5 ms** / p95 263.6 ms
-- 参照：同 suite 无 resume 路径 p50 223.8 ms → after 已接近无 resume 下限
+  wall p50 **468.5 ms** / p95 498.0 ms
+- after（`flush_interval=16`）：wall p50 **265.1 ms** / p95 304.3 ms
+- 参照：同 suite 无 resume 路径 p50 256.4 ms → after 已接近无 resume 下限
   （残余 ≈ 9 次 flush 的序列化 + 写盘）。
 
 **测试**：`TestResumeFlush`（test_replay_bench_cli.py：flush 次数、收尾完整性、
@@ -70,10 +70,12 @@ pytest tests/benchmarks/test_harness_reliability_bench.py -m perf -q
 ```
 原始数据：`docs/quality/evidence/harness_reliability_bench_report.json`
 （每次运行覆盖；含每次 run 的 wall/CPU/maxRSS/payload bytes/entry 数与
-environment 块）。
+environment 块）。`unmeasured` 另行标明 artifact bytes、生产 SSE emitted events、
+渲染 frames 与 Redis mutation scaling 均为 `not_evaluated`，不把 payload bytes
+改名成 artifact bytes，也不虚构浏览器帧数。
 
 环境：CPython 3.13.17 (uv)、x86_64、16 核、并发=1（bench 顺序执行纪律）、
-无网络/无 LLM。maxRSS 全程 ~356 MB（capability graph 一次性加载为主，
+无网络/无 LLM。maxRSS 全程 ~359 MB（capability graph 一次性加载为主，
 非 replay 路径）。
 
 ## 4. 局限与未测面

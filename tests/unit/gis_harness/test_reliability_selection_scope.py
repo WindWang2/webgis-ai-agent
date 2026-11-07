@@ -207,3 +207,26 @@ def test_projection_to_derive_preserves_omitted_across_production_chain():
     }])
     claimed = derive_claimed_scope(snapshot, None)
     assert claimed["selected_ids_omitted"] == 2
+
+
+def test_omitted_metadata_is_accounted_in_payload_byte_budget():
+    import json
+
+    ids = [f"sch-{i:03d}" for i in range(10)]
+    field_count, filler_length = next(
+        (count, n) for count in range(1, 9) for n in range(129)
+        if len(json.dumps({
+            "dataset_ref": "ref:geojson-aaa",
+            "field_names": ["x" * n] * count,
+            "layer_id": "schools", "selected_ids": ids[:8],
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")) == 500
+    )
+    payload = {
+        "dataset_ref": "ref:geojson-aaa",
+        "field_names": ["x" * filler_length] * field_count,
+        "layer_id": "schools", "selected_ids": ids,
+    }
+    # 旧形状为 500B；服务端附加 25B omitted 计数后为 525B，必须 fail-closed，
+    # 不能悄悄超过 MAX_PAYLOAD_BYTES=512。
+    assert 500 + len('"selected_ids_omitted":2,') == 525
+    assert normalize_payload("feature_selected", payload) is None

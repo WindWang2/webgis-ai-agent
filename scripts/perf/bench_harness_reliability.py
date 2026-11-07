@@ -187,6 +187,28 @@ async def main() -> dict:
           f"(str_chars={results['context_proxy_formula']['str_chars']} "
           f"utf8={results['context_proxy_formula']['utf8_bytes']}B)")
 
+    results["unmeasured"] = [
+        {
+            "dimension": "artifact_bytes",
+            "status": "not_evaluated",
+            "reason": "BenchEntry has no artifact-byte source; payload_utf8_bytes is not relabeled",
+        },
+        {
+            "dimension": "emitted_events",
+            "status": "not_evaluated",
+            "reason": "offline replay does not expose production SSE event counts",
+        },
+        {
+            "dimension": "rendering_frames",
+            "status": "not_evaluated",
+            "reason": "offline replay has no browser rendering frames",
+        },
+        {
+            "dimension": "replay_mutations_scaling",
+            "status": "not_evaluated",
+            "reason": "Redis-backed mutation replay was unavailable in this environment",
+        },
+    ]
     results["environment"] = {
         "python": platform.python_version(),
         "platform": platform.platform(),

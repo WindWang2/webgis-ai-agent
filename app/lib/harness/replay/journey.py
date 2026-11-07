@@ -295,12 +295,14 @@ def project_journey_evidence(
         if artifacts.get(key):
             artifact_refs.add(str(artifacts[key]))
     missing_artifacts = result_refs - artifact_refs
-    artifact_ok = not missing_artifacts if result_refs else bool(artifact_refs)
-    if missing_artifacts:
+    artifact_ok = not missing_artifacts if result_refs else False
+    artifact_unverified = bool(successful_results) and not artifact_ok
+    if artifact_unverified:
         findings.append({
             "code": "artifact_persistence_unverified", "stage": "data_result",
-            "detail": "a tool result ref has no matching persisted artifact evidence",
+            "detail": "a successful result has no persisted artifact evidence",
         })
+    if artifact_unverified:
         result_status = "fail"
         stages["data_result"] = _status_records(
             "data_result", result_records, result_status,
@@ -421,7 +423,7 @@ def project_journey_evidence(
         })
     settlement_status: JourneyStatus = "not_evaluated"
     if identity_conflicts or sequence_conflicts or lock_lost \
-            or conflicting_results or dispatch_denials or missing_artifacts:
+            or conflicting_results or dispatch_denials or artifact_unverified:
         settlement_status = "fail"
     elif task_complete and not render_ok:
         settlement_status = "fail"

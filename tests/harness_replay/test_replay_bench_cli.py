@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import pytest
 
@@ -60,11 +61,25 @@ class TestExplain:
         assert "webgis_layer_upsert" in md
 
 
+def _independent_clean(value):
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return str(value)
+        if value == 0.0:
+            return 0.0
+        return round(value, 6)
+    if isinstance(value, dict):
+        return {str(key): _independent_clean(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_independent_clean(item) for item in value]
+    return value
+
+
 def _independent_utf8_bytes(turns) -> int:
     """与实现无关的计量参照：compact JSON 的 UTF-8 字节数（不 import 实现）。"""
     return sum(
-        len(json.dumps(op.arguments, ensure_ascii=False, sort_keys=True,
-                       separators=(",", ":")).encode("utf-8"))
+        len(json.dumps(_independent_clean(op.arguments), ensure_ascii=False,
+                       sort_keys=True, separators=(",", ":")).encode("utf-8"))
         for t in turns for op in t.ops)
 
 
@@ -96,6 +111,20 @@ class TestContextBytesUtf8:
                 call_id="c1", tool="t", arguments={"a": "b"})])])
         entry = await run_one(OfflineReplayer(seed=5), scenario)
         assert entry["context_bytes_proxy"] == len(b'{"a":"b"}')
+
+    @pytest.mark.asyncio
+    async def test_context_bytes_proxy_float_uses_canonical_normalization(self):
+        from app.lib.harness.replay.replayer import (
+            OfflineReplayer, Scenario, ScenarioOp, TurnSpec)
+
+        scenario = Scenario(
+            scenario_id="utf8-bytes-float", category="core",
+            turns=[TurnSpec(ops=[ScenarioOp(
+                call_id="c1", tool="t", arguments={"v": 0.123456789})])])
+        entry = await run_one(OfflineReplayer(seed=5), scenario)
+        assert entry["context_bytes_proxy"] == len(b'{"v":0.123457}')
+        assert entry["context_bytes_proxy"] == _independent_utf8_bytes(
+            scenario.turns)
 
 
 class TestResumeFlush:
