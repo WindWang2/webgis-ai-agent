@@ -16,3 +16,4 @@
 | 6 | M5 收尾：1M 基准完成（峰值/载荷=1.79×，store 正确拒收 byte budget；guard 2.4s/profile 0.23s/指纹 I/O 主导）；INGEST_PERFORMANCE.md + SOURCE_QUALIFICATION_MATRIX.md + DATA_READINESS_CONTRACT.md 落盘 | tests/perf 1M heavy 1 passed（293s）；三文档真实数字 | 通过 | M8 独立 review |
 | 7 | M8a：子代理 B 冷读评审（1 P1 + 4 P2 + 10 P3，F1/F3 实证复现）→ 全部清偿：守卫重写（独立预算+耗尽即拒）、NaN bbox 三处修复、ADR D2 修订、mapspec scope 接线测试+日志、adapter F6/F7/F13/F15、gate F8/F9、F10-F12 | review_fixes 14 passed；全家+邻接 190+185 passed；ruff/mypy 绿 | 通过 | M8b 复审 |
 | 8 | M8b：复审 F1-F15 全 fixed（实证复核）；新发现 N1（GeometryCollection 内层 NaN 逃逸，实证）+N2/N3/N4 → 全部同 PR 清偿（_scan_geometry 迭代展开+反例测试、文档对齐、isfinite 纵深、typed 断流） | review_fixes 16 passed；全家 161 passed；ruff/mypy 绿 | 通过（评审签结：可合并，无未处理 P0/P1） | M9 推送+PR |
+| 9 | M9：master 未动（585812ee4，无需 rebase）→ 推送分支 → **PR #2013 创建**；关键验证二次运行确认 | g03 核心 3 文件复跑 46 passed | 通过（全部 Oracle 达成，goal-loop 收官） |
