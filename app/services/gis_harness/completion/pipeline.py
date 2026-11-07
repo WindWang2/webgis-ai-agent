@@ -830,6 +830,7 @@ def map_product_block(
     session_id: str = "",
     tenant_id: str = "",
     user_hidden_layers: Optional[List[str]] = None,
+    workflow_disclosures: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -942,6 +943,11 @@ def map_product_block(
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
                          exc_info=True)
+    # G02-GIS-EXECUTION-COMPILER（C2 验收桥）：族运行披露随块持久化
+    # （科学终审未过/未匹配需求/skipped 步骤——additive 键，旧读者忽略）。
+    if workflow_disclosures:
+        block["workflow_disclosures"] = [
+            str(d)[:120] for d in list(workflow_disclosures)[:8]]
     # GOAL 05（ADR-0279 M4）：goal verification 对账随块持久化 ——
     # 「完成回执 ↔ 渲染观察 ↔ 数据资格 ↔ 科学评审」一致性面（false-PASS
     # 守门：观察缺失/科学证据不足不能随 task_complete 混过）。additive
@@ -1290,6 +1296,25 @@ async def maybe_finalize_map_product(
                     _spec_snap = None
                 _user_hidden = _user_hidden_layers_from_spec(
                     _spec_snap, current_observation)
+                # G02-GIS-EXECUTION-COMPILER（C2 验收桥）：评估视图合并族
+                # 运行行（analysis workflow 步骤回执对 goal 验收可见——
+                # 节点成功≠目标达成）。合并只进 map_product_block 的评估
+                # 输入，不写回持久 chapter（行指纹守卫消费的是
+                # fresh.gis_chapter 原面）；零运行/桥失败 → 零漂移。
+                awf_eval_chapter = fresh.gis_chapter
+                awf_disclosures: List[str] = []
+                try:
+                    from app.services.gis_harness.execution_compiler import (
+                        evaluation_view_with_workflow_rows,
+                    )
+
+                    awf_eval_chapter, awf_disclosures = (
+                        await evaluation_view_with_workflow_rows(
+                            session_id, fresh.gis_chapter))
+                except Exception:  # noqa: BLE001 — 桥失败按原 chapter 评估
+                    logger.debug(
+                        "[MapFinalizer] workflow bridge unavailable",
+                        exc_info=True)
                 fresh.gis_chapter["map_product"] = map_product_block(
                     result,
                     revision_after_run,
@@ -1300,7 +1325,7 @@ async def maybe_finalize_map_product(
                     render_observation_seq=render_seq,
                     methodology_warnings=list(
                         fresh.gis_chapter.get("methodology_warnings") or []),
-                    chapter=fresh.gis_chapter,
+                    chapter=awf_eval_chapter,
                     repair_plan=repair_plan_dict,
                     observation=current_observation,
                     # V7（D6）：意图验收的独立判定（打破循环论证 —— 渲染
@@ -1316,6 +1341,7 @@ async def maybe_finalize_map_product(
                         if isinstance(fresh_state, dict) else None
                     ),
                     session_id=session_id,
+                    workflow_disclosures=awf_disclosures,
                 )
                 await save_session_plan(fresh)
                 # ADR-0183：SSE 透传真源（result 字段只在**持久化成功后**

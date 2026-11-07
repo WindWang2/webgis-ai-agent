@@ -395,6 +395,89 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                       "先按 alternatives 补数据角色绑定，再重新 plan")),
         }
 
+    # ── 工具 1b：requirement compile（G02-GIS-EXECUTION-COMPILER）────────
+    #
+    # 只读编译：session 的 RequirementDocument → 确定性族候选（信号溯源）
+    # + 表达候选 + 单位义务。LLM 选族前**必须**先消费此投影——族 id 不再
+    # 是自由猜测；显式偏离 top 候选时由调用方在回复中披露理由。
+
+    @tool(
+        registry, name="webgis_requirement_compile",
+        capabilities=["plan_workflow_orchestration"],
+        tier=2, domains=["analysis"],
+        description=(
+            "把本会话的需求文档（RequirementIR）确定性编译为执行候选："
+            "族候选（每候选携带 IR 信号溯源：字段路径+值+权重）、表达候选"
+            "（用户显式点名 vs 系统推荐分离；数据事实缺席时 suitable=unknown）、"
+            "单位义务（率/密度分母裁决——missing_denominator 时只给计数并披露）。"
+            "\n何时不用：需求文档尚未建立（先发生 GIS 意图请求）。"
+            "\n纪律：选族优先取 top 候选；显式偏离必须在回复中说明理由。"
+        ),
+        param_descriptions={
+            "session_id": "会话 id（需求文档按会话持久）",
+            "data_facts": (
+                "可选数据事实 JSON：{role: {'feature_count': n, "
+                "'geometry_types': [...]}}——表达候选适用性裁决输入，"
+                "缺席时 suitable=unknown（不虚构）"),
+        },
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("需求编译", "族候选", "执行编译器", "requirement", "compile"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=("invalid_args", "missing_data"),
+    )
+    async def webgis_requirement_compile(
+        session_id: Optional[str] = None,
+        data_facts: Optional[str] = None,
+    ) -> dict:
+        command = "webgis_requirement_compile"
+        if not session_id:
+            return {"success": False, "message": "Missing session_id",
+                    "command": command}
+        from app.services.session_data import session_data_manager
+        from app.services.gis_harness.requirement_ir import service as req_svc
+        from app.services.gis_harness.requirement_ir.contracts import (
+            RequirementDocument,
+        )
+        from app.services.gis_harness.execution_compiler import (
+            compile_requirement_to_tasks,
+        )
+
+        state = await req_svc.load_state(session_data_manager, session_id)
+        dump = state.document if state is not None else None
+        if not isinstance(dump, dict):
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": "REQUIREMENT_DOCUMENT_ABSENT",
+                    "message": "本会话尚无需求文档（先发起 GIS 请求）"}
+        try:
+            doc = RequirementDocument.model_validate(dump)
+        except Exception:  # noqa: BLE001 — 损坏文档 = 诚实拒绝
+            return {"success": False, "command": command, "declined": True,
+                    "reason_code": "REQUIREMENT_DOCUMENT_INVALID",
+                    "message": "需求文档不可解析"}
+        facts = None
+        if data_facts:
+            try:
+                parsed = json.loads(data_facts)
+                if isinstance(parsed, dict):
+                    facts = {
+                        str(k): (v if isinstance(v, dict) else {})
+                        for k, v in parsed.items()}
+            except (ValueError, json.JSONDecodeError):
+                return {"success": False, "command": command, "declined": True,
+                        "reason_code": "AWF_BAD_JSON",
+                        "message": "data_facts JSON 非法"}
+        compilation = compile_requirement_to_tasks(doc, data_facts=facts)
+        payload = compilation.to_bounded_dict()
+        payload["success"] = True
+        payload["command"] = command
+        return payload
+
     # ── 工具 2：run ──────────────────────────────────────────────────────
 
     @tool(
