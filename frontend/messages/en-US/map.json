@@ -428,7 +428,10 @@
     "ack": "Looks right",
     "acking": "Confirming…",
     "later": "Later",
-    "notConfirmed": "Confirmation not accepted (generation may have moved); retry."
+    "notConfirmed": "Confirmation not accepted (generation may have moved); retry.",
+    "acceptanceAuto": "Final check: render observed (seq {seq}) · auto-confirmed (auto mode, user not asked)",
+    "acceptanceConfirmed": "Final check: render observed (seq {seq}) · user confirmed the display",
+    "acceptanceNoVerdict": "Final check: no verdict yet (map still evolving)"
   },
   "temporal": {
     "aria": "Map timeline",
