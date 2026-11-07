@@ -4,7 +4,7 @@
 > 第二 fingerprint 体系 / 第二认证体系 / 第二 Planner。所有新模块都是既有权威源的**只读投影或受控扩展**。
 > 文件所有权：主 Agent 写 `app/lib/gis/capability_availability.py`、`method_eligibility.py`、
 > `availability_rerank.py`、`provider_eligibility.py`、`capability_schema_parity.py`、
-> `app/tools/capability_ecosystem_tools.py`、`app/lib/gis/data/*`；
+> `app/tools/capability_ecosystem_tools.py`、`app/lib/data/*`；
 > 测试子代理**只写** `tests/unit/gis/test_capability_ecosystem_*.py` 与 `tests/unit/tools/test_capability_ecosystem_*.py`；
 > 冷审子代理**只读**，不写任何文件。任何两个 agent 不得同时改同一文件。
 
@@ -145,7 +145,7 @@ def validate_pi_call(tool_name: str, arguments: dict, *, snapshot, registry=None
 - 拒绝不在 registry 的 hallucinated 工具名、参数多余字段、pi-schema 宽松 coercion。
 - 结果有界：`max_candidates` 硬上限；`bounded=True` 时披露截断。
 
-黄金语料 `app/lib/gis/data/capability_lexicon_golden.json`：
+黄金语料 `app/lib/data/capability_lexicon_golden.json`：
 `{"cases":[{"query":..., "expect_tool":..., "expect_status":..., "forbid_tools":[...], "note":...}]}`
 覆盖中英：缓冲 / 空间连接 / 分区统计 / 路网时间 / 等时圈 / 密度 / 通视 / 插值 / 地理综合。
 负例必须包含「距离秒数不等于米」与「停用扩展的高相似度工具」。
