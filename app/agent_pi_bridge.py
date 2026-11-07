@@ -60,6 +60,8 @@ from app.services.jobs.cancellation import CancellationToken, OperationCancelled
 from app.services.distributed_lock import LockDegradedError, LockLostError  # noqa: F401
 from app.services.tool_dispatch_service import ToolDispatchService, normalize_tool_name
 from app.lib.harness.tool_call_event import ToolCallEvent
+# PI-01（ADR-0286 D1）：turn 相位状态机（观测与防御面，不改控制流权威）。
+from app.services.chat.pi_turn_state import TurnPhase, TurnPhaseTracker
 from app.lib.runtime import context as rt_ctx
 from app.lib.runtime.evidence import (
     Outcome,
@@ -1591,6 +1593,7 @@ class PiBridge:
         error_detail: str = "",
         timeout_reason: str = "",
         projections_settled: bool,
+        phase: Optional[TurnPhaseTracker] = None,
     ) -> str:
         """Turn settle host adapter (F03 seam → ADR-0223 thin adapter).
 
@@ -1602,10 +1605,29 @@ class PiBridge:
         legacy host. Idempotency is the coordinator's (same-turn receipt
         replay; the in-try projection pre-run is passed through as
         ``projections_pre_settled``). Returns the kernel TurnStatus recorded.
+
+        PI-01（ADR-0286 D1）：``phase`` 相位机在 bridge 边界直接拦截第二次
+        结算（exactly-once 门闩；coordinator 幂等仍是兜底权威），并把
+        CANCELLING→SETTLING→终相位 的观测轨迹记入 TurnEvidence summary。
         """
         from app.services.harness_kernel import settle as hk_settle
 
+        if phase is not None and not phase.begin_settlement():
+            # 第二次结算：直接返回首次记录的 kernel status（no-op）。
+            logger.warning(
+                "[PiBridge] duplicate settle blocked by phase latch turn=%s "
+                "(recorded status=%r)", turn_id, phase.last_settlement_status,
+            )
+            return phase.last_settlement_status
+
         abort_source = pop_turn_abort_source(turn_id)
+        if phase is not None and (cancelled or abort_source):
+            phase.transition(
+                TurnPhase.CANCELLING,
+                reason=f"cancel|abort:{abort_source or 'client'}",
+            )
+        if phase is not None:
+            phase.transition(TurnPhase.SETTLING, reason="seam")
         cause = hk_settle.cause_from_host_signals(
             cancelled=cancelled,
             timed_out=timed_out,
@@ -1666,8 +1688,15 @@ class PiBridge:
                             else (error_detail[:200] or "turn failed or timed out")
                         ),
                     )
-                else:
+                elif status in ("completed", "refused"):
                     engine.tracker.complete_task(tracker_task_id)
+                else:
+                    # PI-01（ADR-0286）：未知 kernel status fail-closed —— 此前
+                    # else 分支把未知词表误结算成 completed（开放结构）。
+                    engine.tracker.fail_task(
+                        tracker_task_id,
+                        f"unknown kernel turn status: {status!r}",
+                    )
             except Exception:
                 logger.debug(
                     "[agent_pi_bridge] tracker task settle failed session=%s",
@@ -1680,6 +1709,8 @@ class PiBridge:
                 session_id, turn_id,
                 refusal.get("reason_code", ""), refusal.get("question", "")[:80],
             )
+        if phase is not None:
+            phase.record_terminal_status(status)
         return status
 
     @property
@@ -2041,6 +2072,11 @@ class PiBridge:
             _clear_dispatch_cache(turn_sid)
             with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
                 TURN_EVIDENCE.register(rt_ev)
+                # PI-01（ADR-0286）：显式相位机与旗标同点初始化（finally 的
+                # seam 引用它——先绑定再进 try，防早退路径 UnboundLocalError）。
+                _phase = TurnPhaseTracker(turn_id)
+                rt_ev.attach_phase(_phase)
+                _phase.transition(TurnPhase.STARTING, reason="flags-init")
                 cancelled = False
                 timed_out = False
                 send_failed = False
@@ -2155,6 +2191,8 @@ class PiBridge:
                             "Pi consumed the prompt via an input handler "
                             "(disposition=handled); no agent run started"
                         )
+                    # PI-01（ADR-0286）：prompt 已被 Pi 接收 —— 进入 RUNNING。
+                    _phase.transition(TurnPhase.RUNNING, reason="prompt-accepted")
 
                     # Drain events from the queue (non-streaming mode).
                     # audit #816: message_update carries the ACCUMULATED partial
@@ -2211,6 +2249,9 @@ class PiBridge:
                                 # 首个真实 Pi 事件（first_event/TTFT-proxy）。
                                 rt_ev.mark_first_event()
                                 event_type = event.get("type")
+                                # PI-01（ADR-0286）：tool_execution_start/end 驱动
+                                # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
+                                _phase.observe_tool_event(event_type)
                                 if event_type == "agent_settled":
                                     _drained_complete = True
                                     break
@@ -2301,6 +2342,7 @@ class PiBridge:
                             )
                 except asyncio.CancelledError:
                     cancelled = True
+                    _phase.transition(TurnPhase.CANCELLING, reason="client-cancel")
                     rt_ev.settle(Outcome.CANCELLED)
                     raise
                 except Exception as exc:  # noqa: BLE001
@@ -2361,6 +2403,7 @@ class PiBridge:
                             error_detail=_error_detail,
                             timeout_reason=timeout_reason,
                             projections_settled=_projections_settled,
+                            phase=_phase,
                         )
                     # F03：诊断面与权威终态对齐 —— drain 退出点因 abort 让位
                     # 未结算的，由 seam 记录的 status 补结算（first-wins，
@@ -2555,6 +2598,11 @@ class PiBridge:
             try:
                 _session_executed_sets.pop(turn_sid, None)
                 _clear_dispatch_cache(turn_sid)
+                # PI-01（ADR-0286）：显式相位机与旗标同点初始化（两条路径同构；
+                # seam 引用它 —— 先绑定再进 try，防早退路径 UnboundLocalError）。
+                _phase = TurnPhaseTracker(turn_id)
+                rt_ev.attach_phase(_phase)
+                _phase.transition(TurnPhase.STARTING, reason="flags-init")
                 cancelled = False
                 timed_out = False
                 send_failed = False
@@ -2691,6 +2739,9 @@ class PiBridge:
                         yield sse_event("done", {"session_id": turn_sid})
                         return
 
+                    # PI-01（ADR-0286）：prompt 已被 Pi 接收 —— 进入 RUNNING。
+                    _phase.transition(TurnPhase.RUNNING, reason="prompt-accepted")
+
                     # Stream events from Pi. task_start is a bridge-emitted structural
                     # event (not a Pi event), so first_event is NOT marked here — it is
                     # marked on the first REAL Pi event below, so first_event/TTFT-proxy
@@ -2754,6 +2805,9 @@ class PiBridge:
                                 event = get_task.result()
                                 silence_seconds = 0.0
                                 rt_ev.mark_first_event()
+                                # PI-01（ADR-0286）：tool_execution_start/end 驱动
+                                # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
+                                _phase.observe_tool_event(str(event.get("type") or ""))
                                 # audit #820: truthful task_complete counters — count
                                 # executed tool steps and accumulate the final text
                                 # the vendor streams (message.content snapshots).
@@ -2938,6 +2992,7 @@ class PiBridge:
                     # network drop). Re-raise after flagging so the finally sends the
                     # abort RPC — otherwise Pi keeps running against an abandoned turn.
                     cancelled = True
+                    _phase.transition(TurnPhase.CANCELLING, reason="client-disconnect")
                     raise
                 finally:
                     if process_died:
@@ -3013,6 +3068,7 @@ class PiBridge:
                             error_detail=_error_detail,
                             timeout_reason=timeout_reason,
                             projections_settled=_projections_settled,
+                            phase=_phase,
                         )
                     # #1108 INV-P4: release the lease BEFORE the unregister
                     # await — the release is synchronous (uncancellable) and
