@@ -212,7 +212,7 @@ def _viewport_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str,
 
 def _selection_view(record: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
     view: dict[str, object] = {key: payload[key] for key in (
-        "layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field",
+        "layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "selected_ids_omitted", "id_field",
     ) if key in payload}
     view["source"] = {
         "client_instance_id": record.get("client_instance_id"),

@@ -248,6 +248,15 @@ def normalize_payload(kind: str, payload: Any) -> Dict[str, Any] | None:
             out[key] = [_clip(v) for v in value[:8] if not isinstance(v, dict)]
         else:
             out[key] = _clip(value)
+    # G07 M3（Issue #2004）：selected_ids 超 8 被静默截断曾是静默部分分析
+    # 的来源 —— 服务端计算 selected_ids_omitted=N 诚实披露（非客户端输入：
+    # 白名单不含该键，客户端伪造在上面的循环里已被剥离，此处只能由截断
+    # 事实推出）。≤8 不加键，输出与既有完全一致。
+    if "selected_ids" in spec.payload_keys:
+        _raw_ids = payload.get("selected_ids")
+        if (isinstance(_raw_ids, list) and len(_raw_ids) > 8
+                and "selected_ids" in out):
+            out["selected_ids_omitted"] = len(_raw_ids) - 8
     if not out and not spec.allow_empty_payload:
         return None
     blob = json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
