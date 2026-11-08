@@ -9,7 +9,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useChatStore } from '@/lib/store/useChatStore';
 import { useToastStore } from '@/components/ui/toast';
 import type { SelectedFeatureInfo, ToolCallEntry } from '@/lib/store/hud-types';
-import { getCommittedMapSpec, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { getCommittedMapSpec, getMapSpecSessionCursor, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 // use-sse-stream consumes the bridge for aiStatus + send; we spy on send to
@@ -637,6 +637,45 @@ describe('canonical MapSpec runtime patch', () => {
     expect(layers[0].source).not.toEqual(expect.objectContaining({
       type: 'FeatureCollection',
     }));
+  });
+
+  it('R2-N1 (review-fix-rereview-20261108): a stale mapspec event must not mirror/prune HUD rows', () => {
+    // 游标已被更新的 mutation 推进到 5；迟到的 rev-3 SSE 事件携带旧层集
+    // （不含 L9）。旧代次守卫必须同时挡住 HUD 镜像/修剪 —— 否则 L9 的
+    // 镜像行被 stale spec 剪掉、旧层被复活，面板漂移直到下一事件自愈。
+    setMapSpecSessionCursor('sid-fe4', 5, null);
+    useHudStore.setState({
+      layers: [{
+        id: 'row-9', name: 'L9', type: 'vector', visible: true, opacity: 1,
+        source: { type: 'FeatureCollection', features: [] },
+        _mapspecLayerId: 'L9',
+      }] as any,
+      accentColor: '#00aaff',
+    });
+    renderStream();
+    const staleSpec = {
+      version: '1.0',
+      sources: { LOLD: { type: 'geojson' } },
+      layers: [{ id: 'LOLD', source: 'LOLD', type: 'circle', layout: { visibility: 'visible' } }],
+    };
+
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'step_result',
+        data: {
+          session_id: 'sid-fe4',
+          mutation_revision: 3,
+          result: { mapspec: staleSpec },
+        },
+      });
+    });
+
+    const ids = useHudStore.getState().layers.map((l) => l.id);
+    expect(ids).toContain('row-9');
+    expect(ids).not.toContain('LOLD');
+    expect(getMapSpecSessionCursor().revision).toBe(5);
+    expect((getCommittedMapSpec() as { layers?: Array<{ id?: string }> } | null)?.layers?.[0]?.id)
+      .not.toBe('LOLD');
   });
 
   it('commits step_result MapSpec as the live document', () => {

@@ -146,13 +146,19 @@ export async function refreshMapSpecAfterExternalMutation(
   const state = stateData?.map_state;
   const mapspec = state?.mapspec;
   if (!mapspec || typeof mapspec !== 'object') return;
-  const stateRevision = Number(state?._cartographic_mutation_revision);
-  const nextRevision = typeof revision === 'number' && Number.isFinite(revision)
-    ? revision
-    : Number.isFinite(stateRevision) ? stateRevision : undefined;
+  // R2-N2：restore 响应与 fetch 之间可能又有 mutation 落地 —— 游标取两者
+  // 较高值，否则下一笔用户 mutation 一次 spurious 409。
+  const candidates = [revision, Number(state?._cartographic_mutation_revision)]
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  const nextRevision = candidates.length ? Math.max(...candidates) : undefined;
   if (nextRevision !== undefined) setMapSpecRevision(nextRevision);
-  applyCommittedMapSpec(mapspec as { layers?: any[] }, nextRevision);
-  syncSpecLayersToStore(mapspec as never, sessionId);
+  const accepted = applyCommittedMapSpec(mapspec as { layers?: any[] }, nextRevision);
+  // R2-N1：fetch 到的 map-state 已被游标超越（commit 因旧代次拒绝）时，
+  // 不得以其层集镜像/修剪 HUD —— stale spec 会剪掉新 mutation 刚添加的
+  // 镜像行 / 复活已删层（面板漂移直到下一 spec 事件自愈）。
+  if (accepted) {
+    syncSpecLayersToStore(mapspec as never, sessionId);
+  }
 }
 
 // 用户 mutation 串行链（ST-P1-2）：所有前端发起的 MapSpec CAS 写（用户

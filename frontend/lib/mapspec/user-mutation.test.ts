@@ -542,3 +542,62 @@ describe('refreshMapSpecAfterExternalMutation', () => {
     expect(useHudStore.getState().layers[0].visible).toBe(false);
   });
 });
+
+/* ─── R2-N1/R2-N2（review-fix-rereview-20261108 Fix-2）：stale map-state 守卫 ── */
+describe('refreshMapSpecAfterExternalMutation stale-state guard (R2)', () => {
+  const staleState = (revision: number) => ({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    text: () => Promise.resolve(JSON.stringify({
+      map_state: {
+        mapspec: {
+          version: '1.0',
+          sources: { LOLD: { type: 'geojson' } },
+          layers: [{ id: 'LOLD', source: 'LOLD', type: 'circle', layout: { visibility: 'visible' } }],
+        },
+        _cartographic_mutation_revision: revision,
+      },
+    })),
+  });
+
+  it('R2-N1: does not mirror/prune HUD rows from a map-state that the cursor already superseded', async () => {
+    // 预置：HUD 有一行绑定 spec 层 L9（fetch 期间的新 mutation 添加）。
+    useHudStore.getState().clearLayers();
+    useHudStore.getState().addLayer({
+      id: 'row-9', name: 'L9', type: 'vector', visible: true, opacity: 1,
+      group: 'analysis', source: { type: 'FeatureCollection', features: [] } as any,
+      _mapspecLayerId: 'L9',
+    } as any);
+
+    let release!: (value: unknown) => void;
+    fetchMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+
+    const done = refreshMapSpecAfterExternalMutation('sid-1', 4);
+    // fetch 在途时，一条更新的 mutation 已把游标推进到 20（SSE/串行链先落地）。
+    setMapSpecRevision(20);
+    release(staleState(4));
+    await done;
+
+    // stale spec（revision 4 < 20）不得成为 committed 文档，也不得以其层集
+    // 镜像/修剪 HUD —— L9 行必须存活，LOLD 不得被镜像进来。
+    expect(getMapSpecSessionCursor().revision).toBe(20);
+    const ids = useHudStore.getState().layers.map((l) => l.id);
+    expect(ids).toContain('row-9');
+    expect(ids.some((id) => id === 'LOLD' || useHudStore.getState().layers.find((l) => l.id === id)?._mapspecLayerId === 'LOLD')).toBe(false);
+    expect((getCommittedMapSpec() as { layers?: Array<{ id?: string }> } | null)?.layers?.[0]?.id).not.toBe('LOLD');
+  });
+
+  it('R2-N2: keeps the higher of the mutation-response revision and the fetched state revision', async () => {
+    // restore 响应说 revision=5，但 fetch 到的会话真相已是 11（restore 与
+    // fetch 之间又有 mutation 落地）—— 游标必须停在 11，否则下一笔用户
+    // mutation 一次 spurious 409。
+    fetchMock.mockImplementation((url: unknown) => (
+      String(url).includes('/map-state') ? Promise.resolve(staleState(11)) : Promise.resolve({
+        ok: true, status: 200, statusText: 'OK', text: () => Promise.resolve('{}'),
+      })
+    ));
+    await refreshMapSpecAfterExternalMutation('sid-1', 5);
+    expect(getMapSpecSessionCursor().revision).toBe(11);
+  });
+});

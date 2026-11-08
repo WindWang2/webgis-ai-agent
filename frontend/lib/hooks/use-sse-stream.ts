@@ -622,13 +622,18 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       if (incomingMapSpec) {
         // 携带 revision 提交：迟到的旧代次 SSE 事件（HTTP 响应已推进游标）
         // 不再把 committed spec 拉回旧代（ST-P3-1）。
-        commitMapSpecDocument(
+        const accepted = commitMapSpecDocument(
           incomingMapSpec,
           typeof incomingRevision === 'number' ? incomingRevision : undefined,
         );
-        // product-* 等后端直写图层只落 MapSpec 不走 addLayer 路径——镜像
-        // 成 HUD 行，图层面板可见、ref 定向显隐可解析（幂等，见注释）。
-        syncSpecLayersToStore(incomingMapSpec, sessionIdRef.current);
+        // R2-N1（review-fix-rereview-20261108）：旧代次拒绝的 stale spec 同样
+        // 不得镜像/修剪 HUD 行 —— 否则它剪掉新 mutation 刚添加的镜像行 /
+        // 复活已删层，面板漂移直到下一 spec 事件自愈。
+        if (accepted) {
+          // product-* 等后端直写图层只落 MapSpec 不走 addLayer 路径——镜像
+          // 成 HUD 行，图层面板可见、ref 定向显隐可解析（幂等，见注释）。
+          syncSpecLayersToStore(incomingMapSpec, sessionIdRef.current);
+        }
       }
       // ADR-0225（Goal 03）：执行信封收纳（render_work.v1；防御式解析 +
       // 代次门在 store 内 —— 形状非法/旧代/跨会话一律拒收，不影响主链）。
