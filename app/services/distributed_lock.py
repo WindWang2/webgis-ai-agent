@@ -57,6 +57,8 @@ def _track_release(task) -> None:
 _DEFAULT_TTL_MS = 30_000          # 30s base TTL
 _DEFAULT_ACQUIRE_TIMEOUT_S = 30.0 # 30s acquire budget (matches cartographic observation holders)
 _RENEW_INTERVAL_S = 8.0           # renew well before TTL expiry
+# B-4：同步上下文递交释放的有界等待（清理路径不可无界阻塞；超时后 TTL 兜底）。
+_SYNC_RELEASE_TIMEOUT_S = 5.0
 _FALLBACK_CAP = 4096              # bound the in-process fallback registry
 # Lua: release only if we still own the token (avoid releasing another's lock).
 _RELEASE_SCRIPT = (
@@ -157,6 +159,10 @@ class _ResilientSessionLock:
         self._token: Optional[str] = None
         self._renewer: Optional[asyncio.Task] = None
         self._lost: bool = False
+        # B-4（review-fix-rereview-20261108）：redis 模式下记录 acquire 所在
+        # loop —— 同步上下文释放时把 DEL 递交回该 loop（redis-py 连接池
+        # loop 亲和，临时 asyncio.run 循环上必失败）。
+        self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
         # Object-local ownership, unlike fallback.locked() (which may be held
         # by a different acquisition after this one has been released).
         self._held: bool = False
@@ -219,17 +225,40 @@ class _ResilientSessionLock:
                         # 完成，绝不让 GC 提前回收。旧代码丢弃 create_task 返回值，
                         # DEL 是否发出不可观测。
                         _track_release(loop.create_task(coro))
-                    else:
-                        # #1690：无运行 loop 的同步上下文（同步调用方 / 关停路径）——
-                        # 立即跑完 token 校验 DEL，绝不让 key 活到 TTL。旧代码在此静默
-                        # 丢弃（debug 级），同 session 后续 acquire 全排队到 TTL 过期。
+                    elif (
+                        self._bound_loop is not None
+                        and self._bound_loop.is_running()
+                        and self._bound_loop is not loop
+                    ):
+                        # B-4（review-fix-rereview-20261108）：无运行 loop 的同步
+                        # 上下文（工作线程）—— 把 DEL 递交到 client 绑定的 loop。
+                        # 此前 asyncio.run 临时循环上 redis-py 连接池（loop 亲和）
+                        # 必失败：DEL 从未生效，同 session 后续 acquire 全排队到
+                        # TTL 自然过期，且每次释放创建/销毁一个事件循环。
+                        # 有界等待（清理路径不可无界阻塞）；超时/失败可观测，
+                        # TTL 仍是兜底。
                         try:
-                            asyncio.run(coro)
+                            fut = asyncio.run_coroutine_threadsafe(coro, self._bound_loop)
+                            _track_release(fut)
+                            fut.result(timeout=_SYNC_RELEASE_TIMEOUT_S)
                         except Exception as e:  # noqa: BLE001 — 可观测但不致命
                             logger.warning(
-                                "session lock sync release failed for %s: %s",
+                                "session lock sync release failed for %s: %s "
+                                "(lock will expire at TTL)",
                                 self._key, e,
                             )
+                    else:
+                        # #1690 语义保持：无运行 loop 且绑定 loop 不可递交（关停/
+                        # 孤立对象）—— 不再 asyncio.run 一个必败的临时循环；诚实
+                        # 记 warning，锁等 TTL 过期。
+                        # R2-N6：已创建的 coro 显式关闭 —— 不泄漏 "coroutine
+                        # was never awaited" RuntimeWarning。
+                        coro.close()
+                        logger.warning(
+                            "session lock sync release for %s has no usable event "
+                            "loop (client loop closed/unbound) — relying on TTL expiry",
+                            self._key,
+                        )
                 except Exception as e:  # noqa: BLE001 — 可观测但不致命
                     logger.warning(
                         "session lock release scheduling failed for %s: %s",
@@ -253,6 +282,7 @@ class _ResilientSessionLock:
                     if ok:
                         self._mode = "redis"
                         self._held = True
+                        self._bound_loop = asyncio.get_running_loop()
                         self._renewer = asyncio.create_task(self._renew_loop())
                         return self
                     if asyncio.get_running_loop().time() > deadline:

@@ -6,6 +6,7 @@ POST /api/v1/export 接受 render_diagnostics JSON Form 字段 → 权威词表�
 """
 import json
 import os
+import sys
 
 import pytest
 from fastapi import FastAPI
@@ -15,8 +16,11 @@ from app.api.routes import map as _mod
 from app.core.auth import get_current_user_with_version, get_current_user_optional_with_version
 from pathlib import Path
 
-_TEST_EXPORT_DIR = "/var/tmp/test_exports_diagnostics_sidecar"
-os.makedirs(_TEST_EXPORT_DIR, exist_ok=True)
+# review-fix-rereview-20261108：固定共享 /var/tmp 目录 + autouse 清盘在 xdist
+# 并行 worker 间互相删文件（同 test_map_export_download_auth 的既有 flaky
+# 模式）。改为每测试独立 tmp_path；_TEST_EXPORT_DIR 由 fixture 指向该目录，
+# 用例内 `lambda: Path(_TEST_EXPORT_DIR)` 按全局名在调用时解析。
+_TEST_EXPORT_DIR = ""
 
 _owner_user = {"user_id": "diag-owner"}
 _intruder_user = {"user_id": "diag-intruder"}
@@ -37,10 +41,12 @@ async def client(app):
 
 
 @pytest.fixture(autouse=True)
-def _clean():
+def _clean(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_TEST_EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR)
+    )
     _mod._EXPORT_OWNERS.clear()
-    for fn in os.listdir(_TEST_EXPORT_DIR):
-        os.remove(os.path.join(_TEST_EXPORT_DIR, fn))
     yield
     _mod._EXPORT_OWNERS.clear()
 
@@ -147,6 +153,73 @@ async def test_read_requires_bearer(client):
         mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
         resp = await client.get("/api/v1/export/diagnostics/whatever.png")
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_anonymous_session_owner_reads_own_diagnostics(client, monkeypatch):
+    """B-5（review-fix-rereview-20261108）：匿名会话导出主体是 session:<sid>。
+
+    诊断端点此前硬性 Bearer + user_id 比对 —— 匿名导出者（下载可走签名
+    URL）永远 401/403，读不到自己的渲染诊断 sidecar。修复后与
+    _export_principal 同源：session 主体凭 X-Session-Token 读取。
+    """
+    from fastapi import HTTPException
+
+    _anon = {"user_id": "anonymous", "role": "anonymous"}
+    _auth(client, _anon)
+
+    async def _fake_verify(db, session_id, user_id=None, owner_token=None):
+        if session_id != "sess-diag" or owner_token != "tok-diag":
+            raise HTTPException(status_code=404, detail="Session not found")
+        return object()
+
+    monkeypatch.setattr(
+        "app.services.auth_history_bridge.verify_session_owner", _fake_verify
+    )
+
+    from io import BytesIO
+    from PIL import Image
+
+    png = BytesIO()
+    Image.new("RGB", (1, 1)).save(png, format="PNG")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
+        resp = await client.post(
+            "/api/v1/export",
+            files={"file": ("map.png", png.getvalue(), "image/png")},
+            data={
+                "render_diagnostics": json.dumps([{"code": "label_truncated", "detail": "layer=a"}]),
+                "session_id": "sess-diag",
+            },
+            headers={"X-Session-Token": "tok-diag"},
+        )
+    assert resp.status_code == 200, resp.text
+    filename = resp.json()["filename"]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR))
+        # 匿名导出者携自己的 owner_token → 200
+        ok = await client.get(
+            f"/api/v1/export/diagnostics/{filename}",
+            headers={"X-Session-Token": "tok-diag"},
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["diagnostics"][0]["code"] == "label_truncated"
+
+        # 匿名 + 错误 token → fail-closed 404（与所有权守卫同款，不泄漏存在性）
+        bad = await client.get(
+            f"/api/v1/export/diagnostics/{filename}",
+            headers={"X-Session-Token": "wrong-token"},
+        )
+        assert bad.status_code == 404
+        # R2-N3：404 detail 与"无诊断记录"不可区分 —— 错误 token 与不存在的
+        # session 不得构成弱存在性/归属种类 oracle。
+        assert bad.json()["detail"] == "该导出件没有诊断记录"
+
+        # 认证他者 → 403
+        _auth(client, _intruder_user)
+        other = await client.get(f"/api/v1/export/diagnostics/{filename}")
+        assert other.status_code == 403
 
 
 @pytest.mark.asyncio

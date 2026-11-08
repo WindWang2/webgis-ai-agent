@@ -118,6 +118,21 @@ class NetworkServiceAreaService:
         if not facilities or not breaks:
             return []
 
+        # A-2（review-fix-rereview-20261108）：graph 与 network_dataset 必须
+        # 成对 —— 设施吸附/中点切边都解析自 dataset；graph 在场而 dataset
+        # 缺席时 snapper 在 _get_index 上炸 AttributeError（上层 500）。
+        # 入口类型化拒绝（与 graph_builder 的 ValueError 约定同款）。
+        # R2-N4：双双缺席同样类型化拒绝（此前同在 snapping 上 AttributeError）。
+        if network_dataset is None:
+            raise ValueError(
+                "network_dataset is required when a prebuilt graph is supplied: "
+                "facility snapping resolves against the dataset "
+                "(pass both, or pass only network_dataset to build the graph)"
+                if graph is not None else
+                "network_service_area requires a network_dataset "
+                "(prebuilt graphs alone cannot resolve facility snapping)"
+            )
+
         normalized_facilities = self._normalize_facilities(facilities)
         sorted_breaks = sorted(breaks)
 

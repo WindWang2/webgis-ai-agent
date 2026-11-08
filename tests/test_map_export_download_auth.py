@@ -7,6 +7,7 @@ authenticated transport; this file pins the backend contract the frontend
 now satisfies: anonymous → 401, owner → 200, non-owner → 403, missing → 404.
 """
 import os
+import sys
 
 import pytest
 from fastapi import FastAPI
@@ -16,9 +17,13 @@ from app.api.routes import map as _mod
 from app.core.auth import get_current_user_optional_with_version
 from pathlib import Path
 
-# /tmp 在当前开发机是配额受限的 tmpfs（写入报 EDQUOT）；改用 /var/tmp。
-_TEST_EXPORT_DIR = "/var/tmp/test_exports_download_auth"
-os.makedirs(_TEST_EXPORT_DIR, exist_ok=True)
+# review-fix-rereview-20261108：固定共享 /var/tmp 目录 + autouse 清盘在
+# xdist 并行 worker 间互相删文件 —— 另一方刚写入的导出件被清掉，404 假红
+# （master 既有 flaky：串行 6/6 通过、-n4 每轮 1-2 个随机失败）。改为每测试
+# 独立 tmp_path（worker 间零共享，清盘竞争消失）；_TEST_EXPORT_DIR 由
+# fixture 指向该目录，用例内 `lambda: Path(_TEST_EXPORT_DIR)` 按全局名在
+# 调用时解析，无需逐用例改动。
+_TEST_EXPORT_DIR = ""
 
 _owner_user = {"user_id": "file-owner"}
 _intruder_user = {"user_id": "other-user"}
@@ -46,10 +51,12 @@ def _write_export_file(name: str, content: bytes) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _clean():
+def _clean(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_TEST_EXPORT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.services.export_paths.exports_root", lambda: Path(_TEST_EXPORT_DIR)
+    )
     _mod._EXPORT_OWNERS.clear()
-    for fn in os.listdir(_TEST_EXPORT_DIR):
-        os.remove(os.path.join(_TEST_EXPORT_DIR, fn))
     yield
     _mod._EXPORT_OWNERS.clear()
 
