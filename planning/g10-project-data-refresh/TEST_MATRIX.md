@@ -34,7 +34,7 @@
 
 ## 实际验证结果
 
-- 后端 54 passed（含 R1 回归 10 + R2 回归 4 + 8 端点 404 探针）（PU 15+8 + DI 12+5+3+2 + PI 5），含 R1/R2 审查回归 14 项: `pytest tests/data/test_project_data_refresh_*.py tests/unit/test_project_data_refresh_routes.py tests/integration/test_pi_project_data_refresh.py --no-cov -q` → exit 0
+- 后端 55 passed（含 R1 回归 10 + R2 回归 4 + 8 端点 404 探针）（PU 15+8 + DI 12+5+3+2 + PI 5），含 R1/R2/R3 审查回归 15 项: `pytest tests/data/test_project_data_refresh_*.py tests/unit/test_project_data_refresh_routes.py tests/integration/test_pi_project_data_refresh.py --no-cov -q` → exit 0
 - 前端 30 passed: `vitest run components/sidebar/project/data-refresh-panel.test.tsx` (5)、`key-completeness`+`no-raw-cjk`+`changed-lanes` (25)；`pnpm run typecheck` → exit 0
 - 生成物闸 15 passed: `tests/quality/test_api_compatibility.py` + `tests/test_api_docs_drift.py` → exit 0
 - `ruff check`（本任务全部新增 Python 文件）→ All checks passed, exit 0

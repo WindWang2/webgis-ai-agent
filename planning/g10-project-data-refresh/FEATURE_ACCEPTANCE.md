@@ -37,13 +37,13 @@
 
 | 证据 | 结果 |
 |---|---|
-| 后端 PU/DI/PI 测试 | 54 passed（exit 0，含 R1/R2 审查回归 14 项 + 8 端点 404 探针） |
+| 后端 PU/DI/PI 测试 | 55 passed（exit 0，含 R1/R2/R3 审查回归 15 项 + 8 端点 404 探针 + 内部故障可观测） |
 | 前端组件单测 + i18n 闸 + E2E 注册表闸 | 30 passed（exit 0） |
 | TypeScript `pnpm run typecheck` | exit 0 |
 | ruff（本任务全部新增 Python 文件） | All checks passed |
 | OpenAPI / API docs 生成物闸 | 15 passed（官方生成器刷新后） |
 | 增量/全量结果对拍 | 容差 0 逐字段等价；3 vs 6 节点（见 PERFORMANCE.md） |
 | 真实浏览器 E2E | ⏳ **未验证**（j13 real-only，需真实后端 + 预置账号） |
-| 独立审查 | R1 冷读 3×P1 + 18×P2 → 全修；R2 二审发现 1×新 P1 + 4×P2/P3 → 全修；R15 终审待执行 |
+| 独立审查 | R1 冷读 3×P1 + 18×P2 → 全修；R2 二审发现 1×新 P1 + 4×P2/P3 → 全修；R15 终审 **PR-ready**（0×P0/P1） |
 
 ⏳ 表中所有 MUST 旅程的「浏览器观察」项均为 `unverified`，不把工具成功/任务成功/版本采纳互相替代，不伪造 renderer ACK。操作说明见 `docs/features/project-data-refresh.md`。

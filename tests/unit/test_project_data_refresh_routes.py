@@ -234,6 +234,25 @@ def test_r2_p1_missing_proposal_returns_404_not_500_on_all_guarded_endpoints():
         assert "SERVER_ERROR" not in r.text
 
 
+def test_r3_internal_session_check_failure_is_observable_not_masked_as_404(monkeypatch):
+    """R3：真实内部故障必须可观测（500），不得被伪装成 404 资源不存在。"""
+    from unittest.mock import AsyncMock
+    import app.api.routes.project_data_refresh as routes_mod
+
+    h = _token(OWNER)
+    preview = client.post(f"{_base()}/preview", json={"session_id": SID}, headers=h)
+    assert preview.status_code == 200
+    pid = preview.json()["proposal_id"]
+
+    monkeypatch.setattr(
+        routes_mod, "_verify_session_access",
+        AsyncMock(side_effect=RuntimeError("simulated internal DB outage")),
+    )
+    probe = TestClient(app, raise_server_exceptions=False)
+    r = probe.get(f"{_base()}/proposals/{pid}/status", headers=h)
+    assert r.status_code >= 500, r.text[:200]
+
+
 def test_o05_client_fingerprint_mismatch_is_refused():
     h = _token(OWNER)
     client.post(f"{_base()}/check", json={"session_id": SID}, headers=h)

@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -48,6 +49,8 @@ from app.services.project_runtime.refresh.service import (
     ProjectDataRefreshService,
     RefreshError,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["Project Data Refresh (G10)"])
 
@@ -93,12 +96,14 @@ async def _guard_proposal(
         try:
             await _verify_session_access(proposal.session_id, user, owner_token)
         except HTTPException:
+            # verify_session_owner 的 404/403 是权威拒绝，原样保留（不泄露存在性）
             raise
-        except Exception as exc:  # noqa: BLE001 — 会话所有权失败一律 404 不泄露
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "session_forbidden", "detail": "session owner check failed"},
-            ) from exc
+        except Exception:  # noqa: BLE001 — 内部故障必须可观测，绝不伪装成 404
+            logger.exception(
+                "[G10] session ownership check failed project=%s proposal=%s",
+                project_id, proposal_id,
+            )
+            raise
     return proposal
 
 
