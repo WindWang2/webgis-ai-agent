@@ -135,20 +135,60 @@ assert (expected / "probe.txt").read_text(encoding="utf-8") == "writable"
     assert result.returncode == 0, result.stderr
 
 
-def test_dateutil_bound_protects_the_supported_pandas_line():
+@pytest.mark.parametrize("source", ["requirements", "pyproject"])
+@pytest.mark.parametrize("incompatible_dateutil", ["3.0.0", "4.0.0"])
+def test_dateutil_bound_protects_the_supported_pandas_line(source, incompatible_dateutil):
     """pandas 2.3.3 cannot consume the tzfile rewrite in dateutil 3/4."""
-    declarations = [
-        bounds.parse_requirements(REPO / "requirements.txt"),
-        bounds.parse_pyproject_dependencies(REPO / "pyproject.toml"),
-    ]
-    for declared in declarations:
-        spec = declared.get("python-dateutil")
-        assert spec is not None, "The pandas/dateutil compatibility bound must be explicit"
-        assert bounds.admits(spec, "2.9.0.post0")
-        assert not bounds.admits(spec, "3.0.0")
-        assert not bounds.admits(spec, "4.0.0")
+    declarations = {
+        "requirements": bounds.parse_requirements(REPO / "requirements.txt"),
+        "pyproject": bounds.parse_pyproject_dependencies(REPO / "pyproject.toml"),
+    }
+    declared = declarations[source]
+    spec = declared.get("python-dateutil")
+    assert spec is not None, "The pandas/dateutil compatibility bound must be explicit"
+    assert bounds.admits(spec, "2.9.0.post0")
+    # A working newest/newest pair does not make every allowed pair compatible.
+    # Keep this tied to the supported pandas line, rather than requiring an old
+    # dateutil ceiling forever after a future, validated pandas migration.
+    assert not (
+        bounds.admits(declared["pandas"], "2.3.3")
+        and bounds.admits(spec, incompatible_dateutil)
+    ), f"{source} allows pandas 2.3.3 with incompatible dateutil {incompatible_dateutil}"
     locked = bounds.parse_lock(REPO / "requirements.lock")["python-dateutil"]
-    assert all(bounds.admits(declared["python-dateutil"], locked) for declared in declarations)
+    assert bounds.admits(spec, locked)
+
+
+@pytest.mark.parametrize("raw_values, expected", [
+    (["1.5", "oops", "3.5"], [1.5, 3.5]),
+    (["1.5", None, "inf", "-inf", "3.5"], [1.5, 3.5]),
+    ([1.5, None, float("nan"), float("inf"), 3.5], [1.5, 3.5]),
+    (["not-a-number", "still-not-a-number"], None),
+])
+def test_geojson_numeric_fields_follow_the_installed_pandas_dtype(raw_values, expected):
+    """Use real GeoJSON inference, not an object dtype forced to hide pandas 3."""
+    from app.lib.geo_analysis.context import extract_numeric_frame, validate_spatial_input
+    from app.lib.gis.scientific_errors import MissingRequiredField
+
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [116.39 + i * 0.01, 39.90]},
+                "properties": {"value": value, "source_row": i},
+            }
+            for i, value in enumerate(raw_values)
+        ],
+    }
+    frame = validate_spatial_input(geojson).gdf
+    if expected is None:
+        with pytest.raises(MissingRequiredField, match="missing or non-numeric"):
+            extract_numeric_frame(frame, "value")
+    else:
+        filtered, values = extract_numeric_frame(frame, "value")
+        assert values.tolist() == expected
+        assert filtered["source_row"].tolist() == [0, len(raw_values) - 1]
+        assert filtered.index.tolist() == [0, 1]
 
 
 def test_pandas_dateutil_timezone_localization_and_dst():
