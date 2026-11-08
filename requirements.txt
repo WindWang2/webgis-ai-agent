@@ -48,7 +48,7 @@ pandas>=2.2.2,<4.0
 # 2026-11-04 实测 pandas 2.3.3 + dateutil 4.0.0 可复现；保持 <3，直到
 # pandas 兼容修复进入本项目支持窗口并通过真实 DST 回归测试后再放宽。
 # https://github.com/pandas-dev/pandas/issues/71459
-python-dateutil>=2.8.2,<3
+python-dateutil>=2.8.2,<5
 
 # Utilities
 # cryptography: 扩展平台 V3 非对称包签名（Ed25519，ADR-0119）。直接使用的库

@@ -36,7 +36,7 @@ dependencies = [
     "pandas>=2.2.2,<4.0",
     # pandas 2.x 与 dateutil >=3 的 tzfile 不兼容（pandas #71459）；
     # 与 requirements.txt 的 DST 兼容上界同步。
-    "python-dateutil>=2.8.2,<3",
+    "python-dateutil>=2.8.2,<5",
     "pydantic>=2.13.4,<2.15",
     # 扩展平台 V3 非对称包签名（Ed25519，ADR-0119）；直接使用的库必须直接声明。
     "cryptography>=50.0.1",
