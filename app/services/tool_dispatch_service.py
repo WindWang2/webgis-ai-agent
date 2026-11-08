@@ -137,6 +137,11 @@ class ToolDispatchResult:
     # ADR-0217（H10，additive）：GISAction IR 投影闸证据（plan/compile/
     # finding code 级，无参数）。None = 闸关或投影不可用。
     action_evidence: Optional[dict] = None
+    # G03/ADR-0286 D4（additive）：数据资格闸证据——放行时的有界数据事实
+    # （qualification_context：crs/feature_count/bbox…）与披露
+    # （descriptor_missing）。None = 闸关或本次调用不含数据 ref。
+    # BLOCK 路径不经过此字段（结构化 error 早退）。
+    data_qualification: Optional[dict] = None
 
 
 # 重复调用拦截的 LLM 提示（独立常量，避免 ok/error 分支误用）
@@ -665,6 +670,78 @@ class ToolDispatchService:
                                 _guard_args, ensure_ascii=False
                             )
                             tool_args_raw = tc["function"]["arguments"]
+
+            # 1.46 (G03/ADR-0286 D4) 数据资格闸：ref: 输入的语义证据完整性。
+            # 记录面（recovery source_fingerprints）期望指纹与语义记录不一致
+            # （stale）或记录损坏 → BLOCK 结构化错误早退（释放 dedup 槽位，
+            # 与 1.45 同模式）；放行时附有界数据事实（模型可见）。
+            # DATA_QUALIFICATION_GATE=0 一键关闭；闸门 fail-open（异常=放行）。
+            _data_qualification: Optional[dict] = None
+            with best_effort(
+                "data-qualification-gate",
+                "tool-dispatch-data-gate-best-effort",
+                ctx={"tool": tool_name},
+            ):
+                from app.services.dataset_semantics.dispatch_gate import (
+                    collect_gate_refs,
+                    evaluate_dispatch_data_gate,
+                )
+
+                try:
+                    _gate_args = (
+                        tool_args_raw
+                        if isinstance(tool_args_raw, dict)
+                        else json.loads(tool_args_raw)
+                        if isinstance(tool_args_raw, str)
+                        else None
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    _gate_args = None
+                if isinstance(_gate_args, dict) and session_id and collect_gate_refs(
+                    _gate_args
+                ):
+                    # 评审 F8：无数据 ref 的调用先短路——避免每次 dispatch
+                    # 无谓读 recovery state。
+                    from app.services.dataset_semantics.qualification_bridge import (
+                        recorded_fingerprints,
+                    )
+
+                    _gate_verdict = await evaluate_dispatch_data_gate(
+                        session_id,
+                        tool_name,
+                        _gate_args,
+                        expected_fingerprints=await recorded_fingerprints(
+                            session_id),
+                    )
+                    if _gate_verdict.blocked:
+                        self._release_key(
+                            executed_tools, tool_key, session_id or "")
+                        return ToolDispatchResult(
+                            status="error",
+                            llm_payload=(
+                                f"[数据资格拦截] {_gate_verdict.code}: "
+                                f"{_gate_verdict.reason}"
+                            ),
+                            slim_event={
+                                "type": "tool_error",
+                                "name": tool_name,
+                                "error": f"data_gate:{_gate_verdict.code}",
+                            },
+                            geojson_ref=None,
+                            raw_result={
+                                "success": False,
+                                "error": _gate_verdict.reason,
+                                "code": _gate_verdict.code,
+                            },
+                            error_msg=_gate_verdict.code,
+                        )
+                    if _gate_verdict.qualification_context or (
+                        _gate_verdict.disclosure
+                    ):
+                        _data_qualification = {
+                            **_gate_verdict.to_bounded_dict(),
+                            "context": _gate_verdict.qualification_context,
+                        }
 
             # 1.5 (V2 P10) analysis reuse —— artifact 层确定性复用。ref: 参数
             # 是 cached_tool 的正确性盲区（ref 可变 → 拒缓存），本层靠
@@ -1532,6 +1609,7 @@ class ToolDispatchService:
             ref_descriptor=ref_descriptor,
             capability_evidence=capability_evidence,
             action_evidence=action_evidence,
+            data_qualification=_data_qualification,
         )
 
     async def _author_display_result(

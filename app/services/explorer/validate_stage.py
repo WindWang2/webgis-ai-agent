@@ -2,11 +2,48 @@
 Validate Stage — Pure async stage runner for final dataset quality validation.
 """
 import logging
-from typing import Callable, List, Optional
+import math
+from typing import Any, Callable, List, Optional
 
 from app.services.explorer.models import StageResult
 
 logger = logging.getLogger(__name__)
+
+
+def rows_to_feature_collection(rows: List[dict]) -> Optional[dict]:
+    """geocoded rows → GeoJSON FC（G03 GD-01 / ADR-0286 D3，纯函数）。
+
+    只有坐标有限的行成为要素（geocode 失败/跳过的行不进 FC，不虚构点位）；
+    ``_`` 前缀 magic keys（_lat/_lon/_geocode_status…）剥离出 properties。
+    零有效行 → None（诚实零要素，由调用方决定不铸语义身份）。
+
+    评审 F11：字符串坐标行（既有坐标列原样拷入的形态）按无坐标跳过并
+    debug 日志——诚实缺席，不静默不痕。
+    """
+    features: List[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        lat, lon = row.get("_lat"), row.get("_lon")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            if lat is not None or lon is not None:
+                logger.debug(
+                    "[rows_to_fc] row with non-numeric _lat/_lon skipped "
+                    "(types: %s/%s)", type(lat).__name__, type(lon).__name__)
+            continue
+        if isinstance(lat, bool) or isinstance(lon, bool):
+            continue
+        if not (math.isfinite(float(lat)) and math.isfinite(float(lon))):
+            continue
+        props = {k: v for k, v in row.items() if not str(k).startswith("_")}
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(lon), float(lat)]},
+            "properties": props,
+        })
+    if not features:
+        return None
+    return {"type": "FeatureCollection", "features": features}
 
 
 async def bridge_geocoded_to_session(
@@ -21,6 +58,12 @@ async def bridge_geocoded_to_session(
     桥接 = 同一 payload 存入 chat session + 登记 alias，使后续
     ``add_layer(ref:...)`` / 分析工具可解析。返回桥接描述（失败返回 {}，
     非致命：桥接失败只影响可消费性，不影响探索结果本身）。
+
+    G03（ADR-0286 D3）：桥接同时把有效坐标行转 FC 经 IngestPipeline 铸
+    **语义身份**（descriptor）——role binding/资格裁决从此能消费 explorer
+    数据（此前对 explorer 数据只能 not_found）。全部行 geocode 失败 →
+    不铸 FC（诚实零要素），``semantic_ref`` 缺席；铸链失败非致命（沿用
+    #776 纪律，探索结果本身不受影响）。
     """
     from app.services.session_data_protocol import get_session_store
 
@@ -42,7 +85,35 @@ async def bridge_geocoded_to_session(
         f"[Explorer:{task_id}] bridged geocoded rows into session "
         f"{session_id} as {ref_id} (alias {alias})"
     )
-    return {"session_ref_id": ref_id, "session_ref_alias": alias}
+    bridge: dict[str, Any] = {"session_ref_id": ref_id, "session_ref_alias": alias}
+
+    # ── 语义身份铸造（G03；additive，失败只缺席不致命）─────────────────
+    rows = payload.get("rows") if isinstance(payload, dict) else None
+    if isinstance(rows, list) and rows:
+        fc = rows_to_feature_collection(rows)
+        if fc is not None:
+            try:
+                from app.services.data_ingest.pipeline import get_ingest_pipeline
+
+                ingested = await get_ingest_pipeline().ingest(
+                    session_id,
+                    fc,
+                    name=f"explorer:{task_id}",
+                    crs="EPSG:4326",
+                    source_type="explorer_geocode",
+                    prefix="explorer_geocoded",
+                )
+                if ingested.ok:
+                    bridge["semantic_ref"] = ingested.ref_id
+                else:
+                    logger.warning(
+                        "[Explorer:%s] semantic bridge declined: %s: %s",
+                        task_id, ingested.error_code, ingested.error,
+                    )
+            except Exception as e:  # noqa: BLE001 — 语义桥是增值面，失败不致命
+                logger.warning(
+                    f"[Explorer:{task_id}] semantic bridge failed: {e}")
+    return bridge
 
 
 async def run_validate_stage(

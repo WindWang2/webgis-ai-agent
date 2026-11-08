@@ -177,6 +177,7 @@ def build_descriptor(
     derived_at: str = "",
     license: str = "",
     attribution: str = "",
+    dimension_provenance_overrides: Optional[Dict[str, str]] = None,
 ) -> GISDatasetDescriptor:
     """DatasetProfile ⊕ Semantic ⊕ Measurement → GISDatasetDescriptor（纯装配）。
 
@@ -237,6 +238,22 @@ def build_descriptor(
         except (TypeError, ValueError):
             null_ratio_max = None
 
+    # 维度级证据三态（G03 GD-01 / ADR-0286 D1）：只按本函数可见的证据
+    # 标注——扫描事实 = observed；规则推断的维度由推导入口显式传入
+    # ``dimension_provenance_overrides``（如坐标域识别 CRS = inferred）；
+    # 其余一律 unknown，绝不虚构。
+    dim_provenance: Dict[str, str] = {
+        "geometry_type": "observed" if profile.geometry_types else "unknown",
+        "feature_count": "observed" if profile.feature_count is not None else "unknown",
+        "bbox": "observed" if profile.bbox else "unknown",
+        "crs": "observed" if str(profile.crs or "").strip() else "unknown",
+        "fields": "observed" if profile.fields_status == "explicit" else "unknown",
+        "temporal": "observed" if profile.has_time_field else "unknown",
+        "license": "observed" if str(license or "").strip() else "unknown",
+        "attribution": "observed" if str(attribution or "").strip() else "unknown",
+    }
+    dim_provenance.update(dimension_provenance_overrides or {})
+
     descriptor = GISDatasetDescriptor(
         descriptor_version=DESCRIPTOR_VERSION,
         dataset_key=str(dataset_key or "")[:200],
@@ -264,6 +281,7 @@ def build_descriptor(
         provenance=list(provenance or [])[:8],
         license=str(license or "")[:128],
         attribution=str(attribution or "")[:256],
+        dimension_provenance=dim_provenance,
         derived_at=str(derived_at or "")[:64],
     )
     return descriptor.with_fingerprints()
@@ -286,6 +304,7 @@ def derive_descriptor(
     quality_signals: Optional[List[str]] = None,
     license: str = "",
     attribution: str = "",
+    dimension_provenance_overrides: Optional[Dict[str, str]] = None,
 ) -> GISDatasetDescriptor:
     """采样 → 语义/量纲推导（委托 #1488）→ descriptor 铸造（正向路径主入口）。
 
@@ -347,6 +366,7 @@ def derive_descriptor(
         derived_at=derived_at,
         license=license,
         attribution=attribution,
+        dimension_provenance_overrides=dimension_provenance_overrides,
     )
 
 
@@ -370,6 +390,8 @@ def derive_descriptor_from_v3(
     features: Optional[Iterable[Any]] = None,
     source_refs: Optional[List[SourceRef]] = None,
     provenance: Optional[List[Dict[str, str]]] = None,
+    license: str = "",
+    attribution: str = "",
 ) -> GISDatasetDescriptor:
     """DatasetProfileV3（ingest 已产出的剖析结果）→ descriptor（零额外扫描）。
 
@@ -384,6 +406,8 @@ def derive_descriptor_from_v3(
         features=features,
         source_refs=source_refs,
         provenance=provenance,
+        license=license,
+        attribution=attribution,
     )
 
 
