@@ -26,6 +26,16 @@
 | 3 保留结论只刷新指标 | test_regenerate_preserves_manual_and_locked；j13 real 编辑+锁定 rev2 |
 | 4 先检查再导出私有 HTML | j13 real 预检→冻结→下载（零外链）+ 不公开原始点（默认私有 + 脱敏 + 白名单投影） |
 
+## 跟进事项（复审遗留，不阻塞）
+
+- N3（P3）：信任传播仅一层 —— 依赖为"因依赖降级的 warning"时二级派生
+  可幸存 verified（复审探针 2c B 实证）。到达面受限（无 facts 编辑入口，
+  仅内部构造可触发）；修复方向：降级打标 + 迭代至不动点。
+- N3'（P3）：map_view 块静态图当前共用全图 SVG（compile_mapspec_to_svg
+  不接收块镜头参数）；BRF-O04 的版本 pin 已达成，逐块镜头渲染待后续。
+- N5（P3）：_locate_value 同值多字段可能错位绑定行（值核验不受影响，
+  来源归因可能指到同值异行）。
+
 ## 预存红（master 债，非本分支引入）
 
 - `lib/map-commands/catalogue-contract.test.ts`：webgis_requirement_compile

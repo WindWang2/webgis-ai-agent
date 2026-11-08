@@ -11,4 +11,6 @@
 | 4 | M4-M6：store/preflight/release/export/分享 + 路由 16 端点 + 14 集成测试（发现并修复：无消息无 trace 会话不能起草 → 产物降级路径） | 14 passed + 回归 99 passed | 通过 | commit 53f64c3f0 → M7 工具 |
 | 5 | M7：六工具 + Pi 适配器 + 13 安全负例（安全测试抓到 release_meta 泄漏 → 白名单投影修复；data_mutations 词表对齐） | 5+13 passed；51 回归 | 通过 | commit 35f4fe6ec → 前端 |
 | 6 | 前端：client/面板/story-view/i18n(82 keys)/j13 双模式（修 useT 解构、点号 key 命名、map.set 扫描误报、j13 断言×3、real 栈 CORS 根因） | typecheck 绿；i18n+story 64 passed；j13 mock+real 1+1 passed；j4 mock+real 回归 2 passed | 通过 | commit e7b9e8f77 → M9 文档 |
-| 7 | M9a：ADR-0288（领号+watermark 288）+ docs/features/evidence-map-briefs.md + TEST_MATRIX + FEATURE_ACCEPTANCE | 文档落盘 | 通过 | commit → M8 独立冷读 Review |
+| 7 | M9a：ADR-0288（领号+watermark 288）+ docs/features/evidence-map-briefs.md + TEST_MATRIX + FEATURE_ACCEPTANCE | 文档落盘 | 通过 | commit 80d9014dc → M8 独立冷读 Review |
+| 8 | M8 审查（子代理 C，审查 SHA 80d9014dc）：P1×2（幂等键含墙钟——审查首跑实测复现 flaky；SVG 净化 8 载荷绕过）+ P2×4 + P3×7 → 全部清偿（含 heredoc 转义两处自伤 bug 修正） | 修复后 67 passed；幂等跨秒 ×5 稳定；审查者探针复跑 SVG/传播清零 | 通过 | commit 551902494 → 复审 |
+| 9 | 复审（同审查者新 HEAD 551902494 独立对抗复现 27+ 探针/API 级并发）：结论"可提交 PR"；残留 N1(P2 一行正则)+N2/N4(P3) 即时清偿，N3 记跟进 | 67 passed；N1/N2 探针清零；良性与 CAS 行为保真 | 通过 | commit 6239f0551 → M9b 终检+PR |
