@@ -17,6 +17,8 @@ scripts/
 !/scripts/combine_backend_coverage.py
 # G05：任务级验收本地入口（run/compare/report/pin；planning/g05 契约）
 !/scripts/g05_task_acceptance.py
+# G06：能力生态 5 分钟本地验收入口（CLI/检查器/离线演示/Oracle pytest/catalog 漂移门）
+!/scripts/verify_capability_ecosystem.py
 # G05：本地运行产物（CLI 报告）与栅格 fixture 工作区（validate_data_path 允许区）
 /reports/
 /tmp/

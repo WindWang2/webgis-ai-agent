@@ -114,6 +114,9 @@ _TOOL_MODULES = [
     # GOAL 01：空间语义与量纲可信契约只读工具面（inspect_spatial_semantics；
     # 独立模块防并发冲突，preflight 真相在 gis_harness/spatial_semantics/）
     ("app.tools.spatial_semantics_tools", "register_spatial_semantics_tools"),
+    # G06 / CAP-03 + M5：条件多分位数分区栅格统计 / 线网服务覆盖一致性
+    # 两项真实原生原语（独立模块防并发冲突；执行真相仍是 registry.dispatch）
+    ("app.tools.capability_ecosystem_tools", "register_capability_ecosystem_tools"),
 ]
 
 

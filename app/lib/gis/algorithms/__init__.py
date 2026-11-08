@@ -27,12 +27,15 @@ from app.lib.gis.algorithms import sampling as _sampling_mod
 from app.lib.gis.algorithms import statistics as _statistics_mod
 from app.lib.gis.algorithms import temporal as _temporal_mod
 from app.lib.gis.algorithms import terrain as _terrain_mod
+# G06 / M5：新原语的参数契约域包（ALGORITHMS 为空，不改变算法注册表计数）。
+from app.lib.gis.algorithms import capability_ecosystem as _capability_ecosystem_mod
 
 _ALL_MODULES = (
     _data_access_mod, _geometry_mod, _aggregation_mod, _density_mod,
     _statistics_mod, _point_pattern_mod, _interpolation_mod, _network_mod,
     _terrain_mod, _raster_mod, _remote_mod, _temporal_mod, _decision_mod,
     _platform_mod, _sampling_mod, _ecology_mod, _modelops_mod, _multiscale_mod,
+    _capability_ecosystem_mod,
 )
 
 
