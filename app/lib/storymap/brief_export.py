@@ -39,6 +39,17 @@ _SVG_HREF_RE = re.compile(
 #: 单文件 HTML 预算（内嵌 SVG/图表有界；超限显式失败优于半包）。
 MAX_BRIEF_HTML_BYTES = 8 * 1024 * 1024
 
+#: release 元信息白名单（进入 bundle/HTML 的唯一字段；share_code/
+#: owner_token/签名 URL 等秘密绝不内嵌 —— BRF-O08）。
+_RELEASE_META_KEYS = frozenset({
+    "release_id", "release_no", "frozen_revision", "created_at",
+    "mapspec_fingerprint", "spec_sha256",
+})
+
+
+def _project_release_meta(meta: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    return {k: meta[k] for k in _RELEASE_META_KEYS if k in dict(meta or {})}
+
 
 def sanitize_svg(markup: str) -> str:
     """静态 SVG → 可内嵌安全形态（无脚本/无事件/无外链/无 foreignObject）。"""
@@ -126,7 +137,7 @@ def build_brief_bundle(
         "schema_version": BRIEF_BUNDLE_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "draft": bool(draft),
-        "release": dict(release_meta or {}),
+        "release": _project_release_meta(release_meta),
         "spec": strip_surrogates(spec_dict),  # type: ignore[arg-type]
         "widgets": strip_surrogates(widgets),
         "static_maps": static_maps,
