@@ -40,6 +40,7 @@ from app.api.routes import map_operations as map_operations_routes  # noqa: E402
 from app.api.routes import display_confirmation as display_confirmation_routes  # noqa: E402  # ADR-0278
 from app.api.routes import situation_views as situation_views_routes  # noqa: E402  # ADR-0285
 from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0226
+from app.api.routes import project_data_refresh as project_data_refresh_routes  # noqa: E402  # G10
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
 # replay + Mission Portfolio 只读投影（org 域；runtime 默认关，读路径常开）。
@@ -1148,6 +1149,7 @@ app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
 app.include_router(mission_runtime_routes.router, prefix="/api/v1", tags=["Mission Runtime"])
 app.include_router(project_runtime_routes.router, prefix="/api/v1", tags=["Project Runtime"])  # ADR-0226
+app.include_router(project_data_refresh_routes.router, prefix="/api/v1", tags=["Project Data Refresh (G10)"])
 app.include_router(project_knowledge_routes.router, prefix="/api/v1", tags=["Project Knowledge"])
 app.include_router(geoai_routes.router, prefix="/api/v1", tags=["GeoAI"])
 # Agent Ops Cockpit：只读投影面（无写端点；operator 动作沿用 mission-runtime 路由）
