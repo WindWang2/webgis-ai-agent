@@ -432,12 +432,26 @@ async def upload_map_export(
     tags=["地图制图"],
     response_model=ExportDiagnosticsResponse,
 )
-def get_export_diagnostics(filename: str, _user: dict = Depends(get_current_user_with_version)) -> dict:
+async def get_export_diagnostics(
+    filename: str,
+    _user: dict = Depends(get_current_user_optional_with_version),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+) -> dict:
     """读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。
 
     所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从
     成品名派生（basename + 固定后缀），无路径注入面。
+    B-5（review-fix-rereview-20261108）：匿名会话导出主体是
+    ``session:<sid>`` —— 此前硬性 Bearer + user_id 比对把匿名导出者永远
+    挡在门外（下载可走签名 URL，诊断面被认证模型锁死）。现与
+    _export_principal 同源：session 主体凭 X-Session-Token 读取。
     """
+    uid = _user.get("user_id") if isinstance(_user, dict) else None
+    # 与 download 同款分层：匿名且无会话凭据 → 401（先于存在性探测，不泄漏）。
+    if uid in (None, "", "anonymous") and not owner_token:
+        raise HTTPException(status_code=401, detail="Authentication or export capability required")
+
     safe_filename = os.path.basename(filename)
     sidecar_path = os.path.join(_exports_dir_str(), f"{safe_filename}.diagnostics.json")
     if not os.path.exists(sidecar_path):
@@ -446,7 +460,21 @@ def get_export_diagnostics(filename: str, _user: dict = Depends(get_current_user
     owner = _get_export_owner(safe_filename)
     if owner is None:
         raise HTTPException(status_code=404, detail="地图文件存在性无法验证，拒绝读取")
-    if owner != _user.get("user_id"):
+
+    if owner == uid and uid not in (None, "", "anonymous"):
+        pass  # 认证主体即所有者
+    elif owner.startswith("session:") and owner_token:
+        # B-5：匿名会话导出主体（session:<sid>）经 owner_token 通道读取
+        # 自己的诊断 —— verify_session_owner fail-closed（无效 token → 404，
+        # 与所有权守卫同款，不泄漏存在性）。
+        from app.services.auth_history_bridge import verify_session_owner
+
+        await verify_session_owner(
+            db, owner[len("session:"):], user_id=None, owner_token=owner_token
+        )
+    elif uid in (None, "", "anonymous"):
+        raise HTTPException(status_code=401, detail="Authentication or export capability required")
+    else:
         raise HTTPException(status_code=403, detail="无权读取此文件的诊断")
 
     try:
