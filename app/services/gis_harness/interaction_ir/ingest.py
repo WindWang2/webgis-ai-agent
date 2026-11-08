@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional
 from app.services.gis_harness.interaction_ir.contracts import (
     MAX_LEDGER_BYTES,
     MAX_LEDGER_EVENTS,
+    MAX_PAYLOAD_BYTES_SELECTION,
     MAX_TRACKED_CLIENTS,
     SCHEMA_VERSION,
     LedgerState,
@@ -56,8 +57,11 @@ VERDICT_DUPLICATE = "duplicate"
 VERDICT_STALE_SEQ = "stale_seq"
 VERDICT_REJECTED = "rejected"
 
-#: 单条 ledger 记录的序列化字节上限（规范化 payload ≤512B + 信封字段）。
-_MAX_RECORD_BYTES = 1536
+#: 单条 ledger 记录的序列化字节上限。SW-02（#2004）/复审 P0-1：必须随
+#: 载荷预算分层取宽值（选择 kind 4096B + 信封/服务端盖章字段余量）——
+#: 若低于 normalize 层放行的最大载荷，会出现 accepted-but-dropped（ack
+#: 谎报 accepted 而事件不入环），恰是 #2004 族的静默丢失形态。
+_MAX_RECORD_BYTES = MAX_PAYLOAD_BYTES_SELECTION + 512
 
 
 class EventVerdict:
@@ -186,7 +190,9 @@ def apply_event(
             record["mutation_verified"] = False
 
     _bump_client(state, instance, client_seq, watermark)
-    _append_bounded(state, record)
+    if not _append_bounded(state, record):
+        # R2 N-1：超记录预算 → 诚实拒绝（客户端可见，不重试同尺寸事件）。
+        return EventVerdict(event_id, client_seq, VERDICT_REJECTED, "record_budget")
 
     if gap_from is not None:
         return EventVerdict(
@@ -214,12 +220,18 @@ def _bump_client(
     entry["last_seen"] = state.server_seq + 1
 
 
-def _append_bounded(state: LedgerState, record: Dict[str, Any]) -> None:
+def _append_bounded(state: LedgerState, record: Dict[str, Any]) -> bool:
+    """入环（有界）。返回是否成功入环。
+
+    R2 N-1：超单条记录预算 → 返回 False（调用方回 ``rejected/
+    record_budget`` 诚实裁决）—— 绝不 accepted-but-dropped（ack 谎报
+    accepted 而事件不入环，是 #2004 族的静默丢失形态）。环淘汰（容量/
+    字节预算）仍属诚实披露（``dropped`` 计数 + 快照 ``dropped_events``）。
+    """
     record_bytes = len(canonical_event_blob(record).encode("utf-8"))
     if record_bytes > _MAX_RECORD_BYTES:
-        # 规范化后仍超单条预算（理论上不可达 —— payload ≤512B）：诚实丢弃。
         state.dropped += 1
-        return
+        return False
     state.events.append(record)
     state.total_bytes += record_bytes
     evicted = 0
@@ -232,6 +244,7 @@ def _append_bounded(state: LedgerState, record: Dict[str, Any]) -> None:
         state.total_bytes -= len(canonical_event_blob(dropped_record).encode("utf-8"))
     if evicted:
         state.dropped += evicted
+    return True
 
 
 def _as_int(value: Any) -> Optional[int]:

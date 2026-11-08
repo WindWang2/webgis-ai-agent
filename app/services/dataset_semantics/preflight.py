@@ -28,6 +28,7 @@ PREFLIGHT_CHECKS = (
     "unit_consistency",        # 同名字段单位一致
     "density_denominator",     # 密度语义需要分母
     "role_coverage",           # 期望角色已绑定
+    "task_scope",              # 任务范围一致性（G03 GD-05；声明范围才检查）
 )
 
 #: 缺口码（typed gap；Agent 澄清回路的输入）。
@@ -40,6 +41,10 @@ CODE_UNIT_CONFLICT = "PREFLIGHT_UNIT_CONFLICT"
 CODE_UNIT_UNVERIFIED = "PREFLIGHT_UNIT_UNVERIFIED"
 CODE_DENSITY_NEEDS_DENOMINATOR = "PREFLIGHT_DENSITY_NEEDS_DENOMINATOR"
 CODE_ROLE_MISSING = "PREFLIGHT_ROLE_MISSING"
+#: G03 GD-05：数据 bbox 与任务范围（城市/视口）不相交。
+CODE_SCOPE_MISMATCH = "PREFLIGHT_SCOPE_MISMATCH"
+#: G03 GD-05：dataset bbox 未知，范围一致性不可验证（披露，不硬失败）。
+CODE_SCOPE_UNVERIFIABLE = "PREFLIGHT_SCOPE_UNVERIFIABLE"
 
 #: 预检输入上限（与角色绑定/durable facts 同界）。
 MAX_PREFLIGHT_DATASETS = 16
@@ -221,9 +226,13 @@ def preflight_multi_dataset(
     *,
     expected_roles: Sequence[str] = (),
     analysis_kind: str = "",
+    task_scope: Optional[Dict[str, Any]] = None,
 ) -> PreflightReport:
     """多数据联接 metadata-only 预检（确定性纯函数，零数据扫描）。
 
+    ``task_scope``（G03 GD-05，可选）：``{place?, bbox?}`` 任务范围声明
+    ——声明后启用范围一致性判据（数据 bbox 与任务范围不相交 →
+    PREFLIGHT_SCOPE_MISMATCH）；缺省不检查（向后兼容）。
     ``datasets``：{角色/标签 → GISDatasetDescriptor}（通常来自
     ``role_qualification_evidence`` 的绑定投影；≤16 项）。
     ``expected_roles``：任务声明的必需角色（如 ("subject", "boundary",
@@ -450,6 +459,14 @@ def preflight_multi_dataset(
                 ],
             ))
 
+    # ── task_scope：任务范围一致性（G03 GD-05；声明范围才检查）────────
+    if task_scope:
+        scope_result, scope_gaps, scope_check = preflight_task_scope_check(
+            items, task_scope)
+        report.checks.append(scope_check)
+        for g in scope_gaps:
+            gaps.append(g)
+
     # ── verdict 收敛（review P1：unknown ≠ pass 是本模块的契约）────────
     # gaps（有结构化缺口）> unknown（判据证据不足，不下兼容结论）>
     # compatible（全部判据 pass 且无缺口）。
@@ -460,6 +477,105 @@ def preflight_multi_dataset(
     else:
         report.verdict = "compatible"
     return report
+
+
+def preflight_task_scope_check(
+    items: List[Tuple[str, Any]],
+    task_scope: Any,
+) -> Tuple[str, List[PreflightGap], Dict[str, Any]]:
+    """任务范围一致性判据（G03 GD-05 / ADR-0286 D6；确定性纯函数）。
+
+    ``task_scope``：``{place?, bbox?}``（声明了范围才检查——向后兼容）。
+    判定：dataset bbox 与任务 bbox 不相交 → SCOPE_MISMATCH（数据与任务
+    空间范围不符，典型如「成都任务挂了北京数据」）；dataset bbox 未知 →
+    SCOPE_UNVERIFIABLE（披露不可验证，不硬失败）；相交 → pass。
+    返回 (result, gaps, check_dict)。
+    """
+    from app.services.dataset_semantics.task_scope import (
+        task_scope_from_dict,
+        _normalize_bbox,
+    )
+
+    scope = task_scope_from_dict(task_scope)
+    scope_bbox = scope.get("bbox")
+    if not scope_bbox:
+        declared_but_bad = (
+            isinstance(task_scope, dict)
+            and task_scope.get("bbox") is not None
+            and _normalize_bbox(task_scope.get("bbox")) is None
+        )
+        if declared_but_bad:
+            # 评审 F14：声明过但不可解析（形状/非有限分量坏）≠ 未声明——
+            # 如实披露，不静默降级为"不检查"。
+            return "unknown", [PreflightGap(
+                code=CODE_SCOPE_UNVERIFIABLE,
+                detail="任务范围 bbox 已声明但不可解析（形状错误或含"
+                       "NaN/±Inf）——范围一致性无法判定，不虚构结论",
+            )], {"check": "task_scope", "result": "unknown",
+                 "detail": "declared bbox unparseable"}
+        return "pass", [], {"check": "task_scope", "result": "pass",
+                            "detail": "任务范围未声明 bbox——不检查（兼容）"}
+    scope_place = str(scope.get("place") or "")
+
+    mismatched: List[str] = []
+    unverifiable: List[str] = []
+    for k, d in items:
+        db = getattr(d, "bbox", None)
+        if not (isinstance(db, (list, tuple)) and len(db) == 4):
+            unverifiable.append(k)
+            continue
+        try:
+            dminx, dminy, dmaxx, dmaxy = (float(b) for b in db[:4])
+        except (TypeError, ValueError):
+            unverifiable.append(k)
+            continue
+        # 复审 N3：非 pydantic 对象直传时 NaN 分量与比较恒 False 会伪
+        # pass——防御纵深（descriptor 校验器已关闭持久化面）。
+        import math as _math
+
+        if not all(_math.isfinite(v) for v in (dminx, dminy, dmaxx, dmaxy)):
+            unverifiable.append(k)
+            continue
+        disjoint = (
+            dmaxx < scope_bbox[0] or scope_bbox[2] < dminx
+            or dmaxy < scope_bbox[1] or scope_bbox[3] < dminy
+        )
+        if disjoint:
+            mismatched.append(k)
+
+    out_gaps: List[PreflightGap] = []
+    result = "pass"
+    if mismatched:
+        result = "fail"
+        out_gaps.append(PreflightGap(
+            code=CODE_SCOPE_MISMATCH,
+            detail=(
+                f"数据空间范围与任务范围（{scope_place or 'bbox'}）不相交："
+                + ",".join(mismatched[:4])
+                + "——旧城市/旧范围的数据不得凭名字复用到当前任务"
+            ),
+            refs=mismatched[:4],
+            alternatives=[TypedAlternative(
+                action="switch_dataset",
+                needs="改用任务范围内的数据（重新探索/上传当前范围数据）"),
+            ],
+        ))
+    if unverifiable:
+        if result == "pass":
+            result = "unknown"
+        out_gaps.append(PreflightGap(
+            code=CODE_SCOPE_UNVERIFIABLE,
+            detail="以下数据集 bbox 未知，无法与任务范围比对（不虚构可用"
+                   "结论）：" + ",".join(unverifiable[:4]),
+            refs=unverifiable[:4],
+        ))
+    return result, out_gaps, {
+        "check": "task_scope",
+        "result": result,
+        "place": scope_place[:64],
+        "mismatched": mismatched[:4],
+        "unverifiable": unverifiable[:4],
+    }
 
 
 def _role_needs_text(role: str) -> str:

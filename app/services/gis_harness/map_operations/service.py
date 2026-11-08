@@ -866,16 +866,27 @@ async def commit_map_operation(
                 receipt["viewport_command"] = {"fly_to": fly_params}
             break
 
-    # ADR-0285 D6：可逆性披露（additive）——presentation 族效果（显隐/
-    # 透明度）before/after 完整可反演；其余（符号/视图/组件/删除）不可逆
-    # （数据层撤销归 feature_edit /undo，恢复归 rollback 工具）。
+    # ADR-0285 D6 + SW-04：可逆性披露（additive）——presentation 族（显隐/
+    # 透明度）与持久样式族（paint/符号尺寸，before/after 为 MapLibre paint
+    # 键数值对）可反演；符号 before 缺值（无从恢复"原缺失"语义）则整笔回落
+    # 不可逆；视图/组件/删除仍不可逆（数据层撤销归 feature_edit /undo，
+    # 恢复归 rollback 工具）。
+    def _invertible_effect(ce: _CompiledEffect) -> bool:
+        if ce.state != "applied" or not (ce.before or ce.after):
+            return False
+        if ce.effect.kind in (KIND_SET_LAYER_VISIBILITY, KIND_SET_LAYER_OPACITY):
+            return True
+        if ce.effect.kind in (KIND_SET_LAYER_PAINT, KIND_SET_LAYER_SYMBOL):
+            before = ce.before if isinstance(ce.before, dict) else {}
+            return bool(before) and all(
+                isinstance(v, (int, float)) and not isinstance(v, bool)
+                for v in before.values()
+            )
+        return False
+
     receipt["invertible"] = (
         bool(states) and states.count("applied") > 0
-        and all(
-            ce.effect.kind in (KIND_SET_LAYER_VISIBILITY, KIND_SET_LAYER_OPACITY)
-            and ce.state == "applied"
-            for ce in compiled
-        )
+        and all(_invertible_effect(ce) for ce in compiled)
     )
     receipt["message"] = _receipt_message(receipt)
     receipt["commands"] = _receipt_commands(receipt)

@@ -60,6 +60,8 @@ from app.services.jobs.cancellation import CancellationToken, OperationCancelled
 from app.services.distributed_lock import LockDegradedError, LockLostError  # noqa: F401
 from app.services.tool_dispatch_service import ToolDispatchService, normalize_tool_name
 from app.lib.harness.tool_call_event import ToolCallEvent
+# PI-01（ADR-0286 D1）：turn 相位状态机（观测与防御面，不改控制流权威）。
+from app.services.chat.pi_turn_state import TurnPhase, TurnPhaseTracker
 from app.lib.runtime import context as rt_ctx
 from app.lib.runtime.evidence import (
     Outcome,
@@ -1245,6 +1247,10 @@ _TURN_ABORT_SOURCES_MAX = 64
 #: system/policy 停止属 aborted 语义 —— models.TurnStatus 词表注释）。
 _ABORT_SOURCE_STATUS = {"user": "cancelled", "system": "aborted", "policy": "aborted"}
 
+#: PI-05（review P1-3）：settle seam 内 durable job 撤销的有界预算（与
+#: abort RPC 的 5s 同款；DB 慢/挂不得拖长 turn 锁持有）。
+PI_DURABLE_REVOKE_TIMEOUT_S = 5.0
+
 
 def record_turn_abort_source(turn_id: str, source: str) -> None:
     """Record why a turn is being aborted (bounded; latest source wins).
@@ -1591,6 +1597,7 @@ class PiBridge:
         error_detail: str = "",
         timeout_reason: str = "",
         projections_settled: bool,
+        phase: Optional[TurnPhaseTracker] = None,
     ) -> str:
         """Turn settle host adapter (F03 seam → ADR-0223 thin adapter).
 
@@ -1602,10 +1609,33 @@ class PiBridge:
         legacy host. Idempotency is the coordinator's (same-turn receipt
         replay; the in-try projection pre-run is passed through as
         ``projections_pre_settled``). Returns the kernel TurnStatus recorded.
+
+        PI-01（ADR-0286 D1）：``phase`` 相位机在 bridge 边界直接拦截第二次
+        结算（exactly-once 门闩；coordinator 幂等仍是兜底权威），并把
+        CANCELLING→SETTLING→终相位 的观测轨迹记入 TurnEvidence summary。
         """
         from app.services.harness_kernel import settle as hk_settle
 
+        if phase is not None and not phase.begin_settlement():
+            # 第二次结算：直接返回首次记录的 kernel status（no-op）。
+            # review P2-1：首次结算仍在途（尚未 record_terminal_status）时
+            # last_settlement_status 为空 —— 防御性回落 failed（空串会被
+            # 下游 else 分支误判成 SUCCEEDED），绝不冒充成功。
+            _recorded = phase.last_settlement_status or "failed"
+            logger.warning(
+                "[PiBridge] duplicate settle blocked by phase latch turn=%s "
+                "(recorded status=%r)", turn_id, _recorded,
+            )
+            return _recorded
+
         abort_source = pop_turn_abort_source(turn_id)
+        if phase is not None and (cancelled or abort_source):
+            phase.transition(
+                TurnPhase.CANCELLING,
+                reason=f"cancel|abort:{abort_source or 'client'}",
+            )
+        if phase is not None:
+            phase.transition(TurnPhase.SETTLING, reason="seam")
         cause = hk_settle.cause_from_host_signals(
             cancelled=cancelled,
             timed_out=timed_out,
@@ -1666,8 +1696,15 @@ class PiBridge:
                             else (error_detail[:200] or "turn failed or timed out")
                         ),
                     )
-                else:
+                elif status in ("completed", "refused"):
                     engine.tracker.complete_task(tracker_task_id)
+                else:
+                    # PI-01（ADR-0286）：未知 kernel status fail-closed —— 此前
+                    # else 分支把未知词表误结算成 completed（开放结构）。
+                    engine.tracker.fail_task(
+                        tracker_task_id,
+                        f"unknown kernel turn status: {status!r}",
+                    )
             except Exception:
                 logger.debug(
                     "[agent_pi_bridge] tracker task settle failed session=%s",
@@ -1680,6 +1717,40 @@ class PiBridge:
                 session_id, turn_id,
                 refusal.get("reason_code", ""), refusal.get("question", "")[:80],
             )
+        # PI-05（ADR-0286 D5）：非 clean 终态 → 撤销该 turn 名下排队中的
+        # durable job（晚到后台计算不得对着已取消的 turn 继续跑/提交）。
+        # never-raise：撤销失败绝不影响 settle 终态；clean/refused 不撤销
+        # （后台产物按 SSE background_job_ids 披露继续）。
+        if session_id and status in ("cancelled", "aborted", "failed", "interrupted"):
+            # review P1-3：撤销有界预算（与 abort RPC 的 5s 同款）—— DB 慢/挂
+            # 时不得拖长 turn 锁持有与 SSE 生成器收口；超时放弃本轮撤销（剩余
+            # 非终态 job 由 lifecycle 终态不可迁移规则兜底，晚到结果不得提交）。
+            try:
+                from app.services.chat.pi_durable_cancel import (
+                    revoke_turn_durable_jobs,
+                )
+
+                await asyncio.wait_for(
+                    revoke_turn_durable_jobs(
+                        session_id, turn_id,
+                        reason=f"turn_settled_{status}",
+                    ),
+                    timeout=PI_DURABLE_REVOKE_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[PiBridge] durable job revoke timed out (5s) session=%s "
+                    "turn=%s — releasing turn; late jobs stay gated by "
+                    "lifecycle terminal-state rules",
+                    session_id, turn_id,
+                )
+            except Exception:  # noqa: BLE001 — 防御层（模块内已 never-raise）
+                logger.debug(
+                    "[PiBridge] durable job revoke skipped session=%s turn=%s",
+                    session_id, turn_id, exc_info=True,
+                )
+        if phase is not None:
+            phase.record_terminal_status(status)
         return status
 
     @property
@@ -1755,6 +1826,85 @@ class PiBridge:
                 return False
 
     # ── Public API ──────────────────────────────────────────────
+
+    def surface_generation_stale(self) -> bool:
+        """PI-03（ADR-0286 D4）：registry 代漂移检测。
+
+        spawn dump 的 ``registry_generation``（rpc 客户端在 start() 记录）
+        与当前 runtime manifest 指纹不一致 → 已运行子进程的工具面落后于
+        registry（动态注册的新工具对模型不可见）。fail-open：无世代事实
+        （v2 dump / 探测失败 / kill switch 关闭）一律 False。
+        """
+        import os
+
+        if os.getenv("PI_SURFACE_HOT_RECYCLE", "1").strip().lower() in ("0", "false", "off", "no"):
+            return False
+        spawned = getattr(self._rpc, "spawn_surface_generation", None)
+        if not spawned:
+            return False
+        try:
+            from app.services.chat.pi_tool_spec import current_registry_generation
+
+            current = current_registry_generation()
+        except Exception:  # noqa: BLE001 — 观测面绝不阻断
+            return False
+        return bool(current) and current != spawned
+
+    async def recycle_if_surface_stale(self) -> bool:
+        """PI-03（ADR-0286 D4）：代漂移 → turn 边界回收 worker。
+
+        无在飞 turn 时 stop+start（下一次 spawn 重建 dump，新工具对下一
+        turn 可见——进程不重启）；有在飞 turn 时延迟（本 turn 用旧面跑完，
+        绝不杀活 turn）。返回 True 表示执行了回收。
+        """
+        if not self.surface_generation_stale():
+            return False
+        async with self._respawn_lock:
+            if not self.surface_generation_stale():  # 双检：并发下他人已回收
+                return False
+            if self._active_turn_sid is not None or self._lock.locked():
+                logger.info(
+                    "[PiBridge] Deferring surface recycle: a turn is still "
+                    "running on the stale-generation worker (session=%s)",
+                    self._active_turn_sid,
+                )
+                return False
+            # review P1-2：活 turn 检查与 stop() 之间存在 check-then-act 竞窗
+            # —— 并发准入的请求 B 可能恰在此间获得 turn 锁开始 turn，被 stop
+            # 误杀成 process_died。回收必须持 turn 锁做（与 turn 准入互斥）；
+            # 有界等待：锁被持 = 有在飞 turn = 延迟回收（不阻塞准入路径）。
+            try:
+                # 普通锁协议（非 turn lease）：回收不注册 writer/台账，只与
+                # turn 准入互斥；owner 语义由「谁持锁谁释放」的临界区保证。
+                await asyncio.wait_for(self._lock.acquire(), timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                logger.info(
+                    "[PiBridge] Deferring surface recycle: turn lock busy "
+                    "(a turn is starting or running)",
+                )
+                return False
+            try:
+                if self._active_turn_sid is not None:
+                    return False  # 双检：临界区内再确认（锁内新 turn 不会出现）
+                logger.info(
+                    "[PiBridge] Recycling Pi worker for surface generation drift "
+                    "(registry tools changed since spawn)",
+                )
+                try:
+                    await self.stop()
+                    await self.start()
+                except Exception:  # noqa: BLE001 — 回收失败留给既有 lazy respawn 兜底
+                    logger.exception("[PiBridge] surface recycle failed; lazy respawn will retry")
+                    return False
+            finally:
+                self._lock.release()
+            try:
+                from app.services.chat.pi_surface_metrics import record_surface_recycle
+
+                record_surface_recycle("registry_generation_drift")
+            except Exception:  # noqa: BLE001
+                logger.debug("[PiBridge] surface recycle metric record failed", exc_info=True)
+            return True
 
     async def start(self) -> None:
         """Start the Pi subprocess (delegates to the RPC client)."""
@@ -2041,6 +2191,11 @@ class PiBridge:
             _clear_dispatch_cache(turn_sid)
             with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
                 TURN_EVIDENCE.register(rt_ev)
+                # PI-01（ADR-0286）：显式相位机与旗标同点初始化（finally 的
+                # seam 引用它——先绑定再进 try，防早退路径 UnboundLocalError）。
+                _phase = TurnPhaseTracker(turn_id)
+                rt_ev.attach_phase(_phase)
+                _phase.transition(TurnPhase.STARTING, reason="flags-init")
                 cancelled = False
                 timed_out = False
                 send_failed = False
@@ -2155,6 +2310,8 @@ class PiBridge:
                             "Pi consumed the prompt via an input handler "
                             "(disposition=handled); no agent run started"
                         )
+                    # PI-01（ADR-0286）：prompt 已被 Pi 接收 —— 进入 RUNNING。
+                    _phase.transition(TurnPhase.RUNNING, reason="prompt-accepted")
 
                     # Drain events from the queue (non-streaming mode).
                     # audit #816: message_update carries the ACCUMULATED partial
@@ -2211,6 +2368,9 @@ class PiBridge:
                                 # 首个真实 Pi 事件（first_event/TTFT-proxy）。
                                 rt_ev.mark_first_event()
                                 event_type = event.get("type")
+                                # PI-01（ADR-0286）：tool_execution_start/end 驱动
+                                # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
+                                _phase.observe_tool_event(event_type)
                                 if event_type == "agent_settled":
                                     _drained_complete = True
                                     break
@@ -2301,6 +2461,7 @@ class PiBridge:
                             )
                 except asyncio.CancelledError:
                     cancelled = True
+                    _phase.transition(TurnPhase.CANCELLING, reason="client-cancel")
                     rt_ev.settle(Outcome.CANCELLED)
                     raise
                 except Exception as exc:  # noqa: BLE001
@@ -2361,6 +2522,7 @@ class PiBridge:
                             error_detail=_error_detail,
                             timeout_reason=timeout_reason,
                             projections_settled=_projections_settled,
+                            phase=_phase,
                         )
                     # F03：诊断面与权威终态对齐 —— drain 退出点因 abort 让位
                     # 未结算的，由 seam 记录的 status 补结算（first-wins，
@@ -2393,7 +2555,16 @@ class PiBridge:
                     self._release_turn_lease(lease)
                     await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                     rt_ev.mark_ended()
-                    emit_turn_summary(rt_ev)
+                    _turn_summary = emit_turn_summary(rt_ev)
+                    # PI-08（ADR-0286 D4）：TTFT 进进程级聚合（有界窗口）。
+                    try:
+                        from app.services.chat.pi_surface_metrics import record_timing
+
+                        _fe = (_turn_summary or {}).get("timing_ms", {}).get("first_event")
+                        if _fe is not None:
+                            record_timing("ttft_ms", _fe)
+                    except Exception:  # noqa: BLE001 — 聚合绝不阻断收口
+                        pass
                     # R10（ADR-0256）：env-gated 轨迹录制（默认关闸 no-op；
                     # never-raises；记录面绝不阻断 settle）——非流式 prompt 路径。
                     try:
@@ -2555,6 +2726,11 @@ class PiBridge:
             try:
                 _session_executed_sets.pop(turn_sid, None)
                 _clear_dispatch_cache(turn_sid)
+                # PI-01（ADR-0286）：显式相位机与旗标同点初始化（两条路径同构；
+                # seam 引用它 —— 先绑定再进 try，防早退路径 UnboundLocalError）。
+                _phase = TurnPhaseTracker(turn_id)
+                rt_ev.attach_phase(_phase)
+                _phase.transition(TurnPhase.STARTING, reason="flags-init")
                 cancelled = False
                 timed_out = False
                 send_failed = False
@@ -2691,6 +2867,9 @@ class PiBridge:
                         yield sse_event("done", {"session_id": turn_sid})
                         return
 
+                    # PI-01（ADR-0286）：prompt 已被 Pi 接收 —— 进入 RUNNING。
+                    _phase.transition(TurnPhase.RUNNING, reason="prompt-accepted")
+
                     # Stream events from Pi. task_start is a bridge-emitted structural
                     # event (not a Pi event), so first_event is NOT marked here — it is
                     # marked on the first REAL Pi event below, so first_event/TTFT-proxy
@@ -2700,6 +2879,10 @@ class PiBridge:
                         "session_id": turn_sid,
                         "turn_id": turn_id,
                         "agent_runtime": "pi",
+                        # PI-06（ADR-0286 D3）：统一三态披露（本事件仅在真
+                        # Pi RPC 承载的 turn 上发射 → 恒为 native；fallback
+                        # 由 /health.agent_runtime_mode 与降级日志披露）。
+                        "runtime_mode": "native",
                     })
 
                     # G: watch the subprocess death signal alongside the event queue so
@@ -2727,6 +2910,13 @@ class PiBridge:
                     # audit #820: turn-scoped counters（_turn_tool_steps /
                     # _turn_final_text / _turn_map_product）已随 flags 块
                     # 前置初始化 —— send-failed 早退路径也有诚实缺省值。
+                    # PI-04（ADR-0286 D2）：turn 内 toolCallId 终结事件去重集。
+                    # dispatch cache 单次消费后，Pi 重复回传同一
+                    # tool_execution_end 会走 cache-miss 降级路径补发第二条
+                    # step_result —— 首见放行、重复丢弃并计数。有界：超限后
+                    # 停止去重（正常 turn 的工具步数远低于该界）。
+                    _seen_tool_end_ids: set = set()
+                    _tool_end_dedup_overflow = False
                     get_task = asyncio.ensure_future(self._rpc.events.get())
                     died_task = asyncio.ensure_future(process_died_event.wait())
                     pending = {get_task, died_task}
@@ -2754,10 +2944,46 @@ class PiBridge:
                                 event = get_task.result()
                                 silence_seconds = 0.0
                                 rt_ev.mark_first_event()
+                                # PI-01（ADR-0286）：tool_execution_start/end 驱动
+                                # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
+                                _phase.observe_tool_event(str(event.get("type") or ""))
+                                # PI-04（ADR-0286 D2）：重复终结事件去重 —— 同一
+                                # toolCallId 的 tool_execution_end 首见放行、重复
+                                # 丢弃（不再补发降级 step_result、不重复计数）。
+                                _duplicate_tool_end = False
+                                if event.get("type") == "tool_execution_end":
+                                    _tcid = str(event.get("toolCallId") or "")
+                                    if _tcid:
+                                        if _tcid in _seen_tool_end_ids:
+                                            _duplicate_tool_end = True
+                                            rt_ev.add_warning(
+                                                "duplicate_tool_execution_end",
+                                                f"toolCallId={_tcid} 重复终结事件已丢弃",
+                                            )
+                                            try:
+                                                from app.services.chat.pi_surface_metrics import (
+                                                    record_duplicate_tool_end,
+                                                )
+                                                record_duplicate_tool_end(_tcid)
+                                            except Exception:  # noqa: BLE001 — 计数绝不阻断
+                                                pass
+                                            logger.warning(
+                                                "[PiBridge] duplicate tool_execution_end "
+                                                "dropped turn=%s toolCallId=%s",
+                                                turn_id, _tcid,
+                                            )
+                                        elif len(_seen_tool_end_ids) < 1024:
+                                            _seen_tool_end_ids.add(_tcid)
+                                        elif not _tool_end_dedup_overflow:
+                                            _tool_end_dedup_overflow = True
+                                            rt_ev.add_warning(
+                                                "tool_end_dedup_overflow",
+                                                "去重集超界（1024），后续终结事件不再去重",
+                                            )
                                 # audit #820: truthful task_complete counters — count
                                 # executed tool steps and accumulate the final text
                                 # the vendor streams (message.content snapshots).
-                                if event.get("type") == "tool_execution_end":
+                                if event.get("type") == "tool_execution_end" and not _duplicate_tool_end:
                                     _turn_tool_steps += 1
                                 if event.get("type") == "message_update":
                                     _snap = _extract_text_from_event(event)
@@ -2805,7 +3031,7 @@ class PiBridge:
                                             reason="turn_settled",
                                         )
                                         _projections_settled = True
-                                sse = map_event_to_sse(
+                                sse = "" if _duplicate_tool_end else map_event_to_sse(
                                     event,
                                     turn_sid,
                                     cache_lookup=lookup_result,
@@ -2825,7 +3051,7 @@ class PiBridge:
                                     turn_harness.record_sse_event({
                                         **event, "run_id": run_id, "turn_id": turn_id,
                                     })
-                                if event.get("type") == "tool_execution_end":
+                                if event.get("type") == "tool_execution_end" and not _duplicate_tool_end:
                                     extra_plan = take_session_plan_sse(
                                         str(event.get("toolCallId") or ""), turn_sid,
                                     )
@@ -2938,6 +3164,7 @@ class PiBridge:
                     # network drop). Re-raise after flagging so the finally sends the
                     # abort RPC — otherwise Pi keeps running against an abandoned turn.
                     cancelled = True
+                    _phase.transition(TurnPhase.CANCELLING, reason="client-disconnect")
                     raise
                 finally:
                     if process_died:
@@ -3013,6 +3240,7 @@ class PiBridge:
                             error_detail=_error_detail,
                             timeout_reason=timeout_reason,
                             projections_settled=_projections_settled,
+                            phase=_phase,
                         )
                     # #1108 INV-P4: release the lease BEFORE the unregister
                     # await — the release is synchronous (uncancellable) and
@@ -3052,7 +3280,16 @@ class PiBridge:
                     else:
                         rt_ev.settle(Outcome.SUCCEEDED)
                     rt_ev.mark_ended()
-                    emit_turn_summary(rt_ev)
+                    _turn_summary = emit_turn_summary(rt_ev)
+                    # PI-08（ADR-0286 D4）：TTFT 进进程级聚合（有界窗口）。
+                    try:
+                        from app.services.chat.pi_surface_metrics import record_timing
+
+                        _fe = (_turn_summary or {}).get("timing_ms", {}).get("first_event")
+                        if _fe is not None:
+                            record_timing("ttft_ms", _fe)
+                    except Exception:  # noqa: BLE001 — 聚合绝不阻断收口
+                        pass
                     # R10（ADR-0256）：env-gated 轨迹录制（默认关闸 no-op；
                     # never-raises；只读收集本 turn 的 chain/summary/product
                     # 打包为离线重放 artifact）。记录面绝不阻断 settle。

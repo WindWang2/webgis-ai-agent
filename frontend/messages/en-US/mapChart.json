@@ -7,5 +7,7 @@
     "overLimit": "Dataset exceeds the aggregate scan limit; viewport stats unavailable",
     "error": "Failed to fetch viewport stats",
     "loading": "Aggregating viewport…"
-  }
+  },
+  "keyboardSelect": "Select category (keyboard)",
+  "keyboardSelectNone": "None (clear linkage)"
 }

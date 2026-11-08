@@ -1,0 +1,97 @@
+{
+  "name": "box_select_20_range_faithful",
+  "description": "SW-02/J1 金标：框选 20 所学校（matched_count=20）→ 投影 selection 保留完整 20 个 id + matched_count=20 + ids_truncated=false —— 「选 20 分析 20」，UI 反馈与 Agent 事实一致（#2004 修复前投影只见 8 个）。",
+  "events": [
+    {
+      "event_id": "box20-faith-0001",
+      "client_instance_id": "tab-box20001",
+      "client_seq": 1,
+      "kind": "viewport_settled",
+      "payload": {
+        "center": [
+          104.06,
+          30.66
+        ],
+        "zoom": 12
+      }
+    },
+    {
+      "event_id": "box20-faith-0002",
+      "client_instance_id": "tab-box20001",
+      "client_seq": 2,
+      "kind": "feature_selected",
+      "payload": {
+        "layer_id": "schools",
+        "dataset_ref": "ref:geojson-schools-cd",
+        "id_field": "osm_id",
+        "selected_ids": [
+          "node/1234567890abcdefghij000001x",
+          "node/1234567890abcdefghij000002x",
+          "node/1234567890abcdefghij000003x",
+          "node/1234567890abcdefghij000004x",
+          "node/1234567890abcdefghij000005x",
+          "node/1234567890abcdefghij000006x",
+          "node/1234567890abcdefghij000007x",
+          "node/1234567890abcdefghij000008x",
+          "node/1234567890abcdefghij000009x",
+          "node/1234567890abcdefghij000010x",
+          "node/1234567890abcdefghij000011x",
+          "node/1234567890abcdefghij000012x",
+          "node/1234567890abcdefghij000013x",
+          "node/1234567890abcdefghij000014x",
+          "node/1234567890abcdefghij000015x",
+          "node/1234567890abcdefghij000016x",
+          "node/1234567890abcdefghij000017x",
+          "node/1234567890abcdefghij000018x",
+          "node/1234567890abcdefghij000019x",
+          "node/1234567890abcdefghij000020x"
+        ],
+        "matched_count": 20,
+        "bbox": [
+          104.04,
+          30.65,
+          104.08,
+          30.68
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "verdicts": "all_accepted",
+    "projection": {
+      "selection": {
+        "layer_id": "schools",
+        "matched_count": 20,
+        "ids_truncated": false,
+        "selected_ids": [
+          "node/1234567890abcdefghij000001x",
+          "node/1234567890abcdefghij000002x",
+          "node/1234567890abcdefghij000003x",
+          "node/1234567890abcdefghij000004x",
+          "node/1234567890abcdefghij000005x",
+          "node/1234567890abcdefghij000006x",
+          "node/1234567890abcdefghij000007x",
+          "node/1234567890abcdefghij000008x",
+          "node/1234567890abcdefghij000009x",
+          "node/1234567890abcdefghij000010x",
+          "node/1234567890abcdefghij000011x",
+          "node/1234567890abcdefghij000012x",
+          "node/1234567890abcdefghij000013x",
+          "node/1234567890abcdefghij000014x",
+          "node/1234567890abcdefghij000015x",
+          "node/1234567890abcdefghij000016x",
+          "node/1234567890abcdefghij000017x",
+          "node/1234567890abcdefghij000018x",
+          "node/1234567890abcdefghij000019x",
+          "node/1234567890abcdefghij000020x"
+        ],
+        "bbox": [
+          104.04,
+          30.65,
+          104.08,
+          30.68
+        ]
+      }
+    }
+  }
+}

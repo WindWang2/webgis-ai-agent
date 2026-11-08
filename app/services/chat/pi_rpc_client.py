@@ -29,6 +29,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -170,6 +171,10 @@ class PiRpcClient:
         self._pending_requests: dict[str, asyncio.Future] = {}
         self._event_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_EVENT_QUEUE_SIZE)
         self._request_counter = 0
+        # PI-03（ADR-0286 D4）：本次 spawn 的 dump registry_generation（空 =
+        # v2 dump / 未锚定 —— bridge 的代漂移检测 fail-open 不回收）。
+        self.spawn_surface_generation: str = ""
+        self._surface_dump_path: Optional[Path] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
         # 审计 AGENT-05：Pi 进程死亡后标记为 True，让 _use_pi_bridge() 能回退
@@ -262,6 +267,9 @@ class PiRpcClient:
         if self._process is not None and self._process.poll() is None:
             return
 
+        # PI-08（ADR-0286 D4）：spawn→ready 墙钟计时（冷启动观测）。
+        _spawn_t0 = time.monotonic()
+
         # 重连/respawn：清掉上一次死亡的残留信号，防止陈旧死亡误杀新 turn
         # （reader finally 里与 flag 一起 set 的 event，这里与 flag 一起 clear）。
         self._process_died = False
@@ -288,6 +296,19 @@ class PiRpcClient:
             await self.stop()
             raise PiRpcError("Pi did not become ready within its startup deadline") from exc
 
+        # PI-03/PI-08（ADR-0286 D4）：锚定本次 spawn 的 dump 世代（代漂移
+        # 检测锚点）+ spawn→ready 计时入聚合。观测面失败绝不影响启动。
+        try:
+            self.spawn_surface_generation = self._read_spawn_surface_generation()
+        except Exception:  # noqa: BLE001 — 世代缺席则 bridge 不做代回收
+            self.spawn_surface_generation = ""
+        try:
+            from app.services.chat.pi_surface_metrics import record_timing
+
+            record_timing("spawn_ready_ms", (time.monotonic() - _spawn_t0) * 1000.0)
+        except Exception:  # noqa: BLE001
+            pass
+
         # audit4 #987: 可选的显式模型选择 —— PI_PROVIDER + PI_MODEL 同时设置
         # 时通过 set_model RPC 把 Pi 切到目录内指定模型（provider/modelId 必须
         # 是 Pi 已注册的；后端 chat-completions 端点不是 Pi provider，不能盲映射）。
@@ -300,6 +321,20 @@ class PiRpcClient:
                 logger.info(f"[PiRpcClient] Pi model set to {pi_provider}/{pi_model}")
             except Exception as e:  # noqa: BLE001 — 尽力而为
                 logger.warning(f"[PiRpcClient] set_model {pi_provider}/{pi_model} failed: {e}")
+
+    def _read_spawn_surface_generation(self) -> str:
+        """PI-03（ADR-0286 D4）：读回本次 spawn dump 的 ``registry_generation``。
+
+        v2 dump（无该键）→ 空串（bridge 的代漂移检测 fail-open 不回收）。
+        """
+        path = self._surface_dump_path
+        if not path or not path.is_file():
+            return ""
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return str(payload.get("registry_generation") or "")
+        except Exception:  # noqa: BLE001 — 观测锚缺席不阻断启动
+            return ""
 
     def _spawn_process(self) -> None:
         """Pi 子进程 spawn 的全部阻塞步骤（worker 线程内执行，#1438）。
@@ -392,9 +427,10 @@ class PiRpcClient:
         # ADR-0103: dump is now the v2 dynamic surface (registered superset +
         # default-active); extension registers all and activates the default.
         from app.services.chat.pi_native_surface import dump_surface_file
-        env["WEBGIS_NATIVE_TOOLS_PATH"] = str(
-            dump_surface_file(PI_AGENT_DIR / "native-tools.json")
-        )
+        _dump_path = dump_surface_file(PI_AGENT_DIR / "native-tools.json")
+        env["WEBGIS_NATIVE_TOOLS_PATH"] = str(_dump_path)
+        # PI-03（ADR-0286 D4）：记路径供 start() 读回世代锚点。
+        self._surface_dump_path = _dump_path
 
         # GIS product: Pi is the host, not a coding agent. Built-in bash/read/
         # write/edit would otherwise swallow GIS failures (live: cartography

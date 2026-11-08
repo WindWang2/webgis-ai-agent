@@ -39,6 +39,7 @@
 | compute_spectral_index | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | spectral_index |
 | compute_terrain | 1.0#cv1 | stable | cacheable_read | slow | heavy | large | terrain_slope |
 | compute_vegetation_index | 1.0#cv1 | stable | cacheable_read | slow | heavy | large | ndvi |
+| conditional_quantile_zonal_stats | 1.0#cv1 | stable | deterministic_compute | slow | medium | large | zonal_statistics |
 | connect_data_source | 1.0#cv1 | stable | state_mutation | medium | light | small | data_source_pipeline |
 | control_floating_chart | 1.0#cv1 | stable | state_mutation | unknown | unknown | unknown | thematic_cartography |
 | convert_raster_to_cog | 1.0#cv1 | stable | deterministic_compute | slow | medium | large | raster_cog_conversion |
@@ -203,6 +204,7 @@
 | network_huff_interaction | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | spatial_interaction |
 | network_od_matrix | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | od_matrix |
 | network_service_area | 1.0#cv1 | stable | deterministic_compute | slow | heavy | large | service_area |
+| network_service_coverage_consistency | 1.0#cv1 | stable | deterministic_compute | medium | medium | large | service_area |
 | network_shortest_path | 1.0#cv1 | stable | deterministic_compute | medium | heavy | large | shortest_path |
 | od_flow_edges | 1.0#cv1 | stable | deterministic_compute | unknown | unknown | unknown | od_flow_mapping |
 | ols_regression | 1.0#cv1 | stable | deterministic_compute | medium | medium | medium | spatial_regression |

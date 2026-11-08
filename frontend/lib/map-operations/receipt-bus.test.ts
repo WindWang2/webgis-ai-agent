@@ -129,6 +129,57 @@ describe('agent receipt undo recording (ADR-0285 D6)', () => {
     recordSpy.mockRestore();
   });
 
+  it('records styleCommand for symbol/paint effects with numeric before (SW-04)', async () => {
+    const undoMod = await import('@/lib/workbench/undo');
+    const styleSpy = vi.spyOn(undoMod, 'styleCommand').mockImplementation(() => {});
+    const ok = pushOperationReceipt({
+      operation_id: 'op-agent-style-1',
+      status: 'committed',
+      origin: 'agent',
+      invertible: true,
+      effects: [
+        {
+          index: 0, kind: 'set_layer_symbol', targets: ['schools'],
+          state: 'applied', before: { 'circle-radius': 4 }, after: { 'circle-radius': 8 },
+        },
+        {
+          index: 1, kind: 'set_layer_paint', targets: ['heatmap'],
+          state: 'applied', before: { 'heatmap-opacity': 0.8 }, after: { 'heatmap-opacity': 0.3 },
+        },
+      ],
+    }, 'sess-rb');
+    expect(ok).toBe(true);
+    await vi.waitFor(() => {
+      expect(styleSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(styleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('agent:'),
+      'schools', 'agent',
+      { 'circle-radius': 4 }, { 'circle-radius': 8 },
+    );
+    styleSpy.mockRestore();
+  });
+
+  it('does not record styleCommand when before value is missing (SW-04 honesty)', async () => {
+    const undoMod = await import('@/lib/workbench/undo');
+    const styleSpy = vi.spyOn(undoMod, 'styleCommand').mockImplementation(() => {});
+    pushOperationReceipt({
+      operation_id: 'op-agent-style-2',
+      status: 'committed',
+      origin: 'agent',
+      invertible: true,
+      effects: [
+        {
+          index: 0, kind: 'set_layer_symbol', targets: ['schools'],
+          state: 'applied', before: { 'text-size': null }, after: { 'text-size': 14 },
+        },
+      ],
+    }, 'sess-rb');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(styleSpy).not.toHaveBeenCalled();
+    styleSpy.mockRestore();
+  });
+
   it('skips non-invertible or user-origin receipts', async () => {
     const undoMod = await import('@/lib/workbench/undo');
     const recordSpy = vi.spyOn(undoMod, 'presentationCommand').mockImplementation(() => {});

@@ -331,6 +331,37 @@ export function presentationCommand(
   });
 }
 
+/**
+ * 持久样式命令（paint/符号尺寸 —— SW-04 undo 覆盖面扩展）：
+ * inverse = patch_layer_style 用户通道反向提交（与 agent 的 map-op
+ * 同一 MapSpec 真相/revision 空间；before/after 为 MapLibre paint 键
+ * 数值对 —— 录制方保证 before 数值在场，缺值不录）。
+ */
+export function styleCommand(
+  label: string,
+  layerId: string,
+  actor: 'user' | 'agent',
+  before: Record<string, number>,
+  after: Record<string, number>,
+): void {
+  recordCommand({
+    label,
+    kind: 'toggle',
+    actor,
+    layerIds: [layerId],
+    undo: () => void commitStyle(layerId, before),
+    redo: () => void commitStyle(layerId, after),
+  });
+}
+
+function commitStyle(layerId: string, paint: Record<string, number>): void {
+  loadUserMutation()
+    .then(({ commitLayerStyleAndCommit }) => commitLayerStyleAndCommit(layerId, paint))
+    .catch((err) => {
+      devOnly.warn('[undo] style replay failed:', err);
+    });
+}
+
 function commitPresentation(layerId: string, patch: { visible?: boolean; opacity?: number }): void {
   loadUserMutation()
     .then(({ commitLayerPresentation }) => commitLayerPresentation({ layerId, ...patch }))

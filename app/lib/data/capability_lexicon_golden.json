@@ -1,0 +1,99 @@
+{
+  "schema_version": "capability-lexicon/v1",
+  "offline": true,
+  "description": "中英 GIS 术语检索黄金语料（离线、固定、无 API Key / 无网络）。正例覆盖中文 GIS 术语与其英文对照；负例覆盖 hallucinated 工具名、秒≠米量纲冲突、停用扩展的高相似度近似工具。CAP-O05 / CAP-O02 消费。",
+  "cases": [
+    {
+      "query": "缓冲区分析 / buffer zone（学校周边 500 米）",
+      "expect_tool": "buffer_analysis",
+      "expect_status": "native_verified",
+      "forbid_tools": [
+        "buffer_analysis_v9_hallucinated"
+      ],
+      "note": "缓冲：正例命中真实 buffer_analysis；负例是 hallucinated 名称，必须被拒绝"
+    },
+    {
+      "query": "空间连接 / spatial join（把 POI 落到行政区）",
+      "expect_tool": "spatial_join",
+      "expect_status": "native_verified",
+      "forbid_tools": [
+        "spatial_join_planned_stub"
+      ],
+      "note": "空间连接：负例是仅声明未注册的 planned 近似名"
+    },
+    {
+      "query": "分区统计 / zonal statistics（各区平均 NDVI）",
+      "expect_tool": "zonal_stats",
+      "expect_status": "native_verified",
+      "forbid_tools": [
+        "zonal_quantile_unregistered_v2"
+      ],
+      "note": "分区统计：不得因向量相似度高而激活未注册的分位数工具"
+    },
+    {
+      "query": "路网时间 / travel time seconds（行程秒数求可达性）",
+      "expect_tool": "network_od_matrix",
+      "expect_status": "native_verified",
+      "forbid_tools": [
+        "measure_distance",
+        "distance_matrix_cn"
+      ],
+      "note": "CAP-O06 回归：秒是时间量纲，不是米；米制距离工具必须被抑制"
+    },
+    {
+      "query": "等时圈 / isochrone（15 分钟步行可达范围）",
+      "expect_tool": "isochrone_network",
+      "expect_status": "native_verified",
+      "forbid_tools": [
+        "isochrone_planned_extension_ghost"
+      ],
+      "note": "等时圈：负例是停用/未激活扩展的幽灵工具名"
+    },
+    {
+      "query": "密度分析 / kernel density（学校点位热力）",
+      "expect_tool": "heatmap_data",
+      "expect_status": "native_verified",
+      "forbid_tools": [
+        "density_kernel_unregistered_v3"
+      ],
+      "note": "密度：负例为未注册的近似工具"
+    },
+    {
+      "query": "通视分析 / viewshed（地形可见域）",
+      "expect_tool": "viewshed_analysis",
+      "expect_status": "native_verified",
+      "forbid_tools": [
+        "viewshed_planned_stub"
+      ],
+      "note": "通视：负例为 planned stub"
+    },
+    {
+      "query": "空间插值 / IDW interpolation（气象站点插值）",
+      "expect_tool": "idw_interpolation",
+      "expect_status": "native_verified",
+      "forbid_tools": [
+        "interpolation_unregistered_ghost"
+      ],
+      "note": "插值：已有 LOOCV 能力，不得激活未注册幽灵工具"
+    },
+    {
+      "query": "地理综合 / dissolve generalization（面要素合并）",
+      "expect_tool": "dissolve_layer",
+      "expect_status": "native_verified",
+      "forbid_tools": [
+        "generalize_planned_stub"
+      ],
+      "note": "地理综合：负例为 planned stub"
+    },
+    {
+      "query": "把行程秒数当成米来算缓冲距离 / seconds mistaken as meters",
+      "expect_tool": "network_service_coverage_consistency",
+      "expect_status": "available_unverified",
+      "forbid_tools": [
+        "buffer_analysis",
+        "measure_distance"
+      ],
+      "note": "CAP-O06 硬负例：秒/米绝不混合；米制工具全部抑制，只保留显式时间量纲工具；该新原语未挂算法链，诚实标 available_unverified（ADR-0287 D3）"
+    }
+  ]
+}

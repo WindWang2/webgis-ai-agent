@@ -259,6 +259,11 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "pdf_font_fallback", "info",
             "PDF 文本使用回退字体渲染（未找到首选 CJK 字体）",
         ),
+        # —— G04（#1999）画布打印档约束求解回执 ——
+        RenderDiagnosticSpec(
+            "constraint_layout_evaluated", "info",
+            "打印档已按 solve_layout_v5 求解约束版面（page_profile: {detail}）",
+        ),
         # —— AC-06（ADR-0155）SVG 孪生表达力披露 ——
         RenderDiagnosticSpec(
             "hillshade_not_vectorizable", "warning",
@@ -535,6 +540,8 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     ),
     "raster_layer_unavailable_vector_pdf": ("app.services.publication_export",),
     "pdf_font_fallback": ("app.services.publication_export",),
+    # G04（#1999）：画布打印档求解回执的发射器（exporter 应用 zones 并上报）
+    "constraint_layout_evaluated": ("frontend/lib/map-kit/exporter.ts",),
     # vector_pdf_unavailable 的发射器是导出路由（503 结构化错误回退提示）
     "vector_pdf_unavailable": ("app.api.routes.map",),
     # F14：publication 覆盖回执的发射器（chrome 装配覆盖回执 → 诊断流）

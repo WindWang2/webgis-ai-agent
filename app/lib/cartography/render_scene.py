@@ -246,12 +246,18 @@ def derive_legend_items(legend_spec: Any) -> Optional[Dict[str, Any]]:
             entries.append(nodata_entry)
         if not entries and not allow_empty:
             return None  # 无可呈现条目（前端同规则：不画空卡）
-        return {
+        model = {
             "kind": kind,
             "title": _title(),
             "entries": entries,
             "hasNodata": nodata_entry is not None,
         }
+        # G04（CM-04 单位贯通）：legend_spec.unit 透传到模型（前端
+        # legendUnitSuffix 同语义 —— 单位行文案由渲染端统一为「单位：…」）。
+        unit = spec.get("unit")
+        if isinstance(unit, str) and unit.strip():
+            model["unit"] = unit.strip()
+        return model
 
     legacy = spec.get("entries")
     if isinstance(legacy, list):

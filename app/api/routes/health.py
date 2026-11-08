@@ -107,6 +107,52 @@ def _live_agent_runtime() -> str:
         return "chatengine"
 
 
+def _pi_mode_facts() -> dict:
+    """PI-06（ADR-0286 D3）：三态分类的宿主事实采集（可测试注入点）。
+
+    ``alive`` 为服务级视图（池内任一 worker 活即活，与 agent_runtime 徽章
+    同源）；``entry_built`` 来自 vendor 身份探测（无法判读 → None）。
+    """
+    enabled = False
+    bridge_present = False
+    alive = False
+    probe_ok = True
+    try:
+        from app.services.chat.pi_compat import pi_vendor_identity
+
+        from app.api.routes.chat import USE_NEW_AGENT, pi_bridge, _use_pi_bridge
+
+        enabled = bool(USE_NEW_AGENT)
+        bridge_present = pi_bridge is not None
+        if bridge_present:
+            alive = bool(_use_pi_bridge())
+        entry_built: bool | None = pi_vendor_identity().entry_built
+    except Exception:
+        logger.warning("pi mode facts probe failed", exc_info=True)
+        entry_built = None
+        probe_ok = False  # review P2-2：探测失败≠pi_disabled（假情报）
+    return dict(
+        enabled=enabled, bridge_present=bridge_present,
+        alive=alive, entry_built=entry_built, probe_ok=probe_ok,
+    )
+
+
+def _live_agent_runtime_mode() -> tuple[str, str]:
+    """(mode, reason) —— pi_compat.classify_runtime_mode 的 /health 出口。"""
+    from app.services.chat.pi_compat import classify_runtime_mode
+
+    try:
+        facts = _pi_mode_facts()
+        if not facts.get("probe_ok", True):
+            # 探测自身失败：诚实报 probe_failed（不得误报 pi_disabled）。
+            return "unavailable", "probe_failed"
+        facts.pop("probe_ok", None)
+        return classify_runtime_mode(**facts)
+    except Exception:
+        logger.warning("agent_runtime_mode probe failed", exc_info=True)
+        return "unavailable", "bridge_not_initialized"
+
+
 @router.get("/health", response_model=HealthResponse)
 def health_check() -> HealthResponse:
     """基础存活检查"""
@@ -114,6 +160,7 @@ def health_check() -> HealthResponse:
     # 修复硬编码 "0.1.3" 与 VERSION 文件（0.1.0.0）的漂移。
     from app.core.build_info import version_string
 
+    _mode, _mode_reason = _live_agent_runtime_mode()
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -126,6 +173,9 @@ def health_check() -> HealthResponse:
         # badge can be reconciled against reality.
         pi_workers_alive=_pi_workers_alive(),
         pi_vendor=_pi_vendor_summary(),
+        # PI-06（ADR-0286 D3）：三态 + 有界原因码（降级不冒充）。
+        agent_runtime_mode=_mode,
+        agent_runtime_reason=_mode_reason,
     )
 
 

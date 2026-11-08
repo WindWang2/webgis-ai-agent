@@ -81,16 +81,30 @@ def test_op1_point_select_reaches_projection_and_situation():
 
 
 def test_op2_brush_select_ids_are_bounded_and_bbox_dropped():
-    """框选多选：selected_ids 白名单有界（≤8 标量）；bbox/几何不在任何
-    kind 白名单内——框选几何本体今天无法进 IR（S1 AOI 面缺口）。"""
+    """框选多选（SW-02/#2004 期望语义）：selected_ids 有界但与选择面三方
+    对齐（≤50），12 个 id 完整保留 + 披露截断标记为 False；bbox 谓词随
+    选择上行（SW-02 残余：框选区域作为空间范围可指代；几何本体仍走
+    canvas affordance 环，不进 IR）。"""
     normalized = normalize_payload("feature_selected", {
         "layer_id": "schools",
         "selected_ids": [f"sch-{i}" for i in range(12)],
+        "matched_count": 12,
         "bbox": [104.0, 30.6, 104.1, 30.7],
     })
     assert normalized is not None
-    assert len(normalized["selected_ids"]) == 8  # list 面裁剪
-    assert "bbox" not in normalized  # 白名单丢弃
+    assert len(normalized["selected_ids"]) == 12  # 新界内完整保留（旧 ≤8 为 #2004 断点）
+    assert normalized["ids_truncated"] is False
+    assert normalized["matched_count"] == 12
+    assert normalized["bbox"] == [104.0, 30.6, 104.1, 30.7]  # SW-02：bbox 谓词进白名单
+
+    overflow = normalize_payload("feature_selected", {
+        "layer_id": "schools",
+        "selected_ids": [f"sch-{i}" for i in range(53)],
+        "matched_count": 53,
+    })
+    assert overflow is not None
+    assert len(overflow["selected_ids"]) == 50  # 有界上限（三方对齐）
+    assert overflow["ids_truncated"] is True
 
     state = _fold([
         _ev(1, "feature_selected", {
@@ -272,12 +286,31 @@ def test_op12_selected_ids_flow_to_projection_for_feature_edit():
 
 
 def test_guard_payload_budget_rejects_oversize():
-    big = {"layer_id": "x" * 128, "feature_id": "y" * 128,
-           "geometry_digest": "z" * 128, "dataset_ref": "r" * 128,
-           "selected_ids": ["a" * 32] * 8, "field_names": ["f" * 32] * 8}
-    if len(json.dumps(big)) <= MAX_PAYLOAD_BYTES:
+    """SW-02 后预算分层：selection kind 4096B（50 ids 集），通用 512B。
+
+    selection kind 超宽预算仍拒收（51×128 字符伪造 id 集 ≈7KB > 4096B）；
+    非 selection kind（chart categories 8×128 ≈1.1KB）超 512B 仍整事件拒收。
+    """
+    from app.services.gis_harness.interaction_ir.contracts import (
+        MAX_PAYLOAD_BYTES_SELECTION,
+    )
+    big_selection = {
+        "layer_id": "x" * 128, "feature_id": "y" * 128,
+        "geometry_digest": "z" * 128, "dataset_ref": "r" * 128,
+        "selected_ids": ["a" * 128] * 50, "field_names": ["f" * 32] * 8,
+        "matched_count": 10 ** 6,
+    }
+    blob = json.dumps(big_selection)
+    if len(blob.encode()) <= MAX_PAYLOAD_BYTES_SELECTION:
+        pytest.skip("构造未超宽预算，换更大载荷")
+    assert normalize_payload("feature_selected", big_selection) is None
+    big_style = {
+        "layer_id": "C" * 128,
+        "attribute_names": [str(i) + "a" * 126 for i in range(8)],
+    }
+    if len(json.dumps(big_style)) <= MAX_PAYLOAD_BYTES:
         pytest.skip("构造未超预算，换更大载荷")
-    assert normalize_payload("feature_selected", big) is None
+    assert normalize_payload("layer_style_changed", big_style) is None
 
 
 def test_map_state_snapshot_roundtrip_with_dropped_disclosure():

@@ -458,6 +458,26 @@ CHECKS = [
 ]
 
 
+def _runtime_mode_block() -> tuple[str, str]:
+    """PI-06（ADR-0286 D3）：与运行时同词表的三态判定（doctor 视角）。
+
+    doctor 是进程外 CLI，无法观测后端桥进程活性 —— 以「本 checkout 能否
+    承载真 Pi」的事实代理：USE_NEW_AGENT 开且 entry 已构建 → native 候选；
+    否则 fallback/unavailable。分类逻辑与 /health 共用
+    ``pi_compat.classify_runtime_mode`` 单一定义点（词表不漂移）。
+    """
+    from app.services.chat.pi_compat import classify_runtime_mode, pi_vendor_identity
+
+    use_new_agent = os.getenv("USE_NEW_AGENT", "0") == "1"
+    ident = pi_vendor_identity()
+    return classify_runtime_mode(
+        enabled=use_new_agent,
+        bridge_present=True,  # doctor 视角：宿主代码路径完整在场
+        alive=use_new_agent and ident.entry_built,
+        entry_built=ident.entry_built,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--offline", action="store_true", help="skip the live RPC subprocess probe")
@@ -474,10 +494,20 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 — doctor must always finish
             reports.append(Report(name, FAIL, f"check crashed: {exc}"))
 
+    try:
+        mode, reason = _runtime_mode_block()
+    except Exception:  # noqa: BLE001 — 汇总面绝不阻断；原因码有界（词表）
+        mode, reason = "unavailable", "probe_failed"
+
     if args.json:
         print(json.dumps(
-            [{"domain": r.domain, "status": r.status, "detail": r.detail,
-              "remediation": r.remediation, "facts": r.facts} for r in reports],
+            {
+                "runtime_mode": {"mode": mode, "reason": reason},
+                "domains": [
+                    {"domain": r.domain, "status": r.status, "detail": r.detail,
+                     "remediation": r.remediation, "facts": r.facts} for r in reports
+                ],
+            },
             ensure_ascii=False, indent=2))
     else:
         for r in reports:
@@ -486,6 +516,8 @@ def main() -> int:
             if r.remediation:
                 print(f"             fix: {r.remediation}")
         print()
+        suffix = f" (reason: {reason})" if reason else ""
+        print(f"runtime mode: {mode}{suffix} — vocabulary shared with /health.agent_runtime_mode")
 
     failed = [r for r in reports if r.status == FAIL]
     if failed:

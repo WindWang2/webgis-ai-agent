@@ -79,6 +79,37 @@ def _from_record(record: Optional[DescriptorRecord]) -> ReuseDecision:
                          recorded_fingerprint="", current_fingerprint=record.fingerprint)
 
 
+#: G03 GD-05：任务范围变化的复用失效码（城市/视口切换 → 旧资格过期）。
+CODE_TASK_SCOPE_CHANGED = "TASK_SCOPE_CHANGED"
+
+
+def evaluate_scoped_reuse(
+    recorded_fingerprint: Optional[str],
+    current: Optional[DescriptorRecord],
+    *,
+    recorded_scope_fingerprint: str = "",
+    current_scope_fingerprint: str = "",
+) -> ReuseDecision:
+    """范围感知复用裁决（G03 GD-05 / ADR-0286 D6）。
+
+    指纹一致但**任务范围已变化**（城市/视口切换）→ RECOMPUTE +
+    ``TASK_SCOPE_CHANGED``——旧城市名下绑定的数据不得凭名字/指纹复用到
+    新范围（数据没变 ≠ 资格还有效）。范围指纹任一缺席 → 纯指纹对账
+    （既有语义，向后兼容）。
+    """
+    recorded_scope = str(recorded_scope_fingerprint or "").strip()
+    current_scope = str(current_scope_fingerprint or "").strip()
+    if recorded_scope and current_scope and recorded_scope != current_scope:
+        base = evaluate_reuse(recorded_fingerprint, current)
+        return ReuseDecision(
+            verdict=VERDICT_RECOMPUTE,
+            reason_codes=[CODE_TASK_SCOPE_CHANGED] + list(base.reason_codes)[:3],
+            recorded_fingerprint=base.recorded_fingerprint,
+            current_fingerprint=base.current_fingerprint,
+        )
+    return evaluate_reuse(recorded_fingerprint, current)
+
+
 def evaluate_reuse(
     recorded_fingerprint: Optional[str],
     current: Optional[DescriptorRecord],

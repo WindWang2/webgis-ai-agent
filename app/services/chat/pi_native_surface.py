@@ -381,7 +381,13 @@ def _pi_tool_definition(registry: Any, name: str, *, dormant: bool) -> dict[str,
         "name": name,
         "label": _LABELS.get(name, name),
         "description": fn.get("description") or name,
-        "parameters": _pi_parameters(subset[0]),
+        # G01-PI-NATIVE-RUNTIME（PI-03，PI-09 旅程发现）：此前误传未解包的
+        # schema 条目（{"type":"function","function":{...}}）——顶层无
+        # ``parameters`` 键 → 全部长尾 dormant 工具投影成空 properties +
+        # additionalProperties:false，vendor 按注册 schema 拒绝一切参数，
+        # 裸名长尾面整体不可调用。传 function schema 本体（与
+        # native_tools_for_pi 同源）。
+        "parameters": _pi_parameters(fn),
     }
     if name in NATIVE_TOOL_NAME_SET:
         definition["promptSnippet"] = _SNIPPETS.get(name, "")

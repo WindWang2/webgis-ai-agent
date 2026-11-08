@@ -173,11 +173,18 @@ def test_default_publication_document_is_not_rewritten():
     same, report = prepare_publication_document(document, page_profile=None)
     assert same is document
     assert report["constraint_layout"] == "not_evaluated"
+    # G04（CM-05）：a3_landscape 已入求解器词表（与 PublicationIR 纸张几何
+    # 对齐）—— 不支持档用词表外值（如 letter）断言。
     unsupported, report = prepare_publication_document(
-        document, page_profile="a3_landscape",
+        document, page_profile="letter_portrait",
     )
     assert unsupported is document
     assert report["reason"] == "profile_unsupported"
+    a3_clone, a3_report = prepare_publication_document(
+        document, page_profile="a3_landscape",
+    )
+    assert a3_clone is not document
+    assert a3_report["constraint_layout"] == "evaluated"
 
 
 def test_explicit_a4_landscape_evaluates_existing_solver():
@@ -194,7 +201,10 @@ def test_explicit_a4_landscape_evaluates_existing_solver():
     )
     assert cloned is not document
     assert document["layout"].get("constraint_layout") is None
-    assert cloned["layout"]["constraint_layout"] == "evaluated"
+    # review P3-2:克隆不再携带已退役的 constraint_layout 标记(零消费方
+    # 死数据);page_profile 保留供渲染面读档。
+    assert "constraint_layout" not in cloned["layout"]
+    assert cloned["layout"]["page_profile"] == "a4_landscape"
     assert report["constraint_layout"] == "evaluated"
     assert report["page_profile"] == "a4_landscape"
     assert {item["id"] for item in report["placements"]} >= {"title-1", "legend-1"}
@@ -321,7 +331,8 @@ def test_screen_cartographer_does_not_claim_constraint_layout():
     assert printed_report["constraint_layout"] == "evaluated"
 
 
-def test_default_chrome_coordinates_ignore_a_different_position():
+def test_default_chrome_coordinates_honor_component_anchor():
+    """G04（#2000）：组件锚点是 chrome 挪位的唯一门（不再依赖全局标记）。"""
     spec = {"layout": {"components": [{
         "id": "north-1",
         "type": "north_arrow",
@@ -331,15 +342,27 @@ def test_default_chrome_coordinates_ignore_a_different_position():
     svg, _coverage = _render_chrome_groups(
         spec, [104.0, 30.0, 105.0, 31.0], 800.0, 600.0, lambda _pt: (0.0, 0.0),
     )
-    moved = {
+    historical = {"layout": {"components": [{
+        "id": "north-1",
+        "type": "north_arrow",
+        "enabled": True,
+        "position": "top-right",
+    }]}}
+    historical_svg, _coverage = _render_chrome_groups(
+        historical, [104.0, 30.0, 105.0, 31.0], 800.0, 600.0, lambda _pt: (0.0, 0.0),
+    )
+    assert "chrome-north-arrow" in svg
+    # 用户/求解写入的非历史锚点被导出尊重（挪到底部），历史锚点保持默认坐标
+    assert svg != historical_svg
+    # 全局 constraint_layout 标记不再改变输出（同锚点同字节）
+    with_marker = {
         "layout": {
             "constraint_layout": "evaluated",
             "page_profile": "a4_landscape",
             "components": spec["layout"]["components"],
         },
     }
-    moved_svg, _coverage = _render_chrome_groups(
-        moved, [104.0, 30.0, 105.0, 31.0], 800.0, 600.0, lambda _pt: (0.0, 0.0),
+    marker_svg, _coverage = _render_chrome_groups(
+        with_marker, [104.0, 30.0, 105.0, 31.0], 800.0, 600.0, lambda _pt: (0.0, 0.0),
     )
-    assert "chrome-north-arrow" in svg
-    assert svg != moved_svg
+    assert svg == marker_svg

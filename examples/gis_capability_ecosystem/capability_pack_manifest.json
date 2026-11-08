@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "pack_id": "gis_capability_ecosystem_demo",
+  "version": "1.0.0",
+  "title": "GIS Capability Ecosystem — 最小可运行示范包",
+  "description": "工具声明 → 算法元数据 → 技能说明 → 认证 → 激活 → 发现 → 真实 dispatch → result artifact → MapSpec 消费边界。全部离线、无 API Key、无 PostGIS、无公网。",
+  "vendor": "WindWang2/webgis-ai-agent G06",
+  "namespace": "gis_capability_ecosystem_demo",
+  "permissions": [],
+  "resources": {
+    "latency_class": "medium",
+    "memory_class": "light",
+    "scale_class": "small",
+    "max_raster_cells": 40000000,
+    "max_network_edges": 20000,
+    "max_zones": 256
+  },
+  "side_effects": ["deterministic_compute"],
+  "network": false,
+  "deterministic": true,
+  "tools": [
+    {
+      "name": "conditional_quantile_zonal_stats",
+      "algorithm": "conditional_multi_quantile_zonal",
+      "capability": "zonal_statistics",
+      "input_artifacts": ["vector_polygon_fc", "single_band_raster"],
+      "output_artifacts": ["artifact"],
+      "unit_semantics": "raster_value_unitless",
+      "crs_semantics": "projected_required",
+      "parameter_contract": "conditional_quantile_zonal_stats"
+    },
+    {
+      "name": "network_service_coverage_consistency",
+      "algorithm": "multi_scheme_coverage_consistency",
+      "capability": "service_area",
+      "input_artifacts": ["network_line_fc", "point_fc"],
+      "output_artifacts": ["artifact"],
+      "unit_semantics": "meters",
+      "crs_semantics": "projected_required",
+      "parameter_contract": "network_service_coverage_consistency"
+    }
+  ],
+  "algorithms": [
+    {
+      "id": "conditional_multi_quantile_zonal",
+      "scientific_status": "native_verified",
+      "method": "linear-interpolation empirical quantiles over condition-masked cells",
+      "uncertainty_outputs": ["small_sample_disclosure", "valid_pixel_coverage"],
+      "preconditions": ["projected_crs", "finite_raster_values", "valid_polygon_geometry"]
+    },
+    {
+      "id": "multi_scheme_coverage_consistency",
+      "scientific_status": "native_verified",
+      "method": "Dijkstra reachable edge-set Jaccard across facility schemes",
+      "uncertainty_outputs": ["difference_edge_ids"],
+      "preconditions": ["declared_cost_unit", "no_unit_dimension_conflict", "connected_graph"]
+    }
+  ],
+  "skills": [
+    {
+      "id": "capability_ecosystem_offline_walkthrough",
+      "entry": "demo_school_poi.py",
+      "description": "学校 POI 点 + 行政区聚合：真实 dispatch 到既有 spatial_aggregate，产出分区数值与可审计引用"
+    },
+    {
+      "id": "capability_ecosystem_nodata_science",
+      "entry": "demo_nodata_science.py",
+      "description": "严格量纲 / nodata 科学场景：条件多分位数分区统计 + 秒≠米量纲冲突回归"
+    }
+  ],
+  "golden_tests": [
+    "tests/unit/gis/test_capability_ecosystem_oracles.py",
+    "tests/unit/tools/test_capability_ecosystem_primitives.py"
+  ],
+  "verification": {
+    "command": "python scripts/verify_capability_ecosystem.py",
+    "offline": true,
+    "requires_api_key": false,
+    "requires_postgis": false,
+    "postgis_opt_in": "pytest -m real_services（专项，非本包默认）"
+  }
+}

@@ -3,10 +3,14 @@
 normalize_payload 对 selected_ids 只取前 8 个且此前无 omitted 披露 →
 validate_analysis_scope 可能按前 8 个返回 usable，造成静默部分分析。
 
-本文件钉死 additive 契约（向后兼容）：
-- feature_selected / table_selection_changed 的 selected_ids 超 8 时，
-  规范化输出保留前 8 个并新增**服务端计算**的 selected_ids_omitted=N；
-  ≤8 时输出与既有逐字节一致（无新键）；
+合并仲裁（review-fix-rereview-20261108 执行合并时记录）：携带上限采用
+SW-02（PR #2014，ADR-0287）的 per-key cap —— selected_ids=50（三方对齐：
+前端 selection-store 与 analysis_scope.MAX_SCOPE_FEATURE_IDS）、
+categories=20、宽字节预算 4096；本 PR（#2017）的诚实计数语义保留并按
+实际携带上限推导：
+- selected_ids 超上限时输出携带前 N 个 + **服务端计算**的
+  selected_ids_omitted=原始数-携带数（与 ids_truncated 布尔并存）；
+  未超上限不加键；
 - ClaimedScope/ValidatedScope 暴露 omitted 计数；
 - validate 对 omitted>0 不得返回 usable：status=stale +
   reason=features_missing + checks.features="truncated"；missing_ids
@@ -60,24 +64,29 @@ def _truncated_claim(omitted: int = 2) -> Dict[str, Any]:
 
 def test_normalize_over_cap_discloses_omitted_both_kinds():
     for kind in ("feature_selected", "table_selection_changed"):
+        ids_60 = [f"sch-{i:02d}" for i in range(60)]
         out = normalize_payload(kind, {
             "layer_id": "schools", "dataset_ref": "ref:geojson-aaa",
-            "selected_ids": list(_IDS_10),
+            "selected_ids": ids_60,
         })
         assert out is not None
-        assert out["selected_ids"] == _IDS_10[:8]
-        assert out["selected_ids_omitted"] == 2
+        assert out["selected_ids"] == ids_60[:50]
+        assert out["selected_ids_omitted"] == 10
+        # SW-02 布尔披露与 G07 计数披露并存（同一截断事实的两个面）。
+        assert out["ids_truncated"] is True
 
 
 def test_normalize_at_cap_output_unchanged():
+    ids_50 = [f"sch-{i:02d}" for i in range(50)]
     payload = {
         "layer_id": "schools", "dataset_ref": "ref:geojson-aaa",
-        "selected_ids": _IDS_10[:8],
+        "selected_ids": ids_50,
     }
     out = normalize_payload("feature_selected", payload)
     assert out is not None
     assert "selected_ids_omitted" not in out
-    assert out["selected_ids"] == _IDS_10[:8]
+    assert out["selected_ids"] == ids_50
+    assert out["ids_truncated"] is False
 
 
 def test_normalize_omitted_not_accepted_from_client():
@@ -95,11 +104,12 @@ def test_normalize_omitted_not_accepted_from_client():
 def test_normalize_other_kinds_gain_no_omitted_key():
     out = normalize_payload("chart_selection_changed", {
         "layer_id": "schools", "field": "kind",
-        "categories": list(range(12)),
+        "categories": list(range(25)),
     })
     assert out is not None
     assert "selected_ids_omitted" not in out
-    assert out["categories"] == list(range(8))
+    # 仲裁 cap：categories=20（SW-02 三方对齐）；omitted 键仅属 id 集 kind。
+    assert out["categories"] == list(range(20))
 
 
 # ── derive_claimed_scope：omitted 计数透传 ──────────────────────────────
@@ -196,9 +206,10 @@ def test_projection_to_derive_preserves_omitted_across_production_chain():
         project_interaction_snapshot,
     )
 
+    ids_60 = [f"sch-{i:02d}" for i in range(60)]
     normalized = normalize_payload("feature_selected", {
         "layer_id": "schools", "dataset_ref": "ref:geojson-aaa",
-        "selected_ids": list(_IDS_10),
+        "selected_ids": ids_60,
     })
     assert normalized is not None
     snapshot = project_interaction_snapshot([{
@@ -206,27 +217,48 @@ def test_projection_to_derive_preserves_omitted_across_production_chain():
         "client_instance_id": "browser-1", "client_seq": 1, "server_seq": 1,
     }])
     claimed = derive_claimed_scope(snapshot, None)
-    assert claimed["selected_ids_omitted"] == 2
+    assert claimed["selected_ids_omitted"] == 10
+    assert claimed["ids_truncated"] is True
 
 
 def test_omitted_metadata_is_accounted_in_payload_byte_budget():
+    """宽预算（4096，SW-02）语义：服务端派生的 omitted 计数计入载荷字节
+    预算 —— 附加后越界必须 fail-closed 拒收（None）。控制组：同形不越界
+    载荷放行，证明拒收源于新增元数据（22B）而非基底超限。"""
     import json
 
-    ids = [f"sch-{i:03d}" for i in range(10)]
-    field_count, filler_length = next(
-        (count, n) for count in range(1, 9) for n in range(129)
-        if len(json.dumps({
-            "dataset_ref": "ref:geojson-aaa",
-            "field_names": ["x" * n] * count,
-            "layer_id": "schools", "selected_ids": ids[:8],
-        }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")) == 500
+    def _ids(n_len, count):
+        return [f"{i:03d}" + "x" * (n_len - 3) for i in range(count)]
+
+    def _size(id_len, digest_len, extra_pairs):
+        return len(json.dumps({
+            "geometry_digest": "g" * digest_len,
+            "layer_id": "schools",
+            **dict(extra_pairs),
+            "selected_ids": _ids(id_len, 50),
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+    # 双旋钮逼近预算上界：id 长度粗调（50B/步）、digest 长度细调（1B/步），
+    # 使 50-id 基底（含 ids_truncated:false）落在 (4074, 4096] —— 附加
+    # "selected_ids_omitted":10,（22B）后必越界。
+    # 联合搜索 (id 长度粗调, digest 细调) 使基底落 (4074, 4096]
+    n, target = next(
+        (nn, L)
+        for nn in range(48, 110)
+        for L in range(0, 129)
+        if 4074 < _size(nn, L, [("ids_truncated", False)]) <= 4096
     )
+    base = _size(n, target, [("ids_truncated", False)])
+    crossed = _size(n, target, [("ids_truncated", True), ("selected_ids_omitted", 10)])
+    assert base <= 4096 < crossed
+
     payload = {
-        "dataset_ref": "ref:geojson-aaa",
-        "field_names": ["x" * filler_length] * field_count,
-        "layer_id": "schools", "selected_ids": ids,
+        "layer_id": "schools",
+        "geometry_digest": "g" * target,
+        "selected_ids": _ids(n, 60),
     }
-    # 旧形状为 500B；服务端附加 25B omitted 计数后为 525B，必须 fail-closed，
-    # 不能悄悄超过 MAX_PAYLOAD_BYTES=512。
-    assert 500 + len('"selected_ids_omitted":2,') == 525
+    # 控制组：不越界的同形（原始 50，无 omitted 派生）放行。
+    ok = dict(payload, selected_ids=_ids(n, 50))
+    assert normalize_payload("feature_selected", ok) is not None
+    # 拒收组：原始 60 → 携带 50 + omitted:10 附加后越界 → fail-closed。
     assert normalize_payload("feature_selected", payload) is None

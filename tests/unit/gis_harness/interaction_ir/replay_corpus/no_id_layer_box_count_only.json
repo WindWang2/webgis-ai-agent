@@ -1,0 +1,26 @@
+{
+  "name": "no_id_layer_box_count_only",
+  "description": "SW-02 金标：无稳定 id 字段图层的框选不再零上行 —— count-only feature_selected（layer_id + matched_count）被接受且投影 selection 携带命中数（修复前该分支完全不上行，模型对框选失明）。",
+  "events": [
+    {
+      "event_id": "noid-count-0001",
+      "client_instance_id": "tab-noid0001",
+      "client_seq": 1,
+      "kind": "feature_selected",
+      "payload": {
+        "layer_id": "photos",
+        "matched_count": 23,
+        "bbox": [104.03, 30.65, 104.07, 30.69]
+      }
+    }
+  ],
+  "expect": {
+    "verdicts": "all_accepted",
+    "projection": {
+      "selection": {
+        "layer_id": "photos",
+        "matched_count": 23
+      }
+    }
+  }
+}

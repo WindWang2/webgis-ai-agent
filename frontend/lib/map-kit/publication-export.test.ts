@@ -185,3 +185,31 @@ describe('vectorPdfRequestFromSettings（studio 扁平设置 → 请求；review
     expect(fallback.atlas).toEqual({ driver: 'frames', includeCover: false });
   });
 });
+
+// ── G04 W1（#1999）：打印档矢量请求必须推导 page_profile ──────────────────
+describe('vectorPdfRequestFromSettings · page_profile 推导（#1999）', () => {
+  it('A4/A3 × landscape/portrait → 对应求解 profile', () => {
+    expect(vectorPdfRequestFromSettings({
+      paperSize: 'A4', orientation: 'landscape',
+    }).pageProfile).toBe('a4_landscape');
+    expect(vectorPdfRequestFromSettings({
+      paperSize: 'A4', orientation: 'portrait',
+    }).pageProfile).toBe('a4_portrait');
+    expect(vectorPdfRequestFromSettings({
+      paperSize: 'A3', orientation: 'landscape',
+    }).pageProfile).toBe('a3_landscape');
+    expect(vectorPdfRequestFromSettings({
+      paperSize: 'a3', orientation: 'portrait',
+    }).pageProfile).toBe('a3_portrait');
+  });
+
+  it('screen / 缺省 / 非法值 → 不携带 page_profile（不虚构求解）', () => {
+    expect(vectorPdfRequestFromSettings({
+      paperSize: 'screen',
+    }).pageProfile).toBeUndefined();
+    expect(vectorPdfRequestFromSettings({}).pageProfile).toBeUndefined();
+    expect(vectorPdfRequestFromSettings({
+      paperSize: 'letter',
+    }).pageProfile).toBeUndefined();
+  });
+});

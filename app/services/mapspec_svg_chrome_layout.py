@@ -1,7 +1,10 @@
-"""Constraint-aware SVG chrome positioning and title rendering.
+"""Anchor-aware SVG chrome positioning and title rendering.
 
-Keep historical coordinates and byte-for-byte markup when no explicit
-publication constraint layout is active. This module has no compiler imports.
+G04（#2000）：chrome 挪位以**组件自身锚点**为唯一门（placement.anchor >
+position > 类型默认，resolve_component 已归一）。历史锚点保持历史坐标与
+逐字节 markup；非历史锚点（用户挪动或出版求解写入的一等事实）按锚点
+角比例落位。全局 ``layout.constraint_layout`` 标记不再是门 —— 求解结果
+不得作为第二事实源改变后续默认导出。本模块无 compiler imports。
 """
 from typing import Optional
 
@@ -21,13 +24,7 @@ _HISTORICAL_CHROME_ANCHOR = {
 }
 
 
-def _constraint_layout_active(mapspec: object) -> bool:
-    layout = mapspec.get("layout") if isinstance(mapspec, dict) else None
-    return isinstance(layout, dict) and layout.get("constraint_layout") == "evaluated"
-
-
 def _constraint_chrome_xy(
-    mapspec: object,
     comp: Optional[ResolvedComponent],
     kind: str,
     canvas_w: float,
@@ -35,7 +32,7 @@ def _constraint_chrome_xy(
     margin: float,
 ) -> Optional[tuple[float, float]]:
     """Moved chrome only. Historical anchors keep the existing coordinates."""
-    if comp is None or not _constraint_layout_active(mapspec):
+    if comp is None:
         return None
     anchor = getattr(comp, "anchor", None)
     if anchor == _HISTORICAL_CHROME_ANCHOR.get(kind) or anchor in (None, "", "none"):
@@ -76,43 +73,33 @@ def _constraint_chrome_xy(
 
 
 def _render_title_chrome(
-    mapspec: object,
     title: Optional[ResolvedComponent],
     subtitle: Optional[ResolvedComponent],
     canvas_w: float,
     canvas_h: float,
     m: float,
+    *,
+    temporal_note: str = "",
 ) -> tuple[list[str], list[str]]:
-    """Return title markup and coverage, including the active temporal frame."""
+    """Return title markup and coverage, including the active temporal frame.
+
+    ``temporal_note``：GOAL 03 M6 时序注记（调用方从 MapSpec ``temporal``
+    块装配；启用时并入副标题 —— 导出图纸自带时间证据，缺 subtitle 时
+    独立成行同款排版）。
+    """
     parts: list[str] = []
     rendered: list[str] = []
-    # GOAL 03 M6：时序视图时间注记 —— temporal 启用时把当前帧标签并入
-    # 副标题（导出图纸自带时间证据；缺 subtitle 时独立成行同款排版）。
-    temporal_note = ""
-    temporal_cfg = mapspec.get("temporal") if isinstance(mapspec, dict) else None
-    if isinstance(temporal_cfg, dict) and temporal_cfg.get("enabled"):
-        frames = temporal_cfg.get("frames") or []
-        cursor = temporal_cfg.get("cursor_frame")
-        frame = next(
-            (f for f in frames if isinstance(f, dict) and f.get("id") == cursor), None
-        )
-        if frame is not None:
-            temporal_note = (
-                f"时间: {frame.get('label', cursor)}"
-                f"（粒度 {temporal_cfg.get('granularity') or ''}，"
-                f"窗口 [{frame.get('start')} ~ {frame.get('end')}）"
-            )
     if title is not None or subtitle is not None or temporal_note:
         t_text = title.text if title else ""
         s_text = subtitle.text if subtitle else ""
         if temporal_note:
             s_text = f"{s_text} — {temporal_note}" if s_text else temporal_note
         moved_title = (
-            _constraint_chrome_xy(mapspec, title, "title", canvas_w, canvas_h, m)
+            _constraint_chrome_xy(title, "title", canvas_w, canvas_h, m)
             if title is not None else None
         )
         moved_sub = (
-            _constraint_chrome_xy(mapspec, subtitle, "subtitle", canvas_w, canvas_h, m)
+            _constraint_chrome_xy(subtitle, "subtitle", canvas_w, canvas_h, m)
             if subtitle is not None else None
         )
         if moved_title is None and moved_sub is None:
