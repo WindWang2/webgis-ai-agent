@@ -362,3 +362,26 @@ async def test_benchmark_12_network_temporal_combined_slice():
 
     assert res_t1.accessibility.coverage_percentage <= res_t2.accessibility.coverage_percentage
     assert change_res.status == "success"
+
+
+def test_service_area_graph_without_dataset_fails_typed():
+    """A-2（review-fix-rereview-20261108）：graph/network_dataset 不成对。
+
+    直连服务 API 传 graph 而漏 network_dataset 时，吸附在
+    PointSnappingService._get_index 上炸 AttributeError（NoneType.edges），
+    上层转 500。期望：入口类型化 ValueError —— 调用方可向用户解释，
+    而不是内部错误。
+    """
+    import networkx as nx
+    from app.services.network.service_area import NetworkServiceAreaService
+
+    g = nx.DiGraph()
+    g.add_edge("a", "b", length_m=100.0)
+    with pytest.raises(ValueError, match="network_dataset"):
+        NetworkServiceAreaService().network_service_area(
+            facilities=[(116.391, 39.901)],
+            breaks=[5.0],
+            break_unit="minutes",
+            graph=g,
+            network_dataset=None,
+        )
