@@ -247,6 +247,27 @@ def normalize_geometry_kind(text: str) -> str:
     return value[:48]
 
 
+def harvest_geometry_kind(text: str) -> str:
+    """话语 → 表达类别收割（**只认词表命中**，无 passthrough）。
+
+    ``normalize_geometry_kind`` 对词表外输入返回原文前缀（程序化写入面
+    的兼容行为）；genesis 话语收割（G02-GIS-EXECUTION-COMPILER / GC-01）
+    绝不能把任意词面当表达——未命中 = 未表达（""），由编译器按数据/
+    语义推导表达候选。
+    """
+    value = normalize_text(text)
+    if not value:
+        return ""
+    from app.lib.cartography.model_library import get_map_model_registry
+    if get_map_model_registry().get(value) is not None:
+        return value[:48]
+    for synonyms, kind in _GEOMETRY_KIND_TABLE:
+        for synonym in synonyms:
+            if _contains(value, synonym):
+                return kind
+    return ""
+
+
 # ── 导出格式（对齐 intent.ExportFormat 词表） ──────────────────────────
 
 _EXPORT_FORMATS = frozenset({"png", "pdf", "svg", "csv", "geojson"})

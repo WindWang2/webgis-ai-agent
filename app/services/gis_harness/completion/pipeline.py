@@ -830,6 +830,7 @@ def map_product_block(
     session_id: str = "",
     tenant_id: str = "",
     user_hidden_layers: Optional[List[str]] = None,
+    workflow_disclosures: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -942,6 +943,11 @@ def map_product_block(
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
                          exc_info=True)
+    # G02-GIS-EXECUTION-COMPILER（C2 验收桥）：族运行披露随块持久化
+    # （科学终审未过/未匹配需求/skipped 步骤——additive 键，旧读者忽略）。
+    if workflow_disclosures:
+        block["workflow_disclosures"] = [
+            str(d)[:120] for d in list(workflow_disclosures)[:8]]
     # GOAL 05（ADR-0279 M4）：goal verification 对账随块持久化 ——
     # 「完成回执 ↔ 渲染观察 ↔ 数据资格 ↔ 科学评审」一致性面（false-PASS
     # 守门：观察缺失/科学证据不足不能随 task_complete 混过）。additive
@@ -1180,6 +1186,20 @@ async def maybe_finalize_map_product(
     validated_goal = goal_key(chapter, plan.user_goal)
     revision_after_run = await _current_mapspec_revision(session_id)
 
+    # G02-GIS-EXECUTION-COMPILER（C2 验收桥，review-B P2-4）：族运行加载
+    # 只依赖 session_id（与 chapter 无依赖）——在会话锁**外**预取，避免
+    # 拉长最热锁的持锁时间（1 次 list_refs + ≤8 次别名解析/get）。
+    awf_runs: List[Any] = []
+    try:
+        from app.services.gis_harness.execution_compiler import (
+            load_workflow_runs,
+        )
+
+        awf_runs = await load_workflow_runs(session_id)
+    except Exception:  # noqa: BLE001 — 桥失败按零运行（零漂移评估）
+        logger.debug("[MapFinalizer] workflow runs preload failed",
+                     exc_info=True)
+
     # V6 W10/W11：修复计划（findings 统一投影 → 护栏 → 计划 → 账本落账）。
     # 增值披露：任何失败不影响块写入；锁集读自 mapspec workbench doc。
     repair_plan_dict: Optional[Dict[str, Any]] = None
@@ -1290,6 +1310,32 @@ async def maybe_finalize_map_product(
                     _spec_snap = None
                 _user_hidden = _user_hidden_layers_from_spec(
                     _spec_snap, current_observation)
+                # G02-GIS-EXECUTION-COMPILER（C2 验收桥）：评估视图合并族
+                # 运行行（analysis workflow 步骤回执对 goal 验收可见——
+                # 节点成功≠目标达成）。合并只进 map_product_block 的评估
+                # 输入，不写回持久 chapter（行指纹守卫消费的是
+                # fresh.gis_chapter 原面）；零运行/桥失败 → 零漂移。
+                # 运行清单已在锁外预取（awf_runs）——锁内零 store IO。
+                awf_eval_chapter = fresh.gis_chapter
+                awf_disclosures: List[str] = []
+                if awf_runs:
+                    try:
+                        from app.services.gis_harness.execution_compiler import (
+                            merge_workflow_rows,
+                            workflow_disclosures,
+                        )
+
+                        awf_eval_chapter = merge_workflow_rows(
+                            fresh.gis_chapter,
+                            [(run, None) for run in awf_runs])
+                        for run in awf_runs:
+                            awf_disclosures.extend(
+                                workflow_disclosures(run))
+                        awf_disclosures = awf_disclosures[:8]
+                    except Exception:  # noqa: BLE001 — 桥失败按原 chapter 评估
+                        logger.debug(
+                            "[MapFinalizer] workflow bridge merge failed",
+                            exc_info=True)
                 fresh.gis_chapter["map_product"] = map_product_block(
                     result,
                     revision_after_run,
@@ -1300,7 +1346,7 @@ async def maybe_finalize_map_product(
                     render_observation_seq=render_seq,
                     methodology_warnings=list(
                         fresh.gis_chapter.get("methodology_warnings") or []),
-                    chapter=fresh.gis_chapter,
+                    chapter=awf_eval_chapter,
                     repair_plan=repair_plan_dict,
                     observation=current_observation,
                     # V7（D6）：意图验收的独立判定（打破循环论证 —— 渲染
@@ -1316,6 +1362,7 @@ async def maybe_finalize_map_product(
                         if isinstance(fresh_state, dict) else None
                     ),
                     session_id=session_id,
+                    workflow_disclosures=awf_disclosures,
                 )
                 await save_session_plan(fresh)
                 # ADR-0183：SSE 透传真源（result 字段只在**持久化成功后**

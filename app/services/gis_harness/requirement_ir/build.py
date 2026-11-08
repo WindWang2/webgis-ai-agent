@@ -97,6 +97,15 @@ def derive_sections(
         sr_kind = "near"
     elif "service_area" in core.analysis_intents or core.task == "accessibility_analysis":
         sr_kind = "service_area"
+    # GC-01（G02-GIS-EXECUTION-COMPILER）：genesis 话语的空间关系词收割
+    # —— 「最近设施/网络距离/邻近」是最近设施网络邻近语义（resolver 的
+    # analysis_intents 词表无该 cue，IR 从不携带 → 编译器无法区分欧氏
+    # 冒充）。封闭词表收割，词面命中才置 near；既有 kind 非空（分析
+    # 意图已判）不覆盖；diff 路径不传 query → 零漂移。
+    if (query and sr_kind == "none" and _NEAR_CUE_RE.search(query)
+            and not _NEAR_TIME_RE.search(query)
+            and not _NEAR_ADMIN_RE.search(query)):
+        sr_kind = "near"
     # 输出面
     formats = tuple(core.export_intents)
     purpose = "briefing" if core.report_product else ""
@@ -154,6 +163,28 @@ def derive_sections(
     spec.purpose = purpose
     if purpose:
         spec.field_provenance["purpose"] = Provenance(origin="rule")
+    # GC-01（G02-GIS-EXECUTION-COMPILER）：genesis 话语的显式表达/口径
+    # 收割 —— harvest_geometry_kind / normalize_normalization 是既有权威
+    # 词表，此前只服务 edit cue / comparison 面，genesis 文档从不记录
+    # 「用户点名热力图 / 每万人」→ 执行编译器输入缺字段。只收词表命中
+    # （未命中 = 未表达，零推断）；diff 路径不传 query → 行为零漂移；
+    # patch 面同路径白名单已存在（geometry_kind/normalization set ops）。
+    if query:
+        harvested_kind = norm.harvest_geometry_kind(query)
+        if harvested_kind:
+            spec.representation = spec.representation.model_copy(
+                update={"geometry_kind": harvested_kind})
+            spec.field_provenance["representation.geometry_kind"] = \
+                Provenance(origin="user", turn=None, rationale="",
+                           evidence_refs=("query",))
+        harvested_norm = norm.normalize_normalization(query)
+        if harvested_norm != "none" and \
+                spec.statistics.normalization == "none":
+            spec.statistics = spec.statistics.model_copy(
+                update={"normalization": harvested_norm})
+            spec.field_provenance["statistics.normalization"] = \
+                Provenance(origin="user", turn=None, rationale="",
+                           evidence_refs=("query",))
     # G3D04：genesis 话语的 3D cue → SceneSpec（用户显式表达 → 字段级
     # origin=user，user-wins 从第一轮即生效；无 cue → 全默认零推断）。
     if _apply_scene_cues_to_spec(spec, query):
@@ -337,6 +368,26 @@ def diff_to_patches(
     #    （distribution_overview / district 等默认值不得当"用户要改"），
     #    只有话语本身带对应词面时才允许该字段的差分发射。──
     q_norm = (query or "").lower()
+
+    # GC-01（G02-GIS-EXECUTION-COMPILER）：edit 话语的口径/表达 cue →
+    # set patch（与 genesis 收割同词表、patch 白名单同路径）。统计口径
+    # （每万人/每平方公里）与表达（热力图…）是用户显式修订语义，必须进
+    # journal——否则编译器的单位义务与失效推导都看不到这次修订。
+    if q_norm:
+        q_norm_kind = norm.normalize_normalization(q_norm)
+        if (q_norm_kind != "none"
+                and q_norm_kind != old_spec.statistics.normalization
+                and not _locked(old_spec, "statistics.normalization")):
+            emit("set", "statistics.normalization", q_norm_kind,
+                 "normalization cue in edit utterance")
+            cue_paths.add("statistics.normalization")
+        q_geometry_kind = norm.harvest_geometry_kind(q_norm)
+        if (q_geometry_kind
+                and q_geometry_kind != old_spec.representation.geometry_kind
+                and not _locked(old_spec, "representation.geometry_kind")):
+            emit("set", "representation.geometry_kind", q_geometry_kind,
+                 "geometry kind cue in edit utterance")
+            cue_paths.add("representation.geometry_kind")
     query_task_signal = _QUERY_TASK_SIGNAL_RE.search(q_norm) is not None
     q_time_start, q_time_end, q_time_gran, q_time_series = normalize_time(q_norm)
     gb_dimension, gb_group = normalize_group_by(q_norm)
@@ -391,6 +442,14 @@ def diff_to_patches(
 _LAYER_HIDE_RE = re.compile(r"隐藏\s*([^,，。;；！!?？]{1,24}?)(图层|层|layer)")
 _LAYER_SHOW_RE = re.compile(r"(?:显示|取消隐藏|恢复)\s*([^,，。;；！!?？]{1,24}?)(图层|层|layer)")
 _COLOR_CHANGE_RE = re.compile(r"(换成|改成|改为|换为|涂成|recolor to|change .* to)")
+#: 最近设施/网络邻近语义的封闭词面（GC-01 genesis 收割；命中才置 near）。
+#: review-B P1-2 修复：「最近」作时间词（最近三年/最近一个月）与
+#: 「邻近」作行政邻接（邻近城市/邻近区域）是假阳性——负向先行排除
+#: 这两类句式；锚定到设施/要素语义（距离/可达/设施名词跟随）才收割。
+_NEAR_TIME_RE = re.compile(
+    r"最近[^，。;；,]{0,3}(?:年|月|日|天|周|季|小时|分钟|个小时)")
+_NEAR_ADMIN_RE = re.compile(r"邻近(?:城市|区域|县|省份|地区|行政区|小区)")
+_NEAR_CUE_RE = re.compile(r"(最近|网络距离|邻近)")
 _COLOR_WORD_RE = re.compile(
     r"(蓝色|红色|绿色|橙色|紫色|暖色|冷色|灰度|viridis|blue|red|green|orange|purple)")
 _PUBLISH_CUES: Tuple[str, ...] = ("出版", "发布", "print-ready", "publication")

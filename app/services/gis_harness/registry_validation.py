@@ -57,6 +57,32 @@ def validate_gis_library(
     issues.extend(algorithms.validate(available_tools=available_tools))
     issues.extend(validate_model_library())
 
+    # ── G02-GIS-EXECUTION-COMPILER（C3）：analysis workflow 族声明 ×
+    # 注册表 fail-closed 对账（此前 validate_families 只在测试里被调用
+    # ——BASELINE 断链 #7）。悬空工具/能力/单位词表外 → 违规行进全库
+    # 校验（生产 doctor/启动面可见）；not_evaluated 不算违规（注册面
+    # 缺席诚实留白）。
+    try:
+        from app.services.gis_harness.execution_compiler import (
+            audit_family_conformance,
+        )
+
+        def _tool_exists(name: str) -> bool:
+            if tool_registry is not None:
+                return bool(tool_registry.has(name))
+            if available_tools is not None:
+                return name in available_tools
+            return True  # 注册面缺席 = 不校验（既有语义）
+
+        for verdict in audit_family_conformance(
+                tool_exists=_tool_exists).step_verdicts:
+            if verdict.verdict == "fail":
+                issues.append(
+                    f"family_conformance:{verdict.family}:"
+                    f"{verdict.step_id}:{verdict.reason_code}")
+    except Exception:  # noqa: BLE001 — 对账缺席不阻断全库校验
+        pass
+
     # ── V3：GIS Task Ontology 引用完整性（capability/artifact/map model
     #    /data role/task family 全部对账单一事实源）──────────────────────
     from typing import get_args as _typing_get_args
