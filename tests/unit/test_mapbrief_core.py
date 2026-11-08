@@ -322,6 +322,47 @@ class TestFactCheck:
         assert out.status == "unverified"
         assert any("field_path missing" in r for r in out.reasons)
 
+    def test_verified_not_propagated_to_unverified_deps(self):
+        """评审 #P2-3：分子/分母均无证据 → 派生 ratio 不得 verified。"""
+        facts = [
+            BriefFact.model_validate(_fact(
+                fact_id="fact-num", value=99999,
+                basis={"artifact_ref": "", "field_path": ""})),
+            BriefFact.model_validate(_fact(
+                fact_id="fact-den", value=3,
+                basis={"artifact_ref": "", "field_path": ""})),
+            BriefFact.model_validate(_fact(
+                fact_id="fact-ratio", kind="ratio", value=33333.0,
+                numerator_fact_id="fact-num",
+                denominator_fact_id="fact-den",
+                basis={"artifact_ref": "", "field_path": ""})),
+        ]
+        outs = {o.fact_id: o for o in check_facts(
+            facts, records={}, payloads={})}
+        assert outs["fact-ratio"].status == "warning"
+        assert any("dependency facts lack positive evidence" in r
+                   for r in outs["fact-ratio"].reasons)
+        # 对照：依赖链核验通过（值与载荷字段一致）时 ratio 可 verified
+        facts2 = [
+            BriefFact.model_validate(_fact(
+                fact_id="fact-num", value=142)),
+            BriefFact.model_validate(_fact(
+                fact_id="fact-den", value=97,
+                basis={"artifact_ref": "ref:stats-schools",
+                       "field_path": "table.rows.1.count"})),
+            BriefFact.model_validate(_fact(
+                fact_id="fact-ratio", kind="ratio",
+                value=142 / 97,
+                numerator_fact_id="fact-num",
+                denominator_fact_id="fact-den",
+                basis={"artifact_ref": "ref:stats-schools",
+                       "field_path": ""})),
+        ]
+        outs2 = {o.fact_id: o for o in check_facts(
+            facts2, records=_records(), payloads=_payloads())}
+        assert outs2["fact-ratio"].status == "verified", \
+            outs2["fact-ratio"].reasons
+
     def test_check_facts_and_apply_outcomes_roundtrip(self):
         spec_facts = [BriefFact.model_validate(_fact()),
                       BriefFact.model_validate(_fact(

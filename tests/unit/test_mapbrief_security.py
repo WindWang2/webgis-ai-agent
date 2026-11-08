@@ -67,6 +67,39 @@ class TestHtmlInjection:
         import re
         assert not re.search(r'(src|href)="https?://', html)
 
+    def test_svg_sanitized_hardened(self):
+        """评审 #P1-2 实测旁路全量回归：自闭合/未闭合 script、未引号
+        href、SMIL set/animate、未引号外链 —— 全部必须被剔除。"""
+        payloads = [
+            '<svg><script href="data:text/javascript,alert(1)"/></svg>',
+            '<svg><script>alert(1)</svg>',
+            '<svg><a href=javascript:alert(1)>x</a></svg>',
+            '<svg><image href=http://evil.example/pixel.png /></svg>',
+            '<svg><set attributeName="onmouseover" to="alert(1)"/></svg>',
+            '<svg><animate attributeName="href" '
+            'values="javascript:alert(1)"/></svg>',
+            '<svg><animateTransform attributeName="onload" '
+            'to="alert(1)"/></svg>',
+            '<svg><script>var a = "</scr" + "ipt>"</script></svg>',
+        ]
+        for evil in payloads:
+            clean = sanitize_svg(evil)
+            low = clean.lower()
+            assert "<script" not in low, evil
+            assert "javascript:" not in low, evil
+            assert "onmouseover" not in low and "onload" not in low, evil
+            assert "http://evil.example" not in low, evil
+        # 正常图形元素与 data: 引用保留
+        keep = ('<svg><rect width="1" height="1"/>'
+                '<a xlink:href="data:image/png;base64,AA"><text>y</text></a>'
+                '</svg>')
+        clean = sanitize_svg(keep)
+        assert "<rect" in clean and "data:image/png" in clean
+
+    def test_csv_cr_lf_prefixed(self):
+        assert csv_safe("\r=cmd").startswith("'")
+        assert csv_safe("\n=cmd").startswith("'")
+
     def test_svg_sanitized(self):
         evil_svg = (
             '<svg xmlns="http://www.w3.org/2000/svg">'

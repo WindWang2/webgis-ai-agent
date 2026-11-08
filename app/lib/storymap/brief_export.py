@@ -27,14 +27,28 @@ from app.lib.storymap.spec import assert_json_depth, strip_surrogates
 
 BRIEF_BUNDLE_SCHEMA_VERSION = "briefbundle-1"
 
-#: SVG 净化：剔除 script/foreignObject/事件属性（服务端渲染的 SVG 仍可能
-#: 携带用户可控图层名 —— 纵深防御）。
-_SVG_SCRIPT_RE = re.compile(r"<script\b[^>]*>.*?</script\s*>", re.I | re.S)
-_SVG_FOREIGN_RE = re.compile(r"<foreignObject\b[^>]*>.*?</foreignObject\s*>", re.I | re.S)
-_SVG_EVENT_RE = re.compile(r"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
-#: href 只放行 data:（外链一律剔除）。
+#: SVG 净化（纵深防御；生成侧 compile_mapspec_to_svg 已转义用户文本）。
+#: 覆盖全部已知旁路形态（评审 #P1-2 实测清单）：
+#: - script 全形态：配对闭合 / 自闭合 ``<script/>`` / 未闭合至结尾；
+#: - SMIL 动画注入（<set>/<animate*> 可写事件属性与 href）；
+#: - foreignObject；事件属性（含未引号值）；
+#: - href 只放行 data:（含未引号形态），其余（javascript:/http:…）剔除。
+_SVG_SCRIPT_PAIRED_RE = re.compile(
+    r"<script\b[^>]*>.*?</script\s*>", re.I | re.S)
+_SVG_SCRIPT_SELFCLOSE_RE = re.compile(r"<script\b[^>]*/>", re.I)
+_SVG_SCRIPT_OPEN_RE = re.compile(r"<script\b[^>]*>.*", re.I | re.S)
+_SVG_FOREIGN_RE = re.compile(
+    r"<foreignObject\b[^>]*>.*?</foreignObject\s*>|<foreignObject\b[^>]*/>",
+    re.I | re.S)
+_SVG_SMIL_RE = re.compile(
+    r"<(?:set|animate|animateTransform|animateMotion|animateColor)\b"
+    r"[^>]*(?:/>|>.*?</(?:set|animate|animateTransform|animateMotion"
+    r"|animateColor)\s*>)",
+    re.I | re.S)
+_SVG_EVENT_RE = re.compile(
+    r"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
 _SVG_HREF_RE = re.compile(
-    r"(href|xlink:href)\s*=\s*(\"[^\"]*\"|'[^']*')", re.I)
+    r"(?:xlink:)?href\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
 
 #: 单文件 HTML 预算（内嵌 SVG/图表有界；超限显式失败优于半包）。
 MAX_BRIEF_HTML_BYTES = 8 * 1024 * 1024
@@ -52,22 +66,36 @@ def _project_release_meta(meta: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
 
 
 def sanitize_svg(markup: str) -> str:
-    """静态 SVG → 可内嵌安全形态（无脚本/无事件/无外链/无 foreignObject）。"""
-    out = _SVG_SCRIPT_RE.sub("", markup or "")
+    """静态 SVG → 可内嵌安全形态。
+
+    纵深防御白名单式收窄：无脚本（全形态）/无 SMIL/无 foreignObject/
+    无事件属性/href 仅 data:。审查实测的自闭合 script、未闭合 script、
+    未引号 ``href=javascript:``、``<set attributeName=onmouseover>``、
+    未引号外链 ``<image href=http://…>`` 全部被剔除（负例见
+    tests/unit/test_mapbrief_security.py::TestSvgSanitizeHardened）。
+    """
+    out = _SVG_SCRIPT_PAIRED_RE.sub("", markup or "")
+    out = _SVG_SCRIPT_SELFCLOSE_RE.sub("", out)
+    out = _SVG_SCRIPT_OPEN_RE.sub("", out)
+    out = _SVG_SMIL_RE.sub("", out)
     out = _SVG_FOREIGN_RE.sub("", out)
     out = _SVG_EVENT_RE.sub("", out)
 
     def _drop_external(match: "re.Match[str]") -> str:
-        url = (match.group(2) or "").strip("\"'")
+        url = (match.group(1) or "").strip("\"'")
         return match.group(0) if url.startswith("data:") else ""
 
     return _SVG_HREF_RE.sub(_drop_external, out)
 
 
 def csv_safe(value: Any) -> str:
-    """CSV 单元格公式注入防护：危险打头字符（=+-@\\t）前置撇号。"""
+    """CSV 单元格公式注入防护：危险打头字符（=+-@ 与 \\t/\\r/\\n）前置撇号。
+
+    \\r/\\n 打头单独不成公式，但部分表格引擎会把行首控制符后的内容当
+    公式重新解析 —— 一并打撇号（csv.writer 的引号包裹只管分隔符语义）。
+    """
     text = "" if value is None else str(value)
-    if text[:1] in ("=", "+", "-", "@", "\t"):
+    if text[:1] in ("=", "+", "-", "@", "\t", "\r", "\n"):
         return "'" + text
     return text
 

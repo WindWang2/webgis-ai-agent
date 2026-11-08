@@ -287,6 +287,10 @@ class TestPreflightFreeze:
         assert resp.status_code == 200, resp.text
         release = resp.json()
         assert release["already_released"] is False
+        # 幂等键不含墙钟（评审 #P1-1）：跨秒重复提交仍必须幂等。
+        import time as _time
+
+        _time.sleep(1.2)
         # 幂等：同内容重复提交 → already_released（BRF-O06）
         again = await c.post(
             f"/api/v1/briefs/sessions/{sid}/releases",

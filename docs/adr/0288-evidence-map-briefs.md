@@ -32,7 +32,7 @@ freeze/CAS 先例、证据域有 positive-proof claim 验证器 —— 缺的是
 4. **编辑与重生成**：乐观 revision（expected_revision → 409）；locked
    块内容不可改；merge_regenerated 永不覆盖 manual/locked，删除的块不
    复活；产物更新只标 stale（compute_stale），不改内容。
-5. **预检三态**：pass/fail/not_evaluated × 8 检查项 → deliverable /
+5. **预检三态**：pass/fail/not_evaluated × 7 检查项 → deliverable /
    draft_exportable / blocked；强事实错误、跨 owner、必需图件缺失阻断
    冻结；草稿可显式导出（封面/manifest 标 draft，不冒充正式发布）。
 6. **不可变 release**：CAS 内容寻址（content_sha256 幂等键）+ manifest
@@ -42,7 +42,10 @@ freeze/CAS 先例、证据域有 positive-proof claim 验证器 —— 缺的是
    来源口径；SVG 静态图净化内联；缺图诚实告警）+ facts.csv（公式注入
    防护）+ JSON manifest 对账；release_meta 白名单投影，秘密不进交付物。
 8. **私有分享**：沿 report.py 先例（share_code/ttl/撤销/限流/公共投影
-   CSP sandbox）；token 只授予该 release 只读素材。
+   CSP sandbox）；token 只授予该 release 只读素材。显式决策：公开分享
+   面交付的是冻结简报**本体**（单一不可变工件），其中 provenance 的
+   session 标识/产物 ref 属非秘密内部对账指纹（单独持有不可读取任何
+   资源，跨 owner 访问统一 404）；元数据端点的公共投影不携带这些字段。
 9. **工具面**：brief_create_draft / brief_inspect_evidence /
    brief_update_block / brief_preflight / brief_freeze_release /
    brief_export（session_id 注入探针；回执紧凑；导出仅私有地址）。

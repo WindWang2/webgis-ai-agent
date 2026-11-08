@@ -58,7 +58,14 @@ async def create_brief(
         title=(spec.metadata.title or "地图简报")[:255],
         spec=text, revision=1)
     db.add(row)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # 并发双创建窗口（uq_mb_conversation）：回滚本帧后按冲突语义
+        # 返回，绝不留半行。
+        await db.rollback()
+        raise RevisionConflict(
+            "brief already exists for this session; use PATCH to edit")
     return {"brief_id": row.id, "revision": 1, "title": row.title}
 
 
@@ -100,19 +107,31 @@ async def save_brief(
 
     校验失败（ValueError/ValidationError）向上抛（路由映射 422）。
     """
-    row = await brief_row(db, conv)
-    if expected_revision != row.revision:
-        raise RevisionConflict(
-            f"brief revision changed: expected {expected_revision}, "
-            f"current {row.revision}")
     payload = spec.model_dump(mode="json")
     text = json.dumps(payload, ensure_ascii=False)
     if len(text.encode("utf-8")) > MAX_BRIEF_SPEC_BYTES:
         raise ValueError(f"brief spec exceeds {MAX_BRIEF_SPEC_BYTES} bytes")
-    row.spec = text
-    row.title = (spec.metadata.title or row.title)[:255]
-    row.revision = row.revision + 1
-    await db.flush()
+    # 原子乐观并发（评审 #P2-5）：条件 UPDATE 以 revision 为 CAS 令牌，
+    # rowcount=0 即并发写入已推进 —— 先检查存在性再区分 404/409。
+    from sqlalchemy import update
+
+    result = await db.execute(
+        update(MapBrief)
+        .where(MapBrief.conversation_id == conv.id,
+               MapBrief.revision == expected_revision)
+        .values(spec=text,
+                title=(spec.metadata.title or "地图简报")[:255],
+                revision=expected_revision + 1)
+        .execution_options(synchronize_session=False))
+    if not result.rowcount:
+        current = await db.scalar(select(MapBrief.revision).where(
+            MapBrief.conversation_id == conv.id))
+        if current is None:
+            raise BriefNotFound("no brief for this session")
+        raise RevisionConflict(
+            f"brief revision changed: expected {expected_revision}, "
+            f"current {current}")
+    row = await brief_row(db, conv)
     return {"brief_id": row.id, "revision": row.revision, "title": row.title}
 
 

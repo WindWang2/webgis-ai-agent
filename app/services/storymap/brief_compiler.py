@@ -305,9 +305,13 @@ def _pick_metric_chapters(spec_draft: MapBriefSpec) -> List[str]:
 
 
 async def _load_session_inputs(
-    conv, *, owner_token: str = ""
+    conv, *, owner_token: str = "", include_payloads: bool = True
 ) -> Tuple[Dict[str, Mapping[str, Any]], Dict[str, Any], Optional[Mapping[str, Any]], str, List[Mapping[str, Any]]]:
-    """会话 → (产物台账投影, 产物载荷, trace, mapspec 指纹, 消息)。"""
+    """会话 → (产物台账投影, 产物载荷, trace, mapspec 指纹, 消息)。
+
+    ``include_payloads=False`` 供只需台账投影的读路径（stale 计算），
+    避免大产物会话的读放大（评审 #P3-7）。
+    """
     from app.services.artifact_registry import list_artifacts
     from app.services.gis_harness.trace_store import read_chains
     from app.services.session_data import session_data_manager
@@ -320,8 +324,9 @@ async def _load_session_inputs(
     for rec in artifact_list:
         ref = rec.artifact_id
         records[ref] = rec.to_dict()
-        if ref.startswith(("ref:chart-", "ref:table-", "ref:stats-",
-                           "ref:grid-", "ref:admin-", "ref:profile-")):
+        if include_payloads and ref.startswith(
+                ("ref:chart-", "ref:table-", "ref:stats-",
+                 "ref:grid-", "ref:admin-", "ref:profile-")):
             try:
                 res = await session_data_manager.get_ref_data(
                     session_id, ref, owner_token=owner_token or None)

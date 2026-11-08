@@ -66,7 +66,8 @@ router = APIRouter(prefix="/briefs", tags=["MapBrief"])
 
 class BriefDraftRequest(BaseModel):
     title: Optional[str] = None
-    generator: str = "deterministic"
+    # 生成器类型不由客户端声明：当前管线恒 deterministic，provenance
+    # 标签不可谎报（LLM 接入位在服务端代码层扩展，评审 #P3）。
 
 
 class BriefPatchRequest(BaseModel):
@@ -151,7 +152,7 @@ async def create_brief_draft(
     """从会话真实产物生成简报草稿（幂等创建：已存在 → 409 引导编辑）。"""
     try:
         spec = await compile_brief_draft(
-            conv, db=db, title=req.title, generator=req.generator,
+            conv, db=db, title=req.title,
             owner_token=owner_token or "")
         result = await create_brief(db, conv, spec)
         await db.commit()
@@ -175,7 +176,7 @@ async def get_session_brief(
         from app.services.storymap.brief_compiler import _load_session_inputs
 
         records, _payloads, _t, _f, _m = await _load_session_inputs(
-            conv, owner_token=owner_token or "")
+            conv, owner_token=owner_token or "", include_payloads=False)
         stale = compute_stale(spec, current_records=records)
         return {
             "brief_id": row.id, "revision": row.revision,

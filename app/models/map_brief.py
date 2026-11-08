@@ -81,7 +81,7 @@ class MapBriefRelease(Base):
     content_sha256 = Column(String(64), nullable=False)
     #: CAS html 载荷键（内容寻址；下载经所有权校验后代理读）
     html_object_key = Column(String(255), nullable=False)
-    share_code = Column(String(64), nullable=True, index=True)
+    share_code = Column(String(64), nullable=True)
     #: naive UTC（F-04 纪律：naive 列存 UTC，读取侧换算）
     share_expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_utcnow)

@@ -182,13 +182,16 @@ def check_fact(
             f"artifact {ref} payload unavailable — field proof skipped")
 
     # 2. 权威值定位与比对（field_path 缺失 = 无法正向证明）。
-    # 派生类无自身绑定（无 ref/payload）时跳过值定位 —— 复算通道兜底。
+    # 派生类的正向证明通道是依赖复算：无绑定或无 field_path 都不是缺口，
+    # 跳过值定位（复算兜底）；仅非派生类把 field_path 缺失记为缺口。
     value_ok = False
     authoritative: Optional[float] = None
     if not ref or payload is None:
         pass  # 绑定不可用：已在第 1 步披露；派生类继续走复算。
     elif not binding.field_path:
-        reasons.append("field_path missing — cannot positively verify value")
+        if not derived:
+            reasons.append(
+                "field_path missing — cannot positively verify value")
     else:
         authoritative, reason = resolve_field_path(payload, binding.field_path)
         if authoritative is None:
@@ -266,13 +269,36 @@ def check_facts(
     records: Mapping[str, Mapping[str, Any]],
     payloads: Mapping[str, Any],
 ) -> List[FactCheckOutcome]:
-    """整组核验。依赖事实的取值以"陈述值"进入复算（口径一致性检查），
-    依赖事实自身 unverified 不阻断复算，但会以 reason 披露。"""
+    """整组核验（两遍）。
+
+    第一遍逐条独立核验（依赖事实的陈述值进入复算）。第二遍执行
+    **信任传播纪律**：派生事实（ratio/rate/change/difference）的
+    verified 不得建立在未核验的依赖链上 —— 任一依赖事实的裁决为
+    unverified（或与权威矛盾）时，派生结果降级为 warning 并披露依赖
+    缺口（复算命中仍算正向证明，但"已核验"徽标不下沉到无证据的链）。
+    """
     values = {f.fact_id: f.value for f in facts}
-    return [
+    outcomes = [
         check_fact(f, records=records, payloads=payloads, fact_values=values)
         for f in facts
     ]
+    by_id = {o.fact_id: o for o in outcomes}
+    for fact, outcome in zip(facts, outcomes):
+        if fact.kind not in _DERIVED_KINDS or outcome.status != "verified":
+            continue
+        dep_ids = [d for d in (fact.denominator_fact_id,
+                               fact.numerator_fact_id,
+                               fact.baseline_fact_id) if d]
+        weak = [d for d in dep_ids
+                if by_id.get(d) is not None
+                and (by_id[d].status == "unverified"
+                     or by_id[d].contradicted)]
+        if weak:
+            outcome.status = "warning"
+            outcome.reasons.append(
+                "dependency facts lack positive evidence: "
+                + ",".join(weak))
+    return outcomes
 
 
 def apply_outcomes(

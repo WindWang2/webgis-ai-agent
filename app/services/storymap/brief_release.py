@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.lib.storymap.brief_export import (
@@ -146,6 +147,34 @@ async def freeze_brief_release(
 
     static_maps = await asyncio.to_thread(
         _render_static_maps, spec, mapspec)
+    spec_sha = _sha256_bytes(
+        json.dumps(spec.model_dump(mode="json"), ensure_ascii=False,
+                   sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+    # 幂等键（BRF-O06）：只含**语义内容**指纹 —— brief/revision/spec/产物
+    # 台账指纹/draft 位。墙钟时间戳（bundle.generated_at / manifest
+    # created_at）与由其派生的 html/csv 字节哈希**不进键**：同一语义
+    # 内容跨秒重复提交必须返回既有 release，而非另建版本（时间戳等非
+    # 语义字段单独记录在 release 行/manifest 里）。
+    ledger_sha = _sha256_bytes(
+        json.dumps(
+            {ref: (rec.get("artifact_sha256")
+                   or _sha256_bytes(json.dumps(rec, ensure_ascii=False,
+                                               sort_keys=True,
+                                               default=str).encode("utf-8")))
+             for ref, rec in sorted(records.items())},
+            ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    content_sha = _sha256_bytes(
+        f"{row.id}|{row.revision}|{spec_sha}|{ledger_sha}|{draft}".encode())
+
+    existing = await db.scalar(select(MapBriefRelease).where(
+        MapBriefRelease.content_sha256 == content_sha))
+    if existing is not None:
+        return {"release_id": existing.id,
+                "release_no": existing.release_no,
+                "already_released": True,
+                "manifest": json.loads(existing.manifest)}
+
     bundle = build_brief_bundle(
         spec, payloads=payloads, static_maps=static_maps,
         release_meta={}, draft=draft)
@@ -155,21 +184,6 @@ async def freeze_brief_release(
     csv_text = rows_to_csv(build_fact_csv_rows(spec))
     csv_bytes = csv_text.encode("utf-8")
     csv_sha = _sha256_bytes(csv_bytes)
-    spec_sha = _sha256_bytes(
-        json.dumps(spec.model_dump(mode="json"), ensure_ascii=False,
-                   sort_keys=True, separators=(",", ":")).encode("utf-8"))
-
-    # 幂等键：内容指纹（brief + revision + spec + 载荷哈希）。
-    content_sha = _sha256_bytes(
-        f"{row.id}|{row.revision}|{spec_sha}|{html_sha}|{csv_sha}".encode())
-
-    existing = await db.scalar(select(MapBriefRelease).where(
-        MapBriefRelease.content_sha256 == content_sha))
-    if existing is not None:
-        return {"release_id": existing.id,
-                "release_no": existing.release_no,
-                "already_released": True,
-                "manifest": json.loads(existing.manifest)}
 
     from app.services.durable_blob_store import get_filesystem_blob_store
 
@@ -194,7 +208,20 @@ async def freeze_brief_release(
         status="ready", manifest=json.dumps(manifest, ensure_ascii=False),
         content_sha256=content_sha, html_object_key=html_sha)
     db.add(release)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # 并发双提交（同 content 或 release_no 竞争）：内容寻址无半包；
+        # 回滚本帧未落内容后按幂等语义返回既有 release。
+        await db.rollback()
+        existing = await db.scalar(select(MapBriefRelease).where(
+            MapBriefRelease.content_sha256 == content_sha))
+        if existing is not None:
+            return {"release_id": existing.id,
+                    "release_no": existing.release_no,
+                    "already_released": True,
+                    "manifest": json.loads(existing.manifest)}
+        raise
     manifest = dict(manifest, release_id=release.id)
     release.manifest = json.dumps(manifest, ensure_ascii=False)
     await db.flush()
