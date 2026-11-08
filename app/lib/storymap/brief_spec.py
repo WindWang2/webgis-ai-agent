@@ -82,6 +82,9 @@ class EvidenceBinding(_StoryModel):
     method: str = ""
     stat_semantics: str = ""
     unit: str = ""
+    # 字段级定位（BRF-01：数值断言可定位原始字段/聚合结果）。
+    # 形如 "rows.2.count"（table rows[2].count）或 "data.0.value"（chart）。
+    field_path: str = ""
     # 口径与范围。
     scope_spatial: str = ""
     temporal_window: str = ""
@@ -133,6 +136,7 @@ class BriefFact(_StoryModel):
     unit: str = ""
     basis: EvidenceBinding = Field(default_factory=EvidenceBinding)
     denominator_fact_id: str = ""
+    numerator_fact_id: str = ""
     baseline_fact_id: str = ""
     status: FactStatus = "unverified"
     status_reason: str = ""
@@ -151,10 +155,18 @@ class BriefFact(_StoryModel):
             raise ValueError(
                 f"fact {self.fact_id} of kind change requires "
                 "baseline_fact_id (no fabricated growth)")
-        if self.status == "verified" and not self.basis.artifact_ref:
+        # 派生类（ratio/rate/change/difference）允许只凭依赖事实链验证
+        # （分子/分母各自带绑定）；非派生类 verified 必须自带产物绑定。
+        derived = self.kind in ("ratio", "percentage", "share", "rate",
+                                "change", "difference")
+        has_deps = bool(self.denominator_fact_id or self.baseline_fact_id
+                        or self.numerator_fact_id)
+        if (self.status == "verified" and not self.basis.artifact_ref
+                and not (derived and has_deps)):
             raise ValueError(
                 f"fact {self.fact_id} cannot be verified without an "
-                "artifact binding (evidence-first)")
+                "artifact binding or verifiable dependency chain "
+                "(evidence-first)")
         return self
 
 
@@ -229,9 +241,10 @@ class MapBriefSpec(StoryMapSpec):
             if fact.fact_id in fact_ids:
                 raise ValueError(f"duplicate fact id {fact.fact_id!r}")
             fact_ids.add(fact.fact_id)
-        # 依赖引用（分母/基期/块绑定）必须在同一简报内可解析。
+        # 依赖引用（分母/分子/基期/块绑定）必须在同一简报内可解析。
         for fact in self.facts:
-            deps = (fact.denominator_fact_id, fact.baseline_fact_id)
+            deps = (fact.denominator_fact_id, fact.numerator_fact_id,
+                    fact.baseline_fact_id)
             for dep in deps:
                 if dep and dep not in fact_ids:
                     raise ValueError(
@@ -242,10 +255,11 @@ class MapBriefSpec(StoryMapSpec):
                 raise ValueError(
                     f"block {block.id} references unknown fact "
                     f"{block.fact_id!r}")
-        # 环状依赖禁止（denominator/baseline 不得指向自身或成环）。
+        # 环状依赖禁止（denominator/numerator/baseline 不得指向自身或成环）。
         graph = {
-            f.fact_id: [d for d in (f.denominator_fact_id, f.baseline_fact_id)
-                        if d]
+            f.fact_id: [d for d in (f.denominator_fact_id,
+                                    f.numerator_fact_id,
+                                    f.baseline_fact_id) if d]
             for f in self.facts
         }
         for start in graph:
