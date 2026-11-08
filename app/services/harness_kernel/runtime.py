@@ -79,7 +79,7 @@ from app.services.session_plan import (
 )
 
 
-from app.services.distributed_lock import session_lock_registry
+from app.services.distributed_lock import mutation_session_lock, session_lock_registry
 
 logger = logging.getLogger(__name__)
 
@@ -1234,7 +1234,12 @@ class GISSessionRuntime:
         """
         if not self.session_id or not mutation_id:
             return False
-        async with _session_scope(self.session_id, None) as lock:
+        # The mutation facade runs after lifecycle commit while a chat turn
+        # can still own the session lock. Borrow only verified turn ownership;
+        # ordinary runtime entry points retain their explicit lock-through API.
+        async with mutation_session_lock(
+            self.session_id, registry=session_lock_registry,
+        ) as lock:
             plan = await load_session_plan(self.session_id, store=self._store)
             if plan is None or (lock is not None and lock.lost):
                 return False
