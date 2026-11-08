@@ -28,7 +28,7 @@ python-multipart>=0.0.6
 # <2.1 上界一致。2.1.x（如 2.1.4）会被该上界拒绝，不写进 lock；解禁 2.1 前须
 # 先过 #1512 门禁并保留 #1592 的驱动健壮性加固。#1734：注释随 lock 重编译
 # 同步（原写 2.0.54），避免「注释宣称的现状」与 lock 实际钉版互相矛盾。
-sqlalchemy[asyncio]>=2.0.25,<2.1
+sqlalchemy[asyncio]>=2.0.25,<2.2
 alembic>=1.13.0
 
 # GIS Libraries
