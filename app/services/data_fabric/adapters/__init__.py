@@ -20,6 +20,8 @@ from app.services.data_fabric.adapters.stats_api_adapter import StatsApiAdapter
 # 在 ogc_tiles_proxy / coverage_read 服务层）。
 from app.services.data_fabric.adapters.ogc_tiles_adapter import OGCTilesAdapter
 from app.services.data_fabric.adapters.ogc_coverages_adapter import OGCCoveragesAdapter
+# G03 GD-02（ADR-0286 D5）：远程单文件 GeoJSON（受控取回/预算截断）。
+from app.services.data_fabric.adapters.geojson_url_adapter import GeojsonUrlAdapter
 
 # Convenient aliases
 OGCApiFeaturesAdapter = OGCAPIAdapter
@@ -55,4 +57,5 @@ __all__ = [
     "StatsApiAdapter",
     "OGCTilesAdapter",
     "OGCCoveragesAdapter",
+    "GeojsonUrlAdapter",
 ]

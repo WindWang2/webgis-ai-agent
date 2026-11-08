@@ -210,3 +210,46 @@ def log_pi_vendor_identity() -> "PiVendorIdentity | None":
     else:
         logger.info(line)
     return ident
+
+
+# ── 运行时三态披露（PI-06 / ADR-0286 D3）───────────────────────────────────
+
+#: 唯一词表：native（真 Pi RPC 承载 turn）/ fallback（配置了 Pi 但不可用，
+#: ChatEngine 承载）/ unavailable（未启用 Pi，无桥对象）。
+RUNTIME_MODES = ("native", "fallback", "unavailable")
+
+#: 有界原因码（安全摘要 —— 无内部路径/密钥/异常文本）。
+RUNTIME_MODE_REASONS = (
+    "",                    # native：无原因
+    "pi_disabled",         # USE_NEW_AGENT 关闭
+    "bridge_not_initialized",  # 桥对象未创建（import/spawn 失败）
+    "vendor_entry_unbuilt",    # vendor dist 未构建（#400 静默降级根因）
+    "pi_process_down",     # 桥在场但子进程不活（crash/OOM/坏扩展）
+    "probe_failed",        # 事实探测自身失败（/health 专用；真值未知）
+)
+
+
+def classify_runtime_mode(
+    *,
+    enabled: bool,
+    bridge_present: bool,
+    alive: bool,
+    entry_built: bool | None,
+) -> tuple[str, str]:
+    """宿主事实 → ``(mode, reason)``。纯函数，单一定义点。
+
+    被 /health（``agent_runtime_mode`` 字段）、Pi 桥 ``task_start``
+    （``runtime_mode`` 键）、``scripts/pi_doctor``（汇总行/JSON 字段）共用
+    —— 三态词表与原因码不因出口而漂移。不可判定的 ``entry_built``（None）
+    按已构建处理（fail-open on undeterminable vendor facts —— 进程活性是
+    更直接的事实；真正的 fail-closed 在 turn 终态未知词表→FAILED）。
+    """
+    if not enabled:
+        return "unavailable", "pi_disabled"
+    if not bridge_present:
+        return "unavailable", "bridge_not_initialized"
+    if not alive:
+        if entry_built is False:
+            return "fallback", "vendor_entry_unbuilt"
+        return "fallback", "pi_process_down"
+    return "native", ""

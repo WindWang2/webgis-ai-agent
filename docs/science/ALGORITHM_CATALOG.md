@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：174 能力 · 253 算法 · 127 参数契约。
+统计：174 能力 · 253 算法 · 129 参数契约。
 
 ## `accessibility` — 网络可达性
 

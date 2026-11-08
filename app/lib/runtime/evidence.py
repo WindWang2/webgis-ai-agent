@@ -156,7 +156,15 @@ class TurnEvidence:
         self._map_actions: "OrderedDict[str, _MapActionTrack]" = OrderedDict()
         self._warnings: Deque[Dict[str, str]] = deque(maxlen=_MAX_WARNINGS)
         self.outcome = OutcomeRecorder()
+        # PI-01（ADR-0286）：宿主 turn 相位机投影（可选；任何带 to_dict() 的
+        # 宿主相位机可挂载 —— host-neutral，legacy 路径不挂不受影响）。
+        self._phase_proj: Optional[object] = None
         self._lock = threading.Lock()
+
+    def attach_phase(self, tracker: object) -> None:
+        """挂载宿主 turn 相位机（需提供 ``to_dict()``；观测出口见 to_summary）。"""
+        with self._lock:
+            self._phase_proj = tracker
 
     # ── timing ──────────────────────────────────────────────────────────────
     def mark_first_event(self) -> None:
@@ -321,6 +329,14 @@ class TurnEvidence:
             map_ack_wait_ms = max(ack_waits) if ack_waits else None
             unacked = sum(1 for t in self._map_actions.values() if t.status is None)
             warnings = list(self._warnings)
+            phase_proj = self._phase_proj
+        # PI-01（ADR-0286）：相位机投影（未挂载 → None；legacy 路径不出现该段语义）。
+        turn_phase = None
+        if phase_proj is not None and hasattr(phase_proj, "to_dict"):
+            try:
+                turn_phase = phase_proj.to_dict()
+            except Exception:  # noqa: BLE001 — 观测面绝不阻断 summary
+                turn_phase = None
         return {
             "correlation": {
                 "request_id": self.request_id,
@@ -329,6 +345,7 @@ class TurnEvidence:
                 "run_id": self.run_id,
             },
             "outcome": self.outcome.as_dict(),
+            "turn_phase": turn_phase,
             "timing_ms": {
                 "total": round(total_ms, 1),
                 "first_event": round(first_event_ms, 1) if first_event_ms is not None else None,

@@ -30,11 +30,15 @@ DISCLOSED_REF_OFFLOAD = {
 #: binding_unbacked 61→63：G04 两个组合模板资产工具（list/save，
 #: app/tools/composition_tools.py）与存量 60 个交互/编排/CRUD 工具同型 ——
 #: 声明 capability 是家族语义，路由面不经算法候选（_audit_planner docstring
-#: 认定的合法态）。metadata_incomplete 158：G04 两工具已补 network=False。
+#: 认定的合法态）。63→64：G02-GIS-EXECUTION-COMPILER 的
+#: webgis_requirement_compile（analysis_workflow_tools）与既有 4 个
+#: analysis workflow 工具同型（plan_workflow_orchestration 家族语义、
+#: 只读投影，side_effect=pure）。metadata_incomplete 158：G04 两工具已补
+#: network=False。
 _CEILINGS = {
     "metadata_incomplete": 158,
     "result_size_unknown": 76,
-    "binding_unbacked": 63,
+    "binding_unbacked": 64,
 }
 
 

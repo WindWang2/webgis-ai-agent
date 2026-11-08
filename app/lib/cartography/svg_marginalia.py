@@ -34,6 +34,11 @@ def _fmt(v: float) -> str:
     return s
 
 
+def _round2(v: float) -> float:
+    """显示精度 2 位（与 _fmt 截尾口径一致，供数值属性使用）。"""
+    return float(f"{float(v):.2f}")
+
+
 # ── 帧框 / neatline ──────────────────────────────────────────────────────
 
 def render_frame_border(width: float, height: float, *, margin: float = CHROME_MARGIN,
@@ -56,16 +61,32 @@ def render_frame_border(width: float, height: float, *, margin: float = CHROME_M
 # ── 指北针 ───────────────────────────────────────────────────────────────
 
 def render_north_arrow(cx: float, cy: float, *, size: float = 44.0,
-                       color: str = "#2563eb") -> str:
-    """指北针（(cx, cy) 为中心；三角+半影+N）。"""
+                       color: str = "#2563eb",
+                       bearing: float = 0.0) -> str:
+    """指北针（(cx, cy) 为中心；三角+半影+N）。
+
+    ``bearing``（度）：地图方位角 —— 组级 ``rotate(-bearing, cx, cy)`` 使 N
+    指真北，与 live（north-arrow.tsx ``rotate(-ctx.bearing)``）及 canvas
+    导出链（exporter.ts ``bearing = -mapBearing``）同一方位角语义。缺省 0
+    不产生 transform（历史输出字节不变）。
+    """
     w = h = size
     half = w / 2.0
     top = cy - h / 2.0 + 6.0
     bottom = cy + h / 2.0 - 14.0
     mid = cy
     c = escape_svg_text(color)
+    try:
+        bearing_f = float(bearing)
+    except (TypeError, ValueError):
+        bearing_f = 0.0
+    if not (abs(bearing_f) > 1e-9):
+        transform = ""
+    else:
+        # 显示精度 2 位小数：跨格式 parity 断言可比对同值。
+        transform = f' transform="rotate({-_round2(bearing_f)},{_fmt(cx)},{_fmt(cy)})"'
     return (
-        f'<g class="chrome-north-arrow">'
+        f'<g class="chrome-north-arrow"{transform}>'
         f'<polygon points="{_fmt(cx)},{_fmt(top)} {_fmt(cx)},{_fmt(bottom)} {_fmt(cx - half + 6)},{_fmt(mid)}" fill="{c}" />'
         f'<polygon points="{_fmt(cx)},{_fmt(top)} {_fmt(cx)},{_fmt(bottom)} {_fmt(cx + half - 6)},{_fmt(mid)}" fill="#ffffff" stroke="{c}" stroke-width="1" />'
         f'<text x="{_fmt(cx)}" y="{_fmt(cy + h / 2.0 - 2.0)}" font-family="sans-serif" font-size="12" font-weight="bold" fill="{c}" text-anchor="middle">N</text>'
@@ -146,21 +167,34 @@ def render_scale_bar(x: float, y: float, bounds: List[float], canvas_width: floa
 
 def render_legend_box(x: float, y: float, legend: Dict[str, Any], *,
                       max_items: int = 12, width: float = 176.0) -> str:
-    """图例卡：title + entries（超出 max_items 截断 + 披露由调用方发）。"""
+    """图例卡：title (+unit 行) + entries（超出 max_items 截断 + 披露由调用方发）。
+
+    G04（CM-04 单位与样式匹配）：``legend.unit`` 在场时以标题下弱化小字行
+    披露（与 live legends.tsx 的 unit 后缀行同语义）；缺席时输出与历史
+    逐字节一致（不加行、不改高度）。
+    """
     entries: List[Dict[str, str]] = legend.get("entries") or []
     shown = entries[:max_items]
     if not shown:
         return ""
     item_h = 20.0
     padding = 12.0
-    height = padding * 2 + 18.0 + len(shown) * item_h
+    unit = str(legend.get("unit") or "").strip()
+    unit_dy = 15.0 if unit else 0.0  # review P3-4:降部字母余量
+    height = padding * 2 + 18.0 + unit_dy + len(shown) * item_h
     title = legend.get("title") or "图例"
     parts = [
         f'<rect x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(width)}" height="{_fmt(height)}" fill="rgba(255, 255, 255, 0.9)" stroke="#cbd5e1" stroke-width="1" rx="6" />',
         f'<text x="{_fmt(x + padding)}" y="{_fmt(y + padding + 10)}" font-family="sans-serif" font-size="12" font-weight="bold" fill="#1e293b">{escape_svg_text(title)}</text>',
     ]
+    if unit:
+        parts.append(
+            f'<text x="{_fmt(x + padding)}" y="{_fmt(y + padding + 24)}" '
+            f'font-family="sans-serif" font-size="10" fill="#64748b">'
+            f'{escape_svg_text(f"单位：{unit}")}</text>'
+        )
     for i, e in enumerate(shown):
-        iy = y + padding + 22.0 + i * item_h
+        iy = y + padding + 22.0 + unit_dy + i * item_h
         parts.append(
             f'<rect x="{_fmt(x + padding)}" y="{_fmt(iy - 10)}" width="14" height="10" '
             f'fill="{escape_svg_text(e.get("color", "#888"))}" rx="1" />'

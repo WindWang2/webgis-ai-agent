@@ -30,11 +30,18 @@ from typing import TYPE_CHECKING
 from app.lib.harness.pi_agent_harness import PiAgentHarness
 from app.lib.harness.tool_call_event import ToolCallEvent
 from app.services.cartography_metrics_store import record_quality_run
+from app.services.distributed_lock import LockLostError, mutation_session_lock
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids runtime import cycle
     from app.services.tool_dispatch_service import ToolDispatchResult
 
 logger = logging.getLogger(__name__)
+
+
+def _check_write_lock(session_id: str, lock: Any) -> None:
+    """Refuse writes if ownership was lost/revoked during an awaited read."""
+    if lock is not None and lock.lost:
+        raise LockLostError(f"session lock ownership for {session_id} was lost")
 
 
 # ── Session-scoped evaluation harnesses ────────────────────────────────
@@ -285,6 +292,7 @@ async def _persist_cartographic_harness_context(
     actions: list[dict[str, Any]],
     *,
     session_lock_held: bool = False,
+    _session_lock: Any = None,
 ) -> bool:
     """Persist the latest mutation seam so another API replica can rehydrate.
 
@@ -293,10 +301,8 @@ async def _persist_cartographic_harness_context(
     tool arguments never enter this session-state projection.
     """
     if not session_lock_held:
-        from app.services.distributed_lock import session_lock_registry
-
         # v2(audit F2): harness context 是共享 Redis 投影 —— 降级锁 fail-closed。
-        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
+        async with mutation_session_lock(session_id) as lock:
             from app.services.session_data import session_data_manager
             session_data_manager.invalidate_local_cache(session_id)
             return await _persist_cartographic_harness_context(
@@ -304,6 +310,7 @@ async def _persist_cartographic_harness_context(
                 event,
                 actions,
                 session_lock_held=True,
+                _session_lock=lock,
             )
     if session_id in _deleted_cartography_sessions:
         return False
@@ -373,6 +380,7 @@ async def _persist_cartographic_harness_context(
                 _discard_session_harness(session_id)
                 return False
         context["mutation_revision"] = incoming_revision
+        _check_write_lock(session_id, _session_lock)
         persisted = await session_data_manager.set_map_state(
             session_id, "_cartographic_harness_context", context
         )
@@ -472,19 +480,19 @@ async def _persist_cartographic_issued_action(
     action: dict[str, Any],
     *,
     session_lock_held: bool = False,
+    _session_lock: Any = None,
 ) -> None:
     """Add a runtime-repair command to the cross-worker harness projection."""
     if not session_lock_held:
-        from app.services.distributed_lock import session_lock_registry
-
         # v2(audit F2): issued-action 投影是共享 Redis 写 —— 降级锁 fail-closed。
-        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
+        async with mutation_session_lock(session_id) as lock:
             from app.services.session_data import session_data_manager
             session_data_manager.invalidate_local_cache(session_id)
             await _persist_cartographic_issued_action(
                 session_id,
                 action,
                 session_lock_held=True,
+                _session_lock=lock,
             )
         return
     if session_id in _deleted_cartography_sessions:
@@ -526,6 +534,7 @@ async def _persist_cartographic_issued_action(
     })
     context = copy.deepcopy(context)
     context["map_actions"] = actions[-16:]
+    _check_write_lock(session_id, _session_lock)
     persisted = await session_data_manager.set_map_state(
         session_id, "_cartographic_harness_context", context
     )
@@ -561,6 +570,7 @@ async def evaluate_cartographic_session(
     session_id: str, *, session_lock_held: bool = False,
     state: Optional[dict] = None,
     _defer_selfheal_commit: bool = True,
+    _session_lock: Any = None,
 ) -> dict[str, Any]:
     """Serialize and recompute the session gate after meaningful evidence.
 
@@ -568,22 +578,20 @@ async def evaluate_cartographic_session(
     API replicas. Route handlers already holding it opt out of reacquisition.
     """
     if not session_lock_held:
-        from app.services.distributed_lock import session_lock_registry
-
         # v2(audit F2): 评估持锁读冷态 —— 降级锁下两 pod 并发评估/写评审，
         # 世代守卫只在写侧兜底；fail-closed 保持读-判-写一致。
-        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
+        async with mutation_session_lock(session_id) as lock:
             from app.services.session_data import session_data_manager
             session_data_manager.invalidate_local_cache(session_id)
             # NOTE: 调用方快照读取于锁外，跨锁边界可能已被其它写者更新——
             # 锁内必须重新冷读（#1064 的快照复用只发生在锁内路由）。
             result = await evaluate_cartographic_session(
                 session_id, session_lock_held=True, state=state,
-                _defer_selfheal_commit=False,
+                _defer_selfheal_commit=False, _session_lock=lock,
             )
-        # ADR-0158：呈现提交（换色带/改版面）在会话锁释放后**内联**执行 ——
-        # lifecycle apply_mutation 自带会话锁，持锁重入会自死锁；锁外内联
-        # 保证确定性（提交完成即本调用返回，新世代评审由下一次观察触发）。
+        # Commit outside this evaluation scope. A bound chat turn may still
+        # own the outer lock; lifecycle, journal and backfill borrow that same
+        # verified ownership. Independent requests acquire normally.
         pending_commit = result.pop("_pending_selfheal_commit", None)
         if pending_commit is not None:
             await _execute_selfheal_commit(session_id, pending_commit)
@@ -597,7 +605,10 @@ async def evaluate_cartographic_session(
         return _not_evaluated_no_harness(session_id)
     lock = _get_cartography_eval_lock(session_id)
     async with lock:
-        result = await _evaluate_cartographic_session_unlocked(session_id, state=state)
+        _check_write_lock(session_id, _session_lock)
+        result = await _evaluate_cartographic_session_unlocked(
+            session_id, state=state, _session_lock=_session_lock,
+        )
     if _defer_selfheal_commit:
         # 直接持锁调用方（observation/ACK 路由）：本帧不能执行提交
         # （apply_mutation 重入死锁），调度后台任务锁外执行。
@@ -672,6 +683,7 @@ async def record_cartographic_dispatch_evidence(
 async def _evaluate_cartographic_session_unlocked(
     session_id: str,
     state: Optional[dict] = None,
+    *, _session_lock: Any = None,
 ) -> dict[str, Any]:
     harness = _get_session_harness(session_id)
     if harness is None:
@@ -742,7 +754,9 @@ async def _evaluate_cartographic_session_unlocked(
         result=result,
         map_state=state,
         actions=actions,
+        _session_lock=_session_lock,
     )
+    _check_write_lock(session_id, _session_lock)
     terminal_cacheable = (
         result.get("repair_action") is None
         and (result.get("cartography") or {}).get("status") in {
@@ -887,14 +901,11 @@ async def _execute_selfheal_commit(
         })
     # 尝试状态回填对失败路径同样生效（审计链不断：issued 不得永久悬挂）。
     if results:
-        from app.services.distributed_lock import session_lock_registry
-
-        async with session_lock_registry.lock(
-            session_id, fail_on_degraded=True
-        ):
+        async with mutation_session_lock(session_id) as lock:
             sdm.invalidate_local_cache(session_id)
             state = await sdm.get_map_state(session_id)
-            repair_state = state.get("_cartographic_repair_state")
+            _check_write_lock(session_id, lock)
+            repair_state = copy.deepcopy(state.get("_cartographic_repair_state"))
             updated = False
             if isinstance(repair_state, dict) and isinstance(
                 repair_state.get("attempts"), list
@@ -933,6 +944,7 @@ async def _advance_runtime_cartographic_repair(
     result: dict[str, Any],
     map_state: dict[str, Any],
     actions: list[dict[str, Any]],
+    _session_lock: Any = None,
 ) -> dict[str, Any]:
     """Issue at most one event-driven AUTO_SAFE repair for current evidence."""
     if session_id in _deleted_cartography_sessions:
@@ -957,6 +969,7 @@ async def _advance_runtime_cartographic_repair(
 
     async def persist_repair_state(value: dict[str, Any]) -> None:
         if session_id not in _deleted_cartography_sessions:
+            _check_write_lock(session_id, _session_lock)
             persisted = await session_data_manager.set_map_state(
                 session_id, "_cartographic_repair_state", value
             )
@@ -1141,6 +1154,7 @@ async def _advance_runtime_cartographic_repair(
                 "mapspec_fingerprint": fingerprint,
             },
             session_lock_held=True,
+            _session_lock=_session_lock,
         )
         attempts.append({
             "iteration": len(attempts) + 1,

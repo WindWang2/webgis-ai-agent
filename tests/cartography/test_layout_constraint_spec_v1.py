@@ -423,3 +423,24 @@ def test_explicit_minimum_widens_an_initially_narrow_participant():
     result = solve_layout_v5([participant], constraint_spec=constraints,
                             zone_capacity={'top-left': 4, 'bottom-right': 4})
     assert result.placements and result.placements[0].width_units >= 3
+
+
+def test_a3_profiles_pinned():
+    """G04 review P2-2:A3 档容量为审定启发式(非推导)—— 数字钉住。
+
+    变更 multiplier/budget 必须连带评审(大纸更大容量的方向不变)。
+    """
+    from app.lib.cartography.layout_solver import _PROFILES, page_profiles
+
+    assert _PROFILES["a3_portrait"] == {
+        "multiplier": 2, "top_budget": 4, "bottom_budget": 5,
+    }
+    assert _PROFILES["a3_landscape"] == {
+        "multiplier": 3, "top_budget": 5, "bottom_budget": 5,
+    }
+    assert {"a3_portrait", "a3_landscape"} <= set(page_profiles())
+    # 方向性:大纸容量不小于 A4 同向档
+    assert (_PROFILES["a3_landscape"]["multiplier"]
+            >= _PROFILES["a4_landscape"]["multiplier"])
+    assert (_PROFILES["a3_portrait"]["multiplier"]
+            >= _PROFILES["a4_landscape"]["multiplier"])
