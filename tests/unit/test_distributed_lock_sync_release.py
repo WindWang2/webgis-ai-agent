@@ -95,6 +95,12 @@ async def test_sync_release_without_bound_loop_does_not_raise():
     def _sync_release():
         lock.release()  # 不得抛、不得 asyncio.run
 
-    await asyncio.to_thread(_sync_release)
+    import warnings
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await asyncio.to_thread(_sync_release)
+    # R2-N6：dead-loop 分支的已建 coro 必须关闭 —— 不得泄漏
+    # "coroutine was never awaited" RuntimeWarning。
+    assert not [w for w in caught if "never awaited" in str(w.message)]
     # DEL 未发出（无可用递交目标），key 等 TTL —— 诚实降级而非假成功。
     assert client.eval_calls == []

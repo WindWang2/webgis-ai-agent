@@ -251,6 +251,9 @@ class _ResilientSessionLock:
                         # #1690 语义保持：无运行 loop 且绑定 loop 不可递交（关停/
                         # 孤立对象）—— 不再 asyncio.run 一个必败的临时循环；诚实
                         # 记 warning，锁等 TTL 过期。
+                        # R2-N6：已创建的 coro 显式关闭 —— 不泄漏 "coroutine
+                        # was never awaited" RuntimeWarning。
+                        coro.close()
                         logger.warning(
                             "session lock sync release for %s has no usable event "
                             "loop (client loop closed/unbound) — relying on TTL expiry",

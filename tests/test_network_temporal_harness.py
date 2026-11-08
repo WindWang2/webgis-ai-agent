@@ -385,3 +385,13 @@ def test_service_area_graph_without_dataset_fails_typed():
             graph=g,
             network_dataset=None,
         )
+
+    # R2-N4：双双缺席同样类型化拒绝（此前 snapping AttributeError → 500）。
+    with pytest.raises(ValueError, match="network_dataset"):
+        NetworkServiceAreaService().network_service_area(
+            facilities=[(116.391, 39.901)],
+            breaks=[5.0],
+            break_unit="minutes",
+            graph=None,
+            network_dataset=None,
+        )

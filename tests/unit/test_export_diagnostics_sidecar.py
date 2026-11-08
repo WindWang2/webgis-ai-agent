@@ -212,6 +212,9 @@ async def test_anonymous_session_owner_reads_own_diagnostics(client, monkeypatch
             headers={"X-Session-Token": "wrong-token"},
         )
         assert bad.status_code == 404
+        # R2-N3：404 detail 与"无诊断记录"不可区分 —— 错误 token 与不存在的
+        # session 不得构成弱存在性/归属种类 oracle。
+        assert bad.json()["detail"] == "该导出件没有诊断记录"
 
         # 认证他者 → 403
         _auth(client, _intruder_user)

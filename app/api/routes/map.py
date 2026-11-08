@@ -469,9 +469,16 @@ async def get_export_diagnostics(
         # 与所有权守卫同款，不泄漏存在性）。
         from app.services.auth_history_bridge import verify_session_owner
 
-        await verify_session_owner(
-            db, owner[len("session:"):], user_id=None, owner_token=owner_token
-        )
+        try:
+            await verify_session_owner(
+                db, owner[len("session:"):], user_id=None, owner_token=owner_token
+            )
+        except HTTPException as exc:
+            # R2-N3：错误 token / session 不存在 / 无权访问统一映射为与
+            # "无诊断记录"完全相同的 404 —— 守卫原生 detail（"Session not
+            # found"）与 sidecar 缺席的 detail 差异会构成弱存在性/归属种类
+            # oracle。
+            raise HTTPException(status_code=404, detail="该导出件没有诊断记录") from exc
     elif uid in (None, "", "anonymous"):
         raise HTTPException(status_code=401, detail="Authentication or export capability required")
     else:
