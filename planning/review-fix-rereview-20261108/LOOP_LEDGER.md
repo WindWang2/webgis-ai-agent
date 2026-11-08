@@ -21,3 +21,20 @@
 | 17 | R3 独立终审（第三个全新 subagent，全量 9-commit 累积 diff）后台运行 | — | 进行中 | R3 报告→交付 |
 | 18 | R3 终审报告到达：**PASS with notes**——无未解决可复现 P0/P1；Fix-2 五项全部正确闭环；PROTECTED 零违规（含 #2012 SSE 语义条款专项核验）；亲跑 115+136+tsc/ruff 全绿；新发现 2×P3+2 观察 | REVIEW_R3.md 存档 | 通过 | P3-1 裁决→交付 |
 | 19 | 主 Agent 裁决 R3-P3-1：在 origin/master 快照与本分支分别实测算子路径空 features 行为——双方逐字一致（同款 NodeExecutionError），R3 探针误对照 federation 直调 → **驳回**；R3-P3-2 记 FINDINGS | /tmp/master-probe 实测输出；探针 worktree 已清理 | 通过 | 提交 planning→push→PR |
+| 20 | 最终验收：diff --check 干净、master 未移动（585812ee4）、targeted 回归 194×2 + 前端 138×2 完全一致 → git push → **gh pr create → PR #2018** | push 成功；PR https://github.com/WindWang2/webgis-ai-agent/pull/2018 | 通过 | 目标达成，循环结束 |
+
+## 退出条件核对（Oracle O01–O13）
+
+- O01 ✅ BASELINE.md（master SHA/PR/Issue/dirty-state/技术栈实时快照）
+- O02 ✅ 17 变更文件逐一对拍 7 PR 保护矩阵零冲突（FIX_LEDGER + R2/R3 双重独立复核）
+- O03 ✅ AUDIT_COVERAGE.md（~57k 行深读清单 + 未覆盖逐项标注，覆盖率诚实声明 6.4%）
+- O04 ✅ 12 项修复全部先红后绿（REPRODUCTIONS.md 红/绿输出）
+- O05 ✅ A-1 CRS 修复经 R2 探针（方向/属性保真/真阴性/gcj02/性能）复核
+- O06 ✅ B-4/B-1 并发修复经 R2/R3 守卫探针复核（不复活/不误删/幂等）
+- O07 ✅ C-1 前端修复组件级测试证明（HUD 收敛 + 游标推进）
+- O08 ✅ B-1 性能修复口径：O(features) 计算移出锁，行为语义不变（无限制作弊）
+- O09 ✅ B-5 鉴权放宽经 8 分支矩阵实测（无误放行/无绕过）；R2-N3 oracle 收口
+- O10 ✅ 分类 commits（12 个）+ 测试命令 + 前后日志 + Finding ID 全映射
+- O11 ✅ R2/R3 均为非作者全新 subagent；P0/P1 零未解决（R3 PASS with notes）
+- O12 ✅ targeted 194+138 连续两遍一致（最终态再跑两遍亦一致）；master 既有红单独分栏未掩盖
+- O13 ✅ PR #2018 创建成功，含全部证据与未验证边界披露
