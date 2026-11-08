@@ -19,7 +19,7 @@ pydantic 2.13.4 / numpy 2.4.6 / rasterio 1.5.0 / networkx 3.6.1 / ruff / mypy）
 | CAP-O09 | 原生算法 #2 | 同上，不同 geometry/数据形态 | `test_cap_o09_network_service_coverage_consistency`（线网 + 设施点、Jaccard、两方案相同 → 1.0、Polygon vs LineString 断言） | ✅ |
 | CAP-O10 | 扩展包全链 | 认证/激活/发现/调用/停用/失效一致 | `test_cap_o10_extension_full_lifecycle_marks_namespace_unavailable`（真实 ExtensionHost：discover→certify_extension→activate→deactivate，status_report 状态变化 + catalog generation 变化） | ✅ |
 | CAP-O11 | Pi 工具投影 | native/execute 归属、负例拒绝、schema 对拍 | `test_cap_o11_pi_projection_and_rejects`（`resolve_pi_tool_call` 只读对拍：native/execute/reject/native 包裹拒绝 + hallucinated + 多余字段） | ✅ |
-| CAP-O12 | 资源纪律 | 大量工具/长结果/慢 provider 有界降级 | `test_cap_o12_query_and_rerank_are_bounded`（limit=5、200→8 候选、100k 长串压缩到 612 字符）；`test_cap_o12_slow_provider_returns_not_evaluated_within_budget`（sleep(30) 被 deadline 闸短路，<5s 返回） | ✅ |
+| CAP-O12 | 资源纪律 | 大量工具/长结果/慢 provider 有界降级 | `test_cap_o12_query_and_rerank_are_bounded`（limit=5、200→8 候选、100k 长串压缩到 612 字符）；`test_cap_o12_slow_provider_returns_not_evaluated_within_budget`（注入**协作式**慢探测 0.35s：`probe` 被真实调用 → 按传入 remaining 预算抛 `TimeoutError` → 全资格面降级 `not_evaluated` + `PROBE_DEADLINE_TIMEOUT_NOT_EVALUATED`；**非硬超时**，实测 <5s）；同测试另断言空权限路径仍 fail-closed | ✅ |
 | CAP-O13 | 文档可执行 | 示范包完整可本地跑的命令与日志 | `test_cap_o13_docs_and_examples_are_locally_executable`；`scripts/verify_capability_ecosystem.py` **6/6 passed**（实际日志见 LOOP_LEDGER L5） | ✅ |
 | CAP-O14 | 回归保护 | 既有工具名/签名/历史 recipe/MapSpec 行为兼容 | `test_cap_o14_parity_regression_guard`（5 个 legacy 工具 required 参数集对拍）；gis 全套 **798 passed / 3 skipped**；catalog/元数据/Pi 面 **78 passed / 1 skipped** | ✅ |
 
@@ -35,7 +35,7 @@ $VENV scripts/verify_capability_ecosystem.py                      # 6/6 passed
 
 # 14 Oracle
 $VENV -m pytest tests/unit/gis/test_capability_ecosystem_oracles.py \
-  tests/unit/tools/test_capability_ecosystem_primitives.py --no-cov -q   # 24 passed
+  tests/unit/tools/test_capability_ecosystem_primitives.py --no-cov -q   # 28 passed
 
 # 回归（分批，无 -n）
 $VENV -m pytest tests/unit/gis/ --no-cov -q                      # 798 passed / 3 skipped
@@ -64,17 +64,17 @@ $VENV -m app.lib.gis.execution_catalog_docs --check             # up to date
 | 查询返回 | `limit=5` → 5 条 + `truncated=True` | `MAX_QUERY_LIMIT=256` |
 | 检索候选 | 200 → 8，`bounded=True` + 截断诊断 | `_MAX_CANDIDATES=512` 防御上限 |
 | 长结果 | 100,000 字符 → 612 字符（既有 slim） | 有界 |
-| 慢 provider | `deadline_s=0.05` 立即 `not_evaluated`，实测 <5s | `_MIN_FULL_PROBE_BUDGET_S=0.25` |
+| 慢 provider | 注入协作式探测（0.35s > 预算 0.05s）→ **真实执行后**降级 `not_evaluated`，实测 <5s；这是**协作式** deadline，不是线程级硬超时 | `_MIN_FULL_PROBE_BUDGET_S=0.25` 仅作用于生产默认路径（`probe=None` 且预算过紧 → 直接 not_evaluated、不发起探测） |
 | 栅格原语 | 10×10 = 100 像元 | `MAX_RASTER_CELLS=40_000_000` |
 | 线网原语 | 4 边 / 2 设施 | `MAX_NETWORK_EDGES=20_000` / `MAX_FACILITIES=2_000` |
-| Oracle 套件 | 24 passed / ~30s | pytest `timeout=180` |
+| Oracle 套件 | 28 passed / ~26s | pytest `timeout=180` |
 | gis 全套 | 798 passed / 109s | 分批执行，无 `-n` |
 
 ## 4. 失败归因表（禁止掩盖）
 
 | 失败 | 归因 | 处置 |
 |---|---|---|
-| M1 23 failed | 预期红灯（实现未落地） | 实现后 23→24 passed（新增 1 例生命周期断言） |
+| M1 23 failed | 预期红灯（实现未落地） | 实现后 23→24 passed（+1 生命周期断言），R1 修复后再 →27 passed（+3 P1 回归用例），R2 再 →28 passed（+1 多段时间分摊） |
 | 首次 Oracle 2 failed | O13 文档待写 + O10 fixture 数据错误 | 写文档；修 fixture `manifest.name`（断言未动） |
 | ruff 23 / mypy 3 | 改动引入 | 全部修复，复查 clean |
 | 一键验收 5/6 | `check_pack.py` 缺 sys.path 引导 | 补引导，6/6 |

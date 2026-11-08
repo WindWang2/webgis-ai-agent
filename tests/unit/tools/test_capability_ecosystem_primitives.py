@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import from_origin
 
@@ -314,9 +315,49 @@ def test_cap_o09_network_service_coverage_consistency(tmp_path: Path):
         f"两方案完全相同时一致性应 == 1.0，实际 {nums_ident[:20]}")
 
 
+def test_r2_n02_feature_time_is_apportioned_across_segments():
+    """N-02（R2）：要素级 ``travel_time_s`` 按段长分摊，不得每段重复计总秒数。
+
+    metamorphic 性质：把一条要素拆成 k 段后，图上的**总时间权重**必须仍然
+    等于要素声明的总时间（拆段不变性），且各段按长度占比分摊。
+    """
+    assert not MISSING, RED
+    from app.tools.capability_ecosystem_tools import _build_graph
+
+    def _line(travel_time_s: float, coords: list[list[float]]) -> list[dict]:
+        return [{
+            "type": "Feature",
+            "properties": {"scheme": "A", "travel_time_s": travel_time_s},
+            "geometry": {"type": "LineString", "coordinates": coords},
+        }]
+
+    # 等分两段 → 各 50s，总和 100s（旧实现会得 200s）
+    _g, edges, total = _build_graph(
+        _line(100.0, [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]), time_mode=True)
+    assert len(edges) == 2
+    assert abs(total - 100.0) < 1e-9, f"拆段不变性被破坏：总时间 {total} != 100s"
+    assert all(abs(v[1] - 50.0) < 1e-9 for v in edges.values()), (
+        f"等分两段应各 50s，实际 {[v[1] for v in edges.values()]}")
+
+    # 不等长（3:1）→ 75s / 25s
+    _g2, edges2, total2 = _build_graph(
+        _line(100.0, [[0.0, 0.0], [3.0, 0.0], [4.0, 0.0]]), time_mode=True)
+    costs2 = sorted(v[1] for v in edges2.values())
+    assert abs(total2 - 100.0) < 1e-9
+    assert abs(costs2[0] - 25.0) < 1e-9 and abs(costs2[1] - 75.0) < 1e-9, costs2
+
+    # 缺时间证据：必须 typed 抛错，绝不把几何长度当秒（CAP-O06 红线）
+    with pytest.raises(Exception) as ei:
+        _build_graph([{
+            "type": "Feature", "properties": {"scheme": "A"},
+            "geometry": {"type": "LineString",
+                         "coordinates": [[0.0, 0.0], [1.0, 0.0]]},
+        }], time_mode=True)
+    assert "TimeCostMissing" in type(ei.value).__name__, (
+        f"缺时间成本应以 TimeCostMissing 拒绝，实际 {type(ei.value).__name__}")
+
+
 # ── CAP-O06 dispatch 段：cost_unit=seconds 请求 distance 的 typed 错误 ──
-
-
 def test_cap_o06_network_seconds_distance_returns_typed_error():
     """cost_unit='seconds' 而请求 distance（米）不得静默成功，须 typed 错误。"""
     assert not MISSING, RED
@@ -390,6 +431,10 @@ def test_r1_f01_raster_path_guard_rejects_escape_and_remote():
         text = json.dumps(d, default=str).upper()
         assert not all(k in d for k in _ENV_KEYS), (
             f"非法路径 {bad!r} 不得返回成功封套")
+        # N-09（R2）：必须精确命中路径闸理由码，不能靠「打开失败」蒙混通过。
+        assert "RASTER_PATH_FORBIDDEN" in text, (
+            f"非法路径 {bad!r} 应由路径闸以 RASTER_PATH_FORBIDDEN 拒绝，"
+            f"实际 {text[:200]}")
         assert "FORBIDDEN" in text or "UNREADABLE" in text or "ERROR" in text, (
             f"非法路径 {bad!r} 必须 typed 拒绝，实际 {text[:200]}")
 

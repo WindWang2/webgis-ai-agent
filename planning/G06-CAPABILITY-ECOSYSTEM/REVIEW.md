@@ -61,14 +61,16 @@
 - **F-04**：`qualify_provider` 增加显式 `probe` 注入点（生产默认 None，
   不发起慢 I/O），协作式 deadline；测试改为注入真实慢探测并断言
   **探测被真实调用** + 降级 `not_evaluated` + 空权限仍 fail-closed。
-  账本表述同步改为真实。
+  边界如实披露：这是**协作式** deadline（非线程级硬超时）；`probe`
+  注入后结果恒降级（不做真实健康探测），生产默认 `probe=None` 不发慢 I/O。
+  账本（`TEST_MATRIX.md`）相关行已按上述真实语义改写，见 R2 记录。
 - **附带 mypy 发现的真实 API 误用**（冷审未列，主 Agent 自查）：
   `get_loaded_model_cache` / `get_provider_health_tracker` 不存在、
   `batch_for_budget` 签名不符。改为只读消费显式注入的既有事实 +
   按真实全关键字签名调用，不再靠 try/except 吞异常。
 
 复验结果：
-- Oracle 套件 **27 passed**（原 24 + 3 条 P1 回归用例）；
+- Oracle 套件 **28 passed**（24 基线 + 3 条 P1 回归 + 1 条 N-02 多段时间分摊）；
 - `ruff check` **All checks passed!**；
 - `mypy` 6 个新模块 **Success: no issues found**；
 - `scripts/verify_capability_ecosystem.py` **6/6 passed**；
@@ -77,4 +79,50 @@
 
 ## R2 二次 review
 
-（对修复后的 diff 由同一 reviewer 再审，确认 P0/P1 清零、P2 已记账）
+同一独立 reviewer（子代理 B，未新增 subagent）冷读 `391e28efb` 全量 diff，
+不复用主 Agent 结论。结论：**APPROVE-WITH-FIXES**，P0=0，P1 由 4 → 1。
+
+### R1 P1 逐条复核
+
+| ID | R1 结论 | R2 判定 | 证据 |
+|---|---|---|---|
+| F-01 | 任意读 + SSRF | **清零** | `capability_ecosystem_tools.py:298-302` 在 open 前拒 `/vsi*` 与 `://`；`:303-309` 复用 `validate_data_path`（`app/utils/path.py:25-40` realpath + 拒 `..` + 仅 `./data`/`./tmp`） |
+| F-02 | 几何长度伪称秒 | **清零** | `:490-495` 每边 `_edge_time_cost`，缺失 `raise TimeCostMissing`；`:542-550` typed `TIME_COST_NOT_EVALUATED`；`:632/:642-647` `cost_dimension`/`unit_contract` 仅在真实秒数成功态写入；`speed_mps` = `length/speed` 数学正确 |
+| F-03 | 先读后判界 + 文档失真 | **清零** | `:315-320` `width*height` 与 `MAX_RASTER_CELLS`、`:325-330` `check_grid`，**`:333` 才 `ds.read(1)`**；`docs/dev/GIS_CAPABILITY_ECOSYSTEM.md:84` 已改为「先判界 → 整幅单波段读取」 |
+| F-04 | 慢 provider 空桩 + 账本失真 | **R2 时为「部分清零」** | 代码/测试已清零（`:275` 注入路径不被 tight-budget 短路、`:326` 真实调用、`oracles.py:665` `assert calls`）；残留 **R-01 纯文档**：`TEST_MATRIX.md:22,67` 仍写「sleep(30) 被短路」。**已在本轮修正**（见下） |
+
+### R2 新发现
+
+- **P0：无** —— 无越界、无第二事实源、无任意代码执行、无伪造 `native_verified`。
+- **R-01（P1，纯文档）已修**：`TEST_MATRIX.md` 两处改为「注入协作式探测真实执行后降级、非硬超时」；`24 passed` → `27/28 passed`；`REVIEW.md` 撤回「账本已同步」的旧表述。
+- **N-01~N-10（P2）已记账**，见下节。
+
+### P2 状态（R2 复核）
+
+| ID | 状态 | 说明 |
+|---|---|---|
+| F-05 运算符优先级 | 已修 | `method_eligibility.py:291` `elif deferred_any or combined == "REQUIRES_TRANSFORM"` |
+| F-06 单位/CRS 词表 | 已修（残留 N-06） | `:50-75` 扩充 + `GEOGRAPHIC_CRS_MARKERS`；子串匹配可能误报，后续改「精确优先、子串兜底」 |
+| F-07 parity O(n²) | 已修 | `capability_schema_parity.py:120-131` 预建索引，单次扫描 |
+| F-08 全量编译开销 | **未修，如实记账** | 不在生产热路径；ADR-0287 已披露 |
+| F-09 rerank 输入界 | 已修（残留 N-04） | `availability_rerank.py:31-34`、`:167-168` `islice`；缺 `input_truncated` 诊断 |
+| F-10 私有属性/trust | 部分修 + 记账 | `host` 被真实消费（停用 fail-closed）；私有 pins 保留为后续 |
+| F-11 多方案限制 | 已修（残留 N-03） | `:583-594` 两两 Jaccard + `pairwise_jaccard`/`scheme_count` + 披露；方案数无独立上界 |
+| F-12 悬空引用 | 已修 | `capability_ecosystem.py:5-7`、`availability_rerank.py:14` |
+| F-13 恒真断言 | 部分修（残留 N-10） | oracles 侧已改精确断言；primitives 侧宽松断言仍在 |
+| F-14 `expect_status` 死字段 | 已修（残留 N-05） | 语料 + `oracles.py:400-410` 真实对拍；对拍可复用已编译 `snap` 以省时 |
+
+### 未修 P2（明确后续，不隐藏）
+
+- **N-01** `probe` 无硬超时、注入后恒降级 → 标注为测试/失效注入专用，不宣称硬超时。
+- **N-02** `travel_time_s` 为 feature 级却按段赋给每段 → 多段线时间重复累加，需按段分摊。
+- **N-03** 两两 Jaccard 矩阵 O(k²) 无独立方案数上界 → 需 `MAX_SCHEMES`。
+- **N-04** rerank 输入截断无诊断码。
+- **N-05** 语料对拍重复编译快照（测试耗时）。
+- **N-06** CRS 子串匹配误报风险。
+- **N-07** `capability_ecosystem_tools.py:336-337` 兜底条件恒假（死代码）。
+- **N-08** `./tmp` 测试文件不清理；demo 用绝对路径定位与 `validate_data_path` 相对 cwd 不一致。
+- **N-09** F-01 测试断言过宽（接受 `UNREADABLE`）。
+- **N-10** primitives 侧宽松断言 + `_schema_required` 死代码。
+
+**R2 合并建议**：R-01 修正后 → **APPROVE**（P0=0 / P1=0）；P2 不阻断，随 PR 记录后续。

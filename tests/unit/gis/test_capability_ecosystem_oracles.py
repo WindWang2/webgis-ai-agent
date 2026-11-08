@@ -400,11 +400,8 @@ def _run_lexicon_case(snap: Any, case: dict[str, Any], *,
         # F-14：expect_status 不再是死字段，必须与真实快照逐例对拍。
         declared_status = case.get("expect_status")
         if declared_status:
-            from app.lib.gis.capability_availability import (
-                compile_availability_snapshot,
-            )
-
-            live = compile_availability_snapshot(registry=reg).for_tool(expect)
+            # N-05（R2）：复用本用例已编译的 snap，避免逐例重复全量编译。
+            live = snap.for_tool(expect)
             assert live is not None, f"{expect} 不在真实可用性快照中"
             assert live.availability_status == declared_status, (
                 f"{expect}: 语料声明 {declared_status} != 实际 "

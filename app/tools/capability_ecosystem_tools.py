@@ -34,6 +34,10 @@ from typing import Any, Mapping, Optional
 
 from pydantic import BaseModel, Field
 
+from app.lib.geo_analysis.raster_guard import (
+    RasterResourceExceededError,
+    RasterResourceGuard,
+)
 from app.tools.registry import ToolRegistry, tool
 
 # ── 有界预算（CAP-06 / CAP-O12）───────────────────────────────────────
@@ -318,23 +322,21 @@ def _conditional_quantile_zonal_stats_impl(
                 return _error(
                     "BUDGET_EXCEEDED",
                     f"raster has {cells} cells > {MAX_RASTER_CELLS}（读取前拒绝）")
-            from app.lib.geo_analysis.raster_guard import (
-                RasterResourceExceededError, RasterResourceGuard,
-            )
-
             try:
                 RasterResourceGuard.check_grid(width, height, bytes_per_pixel=8,
                                                num_bands=1)
             except RasterResourceExceededError as exc:
                 return _error(exc.error_code, exc.message,
                               "缩小栅格范围或降采样后重试")
+            except Exception as exc:  # noqa: BLE001 — 预算闸自身异常不吞
+                return _error(
+                    "RASTER_RESOURCE_CHECK_FAILED",
+                    f"resource guard failed: {type(exc).__name__}: {exc}")
             source_crs = str(ds.crs or "")
             transform = ds.transform
             band = ds.read(1).astype("float64")
             ds_nodata = ds.nodata
     except Exception as exc:  # noqa: BLE001 — 路径/栅格错误是 typed 失败
-        if isinstance(exc, (ValueError,)) and "BUDGET" in str(type(exc).__name__):
-            raise
         return _error("RASTER_UNREADABLE", f"cannot open raster: {exc}")
     # 经纬度 CRS 不得按米解释面积/长度（CAP-O06）。
     geographic = bool(source_crs) and (
@@ -441,23 +443,44 @@ class TimeCostMissing(ValueError):
     """时间量纲模式缺少真实时间成本证据 —— 绝不把几何长度当秒。"""
 
 
-def _edge_time_cost(props: Mapping[str, Any], length: float) -> Optional[float]:
-    """时间模式：只接受显式时间成本属性或显式速度换算。
+_TIME_KEYS = ("travel_time_s", "duration_s", "cost_s", "time_s")
 
-    * ``travel_time_s`` / ``duration_s`` / ``cost_s``：直接秒数；
-    * ``speed_mps``：秒 = 长度(米) / 速度(米每秒)；
-    * 都没有 → None（调用方必须返回 not_evaluated，不能猜）。
-    """
-    for key in ("travel_time_s", "duration_s", "cost_s", "time_s"):
+
+def _explicit_time_s(props: Mapping[str, Any]) -> Optional[float]:
+    """要素级显式时间成本（秒）；缺失返回 None，绝不猜。"""
+    for key in _TIME_KEYS:
         value = props.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool) \
                 and math.isfinite(float(value)) and float(value) >= 0:
             return float(value)
+    return None
+
+
+def _edge_speed_mps(props: Mapping[str, Any]) -> Optional[float]:
+    """要素级显式速度（米/秒）；缺失或非正返回 None。"""
     speed = props.get("speed_mps")
     if isinstance(speed, (int, float)) and not isinstance(speed, bool) \
             and math.isfinite(float(speed)) and float(speed) > 0:
-        return float(length) / float(speed)
+        return float(speed)
     return None
+
+
+def _feature_segments(geom: Mapping[str, Any]) -> list[tuple[tuple, tuple, float]]:
+    """把 (Multi)LineString 展开为 (a, b, 段长) 列表。"""
+    lines = [geom.get("coordinates") or []]
+    if geom.get("type") == "MultiLineString":
+        lines = geom.get("coordinates") or []
+    segments: list[tuple[tuple, tuple, float]] = []
+    for line in lines:
+        coords = [(float(p[0]), float(p[1])) for p in line if len(p) >= 2]
+        for a, b in zip(coords, coords[1:]):
+            if a == b:
+                continue
+            length = math.hypot(b[0] - a[0], b[1] - a[1])
+            if not math.isfinite(length):
+                continue
+            segments.append((a, b, length))
+    return segments
 
 
 def _build_graph(feats: list[dict[str, Any]], *, time_mode: bool = False
@@ -465,8 +488,9 @@ def _build_graph(feats: list[dict[str, Any]], *, time_mode: bool = False
     """把线要素构建为 networkx 图。
 
     米制模式：边权 = 几何长度（米）。
-    时间模式：边权 = **显式时间成本**（秒），由边属性提供；缺失即抛
-    ``TimeCostMissing``，绝不退化成几何长度（CAP-O06 秒≠米红线）。
+    时间模式：边权 = **显式时间成本**（秒）。要素级 ``travel_time_s`` 按
+    段长占比分摊到各段（避免多段线重复计值）；``speed_mps`` 按段长换算；
+    两者都缺即抛 ``TimeCostMissing``，绝不退化成几何长度（CAP-O06 秒≠米）。
     """
     import networkx as nx
 
@@ -474,31 +498,33 @@ def _build_graph(feats: list[dict[str, Any]], *, time_mode: bool = False
     edges: dict[tuple, tuple[str, float, str]] = {}
     for i, feat in enumerate(feats):
         geom = feat["geometry"]
-        gtype = geom.get("type")
-        lines = [geom.get("coordinates") or []]
-        if gtype == "MultiLineString":
-            lines = geom.get("coordinates") or []
-        for line in lines:
-            coords = [(float(p[0]), float(p[1])) for p in line if len(p) >= 2]
-            for a, b in zip(coords, coords[1:]):
-                if a == b:
-                    continue
-                length = math.hypot(b[0] - a[0], b[1] - a[1])
-                if not math.isfinite(length):
-                    continue
-                props = feat.get("properties", {}) or {}
-                if time_mode:
-                    cost = _edge_time_cost(props, length)
-                    if cost is None:
-                        raise TimeCostMissing(
-                            "时间量纲模式要求每条边提供 travel_time_s/duration_s/"
-                            "cost_s 或 speed_mps；几何长度不是时间，拒绝换算")
+        segments = _feature_segments(geom)
+        props = feat.get("properties", {}) or {}
+        scheme = str(props.get("scheme", "") or "")
+        explicit = _explicit_time_s(props) if time_mode else None
+        speed = _edge_speed_mps(props) if time_mode else None
+        if time_mode and explicit is None and speed is None:
+            raise TimeCostMissing(
+                "时间量纲模式要求每条边提供 travel_time_s/duration_s/"
+                "cost_s 或 speed_mps；几何长度不是时间，拒绝换算")
+        total_length = sum(seg[2] for seg in segments)
+        share_denominator = total_length if total_length > 0 else 0.0
+        for a, b, length in segments:
+            if time_mode:
+                if explicit is not None:
+                    # 要素总时间按段长占比分摊；退化情形（零总长）平均分。
+                    if share_denominator > 0:
+                        cost = explicit * (length / share_denominator)
+                    else:
+                        cost = explicit / max(len(segments), 1)
                 else:
-                    cost = length
-                key = _edge_key(a, b)
-                eid = f"e{i}_{len(edges)}"
-                edges[key] = (eid, cost, str(props.get("scheme", "") or ""))
-                graph.add_edge(key[0], key[1], length=cost, edge_id=eid)
+                    cost = length / float(speed)  # type: ignore[arg-type]
+            else:
+                cost = length
+            key = _edge_key(a, b)
+            eid = f"e{i}_{len(edges)}"
+            edges[key] = (eid, cost, scheme)
+            graph.add_edge(key[0], key[1], length=cost, edge_id=eid)
     return graph, edges, sum(v[1] for v in edges.values())
 
 
