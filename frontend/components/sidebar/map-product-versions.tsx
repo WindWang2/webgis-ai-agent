@@ -31,6 +31,7 @@ import {
   type MapProductVersionOpen,
   type MapProductVersionSummary,
 } from '@/lib/api/map-product';
+import { refreshMapSpecAfterExternalMutation } from '@/lib/mapspec/user-mutation';
 
 const DIMENSIONS: Array<{
   key: keyof Pick<MapProductVersionDiff, 'data_changed' | 'algorithm_changed' | 'parameter_changed' | 'style_changed' | 'output_changed'>;
@@ -247,6 +248,11 @@ export function MapProductVersionsPanel({
         }) + (proof?.analysis_executed === false ? t('sidebar.versions.styleRestoredNoAnalysis') : ''),
       );
       reload();
+      // C-1（review-fix-rereview-20261108）：恢复是 REST 通道的带外权威
+      // MapSpec 突变（SSE/协作总线无事件）——推进会话游标并回灌 committed
+      // presentation，地图/图层面板立即反映恢复结果，下一次用户 mutation
+      // 不会携带过期 revision 而 409。
+      void refreshMapSpecAfterExternalMutation(sessionId, result.mutation_revision ?? undefined);
     } catch (e) {
       setLifecycleError(e instanceof Error ? e.message : t('sidebar.versions.restoreFailed'));
     } finally {

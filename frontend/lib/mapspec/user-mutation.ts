@@ -1,7 +1,7 @@
 import { t as tNow } from '@/lib/i18n/t';
 import { ApiError, apiFetch } from '@/lib/api/transport';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { presentationFromMapSpec } from '@/lib/session/map-state-restore';
+import { presentationFromMapSpec, syncSpecLayersToStore } from '@/lib/session/map-state-restore';
 import {
   clearPendingPresentation,
   clearPendingRemoved,
@@ -100,6 +100,59 @@ function applyCommittedMapSpec(
 function mapspecLayerId(layerId: string): string {
   const layer = useHudStore.getState().layers.find((item) => item.id === layerId);
   return String(layer?._mapspecLayerId || layerId);
+}
+
+/**
+ * C-1（review-fix-rereview-20261108）：REST 通道带外突变权威 MapSpec 后的
+ * 会话内刷新（当前调用方：map-product-versions 的 style-only 版本恢复）。
+ *
+ * 恢复走 REST 不经聊天 turn——RestoreStyleIntent 未注册 collab_event，
+ * SSE/协作总线只落 op journal，前端不会有任何事件。此前恢复成功后地图与
+ * 图层面板停留在恢复前样式，用户下一次 presentation 提交还携带过期
+ * revision，必然 409 superseded 被回滚一次。
+ *
+ * 纪律与既有路径一致（use-sse-stream 的 mapspec 落地序）：
+ * 1. 先以 mutation 响应的 revision 推进游标（setMapSpecRevision 单调）——
+ *    即使下面的 map-state 拉取失败，下一次用户 mutation 也不会 spurious 409；
+ * 2. 新鲜读 map-state → setMapSpecRevision → commitMapSpecDocument +
+ *    applyCommittedPresentationToHud（复用 applyCommittedMapSpec：pending 层
+ *    跳过语义保留）→ syncSpecLayersToStore（spec 镜像行补增/修剪）。
+ * 会话切换守卫：await 之后游标 session 复核，旧会话的刷新不得写入新会话
+ * 状态。刷新失败诚实保态（devOnly.warn），不伪造成功、不抛出。
+ */
+export async function refreshMapSpecAfterExternalMutation(
+  sessionId: string,
+  revision?: number,
+): Promise<void> {
+  if (!sessionId) return;
+  if (getMapSpecSessionCursor().sessionId !== sessionId) return;
+  if (typeof revision === 'number' && Number.isFinite(revision)) {
+    setMapSpecRevision(revision);
+  }
+  const { ownerToken } = getMapSpecSessionCursor();
+  let stateData: {
+    map_state?: { mapspec?: unknown; _cartographic_mutation_revision?: unknown };
+  };
+  try {
+    stateData = await apiFetch(
+      `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-state`,
+      { ownerToken, label: 'Map state refresh after external mutation' },
+    );
+  } catch (err) {
+    devOnly.warn('[user-mutation] map-state refresh after external mutation failed:', err);
+    return;
+  }
+  if (getMapSpecSessionCursor().sessionId !== sessionId) return;
+  const state = stateData?.map_state;
+  const mapspec = state?.mapspec;
+  if (!mapspec || typeof mapspec !== 'object') return;
+  const stateRevision = Number(state?._cartographic_mutation_revision);
+  const nextRevision = typeof revision === 'number' && Number.isFinite(revision)
+    ? revision
+    : Number.isFinite(stateRevision) ? stateRevision : undefined;
+  if (nextRevision !== undefined) setMapSpecRevision(nextRevision);
+  applyCommittedMapSpec(mapspec as { layers?: any[] }, nextRevision);
+  syncSpecLayersToStore(mapspec as never, sessionId);
 }
 
 // 用户 mutation 串行链（ST-P1-2）：所有前端发起的 MapSpec CAS 写（用户

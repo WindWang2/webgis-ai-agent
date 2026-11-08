@@ -7,6 +7,11 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { clearCache } from '@/lib/api/get-fast-path';
+import { useHudStore } from '@/lib/store/useHudStore';
+import {
+  getMapSpecSessionCursor,
+  setMapSpecSessionCursor,
+} from '@/lib/mapspec/session-cursor';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -117,5 +122,72 @@ describe('MapProductVersionsPanel', () => {
     serveGet({ items: [], total: 0, limit: 50, offset: 0, has_more: false });
     render(<MapProductVersionsPanel projectId="p1" />);
     await waitFor(() => expect(screen.getByText('暂无产品版本')).toBeTruthy());
+  });
+
+  /* C-1（review-fix-rereview-20261108）：style-only 恢复是 REST 通道的带外
+   * 权威 MapSpec 突变——SSE 不会有事件。恢复成功后必须推进会话游标并把
+   * 服务端 committed presentation 回灌 HUD，否则地图/面板停留在旧样式，
+   * 且用户下一次图层操作以过期 revision 提交必然 409 superseded。
+   */
+  it('style-only restore advances the session cursor and re-applies committed presentation', async () => {
+    const snapshotLedger = {
+      items: LEDGER.items.map((v) => ({ ...v, snapshot_available: true })),
+      total: 3, limit: 50, offset: 0, has_more: false,
+    };
+    let restorePosted = false;
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (init?.method === 'POST' && u.includes('/restore')) {
+        restorePosted = true;
+        return jsonOk({
+          restored_version_no: 4,
+          source_version_no: 2,
+          mode: 'style_only',
+          mutation_revision: 7,
+          style_only_proof: { compute_identity_preserved: true, analysis_executed: false, note: '' },
+        });
+      }
+      if (u.includes('/map-state')) {
+        expect(restorePosted).toBe(true);
+        return jsonOk({
+          map_state: {
+            mapspec: {
+              version: '1.0',
+              sources: { L1: { type: 'geojson' } },
+              layers: [{
+                id: 'L1', source: 'L1', type: 'circle',
+                layout: { visibility: 'none' }, paint: { opacity: 0.4 },
+              }],
+            },
+            _cartographic_mutation_revision: 7,
+          },
+        });
+      }
+      if (u.includes('/diff/')) return jsonOk(styleOnlyDiff);
+      if (u.includes('/map-products') && !u.includes('/diff/')) return jsonOk(snapshotLedger);
+      return jsonOk({});
+    });
+
+    useHudStore.getState().clearLayers();
+    setMapSpecSessionCursor('sid-restore', 3);
+    useHudStore.getState().addLayer({
+      id: 'L1', name: 'Schools', type: 'vector', visible: true, opacity: 1,
+      group: 'analysis', source: { type: 'FeatureCollection', features: [] } as never,
+      _mapspecLayerId: 'L1',
+    } as never);
+
+    render(<MapProductVersionsPanel projectId="p1" sessionId="sid-restore" />);
+    const restoreBtn = await screen.findByLabelText('恢复 V2 的样式态');
+    await userEvent.click(restoreBtn);
+
+    await waitFor(() => {
+      // committed presentation 已回灌：面板行从 visible=true 收敛到恢复后的 none。
+      expect(useHudStore.getState().layers.find((l) => l.id === 'L1')?.visible).toBe(false);
+    });
+    // 游标推进到恢复响应的 mutation_revision——下一次用户 mutation 不会 409。
+    expect(getMapSpecSessionCursor().revision).toBe(7);
+    expect(getMapSpecSessionCursor().sessionId).toBe('sid-restore');
+    // 恢复成功的通知仍照常呈现（InlineNotice 不转发 data-testid，按文本断言）。
+    await waitFor(() => expect(screen.getByText(/已恢复 V2 的样式态/)).toBeTruthy());
   });
 });

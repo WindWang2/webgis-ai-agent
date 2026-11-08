@@ -12,6 +12,7 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import {
   commitExplicitView,
+  refreshMapSpecAfterExternalMutation,
   removeLayerAndCommit,
   reorderLayersAndCommit,
   setLayerOpacityAndCommit,
@@ -453,5 +454,91 @@ describe('V7: rollback session guards', () => {
 
     // 新会话的行仍在（旧会话顺序回滚被拦截）。
     expect(useHudStore.getState().layers.map((l) => l.id)).toEqual(['N1']);
+  });
+});
+
+/* ─── C-1（review-fix-rereview-20261108）：REST 通道外突变的会话内刷新 ──────
+ *
+ * style-only 版本恢复（map-product-versions 面板）经 REST 直接突变权威
+ * MapSpec：SSE/协作总线不会有任何事件。若前端不主动推进游标并回灌
+ * committed spec/presentation，地图与图层面板停留在恢复前的样式，且用户
+ * 下一次 presentation 提交携带过期 revision 必然 409 superseded。
+ */
+describe('refreshMapSpecAfterExternalMutation', () => {
+  const mapStateResponse = (revision: number) => ({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    text: () => Promise.resolve(JSON.stringify({
+      map_state: {
+        mapspec: {
+          version: '1.0',
+          sources: { L1: { type: 'geojson' } },
+          layers: [{
+            id: 'L1', source: 'L1', type: 'circle',
+            layout: { visibility: 'none' }, paint: { opacity: 0.4 },
+          }],
+        },
+        _cartographic_mutation_revision: revision,
+      },
+    })),
+  });
+
+  it('advances the cursor and applies the fetched committed presentation to HUD', async () => {
+    fetchMock.mockImplementation((url: unknown) => (
+      String(url).includes('/map-state') ? Promise.resolve(mapStateResponse(9)) : Promise.resolve({
+        ok: true, status: 200, statusText: 'OK', text: () => Promise.resolve('{}'),
+      })
+    ));
+
+    await refreshMapSpecAfterExternalMutation('sid-1', 9);
+
+    expect(getMapSpecSessionCursor().revision).toBe(9);
+    const l1 = useHudStore.getState().layers.find((l) => l.id === 'L1');
+    expect(l1?.visible).toBe(false);
+    expect(l1?.opacity).toBe(0.4);
+    expect(getCommittedMapSpec()?.layers?.[0]).toMatchObject({ id: 'L1' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/chat/sessions/sid-1/map-state'),
+      expect.anything(),
+    );
+  });
+
+  it('advances the revision from the mutation response even when map-state fetch fails', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('network down'));
+
+    await expect(refreshMapSpecAfterExternalMutation('sid-1', 9)).resolves.toBeUndefined();
+
+    // 游标已推进：下一次用户 mutation 携带新 revision，不会被 spurious 409。
+    expect(getMapSpecSessionCursor().revision).toBe(9);
+    // HUD 保持恢复前的本地真相（刷新失败的诚实保态，不伪造成功）。
+    expect(useHudStore.getState().layers[0].visible).toBe(true);
+  });
+
+  it('never writes store state when the cursor moved to another session during the fetch', async () => {
+    let release!: (value: unknown) => void;
+    fetchMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+
+    const done = refreshMapSpecAfterExternalMutation('sid-1', 9);
+    setMapSpecSessionCursor('sid-2', 1);
+    release(mapStateResponse(9));
+    await done;
+
+    expect(useHudStore.getState().layers[0].visible).toBe(true);
+    expect(getMapSpecSessionCursor().sessionId).toBe('sid-2');
+    expect(getMapSpecSessionCursor().revision).toBe(1);
+  });
+
+  it('falls back to the map-state revision when the mutation response omits one', async () => {
+    fetchMock.mockImplementation((url: unknown) => (
+      String(url).includes('/map-state') ? Promise.resolve(mapStateResponse(11)) : Promise.resolve({
+        ok: true, status: 200, statusText: 'OK', text: () => Promise.resolve('{}'),
+      })
+    ));
+
+    await refreshMapSpecAfterExternalMutation('sid-1');
+
+    expect(getMapSpecSessionCursor().revision).toBe(11);
+    expect(useHudStore.getState().layers[0].visible).toBe(false);
   });
 });
