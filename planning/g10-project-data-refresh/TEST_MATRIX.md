@@ -15,7 +15,7 @@
 | O03 | T-O03b | DI | 分母（行政区人口）变 → 归一化统计节点进入 `recompute`，图层样式节点不进入 | 同上 | ✅ 已验证 |
 | O04 style-only / 保守重算 | T-O04a | PU | 仅改颜色/标题 → `recompute=[]`、`style_only=True`；全局分类断点/核密度/网络拓扑 → 整项重算 | 同上 | ✅ 已验证 |
 | O04 结果等价 | T-O04b | DI | 增量结果与固定版本全量重算在声明容差内逐字段相等 | `tests/data/test_project_data_refresh_parity.py` | ✅ 已验证 |
-| O05 预览无写入 + 绑定版本 | T-O05a | DI | `preview` 前后磁盘/DB 状态哈希相同；执行时 `source_version_set` 不匹配 → 409 `proposal_drift` | `tests/data/test_project_data_refresh_service.py` | ✅ 已验证 |
+| O05 项目成果零写入 + 绑定版本 | T-O05a | DI | `preview` 前后**项目成果**（MapSpec 指纹 / revision / DB 数据集 / 基线版本）状态哈希相同；隔离 `data-refresh/` proposal 账本与合并基线文档的写入已在 `docs/features` 披露；执行时 `source_version_set` 不匹配 → 409 `proposal_drift` | `tests/data/test_project_data_refresh_service.py` | ✅ 已验证 |
 | O05 revision/权限漂移 | T-O05b | DI | MapSpec revision 漂移 / 权限撤销 / 预览后人工编辑 → 409 + 强制重预览 | 同上 | ✅ 已验证 |
 | O06 用户编辑保留 | T-O06a | PU | baseline/current/candidate 三方合并后颜色、透明度、可见性、层序、组件族锁、文本全部按 entity ID 保留 | `tests/data/test_project_data_refresh_merge.py` | ✅ 已验证 |
 | O06 显式冲突 | T-O06b | PU | 被删要素的标注 / 被移除字段的标签 → `conflict` 列表显式列出，不迁移到别的对象；硬语义错误不因 user-wins 变合法 | 同上 | ✅ 已验证 |
@@ -34,7 +34,7 @@
 
 ## 实际验证结果
 
-- 后端 50 passed（PU 15+8 + DI 12+5+3+2 + PI 5），含 R1 审查回归 10 项: `pytest tests/data/test_project_data_refresh_*.py tests/unit/test_project_data_refresh_routes.py tests/integration/test_pi_project_data_refresh.py --no-cov -q` → exit 0
+- 后端 54 passed（含 R1 回归 10 + R2 回归 4 + 8 端点 404 探针）（PU 15+8 + DI 12+5+3+2 + PI 5），含 R1/R2 审查回归 14 项: `pytest tests/data/test_project_data_refresh_*.py tests/unit/test_project_data_refresh_routes.py tests/integration/test_pi_project_data_refresh.py --no-cov -q` → exit 0
 - 前端 30 passed: `vitest run components/sidebar/project/data-refresh-panel.test.tsx` (5)、`key-completeness`+`no-raw-cjk`+`changed-lanes` (25)；`pnpm run typecheck` → exit 0
 - 生成物闸 15 passed: `tests/quality/test_api_compatibility.py` + `tests/test_api_docs_drift.py` → exit 0
 - `ruff check`（本任务全部新增 Python 文件）→ All checks passed, exit 0

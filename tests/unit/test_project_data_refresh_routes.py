@@ -209,6 +209,31 @@ def test_o10_full_http_journey_check_preview_execute_compare_adopt_rollback():
     assert r.json()["revision_after"] == 5
 
 
+def test_r2_p1_missing_proposal_returns_404_not_500_on_all_guarded_endpoints():
+    """R2 独立审查 P1：helper 抛的 RefreshError 必须映射成统一 404，
+    不得冒泡成 500 / SERVER_ERROR（跨 owner / 撤权场景同理）。"""
+    probe = TestClient(app, raise_server_exceptions=False)
+    h = _token(OWNER)
+    pid = "g10p-does-not-exist"
+    paths = [
+        ("GET", f"{_base()}/proposals/{pid}"),
+        ("GET", f"{_base()}/proposals/{pid}/status"),
+        ("GET", f"{_base()}/proposals/{pid}/compare"),
+        ("GET", f"{_base()}/proposals/{pid}/explain"),
+        ("POST", f"{_base()}/proposals/{pid}/execute"),
+        ("POST", f"{_base()}/proposals/{pid}/adopt"),
+        ("POST", f"{_base()}/proposals/{pid}/discard"),
+        ("POST", f"{_base()}/proposals/{pid}/rollback"),
+    ]
+    for method, url in paths:
+        kwargs = {"headers": h}
+        if method == "POST":
+            kwargs["json"] = {}
+        r = probe.request(method, url, **kwargs)
+        assert r.status_code == 404, (method, url, r.status_code, r.text[:200])
+        assert "SERVER_ERROR" not in r.text
+
+
 def test_o05_client_fingerprint_mismatch_is_refused():
     h = _token(OWNER)
     client.post(f"{_base()}/check", json={"session_id": SID}, headers=h)

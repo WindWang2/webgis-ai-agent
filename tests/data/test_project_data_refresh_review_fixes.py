@@ -290,3 +290,60 @@ async def test_r1_p2_production_mapspec_port_cas_and_revision_monotonic():
     assert stale["status"] == "superseded"
     doc, rev = await port.read(sid)
     assert rev == 2 and doc.get("title") == "candidate"
+
+
+# ── R2 二审：cap 配额 / 实例重验证 / 短尾绑定 ─────────────────────
+
+@pytest.mark.asyncio
+async def test_r2_p2_cap_counts_only_manifests_and_keeps_baseline_docs(monkeypatch):
+    from app.services.project_runtime.refresh import store as store_mod
+
+    monkeypatch.setattr(store_mod, "MAX_PROPOSALS_PER_PROJECT", 3)
+    store = RefreshStore()
+    for i in range(5):
+        pid = f"g10p-r2p{i:03d}"
+        await store.save_proposal(RefreshProposal(
+            proposal_id=pid, project_id="proj-r1", owner_id="u-r1",
+            proposal_fingerprint="g10:abc"))
+        await store.save_doc("proj-r1", f"g10p-{pid}-baseline", {"n": i})
+    manifests = [f for f in store_mod._dir("proj-r1").glob("g10p-*.json")
+                 if not f.name.endswith(".doc.json")]
+    docs = list(store_mod._dir("proj-r1").glob("*.doc.json"))
+    assert len(manifests) == 3, [f.name for f in manifests]
+    assert len(docs) == 5, "baseline docs must never be deleted by the cap sweep"
+
+
+def test_r2_p2_revalidate_instance_reapplies_truncation():
+    s = _snap(5)
+    s.features = {f"x{i}": {"properties": {"n": i}, "geometry": "POINT(1 1)"}
+                  for i in range(MAX_SNAPSHOT_FEATURES + 10)}
+    s.truncated = False
+    s.sampled = False
+    s2 = SourceSnapshot.model_validate(s)
+    assert len(s2.features) == MAX_SNAPSHOT_FEATURES
+    assert s2.truncated is True and s2.sampled is True
+
+
+def test_r2_p2_rebind_short_logical_ids_have_no_substring_collision():
+    from app.services.project_runtime.refresh.contracts import SourceDiff
+    from app.services.project_runtime.refresh.service import _rebind_sources
+
+    diffs = [
+        SourceDiff(logical_id="dataset:a", change_class="content"),
+        SourceDiff(logical_id="dataset:b", change_class="content"),
+    ]
+    versions = {"dataset:a": "vA", "dataset:b": "vB"}
+    doc = {
+        "sources": {"dataset-b": {"ref": "ref://dataset-b"}},
+        "layers": [{"id": "L1", "source": "ref://dataset-b"}],
+    }
+    out = _rebind_sources(doc, diffs=diffs, source_versions=versions)
+    assert out["sources"]["dataset-b"]["content_revision"] == "vB"
+    assert out["layers"][0]["data_binding"]["logical_id"] == "dataset:b"
+
+    listed = {
+        "sources": [{"id": "dataset-b", "ref": "ref://dataset-b"}],
+        "layers": [{"id": "L1", "source": "ref://dataset-b"}],
+    }
+    out2 = _rebind_sources(listed, diffs=diffs, source_versions=versions)
+    assert out2["sources"][0]["content_revision"] == "vB"

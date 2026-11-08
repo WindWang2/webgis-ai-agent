@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import copy
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -137,31 +138,41 @@ def _rebind_sources(
     if not tokens:
         return doc
 
-    # R1-P2：多来源变化时按来源分别绑定，不再一律写第一个 token。
+    # R1/R2-P2：多来源变化时按来源**精确**绑定；短 logical_id 尾段用
+    # 词边界匹配，避免 "a" 命中 "dataset-b" 这类子串碰撞。
+    def _match(text: str) -> tuple[str, str] | None:
+        for logical_id, token in tokens.items():
+            if logical_id and logical_id in text:
+                return logical_id, token
+            tail = logical_id.rsplit(":", 1)[-1]
+            if tail and re.search(r"(?<![A-Za-z0-9])" + re.escape(tail)
+                                  + r"(?![A-Za-z0-9])", text):
+                return logical_id, token
+        return None
+
     def _token_for(layer: Dict[str, Any]) -> tuple[str, str]:
         binding = layer.get("data_binding")
         declared = str(binding.get("logical_id") or "") if isinstance(binding, dict) else ""
         if declared in tokens:
             return declared, tokens[declared]
-        src = str(layer.get("source") or "")
-        for logical_id, token in tokens.items():
-            tail = logical_id.rsplit(":", 1)[-1]
-            if tail and tail in src:
-                return logical_id, token
-        return next(iter(tokens.items()))
+        matched = _match(str(layer.get("source") or ""))
+        return matched or next(iter(tokens.items()))
 
     sources = doc.get("sources")
     if isinstance(sources, dict):
         for key, entry in list(sources.items())[:64]:
             if isinstance(entry, dict):
-                for logical_id, token in tokens.items():
-                    if logical_id.rsplit(":", 1)[-1] in str(key) + str(entry.get("ref", "")):
-                        entry["content_revision"] = token[:64]
-                        break
+                matched = _match(str(key) + " " + str(entry.get("ref", "")))
+                if matched:
+                    entry["content_revision"] = matched[1][:64]
     elif isinstance(sources, list):
         for entry in sources[:64]:
-            if isinstance(entry, dict) and tokens:
-                entry["content_revision"] = next(iter(tokens.values()))[:64]
+            if isinstance(entry, dict):
+                matched = _match(str(entry.get("ref") or "")
+                                 + " " + str(entry.get("logical_id") or "")
+                                 + " " + str(entry.get("id") or ""))
+                if matched:
+                    entry["content_revision"] = matched[1][:64]
 
     for layer in (doc.get("layers") or [])[:64]:
         if not isinstance(layer, dict):

@@ -116,7 +116,9 @@ class SourceSnapshot(BaseModel):
     manifest 填充；测试用本地合成 fixture 走**同一套判定代码**。
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # R2-P2：对已构造的 BaseModel 实例再次 model_validate 时也要重新截断，
+    # 否则可绕过 truncated/sampled 置位。
+    model_config = ConfigDict(extra="forbid", revalidate_instances="always")
 
     logical_id: str = Field(min_length=1, max_length=160)
     display_name: str = ""
@@ -174,6 +176,8 @@ class SourceSnapshot(BaseModel):
         否则超界数据会以「精确证据」算出全 0 的差异计数，进而得到
         recompute=[] / conservative=False 的 silently unchanged（R1-P1-1）。
         """
+        if isinstance(value, BaseModel):
+            value = value.model_dump()
         if not isinstance(value, dict):
             return value
         v = dict(value)

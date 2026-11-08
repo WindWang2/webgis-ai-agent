@@ -82,10 +82,23 @@ async def _guard_proposal(
     proposal 里存的 session_id 继续操作会话 MapSpec）。
     """
     await _auth_project(db, project_id, user)
-    proposal = await _svc().get_proposal(
-        project_id=project_id, proposal_id=proposal_id, user_id=_user_id(user))
+    # R2-P1：helper 抛出的 RefreshError 必须在 helper 内映射成统一 HTTP
+    # 错误信封；端点把 helper 放在自身 try 之外，异常原本会冒泡成 500。
+    try:
+        proposal = await _svc().get_proposal(
+            project_id=project_id, proposal_id=proposal_id, user_id=_user_id(user))
+    except RefreshError as exc:
+        raise _http_error(exc) from exc
     if proposal.session_id:
-        await _verify_session_access(proposal.session_id, user, owner_token)
+        try:
+            await _verify_session_access(proposal.session_id, user, owner_token)
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 — 会话所有权失败一律 404 不泄露
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "session_forbidden", "detail": "session owner check failed"},
+            ) from exc
     return proposal
 
 

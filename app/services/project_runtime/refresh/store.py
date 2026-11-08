@@ -313,8 +313,13 @@ class RefreshStore:
                         tmp.unlink()
                 except OSError:
                     continue
-            files = sorted(d.glob(f"{PROPOSAL_PREFIX}*.json"),
-                           key=lambda p: p.stat().st_mtime)
+            # R2-P2：glob 会同时匹配隔离基线 doc（*.doc.json）。它们不是
+            # proposal manifest，既不能计入配额，也不能被当作可回收项删除。
+            files = sorted(
+                (f for f in d.glob(f"{PROPOSAL_PREFIX}*.json")
+                 if not f.name.endswith(".doc.json")),
+                key=lambda p: p.stat().st_mtime,
+            )
             overflow = len(files) - MAX_PROPOSALS_PER_PROJECT
             for f in files[: max(0, overflow)]:
                 # 已采纳/有候选 pin 的 proposal 不回收（交付固定版本不可失效）

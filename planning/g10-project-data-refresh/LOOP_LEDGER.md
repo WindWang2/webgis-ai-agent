@@ -17,9 +17,11 @@
 | R9 | S8 前端 | `pnpm install --frozen-lockfile`(**EPERM futime，沙箱拦截**) → 只读 symlink 复用同仓库依赖缓存(0)；`vitest` 组件测试首跑 `2 failed, 3 passed`：动态 import 使 mock 未生效触发真实 fetch、预览按钮误放已有提案分支；修后 `5 passed`(0)；`typecheck`(0)；i18n+e2e-lanes 闸 `25 passed`(0) | 前端 8 个文件（panel / api client / 双语 JSON / journey / registry / 挂载） | 见上 | `183a0a632` | UI 单测 + typecheck + i18n 闸 | **真实浏览器 E2E 未跑**（需 real 后端 + 预置账号），标未验证 |
 | R10 | S9 对拍/性能/文档 | `pytest ...test_project_data_refresh_parity.py`(0) `3 passed`，输出 `G10_PERFORMANCE_JSON`；全量后端 `40 passed`(0)；`ruff check` 首跑 5×F401 → `--fix` 后 `All checks passed`(0)；生成物闸首跑 `2 failed`(#2007 既有漂移 + 12 新端点) → 官方生成器 `API_SNAPSHOT_UPDATE=1 pytest ...`(0) + `python scripts/gen_api_docs.py`(0) → 复跑 `15 passed`(0) | parity 测试、PERFORMANCE.md、docs/features、生成物 ×2、ruff 清理 | 见上 | 待提交（S9） | DI + PU + 生成物闸 | 快照 diff 含 master 既有漂移，PR 中披露 |
 | R11 | M8 独立 Review（C 冷读，固定 SHA `1a6a2eff0`） | `git diff 8eb8aa188..1a6a2eff0 --stat`(0)：39 files +9073/−30；后端 40 passed(0)、生成物闸 15 passed(0)、ruff(0)、4 组只读 `python -c` 复现(0)；审查者全程未改文件 | 无（只读审查） | **3×P1**：① `_bounded_map` 静默截断 256 → 假 EXACT + silently unchanged；② 客户端 `style_only` 跳过真实差异；③ `hard_semantic_errors` 用 `and` 短路。另有 18×P2 / 4 组 P3 | 待提交（R12 修复轮） | 冷读 + 针对性复现 | 结论：需修复后二审，0×P0 |
-| R12 | M8 Fix：清偿 3×P1 + 高价值 P2 | `pytest ...test_project_data_refresh_review_fixes.py` → 10 passed(0)；全套后端 50 passed(0) | contracts/diff/impact/merge/execution/service/store/routes/tools/前端 panel + 回归测试 | 见 R11 | 待提交 | PU+DI+PI+真实生产 CAS | 残余 P2/P3 在 PR 披露 |
-| R13 | M8 Re-Review（新 HEAD 二审） | 待执行 | 待填写 | 待填写 | 待填写 | 冷读 + 针对性复现 | — |
-| R14 | M9 同步 master + PR | 待执行 | 待填写 | 待填写 | 待填写 | 最终验收 | 不自动 merge |
+| R12 | M8 Fix（R1）：清偿 3×P1 + 高价值 P2 | 回归 10 passed(0)；全套后端 50 passed(0)；前端 30 passed + typecheck(0)；生成物闸 15 passed(0)；ruff(0) | contracts/diff/impact/merge/execution/service/store/routes/tools/前端 panel + 回归测试 | 见 R11 | `1945e7316` | PU+DI+PI+真实生产 CAS | 残余 P2/P3 在 PR 披露 |
+| R13 | M8 Re-Review（C 冷读 `1945e7316`） | 40 files +9873/−274；后端 50 passed(0)、生成物闸 15 passed(0)、ruff(0)、8 端点 HTTP 探针 + 3×P1 只读复现(0)；审查者未改文件 | 无（只读审查） | **R2 新 P1**：`_guard_proposal` 抛 `RefreshError` 未被端点 `try/except` 覆盖 → 8 个端点在 proposal 不存在/越权时返回 500；另 4 项 P2/P3（cap glob 把 `.doc.json` 计配额、实例重验证、短尾绑定碰撞、TEST_MATRIX O05 措辞） | 待提交（R14） | 冷读 + 针对性复现 | 结论：仍需修复，0×P0 |
+| R14 | M8 Fix（R2）：修新 P1 + 4 项 P2/P3 | 回归 19 passed(0)；全套后端 54 passed(0)；生成物闸 15 passed(0)；ruff(0) | routes.py / contracts.py / store.py / service.py / TEST_MATRIX + 回归测试 | 见 R13 | 待提交 | PU+DI+PI+HTTP 探针 | 待 R15 终审 |
+| R15 | M8 终审（新 HEAD 确认） | 待执行 | 待填写 | 待填写 | 待填写 | 冷读 + 针对性复现 | — |
+| R16 | M9 同步 master + PR | 待执行 | 待填写 | 待填写 | 待填写 | 最终验收 | 不自动 merge |
 
 ## 关键确定性验收（在最终代码上重复两遍）
 
