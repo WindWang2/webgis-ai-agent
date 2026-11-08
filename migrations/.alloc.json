@@ -78,6 +78,11 @@
       "0101",
       "0102",
       "0103"
+    ],
+    "zcode/goal-g11-evidence-map-briefs-20261108T160816Z": [
+      "0104",
+      "0105",
+      "0106"
     ]
   },
   "legacy_merged": {
@@ -163,6 +168,11 @@
       "revision": "0103_workflow_run_session",
       "down_revision": "0102_owner_token_hashes",
       "file": "0103_workflow_run_session.py"
+    },
+    "0104": {
+      "branch": "zcode/goal-g11-evidence-map-briefs-20261108T160816Z",
+      "revision": "0104_map_briefs",
+      "down_revision": "0103_workflow_run_session"
     }
   }
 }
