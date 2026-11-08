@@ -91,7 +91,14 @@ def evidence_from_feature_collection(
 
     提取：顶层 crs member（geo_processor.extract_declared_crs 同规），
     几何类型计数，数据 bbox（采样口径），坐标采样。
+
+    G03（ADR-0286 D6 集成）：session 存储规范形状 ``{"geojson": FC}`` 的
+    包装层会遮蔽内层 FC 的 crs member（合法声明数据被误判 SSC_UNKNOWN_CRS
+    blocked）——此处拆包一层（存储规范形状，非猜测）。
     """
+    if (isinstance(fc, dict) and fc.get("type") != "FeatureCollection"
+            and isinstance(fc.get("geojson"), dict)):
+        fc = fc["geojson"]
     if not isinstance(fc, dict) or fc.get("type") != "FeatureCollection":
         return DatasetSpatialEvidence(ref=ref, fingerprint=fingerprint)
     # R1 P1：crs member 解析复用 geo_processor.extract_declared_crs（单一
