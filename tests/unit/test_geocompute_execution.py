@@ -398,6 +398,55 @@ class TestOperators:
         assert payload["metadata"]["join_pairs"] == len(points)
         assert all("__right__" in r for r in payload["rows"])
 
+    def test_spatial_join_declared_projected_right_side(self):
+        # A-1（review-fix-rereview-20261108）：右侧声明 EPSG:3857、左侧 WGS84
+        # 点 —— 此前 join 直接把米坐标送进度空间谓词，静默 0 行"成功"。
+        from pyproj import Transformer
+
+        t = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+        ring = [[116.0, 39.5], [117.0, 39.5], [117.0, 40.2], [116.0, 40.2], [116.0, 39.5]]
+        poly = {
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [[list(t.transform(x, y)) for x, y in ring]]},
+            "properties": {"zone": "z1"},
+        }
+        payloads = {
+            "pts": {"features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.39, 39.91]},
+                 "properties": {"id": "p1"}},
+            ], "metadata": {}},
+            "polys": {"features": [poly], "metadata": {"crs": "EPSG:3857"}},
+        }
+        join = _node("j", NodeCategory.SPATIAL_JOIN, inputs=["pts", "polys"],
+                     parameters={"spatial_op": "within"})
+        payload = ops.execute_node(self._ctx(), join, payloads)
+        assert payload["metadata"]["join_pairs"] == 1
+        assert payload["rows"][0]["__right__"]["zone"] == "z1"
+
+    def test_spatial_join_both_sides_declared_projected_crs(self):
+        # A-1：双侧同声明 EPSG:3857 —— 归一到共享工作框架后 join 必须命中
+        # （此前米坐标按度比较，同 CRS 也 0 行）。
+        from pyproj import Transformer
+
+        t = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+        ring = [[116.0, 39.5], [117.0, 39.5], [117.0, 40.2], [116.0, 40.2], [116.0, 39.5]]
+        ring_3857 = [list(t.transform(x, y)) for x, y in ring]
+        px, py = t.transform(116.39, 39.91)
+        payloads = {
+            "pts": {"features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [px, py]},
+                 "properties": {"id": "p1"}},
+            ], "metadata": {"crs": "EPSG:3857"}},
+            "polys": {"features": [
+                {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring_3857]},
+                 "properties": {"zone": "z1"}},
+            ], "metadata": {"crs": "EPSG:3857"}},
+        }
+        join = _node("j", NodeCategory.SPATIAL_JOIN, inputs=["pts", "polys"],
+                     parameters={"spatial_op": "within"})
+        payload = ops.execute_node(self._ctx(), join, payloads)
+        assert payload["metadata"]["join_pairs"] == 1
+
     def test_materialize_stores_ref(self):
         node = _node("m", NodeCategory.MATERIALIZE, inputs=["src"],
                      parameters={"prefix": "geocompute"})

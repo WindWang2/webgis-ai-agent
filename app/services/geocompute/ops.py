@@ -425,8 +425,29 @@ def _op_spatial_join(ctx: OperatorContext, node: "ExecutionNode", payloads: dict
         raise NodeExecutionError(
             "SPATIAL_JOIN node requires two feature inputs (left, right)", node_id=node.node_id
         )
-    left = payloads[node.inputs[0]]["features"]
-    right = payloads[node.inputs[1]]["features"]
+    left_fc = _payloads_fc(payloads, node, 0)
+    right_fc = _payloads_fc(payloads, node, 1)
+    left = left_fc["features"]
+    right = right_fc["features"]
+    # A-1（review-fix-rereview-20261108）：任一侧声明 CRS 时先把两侧归一到
+    # 共享工作框架（gdf_from_features：声明的投影 CRS → WGS84，gcj02/bd09
+    # → 真 WGS84；同 GIS-599/gdf_from_features 的既有纪律）。此前 join 把
+    # 米坐标直接送进度空间谓词 —— 左 WGS84 × 右 EPSG:3857 静默 0 行
+    # "成功"（GOAL 01 G2 只覆盖了 buffer/clip/overlay，join 路径漏掉）。
+    # 双侧都未声明时零开销走原路径（不可发明数据没有的声明）。
+    from app.lib.geo_processor.core import extract_declared_crs, gdf_from_features
+
+    left_crs = extract_declared_crs(left_fc)
+    right_crs = extract_declared_crs(right_fc)
+    if left_crs or right_crs:
+        import json as _json
+
+        left_gdf = gdf_from_features(left_fc, "geocompute spatial_join left")
+        right_gdf = gdf_from_features(right_fc, "geocompute spatial_join right")
+        if right_gdf.crs != left_gdf.crs:
+            right_gdf = right_gdf.to_crs(left_gdf.crs)
+        left = _json.loads(left_gdf.to_json())["features"]
+        right = _json.loads(right_gdf.to_json())["features"]
     budget = StreamingBudget(
         max_rows=ctx.budget.max_rows if ctx.budget else HARD_NODE_ROW_CAP,
         max_bytes=ctx.budget.max_bytes if ctx.budget else 256 * 1024 * 1024,
