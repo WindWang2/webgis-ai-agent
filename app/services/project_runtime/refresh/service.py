@@ -34,7 +34,6 @@ from .contracts import (
     PlanDecision,
     ProposalStatus,
     CandidateStatus,
-    SourceSnapshot,
 )
 from .diff import compute_source_diff
 from .execution import (

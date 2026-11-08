@@ -15,7 +15,6 @@
 """
 from __future__ import annotations
 
-import time
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 from app.lib.data.fingerprints import canonical_fingerprint

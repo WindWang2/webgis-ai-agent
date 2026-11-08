@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import pytest
 
 from app.services.project_runtime.refresh.contracts import (
     ChangeEvidence,

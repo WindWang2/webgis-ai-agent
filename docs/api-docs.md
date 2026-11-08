@@ -629,7 +629,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
 | `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals` | Create Review Proposal | — |
-| `GET` | `/api/v1/chat/sessions/{session_id}/review/proposals` | List Review Proposals | ProposalListResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/review/proposals` | List Review Proposals | app__schemas__review_schema__ProposalListResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}` | Get Review Proposal | ProposalProjectionResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/submit` | Submit Review Proposal | ProposalProjectionResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/comments` | Add Review Comment | ProposalProjectionResponse |
@@ -988,6 +988,23 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}` | Delete Runtime Snapshot | RuntimeSnapshotDeleteResponse |
 | `POST` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}/resume` | Resume Runtime Snapshot | RuntimeSnapshotResumeResponse |
 
+### Project Data Refresh (G10)
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/check` | Check Updates | CheckReceipt |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/sources` | List Sources | object |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/preview` | Preview Refresh | RefreshProposal |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals` | List Proposals | app__schemas__project_data_refresh_schema__ProposalListResponse |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}` | Get Proposal | RefreshProposal |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/status` | Proposal Status | StatusResponse |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/explain` | Explain Stale | object |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/execute` | Execute Candidate | ExecuteRefreshResponse |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/compare` | Compare Candidate | object |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/adopt` | Adopt Candidate | AdoptionReceipt |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/discard` | Discard Candidate | AdoptionReceipt |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/rollback` | Rollback Candidate | AdoptionReceipt |
+
 ### Project Knowledge
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1170,6 +1187,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：433（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：445（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

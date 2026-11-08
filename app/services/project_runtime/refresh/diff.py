@@ -15,7 +15,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from app.lib.data.fingerprints import (
     ChangeClass,

@@ -191,6 +191,121 @@
     "title": "AdminChildrenResponse",
     "type": "object"
    },
+   "AdoptRefreshRequest": {
+    "additionalProperties": false,
+    "description": "客户端声明的 CAS 锚点；服务端一律重新读取权威 revision/指纹复核。",
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "maximum": 1000000000.0,
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "proposal_fingerprint": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Proposal Fingerprint"
+     }
+    },
+    "title": "AdoptRefreshRequest",
+    "type": "object"
+   },
+   "AdoptionReceipt": {
+    "additionalProperties": false,
+    "description": "采纳 / 放弃 / 回退回执（三态分离，禁止互相替代）。",
+    "properties": {
+     "action": {
+      "title": "Action",
+      "type": "string"
+     },
+     "map_observation": {
+      "default": "unverified",
+      "title": "Map Observation",
+      "type": "string"
+     },
+     "mapspec_fingerprint": {
+      "default": "",
+      "title": "Mapspec Fingerprint",
+      "type": "string"
+     },
+     "proposal_fingerprint": {
+      "default": "",
+      "title": "Proposal Fingerprint",
+      "type": "string"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "replayed": {
+      "default": false,
+      "title": "Replayed",
+      "type": "boolean"
+     },
+     "restored_snapshot_id": {
+      "default": "",
+      "title": "Restored Snapshot Id",
+      "type": "string"
+     },
+     "revision_after": {
+      "default": 0,
+      "title": "Revision After",
+      "type": "integer"
+     },
+     "revision_before": {
+      "default": 0,
+      "title": "Revision Before",
+      "type": "integer"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "task_execution": {
+      "default": "not_run",
+      "title": "Task Execution",
+      "type": "string"
+     },
+     "tool_execution": {
+      "default": "not_run",
+      "title": "Tool Execution",
+      "type": "string"
+     },
+     "version_adoption": {
+      "default": "unchanged",
+      "title": "Version Adoption",
+      "type": "string"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "proposal_id",
+     "action",
+     "status"
+    ],
+    "title": "AdoptionReceipt",
+    "type": "object"
+   },
    "Anchor": {
     "additionalProperties": false,
     "description": "锚 = (kind, id[, layer_id])。stale 判定见 services/review/anchors.py。",
@@ -1072,6 +1187,18 @@
    },
    "Body_upload_files_api_v1_upload_post": {
     "properties": {
+     "attribution": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据归因/来源署名声明。随 license 一同进入语义身份证与产物台账",
+      "title": "Attribution"
+     },
      "crs": {
       "anyOf": [
        {
@@ -1098,6 +1225,18 @@
       },
       "title": "Files",
       "type": "array"
+     },
+     "license": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据许可证声明（如 CC-BY-4.0）。非空时进入数据集语义身份证（observed）；缺省如实 unknown，不虚构",
+      "title": "License"
      },
      "register_ref": {
       "default": false,
@@ -1305,6 +1444,20 @@
     ],
     "title": "CameraKeyframe",
     "type": "object"
+   },
+   "CandidateStatus": {
+    "enum": [
+     "pending",
+     "running",
+     "partial",
+     "succeeded",
+     "failed",
+     "cancelled",
+     "discarded",
+     "adopted"
+    ],
+    "title": "CandidateStatus",
+    "type": "string"
    },
    "CanvasActionDTO": {
     "additionalProperties": false,
@@ -2036,6 +2189,17 @@
     "title": "CeleryTaskStatusResponse",
     "type": "object"
    },
+   "ChangeEvidence": {
+    "description": "差异判定证据四态（UPD-02）。",
+    "enum": [
+     "exact",
+     "conservative",
+     "unknown",
+     "unverified"
+    ],
+    "title": "ChangeEvidence",
+    "type": "string"
+   },
    "ChangeIn": {
     "description": "单个变更输入（dimension × target_kind）。",
     "examples": [
@@ -2255,6 +2419,92 @@
      "content"
     ],
     "title": "ChatResponse",
+    "type": "object"
+   },
+   "CheckReceipt": {
+    "additionalProperties": false,
+    "description": "「检查更新」回执（类型化，供 UI / Pi 投影）。",
+    "properties": {
+     "changed": {
+      "default": 0,
+      "title": "Changed",
+      "type": "integer"
+     },
+     "checked_at": {
+      "title": "Checked At",
+      "type": "number"
+     },
+     "inventory": {
+      "$ref": "#/components/schemas/SourceInventory"
+     },
+     "missing": {
+      "default": 0,
+      "title": "Missing",
+      "type": "integer"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "sources_total": {
+      "default": 0,
+      "title": "Sources Total",
+      "type": "integer"
+     },
+     "stale": {
+      "default": false,
+      "title": "Stale",
+      "type": "boolean"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     },
+     "unchanged": {
+      "default": 0,
+      "title": "Unchanged",
+      "type": "integer"
+     },
+     "unverifiable": {
+      "default": 0,
+      "title": "Unverifiable",
+      "type": "integer"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "project_id",
+     "checked_at"
+    ],
+    "title": "CheckReceipt",
+    "type": "object"
+   },
+   "CheckUpdatesRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "establish_baseline": {
+      "default": true,
+      "title": "Establish Baseline",
+      "type": "boolean"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "CheckUpdatesRequest",
     "type": "object"
    },
    "ClarificationAnswerItem": {
@@ -4107,6 +4357,17 @@
     "title": "EvaluateRequest",
     "type": "object"
    },
+   "EvidenceLevel": {
+    "description": "版本证据级别（决定能否声称精确变化）。",
+    "enum": [
+     "content_exact",
+     "revision_token",
+     "timestamp_only",
+     "none"
+    ],
+    "title": "EvidenceLevel",
+    "type": "string"
+   },
    "ExecutePlanRequest": {
     "properties": {
      "plan": {
@@ -4128,6 +4389,60 @@
      "plan"
     ],
     "title": "ExecutePlanRequest",
+    "type": "object"
+   },
+   "ExecuteRefreshRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "cancel": {
+      "default": false,
+      "title": "Cancel",
+      "type": "boolean"
+     }
+    },
+    "title": "ExecuteRefreshRequest",
+    "type": "object"
+   },
+   "ExecuteRefreshResponse": {
+    "additionalProperties": false,
+    "properties": {
+     "candidate": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/RefreshCandidate"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "conflicts": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Conflicts",
+      "type": "array"
+     },
+     "preserved": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Preserved",
+      "type": "array"
+     },
+     "receipt": {
+      "additionalProperties": true,
+      "title": "Receipt",
+      "type": "object"
+     },
+     "replayed": {
+      "default": false,
+      "title": "Replayed",
+      "type": "boolean"
+     }
+    },
+    "title": "ExecuteRefreshResponse",
     "type": "object"
    },
    "ExecuteResponse": {
@@ -4464,6 +4779,33 @@
      "ref"
     ],
     "title": "ExportLineageInfo",
+    "type": "object"
+   },
+   "FeatureCounts": {
+    "description": "精确要素差异计数（只有 EXACT 证据才允许非 None）。",
+    "properties": {
+     "added": {
+      "default": 0,
+      "title": "Added",
+      "type": "integer"
+     },
+     "attribute_changed": {
+      "default": 0,
+      "title": "Attribute Changed",
+      "type": "integer"
+     },
+     "geometry_changed": {
+      "default": 0,
+      "title": "Geometry Changed",
+      "type": "integer"
+     },
+     "removed": {
+      "default": 0,
+      "title": "Removed",
+      "type": "integer"
+     }
+    },
+    "title": "FeatureCounts",
     "type": "object"
    },
    "FeatureEditPreviewRequest": {
@@ -4836,6 +5178,28 @@
      "agent_runtime": {
       "title": "Agent Runtime",
       "type": "string"
+     },
+     "agent_runtime_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Mode"
+     },
+     "agent_runtime_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Reason"
      },
      "pi_vendor": {
       "anyOf": [
@@ -9712,6 +10076,53 @@
     "title": "PolicyUpsertRequest",
     "type": "object"
    },
+   "PreviewRefreshRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "dag": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dag"
+     },
+     "max_bytes": {
+      "default": 8388608,
+      "maximum": 268435456.0,
+      "minimum": 1.0,
+      "title": "Max Bytes",
+      "type": "integer"
+     },
+     "max_features": {
+      "default": 50000,
+      "maximum": 1000000.0,
+      "minimum": 1.0,
+      "title": "Max Features",
+      "type": "integer"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "style_only": {
+      "default": false,
+      "title": "Style Only",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "PreviewRefreshRequest",
+    "type": "object"
+   },
    "PreviewResponse": {
     "properties": {
      "degraded": {
@@ -10342,28 +10753,6 @@
     "title": "PromptSegmentBody",
     "type": "object"
    },
-   "ProposalListResponse": {
-    "additionalProperties": true,
-    "properties": {
-     "proposals": {
-      "items": {
-       "additionalProperties": true,
-       "type": "object"
-      },
-      "title": "Proposals",
-      "type": "array"
-     },
-     "session_id": {
-      "title": "Session Id",
-      "type": "string"
-     }
-    },
-    "required": [
-     "session_id"
-    ],
-    "title": "ProposalListResponse",
-    "type": "object"
-   },
    "ProposalProjectionResponse": {
     "additionalProperties": true,
     "description": "GET proposal 详情投影（proposal + 锚态 + 冲突 + 策略 verdict）。",
@@ -10406,6 +10795,19 @@
     ],
     "title": "ProposalProjectionResponse",
     "type": "object"
+   },
+   "ProposalStatus": {
+    "enum": [
+     "preview",
+     "executing",
+     "ready",
+     "adopted",
+     "discarded",
+     "drifted",
+     "failed"
+    ],
+    "title": "ProposalStatus",
+    "type": "string"
    },
    "QualificationReason": {
     "additionalProperties": false,
@@ -11151,6 +11553,349 @@
      "candidate"
     ],
     "title": "RefineBody",
+    "type": "object"
+   },
+   "RefreshCandidate": {
+    "additionalProperties": false,
+    "description": "隔离候选运行状态（新产物先写 candidate 命名空间，不污染当前地图）。",
+    "properties": {
+     "adoptable": {
+      "default": false,
+      "title": "Adoptable",
+      "type": "boolean"
+     },
+     "attempts": {
+      "default": 0,
+      "title": "Attempts",
+      "type": "integer"
+     },
+     "baseline_fingerprint": {
+      "default": "",
+      "title": "Baseline Fingerprint",
+      "type": "string"
+     },
+     "cancelled": {
+      "default": false,
+      "title": "Cancelled",
+      "type": "boolean"
+     },
+     "candidate_doc_path": {
+      "default": "",
+      "title": "Candidate Doc Path",
+      "type": "string"
+     },
+     "candidate_fingerprint": {
+      "default": "",
+      "title": "Candidate Fingerprint",
+      "type": "string"
+     },
+     "candidate_id": {
+      "title": "Candidate Id",
+      "type": "string"
+     },
+     "completed_nodes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Completed Nodes",
+      "type": "array"
+     },
+     "created_at": {
+      "default": 0.0,
+      "title": "Created At",
+      "type": "number"
+     },
+     "failed_nodes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Failed Nodes",
+      "type": "array"
+     },
+     "hard_semantic_errors": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Hard Semantic Errors",
+      "type": "array"
+     },
+     "last_error": {
+      "default": "",
+      "title": "Last Error",
+      "type": "string"
+     },
+     "merge_conflicts": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Merge Conflicts",
+      "type": "array"
+     },
+     "merge_preserved": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Merge Preserved",
+      "type": "array"
+     },
+     "progress": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Progress",
+      "type": "array"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "retry_key": {
+      "default": "",
+      "title": "Retry Key",
+      "type": "string"
+     },
+     "source_version_set": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Source Version Set",
+      "type": "object"
+     },
+     "status": {
+      "$ref": "#/components/schemas/CandidateStatus",
+      "default": "pending"
+     },
+     "updated_at": {
+      "default": 0.0,
+      "title": "Updated At",
+      "type": "number"
+     }
+    },
+    "required": [
+     "candidate_id",
+     "proposal_id",
+     "project_id"
+    ],
+    "title": "RefreshCandidate",
+    "type": "object"
+   },
+   "RefreshPlan": {
+    "additionalProperties": false,
+    "description": "UPD-03 只读更新计划（不新建第二 DAG，复用 compute_affected_subgraph）。",
+    "properties": {
+     "changed_dimensions": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Changed Dimensions",
+      "type": "array"
+     },
+     "conflicts": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Conflicts",
+      "type": "array"
+     },
+     "conservative": {
+      "default": false,
+      "title": "Conservative",
+      "type": "boolean"
+     },
+     "decisions": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Decisions",
+      "type": "object"
+     },
+     "estimated_budget": {
+      "additionalProperties": true,
+      "title": "Estimated Budget",
+      "type": "object"
+     },
+     "explanations": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Explanations",
+      "type": "array"
+     },
+     "preserved_user_edits": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Preserved User Edits",
+      "type": "array"
+     },
+     "proposal_fingerprint": {
+      "default": "",
+      "title": "Proposal Fingerprint",
+      "type": "string"
+     },
+     "recompute": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Recompute",
+      "type": "array"
+     },
+     "reuse": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Reuse",
+      "type": "array"
+     },
+     "reuse_fingerprint": {
+      "default": "",
+      "title": "Reuse Fingerprint",
+      "type": "string"
+     },
+     "style_only": {
+      "default": false,
+      "title": "Style Only",
+      "type": "boolean"
+     },
+     "style_only_reason": {
+      "default": "",
+      "title": "Style Only Reason",
+      "type": "string"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "title": "RefreshPlan",
+    "type": "object"
+   },
+   "RefreshProposal": {
+    "additionalProperties": false,
+    "description": "只读预览提案（绑定输入版本集 / MapSpec revision / 用户锁 / owner）。",
+    "properties": {
+     "adopted_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Adopted Revision"
+     },
+     "baseline_snapshot_id": {
+      "default": "",
+      "title": "Baseline Snapshot Id",
+      "type": "string"
+     },
+     "created_at": {
+      "default": 0.0,
+      "title": "Created At",
+      "type": "number"
+     },
+     "diffs": {
+      "items": {
+       "$ref": "#/components/schemas/SourceDiff"
+      },
+      "title": "Diffs",
+      "type": "array"
+     },
+     "inventory": {
+      "$ref": "#/components/schemas/SourceInventory"
+     },
+     "mapspec_fingerprint": {
+      "default": "",
+      "title": "Mapspec Fingerprint",
+      "type": "string"
+     },
+     "mapspec_revision": {
+      "default": 0,
+      "title": "Mapspec Revision",
+      "type": "integer"
+     },
+     "org_id": {
+      "default": "",
+      "title": "Org Id",
+      "type": "string"
+     },
+     "owner_id": {
+      "default": "",
+      "title": "Owner Id",
+      "type": "string"
+     },
+     "plan": {
+      "$ref": "#/components/schemas/RefreshPlan"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "proposal_fingerprint": {
+      "default": "",
+      "title": "Proposal Fingerprint",
+      "type": "string"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+     },
+     "session_id": {
+      "default": "",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_versions": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Source Versions",
+      "type": "object"
+     },
+     "status": {
+      "$ref": "#/components/schemas/ProposalStatus",
+      "default": "preview"
+     },
+     "updated_at": {
+      "default": 0.0,
+      "title": "Updated At",
+      "type": "number"
+     },
+     "user_locks": {
+      "items": {
+       "type": "string"
+      },
+      "title": "User Locks",
+      "type": "array"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "proposal_id",
+     "project_id"
+    ],
+    "title": "RefreshProposal",
     "type": "object"
    },
    "RefreshRequest": {
@@ -13739,6 +14484,290 @@
     "title": "SourceDetailResponse",
     "type": "object"
    },
+   "SourceDiff": {
+    "additionalProperties": false,
+    "description": "UPD-02 差异报告：精确 / 保守 / 未知 / 未验证分别披露。",
+    "properties": {
+     "alignment": {
+      "default": "unavailable",
+      "title": "Alignment",
+      "type": "string"
+     },
+     "bbox_changed": {
+      "default": false,
+      "title": "Bbox Changed",
+      "type": "boolean"
+     },
+     "change_class": {
+      "default": "unknown",
+      "title": "Change Class",
+      "type": "string"
+     },
+     "crs_changed": {
+      "default": false,
+      "title": "Crs Changed",
+      "type": "boolean"
+     },
+     "denominator_changed": {
+      "default": false,
+      "title": "Denominator Changed",
+      "type": "boolean"
+     },
+     "evidence": {
+      "$ref": "#/components/schemas/ChangeEvidence",
+      "default": "unknown"
+     },
+     "exact_counts": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/FeatureCounts"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "expanded_dependencies": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Expanded Dependencies",
+      "type": "array"
+     },
+     "features_added": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Features Added",
+      "type": "array"
+     },
+     "features_attribute_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Features Attribute Changed",
+      "type": "array"
+     },
+     "features_geometry_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Features Geometry Changed",
+      "type": "array"
+     },
+     "features_removed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Features Removed",
+      "type": "array"
+     },
+     "fields_added": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fields Added",
+      "type": "array"
+     },
+     "fields_removed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fields Removed",
+      "type": "array"
+     },
+     "fields_type_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fields Type Changed",
+      "type": "array"
+     },
+     "fields_unit_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fields Unit Changed",
+      "type": "array"
+     },
+     "logical_id": {
+      "title": "Logical Id",
+      "type": "string"
+     },
+     "method_version_changed": {
+      "default": false,
+      "title": "Method Version Changed",
+      "type": "boolean"
+     },
+     "raster_tiles_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Raster Tiles Changed",
+      "type": "array"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     },
+     "sampled": {
+      "default": false,
+      "title": "Sampled",
+      "type": "boolean"
+     },
+     "seed_targets": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Seed Targets",
+      "type": "array"
+     },
+     "temporal_changed": {
+      "default": false,
+      "title": "Temporal Changed",
+      "type": "boolean"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "logical_id"
+    ],
+    "title": "SourceDiff",
+    "type": "object"
+   },
+   "SourceInventory": {
+    "properties": {
+     "fingerprint": {
+      "default": "",
+      "title": "Fingerprint",
+      "type": "string"
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/SourceInventoryItem"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "title": "SourceInventory",
+    "type": "object"
+   },
+   "SourceInventoryItem": {
+    "additionalProperties": false,
+    "description": "UPD-01 来源清单条目（有界，可直接投影给 UI/Pi）。",
+    "properties": {
+     "baseline_version": {
+      "default": "",
+      "title": "Baseline Version",
+      "type": "string"
+     },
+     "bbox": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox"
+     },
+     "crs": {
+      "default": "",
+      "title": "Crs",
+      "type": "string"
+     },
+     "current_version": {
+      "default": "",
+      "title": "Current Version",
+      "type": "string"
+     },
+     "display_name": {
+      "default": "",
+      "title": "Display Name",
+      "type": "string"
+     },
+     "evidence": {
+      "$ref": "#/components/schemas/EvidenceLevel",
+      "default": "none"
+     },
+     "kind": {
+      "default": "vector",
+      "title": "Kind",
+      "type": "string"
+     },
+     "logical_id": {
+      "title": "Logical Id",
+      "type": "string"
+     },
+     "note": {
+      "default": "",
+      "title": "Note",
+      "type": "string"
+     },
+     "owner_id": {
+      "default": "",
+      "title": "Owner Id",
+      "type": "string"
+     },
+     "state": {
+      "$ref": "#/components/schemas/SourceState",
+      "default": "version_unknown"
+     },
+     "temporal_window": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Temporal Window"
+     },
+     "verdict": {
+      "default": "unknown",
+      "title": "Verdict",
+      "type": "string"
+     }
+    },
+    "required": [
+     "logical_id"
+    ],
+    "title": "SourceInventoryItem",
+    "type": "object"
+   },
    "SourceListResponse": {
     "additionalProperties": true,
     "description": "GET /data-fabric/sources 响应。",
@@ -13762,6 +14791,18 @@
     "properties": {},
     "title": "SourceProbeResponse",
     "type": "object"
+   },
+   "SourceState": {
+    "description": "来源可用性词表（与 project_runtime.promotion 既有分类映射）。",
+    "enum": [
+     "pinned",
+     "refreshable",
+     "ephemeral",
+     "missing",
+     "version_unknown"
+    ],
+    "title": "SourceState",
+    "type": "string"
    },
    "SourceSyncResponse": {
     "additionalProperties": true,
@@ -13903,6 +14944,69 @@
      "status"
     ],
     "title": "StartExploreResponse",
+    "type": "object"
+   },
+   "StatusResponse": {
+    "additionalProperties": false,
+    "properties": {
+     "adopted_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Adopted Revision"
+     },
+     "candidate_attempts": {
+      "default": 0,
+      "title": "Candidate Attempts",
+      "type": "integer"
+     },
+     "candidate_status": {
+      "default": "not_started",
+      "title": "Candidate Status",
+      "type": "string"
+     },
+     "mapspec_revision": {
+      "default": 0,
+      "title": "Mapspec Revision",
+      "type": "integer"
+     },
+     "progress": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Progress",
+      "type": "array"
+     },
+     "proposal_fingerprint": {
+      "default": "",
+      "title": "Proposal Fingerprint",
+      "type": "string"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "proposal_status": {
+      "title": "Proposal Status",
+      "type": "string"
+     },
+     "recoverable": {
+      "default": true,
+      "title": "Recoverable",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "proposal_id",
+     "proposal_status"
+    ],
+    "title": "StatusResponse",
     "type": "object"
    },
    "StoryChapter": {
@@ -15242,6 +16346,18 @@
       ],
       "title": "Atlas Pages"
      },
+     "constraint_layout": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Constraint Layout"
+     },
      "filename": {
       "title": "Filename",
       "type": "string"
@@ -15387,6 +16503,18 @@
       "additionalProperties": true,
       "title": "Mapspec",
       "type": "object"
+     },
+     "page_profile": {
+      "anyOf": [
+       {
+        "maxLength": 32,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Profile"
      },
      "session_id": {
       "anyOf": [
@@ -17267,6 +18395,55 @@
      "object_ids"
     ],
     "title": "PublishRequest",
+    "type": "object"
+   },
+   "app__schemas__project_data_refresh_schema__ProposalListResponse": {
+    "additionalProperties": false,
+    "properties": {
+     "count": {
+      "default": 0,
+      "title": "Count",
+      "type": "integer"
+     },
+     "items": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "project_id"
+    ],
+    "title": "ProposalListResponse",
+    "type": "object"
+   },
+   "app__schemas__review_schema__ProposalListResponse": {
+    "additionalProperties": true,
+    "properties": {
+     "proposals": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Proposals",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "ProposalListResponse",
     "type": "object"
    },
    "app__schemas__workflow_runtime_schema__PublishRequest": {
@@ -20520,7 +21697,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/ProposalListResponse"
+         "$ref": "#/components/schemas/app__schemas__review_schema__ProposalListResponse"
         }
        }
       },
@@ -26896,7 +28073,7 @@
   },
   "/api/v1/export/diagnostics/{filename}": {
    "get": {
-    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。",
+    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。\nB-5（review-fix-rereview-20261108）：匿名会话导出主体是\n``session:<sid>`` —— 此前硬性 Bearer + user_id 比对把匿名导出者永远\n挡在门外（下载可走签名 URL，诊断面被认证模型锁死）。现与\n_export_principal 同源：session 主体凭 X-Session-Token 读取。",
     "operationId": "get_export_diagnostics_api_v1_export_diagnostics__filename__get",
     "parameters": [
      {
@@ -26906,6 +28083,22 @@
       "schema": {
        "title": "Filename",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],
@@ -34675,6 +35868,814 @@
     "tags": [
      "项目工作区",
      "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/check": {
+   "post": {
+    "description": "手动「检查更新」（默认手动；本轮无后台定时器/自动抓取）。",
+    "operationId": "check_updates_api_v1_projects__project_id__data_refresh_check_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CheckUpdatesRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CheckReceipt"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Check Updates",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/preview": {
+   "post": {
+    "description": "只读影响预览：不写 MapSpec / 数据集 / 版本 / 基线，只落 proposal 账本。",
+    "operationId": "preview_refresh_api_v1_projects__project_id__data_refresh_preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PreviewRefreshRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RefreshProposal"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview Refresh",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals": {
+   "get": {
+    "description": "有界提案清单（刷新页面后恢复候选/进度的入口）。",
+    "operationId": "list_proposals_api_v1_projects__project_id__data_refresh_proposals_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/app__schemas__project_data_refresh_schema__ProposalListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Proposals",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}": {
+   "get": {
+    "operationId": "get_proposal_api_v1_projects__project_id__data_refresh_proposals__proposal_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RefreshProposal"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Proposal",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/adopt": {
+   "post": {
+    "description": "原子 CAS 采纳；客户端声明的 revision/指纹只作提示，服务端双核对。",
+    "operationId": "adopt_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__adopt_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AdoptRefreshRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AdoptionReceipt"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Adopt Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/compare": {
+   "get": {
+    "operationId": "compare_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__compare_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Compare Candidate Api V1 Projects  Project Id  Data Refresh Proposals  Proposal Id  Compare Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Compare Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/discard": {
+   "post": {
+    "operationId": "discard_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__discard_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AdoptionReceipt"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Discard Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/execute": {
+   "post": {
+    "description": "执行获授权的隔离候选（或取消）；失败/取消不污染当前成果。",
+    "operationId": "execute_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExecuteRefreshRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ExecuteRefreshResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/explain": {
+   "get": {
+    "description": "Pi / UI 解释「为什么更新、哪些结果过期、哪些不可判定」。",
+    "operationId": "explain_stale_api_v1_projects__project_id__data_refresh_proposals__proposal_id__explain_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Explain Stale Api V1 Projects  Project Id  Data Refresh Proposals  Proposal Id  Explain Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Explain Stale",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/rollback": {
+   "post": {
+    "description": "回退：新 revision（forward revert）或既有 runtime snapshot resume。",
+    "operationId": "rollback_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__rollback_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AdoptionReceipt"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Rollback Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/status": {
+   "get": {
+    "operationId": "proposal_status_api_v1_projects__project_id__data_refresh_proposals__proposal_id__status_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Proposal Status",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/sources": {
+   "get": {
+    "description": "来源版本清单（逻辑身份 / 内容版本 / 证据级别 / 五态）。",
+    "operationId": "list_sources_api_v1_projects__project_id__data_refresh_sources_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Sources Api V1 Projects  Project Id  Data Refresh Sources Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Sources",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
     ]
    }
   },
