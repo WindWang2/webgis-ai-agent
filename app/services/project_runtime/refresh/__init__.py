@@ -27,8 +27,27 @@ from .contracts import (
     SourceState,
 )
 from .diff import compute_source_diff
+from .execution import (
+    InMemoryMapSpecPort,
+    MapSpecStatePort,
+    SessionMapSpecPort,
+    commit_candidate,
+    forward_rollback,
+    retry_key,
+    verify_no_drift,
+)
 from .impact import build_refresh_plan
 from .merge import three_way_merge
+from .records import AdoptionReceipt, CheckReceipt, RefreshCandidate, RefreshProposal
+from .service import ProjectDataRefreshService, RefreshError
+from .sources import (
+    SessionRefPayloadProvider,
+    SourcePayloadProvider,
+    StaticPayloadProvider,
+    build_snapshot,
+    collect_project_sources,
+)
+from .store import RefreshStore, get_refresh_store, reset_refresh_store
 
 __all__ = [
     "REFRESH_SCHEMA_VERSION",
@@ -37,4 +56,11 @@ __all__ = [
     "PlanDecision", "ProposalStatus", "RefreshPlan", "SourceDiff",
     "SourceInventory", "SourceInventoryItem", "SourceSnapshot", "SourceState",
     "compute_source_diff", "build_refresh_plan", "three_way_merge",
+    "RefreshProposal", "RefreshCandidate", "CheckReceipt", "AdoptionReceipt",
+    "ProjectDataRefreshService", "RefreshError",
+    "RefreshStore", "get_refresh_store", "reset_refresh_store",
+    "SourcePayloadProvider", "SessionRefPayloadProvider", "StaticPayloadProvider",
+    "build_snapshot", "collect_project_sources",
+    "MapSpecStatePort", "SessionMapSpecPort", "InMemoryMapSpecPort",
+    "commit_candidate", "forward_rollback", "retry_key", "verify_no_drift",
 ]
