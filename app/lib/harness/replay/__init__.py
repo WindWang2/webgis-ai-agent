@@ -4,7 +4,8 @@
 
 - :mod:`.schema`      ReplayTrace v1 —— 18 阶段证据链的**打包层**（不是第二套 trace）；
 - :mod:`.recorder`    env-gated 生产录制（S13 settle 缝单点接线，fire-and-forget）；
-- :mod:`.replayer`    离线确定性重放（T1 证据级 / T2 变异级 / T3 dispatch 级）；
+- :mod:`.replayer`    离线确定性重放（T1 证据 / T2 变异 / T3 bind / T4 receipt）；
+- :mod:`.journey`     跨边界完成证据投影与有界、owner-scoped 只读诊断；
 - :mod:`.scenarios`   场景语料矩阵 + 确定性展开器；
 - :mod:`.faults`      故障注入规格（落在 replayer 环境边界）；
 - :mod:`.metrics`     B0 评测维度投影（复用 cartography ratchet 行契约）;

@@ -199,6 +199,9 @@ python_version = "3.13"
 files = [
     "app/core",
     "app/lib/harness/evidence.py",
+    "app/lib/harness/lab/golden.py",
+    "app/lib/harness/result_contracts.py",
+    "app/lib/harness/replay/journey.py",
     "app/lib/harness/tool_call_event.py",
     "app/services/mapspec/intents.py",
 ]

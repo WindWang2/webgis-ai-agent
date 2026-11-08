@@ -38,6 +38,9 @@ class ClaimedScope(TypedDict, total=False):
     # （UI 同源），ids_truncated=True 表示 feature_ids 是有界样本而非全量。
     matched_count: int
     ids_truncated: bool
+    #: G07 M3：IR normalize 截断披露（selected_ids 超 8 的省略计数，
+    #: 服务端计算；缺席/0 = 无截断）。
+    selected_ids_omitted: int
 
 
 class ValidatedScope(TypedDict, total=False):
@@ -61,6 +64,8 @@ class ValidatedScope(TypedDict, total=False):
     # 描述符范围）分义；空间工具 extent 兜底必须用本键，不得把数据集
     # 全量范围当框选范围（#2004 族"范围静默改变"的放大方向重现）。
     selection_bbox: list[float]
+    #: G07 M3：声称面带截断披露时如实回显（0/缺席 = 无截断）。
+    selected_ids_omitted: int
 
 
 def record_fields(value: object) -> Mapping[str, object]:
@@ -161,6 +166,16 @@ def derive_claimed_scope(
             if isinstance(src, dict) and isinstance(src.get("server_seq"), int):
                 claimed_seq = src["server_seq"]
         id_field = source.get("id_field")
+        # G07 M3：截断披露只在多选集上透传（selected_ids 是省略计数的事
+        # 实来源；feature_single 无截断面）。非正整数/布尔 → 0（不猜）。
+        omitted_raw = source.get("selected_ids_omitted")
+        omitted = (
+            int(omitted_raw)
+            if isinstance(omitted_raw, int)
+            and not isinstance(omitted_raw, bool)
+            and omitted_raw > 0
+            else 0
+        )
         claimed: ClaimedScope = {
             "kind": "feature_ids" if multi else ("feature_single" if single else "none"),
             "layer_id": (str(source.get("layer_id") or "")[:200] or None),
@@ -170,6 +185,8 @@ def derive_claimed_scope(
             "sources": sources,
             **({"id_field": id_field[:64]} if isinstance(id_field, str) else {}),
             **_scope_disclosure(source, feature_ids),
+            **({"selected_ids_omitted": omitted}
+               if omitted and multi else {}),
         }
         # SW-02：框选 bbox 谓词随选择上行（"这些学校/刚才框选的"作为空间
         # 范围可解析——空间工具可用 extent 兜底而不必从 ids 反推）。
@@ -344,6 +361,27 @@ async def validate_analysis_scope(
         return result
 
     # ── feature_ids / feature_single：五链验证 ──────────────────────────
+    # G07 M3：声称面带截断披露（selected_ids_omitted>0）→ 即使五链全过
+    # 也不得 usable（stale + features_missing + checks.features=truncated）：
+    # 输入集本身不完整，usable 会造成静默部分分析。所有权/ref 校验照常
+    # 先行 —— omitted 绝不绕过权限（fail-closed 路径在其上游已返回）。
+    _omitted_raw = claimed.get("selected_ids_omitted")
+    _omitted = (
+        int(_omitted_raw)
+        if isinstance(_omitted_raw, int)
+        and not isinstance(_omitted_raw, bool)
+        and _omitted_raw > 0
+        else 0
+    )
+    if _omitted:
+        result["selected_ids_omitted"] = _omitted
+
+    def _downgrade_if_truncated() -> None:
+        if _omitted and result.get("status") == _STATUS_USABLE:
+            result["status"] = _STATUS_STALE
+            result["reason"] = SCOPE_REASON_FEATURES_MISSING
+            result["checks"]["features"] = "truncated"
+
     # Bind the claimed input to one authoritative desired layer/source snapshot.
     try:
         spec = await mapspec_store.get_mapspec(session_id)
@@ -444,12 +482,14 @@ async def validate_analysis_scope(
         result["checks"]["features"] = "not_applicable"
         result["status"] = _STATUS_USABLE
         result["reason"] = SCOPE_REASON_OK
+        _downgrade_if_truncated()
         return result
     if isinstance(feature_count, (int, float)) and int(feature_count) > MAX_LIVENESS_FEATURES:
         result["checks"]["features"] = "skipped_large_dataset"
         result["feature_ids"] = requested
         result["status"] = _STATUS_USABLE
         result["reason"] = SCOPE_REASON_OK
+        _downgrade_if_truncated()
         return result
     present = _feature_ids_in_payload(payload, requested)
     missing = [fid for fid in requested if fid not in set(present)]
@@ -469,4 +509,5 @@ async def validate_analysis_scope(
         )
     result["status"] = _STATUS_USABLE
     result["reason"] = SCOPE_REASON_OK
+    _downgrade_if_truncated()
     return result

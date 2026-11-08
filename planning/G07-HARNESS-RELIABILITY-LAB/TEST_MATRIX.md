@@ -1,0 +1,123 @@
+# 测试矩阵与执行模式
+
+## 分层车道
+
+| 车道 | 默认 | 外部依赖 | 资源约束 | 证据含义 |
+|---|---|---|---|---|
+| smoke | 是 | 无 | 串行或最多 2 workers | 契约/导入/关键纯函数 |
+| focused backend | 是 | 无公网、无付费模型 | 最多 2 workers | 真实 Replay/Lab/MapSpec/Recovery 代码 |
+| Pi with stub | 按需 | 本地 Pi + stub LLM | 单进程、有界超时 | 真实 RPC，不是真实模型质量 |
+| GIS with fixture | 是 | 固定本地 fixture | 固定 seed、数据规模上限 | 真实 ToolRegistry/ToolDispatchService/GIS 算法 |
+| local browser opt-in | 否 | 本地服务与浏览器 | 单浏览器、无公网底图 | 真实 MapLibre 观察；不可运行则未验证 |
+| live services opt-in | 否 | 用户已有凭证/外部服务 | 默认完全禁用 | 独立标注，绝不默认触发 |
+
+## Oracle 覆盖
+
+| Oracle | smoke | focused | dispatch | browser | fault/recovery | benchmark |
+|---|---|---|---|---|---|---|
+| O01/O03/O05/O06 | 契约负例 | 证据投影/诊断 | 真实 dispatch 关联 | 可用时渲染观察 | 缺失/乱序/跨会话 | payload bytes |
+| O02/O10 | manifest | 科学性质与既有回归 | 12 组可运行子集 | 明确 opt-in 子集 | 成功/失败双边界 | 守恒与规模 |
+| O04/O07 | 终态纯函数 | recovery policy | 沙箱故障 | context loss opt-in | 至少 4 组对照 | 有界重试 |
+| O08/O09 | 无 | 预算单测 | 大规模本地 fixture | 帧数可选 | 压力故障 | wall/CPU/RSS/bytes/events |
+| O11/O12/O13 | ratchet 形状 | 原门不降级 | 双跑 | 双跑（若运行） | 独立复审 | 原始汇总与复现命令 |
+
+## 当前执行记录
+
+尚未执行产品测试。后续每条记录必须包含命令、HEAD、模式、pass/fail/skip、运行次数和限制。
+
+## M2 实际执行
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pytest tests/lab tests/harness_replay --no-cov -q`（基线） | 239 passed, 4 warnings | 既有离线 Lab/Replay；未含新测试 |
+| `pytest tests/harness_replay/test_journey_evidence.py tests/harness_replay/test_journey_diagnostic.py tests/harness_replay/test_replay_bench_cli.py::TestExplain --no-cov -q -p no:cacheprovider` | 10 passed | 真实投影/CLI；含缺 renderer、跨 session、悬空、乱序、完整正向、脱敏/bytes/owner 负例 |
+| `pytest tests/unit/gis_harness/recovery_policy tests/unit/evaluation/test_recovery_corpus.py tests/unit/lib/test_goal_verification_reconcile.py --no-cov -q -p no:cacheprovider` | 195 passed | 真实 TDS + fake registry/工具；不是 live provider |
+| `mypy app/lib/harness/replay/journey.py app/lib/harness/result_contracts.py --no-incremental` | Success, 0 issues | 两文件已加入标准 mypy whitelist |
+| Ruff changed files + `git diff --check` | 通过 | 无样式/空白错误 |
+
+## M3 实际执行
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pytest tests/acceptance/gis_agent/test_reliability_golden.py::test_all_selected_acceptance_scenarios_pass` | 1 passed（30 场景，19.44s） | 真实 dispatch_tool/TDS/MapSpec/settle；scripted LLM，本地合成数据 |
+| `python scripts/harness_reliability_golden.py --out reports/g07/golden.json` | 30/30 passed，报告落盘 | 首次 30/30 Redis 环境失败已修复；browser/live 均 not_run |
+| focused usability/layout/network/interaction/selection tests | 255 passed, 6 warnings | 生产纯函数/真实算法；无公网 |
+| `pytest tests/unit/gis_harness/test_reliability_selection_scope.py` | 11 passed | normalize→projection→derive→validate 全链；含 ownership fail-closed |
+| `pytest tests/acceptance/gis_agent/test_reliability_cli.py` | 1 passed | 真实 CLI 子进程与 JSON 报告 |
+| `pytest tests/acceptance/gis_agent/test_reliability_golden.py::test_manifest_has_twelve_complete_oracle_pairs` | 1 passed | 12 类、期望 ID、科学不变量、focused path 完整 |
+
+## M4 实际执行
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pytest tests/harness_replay/test_journey_faults.py tests/harness_replay/test_journey_evidence.py tests/harness_replay/test_journey_diagnostic.py` | 20 passed | lock/cancel/timeout/disconnect、renderer/tiles/PostGIS/export、duplicate/late/dynamic tool |
+| `pytest tests/harness_replay/test_replay_faults.py tests/lab/test_lab_settlement.py tests/unit/test_nested_session_mutations.py tests/unit/test_pi_dynamic_surface.py tests/unit/test_pi_gis_usability_fixes.py` | 89 passed | 既有生产 seam；锁实现未改 |
+| Mypy journey/result_contracts + Ruff | 通过 | 类型/样式无回归 |
+
+## M5 实际执行
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pytest tests/unit/gis_harness/recovery_policy/test_reliability_recovery_experiments.py` | 4 passed | 缺观察、瞬态读失败、跨城不一致、持久编辑四组对照 |
+| `pytest tests/unit/gis_harness/recovery_policy tests/unit/evaluation/test_recovery_corpus.py tests/unit/lib/test_goal_verification_reconcile.py` | 199 passed | 真实 TDS/policy/GoalVerification；工具 provider 为本地 fake |
+
+## M7 实际执行（持续更新）
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| journey evidence/fault/diagnostic/metrics/Explain | 26 passed | 含 artifact ref 持久化完整性、record-only 指标 |
+| `pytest tests/harness_replay/test_journey_metrics.py tests/harness_replay/test_replay_ratchet.py tests/harness_replay/test_replay_schema.py` | 27 passed | 原 ratchet/store 不变；新行 record-only |
+| `python scripts/pi_doctor.py --json` | vendor/build/extension/surface/rpc/env 全 PASS | 固定 v1.5.0 pin；真实 RPC handshake/turn/settled |
+| `PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_stub_llm_journeys.py` | 1 passed, 32.17s | 真实 Pi + stub LLM；非真实模型质量；默认 skip 原因已记录 |
+| `pytest tests/integration/test_pi_stub_llm_journeys.py`（默认） | 1 skipped | opt-in 门控 `PI_JOURNEY_E2E=1`，不是通过证据 |
+
+## M6/M7 阶段验收
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pytest tests/lab tests/harness_replay --no-cov -q -p no:cacheprovider` | 268 passed, 4 warnings, 54.31s | 全量既有+新增 Replay/Lab；非全仓 CI |
+| `pytest tests/benchmarks/test_harness_reliability_bench.py -m perf` | 6 passed, 6.29s | UTF-8/resume 语义与宽松冒烟，不是精确性能 gate |
+| `python scripts/perf/bench_harness_reliability.py` | 最新 resume p50 468.510→265.073ms；140/140 green | 同一进程 warm before/after；原始 JSON 在 docs/quality/evidence |
+| `python -m mypy --no-incremental` | Success, 38 files | 新模块已加入 whitelist |
+| Ruff + `git diff --check` | 通过 | 无格式/空白错误 |
+
+## 浏览器补充证据（非稳定生产门）
+
+| 命令/范围 | 结果 | 模式与限制 |
+|---|---|---|
+| `pnpm exec playwright test --grep @smoke`（首跑） | 7 passed, 2 skipped, 35.5s | 真实 MapLibre + mock API；不是生产后端验证 |
+| 同命令第二跑 | 6 passed, 1 failed, 2 skipped | J9 三维资产 `mounted` 15s 未出现；既有前端时序/flaky，未修改无关 UI，未作为稳定通过证据 |
+
+## M9 最终连续验收
+
+验收代码：二次独立复审 HEAD `8f2f1c873`；后续只改 planning 交付账本。基线重取为 `origin/master=585812ee4e2d75612f2b124e6fe6587af3deca5c`，merge 已最新。
+
+| 命令/范围 | HEAD/模式 | 结果 | 次数与限制 |
+|---|---|---|---|
+| `PYTHONDONTWRITEBYTECODE=1 /home/kevin/projects/webgis/webgis-ai-agent/.venv/bin/python -m pytest tests/lab tests/harness_replay --no-cov -q -p no:cacheprovider` | `8f2f1c873`，offline replay + lab | **270 passed, 4 warnings, 107.24s** | 复审后第一跑；非全仓或线上 CI |
+| 同上 | `8f2f1c873`，同一输入与离线环境 | **270 passed, 4 warnings, 48.29s** | 最终第二跑；满足连续两次关键验收 |
+| `PYTHONDONTWRITEBYTECODE=1 /home/kevin/projects/webgis/webgis-ai-agent/.venv/bin/python -m mypy --no-incremental` | 最终代码 | Success, 38 files | 标准 whitelist；3 条既有 untyped note，无 error |
+| focused Ruff（journey、bench 及其测试）+ `git diff --check` | 最终候选 | 通过 | 无 lint/空白错误 |
+| Gate diff + approval class | 最终候选 | 17 listed / 3 read / 0 unread；无 approval class | 新测试含保守冒烟界与 E731 局部豁免，不改旧阈值；独立 B 已审阅相关 diff |
+| secrets/提交面扫描 | 最终候选 | 未命中凭据；39 个原始变更文件，约 4.1k 行，benchmark JSON 约 15KB | 无 `.env`、node_modules、test-results、缓存或截图入提交 |
+
+## 发布前补充验证与工具边界
+
+| 范围 | 结果 | 限制与处置 |
+|---|---|---|
+| 冻结后同一全量命令（gstack evidence） | **270 passed, 4 warnings, 44.72s**，FRESH | 同一产品代码、仅 planning 变化；runner 未识别汇总行但原生日志明确计数 |
+| journey evidence/diagnostic/fault 探针 | 22 passed | 公共生产契约，隔离 fixture |
+| owner 拒绝、脱敏与 CLI 探针 | 3 passed | 合成凭据不出报告，跨 owner ID 零回显 |
+| 清除外部环境后的黄金 CLI | 30/30 passed，报告已落盘 | 真实本地 dispatch；stub LLM，browser/live 未运行 |
+| preflight 安全阶段 | 4163 added lines clean（5 WARN）；2 个精确豁免 | 本地策略仅允许两个固定合成脱敏负例，不入 PR；strays/literals/policy-floor/guards 通过 |
+| timing 提示 | 3 条 | 宽松 smoke 界，非精确 gate；不改阈值，精确结论以原始重复 benchmark 为准 |
+| vendored `.agents` 两个被附加工具选中的测试 | 不能运行 | 本分支未改；base 同样缺少 fs-caps/egress-receipt helper；不计为通过，不扩大修复 |
+
+REL-O12 的“双跑 + 独立 Review”已满足。真实后端浏览器、真实 PostGIS 故障、跨进程 RPC 重连、live provider、真实模型、生产部署和线上 CI 仍明确未验证，不能将上述本地结果扩展为这些结论。
+
+## PR 交付
+
+- 创建时 head：`3958aec5d6323778300f84efc043d09086bb1ea6`。
+- PR：**https://github.com/WindWang2/webgis-ai-agent/pull/2017**；base master，非 draft。
+- 开放 PR #2014 的选择截断政策差异已记录于 BASELINE 和 PR 正文；#2015 无重叠。
+- 最后仅回填交付账本，未 merge、未等待或宣称线上 CI。

@@ -43,6 +43,8 @@ def explain_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
     ]
     if not final_records:
         missing.append("FINAL_VERDICT")
+    from app.lib.harness.replay.journey import project_journey_evidence
+
     return {
         "kind": "recorded_trace",
         "task": {
@@ -72,6 +74,7 @@ def explain_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
             [(n, "") for n in missing], trace.get("warnings") or [],
         ),
         "behavior_digest": trace.get("behavior_digest") or "",
+        "journey_evidence": project_journey_evidence(trace),
     }
 
 
@@ -185,6 +188,12 @@ def render_markdown(explanation: Dict[str, Any]) -> str:
         lines.append(f"- outcome: `{task.get('outcome')}`")
         lines.append(f"- goal: {task.get('normalized_goal')}")
         lines.append(f"- digest: `{str(explanation.get('behavior_digest'))[:16]}…`")
+        journey = explanation.get("journey_evidence") or {}
+        lines.append(
+            f"- Journey: `{journey.get('overall', 'not_evaluated')}` "
+            f"(mode={journey.get('mode', 'offline_replay')}; "
+            f"last_valid={journey.get('last_valid_stage')})"
+        )
         for call in explanation.get("tool_calls") or []:
             lines.append(f"- `{call.get('tool_name')}` [{call.get('status')}]")
         disc = explanation.get("disclosures") or {}

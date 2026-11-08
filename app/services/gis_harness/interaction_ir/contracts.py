@@ -322,6 +322,15 @@ def normalize_payload(kind: str, payload: Any) -> Dict[str, Any] | None:
             > MAX_SELECTED_IDS_PAYLOAD
             or (isinstance(matched_val, int) and matched_val > len(carried))
         )
+    # G07 M3（Issue #2004）：selected_ids 被截断曾是静默部分分析的来源
+    # —— 服务端计算 selected_ids_omitted=N 诚实披露（非客户端输入：白名单
+    # 不含该键，客户端伪造在上面的循环里已被剥离，此处只能由截断事实推出）。
+    # 仲裁（merge resolution）：携带上限取 SW-02 的 per-key cap
+    # （_LIST_ITEM_CAPS，50/三方对齐）而非本 PR 原稿的硬编码 8 —— omitted
+    # 按原始数与实际携带数之差推导；未超上限不加键，输出与既有一致。
+    if is_selection_kind and "selected_ids" in out:
+        if isinstance(raw_id_count, int) and raw_id_count > len(out["selected_ids"]):
+            out["selected_ids_omitted"] = raw_id_count - len(out["selected_ids"])
     if not out and not spec.allow_empty_payload:
         return None
     budget = MAX_PAYLOAD_BYTES_SELECTION if kind in WIDE_BUDGET_KINDS else MAX_PAYLOAD_BYTES

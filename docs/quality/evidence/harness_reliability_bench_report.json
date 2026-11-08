@@ -1,0 +1,364 @@
+{
+ "cold_start_2scenarios_ms": 4503.884,
+ "profiles": {
+  "small": {
+   "scenario_count": 140,
+   "wall": {
+    "n": 5,
+    "min_ms": 253.925,
+    "p50_ms": 256.424,
+    "p95_ms": 259.062,
+    "max_ms": 259.062,
+    "mean_ms": 256.019
+   },
+   "cpu_p50_ms": 256.41,
+   "max_rss_mb": 359.4,
+   "payload_utf8_bytes": 39934,
+   "entries": 140,
+   "green": 140,
+   "red": 0,
+   "runs": [
+    {
+     "wall_ms": 253.925,
+     "cpu_ms": 253.93,
+     "max_rss_mb": 359.3,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 254.219,
+     "cpu_ms": 254.213,
+     "max_rss_mb": 359.4,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 256.464,
+     "cpu_ms": 256.469,
+     "max_rss_mb": 359.4,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 256.424,
+     "cpu_ms": 256.41,
+     "max_rss_mb": 359.4,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 259.062,
+     "cpu_ms": 259.066,
+     "max_rss_mb": 359.4,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    }
+   ]
+  },
+  "medium": {
+   "scenario_count": 140,
+   "wall": {
+    "n": 5,
+    "min_ms": 310.355,
+    "p50_ms": 330.221,
+    "p95_ms": 370.727,
+    "max_ms": 370.727,
+    "mean_ms": 333.954
+   },
+   "cpu_p50_ms": 330.218,
+   "max_rss_mb": 359.5,
+   "payload_utf8_bytes": 3870560,
+   "entries": 140,
+   "green": 140,
+   "red": 0,
+   "runs": [
+    {
+     "wall_ms": 370.727,
+     "cpu_ms": 370.726,
+     "max_rss_mb": 359.4,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 3870560
+    },
+    {
+     "wall_ms": 330.221,
+     "cpu_ms": 330.218,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 3870560
+    },
+    {
+     "wall_ms": 344.543,
+     "cpu_ms": 344.549,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 3870560
+    },
+    {
+     "wall_ms": 313.922,
+     "cpu_ms": 313.898,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 3870560
+    },
+    {
+     "wall_ms": 310.355,
+     "cpu_ms": 310.361,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 3870560
+    }
+   ]
+  },
+  "large": {
+   "scenario_count": 140,
+   "wall": {
+    "n": 5,
+    "min_ms": 597.883,
+    "p50_ms": 598.759,
+    "p95_ms": 610.88,
+    "max_ms": 610.88,
+    "mean_ms": 600.889
+   },
+   "cpu_p50_ms": 598.753,
+   "max_rss_mb": 359.5,
+   "payload_utf8_bytes": 30535520,
+   "entries": 140,
+   "green": 140,
+   "red": 0,
+   "runs": [
+    {
+     "wall_ms": 599.035,
+     "cpu_ms": 598.996,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 30535520
+    },
+    {
+     "wall_ms": 597.883,
+     "cpu_ms": 597.888,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 30535520
+    },
+    {
+     "wall_ms": 598.759,
+     "cpu_ms": 598.753,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 30535520
+    },
+    {
+     "wall_ms": 597.89,
+     "cpu_ms": 597.874,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 30535520
+    },
+    {
+     "wall_ms": 610.88,
+     "cpu_ms": 610.874,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 30535520
+    }
+   ]
+  }
+ },
+ "resume_flush": {
+  "before_flush_every_scenario": {
+   "flush_interval": 1,
+   "scenario_count": 140,
+   "wall": {
+    "n": 5,
+    "min_ms": 458.522,
+    "p50_ms": 468.51,
+    "p95_ms": 497.973,
+    "max_ms": 497.973,
+    "mean_ms": 474.142
+   },
+   "cpu_p50_ms": 467.861,
+   "max_rss_mb": 359.5,
+   "runs": [
+    {
+     "wall_ms": 467.194,
+     "cpu_ms": 460.509,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 468.51,
+     "cpu_ms": 467.861,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 458.522,
+     "cpu_ms": 457.438,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 497.973,
+     "cpu_ms": 497.353,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 478.51,
+     "cpu_ms": 477.884,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    }
+   ]
+  },
+  "after_flush_interval_16": {
+   "flush_interval": 16,
+   "scenario_count": 140,
+   "wall": {
+    "n": 5,
+    "min_ms": 259.5,
+    "p50_ms": 265.073,
+    "p95_ms": 304.255,
+    "max_ms": 304.255,
+    "mean_ms": 272.664
+   },
+   "cpu_p50_ms": 265.022,
+   "max_rss_mb": 359.5,
+   "runs": [
+    {
+     "wall_ms": 259.5,
+     "cpu_ms": 259.389,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 259.865,
+     "cpu_ms": 259.811,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 265.073,
+     "cpu_ms": 265.022,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 304.255,
+     "cpu_ms": 294.704,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    },
+    {
+     "wall_ms": 274.629,
+     "cpu_ms": 274.554,
+     "max_rss_mb": 359.5,
+     "entries": 140,
+     "green": 140,
+     "red": 0,
+     "payload_utf8_bytes": 39934
+    }
+   ]
+  }
+ },
+ "context_proxy_formula": {
+  "sample": "core-heatmap-01 profile=large",
+  "op_count": 2,
+  "str_chars": 131310,
+  "utf8_bytes": 131297,
+  "str_formula_ms_per_call": 0.1544,
+  "utf8_formula_ms_per_call": 0.2618,
+  "note": "计量口径修正，不是速度优化；str() 不计非 ASCII 真实字节"
+ },
+ "unmeasured": [
+  {
+   "dimension": "artifact_bytes",
+   "status": "not_evaluated",
+   "reason": "BenchEntry has no artifact-byte source; payload_utf8_bytes is not relabeled"
+  },
+  {
+   "dimension": "emitted_events",
+   "status": "not_evaluated",
+   "reason": "offline replay does not expose production SSE event counts"
+  },
+  {
+   "dimension": "rendering_frames",
+   "status": "not_evaluated",
+   "reason": "offline replay has no browser rendering frames"
+  },
+  {
+   "dimension": "replay_mutations_scaling",
+   "status": "not_evaluated",
+   "reason": "Redis-backed mutation replay was unavailable in this environment"
+  }
+ ],
+ "environment": {
+  "python": "3.13.17",
+  "platform": "Linux-7.3.1-1-cachyos-x86_64-with-glibc2.44",
+  "machine": "x86_64",
+  "cpu_count": 16,
+  "seed": 11,
+  "repeats": 5,
+  "scenario_count": 140,
+  "corpus_size": 140,
+  "max_rss_mb_end": 359.5,
+  "concurrency": 1
+ }
+}

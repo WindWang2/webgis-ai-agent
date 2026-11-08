@@ -1,0 +1,277 @@
+{
+  "schema_version": "gis_harness_reliability_golden.v1",
+  "seed": 20261107,
+  "tasks": [
+    {
+      "id": "rel-01-school-points",
+      "category": "point_distribution",
+      "title": "成都小学点分布与错误数据边界",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f01-school-points-map"],
+      "negative": ["f18-wrong-dataset"],
+      "expectations": {
+        "f01-school-points-map": ["f01-points-layer", "f01-task-incomplete"],
+        "f18-wrong-dataset": ["f18-not-satisfied", "f18-blocking-reason"]
+      },
+      "focused_tests": [],
+      "oracle": {
+        "invariant": "点位图层只来自当前 session 的授权 ref；错误 CRS/范围不得被宣布满足目标",
+        "reference_space": "EPSG:4326；合成成都参考范围，非实测",
+        "units": "feature count",
+        "nodata": "缺失坐标或错误地理域不得静默忽略",
+        "ownership": "每场景独立 session；ref 只能由该 session 解析"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["离线 POI 数据缺口按既有诚实降级断言，不是线上学校数据验证"]
+    },
+    {
+      "id": "rel-02-heatmap-eligibility",
+      "category": "heatmap_eligibility",
+      "title": "小学热力图与稀疏样本降级",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f02a-heatmap-method"],
+      "negative": ["f02b-sparse-heatmap-degraded"],
+      "expectations": {
+        "f02a-heatmap-method": ["f02a-heatmap-layer"],
+        "f02b-sparse-heatmap-degraded": ["f02b-no-heatmap", "f02b-points-fallback", "f02b-fallback-evidence"]
+      },
+      "focused_tests": [],
+      "oracle": {
+        "invariant": "样本量达到阈值才允许 heatmap；稀疏输入必须回退点图并保留 fallback 证据",
+        "reference_space": "EPSG:4326；40 点正例与 3 点负例",
+        "units": "point samples",
+        "nodata": "无效/稀疏样本不计入有效热力资格",
+        "ownership": "同一合成 fixture 的不同基数对照，不跨 session 复用结果"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["MapSpec 类型资格不等同于 MapLibre 像素质量"]
+    },
+    {
+      "id": "rel-03-zonal-statistics",
+      "category": "zonal_statistics",
+      "title": "分区计数、面积密度与单位冲突",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f03-admin-aggregation", "f04a-density-denominator", "fd2-denominator-rate-candidates"],
+      "negative": ["f11-unit-conflict"],
+      "expectations": {
+        "f03-admin-aggregation": ["f03-agg-row-done", "f03-mapspec"],
+        "f04a-density-denominator": ["f04a-agg-done"],
+        "fd2-denominator-rate-candidates": ["fd2-normalized-in-pool", "fd2-no-blocked-rate"],
+        "f11-unit-conflict": ["f11-no-claim", "f11-needs-execution-visible"]
+      },
+      "focused_tests": [],
+      "oracle": {
+        "invariant": "计数守恒；面积/人口分母显式；混用亩与公顷不得产生完成结论",
+        "reference_space": "合成点面 EPSG:4326；面积计算使用生产归一化路径",
+        "units": "count、count/km²、count/person 分列，禁止秒/米混用",
+        "nodata": "nodata 与单位冲突不计入有效统计",
+        "ownership": "points/districts 各自 ref 绑定当前 session"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["Issue #2006 的 summary 数值可见性仍属基线债务，本组不宣称模型上下文数值完整"]
+    },
+    {
+      "id": "rel-04-network-accessibility",
+      "category": "network_accessibility",
+      "title": "网络可达性：行程秒与网络米",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f28-03-accessibility-network", "f29-03-nearest-hospital-distance"],
+      "negative": ["f28-02-no-network-blocked"],
+      "expectations": {
+        "f28-03-accessibility-network": ["f28-03-isochrone", "f28-03-layer-ref"],
+        "f29-03-nearest-hospital-distance": ["f29-03-nearest", "f29-03-summary"],
+        "f28-02-no-network-blocked": ["f28-02-blocked-code", "f28-02-run-drove-state"]
+      },
+      "focused_tests": ["tests/unit/gis_harness/analysis_workflows/test_known_answer_oracles.py"],
+      "oracle": {
+        "invariant": "Dijkstra 路径真实存在；无路网 typed blocked；时间成本与距离长度不可互换",
+        "reference_space": "合成路网与设施点；真实生产网络算法",
+        "units": "total_time_s 为秒，total_distance_m 为米；等时圈输入为分钟",
+        "nodata": "不可达/缺图不得返回零成本或成功",
+        "ownership": "网络 fixture 仅在当前 workflow/session 内解析"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["Issue #2005：现有 accessibility_summary 的 total_cost 秒聚合不能算作米制验证", "人口覆盖外部数据按既有 typed skipped，不补造"]
+    },
+    {
+      "id": "rel-05-multilayer-join",
+      "category": "spatial_join",
+      "title": "多层空间连接与 CRS 负例",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f07-spatial-join", "f29-01-hazard-zone-facilities"],
+      "negative": ["f09-wrong-crs"],
+      "expectations": {
+        "f07-spatial-join": ["f07-join-step-ok"],
+        "f29-01-hazard-zone-facilities": ["f29-01-buffer", "f29-01-exposure", "f29-01-layer-ref"],
+        "f09-wrong-crs": ["f09-analysis-passes-through", "f09-no-claim"]
+      },
+      "focused_tests": [],
+      "oracle": {
+        "invariant": "within/intersects 谓词保持空间关系与 M:N 基数披露；错误 CRS 不得被目标完成门吸收",
+        "reference_space": "合成点/面/危险源，EPSG:4326 与错误 CRS 对照",
+        "units": "joined features 与暴露计数",
+        "nodata": "空几何/错误 CRS 不计为有效连接",
+        "ownership": "hazard/receptor/boundary 分 ref 授权，禁止跨 session 输入"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["既有 F09 披露产品级 CRS 接线缺口，保留为未验证边界"]
+    },
+    {
+      "id": "rel-06-cross-city-scope",
+      "category": "cross_city_scope",
+      "title": "跨城切换的地名与范围框双向 guard",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": [],
+      "negative": [],
+      "expectations": {},
+      "focused_tests": ["tests/unit/test_pi_gis_usability_v2.py"],
+      "oracle": {
+        "invariant": "同名且范围包含才 matched；异名或范围分离必须 mismatched；证据缺失保持 unverified",
+        "reference_space": "北京/成都名称与 WGS84 bbox 对拍",
+        "units": "经纬度 degrees，不将投影米制当经纬度",
+        "nodata": "无地名/无 bbox 不猜城市归属",
+        "ownership": "产品 primary_ref 必须属于当前 scope 与 session"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["Issue #2001：同名但范围错位与 overlay/layer_ids 仍有开放缺口，本组通过不构成其修复证明"]
+    },
+    {
+      "id": "rel-07-selection-bounds",
+      "category": "selection_bounds",
+      "title": "单选与超限多选的基数诚实",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f24-02-observer-selected"],
+      "negative": [],
+      "expectations": {
+        "f24-02-observer-selected": ["f24-02-selection"]
+      },
+      "focused_tests": ["tests/unit/gis_harness/test_reliability_selection_scope.py"],
+      "oracle": {
+        "invariant": "≤8 选择保持原义；>8 必须披露 omitted 且不得按完整 usable 输入结算",
+        "reference_space": "固定 feature id 列表与真实 Interaction IR/analysis_scope 公共接缝",
+        "units": "selected/omitted feature counts",
+        "nodata": "未知被裁 ID 不伪造 missing_ids；无选择不得变成全量数据",
+        "ownership": "选择 ref 仍须通过当前 session 的所有权与宿主层验证"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["Issue #2004 仅做本线需要的截断披露，不接管前端框选交互"]
+    },
+    {
+      "id": "rel-08-temporal-map",
+      "category": "temporal_map",
+      "title": "时间序列地图与期次错配拒绝",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f05-temporal-points"],
+      "negative": ["f28-04-temporal-mismatch"],
+      "expectations": {
+        "f05-temporal-points": ["f05-recipe", "f05-profile-done"],
+        "f28-04-temporal-mismatch": ["f28-04-blocked", "f28-04-code"]
+      },
+      "focused_tests": [],
+      "oracle": {
+        "invariant": "年份字段与时间语义不丢失；同年伪双期不得差分",
+        "reference_space": "2015/2020/2025 合成点位与固定 qualifier",
+        "units": "calendar years",
+        "nodata": "缺少年份或期次不一致不计为可比较时间序列",
+        "ownership": "temporal ref 与 workflow 均属当前 session"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["时序图表数值由既有 science oracle 承担，本组不伪造浏览器时间轴交互"]
+    },
+    {
+      "id": "rel-09-style-increment",
+      "category": "style_increment",
+      "title": "样式增量修改与错误方法注入",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f12-multiturn-edit-chain", "fd3-design-select-pin-honored"],
+      "negative": ["f04b-visual-for-quantitative"],
+      "expectations": {
+        "f12-multiturn-edit-chain": ["f12-layers-preserved", "f12-components", "f12-revision-positive"],
+        "fd3-design-select-pin-honored": ["fd3-pinned-model", "fd3-next-product-honors"],
+        "f04b-visual-for-quantitative": ["f04b-no-claim", "f04b-heatmap-authored-anyway"]
+      },
+      "focused_tests": [],
+      "oracle": {
+        "invariant": "目标组件变化不得重查数据或清除其他图层；用户 pin 后续轮 honored；错误视觉方法不完成定量目标",
+        "reference_space": "同一 fixture/MapSpec 的多轮 revision 对拍",
+        "units": "revision、component count、preserved layer count",
+        "nodata": "缺失目标组件不得伪报增量成功",
+        "ownership": "用户锁与 MapSpec revision 属当前 session/turn"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["设计候选与 pin 复用既有事实源，不新建模板选择器"]
+    },
+    {
+      "id": "rel-10-publication-export",
+      "category": "publication_export",
+      "title": "导出、A4 约束与旋转指北针证据边界",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f16-export-offline", "f22-01-camera-applies"],
+      "negative": ["f21-03-static-medium", "f27-11-print-degrade"],
+      "expectations": {
+        "f16-export-offline": ["f16-export-consistency", "f16-no-fake-pass"],
+        "f22-01-camera-applies": ["f22-01-bearing", "f22-01-ir"],
+        "f21-03-static-medium": ["f21-03-not-3d", "f21-03-medium"],
+        "f27-11-print-degrade": ["f27-11-mode", "f27-11-profile-layer"]
+      },
+      "focused_tests": ["tests/unit/test_pi_gis_usability_v2.py", "tests/cartography/test_layout_constraint_spec_v1.py"],
+      "oracle": {
+        "invariant": "导出 manifest 与 MapSpec 一致；静态媒介禁用 3D；bearing 真实落 spec；无约束/旋转证据不得宣称出版完成",
+        "reference_space": "A4 landscape 约束测试资产与 bearing=45° 的 MapSpec",
+        "units": "mm、degrees、target DPI",
+        "nodata": "不支持/未求解/未观察的导出维度保持 not_evaluated",
+        "ownership": "导出 ref/artifact 与 layout revision 属当前 session"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["Issue #1999：Agent/浏览器 A4 导出不等于已走约束求解", "Issue #2003：未做旋转导出 N 字母的像素/几何一致性验证", "普通 export/bearing 通过不得替代上述两项结论"]
+    },
+    {
+      "id": "rel-11-cancel-recovery",
+      "category": "cancel_recovery",
+      "title": "取消、中断恢复与不可完成负例",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f13-cross-session-recovery", "f14-user-cancel", "f27-10-cancel-resume"],
+      "negative": ["f26-03-verdict-honesty"],
+      "expectations": {
+        "f13-cross-session-recovery": ["f13-t1-interrupted", "f13-resume-count", "f13-mapspec-after-recovery"],
+        "f14-user-cancel": ["f14-cancelled-status", "f14-no-claim"],
+        "f27-10-cancel-resume": ["f27-10-layer", "f27-10-binding"],
+        "f26-03-verdict-honesty": ["f26-03-not-25d-dangling", "f26-03-mode"]
+      },
+      "focused_tests": ["tests/unit/gis_harness/recovery_policy/test_e2e_recovery_gates.py"],
+      "oracle": {
+        "invariant": "cancelled 不得等于 completed；恢复只继续授权幂等工作；悬空证据不得完成",
+        "reference_space": "固定中断/恢复 turn 序列与生产 settle/recovery 接缝",
+        "units": "turn status、resume count、terminal state",
+        "nodata": "未结算/取消/无效场景不产完成奖励",
+        "ownership": "恢复不得复制或读取其他 owner/session 的 ref"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["跨会话续跑指同一 GIS session 的恢复，不是读取他人会话"]
+    },
+    {
+      "id": "rel-12-offline-degradation",
+      "category": "offline_degradation",
+      "title": "工具离线、数据缺失与权限降级",
+      "execution_mode": "live_dispatch_stub_llm",
+      "positive": ["f03-admin-aggregation"],
+      "negative": ["f08-no-coordinates", "f15-tier3-governance", "f28-02-no-network-blocked"],
+      "expectations": {
+        "f03-admin-aggregation": ["f03-agg-row-done"],
+        "f08-no-coordinates": ["f08-no-claim", "f08-no-fake-points"],
+        "f15-tier3-governance": ["f15-no-claim", "f15-intent-or-empty"],
+        "f28-02-no-network-blocked": ["f28-02-blocked-code"]
+      },
+      "focused_tests": ["tests/unit/gis_harness/recovery_policy/test_e2e_recovery_gates.py"],
+      "oracle": {
+        "invariant": "本地真实计算可完成；外部服务/坐标/权限缺失必须 typed 降级，绝不合成外部结果",
+        "reference_space": "无网络沙箱与固定本地 fixture",
+        "units": "availability、typed reason code、dispatch count",
+        "nodata": "无坐标/无网络/无权限均不视为空结果成功",
+        "ownership": "tier3/破坏性调用仍需现有确认，不跨 owner 自动恢复"
+      },
+      "coverage": {"browser_renderer": "not_run", "live_services_opt_in": "not_run", "offline_replay": "not_run"},
+      "disclosures": ["默认测试不访问公网或付费模型；live_services_opt_in 永远显式另开"]
+    }
+  ]
+}

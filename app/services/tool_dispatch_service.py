@@ -1120,6 +1120,23 @@ class ToolDispatchService:
                         _tool_desc = self._registry.descriptor(tool_name)
                     except Exception:  # noqa: BLE001 — KeyError 等 → 保守
                         _tool_desc = None
+                    # GOAL 05 归因身份：仅取本次调用已确证的事实 —
+                    # tool_call_id 来自 tc.id；capability 只从 capability
+                    # bind 的既有 evidence 真实键取（缺席留空）；
+                    # turn_id 只在 current_turn_evidence() 在场时填
+                    # （Pi 独立 HTTP task 无 ContextVar → 诚实留空）。
+                    _cap_attr = ""
+                    if capability_evidence:
+                        _cap_val = capability_evidence.get("rank_capability")
+                        if not _cap_val:
+                            _caps = capability_evidence.get("capabilities")
+                            if isinstance(_caps, list) and _caps:
+                                _cap_val = _caps[0]
+                        _cap_attr = str(_cap_val or "")[:64]
+                    _turn_attr = ""
+                    _ev_now = current_turn_evidence()
+                    if _ev_now is not None:
+                        _turn_attr = str(_ev_now.turn_id or "")[:64]
                     _rec = build_recovery_payload(
                         status=result.get("status"),
                         code=result.get("code"),
@@ -1128,6 +1145,9 @@ class ToolDispatchService:
                         tool_name=tool_name,
                         harness_failure=result.get("harness_failure"),
                         session_id=session_id or "",
+                        turn_id=_turn_attr,
+                        tool_call_id=str(tc.get("id") or "")[:64],
+                        capability=_cap_attr,
                         descriptor=_tool_desc,
                     )
                     result["recovery"] = {

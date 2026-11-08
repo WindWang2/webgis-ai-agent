@@ -108,8 +108,14 @@ async def run_one(replayer: OfflineReplayer, scenario: Scenario,
             scenario, current_registry_digest=current_registry_digest))
     if record_perf:
         entry["duration_ms"] = round(duration_ms, 1)
+        # context 体积代理 = canonical compact JSON 的实际 UTF-8 bytes
+        # （#1998 口径；与 digest 同一 canonical_json，拒绝 str() 字符数 ——
+        # 非 ASCII 参数下两者系统性不等）。计量面，不进 digest/基线。
+        from app.lib.harness.replay.determinism import canonical_json
+
         entry["context_bytes_proxy"] = sum(
-            len(str(op.arguments)) for t in replayed.turns for op in t.ops)
+            len(canonical_json(op.arguments).encode("utf-8"))
+            for t in replayed.turns for op in t.ops)
     return entry
 
 
@@ -191,8 +197,18 @@ def _projection_of(result: ScenarioResult) -> ScenarioProjection:
 async def run_suite(
     scenarios: List[Scenario], *, seed: int = 0,
     profile: str = "small", resume_path: Optional[str] = None,
+    flush_interval: int = 16,
 ) -> BenchReport:
-    """跑一个 suite；resume 状态文件跳过已完成场景（最终合并全量报告）。"""
+    """跑一个 suite；resume 状态文件跳过已完成场景（最终合并全量报告）。
+
+    resume 刷新纪律：状态文件每 ``flush_interval`` 个完成场景写一次 +
+    suite 收尾强制 flush —— 旧实现每场景全量重写（O(N²) JSON 序列化，
+    140 场景 resume 路径累计 ~0.17s、400 场景 ~1.5s）。刷新降频后中断
+    最多重算最近 ``flush_interval - 1`` 条已完成场景（语义安全：重算
+    结果确定性同 seed 等价）。``flush_interval`` 必须 ≥ 1。
+    """
+    if flush_interval < 1:
+        raise ValueError(f"flush_interval must be >= 1, got {flush_interval}")
     replayer = OfflineReplayer(seed=seed)
     completed: ResumeState = {}
     if resume_path and Path(resume_path).exists():
@@ -213,9 +229,17 @@ async def run_suite(
         if isinstance(e, dict) and e.get("scenario_id") in wanted_ids]
     done_ids = {e["scenario_id"] for e in entries}
 
-    def _save() -> None:
+    entries_since_flush = 0
+
+    def _save(force: bool = False) -> None:
+        nonlocal entries_since_flush
         if not resume_path:
             return
+        if not force and entries_since_flush < flush_interval:
+            return
+        if force and not entries_since_flush:
+            return  # 收尾无新条目 → 不重复写（上次 flush 已是最新）
+        entries_since_flush = 0
         payload = json.dumps({
             "seed": seed, "profile": profile,
             "entries": {e["scenario_id"]: e for e in entries},
@@ -243,7 +267,9 @@ async def run_suite(
                               contract_sink=contract_violations,
                               current_registry_digest=current_registry_digest)
         entries.append(entry)
+        entries_since_flush += 1
         _save()
+    _save(force=True)
     entries.sort(key=lambda e: e["scenario_id"])
     return {
         "suite_seed": seed,
