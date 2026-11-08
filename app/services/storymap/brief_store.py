@@ -113,14 +113,17 @@ async def save_brief(
         raise ValueError(f"brief spec exceeds {MAX_BRIEF_SPEC_BYTES} bytes")
     # 原子乐观并发（评审 #P2-5）：条件 UPDATE 以 revision 为 CAS 令牌，
     # rowcount=0 即并发写入已推进 —— 先检查存在性再区分 404/409。
+    # 空 title 保留行内现有标题（复审 N4：不回退字面量默认值）。
     from sqlalchemy import update
 
+    current_title = await db.scalar(select(MapBrief.title).where(
+        MapBrief.conversation_id == conv.id))
     result = await db.execute(
         update(MapBrief)
         .where(MapBrief.conversation_id == conv.id,
                MapBrief.revision == expected_revision)
         .values(spec=text,
-                title=(spec.metadata.title or "地图简报")[:255],
+                title=(spec.metadata.title or current_title or "地图简报")[:255],
                 revision=expected_revision + 1)
         .execution_options(synchronize_session=False))
     if not result.rowcount:

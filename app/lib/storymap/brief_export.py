@@ -41,12 +41,14 @@ _SVG_FOREIGN_RE = re.compile(
     r"<foreignObject\b[^>]*>.*?</foreignObject\s*>|<foreignObject\b[^>]*/>",
     re.I | re.S)
 _SVG_SMIL_RE = re.compile(
-    r"<(?:set|animate|animateTransform|animateMotion|animateColor)\b"
+    r"<(?:set|animate|animateTransform|animateMotion|animateColor|handler)\b"
     r"[^>]*(?:/>|>.*?</(?:set|animate|animateTransform|animateMotion"
-    r"|animateColor)\s*>)",
+    r"|animateColor|handler)\s*>)",
     re.I | re.S)
+# N1（复审）：属性边界不止空白 —— 引号闭合后紧跟属性名（fill="x"onload=…）
+# 同样是合法属性分隔；捕获边界字符以免破坏前一个属性。
 _SVG_EVENT_RE = re.compile(
-    r"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
+    r"([\s\"'])on\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
 _SVG_HREF_RE = re.compile(
     r"(?:xlink:)?href\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
 
@@ -79,7 +81,7 @@ def sanitize_svg(markup: str) -> str:
     out = _SVG_SCRIPT_OPEN_RE.sub("", out)
     out = _SVG_SMIL_RE.sub("", out)
     out = _SVG_FOREIGN_RE.sub("", out)
-    out = _SVG_EVENT_RE.sub("", out)
+    out = _SVG_EVENT_RE.sub(r"\1", out)
 
     def _drop_external(match: "re.Match[str]") -> str:
         url = (match.group(1) or "").strip("\"'")

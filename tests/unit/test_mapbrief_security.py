@@ -81,6 +81,10 @@ class TestHtmlInjection:
             '<svg><animateTransform attributeName="onload" '
             'to="alert(1)"/></svg>',
             '<svg><script>var a = "</scr" + "ipt>"</script></svg>',
+            # 复审 N1：引号闭合后无空格拼接的事件属性
+            '<svg><rect width="1" height="1" fill="x"onload="alert(1)"/></svg>',
+            # 复审 N2：SVG Tiny 事件元素
+            '<svg><handler ev:event="load">alert(1)</handler></svg>',
         ]
         for evil in payloads:
             clean = sanitize_svg(evil)
@@ -88,13 +92,15 @@ class TestHtmlInjection:
             assert "<script" not in low, evil
             assert "javascript:" not in low, evil
             assert "onmouseover" not in low and "onload" not in low, evil
+            assert "<handler" not in low, evil
             assert "http://evil.example" not in low, evil
         # 正常图形元素与 data: 引用保留
-        keep = ('<svg><rect width="1" height="1"/>'
+        keep = ('<svg><rect width="1" height="1" fill="x"/>'
                 '<a xlink:href="data:image/png;base64,AA"><text>y</text></a>'
                 '</svg>')
         clean = sanitize_svg(keep)
         assert "<rect" in clean and "data:image/png" in clean
+        assert 'fill="x"' in clean  # 前一属性不被边界替换破坏
 
     def test_csv_cr_lf_prefixed(self):
         assert csv_safe("\r=cmd").startswith("'")
