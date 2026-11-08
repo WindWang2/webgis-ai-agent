@@ -24,7 +24,7 @@
 | M6 | complete | 最新 resume p50 468.510→265.073ms（1.77×）；UTF-8 修正明确非提速；原始报告完整 |
 | M7 | complete | record-only 指标、分层车道、质量文档、真实 Pi 证据；阶段全量 268 项通过，修复后 270 项通过 |
 | M8 | complete | 冷审 P0/P1=0；4 项 P2 全修复；二次复审通过；全量 270 项复跑满足附带条件 |
-| M9 | in_progress | 重取 master、必要集成、双次关键验收、语义化 commits、push 与唯一 PR |
+| M9 | complete | master 已同步且无需 rebase；270 项连续双跑及冻结复跑通过；独立复审通过；branch 已 push，PR #2017 已创建，未合并 |
 
 ## Oracle 对账
 

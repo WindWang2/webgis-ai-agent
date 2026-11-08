@@ -101,4 +101,23 @@
 | Gate diff + approval class | 最终候选 | 17 listed / 3 read / 0 unread；无 approval class | 新测试含保守冒烟界与 E731 局部豁免，不改旧阈值；独立 B 已审阅相关 diff |
 | secrets/提交面扫描 | 最终候选 | 未命中凭据；39 个原始变更文件，约 4.1k 行，benchmark JSON 约 15KB | 无 `.env`、node_modules、test-results、缓存或截图入提交 |
 
+## 发布前补充验证与工具边界
+
+| 范围 | 结果 | 限制与处置 |
+|---|---|---|
+| 冻结后同一全量命令（gstack evidence） | **270 passed, 4 warnings, 44.72s**，FRESH | 同一产品代码、仅 planning 变化；runner 未识别汇总行但原生日志明确计数 |
+| journey evidence/diagnostic/fault 探针 | 22 passed | 公共生产契约，隔离 fixture |
+| owner 拒绝、脱敏与 CLI 探针 | 3 passed | 合成凭据不出报告，跨 owner ID 零回显 |
+| 清除外部环境后的黄金 CLI | 30/30 passed，报告已落盘 | 真实本地 dispatch；stub LLM，browser/live 未运行 |
+| preflight 安全阶段 | 4163 added lines clean（5 WARN）；2 个精确豁免 | 本地策略仅允许两个固定合成脱敏负例，不入 PR；strays/literals/policy-floor/guards 通过 |
+| timing 提示 | 3 条 | 宽松 smoke 界，非精确 gate；不改阈值，精确结论以原始重复 benchmark 为准 |
+| vendored `.agents` 两个被附加工具选中的测试 | 不能运行 | 本分支未改；base 同样缺少 fs-caps/egress-receipt helper；不计为通过，不扩大修复 |
+
 REL-O12 的“双跑 + 独立 Review”已满足。真实后端浏览器、真实 PostGIS 故障、跨进程 RPC 重连、live provider、真实模型、生产部署和线上 CI 仍明确未验证，不能将上述本地结果扩展为这些结论。
+
+## PR 交付
+
+- 创建时 head：`3958aec5d6323778300f84efc043d09086bb1ea6`。
+- PR：**https://github.com/WindWang2/webgis-ai-agent/pull/2017**；base master，非 draft。
+- 开放 PR #2014 的选择截断政策差异已记录于 BASELINE 和 PR 正文；#2015 无重叠。
+- 最后仅回填交付账本，未 merge、未等待或宣称线上 CI。

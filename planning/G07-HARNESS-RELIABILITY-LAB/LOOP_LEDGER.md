@@ -93,4 +93,10 @@
 - 连续验收：同一最终代码的 Replay/Lab 全量第一跑 **270 passed, 4 warnings, 107.24s**，第二跑 **270 passed, 4 warnings, 48.29s**。
 - 静态检查：标准 Mypy **Success: no issues found in 38 source files**；focused Ruff 和 `git diff --check` 通过；提交面扫描未发现凭据、缓存或大型测试输出。
 - Review：不再派生 subagent，遵守三个上限；采用 B 已完成的独立冷审、修复和二次复审。`/ship` 只用于最终交付门禁，不增加版本、TODO、CI 或额外外部评测范围。
-- 剩余：冻结后发布前验证、push、唯一 PR、回填真实 URL 与最终 HEAD。未创建前不得宣称已提交 PR。
+- 补充探针：证据/诊断/故障 **22 passed**，owner/脱敏/CLI **3 passed**；清除外部环境后的黄金 CLI **30/30** 通过并写入 `.gstack/tmp/g07-probes/golden.json`。没有生产服务或付费模型。
+- 发布工具：首次 preflight 对两个合成脱敏样本和 lane 映射失败。按官方用户本地策略精确豁免两个固定负例后，安全预检通过（4163 added lines、5 个非阻断 warning），timing 3 条提示不改阈值。该策略仅在用户本地，不进入 PR。
+- 工具限制：vendored `.agents` 两个未修改测试缺 base 同样缺失的 helper，不能独立运行；未修复无关基线、未计为通过。不使用可选 QA materializer 的失败充当产品失败或成功。
+- 实时冲突：开放 PR #2014 与选择范围三文件有语义接触，#2015 无重叠；具体差异和保守 stale 政策已记录 BASELINE/PR。
+- 最终证据：冻结代码全量 Replay/Lab 再跑 **270 passed, 4 warnings, 44.72s**；gstack evidence FRESH，Mypy/Ruff/diff check 通过，工作区无生成物入提交。
+- 发布：`3958aec5d6323778300f84efc043d09086bb1ea6` 已普通 push（非 force），唯一真实 PR **https://github.com/WindWang2/webgis-ai-agent/pull/2017** 创建成功。未 merge、未等待或宣称 CI。
+- 收尾：回填 URL 与 commit 清单，PLAN M9 标记 complete，推送文档并核对远端 head。

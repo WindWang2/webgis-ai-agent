@@ -98,4 +98,6 @@ ADR-0256 已定义 ReplayTrace 为打包层、T1/T2/T3 与 provisional ratchet�
 - #2013（G03）也修改 `app/services/tool_dispatch_service.py`，其新增位于数据资格闸（约 671 行）和结果字段（约 1609 行）；本线仅复用既有 recovery payload 参数（约 1046 行），代码块和语义均不冲突。
 - #2012（G01）修改 `scripts/pi_doctor.py` 与 `tests/integration/test_pi_stub_llm_journeys.py`，本线未改这些文件；未来 master 合并后需重跑 Pi doctor/stub 验证，不提前声称其新测试通过。
 - #2011（G02）与本线无重叠文件。Dependabot 的 pyproject 依赖变更与本线 mypy whitelist 不同块，需在最终 merge 时正常冲突审查。
+- 最终开放 PR 复核新增 #2015（G04），与本线没有文件重叠。
+- #2014（G05）与本线共同触及 `interaction_ir/contracts.py`、`projection.py` 和 `analysis_scope.py`。其实现把 selected_ids 上限扩大至 50，并以 `matched_count`/`ids_truncated`/`truncated_sample` 披露后仍标 usable；本线保留 >8 的 `selected_ids_omitted`、伪造计数剥离与下游 stale。两者对截断输入能否用于分析的政策不同，后续整合必须显式选择，不得静默以 usable 覆盖 stale。当前 origin/master 未合入 #2014，本线不预先改写其在途实现。
 - 不读取或等待这些 PR 的线上 CI；其失败/成功状态不作为本线证据。

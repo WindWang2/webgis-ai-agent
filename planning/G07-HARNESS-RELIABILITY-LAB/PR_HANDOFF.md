@@ -1,17 +1,19 @@
 # PR 证据对账与交付
 
-状态：REL-O01–O13 本地证据完成，独立二次复审通过，关键验收连续两次通过。尚未 push，尚未创建 PR。
+状态：**完成**。REL-O01–O13 本地证据完成，独立二次复审通过，关键验收连续两次通过；目标 branch 已推送，真实 PR 已创建，未合并。
 
 ## Git 与发布边界
 
-- 实时 `origin/master`：`585812ee4e2d75612f2b124e6fe6587af3deca5c`（2026-11-07T17:54:14+08:00；2026-11-08 重取成功，merge 已最新，无 rebase）。
+- 实时 `origin/master`：`585812ee4e2d75612f2b124e6fe6587af3deca5c`（2026-11-07T17:54:14+08:00；2026-11-08 最终重取，merge 已最新，无 rebase）。
 - 独立二次复审 HEAD：`8f2f1c873a020ef68e245e111ee527ec0cdd1245`；最终代码修复：`ce3706e65`。
+- 最终代码及验收账本 HEAD、PR 创建时 head：`3958aec5d6323778300f84efc043d09086bb1ea6`。
 - worktree：`/home/kevin/projects/webgis/webgis-wt-harness-reliability-lab-20261107`
 - branch：`zcode/goal-harness-reliability-lab-20261107`
-- 最终 HEAD 和 PR URL：真实创建后回填。只 push 本 branch，不改 master、不合并、不等待或宣称 CI。
-- #2013 接触 TDS 不同代码块，语义兼容；#2012 未改本分支 Pi doctor/旅程文件；#2011 无重叠。master 未变化，无需额外集成。
+- **PR URL：https://github.com/WindWang2/webgis-ai-agent/pull/2017**（#2017，base master，非 draft）。本文件提交是最后的交付回写；其对象 ID 由提交后的 `git rev-parse HEAD` 和 PR 页面确认，不能在文件内自引用。
+- 只 push 本 branch，不改 master、不合并、不等待或宣称 CI。
+- #2013 接触 TDS 不同代码块，语义兼容；#2012 未改本分支 Pi doctor/旅程文件；#2011/#2015 无本分支文件重叠。#2014 的选择范围语义接触点见下。
 
-## Commits（二次复审时 16 个）
+## Commits（创建 PR 时 17 个）
 
 1. `e3895ece4` feat(harness): add bounded end-to-end journey diagnostics
 2. `8a9742eac` fix(recovery): preserve dispatch attribution in diagnostics
@@ -29,8 +31,9 @@
 14. `ce3706e65` fix(harness): close independent review evidence gaps
 15. `1960d1f61` docs(planning): record independent cold review fixes
 16. `8f2f1c873` docs(planning): close independent second review
+17. `3958aec5d` docs(planning): record final G07 acceptance evidence
 
-最终验收账本和 PR 回填提交在创建后追加，以 `git log origin/master..HEAD` 为最终清单。
+最后的 `docs(planning): hand off G07 reliability PR` 回填上述真实 PR、工具限制与最终接触点。完整提交清单以 `git log origin/master..HEAD` 为准。
 
 ## Oracle 证据对账
 
