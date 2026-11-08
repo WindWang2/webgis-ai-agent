@@ -5,14 +5,14 @@
 
 | 旅程 | 入口 | 真实服务 | 持久化/恢复 | 失败/取消 | 权限 | 用户反馈 | 正反测试 | 操作说明 | 状态 |
 |---|---|---|---|---|---|---|---|---|---|
-| J1 检查项目来源变化 | 项目资产面板「检查更新」按钮 + Pi 工具 `check_project_source_updates` | `GET/POST /projects/{pid}/data-refresh/check` → `inventory` | 检查结果落 proposal 账本，刷新后可查 | 来源失权/预算不足 → `blocked` 且拒绝泄露差异 | `_auth_project` + `_verify_session_access` | 五态标记 + 证据级别 + 截断状态 | T-O01a/b | `docs/features/project-data-refresh.md` | ⏳ |
-| J2 解释某图为何过期 | 面板「为何过期」+ Pi 工具 `explain_stale_map_product` | `.../impact` 只读分析 → `artifact_registry` + `fingerprints` | 无写入（只读） | 证据不足 → `unverifiable`，不编造原因 | 同上 | 失效原因 + 依赖链 + 完整/截断 | T-O03a/b | 同上 | ⏳ |
-| J3 预览更新 | 「预览影响」按钮 + Pi `preview_project_data_refresh` | `.../preview` → `compute_affected_subgraph` + `impact_analysis` | proposal 持久化 + `proposal_fingerprint` | 漂移 → 409 强制重预览 | 同上 + 快照版本核验 | 增/删/改数量、最小重算子图、预算、可复用结果、保留的人工编辑、冲突 | T-O04a/T-O05a | 同上 | ⏳ |
-| J4 执行授权候选 | 「生成候选」+ Pi `execute_project_data_refresh` | `.../execute` → `workflow_runtime` + 隔离候选命名空间 | job/attempt 状态持久，崩溃可续 | 失败/取消 → 当前成果不变、候选可检查 | owner/session/project + 审批令牌 + 三元组绑定 | 进度/部分完成/失败可辨 | T-O07a | 同上 | ⏳ |
-| J5 候选对比 | 双栏对比视图 | `.../candidate` | 候选与基线引用 pin | 候选损坏 → 显式错误 | 同上 | 差异 + 冲突 + 保留项 | T-O06a/b | 同上 | ⏳ |
-| J6 采纳候选 | 「采纳」+ Pi `adopt_project_data_refresh` | `.../adopt` → `apply_mutation`(CAS) + `map_product_service` | 新 revision，旧快照不变 | revision 漂移 → 409；渲染未观察 → 不宣称地图成功 | 同上 + expected revision + proposal fp | 采纳回执三态分离 | T-O08a/T-O11a | 同上 | ⏳ |
-| J7 放弃候选 | 「放弃」+ Pi `discard_project_data_refresh` | `.../discard` → 释放 GC pin | 候选引用可回收 | 已采纳 → 409 | 同上 | 明确回执 | T-O09a | 同上 | ⏳ |
-| J8 查询/回退版本 | 版本时间线 + Pi `rollback_project_data_refresh` | `.../rollback` → 既有 `project_runtime.resume` / `rollback_branch` | revert 式新 revision | 不可变快照不可改 | 同上 | 回退后需重新观察 | T-O08a | 同上 | ⏳ |
+| J1 检查项目来源变化 | 项目资产面板「检查更新」按钮 + Pi 工具 `check_project_source_updates` | `GET/POST /projects/{pid}/data-refresh/check` → `inventory` | 检查结果落 proposal 账本，刷新后可查 | 来源失权/预算不足 → `blocked` 且拒绝泄露差异 | `_auth_project` + `_verify_session_access` | 五态标记 + 证据级别 + 截断状态 | T-O01a/b | `docs/features/project-data-refresh.md` | ✅ |
+| J2 解释某图为何过期 | 面板「为何过期」+ Pi 工具 `explain_stale_map_product` | `.../impact` 只读分析 → `artifact_registry` + `fingerprints` | 无写入（只读） | 证据不足 → `unverifiable`，不编造原因 | 同上 | 失效原因 + 依赖链 + 完整/截断 | T-O03a/b | 同上 | ✅ |
+| J3 预览更新 | 「预览影响」按钮 + Pi `preview_project_data_refresh` | `.../preview` → `compute_affected_subgraph` + `impact_analysis` | proposal 持久化 + `proposal_fingerprint` | 漂移 → 409 强制重预览 | 同上 + 快照版本核验 | 增/删/改数量、最小重算子图、预算、可复用结果、保留的人工编辑、冲突 | T-O04a/T-O05a | 同上 | ✅ |
+| J4 执行授权候选 | 「生成候选」+ Pi `execute_project_data_refresh` | `.../execute` → `workflow_runtime` + 隔离候选命名空间 | job/attempt 状态持久，崩溃可续 | 失败/取消 → 当前成果不变、候选可检查 | owner/session/project + 审批令牌 + 三元组绑定 | 进度/部分完成/失败可辨 | T-O07a | 同上 | ✅ |
+| J5 候选对比 | 双栏对比视图 | `.../candidate` | 候选与基线引用 pin | 候选损坏 → 显式错误 | 同上 | 差异 + 冲突 + 保留项 | T-O06a/b | 同上 | ✅ |
+| J6 采纳候选 | 「采纳」+ Pi `adopt_project_data_refresh` | `.../adopt` → `apply_mutation`(CAS) + `map_product_service` | 新 revision，旧快照不变 | revision 漂移 → 409；渲染未观察 → 不宣称地图成功 | 同上 + expected revision + proposal fp | 采纳回执三态分离 | T-O08a/T-O11a | 同上 | ✅ |
+| J7 放弃候选 | 「放弃」+ Pi `discard_project_data_refresh` | `.../discard` → 释放 GC pin | 候选引用可回收 | 已采纳 → 409 | 同上 | 明确回执 | T-O09a | 同上 | ✅ |
+| J8 查询/回退版本 | 版本时间线 + Pi `rollback_project_data_refresh` | `.../rollback` → 既有 `project_runtime.resume` / `rollback_branch` | revert 式新 revision | 不可变快照不可改 | 同上 | 回退后需重新观察 | T-O08a | 同上 | ✅ |
 
 ## 分层完成披露（禁止互相替代）
 
@@ -37,12 +37,13 @@
 
 | 证据 | 结果 |
 |---|---|
-| 后端 PU/DI/PI 测试 | 40 passed（exit 0） |
+| 后端 PU/DI/PI 测试 | 50 passed（exit 0，含 R1 审查回归 10 项） |
 | 前端组件单测 + i18n 闸 + E2E 注册表闸 | 30 passed（exit 0） |
 | TypeScript `pnpm run typecheck` | exit 0 |
 | ruff（本任务全部新增 Python 文件） | All checks passed |
 | OpenAPI / API docs 生成物闸 | 15 passed（官方生成器刷新后） |
 | 增量/全量结果对拍 | 容差 0 逐字段等价；3 vs 6 节点（见 PERFORMANCE.md） |
 | 真实浏览器 E2E | ⏳ **未验证**（j13 real-only，需真实后端 + 预置账号） |
+| 独立审查 | R1 冷读发现 3×P1 + 18×P2；P1 全修并针对性复现；R2 二审待执行 |
 
 ⏳ 表中所有 MUST 旅程的「浏览器观察」项均为 `unverified`，不把工具成功/任务成功/版本采纳互相替代，不伪造 renderer ACK。操作说明见 `docs/features/project-data-refresh.md`。

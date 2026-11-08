@@ -72,6 +72,23 @@ async def _guard(
         await _verify_session_access(session_id, user, owner_token)
 
 
+async def _guard_proposal(
+    *, project_id: str, proposal_id: str, db: Session,
+    user: Dict[str, Any], owner_token: Optional[str],
+) -> RefreshProposal:
+    """R1-P2：所有读差异摘要 / 写项目状态的端点统一三重门。
+
+    项目鉴权 → 服务侧 owner 二道守卫 → 会话所有权（撤权窗口内不得凭
+    proposal 里存的 session_id 继续操作会话 MapSpec）。
+    """
+    await _auth_project(db, project_id, user)
+    proposal = await _svc().get_proposal(
+        project_id=project_id, proposal_id=proposal_id, user_id=_user_id(user))
+    if proposal.session_id:
+        await _verify_session_access(proposal.session_id, user, owner_token)
+    return proposal
+
+
 def _user_id(user: Dict[str, Any]) -> str:
     uid, _org = actor_ids(user)
     return str(uid or "")
@@ -158,7 +175,7 @@ async def list_proposals(
 ) -> ProposalListResponse:
     """有界提案清单（刷新页面后恢复候选/进度的入口）。"""
     await _auth_project(db, project_id, user)
-    items = await _svc().list_proposals(project_id=project_id)
+    items = await _svc().list_proposals(project_id=project_id, owner_id=_user_id(user))
     return ProposalListResponse(project_id=project_id, count=len(items), items=items)
 
 
@@ -168,8 +185,9 @@ async def get_proposal(
     project_id: str, proposal_id: str,
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ) -> RefreshProposal:
-    await _auth_project(db, project_id, user)
+    await _guard_proposal(project_id=project_id, proposal_id=proposal_id, db=db, user=user, owner_token=owner_token)
     try:
         return await _svc().get_proposal(
             project_id=project_id, proposal_id=proposal_id, user_id=_user_id(user))
@@ -183,8 +201,9 @@ async def proposal_status(
     project_id: str, proposal_id: str,
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ) -> StatusResponse:
-    await _auth_project(db, project_id, user)
+    await _guard_proposal(project_id=project_id, proposal_id=proposal_id, db=db, user=user, owner_token=owner_token)
     try:
         data = await _svc().status(
             project_id=project_id, proposal_id=proposal_id, user_id=_user_id(user))
@@ -198,9 +217,10 @@ async def explain_stale(
     project_id: str, proposal_id: str,
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ) -> Dict[str, Any]:
     """Pi / UI 解释「为什么更新、哪些结果过期、哪些不可判定」。"""
-    await _auth_project(db, project_id, user)
+    await _guard_proposal(project_id=project_id, proposal_id=proposal_id, db=db, user=user, owner_token=owner_token)
     try:
         return await _svc().explain_stale(
             project_id=project_id, proposal_id=proposal_id, user_id=_user_id(user))
@@ -218,7 +238,7 @@ async def execute_candidate(
     owner_token: Optional[str] = Depends(get_owner_token),
 ) -> ExecuteRefreshResponse:
     """执行获授权的隔离候选（或取消）；失败/取消不污染当前成果。"""
-    await _auth_project(db, project_id, user)
+    await _guard_proposal(project_id=project_id, proposal_id=proposal_id, db=db, user=user, owner_token=owner_token)
     try:
         result = await _svc().execute(
             db, project_id=project_id, proposal_id=proposal_id,
@@ -242,8 +262,9 @@ async def compare_candidate(
     project_id: str, proposal_id: str,
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ) -> Dict[str, Any]:
-    await _auth_project(db, project_id, user)
+    await _guard_proposal(project_id=project_id, proposal_id=proposal_id, db=db, user=user, owner_token=owner_token)
     try:
         return await _svc().compare(
             project_id=project_id, proposal_id=proposal_id, user_id=_user_id(user))
@@ -261,7 +282,7 @@ async def adopt_candidate(
     owner_token: Optional[str] = Depends(get_owner_token),
 ) -> AdoptionReceipt:
     """原子 CAS 采纳；客户端声明的 revision/指纹只作提示，服务端双核对。"""
-    await _auth_project(db, project_id, user)
+    await _guard_proposal(project_id=project_id, proposal_id=proposal_id, db=db, user=user, owner_token=owner_token)
     try:
         proposal = await _svc().get_proposal(
             project_id=project_id, proposal_id=proposal_id, user_id=_user_id(user))
@@ -287,8 +308,9 @@ async def discard_candidate(
     project_id: str, proposal_id: str,
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ) -> AdoptionReceipt:
-    await _auth_project(db, project_id, user)
+    await _guard_proposal(project_id=project_id, proposal_id=proposal_id, db=db, user=user, owner_token=owner_token)
     try:
         return await _svc().discard(
             project_id=project_id, proposal_id=proposal_id, user_id=_user_id(user))
@@ -305,7 +327,7 @@ async def rollback_candidate(
     owner_token: Optional[str] = Depends(get_owner_token),
 ) -> AdoptionReceipt:
     """回退：新 revision（forward revert）或既有 runtime snapshot resume。"""
-    await _auth_project(db, project_id, user)
+    await _guard_proposal(project_id=project_id, proposal_id=proposal_id, db=db, user=user, owner_token=owner_token)
     try:
         return await _svc().rollback(
             project_id=project_id, proposal_id=proposal_id,

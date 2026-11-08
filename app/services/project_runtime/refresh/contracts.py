@@ -15,12 +15,15 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 REFRESH_SCHEMA_VERSION = 1
 PROPOSAL_FINGERPRINT_PREFIX = "g10:"
 MAX_SOURCES = 64
 MAX_DIFF_IDS = 256
+#: 生产快照允许逐要素对齐的上限；超过即截断并强制标 truncated/sampled，
+#: 绝不静默丢弃后仍声称 EXACT 精确计数（独立审查 C · P1-1）。
+MAX_SNAPSHOT_FEATURES = 20_000
 MAX_WARNINGS = 16
 MAX_TEXT = 512
 
@@ -163,10 +166,30 @@ class SourceSnapshot(BaseModel):
             raise ValueError("bbox must be finite")
         return [float(x) for x in v]
 
-    @field_validator("schema_fields", "features", "raster_tiles", "fingerprints")
+    @model_validator(mode="before")
     @classmethod
-    def _bounded_map(cls, v: Dict[str, Any]) -> Dict[str, Any]:
-        return dict(list(v.items())[:MAX_DIFF_IDS])
+    def _bound_maps_and_flag_truncation(cls, value: Any) -> Any:
+        """有界截断必须**同时**置 truncated/sampled，绝不静默丢弃要素。
+
+        否则超界数据会以「精确证据」算出全 0 的差异计数，进而得到
+        recompute=[] / conservative=False 的 silently unchanged（R1-P1-1）。
+        """
+        if not isinstance(value, dict):
+            return value
+        v = dict(value)
+        truncated = False
+        for key, limit in (("schema_fields", MAX_DIFF_IDS),
+                           ("features", MAX_SNAPSHOT_FEATURES),
+                           ("raster_tiles", MAX_DIFF_IDS),
+                           ("fingerprints", MAX_DIFF_IDS)):
+            raw = v.get(key)
+            if isinstance(raw, dict) and len(raw) > limit:
+                v[key] = dict(list(raw.items())[:limit])
+                truncated = True
+        if truncated:
+            v["truncated"] = True
+            v["sampled"] = True
+        return v
 
 
 class SourceDiff(BaseModel):

@@ -107,16 +107,23 @@ def build_refresh_plan(
     node_set = set(nodes)
     warnings: List[str] = []
 
-    # ── style-only：零 GIS 数值重算 ─────────────────────────────────
-    if style_only or (not diffs and style_only):
+    # ── style-only：零 GIS 数值重算（R1-P1-2：客户端不可借此跳过真实差异） ──
+    real_changes = [d for d in diffs if d.change_class != "none"]
+    effective_style_only = bool(style_only) and not real_changes
+    if style_only and real_changes:
+        warnings.append(
+            "style_only request ignored: real data/schema/CRS changes detected; "
+            "client-supplied style_only cannot suppress recomputation"
+        )
+    if effective_style_only:
         decisions = {n: PlanDecision.REUSE.value for n in nodes}
         return RefreshPlan(
             recompute=[], reuse=sorted(nodes), decisions=decisions,
             changed_dimensions=["style"],
             explanations=["style-only change: presentation only, GIS science subgraph untouched"],
-            conservative=False, style_only=True,
-            style_only_reason="only title/color/presentation edits; no data, method, "
-                              "CRS, denominator or coverage dimension changed",
+            conservative=False, style_only=True, warnings=warnings[:16],
+            style_only_reason="only title/color/presentation edits; all source diffs "
+                              "verified as class=none",
             estimated_budget={"recompute_nodes": 0, "reuse_nodes": len(nodes),
                               "estimated_tool_calls": 0},
             proposal_fingerprint=PROPOSAL_FINGERPRINT_PREFIX + canonical_fingerprint({
@@ -125,7 +132,10 @@ def build_refresh_plan(
                 "locks": sorted(set(user_locks or [])),
                 "owner": owner_scope,
                 "style_only": True,
-                "diffs": [],
+                "diffs": [
+                    {"id": d.logical_id, "class": d.change_class,
+                     "evidence": d.evidence.value} for d in diffs
+                ],
             }),
         )
 
@@ -139,8 +149,9 @@ def build_refresh_plan(
         if d.expanded_dependencies:
             conservative_reasons.append(
                 f"{d.logical_id}: global dependencies {','.join(d.expanded_dependencies)}")
-        if d.sampled:
-            conservative_reasons.append(f"{d.logical_id}: sampled payload")
+        if d.sampled or d.truncated:
+            conservative_reasons.append(
+                f"{d.logical_id}: sampled/truncated payload ({d.alignment})")
         if d.alignment not in ("stable_id",) and d.change_class != "none":
             conservative_reasons.append(f"{d.logical_id}: alignment={d.alignment}")
         if d.crs_changed or d.bbox_changed or d.temporal_changed:

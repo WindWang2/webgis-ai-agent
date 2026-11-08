@@ -11783,6 +11783,11 @@
     "additionalProperties": false,
     "description": "只读预览提案（绑定输入版本集 / MapSpec revision / 用户锁 / owner）。",
     "properties": {
+     "adopted_mapspec_fingerprint": {
+      "default": "",
+      "title": "Adopted Mapspec Fingerprint",
+      "type": "string"
+     },
      "adopted_revision": {
       "anyOf": [
        {
@@ -36091,6 +36096,22 @@
        "title": "Proposal Id",
        "type": "string"
       }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
      }
     ],
     "responses": {
@@ -36232,6 +36253,22 @@
        "title": "Proposal Id",
        "type": "string"
       }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
      }
     ],
     "responses": {
@@ -36290,6 +36327,22 @@
       "schema": {
        "title": "Proposal Id",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],
@@ -36433,6 +36486,22 @@
        "title": "Proposal Id",
        "type": "string"
       }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
      }
     ],
     "responses": {
@@ -36565,6 +36634,22 @@
       "schema": {
        "title": "Proposal Id",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],

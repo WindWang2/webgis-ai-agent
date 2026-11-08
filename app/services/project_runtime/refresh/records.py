@@ -50,6 +50,8 @@ class RefreshProposal(BaseModel):
 
     #: 采纳后由回执填充；不倒写 revision
     adopted_revision: Optional[int] = None
+    #: 采纳时写入的 MapSpec 指纹（回退前检测采纳后是否有用户后续编辑）
+    adopted_mapspec_fingerprint: str = ""
 
 
 class RefreshCandidate(BaseModel):

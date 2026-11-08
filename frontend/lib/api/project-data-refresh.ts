@@ -30,6 +30,8 @@ export interface RefreshSourceItem {
   current_version: string;
   crs: string;
   bbox: number[] | null;
+  owner_id?: string;
+  temporal_window?: string[] | null;
   verdict: 'unchanged' | 'changed' | 'missing' | 'unverifiable';
   note: string;
 }
@@ -78,6 +80,7 @@ export interface RefreshDiff {
   denominator_changed: boolean;
   raster_tiles_changed: string[];
   expanded_dependencies: string[];
+  seed_targets?: string[];
   warnings: string[];
   truncated: boolean;
   reason: string;
@@ -189,6 +192,7 @@ export interface ProposalSummary {
   proposal_id: string;
   status: string;
   created_at: number;
+  owner_id?: string;
   proposal_fingerprint: string;
   mapspec_revision: number;
   sources: number;

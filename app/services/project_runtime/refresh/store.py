@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
@@ -29,9 +30,16 @@ from .records import RefreshCandidate, RefreshProposal
 logger = logging.getLogger(__name__)
 
 MAX_PROPOSALS_PER_PROJECT = 25
-LEASE_TTL_SECONDS = 300
 PROPOSAL_PREFIX = "g10p-"
 CANDIDATE_PREFIX = "g10c-"
+
+#: R1-P2：所有拼进文件路径的 id 必须过白名单（复用 project_runtime.store
+#: 的同款 charset 纪律），禁止 ``../`` / 绝对路径 / 空串。
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
+
+
+def _safe_id(value: str) -> bool:
+    return bool(_ID_RE.match(value or ""))
 
 
 def _dir(project_id: str) -> Optional[Path]:
@@ -74,6 +82,8 @@ class RefreshStore:
 
     # ── proposal ────────────────────────────────────────────────────
     async def save_proposal(self, record: RefreshProposal) -> bool:
+        if not _safe_id(record.proposal_id):
+            return False
         d = _dir(record.project_id)
         if d is None:
             return False
@@ -90,6 +100,8 @@ class RefreshStore:
         return True
 
     def load_proposal(self, project_id: str, proposal_id: str) -> Optional[RefreshProposal]:
+        if not _safe_id(proposal_id):
+            return None
         d = _dir(project_id)
         if d is None:
             return None
@@ -116,6 +128,7 @@ class RefreshStore:
                     continue
                 out.append({
                     "proposal_id": str(raw.get("proposal_id") or f.stem),
+                    "owner_id": str(raw.get("owner_id") or ""),
                     "status": str(raw.get("status") or "preview"),
                     "created_at": raw.get("created_at"),
                     "updated_at": raw.get("updated_at"),
@@ -136,6 +149,8 @@ class RefreshStore:
 
     # ── candidate ───────────────────────────────────────────────────
     async def save_candidate(self, record: RefreshCandidate) -> bool:
+        if not _safe_id(record.candidate_id):
+            return False
         d = _dir(record.project_id)
         if d is None:
             return False
@@ -151,6 +166,8 @@ class RefreshStore:
         return True
 
     def load_candidate(self, project_id: str, candidate_id: str) -> Optional[RefreshCandidate]:
+        if not _safe_id(candidate_id):
+            return None
         d = _dir(project_id)
         if d is None:
             return None
@@ -166,6 +183,8 @@ class RefreshStore:
         self, project_id: str, candidate_id: str, doc: Dict[str, Any]
     ) -> str:
         """候选 MapSpec 写隔离命名空间（文件存在 = GC pin 生效）。"""
+        if not _safe_id(candidate_id):
+            return ""
         d = _dir(project_id)
         if d is None:
             return ""
@@ -174,6 +193,8 @@ class RefreshStore:
         return str(path)
 
     def load_candidate_doc(self, project_id: str, candidate_id: str) -> Optional[Dict[str, Any]]:
+        if not _safe_id(candidate_id):
+            return None
         d = _dir(project_id)
         if d is None:
             return None
@@ -181,6 +202,8 @@ class RefreshStore:
 
     async def release_candidate_pin(self, project_id: str, candidate_id: str) -> bool:
         """放弃候选后释放引用/配额（只删本任务自己创建的候选 doc/manifest）。"""
+        if not _safe_id(candidate_id):
+            return False
         d = _dir(project_id)
         if d is None:
             return False
@@ -200,7 +223,7 @@ class RefreshStore:
     async def save_doc(self, project_id: str, name: str, doc: Dict[str, Any]) -> str:
         """隔离命名空间内的任意有界文档（候选 / 采纳前基线）。"""
         d = _dir(project_id)
-        if d is None or not name.replace("-", "").replace("_", "").isalnum():
+        if d is None or not _safe_id(name):
             return ""
         path = d / f"{name}.doc.json"
         await asyncio.to_thread(_atomic_write_json_sync, path, doc)
@@ -234,6 +257,8 @@ class RefreshStore:
 
     # ── lease（execute / adopt 互斥；进程死亡自动释放） ───────────────
     def acquire_lease(self, project_id: str, key: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        if not _safe_id(key):
+            return False, {"reason": "invalid lease key"}
         d = _dir(project_id)
         if d is None:
             return False, {"reason": "invalid ids"}
@@ -261,6 +286,8 @@ class RefreshStore:
         return True, None
 
     def release_lease(self, project_id: str, key: str) -> None:
+        if not _safe_id(key):
+            return
         d = _dir(project_id)
         if d is None:
             return
@@ -294,6 +321,10 @@ class RefreshStore:
                 raw = _read_json_sync(f) or {}
                 if raw.get("adopted_revision") is not None:
                     continue
+                # R1-P2：仍有隔离候选文件 = GC pin 生效，不得回收 proposal
+                stem = f.stem[len(PROPOSAL_PREFIX):]
+                if (d / f"{CANDIDATE_PREFIX}g10c-{stem}.doc.json").is_file():
+                    continue
                 try:
                     f.unlink()
                 except OSError:
@@ -321,4 +352,4 @@ def reset_refresh_store() -> None:
 
 
 __all__ = ["RefreshStore", "get_refresh_store", "reset_refresh_store",
-           "MAX_PROPOSALS_PER_PROJECT", "LEASE_TTL_SECONDS"]
+           "MAX_PROPOSALS_PER_PROJECT"]

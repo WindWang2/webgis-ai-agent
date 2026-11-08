@@ -11,7 +11,8 @@
 - 回退**不倒写 revision**：优先调既有 ``resume_runtime_snapshot``（新
   session + ResumeReceipt）；无快照时以「采纳前 MapSpec」作一次新的 CAS
   提交（forward revert，revision 单调增），旧快照字节不变；
-- 幂等键 = ``source-version set + proposal_fingerprint + operation``。
+- 幂等键 = ``source-version set + proposal_id + proposal_fingerprint + operation``
+  （``proposal_id`` 参与，避免不同预览的同版本集互相重放）。
 """
 from __future__ import annotations
 
@@ -47,10 +48,12 @@ def verify_no_drift(
         drift.append("source_version_set_changed")
     if int(current_revision) != int(proposal.mapspec_revision):
         drift.append(f"mapspec_revision_drift:{proposal.mapspec_revision}->{current_revision}")
-    if (proposal.mapspec_fingerprint and current_mapspec_fingerprint
-            and proposal.mapspec_fingerprint != current_mapspec_fingerprint):
-        drift.append("mapspec_content_changed_after_preview")
-    if proposal.owner_id and owner_id and proposal.owner_id != owner_id:
+    # R1-P2：空值必须 fail-closed，不能用 and 短路「跳过检查」。
+    if (not proposal.mapspec_fingerprint or not current_mapspec_fingerprint
+            or proposal.mapspec_fingerprint != current_mapspec_fingerprint):
+        drift.append("mapspec_content_unverifiable_or_changed_after_preview")
+    if (not owner_id or not proposal.owner_id
+            or proposal.owner_id != owner_id):
         drift.append("owner_permission_changed")
     if not proposal.proposal_fingerprint.startswith(PROPOSAL_FINGERPRINT_PREFIX):
         drift.append("invalid_proposal_fingerprint")
@@ -219,9 +222,25 @@ async def forward_rollback(
     proposal: RefreshProposal,
     baseline_doc: Dict[str, Any],
     owner_id: str,
+    expected_current_fingerprint: str = "",
 ) -> AdoptionReceipt:
-    """前向回退：把采纳前 MapSpec 作为**新 revision**提交，不倒写、不改快照。"""
-    _doc, current_revision = await port.read(proposal.session_id)
+    """前向回退：把采纳前 MapSpec 作为**新 revision**提交，不倒写、不改快照。
+
+    R1-P2：若采纳之后用户又编辑过 MapSpec，直接覆盖会删除用户后续数据 ——
+    此时拒绝回退并要求显式冲突处置，而不是静默 last-write-wins。
+    """
+    current_doc, current_revision = await port.read(proposal.session_id)
+    if expected_current_fingerprint and \
+            canonical_fingerprint(current_doc) != expected_current_fingerprint:
+        return AdoptionReceipt(
+            proposal_id=proposal.proposal_id, action="rollback", status="blocked",
+            tool_execution="ok", task_execution="failed",
+            map_observation="unverified", version_adoption="unchanged",
+            revision_before=current_revision, revision_after=current_revision,
+            proposal_fingerprint=proposal.proposal_fingerprint,
+            warnings=["user edits after adoption detected; refusing to overwrite "
+                      "current MapSpec. Resolve the conflict explicitly."],
+        )
     result = await port.commit(
         proposal.session_id, baseline_doc,
         expected_revision=current_revision,

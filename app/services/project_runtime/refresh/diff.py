@@ -177,8 +177,8 @@ def compute_source_diff(
         change_class = ChangeClass.SCHEMA.value
 
     # ── 3. 覆盖范围 / 分母 / 方法版本 / CRS ──────────────────────────
-    crs_changed = bool(baseline.crs and current.crs and baseline.crs != current.crs) \
-        or bool(baseline.crs != current.crs)
+    # 任一方 CRS 证据缺失也按「变化/不可判定」处理（保守）
+    crs_changed = bool(baseline.crs != current.crs)
     bbox_changed = baseline.bbox != current.bbox
     temporal_changed = baseline.temporal_window != current.temporal_window
     denominator_changed = baseline.denominator != current.denominator
@@ -300,6 +300,12 @@ def compute_source_diff(
             seed_targets.extend(roles)
         if fields_unit_changed or fields_type_changed:
             seed_targets.extend(baseline.denominator_nodes or ["analysis:normalized"])
+    # 兜底（R1-P1-1）：只要判定为「有变化」却没推出任何种子，一律保守全图，
+    # 绝不产生 recompute=[] / conservative=False 的 silently unchanged。
+    if change_class not in (ChangeClass.NONE.value,) and not seed_targets:
+        seed_targets.append("recipe")
+        warnings.append("no analyzable seed targets; conservative full recompute enforced")
+
     seed_targets = list(dict.fromkeys(seed_targets))[:16]
 
     reason_bits = [

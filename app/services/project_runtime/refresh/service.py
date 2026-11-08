@@ -137,25 +137,43 @@ def _rebind_sources(
     if not tokens:
         return doc
 
+    # R1-P2：多来源变化时按来源分别绑定，不再一律写第一个 token。
+    def _token_for(layer: Dict[str, Any]) -> tuple[str, str]:
+        binding = layer.get("data_binding")
+        declared = str(binding.get("logical_id") or "") if isinstance(binding, dict) else ""
+        if declared in tokens:
+            return declared, tokens[declared]
+        src = str(layer.get("source") or "")
+        for logical_id, token in tokens.items():
+            tail = logical_id.rsplit(":", 1)[-1]
+            if tail and tail in src:
+                return logical_id, token
+        return next(iter(tokens.items()))
+
     sources = doc.get("sources")
     if isinstance(sources, dict):
         for key, entry in list(sources.items())[:64]:
-            if isinstance(entry, dict) and any(t and t in str(key) + str(entry.get("ref", ""))
-                                               for t in tokens.values()):
-                entry["content_revision"] = next(iter(tokens.values()))[:64]
+            if isinstance(entry, dict):
+                for logical_id, token in tokens.items():
+                    if logical_id.rsplit(":", 1)[-1] in str(key) + str(entry.get("ref", "")):
+                        entry["content_revision"] = token[:64]
+                        break
     elif isinstance(sources, list):
         for entry in sources[:64]:
-            if isinstance(entry, dict):
+            if isinstance(entry, dict) and tokens:
                 entry["content_revision"] = next(iter(tokens.values()))[:64]
 
     for layer in (doc.get("layers") or [])[:64]:
         if not isinstance(layer, dict):
             continue
+        logical_id, token = _token_for(layer)
         binding = layer.get("data_binding")
         if isinstance(binding, dict):
-            binding["version_token"] = next(iter(tokens.values()))[:64]
-        elif changed_ids:
-            layer["data_binding"] = {"version_token": next(iter(tokens.values()))[:64]}
+            binding["logical_id"] = logical_id
+            binding["version_token"] = token[:64]
+        else:
+            layer["data_binding"] = {"logical_id": logical_id,
+                                     "version_token": token[:64]}
     return doc
 
 
@@ -183,10 +201,6 @@ class ProjectDataRefreshService:
             db, project_id=project_id, session_id=session_id, user_id=user_id,
             payload_provider=self.payload_provider,
             baselines=(baselines or {}).get("snapshots") if isinstance(baselines, dict) else None,
-            runtime_descriptor_versions=(
-                (baselines or {}).get("runtime_descriptor_versions")
-                if isinstance(baselines, dict) else None
-            ),
             establish_baseline=establish_baseline,
         )
         if meta.get("baseline_established"):
@@ -307,6 +321,13 @@ class ProjectDataRefreshService:
             facts["inventory"].warnings.append(
                 "analysis graph unavailable; using bounded MapSpec projection"
             )
+        elif dag_source == "explicit":
+            # R1-P2：客户端显式 DAG 已过 schema 有界校验，但不是服务端权威
+            # 分析图；明确披露，生产调用方应省略该参数。
+            facts["inventory"].warnings.append(
+                "client-supplied DAG used (bounds validated); server-authoritative "
+                "analysis graph was not consulted"
+            )
 
         mapspec = facts["mapspec"]
         locks = list((mapspec.get("workbench") or {}).get("lockedLayerIds") or []) + \
@@ -332,15 +353,25 @@ class ProjectDataRefreshService:
         for d in diffs:
             if d.warnings:
                 plan.warnings.extend(f"{d.logical_id}: {w}" for w in d.warnings[:4])
+        plan.warnings.extend(facts["inventory"].warnings[:4])
         plan.warnings = plan.warnings[:16]
 
+        # R1-P2：真正从既有 ProjectRuntimeStore 读取最新 runtime snapshot，
+        # 让 rollback 的 resume_runtime_snapshot 分支不再是不可达死代码。
+        snapshot_id = ""
+        try:
+            from app.services.project_runtime.store import get_project_runtime_store
+
+            snaps = await get_project_runtime_store().list_snapshots(project_id)
+            snapshot_id = str((snaps[-1] if snaps else {}).get("snapshot_id") or "")
+        except Exception:  # noqa: BLE001 — 快照缺席是诚实状态，不阻断预览
+            snapshot_id = ""
         now = time.time()
         proposal = RefreshProposal(
             proposal_id=_mint("g10p"), project_id=project_id,
             session_id=session_id, owner_id=user_id, org_id=org_id,
             status=ProposalStatus.PREVIEW, created_at=now, updated_at=now,
-            baseline_snapshot_id=str((self.store.load_baselines(project_id) or {})
-                                     .get("runtime_snapshot_id") or ""),
+            baseline_snapshot_id=snapshot_id,
             mapspec_revision=facts["revision"],
             mapspec_fingerprint=facts["mapspec_fingerprint"],
             user_locks=sorted(set(locks)),
@@ -373,8 +404,13 @@ class ProjectDataRefreshService:
                            user_id: str) -> RefreshProposal:
         return self._require_proposal(project_id, proposal_id, user_id)
 
-    async def list_proposals(self, *, project_id: str) -> List[Dict[str, Any]]:
-        return await self.store.list_proposals(project_id)
+    async def list_proposals(self, *, project_id: str,
+                             owner_id: str = "") -> List[Dict[str, Any]]:
+        # R1-P2：清单摘要也不得泄露其它 owner 的 proposal 指纹/revision。
+        items = await self.store.list_proposals(project_id)
+        if owner_id:
+            items = [i for i in items if str(i.get("owner_id") or "") == owner_id]
+        return items
 
     async def status(self, *, project_id: str, proposal_id: str,
                      user_id: str) -> Dict[str, Any]:
@@ -413,9 +449,13 @@ class ProjectDataRefreshService:
             CandidateStatus.SUCCEEDED, CandidateStatus.PARTIAL, CandidateStatus.ADOPTED
         ):
             return {"candidate": existing, "replayed": True,
-                    "receipt": {"tool_execution": "ok", "task_execution": "ok",
-                                "map_observation": "unverified",
-                                "version_adoption": "unchanged"}}
+                    "receipt": {
+                        "tool_execution": "ok",
+                        "task_execution": ("partial" if existing.status is
+                                           CandidateStatus.PARTIAL else "ok"),
+                        "map_observation": "unverified",
+                        "version_adoption": "unchanged",
+                    }}
         if cancel:
             if existing:
                 existing.cancelled = True
@@ -458,6 +498,20 @@ class ProjectDataRefreshService:
                 current_doc, diffs=proposal.diffs,
                 source_versions=proposal.source_versions,
             )
+            # R1-P1-3：CRS / 单位 / 类型变化**任一**成立即硬语义错误，
+            # 不得被 user-wins 变成合法科学结论（原来误用 and 短路）。
+            hard_errors: List[str] = []
+            for d in proposal.diffs:
+                bits = []
+                if d.crs_changed:
+                    bits.append("crs_changed")
+                if d.fields_unit_changed:
+                    bits.append("unit_changed")
+                if d.fields_type_changed:
+                    bits.append("type_changed")
+                if bits:
+                    hard_errors.append(
+                        f"{d.logical_id}: {','.join(bits)} semantic mismatch")
             merged = three_way_merge(
                 baseline=baseline_doc, current=current_doc,
                 candidate=candidate_src,
@@ -465,11 +519,7 @@ class ProjectDataRefreshService:
                     d.logical_id: d.fields_removed for d in proposal.diffs
                     if d.fields_removed
                 },
-                hard_semantic_errors=[
-                    f"{d.logical_id}: CRS/unit semantic mismatch"
-                    for d in proposal.diffs
-                    if d.crs_changed and d.fields_unit_changed
-                ],
+                hard_semantic_errors=hard_errors,
             )
             doc_path = await self.store.save_candidate_doc(
                 project_id, cid, merged.merged_mapspec
@@ -597,6 +647,7 @@ class ProjectDataRefreshService:
                                           before_doc or {})
                 proposal.status = ProposalStatus.ADOPTED
                 proposal.adopted_revision = receipt.revision_after
+                proposal.adopted_mapspec_fingerprint = receipt.mapspec_fingerprint
                 proposal.updated_at = time.time()
                 await self.store.save_proposal(proposal)
                 candidate.status = CandidateStatus.ADOPTED
@@ -654,6 +705,7 @@ class ProjectDataRefreshService:
             receipt = await forward_rollback(
                 port=self.port, proposal=proposal,
                 baseline_doc=baseline_doc, owner_id=user_id,
+                expected_current_fingerprint=proposal.adopted_mapspec_fingerprint,
             )
             if receipt.status == "rolled_back":
                 proposal.status = ProposalStatus.DISCARDED

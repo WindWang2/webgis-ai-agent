@@ -16,8 +16,10 @@
 | R8 | S7 Pi 工具链 | 首跑 `3 failed, 1 passed`：① `list_tools()` 返回字符串列表 ② 既有「同参重复拦截」吞掉第二次 check ③ 工具错误被 Pi 桥包装成 LLM 文本；改用真实 `ToolDispatchService.dispatch` + 新 `executed_tools` 集合取 `raw_result` 后 `5 passed`(0) | `app/tools/__init__.py`(1 行)、`app/tools/project_data_refresh_tools.py`、Pi 集成测试 | `side_effect` 词表非法（`read_only`）→ 改 `pure`/`artifact_creation`；fish heredoc 反引号被命令替换 → 改用编辑工具 | `8145754c1` | PI（真实 registry + dispatch + 领域计算） | 完整 Pi RPC + stub LLM 子进程车道未跑 |
 | R9 | S8 前端 | `pnpm install --frozen-lockfile`(**EPERM futime，沙箱拦截**) → 只读 symlink 复用同仓库依赖缓存(0)；`vitest` 组件测试首跑 `2 failed, 3 passed`：动态 import 使 mock 未生效触发真实 fetch、预览按钮误放已有提案分支；修后 `5 passed`(0)；`typecheck`(0)；i18n+e2e-lanes 闸 `25 passed`(0) | 前端 8 个文件（panel / api client / 双语 JSON / journey / registry / 挂载） | 见上 | `183a0a632` | UI 单测 + typecheck + i18n 闸 | **真实浏览器 E2E 未跑**（需 real 后端 + 预置账号），标未验证 |
 | R10 | S9 对拍/性能/文档 | `pytest ...test_project_data_refresh_parity.py`(0) `3 passed`，输出 `G10_PERFORMANCE_JSON`；全量后端 `40 passed`(0)；`ruff check` 首跑 5×F401 → `--fix` 后 `All checks passed`(0)；生成物闸首跑 `2 failed`(#2007 既有漂移 + 12 新端点) → 官方生成器 `API_SNAPSHOT_UPDATE=1 pytest ...`(0) + `python scripts/gen_api_docs.py`(0) → 复跑 `15 passed`(0) | parity 测试、PERFORMANCE.md、docs/features、生成物 ×2、ruff 清理 | 见上 | 待提交（S9） | DI + PU + 生成物闸 | 快照 diff 含 master 既有漂移，PR 中披露 |
-| R11 | M8 独立 Review → Fix → Re-Review | 待执行 | 待填写 | 待填写 | 待填写 | 冷读 + 针对性复现 | — |
-| R12 | M9 同步 master + PR | 待执行 | 待填写 | 待填写 | 待填写 | 最终验收 | 不自动 merge |
+| R11 | M8 独立 Review（C 冷读，固定 SHA `1a6a2eff0`） | `git diff 8eb8aa188..1a6a2eff0 --stat`(0)：39 files +9073/−30；后端 40 passed(0)、生成物闸 15 passed(0)、ruff(0)、4 组只读 `python -c` 复现(0)；审查者全程未改文件 | 无（只读审查） | **3×P1**：① `_bounded_map` 静默截断 256 → 假 EXACT + silently unchanged；② 客户端 `style_only` 跳过真实差异；③ `hard_semantic_errors` 用 `and` 短路。另有 18×P2 / 4 组 P3 | 待提交（R12 修复轮） | 冷读 + 针对性复现 | 结论：需修复后二审，0×P0 |
+| R12 | M8 Fix：清偿 3×P1 + 高价值 P2 | `pytest ...test_project_data_refresh_review_fixes.py` → 10 passed(0)；全套后端 50 passed(0) | contracts/diff/impact/merge/execution/service/store/routes/tools/前端 panel + 回归测试 | 见 R11 | 待提交 | PU+DI+PI+真实生产 CAS | 残余 P2/P3 在 PR 披露 |
+| R13 | M8 Re-Review（新 HEAD 二审） | 待执行 | 待填写 | 待填写 | 待填写 | 冷读 + 针对性复现 | — |
+| R14 | M9 同步 master + PR | 待执行 | 待填写 | 待填写 | 待填写 | 最终验收 | 不自动 merge |
 
 ## 关键确定性验收（在最终代码上重复两遍）
 

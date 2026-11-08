@@ -306,7 +306,7 @@ export function DataRefreshPanel({ projectId, sessionId, authed }: DataRefreshPa
               type="button"
               className="h-control-sm rounded-sm border border-edge-subtle px-2 text-micro hover:bg-surface-raised"
               onClick={() => setConfirm('adopt')}
-              disabled={busy !== null || !comparison?.candidate_available}
+              disabled={busy !== null || !comparison?.candidate_available || !comparison?.adoptable}
               data-testid="g10-adopt"
             >
               <Check size={11} aria-hidden className="mr-1 inline" />{t('g10Adopt')}
@@ -324,7 +324,10 @@ export function DataRefreshPanel({ projectId, sessionId, authed }: DataRefreshPa
               type="button"
               className="h-control-sm rounded-sm border border-edge-subtle px-2 text-micro hover:bg-surface-raised"
               onClick={() => setConfirm('rollback')}
-              disabled={busy !== null || !receipt || receipt.status !== 'adopted'}
+              disabled={busy !== null || !(
+                (receipt && receipt.status === 'adopted') ||
+                (status && status.proposal_status === 'adopted')
+              )}
               data-testid="g10-rollback"
             >
               <Undo2 size={11} aria-hidden className="mr-1 inline" />{t('g10Rollback')}

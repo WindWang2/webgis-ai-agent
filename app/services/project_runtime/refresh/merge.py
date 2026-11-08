@@ -200,11 +200,9 @@ def three_way_merge(
                 kind="hidden_invalid_layer", entity_id=lid,
                 detail="user-hidden layer became invalid/removed in candidate",
             ))
-        if not target_field and c_layers[lid].get("visible") is not False:
-            conflicts.append(MergeConflict(
-                kind="deleted_annotation_target", entity_id=lid,
-                detail="layer removed by candidate; no automatic rebinding performed",
-            ))
+        # R1-P2：候选正常删除一个用户既未标注、未隐藏、未锁定的图层是合法
+        # 数据更新，不应一律升级为冲突阻断采纳；但仍须在 compare 中可见。
+        # （显式冲突仅针对上述三类用户态对象。）
     for lid, fields in (removed_fields or {}).items():
         for field in fields:
             conflicts.append(MergeConflict(

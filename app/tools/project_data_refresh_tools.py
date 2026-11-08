@@ -149,10 +149,11 @@ def register_project_data_refresh_tools(registry: ToolRegistry) -> None:
             "列出稳定逻辑身份、内容版本、证据级别与 pinned/refreshable/missing 等状态。"
             "\n何时用：用户说『数据更新了』『检查更新』『哪些来源变了』。"
             "\n关键语义：默认手动检查，不自动拉付费数据、不自动覆盖项目；"
-            "首次只建立基线，不声称数据变化；ETag/更新时间不等于精确内容版本。"
+            "首次只建立基线（写入隔离刷新账本，不改 MapSpec/数据/版本），"
+            "不声称数据变化；ETag/更新时间不等于精确内容版本。"
             "\n返回有界摘要 + stale 标记 + 完整/截断状态。"
         ),
-        side_effect="pure", deterministic=False, latency_class="medium",
+        side_effect="artifact_creation", deterministic=False, latency_class="medium",
         memory_class="light", scale_class="small",
         tags=["检查更新", "数据版本", "来源清单", "project refresh"],
         output_semantic_type="text", result_size_policy="inline_small",
