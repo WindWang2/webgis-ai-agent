@@ -46,7 +46,7 @@ def register_brief_tools(registry: ToolRegistry):
 
     @registry.tool(
         tier=2, domains=["brief"], name="brief_create_draft",
-        capabilities=["brief_draft"],
+        capabilities=["evidence_map_brief"],
         description=(
             "把当前会话的真实分析产物（统计表/图表/图层）整理成一份可编辑"
             "的地图简报草稿：章节、指标卡、图表、地图视图、方法与来源。"
@@ -123,7 +123,7 @@ def register_brief_tools(registry: ToolRegistry):
 
     @registry.tool(
         tier=2, domains=["brief"], name="brief_inspect_evidence",
-        capabilities=["brief_evidence"],
+        capabilities=["evidence_map_brief"],
         description=(
             "核 对简报中某个指标的证据链：值来自哪个产物、哪个字段、什么"
             "口径/单位/时间窗，以及确定性核验结果与分子/分母/基期。"
@@ -213,7 +213,7 @@ def register_brief_tools(registry: ToolRegistry):
 
     @registry.tool(
         tier=2, domains=["brief"], name="brief_update_block",
-        capabilities=["brief_edit"],
+        capabilities=["evidence_map_brief"],
         description=(
             "编辑简报内容块：更新文字（text/method/limitation）或锁定/解锁"
             "块。锁定后的块不会被重生成覆盖。用户改过的内容请设置 "
@@ -287,7 +287,7 @@ def register_brief_tools(registry: ToolRegistry):
 
     @registry.tool(
         tier=2, domains=["brief"], name="brief_preflight",
-        capabilities=["brief_preflight"],
+        capabilities=["evidence_map_brief"],
         description=(
             "发布预检：检查来源授权/引用可解析/数值单位一致性/地图版本/"
             "导出可用性/隐私字段，给出 pass/fail/not_evaluated 与总判定"
@@ -344,7 +344,7 @@ def register_brief_tools(registry: ToolRegistry):
 
     @registry.tool(
         tier=2, domains=["brief"], name="brief_freeze_release",
-        capabilities=["brief_release"],
+        capabilities=["evidence_map_brief"],
         description=(
             "冻结发布：生成不可变发布版本（HTML + 证据 manifest + CSV），"
             "pin 当前数据/图件/证据指纹。之后继续编辑草稿不影响旧版本。"
@@ -421,7 +421,7 @@ def register_brief_tools(registry: ToolRegistry):
 
     @registry.tool(
         tier=2, domains=["brief"], name="brief_export",
-        capabilities=["brief_export"],
+        capabilities=["evidence_map_brief"],
         description=(
             "导出简报为可离线阅读的私有 HTML（单文件，含图表数据与静态图件；"
             "无外链）或 JSON manifest。默认 private：只给所有者下载地址，"
