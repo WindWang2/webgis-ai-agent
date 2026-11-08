@@ -165,6 +165,26 @@ INLINE_FC = {
     ],
 }
 
+# J6 邻近性分析的内联双集合（小而有界，真实空间计算）
+INLINE_SCHOOLS_FC = {
+    "type": "FeatureCollection",
+    "features": [
+        {"type": "Feature", "properties": {"name": "s{}".format(i)},
+         "geometry": {"type": "Point", "coordinates": [104.05 + i * 0.01, 30.65]}}
+        for i in range(4)
+    ],
+}
+
+INLINE_METRO_FC = {
+    "type": "FeatureCollection",
+    "features": [
+        {"type": "Feature", "properties": {"name": "metro-north", "id": "m1"},
+         "geometry": {"type": "Point", "coordinates": [104.05, 30.66]}},
+        {"type": "Feature", "properties": {"name": "metro-south", "id": "m2"},
+         "geometry": {"type": "Point", "coordinates": [104.08, 30.64]}},
+    ],
+}
+
 # 旅程脚本（按用户消息首行键控；旁路调用如 title 生成不消耗步骤）
 TURN_SCRIPTS = {
     "warmup": [{"text": "warmup-ok"}],
@@ -181,6 +201,32 @@ TURN_SCRIPTS = {
     ],
     "重新开始": [{"text": "重新开始：这是取消后的新一轮，未携带上一轮结果。"}],
     "这是一条普通问答": [{"text": "这是一条不涉及地图的普通问答。"}],
+    # J6（PI-09）：wrap-native 负面 oracle —— 注册面（dump 超集）工具嵌套
+    # 进 webgis_execute 会被扩展侧双端拒绝（"do not wrap native tool"）；
+    # 真实邻近计算在 J6b 裸名路径完成（见下）。
+    "框选这块的学校离地铁站多远": [
+        {"tool": "webgis_map_intent", "args": {"query": "成都学校到地铁站邻近性"}},
+        {"tool": "webgis_execute", "args": {
+            "toolName": "nearest_facility",
+            "arguments": {
+                "source_points": INLINE_SCHOOLS_FC,
+                "target_points": INLINE_METRO_FC,
+            },
+        }},
+        {"text": "框选范围内每所学校到最近地铁站的距离（米）已算出。"},
+    ],
+    # J6b：两段式 —— 意图先建立计划资格（邻近能力入面），下一 turn 裸名执行。
+    "分析框选学校到地铁站的最近设施匹配": [
+        {"tool": "webgis_map_intent", "args": {"query": "成都学校到地铁站最近设施匹配 邻近性分析"}},
+        {"text": "邻近性分析计划已建立（最近设施能力已入面）。"},
+    ],
+    "执行最近设施匹配计算": [
+        {"tool": "nearest_facility", "args": {
+            "source_points": INLINE_SCHOOLS_FC,
+            "target_points": INLINE_METRO_FC,
+        }},
+        {"text": "每所学校到最近地铁站的距离（米）已算出。"},
+    ],
 }
 
 
@@ -303,7 +349,7 @@ def main() -> int:
     ready = server.started and _port_open(api_port) and try_get_chat_engine() is not None
     verdict = {"journeys": {}, "fail": []}
 
-    def _post_stream(message, session_id, timeout_s=120.0, owner_token=None):
+    def _post_stream_raw(message, session_id, timeout_s=120.0, owner_token=None):
         payload = {"message": message, "session_id": session_id}
         headers = {"Content-Type": "application/json"}
         if owner_token:
@@ -316,7 +362,11 @@ def main() -> int:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             body = resp.read().decode("utf-8", "replace")
         (WORK / ("sse_" + session_id + ".log")).write_text(body, encoding="utf-8")
-        return _parse_sse(body)
+        return body
+
+    def _post_stream(message, session_id, timeout_s=120.0, owner_token=None):
+        return _parse_sse(_post_stream_raw(
+            message, session_id, timeout_s=timeout_s, owner_token=owner_token))
 
     def _owner_token_of(events):
         for e in events:
@@ -410,6 +460,88 @@ def main() -> int:
             "names": [e["event"] for e in ev5],
             "map_product": completes[0].get("map_product") if completes else None,
         }
+
+        # ── J6（PI-09）：wrap-native 双端拒绝 —— 注册面工具不得嵌套进
+        #    webgis_execute 代理（PI-03 负面 oracle：拒绝嵌套）。──
+        J6_MSG = "框选这块的学校离地铁站多远"
+        try:
+            ev6 = _post_stream(J6_MSG, RUN + "-cd", owner_token=cd_owner)
+            verdict["journeys"]["J6"] = {
+                "names": [e["event"] for e in ev6],
+                "wrap_rejected": any(
+                    e["event"] == "step_error"
+                    and "webgis_execute" in str(e["data"].get("tool"))
+                    and "do not wrap" in str(e["data"].get("error"))
+                    for e in ev6),
+            }
+        except Exception as exc:  # noqa: BLE001 — 单旅程失败入 verdict
+            verdict["fail"].append("J6 request error: " + str(exc)[:200])
+
+        # ── J6b（PI-09）：计划资格两段式 —— 意图建立邻近能力后裸名执行。
+        J6B_MSG = "执行最近设施匹配计算"
+        body6b = ""
+        try:
+            _post_stream("分析框选学校到地铁站的最近设施匹配", RUN + "-cd", owner_token=cd_owner)
+            body6b = _post_stream_raw(J6B_MSG, RUN + "-cd", owner_token=cd_owner)
+            ev6b = _parse_sse(body6b)
+            verdict["journeys"]["J6b"] = {
+                "names": [e["event"] for e in ev6b],
+                "nearest_ok": any(
+                    e["event"] == "step_result"
+                    and e["data"].get("tool") == "nearest_facility"
+                    and isinstance(e["data"].get("result"), dict)
+                    and (
+                        e["data"]["result"].get("success") is True
+                        or e["data"]["result"].get("status") == "ok"
+                    )
+                    for e in ev6b),
+                "proximity_evidence": any(
+                    e["event"] == "step_result"
+                    and isinstance(e["data"].get("result"), dict)
+                    and (
+                        "nearest" in str(e["data"]["result"])[:2000]
+                        or e["data"]["result"].get("geojson_ref")
+                    )
+                    for e in ev6b),
+                "foreign_sid": [_sid(e) for e in ev6b if _sid(e) and _sid(e) != RUN + "-cd"],
+                "step_errors": [
+                    {"tool": e["data"].get("tool"), "error": str(e["data"].get("error"))[:300]}
+                    for e in ev6b if e["event"] == "step_error"
+                ],
+            }
+        except Exception as exc:  # noqa: BLE001 — 单旅程失败入 verdict
+            verdict["fail"].append("J6b request error: " + str(exc)[:200])
+
+        # ── J7（PI-09）：断线重连 resume —— 同消息 + Last-Event-ID 重放，
+        #    DUP-1：绝不重发 prompt（零 LLM 调用）。──
+        try:
+            ids6 = [ln[4:].strip() for ln in body6b.splitlines() if ln.startswith("id: ")]
+            last_id = ids6[-1] if ids6 else ""
+            rec_before = rec.read_text().count(json.dumps({"key": J6_MSG}, ensure_ascii=False))
+            payload = {"message": J6_MSG, "session_id": RUN + "-cd"}
+            req = urllib.request.Request(
+                "http://127.0.0.1:{}/api/v1/chat/stream".format(api_port),
+                data=json.dumps(payload).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "Last-Event-ID": last_id,
+                    "X-Session-Token": cd_owner or "",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp7:
+                body7 = resp7.read().decode("utf-8", "replace")
+            (WORK / "sse_resume.log").write_text(body7, encoding="utf-8")
+            ev7 = _parse_sse(body7)
+            rec_after = rec.read_text().count(json.dumps({"key": J6_MSG}, ensure_ascii=False))
+            verdict["journeys"]["J7"] = {
+                "names": [e["event"] for e in ev7],
+                "llm_calls": rec_after - rec_before,
+                "error_event": any(e["event"] == "error" for e in ev7),
+                "replayed_sid_consistent": all(
+                    (not _sid(e)) or _sid(e) == RUN + "-cd" for e in ev7),
+            }
+        except Exception as exc:  # noqa: BLE001 — 单旅程失败入 verdict
+            verdict["fail"].append("J7 request error: " + str(exc)[:200])
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -473,3 +605,22 @@ async def test_a5_journeys_on_real_pi_bridge():
     # J5：无地图变更不伪装完成
     mp = j["J5"]["map_product"]
     assert not (isinstance(mp, dict) and mp.get("status") == "completed"), j["J5"]
+
+    # J6（PI-09）：wrap-native 嵌套被拒（PI-03 负面 oracle）
+    assert "J6" in j, verdict.get("fail")
+    assert j["J6"]["wrap_rejected"] is True, j["J6"]
+
+    # J6b（PI-09）：两段式计划资格 → nearest_facility 裸名真实计算成功
+    assert "J6b" in j, verdict.get("fail")
+    assert j["J6b"]["nearest_ok"] is True, j["J6b"]
+    assert j["J6b"]["proximity_evidence"] is True, j["J6b"]
+    assert "task_complete" in j["J6b"]["names"]
+    assert j["J6b"]["names"][-1] == "done"
+    assert not j["J6b"]["foreign_sid"], j["J6b"]["foreign_sid"]
+
+    # J7（PI-09）：resume 只重放 —— 零 LLM 调用、会话归属一致
+    assert "J7" in j, verdict.get("fail")
+    assert j["J7"]["llm_calls"] == 0, j["J7"]
+    assert j["J7"]["replayed_sid_consistent"] is True, j["J7"]
+    assert not j["J7"]["error_event"], j["J7"]
+    assert j["J7"]["names"][-1] == "done", j["J7"]
