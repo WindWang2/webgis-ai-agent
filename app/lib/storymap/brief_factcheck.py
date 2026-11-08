@@ -43,6 +43,8 @@ class FactCheckOutcome:
     reasons: List[str] = field(default_factory=list)
     #: 复算链路披露（numerator/denominator/baseline 的取值快照）。
     recompute: Dict[str, float] = field(default_factory=dict)
+    #: 强事实错误（与权威值/复算值矛盾）—— 预检阻断项，区别于"缺证据"。
+    contradicted: bool = False
 
 
 def resolve_field_path(payload: Any, path: str) -> Tuple[Optional[float], str]:
@@ -199,7 +201,8 @@ def check_fact(
                     f"value {fact.value!r} contradicts authoritative "
                     f"{authoritative!r} at {binding.field_path}")
                 return FactCheckOutcome(
-                    fact.fact_id, "unverified", reasons)
+                    fact.fact_id, "unverified", reasons,
+                    contradicted=True)
             reasons.append(
                 f"value drifts from authoritative {authoritative!r} "
                 f"by {drift:.6g} (within warning bound)")
@@ -222,7 +225,8 @@ def check_fact(
                         f"derived value {fact.value!r} contradicts "
                         f"recomputed {expected!r}")
                     return FactCheckOutcome(
-                        fact.fact_id, "unverified", reasons)
+                        fact.fact_id, "unverified", reasons,
+                        contradicted=True)
                 reasons.append(
                     f"derived value drifts from recomputed {expected!r}")
             else:

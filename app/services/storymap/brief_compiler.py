@@ -387,6 +387,19 @@ async def compile_brief_draft(
         conv, owner_token=owner_token)
     messages = await _session_messages(db, conv) if db is not None else []
 
+    if trace is None and not messages and records:
+        # 产物降级路径：无 trace 且无消息，但会话有真实产物 —— 合成
+        # ReplayTrace 形状的确定性投影（叙事骨架来自产物清单本身；
+        # 数值仍只经 facts 从产物字段提取，此处不造任何数值）。
+        trace = {
+            "user_intent": title or "基于会话分析产物生成简报",
+            "artifacts": [
+                {"ref": ref, "title": _artifact_label(rec)}
+                for ref, rec in sorted(records.items())[:16]
+            ],
+            "final_text": f"本简报基于会话内 {len(records)} 个分析产物生成。",
+        }
+
     try:
         base = compile_story_map(
             trace=trace, messages=messages or None,
