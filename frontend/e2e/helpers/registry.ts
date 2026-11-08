@@ -122,6 +122,14 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['mock'],
     owner: 'situated-agent-workbench-vnext',
   },
+  {
+    id: 'j13',
+    file: 'journeys/j13-project-data-refresh.journey.ts',
+    title: '项目数据刷新：检查→预览→候选→采纳/回退（真实认证）',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g10-project-data-refresh',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);
