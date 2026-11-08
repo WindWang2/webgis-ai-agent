@@ -117,6 +117,8 @@ _TOOL_MODULES = [
     # G06 / CAP-03 + M5：条件多分位数分区栅格统计 / 线网服务覆盖一致性
     # 两项真实原生原语（独立模块防并发冲突；执行真相仍是 registry.dispatch）
     ("app.tools.capability_ecosystem_tools", "register_capability_ecosystem_tools"),
+    # G10：项目数据版本刷新（检查→预览→候选→采纳/回退）自然语言工具面
+    ("app.tools.project_data_refresh_tools", "register_project_data_refresh_tools"),
 ]
 
 
