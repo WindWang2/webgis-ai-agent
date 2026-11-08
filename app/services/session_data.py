@@ -504,27 +504,41 @@ class MemorySessionStore(BaseSessionStore):
             # V5-E: same ref identity, new content — bump the revision.
             revs = self._ref_revisions.setdefault(session_id, {})
             revs[ref_id] = revs.get(ref_id, 1) + 1
-            # #1113 P3-5: recompute the descriptor against the new payload (same
-            # as store()). Before this fix overwrite left the OLD payload's stale
-            # descriptor in place; a plain pop would be worse still — Memory
-            # readers have no lazy recompute fallback (unlike
-            # RedisSessionStore.get_ref_descriptor) and would see NotFound.
-            # G-2: identical-object overwrites (plan_mode re-persisting the same
-            # payload) skip the O(features) recompute entirely.
-            try:
-                from app.schemas.ref_descriptor import compute_descriptor
-                descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
-                if session_id not in self._descriptors:
-                    self._descriptors[session_id] = {}
-                self._descriptors[session_id][ref_id] = descriptor.to_dict()
-            except Exception as e:
-                self._descriptors.get(session_id, {}).pop(ref_id, None)
-                logger.warning(f"V3: Failed to recompute descriptor for {ref_id} on overwrite: {e}")
+            rev_after = revs[ref_id]
             # overwrite is the durability path for plans/checkpoints — bump LRU
             # recency so a just-updated plan is not the next eviction victim.
             self._touch_cache_item(session_cache, ref_id)
             self._touch_session(session_id)
+
+        # B-1（review-fix-rereview-20261108）：descriptor 计算移出全 store 锁
+        # —— 与 store() 的既定纪律一致（"Disk and descriptor work must not
+        # hold the process-wide cache lock"）。overwrite 是 plan_mode 每波后
+        # 重持久化 step_results 的热路径，此前在临界区内 await to_thread 跑
+        # O(features) 计算，任意会话的 store/get/delete 全部排队停顿。
+        # #1113 P3-5 语义保持：覆写后重算 descriptor（Memory 读者无惰性回退，
+        # 旧描述符留置 = 谎报形状）；计算失败按同款 pop + warning。
+        # G-2: identical-object overwrites 已在上方锁内短路跳过本段。
+        try:
+            from app.schemas.ref_descriptor import compute_descriptor
+            descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
+        except Exception as e:
+            logger.warning(f"V3: Failed to recompute descriptor for {ref_id} on overwrite: {e}")
+            async with self._lock:
+                # 只有条目仍是本对象且 revision 未被更新的覆写推进时才清
+                # 描述符 —— 不得误删并发更新写入的新描述符。
+                if (self._store.get(session_id, {}).get(ref_id) is data
+                        and self._ref_revisions.get(session_id, {}).get(ref_id) == rev_after):
+                    self._descriptors.get(session_id, {}).pop(ref_id, None)
             return True
+        # 迟到守卫（store() 同款）：计算窗口内同 ref 又被覆写（对象身份/
+        # revision 已变）时，本描述符对旧 payload —— 丢弃，不覆盖新真相。
+        async with self._lock:
+            if (self._store.get(session_id, {}).get(ref_id) is data
+                    and self._ref_revisions.get(session_id, {}).get(ref_id) == rev_after):
+                if session_id not in self._descriptors:
+                    self._descriptors[session_id] = {}
+                self._descriptors[session_id][ref_id] = descriptor.to_dict()
+        return True
 
     async def delete_ref(self, session_id: str, ref_id: str) -> bool:
         """Drop one stored ref (and its descriptor/alias). Returns False if missing."""
