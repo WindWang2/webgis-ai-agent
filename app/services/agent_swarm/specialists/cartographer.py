@@ -480,8 +480,10 @@ class CartographerAgent(BaseSpecialistAgent):
                 },
                 "purpose": purpose,
                 "components": components,
-                "constraint_layout": layout_report.get("constraint_layout"),
-                "constraint_layout_report": layout_report,
+                # #2000：求解报告不落 MapSpec（第二事实源禁止 —— ADR-0084/
+                # ADR-0283）。求解事实保留在一等载体：组件 position/anchor
+                # （下方 components 已带求解 zones）；evaluated/not_evaluated
+                # 结论与发现经 warnings/ref 载荷披露。
             },
             "thresholds": {},
         }

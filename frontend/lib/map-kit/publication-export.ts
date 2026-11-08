@@ -26,6 +26,12 @@ export interface VectorPdfExportRequest {
   subtitle?: string;
   author?: string;
   dpi?: number;
+  /**
+   * G04（#1999）：打印档求解 profile（a4_landscape 等）—— 由
+   * paperSize/orientation 推导（见 pageProfileForPaper）；缺席 = 屏幕档
+   * not_evaluated（服务端不虚构求解）。
+   */
+  pageProfile?: string;
   atlas?: {
     driver: 'frames' | 'category' | 'feature';
     layerId?: string;
@@ -35,6 +41,20 @@ export interface VectorPdfExportRequest {
     includeCover?: boolean;
     atlasTitle?: string;
   };
+}
+
+/** A4/A3 × landscape/portrait → solve_layout_v5 profile；其他 → undefined。 */
+export function pageProfileForPaper(
+  paperSize?: unknown,
+  orientation?: unknown,
+): string | undefined {
+  const paper =
+    typeof paperSize === 'string' ? paperSize.trim().toLowerCase() : '';
+  const ori =
+    typeof orientation === 'string' ? orientation.trim().toLowerCase() : '';
+  if (paper !== 'a4' && paper !== 'a3') return undefined;
+  const facing = ori === 'portrait' ? 'portrait' : 'landscape';
+  return `${paper}_${facing}`;
 }
 
 export interface VectorPdfExportOutcome {
@@ -75,6 +95,15 @@ export function vectorPdfRequestFromSettings(settings: Record<string, unknown>):
     ...(typeof settings['dpi'] === 'number' && settings['dpi'] > 0
       ? { dpi: settings['dpi'] }
       : {}),
+    // G04（#1999）：A4/A3 纸档 → 显式求解 profile（此前无调用方传
+    // page_profile，MapSpec/参数里的 A4 从不触发 solve_layout_v5）。
+    ...(() => {
+      const profile = pageProfileForPaper(
+        settings['paperSize'],
+        settings['orientation'],
+      );
+      return profile ? { pageProfile: profile } : {};
+    })(),
   };
   if (settings['atlasEnabled'] !== true) return req;
   const driver = settings['atlasDriver'];
@@ -150,6 +179,7 @@ export async function runVectorPdfExport(
       targetDpi: req.dpi,
       sessionId,
       atlas: atlasPolicyFromRequest(req.atlas),
+      pageProfile: req.pageProfile,
     });
     recordVectorExport(getHudState, req, result);
     const pages = result.pages ?? 1;

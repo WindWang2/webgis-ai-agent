@@ -165,7 +165,6 @@ from app.services.mapspec_svg_payloads import (
 
 from app.services.mapspec_svg_chrome_layout import (
     _constraint_chrome_xy,
-    _constraint_layout_active as _constraint_layout_active,
     _render_title_chrome,
 )
 
@@ -483,6 +482,36 @@ from app.services.export_lineage import (  # noqa: E402
 #: 表格卡装配前高度估计（review P2-7：渲染几何同表，消除右下栈重叠估算差）。
 
 
+def _view_bearing(mapspec: Dict[str, Any]) -> float:
+    """MapSpec ``view.bearing``（度；缺席/非法 → 0，不虚构方位）。"""
+    view = mapspec.get("view") if isinstance(mapspec, dict) else None
+    if not isinstance(view, dict):
+        return 0.0
+    bearing = view.get("bearing")
+    if isinstance(bearing, bool) or not isinstance(bearing, (int, float)):
+        return 0.0
+    return float(bearing)
+
+
+def _temporal_note(mapspec: Dict[str, Any]) -> str:
+    """GOAL 03 M6 时序注记（temporal 启用时当前帧标签；缺席 → 空）。"""
+    temporal_cfg = mapspec.get("temporal") if isinstance(mapspec, dict) else None
+    if not (isinstance(temporal_cfg, dict) and temporal_cfg.get("enabled")):
+        return ""
+    frames = temporal_cfg.get("frames") or []
+    cursor = temporal_cfg.get("cursor_frame")
+    frame = next(
+        (f for f in frames if isinstance(f, dict) and f.get("id") == cursor), None,
+    )
+    if frame is None:
+        return ""
+    return (
+        f"时间: {frame.get('label', cursor)}"
+        f"（粒度 {temporal_cfg.get('granularity') or ''}，"
+        f"窗口 [{frame.get('start')} ~ {frame.get('end')}）"
+    )
+
+
 def _render_chrome_groups(
     mapspec: Dict[str, Any],
     geo_bounds: List[float],
@@ -548,29 +577,35 @@ def _render_chrome_groups(
     title = _first_of_type("title")
     subtitle = _first_of_type("subtitle")
     title_parts, title_types = _render_title_chrome(
-        mapspec, title, subtitle, canvas_w, canvas_h, m,
+        title, subtitle, canvas_w, canvas_h, m,
+        temporal_note=_temporal_note(mapspec),
     )
     parts.extend(title_parts)
     for title_type in title_types:
         _mark_rendered(title_type)
 
-    # 指北针（右上）
+    # 指北针（右上；#2003 —— N 随 view.bearing 旋转，与 live/canvas 同语义）
     north = _first_of_type("north_arrow")
     if north is not None:
         moved_north = _constraint_chrome_xy(
-            mapspec, north, "north_arrow", canvas_w, canvas_h, m,
+            north, "north_arrow", canvas_w, canvas_h, m,
         )
+        _bearing = _view_bearing(mapspec)
         if moved_north is None:
-            parts.append(_render_north_arrow(canvas_w - m - 30.0, m + 30.0))
+            parts.append(
+                _render_north_arrow(canvas_w - m - 30.0, m + 30.0, bearing=_bearing)
+            )
         else:
-            parts.append(_render_north_arrow(moved_north[0], moved_north[1]))
+            parts.append(
+                _render_north_arrow(moved_north[0], moved_north[1], bearing=_bearing)
+            )
         _mark_rendered("north_arrow")
 
     # 比例尺（右下，投影感知）
     scale = _first_of_type("scale_bar")
     if scale is not None:
         moved_scale = _constraint_chrome_xy(
-            mapspec, scale, "scale_bar", canvas_w, canvas_h, m,
+            scale, "scale_bar", canvas_w, canvas_h, m,
         )
         if moved_scale is None:
             parts.append(
@@ -597,7 +632,7 @@ def _render_chrome_groups(
             (c for c in enabled if c.id == legend_plan.component_id), None,
         )
         moved_legend = _constraint_chrome_xy(
-            mapspec, legend_comp, legend_plan.component_type,
+            legend_comp, legend_plan.component_type,
             canvas_w, canvas_h, m,
         )
         if moved_legend is None:
@@ -635,7 +670,7 @@ def _render_chrome_groups(
     attr = _first_of_type("attribution")
     if attr is not None and attr.text:
         moved_attr = _constraint_chrome_xy(
-            mapspec, attr, "attribution", canvas_w, canvas_h, m,
+            attr, "attribution", canvas_w, canvas_h, m,
         )
         if moved_attr is None:
             parts.append(_render_attribution(m + 4.0, canvas_h - m - 14.0, attr.text))

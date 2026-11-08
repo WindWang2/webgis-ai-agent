@@ -457,7 +457,6 @@ async def webgis_map_product(
         from app.lib.cartography.design_decision_trace import (
             build_design_decision_trace as _build_trace,
         )
-        from app.services.gis_harness.planner import _TASK_CATEGORY_BY_INTENT
 
         # overlay 次几何/字段证据（扩展可行域与跨源分母投影用）：
         # 成都学校（点主数据）+ 行政区（overlay 面，含 population）→
@@ -481,16 +480,8 @@ async def webgis_map_product(
             if isinstance(_of, dict):
                 _overlay_fields.extend(
                     str(f).lower() for f in _of.keys())
-        _geom_types = set((profile or {}).get("geometryTypes") or [])
-        if _geom_types:
-            from app.services.gis_harness.recipes import _geometry_category
-            _gcat = _geometry_category(list(_geom_types))
-            _geom_kind = {"point": "point", "line": "line"}.get(
-                _gcat, "polygon")
-        else:
-            _geom_kind = {"point": "point", "line": "line",
-                          "polygon": "polygon", "raster": "raster"}.get(
-                str(intent.geometry_expectation or ""), "polygon")
+        # CM-01（G04）：几何/产物/统计/类目的本地坍缩/派生退役 —— 统一由
+        # lib selection_context 唯一投影器产出（见 _DesignCtx 构造处）。
         # 分母证据：DENOMINATOR_FIELD_HINTS 单一事实源词表命中（字段名
         # 级匹配；宁缺毋滥——无命中即无分母，不猜）。
         _fields = (profile or {}).get("fields") or {}
@@ -550,47 +541,32 @@ async def webgis_map_product(
             "visual_heatmap" if "bare_density_visual" in (
                 intent.matched_rules or []) else "",
         ))))
+        # CM-01（G04）：判选输入经唯一投影器 —— 与 planner 侧
+        # _composition_alternatives_evidence 消费同一 project_selection_facts
+        #（variable_kind 现随 profile 流入 design 面；statistic/几何/产物
+        # 单口径）。分母证据是会话级证据，在构造点显式注入。
+        from app.lib.cartography.selection_context import (
+            project_selection_facts as _project_facts,
+        )
+        _facts = _project_facts(
+            intent_task=str(intent.task or ""),
+            profile=profile,
+            geometry_expectation=str(intent.geometry_expectation or ""),
+            measure=str(getattr(intent, "measure", "") or ""),
+            scale_hint=str(getattr(intent.scope, "level", "") or ""),
+            overlay_geometry_kinds=_secondary_geoms,
+            user_requested_models=_user_models,
+            temporal_periods=_temporal_periods,
+        )
         _design_ctx = _DesignCtx(
-            task_categories=_TASK_CATEGORY_BY_INTENT.get(
-                str(intent.task or ""), ("thematic_cartography",)),
-            geometry_kind=_geom_kind,
-            statistic=(
-                "density" if (
-                    str(getattr(intent, "measure", "") or "")
-                    in ("density", "rate", "ratio")
-                    or intent.task in ("analytical_density",
-                                       "concentration_analysis"))
-                else "count"),
-            artifact_types=tuple(dict.fromkeys((
-                *{
-                    "point": ("point_feature_set", "admin_aggregate_table"),
-                    "line": ("line_feature_set", "admin_aggregate_table"),
-                    "polygon": ("polygon_feature_set", "admin_aggregate_table"),
-                    "raster": ("raster_surface",),
-                }.get(_geom_kind, ("admin_aggregate_table",)),
-                # overlay 面数据在场 → 行政边界产物面成立（面族表达证据）
-                * (("admin_boundary_set",) if "polygon" in _secondary_geoms
-                   else ()),
-            ))),
-            secondary_geometry_kinds=tuple(
-                g for g in _secondary_geoms if g != _geom_kind),
-            point_count=int((profile or {}).get("featureCount") or 0)
-            if _geom_kind == "point" else 0,
-            point_count_basis="profile" if (
-                _geom_kind == "point"
-                and isinstance((profile or {}).get("featureCount"), int)
-            ) else "unknown",
-            denominator=_DenomEvidence(
+            **_facts.design_ctx_kwargs(denominator=_DenomEvidence(
                 field=_denom_field, available=bool(_denom_field),
                 unit=(
                     "户数" if _denom_field and any(
                         h in _denom_field
                         for h in ("household", "户数"))
                     else ("人口" if _denom_field else "")),
-                source=_denom_source),
-            temporal_periods=_temporal_periods,
-            user_requested_models=_user_models,
-            scale_hint=str(getattr(intent.scope, "level", "") or ""),
+                source=_denom_source)),
         )
         _primary_bound_model = str(
             (primary_bound or {}).get("cartography") or "")

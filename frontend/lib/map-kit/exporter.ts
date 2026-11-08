@@ -26,6 +26,10 @@ import {
   type ExportChromeModel,
   type ExportDegradation,
 } from './export-chrome';
+import {
+  applyConstraintLayoutToSpec,
+  type ConstraintLayoutReportFE,
+} from './constraint-layout-apply';
 import { DEFAULT_STACK_STEP_PX } from '@/lib/map-components/resolve-layout';
 import { sceneExportDisclosure } from './scene-export-disclosure';
 export type { ExportChromeModel } from './export-chrome';
@@ -1216,6 +1220,14 @@ export interface ExportRequest {
    */
   fit_to_frame?: boolean;
   color_mode?: 'srgb' | 'cmyk';
+  /**
+   * G04（#1999）：打印档约束求解报告（后端 export_thematic_map 任务携带
+   * 的 solve_layout_v5 有界结果）。在场且 evaluated 时应用到**导出时
+   * 组件副本**（持久 MapSpec 零触碰），并发射 constraint_layout_evaluated
+   * 回执进上传 diagnostics（sidecar 持久化）。
+   */
+  constraint_layout?: ConstraintLayoutReportFE;
+  page_profile?: string;
 }
 
 export interface ExportDeps {
@@ -2002,6 +2014,8 @@ async function runExportInternal(
     let specShowCompass: boolean | undefined;
     let specShowScale: boolean | undefined;
     let committedSpec: ExportCommittedSpec | null = null;
+    // G04（#1999）：打印档求解回执（应用成功后填充 → chromeDegradations）
+    let constraintLayoutReceipt: ExportDegradation | null = null;
     try {
       // W7：导出 spec 经 live 同一合成器（composeLiveMapSpec）—— 叠加
       // pendingPresentation/pendingRemoved，与 live 同一时刻的可见状态。
@@ -2016,6 +2030,19 @@ async function runExportInternal(
         getPendingPresentation(),
         getPendingRemoved(),
       )) as ExportCommittedSpec;
+      // G04（#1999）：打印档求解结果应用到导出副本（持久 MapSpec 零触碰）；
+      // suppressed 组件在这里已 enabled=false，后续 specComps 读取
+      // （罗盘/比例尺开关）与 buildExportChrome 同一语义。
+      if (req.constraint_layout?.constraint_layout === 'evaluated') {
+        committedSpec = applyConstraintLayoutToSpec(
+          committedSpec as never,
+          req.constraint_layout,
+        ) as unknown as ExportCommittedSpec;
+        constraintLayoutReceipt = {
+          code: 'constraint_layout_evaluated' as const,
+          detail: req.constraint_layout.page_profile ?? '',
+        };
+      }
       const specComps = committedSpec?.layout?.components ?? [];
       if (specComps.length) {
         const isEnabled = (t: string) =>
@@ -2233,6 +2260,9 @@ async function runExportInternal(
       ...(wysiwyg.fitTimeout
         ? [{ code: 'extent_fit_timeout_degraded' as const, detail: '相机 fit 未在截止内 idle，回退视口裁切' }]
         : []),
+      // G04（#1999）：打印档约束求解回执（已应用到导出副本 —— 随上传
+      // diagnostics 持久化 sidecar；屏幕档不发射，不虚构求解）。
+      ...(constraintLayoutReceipt ? [constraintLayoutReceipt] : []),
     ];
     if (storeState.is3D && showScaleEffective) {
       chromeDegradations.push({ code: 'terrain_3d_scale_caveat' });
