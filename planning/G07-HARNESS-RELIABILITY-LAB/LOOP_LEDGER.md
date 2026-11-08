@@ -85,3 +85,12 @@
 - 二次复审：四项全关闭，appendix A1/A5 解决，无新问题，83 项独立复跑通过。
 - 附带条件：修复后全量 Replay/Lab 已由主 Agent `270 passed, 4 warnings, 107.24s` 满足。
 - 结论：独立二次复审通过，进入 M9 最终双次验收与 PR。
+
+## Loop 9 — M9 最终验收与同步
+
+- 实时同步：首次 `git fetch origin master --prune` 遇到 TLS unexpected EOF，保留错误；独立重试成功，`origin/master=585812ee4e2d75612f2b124e6fe6587af3deca5c`，merge 显示已是最新，无 rebase。
+- 冻结代码：最终实时代码修复 `ce3706e65`，二次复审记录 HEAD `8f2f1c873`；后续只允许交付账本和 PR 证据更新。
+- 连续验收：同一最终代码的 Replay/Lab 全量第一跑 **270 passed, 4 warnings, 107.24s**，第二跑 **270 passed, 4 warnings, 48.29s**。
+- 静态检查：标准 Mypy **Success: no issues found in 38 source files**；focused Ruff 和 `git diff --check` 通过；提交面扫描未发现凭据、缓存或大型测试输出。
+- Review：不再派生 subagent，遵守三个上限；采用 B 已完成的独立冷审、修复和二次复审。`/ship` 只用于最终交付门禁，不增加版本、TODO、CI 或额外外部评测范围。
+- 剩余：冻结后发布前验证、push、唯一 PR、回填真实 URL 与最终 HEAD。未创建前不得宣称已提交 PR。

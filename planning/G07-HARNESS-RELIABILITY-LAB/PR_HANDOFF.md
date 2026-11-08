@@ -1,16 +1,17 @@
 # PR 证据对账与交付
 
-状态：独立二次复审通过；尚未 push，尚未创建 PR。
+状态：REL-O01–O13 本地证据完成，独立二次复审通过，关键验收连续两次通过。尚未 push，尚未创建 PR。
 
-## 当前 Git 事实
+## Git 与发布边界
 
-- 最新 `origin/master`：`585812ee4e2d75612f2b124e6fe6587af3deca5c`（再次 fetch，未变化）。
-- 当前 HEAD：`1960d1f61`（`docs(planning): record independent cold review fixes`）；代码修复 HEAD：`ce3706e65`。
+- 实时 `origin/master`：`585812ee4e2d75612f2b124e6fe6587af3deca5c`（2026-11-07T17:54:14+08:00；2026-11-08 重取成功，merge 已最新，无 rebase）。
+- 独立二次复审 HEAD：`8f2f1c873a020ef68e245e111ee527ec0cdd1245`；最终代码修复：`ce3706e65`。
 - worktree：`/home/kevin/projects/webgis/webgis-wt-harness-reliability-lab-20261107`
 - branch：`zcode/goal-harness-reliability-lab-20261107`
-- PR URL：待真实创建后填写，不虚构。
+- 最终 HEAD 和 PR URL：真实创建后回填。只 push 本 branch，不改 master、不合并、不等待或宣称 CI。
+- #2013 接触 TDS 不同代码块，语义兼容；#2012 未改本分支 Pi doctor/旅程文件；#2011 无重叠。master 未变化，无需额外集成。
 
-## Commits（master 起 13 个）
+## Commits（二次复审时 16 个）
 
 1. `e3895ece4` feat(harness): add bounded end-to-end journey diagnostics
 2. `8a9742eac` fix(recovery): preserve dispatch attribution in diagnostics
@@ -27,45 +28,45 @@
 13. `51eb10c68` docs(planning): record G07 performance and Pi evidence
 14. `ce3706e65` fix(harness): close independent review evidence gaps
 15. `1960d1f61` docs(planning): record independent cold review fixes
+16. `8f2f1c873` docs(planning): close independent second review
+
+最终验收账本和 PR 回填提交在创建后追加，以 `git log origin/master..HEAD` 为最终清单。
 
 ## Oracle 证据对账
 
-| Oracle | 当前证据 | 状态 |
+| Oracle | 可复现证据 | 结论 |
 |---|---|---|
-| O01 完成声明阶梯 | `journey.py` 八阶段与 8 声明；缺 render/artifact/context 均不可完成 | 本地通过 |
-| O02 12 组双 Oracle | manifest + 30 真实 dispatch 场景；10 组双侧 + 2 focused | 本地通过，模式明确 |
-| O03 关联无跨会话 | session/turn/goal/operation/correlation 检查与零回显 | 本地通过 |
+| O01 完成声明阶梯 | `journey.py` 八阶段；缺 render/artifact/context 均不可完成 | 本地通过 |
+| O02 12 组双 Oracle | manifest + 30 场景；10 组双侧 + 2 focused | 本地通过，模式明确 |
+| O03 关联无跨会话 | 五类关联 ID 检查与零回显 | 本地通过 |
 | O04 故障终态 | 20 项跨边界 + 89 项既有 fault/lock/SSE | 本地通过 |
 | O05 只读诊断 | owner scope、secret 负例、UTF-8 上限、CLI 子进程 | 本地通过 |
-| O06 模式不混淆 | offline/live dispatch/Pi stub 有证据；browser mock/flaky；live not_run | 诚实披露 |
+| O06 模式不混淆 | offline/live dispatch/Pi stub；browser mock/flaky；live not_run | 诚实披露 |
 | O07 4 组恢复 | 缺观察、瞬态、跨城、持久编辑；恢复域 199 项 | 本地通过 |
-| O08 压力资源有界 | 140 场景 wall/CPU/RSS/payload；events/artifact bytes/frames 未测项明示 | 本地通过（未测项不冒充） |
+| O08 压力资源有界 | 140 场景 wall/CPU/RSS/payload；其余维度 not_evaluated | 本地通过，未测不冒充 |
 | O09 两个热点结论 | resume 1.77×；UTF-8 未提速/deepcopy/sha 不优化 | 原始 JSON |
-| O10 科学不降级 | focused 255、科学/单位/范围既有回归；未修开放 issue | 本地通过 |
+| O10 科学不降级 | focused 255、科学/单位/范围回归；未修开放 issue | 本地通过 |
 | O11 原 ratchet 不降级 | record-only，active baseline 不动，not_evaluated 非 pass | 本地通过 |
-| O12 双跑+独立 Review | 全量 270 passed；B 冷审无 P0/P1、P2 全关闭；二次复审通过 | 已满足，最终双跑待完成 |
-| O13 干净 worktree 复现 | 质量文档 §6 命令、分层车道、资源上限 | 已交付 |
+| O12 双跑+独立 Review | 270 项连续两次通过；B 冷审 P0/P1=0、P2 全关闭 | 已满足 |
+| O13 干净 worktree 复现 | 质量文档 §6、分层车道、资源上限、原始报告 | 已交付 |
 
-## 本地验证统计
+## 最终本地验证
 
-- 全量 Replay/Lab：`270 passed, 4 warnings, 107.24s`。
-- 真实 dispatch：30/30 场景；CLI 报告 `reports/g07/golden.json`。
-- focused 科学/scope：255 passed；恢复：199 passed；selection 全链：11 passed。
-- journey 修复后相关：52 passed；perf 契约：7 passed。
-- Pi doctor：全 PASS；显式真实 Pi + stub 旅程：1 passed, 32.17s。
-- Mypy：Success, 38 files；Ruff/diff check 通过。
-- 浏览器：首跑 7 passed/2 skipped；第二跑 J9 failed（既有 flaky，非稳定门）。
+- Replay/Lab 连续两次：`270 passed, 4 warnings, 107.24s`；`270 passed, 4 warnings, 48.29s`。命令为 `PYTHONDONTWRITEBYTECODE=1 /home/kevin/projects/webgis/webgis-ai-agent/.venv/bin/python -m pytest tests/lab tests/harness_replay --no-cov -q -p no:cacheprovider`。
+- 真实 dispatch：30/30 场景；报告 `reports/g07/golden.json`（本地产物，不入提交）。
+- focused 科学/scope：255 passed；恢复：199 passed；selection 全链：11 passed；journey 修复相关：52 passed；最新 perf 契约：7 passed。
+- Pi doctor：全 PASS；显式真实 Pi + stub 旅程：1 passed, 32.17s；不是付费或真实模型质量验证。
+- Mypy：Success, 38 files；Ruff/`git diff --check` 通过。
+- benchmark：resume before p50 468.510ms / p95 497.973ms，after p50 265.073ms / p95 304.255ms（1.77×，140/140 green）。UTF-8 计量 str 0.154ms vs canonical_json 0.262ms，不宣称提速。原始汇总 `docs/quality/evidence/harness_reliability_bench_report.json`。
+- 浏览器：首跑 7 passed/2 skipped；第二跑 6 passed/1 failed/2 skipped，J9 mounted 15s 超时；API mock，非生产后端门。
 
 ## 独立 Review
 
-- B 冷审：P0/P1=0；P2 四项（inline artifact、float 参照、512B 边界、未测维度）。
-- 修复 commit：`ce3706e65`；复审正在执行，结果待写 `REVIEW.md`。
+B 冷审 P0/P1=0；P2 四项为 inline artifact、float 独立参照、512B 边界、未测维度。`ce3706e65` 全部修复；二次复审通过，独立复跑 83 项全绿；复审后的 270 项全量复跑满足附带条件。详见 `REVIEW.md`。
 
-## 在途接触点
+## 兼容与未验证风险
 
-- #2013 TDS 不同代码块，语义兼容；#2012 仅影响未来 Pi 验证环境；master 未变化，无需 rebase。
-- 不等待或宣称线上 CI；不合并 PR。
-
-## 未验证/风险
-
-真实后端浏览器、真实 PostGIS 故障、跨进程 RPC 重连、live provider、真实模型、生产部署未验证。J9 浏览器 flaky 明示。#1999/#2001/#2003/#2005/#2006/#2007 保持 baseline debt，不宣称修复。
+- additive 投影，无第二 trace store/planner/executor/registry；旧 ratchet/active baseline 和权限/确认语义不动；`flush_interval=1` 保留旧行为，默认 16 有收尾强制 flush。
+- 选择输入增加 omitted 元数据后，贴边样例由 500B 增至 525B 会 fail-closed 拒绝；伪造计数被剥离，ownership 优先。已在 `DECISIONS.md` 披露。
+- 真实后端浏览器、真实 PostGIS 故障、跨进程 RPC 重连、live provider、真实模型、生产部署和线上 CI 未验证；artifact bytes、生产 SSE events、渲染 frames、Redis mutation scaling 为 `not_evaluated`。
+- #1999/#2001/#2003/#2005/#2006/#2007 保持 baseline debt，不宣称修复；J9 flaky 明示。

@@ -71,7 +71,7 @@
 | `PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_stub_llm_journeys.py` | 1 passed, 32.17s | 真实 Pi + stub LLM；非真实模型质量；默认 skip 原因已记录 |
 | `pytest tests/integration/test_pi_stub_llm_journeys.py`（默认） | 1 skipped | opt-in 门控 `PI_JOURNEY_E2E=1`，不是通过证据 |
 
-## M6/M7 最终执行
+## M6/M7 阶段验收
 
 | 命令/范围 | 结果 | 模式与限制 |
 |---|---|---|
@@ -87,3 +87,18 @@
 |---|---|---|
 | `pnpm exec playwright test --grep @smoke`（首跑） | 7 passed, 2 skipped, 35.5s | 真实 MapLibre + mock API；不是生产后端验证 |
 | 同命令第二跑 | 6 passed, 1 failed, 2 skipped | J9 三维资产 `mounted` 15s 未出现；既有前端时序/flaky，未修改无关 UI，未作为稳定通过证据 |
+
+## M9 最终连续验收
+
+验收代码：二次独立复审 HEAD `8f2f1c873`；后续只改 planning 交付账本。基线重取为 `origin/master=585812ee4e2d75612f2b124e6fe6587af3deca5c`，merge 已最新。
+
+| 命令/范围 | HEAD/模式 | 结果 | 次数与限制 |
+|---|---|---|---|
+| `PYTHONDONTWRITEBYTECODE=1 /home/kevin/projects/webgis/webgis-ai-agent/.venv/bin/python -m pytest tests/lab tests/harness_replay --no-cov -q -p no:cacheprovider` | `8f2f1c873`，offline replay + lab | **270 passed, 4 warnings, 107.24s** | 复审后第一跑；非全仓或线上 CI |
+| 同上 | `8f2f1c873`，同一输入与离线环境 | **270 passed, 4 warnings, 48.29s** | 最终第二跑；满足连续两次关键验收 |
+| `PYTHONDONTWRITEBYTECODE=1 /home/kevin/projects/webgis/webgis-ai-agent/.venv/bin/python -m mypy --no-incremental` | 最终代码 | Success, 38 files | 标准 whitelist；3 条既有 untyped note，无 error |
+| focused Ruff（journey、bench 及其测试）+ `git diff --check` | 最终候选 | 通过 | 无 lint/空白错误 |
+| Gate diff + approval class | 最终候选 | 17 listed / 3 read / 0 unread；无 approval class | 新测试含保守冒烟界与 E731 局部豁免，不改旧阈值；独立 B 已审阅相关 diff |
+| secrets/提交面扫描 | 最终候选 | 未命中凭据；39 个原始变更文件，约 4.1k 行，benchmark JSON 约 15KB | 无 `.env`、node_modules、test-results、缓存或截图入提交 |
+
+REL-O12 的“双跑 + 独立 Review”已满足。真实后端浏览器、真实 PostGIS 故障、跨进程 RPC 重连、live provider、真实模型、生产部署和线上 CI 仍明确未验证，不能将上述本地结果扩展为这些结论。

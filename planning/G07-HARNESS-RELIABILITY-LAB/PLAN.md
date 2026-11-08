@@ -21,8 +21,8 @@
 | M3 | complete | 12 组 manifest；30 个真实 dispatch 场景全绿；选择截断防线与 mode-aware CLI |
 | M4 | complete | 20 项跨边界故障测试 + 89 项既有 fault/lock/SSE 回归；终态 typed reason 完整 |
 | M5 | complete | 4 组恢复实验链 + 199 项恢复回归；动作/权限/终态可复现 |
-| M6 | complete | resume p50 435.4→254.5ms（1.71×）；UTF-8 修正明确非提速；原始报告完整 |
-| M7 | complete | record-only 指标、分层车道、质量文档、真实 Pi 证据；全量 268 项回归通过 |
+| M6 | complete | 最新 resume p50 468.510→265.073ms（1.77×）；UTF-8 修正明确非提速；原始报告完整 |
+| M7 | complete | record-only 指标、分层车道、质量文档、真实 Pi 证据；阶段全量 268 项通过，修复后 270 项通过 |
 | M8 | complete | 冷审 P0/P1=0；4 项 P2 全修复；二次复审通过；全量 270 项复跑满足附带条件 |
 | M9 | in_progress | 重取 master、必要集成、双次关键验收、语义化 commits、push 与唯一 PR |
 
@@ -30,19 +30,19 @@
 
 | ID | 验证方式 | 当前状态 |
 |---|---|---|
-| REL-O01 | 完成声明逐级取证；缺 renderer 观察必须 `not_evaluated`/非完成 | pending |
-| REL-O02 | 12 组任务 manifest + 成功/失败双 Oracle + 模式披露 | pending |
-| REL-O03 | session/turn/goal/operation/correlation 关联与跨会话负例 | pending |
-| REL-O04 | cancel、late、lock loss、timeout、disconnect 故障矩阵 | pending |
-| REL-O05 | 诊断报告阶段/缺失证据/重试资格 + secrets/owner/bytes 负例 | pending |
-| REL-O06 | offline/live dispatch/browser/live services 覆盖矩阵 | pending |
-| REL-O07 | 4 组受控恢复对照及权限、动作、终态 | pending |
-| REL-O08 | 压力场景的 wall/CPU/RSS/UTF-8 bytes/events/artifact bytes | pending |
-| REL-O09 | 两个热点的 before/after 或负结果实验记录 | pending |
-| REL-O10 | 数值、单位、地理范围、会话归属既有回归不降级 | pending |
-| REL-O11 | 原 ratchet/store 保留；阈值差异审计；not_evaluated 非 pass | pending |
-| REL-O12 | 关键命令双跑 + 独立 Review 证据 | pending |
-| REL-O13 | 干净 worktree 可复制命令、分层车道与资源上限文档 | pending |
+| REL-O01 | 完成声明逐级取证；缺 renderer 观察必须 `not_evaluated`/非完成 | 本地通过；缺观察/产物/上下文均拒绝完成 |
+| REL-O02 | 12 组任务 manifest + 成功/失败双 Oracle + 模式披露 | 本地通过；10 组双侧 + 2 focused，30/30 dispatch |
+| REL-O03 | session/turn/goal/operation/correlation 关联与跨会话负例 | 本地通过；身份污染硬失败 |
+| REL-O04 | cancel、late、lock loss、timeout、disconnect 故障矩阵 | 本地通过；20 项跨边界 + 89 项既有回归 |
+| REL-O05 | 诊断报告阶段/缺失证据/重试资格 + secrets/owner/bytes 负例 | 本地通过；owner scope、脱敏和 UTF-8 上限 |
+| REL-O06 | offline/live dispatch/browser/live services 覆盖矩阵 | 本地通过并披露未验证；不把 mock 当生产 |
+| REL-O07 | 4 组受控恢复对照及权限、动作、终态 | 本地通过；恢复域 199 项 |
+| REL-O08 | 压力场景的 wall/CPU/RSS/UTF-8 bytes/events/artifact bytes | 140 场景有界；未测维度 `not_evaluated` |
+| REL-O09 | 两个热点的 before/after 或负结果实验记录 | resume 1.77×；UTF-8 修正不改善性能 |
+| REL-O10 | 数值、单位、地理范围、会话归属既有回归不降级 | focused 255 项通过；无阈值降级 |
+| REL-O11 | 原 ratchet/store 保留；阈值差异审计；not_evaluated 非 pass | 新指标 record-only，旧 baseline 不动 |
+| REL-O12 | 关键命令双跑 + 独立 Review 证据 | 270 项连续两次通过；独立二次复审通过 |
+| REL-O13 | 干净 worktree 可复制命令、分层车道与资源上限文档 | 本地指南与原始报告已交付 |
 
 ## 验证纪律
 
