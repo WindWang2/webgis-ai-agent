@@ -113,14 +113,30 @@ def test_history_bounded_entries():
 
 
 def test_history_truncated_disclosure():
+    """SW-02/#2004：史代 ids 与 IR 摄入同界（≤50）；>50 才截断披露。
+
+    12 个 id 在新界内完整保留（旧行为静默截到 8 是 #2004 断点）。
+    """
     raw_ids = [f"sch-{i}" for i in range(1, 13)]
     events = [_ev(1, "feature_selected", {
         "layer_id": "schools", "dataset_ref": "ref:geojson-aaa",
         "selected_ids": raw_ids,
     })]
     history = project_selection_history(events)
-    assert history[0]["truncated"] is True  # IR payload ≤8 上行的截断披露
-    assert len(history[0]["feature_ids"]) == 8
+    assert history[0]["truncated"] is False
+    assert history[0]["feature_ids"] == raw_ids
+    assert history[0]["matched_count"] == 12
+
+    overflow_ids = [f"sch-{i}" for i in range(1, 53)]  # 52 > 50
+    events = [_ev(2, "feature_selected", {
+        "layer_id": "schools", "dataset_ref": "ref:geojson-aaa",
+        "selected_ids": overflow_ids, "matched_count": 52, "ids_truncated": True,
+    })]
+    history = project_selection_history(events)
+    assert history[0]["truncated"] is True
+    assert len(history[0]["feature_ids"]) == 50
+    assert history[0]["matched_count"] == 52
+    assert history[0]["ids_truncated"] is True
 
 
 def test_review_table_clear_closes_current_epoch():

@@ -431,7 +431,10 @@ async def test_commit_presentation_only_receipt_is_invertible():
     assert receipt["invertible"] is True
 
 
-async def test_commit_mixed_kinds_receipt_not_invertible():
+async def test_commit_mixed_kinds_receipt_invertible_with_numeric_before():
+    """SW-04：presentation + symbol（before 数值在场）现在**可逆**
+    （undo 反演经 patch_layer_style 用户通道）；不可逆的是
+    before 缺值（无从恢复"原缺失"语义）与视图/组件/删除族。"""
     sid = f"mopt-{uuid.uuid4().hex[:10]}"
     await _seed(sid)
     receipt = await commit_map_operation(sid, MapOperationRequest(
@@ -444,7 +447,40 @@ async def test_commit_mixed_kinds_receipt_not_invertible():
              "symbol_value": 8},
         ],
     ))
-    assert receipt["invertible"] is False  # symbol 族不在可逆白名单
+    assert receipt["status"] == "committed"
+    # schools 种子层 circle-radius=4（数值 before）→ 整笔可反演。
+    assert receipt["invertible"] is True
+
+
+async def test_symbol_without_numeric_before_not_invertible():
+    """before 缺值（层无该 paint 键）→ 不虚称可逆：撤销无法恢复"原本缺失"。"""
+    sid = f"mopt-{uuid.uuid4().hex[:10]}"
+    await _seed(sid)
+    receipt = await commit_map_operation(sid, MapOperationRequest(
+        operation_id=mint_operation_id(), mode="commit",
+        effects=[
+            # schools（circle）没有 text-size —— label_size 的 before 为 None。
+            {"kind": "set_layer_symbol", "target_kind": "layer_ref",
+             "target": "成都小学", "symbol_property": "label_size",
+             "symbol_value": 14},
+        ],
+    ))
+    assert receipt["status"] == "committed"
+    assert receipt["invertible"] is False
+
+
+async def test_paint_only_receipt_is_invertible():
+    sid = f"mopt-{uuid.uuid4().hex[:10]}"
+    await _seed(sid)
+    receipt = await commit_map_operation(sid, MapOperationRequest(
+        operation_id=mint_operation_id(), mode="commit",
+        effects=[
+            {"kind": "set_layer_paint", "target_kind": "layer_ref",
+             "target": "人口热力图", "paint": {"heatmap-opacity": 0.3}},
+        ],
+    ))
+    assert receipt["status"] == "committed"
+    assert receipt["invertible"] is True  # 种子 heatmap-opacity=0.8 数值 before 在场
 
 
 async def test_failed_receipt_not_invertible():

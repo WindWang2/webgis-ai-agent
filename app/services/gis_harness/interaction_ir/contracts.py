@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, Tuple
 
@@ -107,9 +108,13 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     # ── 观察型：要素选择/取消（有限载荷：引用 + 字段名 + 几何摘要）──────
     # /goal 03 additive：selected_ids（多选集，normalize 的 list 面纪律
     # ≤8 标量元素）—— 框选/多选对 Agent 可见；单选时缺席（向后兼容）。
+    # SW-02（#2004）additive：matched_count（真实命中数，前端 selection-store
+    # 同源披露）+ ids_truncated（服务端派生，客户端申报不可信）—— 框选 >8
+    # 要素不再静默截断（selected_ids 专属上限 50，三方对齐：前端
+    # selection-store / analysis_scope.MAX_SCOPE_FEATURE_IDS）。
     _k(
         "feature_selected",
-        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field"),
+        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field", "matched_count", "ids_truncated", "bbox"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
     _k(
@@ -176,7 +181,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     #    publishSelection(source:'table')——本质是要素定位，保留来源身份）──
     _k(
         "table_selection_changed",
-        ("layer_id", "feature_id", "selected_ids", "dataset_ref", "action", "id_field"),
+        ("layer_id", "feature_id", "selected_ids", "dataset_ref", "action", "id_field", "matched_count", "ids_truncated"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
     # ── mutation 链接型：时间窗 settle（ADR-0285 D2；钩子 temporal
@@ -210,12 +215,37 @@ MAX_LEDGER_BYTES = 96 * 1024
 MAX_TRACKED_CLIENTS = 8
 #: 单条 payload 规范化 JSON 字节上限（与 observation.py 同纪律）。
 MAX_PAYLOAD_BYTES = 512
+#: SW-02（#2004）：selection kind 的载荷字节预算 —— 50×32 字符 id 集
+#: ≈1.9KB，512B 会把"截断"恶化成"整事件拒绝"（Agent 连样本都看不到）。
+#: 预算仍严格有界（4KB），且只对 :data:`WIDE_BUDGET_KINDS` 放宽。
+MAX_PAYLOAD_BYTES_SELECTION = 4096
+#: 携带要素 id 集的 kind（selected_ids 专属上限 + matched_count/ids_truncated
+#: 披露派生面）。
+SELECTION_ID_KINDS = frozenset({"feature_selected", "table_selection_changed"})
+#: 宽载荷预算适用面（id 集/类别集的有界大载荷 kind：ids 50×32、类别 20×32）。
+WIDE_BUDGET_KINDS = frozenset(SELECTION_ID_KINDS | {"chart_selection_changed"})
+#: selected_ids 元素上限（三方对齐：前端 selection-store MAX_SELECTED_IDS
+#: 与 gis_situation.analysis_scope.MAX_SCOPE_FEATURE_IDS —— 声称面/验证面
+#: /摄入面同一数字，跨面漂移由 manifest 闸锁定）。
+MAX_SELECTED_IDS_PAYLOAD = 50
+#: categories 元素上限（SW-02：与前端 selection-store selected_categories ≤20
+#: 对齐——图表类别上行不再退化为 ≤8 静默截断）。
+MAX_CATEGORIES_PAYLOAD = 20
+#: matched_count 合法域上限（框选命中数披露；超域丢弃该键，不猜默认）。
+MAX_MATCHED_COUNT = 10_000_000
 #: payload 字符串值长度上限。
 MAX_STR_VALUE_CHARS = 128
 #: payload 嵌套键数上限。
 _MAX_NESTED_KEYS = 8
 #: kind 字符串上限（防御性）。
 _MAX_KIND_CHARS = 48
+#: list 值元素数默认上限（通用纪律，保持不变）。
+_MAX_LIST_ITEMS = 8
+#: per-key list 上限覆写（selected_ids/categories 专属，其余键仍走默认 8）。
+_LIST_ITEM_CAPS: Dict[str, int] = {
+    "selected_ids": MAX_SELECTED_IDS_PAYLOAD,
+    "categories": MAX_CATEGORIES_PAYLOAD,
+}
 
 
 def spec_for(kind: str) -> KindSpec | None:
@@ -227,17 +257,45 @@ def normalize_payload(kind: str, payload: Any) -> Dict[str, Any] | None:
 
     与 observation.py 的差异：空 dict 只有在 kind 显式 ``allow_empty_payload``
     时才合法（信号型事件）；白名单内一律不含原始 feature properties。
+
+    SW-02（#2004）selection 纪律：``selected_ids`` 按
+    :data:`MAX_SELECTED_IDS_PAYLOAD` 上限裁剪并**由服务端派生**
+    ``ids_truncated``（客户端申报被覆写 —— 截断判定以服务端实际保留数为
+    准）；``matched_count`` 只接受有界整数。缺 ``selected_ids`` 键（单选/
+    旧事件）不派生截断标记，向后兼容。
     """
     if not isinstance(payload, dict):
         return None
     spec = INTERACTION_KINDS.get(str(kind)[:_MAX_KIND_CHARS])
     if spec is None:
         return None
+    is_selection_kind = kind in SELECTION_ID_KINDS
+    raw_ids = payload.get("selected_ids")
+    raw_id_count = len(raw_ids) if isinstance(raw_ids, list) else None
     out: Dict[str, Any] = {}
     for key in sorted(payload):
         if key not in spec.payload_keys:
             continue
+        if is_selection_kind and key == "ids_truncated":
+            continue  # 服务端派生键 —— 客户端申报一律不透传
         value = payload[key]
+        if key == "bbox":
+            # 复审 P3-1/R2 N-3：bbox 摄入即收敛为 4 元有限数值（宽进严出
+            # 对称——畸形 bbox 不进 ledger/投影；非 list 值直接丢键）。
+            if not isinstance(value, list):
+                continue
+            numbers = [
+                float(v) for v in value
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(float(v))
+            ]
+            out[key] = numbers if len(numbers) == 4 and len(value) == 4 else []
+            continue
+        if key == "matched_count" and is_selection_kind:
+            count = _as_bounded_int(value, MAX_MATCHED_COUNT)
+            if count is not None:
+                out[key] = count
+            continue
         if isinstance(value, dict):
             out[key] = {
                 str(k)[:32]: _clip(v) for k, v in sorted(value.items())[:_MAX_NESTED_KEYS]
@@ -245,15 +303,45 @@ def normalize_payload(kind: str, payload: Any) -> Dict[str, Any] | None:
         elif isinstance(value, list):
             # list 元素只接受标量（review P3-6：dict 元素不经嵌套归一，直接
             # 丢弃 —— 白名单内的值同样受控，不留旁缝）。
-            out[key] = [_clip(v) for v in value[:8] if not isinstance(v, dict)]
+            cap = _LIST_ITEM_CAPS.get(key, _MAX_LIST_ITEMS)
+            out[key] = [_clip(v) for v in value[:cap] if not isinstance(v, dict)]
         else:
             out[key] = _clip(value)
+    if is_selection_kind and "selected_ids" in out:
+        # 服务端权威派生（两条独立判据，满足其一即截断）：
+        # 1. 原始 id 数超上限（服务端裁掉了尾部 —— 显式 False 与缺席语义
+        #    不同：缺席=单选/旧事件兼容，在场=多选集有界披露）；
+        # 2. matched_count（真实命中数）大于实际携带数 —— 前端 selection-store
+        #    在上行前已按同界截断（50 ids + matched_count=80）时，携带集
+        #    本身就是样本。仅在 selected_ids 实际保留于载荷时派生
+        #    （防"只剩标记"的幽灵载荷）。
+        carried = out["selected_ids"]
+        matched_val = out.get("matched_count")
+        out["ids_truncated"] = (
+            (raw_id_count if isinstance(raw_id_count, int) else len(carried))
+            > MAX_SELECTED_IDS_PAYLOAD
+            or (isinstance(matched_val, int) and matched_val > len(carried))
+        )
     if not out and not spec.allow_empty_payload:
         return None
+    budget = MAX_PAYLOAD_BYTES_SELECTION if kind in WIDE_BUDGET_KINDS else MAX_PAYLOAD_BYTES
     blob = json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    if len(blob.encode("utf-8")) > MAX_PAYLOAD_BYTES:
+    if len(blob.encode("utf-8")) > budget:
         return None
     return out
+
+
+def _as_bounded_int(value: Any, upper: int) -> int | None:
+    """有界整数收敛：bool 排除、浮点取整、越界/非数值 → None（丢键不猜）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = int(value)
+    except (ValueError, OverflowError):
+        return None
+    if number < 0 or number > upper:
+        return None
+    return number
 
 
 def _clip(value: Any) -> Any:

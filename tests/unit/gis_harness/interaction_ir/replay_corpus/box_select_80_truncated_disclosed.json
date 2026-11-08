@@ -1,0 +1,61 @@
+{
+  "name": "box_select_80_truncated_disclosed",
+  "description": "SW-02 金标：框选 80 要素 → id 集按三方对齐上限 50 截断且服务端派生 ids_truncated=true、matched_count=80 全量披露 —— 截断可披露而非静默（消费方必须能对用户说『分析的是前 50/共 80』或改走 bbox 谓词）。",
+  "events": [
+    {
+      "event_id": "box80-disc-0001",
+      "client_instance_id": "tab-box80001",
+      "client_seq": 1,
+      "kind": "feature_selected",
+      "payload": {
+        "layer_id": "schools",
+        "dataset_ref": "ref:geojson-schools-cd",
+        "id_field": "osm_id",
+        "selected_ids": [
+          "sch-0001", "sch-0002", "sch-0003", "sch-0004", "sch-0005",
+          "sch-0006", "sch-0007", "sch-0008", "sch-0009", "sch-0010",
+          "sch-0011", "sch-0012", "sch-0013", "sch-0014", "sch-0015",
+          "sch-0016", "sch-0017", "sch-0018", "sch-0019", "sch-0020",
+          "sch-0021", "sch-0022", "sch-0023", "sch-0024", "sch-0025",
+          "sch-0026", "sch-0027", "sch-0028", "sch-0029", "sch-0030",
+          "sch-0031", "sch-0032", "sch-0033", "sch-0034", "sch-0035",
+          "sch-0036", "sch-0037", "sch-0038", "sch-0039", "sch-0040",
+          "sch-0041", "sch-0042", "sch-0043", "sch-0044", "sch-0045",
+          "sch-0046", "sch-0047", "sch-0048", "sch-0049", "sch-0050",
+          "sch-0051", "sch-0052", "sch-0053", "sch-0054", "sch-0055",
+          "sch-0056", "sch-0057", "sch-0058", "sch-0059", "sch-0060",
+          "sch-0061", "sch-0062", "sch-0063", "sch-0064", "sch-0065",
+          "sch-0066", "sch-0067", "sch-0068", "sch-0069", "sch-0070",
+          "sch-0071", "sch-0072", "sch-0073", "sch-0074", "sch-0075",
+          "sch-0076", "sch-0077", "sch-0078", "sch-0079", "sch-0080"
+        ],
+        "matched_count": 80,
+        "bbox": [104.02, 30.64, 104.1, 30.7]
+      }
+    }
+  ],
+  "expect": {
+    "verdicts": "all_accepted",
+    "state": {
+      "event_count": 1
+    },
+    "projection": {
+      "selection": {
+        "matched_count": 80,
+        "ids_truncated": true,
+        "selected_ids": [
+          "sch-0001", "sch-0002", "sch-0003", "sch-0004", "sch-0005",
+          "sch-0006", "sch-0007", "sch-0008", "sch-0009", "sch-0010",
+          "sch-0011", "sch-0012", "sch-0013", "sch-0014", "sch-0015",
+          "sch-0016", "sch-0017", "sch-0018", "sch-0019", "sch-0020",
+          "sch-0021", "sch-0022", "sch-0023", "sch-0024", "sch-0025",
+          "sch-0026", "sch-0027", "sch-0028", "sch-0029", "sch-0030",
+          "sch-0031", "sch-0032", "sch-0033", "sch-0034", "sch-0035",
+          "sch-0036", "sch-0037", "sch-0038", "sch-0039", "sch-0040",
+          "sch-0041", "sch-0042", "sch-0043", "sch-0044", "sch-0045",
+          "sch-0046", "sch-0047", "sch-0048", "sch-0049", "sch-0050"
+        ]
+      }
+    }
+  }
+}

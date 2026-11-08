@@ -7,9 +7,10 @@
  * - 回执来自 receipt-bus（后端命令 map_operation_receipt 投递），组件零
  *   fetch、零推导 —— 渲染服务端裁决的事实（per-effect before/after、
  *   user_wins/superseded/partial 如实呈现，不用 200 冒充成功）；
- * - 显示确认卡自水合：挂载/会话切换时 GET display-confirmation；auto
- *   模式永不显示（历史行为零变化）；MapSpec live generation 变化后
- *   debounce 复查（终验裁决随观察/turn 演进，非轮询）；
+ * - 显示确认卡自水合：挂载/会话切换时 GET display-confirmation；SW-09
+ *   起 auto 模式呈现被动终验收口行（"自动确认（未请求用户）"诚实披露，
+ *   不再静默）；MapSpec live generation 变化后 debounce 复查（终验裁决
+ *   随观察/turn 演进，非轮询）；
  * - 「地图已改变」≠「用户已看到/认可」：只有 owner 当前代次 ack 才把
  *   pending 翻成 confirmed（后端新鲜度门权威）。
  */
@@ -197,6 +198,37 @@ function ReceiptCard(props: {
   );
 }
 
+/**
+ * SW-09 终验收口披露行（被动、无交互）：四层终态中"渲染观察 + 用户确认"
+ * 两层的诚实呈现。auto 模式不再静默 —— 明确标注"自动确认（未请求用户）"，
+ * 「渲染已发生」绝不冒充「用户已认可」；required 模式在用户 ack 后呈现
+ * 确认态。无裁决时不虚报（暂无裁决）。工具执行/MapSpec 接受两层由
+ * ReceiptCard（status/revision/effects）承载 —— 四层各归其位。
+ */
+function FinalAcceptanceLine(props: { status: DisplayConfirmationStatus }) {
+  const { status } = props;
+  const t = useT();
+  // 复审 P1-1：required+pending（裁决在场、等待用户 ack）必须如实披露
+  // "等待用户确认"——该态与交互卡同屏（卡承载动作、行承载状态），
+  // 绝不能显示"自动确认"。
+  const line = !status.verdict_present
+    ? t('map.finalAck.acceptanceNoVerdict')
+    : status.pending
+      ? t('map.finalAck.acceptancePending', { seq: status.latest_observation_seq })
+      : status.confirmed && status.mode === 'required'
+        ? t('map.finalAck.acceptanceConfirmed', { seq: status.latest_observation_seq })
+        : t('map.finalAck.acceptanceAuto', { seq: status.latest_observation_seq });
+  return (
+    <p
+      data-testid="final-acceptance-line"
+      aria-live="polite"
+      className="pointer-events-auto w-80 rounded-md border border-edge-subtle bg-surface-raised/80 px-2.5 py-1.5 text-micro leading-relaxed text-ink-muted"
+    >
+      {line}
+    </p>
+  );
+}
+
 function DisplayConfirmationCard(props: {
   sessionId: string;
   ownerToken?: string | null;
@@ -298,8 +330,8 @@ export function MapHarnessCards(props: {
 
   // 显示确认水合：不抢首批渲染/观察窗口（map-panel.cartography-race 对
   // fetch 调用序有精确断言）—— 挂载后 5s 兜底一次 + MapSpec live
-  // generation 变化 debounce 2s 复查；auto 模式确认面恒空，已知 auto
-  // 即不再复查（env 在部署内恒定）。终验裁决随观察/turn 演进时
+  // generation 变化 debounce 2s 复查（SW-09：auto 模式同样复查 ——
+  // 终验收口行的代次/裁决需保持当前态）。终验裁决随观察/turn 演进时
   // live generation 必然前进，卡面随之刷新 —— 非轮询。
   useEffect(() => {
     if (!sessionId) return;
@@ -318,7 +350,6 @@ export function MapHarnessCards(props: {
       }
     };
     mountTimer = setTimeout(() => {
-      if (confirmStatusRef.current?.mode === 'auto') return;
       void hydrate();
       // 独立评审 D-4：跨刷新恢复 —— 拉服务端回执环回填 bus（刷新后
       // agent 操作历史重现；fetch 失败静默 —— 环是披露面不是正确性面）。
@@ -336,7 +367,8 @@ export function MapHarnessCards(props: {
     const unsubscribe = subscribeMapSpecLive(() => {
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
-        if (confirmStatusRef.current?.mode === 'auto') return;
+        // SW-09：auto 模式也复查 —— 终验收口行的代次/裁决需随观察演进
+        // 保持当前态（被动披露行显示陈旧代次 = 不诚实）。
         void hydrate();
       }, 2000);
     });
@@ -351,8 +383,14 @@ export function MapHarnessCards(props: {
   if (!sessionId) return null;
 
   const visibleReceipts = receipts.slice(0, 3);
+  // SW-09：确认状态一旦水合（任意模式）即呈现终验收口行 —— auto 披露
+  // "自动确认"；required+pending 披露"等待用户确认"（与交互卡同屏）；
+  // ack 后收口为"用户已确认"。
+  const showAcceptanceLine = confirmStatus !== null;
 
-  if (visibleReceipts.length === 0 && !confirmStatus?.pending) return null;
+  if (visibleReceipts.length === 0 && !confirmStatus?.pending && !showAcceptanceLine) {
+    return null;
+  }
 
   return (
     <div
@@ -366,6 +404,9 @@ export function MapHarnessCards(props: {
           status={confirmStatus}
           onAcked={setConfirmStatus}
         />
+      ) : null}
+      {showAcceptanceLine && confirmStatus ? (
+        <FinalAcceptanceLine status={confirmStatus} />
       ) : null}
       {visibleReceipts.map((receipt) => (
         <ReceiptCard

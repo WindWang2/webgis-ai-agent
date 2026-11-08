@@ -156,4 +156,79 @@ describe('MapHarnessCards', () => {
       vi.useRealTimers();
     }
   });
+
+  // ── SW-09：终验收口披露行（auto 不再静默；四层终态诚实分层）───────
+
+  it('discloses auto mode honestly via the passive acceptance line (SW-09)', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValue(fetchJson({
+        session_id: 's1', mode: 'auto', confirmed: true, pending: false,
+        required_render_seq: 0, latest_observation_seq: 12, verdict_present: true,
+      }));
+      render(<MapHarnessCards sessionId="s1" />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+      const line = screen.getByTestId('final-acceptance-line');
+      // 「自动确认」明确披露 —— 渲染已发生绝不冒充用户已认可。
+      expect(line.textContent).toContain('自动确认');
+      expect(line.textContent).toContain('12');
+      expect(screen.queryByTestId('display-confirmation-card')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows user-confirmed state on the acceptance line after required-mode ack', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValue(fetchJson({
+        session_id: 's1', mode: 'required', confirmed: true, pending: false,
+        required_render_seq: 7, latest_observation_seq: 7, verdict_present: true,
+      }));
+      render(<MapHarnessCards sessionId="s1" />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+      const line = screen.getByTestId('final-acceptance-line');
+      expect(line.textContent).toContain('用户已确认');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not fabricate a verdict when none exists (SW-09 honesty)', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValue(fetchJson({
+        session_id: 's1', mode: 'auto', confirmed: true, pending: false,
+        required_render_seq: 0, latest_observation_seq: 3, verdict_present: false,
+      }));
+      render(<MapHarnessCards sessionId="s1" />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+      const line = screen.getByTestId('final-acceptance-line');
+      expect(line.textContent).toContain('暂无裁决');
+      // 无裁决不冒充"已确认"。
+      expect(line.textContent).not.toContain('自动确认');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('discloses awaiting-user state under required+pending (review P1-1)', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValue(fetchJson({
+        session_id: 's1', mode: 'required', confirmed: false, pending: true,
+        required_render_seq: 7, latest_observation_seq: 7, verdict_present: true,
+      }));
+      render(<MapHarnessCards sessionId="s1" />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+      // 交互卡（动作）与披露行（状态）同屏：行必须说"等待用户确认"，
+      // 绝不能显示"自动确认"（required 模式下从未自动确认过）。
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+      const line = screen.getByTestId('final-acceptance-line');
+      expect(line.textContent).toContain('等待用户确认');
+      expect(line.textContent).not.toContain('自动确认');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

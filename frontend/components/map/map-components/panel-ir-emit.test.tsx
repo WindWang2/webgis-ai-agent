@@ -105,3 +105,44 @@ describe('chart-panel category click → IR emit', () => {
     expect(container).toBeTruthy();
   });
 });
+
+describe('chart-panel keyboard category select (SW-08)', () => {
+  it('exposes a keyboard-reachable select wired to the same selection chain', async () => {
+    const ctx = { spec: null, zoom: 10, centerLat: 30 } as never;
+    render(renderComponent(chartComponent(), ctx) as never);
+    const select = await waitFor(() => {
+      const el = document.querySelector('[data-testid="chart-category-keyboard-select"]') as HTMLSelectElement | null;
+      if (!el) throw new Error('keyboard select not rendered yet');
+      return el;
+    });
+    // 原生 select：Tab 可达 + 方向键/Enter 操作（与 recharts 点击同链）。
+    expect(select.tagName).toBe('SELECT');
+    const options = Array.from(select.options).map((o) => o.value);
+    expect(options).toContain('');
+    expect(options).toContain('primary');
+    expect(options).toContain('middle');
+
+    // 选择类别 → publishSelection + IR 上行（同点击链路）。
+    select.value = 'middle';
+    await act(async () => {
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(getSelection()?.source).toBe('chart');
+    expect(emitChart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        layerId: 'districts',
+        field: 'type',
+        categories: ['middle'],
+      }),
+    );
+
+    // 空值项 = 清除选择（联动与 IR 同刻清除）。
+    select.value = '';
+    await act(async () => {
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(emitChart).toHaveBeenCalledWith(
+      expect.objectContaining({ layerId: 'districts', action: 'clear' }),
+    );
+  });
+});
