@@ -14,3 +14,5 @@
 | 7 | M9a：ADR-0288（领号+watermark 288）+ docs/features/evidence-map-briefs.md + TEST_MATRIX + FEATURE_ACCEPTANCE | 文档落盘 | 通过 | commit 80d9014dc → M8 独立冷读 Review |
 | 8 | M8 审查（子代理 C，审查 SHA 80d9014dc）：P1×2（幂等键含墙钟——审查首跑实测复现 flaky；SVG 净化 8 载荷绕过）+ P2×4 + P3×7 → 全部清偿（含 heredoc 转义两处自伤 bug 修正） | 修复后 67 passed；幂等跨秒 ×5 稳定；审查者探针复跑 SVG/传播清零 | 通过 | commit 551902494 → 复审 |
 | 9 | 复审（同审查者新 HEAD 551902494 独立对抗复现 27+ 探针/API 级并发）：结论"可提交 PR"；残留 N1(P2 一行正则)+N2/N4(P3) 即时清偿，N3 记跟进 | 67 passed；N1/N2 探针清零；良性与 CAS 行为保真 | 通过 | commit 6239f0551 → M9b 终检+PR |
+| 10 | M9b 终检：master 无漂移（8eb8aa1）；关键验收 134 tests 连跑两遍全绿；前端 typecheck+i18n/story 64+j13 mock 复跑；push + PR #2021 创建 + 审查证据链评论 | PR #2021 在场（未合并） | 通过 | 完结 |
+| 完结 | G11 证据化地图简报：BRF-O01..O12 全覆盖（证据见 TEST_MATRIX/FEATURE_ACCEPTANCE）；独立 Review→Fix→Re-Review 双轮（复审结论"可提交 PR"）；9 commits | PR #2021（未 merge） | Oracle 满足：模型/编译器/编辑/预检/冻结/导出/分享/工具/UI/e2e 双模式/安全负例/文档全量在场且实跑通过 | 2026-11-09 |
