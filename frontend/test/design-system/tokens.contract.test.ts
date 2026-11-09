@@ -220,7 +220,7 @@ describe('V4 design tokens — Tailwind exposure', () => {
     const out = await postcss([
       tailwind({
         ...config,
-        content: [{ raw: '<div class="bg-surface-raised/90 text-status-warn border-edge-subtle/60 bg-surface-panel"></div>', extension: 'html' }],
+        content: [{ raw: '<div class="bg-surface-raised/90 text-status-warn border-edge-subtle/60 bg-surface-panel from-surface-panel to-surface-raised/80"></div>', extension: 'html' }],
         corePlugins: { preflight: false },
       }),
     ]).process('@tailwind utilities;', { from: undefined });
@@ -228,6 +228,10 @@ describe('V4 design tokens — Tailwind exposure', () => {
     expect(css).toContain('color-mix(in srgb, var(--surface-raised) 90%, transparent)');
     expect(css).toContain('color-mix(in srgb, var(--border-subtle) 60%, transparent)');
     expect(css).toContain('color: var(--warning)');
+    // Gradients call the colour fn with a *numeric* opacityValue (0) — that
+    // crashed the production build before the String() coercion.
+    expect(css).toContain('--tw-gradient-from: var(--surface-panel)');
+    expect(css).toContain('color-mix(in srgb, var(--surface-panel) 0%, transparent)');
     // No modifier → the bare var (Tailwind adds an inert --tw-bg-opacity: 1).
     expect(css).toMatch(/\.bg-surface-panel \{ (--tw-bg-opacity: 1; )?background-color: var\(--surface-panel\) \}/);
   });

@@ -318,7 +318,7 @@ export function SceneController({ getMap, sessionId }: { getMap?: () => MapViewS
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => setOpen((v) => !v)}
-        className={`map-chrome flex h-control-lg items-center gap-1 px-2 text-caption transition-colors ${
+        className={`map-chrome flex h-control-lg items-center gap-1 whitespace-nowrap px-2 text-caption transition-colors ${
           mode !== '2d'
             ? 'font-semibold text-status-accent'
             : 'text-ink-secondary hover:text-ink'

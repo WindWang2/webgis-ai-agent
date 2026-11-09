@@ -14,14 +14,18 @@ import typography from "@tailwindcss/typography";
  * output is the bare `var(--token)` — byte-identical to the previous string
  * colours — and with one it becomes a `color-mix()` toward transparent.
  */
-type ColorFn = ((opts: { opacityValue?: string }) => string) & { cssVar: string };
+// Tailwind passes strings for `/90` modifiers but numbers internally (e.g. the
+// gradient `transparentTo` helper calls with `opacityValue: 0`).
+type ColorFn = ((opts: { opacityValue?: string | number }) => string) & { cssVar: string };
 
 export function tokenColor(cssVar: string): ColorFn {
-  const fn = (({ opacityValue }: { opacityValue?: string } = {}) => {
-    if (opacityValue === undefined || opacityValue.startsWith("var(") || opacityValue === "1") {
+  const fn = (({ opacityValue }: { opacityValue?: string | number } = {}) => {
+    if (opacityValue === undefined || opacityValue === null) return `var(${cssVar})`;
+    const raw = String(opacityValue).trim();
+    if (raw.startsWith("var(") || raw === "1") {
       return `var(${cssVar})`;
     }
-    const pct = Math.round(Number(opacityValue) * 1000) / 10;
+    const pct = Math.round(Number(raw) * 1000) / 10;
     if (!Number.isFinite(pct)) return `var(${cssVar})`;
     return `color-mix(in srgb, var(${cssVar}) ${pct}%, transparent)`;
   }) as ColorFn;
