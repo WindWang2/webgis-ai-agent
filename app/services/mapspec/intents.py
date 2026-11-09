@@ -235,6 +235,19 @@ class RollbackIntent:
 
 
 @dataclass
+class UndoAgentCommitIntent:
+    """PR-D：用户撤销/重做一段 Agent 提交（``(base_revision, agent_revision]``）。
+
+    回滚到段首撤销点的提交前 checkpoint（redo：回滚到撤销时捕获的
+    checkpoint）。冲突判定在 handler 内、锁内完成（见 agent_undo.py）。
+    """
+
+    base_revision: int
+    agent_revision: int
+    direction: str = "undo"  # "undo" | "redo"
+
+
+@dataclass
 class RestoreStyleIntent:
     """Map Product 版本的样式态恢复（ADR-0236 style-only restore）。
 
@@ -436,6 +449,7 @@ MutationIntent = Union[
     SetLayoutIntent,
     CheckpointIntent,
     RollbackIntent,
+    UndoAgentCommitIntent,
     RestoreStyleIntent,
     SetBasemapIntent,
     SetTimeIntent,

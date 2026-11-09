@@ -26,6 +26,7 @@ from app.schemas.mapspec_mutation_schema import (  # noqa: F401 - 模块属性�
     SetTimeBody,
     SetViewBody,
     SetWorkbenchStateBody,
+    UndoAgentCommitBody,
     MutationApplyResponse,
     UserMapSpecMutationRequest,
     WorkbenchArtifactStatusResponse,

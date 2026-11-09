@@ -853,6 +853,19 @@ CASES = [
             {"class": "RollbackIntent", "fields": {"checkpoint_id": "no-such-ckpt"}}
         ],
     },
+    # ── UndoAgentCommit（PR-D）───────────────────────────────────────────────
+    {
+        "name": "undo_agent_commit_undo_redo_expired",
+        "seed": [_upsert("ly-a"), _upsert("ly-b")],
+        "actions": [
+            {"class": "UndoAgentCommitIntent", "origin": "user", "expected_revision": "prior",
+             "fields": {"base_revision": 1, "agent_revision": 2}},
+            {"class": "UndoAgentCommitIntent", "origin": "user", "expected_revision": "prior",
+             "fields": {"base_revision": 1, "agent_revision": 2, "direction": "redo"}},
+            {"class": "UndoAgentCommitIntent", "origin": "user", "expected_revision": "prior",
+             "fields": {"base_revision": 40, "agent_revision": 41}},
+        ],
+    },
     # ── RestoreStyle ─────────────────────────────────────────────────────────
     {
         "name": "restore_style_subset_skips_missing",
