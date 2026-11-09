@@ -1,7 +1,7 @@
 """Pi bridge 真实 LLM E2E — 3 条冒烟旅程（P6，WAYFINDER 票 1）。
 
 门控纪律：真实 LLM 成本 + 外部依赖 —— 必须 PI_REAL_E2E=1 且 LLM_API_KEY 为
-非占位值才运行；否则显式 skip（理由写明，绝不静默绿）。USE_NEW_AGENT=true
+非占位值才运行；否则显式 skip（理由写明，绝不静默绿）。PI_AUTOSTART=true
 （Pi bridge 路径）由 conftest 之外的本文件自行钉入。
 
 旅程：
@@ -15,9 +15,9 @@ import os
 
 import pytest
 
-#: conftest（tests/conftest.py）把 USE_NEW_AGENT 钉 false 以隔离单元面；
+#: conftest（tests/conftest.py）把 PI_AUTOSTART 钉 false 以隔离单元面；
 #: 本文件恢复 Pi bridge 生产路径 —— 必须在 app 装载前生效。
-os.environ["USE_NEW_AGENT"] = "true"
+os.environ["PI_AUTOSTART"] = "true"
 
 REAL_E2E_ARMED = os.getenv("PI_REAL_E2E") == "1"
 _llm_key = os.getenv("LLM_API_KEY", "")

@@ -146,7 +146,7 @@ class TestStartupEventAudit:
 
     模式取自 tests/test_runtime_chaos_lifecycle.py::_drive_lifespan_cycles
     （init_db / drain_background_tasks 打桩；conftest 已钉
-    USE_NEW_AGENT=false，不拉起 Node 子进程）。
+    PI_AUTOSTART=false，不拉起 Node 子进程）。
     """
 
     @staticmethod

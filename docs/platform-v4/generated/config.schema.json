@@ -640,6 +640,11 @@
       "title": "Overpass Api Url",
       "type": "string"
     },
+    "PI_AUTOSTART": {
+      "default": true,
+      "title": "Pi Autostart",
+      "type": "boolean"
+    },
     "PROJECT_ARTIFACT_CONTENT_DIR": {
       "default": "",
       "title": "Project Artifact Content Dir",
@@ -724,11 +729,6 @@
       "default": 900.0,
       "title": "Turn Total Timeout S",
       "type": "number"
-    },
-    "USE_NEW_AGENT": {
-      "default": true,
-      "title": "Use New Agent",
-      "type": "boolean"
     },
     "USE_REDIS": {
       "default": true,

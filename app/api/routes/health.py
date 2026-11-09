@@ -91,20 +91,20 @@ def _check_celery():
 
 
 def _live_agent_runtime() -> str:
-    """Pi if the bundled subprocess is up; ChatEngine otherwise.
+    """Pi if the bundled subprocess is up; otherwise ``unavailable``.
 
-    Fail-closed: an unreadable bridge state must not claim "pi" off the flag
-    alone — that is the hardcoded-badge lie #1032 kills. If the probe itself
-    errors, report ChatEngine (the safe fallback that serves when the bridge
-    cannot be verified)."""
+    Fail-closed: an unreadable bridge state must not claim "pi". There is no
+    ChatEngine dialogue fallback, so a down or unverifiable bridge is
+    reported as ``unavailable`` (not ``chatengine``).
+    """
     try:
         from app.api.routes.chat import _use_pi_bridge
         if _use_pi_bridge():
             return "pi"
-        return "chatengine"
+        return "unavailable"
     except Exception:
-        logger.warning("agent_runtime probe failed; reporting chatengine", exc_info=True)
-        return "chatengine"
+        logger.warning("agent_runtime probe failed; reporting unavailable", exc_info=True)
+        return "unavailable"
 
 
 def _pi_mode_facts() -> dict:
@@ -120,9 +120,9 @@ def _pi_mode_facts() -> dict:
     try:
         from app.services.chat.pi_compat import pi_vendor_identity
 
-        from app.api.routes.chat import USE_NEW_AGENT, pi_bridge, _use_pi_bridge
+        from app.api.routes.chat import pi_bridge, _use_pi_bridge
 
-        enabled = bool(USE_NEW_AGENT)
+        enabled = True  # 产品不再提供关闭 Pi 改走 ChatEngine 的开关
         bridge_present = pi_bridge is not None
         if bridge_present:
             alive = bool(_use_pi_bridge())
@@ -197,7 +197,7 @@ def _pi_workers_alive() -> Optional[str]:
 def _pi_vendor_summary() -> Optional[str]:
     """ADR-0282: which vendored Pi the bridge would run, e.g. "v1.5.0 (bundle)".
 
-    None = no built entry (agent_runtime would honestly report chatengine via
+    None = no built entry (agent_runtime would honestly report unavailable via
     the fail-closed badge anyway) or probe failure — never fabricate."""
     global _pi_vendor_last_check, _pi_vendor_last_result
     now = time.monotonic()

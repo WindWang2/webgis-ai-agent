@@ -30,11 +30,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-# The production turn path gates on USE_NEW_AGENT; the soak drives the real
+# The production turn path is Pi-only; the soak drives the real
 # chat-route helpers (availability + lazy respawn), so pin the flag on before
 # app settings load. Test conftest pins it false; this standalone script
 # always exercises the Pi path.
-os.environ.setdefault("USE_NEW_AGENT", "true")
+os.environ.setdefault("PI_AUTOSTART", "true")
 
 import app.agent_pi_bridge as bridge_mod  # noqa: E402
 from app.agent_pi_bridge import PiBridge, PiBridgePool  # noqa: E402

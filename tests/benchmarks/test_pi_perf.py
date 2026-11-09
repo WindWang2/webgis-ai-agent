@@ -9,7 +9,7 @@ Usage:
     python -m pytest tests/benchmarks/test_pi_perf.py -v --benchmark --benchmark-iterations=10
 
 Requires:
-    - USE_NEW_AGENT=true for Pi bridge tests
+    - Pi-only dialogue path (no ChatEngine fallback)
     - A configured LLM provider for real latency measurements
     - Without API key, tests will be skipped with a warning
 """

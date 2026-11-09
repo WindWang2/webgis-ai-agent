@@ -92,7 +92,7 @@ import uuid
 
 RUN = "jr" + uuid.uuid4().hex[:8]
 
-os.environ["USE_NEW_AGENT"] = "true"
+os.environ["PI_AUTOSTART"] = "true"
 
 STUB_JS = r"""
 import http from 'node:http';

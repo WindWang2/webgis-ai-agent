@@ -198,7 +198,7 @@ jobs:
           CHAOS_STACK: '1'
           CHAOS_REDIS_URL: redis://localhost:6399/0
           REDIS_URL: redis://localhost:6399/0
-          USE_NEW_AGENT: 'false'
+          PI_AUTOSTART: 'false'
           JWT_SECRET_KEY: chaos-ci-secret-key-32-chars
           ENV: development
           LLM_API_KEY: chaos-not-real
@@ -257,7 +257,7 @@ jobs:
       # scripted stub; everything behind it is the real backend.
       LLM_BASE_URL: http://localhost:8767/v1
       LLM_API_KEY: quality-e2e-stub-key
-      USE_NEW_AGENT: 'false'
+      PI_AUTOSTART: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -298,6 +298,10 @@ jobs:
           printf '%s\n' "$E2E_PASS" | python manage.py create-admin "$E2E_USER" e2e@example.org --password-stdin
       - name: Verify owned PostGIS fabric fixture
         run: python frontend/e2e/tools/seed-fabric-source.py
+      - name: Build vendored Pi (required — dialogue path is Pi-only)
+        run: |
+          git submodule update --init vendor/pi
+          bash scripts/build-vendor-pi.sh
       - name: Start backend (uvicorn, minimal config)
         run: |
           python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 > /tmp/backend.log 2>&1 &
@@ -346,6 +350,10 @@ jobs:
         env:
           CI: '1'
         run: pnpm exec playwright test
+      - name: Pi stub-LLM journeys (nightly, PI_JOURNEY_E2E)
+        env:
+          PI_JOURNEY_E2E: '1'
+        run: pytest tests/integration/test_pi_stub_llm_journeys.py -m heavy --no-cov -q
       - name: Dump service logs on failure
         if: failure()
         run: |

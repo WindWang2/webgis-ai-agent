@@ -70,6 +70,73 @@ export function analysisTurn(opts: {
   ].join('');
 }
 
+
+/** Agent 提交一份带可见层与图例的 MapSpec，并将 mutation_revision 从 0 推进到 `revision`。 */
+export function mapspecCommitTurn(opts: {
+  sessionId?: string;
+  taskId?: string;
+  revision?: number;
+  layerName?: string;
+} = {}): string {
+  const sessionId = opts.sessionId ?? 's-j13';
+  const taskId = opts.taskId ?? 't-j13';
+  const revision = opts.revision ?? 2;
+  const layerName = opts.layerName ?? '分析结果: 热点';
+  const legendSpec = {
+    type: 'graduated',
+    field: 'gi_bin',
+    breaks: [0, 3, 6, 9],
+    palette: 'RdYlBu',
+    palette_colors: ['#2166ac', '#f7f7f7', '#b2182b'],
+  };
+  const mapspec = {
+    version: '1.1',
+    sources: {
+      'src-hotspot': {
+        type: 'geojson',
+        inlineData: { type: 'FeatureCollection', features: [] },
+      },
+    },
+    layers: [
+      {
+        id: 'ly-hotspot',
+        source: 'src-hotspot',
+        type: 'circle',
+        visible: true,
+        legend_spec: legendSpec,
+      },
+    ],
+    layout: {
+      components: [
+        { id: 'legend-main', type: 'legend', enabled: true },
+      ],
+    },
+  };
+  return [
+    sse('session', { session_id: sessionId }),
+    sse('task_start', { task_id: taskId, session_id: sessionId }),
+    sse('token', { content: '已根据分析结果更新地图。' }),
+    sse('step_result', {
+      task_id: taskId,
+      step_id: 'sr-j13',
+      tool: 'hotspot_analysis',
+      mutation_revision: revision,
+      mapspec,
+      result: {
+        success: true,
+        summary: '热点分析结果已写入 MapSpec。',
+        legend_spec: legendSpec,
+        runtime_patch: { visible: true, name: layerName },
+        mapspec,
+        mutation_revision: revision,
+      },
+    }),
+    sse('task_complete', { task_id: taskId, mutation_revision: revision, mapspec }),
+    'data: [DONE]\n\n',
+  ].join('');
+}
+
+
 /**
  * Long-running turn used by the cancel/retry journey: task_start only, the
  * stream never completes — the task sits "running" until the journey cancels.
