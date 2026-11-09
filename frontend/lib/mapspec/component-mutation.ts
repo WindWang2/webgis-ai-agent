@@ -45,6 +45,13 @@ export interface ComponentPatch {
   style?: Record<string, unknown>;
   options?: Record<string, unknown>;
   position?: string;
+  /**
+   * PR-C（Map Studio 主编辑面）：组件尚不存在时按类型新建（upsert）。
+   * 后端 PatchComponentBody.component_type + upsert=true → mutate_component
+   * 工厂默认值起步再应用本次字段；组件已存在时两者无副作用。
+   */
+  componentType?: string;
+  upsert?: boolean;
 }
 
 function supersededFromError(err: unknown): MutationResponse | null {
@@ -94,6 +101,8 @@ export async function commitComponentPatch(
             intent: 'patch_component',
             expected_revision: revision,
             component_id: componentId,
+            ...(patch.componentType ? { component_type: patch.componentType } : {}),
+            ...(patch.upsert ? { upsert: true } : {}),
             ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
             ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
             ...(patch.variant !== undefined ? { variant: patch.variant } : {}),

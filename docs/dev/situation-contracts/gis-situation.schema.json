@@ -211,6 +211,9 @@
         },
         "observed": {
           "$ref": "#/$defs/SitFact"
+        },
+        "layout": {
+          "$ref": "#/$defs/SitFact"
         }
       },
       "required": [

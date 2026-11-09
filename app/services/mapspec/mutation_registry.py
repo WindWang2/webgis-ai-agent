@@ -253,6 +253,7 @@ def _codec_patch_component(req: Any) -> MutationIntent:
         raise ValueError("patch_component requires at least one mutation field")
     return PatchComponentIntent(
         component_id=req.component_id,
+        component_type=getattr(req, "component_type", None),
         enabled=req.enabled,
         position=req.position,
         placement=req.placement.model_dump(exclude_none=True) if req.placement else None,
