@@ -418,12 +418,15 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       {/* Subtab navigation —— 完整 WAI-APG tablist（role/aria-selected/
           aria-controls/roving tabindex + 方向键与 Home/End 键盘导航）。
           V4 之前是裸 button，无任何 tab 语义，键盘用户只能 Tab 到按钮后回车。 */}
-      <div className="flex shrink-0 items-end justify-between border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2">
+      {/* 330px 默认宽下 5 个子页签 + 带文字的控制台按钮放不进一行，页签被挤成
+          逐字竖排（「空/间/目/录」）。tablist 改为可横向滚动的单行（全局
+          [role=tablist] 规则保证不换行），控制台入口收为图标按钮。 */}
+      <div className="flex shrink-0 items-end gap-1 border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2">
         <div
           role="tablist"
           aria-label={t('sidebar.ds.subtabsAria')}
           onKeyDown={onSubTabKeyDown}
-          className="flex gap-2"
+          className="flex min-w-0 flex-1 gap-2"
         >
           {renderSubTabButton('catalog', t('sidebar.ds.subtabCatalog', { count: catalogTotal }), Layers)}
           {renderSubTabButton('sources', t('sidebar.ds.subtabSources', { count: sources.length }), Database)}
@@ -436,11 +439,12 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         <button
           type="button"
           onClick={() => useQueryConsoleStore.getState().openWith()}
-          className="mb-1 inline-flex shrink-0 items-center gap-1 rounded-md border border-edge-subtle px-2 py-1 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          className="mb-1 inline-flex h-control-md w-control-md shrink-0 items-center justify-center rounded-md border border-edge-subtle text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
           data-testid="open-query-console"
+          title={t('sidebar.ds.queryConsole')}
         >
-          <TerminalSquare size={13} aria-hidden />
-          {t('sidebar.ds.queryConsole')}
+          <TerminalSquare size={14} aria-hidden />
+          <span className="sr-only">{t('sidebar.ds.queryConsole')}</span>
         </button>
       </div>
 

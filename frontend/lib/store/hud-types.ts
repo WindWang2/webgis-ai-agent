@@ -334,6 +334,10 @@ export interface HudState extends WorkbenchSlice {
   setFontSize: (size: number) => void;
   sidebarWidth: number;
   setSidebarWidth: (width: number) => void;
+  /** 面板「展开为宽视图」：数据密集页签（运维/驾驶舱/数据湖/结果表格）
+   *  临时加宽到视口约一半，不改写用户拖拽的 sidebarWidth。 */
+  panelExpanded: boolean;
+  setPanelExpanded: (expanded: boolean) => void;
 
   /* ─── v2 Feature Data ─── */
   opsLog: OpLogEntry[];
