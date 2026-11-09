@@ -42,7 +42,7 @@ pyogrio>=0.13.0
 # StringDtype（np.asarray 对 pandas 3 默认字符串扩展 dtype 的不兼容）与扩展平台
 # DEGRADED 连锁。落实 #1512 的真实意图：上界收紧到 <3.0（lock pandas==2.3.3
 # 已全量验证）。
-pandas>=2.2.2,<3.0
+pandas>=2.2.2,<4.0
 # pandas 2.x 的 tzfile 检测依赖 dateutil 2.x 的内部转换表。dateutil 3/4
 # 重写 tzfile 后，时区本地化会抛 AttributeError（pandas upstream #71459）。
 # 2026-11-04 实测 pandas 2.3.3 + dateutil 4.0.0 可复现；保持 <3，直到
