@@ -32,4 +32,3 @@ The P1 fix's collection-time upper bound (`index <= len(out)` after removals) mi
 - `_artifact_metadata` fix verified; commit_plan metadata read_only mirror verified with correct FeatureEditBlocked passthrough; promote non-dict guard = typed INVALID_FEATURES.
 - Full suite 123 passed (reviewer reproduced).
 - Remaining known limitations = accepted P3s (m²→deg² lon-only approx, per-op MAX_CREATED naming, MVT edit gating, Multi* hit-testing) — none blocking. Verdict: "Ship it."
-
