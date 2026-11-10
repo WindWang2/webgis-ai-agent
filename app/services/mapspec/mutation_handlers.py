@@ -261,6 +261,158 @@ async def _handle_patchlayerstyle(ctx: MutationContext) -> HandlerOut:
     return MutationPlan(mapspec=mapspec, auto_checkpoint=True)
 
 
+async def _handle_patchlayerlabelauthoring(ctx: MutationContext) -> HandlerOut:
+    """PatchLayerLabelAuthoringIntent 分支体（G16，v2.1）。
+
+    原子语义：任一 op 被拒 → 整笔 is_error（per-op findings + correction
+    hint），绝不部分写入。身份核验：inline 源在场时逐目标复核（找不到
+    → feature_not_found；裸数据集无 id → feature_identity_missing）；
+    ref 源未水合 → 放行待消费侧复核（消费侧才是权威判定点）。
+    origin/sourceRevision 由本路径盖章（merge 语义已阻断 patch 覆写）。
+    """
+    from app.lib.cartography import label_authoring as _la
+
+    origin = ctx.origin
+    loaded = ctx.loaded
+    intent = ctx.intent
+
+    mapspec = {**loaded} if loaded else {}
+    mapspec["layers"] = list(loaded.get("layers", []) if loaded else [])
+
+    target_layer = None
+    for layer in mapspec["layers"]:
+        if isinstance(layer, dict) and layer.get("id") == intent.layer_id:
+            target_layer = layer
+            break
+    if target_layer is None:
+        return MapSpecResult(
+            is_error=True,
+            origin=origin,
+            error_msg=f"Layer {intent.layer_id} not found.",
+            correction_hint="Re-read MapSpec and author labels of an existing layer id.",
+        )
+    label_cfg = target_layer.get("label")
+    if not isinstance(label_cfg, dict) or not label_cfg.get("field"):
+        return MapSpecResult(
+            is_error=True,
+            origin=origin,
+            error_msg=f"Layer {intent.layer_id} has no label config.",
+            correction_hint=(
+                "Label authoring requires layer.label.field — "
+                "enable labels for the layer first."
+            ),
+        )
+
+    # 身份核验数据：inline 源特征在场才复核（ref 源 → None，消费侧权威）。
+    known_features = None
+    sources = mapspec.get("sources") if isinstance(mapspec.get("sources"), dict) else {}
+    src = sources.get(target_layer.get("source"))
+    if isinstance(src, dict):
+        data = src.get("inlineData")
+        if isinstance(data, dict):
+            feats = data.get("features")
+            if isinstance(feats, list) and feats:
+                has_any_identity = any(
+                    _la.resolve_feature_identity(f)[0] is not None for f in feats[:50]
+                )
+                if not has_any_identity:
+                    return MapSpecResult(
+                        is_error=True,
+                        origin=origin,
+                        error_msg=(
+                            "Source has no reliable feature identity "
+                            "(no id fields) — refusing persistent label "
+                            "overrides."
+                        ),
+                        correction_hint=(
+                            "Materialize stable feature ids first "
+                            "(feature editing materialization), then author "
+                            "labels."
+                        ),
+                    )
+                known_features = feats
+
+    current = []
+    authoring = label_cfg.get("authoring")
+    if isinstance(authoring, dict) and isinstance(authoring.get("overrides"), list):
+        current = [dict(o) for o in authoring["overrides"] if isinstance(o, dict)]
+
+    # labels_config-only（ops 空）：跳过 ops 预览，仅打配置补丁。
+    if not intent.ops:
+        preview = None
+    else:
+        preview = _la.preview_authoring_ops(
+            current, intent.ops, layer_id=intent.layer_id,
+            known_features=known_features)
+    rejected = [r for r in (preview.reports if preview else [])
+                if r.action == "rejected"]
+    # 拒绝 = 整笔失败；全部 noop（reset 空条目）= 合法无变更提交；
+    # preview.findings = 形状级早退（超限）同样整笔失败。
+    if rejected or (preview is not None and preview.findings):
+        return MapSpecResult(
+            is_error=True,
+            origin=origin,
+            error_msg="Label authoring ops rejected: "
+                      + "; ".join(
+                          f"{r.feature_id}:{','.join(r.findings)}" for r in rejected
+                      )[:400],
+            correction_hint=(
+                "Fix rejected targets (feature_not_found = id not in "
+                "current source; text_too_long >120 code points; "
+                "offset_out_of_range >24em) and retry atomically."
+            ),
+        )
+
+    next_overrides = preview.next_overrides if preview else None
+    if next_overrides is not None:
+        # 溯源盖章：origin（user 手势 / agent 工具）+ 当前源 revision。
+        rev_now = None
+        if isinstance(src, dict):
+            rev_raw = src.get("content_revision")
+            if isinstance(rev_raw, (int, float)) and not isinstance(rev_raw, bool):
+                rev_now = float(rev_raw)
+        for ov in next_overrides:
+            if ov.get("origin") is None:
+                ov["origin"] = str(origin)
+            if rev_now is not None and ov.get("sourceRevision") is None:
+                ov["sourceRevision"] = rev_now
+        next_overrides = _la.sort_overrides_stable(next_overrides)
+
+    new_layers: List[Any] = []
+    for layer in mapspec["layers"]:
+        if layer is target_layer:
+            patched = dict(layer)
+            patched_label = dict(label_cfg)
+            if next_overrides is None:
+                # 无变更（全 noop reset）→ 保持原样。
+                pass
+            elif next_overrides:
+                patched_label["authoring"] = {"overrides": next_overrides}
+            else:
+                patched_label.pop("authoring", None)
+            patched["label"] = patched_label
+            new_layers.append(patched)
+        else:
+            new_layers.append(layer)
+    mapspec["layers"] = new_layers
+
+    # labels_config 补丁（G16 所有权键：obstaclePolicy/forbiddenZones）。
+    if intent.labels_config:
+        layout = dict(mapspec.get("layout") or {})
+        labels_c = dict(layout.get("labels") or {})
+        for key, value in intent.labels_config.items():
+            if value is None:
+                labels_c.pop(key, None)
+            else:
+                labels_c[key] = value
+        layout["labels"] = labels_c
+        mapspec["layout"] = layout
+
+    # 成功路径：applied 覆写直接可从返回 mapspec 对账（label.authoring
+    # 是权威态），不另造平行回执面。
+    return MutationPlan(mapspec=mapspec, auto_checkpoint=True)
+
+
 async def _handle_upsertsource(ctx: MutationContext) -> HandlerOut:
     """UpsertSourceIntent 分支体（逐字迁移，见模块 docstring 的适配清单）。"""
     origin = ctx.origin

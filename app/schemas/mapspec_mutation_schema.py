@@ -47,6 +47,20 @@ class PatchLayerStyleBody(ClientMutationIdMixin):
     paint: dict[str, Any] = Field(min_length=1)
 
 
+class PatchLayerLabelAuthoringBody(ClientMutationIdMixin):
+    """G16 要素级标注 authoring（UI 标签编辑手势与 Pi 工具共用）。
+
+    ops 原子（任一拒绝 → 整笔 400 + per-op findings）；labels_config
+    只收 obstaclePolicy/forbiddenZones（其余键 422）。
+    """
+
+    intent: Literal["patch_layer_label_authoring"]
+    expected_revision: int = Field(ge=0)
+    layer_id: str = Field(min_length=1, max_length=200)
+    ops: List[Dict[str, Any]] = Field(default_factory=list, max_length=200)
+    labels_config: Optional[Dict[str, Any]] = None
+
+
 class PatchComponentBody(ClientMutationIdMixin):
     """组件局部突变（UI 拖拽/缩放/折叠收尾提交）。
 
@@ -224,6 +238,7 @@ UserMapSpecMutationRequest = Annotated[
     Union[
         PatchLayerPresentationBody,
         PatchLayerStyleBody,
+        PatchLayerLabelAuthoringBody,
         PatchComponentBody,
         SetViewBody,
         SetSceneBody,
