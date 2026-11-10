@@ -8,7 +8,7 @@ This test verifies:
 2. PiBridge correctly maps Pi events to SSE format
 3. Tool execution flow (tool_call -> step_start -> step_result)
 4. Error handling (PiRpcError -> HTTP 502)
-5. Feature flag gating (USE_NEW_AGENT=true/false)
+5. Pi availability gating (live bridge vs fail-closed)
 """
 import asyncio
 import json
@@ -207,30 +207,19 @@ class TestPiBridgeE2EScenarios:
         assert len(reasoning_tokens) >= 1
 
 
-class TestFeatureFlag:
-    """Test USE_NEW_AGENT feature flag behavior."""
+class TestPiAvailability:
+    """_use_pi_bridge depends only on live workers; no product off-switch."""
 
     def test_use_pi_bridge_helper(self):
-        """_use_pi_bridge() returns correct value based on env and bridge state."""
-        from app.api.routes.chat import _use_pi_bridge, USE_NEW_AGENT, pi_bridge
+        """_use_pi_bridge() returns correct value based on bridge liveness."""
+        from app.api.routes.chat import _use_pi_bridge, pi_bridge
+        import app.api.routes.chat as chat_mod
 
-        original_flag = USE_NEW_AGENT
         original_bridge = pi_bridge
-
         try:
-            # Test: flag off -> False regardless of bridge
-            import app.api.routes.chat as chat_mod
-            chat_mod.USE_NEW_AGENT = False
-            chat_mod.pi_bridge = MagicMock()
-            assert _use_pi_bridge() is False
-
-            # Test: flag on, no bridge -> False
-            chat_mod.USE_NEW_AGENT = True
             chat_mod.pi_bridge = None
             assert _use_pi_bridge() is False
 
-            # Test: flag on, bridge set, subprocess alive -> True
-            chat_mod.USE_NEW_AGENT = True
             alive_bridge = MagicMock()
             alive_bridge._process_died = False
             # C-F15：_use_pi_bridge 会调用 is_alive() 探活；MagicMock 的
@@ -239,12 +228,11 @@ class TestFeatureFlag:
             chat_mod.pi_bridge = alive_bridge
             assert _use_pi_bridge() is True
 
-            # C-F15: flag on, bridge set but subprocess died -> False (legacy fallback)
+            # C-F15: bridge set but subprocess died -> False (fail-closed, no ChatEngine)
             dead_bridge = MagicMock()
             dead_bridge._process_died = True
             dead_bridge.is_alive.return_value = False
             chat_mod.pi_bridge = dead_bridge
             assert _use_pi_bridge() is False
         finally:
-            chat_mod.USE_NEW_AGENT = original_flag
             chat_mod.pi_bridge = original_bridge

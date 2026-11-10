@@ -106,7 +106,6 @@ def _fresh_stream_state(monkeypatch):
 @pytest.fixture
 def _pi_path(monkeypatch):
     def _install(bridge) -> None:
-        monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
         monkeypatch.setattr(chat_route, "pi_bridge", bridge)
 
     return _install

@@ -1,4 +1,7 @@
-"""Pi vs ChatEngine benchmark harness (quality-e2e-v9, ADR-0146 P6).
+"""RETIRED as a product comparison: dialogue is Pi-only.
+ChatEngine arm below is historical; PI_AUTOSTART=false no longer serves /chat.
+
+Pi vs ChatEngine benchmark harness (quality-e2e-v9, ADR-0146 P6).
 
 WAYFINDER ticket: "性能基准：对比 Pi vs ChatEngine".
 

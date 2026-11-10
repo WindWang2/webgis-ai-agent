@@ -459,21 +459,21 @@ CHECKS = [
 
 
 def _runtime_mode_block() -> tuple[str, str]:
-    """PI-06（ADR-0286 D3）：与运行时同词表的三态判定（doctor 视角）。
+    """PI-06（ADR-0286 D3）：与运行时同词表的判定（doctor 视角）。
 
     doctor 是进程外 CLI，无法观测后端桥进程活性 —— 以「本 checkout 能否
-    承载真 Pi」的事实代理：USE_NEW_AGENT 开且 entry 已构建 → native 候选；
-    否则 fallback/unavailable。分类逻辑与 /health 共用
+    承载真 Pi」的事实代理：PI_AUTOSTART 未关且 entry 已构建 → native 候选；
+    否则 unavailable。分类逻辑与 /health 共用
     ``pi_compat.classify_runtime_mode`` 单一定义点（词表不漂移）。
     """
     from app.services.chat.pi_compat import classify_runtime_mode, pi_vendor_identity
 
-    use_new_agent = os.getenv("USE_NEW_AGENT", "0") == "1"
+    autostart = os.getenv("PI_AUTOSTART", "true").lower() not in {"0", "false", "no"}
     ident = pi_vendor_identity()
     return classify_runtime_mode(
-        enabled=use_new_agent,
+        enabled=True,
         bridge_present=True,  # doctor 视角：宿主代码路径完整在场
-        alive=use_new_agent and ident.entry_built,
+        alive=autostart and ident.entry_built,
         entry_built=ident.entry_built,
     )
 

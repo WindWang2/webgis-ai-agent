@@ -382,14 +382,14 @@ async def lifespan(app: FastAPI):
     chat.engine = chat_engine
 
     # 仓内 vendor/pi：API 启动即拉起 bundled RPC 子进程（不是用户全局 pi CLI）。
-    from app.agent_pi_bridge import USE_NEW_AGENT, get_pi_bridge
-    if USE_NEW_AGENT:
+    # 启动失败或测试夹具关闭 PI_AUTOSTART 时不回退 ChatEngine，/chat fail-closed。
+    from app.agent_pi_bridge import PI_AUTOSTART, get_pi_bridge
+    if PI_AUTOSTART:
         # ADR-0282：启动即披露实际运行的 Pi 身份（pin/describe/入口形态/node
         # 版本/协议下限）。只观测不阻断 —— spawn 自身的 fail-closed 行为不变。
         from app.services.chat.pi_compat import log_pi_vendor_identity
         log_pi_vendor_identity()
         try:
-            from app.agent_pi_bridge import get_pi_bridge
             # 审计 AGENT-03：指向 .mjs 文件（Pi extension loader 需要可执行 JS，
             # 不是 .ts）。.mjs 是 ESM 格式，Node 原生支持无需编译。
             extension_path = str(Path(__file__).parent.parent / "app" / "extensions" / "webgis-tools" / "index.mjs")
@@ -398,11 +398,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(
                 f"[lifespan] bundled vendor/pi failed to start: {e}; "
-                "falling back to ChatEngine"
+                "chat path is fail-closed (no ChatEngine fallback)"
             )
             chat.pi_bridge = None
     else:
-        logger.info("[lifespan] USE_NEW_AGENT=false — ChatEngine path (bundled Pi not started)")
+        logger.info(
+            "[lifespan] PI_AUTOSTART=false — bundled Pi not started "
+            "(chat fail-closed; ChatEngine is not a dialogue fallback)"
+        )
         chat.pi_bridge = None
 
     # 审计 S46：cleanup_idle_sessions 之前是死代码（定义在 session_data_manager
@@ -548,12 +551,11 @@ async def lifespan(app: FastAPI):
 
     # 审计 BUG-03/AGENT-04：Pi bridge subprocess 之前从未在 shutdown 时关闭
     # → 每次重启泄漏一个 node 进程 + reader task。现在显式关闭。
-    if USE_NEW_AGENT:
-        try:
-            from app.agent_pi_bridge import shutdown_pi_bridge
-            await shutdown_pi_bridge()
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[lifespan] Pi bridge shutdown failed: {e}")
+    try:
+        from app.agent_pi_bridge import shutdown_pi_bridge
+        await shutdown_pi_bridge()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[lifespan] Pi bridge shutdown failed: {e}")
 
     # F11：之前只 dispose 同步 Engine，async 池仍绑定在已关闭的 event loop 上，
     # 跨 lifespan 周期复用时第一次 async DB 调用直接 'Event loop is closed'。

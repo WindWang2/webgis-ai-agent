@@ -107,43 +107,6 @@ class _GatedBridge:
         yield sse_event("done", {"session_id": sid})
 
 
-class _GatedEngine:
-    """Legacy-path fake engine: counts stream invocations and (simulated)
-    side-effecting tool dispatches. With ``queue_second=True`` the second call
-    parks at entry (queued behind the per-session engine lock) until released.
-    """
-
-    def __init__(self, queue_second: bool = False) -> None:
-        self.stream_calls = 0
-        self.tool_dispatches = 0
-        self.second_entered = asyncio.Event()
-        self.second_gate = asyncio.Event()
-        self._queue_second = queue_second
-
-    async def chat_stream(
-        self,
-        message: str,
-        session_id: Optional[str] = None,
-        map_state: Optional[dict] = None,
-        skill_name: Optional[str] = None,
-        user_id: Optional[str] = None,
-        project_id: Optional[str] = None,  # #348: route passes project_id through
-    ) -> AsyncIterator[str]:
-        self.stream_calls += 1
-        if self._queue_second and self.stream_calls == 2:
-            self.second_entered.set()
-            await self.second_gate.wait()
-            return
-        sid = session_id or "s"
-        yield sse_event("task_start", {"task_id": "t", "session_id": sid})
-        yield sse_event("tool_call", {"tool": "search_poi", "call_id": "c1", "session_id": sid})
-        self.tool_dispatches += 1  # side effect: must never happen twice
-        yield sse_event(
-            "step_result",
-            {"tool": "search_poi", "call_id": "c1", "result": {"ok": True}, "session_id": sid},
-        )
-        yield sse_event("token", {"content": "answer", "session_id": sid})
-        yield sse_event("done", {"session_id": sid})
 
 
 def _block_events(chunk: str) -> list[str]:
@@ -214,7 +177,6 @@ def _pi_path(monkeypatch):
     """Force the Pi streaming path; caller installs the fake bridge."""
 
     def _install(bridge) -> None:
-        monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
         monkeypatch.setattr(chat_route, "pi_bridge", bridge)
 
     return _install
@@ -329,43 +291,35 @@ async def test_resume_turn_a_while_turn_b_queued_same_session(_pi_path, _pass_ow
 
 
 @pytest.mark.asyncio
-async def test_resume_never_reexecutes_completed_tool_calls(monkeypatch, _pass_ownership):
-    """F4(b), legacy path: turn A completed (its tool dispatched exactly once);
-    turn B is queued behind the engine lock. A reconnect with Last-Event-ID
-    must replay A's tail and NEVER re-dispatch the completed tool call."""
-    engine = _GatedEngine(queue_second=True)
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", False)
-    monkeypatch.setattr(chat_route, "pi_bridge", None)
-    monkeypatch.setattr(chat_route, "engine", engine)
+async def test_resume_never_reexecutes_completed_tool_calls(_pi_path, _pass_ownership):
+    """F4(b), Pi path: turn A completed (step_result / tool once);
+    turn B is queued behind the bridge lock. A reconnect with Last-Event-ID
+    must replay A's tail and NEVER start a third turn (no re-dispatch)."""
+    bridge = _GatedBridge(turns=2, park_before=frozenset({1}))
+    _pi_path(bridge)
+    sid = "s-resume-28d95a9e"
 
-    out_a, task_a = await _start_stream("run tool", session_id="s-resume-28d95a9e")
+    out_a, task_a = await _start_stream("run tool", session_id=sid)
+    await bridge.parked[0].wait()
+    bridge.gates[0].set()
     await task_a
     assert [_event_id(b) for b in out_a] == [1, 2, 3, 4, 5]
-    assert engine.stream_calls == 1
-    assert engine.tool_dispatches == 1
+    assert bridge.prompt_calls == 1
+    assert sum(1 for b in out_a if _event_type(b) == "step_result") == 1
 
     # Turn B queued (buffer registered, no events yet) — must not clobber A.
-    out_b, task_b = await _start_stream("queued work", session_id="s-resume-28d95a9e")
-    try:
-        await asyncio.wait_for(engine.second_entered.wait(), timeout=15)
-    except asyncio.TimeoutError:  # pragma: no cover - diagnostic fast-fail
-        engine.second_gate.set()
-        await asyncio.gather(task_b, return_exceptions=True)
-        raise AssertionError(
-            "turn B never entered the engine — per-session lock stalled by "
-            "earlier state on this session id (full-suite order pollution)"
-        )
-    assert engine.stream_calls == 2
+    out_b, task_b = await _start_stream("queued work", session_id=sid)
+    await bridge.entered[1].wait()
+    assert bridge.prompt_calls == 2
 
-    resumed, rtask = await _open_resume("run tool", last_event_id=2, session_id="s-resume-28d95a9e")
+    resumed, rtask = await _open_resume("run tool", last_event_id=2, session_id=sid)
     await rtask
     assert [_event_id(b) for b in resumed] == [3, 4, 5], resumed
     assert _event_type(resumed[-1]) == "done"
-    assert engine.stream_calls == 2, "resume is a read — no new turn"
-    assert engine.tool_dispatches == 1, "completed tool calls never re-execute"
+    assert bridge.prompt_calls == 2, "resume is a read — no new turn"
+    assert sum(1 for b in resumed if _event_type(b) == "step_result") == 1
 
-    # cleanup: release queued turn B
-    engine.second_gate.set()
+    bridge.gates[1].set()
     await task_b
 
 
@@ -691,8 +645,7 @@ async def test_clear_session_route_purges_resume_buffers(_pi_path, monkeypatch, 
     await rtask
     assert [_event_id(b) for b in resumed] == [2, 3, 4, 5], resumed
 
-    # DELETE the session (legacy path — engine reports success).
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", False)
+    # DELETE the session（clear_session 仍走 engine 的会话清理，不是对话回退）。
     monkeypatch.setattr(chat_route, "pi_bridge", None)
     monkeypatch.setattr(chat_route, "engine", _ClearableEngine())
     result = await chat_route.clear_session(
@@ -752,7 +705,6 @@ async def test_clear_session_aborts_deleted_session(monkeypatch):
         # ADR-0100 seam contract: entry.bridge is the owning worker.
         bridge = owner_bridge
 
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
     monkeypatch.setattr(chat_route, "pi_bridge", owner_bridge)
     monkeypatch.setattr(chat_route, "engine", _ClearableEngine())
     # Other sessions have no active-turn entry → no abort may leave this seam.

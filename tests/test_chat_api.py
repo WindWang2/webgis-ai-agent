@@ -61,10 +61,18 @@ async def test_chat_completions(client):
     mock_registry.tools = {}
 
     mock_engine = MagicMock()
-    mock_engine.chat = AsyncMock(return_value={"session_id": "test-sid", "content": "你好！"})
+    mock_engine._fire_and_forget = MagicMock()
+    mock_engine._generate_title = MagicMock()
+
+    mock_bridge = MagicMock()
+    mock_bridge._process_died = False
+    mock_bridge.is_alive.return_value = True
+    mock_bridge.respawn_if_dead = AsyncMock(return_value=True)
+    mock_bridge.prompt = AsyncMock(return_value={"sessionId": "test-sid", "content": "你好！"})
 
     with patch.object(_chat_mod, "registry", mock_registry), \
-         patch.object(_chat_mod, "engine", mock_engine):
+         patch.object(_chat_mod, "engine", mock_engine), \
+         patch.object(_chat_mod, "pi_bridge", mock_bridge):
         resp = await client.post("/api/chat/completions", json={"message": "你好"})
         assert resp.status_code == 200
         data = resp.json()
@@ -211,7 +219,6 @@ def _patch_turn_start_busy(monkeypatch):
 
     monkeypatch.setattr(_chat_mod, "_record_frontend_cartographic_observation", _busy)
     monkeypatch.setattr(_chat_mod, "_guard_body_session", _noop_guard)
-    monkeypatch.setattr(_chat_mod, "USE_NEW_AGENT", True)
     fake_bridge = MagicMock()
     fake_bridge._process_died = False
     fake_bridge.prompt = AsyncMock()

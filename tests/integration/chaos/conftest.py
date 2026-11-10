@@ -109,7 +109,7 @@ def chaos_api(chaos_stack, tmp_path):
     proc = _Process(
         [sys.executable, "-m", "uvicorn", "app.main:app",
          "--host", "127.0.0.1", "--port", "8021", "--log-level", "warning"],
-        env={"REDIS_URL": CHAOS_REDIS_URL, "USE_NEW_AGENT": "false",
+        env={"REDIS_URL": CHAOS_REDIS_URL, "PI_AUTOSTART": "false",
              "JWT_SECRET_KEY": "chaos-secret-key-32-chars-ok",
              "ENV": "development", "LLM_API_KEY": "chaos-not-real"},
         log=tmp_path / "api.log")

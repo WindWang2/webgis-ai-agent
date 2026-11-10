@@ -78,11 +78,10 @@ if TYPE_CHECKING:
     from app.services.tool_dispatch_service import ToolDispatchResult
     from app.services.chat.pi_rpc_client import PiRpcClient
 
-# Feature flag
-# 默认 True = 仓内 vendor/pi；False = ChatEngine 回退（测试 conftest 钉 false）。
 from app.core.config import settings as _app_settings
 
-USE_NEW_AGENT = bool(_app_settings.USE_NEW_AGENT)
+# 是否在进程启动时拉起 bundled Pi。测试夹具可关；关后无 ChatEngine 回退。
+PI_AUTOSTART = bool(_app_settings.PI_AUTOSTART)
 
 
 def _env_float_drain(name: str, default: float) -> float:

@@ -1,4 +1,8 @@
-"""#409: legacy engine token-stream heartbeat + lossless error flush.
+"""#409: ChatEngine token-stream heartbeat + lossless error flush.
+
+ChatEngine 仍由子 agent / execution_engine 使用，本文件保留其 token 循环的
+单元与引擎级测试。对话 HTTP 路由已改为 Pi-only：路由级断言改走 mock Pi
+桥，不再安装 ChatEngine 回退路径。
 
 Two defects on the legacy chat engine's LLM token loop:
 
@@ -72,12 +76,11 @@ def _fresh_resume_registry(monkeypatch):
 
 
 @pytest.fixture
-def _legacy_path(monkeypatch):
-    """Force the legacy engine path; install the engine behind get_engine()."""
+def _pi_path(monkeypatch):
+    """Install a live mock Pi bridge as the dialogue path."""
 
-    def _install(eng) -> None:
-        monkeypatch.setattr(chat_route, "USE_NEW_AGENT", False)
-        monkeypatch.setattr(chat_route, "get_engine", lambda: eng)
+    def _install(bridge) -> None:
+        monkeypatch.setattr(chat_route, "pi_bridge", bridge)
 
     return _install
 
@@ -199,23 +202,34 @@ async def test_engine_mid_stream_error_flushes_buffered_tokens(engine, monkeypat
     )
 
 
-# ─── route-level: tokens before error + replayable tail ──────────────────────
+# ─── route-level (Pi-only dialogue path) ─────────────────────────────────────
+
+
+class _LiveBridge:
+    _process_died = False
+
+    def is_alive(self) -> bool:
+        return True
+
+    async def respawn_if_dead(self) -> bool:
+        return True
 
 
 @pytest.mark.asyncio
-async def test_route_mid_stream_error_delivers_tokens_then_error(
-    _legacy_path, engine, monkeypatch
-):
-    """#409 end-to-end through the chat route (legacy path): the client sees
-    the 5 buffered tokens BEFORE the terminal error, and the resume buffer
-    recorded the same tail so a reconnect replays tokens + error."""
-    async def exploding_stream(*args, **kwargs):
-        for i in range(5):
-            yield ("token", {"content": f"t{i} "})
-        raise RuntimeError("provider exploded")
+async def test_route_mid_stream_error_delivers_tokens_then_error(_pi_path):
+    """#409 end-to-end through the chat route (Pi path): the client sees
+    the 5 tokens BEFORE the terminal error, and the resume buffer recorded
+    the same tail so a reconnect replays tokens + error."""
+    from app.utils.sse import sse_event
 
-    monkeypatch.setattr(engine, "_call_llm_stream", exploding_stream)
-    _legacy_path(engine)
+    class _Exploding(_LiveBridge):
+        async def stream_prompt(self, *args, **kwargs):
+            yield sse_event("task_start", {"task_id": "t-flush", "session_id": "s-route-flush"})
+            for i in range(5):
+                yield sse_event("token", {"content": f"t{i} "})
+            raise RuntimeError("provider exploded")
+
+    _pi_path(_Exploding())
 
     resp = await chat_route.chat_stream(
         chat_route.ChatRequest(message="hi", session_id="s-route-flush", map_state=None),
@@ -226,13 +240,10 @@ async def test_route_mid_stream_error_delivers_tokens_then_error(
         blocks.extend(_block_events(chunk))
 
     types = [_event_type(b) for b in blocks]
-    assert types[0] == "task_start"
     assert types.count("token") == 5, types
     assert types[-1] == "error", types
     assert types.index("error") == len(types) - 1, "the error must terminate the stream"
 
-    # The resume buffer holds the same tail (tokens + error terminal): a
-    # reconnect replays the partial answer, not a fabricated done.
     resumed_resp = await chat_route.chat_stream(
         chat_route.ChatRequest(message="hi", session_id="s-route-flush", map_state=None),
         _user={}, owner_token=None, db=None,
@@ -247,30 +258,18 @@ async def test_route_mid_stream_error_delivers_tokens_then_error(
 
 
 @pytest.mark.asyncio
-async def test_route_token_stall_emits_keepalive(_legacy_path, engine, monkeypatch):
-    """#409 route-level: the keep_alive event crosses the route boundary on
-    the legacy path (a stalled provider stream stays alive on the wire)."""
-    monkeypatch.setattr(ee_mod, "_LLM_TOKEN_KEEPALIVE_S", 0.02)
+async def test_route_without_pi_fails_closed(monkeypatch):
+    """对话路由在 Pi 不可用时 fail-closed（HTTP 503），不再回退 ChatEngine。"""
+    monkeypatch.setattr(chat_route, "pi_bridge", None)
+    from fastapi import HTTPException
 
-    async def stalled_stream(*args, **kwargs):
-        yield ("token", {"content": "a "})
-        await asyncio.sleep(0.06)
-        yield ("done", {"message": {"content": "a"}})
-
-    monkeypatch.setattr(engine, "_call_llm_stream", stalled_stream)
-    _legacy_path(engine)
-
-    resp = await chat_route.chat_stream(
-        chat_route.ChatRequest(message="hi", session_id="s-route-ka", map_state=None),
-        _user={}, owner_token=None, db=None,
-    )
-    blocks: list[str] = []
-    async for chunk in resp.body_iterator:
-        blocks.extend(_block_events(chunk))
-
-    types = [_event_type(b) for b in blocks]
-    assert "keep_alive" in types, types
-    assert types[-1] == "done"
+    with pytest.raises(HTTPException) as exc:
+        await chat_route.chat_stream(
+            chat_route.ChatRequest(message="hi", session_id="s-route-na", map_state=None),
+            _user={}, owner_token=None, db=None,
+        )
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Pi agent unavailable"
 
 
 @pytest.mark.asyncio

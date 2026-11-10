@@ -136,7 +136,7 @@ COPY --from=backend-builder /app ./
 COPY --from=backend-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-builder /usr/local/bin /usr/local/bin
 # Pi v1.5.0 RPC bundle（pi-builder 构建产物）—— 覆盖 COPY vendor/
-# 源码中不存在的 dist 产物，保证 USE_NEW_AGENT=true 时入口可执行。
+# 源码中不存在的 dist 产物，保证 Pi 入口可执行（对话路径不再回退 ChatEngine）。
 COPY --from=pi-builder /app/vendor/pi/packages/coding-agent/dist/bundle ./vendor/pi/packages/coding-agent/dist/bundle
 COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules/jiti
 

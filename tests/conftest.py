@@ -161,9 +161,9 @@ _ENV_BASELINE = {
         "CANCEL_WAIT_TIMEOUT_S": "5.0",
         "CHAT_MAX_ROUNDS": "60",
         "TURN_TOTAL_TIMEOUT_S": "900",
-        # 测试钉 false：生产/dev 默认 true（仓内 vendor/pi）。pytest 不得
-        # 每个 TestClient lifespan 拉起 Node 子进程。
-        "USE_NEW_AGENT": "false",
+        # 测试钉 PI_AUTOSTART=false：避免每个 TestClient lifespan 拉起 Node。
+        # 关后 /chat fail-closed，不是 ChatEngine 回退开关。
+        "PI_AUTOSTART": "false",
         # GIS Extension Platform（ADR-0243）——与 Settings 默认等价的
         # 安全值（默认全关；空白名单/黑名单/授权表；空目录）。
         "EXTENSIONS_ENABLED": "false",

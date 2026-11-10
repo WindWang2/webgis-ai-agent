@@ -104,8 +104,7 @@ async def test_ensure_pi_bridge_available_route_integration():
     mock_bridge.is_alive.return_value = False
     mock_bridge.respawn_if_dead = AsyncMock(return_value=True)
 
-    with patch.object(chat_mod, "USE_NEW_AGENT", True), \
-         patch.object(chat_mod, "pi_bridge", mock_bridge):
+    with patch.object(chat_mod, "pi_bridge", mock_bridge):
         available = await chat_mod._ensure_pi_bridge_available()
         assert available is True
         assert mock_bridge.respawn_if_dead.call_count == 1

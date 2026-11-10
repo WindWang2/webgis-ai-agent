@@ -50,7 +50,7 @@ class Harness:
         env.update({
             "DATABASE_URL": f"sqlite:///{self.tmpdir}/harness.db",
             "AUTH_DISABLED": "false",       # 生产姿态：401 语义真实生效
-            "USE_NEW_AGENT": "false",       # 不起 LLM 子进程（资源纪律）
+            "PI_AUTOSTART": "false",       # 不起 Node 子进程（资源纪律；chat fail-closed）
         })
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "app.main:app",

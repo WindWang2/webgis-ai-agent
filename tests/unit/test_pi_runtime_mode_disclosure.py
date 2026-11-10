@@ -1,4 +1,4 @@
-"""PI-06（ADR-0286 D3）：运行时三态披露 native / fallback / unavailable。
+"""PI-06（ADR-0286 D3）：运行时披露 native / unavailable（已移除 ChatEngine fallback）。
 
 覆盖 M0 审计缺口 G6：/health 只报 runtime 名不报降级原因；per-request 静默
 降级客户端不可见。单一定义点 ``pi_compat.classify_runtime_mode``，四个披露
@@ -25,16 +25,17 @@ import app.api.routes.chat  # noqa: F401  # stream_prompt 冷导入预热
 def test_mode_vocabulary_is_closed():
     from app.services.chat import pi_compat
 
-    assert pi_compat.RUNTIME_MODES == ("native", "fallback", "unavailable")
+    assert pi_compat.RUNTIME_MODES == ("native", "unavailable")
 
 
 def test_classify_unavailable_when_disabled():
     from app.services.chat.pi_compat import classify_runtime_mode
 
+    # 产品已无关闭开关；enabled=False 与桥未初始化同义（兼容旧调用方）。
     mode, reason = classify_runtime_mode(
         enabled=False, bridge_present=True, alive=True, entry_built=True,
     )
-    assert (mode, reason) == ("unavailable", "pi_disabled")
+    assert (mode, reason) == ("unavailable", "bridge_not_initialized")
 
 
 def test_classify_unavailable_when_no_bridge():
@@ -46,17 +47,17 @@ def test_classify_unavailable_when_no_bridge():
     assert (mode, reason) == ("unavailable", "bridge_not_initialized")
 
 
-def test_classify_fallback_reasons():
+def test_classify_unavailable_when_process_down():
     from app.services.chat.pi_compat import classify_runtime_mode
 
-    # vendor 未构建 → fallback（原因码：vendor_entry_unbuilt）
+    # vendor 未构建 → unavailable（原因码：vendor_entry_unbuilt）
     assert classify_runtime_mode(
         enabled=True, bridge_present=True, alive=False, entry_built=False,
-    ) == ("fallback", "vendor_entry_unbuilt")
-    # 已构建但进程不活 → fallback（原因码：pi_process_down）
+    ) == ("unavailable", "vendor_entry_unbuilt")
+    # 已构建但进程不活 → unavailable（原因码：pi_process_down）
     assert classify_runtime_mode(
         enabled=True, bridge_present=True, alive=False, entry_built=True,
-    ) == ("fallback", "pi_process_down")
+    ) == ("unavailable", "pi_process_down")
 
 
 def test_classify_native():
@@ -89,9 +90,9 @@ def test_health_reports_mode_and_reason(monkeypatch):
     resp = client.get("/api/v1/health")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["agent_runtime_mode"] == "fallback"
+    assert body["agent_runtime_mode"] == "unavailable"
     assert body["agent_runtime_reason"] == "pi_process_down"
-    # agent_runtime 名与 mode 一致（不冒充）：fallback 时不得报 "pi"
+    # agent_runtime 名与 mode 一致（不冒充）：unavailable 时不得报 "pi"
     assert body["agent_runtime"] != "pi"
 
 
@@ -257,7 +258,7 @@ def test_pi_doctor_reports_runtime_mode():
 
 def test_health_probe_failed_reason(monkeypatch):
     """nP2-1：探测自身失败 → probe_failed 原因码（有界词表内，不误报
-    pi_disabled）。"""
+    native）。"""
     client = _health_client(monkeypatch, dict(
         enabled=True, bridge_present=True, alive=True, entry_built=True,
         probe_ok=False,

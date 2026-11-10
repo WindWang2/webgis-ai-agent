@@ -734,7 +734,7 @@ class TestClearSessionRoute:
     """Test clear_session route delegates to the engine and does not require the Pi bridge.
 
     These behavioral tests replace the old source-text inspection
-    (``assert "if USE_NEW_AGENT" not in source``). The original concern was a
+    (``assert source no longer has a product engine flag``). The original concern was a
     dead/inline Pi conditional branch in clear_session; the route now uses the
     ``_use_pi_bridge()`` helper. We verify the observable behavior instead: with
     ``pi_bridge is None`` (default), clearing a session delegates to the engine
