@@ -101,13 +101,27 @@
 
 | 项目 | 结果 |
 |---|---|
-| 后端 G19 全量 | **81 passed**（44 + 23 + 8 + 6） |
-| 契约门禁 | **23 passed** |
+| 后端 G19 全量 | **82 passed**（44 + 24 + 8 + 6，35.12s） |
+| 契约门禁 | **23 passed**（29.42s） |
 | 前端 | **21 passed**（组件 8 + 错误解析 3 + i18n 10） |
 | 静态 | `ruff` All checks passed；`tsc` 新增 0 错误；ESLint 0 警告；i18n 143/143；`git diff --check` 通过 |
 
+## 第四轮复审结果
+
+独立 reviewer（全新冷读，未参与实现）核对 `9461505c9..2efb7fe03`，结论：
+
+- **4 项全部已修复 — 无阻塞，可以进入 PR**：
+  1. 排队取消 — `execute()` 取锁前 `_mark_active`、finally 先 `_unmark_active` 再按 `is_executing` 清理；`_execute_locked` 仅当 `_ACTIVE_EXEC<=1` 才 pop（通过）。
+  2. 升级失败降级 — 保留 `session_ref` 且 `degraded` 含 `PROJECT_SAVE_FAILED`（通过）。
+  3. 稳定键回滚 — `drop_published` 按 stable_key 删除、`_rollback_unpublished` 失败写 `STABLE_KEY_ROLLBACK_FAILED`（通过）。
+  4. 测试证据 — ring 失败用例真走 `_append_sync`、并发取消用例真跑两任务；组件两项真断言行为（通过）。
+- 3 条 P3 建议，**已全部落实**：
+  1. 幂等短路前先 `_check_cancel`，避免排队期间已取消却被判成功；
+  2. 升级失败降级回写台账（`append_receipt`），重开/查询也看到真实状态；
+  3. `drop_published` 同时撤除 ring 记录（否则 fallback 仍命中已撤销成果），并补成功删除路径用例；ring 失败用例增加「抛错前稳定键已存在」断言，防假通过。
+
 ## 状态
 
-- 已推送修复并发起**第四轮独立复审**（全新 reviewer，只核上述 3 个 P2 + 2 项证据修正，并扫描新引入问题）。
-- **不得由作者自行标记通过**：是否清零由 reviewer 判定。
-- 残余已知项（非阻塞，已在 PR 正文披露）：additive 三类登记不可回滚（仅撤销 ref/清单/稳定键）；真实 Pi 进程 + 渲染回执、浏览器端旅程、线上 CI 未运行（`blocked`/`not_evaluated`）。
+- **独立复审已通过（第四轮）**：4/4 已修复、无阻塞、可进入 PR；残余仅为已披露的非阻塞限制。
+- 残余已知项：additive 三类登记不可回滚（仅撤销稳定键/ref/项目清单）；真实 Pi 进程 + 渲染回执、浏览器端旅程、线上 CI 未运行（`blocked`/`not_evaluated`）。
+- 交付：PR `#2074`（open，未 merge），分支 head 见 `PR_HANDOFF.md`。

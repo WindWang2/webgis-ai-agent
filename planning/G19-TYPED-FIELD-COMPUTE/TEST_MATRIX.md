@@ -15,10 +15,10 @@
 | 项 | 命令 | 结果 |
 |---|---|---|
 | 核心回归（IR/解释器/服务层） | `pytest tests/data/test_field_compute_v1.py -q --no-cov -p no:cacheprovider` | **44 passed**（`--collect-only` 实测 44 用例；含 selection 过期/可靠命中） |
-| 独立评审修复回归 | `pytest tests/data/test_field_compute_review_v1.py -q --no-cov -p no:cacheprovider` | **23 passed**：原 12 项（OpenAPI 短名、时区、项目保存失败、收据闸门、幂等升级、computed_rows、abort 几何、取消、owner、ring/manifest、弱引用锁）+ 第二轮 5 项（发布面探测、最终 upsert 失败回滚、升级清除 `PROJECT_SAVE_FAILED`、执行中取消、空闲/已结束取消不污染）+ 第三轮 6 项（稳定键写失败不发布、ring 失败删稳定键、回滚残留披露、升级失败降级、引用计数、排队取消不丢） |
+| 独立评审修复回归 | `pytest tests/data/test_field_compute_review_v1.py -q --no-cov -p no:cacheprovider` | **24 passed**：原 12 项（OpenAPI 短名、时区、项目保存失败、收据闸门、幂等升级、computed_rows、abort 几何、取消、owner、ring/manifest、弱引用锁）+ 第二轮 5 项（发布面探测、最终 upsert 失败回滚、升级清除 `PROJECT_SAVE_FAILED`、执行中取消、空闲/已结束取消不污染）+ 第三轮 7 项（稳定键写失败不发布、ring 失败删稳定键、`drop_published` 成功路径、回滚残留披露、升级失败降级、引用计数、排队取消不丢） |
 | API 路由层（真实 ASGI + 鉴权） | `pytest tests/data/test_field_compute_api_v1.py -q --no-cov -p no:cacheprovider` | **8 passed（32.47s）**：catalog/越权 404/describe→plan→preview→execute→result→项目清单/typed 422/stale 409 + cancel 端点 2 项（不存在计划 typed 404；空闲/已结束 `cancelled=false` 且不影响后续执行） |
 | Pi 工具面（真实 `ToolRegistry.dispatch`） | `pytest tests/unit/test_field_compute_tools_v1.py -q --no-cov -p no:cacheprovider` | **6 passed（79.18s）** |
-| 全量 G19 后端合并复跑 | `pytest <4 个文件> -q --no-cov -p no:cacheprovider --basetemp=<tmp>` | **81 passed（38.81s）= 44 + 23 + 8 + 6**（第三轮复审新增 4 项） |
+| 全量 G19 后端合并复跑 | `pytest <4 个文件> -q --no-cov -p no:cacheprovider --basetemp=<tmp>` | **82 passed（35.12s）= 44 + 24 + 8 + 6**（第三轮复审新增 5 项） |
 | API 契约门禁 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q --no-cov` | 首轮 3 failed（生成物过期）→ 刷新生成物后 **23 passed（70.73s）** |
 | 生成物刷新 | `API_SNAPSHOT_UPDATE=1 pytest tests/quality/test_api_compatibility.py::test_snapshot_matches_and_no_breaking_changes`；`python scripts/gen_api_docs.py`；`python scripts/generate_endpoint_scope_matrix.py` | 快照/api-docs/矩阵三个生成物全部随本 PR 提交 |
 | 契约帮助文档 | `python app/services/data_preparation/field_compute/gen_help.py` | 由 `function_help()` + `contracts` + `CANONICAL_UNITS` 生成 `docs/field-compute-contract.md`（46 行表格） |
@@ -67,7 +67,7 @@
 | 失败任务不污染已完成派生成果 | ✅ passed | `test_snapshot_changed_mid_execution_aborts`（`find_receipt=None`）、`test_final_receipt_failure_rolls_back_visible_result`（回滚后无可见成果） |
 | 取消只对活跃执行生效、不留陈旧键 | ✅ passed | `test_cancel_during_execution_stops_it`（执行中 → True → `CANCELLED`，finally 清空 `_CANCEL_REQUESTS`/`_ACTIVE_EXEC`）、`test_cancel_on_idle_or_finished_plan_is_noop`（未开始/已结束 → False，且重提不被误判） |
 | 收据发布面可写性前置探测 | ✅ passed | `test_publish_probe_failure_writes_nothing`（`probe_publish=False` → `WRITE_FAILED`，`fc` store 零调用） |
-| 稳定键写入失败不留下已发布副本 | ✅ passed | `test_stable_key_write_failure_never_publishes_or_poisons`（端到端）+ `test_ring_write_failure_removes_stable_key`（receipt 层：`_append_sync` 抛错后稳定键被删、`find_receipt=None`）+ `test_final_failure_reports_stable_key_residual`（删除失败 → detail 含 `STABLE_KEY_ROLLBACK_FAILED`） |
+| 稳定键写入失败不留下已发布副本 | ✅ passed | `test_stable_key_write_failure_never_publishes_or_poisons`（端到端）+ `test_ring_write_failure_removes_stable_key`（receipt 层：先断言键已写入、`_append_sync` 抛错后键被删、`find_receipt=None`）+ `test_drop_published_removes_existing_stable_key`（删除成功路径，ring 同步撤除）+ `test_final_failure_reports_stable_key_residual`（删除失败 → detail 含 `STABLE_KEY_ROLLBACK_FAILED`） |
 | 排队执行不被先完成者摘除活跃登记 / 取消不丢 | ✅ passed | `test_active_registration_is_reference_counted`、`test_queued_execution_cancel_is_not_lost`（两个并发任务都 `CANCELLED`，`_CANCEL_REQUESTS`/`_ACTIVE_EXEC` 清空） |
 | 批大小不变性 | ✅ passed | `test_batch_size_invariance`（1 / 7 / 100 三档结果逐字节相同） |
 | 带洞/多部件面/跨经线 | ✅ passed | `test_geodesic_area_holes_multipart_and_dateline`（Geod + 洞标记 + dateline 披露） |

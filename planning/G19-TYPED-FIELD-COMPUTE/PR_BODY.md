@@ -48,10 +48,10 @@
 | 项 | 结果 |
 |---|---|
 | `pytest tests/data/test_field_compute_v1.py -q --no-cov` | **44 passed** |
-| `pytest tests/data/test_field_compute_review_v1.py -q --no-cov` | **23 passed**（三轮独立评审修复的针对性回归） |
+| `pytest tests/data/test_field_compute_review_v1.py -q --no-cov` | **24 passed**（三轮独立评审修复的针对性回归） |
 | `pytest tests/data/test_field_compute_api_v1.py -q --no-cov` | **8 passed**（真实 ASGI 路由 + 鉴权 + cancel 端点） |
 | `pytest tests/unit/test_field_compute_tools_v1.py -q --no-cov` | **6 passed**（真实 `ToolRegistry.dispatch`） |
-| 四份合并复跑 | **81 passed（38.81s）= 44 + 23 + 8 + 6** |
+| 四份合并复跑 | **82 passed（35.12s）= 44 + 24 + 8 + 6** |
 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q --no-cov` | **23 passed**（刷新生成物 + schema 消歧修复后） |
 | `vitest run <组件 + 错误解析 + i18n 门禁> --pool=threads --maxWorkers=1` | **21 passed**（组件 8 + 错误解析 3 + i18n 键完整性 10） |
 | `ruff check`（全部新增/改动 Python） | All checks passed |
@@ -106,7 +106,13 @@
 
 **如实更正**：原表述「任一次写入失败都不会留下已发布副本」已改为「尽力回滚；删除失败以 residual 码披露」。additive 登记（descriptor/provenance/artifact）在发布失败后**不删除**（registry 无删除 API），它们指向已删除 ref，不构成可读成果；这是已知限制，不声称「完全无痕」。
 
-> 第四轮复审：由独立 reviewer 冷读 `9461505c9..HEAD`，只核上述 3 个 P2 + 2 项证据修正并扫描新问题；`REVIEW.md` 记录逐项证据，主 Agent 不自行标记通过。
+### 第四轮复审（全新 reviewer 冷读 `9461505c9..2efb7fe03`）
+
+**结论：4 项全部已修复、无阻塞，可以进入 PR。** 另给 3 条 P3 建议，已全部落实：
+
+1. 幂等短路前先 `_check_cancel`：排队执行期间用户已取消时，不能因为「成果已存在」把本次提交判成功（service.py `_execute_locked`）。
+2. 升级失败降级回写台账：`_maybe_upgrade_project` 失败路径也 `append_receipt`，重开/查询能看到 `PROJECT_SAVE_FAILED`（不再只在本次响应里）。
+3. 测试证据加固：`drop_published` 增成功删除路径用例（同时撤 ring 记录，否则 fallback 仍命中）；ring 失败用例在抛错前断言稳定键已存在（防止「实现根本不写键」的假通过）；组件取消用例改 `waitFor`。
 
 ## 与其他 PR 的关系
 

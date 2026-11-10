@@ -46,7 +46,7 @@
 
 | 类 | 结果 |
 |---|---|
-| 后端定向 | **81 passed（38.81s）= 核心 44 + 评审修复 23 + API 8 + Pi 工具 6**，单进程 `--no-cov --basetemp` |
+| 后端定向 | **82 passed（35.12s）= 核心 44 + 评审修复 24 + API 8 + Pi 工具 6**，单进程 `--no-cov --basetemp` |
 | 契约门禁 | **23 passed**（OpenAPI 快照 / api-docs drift / 端点矩阵） |
 | 前端定向 | **21 passed**（组件 8 + 错误信封解析 3 + i18n 键完整性 10），threads pool 单 worker |
 | 静态 | `ruff check` All checks passed；`tsc --noEmit` 新增文件 0 错误（8 个既有 `scene3d/*`）；ESLint 新增文件 0 警告；i18n 143/143；`git diff --check` 通过 |
@@ -64,7 +64,7 @@
 - 第三轮修复：`probe_publish()` 发布面探测、稳定键先写+ring 失败回滚、最终 upsert 失败撤销 ref 与项目清单、升级清理 degraded、`_ACTIVE_EXEC` + TTL 取消语义、cancel 端点 typed 映射与真实 ASGI 覆盖、`cancelled` 可恢复、前端空集合/取消三态文案。新增 7 项回归（17 review + 2 API）。
 - 第三轮复审（全新 reviewer，冷读 `9461505c9`）：4 个遗留项 3 项判定已修，另发现 3 个功能性 P2（排队取消被先完成者清掉、升级失败丢降级标记、最终失败未删稳定键且删键失败无披露）+ 2 项证据映射偏差。
 - 第四轮修复：条件化取消键清理 + 两并发任务回归；恢复 `PROJECT_SAVE_FAILED`；`drop_published()` 删除稳定键并在失败时写 `STABLE_KEY_ROLLBACK_FAILED`；TTL 剪枝跳过活跃执行；receipt 层 ring 失败测试与组件空集合/取消三态测试。
-- 第四轮复审：待独立 reviewer 冷读 `9461505c9..HEAD`；**不得由作者自行标记通过**。
+- 第四轮复审（全新 reviewer，冷读 `9461505c9..2efb7fe03`）：**4 项全部已修复、无阻塞，判定可以进入 PR**；3 条 P3（幂等短路前尊重取消、降级回写台账、测试证据加固）已全部落实。
 
 ## 迁移 / 回退
 

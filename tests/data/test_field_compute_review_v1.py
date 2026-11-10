@@ -277,12 +277,36 @@ class TestPublishSequence:
         def _boom(_path, _records):
             raise OSError("simulated ring write failure")
 
+        key = rc.stable_key("fp-ring", "ref:in", "h-ring")
+        key_file = rc._stable_receipt_path("sess-fc-rev-ringfail", key)
+
+        def _boom(_path, _records):
+            # ring 失败前稳定键必须已写入 —— 证明「先写键、再写 ring」的顺序，
+            # 否则本测试可能因为实现根本不写键而假通过。
+            assert key_file.exists(), "ring 失败前应已写入稳定键"
+            raise OSError("simulated ring write failure")
+
         monkeypatch.setattr(rc, "_append_sync", _boom)
         assert await rc.append_receipt("sess-fc-rev-ringfail", receipt) is False
-        key = rc.stable_key("fp-ring", "ref:in", "h-ring")
-        assert not rc._stable_receipt_path("sess-fc-rev-ringfail", key).exists()
+        assert not key_file.exists()
         assert await rc.find_receipt(
             "sess-fc-rev-ringfail", "fp-ring", "ref:in", "h-ring") is None
+
+    async def test_drop_published_removes_existing_stable_key(self):
+        """drop_published 的成功删除路径（不是只测 mock 失败分支）。"""
+        receipt = ComputeReceipt(
+            plan_id="p", compute_fingerprint="fp-drop",
+            input_ref="ref:in", output_ref="ref:out",
+            input_content_hash="h-drop", output_content_hash="o",
+            published=True)
+        sid = "sess-fc-rev-drop"
+        assert await rc.append_receipt(sid, receipt)
+        path = rc._stable_receipt_path(
+            sid, rc.stable_key("fp-drop", "ref:in", "h-drop"))
+        assert path.exists()
+        assert await rc.drop_published(sid, receipt) is True
+        assert not path.exists()
+        assert await rc.find_receipt(sid, "fp-drop", "ref:in", "h-drop") is None
 
     async def test_final_failure_reports_stable_key_residual(self, monkeypatch):
         """稳定键回滚失败时必须在错误 detail 如实列出残留码。"""
@@ -322,6 +346,11 @@ class TestPublishSequence:
         assert second.persistence == "session_ref"
         assert "PROJECT_SAVE_FAILED" in second.degraded
         assert await service.list_project_results(sid, "proj-up3") == []
+        # 降级必须回写台账：之后查询/重开也看到真实状态
+        persisted = await rc.find_receipt(
+            sid, plan.compute_fingerprint, ref, plan.anchor.content_hash)
+        assert persisted is not None
+        assert "PROJECT_SAVE_FAILED" in persisted.degraded
 
     async def test_idempotent_upgrade_from_session_to_project(self):
         sid = "sess-fc-rev-upgrade"
@@ -423,7 +452,14 @@ class TestCancelOwnerLocks:
         first = asyncio.create_task(service.execute(plan.plan_id, sid))
         assert await asyncio.to_thread(entered.wait, 10)
         second = asyncio.create_task(service.execute(plan.plan_id, sid))
-        await asyncio.sleep(0)          # 让第二个任务完成活跃登记并进入排队
+        # 轮询等待第二个执行完成活跃登记（单次 sleep(0) 在慢机上可能还没跑到）
+        key = service._cancel_key(sid, plan.plan_id)
+        for _ in range(200):
+            if service._ACTIVE_EXEC.get(key, 0) >= 2:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("第二个执行未完成活跃登记")
         assert service.request_cancel(sid, plan.plan_id) is True
         release.set()
         results = await asyncio.gather(first, second, return_exceptions=True)

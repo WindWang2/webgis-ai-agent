@@ -262,8 +262,8 @@ describe('FieldComputePanel', () => {
     fireEvent.click(await screen.findByTestId('fc-cancel'));
     await waitFor(() => expect(mockCancelPlan).toHaveBeenCalledWith(
       'fc-1', 'sess-1', expect.objectContaining({ ownerToken: null })));
-    expect((await screen.findByTestId('fc-cancel-note')).textContent)
-      .toContain('cancelNoActive');
+    await waitFor(() => expect(
+      screen.getByTestId('fc-cancel-note').textContent).toContain('cancelNoActive'));
 
     // 清理挂起的预览 promise，避免 act 警告
     await act(async () => { resolvePreview(makePreview(0)); });
