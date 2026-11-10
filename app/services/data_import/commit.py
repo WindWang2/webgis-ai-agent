@@ -138,6 +138,9 @@ async def commit_member(
             layer = None
             if member.container.value in ("gpkg", "kml"):
                 layer = member.container_ref
+                if not layer:
+                    # 防线：绝不静默回落 GDAL 默认第一层（故障注入反验 1）
+                    raise CommitError("CONTAINER_REF_MISSING", member.member_key)
             elif member.container.value == "zipset":
                 from app.services.data_import.preview import _zipset_shp_path
 

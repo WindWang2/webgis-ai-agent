@@ -21,6 +21,7 @@ from app.services.data_import.interpretation import InterpretationError
 from app.services.data_import.models import (
     BATCH_TERMINAL,
     BatchStatus,
+    CommitReceipt,
     ImportBatchState,
     MemberRecord,
     MemberStatus,
@@ -411,6 +412,32 @@ class DataImportService:
                     if source is None:
                         continue
                     plan_hash = state.plan_hashes.get(key, "")
+                    # 计划一致性防线：提交使用的 hash 必须等于当前状态事实源
+                    #（preview 与 commit 同一解释器 + 同一 hash；防外发篡改/陈旧值）
+                    if not plan_hash or key not in state.interpretations:
+                        state.receipts[key] = CommitReceipt(
+                            member_key=key, plan_hash=plan_hash or "", status="failed",
+                            error_code="PLAN_REQUIRED", error_message="成员缺少计划",
+                        )
+                        await asyncio.to_thread(staging.save_state, state)
+                        continue
+                    # 计划一致性防线：存储 hash 只是缓存 —— 提交时按
+                    #（源 sha, 成员, 当前解释）重新推导并比对；不一致即状态
+                    #被外发篡改/损坏，拒绝提交（故障注入反验 2）。
+                    src = next(
+                        (s0 for s0 in state.sources if s0.source_id == member.source_id), None
+                    )
+                    recomputed = compute_plan_hash(
+                        src.sha256, key, state.interpretations[key]
+                    ) if src else ""
+                    if recomputed != plan_hash:
+                        state.receipts[key] = CommitReceipt(
+                            member_key=key, plan_hash=plan_hash, status="failed",
+                            error_code="PLAN_HASH_MISMATCH",
+                            error_message="计划 hash 与当前解释不一致（状态可能被篡改）",
+                        )
+                        await asyncio.to_thread(staging.save_state, state)
+                        continue
                     interp_payload = state.interpretations.get(key)
                     interp = (
                         _interpretation_model(
@@ -429,8 +456,6 @@ class DataImportService:
 
                     if isinstance(e, OperationCancelled) or cancel_event.is_set():
                         cancelled = True
-                        from app.services.data_import.models import CommitReceipt
-
                         receipt = CommitReceipt(
                             member_key=key, plan_hash=plan_hash, status="cancelled",
                             error_code="CANCELLED", error_message="用户取消",
@@ -522,9 +547,18 @@ class DataImportService:
 
 
 def _validate_columns(member: MemberRecord, interp: Any) -> None:
-    """points/wkt 模式的列引用在计划保存时 fail-fast（不等到提交）。"""
-    from app.services.data_import.models import TableInterpretation
+    """列引用在计划保存时 fail-fast（不等到提交）。"""
+    from app.services.data_import.models import TableInterpretation, VectorInterpretation
 
+    if isinstance(interp, VectorInterpretation):
+        if interp.keep_fields and member.fields:
+            missing = [c for c in interp.keep_fields if c not in set(member.fields)]
+            if missing:
+                raise DataImportError(
+                    "COLUMN_NOT_FOUND",
+                    f"字段不存在: {', '.join(missing)}；可用: {', '.join(member.fields[:20])}",
+                )
+        return
     if not isinstance(interp, TableInterpretation):
         return
     mode = interp.mode

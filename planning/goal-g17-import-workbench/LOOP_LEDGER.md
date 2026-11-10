@@ -52,3 +52,11 @@
   40/40 全绿（场景 22：ignored_files/单文件契约/register_ref 不变）
 - 跨入口一致性：同一批次 plan_hash 与收据在 service(API)/工具(dispatcher) 两视角一致
 - 环境注：worktree frontend/node_modules 为主工作区 junction（基线相同，未改 package.json）
+
+### R9+反验（2026-11-11）故障注入 + 性能实测 + 文档
+- 故障注入 3/3（暴露并修复两处真实防线缺口：commit 侧 container_ref 守卫、计划 hash 重推导权威比对；
+  keep_fields 保存时 fail-fast）。附带修复：_run_commit 局部 import 遮蔽导致的 UnboundLocalError
+- 性能实测（planning/PERFORMANCE.md）：45.4MB 近限额单文件（发现 3.2s/峰值1MB——metadata 优先成立；
+  提交 217s/553MB——O(N) 如实披露）、20×4500 小文件批次、取消往返 6.2s、清理无残留
+- 文档：docs/data-import-workbench.md（格式矩阵/资源限制/真实降级）、TEST_MATRIX.md（22 场景全落位）
+- 全量 data_import 套件 32/32
