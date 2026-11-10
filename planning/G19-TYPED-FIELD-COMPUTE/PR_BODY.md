@@ -67,7 +67,7 @@
 **🚧 环境阻塞 / 未运行**
 - 真实 Pi 进程 + stub LLM 全链路 → MapSpec mutation → 浏览器渲染回执：本环境无 Node extension/runtime 与渲染服务；已用真实 `ToolRegistry.dispatch` 覆盖「工具→服务→成果→既有分类引擎」的数据面闭环，MapSpec/渲染保持 `not_evaluated`，不伪造。
 - 前端全量构建 / 全量 Vitest / Playwright 浏览器旅程：资源纪律与同机 4 个 worktree 并行下未运行；只跑定向组件测试与静态检查。
-- 万行级峰值内存基准：未做；只报告真实输入量（≤37 行合成夹具）与命令耗时，不用小样本承诺千万行能力。
+- 有界基准已真实执行：Windows AMD64 / Python 3.13.9，5,000 行 × 3 列、batch 2,000，耗时 **1.008s**、`tracemalloc` 峰值 **1.81 MiB**（仅解释器执行期新增分配，不含输入构造与冻结深拷贝）；**万行级基准未跑**，不据此承诺 10 万/千万行能力。
 - **线上 CI：按授权不等待、不轮询；未关闭或降低任何门禁。**
 
 ## 独立评审（review → fix → rereview）
@@ -83,7 +83,8 @@
 - 开放 `#2032`（UI 重设计）：只在 prepare panel 内加一行挂载，不动主题/布局/侧栏/面板宽度；冲突段已在 `INTERFACES.md §2` 列出。
 - 开放 `#2022`（G10 刷新）：不做自动刷新；提交前版本重核与 `SNAPSHOT_CHANGED` 是独立的计算一致性语义。
 - 开放 `#2021`（G11 简报）与 dependabot：不碰。
-- G12–G18 / G20–G21：按 `INTERFACES.md §5` 让出所有权；本 PR 基于 `origin/master @8167052`，PR 前再次 fetch 确认主干未前进（`0 behind / 4 ahead`）。
+- **PR 前新出现的 `#2073`（G13 能力生态生产装配）**：已用 `gh api pulls/2073/files` 分页核查其 29 个 changed files，与我的 9 个共享接线/生成物文件**零重叠**（`OVERLAP` 检查为空），无需冲突处理；其领地（`pi_availability_adapter` / `tool_surface_v3` / `tool_dispatch_service` 等）本 PR 不触碰。
+- G12–G18 / G20–G21：按 `INTERFACES.md §5` 让出所有权；本 PR 基于 `origin/master @8167052`，PR 前再次 fetch 确认主干未前进（`0 behind / 5 ahead`）。相关 3 个开放 PR（#2021/#2022/#2032）无正式 review submission / inline comments。
 
 ## 迁移与回退
 

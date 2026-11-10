@@ -103,17 +103,24 @@ def build() -> str:
         "- 预览/执行各自冻结一致快照；发布前二次核对内容/schema，变化即 "
         "`SNAPSHOT_CHANGED` 中止且不发布。预览后源变化 → `STALE_PLAN`，"
         "刷新预览即可继续。",
-        "- 取消 → `CANCELLED`；写入失败 → `STORE_FAILED` / `WRITE_FAILED`；"
-        "均不发布半成品。同计划重复提交返回既有收据（幂等）。",
+        "- 取消 → `CANCELLED`；`POST /field-compute/plan/{plan_id}/cancel` "
+        "请求服务端协作取消，取消是**可恢复态**，可原计划重提；写入失败 → "
+        "`STORE_FAILED` / `WRITE_FAILED`；均不发布半成品。同计划重复提交返回"
+        "既有收据（幂等，稳定键不受 ring 截断影响）。",
         "- 持久化如实区分：`session_ref`（会话级，重开会失效）/ "
-        "`project_artifact`（项目清单真实落盘，可重开找回）。\n",
+        "`project_artifact`（项目清单真实落盘，可重开找回）；"
+        "项目清单保存失败降级为 `session_ref` 并披露 `PROJECT_SAVE_FAILED`，"
+        "绝不谎称已可重开找回。\n",
         "\n## 7. 支持的数据形态与规模\n",
         "- ref-backed GeoJSON FeatureCollection（含 `crs` / `crs_source`）与真正的 "
         "`rows` 非空间表格；UI 按 `data_shape` 如实披露，不宣称未支持的通用能力。",
         f"- 行数上限 `{C.MAX_ROWS}`（超限在启动前 `ROW_LIMIT_EXCEEDED` 拒绝，"
         f"不静默截断）；列 ≤ `{C.MAX_COLUMNS}`；AST 节点 ≤ `{C.MAX_EXPR_NODES}`、"
         f"深度 ≤ `{C.MAX_EXPR_DEPTH}`；每行操作数 ≤ `{C.MAX_ROW_OPS}`；"
-        f"字符串输入 ≤ `{C.MAX_STRING_INPUT}`、结果 ≤ `{C.MAX_RESULT_STRING}`。\n",
+        f"字符串输入 ≤ `{C.MAX_STRING_INPUT}`、结果 ≤ `{C.MAX_RESULT_STRING}`。",
+        "- 前端属性计算面板**一次编辑一列**；多列链式依赖（≤8 列，声明顺序即"
+        "计算顺序，只允许引用之前的列）请用 Pi 对话或 API，不把 UI 单列说成"
+        "已支持多列。\n",
         "\n## 8. 再生成\n",
         "函数表由 `FUNCTIONS` 词表驱动；新增函数必须同步提升 "
         "`FUNCTION_SET_VERSION`、补边界测试，并重跑：\n",

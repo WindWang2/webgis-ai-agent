@@ -101,14 +101,15 @@
 - 预览是 **sample/estimate**（≤50 行），采样错误率不是全量错误率；预览不产出公开 ref，不改变原数据。
 - 计划指纹绑定：输入内容哈希 + schema 指纹 + scope + 列 IR + 函数集版本 + 单位 + 时区 + 错误策略。
 - 预览/执行各自冻结一致快照；发布前二次核对内容/schema，变化即 `SNAPSHOT_CHANGED` 中止且不发布。预览后源变化 → `STALE_PLAN`，刷新预览即可继续。
-- 取消 → `CANCELLED`；写入失败 → `STORE_FAILED` / `WRITE_FAILED`；均不发布半成品。同计划重复提交返回既有收据（幂等）。
-- 持久化如实区分：`session_ref`（会话级，重开会失效）/ `project_artifact`（项目清单真实落盘，可重开找回）。
+- 取消 → `CANCELLED`；`POST /field-compute/plan/{plan_id}/cancel` 请求服务端协作取消，取消是**可恢复态**，可原计划重提；写入失败 → `STORE_FAILED` / `WRITE_FAILED`；均不发布半成品。同计划重复提交返回既有收据（幂等，稳定键不受 ring 截断影响）。
+- 持久化如实区分：`session_ref`（会话级，重开会失效）/ `project_artifact`（项目清单真实落盘，可重开找回）；项目清单保存失败降级为 `session_ref` 并披露 `PROJECT_SAVE_FAILED`，绝不谎称已可重开找回。
 
 
 ## 7. 支持的数据形态与规模
 
 - ref-backed GeoJSON FeatureCollection（含 `crs` / `crs_source`）与真正的 `rows` 非空间表格；UI 按 `data_shape` 如实披露，不宣称未支持的通用能力。
 - 行数上限 `50000`（超限在启动前 `ROW_LIMIT_EXCEEDED` 拒绝，不静默截断）；列 ≤ `8`；AST 节点 ≤ `64`、深度 ≤ `12`；每行操作数 ≤ `256`；字符串输入 ≤ `2048`、结果 ≤ `512`。
+- 前端属性计算面板**一次编辑一列**；多列链式依赖（≤8 列，声明顺序即计算顺序，只允许引用之前的列）请用 Pi 对话或 API，不把 UI 单列说成已支持多列。
 
 
 ## 8. 再生成

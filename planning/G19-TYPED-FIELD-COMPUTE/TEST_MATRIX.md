@@ -67,7 +67,7 @@
 | 失败任务不污染已完成派生成果 | ✅ passed | `test_snapshot_changed_mid_execution_aborts`（`find_receipt=None`） |
 | 批大小不变性 | ✅ passed | `test_batch_size_invariance`（1 / 7 / 100 三档结果逐字节相同） |
 | 带洞/多部件面/跨经线 | ✅ passed | `test_geodesic_area_holes_multipart_and_dateline`（Geod + 洞标记 + dateline 披露） |
-| 有界基准（机器/输入量/峰值内存/耗时） | ⚠️ partial | 仅记录实测命令耗时（44 项 139.57s、6 项 79.18s、23 项 70.73s），输入量 ≤37 行合成夹具；**未做万行级峰值内存基准**（避免用小样本承诺千万行能力，任务书要求如实报告机器/输入量/耗时，不虚构） |
+| 有界基准（机器/输入量/峰值内存/耗时） | ✅ passed（有界口径） | 真实执行：Windows AMD64 / Python 3.13.9、`OMP_NUM_THREADS=1`；输入 **5,000 行 × 3 列**（密度/变化率/代码补齐）、`batch_size=2000`、输出 5,000 行、`computed_rows=5000`、`errors=0`；**耗时 1.008s**，`tracemalloc` 峰值 **1.81 MiB**（仅解释器执行期新增分配，不含预构造输入与 `freeze()` 深拷贝）。明确声明：这是 5,000 行合成夹具的实测，**不据此承诺 10 万/千万行能力**；50,000 行上限有硬闸但万行级峰值内存基准未跑 |
 
 ## 未运行 / 环境阻塞（如实披露）
 
