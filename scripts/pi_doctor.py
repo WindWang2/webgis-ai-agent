@@ -237,10 +237,23 @@ def check_surface() -> Report:
     fp_count = sum(1 for t in tools if isinstance(t, dict) and t.get("spec", {}).get("fingerprint"))
     if v3 is not None and fp_count == 0:
         return Report("surface", FAIL, "v3 dump carries no fingerprints (stale-surface gate blind)", "")
+    # ADR-0288（dump v4）：注册面（direct+deferred）与声明面（default_active）
+    # 是两个可观测集合 —— deferred 计数 = tool_search 可发现的长尾候选规模。
+    exposure_counts = {"direct": 0, "deferred": 0}
+    for t in tools:
+        if isinstance(t, dict) and t.get("exposure") in exposure_counts:
+            exposure_counts[t["exposure"]] += 1
+    if surface.get("version", 0) >= 4 and exposure_counts["deferred"] == 0:
+        return Report(
+            "surface", FAIL,
+            "v4 dump declares no deferred tools — tool_search would find nothing",
+            "check pi_surface_for_spawn exposure projection",
+        )
     return Report(
         "surface", PASS,
         f"{len(tools)} tools; native 7/7; proxy={EXECUTE_PROXY_NAME}; "
-        f"abi={'v3' if v3 else 'v2'}; fingerprints={fp_count}",
+        f"abi={'v3' if v3 else 'v2'}; fingerprints={fp_count}; "
+        f"exposure direct={exposure_counts['direct']} deferred={exposure_counts['deferred']}",
     )
 
 

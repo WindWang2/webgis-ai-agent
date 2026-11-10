@@ -293,7 +293,12 @@ export default function webgisToolsExtension(pi) {
   for (const tool of nativeTools) {
     if (!tool?.name) continue;
     const toolFingerprint = toolFingerprints.get(tool.name);
-    pi.registerTool({
+    // dump v4（ADR-0288）：透传原生封套 —— exposure（前门 direct / 长尾
+    // deferred，deferred 可被上游 tool_search 发现并入 active 集）、
+    // namespace（域分组，tool_search 的 namespace 权重）、annotations
+    // （side_effect 派生的 MCP 语义提示；提示不是授权，执行仍回 Python 闸）。
+    // 字段缺席（v2 dump / 旧投影）= 保持默认行为，零漂移。
+    const registration = {
       name: tool.name,
       label: tool.label || tool.name,
       description: tool.description || tool.name,
@@ -305,7 +310,15 @@ export default function webgisToolsExtension(pi) {
           toolFingerprint,
         });
       },
-    });
+    };
+    if (tool.exposure) registration.exposure = tool.exposure;
+    if (tool.namespace && typeof tool.namespace === "object") {
+      registration.namespace = tool.namespace;
+    }
+    if (tool.annotations && typeof tool.annotations === "object") {
+      registration.annotations = tool.annotations;
+    }
+    pi.registerTool(registration);
   }
 
   pi.registerTool({
@@ -318,6 +331,8 @@ export default function webgisToolsExtension(pi) {
       "Restyle (color, legend position, title) uses webgis_component_update, not a new POI query.",
       "webgis_cartography_status is a ZERO-argument read of the server cartography verdict AFTER the map has changed. Call it as webgis_cartography_status {}. It does not accept city, topic, scope, or query.",
     ].join("\n"),
+    // 代理可派发读写混合的长尾 —— readOnlyHint 未知即缺席（保守语义）。
+    exposure: "direct",
     promptSnippet:
       "Long-tail GIS via webgis_execute(toolName, arguments). First for 分布/密度: webgis_map_intent {query}. After map changes only: webgis_cartography_status {}.",
     promptGuidelines: [

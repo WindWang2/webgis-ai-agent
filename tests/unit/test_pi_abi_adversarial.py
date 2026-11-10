@@ -655,7 +655,7 @@ def test_kill_switch_dump_and_surface_match_master(full_registry, monkeypatch):
 
     monkeypatch.delenv("PI_TOOL_ABI", raising=False)
     v3 = pi_surface_for_spawn(registry)
-    assert v3["version"] == 3
+    assert v3["version"] == 4  # ADR-0288: dump v4 (v3 fields retained)
     assert v3["abi"]["version"] == 1
     assert v3["registry_generation"]
     assert v3["surface_fingerprint"]
