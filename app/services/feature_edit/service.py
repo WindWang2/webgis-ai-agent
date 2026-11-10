@@ -57,7 +57,18 @@ async def build_and_store_plan(
     if payload is None:
         return {}, [{"code": "dataset_not_found", "message": f"ref not resolvable in this session: {str(ref_id)[:48]}"}]
     # G14/V20：只读源拒绝直接编辑 —— typed finding + 派生副本指引（原源零写入）。
-    if isinstance(payload, dict) and payload.get("read_only") is True:
+    # R3 P2-2：envelope 与 artifact metadata 两个标记面都对齐（qualification
+    # 同款判定），ledger 读失败按可编辑处理（诚实降级不阻断）。
+    read_only = isinstance(payload, dict) and payload.get("read_only") is True
+    if not read_only:
+        try:
+            from app.services.artifact_registry import get_artifact
+
+            rec = await get_artifact(session_id, str(ref_id))
+            read_only = bool(rec and rec.metadata and rec.metadata.get("read_only") is True)
+        except Exception:  # noqa: BLE001 — ledger 不可达不改变可编辑性判定
+            read_only = False
+    if read_only:
         return {}, [{
             "code": "dataset_read_only_source",
             "message": (

@@ -573,7 +573,9 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
         sessionId,
         { name: tNow('map.sketch.promotedName', { date: new Date().toISOString().slice(0, 10) }), features },
       );
-      if (!result.ok) {
+      if (!result.ok || !result.layer_id) {
+        // R3 P2-3：挂层未确认前不清草图 —— 数据集在但画布无图层时，
+        // 用户的绘制内容不消失（失败可重试；SSE 镜像随后收敛）。
         setSketchSaving('failed');
         return;
       }
@@ -588,9 +590,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
         actor: 'user',
       });
       // 升格后立即成为编辑目标（行由 SSE mapspec 镜像补齐；行到位前组件不渲染）
-      if (result.layer_id) {
-        useHudStore.getState().setEditTarget({ layerId: result.layer_id, refId: result.ref_id });
-      }
+      useHudStore.getState().setEditTarget({ layerId: result.layer_id, refId: result.ref_id });
       setSketchSaving('idle');
     } catch {
       setSketchSaving('failed');

@@ -239,11 +239,21 @@ def _validate_promote_features(features: Any) -> Optional[Dict[str, Any]]:
         return {"ok": False, "error_code": "PAYLOAD_TOO_LARGE",
                 "error": "sketch payload exceeds the promotion byte budget"}
     geometry_types = set()
-    for feature in features:
+    for position, feature in enumerate(features):
         if not isinstance(feature, dict) or not isinstance(feature.get("geometry"), dict):
             return {"ok": False, "error_code": "INVALID_FEATURES",
                     "error": "every feature requires a geometry object"}
         geometry_types.add(str(feature["geometry"].get("type") or ""))
+        props = feature.get("properties")
+        if props is not None and isinstance(props, dict):
+            # R3 P2-8：升格属性限标量（与编辑词表同面；非标量入库后不可编辑）
+            bad_fields = [
+                k for k, v in props.items()
+                if isinstance(v, (list, dict))
+            ]
+            if bad_fields:
+                return {"ok": False, "error_code": "INVALID_FEATURES",
+                        "error": f"feature[{position}] properties must be scalar; got containers in: {bad_fields[:4]}"}
     # 升格保持单一基类型（多类型草图应先拆分；诚实拒绝而非静默混装）
     bases = {g[5:] if g.startswith("Multi") else g for g in geometry_types}
     if len(bases) != 1 or not bases.intersection(_GEOMETRY_BASE_TYPES):

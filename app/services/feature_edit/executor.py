@@ -240,6 +240,11 @@ async def commit_plan(
                 },
             )
 
+        # R3 P2-2：提交期只读复核 —— 预览后源被标记只读时 pending plan 不得
+        # 落地（窗口闭合；fail-closed）。
+        if isinstance(payload, dict) and payload.get("read_only") is True:
+            raise FeatureEditBlocked("dataset_read_only_source", "source became read-only after preview")
+
         # 重新求值（与 preview 同一纯函数路径；载荷在锁内冷读，指纹已验）。
         fc = extract_fc(payload)
         if fc is None:

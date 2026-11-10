@@ -160,9 +160,14 @@ def apply_deltas_to_features(
             )
         ]
         applied.extend(sorted(w for w in removed_wfids if w))
-    # ② 出生（幂等：同 wfid 已存在跳过）
+    # ② 出生（幂等：同 wfid 已存在跳过）。带 index 的原位重插按 index 升序
+    # 执行 —— 乱序 index 序列（如 merge 的用户选择序）直接插会得到漂移的
+    # 列表序，undo 的链指纹断言随之诚实失败（R3 P1-1）；升序重放使任意
+    # delta 顺序都恢复到同一确定性次序。
     seen_wfids: set = set()
-    for delta in deltas:
+    created_with_index: List[tuple[int, int, dict, str]] = []  # (index, 原序, feature, wfid)
+    created_append: List[tuple[int, dict, str]] = []  # (原序, feature, wfid)
+    for order, delta in enumerate(deltas):
         if not isinstance(delta, dict) or delta.get("presence") != "created":
             continue
         wfid = delta.get("wfid")
@@ -183,10 +188,15 @@ def apply_deltas_to_features(
         props[WFID_PROP] = wfid
         index = delta.get("index")
         if isinstance(index, int) and not isinstance(index, bool) and 0 <= index <= len(out):
-            out.insert(index, new_feature)
+            created_with_index.append((index, order, new_feature, wfid))
         else:
-            out.append(new_feature)
+            created_append.append((order, new_feature, wfid))
         seen_wfids.add(wfid)
+    for _index, _order, new_feature, wfid in sorted(created_with_index, key=lambda t: (t[0], t[1])):
+        out.insert(min(_index, len(out)), new_feature)
+        applied.append(wfid)
+    for _order, new_feature, wfid in created_append:
+        out.append(new_feature)
         applied.append(wfid)
     # ③ 更新
     by_wfid = {

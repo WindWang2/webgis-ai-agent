@@ -33,14 +33,21 @@ export type SubmitEditResult =
   | { ok: true; planId: string; revision: number | undefined; createdWfids: string[]; retiredWfids: string[] }
   | { ok: false; stage: 'preview' | 'approve'; code: string; findings?: FeatureEditFinding[]; message?: string };
 
-/** 单击要素 → 可寻址 id（properties._wfid 优先，沿 feature-id 链）。 */
-export function featureIdFromProperties(properties: Record<string, unknown> | null | undefined): string | null {
-  if (!properties) return null;
-  const wfid = properties._wfid;
-  if (typeof wfid === 'string' && wfid) return wfid;
-  const fallback = properties.id ?? properties.OBJECTID ?? properties.fid ?? properties.feature_id;
-  if (typeof fallback === 'string' && fallback) return fallback;
-  if (typeof fallback === 'number') return String(fallback);
+/** 单击要素 → 可寻址 id（properties._wfid 优先，沿 feature-id 链；顶层
+ * feature.id 兜底 —— 后端 FEATURE_ID_KEYS 链同样解析顶层 id）。 */
+export function featureIdFromProperties(
+  properties: Record<string, unknown> | null | undefined,
+  topLevelId?: unknown,
+): string | null {
+  if (properties) {
+    const wfid = properties._wfid;
+    if (typeof wfid === 'string' && wfid) return wfid;
+    const fallback = properties.id ?? properties.OBJECTID ?? properties.fid ?? properties.feature_id;
+    if (typeof fallback === 'string' && fallback) return fallback;
+    if (typeof fallback === 'number') return String(fallback);
+  }
+  if (typeof topLevelId === 'string' && topLevelId) return topLevelId;
+  if (typeof topLevelId === 'number') return String(topLevelId);
   return null;
 }
 

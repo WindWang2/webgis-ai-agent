@@ -552,10 +552,32 @@ def split_feature(
     parent_delta: FeatureDelta = {"wfid": wfid, "presence": "removed", "feature_before": parent_snapshot}
     if parent_index is not None:
         parent_delta["index"] = parent_index  # undo 原位复活（恢复列表次序）
+    # R3 P2-7：分割不变量强制执行 —— children 的并集必须覆盖原几何（面积
+    # 容差内）。shapely split 的洞/边界边缘形态若重组或丢洞，在此拒绝而非
+    # 静默落地（注释声称的不变量不再只是声称）。
+    union_check = unary_union(out_parts)
+    if abs(union_check.area - parent_geom.area) > max(parent_geom.area * 1e-9, 1e-16):
+        return [], [
+            finding(
+                "split_not_dividing",
+                "split parts do not reconstruct the source geometry (holes/parts would be lost)",
+                wfid=wfid,
+            )
+        ], None
     deltas: List[FeatureDelta] = [parent_delta]
     children: List[str] = []
+    existing_ids = {
+        cast(dict, f.get("properties") or {}).get(WFID_PROP)
+        for f in fc.get("features") or []
+        if isinstance(f, dict)
+    }
     for child_index, part in enumerate(out_parts):
         child_wfid = wfid_for_created(plan_seed, op_index, child_index)
+        shift = 0
+        while child_wfid in existing_ids:  # R3 P2-1：撞既有身份即偏移，不静默丢 child
+            shift += 1000
+            child_wfid = wfid_for_created(plan_seed, op_index, child_index + shift)
+        existing_ids.add(child_wfid)
         child_props = {k: v for k, v in props.items()}
         child_props[WFID_PROP] = child_wfid
         child_feature = {
@@ -642,7 +664,9 @@ def merge_features(
             continue
         distinct = []
         for v in present_vals:
-            if v not in distinct:
+            # 类型敏感去重（R3 P3）：Python 相等把 0==False/1==1.0 视为同值，
+            # 会把布尔/数字混合误判为「一致字段」而静默取首值。
+            if not any(type(v) is type(d) and v == d for d in distinct):
                 distinct.append(v)
         if key in overrides:
             merged_props[key] = overrides[key]
@@ -678,21 +702,34 @@ def merge_features(
     bad = _validate_after(union)
     if bad is not None:
         return [], [bad], None
+    # 新生身份查重（R3 P2-1）：与 create 同款偏移守卫 —— 撞上既有身份时
+    # 偏移派生，绝不静默吞掉 child。
     child_wfid = wfid_for_created(plan_seed, op_index, 0)
+    existing_ids = {
+        cast(dict, f.get("properties") or {}).get(WFID_PROP)
+        for f in fc.get("features") or []
+        if isinstance(f, dict)
+    }
+    shift = 0
+    while child_wfid in existing_ids:
+        shift += 1000
+        child_wfid = wfid_for_created(plan_seed, op_index, shift)
     merged_props[WFID_PROP] = child_wfid
     child_feature = {
         "type": "Feature",
         "geometry": _geometry_out(union),
         "properties": merged_props,
     }
-    # 父要素原位 index（undo 恢复次序；按列表内出现顺序）
+    # 父要素原位 index（undo 恢复次序）。R3 P1-1：removed deltas 按列表内
+    # 出现顺序（index 升序）发射 —— 用户选择序（如 [B,A]）直接发射会让
+    # undo 的原位重插得到漂移列表序，链指纹断言 409。
     index_of = {
         cast(dict, f.get("properties") or {}).get(WFID_PROP): i
         for i, f in enumerate(fc.get("features") or [])
         if isinstance(f, dict)
     }
     deltas: List[FeatureDelta] = []
-    for w, f in zip(wfids, ordered):
+    for w, f in sorted(zip(wfids, ordered), key=lambda pair: index_of.get(pair[0], len(index_of))):
         d: FeatureDelta = {"wfid": w, "presence": "removed", "feature_before": copy_feature_snapshot(f)}
         if w in index_of:
             d["index"] = index_of[w]

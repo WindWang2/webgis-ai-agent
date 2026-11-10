@@ -131,6 +131,12 @@ def validate_set_fields(
         profile = field_profiles.get(name)
         if profile is None:
             if allow_new_fields:
+                # R3 P2-8：新字段放行仍限标量 —— list/dict 值不进编辑词表
+                # （json_field_type 面），否则一旦入库就永不可经 set_fields 修改。
+                if json_field_type(value) == "unsupported":
+                    findings.append(
+                        finding("type_mismatch", "only scalar values are editable", field=name)
+                    )
                 continue
             findings.append(
                 finding(

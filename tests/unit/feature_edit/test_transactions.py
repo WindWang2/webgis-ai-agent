@@ -504,3 +504,122 @@ class TestEditableCopy:
         copy_payload = await session_data_manager.get(s, copy["ref_id"])
         assert copy_payload["geojson"]["features"][0]["properties"]["capacity"] == 200
         assert copy_payload["derived_from"] == source_ref
+
+
+# ─── R3 复审修复回归 ──────────────────────────────────────────────────────
+
+class TestReviewFixes:
+    async def test_merge_out_of_order_parents_undo_restores_exact_order(self, client):
+        """R3 P1-1：用户按 [C,A] 顺序选父要素合并 —— undo 必须恢复精确列表序
+        （指纹链断言不 409），且 first 字段策略仍按用户列出顺序取值。"""
+        s = sid()
+        created = await _create_empty(client, s, "Polygon")
+        ref = created["ref_id"]
+        prev = await _preview(client, s, ref, [{"op": "create_features", "features": [
+            {"geometry": {"type": "Polygon", "coordinates": [SQUARE_A]}, "properties": {"name": "A", "rank": 1}},
+            {"geometry": {"type": "Polygon", "coordinates": [[
+                [116.20, 39.00], [116.30, 39.00], [116.30, 39.10], [116.20, 39.10], [116.20, 39.00],
+            ]]}, "properties": {"name": "B", "rank": 2}},
+            {"geometry": {"type": "Polygon", "coordinates": [SQUARE_B]}, "properties": {"name": "C", "rank": 3}},
+        ]}])
+        body = prev.json()
+        assert body["committable"], body["validation"]
+        receipt = (await _approve(client, s, body["plan_id"])).json()["receipt"]
+        wfids = receipt["created_wfids"]
+        assert len(wfids) == 3
+
+        # 用户点击顺序 [C, A]（B 保留）
+        merge_prev = await _preview(client, s, ref, [
+            {"op": "merge_features", "field_policy": {"mode": "first"}},
+        ], feature_ids=[wfids[2], wfids[0]])
+        assert merge_prev.status_code == 200
+        r2 = (await _approve(client, s, merge_prev.json()["plan_id"])).json()["receipt"]
+        assert len(r2["created_wfids"]) == 1
+        merged = (await session_data_manager.get(s, ref))["geojson"]["features"]
+        assert len(merged) == 2  # B + child
+        assert merged[1]["properties"]["name"] == "C"  # first = 用户列出第一个（C）
+
+        # undo 不 409：精确恢复 [A, B, C]
+        undo = await client.post(f"/api/v1/chat/sessions/{s}/feature-edits/{ref}/undo")
+        assert undo.status_code == 200, undo.text
+        restored = (await session_data_manager.get(s, ref))["geojson"]["features"]
+        assert [f["properties"]["name"] for f in restored] == ["A", "B", "C"]
+        assert [f["properties"]["_wfid"] for f in restored] == wfids
+
+    async def test_read_only_marked_after_preview_blocks_commit(self, client):
+        """R3 P2-2：预览后源被标记只读 → pending plan 提交被拒（窗口闭合）。"""
+        from app.services.data_ingest.pipeline import compute_payload_fingerprint
+
+        s = sid()
+        created = await _create_empty(client, s, "Polygon")
+        ref = created["ref_id"]
+        prev = await _preview(client, s, ref, [{"op": "create_features", "features": [
+            {"geometry": {"type": "Polygon", "coordinates": [SQUARE_A]}}]}])
+        plan_id = prev.json()["plan_id"]
+        # 预览后有人把源标记为只读（直接覆写载荷 —— 模拟治理动作）
+        payload = await session_data_manager.get(s, ref)
+        payload["read_only"] = True
+        await session_data_manager.overwrite(s, ref, payload)
+        resp = await _approve(client, s, plan_id)
+        # 载荷 revision 也变了（overwrite）→ stale；标记只读但同 revision 的面
+        # 由 executor 的 read_only 复核兜底（dataset_read_only_source）
+        assert resp.status_code in (400, 409)
+        detail = resp.json().get("detail") or {}
+        assert detail.get("code") in ("stale_revision", "dataset_read_only_source")
+
+    async def test_create_rejects_container_property_values(self, client):
+        """R3 P2-8：create 的新字段限标量（list/dict 拒绝）。"""
+        s = sid()
+        created = await _create_empty(client, s, "Point")
+        ref = created["ref_id"]
+        prev = await _preview(client, s, ref, [{"op": "create_features", "features": [
+            {"geometry": {"type": "Point", "coordinates": [116, 39]}, "properties": {"tags": ["a", "b"]}},
+        ]}])
+        body = prev.json()
+        assert body["committable"] is False
+        assert any(f["code"] == "type_mismatch" for f in body["validation"])
+
+    async def test_promote_rejects_container_properties(self, client):
+        """R3 P2-8：升格属性含容器值 → typed 拒绝（不静默入库不可编辑数据）。"""
+        s = sid()
+        resp = await client.post(
+            f"/api/v1/chat/sessions/{s}/feature-edits/datasets/promote-sketch",
+            json={"name": "bad", "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116, 39]},
+                 "properties": {"meta": {"nested": True}}},
+            ]},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "INVALID_FEATURES"
+
+    async def test_split_union_invariant_enforced(self, client):
+        """R3 P2-7：分割不变量（children 并集 = 原几何面积）在服务端强制。"""
+        from app.services.feature_edit.geometry_ops import split_feature
+
+        from app.services.feature_edit.identity import materialize_wfids
+
+        fc = {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [
+                    SQUARE_A,  # 外环
+                    [[116.02, 39.02], [116.04, 39.02], [116.04, 39.04], [116.02, 39.04], [116.02, 39.02]],
+                ]}, "properties": {"name": "H"}},
+            ],
+        }
+        fc, _ = materialize_wfids(fc, "fp-r3")
+        w = fc["features"][0]["properties"]["_wfid"]
+        # 穿洞分割线：洞被线穿过时 shapely split 若无法保真重组 → 拒绝或保真
+        line = {"type": "LineString", "coordinates": [[116.03, 38.9], [116.03, 39.2]]}
+        deltas, findings, lineage = split_feature(fc, w, line, plan_seed="fep-r3", op_index=0)
+        if findings:
+            assert any(f["code"] == "split_not_dividing" for f in findings), findings
+        else:
+            # 通过则并集面积不变量成立（children ∪ = parent）
+            from shapely.geometry import shape
+            from shapely.ops import unary_union
+
+            parent = shape(fc["features"][0]["geometry"])
+            children = [d["feature_after"]["geometry"] for d in deltas if d.get("presence") == "created"]
+            union = unary_union([shape(g) for g in children])
+            assert abs(union.area - parent.area) < 1e-12

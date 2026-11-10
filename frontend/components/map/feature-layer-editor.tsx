@@ -71,6 +71,54 @@ function ringOf(geometry: GeoJSON.Geometry): [number, number][] {
   return [];
 }
 
+/** 射线法点在环内（含边界近似由容差像素吸收）。 */
+function pointInRing(lng: number, lat: number, ring: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** 要素命中（R3 P2-5）：顶点近邻 OR 面/线几何包含点击点（面=外环减洞）。 */
+function featureHit(
+  feature: GeoJSON.Feature,
+  lngLat: [number, number],
+  project: (p: [number, number]) => { x: number; y: number },
+  point: { x: number; y: number },
+  tolerancePx: number,
+): boolean {
+  const g = feature.geometry;
+  if (!g) return false;
+  if (g.type === 'Point') {
+    const p = project([g.coordinates[0], g.coordinates[1]]);
+    return Math.hypot(p.x - point.x, p.y - point.y) <= tolerancePx;
+  }
+  if (g.type === 'LineString') {
+    for (const c of g.coordinates) {
+      const p = project([c[0], c[1]]);
+      if (Math.hypot(p.x - point.x, p.y - point.y) <= tolerancePx) return true;
+    }
+    return false;
+  }
+  if (g.type === 'Polygon') {
+    const rings = (g.coordinates as [number, number][][]);
+    if (!pointInRing(lngLat[0], lngLat[1], rings[0])) return false;
+    for (let h = 1; h < rings.length; h++) {
+      if (pointInRing(lngLat[0], lngLat[1], rings[h])) return false; // 洞内不算命中
+    }
+    return true;
+  }
+  // Multi* / 其它：退化为顶点近邻
+  for (const c of ringOf(g as GeoJSON.Geometry)) {
+    const p = project(c);
+    if (Math.hypot(p.x - point.x, p.y - point.y) <= tolerancePx) return true;
+  }
+  return false;
+}
+
 export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null> }) {
   const t = useT();
   const mapReady = useHudStore((s) => s.mapLoaded);
@@ -92,9 +140,21 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   useEffect(() => subscribeSelection(() => setSelectionGen(getSelectionGeneration())), []);
   const selection = useMemo(() => getSelection(), [selectionGen]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* R3 P2-6：工具切换清理过期手势目标（split 目标随 split 工具退出而清）。 */
+  useEffect(() => {
+    if (tool !== 'split_feature' && splitTarget) setSplitTarget(null);
+    if (tool !== 'edit_vertices' && vertexTarget) setVertexTarget(null);
+  }, [tool, splitTarget, vertexTarget]);
+
   const targetLayer = layers.find((l) => l.id === editTarget?.layerId);
   const refId = editTarget?.refId ?? null;
   const sessionId = getSessionIdentity().sessionId;
+  /* R3 P2-4：会话内编辑取数的中止纪律 —— 目标切换/卸载时中止在途刷新。 */
+  const refreshAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    refreshAbortRef.current = new AbortController();
+    return () => { refreshAbortRef.current?.abort(); };
+  }, [editTarget?.refId]);
 
   const getMap = useCallback(() => mapRef.current?.getMap() ?? null, [mapRef]);
 
@@ -186,6 +246,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
     const result: SubmitEditResult = await submitEditOps(sessionId, refId, ops, {
       featureIds: opts.featureIds,
       labelKey: opts.labelKey,
+      signal: refreshAbortRef.current?.signal,
     });
     if (result.ok) {
       setStatus({ state: 'done', what: opts.what });
@@ -260,16 +321,23 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
           const feats = await targetFeatures(editTarget.layerId);
           const m0 = getMap();
           if (m0) {
+            const proj0 = (c: [number, number]) => m0.project(c);
             let best0: { feature: GeoJSON.Feature; dist: number } | null = null;
             for (const f of feats) {
+              if (!f.geometry || f.geometry.type === 'GeometryCollection') continue;
+              if (!featureHit(f, lngLat, proj0, e.point, 6)) continue;
+              let dist0 = Infinity;
               for (const c of ringOf(f.geometry)) {
-                const p = m0.project(c as [number, number]);
-                const d = Math.hypot(p.x - e.point.x, p.y - e.point.y);
-                if (d <= 6 && (!best0 || d < best0.dist)) best0 = { feature: f, dist: d };
+                const p = proj0(c as [number, number]);
+                dist0 = Math.min(dist0, Math.hypot(p.x - e.point.x, p.y - e.point.y));
               }
+              if (!best0 || dist0 < best0.dist) best0 = { feature: f, dist: dist0 };
             }
             if (best0) {
-              const fid = featureIdFromProperties(best0.feature.properties as Record<string, unknown> | null);
+              const fid = featureIdFromProperties(
+                best0.feature.properties as Record<string, unknown> | null,
+                (best0.feature as { id?: unknown }).id,
+              );
               if (fid) { setSplitTarget(fid); return; }
             }
           }
@@ -298,16 +366,23 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
         let best: { feature: GeoJSON.Feature; dist: number } | null = null;
         const m = getMap();
         if (!m) return;
+        const proj = (c: [number, number]) => m.project(c);
         for (const f of feats) {
           if (!f.geometry || f.geometry.type === 'GeometryCollection') continue;
+          if (!featureHit(f, lngLat, proj, e.point, tolerance)) continue;
+          // 命中要素中取首个顶点最近者（多重叠时选择最贴近顶点的对象）
+          let dist = Infinity;
           for (const c of ringOf(f.geometry)) {
-            const p = m.project(c as [number, number]);
-            const d = Math.hypot(p.x - e.point.x, p.y - e.point.y);
-            if (d <= tolerance && (!best || d < best.dist)) best = { feature: f, dist: d };
+            const p = proj(c as [number, number]);
+            dist = Math.min(dist, Math.hypot(p.x - e.point.x, p.y - e.point.y));
           }
+          if (!best || dist < best.dist) best = { feature: f, dist };
         }
         if (!best) return;
-        const fid = featureIdFromProperties(best.feature.properties as Record<string, unknown> | null);
+        const fid = featureIdFromProperties(
+          best.feature.properties as Record<string, unknown> | null,
+          (best.feature as { id?: unknown }).id,
+        );
         if (!fid) { setStatus({ state: 'failed', message: t('map.edit.noStableId') }); return; }
         if (active === 'delete_feature') {
           await submit([{ op: 'delete_features' }], { featureIds: [fid], labelKey: 'map.edit.deleteFeature', what: t('map.edit.deleteFeature') });
