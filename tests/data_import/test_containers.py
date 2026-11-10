@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from fixtures import (  # noqa: E402
 )
 
 from app.core.config import settings
-from app.services.data_import.service import DataImportError, DataImportService
+from app.services.data_import.service import DataImportService
 from app.services.session_data import session_data_manager
 
 pytestmark = pytest.mark.heavy
@@ -54,7 +53,7 @@ async def test_gpkg_three_layers_select_two(env, tmp_path):
 
     # 只选两层（场景 1）
     sel = ["pt_layer", "line_layer"]
-    saved = await env.save_plan(
+    await env.save_plan(
         state.batch_id, SESSION,
         member_configs={layers[n].member_key: {} for n in sel},
         selected=[layers[n].member_key for n in sel],

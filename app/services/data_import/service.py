@@ -15,11 +15,10 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_import import budgets, staging
-from app.services.data_import.commit import CommitError, commit_member
+from app.services.data_import.commit import commit_member
 from app.services.data_import.discovery import DiscoveryError, discover_source
 from app.services.data_import.interpretation import InterpretationError
 from app.services.data_import.models import (
-    BATCH_TERMINAL,
     BatchStatus,
     CommitReceipt,
     ImportBatchState,
@@ -173,7 +172,7 @@ class DataImportService:
         return [staging.batch_summary(s) for s in states]
 
     async def delete_batch(self, batch_id: str, session_id: Optional[str]) -> bool:
-        state = await self._load_owned(batch_id, session_id)
+        await self._load_owned(batch_id, session_id)  # 归属/过期校验（统一 NOT_FOUND）
         task = self._commit_tasks.get(batch_id)
         if task is not None and not task.done():
             raise DataImportError("COMMIT_IN_PROGRESS", "提交进行中，请先取消", status=409)

@@ -6,12 +6,8 @@ from __future__ import annotations
 
 import io
 import json
-import re
-import zipfile
 from contextlib import asynccontextmanager
-from pathlib import Path
 
-import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError

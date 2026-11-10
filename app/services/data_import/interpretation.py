@@ -295,7 +295,6 @@ def _resolve_auto_mode(
     columns: List[str], interp: TableInterpretation, hints: Dict[str, Any]
 ) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
     """auto 模式落定：X/Y 列 → points；WKT 列 → wkt；否则 table。"""
-    from app.services.data_parser import LAT_COLUMNS, LNG_COLUMNS
 
     x = interp.x_column
     y = interp.y_column
@@ -587,7 +586,6 @@ def feature_collection(result: InterpretResult, *, to_wgs84: bool) -> Tuple[Dict
     to_wgs84：crs 证据确认（declared/source/rfc 默认）且非 4326 时重投影。
     返回 (fc, transformed)。坐标经 shapely 映射（无 JS Number 截断面）。
     """
-    import shapely
 
     features = []
     transformed = False
@@ -599,7 +597,6 @@ def feature_collection(result: InterpretResult, *, to_wgs84: bool) -> Tuple[Dict
         target_is_4326 = (ev.crs or "").upper() in ("EPSG:4326", "WGS84", "WGS 84")
         if not target_is_4326:
             import geopandas as gpd
-            import pandas as pd
 
             gser = gpd.GeoSeries(geoms, crs=ev.crs)
             geoms = gser.to_crs("EPSG:4326").tolist()

@@ -226,10 +226,10 @@ async def test_xlsx_sheets_empty_and_formula(env, tmp_path):
     ws1.append(["名称", "数值", "公式列"])
     ws1.append(["甲", 10, "=B2*2"])       # openpyxl 不计算 → 无缓存值
     ws1.append(["乙", 20, "=B3*2"])
-    ws2 = wb.create_sheet("空表")
-    ws3 = wb.create_sheet("汇总")
-    ws3.append(["k", "v"])
-    ws3.append(["x", 1])
+    wb.create_sheet("空表")
+    _ws3 = wb.create_sheet("汇总")
+    _ws3.append(["k", "v"])
+    _ws3.append(["x", 1])
     xlsx_path = tmp_path / "book.xlsx"
     wb.save(xlsx_path)
 

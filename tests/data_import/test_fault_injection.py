@@ -89,7 +89,7 @@ async def test_fault_forged_ref_not_reused(env, tmp_path):
     key = state.members[0].member_key
     await env.save_plan(state.batch_id, SESSION, {key: {}}, selected=[key])
     out = await env.start_commit(state.batch_id, SESSION, background=False)
-    real_ref = out["receipts"][key]["output_ref"]
+    out["receipts"][key]["output_ref"]  # noqa: B018 — 记录真实 ref 存在性
 
     # 伪造：改写收据指向一个不存在的 ref
     tampered = staging.load_state(state.batch_id)

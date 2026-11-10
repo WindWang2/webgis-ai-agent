@@ -34,7 +34,6 @@ from app.services.data_parser import (
     ParseError,
     check_detected_driver,
     check_untrusted_vector_content,
-    detect_csv_columns,
     geojson_declares_crs,
     validate_shapefile_zip,
 )
@@ -318,7 +317,6 @@ def _sniff_csv(path: Path, encoding: Optional[str]) -> Tuple[str, List[str], Opt
 def discover_csv(path: Path, source: SourceFile) -> Tuple[List[MemberRecord], List[str]]:
     encoding, columns, delim = _sniff_csv(path, None)
     notes: List[str] = []
-    lowered = [c.lower() for c in columns]
     lng = next((c for c in columns if c.strip().lower() in LNG_COLUMNS), None)
     lat = next((c for c in columns if c.strip().lower() in LAT_COLUMNS), None)
     if lng or lat:

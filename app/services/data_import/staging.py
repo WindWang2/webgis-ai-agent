@@ -114,7 +114,7 @@ def stage_files(
 
     预算：文件数、单文件大小、批次合计。任一超限 → 全部拒绝（不落部分）。
     """
-    from app.services.data_import.models import new_batch_id, sanitize_stored_name, utc_now_iso
+    from app.services.data_import.models import new_batch_id, sanitize_stored_name
 
     if not files:
         raise StagingError("EMPTY_BATCH", "批次必须至少包含一个文件")
