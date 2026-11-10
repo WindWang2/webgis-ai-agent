@@ -391,8 +391,13 @@ def test_wp04_real_pi_turn_marker_changes(registry, monkeypatch):
             "恢复后重新发现可继续（C07 重新发现路径）")
     finally:
         # R2 P3-7：还原模块全局（registry + env + 重载态），不泄漏到其它用例。
+        # R2-N1：原先「未初始化」的进程恢复为 unset 而非遗留测试注册表。
+        import app.agent_pi_bridge as _apb
+
         if original_global is not None:
             set_tool_registry(original_global)
+        else:
+            _apb._tool_registry = None
         monkeypatch.delenv("PI_DYNAMIC_TOOL_SURFACE")
         monkeypatch.delenv("PI_TOOL_ABI")
         importlib.reload(pns)

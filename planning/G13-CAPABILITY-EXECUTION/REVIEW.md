@@ -40,6 +40,34 @@ j) 测试大多行为化；两处空洞断言已点名。
 | P3-8 | P3 | kill switch 关闭时 as_dict 仍带空 availability_suppressed（行为逐位、trace 形状非逐位） | 记账不改：无 as_dict 消费方；行为反验已证逐位一致 |
 | （review 另记） | — | 发现面原语断言被 if 守卫（空洞风险） | ✅ 改硬断言（raster 域必含） |
 
-## 复审（R2）
+## 复审（R2）— 同一独立 reviewer，commit `5b4bb7884`
 
-同一 reviewer 对修复 diff 复核 → 见下方追加记录。
+**APPROVE**（无阻塞残留）。
+
+逐项复核结论（reviewer 以实机探针 + 计数断言验证）：
+
+1. **P2-1/P2-2 退避重设计 — 行为级证实**：冷进程持续失败 20 次读取 →
+   1 次编译尝试 + 19 次 `AvailabilitySnapshotBackoff` +
+   `backoff_suppressed: 19`（风暴消除）；跨代探针 → gen-A 从不被服务
+   （首次失败原样上抛 RuntimeError，窗口内后续读取证据缺席）。
+2. **三个消费方全部捕获新异常**（selector 6.8 try / preflight
+   except→None / meta_tools 不披露）—— 无任何路径可令 turn 崩溃。
+3. **地理启发式纯披露**：不 fire 于时间模式；不改 data/jaccard/控制流；
+   近原点 fixture 的保守误报已诚实注释且无害（原语/语料测试原样通过）。
+4. **前门豁免不扩大抑制**：仅从待分类名单移除 7 个前门名，普通动态候选
+   判定逐字节一致；C06/C12/C14 通过。
+5. P3-1/2/5/6/7 全部按声明落地；P3-8 接受合理（as_dict 零消费方）。
+
+残留（全部 P3 级 nit，不阻塞）：
+- **R2-N1** 进程原本无全局注册表时 teardown 遗留测试注册表 → 本轮已补
+  `unset` 还原（`_apb._tool_registry = None` 分支）。
+- **R2-N2** Backoff 异常消息含结构键（仅指纹/摘要，无秘密）—— 记录不改。
+- **R2-N3** PR_BODY.md 需有意提交（本 PR 将其作为 planning 交付物一并提交）。
+- **R2-N4** 既有协议暴露（非 sentinel 的 store() 抛错泄漏 dedup 占位）——
+  与既有 geojson/heatmap/profile seam 同源，非本分支回归，按基线接受。
+
+## 最终结论
+
+R1 APPROVE-WITH-FIXES（P2×2 + P3×8）→ 全部修复 → R2 **APPROVE**。
+未解决的本任务 P0/P1：无。
+
