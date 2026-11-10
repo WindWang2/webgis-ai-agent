@@ -314,4 +314,3 @@ async function fallbackToRasterPdf(
     };
   }
 }
-
