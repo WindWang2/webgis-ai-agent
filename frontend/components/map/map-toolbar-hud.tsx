@@ -39,6 +39,7 @@ import {
   SKETCH_LAYER_ID,
 } from '@/lib/edit/sketch-store'
 import type { MapToolId } from '@/lib/store/slices/toolSlice'
+import { FeatureEditToolGroup } from './feature-edit-toolbar'
 
 export type MeasureMode = 'none' | 'distance' | 'area'
 
@@ -516,6 +517,9 @@ export function MapToolbarHUD({
         {/* V7：草图编辑工具组 —— 激活态/吸附读 toolSlice（全局工具唯一真相），
             可用性按状态推导（edit/delete 需要草图要素存在）。 */}
         {!collapsed && <SketchToolGroup />}
+
+        {/* G14：真实图层编辑入口（目标层选择 + 分割工具；独立组件最小接入）。 */}
+        {!collapsed && <FeatureEditToolGroup />}
       </div>
     </div>
   )

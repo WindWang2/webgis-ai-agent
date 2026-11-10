@@ -555,6 +555,48 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
     if (draftRef.current) setSketchDraft(null);
   }, []);
 
+  /* ─── G14：草图 → 持久数据集（升格事务；成功后可直接继续编辑） ─── */
+  const [sketchSaving, setSketchSaving] = useState<'idle' | 'busy' | 'failed'>('idle');
+  const saveSketchAsDataset = useCallback(async () => {
+    const { getSessionIdentity } = await import('@/lib/store/session-identity');
+    const { promoteSketchDataset } = await import('@/lib/api/feature-edit');
+    const features = getSketchState().features.map((f) => ({
+      type: 'Feature' as const,
+      geometry: f.geometry,
+      properties: f.properties ?? {},
+    }));
+    const { sessionId } = getSessionIdentity();
+    if (!sessionId || !features.length) return;
+    setSketchSaving('busy');
+    try {
+      const result = await promoteSketchDataset(
+        sessionId,
+        { name: tNow('map.sketch.promotedName', { date: new Date().toISOString().slice(0, 10) }), features },
+      );
+      if (!result.ok) {
+        setSketchSaving('failed');
+        return;
+      }
+      resetSketchStore();
+      setSketchSelected(null);
+      setSketchDirty(false);
+      useHudStore.getState().pushOpLog({
+        id: `op-${Date.now()}`,
+        type: 'add',
+        label: tNow('map.sketch.saveDataset'),
+        time: new Date().toLocaleTimeString(currentLocale()),
+        actor: 'user',
+      });
+      // 升格后立即成为编辑目标（行由 SSE mapspec 镜像补齐；行到位前组件不渲染）
+      if (result.layer_id) {
+        useHudStore.getState().setEditTarget({ layerId: result.layer_id, refId: result.ref_id });
+      }
+      setSketchSaving('idle');
+    } catch {
+      setSketchSaving('failed');
+    }
+  }, [setSketchDirty]);
+
   if (!sketchDirty) return null;
 
   return (
@@ -567,7 +609,19 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       <span>{t('map.sketch.unsaved')}</span>
       <button
         type="button"
+        data-testid="sketch-save-dataset"
         className="rounded-xs bg-status-accent px-2 py-0.5 font-medium text-ink-on-accent hover:opacity-90"
+        disabled={sketchSaving === 'busy'}
+        onClick={() => { void saveSketchAsDataset(); }}
+      >
+        {sketchSaving === 'busy' ? t('map.sketch.promoting') : t('map.sketch.saveDataset')}
+      </button>
+      {sketchSaving === 'failed' && (
+        <span className="text-status-error" data-testid="sketch-save-error">{t('map.sketch.promoteFailed')}</span>
+      )}
+      <button
+        type="button"
+        className="rounded-xs border border-edge-subtle px-2 py-0.5 hover:bg-surface-hover"
         onClick={() => {
           const data = sketchFeatureCollection();
           const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/geo+json' });

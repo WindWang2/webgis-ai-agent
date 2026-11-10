@@ -293,6 +293,9 @@ export interface HudState extends WorkbenchSlice {
   sketchDirty: import('./slices/toolSlice').ToolSlice['sketchDirty'];
   setSketchDirty: import('./slices/toolSlice').ToolSlice['setSketchDirty'];
   clearToolState: import('./slices/toolSlice').ToolSlice['clearToolState'];
+  /* ─── G14：真实图层编辑目标 ─── */
+  editTarget: import('./slices/toolSlice').ToolSlice['editTarget'];
+  setEditTarget: import('./slices/toolSlice').ToolSlice['setEditTarget'];
 
   /* ─── Copilot（ADR-0194：画布意图工具 / 高亮 / 生成式微 UI / 上报遥测）─── */
   copilotTool: import('./slices/copilotSlice').CopilotSlice['copilotTool'];

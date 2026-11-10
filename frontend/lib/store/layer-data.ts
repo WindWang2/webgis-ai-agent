@@ -14,7 +14,8 @@ export interface EnsureLayerResult {
 }
 
 const VECTOR_TILE_THRESHOLD = 5000;
-export const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id', 'featureId', 'feature_id'];
+// G14：_wfid 最优先（已编辑数据集稳定身份；与 feature-id.ts 同序语义）
+export const FEATURE_ID_KEYS = ['_wfid', 'id', 'OBJECTID', 'fid', 'osm_id', '@id', 'featureId', 'feature_id'];
 
 // #1109: the session identity holder lives in the dependency-free leaf module
 // session-identity.ts (store slices need to read the owner token without
