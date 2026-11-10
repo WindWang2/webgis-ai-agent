@@ -521,6 +521,8 @@ class ComputeReceipt(BaseModel):
     persistence: str = "session_ref"
     descriptor_minted: bool = False
     degraded: Tuple[str, ...] = ()
+    #: 发布闸门：False = 草稿（store/登记之前写入，绝不对外可见，也不参与幂等）。
+    published: bool = True
     created_at: float = 0.0
 
     def to_bounded_dict(self) -> Dict[str, Any]:

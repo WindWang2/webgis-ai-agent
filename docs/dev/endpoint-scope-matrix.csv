@@ -155,6 +155,7 @@ GET,/api/v1/field-compute/catalog,gis:read,N,N
 POST,/api/v1/field-compute/describe,gis:write,N,Y
 POST,/api/v1/field-compute/plan,gis:write,N,Y
 DELETE,/api/v1/field-compute/plan/{plan_id},gis:write,N,Y
+POST,/api/v1/field-compute/plan/{plan_id}/cancel,gis:write,N,Y
 POST,/api/v1/field-compute/plan/{plan_id}/execute,gis:write,N,Y
 POST,/api/v1/field-compute/plan/{plan_id}/preview,gis:write,N,Y
 GET,/api/v1/field-compute/plans,gis:read,N,Y

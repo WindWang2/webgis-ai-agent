@@ -135,5 +135,9 @@
   "resultReadable": "可读：是",
   "resultNotReadable": "可读：否",
   "resultSample": "样本行",
-  "valueEmpty": "—"
+  "valueEmpty": "—",
+  "multiColumnNote": "当前面板一次编辑一列；需要多个计算列链式依赖（如密度→分级）请使用 Pi 对话或 API（最多 8 列，声明顺序即计算顺序）。",
+  "cancelRequested": "已请求服务端取消；若任务已进入写入阶段，成果仍可能生成，可在结果表回查。",
+  "loadIncomplete": "加载失败：结果为空或格式不合法，已移除占位图层（成果 ref 仍保留）",
+  "projectSaveFailed": "项目清单保存失败：成果仅为本会话数据，重开可能失效（PROJECT_SAVE_FAILED）"
 }

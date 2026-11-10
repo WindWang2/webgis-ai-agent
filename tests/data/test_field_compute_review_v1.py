@@ -1,0 +1,254 @@
+"""G19 独立评审修复回归（review → fix → rereview 证据）。
+
+每一条对应 REVIEW.md 中的 P1 / 影响验收的 P2：
+P1-1 OpenAPI 短名保持、P1-2 项目保存失败降级、P1-3 收据落盘闸门、
+P1-4 datetime_part 时区、P2-5 幂等升级项目、P2-6 computed_rows、
+P2-7 abort 下几何阻断豁免、P2-8 服务端取消端点、P2-10 owner 元数据、
+P2-11 ring/manifest 不截断、P2-13 弱引用锁。
+"""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from app.services.data_preparation.field_compute import receipt as rc
+from app.services.data_preparation.field_compute import service
+from app.services.data_preparation.field_compute.contracts import ExecError
+from app.services.data_preparation.field_compute.interpreter import (
+    EvalConfig, evaluate_rows,
+)
+from app.services.data_preparation.field_compute.parser import (
+    CompileContext, compile_columns,
+)
+from app.services.dataset_semantics import reset_dataset_semantic_store
+from app.services.session_data import session_data_manager as sdm
+
+
+@pytest.fixture(autouse=True)
+def _isolated_storage(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.mapspec.store.BASE_STORAGE_DIR", tmp_path)
+    reset_dataset_semantic_store()
+    yield
+    reset_dataset_semantic_store()
+
+
+def _fc():
+    return {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [104.0 + i * 0.01, 30.0]},
+         "properties": {"人口": 1000 + i * 100, "面积 平方千米": 10 + i,
+                        "基期": 100, "现期": 120, "代码": "00123",
+                        "时间": "2023-12-31 16:30:00", "名称": f"区{i}"}}
+        for i in range(4)]}
+
+
+def _payload(crs="EPSG:4326", crs_source="declared"):
+    return {"geojson": _fc(), "crs": crs, "crs_source": crs_source}
+
+
+async def _seed(sid, payload=None):
+    return await sdm.store(sid, payload or _payload(), prefix="test")
+
+
+async def _plan(sid, ref, columns, **kw):
+    req = {"session_id": sid, "source_ref": ref, "columns": columns}
+    req.update(kw)
+    return (await service.create_plan(req))["plan"]
+
+
+# ── P1-1 / P2-12：OpenAPI 既有短名与 $ref 零变化 ──────────────────────────
+
+class TestOpenApiCompatibility:
+    def test_existing_short_schema_names_preserved(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2]
+        d = json.loads((root / "tests/quality/snapshots/openapi.json").read_text(
+            encoding="utf-8"))
+        schemas = d["components"]["schemas"]
+        for name in ("PlanOut", "PlanResponse", "PlanListResponse",
+                     "PlanRequest", "PreviewResponse"):
+            assert name in schemas, f"既有短名 {name} 被消歧改写"
+        assert not any(k.startswith("app__schemas__data_preparation_schema__")
+                       for k in schemas)
+        for path in ("/api/v1/data-preparation/plan",
+                     "/api/v1/data-preparation/plans"):
+            op = (d["paths"][path].get("post") or d["paths"][path].get("get"))
+            ref = op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+            assert ref.startswith("#/components/schemas/Plan")
+            assert "app__schemas__" not in ref
+        assert all(k.startswith("FieldCompute") for k in schemas
+                   if k.startswith("FieldCompute"))
+        assert "FieldComputePlanOut" in schemas
+
+
+# ── P1-4：datetime_part 使用表达式时区 ────────────────────────────────────
+
+class TestTimezone:
+    def test_plan_utc_but_formula_plus8_crosses_day(self):
+        ctx = CompileContext(
+            available_fields=("时间",), timezone="UTC",
+            date_format="%Y-%m-%d %H:%M:%S")
+        cols, _ = compile_columns([{
+            "name": "月份",
+            "expression": "datetime_part(parse_datetime({时间}, '%Y-%m-%d %H:%M:%S', '+08:00'), 'month')",
+        }], ctx)
+        cfg = EvalConfig(timezone="UTC", date_format="%Y-%m-%d %H:%M:%S")
+        rows = [({"时间": "2023-12-31 16:30:00"}, None),
+                ({"时间": "2024-01-01 00:30:00"}, None)]
+        out = evaluate_rows(rows, cols, None, cfg)
+        # 计划级 UTC 不得覆盖公式内 +08:00；跨 UTC 日期边界仍取 12 月 / 1 月。
+        assert [r["月份"] for r in out.rows] == [12, 1]
+
+
+# ── P1-2 / P1-3 / P2-5 / P2-6：发布顺序、持久化与统计 ─────────────────────
+
+class TestPublishSequence:
+    async def test_project_save_failure_downgrades_persistence(self, monkeypatch):
+        sid = "sess-fc-rev-savefail"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / {面积 平方千米}"}],
+                           owner="alice")
+
+        async def _fail(*_a, **_kw):
+            return False
+        monkeypatch.setattr(service, "save_to_project", _fail)
+        receipt = await service.execute(plan.plan_id, sid, project_id="proj-fail")
+        assert receipt.persistence == "session_ref"
+        assert "PROJECT_SAVE_FAILED" in receipt.degraded
+        assert await service.list_project_results(sid, "proj-fail") == []
+
+    async def test_receipt_gate_failure_writes_nothing(self, monkeypatch):
+        sid = "sess-fc-rev-gate"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / {面积 平方千米}"}])
+        fc_writes: list = []
+        real_store = sdm.store
+
+        async def _rec(*a, **kw):
+            if kw.get("prefix") == "fc":
+                fc_writes.append(a)
+            return await real_store(*a, **kw)
+
+        async def _no_receipt(*_a, **_kw):
+            return False
+
+        monkeypatch.setattr(sdm, "store", _rec)
+        monkeypatch.setattr(rc, "append_receipt", _no_receipt)
+        with pytest.raises(ExecError) as ei:
+            await service.execute(plan.plan_id, sid, project_id="proj-gate")
+        assert ei.value.code == "WRITE_FAILED"
+        assert fc_writes == []                    # store 从未调用 → 无孤儿 ref
+        assert await service.list_project_results(sid, "proj-gate") == []
+        assert await rc.find_receipt(sid, plan.compute_fingerprint, ref,
+                                     plan.anchor.content_hash) is None
+
+    async def test_idempotent_upgrade_from_session_to_project(self):
+        sid = "sess-fc-rev-upgrade"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / {面积 平方千米}"}])
+        first = await service.execute(plan.plan_id, sid)
+        assert first.persistence == "session_ref"
+        second = await service.execute(plan.plan_id, sid, project_id="proj-up")
+        assert second.output_ref == first.output_ref
+        assert second.persistence == "project_artifact"
+        items = await service.list_project_results(sid, "proj-up")
+        assert len(items) == 1 and items[0]["output_ref"] == first.output_ref
+
+    async def test_computed_rows_excludes_error_rows(self):
+        sid = "sess-fc-rev-computed"
+        payload = _payload()
+        payload["geojson"]["features"][0]["properties"]["面积 平方千米"] = 0
+        ref = await _seed(sid, payload)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / {面积 平方千米}"}])
+        receipt = await service.execute(plan.plan_id, sid)
+        assert receipt.row_count == 4
+        assert receipt.error_count >= 1
+        assert receipt.computed_rows == 3
+        assert receipt.computed_rows < receipt.row_count
+
+
+# ── P2-7：abort 下几何阻断不终止其他列 ────────────────────────────────────
+
+class TestAbortGeometry:
+    async def test_abort_with_blocked_geometry_still_computes_text(self):
+        sid = "sess-fc-rev-abortgeo"
+        ref = await _seed(sid, _payload(crs="", crs_source="assumed"))
+        plan = await _plan(
+            sid, ref,
+            [{"name": "规范代码", "expression": "pad_left({代码}, 6, '0')"},
+             {"name": "面积", "expression": "area_km2()"}],
+            error_policy="abort")
+        receipt = await service.execute(plan.plan_id, sid)
+        got = await service.get_result(sid, receipt.output_ref)
+        assert got["sample_rows"][0]["规范代码"] == "000123"
+        assert got["sample_rows"][0]["面积"] is None
+        assert any(c.name == "面积" and c.errors > 0 for c in receipt.columns)
+
+
+# ── P2-8 / P2-10 / P2-13：取消端点、owner 元数据、锁有界 ──────────────────
+
+class TestCancelOwnerLocks:
+    async def test_cancel_endpoint_stops_execution(self):
+        sid = "sess-fc-rev-cancel"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / {面积 平方千米}"}])
+        assert service.request_cancel(sid, plan.plan_id) is True
+        with pytest.raises(ExecError) as ei:
+            await service.execute(plan.plan_id, sid)
+        assert ei.value.code == "CANCELLED"
+        # 取消后再次提交可正常执行（请求已被清理，不污染后续任务）
+        receipt = await service.execute(plan.plan_id, sid)
+        assert receipt.output_ref.startswith("ref:fc-")
+
+    async def test_owner_is_metadata_not_a_gate(self):
+        sid = "sess-fc-rev-owner"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}],
+                           owner="alice")
+        # 跨入口（UI user_id / Pi agent）复用同一 plan 不得被 owner 误拒；
+        # 数据隔离由 session 归属与 ref 命名空间保证。
+        receipt = await service.execute(plan.plan_id, sid, owner="bob")
+        assert receipt.output_ref.startswith("ref:fc-")
+
+    def test_exec_lock_table_is_weak(self):
+        import weakref
+        assert isinstance(service._EXEC_LOCKS, weakref.WeakValueDictionary)
+
+
+# ── P2-11：ring 溢出后幂等仍成立；manifest 不截断 ─────────────────────────
+
+class TestStableKeys:
+    async def test_ring_overflow_keeps_idempotency(self):
+        sid = "sess-fc-rev-ring"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / {面积 平方千米}"}])
+        first = await service.execute(plan.plan_id, sid)
+        # 制造 70 条不同收据把 64 条 ring 挤出，稳定键文件必须仍保住幂等。
+        for i in range(70):
+            dummy = first.model_copy(update={
+                "compute_fingerprint": f"dummy-{i:03d}",
+                "output_ref": f"ref:fc-dummy-{i}",
+            })
+            assert await rc.append_receipt(sid, dummy)
+        again = await service.execute(plan.plan_id, sid)
+        assert again.output_ref == first.output_ref
+        assert again.created_at == first.created_at
+
+    async def test_manifest_does_not_silently_drop_history(self):
+        sid = "sess-fc-rev-manifest"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        for i in range(130):
+            assert await service.save_to_project(
+                sid, f"ref:fc-x-{i}", "proj-many", plan)
+        items = await service.list_project_results(sid, "proj-many")
+        assert len(items) == 130

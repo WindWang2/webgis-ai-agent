@@ -25,7 +25,7 @@
 | `scripts/generate_endpoint_scope_matrix.py` | +1 条 `DOMAIN_RULES` 规则 `"field-compute": ("gis:read","gis:write")` | 新域端点必须显式 scope；纯新增一行，不改既有规则 |
 | `tests/quality/snapshots/openapi.json` | 由 `API_SNAPSHOT_UPDATE=1` 刷新 | additive 新端点；无 path 删除/破坏性变更 |
 | `docs/api-docs.md` | 由 `scripts/gen_api_docs.py` 刷新生成区 | 生成器产物，不手写漂移 |
-| `docs/dev/endpoint-scope-matrix.csv` | 由 `scripts/generate_endpoint_scope_matrix.py` 重新生成 | 9 个新端点补齐矩阵行 |
+| `docs/dev/endpoint-scope-matrix.csv` | 由 `scripts/generate_endpoint_scope_matrix.py` 重新生成 | 10 个新端点（含复审修复新增的 `cancel`）补齐矩阵行 |
 | `docs/field-compute-contract.md` + `app/services/data_preparation/field_compute/gen_help.py` | 新增（面向用户帮助 + 契约驱动生成脚本） | 函数表由 `function_help()` 生成，新增函数须升版本并重跑 |
 
 **生成物归属**：以上 4 个生成物/规则按**本分支当前版本**独立完成并随 PR 提交，不把必需工作留给合并者；合入其他并行 PR 后按最新主干重新校正（`INTERFACES.md §6`）。

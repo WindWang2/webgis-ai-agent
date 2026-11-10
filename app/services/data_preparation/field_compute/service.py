@@ -1,22 +1,26 @@
 """字段计算工作台服务层（G19 / WP06–WP10）—— API、UI、Pi 工具的**同一业务真相**。
 
-阶段：``describe → compile → preview → execute(compute → write → register →
-publish)``。预览与全量共用 ``interpreter.evaluate_rows``；CPU 密集计算经
-``asyncio.to_thread`` offload；取消与行级 abort 都有明确 terminal 状态。
+发布顺序（独立评审 P1-3 修复）：
+``compute → verify_anchor → 收据草稿落盘闸门 → store → additive 登记 →
+项目保存 → 已发布收据 upsert → 返回``。
+收据草稿在任何 store/登记之前写入且 ``published=False``（不参与幂等、不对
+外可见）；因此「收据落盘失败」时**没有任何可见半成品**。仅已发布收据对外
+暴露 ``output_ref``。
 
-原子可见性：输出 ref 只在「计算完成 + store 成功 + 收据落盘」之后返回；
-取消/失败/写入失败都不发布，临时 ref 不被任何响应引用。幂等键 =
-``compute_fingerprint + input_ref + input_content_hash``。
+阶段：``describe → compile → preview → execute``。预览与全量共用
+``interpreter.evaluate_rows``；CPU 密集计算经 ``asyncio.to_thread`` offload。
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import tempfile
 import time
 import uuid
+import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -49,10 +53,13 @@ from app.services.data_preparation.field_compute.units import describe as unit_d
 
 logger = logging.getLogger(__name__)
 
-#: 预估操作数闸门（启动前拒绝明显超预算的任务）。
 MAX_ESTIMATED_OPS = 5_000_000
-#: 每 (session, fingerprint) 一把执行锁（并发幂等）。
-_EXEC_LOCKS: Dict[str, "asyncio.Lock"] = {}
+
+#: 弱引用锁表：锁对象在最后一次 execute 结束后可被 GC，避免长驻进程无界累积。
+_EXEC_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = \
+    weakref.WeakValueDictionary()
+#: 显式协作取消请求（前端 cancel 端点写入）；执行循环每批检查。
+_CANCEL_REQUESTS: set[str] = set()
 
 
 def _exec_lock(session_id: str, fingerprint: str) -> "asyncio.Lock":
@@ -64,7 +71,19 @@ def _exec_lock(session_id: str, fingerprint: str) -> "asyncio.Lock":
     return lock
 
 
-def _check_cancel() -> None:
+def _cancel_key(session_id: str, plan_id: str) -> str:
+    return f"{session_id}:{plan_id}"
+
+
+def request_cancel(session_id: str, plan_id: str) -> bool:
+    """登记协作取消请求（服务端 cancel 端点调用；不影响已发布成果）。"""
+    _CANCEL_REQUESTS.add(_cancel_key(session_id, plan_id))
+    return True
+
+
+def _check_cancel(key: str = "") -> None:
+    if key and key in _CANCEL_REQUESTS:
+        raise OperationCancelled("cancelled by user request", job_id=key)
     token = current_token()
     if token is not None and token.cancelled:
         raise OperationCancelled(token.reason or "field compute cancelled",
@@ -142,25 +161,18 @@ async def describe_source(session_id: str, source_ref: str) -> Dict[str, Any]:
         })
     mode, reason = geometry_gate(crs, crs_source)
     return {
-        "input_ref": source_ref,
-        "data_shape": shape,
-        "row_count": len(rows),
-        "crs": crs,
-        "crs_source": crs_source,
-        "fields": fields[:64],
-        "sample_rows": [dict(r) for r in rows[:5]],
-        "function_set_version": FUNCTION_SET_VERSION,
-        "ir_version": IR_VERSION,
+        "input_ref": source_ref, "data_shape": shape, "row_count": len(rows),
+        "crs": crs, "crs_source": crs_source,
+        "fields": fields[:64], "sample_rows": [dict(r) for r in rows[:5]],
+        "function_set_version": FUNCTION_SET_VERSION, "ir_version": IR_VERSION,
         "functions": function_help(),
         "scope_modes": sorted({"all_rows", "selection", "predicate"}),
         "error_policies": ["null", "abort"],
         "limits": {"max_rows": MAX_ROWS, "max_columns": 8,
                    "max_ops_per_row": MAX_ROW_OPS,
                    "preview_rows": MAX_PREVIEW_ROWS},
-        "geometry": {
-            "mode": mode, "block_reason": reason or None,
-            "detail": gate_reason_detail(mode, reason, crs),
-        },
+        "geometry": {"mode": mode, "block_reason": reason or None,
+                     "detail": gate_reason_detail(mode, reason, crs)},
         "unit_declaration_required": True,
         "note": "字段名只是提示；科学单位必须由 field_units 显式声明（user-declared）",
     }
@@ -176,7 +188,7 @@ async def create_plan(req: Dict[str, Any]) -> Dict[str, Any]:
     if not session_id or not source_ref.startswith("ref:"):
         raise CompileError("INVALID_PREDICATE", "session_id / source_ref(ref:) 必填")
     payload = await _payload(session_id, source_ref)
-    frozen = freeze(payload)                 # 编译期锚定的一致快照
+    frozen = freeze(payload)
     shape, rows, crs, crs_source, _meta = parse_payload(frozen)
     fp_desc = await _descriptor_fingerprint(session_id, source_ref)
     anchor = build_anchor(frozen, source_ref, fp_desc)
@@ -193,8 +205,7 @@ async def create_plan(req: Dict[str, Any]) -> Dict[str, Any]:
         field_types=_infer_types(rows),
         field_units=dict(req.get("field_units") or {}),
         timezone=str(req.get("timezone") or "UTC"),
-        date_format=str(req.get("date_format") or ""),
-        crs=crs,
+        date_format=str(req.get("date_format") or ""), crs=crs,
     )
     columns, order = compile_columns(req.get("columns") or [], ctx)
     estimated_ops = len(rows) * sum(node_count(c.expression) for c in columns)
@@ -217,9 +228,7 @@ async def create_plan(req: Dict[str, Any]) -> Dict[str, Any]:
         raise ExecError("WRITE_FAILED", "计划台账落盘失败")
     mode, reason = geometry_gate(crs, crs_source)
     return {
-        "plan": plan,
-        "data_shape": shape,
-        "column_order": order,
+        "plan": plan, "data_shape": shape, "column_order": order,
         "scope_summary": scope_summary,
         "geometry": {"mode": mode, "block_reason": reason or None,
                      "detail": gate_reason_detail(mode, reason, crs)},
@@ -241,21 +250,20 @@ def _compile_warnings(columns, crs: str, mode: str, reason: str) -> List[str]:
 async def _prepare(plan: ComputePlan, session_id: str
                    ) -> Tuple[Any, List[Tuple[Dict[str, Any], Any]],
                               List[bool], Dict[str, Any], str, str, str]:
-    """载入 → 重核版本锚 → 冻结快照 → 解析范围（预览与执行共用）。"""
     payload = await _payload(session_id, plan.input_ref)
-    shape, rows, crs, crs_source, _meta = parse_payload(payload)
+    _shape, _rows, crs, crs_source, _meta = parse_payload(payload)
     now = build_anchor(payload, plan.input_ref)
     if (now.content_hash != plan.anchor.content_hash
             or now.schema_fingerprint != plan.anchor.schema_fingerprint):
         raise ExecError("STALE_PLAN",
                         "预览后源/schema 已改变 —— 旧计划被拒绝，请刷新预览")
-    frozen = freeze(payload)                 # 固定快照（此后所有批次只读它）
+    frozen = freeze(payload)
     rows_with_geom, _ = extract_rows(frozen)
     feats = _scope_features(rows_with_geom)
     selection_payload = await _selection_payload(session_id, plan.scope)
     mask, scope_summary = resolve_scope(
         plan.scope, feats, plan.anchor.available_fields, selection_payload)
-    return frozen, rows_with_geom, mask, scope_summary, crs, crs_source, shape
+    return frozen, rows_with_geom, mask, scope_summary, crs, crs_source, _shape
 
 
 def _eval_config(plan: ComputePlan, crs: str, crs_source: str) -> EvalConfig:
@@ -281,8 +289,7 @@ def _column_meta(plan: ComputePlan) -> List[Dict[str, Any]]:
                            declared_column_units={
                                x.name: x.declared_unit for x in plan.columns})
         out.append({
-            "name": c.name,
-            "expression": c.expression.canonical(),
+            "name": c.name, "expression": c.expression.canonical(),
             "formula": render_expression(c.expression),
             "dtype": static_type(c.expression, {}),
             "unit": info.unit, "unit_status": info.status,
@@ -302,7 +309,7 @@ async def preview(plan_id: str, session_id: str, *, generation: int = 0
         raise ExecError("PLAN_NOT_FOUND", plan_id)
     if plan.state in ("executed", "cancelled", "rejected"):
         raise ExecError("PLAN_REJECTED", f"计划状态 {plan.state}")
-    frozen, rows_wg, mask, scope_summary, crs, crs_source, shape = await _prepare(
+    _frozen, rows_wg, mask, scope_summary, crs, crs_source, shape = await _prepare(
         plan, session_id)
     sample = rows_wg[:MAX_PREVIEW_ROWS]
     cfg = _eval_config(plan, crs, crs_source)
@@ -325,16 +332,12 @@ async def preview(plan_id: str, session_id: str, *, generation: int = 0
     plan.state = "previewed"
     await store.save_plan(plan)
     return {
-        "plan_id": plan.plan_id,
-        "generation": generation,
+        "plan_id": plan.plan_id, "generation": generation,
         "compute_fingerprint": plan.compute_fingerprint,
-        "kind": "sample",
-        "sampled_rows": len(sample),
-        "total_rows": len(rows_wg),
-        "truncated": len(rows_wg) > len(sample),
+        "kind": "sample", "sampled_rows": len(sample),
+        "total_rows": len(rows_wg), "truncated": len(rows_wg) > len(sample),
         "data_shape": shape,
-        "columns": [{**m,
-                     "computed": batch.stats[m["name"]].computed,
+        "columns": [{**m, "computed": batch.stats[m["name"]].computed,
                      "nulls": batch.stats[m["name"]].nulls,
                      "errors": batch.stats[m["name"]].errors}
                     for m in columns_meta],
@@ -371,92 +374,175 @@ async def preview(plan_id: str, session_id: str, *, generation: int = 0
 async def execute(plan_id: str, session_id: str, *, project_id: str = "",
                   owner: str = "", expected_fingerprint: str = ""
                   ) -> ComputeReceipt:
-    """有界批执行 → 原子派生登记（取消/失败不发布半成品）。"""
+    """有界批执行 → 原子派生登记（取消/失败不发布半成品）。
+
+    ``owner`` 是**提示性元数据**：数据隔离由 session 归属与 ref 命名空间保证，
+    不把它当权限门禁（跨 UI / Pi 入口复用同一 plan 不得被误拒）。
+    """
     plan = await store.get_plan(session_id, plan_id)
     if plan is None:
         raise ExecError("PLAN_NOT_FOUND", plan_id)
-    if plan.state in ("cancelled", "rejected"):
+    # cancelled 是可恢复态：取消请求在 finally 中清理，用户可原计划重提（正确恢复）；
+    # rejected（行级 abort）是终态，不自动复活。
+    if plan.state == "rejected":
         raise ExecError("PLAN_REJECTED", f"计划状态 {plan.state}")
     if expected_fingerprint and expected_fingerprint != plan.compute_fingerprint:
         raise ExecError("STALE_PLAN", "确认参数与已预览参数不一致（generation 失效）")
-    if owner and plan.owner and owner != plan.owner:
-        raise ExecError("OWNER_MISMATCH", "计划 owner 与执行者不一致")
 
     async with _exec_lock(session_id, plan.compute_fingerprint):
         return await _execute_locked(plan, session_id, project_id=project_id)
 
 
+async def _maybe_upgrade_project(existing: ComputeReceipt, session_id: str,
+                                 project_id: str, plan: ComputePlan
+                                 ) -> ComputeReceipt:
+    """幂等命中后补做项目保存（修「先生成、后决定保存项目」旅程）。"""
+    if not project_id or existing.persistence == "project_artifact":
+        return existing
+    ok = await save_to_project(session_id, existing.output_ref, project_id, plan)
+    if ok:
+        updated = existing.model_copy(update={"persistence": "project_artifact"})
+        await store.append_receipt(session_id, updated)
+        return updated
+    return existing.model_copy(update={
+        "degraded": tuple(existing.degraded) + ("PROJECT_SAVE_FAILED",)})
+
+
 async def _execute_locked(plan: ComputePlan, session_id: str,
                           *, project_id: str) -> ComputeReceipt:
-    # 幂等（在版本重核之后）：同计划 + 同内容锚 → 既有成果。
-    current = await _payload(session_id, plan.input_ref)
-    content_hash = canonical_hash(current)
-    existing = await store.find_receipt(
-        session_id, plan.compute_fingerprint, plan.input_ref, content_hash)
-    if existing is not None:
-        return existing
-
-    frozen, rows_wg, mask, scope_summary, crs, crs_source, _shape = await _prepare(
-        plan, session_id)
-    cfg = _eval_config(plan, crs, crs_source)
-    columns = list(plan.columns)
-
-    # ① compute：分批 offload（CPU 不堵塞事件循环）+ 每批协作取消。
-    new_rows: List[Dict[str, Any]] = []
-    stats: Dict[str, ColumnStats] = {c.name: ColumnStats() for c in columns}
-    precision = ""
-    geometry_evidence: Dict[str, Any] = {}
+    cancel_key = _cancel_key(session_id, plan.plan_id)
     try:
-        for start in range(0, len(rows_wg), MAX_BATCH_ROWS):
-            _check_cancel()
-            chunk = rows_wg[start:start + MAX_BATCH_ROWS]
-            chunk_mask = mask[start:start + len(chunk)]
-            batch: BatchResult = await asyncio.to_thread(
-                evaluate_rows, chunk, columns, chunk_mask, cfg,
-                batch_size=len(chunk))
-            new_rows.extend(batch.rows)
-            for name, st in batch.stats.items():
-                acc = stats[name]
-                acc.computed += st.computed
-                acc.nulls += st.nulls
-                acc.errors += st.errors
-                acc.samples.extend(st.samples)
-            precision = precision or batch.precision_policy
-            geometry_evidence = batch.geometry_evidence
-    except OperationCancelled as exc:
-        plan.state = "cancelled"
+        current = await _payload(session_id, plan.input_ref)
+        content_hash = canonical_hash(current)
+        existing = await store.find_receipt(
+            session_id, plan.compute_fingerprint, plan.input_ref, content_hash)
+        if existing is not None:
+            return await _maybe_upgrade_project(
+                existing, session_id, project_id, plan)
+
+        frozen, rows_wg, mask, scope_summary, crs, crs_source, _shape = \
+            await _prepare(plan, session_id)
+        cfg = _eval_config(plan, crs, crs_source)
+        columns = list(plan.columns)
+
+        # ① compute：分批 offload + 每批协作取消。
+        new_rows: List[Dict[str, Any]] = []
+        stats: Dict[str, ColumnStats] = {c.name: ColumnStats() for c in columns}
+        precision = ""
+        geometry_evidence: Dict[str, Any] = {}
+        computed_rows = 0
+        try:
+            for start in range(0, len(rows_wg), MAX_BATCH_ROWS):
+                _check_cancel(cancel_key)
+                chunk = rows_wg[start:start + MAX_BATCH_ROWS]
+                chunk_mask = mask[start:start + len(chunk)]
+                batch: BatchResult = await asyncio.to_thread(
+                    evaluate_rows, chunk, columns, chunk_mask, cfg,
+                    batch_size=len(chunk))
+                new_rows.extend(batch.rows)
+                computed_rows += batch.computed_rows
+                for name, st in batch.stats.items():
+                    acc = stats[name]
+                    acc.computed += st.computed
+                    acc.nulls += st.nulls
+                    acc.errors += st.errors
+                    acc.samples.extend(st.samples)
+                precision = precision or batch.precision_policy
+                geometry_evidence = batch.geometry_evidence
+        except OperationCancelled as exc:
+            plan.state = "cancelled"
+            await store.save_plan(plan)
+            raise ExecError("CANCELLED", str(exc)[:200]) from exc
+        except RowAbort as exc:
+            plan.state = "rejected"
+            await store.save_plan(plan)
+            raise ExecError("ABORTED_BY_ROW_ERROR",
+                            f"row {exc.row_index} / {exc.column}: {exc.code}") from exc
+        if len(new_rows) != len(rows_wg):
+            raise ExecError("WRITE_FAILED", "结果行数与输入行数不一致")
+
+        # ② 发布前二次版本核对。
+        latest = await _payload(session_id, plan.input_ref)
+        verify_anchor(latest, plan.anchor)
+
+        subset = mask if plan.scope.subset_export else None
+        output_payload = build_output_payload(frozen, new_rows, subset=subset)
+        column_results = _column_results(plan, stats)
+
+        def _make_receipt(output_ref: str, published: bool,
+                          persistence: str, degraded: Tuple[str, ...],
+                          minted: bool) -> ComputeReceipt:
+            return ComputeReceipt(
+                plan_id=plan.plan_id,
+                compute_fingerprint=plan.compute_fingerprint,
+                input_ref=plan.input_ref, output_ref=output_ref,
+                input_content_hash=canonical_hash(frozen),
+                output_content_hash=canonical_hash(output_payload),
+                row_count=len(rows_wg), computed_rows=computed_rows,
+                selected_rows=sum(1 for s in mask if s),
+                skipped_rows=sum(1 for s in mask if not s),
+                null_count=sum(s.nulls for s in stats.values()),
+                error_count=sum(s.errors for s in stats.values()),
+                columns=tuple(column_results), scope=scope_summary,
+                geometry=geometry_evidence,
+                formula_summary=tuple(
+                    f"{m['name']} = {m['formula']}" for m in _column_meta(plan)),
+                unit_summary={m["name"]: unit_describe(
+                    m["unit"], m["unit_status"], m["unit_dimension"])
+                    for m in _column_meta(plan)},
+                precision_policy=precision, persistence=persistence,
+                descriptor_minted=minted, degraded=degraded,
+                published=published, created_at=time.time(),
+            )
+
+        # ③ 收据草稿闸门：必须在 store / 任何登记之前，且 published=False。
+        draft = _make_receipt("", False, "session_ref", (), False)
+        if not await store.append_receipt(session_id, draft):
+            raise ExecError("WRITE_FAILED",
+                            "收据草稿落盘失败 —— 未写入任何成果（无可见半成品）")
+
+        # ④ write：一次性写入新 ref（原件绝不覆写）。
+        from app.services.session_data import session_data_manager
+        output_ref = await session_data_manager.store(
+            session_id, output_payload, prefix="fc")
+        if not output_ref:
+            raise ExecError("STORE_FAILED", "session store 拒绝派生成果")
+
+        # ⑤ additive 登记（不含项目保存）。
+        minted, degraded = await _register_output(
+            session_id, plan, output_ref, output_payload, crs,
+            cfg.geometry_block_reason, precision)
+
+        # ⑥ 项目保存（在最终收据之前）：失败必须降级 persistence，不谎称可找回。
+        project_saved = False
+        if project_id:
+            project_saved = await save_to_project(
+                session_id, output_ref, project_id, plan)
+            if not project_saved:
+                degraded.append("PROJECT_SAVE_FAILED")
+        persistence = ("project_artifact" if project_id and project_saved
+                       else "session_ref")
+
+        # ⑦ 已发布收据 upsert（同键替换草稿）。失败即不对外披露 output_ref。
+        final = _make_receipt(output_ref, True, persistence,
+                              tuple(degraded), minted)
+        if not await store.append_receipt(session_id, final):
+            logger.warning("[field_compute] final receipt persist failed; "
+                           "output ref %s stays unpublished", output_ref)
+            raise ExecError("WRITE_FAILED", "收据发布失败 —— 成果未发布")
+        plan.state = "executed"
         await store.save_plan(plan)
-        raise ExecError("CANCELLED", str(exc)[:200]) from exc
-    except RowAbort as exc:
-        plan.state = "rejected"
-        await store.save_plan(plan)
-        raise ExecError("ABORTED_BY_ROW_ERROR",
-                        f"row {exc.row_index} / {exc.column}: {exc.code}") from exc
-    if len(new_rows) != len(rows_wg):
-        raise ExecError("WRITE_FAILED", "结果行数与输入行数不一致")
+        return final
+    finally:
+        _CANCEL_REQUESTS.discard(cancel_key)
 
-    # ② 发布前二次版本核对（源在第二批被编辑/刷新 → 中止且不发布）。
-    latest = await _payload(session_id, plan.input_ref)
-    verify_anchor(latest, plan.anchor)
 
-    # ③ write：一次性写入新 ref（原件绝不覆写）。
-    from app.services.session_data import session_data_manager
-    subset = mask if plan.scope.subset_export else None
-    output_payload = build_output_payload(frozen, new_rows, subset=subset)
-    output_ref = await session_data_manager.store(
-        session_id, output_payload, prefix="fc")
-    if not output_ref:
-        raise ExecError("STORE_FAILED", "session store 拒绝派生成果")
-
-    # ④ register：additive 登记（既有 Windows descriptor store 缺陷下降级披露）。
-    descriptor_minted, degraded = await _register_output(
-        session_id, plan, output_ref, output_payload, project_id, crs,
-        cfg.geometry_block_reason, precision)
-
-    column_results = []
+def _column_results(plan: ComputePlan,
+                    stats: Dict[str, ColumnStats]) -> List[ColumnResult]:
+    out = []
     for m in _column_meta(plan):
         st = stats[m["name"]]
-        column_results.append(ColumnResult(
+        out.append(ColumnResult(
             name=m["name"], dtype=m["dtype"], unit=m["unit"],
             unit_status=m["unit_status"],
             measurement_kind=m["measurement_kind"],
@@ -465,37 +551,7 @@ async def _execute_locked(plan: ComputePlan, session_id: str,
             expression=m["expression"], computed=st.computed,
             nulls=st.nulls, errors=st.errors,
             error_samples=tuple(st.samples[:8])))
-
-    receipt = ComputeReceipt(
-        plan_id=plan.plan_id, compute_fingerprint=plan.compute_fingerprint,
-        input_ref=plan.input_ref, output_ref=output_ref,
-        input_content_hash=canonical_hash(frozen),
-        output_content_hash=canonical_hash(output_payload),
-        row_count=len(rows_wg), computed_rows=len(rows_wg),
-        selected_rows=sum(1 for s in mask if s),
-        skipped_rows=sum(1 for s in mask if not s),
-        null_count=sum(s.nulls for s in stats.values()),
-        error_count=sum(s.errors for s in stats.values()),
-        columns=tuple(column_results), scope=scope_summary,
-        geometry=geometry_evidence,
-        formula_summary=tuple(
-            f"{m['name']} = {m['formula']}" for m in _column_meta(plan)),
-        unit_summary={m["name"]: unit_describe(
-            m["unit"], m["unit_status"], m["unit_dimension"])
-            for m in _column_meta(plan)},
-        precision_policy=precision,
-        persistence="project_artifact" if project_id else "session_ref",
-        descriptor_minted=descriptor_minted, degraded=tuple(degraded),
-        created_at=time.time(),
-    )
-    # ⑤ publish：收据落盘是 ready 的必要条件；失败即不返回 output_ref。
-    if not await store.append_receipt(session_id, receipt):
-        logger.warning("[field_compute] receipt persist failed; output ref %s "
-                       "stays unpublished", output_ref)
-        raise ExecError("WRITE_FAILED", "收据落盘失败 —— 成果未发布")
-    plan.state = "executed"
-    await store.save_plan(plan)
-    return receipt
+    return out
 
 
 def _deps_of(plan: ComputePlan, name: str) -> List[str]:
@@ -507,10 +563,10 @@ def _deps_of(plan: ComputePlan, name: str) -> List[str]:
 
 
 async def _register_output(session_id: str, plan: ComputePlan, output_ref: str,
-                           output_payload: Any, project_id: str, crs: str,
+                           output_payload: Any, crs: str,
                            geometry_block_reason: str, precision: str
                            ) -> Tuple[bool, List[str]]:
-    """既有 provenance / descriptor / artifact 入口（增值面，失败不阻断）。"""
+    """既有 descriptor / provenance / artifact 入口（增值面，失败不阻断）。"""
     degraded: List[str] = []
     minted = False
     try:
@@ -556,8 +612,7 @@ async def _register_output(session_id: str, plan: ComputePlan, output_ref: str,
         from app.services.artifact_registry import register_artifact
         await register_artifact(
             session_id, artifact_id=output_ref, artifact_type="dataset",
-            producer_tool="compute_fields",
-            inputs=[plan.input_ref],
+            producer_tool="compute_fields", inputs=[plan.input_ref],
             metadata={
                 "field_compute_plan_id": plan.plan_id,
                 "compute_fingerprint": plan.compute_fingerprint,
@@ -566,7 +621,6 @@ async def _register_output(session_id: str, plan: ComputePlan, output_ref: str,
                 "formula_summary": [f"{c.name} = {render_expression(c.expression)}"
                                     for c in plan.columns],
                 "scope": plan.scope.canonical(),
-                "project_id": project_id or None,
                 "precision_policy": precision,
             },
         )
@@ -576,22 +630,19 @@ async def _register_output(session_id: str, plan: ComputePlan, output_ref: str,
         degraded.append(f"GEOMETRY_BLOCKED:{geometry_block_reason}")
     if precision:
         degraded.append(f"PRECISION:{precision}")
-    if project_id:
-        ok = await save_to_project(session_id, output_ref, project_id, plan)
-        if not ok:
-            degraded.append("PROJECT_SAVE_FAILED")
     return minted, degraded
 
 
-# ── 项目持久化（真实磁盘，非 session ref 冒充）──────────────────────────────
+# ── 项目持久化（按 project 独立清单，不截断、不静默丢历史）─────────────────
 
-def _manifest_path(session_id: str) -> Path:
+def _manifest_path(session_id: str, project_id: str) -> Path:
     from app.services.mapspec.store import BASE_STORAGE_DIR
     root = BASE_STORAGE_DIR.resolve()
     d = (root / str(session_id)).resolve()
     if d.parent != root:
         raise ValueError("invalid session id for project manifest")
-    return d / "field_compute" / "project_manifest.jsonl"
+    key = hashlib.sha256(str(project_id).encode("utf-8")).hexdigest()[:24]
+    return d / "field_compute" / "projects" / f"{key}.jsonl"
 
 
 def _append_manifest_sync(path: Path, record: Dict[str, Any]) -> None:
@@ -613,7 +664,7 @@ def _append_manifest_sync(path: Path, record: Dict[str, Any]) -> None:
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            for r in records[-128:]:
+            for r in records:              # 不截断：重开找回不能静默丢历史
                 f.write(json.dumps(r, ensure_ascii=False, sort_keys=True,
                                    separators=(",", ":"), default=str) + "\n")
             f.flush()
@@ -643,7 +694,7 @@ async def save_to_project(session_id: str, output_ref: str, project_id: str,
     }
     try:
         await asyncio.to_thread(_append_manifest_sync,
-                                _manifest_path(session_id), record)
+                                _manifest_path(session_id, project_id), record)
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -652,7 +703,7 @@ async def save_to_project(session_id: str, output_ref: str, project_id: str,
 async def list_project_results(session_id: str, project_id: str
                                ) -> List[Dict[str, Any]]:
     """重开项目后找回公式/来源/成果 ref（不冒充 session ref 长期有效）。"""
-    path = _manifest_path(session_id)
+    path = _manifest_path(session_id, project_id)
     if not path.exists():
         return []
     try:
@@ -684,8 +735,7 @@ async def get_result(session_id: str, output_ref: str) -> Dict[str, Any]:
     return {
         "output_ref": output_ref, "data_shape": shape, "crs": crs,
         "row_count": len(rows), "fields": fields[:64],
-        "sample_rows": [dict(r) for r in rows[:5]],
-        "readable": True,
+        "sample_rows": [dict(r) for r in rows[:5]], "readable": True,
     }
 
 
@@ -703,5 +753,5 @@ async def discard_plan(session_id: str, plan_id: str) -> Optional[ComputePlan]:
 __all__ = [
     "describe_source", "create_plan", "preview", "execute", "get_plan",
     "list_plans", "get_result", "discard_plan", "save_to_project",
-    "list_project_results", "MAX_ESTIMATED_OPS",
+    "list_project_results", "request_cancel", "MAX_ESTIMATED_OPS",
 ]

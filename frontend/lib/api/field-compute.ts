@@ -344,13 +344,27 @@ function errorBody(err: unknown): unknown {
 
 /**
  * 把 transport 抛出的错误归一为可读结构（编译期 code/position/hint + 通用
- * detail）。FastAPI 可能返回 {"detail": {...}}、{"detail": "..."}、裸对象或
- * 纯文本；网络层错误回退到 describeApiError 的可读文案。
+ * detail）。后端有两种信封：legacy `{"detail": {...}}` 与仓库统一错误信封
+ * `{"data": {...}, "message": "..."}`（app/core/exception.py 把结构化 detail
+ * 移入 data）；此外还可能是 `{"detail": "..."}`、裸对象或纯文本。
+ * 网络层错误回退到 describeApiError 的可读文案。
  */
 export function parseFieldComputeError(err: unknown): FieldComputeErrorInfo {
   const body = errorBody(err);
   let node: unknown = body;
-  if (isRecord(node) && 'detail' in node) node = node.detail;
+  // 裸结构化体（{code, detail, position, hint}）本身就是要解析的对象，
+  // 不能因为它含 detail 字段就被误当成信封解包成字符串。
+  if (isRecord(node) && !('code' in node) && !('hint' in node)) {
+    const detail = node.detail;
+    const data = node.data;
+    if (isRecord(detail) && ('code' in detail || 'hint' in detail)) {
+      node = detail;
+    } else if (isRecord(data) && ('code' in data || 'detail' in data || 'hint' in data)) {
+      node = data;
+    } else if ('detail' in node) {
+      node = detail;
+    }
+  }
 
   if (isRecord(node)) {
     const position = node.position;
@@ -469,6 +483,18 @@ export const fieldComputeApi = {
       signal: opts?.signal,
       label: FC_LABEL,
     });
+  },
+
+  /** 请求服务端协作取消（执行循环每批检查；已发布成果不受影响）。 */
+  cancelPlan(
+    planId: string,
+    sessionId: string,
+    opts?: FieldComputeRequestOptions,
+  ): Promise<{ plan_id: string; cancelled: boolean }> {
+    return apiFetch<{ plan_id: string; cancelled: boolean }>(
+      `${FC_BASE}/plan/${encodeURIComponent(planId)}/cancel?session_id=${encodeURIComponent(sessionId)}`,
+      { method: 'POST', ownerToken: opts?.ownerToken ?? undefined, signal: opts?.signal, label: FC_LABEL },
+    );
   },
 
   discardPlan(

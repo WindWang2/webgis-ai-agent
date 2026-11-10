@@ -448,6 +448,7 @@ class TestService:
         assert receipt.output_ref.startswith("ref:fc-")
         assert receipt.output_ref != ref
         assert receipt.row_count == 4 and receipt.error_count >= 1
+        assert receipt.computed_rows < receipt.row_count   # 失败行不算成功
         got = await service.get_result(sid, receipt.output_ref)
         assert got["row_count"] == 4 and "人口密度" in got["fields"]
         assert got["sample_rows"][0]["人口密度"] == 100.0
@@ -483,7 +484,7 @@ class TestService:
         await sdm.overwrite(sid, ref, _payload(_fc(9)))
         with pytest.raises(ExecError) as ei:
             await service.preview(plan.plan_id, sid)
-        assert ei.value.code == "PLAN_REJECTED" or ei.value.code == "STALE_PLAN"
+        assert ei.value.code == "STALE_PLAN"
         # 新计划刷新后可继续
         created2 = await service.create_plan({
             "session_id": sid, "source_ref": ref,
@@ -540,7 +541,7 @@ class TestService:
         import app.services.data_preparation.field_compute.service as svc
         real_check = svc._check_cancel
         monkeypatch.setattr(svc, "_check_cancel",
-                            lambda: (_ for _ in ()).throw(
+                            lambda *_a, **_kw: (_ for _ in ()).throw(
                                 OperationCancelled("test cancel")))
         with pytest.raises(ExecError) as ei:
             await service.execute(plan.plan_id, sid)
@@ -560,9 +561,10 @@ class TestService:
             await service.execute(created["plan"].plan_id, sid,
                                   expected_fingerprint="wrong")
         assert ei.value.code == "STALE_PLAN"
-        with pytest.raises(ExecError) as ei2:
-            await service.execute(created["plan"].plan_id, sid, owner="bob")
-        assert ei2.value.code == "OWNER_MISMATCH"
+        # owner 是提示性元数据而非权限门禁（隔离在 session 层），
+        # 跨 UI / Pi 入口复用同一计划不得被误拒。
+        receipt = await service.execute(created["plan"].plan_id, sid, owner="bob")
+        assert receipt.output_ref.startswith("ref:fc-")
 
     async def test_scope_predicate_and_selection_reliability(self):
         sid = "sess-fc-scope"

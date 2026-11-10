@@ -14,15 +14,20 @@
 
 | 项 | 命令 | 结果 |
 |---|---|---|
-| 核心回归（IR/解释器/服务层） | `pytest tests/data/test_field_compute_v1.py -q --no-cov -p no:cacheprovider` | **44 passed（139.57s）**；另加 selection 过期/可靠命中用例后 `-k scope` **1 passed** |
+| 核心回归（IR/解释器/服务层） | `pytest tests/data/test_field_compute_v1.py -q --no-cov -p no:cacheprovider` | **45 passed**（含 selection 过期/可靠命中用例） |
+| 独立评审修复回归 | `pytest tests/data/test_field_compute_review_v1.py -q --no-cov -p no:cacheprovider` | **12 passed（158.18s）**：OpenAPI 短名、时区、项目保存失败、收据闸门、幂等升级、computed_rows、abort 几何、取消端点、owner、ring/manifest、弱引用锁 |
+| API 路由层（真实 ASGI + 鉴权） | `pytest tests/data/test_field_compute_api_v1.py -q --no-cov -p no:cacheprovider` | **6 passed（89.80s）**：catalog/越权 404/describe→plan→preview→execute→result→项目清单/typed 422/stale 409 |
 | Pi 工具面（真实 `ToolRegistry.dispatch`） | `pytest tests/unit/test_field_compute_tools_v1.py -q --no-cov -p no:cacheprovider` | **6 passed（79.18s）** |
+| 全量 G19 后端合并复跑 | `pytest <4 个文件> -q --no-cov -p no:cacheprovider` | 修复前 66 passed / 2 failed → 修复后 **68 passed** |
 | API 契约门禁 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q --no-cov` | 首轮 3 failed（生成物过期）→ 刷新生成物后 **23 passed（70.73s）** |
 | 生成物刷新 | `API_SNAPSHOT_UPDATE=1 pytest tests/quality/test_api_compatibility.py::test_snapshot_matches_and_no_breaking_changes`；`python scripts/gen_api_docs.py`；`python scripts/generate_endpoint_scope_matrix.py` | 快照/api-docs/矩阵三个生成物全部随本 PR 提交 |
 | 契约帮助文档 | `python app/services/data_preparation/field_compute/gen_help.py` | 由 `function_help()` + `contracts` + `CANONICAL_UNITS` 生成 `docs/field-compute-contract.md`（46 行表格） |
 | i18n | Python 比较 zh/en `fieldCompute.json` | **137 / 137 键完全一致** |
 | ruff | `ruff check`（全部新增/改动 Python 文件） | **All checks passed** |
 | `git diff --check` | `git diff --check` | 通过（仅 `endpoint-scope-matrix.csv` 一条 CRLF 提示，非错误） |
-| 前端组件测试 | `vitest run components/sidebar/data-preparation/field-compute-panel.test.tsx --pool=threads --maxWorkers=1` | **6 passed（13.17s）**：选数据→describe→写公式→预览→执行→结果表/入图、generation 失效、迟到响应丢弃、编译错误 code/hint、键盘可操作。首轮 forks pool 曾 worker 超时，改用 threads pool + 复用主工作区依赖的目录联接后真实跑通 |
+| 前端定向测试 | `vitest run components/sidebar/data-preparation/field-compute-panel.test.tsx lib/api/field-compute.test.ts --pool=threads --maxWorkers=1` | **9 passed（22.51s）**：组件 6 项（选数据→describe→写公式→预览→执行→结果表/入图、generation 失效、迟到响应丢弃、编译错误 code/hint、键盘可操作）+ 错误信封解析 3 项（legacy `detail` / 统一 `data` / 裸结构化体）。首轮 forks pool 曾 worker 超时，改用 threads pool + 复用主工作区依赖的目录联接后真实跑通 |
+| ESLint（新增前端文件） | `eslint <4 个新增文件> --max-warnings 0` | **0 警告** |
+| i18n | Python 比较 zh/en `fieldCompute.json` | **141 / 141 键完全一致**（修复新增 4 个键） |
 | 线上 CI | — | **不等待、不轮询**（CLAUDE.md:41 + 任务书 A） |
 
 ## 必须通过的用户与故障场景（任务书 §5）
@@ -31,7 +36,7 @@
 |---|---|---|---|
 | 1 | 人口÷平方千米面积：值/单位/分子分母/输入版本可复核，可用于制图 | ✅ passed | `test_full_journey_and_original_immutable`（密度 100.0、`measurement_kind=density`、`derived_from` 分子/分母、`anchor.content_hash`、既有 `CartographyService.classify` 可分级）、`test_static_unit_density_evidence` |
 | 2 | 变化率含零基期/缺失：error/null 策略，行数与原因保留，未伪造 0% | ✅ passed | `test_if_unselected_branch_does_not_create_error`、`test_division_by_zero_null_and_error_strategy`（`DIVISION_BY_ZERO` + 有限示例 + abort 终态） |
-| 3 | 多列依赖确定顺序；循环依赖执行前拒绝 | ✅ passed | `test_cyclic_and_forward_reference_rejected` + `test_full_journey`（3 列链式） |
+| 3 | 多列依赖确定顺序；循环依赖执行前拒绝 | ✅ passed（后端/API/Pi）；UI 单列如实声明 | `test_cyclic_and_forward_reference_rejected` + `test_full_journey`（3 列链式）+ `test_describe_plan_preview_execute_result`（API 2 列）。**UI 一次编辑一列**，已在面板以 `multiColumnNote` 明示：多列链式依赖请用 Pi 对话或 API（≤8 列，声明顺序即计算顺序）；不把 UI 单列说成已支持多列 |
 | 4 | 中文/空格字段名安全引用，不被解析为代码 | ✅ passed | `test_chinese_and_spaced_field_names_are_safe_references`、`test_host_code_attempts_rejected` |
 | 5 | 行政区代码 `00123` 前导零保留 | ✅ passed | `test_admin_code_leading_zero_and_unicode`（`000123`）+ 服务层回读 |
 | 6 | 布尔/空串/null/数值混合：严格契约，不自动转换 | ✅ passed | `test_bool_empty_string_null_are_not_numeric`（`TYPE_MISMATCH` / `EMPTY_STRING_NOT_ZERO`；空串不是 null） |
@@ -66,7 +71,7 @@
 
 ## 未运行 / 环境阻塞（如实披露）
 
-1. **前端全量构建 / 全量 Vitest / Playwright 浏览器旅程**：未运行（资源纪律与同机并行任务限制）。定向组件测试 6 passed、`tsc --noEmit` 新增文件 0 错误、i18n 137/137 一致；不把未跑项目写成通过。
+1. **前端全量构建 / 全量 Vitest / Playwright 浏览器旅程**：未运行（资源纪律与同机并行任务限制）。定向组件 + 错误解析测试 9 passed、`tsc --noEmit` 新增文件 0 错误、ESLint 0 警告、i18n 141/141 一致；不把未跑项目写成通过。
 2. **真实 Pi 进程 + stub LLM 全链路 → MapSpec mutation → 渲染回执**：本环境无 Node extension/runtime 与浏览器渲染服务；已用真实 `ToolRegistry.dispatch` 覆盖工具→服务→成果→既有分类引擎的数据面闭环，`MapSpec`/渲染回执保持 `not_evaluated`，不伪造。
 3. **线上 CI**：按授权不等待、不轮询。
 4. **既有仓库失败**：preparation 9 项（Windows descriptor 冒号）、前端 8 项（scene3d 缺 three），均在干净基线复现且位于未改动文件，见 `BASELINE.md`。

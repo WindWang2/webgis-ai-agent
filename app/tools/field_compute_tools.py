@@ -62,6 +62,16 @@ def _sid(session_id: Optional[str]) -> str:
     return _resolve_session_id(session_id) or ""
 
 
+def _persistence_note(receipt) -> str:
+    """持久化披露必须与实际保存结果一致（独立评审 P1-2）。"""
+    if "PROJECT_SAVE_FAILED" in receipt.degraded:
+        return (" 项目清单保存失败（PROJECT_SAVE_FAILED）：成果仅为本会话 "
+                "session ref，重开会话可能失效，不能宣称已可重开找回。")
+    if receipt.persistence == "project_artifact":
+        return " 该成果已登记到项目清单，可重开找回。"
+    return " 该成果仅为本会话 session ref，重开会话可能失效。"
+
+
 def _typed_error(exc: Exception) -> Dict[str, Any]:
     if isinstance(exc, CompileError):
         return {"success": False, "code": exc.code, "detail": exc.detail,
@@ -271,15 +281,14 @@ def register_field_compute_tools(registry: ToolRegistry) -> None:
             "persistence": receipt.persistence,
             "descriptor_minted": receipt.descriptor_minted,
             "degraded": list(receipt.degraded),
-            "not_evaluated": ["全量视觉渲染"] if receipt.row_count else [],
+            # 数据目标不制造地图验收；渲染/视觉面恒为未评估（无论行数）。
+            "not_evaluated": ["全量视觉渲染", "地图渲染回执"],
             "guidance": (
                 f"成果 ref {receipt.output_ref} 已可读；新字段 "
                 f"{', '.join(c.name for c in receipt.columns)} 可直接用于查表、分析与"
                 "制图。下一轮若用户要求「用刚才的新字段做分级图」，请基于本结果中"
                 "的真实 output_ref 与字段名调用既有制图工具，不要重新猜测字段。"
-                + (" 该成果仅为本会话 session ref，重开会话可能失效；"
-                   if receipt.persistence == "session_ref" else
-                   " 该成果已登记到项目清单，可重开找回。")),
+                + _persistence_note(receipt)),
             "next_actions": ["field_compute_result", "create_thematic_map",
                              "webgis_layer_upsert"],
         }

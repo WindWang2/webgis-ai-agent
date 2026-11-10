@@ -57,6 +57,13 @@ class RowAbort(Exception):
 
 ROW_EXCEPTIONS = (RowError, GeometryBlocked, UnitConversionError)
 
+#: CRS/几何资格阻断是「列级不可用」，不是数据行算错；即使 error_policy=abort
+#: 也只让该列降级，不终止整次，保证不依赖几何的其他列仍可执行。
+GEOMETRY_BLOCK_CODES = frozenset({
+    "CRS_UNKNOWN", "CRS_NOT_METRIC", "GEOMETRY_NOT_MEASURABLE",
+    "GEOMETRY_INVALID",
+})
+
 
 @dataclass(slots=True)
 class EvalConfig:
@@ -93,6 +100,8 @@ class BatchResult:
     stats: Dict[str, ColumnStats] = dc_field(default_factory=dict)
     precision_policy: str = ""
     geometry_evidence: Dict[str, Any] = dc_field(default_factory=dict)
+    #: 无任何列级错误且至少一列产出非 null 值的行数（收据 computed_rows 真值）。
+    computed_rows: int = 0
 
 
 @dataclass(slots=True)
@@ -614,7 +623,9 @@ def _eval_call(node: ExprNode, st: _RowState) -> Value:
         part = str(args[1].value) if args[1].kind == "lit" else str(vals[1].value)
         if part not in DATETIME_PARTS:
             raise RowError("INVALID_DATE", "unknown part")
-        return Value.number(datetime_part(v.value, part, st.config.timezone))
+        # 必须用时间点自带的时区（parse_datetime 的显式 tz 参数），而不是计划级
+        # 默认 timezone；否则 UTC 计划 + +08:00 公式跨 UTC 边界会取错月份。
+        return Value.number(datetime_part(v.value, part, v.value.timezone))
     if name == "date_diff_days":
         a, b = vals[0], vals[1]
         if a.is_null or b.is_null:
@@ -685,6 +696,8 @@ def evaluate_rows(
                         out_row[c.name] = None
                 result.rows.append(out_row)
                 continue
+            row_has_error = False
+            row_has_value = False
             for c in columns:
                 stats = result.stats[c.name]
                 try:
@@ -696,6 +709,7 @@ def evaluate_rows(
                         stats.nulls += 1
                     else:
                         stats.computed += 1
+                        row_has_value = True
                     working[c.name] = v
                     out_row[c.name] = out
                 except RowAbort:
@@ -703,10 +717,15 @@ def evaluate_rows(
                 except ROW_EXCEPTIONS as exc:
                     code = str(getattr(exc, "code", "TYPE_MISMATCH"))
                     stats.add_error(row_index, c.name, code)
-                    if config.error_policy == "abort":
+                    row_has_error = True
+                    # 几何/CRS 资格阻断是列级不可用，不终止整次（其他列仍可执行）。
+                    if (config.error_policy == "abort"
+                            and code not in GEOMETRY_BLOCK_CODES):
                         raise RowAbort(code, row_index, c.name) from exc
                     working[c.name] = Value.null()
                     out_row[c.name] = None
+            if not row_has_error and row_has_value:
+                result.computed_rows += 1
             result.rows.append(out_row)
     result.precision_policy = precision
     return result

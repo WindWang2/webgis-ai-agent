@@ -23,6 +23,7 @@ const mockGetResult = vi.fn();
 const mockListUploads = vi.fn();
 const mockFetchRefGeoJSON = vi.fn();
 const mockAddLayer = vi.fn();
+const mockRemoveLayer = vi.fn();
 const mockUpdateLayer = vi.fn();
 
 vi.mock('@/lib/api/field-compute', () => ({
@@ -62,7 +63,8 @@ vi.mock('@/lib/api/data-fabric', () => ({
 
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: (sel: (s: unknown) => unknown) =>
-    sel({ addLayer: mockAddLayer, updateLayer: mockUpdateLayer }),
+    sel({ addLayer: mockAddLayer, updateLayer: mockUpdateLayer,
+          removeLayer: mockRemoveLayer }),
 }));
 
 vi.mock('@/components/ui/toast', () => ({
@@ -78,7 +80,7 @@ vi.mock('@/lib/i18n/useT', () => ({
 function makeDescribe(overrides: Record<string, unknown> = {}) {
   return {
     input_ref: 'ref:data-1',
-    data_shape: 'tabular',
+    data_shape: 'table',
     row_count: 20,
     crs: 'EPSG:4326',
     crs_source: 'declared',
@@ -93,11 +95,11 @@ function makeDescribe(overrides: Record<string, unknown> = {}) {
     ],
     scope_modes: ['all_rows', 'predicate', 'selection'],
     error_policies: ['null', 'abort'],
-    limits: { max_rows: 100000, max_ops_per_row: 50 },
+    limits: { max_rows: 50000, max_ops_per_row: 256 },
     geometry: { mode: 'geodesic', block_reason: null, detail: '' },
     unit_declaration_required: true,
     function_set_version: 'g19-fc-1.0',
-    ir_version: 'ir-1',
+    ir_version: 'g19-ir-1',
     ...overrides,
   };
 }
@@ -108,7 +110,7 @@ function makePlan() {
       plan_id: 'fc-1', compute_fingerprint: 'cfp-abc', state: 'compiled',
       input_ref: 'ref:data-1', input_fingerprint: 'ifp', columns: [], mutates_data: false,
     },
-    data_shape: 'tabular',
+    data_shape: 'table',
     column_order: ['密度'],
     scope_summary: { mode: 'all_rows' },
     geometry: { mode: 'geodesic', block_reason: null, detail: '' },
@@ -120,7 +122,7 @@ function makePlan() {
 function makePreview(generation = 0) {
   return {
     plan_id: 'fc-1', generation, compute_fingerprint: 'cfp-abc', kind: 'sample',
-    sampled_rows: 5, total_rows: 20, truncated: true, data_shape: 'tabular',
+    sampled_rows: 5, total_rows: 20, truncated: true, data_shape: 'table',
     columns: [
       { name: '密度', formula: '人口 / 面积', dtype: 'number', unit: '', unit_status: 'undeclared',
         unit_dimension: '', measurement_kind: 'density', derived_from: {}, declared_unit: '',
@@ -131,9 +133,9 @@ function makePreview(generation = 0) {
     sample_error_rate_estimate: 0,
     scope: { mode: 'all_rows' },
     unit_summary: { 密度: { unit: '', unit_status: 'undeclared', dimension: '', display: '', declared: false } },
-    precision_policy: 'ieee754',
+    precision_policy: '',
     geometry: {},
-    budget: { row_count: 20, estimated_ops: 40, max_rows: 100000, max_ops_per_row: 50, within_budget: true },
+    budget: { row_count: 20, estimated_ops: 40, max_rows: 50000, max_ops_per_row: 256, within_budget: true },
     degraded: [],
     confirmation: { params_fingerprint: 'cfp-abc', note: 'confirm note' },
     next_actions: ['execute'],
@@ -147,7 +149,7 @@ function makeReceipt() {
       row_count: 20, computed_rows: 20, selected_rows: 20, skipped_rows: 0,
       null_count: 0, error_count: 0,
       columns: [], scope: { mode: 'all_rows' }, formula_summary: ['密度 = 人口 / 面积'],
-      unit_summary: {}, precision_policy: 'ieee754', persistence: 'session_ref',
+      unit_summary: {}, precision_policy: '', persistence: 'session_ref',
       descriptor_minted: true, degraded: [], created_at: 1,
     },
   };
@@ -155,7 +157,7 @@ function makeReceipt() {
 
 function makeResult() {
   return {
-    output_ref: 'ref:fc-9', data_shape: 'tabular', crs: 'EPSG:4326', row_count: 20,
+    output_ref: 'ref:fc-9', data_shape: 'table', crs: 'EPSG:4326', row_count: 20,
     fields: ['人口', '面积 平方千米', '密度'],
     sample_rows: [{ 人口: 100, 面积: 1, 密度: 100 }],
     readable: true,

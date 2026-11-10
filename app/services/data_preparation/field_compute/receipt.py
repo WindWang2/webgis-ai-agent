@@ -1,20 +1,23 @@
-"""计划/收据持久化（G19 / WP08）—— 与 preparation 同纪律的有界 JSONL ring。
+"""计划/收据持久化（G19 / WP08）—— 有界 JSONL ring + **稳定键文件**。
 
-- per-writer ``mkstemp + os.replace`` 原子替换；坏行跳过；超限丢最旧；
-- 文件名不含冒号（规避 ``docs/adr`` 之外既有 descriptor store 在 Windows 的
-  ``dsd-v1:<sha>.json`` WinError 123 基线缺陷）；
-- 幂等键 = ``compute_fingerprint + input_ref + input_content_hash``：
-  同计划重复提交返回既有成果，不同内容 revision **绝不**复用。
+- per-writer ``mkstemp + os.replace`` 原子替换；坏行跳过；ring 超限丢最旧；
+- 文件名不含冒号（规避既有 descriptor store 在 Windows 的 WinError 123）；
+- **幂等不依赖 ring**（独立评审 P2-11）：每条已发布收据同时按
+  ``(compute_fingerprint, input_ref, input_content_hash)`` 写入稳定键文件；
+  ``find_receipt`` 优先读该文件，因此 64 条 ring 溢出后幂等仍成立；
+- ``published=False`` 的草稿收据在 store/登记之前写入，作为「收据可落盘」
+  的前置闸门，且**不参与幂等、不对外可见**（独立评审 P1-3）。
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.services.data_preparation.field_compute.contracts import (
     ComputePlan, ComputeReceipt,
@@ -38,6 +41,16 @@ def _storage_path(session_id: str, filename: str) -> Path:
     if session_dir.parent != root:
         raise ValueError("invalid session id for field compute storage")
     return session_dir / "field_compute" / filename
+
+
+def stable_key(fingerprint: str, input_ref: str, content_hash: str) -> str:
+    return hashlib.sha256(
+        f"{fingerprint}|{input_ref}|{content_hash}".encode("utf-8")
+    ).hexdigest()[:32]
+
+
+def _stable_receipt_path(session_id: str, key: str) -> Path:
+    return _storage_path(session_id, _RECEIPTS_FILE).parent / "by_key" / f"{key}.json"
 
 
 def _load_sync(path: Path, model: Any) -> List[Any]:
@@ -70,16 +83,33 @@ def _receipt_from(raw: Any) -> Optional[ComputeReceipt]:
         return None
 
 
+def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":"), default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            logger.warning("[field_compute] temp cleanup failed", exc_info=True)
+        raise
+
+
 def _append_sync(path: Path, records: List[Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             for r in records[-_MAX_RECORDS:]:
-                blob = (r.to_bounded_dict() if isinstance(r, ComputePlan)
-                        else r.to_bounded_dict())
-                f.write(json.dumps(blob, ensure_ascii=False, sort_keys=True,
-                                   separators=(",", ":"), default=str) + "\n")
+                f.write(json.dumps(r.to_bounded_dict(), ensure_ascii=False,
+                                   sort_keys=True, separators=(",", ":"),
+                                   default=str) + "\n")
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_name, path)
@@ -126,14 +156,24 @@ async def list_plans(session_id: str) -> List[ComputePlan]:
 
 async def find_receipt(session_id: str, compute_fingerprint: str,
                        input_ref: str, content_hash: str) -> Optional[ComputeReceipt]:
-    """幂等查找；内容锚不一致 = 另一个 revision，绝不复用。"""
+    """幂等查找：稳定键文件优先（不受 ring 截断影响）；只返回已发布收据。"""
+    key = stable_key(compute_fingerprint, input_ref, content_hash)
+    stable = _stable_receipt_path(session_id, key)
+    if stable.exists():
+        try:
+            raw = json.loads(stable.read_text(encoding="utf-8"))
+            item = _receipt_from(raw)
+            if item is not None and item.published:
+                return item
+        except Exception:  # noqa: BLE001
+            pass
     try:
         records = await asyncio.to_thread(
             _load_sync, _storage_path(session_id, _RECEIPTS_FILE), ComputeReceipt)
     except Exception:  # noqa: BLE001
         return None
     for r in reversed(records):
-        if (r.compute_fingerprint == compute_fingerprint
+        if (r.published and r.compute_fingerprint == compute_fingerprint
                 and r.input_ref == input_ref
                 and r.input_content_hash == content_hash):
             return r
@@ -155,7 +195,16 @@ def _append_receipt_sync(session_id: str, receipt: ComputeReceipt) -> None:
                        and r.input_ref == receipt.input_ref
                        and r.input_content_hash == receipt.input_content_hash)]
     records.append(receipt)
+    # 先写 ring（草稿也可写，不对外可见），再写稳定键（仅已发布）。
     _append_sync(path, records)
+    if receipt.published:
+        key = stable_key(receipt.compute_fingerprint, receipt.input_ref,
+                         receipt.input_content_hash)
+        _atomic_write_json(_stable_receipt_path(session_id, key),
+                           receipt.to_bounded_dict())
 
 
-__all__ = ["save_plan", "get_plan", "list_plans", "find_receipt", "append_receipt"]
+__all__ = [
+    "save_plan", "get_plan", "list_plans", "find_receipt", "append_receipt",
+    "stable_key",
+]

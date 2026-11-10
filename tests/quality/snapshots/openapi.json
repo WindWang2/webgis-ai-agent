@@ -2580,44 +2580,6 @@
     "title": "ClusterWorkersResponse",
     "type": "object"
    },
-   "ColumnSpec": {
-    "properties": {
-     "declared_unit": {
-      "default": "",
-      "title": "Declared Unit",
-      "type": "string"
-     },
-     "description": {
-      "default": "",
-      "title": "Description",
-      "type": "string"
-     },
-     "expression": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "additionalProperties": true,
-        "type": "object"
-       }
-      ],
-      "description": "文本公式或闭合 IR dict；两者编译为同一个 IR",
-      "title": "Expression"
-     },
-     "name": {
-      "description": "新字段名（不得与输入字段/保留字段冲突）",
-      "title": "Name",
-      "type": "string"
-     }
-    },
-    "required": [
-     "name",
-     "expression"
-    ],
-    "title": "ColumnSpec",
-    "type": "object"
-   },
    "ComponentPlacement": {
     "description": "自由布局放置（可选增强，向后兼容）。\n\n旧组件只有 ``position`` 六槽锚点；``placement`` 引入显式 typed 布局：\n- anchor 模式：等价旧语义（anchor = 七槽字面量），与 ``position`` 双写\n  保持一致，不新增第二种真相；\n- floating 模式：x/y 像素自由定位 + 可选 width/height/zIndex/collapsed，\n  服务拖拽/缩放后的持久化。缺省字段由渲染端兜底。",
     "properties": {
@@ -3528,24 +3490,6 @@
     "title": "DeprecateRequest",
     "type": "object"
    },
-   "DescribeRequest": {
-    "properties": {
-     "session_id": {
-      "title": "Session Id",
-      "type": "string"
-     },
-     "source_ref": {
-      "title": "Source Ref",
-      "type": "string"
-     }
-    },
-    "required": [
-     "session_id",
-     "source_ref"
-    ],
-    "title": "DescribeRequest",
-    "type": "object"
-   },
    "DiscardPlanResponse": {
     "properties": {
      "plan_id": {
@@ -3562,24 +3506,6 @@
      "state"
     ],
     "title": "DiscardPlanResponse",
-    "type": "object"
-   },
-   "DiscardResponse": {
-    "properties": {
-     "plan_id": {
-      "title": "Plan Id",
-      "type": "string"
-     },
-     "state": {
-      "title": "State",
-      "type": "string"
-     }
-    },
-    "required": [
-     "plan_id",
-     "state"
-    ],
-    "title": "DiscardResponse",
     "type": "object"
    },
    "DisplayAckRequest": {
@@ -4228,28 +4154,6 @@
     "title": "ExecutePlanRequest",
     "type": "object"
    },
-   "ExecuteRequest": {
-    "properties": {
-     "expected_fingerprint": {
-      "default": "",
-      "description": "已看到预览的 confirmation.params_fingerprint",
-      "title": "Expected Fingerprint",
-      "type": "string"
-     },
-     "owner": {
-      "default": "",
-      "title": "Owner",
-      "type": "string"
-     },
-     "project_id": {
-      "default": "",
-      "title": "Project Id",
-      "type": "string"
-     }
-    },
-    "title": "ExecuteRequest",
-    "type": "object"
-   },
    "ExecuteResponse": {
     "properties": {
      "receipt": {
@@ -4669,6 +4573,301 @@
      "source_ref"
     ],
     "title": "FieldBindingResponse",
+    "type": "object"
+   },
+   "FieldComputeCancelResponse": {
+    "properties": {
+     "cancelled": {
+      "title": "Cancelled",
+      "type": "boolean"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan_id",
+     "cancelled"
+    ],
+    "title": "FieldComputeCancelResponse",
+    "type": "object"
+   },
+   "FieldComputeColumnSpec": {
+    "properties": {
+     "declared_unit": {
+      "default": "",
+      "title": "Declared Unit",
+      "type": "string"
+     },
+     "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+     },
+     "expression": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": true,
+        "type": "object"
+       }
+      ],
+      "description": "文本公式或闭合 IR dict；两者编译为同一个 IR",
+      "title": "Expression"
+     },
+     "name": {
+      "description": "新字段名（不得与输入字段/保留字段冲突）",
+      "title": "Name",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "expression"
+    ],
+    "title": "FieldComputeColumnSpec",
+    "type": "object"
+   },
+   "FieldComputeDescribeRequest": {
+    "properties": {
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "source_ref"
+    ],
+    "title": "FieldComputeDescribeRequest",
+    "type": "object"
+   },
+   "FieldComputeDiscardResponse": {
+    "properties": {
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan_id",
+     "state"
+    ],
+    "title": "FieldComputeDiscardResponse",
+    "type": "object"
+   },
+   "FieldComputeExecuteRequest": {
+    "properties": {
+     "expected_fingerprint": {
+      "default": "",
+      "description": "已看到预览的 confirmation.params_fingerprint",
+      "title": "Expected Fingerprint",
+      "type": "string"
+     },
+     "owner": {
+      "default": "",
+      "title": "Owner",
+      "type": "string"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "title": "FieldComputeExecuteRequest",
+    "type": "object"
+   },
+   "FieldComputePlanListResponse": {
+    "properties": {
+     "plans": {
+      "items": {
+       "$ref": "#/components/schemas/FieldComputePlanOut"
+      },
+      "title": "Plans",
+      "type": "array"
+     }
+    },
+    "title": "FieldComputePlanListResponse",
+    "type": "object"
+   },
+   "FieldComputePlanOut": {
+    "properties": {
+     "columns": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Columns",
+      "type": "array"
+     },
+     "compute_fingerprint": {
+      "title": "Compute Fingerprint",
+      "type": "string"
+     },
+     "content_hash": {
+      "default": "",
+      "title": "Content Hash",
+      "type": "string"
+     },
+     "data_shape": {
+      "default": "",
+      "title": "Data Shape",
+      "type": "string"
+     },
+     "error_policy": {
+      "default": "null",
+      "title": "Error Policy",
+      "type": "string"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "owner": {
+      "default": "",
+      "title": "Owner",
+      "type": "string"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     },
+     "timezone": {
+      "default": "UTC",
+      "title": "Timezone",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan_id",
+     "compute_fingerprint",
+     "state",
+     "input_ref"
+    ],
+    "title": "FieldComputePlanOut",
+    "type": "object"
+   },
+   "FieldComputePlanRequest": {
+    "properties": {
+     "columns": {
+      "items": {
+       "$ref": "#/components/schemas/FieldComputeColumnSpec"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Columns",
+      "type": "array"
+     },
+     "date_format": {
+      "default": "",
+      "title": "Date Format",
+      "type": "string"
+     },
+     "error_policy": {
+      "default": "null",
+      "title": "Error Policy",
+      "type": "string"
+     },
+     "field_units": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "description": "user-declared canonical unit（字段名只是提示，不是单位证据）",
+      "title": "Field Units",
+      "type": "object"
+     },
+     "owner": {
+      "default": "",
+      "title": "Owner",
+      "type": "string"
+     },
+     "scope": {
+      "additionalProperties": true,
+      "title": "Scope",
+      "type": "object"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     },
+     "timezone": {
+      "default": "UTC",
+      "title": "Timezone",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "source_ref",
+     "columns"
+    ],
+    "title": "FieldComputePlanRequest",
+    "type": "object"
+   },
+   "FieldComputePlanResponse": {
+    "properties": {
+     "column_order": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Column Order",
+      "type": "array"
+     },
+     "data_shape": {
+      "title": "Data Shape",
+      "type": "string"
+     },
+     "estimated_ops": {
+      "default": 0,
+      "title": "Estimated Ops",
+      "type": "integer"
+     },
+     "geometry": {
+      "additionalProperties": true,
+      "title": "Geometry",
+      "type": "object"
+     },
+     "plan": {
+      "$ref": "#/components/schemas/FieldComputePlanOut"
+     },
+     "scope_summary": {
+      "additionalProperties": true,
+      "title": "Scope Summary",
+      "type": "object"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan",
+     "data_shape"
+    ],
+    "title": "FieldComputePlanResponse",
     "type": "object"
    },
    "FieldProposalOut": {
@@ -9634,6 +9833,121 @@
     "description": "POST /geocompute/plans/execute 响应。",
     "properties": {},
     "title": "PlanExecuteResponse",
+    "type": "object"
+   },
+   "PlanListResponse": {
+    "properties": {
+     "plans": {
+      "items": {
+       "$ref": "#/components/schemas/PlanOut"
+      },
+      "title": "Plans",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plans"
+    ],
+    "title": "PlanListResponse",
+    "type": "object"
+   },
+   "PlanOut": {
+    "properties": {
+     "input_fingerprint": {
+      "default": "",
+      "title": "Input Fingerprint",
+      "type": "string"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "mutates_data": {
+      "default": false,
+      "title": "Mutates Data",
+      "type": "boolean"
+     },
+     "plan_hash": {
+      "title": "Plan Hash",
+      "type": "string"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     },
+     "steps": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Steps",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan_id",
+     "plan_hash",
+     "state",
+     "input_ref"
+    ],
+    "title": "PlanOut",
+    "type": "object"
+   },
+   "PlanRequest": {
+    "properties": {
+     "auto_steps": {
+      "default": false,
+      "description": "由服务端按收据证据自动补齐安全步（仅 filter_rows 与经用户 hints 确认的 field_mapping）",
+      "title": "Auto Steps",
+      "type": "boolean"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     },
+     "steps": {
+      "description": "closed-union 步集（type 判别）",
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Steps",
+      "type": "array"
+     }
+    },
+    "required": [
+     "session_id",
+     "steps",
+     "source_ref"
+    ],
+    "title": "PlanRequest",
+    "type": "object"
+   },
+   "PlanResponse": {
+    "properties": {
+     "plan": {
+      "$ref": "#/components/schemas/PlanOut"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "PlanResponse",
     "type": "object"
    },
    "PlanRunCancelResponse": {
@@ -17340,297 +17654,6 @@
      }
     },
     "title": "SkillsListResponse",
-    "type": "object"
-   },
-   "app__schemas__data_preparation_schema__PlanListResponse": {
-    "properties": {
-     "plans": {
-      "items": {
-       "$ref": "#/components/schemas/app__schemas__data_preparation_schema__PlanOut"
-      },
-      "title": "Plans",
-      "type": "array"
-     }
-    },
-    "required": [
-     "plans"
-    ],
-    "title": "PlanListResponse",
-    "type": "object"
-   },
-   "app__schemas__data_preparation_schema__PlanOut": {
-    "properties": {
-     "input_fingerprint": {
-      "default": "",
-      "title": "Input Fingerprint",
-      "type": "string"
-     },
-     "input_ref": {
-      "title": "Input Ref",
-      "type": "string"
-     },
-     "mutates_data": {
-      "default": false,
-      "title": "Mutates Data",
-      "type": "boolean"
-     },
-     "plan_hash": {
-      "title": "Plan Hash",
-      "type": "string"
-     },
-     "plan_id": {
-      "title": "Plan Id",
-      "type": "string"
-     },
-     "state": {
-      "title": "State",
-      "type": "string"
-     },
-     "steps": {
-      "items": {
-       "additionalProperties": true,
-       "type": "object"
-      },
-      "title": "Steps",
-      "type": "array"
-     }
-    },
-    "required": [
-     "plan_id",
-     "plan_hash",
-     "state",
-     "input_ref"
-    ],
-    "title": "PlanOut",
-    "type": "object"
-   },
-   "app__schemas__data_preparation_schema__PlanRequest": {
-    "properties": {
-     "auto_steps": {
-      "default": false,
-      "description": "由服务端按收据证据自动补齐安全步（仅 filter_rows 与经用户 hints 确认的 field_mapping）",
-      "title": "Auto Steps",
-      "type": "boolean"
-     },
-     "session_id": {
-      "title": "Session Id",
-      "type": "string"
-     },
-     "source_ref": {
-      "title": "Source Ref",
-      "type": "string"
-     },
-     "steps": {
-      "description": "closed-union 步集（type 判别）",
-      "items": {
-       "additionalProperties": true,
-       "type": "object"
-      },
-      "title": "Steps",
-      "type": "array"
-     }
-    },
-    "required": [
-     "session_id",
-     "steps",
-     "source_ref"
-    ],
-    "title": "PlanRequest",
-    "type": "object"
-   },
-   "app__schemas__data_preparation_schema__PlanResponse": {
-    "properties": {
-     "plan": {
-      "$ref": "#/components/schemas/app__schemas__data_preparation_schema__PlanOut"
-     },
-     "warnings": {
-      "items": {
-       "type": "string"
-      },
-      "title": "Warnings",
-      "type": "array"
-     }
-    },
-    "required": [
-     "plan"
-    ],
-    "title": "PlanResponse",
-    "type": "object"
-   },
-   "app__schemas__field_compute_schema__PlanListResponse": {
-    "properties": {
-     "plans": {
-      "items": {
-       "$ref": "#/components/schemas/app__schemas__field_compute_schema__PlanOut"
-      },
-      "title": "Plans",
-      "type": "array"
-     }
-    },
-    "title": "PlanListResponse",
-    "type": "object"
-   },
-   "app__schemas__field_compute_schema__PlanOut": {
-    "properties": {
-     "columns": {
-      "items": {
-       "additionalProperties": true,
-       "type": "object"
-      },
-      "title": "Columns",
-      "type": "array"
-     },
-     "compute_fingerprint": {
-      "title": "Compute Fingerprint",
-      "type": "string"
-     },
-     "content_hash": {
-      "default": "",
-      "title": "Content Hash",
-      "type": "string"
-     },
-     "data_shape": {
-      "default": "",
-      "title": "Data Shape",
-      "type": "string"
-     },
-     "error_policy": {
-      "default": "null",
-      "title": "Error Policy",
-      "type": "string"
-     },
-     "input_ref": {
-      "title": "Input Ref",
-      "type": "string"
-     },
-     "plan_id": {
-      "title": "Plan Id",
-      "type": "string"
-     },
-     "state": {
-      "title": "State",
-      "type": "string"
-     },
-     "timezone": {
-      "default": "UTC",
-      "title": "Timezone",
-      "type": "string"
-     }
-    },
-    "required": [
-     "plan_id",
-     "compute_fingerprint",
-     "state",
-     "input_ref"
-    ],
-    "title": "PlanOut",
-    "type": "object"
-   },
-   "app__schemas__field_compute_schema__PlanRequest": {
-    "properties": {
-     "columns": {
-      "items": {
-       "$ref": "#/components/schemas/ColumnSpec"
-      },
-      "maxItems": 8,
-      "minItems": 1,
-      "title": "Columns",
-      "type": "array"
-     },
-     "date_format": {
-      "default": "",
-      "title": "Date Format",
-      "type": "string"
-     },
-     "error_policy": {
-      "default": "null",
-      "title": "Error Policy",
-      "type": "string"
-     },
-     "field_units": {
-      "additionalProperties": {
-       "type": "string"
-      },
-      "description": "user-declared canonical unit（字段名只是提示，不是单位证据）",
-      "title": "Field Units",
-      "type": "object"
-     },
-     "owner": {
-      "default": "",
-      "title": "Owner",
-      "type": "string"
-     },
-     "scope": {
-      "additionalProperties": true,
-      "title": "Scope",
-      "type": "object"
-     },
-     "session_id": {
-      "title": "Session Id",
-      "type": "string"
-     },
-     "source_ref": {
-      "title": "Source Ref",
-      "type": "string"
-     },
-     "timezone": {
-      "default": "UTC",
-      "title": "Timezone",
-      "type": "string"
-     }
-    },
-    "required": [
-     "session_id",
-     "source_ref",
-     "columns"
-    ],
-    "title": "PlanRequest",
-    "type": "object"
-   },
-   "app__schemas__field_compute_schema__PlanResponse": {
-    "properties": {
-     "column_order": {
-      "items": {
-       "type": "string"
-      },
-      "title": "Column Order",
-      "type": "array"
-     },
-     "data_shape": {
-      "title": "Data Shape",
-      "type": "string"
-     },
-     "estimated_ops": {
-      "default": 0,
-      "title": "Estimated Ops",
-      "type": "integer"
-     },
-     "geometry": {
-      "additionalProperties": true,
-      "title": "Geometry",
-      "type": "object"
-     },
-     "plan": {
-      "$ref": "#/components/schemas/app__schemas__field_compute_schema__PlanOut"
-     },
-     "scope_summary": {
-      "additionalProperties": true,
-      "title": "Scope Summary",
-      "type": "object"
-     },
-     "warnings": {
-      "items": {
-       "type": "string"
-      },
-      "title": "Warnings",
-      "type": "array"
-     }
-    },
-    "required": [
-     "plan",
-     "data_shape"
-    ],
-    "title": "PlanResponse",
     "type": "object"
    },
    "app__schemas__lakehouse_schema__PublishRequest": {
@@ -26160,7 +26183,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/app__schemas__data_preparation_schema__PlanRequest"
+        "$ref": "#/components/schemas/PlanRequest"
        }
       }
      },
@@ -26171,7 +26194,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/app__schemas__data_preparation_schema__PlanResponse"
+         "$ref": "#/components/schemas/PlanResponse"
         }
        }
       },
@@ -26538,7 +26561,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/app__schemas__data_preparation_schema__PlanListResponse"
+         "$ref": "#/components/schemas/PlanListResponse"
         }
        }
       },
@@ -27952,7 +27975,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/DescribeRequest"
+        "$ref": "#/components/schemas/FieldComputeDescribeRequest"
        }
       }
      },
@@ -28018,7 +28041,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/app__schemas__field_compute_schema__PlanRequest"
+        "$ref": "#/components/schemas/FieldComputePlanRequest"
        }
       }
      },
@@ -28029,7 +28052,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/app__schemas__field_compute_schema__PlanResponse"
+         "$ref": "#/components/schemas/FieldComputePlanResponse"
         }
        }
       },
@@ -28101,7 +28124,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/DiscardResponse"
+         "$ref": "#/components/schemas/FieldComputeDiscardResponse"
         }
        }
       },
@@ -28124,6 +28147,79 @@
      }
     ],
     "summary": "Discard Plan",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/plan/{plan_id}/cancel": {
+   "post": {
+    "description": "请求服务端协作取消（执行循环每批检查；已发布成果不受影响）。",
+    "operationId": "cancel_plan_api_v1_field_compute_plan__plan_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FieldComputeCancelResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Plan",
     "tags": [
      "字段计算"
     ]
@@ -28172,7 +28268,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/ExecuteRequest"
+        "$ref": "#/components/schemas/FieldComputeExecuteRequest"
        }
       }
      },
@@ -28333,7 +28429,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/app__schemas__field_compute_schema__PlanListResponse"
+         "$ref": "#/components/schemas/FieldComputePlanListResponse"
         }
        }
       },

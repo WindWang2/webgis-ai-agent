@@ -112,6 +112,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
   const addToast = useToastStore((s) => s.addToast);
   const addLayer = useHudStore((s) => s.addLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
+  const removeLayer = useHudStore((s) => s.removeLayer);
 
   // ── state ─────────────────────────────────────────────────────────────
   const [uploads, setUploads] = useState<UploadOption[]>([]);
@@ -305,7 +306,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
       if (generationRef.current !== gen || controller.signal.aborted) return;
       setDescribeRes(res);
       setFieldSearch('');
-    } catch (err) {
+    } catch {
       if (controller.signal.aborted) { setCancelled(true); return; }
       if (generationRef.current !== gen) return;
       addToast(t('describeFailed'), 'error');
@@ -380,6 +381,15 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
 
   const handleCancel = () => {
     abortRef.current?.abort();
+    // 真正联动服务端协作取消端点（fire-and-forget）；方法缺失时（测试 mock）
+    // 退化为仅客户端取消，UI 文案仍如实声明结果可能已生成。
+    const pid = plan?.plan.plan_id;
+    const cancelPlan = (fieldComputeApi as unknown as Record<string, unknown>).cancelPlan as
+      | ((planId: string, sid: string, opts?: unknown) => Promise<unknown>)
+      | undefined;
+    if (sessionId && pid && cancelPlan) {
+      void cancelPlan(pid, sessionId, { ownerToken }).catch(() => undefined);
+    }
     setPreviewing(false);
     setExecuting(false);
     setCancelled(true);
@@ -418,9 +428,14 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
       const geojson = await dataFabricApi.fetchRefGeoJSON(receipt.output_ref, sessionId, { ownerToken });
       if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
         updateLayer(layerId, { source: geojson });
+        addToast(t('loadSuccess'), 'success');
+        return;
       }
-      addToast(t('loadSuccess'), 'success');
+      // 空/非法结果不得报成功，也不得在地图上残留空占位图层。
+      removeLayer(layerId);
+      addToast(t('loadIncomplete'), 'warning');
     } catch {
+      removeLayer(layerId);
       addToast(t('loadFailed'), 'warning');
     }
   };
@@ -681,6 +696,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                 />
               </label>
               <p className="text-meta text-ink-500" data-testid="fc-expression-hint">{t('expressionHint')}</p>
+              <p className="text-meta text-ink-500" data-testid="fc-multi-column-note">{t('multiColumnNote')}</p>
 
               <label className="flex flex-col gap-1 text-meta text-ink-600">
                 {t('scopeMode')}
@@ -808,7 +824,10 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                 <p className="text-meta text-ink-500" data-testid="fc-no-preview-hint">{t('noPreviewHint')}</p>
               )}
               {cancelled && (
-                <p className="text-meta text-ink-500" data-testid="fc-cancelled">{t('cancelled')}</p>
+                <>
+                  <p className="text-meta text-ink-500" data-testid="fc-cancelled">{t('cancelled')}</p>
+                  <p className="text-meta text-ink-500" data-testid="fc-cancel-note">{t('cancelRequested')}</p>
+                </>
               )}
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -1066,6 +1085,12 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                   {' · '}
                   {receipt.descriptor_minted ? t('descriptorMinted') : t('descriptorNotMinted')}
                 </div>
+
+                {receipt.degraded.includes('PROJECT_SAVE_FAILED') && (
+                  <p className="text-meta text-amber-700" data-testid="fc-project-save-failed">
+                    {t('projectSaveFailed')}
+                  </p>
+                )}
 
                 {receipt.degraded.length > 0 && (
                   <div data-testid="fc-receipt-degraded">
