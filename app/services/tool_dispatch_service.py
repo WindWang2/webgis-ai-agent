@@ -537,6 +537,9 @@ class ToolDispatchService:
             # 面）；拒绝释放 dedup 占位（同任务纠因后可重试）；alternatives
             # 喂 LLM 重试（重新发现可继续）。kill switch
             # GIS_AVAILABILITY_DISPATCH_RECHECK。
+            # 冷缓存重建是全量对账（秒级）—— 经 to_thread 执行，前台
+            # 事件循环永不被全量审计阻塞（正常 turn 流程中 surface 投影
+            # 已预热缓存，此处命中路径只做 O(1) 键比对）。
             _availability_denial = None
             with best_effort(
                 "availability-recheck",
@@ -547,7 +550,8 @@ class ToolDispatchService:
                     preflight_dispatch_availability,
                 )
 
-                _availability_denial = preflight_dispatch_availability(
+                _availability_denial = await asyncio.to_thread(
+                    preflight_dispatch_availability,
                     tool_name, registry=self._registry)
             if _availability_denial is not None:
                 _av_d = _availability_denial
