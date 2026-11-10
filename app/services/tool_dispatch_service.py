@@ -237,6 +237,32 @@ def _get_governor_adapter(registry: "ToolRegistry"):
     return None
 
 
+def _base_layer_with_explicit_paint(base: Dict[str, Any], style_applied: Any) -> Dict[str, Any]:
+    """工具显式的图层级样式（``style_applied``，如 apply_layer_style）→ 层 paint。
+
+    PR-C：样式进 MapSpec 层 paint（语义方言 color/opacity/width，与前端
+    ``layerStyleToPaint`` / ``patch_layer_style`` 同键），转换器把它作为
+    existing paint 合并（非专题层保留显式 color）。用户随后的
+    ``patch_layer_style`` 合并在其上 —— 用户编辑天然胜出，不再被逐要素
+    ``fill_color`` 压住。缺席/非法值 → 原样返回 base（行为不变）。
+    """
+    if not isinstance(style_applied, dict):
+        return base
+    paint: Dict[str, Any] = {}
+    color = style_applied.get("color")
+    if isinstance(color, str) and color:
+        paint["color"] = color
+    opacity = style_applied.get("opacity")
+    if isinstance(opacity, (int, float)) and not isinstance(opacity, bool) and 0 <= opacity <= 1:
+        paint["opacity"] = float(opacity)
+    width = style_applied.get("stroke_width", style_applied.get("strokeWidth"))
+    if isinstance(width, (int, float)) and not isinstance(width, bool) and width >= 0:
+        paint["width"] = float(width)
+    if not paint:
+        return base
+    return {**base, "paint": paint}
+
+
 class ToolDispatchService:
     """工具调度的单一拥有者。两条 agent 路径都应经由本服务。"""
 
@@ -1232,6 +1258,8 @@ class ToolDispatchService:
                     recovery_disposition=str(
                         _rec_d.get("disposition") or "")[:32] or None,
                 )
+            # 先铸/门禁地图命令，再做 SSE 投影 —— 清单外 command 不得进 slim_event。
+            error_map_actions = self._mint_map_action_ids(result)
             return ToolDispatchResult(
                 status="error",
                 llm_payload=llm_payload,
@@ -1239,7 +1267,7 @@ class ToolDispatchService:
                 geojson_ref=None,
                 raw_result=result,
                 error_msg=error_msg,
-                map_actions=self._mint_map_action_ids(result),
+                map_actions=error_map_actions,
                 capability_evidence=capability_evidence,
                 action_evidence=action_evidence,
             )
@@ -1694,14 +1722,17 @@ class ToolDispatchService:
             converted_layer, _, conversion_warnings = await asyncio.to_thread(
                 convert_analysis_to_mapspec_layer,
                 analysis_payload,
-                {
-                    "id": layer_id,
-                    "source": source_id,
-                    "provenance": {
-                        "tool_call_id": tool_call_id,
-                        "result_ref": result_ref,
+                _base_layer_with_explicit_paint(
+                    {
+                        "id": layer_id,
+                        "source": source_id,
+                        "provenance": {
+                            "tool_call_id": tool_call_id,
+                            "result_ref": result_ref,
+                        },
                     },
-                },
+                    result.get("style_applied"),
+                ),
             )
             # profile 已在 analysis_payload 构建前派生——payload 与
             # source_data 共用同一份（#688 收尾）。
@@ -2133,6 +2164,7 @@ class ToolDispatchService:
         """
         if not isinstance(result, dict):
             return []
+        self._gate_map_commands(result)
         minted: list = []
         commands = result.get("commands")
         if isinstance(commands, list):
@@ -2149,6 +2181,43 @@ class ToolDispatchService:
                 entry["mapspec_fingerprint"] = result.get("mapspec_fingerprint")
                 minted.append(entry)
         return minted
+
+    @staticmethod
+    def _gate_map_commands(result: Dict[str, Any]) -> list:
+        """只放行前端注册的地图命令（``app/contracts/map_commands.py`` 清单）。
+
+        ``command`` 是前端地图动作通道的保留键：前端对 ``step_result.result
+        .command`` / ``commands[]`` 逐条按 ``COMMAND_CATALOGUE`` 执行。清单外
+        的名字（例如工具把自身名字写进 ``command`` 当自标识）没有执行体，
+        下发只会制造 ``unknown_command`` 失败回执 —— 在铸 action_id 与 SSE
+        投影之前就地剔除（单命令删键；批量项过滤），并记 warning。返回被
+        剔除的名字（测试/诊断用）。
+        """
+        from app.contracts.map_commands import is_map_command
+
+        dropped: list = []
+        single = result.get("command")
+        if single and not is_map_command(single):
+            dropped.append(str(single))
+            result.pop("command", None)
+        commands = result.get("commands")
+        if isinstance(commands, list):
+            kept = []
+            for cmd in commands:
+                name = (cmd.get("command") or cmd.get("type")) if isinstance(cmd, dict) else None
+                if isinstance(cmd, dict) and is_map_command(name):
+                    kept.append(cmd)
+                else:
+                    dropped.append(str(name))
+            if len(kept) != len(commands):
+                result["commands"] = kept
+        if dropped:
+            logger.warning(
+                "[ToolDispatch] dropped unregistered map command(s) %s "
+                "(not in app/contracts/map_commands.py)",
+                ",".join(d[:48] for d in dropped[:8]),
+            )
+        return dropped
 
     @staticmethod
     def _mint_one_map_action(command_dict: Dict[str, Any]) -> Optional[dict]:

@@ -57,14 +57,9 @@ export function ExportMask() {
 
   return (
     <div ref={containerRef} style={maskStyle}>
-       {/* Preview Header — #700：色值走主题 token（DOM 覆盖层，var 随主题解析），
-           不再裸写 rgba/#hex 与 UI 主题漂移 */}
-       {(settings.title || settings.subtitle) && (
-         <div className="absolute top-0 left-0 w-full p-8 pointer-events-none" style={{ background: `linear-gradient(to bottom, ${isDark ? 'rgba(var(--surface-overlay-rgb, 0 10 20), 0.8)' : 'rgba(255, 255, 255, 0.9)'}, transparent)` }}>
-            {settings.title && <h1 className={`text-3xl font-bold ${isDark ? 'text-agent-accent' : 'text-slate-800'}`}>{settings.title}</h1>}
-            {settings.subtitle && <h2 className={`text-xl mt-2 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{settings.subtitle}</h2>}
-         </div>
-       )}
+       {/* PR-C：不再画本地 exportSettings.title 的预览标题 —— 标题/副标题是
+           MapSpec 组件，live chrome（MapSpecChrome）已按 spec 渲染，与导出同源；
+           此处再画一份会与 spec 标题重复且可能陈旧（Studio 曾与 Agent 各写一份）。 */}
        {/* Preview Watermark */}
        {settings.showWatermark && (
          <div className="absolute bottom-4 right-4 pointer-events-none opacity-50 text-sm font-mono font-bold" style={{ color: isDark ? 'var(--text-primary)' : 'var(--text-primary)' }}>

@@ -93,7 +93,102 @@ def _layer_summary(layer: Dict[str, Any]) -> Dict[str, Any]:
     }
     if role:
         summary["role"] = role
+    style = _style_summary(layer.get("paint"))
+    if style:
+        summary["style"] = style
     return summary
+
+
+#: PR-C：单层样式摘要上限（字符）—— 情境块 4KiB 预算内每层一行有界。
+MAX_STYLE_SUMMARY_CHARS = 72
+_STYLE_KEYS = (
+    ("color", ("color", "fill-color", "line-color", "circle-color")),
+    ("opacity", ("opacity", "fill-opacity", "line-opacity", "circle-opacity")),
+    ("width", ("width", "strokeWidth", "line-width")),
+    ("radius", ("radius", "circle-radius")),
+)
+
+
+def _style_value(value: Any) -> Optional[str]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return f"{value:g}"
+    if isinstance(value, str):
+        return value[:24]
+    if isinstance(value, dict):
+        method = value.get("method")
+        if method == "constant":
+            return _style_value(value.get("value"))
+        field = value.get("field")
+        if isinstance(method, str) and isinstance(field, str):
+            return f"{method}({field[:24]})"
+        return "expr"
+    if isinstance(value, list):
+        return "expr"
+    return None
+
+
+def _style_summary(paint: Any) -> Optional[str]:
+    """MapSpec 层 paint → 一行有界样式摘要（color/opacity/width/radius）。
+
+    让 agent 看见层的**当前**样式（含用户在样式面板/Studio 的改动），
+    而不是只知道 id/type —— 否则「把颜色调回去」「再淡一点」无从谈起。
+    """
+    if not isinstance(paint, dict) or not paint:
+        return None
+    bits: List[str] = []
+    for label, keys in _STYLE_KEYS:
+        for key in keys:
+            if key in paint:
+                rendered = _style_value(paint.get(key))
+                if rendered:
+                    bits.append(f"{label}={rendered}")
+                break
+    if not bits:
+        return None
+    text = " ".join(bits)
+    return text if len(text) <= MAX_STYLE_SUMMARY_CHARS else text[: MAX_STYLE_SUMMARY_CHARS - 1] + "…"
+
+
+#: PR-C：版面摘要覆盖的组件类型（制图装饰族）与条数/文本上限。
+_LAYOUT_SUMMARY_TYPES = (
+    "title", "subtitle", "north_arrow", "scale_bar", "legend",
+    "categorical_legend", "continuous_colorbar", "attribution", "graticule",
+    "map_border", "inset_map", "annotation",
+)
+MAX_LAYOUT_SUMMARIES = 10
+_MAX_LAYOUT_TEXT_CHARS = 32
+
+
+def _layout_summary(mapspec: Any) -> Optional[List[Dict[str, Any]]]:
+    """MapSpec layout.components → 有界版面摘要（装饰族；文本截断）。
+
+    None = spec 无 layout.components 列表（unknown）；[] = 有列表但无装饰。
+    """
+    layout = mapspec.get("layout") if isinstance(mapspec, dict) else None
+    comps = layout.get("components") if isinstance(layout, dict) else None
+    if not isinstance(comps, list):
+        return None
+    rows: List[Dict[str, Any]] = []
+    for comp in comps:
+        if not isinstance(comp, dict) or comp.get("type") not in _LAYOUT_SUMMARY_TYPES:
+            continue
+        row: Dict[str, Any] = {
+            "type": comp["type"],
+            "enabled": comp.get("enabled") is not False,
+        }
+        options = comp.get("options") if isinstance(comp.get("options"), dict) else {}
+        text = options.get("text")
+        if isinstance(text, str) and text.strip():
+            clean = " ".join(text.split())
+            row["text"] = (clean if len(clean) <= _MAX_LAYOUT_TEXT_CHARS
+                           else clean[: _MAX_LAYOUT_TEXT_CHARS - 1] + "…")
+        layer_id = options.get("layerId")
+        if isinstance(layer_id, str) and layer_id:
+            row["layer"] = layer_id[:48]
+        rows.append(row)
+    return rows[:MAX_LAYOUT_SUMMARIES]
 
 
 def _scale_from_zoom(zoom: Any) -> str:
@@ -366,7 +461,14 @@ def compile_map(
                 revision=_num(observation.get("mapspec_revision")),
                 observed_at=str(observation.get("observed_at") or ""),
             )
+    layout_rows = _safe(_layout_summary, mapspec)
+    layout_fact = (
+        known(layout_rows, source="mapspec.layout.components", revision=revision)
+        if isinstance(layout_rows, list)
+        else unknown(source="mapspec.layout.components")
+    )
     return MapContext(
+        layout=layout_fact,
         desired_revision=rev_fact, fingerprint=fingerprint,
         layers=layers_fact, layer_count=layer_count_fact,
         layer_ids=(known([str(row["id"]) for row in raw_layers

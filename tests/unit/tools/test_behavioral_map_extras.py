@@ -45,7 +45,7 @@ async def test_apply_layer_style_behavioral(registry):
         "geojson": "definitely-not-geojson", "color": "#ff0000"})
     assert isinstance(junk, dict) and "error" in junk, junk
 
-    # happy path：样式注入回写 properties + style_applied 摘要
+    # happy path：style_applied 摘要（图层级样式意图）
     out = await registry.dispatch("apply_layer_style", {
         "geojson": _fc(), "color": "#3366cc", "opacity": 0.8,
         "stroke_width": 3.0, "group": "analysis"})
@@ -56,11 +56,15 @@ async def test_apply_layer_style_behavioral(registry):
     assert out.get("group") == "analysis"
     features = (out.get("geojson") or {}).get("features") or []
     assert len(features) == 2
-    for f in features:
+    # PR-C 回归锁：样式不得逐要素烙进 properties —— 烙进去的 fill_color 会在
+    # coalesce(fill_color, style.color) 下永远压过用户在样式面板改的颜色
+    # （旧断言锁的正是这个缺陷）。要素属性原样保留。
+    originals = _fc()["features"]
+    for f, orig in zip(features, originals):
         props = f.get("properties") or {}
-        assert props.get("fill_color") == "#3366cc"
-        assert props.get("opacity") == 0.8
-        assert props.get("stroke_width") == 3.0
+        assert "fill_color" not in props
+        assert "stroke_width" not in props
+        assert props == (orig.get("properties") or {})
 
 
 @pytest.mark.asyncio

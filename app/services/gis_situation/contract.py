@@ -124,6 +124,11 @@ class MapContext(BaseModel):
     sources: SitFact     # 有界摘要
     basemap: SitFact
     observed: SitFact    # runtime 观察阶梯摘要（observation_states 派生）
+    # PR-C：版面组件有界摘要（标题/副标题/指北针/比例尺/图例族…的 enabled +
+    # 截断文本）。Map Studio 是主编辑面 —— 用户在 Studio 的改动必须进入
+    # agent 情境，否则 agent 会凭旧认知覆盖。additive，缺省 unknown。
+    layout: SitFact = Field(
+        default_factory=lambda: SitFact(source="mapspec.layout.components"))
 
 
 class AnalysisContext(BaseModel):

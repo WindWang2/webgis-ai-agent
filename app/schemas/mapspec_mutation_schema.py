@@ -57,6 +57,9 @@ class PatchComponentBody(ClientMutationIdMixin):
     intent: Literal["patch_component"]
     expected_revision: int = Field(ge=0)
     component_id: str = Field(min_length=1, max_length=128)
+    # PR-C：upsert 新建组件（Map Studio 首次开启指北针/比例尺/标题…）必须
+    # 声明类型；仅 patch 已有组件时可省略。合法性由 mutate_component 校验。
+    component_type: Optional[str] = Field(None, min_length=1, max_length=64)
     enabled: Optional[bool] = None
     position: Optional[str] = None
     placement: Optional[ComponentPlacement] = None
