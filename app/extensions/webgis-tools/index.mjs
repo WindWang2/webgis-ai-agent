@@ -409,6 +409,22 @@ export default function webgisToolsExtension(pi) {
       applyDefaultActiveTools("default(session_start)");
     });
 
+    // ADR-0288（W09）：compaction 生命周期 —— 只记账披露，绝不改写 summary
+    // （不可信数据不当指令；自定义摘要 = summary 获得事实话语权，拒绝）。
+    // 压缩后的权威状态重建由后端 typed assembly 的 GIS 状态重建块
+    // （GisStateRebuildProvider，MapSpec/SessionPlan 现取）承担 —— 隐藏层/
+    // 待办/证据 refs 不随压缩丢失，也不凭 summary 授予修改权。
+    pi.on("session_before_compact", async (event) => {
+      console.log(`[webgis-tools] compaction starting (reason=${event?.reason ?? "?"})`);
+      return {}; // 不注入自定义 summary —— 保持 vendor 默认压缩内容
+    });
+    pi.on("session_compact_failed", async (event) => {
+      console.error(
+        `[webgis-tools] compaction failed (fromHandler=${event?.fromBeforeCompactHandler ?? "?"})`,
+      );
+      return {};
+    });
+
     pi.on("before_agent_start", async (event) => {
       const current = event.systemPrompt || "";
       let rewritten = `${GIS_IDENTITY}\n\n${current}`;

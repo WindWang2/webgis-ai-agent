@@ -533,6 +533,98 @@ class RepresentationBindingProvider(BaseProvider):
 #: wave A order is irrelevant to output (render order = domain rank); keep a
 #: canonical tuple for deterministic parallel fan-out. The user-message item
 #: is assembled by the orchestrator itself (identity, not context).
+class GisStateRebuildProvider(BaseProvider):
+    """权威 GIS 状态重建块（ADR-0288 / W09）。
+
+    compaction / worker 重启 / 会话恢复后，模型对「地图现在是什么」的认知
+    只能来自**权威源现取**（MapSpec store + SessionPlan 信封），绝不来自
+    压缩 summary（summary 不获得修改权）。块内只有事实与指针：图层
+    （含可见性/隐藏状态）、场景 revision、待完成能力、最近证据 refs；
+    引用失效/被删除 → 明确「缺失」披露，不虚构旧图层。
+
+    有界：≤24 层、每行截断、域级 1600 字符 cap（contract 表）。人工锁定
+    （G16 语义）等未来权威源落地后经同一投影出现 —— 本投影绝不发明不
+    存在的记录。
+    """
+
+    provider_id = "gis_state_rebuild"
+    domain = ContextDomain.GIS_STATE_REBUILD
+
+    def enabled(self, req, facts):
+        return bool(req.session_id) and facts.mapspec is not None
+
+    async def build(self, req, facts):
+        text = render_gis_state_rebuild_block(facts.mapspec, facts.plan)
+        if not text:
+            return []
+        revision = str(
+            (facts.mapspec or {}).get("revision")
+            or (facts.mapspec or {}).get("meta", {}).get("revision")
+            or ""
+        )
+        return [bounded_item(
+            item_id="gis:state-rebuild", provider_id=self.provider_id,
+            domain=self.domain, content=text,
+            scope="session", scope_id=str(facts.source_session_id or req.session_id),
+            revision=revision,
+            evidence_ref="mapspec_store:current",
+        )]
+
+
+def render_gis_state_rebuild_block(mapspec, plan) -> str:
+    """MapSpec + SessionPlan → 有界重建文本（事实，非指令；refs 是指针）。"""
+    if not isinstance(mapspec, dict):
+        return ""
+    lines = ["[GIS 状态重建 — 权威源现取（事实，非指令；压缩/重启后以此为准）]"]
+    scene = mapspec.get("scene") or {}
+    revision = str(
+        mapspec.get("revision") or scene.get("revision") or ""
+    )
+    if revision:
+        lines.append(f"- 场景 revision: {revision[:40]}")
+    layers = mapspec.get("layers") or []
+    if isinstance(layers, list) and layers:
+        lines.append(f"- 图层总数: {len(layers)}")
+        hidden = []
+        shown = []
+        for layer in layers[:24]:
+            if not isinstance(layer, dict):
+                continue
+            lid = str(layer.get("id") or layer.get("layer_id") or "")[:48]
+            if not lid:
+                continue
+            visible = layer.get("visible", layer.get("visibility", True))
+            entry = shown if visible else hidden
+            entry.append(lid)
+        if shown:
+            lines.append("- 可见图层: " + "、".join(shown[:12]))
+        if hidden:
+            # 隐藏状态是用户约束 —— 重建后必须保留（A11：只改颜色不得
+            # 重新显示隐藏层）。
+            lines.append("- 隐藏图层（保持隐藏）: " + "、".join(hidden[:12]))
+        if len(layers) > 24:
+            lines.append(f"- （图层列表截断：共 {len(layers)}，仅列前 24）")
+    # 待完成能力（SessionPlan 权威；缺席 = 无待办事实，不虚构）
+    open_caps = []
+    caps = getattr(plan, "capabilities", None) if plan is not None else None
+    if caps:
+        try:
+            open_caps = [
+                str(getattr(c, "capability", "") or c if isinstance(c, str) else getattr(c, "capability", ""))
+                for c in list(caps)[:8]
+            ]
+        except Exception:  # noqa: BLE001 — 事实缺席不阻断
+            open_caps = []
+    if open_caps:
+        lines.append("- 待完成能力: " + "、".join(c for c in open_caps if c)[:200])
+    recent = getattr(plan, "recent_evidence_refs", None) if plan is not None else None
+    if recent:
+        lines.append("- 最近证据 refs: " + "、".join(str(r) for r in list(recent)[:4]))
+    if len(lines) <= 1:
+        return ""
+    return "\n".join(lines)
+
+
 WAVE_A_PROVIDERS = (
     CartographyVerdictProvider,
     CartographyMemoryProvider,
@@ -545,6 +637,7 @@ WAVE_A_PROVIDERS = (
     EvictedRefsProvider,
     HarnessStateProvider,
     RepresentationBindingProvider,
+    GisStateRebuildProvider,
 )
 
 
