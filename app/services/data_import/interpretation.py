@@ -113,9 +113,11 @@ def coerce_value(column: str, raw: str, target: str) -> Tuple[bool, Any, str]:
         s2 = s.strip()
         if _INT_RE.match(s2):
             v = int(s2)
-            if abs(v) < 2**63:
+            if abs(v) <= 2**53:
                 return True, v, ""
-            return True, float(s2), ""   # 超整数范围按浮点（披露见列摘要）
+            # >2^53 的整数按 JSON 数值会被 JS Number 截断 → 保真为字符串
+            #（任务书场景 7：长整型 ID 不经数值截断）
+            return True, s2, "int_beyond_js_safe_range_kept_as_text"
         try:
             fv = float(s2)
         except ValueError:
@@ -265,7 +267,7 @@ def _read_xlsx_rows(
     formula_cells = 0
     uncached = 0
     truncated = False
-    with wb:
+    try:
         ws = wb[sheet]
         header: List[str] = []
         data_count = 0
@@ -284,6 +286,8 @@ def _read_xlsx_rows(
                 truncated = True
                 break
             rows.append({header[i]: _cell_to_str(v) for i, v in enumerate(row) if i < len(header)})
+    finally:
+        wb.close()
     return rows, None, truncated, formula_cells, uncached
 
 

@@ -181,6 +181,22 @@ class DataImportService:
                     raise DataImportError("UNKNOWN_MEMBER", ",".join(unknown[:5]), status=404)
                 for m in state.members:
                     m.selected = m.member_key in set(selected)
+                # 勾选即确认默认解释（save_plan 是显式确认点）：未显式配置的
+                # 勾选成员落默认解释（vector 默认 / table auto），并铸 plan_hash。
+                for m in state.members:
+                    if m.selected and not m.unsupported_reason and m.member_key not in state.interpretations:
+                        interp = (
+                            VectorInterpretation()
+                            if m.kind.value == "vector"
+                            else TableInterpretation()
+                        )
+                        state.interpretations[m.member_key] = interp.model_dump()
+                        src = next(s for s in state.sources if s.source_id == m.source_id)
+                        state.plan_hashes[m.member_key] = compute_plan_hash(
+                            src.sha256, m.member_key, state.interpretations[m.member_key]
+                        )
+                        m.status = MemberStatus.PLANNED
+                        state.previewed_hashes.pop(m.member_key, None)
             if state.plan_version == 0 or member_configs:
                 state.plan_version += 1
             if state.status in (BatchStatus.STAGED, BatchStatus.INSPECTED, BatchStatus.PREVIEWED):

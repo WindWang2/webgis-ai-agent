@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -40,6 +41,7 @@ from app.services.data_parser import (
 
 logger = logging.getLogger(__name__)
 
+_MEMBER_SAFE_RE = re.compile(r"[^A-Za-z0-9._\-]")
 _SHAPEFILE_COMPONENT_EXTS = {".shp", ".dbf", ".shx", ".prj", ".cpg", ".sbn", ".sbx", ".aih", ".aix", ".qix", ".atx"}
 _ENCODING_FALLBACK_CHAIN = ("utf-8-sig", "utf-8", "gb18030")
 
@@ -372,7 +374,7 @@ def discover_xlsx(path: Path, source: SourceFile) -> Tuple[List[MemberRecord], L
     except Exception as e:  # noqa: BLE001
         raise DiscoveryError("XLSX_OPEN_FAILED", f"{source.original_name}: {e}") from e
     members: List[MemberRecord] = []
-    with wb_v, wb_f:
+    try:
         sheets = list(wb_v.sheetnames)[: budgets.XLSX_MAX_SHEETS]
         if len(wb_v.sheetnames) > budgets.XLSX_MAX_SHEETS:
             raise DiscoveryError(
@@ -426,6 +428,9 @@ def discover_xlsx(path: Path, source: SourceFile) -> Tuple[List[MemberRecord], L
                 )
                 notes.append(note)
             members.append(member)
+    finally:
+        wb_v.close()
+        wb_f.close()
     return members, notes
 
 
