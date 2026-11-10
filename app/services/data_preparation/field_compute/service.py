@@ -83,9 +83,13 @@ def _cancel_key(session_id: str, plan_id: str) -> str:
 
 
 def _prune_cancel_requests(now: Optional[float] = None) -> None:
-    """丢弃过期取消请求（防御性：正常路径由 execute 的 finally 清理）。"""
+    """丢弃过期取消请求（防御性：正常路径由 execute 的 finally 清理）。
+
+    有活跃执行的 key 不剪枝 —— 长任务不能被 TTL 静默丢掉取消意图。
+    """
     cutoff = (time.monotonic() if now is None else now) - _CANCEL_TTL_SECONDS
-    stale = [k for k, ts in _CANCEL_REQUESTS.items() if ts < cutoff]
+    stale = [k for k, ts in _CANCEL_REQUESTS.items()
+             if ts < cutoff and _ACTIVE_EXEC.get(k, 0) <= 0]
     for k in stale:
         _CANCEL_REQUESTS.pop(k, None)
 
@@ -450,7 +454,10 @@ async def _maybe_upgrade_project(existing: ComputeReceipt, session_id: str,
         return existing
     ok = await save_to_project(session_id, existing.output_ref, project_id, plan)
     if not ok:
-        return existing
+        degraded = tuple(existing.degraded)
+        if "PROJECT_SAVE_FAILED" not in degraded:
+            degraded += ("PROJECT_SAVE_FAILED",)
+        return existing.model_copy(update={"degraded": degraded})
     # 升级成功必须清掉早前失败留下的 PROJECT_SAVE_FAILED，否则 UI 会一边显示
     # 「已持久化到项目」一边显示「保存失败」（独立复审 P2）。
     cleaned = tuple(d for d in existing.degraded if d != "PROJECT_SAVE_FAILED")
@@ -590,7 +597,7 @@ async def _execute_locked(plan: ComputePlan, session_id: str,
                               tuple(degraded), minted)
         if not await store.append_receipt(session_id, final):
             residual = await _rollback_unpublished(
-                session_id, output_ref, project_id)
+                session_id, output_ref, project_id, final)
             logger.warning("[field_compute] final receipt persist failed; "
                            "rolled back %s (residual=%s)", output_ref, residual)
             raise ExecError(
@@ -601,13 +608,24 @@ async def _execute_locked(plan: ComputePlan, session_id: str,
         await store.save_plan(plan)
         return final
     finally:
-        _CANCEL_REQUESTS.pop(cancel_key, None)
+        # 只有「本次是最后一个活跃执行」时才清理取消键：同一计划排队执行时
+        # 保留用户已登记的取消，交给队列中的下一次执行检查。
+        if _ACTIVE_EXEC.get(cancel_key, 0) <= 1:
+            _CANCEL_REQUESTS.pop(cancel_key, None)
 
 
 async def _rollback_unpublished(session_id: str, output_ref: str,
-                                project_id: str) -> List[str]:
-    """撤销未发布成果的全部可见面（session ref + 项目清单条目）。"""
+                                project_id: str, receipt: ComputeReceipt
+                                ) -> List[str]:
+    """撤销未发布成果的全部可见面（稳定键 + session ref + 项目清单条目）。
+
+    §3 的 additive 登记（descriptor/provenance/artifact）没有删除 API，属
+    只追加证据；它们指向已删除的 ref，不构成可读成果 —— 真实限制在
+    PR 正文与 `REVIEW.md` 披露，不声称「完全无痕」。
+    """
     residual: List[str] = []
+    if not await store.drop_published(session_id, receipt):
+        residual.append("STABLE_KEY_ROLLBACK_FAILED")
     try:
         from app.services.session_data import session_data_manager
         if not await session_data_manager.delete_ref(session_id, output_ref):

@@ -5,8 +5,9 @@
 - **幂等不依赖 ring**（独立评审 P2-11）：每条已发布收据同时按
   ``(compute_fingerprint, input_ref, input_content_hash)`` 写入稳定键文件；
   ``find_receipt`` 优先读该文件，因此 64 条 ring 溢出后幂等仍成立；
-- 已发布收据**先写稳定键、再写 ring**，ring 失败时删除刚写的稳定键，确保
-  「任一次写入失败 ⇒ 两个面都不存在已发布副本」（独立复审 P1）；
+- 已发布收据**先写稳定键、再写 ring**，ring 失败时删除刚写的稳定键（删除失败
+  由 service 回滚重试并以 `STABLE_KEY_ROLLBACK_FAILED` 披露）——保证「写入失败
+  ⇒ 不对外存在已发布副本」是尽力而为且可验证的；
 - ``probe_publish()`` 在执行前探测 ring 与 ``by_key`` 两个写入面都可落盘；
 - ``published=False`` 的草稿收据在 store/登记之前写入，作为「收据可落盘」
   的前置闸门，且**不参与幂等、不对外可见**（独立评审 P1-3）。
@@ -157,6 +158,30 @@ async def list_plans(session_id: str) -> List[ComputePlan]:
         return []
 
 
+async def drop_published(session_id: str, receipt: ComputeReceipt) -> bool:
+    """删除该收据的稳定键副本（发布失败回滚用）；不存在视为成功。
+
+    ``_append_receipt_sync`` 的 ring 失败回滚若删除失败，会由 service 层再调
+    本函数重试；仍失败则以 ``STABLE_KEY_ROLLBACK_FAILED`` 如实披露，不谎称
+    已回滚。
+    """
+    if not receipt.published:
+        return True
+    key = stable_key(receipt.compute_fingerprint, receipt.input_ref,
+                     receipt.input_content_hash)
+    try:
+        await asyncio.to_thread(_unlink_if_exists,
+                                _stable_receipt_path(session_id, key))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _unlink_if_exists(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+
+
 async def find_receipt(session_id: str, compute_fingerprint: str,
                        input_ref: str, content_hash: str) -> Optional[ComputeReceipt]:
     """幂等查找：稳定键文件优先（不受 ring 截断影响）；只返回已发布收据。"""
@@ -253,5 +278,5 @@ def _append_receipt_sync(session_id: str, receipt: ComputeReceipt) -> None:
 
 __all__ = [
     "save_plan", "get_plan", "list_plans", "find_receipt", "append_receipt",
-    "probe_publish", "stable_key",
+    "probe_publish", "drop_published", "stable_key",
 ]
