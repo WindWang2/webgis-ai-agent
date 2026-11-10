@@ -66,7 +66,10 @@ class ConditionalQuantileZonalStatsArgs(BaseModel):
 class NetworkServiceCoverageConsistencyArgs(BaseModel):
     network: Any = Field(..., description="线网 FeatureCollection（LineString / MultiLineString）")
     facilities: Any = Field(..., description="设施点 FeatureCollection，properties.scheme 标方案")
-    cutoff: float = Field(2.0, gt=0, description="服务半径/时间阈值（单位由 cost_unit 声明）")
+    # G13：cutoff 必填（与参数契约 required=True 对齐）—— 静默默认 2.0 会
+    # 把「15 分钟覆盖」悄悄算成 2 米/2 秒，属于伪成功；缺省即 typed 校验
+    # 拒绝并引导补参。
+    cutoff: float = Field(..., gt=0, description="服务半径/时间阈值（单位由 cost_unit 声明）")
     cost_unit: str = Field("meters", description="成本量纲：meters/m/km 或 seconds/s/min")
     metric: str = Field("", description="请求的输出量纲（诊断用）")
     output_unit: str = Field("", description="请求的输出单位（诊断用）")
@@ -243,7 +246,7 @@ def register_capability_ecosystem_tools(registry: ToolRegistry) -> None:
         failure_modes=("invalid_args", "unit_conflict", "budget", "disconnected_network"),
     )
     def network_service_coverage_consistency(
-        network: Any, facilities: Any, cutoff: float = 2.0,
+        network: Any, facilities: Any, cutoff: float,
         cost_unit: str = "meters", metric: str = "",
         output_unit: str = "", request_metric: str = "",
     ) -> dict:
