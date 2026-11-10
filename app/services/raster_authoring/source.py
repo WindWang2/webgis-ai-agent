@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from app.schemas.raster_spec import (
     RasterArtifactDescriptor,
@@ -27,6 +30,31 @@ _REVISION_CACHE_MAX = 512
 _SOURCE_CACHE: Dict[tuple, tuple["RasterSource", float]] = {}
 _SOURCE_TTL_S = 5.0
 _SOURCE_CACHE_MAX = 128
+
+
+def invalidate_source_cache(session_id: str, ref_id: str) -> int:
+    """ref 失效时同步清掉源描述子/修订缓存（与 tile/stats 缓存同生命周期）。"""
+    dropped = 0
+    for cache in (_SOURCE_CACHE, _REVISION_CACHE):
+        for key in [k for k in cache if k[0] == session_id and k[1] == ref_id]:
+            cache.pop(key, None)
+            dropped += 1
+    return dropped
+
+
+def _on_ref_invalidation(session_id: str, ref_id: str, reason: object) -> None:
+    try:
+        invalidate_source_cache(session_id, ref_id)
+    except Exception:  # noqa: BLE001 - 钩子绝不影响失效权威
+        logger.debug("[raster-source] invalidation hook failed", exc_info=True)
+
+
+try:
+    from app.services.ref_lifecycle import register_ref_invalidation_hook
+
+    register_ref_invalidation_hook(_on_ref_invalidation)
+except Exception:  # noqa: BLE001 - 注册失败仅失去主动失效（TTL 兜底）
+    logger.debug("[raster-source] lifecycle hook registration failed", exc_info=True)
 
 #: 描述子统计只读前 N 个波段、最长边 ≤1024；超出部分如实披露截断，
 #: 绝不为 224 波段高光谱一次性分配 GB 级数组。
@@ -214,10 +242,31 @@ def _read_band_meta(path: str, descriptor: RasterArtifactDescriptor) -> List[Dic
     return out
 
 
+def _bounded_file_fingerprint(path: str, stat: os.stat_result) -> tuple[str, None]:
+    """高波段栅格的**有界**文件摘要（首/尾各 256KB + 尺寸/时间戳）。
+
+    ``raster_content_fingerprint`` 的格式被 analysis-reuse 冻结，不能改；
+    它会按全部波段解码 ≤1024² 样本（224 波段 float32 可达 GB 级）。本函数
+    只用于极宽波段源的数据修订绑定，返回 ``bnd:`` 前缀并明确不给
+    analysis-reuse 指纹（``content_fingerprint=None``），避免格式冒充。
+    """
+    import hashlib
+
+    digest = hashlib.sha256()
+    digest.update(f"grid|{stat.st_size}|{stat.st_mtime_ns}".encode())
+    with open(path, "rb") as handle:
+        digest.update(handle.read(262144))
+        if stat.st_size > 524288:
+            handle.seek(-262144, os.SEEK_END)
+            digest.update(handle.read(262144))
+    return "bnd:" + digest.hexdigest()[:16], None
+
+
 def _resolve_data_revision(
-    session_id: str, ref_id: str, path: str, payload: Dict[str, Any]
+    session_id: str, ref_id: str, path: str, payload: Dict[str, Any],
+    *, band_count: int = 1,
 ) -> tuple[str, Optional[str], Optional[int]]:
-    """数据修订 = ref 已声明的 content_revision 优先，否则用内容指纹（有界）。"""
+    """数据修订 = ref 已声明的 content_revision 优先，否则用有界内容指纹。"""
     declared = payload.get("content_revision")
     if declared is None:
         declared = payload.get("revision")
@@ -229,7 +278,13 @@ def _resolve_data_revision(
         stat = os.stat(path)
         fingerprint_key = (path, stat.st_mtime_ns, stat.st_size)
     except OSError:
+        stat = None
         fingerprint_key = (path, 0, 0)
+    if band_count > _DESCRIPTOR_MAX_BANDS and stat is not None:
+        short, _unused = _bounded_file_fingerprint(path, stat)
+        if ref_revision is not None:
+            return f"r{ref_revision}:{short}", None, ref_revision
+        return short, None, None
     cache_key = (session_id, ref_id) + fingerprint_key
     cached = _cache_get(_REVISION_CACHE, cache_key)
     fingerprint = cached
@@ -325,9 +380,14 @@ async def resolve_source(
 
     try:
         stat = os.stat(safe_path)
-        cache_key = (session_id, ref_id, safe_path, stat.st_mtime_ns, stat.st_size)
+        # 声明的 content_revision 也进 key：仅元数据修订提升（文件内容不变）
+        # 不会在 TTL 内复用旧 data_revision；失效钩子另负责主动清理。
+        cache_key = (
+            session_id, ref_id, safe_path, stat.st_mtime_ns, stat.st_size,
+            str(payload.get("content_revision") or payload.get("revision") or ""),
+        )
     except OSError:
-        cache_key = (session_id, ref_id, safe_path, 0, 0)
+        cache_key = (session_id, ref_id, safe_path, 0, 0, "")
     cached = _SOURCE_CACHE.get(cache_key)
     if cached and time.monotonic() <= cached[1]:
         return cached[0]
@@ -350,7 +410,10 @@ async def resolve_source(
         ) from exc
 
     revision, fingerprint, ref_revision = await asyncio.to_thread(
-        _resolve_data_revision, session_id, ref_id, safe_path, payload
+        lambda: _resolve_data_revision(
+            session_id, ref_id, safe_path, payload,
+            band_count=descriptor.band_count,
+        )
     )
     source = RasterSource(
         session_id=session_id,

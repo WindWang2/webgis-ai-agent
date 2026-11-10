@@ -40,6 +40,7 @@ FIELD_BY_CODE: Dict[str, str] = {
     "UNSUPPORTED_RESAMPLING": "resampling",
     "CLASSIFIED_INTERPOLATION": "resampling",
     "OPACITY_OUT_OF_RANGE": "opacity",
+    "MUTATION_REJECTED": "expected_revision",
 }
 
 #: 永不进入 UI / Pi 回执的详情键（服务端路径、原始异常文本）。

@@ -60,6 +60,14 @@ const btnCls =
 export function RasterAuthoringLauncher() {
   const t = useT('hud');
   const [open, setOpen] = useState(false);
+  // 刷新/撤销/Pi 提交后从权威 MapSpec 读回同一层的表达，保证 launcher
+  // 路径与 layer-style-panel 路径的恢复语义一致（复审 P2-2）。
+  const liveSpec = useSyncExternalStore(subscribeMapSpecLive, getCommittedMapSpec);
+  const liveLayer = (liveSpec as unknown as {
+    layers?: Array<Record<string, unknown>>;
+  } | null)?.layers?.find((l) => l?.id === 'raster-authoring-main');
+  const committedStyle = (liveLayer?.raster_style ?? null) as RasterExpressionSpec | null;
+  const committedLegend = (liveLayer?.legend_spec ?? null) as RasterLegend | null;
   return (
     <div className="px-3 pb-2 border-t border-edge-subtle pt-2">
       <button
@@ -70,7 +78,13 @@ export function RasterAuthoringLauncher() {
       >
         {t('rasterAuthoring.title')}
       </button>
-      {open && <RasterAuthoringPanel layerId="raster-authoring-main" />}
+      {open && (
+        <RasterAuthoringPanel
+          layerId="raster-authoring-main"
+          committedStyle={committedStyle}
+          committedLegend={committedLegend}
+        />
+      )}
     </div>
   );
 }
@@ -117,9 +131,14 @@ export function RasterAuthoringPanel({
       case 'CLASSIFIED_INTERPOLATION': return t('rasterAuthoring.errors.CLASSIFIED_INTERPOLATION');
       case 'COLORMAP_ON_RGB': return t('rasterAuthoring.errors.COLORMAP_ON_RGB');
       case 'OPACITY_OUT_OF_RANGE': return t('rasterAuthoring.errors.OPACITY_OUT_OF_RANGE');
-      case 'CAS_SUPERSEDED': return t('rasterAuthoring.errors.CAS_SUPERSEDED');
+      case 'CAS_SUPERSEDED':
+      case 'MUTATION_REJECTED':
+      case 'STALE_STYLE': return t('rasterAuthoring.errors.CAS_SUPERSEDED');
       case 'STALE_BINDING': return t('rasterAuthoring.errors.STALE_BINDING');
-      case 'RENDER_FAILED': return t('rasterAuthoring.errors.RENDER_FAILED');
+      case 'SOURCE_UNAVAILABLE':
+      case 'SOURCE_NOT_NUMERIC_RASTER': return t('rasterAuthoring.unavailable');
+      case 'RENDER_FAILED':
+      case 'EXPORT_UNSUPPORTED': return t('rasterAuthoring.errors.RENDER_FAILED');
       default: return t('rasterAuthoring.errors.default');
     }
   }, [t]);

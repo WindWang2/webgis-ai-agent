@@ -55,12 +55,46 @@ Reviewer：独立 code-explorer subagent（未参与本轮任何实现；在此�
 - `CommittedExpression.mapspec_revision` 未消费 → 保留作为导出冻结证据字段（现由 `frozen_layers` 显式传入）。
 - PDF 工具在渲染前拒绝 → 已修。
 
-## 复审（待）
+## 复审（第二轮，独立 reviewer，已完成）
 
-第二轮将由同一独立 reviewer 冷读修复后的完整 diff 与测试证据，重点复核：
-P1-1..6 是否真闭环、单笔事务是否真的不残留半状态、`store_data` typed
-passthrough 是否影响其它源类型、有界缓存是否会在数据修订变化后串用、
-UI 默认自动拉伸与逐通道提交是否可达、能力 URL 是否仍受属主校验。
+第二个独立 code-explorer subagent（全任务累计 3 个 subagents，未突破上限）
+冷读 `816705218a5a..f2792bbc4` 修复后 diff 与测试证据，逐条复核 6 个 P1：
+
+**结论：可交付。** 六项 P1 的阻塞面在源码层均已消除，未发现新的 P0
+（越权/数据损坏）或 P1（功能假成功）。逐条证据：
+1. 默认 auto — 已闭环（`contracts.ts:70-83,219,265-271` + `contract.py:107-118`；
+   Pi 走同一 `resolve_expression`）。
+2. 逐通道提交 — 已闭环（`contracts.ts:258-271,326-336` + `channel_stretch`
+   + `raster_tile_service.py:507-510,582-583`；HTTP 旅程断言 PNG 字节变化）。
+3. 单笔事务 — 已闭环（`service.py:228-236` 唯一一次 `apply_gis_mutation`；
+   `pipeline.py:78-84` strip 后由 `mapspec_source.py:48-55` 恢复全部字段；
+   `lifecycle_engine.py:543-554` auto-init 骨架；CAS 在 handler 前返回、零写入）。
+4. 能力 URL — 已闭环且无新增越权（签名绑定 filename，
+   `signing.py:33-36,60-69` + `map.py:784-800` 双重校验）。
+5. 有界缓存/描述子 — 已闭环（缓存命中早于所有文件打开；`_open` 正确绑定
+   contextmanager；`bands_truncated` 披露；5s TTL + 文件 stat key）。
+6. UI probe 全波段 — **部分**（>16 波段源 Pi 缺省曾 413、UI 取前 16，
+   `truncated` 恒 false；非阻塞，已按下表补修）。
+
+复审列出的残留 P2/P3 及处置（本轮全部补修，除明确披露的后续收敛项）：
+
+| # | 复审发现 | 处置 |
+|---|---|---|
+| P2-① | >16 波段 probe 缺省 413 / `truncated` 恒 false | 已修：`probe.py` 缺省按预算截到 16 并置 `truncated=True`；显式超限仍 `BUDGET_EXCEEDED`。回归 `test_wide_band_probe_is_truncated_and_disclosed` |
+| P2-② | launcher 未传 `committedStyle/Legend`，刷新/撤销不恢复；两个面板可能并存 | 已修：launcher 从 live MapSpec 派生同层表达传入；`context-panel.tsx` 仅在未编辑某层时挂载 launcher |
+| P2-③ | `_SOURCE_CACHE`/`_REVISION_CACHE` 未随 ref lifecycle 失效；key 不含声明的 content_revision | 已修：cache key 纳入 declared revision；注册 `register_ref_invalidation_hook` 主动清理。回归 `test_source_cache_is_invalidated_with_ref_lifecycle` |
+| P2-④ | `raster_content_fingerprint`（基线冻结格式）对 224 波段仍可 GB 级读 | 已修（本任务调用点）：>16 波段改用 `_bounded_file_fingerprint`（首/尾 256KB，`bnd:` 前缀，`content_fingerprint=None` 不冒充 analysis-reuse 指纹）；不改基线函数格式 |
+| P3-⑤ | HTTP `format=pdf` 在 compose 前先渲染一遍 | 已修：`export_snapshot` 服务入口提前拒绝（Pi 工具亦已提前拒绝） |
+| P3-⑥ | 面板 `errorText` 缺新错误码 | 已修：复用既有 i18n 键映射；`errors.py::FIELD_BY_CODE` 补 `MUTATION_REJECTED` |
+| P3-⑦ | `descriptor.py`/`probe.py`/`render.py` 仍裸 `rasterio.open` | **明确后续收敛项**：这些窗口读已限定波段（≤16）与 ≤2048 边，且路径已经过 owner-scope 校验；`source.py` 内部已统一 `_open`。本任务不重做基线 GDAL 环境改造。 |
+
+复审确认的其它事实：`mutations==2/3` 旧断言 0 命中；`MUTATION_REJECTED`
+与 `RASTER_ERROR_CODES` 一致；launcher 无 React hook 顺序/无限重渲染风险；
+PDF 提前拒绝与 `reconcile_via` 披露合理；基线失败（ADR 撞号、registry
+棘轮、OpenAPI 漂移）不算本任务阻塞。
+
+**最终评审结论：可交付（无未解决的本任务 P0/P1；影响验收的 P2 已闭环或
+有明确边界披露）。**
 
 ## 基线既有失败（隔离证据，非本任务引入）
 

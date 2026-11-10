@@ -8,8 +8,9 @@ vitest 4.1.12 / pnpm 10.18.3（离线 store，hoisted node-linker）。数值库
 
 | 命令 | 结果 |
 |---|---|
-| `python -m pytest tests/unit/raster_authoring -q --no-cov -o timeout=900` | **42 passed**（8 warnings：rasterio `round_shape` 弃用，基线既有） |
-| `python -m pytest <19 个基线文件> -q --no-cov -o timeout=900`（含 G20 全套、栅格、schema、mutation parity、SVG 孪生、tool registry、API/ADR 闸） | **328 passed, 1 skipped, 1 failed**（唯一失败为基线 ADR 编号撞号，见下） |
+| `python -m pytest tests/unit/raster_authoring -q --no-cov -o timeout=900` | **44 passed**（8 warnings：rasterio `round_shape` 弃用，基线既有；含复审残留 P2 修复回归 2 项） |
+| `python -m pytest <18 个基线 + 新增文件> -q --no-cov -o timeout=900`（含 G20 全套、栅格、schema、mutation parity、SVG 孪生、tool registry、mapspec_source、API/字段闸） | **352 passed, 1 skipped**（最终复跑） |
+| `python -m pytest tests/test_adr_numbering_contract.py -q` | **3 passed, 1 failed**：唯一失败为基线 ADR 编号撞号（见下） |
 | `python -m pytest tests/unit/test_mapspec_source.py -q` | **24 passed**（验证 store_data additive 分支不回归） |
 | `python -m ruff check <本任务所有 Python 改动>` | **All checks passed** |
 | `git diff --check` | 干净 |
@@ -56,6 +57,9 @@ vitest 4.1.12 / pnpm 10.18.3（离线 store，hoisted node-linker）。数值库
 | A21 | 旧 PNG/底图/旧 tile | 旧 imageRef/raster-opacity 与 style=None 回归 | ✅ `compiler.numeric-raster.test.ts` + 4 个旧栅格测试文件 |
 | A22 | UI 契约 | 默认 auto 不伪造精确范围、逐通道 dirty 可提交、快速点击 A/B 抑制、四态 | ✅ 前端 `contracts.test.ts`/`state.test.ts`/`tile-url.test.ts` |
 | A23 | 描述子截断/直方图披露 | 原始 vs 降采样边、`bands_truncated` | ✅ 评审修复回归 |
+| A24 | 宽波段 probe 截断 / 失效缓存 | >16 波段 default probe 返回 16 个波段 + `truncated=True`；ref 失效清缓存 | ✅ `test_wide_band_probe_is_truncated_and_disclosed`、`test_source_cache_is_invalidated_with_ref_lifecycle` |
+| A25 | 单笔事务与 CAS 零写入 | 首挂载 `mutations==1`、version 在场、CAS 拒绝后 MapSpec 逐字未变 | ✅ `test_single_mutation_first_mount…`、`test_concurrent_commit_rejection_writes_nothing` |
+| A26 | 能力 URL 绑定 filename | 登录 principal 也带 exp/sig；签名输入含具体文件名 | ✅ `test_export_download_is_always_a_signed_capability` + 复审源码核对 |
 
 ## 固定测试数据（现场生成，不签入二进制）
 

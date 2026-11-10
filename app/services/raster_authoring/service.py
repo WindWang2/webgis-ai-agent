@@ -366,6 +366,14 @@ async def export_snapshot(
     """冻结修订 → 渲染 → 组合（真实文件字节，调用方负责受权落盘）。"""
     from app.services.raster_authoring.snapshot import build_entry, compose
 
+    # 渲染前拒绝不支持的格式（HTTP 路由与 Pi 工具都经此门），
+    # 避免为注定失败的 PDF 先做一遍 2048 边快照。
+    if fmt not in ("png", "svg"):
+        raise RasterExpressionError(
+            "EXPORT_UNSUPPORTED",
+            "PDF does not embed numeric raster snapshots; use png or svg",
+            field="format",
+        )
     frozen = await frozen_layers(session_id, expected_revision)
     entries = []
     for item in frozen["numeric_layers"]:

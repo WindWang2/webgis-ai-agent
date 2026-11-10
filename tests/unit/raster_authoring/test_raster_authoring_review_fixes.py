@@ -160,6 +160,36 @@ async def test_export_download_is_always_a_signed_capability(
 
 
 @pytest.mark.asyncio
+async def test_wide_band_probe_is_truncated_and_disclosed(owner_root, session_id):
+    """复审 P2-①：>16 波段源省略 bands 时按预算截断并如实披露，不再 413。"""
+    from app.services.raster_authoring import probe_raster
+
+    ref = await register_raster_ref(session_id, write_tif(owner_root / "wide.tif", bands=20))
+    result = await probe_raster(session_id, ref, [[10.005, 19.995]], bands=None)
+    assert result["truncated"] is True
+    assert len(result["bands"]) == 16
+    assert len(result["points"][0]["values"]) == 16
+    # 显式超限仍按预算拒绝，不静默剔除用户选择
+    with pytest.raises(RasterExpressionError) as exc:
+        await probe_raster(session_id, ref, [[10.005, 19.995]],
+                           bands=list(range(1, 21)))
+    assert exc.value.code == "BUDGET_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_source_cache_is_invalidated_with_ref_lifecycle(owner_root, session_id):
+    """复审 P2-③：ref 失效钩子同步清源/修订缓存。"""
+    from app.services.raster_authoring.source import invalidate_source_cache
+
+    ref = await register_raster_ref(session_id, write_tif(owner_root / "one.tif"))
+    await resolve_source(session_id, ref)
+    assert any(k[0] == session_id and k[1] == ref for k in _SOURCE_CACHE)
+    dropped = invalidate_source_cache(session_id, ref)
+    assert dropped > 0
+    assert not any(k[0] == session_id and k[1] == ref for k in _SOURCE_CACHE)
+
+
+@pytest.mark.asyncio
 async def test_descriptor_discloses_approximate_and_truncation(owner_root, session_id):
     """P3-1：直方图截断披露基于原始尺寸，不再恒 False。"""
     ref = await register_raster_ref(session_id, write_tif(owner_root / "one.tif"))

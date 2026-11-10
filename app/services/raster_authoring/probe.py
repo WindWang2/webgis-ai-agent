@@ -173,18 +173,21 @@ def probe(
     parsed = [_point_xy(p, i) for i, p in enumerate(bounded)]
     requested = [(x, y) for x, y, _ in parsed]
     coords = _transform_points(requested, crs, source)
-    selected = bounded_bands(
-        bands if bands is not None else list(range(1, source.band_count + 1)),
-        source.band_count,
-    )
+    from app.services.raster_authoring.budgets import MAX_RASTER_PROBE_BANDS
+
+    if bands is None:
+        # 缺省「各波段」：与 UI 一致，按领域预算截取并**如实披露**，
+        # 而不是让 >16 波段源直接 413（显式超限请求仍按预算拒绝）。
+        all_bands = list(range(1, source.band_count + 1))
+        truncated_bands = len(all_bands) > MAX_RASTER_PROBE_BANDS
+        selected = bounded_bands(all_bands[:MAX_RASTER_PROBE_BANDS], source.band_count)
+    else:
+        selected = bounded_bands(bands, source.band_count)
+        truncated_bands = False
     if not selected:
         raise RasterExpressionError(
             "BUDGET_EXCEEDED", "at least one band is required", field="bands",
         )
-    from app.services.raster_authoring.budgets import MAX_RASTER_PROBE_BANDS
-
-    truncated_bands = len(selected) > MAX_RASTER_PROBE_BANDS
-    selected = selected[:MAX_RASTER_PROBE_BANDS]
     pixels = _read_pixel(source, selected, coords)
     out_points = []
     label: str
