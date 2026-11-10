@@ -33,6 +33,15 @@ const FALLBACK_NATIVE = [
 
 const EXECUTE_PROXY_NAME = "webgis_execute";
 
+// ADR-0288（W04）：上游内置发现入口 —— `--no-builtin-tools` 只清默认工具
+// 选择，内置扩展（tool-search/codemode）仍以 defaultActive:false +
+// exposure:"model-only" 注册（C11）。把它们并入常驻激活集后，模型可
+// tool_search 发现 deferred 长尾（C12 merge 语义，前门不丢），或经 codemode
+// 沙箱做有界只读组合（C13）。两者只能被模型直调，脚本不可触达。
+// PI_NATIVE_DISCOVERY=0（spawn env）一键回退 G12 前行为。
+const DISCOVERY_ENTRY_TOOLS = ["tool_search", "codemode"];
+const NATIVE_DISCOVERY_ENABLED = process.env.PI_NATIVE_DISCOVERY !== "0";
+
 // ADR-0103: per-turn dynamic tool surface. Python attaches the projection to
 // the turn prompt. Only its final control paragraph is authoritative.
 const ACTIVE_TOOLS_SUFFIX_RE = /(?:^|\n\n)\[WEBGIS_ACTIVE_TOOLS:(\[[^\r\n]*?\])\](?:\[工具面(?:提示|资格)\][^\r\n]*)*$/;
@@ -255,7 +264,13 @@ export default function webgisToolsExtension(pi) {
   // vocabulary; if the schema dump missed, wrapping still reaches Python.
   const nativeNames = new Set(nativeTools.map((tool) => tool.name).filter(Boolean));
   // webgis_execute is registered below and always part of the active surface.
-  const alwaysActive = new Set([...FALLBACK_NATIVE, EXECUTE_PROXY_NAME]);
+  // ADR-0288：发现入口（tool_search/codemode）常驻激活 —— 它们不在 dump
+  // 注册面（vendor 内置扩展注册），须经 alwaysActive 白名单进入声明面。
+  const alwaysActive = new Set([
+    ...FALLBACK_NATIVE,
+    EXECUTE_PROXY_NAME,
+    ...(NATIVE_DISCOVERY_ENABLED ? DISCOVERY_ENTRY_TOOLS : []),
+  ]);
 
   const applyActiveTools = (names, why) => {
     if (typeof pi.setActiveTools !== "function") {
@@ -268,6 +283,7 @@ export default function webgisToolsExtension(pi) {
       // #review M1 (defense in depth): the Python projector caps the surface
       // at k_max (default 30); enforce a hard ceiling here so a forged or
       // oversized marker can never activate the whole superset.
+      // 发现入口占用常驻名额（≤2），不动 48 上限。
       const MAX_ACTIVE = 48;
       const active = [...new Set([...alwaysActive, ...(names || [])])]
         .filter((name) => nativeNames.has(name) || alwaysActive.has(name))

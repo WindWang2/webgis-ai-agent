@@ -63,28 +63,121 @@ CONTRACT_DUMP = {
     "execute_proxy": "webgis_execute",
 }
 
+# ADR-0288 discovery lane dump (v4): one direct front-door tool + one DEFERRED
+# long-tail tool whose searchable schema text lives behind a local $ref with a
+# Chinese property description (A3: query terms must match $defs content).
+DISCOVERY_DUMP = {
+    "version": 4,
+    "abi": {"version": 1, "policy": "pi_tool_spec.v1"},
+    "registry_generation": "gen-discovery",
+    "surface_fingerprint": "fp-discovery",
+    "tools": [
+        {
+            "name": "webgis_map_intent",
+            "label": "Map Intent",
+            "description": "Parse user intent for a map task",
+            "exposure": "direct",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            "spec": {"fingerprint": "fp-map-intent", "version": 1, "policy": "pi_tool_spec.v1"},
+        },
+        {
+            "name": "nearest_facility",
+            "label": "Nearest Facility",
+            "description": "Compute nearest facilities from points",
+            "exposure": "deferred",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "facilities": {"$ref": "#/$defs/FacilityCollection"},
+                },
+                "$defs": {
+                    "FacilityCollection": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "学校名称——就近设施检索的目标",
+                                }
+                            },
+                        },
+                    }
+                },
+                "additionalProperties": False,
+            },
+            "spec": {"fingerprint": "fp-nearest", "version": 1, "policy": "pi_tool_spec.v1"},
+        },
+    ],
+    "default_active": ["webgis_map_intent"],
+    "execute_proxy": "webgis_execute",
+}
+
 STUB_LLM_JS = r"""
 import http from 'node:http';
+import fs from 'node:fs';
 const port = Number(process.env.STUB_PORT || 0);
 const mode = process.env.STUB_MODE || 'tool-then-text';
 const requests = [];
 const srv = http.createServer((req, res) => {
+  // The harness probes loopback reachability via /healthz BEFORE the vendor
+  // child connects — answer any non-completions path with a plain 200 and do
+  // NOT count it (request indexing drives the scripted turns).
+  if (!req.url.includes('/chat/completions')) {
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('ok');
+    return;
+  }
   let body = ''; req.on('data', (c) => (body += c));
   req.on('end', async () => {
     requests.push(body);
     const parsed = JSON.parse(body || '{}');
     const msgs = parsed.messages || [];
     const last = msgs[msgs.length - 1];
-    const wantsTool = mode === 'tool-then-text' && !(last && last.role === 'tool');
+    // Per-request declaration log (A2/A3 evidence): which tool names the
+    // model actually saw. Appended as JSON lines to STUB_LOG when set.
+    if (process.env.STUB_LOG) {
+      const toolNames = (parsed.tools || []).map((t) => t.function?.name || t.name);
+      fs.appendFileSync(process.env.STUB_LOG,
+        JSON.stringify({ req: requests.length, tools: toolNames }) + '\n');
+    }
+    const reqIdx = requests.length;
+    let toolCall = null;
+    if (mode === 'tool-then-text') {
+      const wantsTool = !(last && last.role === 'tool');
+      if (wantsTool) {
+        toolCall = { name: process.env.STUB_TOOL || 'webgis_map_intent',
+                     arguments: process.env.STUB_TOOL_ARGS || '{"query":"成都小学分布"}' };
+      }
+    } else if (mode === 'discovery') {
+      // req1: tool_search(query) -> req2: the discovered tool directly -> req3: text.
+      if (reqIdx === 1) {
+        toolCall = { name: 'tool_search',
+                     arguments: JSON.stringify({ query: process.env.STUB_SEARCH_QUERY || 'buffer' }) };
+      } else if (reqIdx === 2) {
+        toolCall = { name: process.env.STUB_TOOL || 'nearest_facility',
+                     arguments: process.env.STUB_TOOL_ARGS || '{}' };
+      }
+    } else if (mode === 'codemode-nested') {
+      // req1: codemode(script) -> req2: text.
+      if (reqIdx === 1) {
+        toolCall = { name: 'codemode',
+                     arguments: JSON.stringify({ code: process.env.STUB_CODE || 'return 1;' }) };
+      }
+    }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const sse = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
-    const id = 'c' + requests.length;
-    if (wantsTool) {
+    const id = 'c' + reqIdx;
+    if (toolCall) {
       sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
-        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1',
+        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_' + reqIdx,
           type: 'function',
-          function: { name: process.env.STUB_TOOL || 'webgis_map_intent',
-                       arguments: process.env.STUB_TOOL_ARGS || '{"query":"成都小学分布"}' } }] } }] });
+          function: { name: toolCall.name, arguments: toolCall.arguments } }] } }] });
       sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
         choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
     } else {
@@ -213,7 +306,9 @@ class _VendorHarness:
 
     def __init__(self, stub_port: int, tmp: Path, mode: str = "tool-then-text",
                  tool: str | None = None, tool_args: str | None = None,
-                 stub_text: str | None = None, delay_second_s: float = 0):
+                 stub_text: str | None = None, delay_second_s: float = 0,
+                 dump: dict | None = None, search_query: str | None = None,
+                 code: str | None = None):
         self.stub_port = stub_port
         self.tmp = tmp
         self.stub_js = tmp / f"stub_{time.monotonic_ns()}.mjs"
@@ -221,7 +316,7 @@ class _VendorHarness:
         self.probe_js = tmp / "probe.mjs"
         self.probe_js.write_text(PROBE_JS, encoding="utf-8")
         self.dump = tmp / "native-tools.json"
-        self.dump.write_text(json.dumps(CONTRACT_DUMP), encoding="utf-8")
+        self.dump.write_text(json.dumps(dump or CONTRACT_DUMP), encoding="utf-8")
         env = {**os.environ, "STUB_PORT": str(stub_port), "STUB_MODE": mode}
         if tool:
             env["STUB_TOOL"] = tool
@@ -231,6 +326,13 @@ class _VendorHarness:
             env["STUB_TEXT"] = stub_text
         if delay_second_s:
             env["STUB_DELAY_SECOND_S"] = str(delay_second_s)
+        if search_query:
+            env["STUB_SEARCH_QUERY"] = search_query
+        if code:
+            env["STUB_CODE"] = code
+        # Per-request declaration log (discovery lanes read it back).
+        self.stub_log = tmp / f"stublog_{time.monotonic_ns()}.jsonl"
+        env["STUB_LOG"] = str(self.stub_log)
         self.stub_env = env
         self.stub_proc: subprocess.Popen | None = None
 
@@ -536,3 +638,173 @@ async def test_persona_injected_and_turn_token_recovered(harness):
     assert "coding assistant" not in system[:120], "vendor coding persona must be replaced"
     assert "webgis_map_intent" in tool_names
     assert not (tool_names & BUILTIN_CODING_TOOLS)
+
+
+# ---------------------------------------------------------------------------
+# ADR-0288（G12 W04/W06）：原生发现与嵌套调用契约车道。
+# ---------------------------------------------------------------------------
+
+def _read_stub_log(harness) -> list[dict]:
+    rows = [
+        json.loads(line)
+        for line in harness.stub_log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows, "stub declaration log is empty"
+    return rows
+
+
+async def test_tool_search_discovers_deferred_gis_tool(make_harness, tmp_path):
+    """A2/A3：中文 query 经 $defs 属性描述发现 deferred 工具，声明面前后可证。
+
+    - 请求1 声明面 = 前门 + proxy + tool_search + codemode（发现入口常驻，
+      前门不因发现入口在场而丢失）；
+    - tool_search 命中 merge 语义：请求2 声明面**追加** nearest_facility，
+      前门仍在（C12）；
+    - nearest_facility 直调经本仓扩展 execute 走桥路径（dead port →
+      isError:true + 桥侧错误文本 —— 证明不是 vendor "unknown tool" 拒绝）；
+    - agent_settled 恰一次。
+    """
+    harness = make_harness(
+        mode="discovery",
+        dump=DISCOVERY_DUMP,
+        search_query="学校 就近设施",
+        tool="nearest_facility",
+        tool_args='{"facilities": [{"name": "实验小学"}]}',
+    )
+    result = harness.run_turn(
+        "找能按学校名称做就近设施检索的工具\n\n"
+        "[WEBGIS_TURN_CONTEXT:contract-session.turn-disc]\n"
+        "(Internal routing context; do not quote or modify this marker.)"
+    )
+    events = _events(result)
+    # 发现入口与发现结果的事件链
+    search_end = next(
+        (e for e in events
+         if e.get("type") == "tool_execution_end" and e.get("toolName") == "tool_search"),
+        None,
+    )
+    assert search_end is not None, "tool_search was never executed"
+    content = search_end.get("result", {}).get("content", [])
+    search_text = content[0].get("text", "") if content else ""
+    assert "nearest_facility" in search_text, f"search result: {search_text[:200]!r}"
+    assert "Loaded 1 tool" in search_text
+    direct_end = next(
+        (e for e in events
+         if e.get("type") == "tool_execution_end" and e.get("toolName") == "nearest_facility"),
+        None,
+    )
+    assert direct_end is not None, "discovered tool was never called directly"
+    assert direct_end.get("isError") is True, (
+        "dead bridge port must yield an honest error (call went through our execute path)"
+    )
+    # 声明面前后变化：stub 逐请求记录
+    log = _read_stub_log(harness)
+    first, later = log[0], log[1]
+    assert "webgis_map_intent" in first["tools"], "front door must stay declared"
+    assert "tool_search" in first["tools"] and "codemode" in first["tools"], (
+        "discovery entry points must be declared (C11)"
+    )
+    assert "nearest_facility" not in first["tools"], (
+        "deferred tool must NOT be declared before discovery"
+    )
+    assert "nearest_facility" in later["tools"], (
+        "discovered tool must be declared on the next model request (C12 merge)"
+    )
+    assert "webgis_map_intent" in later["tools"], "merge must not drop the front door"
+    assert not (set(first["tools"]) & BUILTIN_CODING_TOOLS), "A7: no coding tools reachable"
+    # 终判唯一
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1
+
+
+async def test_tool_search_no_match_is_honest(make_harness):
+    """发现失败诚实披露：无关 query → No matching tools found，声明面不变。"""
+    harness = make_harness(
+        mode="discovery",
+        dump=DISCOVERY_DUMP,
+        search_query="量子纠缠 引力波",
+        tool="nearest_facility",
+        tool_args="{}",
+    )
+    result = harness.run_turn(
+        "找一个完全不相关的工具\n\n"
+        "[WEBGIS_TURN_CONTEXT:contract-session.turn-nomatch]\n"
+        "(Internal routing context; do not quote or modify this marker.)"
+    )
+    events = _events(result)
+    search_end = next(
+        (e for e in events
+         if e.get("type") == "tool_execution_end" and e.get("toolName") == "tool_search"),
+        None,
+    )
+    assert search_end is not None
+    content = search_end.get("result", {}).get("content", [])
+    search_text = content[0].get("text", "") if content else ""
+    assert "No matching tools found" in search_text
+    log = _read_stub_log(harness)
+    assert "nearest_facility" not in log[-1]["tools"], (
+        "a no-match search must not activate anything"
+    )
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1
+
+
+async def test_codemode_nested_calls_carry_parent_tool_call_id(make_harness):
+    """A4/W06：codemode 沙箱嵌套调用 —— parentToolCallId 事件 + 直调工具受限。
+
+    脚本经 ctx.executeTool 调 webgis_map_intent（active direct 工具）—— 嵌套
+    tool_execution_* 事件必须携带 parentToolCallId（C13），且嵌套 id 形如
+    ``<callerId>/<n>``。bash 等未注册工具在脚本里不可达（A7）：脚本引用
+    未注册名只会得到 not-found 类错误，不存在进程权限扩大。
+    """
+    code = (
+        "const r1 = await tools.webgis_map_intent({query: '成都小学分布'});\n"
+        "const r2 = await tools.webgis_map_intent({query: '北京中学分布'});\n"
+        "return 'two reads attempted: ' + String(r1).slice(0, 40);\n"
+    )
+    harness = make_harness(
+        mode="codemode-nested",
+        dump=CONTRACT_DUMP,
+        code=code,
+    )
+    result = harness.run_turn(
+        "对两个城市分别解析意图并汇总\n\n"
+        "[WEBGIS_TURN_CONTEXT:contract-session.turn-code]\n"
+        "(Internal routing context; do not quote or modify this marker.)"
+    )
+    events = _events(result)
+    codemode_start = next(
+        (e for e in events
+         if e.get("type") == "tool_execution_start" and e.get("toolName") == "codemode"),
+        None,
+    )
+    assert codemode_start is not None, "codemode was not invoked"
+    parent_id = codemode_start.get("toolCallId", "")
+    assert parent_id, "codemode call id missing"
+    nested = [
+        e for e in events
+        if e.get("type") in ("tool_execution_start", "tool_execution_end")
+        and e.get("parentToolCallId") == parent_id
+    ]
+    assert nested, "nested calls must emit tool_execution events with parentToolCallId"
+    nested_names = {e.get("toolName") for e in nested}
+    assert nested_names == {"webgis_map_intent"}, (
+        f"nested reach must be the called GIS tool only; got {nested_names}"
+    )
+    for e in nested:
+        assert e.get("toolCallId", "").startswith(parent_id + "/"), (
+            "nested call ids are <callerId>/<n>"
+        )
+        if e.get("type") == "tool_execution_end":
+            # dead bridge port: nested GIS calls fail honestly through our path
+            assert e.get("isError") is True
+    # codemode 本体完成 + 唯一终判
+    codemode_end = next(
+        (e for e in events
+         if e.get("type") == "tool_execution_end" and e.get("toolName") == "codemode"),
+        None,
+    )
+    assert codemode_end is not None
+    settled = [e for e in events if e.get("type") == "agent_settled"]
+    assert len(settled) == 1

@@ -573,9 +573,9 @@ async def _dispatch_tool_bound(
     tool_name = normalize_tool_name(resolved.name)
     arguments = dict(resolved.arguments)
 
-    # ADR-0224：turn SurfaceReceipt 对照（fingerprint echo + opt-in 面成员
-    # 硬校验）——语义与故障模型见 pi_bridge_surface_gate.stale_surface_gate。
-    stale = stale_surface_gate(request, session_id, tool_name, _proxied)
+    # ADR-0224：turn SurfaceReceipt 对照（fingerprint echo + 面成员硬校验 +
+    # ADR-0288 发现 grant）——语义与故障模型见 pi_bridge_surface_gate.stale_surface_gate。
+    stale = stale_surface_gate(request, session_id, tool_name, _proxied, registry)
     if stale is not None:
         return stale
 

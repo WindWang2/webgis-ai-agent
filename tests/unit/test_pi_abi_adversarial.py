@@ -569,9 +569,14 @@ def test_receipt_store_bounded_and_session_scoped():
 # ---------------------------------------------------------------------------
 
 async def test_scope_enforcement_attack_matrix(toy_registry, client, monkeypatch):
-    """PI_SURFACE_SCOPE_ENFORCE=1: bare-name off-surface call is typed-rejected
-    without execution; the SAME tool via webgis_execute proxy still executes;
-    with enforcement OFF (default) the bare-name executes (compat)."""
+    """ADR-0288：scope 校验默认 ON + discovery grant 契约。
+
+    - 注册超集内的 bare-name 直调（不在 turn selected 面）→ discovery grant
+      放行并真实执行（发现只改声明；权限面=注册超集+dispatch 闸）；
+    - **伪造/过期 echo**（fingerprint 与 registry 现编译不符）→ typed
+      SURFACE_SCOPE_VIOLATION 拒绝，零执行（A6 撤权/过期 schema 反例）；
+    - webgis_execute 代理路径不受 scope 校验（既有语义）；
+    - kill-switch（=0）回 G12 前放行行为。"""
     registry, counts = toy_registry
     session_id, turn_id = "sess-adv-scope", "turn-adv-scope"
     receipt = _mint_receipt(registry, session_id, turn_id, ["adv_inface"])
@@ -579,43 +584,66 @@ async def test_scope_enforcement_attack_matrix(toy_registry, client, monkeypatch
     await _register(session_id, turn_id)
     assert "adv_outface" not in receipt.selected
 
-    monkeypatch.setenv("PI_SURFACE_SCOPE_ENFORCE", "1")
+    from app.services.chat.pi_surface_receipt import (
+        discovered_store,
+        discovered_tools,
+    )
 
-    # Bare-name call for a tool NOT in this turn's receipt.selected.
+    discovered_store.clear()
+
+    # 1) 注册面内 bare-name 直调（无 echo）→ grant → 执行。
     resp = await client.post(
         "/pi-tools/execute", headers=_headers(),
         json=_body("call-scope-1", "adv_outface", {"note": "bare"}, token),
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["isError"] is True
-    assert data["details"]["code"] == "SURFACE_SCOPE_VIOLATION"
-    assert "stale" in data["content"][0]["text"]
-    assert counts["outface"] == 0  # rejected BEFORE dispatch: no execution
+    assert data["isError"] is False, data
+    assert counts["outface"] == 1
+    assert "adv_outface" in discovered_tools(session_id, turn_id), (
+        "the granted discovery must be observable"
+    )
 
-    # Same tool through the webgis_execute proxy -> executes (fallback path
-    # is deliberately outside the native scope check).
+    # 2) 伪造 echo：同工具但指纹与现编译 spec 不符 → typed 拒绝，零执行。
+    resp_bad = await client.post(
+        "/pi-tools/execute", headers=_headers(),
+        json=_body(
+            "call-scope-2", "adv_outface", {"note": "forged"},
+            token, toolFingerprint="fp-forged-deadbeef",
+        ),
+    )
+    data_bad = resp_bad.json()
+    assert data_bad["isError"] is True
+    # 更精确的 typed 码：echo 与现编译 spec 不符 = fingerprint mismatch
+    # （grant 后的后续调用同样对拍 —— 伪造 echo 不得因已 grant 绕过）。
+    assert data_bad["details"]["code"] == "SURFACE_FINGERPRINT_MISMATCH"
+    assert "stale" in data_bad["content"][0]["text"]
+    assert counts["outface"] == 1  # rejected BEFORE dispatch: no execution
+
+    # 3) Proxy 通道不受 scope 校验（fallback path 语义保持）。
     resp2 = await client.post(
         "/pi-tools/execute", headers=_headers(),
         json=_body(
-            "call-scope-2", "webgis_execute",
+            "call-scope-3", "webgis_execute",
             {"toolName": "adv_outface", "arguments": {"note": "proxy"}}, token,
         ),
     )
     d2 = resp2.json()
     assert d2["isError"] is False, d2
-    assert counts["outface"] == 1
+    assert counts["outface"] == 2
 
-    # Enforcement OFF (default): the same bare-name call executes (compat —
-    # setActiveTools may be unavailable, hard scope would false-reject).
-    # Distinct args: the executed-set dedup is (tool, canonical args)-keyed.
-    monkeypatch.delenv("PI_SURFACE_SCOPE_ENFORCE", raising=False)
+    # 4) Kill-switch（=0）：伪造 echo 的 bare-name 也不再经 scope/grant 拒
+    #    （verify 对非 selected 工具跳过 echo —— G12 前 master 行为）。
+    monkeypatch.setenv("PI_SURFACE_SCOPE_ENFORCE", "0")
     resp3 = await client.post(
         "/pi-tools/execute", headers=_headers(),
-        json=_body("call-scope-3", "adv_outface", {"note": "bare-off"}, token),
+        json=_body(
+            "call-scope-4", "adv_outface", {"note": "bare-kill"},
+            token, toolFingerprint="fp-forged-deadbeef",
+        ),
     )
     assert resp3.json()["isError"] is False
-    assert counts["outface"] == 2
+    assert counts["outface"] == 3
 
 
 # ---------------------------------------------------------------------------
