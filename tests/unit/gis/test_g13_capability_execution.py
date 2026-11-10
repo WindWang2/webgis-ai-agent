@@ -479,6 +479,43 @@ async def test_c07_revoked_after_selection_recheck_refuses_and_releases(
     assert result2.status != "error", (
         f"关闭复核后同输入必须真实执行（证明拒绝只来自 G13 执行闸），"
         f"实际 {result2.status}/{result2.error_msg}")
+    monkeypatch.delenv("GIS_AVAILABILITY_DISPATCH_RECHECK")
+
+
+@pytest.mark.asyncio
+async def test_c15_denial_then_recovery_no_stuck_placeholder(
+        registry, monkeypatch):
+    """C15：拒绝/异常后同参重试无永久「在飞」占位 —— 撤销恢复
+    （快照换代回 native_verified）后，同会话同参直接真实执行成功。"""
+    import app.lib.gis.capability_availability_cache as cac
+
+    snap_bad = _fake_snapshot([
+        _rec("network_service_coverage_consistency", "temporarily_unavailable",
+             "service_area"),
+        _rec("network_service_area", "native_verified", "service_area"),
+    ])
+    monkeypatch.setattr(
+        cac, "get_availability_snapshot", lambda **kw: snap_bad)
+    args = {"network": _LINE_NET, "facilities": _POINT_FAC, "cutoff": 5.0}
+    executed: set = set()
+    svc = _svc(registry)
+    denied = await svc.dispatch(
+        _tc("network_service_coverage_consistency", args), "sess-c15", executed)
+    assert denied.status == "error"
+
+    # 恢复：快照换代 → 同会话同参重试真实执行（不是「已在执行」谎言）。
+    snap_ok = _fake_snapshot([
+        _rec("network_service_coverage_consistency", "native_verified",
+             "service_area"),
+    ])
+    monkeypatch.setattr(
+        cac, "get_availability_snapshot", lambda **kw: snap_ok)
+    retried = await svc.dispatch(
+        _tc("network_service_coverage_consistency", args), "sess-c15", set())
+    assert retried.status != "error", (
+        f"恢复后同参重试必须真实执行（无永久在飞占位），"
+        f"实际 {retried.status}/{retried.error_msg}: {retried.llm_payload[:120]}")
+    assert "Loop blocked" not in retried.llm_payload
 
 
 @pytest.mark.asyncio
