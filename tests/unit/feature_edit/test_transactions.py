@@ -623,3 +623,56 @@ class TestReviewFixes:
             children = [d["feature_after"]["geometry"] for d in deltas if d.get("presence") == "created"]
             union = unary_union([shape(g) for g in children])
             assert abs(union.area - parent.area) < 1e-12
+
+
+class TestR4MultiDeleteUndo:
+    """R4 复审回归：多要素删除的 undo 必须恢复精确列表序（含尾部目标集）。"""
+
+    async def _seed_n(self, client, s, n):
+        created = await _create_empty(client, s, "Point")
+        ref = created["ref_id"]
+        feats = [
+            {"geometry": {"type": "Point", "coordinates": [116.0 + 0.01 * i, 39.0]},
+             "properties": {"name": f"F{i}"}}
+            for i in range(n)
+        ]
+        prev = await _preview(client, s, ref, [{"op": "create_features", "features": feats}])
+        body = prev.json()
+        assert body["committable"], body["validation"]
+        receipt = (await _approve(client, s, body["plan_id"])).json()["receipt"]
+        return ref, receipt["created_wfids"]
+
+    async def test_delete_first3_of_4_undo_exact_order(self, client):
+        s = sid()
+        ref, wfids = await self._seed_n(client, s, 4)
+        prev = await _preview(client, s, ref, [{"op": "delete_features"}], feature_ids=wfids[:3])
+        r = (await _approve(client, s, prev.json()["plan_id"])).json()["receipt"]
+        assert sorted(r["retired_wfids"]) == sorted(wfids[:3])
+        undo = await client.post(f"/api/v1/chat/sessions/{s}/feature-edits/{ref}/undo")
+        assert undo.status_code == 200, undo.text
+        restored = (await session_data_manager.get(s, ref))["geojson"]["features"]
+        assert [f["properties"]["_wfid"] for f in restored] == wfids
+        assert [f["properties"]["name"] for f in restored] == [f"F{i}" for i in range(4)]
+
+    async def test_delete_scattered_1_4_5_of_7_undo_exact_order(self, client):
+        s = sid()
+        ref, wfids = await self._seed_n(client, s, 7)
+        targets = [wfids[i] for i in (1, 4, 5)]
+        prev = await _preview(client, s, ref, [{"op": "delete_features"}], feature_ids=targets)
+        await _approve(client, s, prev.json()["plan_id"])
+        undo = await client.post(f"/api/v1/chat/sessions/{s}/feature-edits/{ref}/undo")
+        assert undo.status_code == 200, undo.text
+        restored = (await session_data_manager.get(s, ref))["geojson"]["features"]
+        assert [f["properties"]["_wfid"] for f in restored] == wfids
+        assert [f["properties"]["name"] for f in restored] == [f"F{i}" for i in range(7)]
+
+    async def test_delete_tail_then_undo_no_409(self, client):
+        """尾部连续删除（index 最高位）—— 上一版 collection 上界 bug 的直接面。"""
+        s = sid()
+        ref, wfids = await self._seed_n(client, s, 5)
+        prev = await _preview(client, s, ref, [{"op": "delete_features"}], feature_ids=wfids[3:])
+        await _approve(client, s, prev.json()["plan_id"])
+        undo = await client.post(f"/api/v1/chat/sessions/{s}/feature-edits/{ref}/undo")
+        assert undo.status_code == 200, undo.text
+        restored = (await session_data_manager.get(s, ref))["geojson"]["features"]
+        assert [f["properties"]["_wfid"] for f in restored] == wfids

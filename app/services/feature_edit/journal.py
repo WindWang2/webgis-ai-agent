@@ -187,7 +187,10 @@ def apply_deltas_to_features(
             new_feature["properties"] = props
         props[WFID_PROP] = wfid
         index = delta.get("index")
-        if isinstance(index, int) and not isinstance(index, bool) and 0 <= index <= len(out):
+        # R4：collection 期只做下界检查 —— 高于「删除后幸存数」的原位 index
+        # 是良构的（删除集越靠后越常见），上界判断会误路由到 append 打乱
+        # 恢复序；插入期 min(index, len) 仍是畸形 entry 的防御。
+        if isinstance(index, int) and not isinstance(index, bool) and index >= 0:
             created_with_index.append((index, order, new_feature, wfid))
         else:
             created_append.append((order, new_feature, wfid))

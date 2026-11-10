@@ -240,10 +240,22 @@ async def commit_plan(
                 },
             )
 
-        # R3 P2-2：提交期只读复核 —— 预览后源被标记只读时 pending plan 不得
-        # 落地（窗口闭合；fail-closed）。
+        # R3 P2-2 + R4：提交期只读复核（fail-closed）。envelope 标记变更会先被
+        # 指纹 CAS 拒（此处是纵深防御）；metadata-only 标记不改载荷指纹 ——
+        # 在此显式复核，闭合「预览后才被治理标记只读」的 pending 窗口。
         if isinstance(payload, dict) and payload.get("read_only") is True:
             raise FeatureEditBlocked("dataset_read_only_source", "source became read-only after preview")
+        try:
+            from app.services.artifact_registry import get_artifact
+
+            rec = await get_artifact(session_id, ref_id)
+            md = getattr(rec, "metadata", None)
+            if isinstance(md, dict) and md.get("read_only") is True:
+                raise FeatureEditBlocked("dataset_read_only_source", "source became read-only after preview")
+        except FeatureEditBlocked:
+            raise
+        except Exception:  # noqa: BLE001 — ledger 不可达不改变提交资格
+            pass
 
         # 重新求值（与 preview 同一纯函数路径；载荷在锁内冷读，指纹已验）。
         fc = extract_fc(payload)

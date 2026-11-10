@@ -107,7 +107,11 @@ async def _artifact_metadata(session_id: str, ref_id: str) -> Dict[str, Any]:
         from app.services.artifact_registry import get_artifact
 
         rec = await get_artifact(session_id, ref_id)
-        return rec.get("metadata") if isinstance(rec, dict) else {}
+        # ArtifactRecord 是 dataclass（.metadata 属性）；dict 形态作防御兼容
+        metadata = getattr(rec, "metadata", None)
+        if metadata is None and isinstance(rec, dict):
+            metadata = rec.get("metadata")
+        return metadata if isinstance(metadata, dict) else {}
     except Exception:  # noqa: BLE001 — ledger 读失败按无元数据处理
         return {}
 
@@ -279,7 +283,11 @@ async def promote_sketch(
     for feature in features:
         if not isinstance(feature, dict):
             continue
-        props = dict(feature.get("properties") or {})
+        raw_props = feature.get("properties")
+        if raw_props is not None and not isinstance(raw_props, dict):
+            return {"ok": False, "error_code": "INVALID_FEATURES",
+                    "error": "feature properties must be an object"}
+        props = dict(raw_props or {})
         props.pop("_wfid", None)  # 草图临时身份不入库（首编辑时物化）
         clean_features.append({
             "type": "Feature",
