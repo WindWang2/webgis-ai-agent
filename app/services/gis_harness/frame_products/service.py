@@ -719,3 +719,10 @@ async def frame_product_status(session_id: str) -> Dict[str, Any]:
         "quality": product.get("quality", []),
         "disclosures": product.get("disclosures", []),
     }
+    # WP11：逐画幅终验（有界 frame 证据；观察回执缺席 = 诚实 not_observed）。
+    from app.services.gis_harness.frame_products.verification import (
+        verify_frame_product,
+    )
+
+    out["verification"] = verify_frame_product(spec)
+    return out
