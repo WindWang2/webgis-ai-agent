@@ -91,6 +91,26 @@ async def _apply(
     )
 
 
+def _write_refusal(result: Any, *, step: str) -> Optional[Dict[str, Any]]:
+    """写入结果 → typed refusal（is_error 或 superseded —— review R2-A：
+    CAS 过期的 superseded 回执 is_error=False 但什么都没写，绝不能当
+    成功上报（否则出现「回执 ok 而产品缺席」的空壳成功）。"""
+    if getattr(result, "superseded", False):
+        return _refusal(
+            "mutation_superseded",
+            f"frame_product {step}：MapSpec revision 已前进（CAS 过期），"
+            "本次未写入 —— 重读 frame_product_status 后基于新 revision 重试。",
+            correction_hint="重新 frame_product_status 取当前 revision 再提交。",
+        )
+    if getattr(result, "is_error", False):
+        return _refusal(
+            "mutation_rejected",
+            f"frame_product {step} 被拒绝：{getattr(result, 'error_msg', '') or ''}",
+            correction_hint=getattr(result, "correction_hint", "") or "",
+        )
+    return None
+
+
 def _fc_bbox(fc: Dict[str, Any]) -> Optional[List[float]]:
     """FeatureCollection → WSEN bbox（坐标面有界遍历；非有限值跳过）。"""
     import math
@@ -525,12 +545,9 @@ async def bind_frame_product(
         reason="frame_product bind: 画幅身份登记",
         expected_revision=expected_revision,
     )
-    if frames_result.is_error:
-        return _refusal(
-            "mutation_rejected",
-            f"画幅登记被拒绝：{frames_result.error_msg}",
-            correction_hint=frames_result.correction_hint,
-        )
+    frames_refusal = _write_refusal(frames_result, step="bind frames")
+    if frames_refusal is not None:
+        return frames_refusal
 
     # 产品契约。
     product_frames: List[Dict[str, Any]] = []
@@ -573,19 +590,26 @@ async def bind_frame_product(
         config["disclosures"] = [f"shared_refused:{shared_refusal['code']}"] + (
             config["disclosures"] or [])[:7]
 
+    # R2-A：两笔写是同一逻辑事务 —— 第二笔 CAS 基线 = 第一笔落定后的
+    # revision（复用调用方旧基线必然 superseded；调用方未给基线则不 CAS）。
+    chained_revision = (
+        frames_result.mutation_revision
+        if expected_revision is not None
+        and getattr(frames_result, "mutation_revision", None) is not None
+        else None
+    )
     product_result = await _apply(
         session_id,
         _set_frame_product_intent(config=config),
         reason="frame_product bind: 产品契约",
-        expected_revision=expected_revision,
+        expected_revision=chained_revision,
     )
-    if product_result.is_error:
-        return _refusal(
-            "mutation_rejected",
-            f"产品契约写入被拒绝：{product_result.error_msg}",
-            correction_hint=product_result.correction_hint,
-            note="画幅登记已写入（惰性无害 —— 无产品引用不参与渲染）",
-        )
+    product_refusal = _write_refusal(product_result, step="bind product")
+    if product_refusal is not None:
+        product_refusal["note"] = (
+            "画幅登记已写入（注意：保留的 layout.frames 仍驱动缺省导出的"
+            "逐帧分页 —— 每页为主文档整幅）；产品契约未写入，重试 bind 即可")
+        return product_refusal
 
     return _product_summary(
         session_id, product_result.mutation_revision
@@ -659,11 +683,9 @@ async def update_frame_product(
         session_id, _set_frame_product_intent(patch=patch),
         reason="frame_product update", expected_revision=expected_revision,
     )
-    if result.is_error:
-        return _refusal(
-            "mutation_rejected", result.error_msg or "patch 被拒绝",
-            correction_hint=result.correction_hint,
-        )
+    refusal = _write_refusal(result, step="update")
+    if refusal is not None:
+        return refusal
     out: Dict[str, Any] = {"status": "ok"}
     if getattr(result, "mutation_revision", None) is not None:
         out["mutation_revision"] = result.mutation_revision
@@ -678,8 +700,9 @@ async def unbind_frame_product(
         session_id, _set_frame_product_intent(remove=True),
         reason="frame_product unbind", expected_revision=expected_revision,
     )
-    if result.is_error:
-        return _refusal("mutation_rejected", result.error_msg or "解绑被拒绝")
+    refusal = _write_refusal(result, step="unbind")
+    if refusal is not None:
+        return refusal
     return {
         "status": "ok",
         "note": "产品语义已移除；layout.frames 画幅登记保留（可重新绑定）",

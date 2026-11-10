@@ -203,6 +203,20 @@ def register_frame_product_tools(registry: ToolRegistry) -> None:
             return {"error": "Missing session_id context"}
         from app.services.gis_harness.frame_products import service as fps
 
+        if semantics is not None:
+            from app.lib.cartography.mapspec_schema import (
+                SHARED_EXPRESSION_SEMANTICS,
+            )
+
+            if semantics not in SHARED_EXPRESSION_SEMANTICS:
+                return {
+                    "status": "refused",
+                    "code": "invalid_semantics",
+                    "message": (
+                        f"semantics {semantics!r} 不在词表 {list(SHARED_EXPRESSION_SEMANTICS)}"
+                        "（count|ratio|index|other；测量语义词如 rate 是"
+                        " shared_expression 语义面之外的词）"),
+                }
         try:
             args = FrameProductBindArgs(
                 ref_id=ref_id, product_kind=product_kind, layer_id=layer_id,

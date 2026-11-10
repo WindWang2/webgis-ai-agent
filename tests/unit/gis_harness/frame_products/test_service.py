@@ -73,8 +73,8 @@ async def ref_store(monkeypatch, tmp_path):
     return fcs
 
 
-async def _seed_layer(session_id: str, layer_id: str = "lyr-districts") -> None:
-    """目标层先落 spec（bind 的诚实义务：不静默挂层）。"""
+async def _seed_layer(session_id: str, layer_id: str = "lyr-districts") -> int:
+    """目标层先落 spec（bind 的诚实义务：不静默挂层）；返回落定 revision。"""
     from app.services.mapspec.intents import UpsertLayerIntent, UpsertSourceIntent
     from app.services.gis_world_state import apply_gis_mutation
 
@@ -83,10 +83,11 @@ async def _seed_layer(session_id: str, layer_id: str = "lyr-districts") -> None:
             source_id="src-d",
             source={"type": "geojson", "inlineData": THREE_YEARS},
         ), origin="agent", actor="test")
-    await apply_gis_mutation(
+    result = await apply_gis_mutation(
         session_id, UpsertLayerIntent(
             layer={"id": layer_id, "type": "fill", "source": "src-d"}),
         origin="agent", actor="test")
+    return int(getattr(result, "mutation_revision", 0) or 0)
 
 
 async def _spec(session_id: str) -> Dict[str, Any]:
@@ -277,3 +278,49 @@ async def test_rate_shared_with_denominator_journey(ref_store):
     shared = spec["frame_product"]["shared_expression"]
     assert shared["denominator"] == "population"
     assert shared["unit"] == "个/万人"
+
+
+class TestCasSemantics:
+    """review R2-A：CAS 过期（superseded）绝不能上报成功。"""
+
+    async def test_bind_fresh_revision_chains_and_succeeds(self, ref_store):
+        sid = f"g15-{uuid.uuid4().hex[:10]}"
+        # 真实当前 revision = seed 落定回执的 mutation_revision（>0）；
+        # bind 第二笔（产品契约）按链式基线（frames 写落定 revision）CAS。
+        rev = await _seed_layer(sid)
+        assert rev > 0
+        out = await fps.bind_frame_product(
+            sid, "ref:three", product_kind="time_series", field="per_10k",
+            expected_revision=rev)
+        assert out["status"] == "ok", out
+        spec = await _spec(sid)
+        assert spec.get("frame_product", {}).get("enabled") is True
+
+    async def test_bind_stale_revision_refused_not_fake_success(self, ref_store):
+        sid = f"g15-{uuid.uuid4().hex[:10]}"
+        await _seed_layer(sid)
+        out = await fps.bind_frame_product(
+            sid, "ref:three", product_kind="time_series", field="per_10k",
+            expected_revision=0)  # seed 已推进 revision → 0 必过期
+        assert out["status"] == "refused"
+        assert out["code"] == "mutation_superseded"
+        spec = await _spec(sid)
+        # 不留空壳成功产品。
+        assert "frame_product" not in spec
+
+    async def test_update_and_unbind_stale_refused(self, ref_store):
+        sid = f"g15-{uuid.uuid4().hex[:10]}"
+        await _seed_layer(sid)
+        await fps.bind_frame_product(
+            sid, "ref:three", product_kind="time_series", field="per_10k")
+        stale = 0
+        upd = await fps.update_frame_product(
+            sid, {"active_frame": "fp-t-2024"}, expected_revision=stale)
+        assert upd["status"] == "refused"
+        assert upd["code"] == "mutation_superseded"
+        un = await fps.unbind_frame_product(sid, expected_revision=stale)
+        assert un["status"] == "refused"
+        assert un["code"] == "mutation_superseded"
+        # spec 未被触碰。
+        spec = await _spec(sid)
+        assert spec["frame_product"]["active_frame"] == "fp-t-2020"

@@ -106,9 +106,10 @@ export function vectorPdfRequestFromSettings(settings: Record<string, unknown>):
       return profile ? { pageProfile: profile } : {};
     })(),
   };
-  if (settings['atlasEnabled'] !== true) return req;
-  const driver = settings['atlasDriver'];
   // G15：frame_product 在场 → 产品页（同页并置；精确语义只有后端能承载）。
+  // 检测在 atlasEnabled 门之前（review R2-B：产品绑定时即使图册开关
+  // 关闭也走产品页 —— 否则缺省路径产出 N 张无过滤整幅页且无披露）。
+  const driver = settings['atlasDriver'];
   let effectiveDriver: 'frames' | 'category' | 'feature' | 'product' =
     driver === 'category' || driver === 'feature' ? driver : 'frames';
   try {
@@ -120,6 +121,10 @@ export function vectorPdfRequestFromSettings(settings: Record<string, unknown>):
     }
   } catch {
     /* spec 面缺席 → 既有语义 */
+  }
+  if (effectiveDriver !== 'product' && settings['atlasEnabled'] !== true) {
+    // 既有门：非产品 + 图册开关关闭 → 不携带 atlas（语义逐字节不变）。
+    return req;
   }
   const atlasPolicy: AtlasRequestPolicy = {
     driver: effectiveDriver,
@@ -305,3 +310,4 @@ async function fallbackToRasterPdf(
     };
   }
 }
+

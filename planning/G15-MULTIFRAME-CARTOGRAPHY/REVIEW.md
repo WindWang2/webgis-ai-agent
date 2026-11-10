@@ -28,6 +28,17 @@ golden additive；资源界真实；无 ChatEngine 复活；ADR-0288 唯一；i1
 - 前端：`vitest run lib/ + 面板 + comparison + i18n` → **3305 passed**；`tsc --noEmit` 0 错误
 - 真实工件复验：PDF 文本层含共享域标签、不含局部边界；像素级四画幅着墨
 
-## R2 复审
+## R2 复审（reviewer 对 R1 修复的复审）
 
-（待复审结论）
+结论：APPROVE-WITH-FIXES —— R1 全部 11 项确认修复（两项经 reviewer 独立
+复现验证）；发现 1 个 R1 修复引入的新 P0 + 2 个遗留：
+
+| # | 级 | 发现 | 修复 |
+|---|---|---|---|
+| A | P0 | CAS superseded 回执（is_error=False）被当成功：bind/update/unbind 在过期 CAS 下回执 ok 而零写入/半写入；bind 第二笔复用调用方旧基线必 superseded | `_write_refusal`：is_error **或 superseded** → typed `mutation_superseded` 拒绝（三写面统一）；bind 第二笔 CAS 基线链式取 frames 写落定 revision；新增 3 个 CAS 语义测试（fresh 链式成功 / stale 拒绝不留空壳 / update+unbind stale 拒绝） |
+| B | P2 | 产品 PDF 路由被 atlasEnabled 门挡住（默认关）→ 缺省路径仍产出 N 张无过滤页 | 检测提升到门之前：产品在场即 driver=product（图册开关无关）；非产品路径门语义逐字节保留 |
+| C | P3 | 工件测试局部存储标签与共享标签同文（derive_legend_items 优先 labels）→ 判别力不全 | fixture 局部 labels 改为局部 breaks 文本（"20 – 26.5"）+ PDF 断言局部标签不出现 |
+| D | P3 | semantics 词表无早校验（传 rate 会在 schema 晚期挂难懂错） | 工具面按 SHARED_EXPRESSION_SEMANTICS 早拒（invalid_semantics typed） |
+
+修复后验证：后端 6925 passed / 0 failed（含 3 个新 CAS 测试）；前端 650
+passed + tsc 0 错误。

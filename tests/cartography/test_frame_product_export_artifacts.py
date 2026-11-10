@@ -60,7 +60,9 @@ def _four_year_document() -> dict:
                 "type": "graduated", "field": "per_10k",
                 "breaks": [20.0, 26.5, 33.0, 40.0],  # 局部分级故意不同于共享域（review#2 unmask）
                 "palette_colors": ["#c6dbef", "#6baed6", "#2171b5"],
-                "labels": ["20 – 27", "27 – 34", "34 – 40"],
+                # 存储标签跟局部 breaks（review R2-C：derive_legend_items 优先
+                # labels —— 标签与 breaks 都要可判别，旧缺陷代码必须挂）。
+                "labels": ["20 – 26.5", "26.5 – 33", "33 – 40"],
                 "palette": "Blues", "method": "equal_interval", "k": 3,
                 "nodata": {"label": "No data", "color": "#cccccc"},
             },
@@ -150,6 +152,7 @@ class TestPdfReal:
         # review#2：PDF 共享图例带 = 共享域标签；局部边界 26.5 不得出现。
         assert "20 – 27" in text
         assert "26.5" not in text
+        assert "20 – 26.5" not in text  # 局部存储标签不得出现（R2-C）
 
     def test_pdf_rasterized_to_png_real(self, product_2x2, tmp_path):
         pytest.importorskip("weasyprint")
