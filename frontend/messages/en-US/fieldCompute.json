@@ -139,5 +139,7 @@
   "multiColumnNote": "This panel edits one column at a time; for chained multi-column derivations (e.g. density then class) use the Pi conversation or the API (up to 8 columns, declaration order is execution order).",
   "cancelRequested": "Server-side cancellation requested; if the task already reached the write phase, a result may still be produced and can be looked up in the result table.",
   "loadIncomplete": "Load failed: result is empty or invalid; placeholder layer removed (result ref is still kept)",
-  "projectSaveFailed": "Project manifest save failed: result is session-scoped only and may not survive a restart (PROJECT_SAVE_FAILED)"
+  "projectSaveFailed": "Project manifest save failed: result is session-scoped only and may not survive a restart (PROJECT_SAVE_FAILED)",
+  "cancelNoActive": "No active execution for this plan, so no server-side cancel was registered; if you just stopped waiting, the run may already have finished — check the result table.",
+  "cancelLocalOnly": "Stopped waiting locally; server-side cancellation could not be confirmed, so a result may still exist — check the result table."
 }

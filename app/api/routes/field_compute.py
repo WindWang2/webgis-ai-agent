@@ -181,11 +181,18 @@ async def cancel_plan(
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
 ) -> FieldComputeCancelResponse:
-    """请求服务端协作取消（执行循环每批检查；已发布成果不受影响）。"""
+    """请求服务端协作取消（执行循环每批检查；已发布成果不受影响）。
+
+    只对**正在执行**的计划登记取消：计划不存在 → typed 404；计划已结束或
+    尚未开始 → ``cancelled=false``（不留下会污染后续重提的陈旧取消键）。
+    """
     await _require_session(session_id, _user, owner_token)
-    await service.get_plan(session_id, plan_id)   # 不存在 → PLAN_NOT_FOUND
-    return FieldComputeCancelResponse(
-        plan_id=plan_id, cancelled=service.request_cancel(session_id, plan_id))
+    try:
+        await service.get_plan(session_id, plan_id)   # 不存在 → PLAN_NOT_FOUND
+        accepted = service.request_cancel(session_id, plan_id)
+    except (CompileError, ExecError) as exc:
+        _raise_typed(exc)
+    return FieldComputeCancelResponse(plan_id=plan_id, cancelled=accepted)
 
 
 @router.get("/field-compute/plans", response_model=FieldComputePlanListResponse)

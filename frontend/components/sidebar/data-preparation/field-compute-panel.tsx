@@ -145,6 +145,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
   const [execError, setExecError] = useState<FieldComputeErrorInfo | null>(null);
   const [staleHint, setStaleHint] = useState(false);
   const [cancelled, setCancelled] = useState(false);
+  const [cancelAccepted, setCancelAccepted] = useState<boolean | null>(null);
 
   // ── refs ──────────────────────────────────────────────────────────────
   const generationRef = useRef(0);
@@ -381,14 +382,16 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
 
   const handleCancel = () => {
     abortRef.current?.abort();
-    // 真正联动服务端协作取消端点（fire-and-forget）；方法缺失时（测试 mock）
-    // 退化为仅客户端取消，UI 文案仍如实声明结果可能已生成。
+    // 真正联动服务端协作取消端点；只有「执行中」才会被接受（cancelled=true）。
+    // 缺失方法（测试 mock）或请求失败时保持 null，UI 走 cancelLocalOnly 文案，
+    // 不谎称已在服务端取消。
     const pid = plan?.plan.plan_id;
-    const cancelPlan = (fieldComputeApi as unknown as Record<string, unknown>).cancelPlan as
-      | ((planId: string, sid: string, opts?: unknown) => Promise<unknown>)
-      | undefined;
-    if (sessionId && pid && cancelPlan) {
-      void cancelPlan(pid, sessionId, { ownerToken }).catch(() => undefined);
+    const cancelPlan = fieldComputeApi.cancelPlan;
+    setCancelAccepted(null);
+    if (sessionId && pid && typeof cancelPlan === 'function') {
+      void cancelPlan.call(fieldComputeApi, pid, sessionId, { ownerToken })
+        .then((res) => setCancelAccepted(Boolean(res?.cancelled)))
+        .catch(() => setCancelAccepted(null));
     }
     setPreviewing(false);
     setExecuting(false);
@@ -426,7 +429,8 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
     });
     try {
       const geojson = await dataFabricApi.fetchRefGeoJSON(receipt.output_ref, sessionId, { ownerToken });
-      if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
+      // 合法但空的 FeatureCollection 同样视为「结果为空」，不得报加载成功。
+      if (geojson && Array.isArray(geojson.features) && geojson.features.length > 0) {
         updateLayer(layerId, { source: geojson });
         addToast(t('loadSuccess'), 'success');
         return;
@@ -826,7 +830,13 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
               {cancelled && (
                 <>
                   <p className="text-meta text-ink-500" data-testid="fc-cancelled">{t('cancelled')}</p>
-                  <p className="text-meta text-ink-500" data-testid="fc-cancel-note">{t('cancelRequested')}</p>
+                  <p className="text-meta text-ink-500" data-testid="fc-cancel-note">
+                    {cancelAccepted === true
+                      ? t('cancelRequested')
+                      : cancelAccepted === false
+                        ? t('cancelNoActive')
+                        : t('cancelLocalOnly')}
+                  </p>
                 </>
               )}
               <div className="flex flex-wrap items-center gap-2">

@@ -1,11 +1,12 @@
 """字段计算工作台服务层（G19 / WP06–WP10）—— API、UI、Pi 工具的**同一业务真相**。
 
-发布顺序（独立评审 P1-3 修复）：
-``compute → verify_anchor → 收据草稿落盘闸门 → store → additive 登记 →
-项目保存 → 已发布收据 upsert → 返回``。
+发布顺序（独立评审 P1-3 + 复审 P1）：
+``compute → verify_anchor → 发布面探测 + 收据草稿落盘闸门 → store →
+additive 登记 → 项目保存 → 已发布收据 upsert（失败则回滚 ref/清单）→ 返回``。
 收据草稿在任何 store/登记之前写入且 ``published=False``（不参与幂等、不对
-外可见）；因此「收据落盘失败」时**没有任何可见半成品**。仅已发布收据对外
-暴露 ``output_ref``。
+外可见）；稳定键先写、ring 后写并在 ring 失败时回滚，因此「收据落盘失败」
+时**没有任何可见半成品**，也不会有「未发布成果被幂等命中」。仅已发布收据
+对外暴露 ``output_ref``。
 
 阶段：``describe → compile → preview → execute``。预览与全量共用
 ``interpreter.evaluate_rows``；CPU 密集计算经 ``asyncio.to_thread`` offload。
@@ -58,8 +59,13 @@ MAX_ESTIMATED_OPS = 5_000_000
 #: 弱引用锁表：锁对象在最后一次 execute 结束后可被 GC，避免长驻进程无界累积。
 _EXEC_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = \
     weakref.WeakValueDictionary()
-#: 显式协作取消请求（前端 cancel 端点写入）；执行循环每批检查。
-_CANCEL_REQUESTS: set[str] = set()
+#: 活跃执行登记（execute 入口 → finally 清理）；只有活跃计划才接受取消请求。
+_ACTIVE_EXEC: "set[str]" = set()
+#: 协作取消请求：key → 登记时刻（单调查时钟）。带 TTL 且只对活跃执行登记，
+#: 避免「对已结束计划取消」把 key 永久留在集合里、并让同一计划的后续重提
+#: 第一批就误判 CANCELLED（独立复审 P2）。
+_CANCEL_REQUESTS: "Dict[str, float]" = {}
+_CANCEL_TTL_SECONDS = 300.0
 
 
 def _exec_lock(session_id: str, fingerprint: str) -> "asyncio.Lock":
@@ -75,13 +81,30 @@ def _cancel_key(session_id: str, plan_id: str) -> str:
     return f"{session_id}:{plan_id}"
 
 
+def _prune_cancel_requests(now: Optional[float] = None) -> None:
+    """丢弃过期取消请求（防御性：正常路径由 execute 的 finally 清理）。"""
+    cutoff = (time.monotonic() if now is None else now) - _CANCEL_TTL_SECONDS
+    stale = [k for k, ts in _CANCEL_REQUESTS.items() if ts < cutoff]
+    for k in stale:
+        _CANCEL_REQUESTS.pop(k, None)
+
+
+def is_executing(session_id: str, plan_id: str) -> bool:
+    return _cancel_key(session_id, plan_id) in _ACTIVE_EXEC
+
+
 def request_cancel(session_id: str, plan_id: str) -> bool:
-    """登记协作取消请求（服务端 cancel 端点调用；不影响已发布成果）。"""
-    _CANCEL_REQUESTS.add(_cancel_key(session_id, plan_id))
+    """登记协作取消请求；仅对**正在执行**的计划生效（返回 False 表示无活跃执行）。"""
+    key = _cancel_key(session_id, plan_id)
+    _prune_cancel_requests()
+    if key not in _ACTIVE_EXEC:
+        return False
+    _CANCEL_REQUESTS[key] = time.monotonic()
     return True
 
 
 def _check_cancel(key: str = "") -> None:
+    _prune_cancel_requests()
     if key and key in _CANCEL_REQUESTS:
         raise OperationCancelled("cancelled by user request", job_id=key)
     token = current_token()
@@ -307,7 +330,9 @@ async def preview(plan_id: str, session_id: str, *, generation: int = 0
     plan = await store.get_plan(session_id, plan_id)
     if plan is None:
         raise ExecError("PLAN_NOT_FOUND", plan_id)
-    if plan.state in ("executed", "cancelled", "rejected"):
+    # cancelled 是可恢复态（与 execute 一致）：取消后仍可刷新预览再执行；
+    # 只有 executed / rejected 是终态。
+    if plan.state in ("executed", "rejected"):
         raise ExecError("PLAN_REJECTED", f"计划状态 {plan.state}")
     _frozen, rows_wg, mask, scope_summary, crs, crs_source, shape = await _prepare(
         plan, session_id)
@@ -389,8 +414,18 @@ async def execute(plan_id: str, session_id: str, *, project_id: str = "",
     if expected_fingerprint and expected_fingerprint != plan.compute_fingerprint:
         raise ExecError("STALE_PLAN", "确认参数与已预览参数不一致（generation 失效）")
 
-    async with _exec_lock(session_id, plan.compute_fingerprint):
-        return await _execute_locked(plan, session_id, project_id=project_id)
+    cancel_key = _cancel_key(session_id, plan.plan_id)
+    # 活跃登记在取锁之前：排队等待期间也允许用户取消，且执行结束后立即摘除，
+    # 后到的 cancel 请求只会得到 cancelled=False，不会留下污染重提的陈旧键。
+    _ACTIVE_EXEC.add(cancel_key)
+    try:
+        async with _exec_lock(session_id, plan.compute_fingerprint):
+            return await _execute_locked(plan, session_id,
+                                         project_id=project_id,
+                                         cancel_key=cancel_key)
+    finally:
+        _ACTIVE_EXEC.discard(cancel_key)
+        _CANCEL_REQUESTS.pop(cancel_key, None)
 
 
 async def _maybe_upgrade_project(existing: ComputeReceipt, session_id: str,
@@ -400,17 +435,23 @@ async def _maybe_upgrade_project(existing: ComputeReceipt, session_id: str,
     if not project_id or existing.persistence == "project_artifact":
         return existing
     ok = await save_to_project(session_id, existing.output_ref, project_id, plan)
-    if ok:
-        updated = existing.model_copy(update={"persistence": "project_artifact"})
-        await store.append_receipt(session_id, updated)
-        return updated
-    return existing.model_copy(update={
-        "degraded": tuple(existing.degraded) + ("PROJECT_SAVE_FAILED",)})
+    if not ok:
+        return existing
+    # 升级成功必须清掉早前失败留下的 PROJECT_SAVE_FAILED，否则 UI 会一边显示
+    # 「已持久化到项目」一边显示「保存失败」（独立复审 P2）。
+    cleaned = tuple(d for d in existing.degraded if d != "PROJECT_SAVE_FAILED")
+    updated = existing.model_copy(
+        update={"persistence": "project_artifact", "degraded": cleaned})
+    if not await store.append_receipt(session_id, updated):
+        logger.warning("[field_compute] project upgrade receipt not persisted "
+                       "for %s", updated.output_ref)
+    return updated
 
 
 async def _execute_locked(plan: ComputePlan, session_id: str,
-                          *, project_id: str) -> ComputeReceipt:
-    cancel_key = _cancel_key(session_id, plan.plan_id)
+                          *, project_id: str, cancel_key: str = ""
+                          ) -> ComputeReceipt:
+    cancel_key = cancel_key or _cancel_key(session_id, plan.plan_id)
     try:
         current = await _payload(session_id, plan.input_ref)
         content_hash = canonical_hash(current)
@@ -496,6 +537,11 @@ async def _execute_locked(plan: ComputePlan, session_id: str,
             )
 
         # ③ 收据草稿闸门：必须在 store / 任何登记之前，且 published=False。
+        # 先探测 ring 与 by_key 两个写入面（复审 P1：只探测 ring 时最终 upsert
+        # 仍可能在稳定键目录失败），再落草稿。
+        if not await store.probe_publish(session_id):
+            raise ExecError("WRITE_FAILED",
+                            "收据目录不可写 —— 未写入任何成果（无可见半成品）")
         draft = _make_receipt("", False, "session_ref", (), False)
         if not await store.append_receipt(session_id, draft):
             raise ExecError("WRITE_FAILED",
@@ -523,18 +569,51 @@ async def _execute_locked(plan: ComputePlan, session_id: str,
         persistence = ("project_artifact" if project_id and project_saved
                        else "session_ref")
 
-        # ⑦ 已发布收据 upsert（同键替换草稿）。失败即不对外披露 output_ref。
+        # ⑦ 已发布收据 upsert（同键替换草稿）。失败即回滚已写入的可见面：
+        # 稳定键先写、ring 失败时已由 receipt 层删除该键，因此「未发布成果」
+        # 不会通过幂等被命中；这里再撤掉 session ref 与项目清单条目。
         final = _make_receipt(output_ref, True, persistence,
                               tuple(degraded), minted)
         if not await store.append_receipt(session_id, final):
+            residual = await _rollback_unpublished(
+                session_id, output_ref, project_id)
             logger.warning("[field_compute] final receipt persist failed; "
-                           "output ref %s stays unpublished", output_ref)
-            raise ExecError("WRITE_FAILED", "收据发布失败 —— 成果未发布")
+                           "rolled back %s (residual=%s)", output_ref, residual)
+            raise ExecError(
+                "WRITE_FAILED",
+                "收据发布失败 —— 成果已回滚" if not residual else
+                "收据发布失败 —— 回滚不完整（残留：%s）" % ",".join(residual))
         plan.state = "executed"
         await store.save_plan(plan)
         return final
     finally:
-        _CANCEL_REQUESTS.discard(cancel_key)
+        _CANCEL_REQUESTS.pop(cancel_key, None)
+
+
+async def _rollback_unpublished(session_id: str, output_ref: str,
+                                project_id: str) -> List[str]:
+    """撤销未发布成果的全部可见面（session ref + 项目清单条目）。"""
+    residual: List[str] = []
+    try:
+        from app.services.session_data import session_data_manager
+        if not await session_data_manager.delete_ref(session_id, output_ref):
+            residual.append("REF_DELETE_FAILED")
+    except Exception:  # noqa: BLE001
+        logger.warning("[field_compute] ref rollback failed", exc_info=True)
+        residual.append("REF_DELETE_FAILED")
+    if project_id:
+        try:
+            removed = await asyncio.to_thread(
+                _remove_from_project_sync,
+                _manifest_path(session_id, project_id),
+                project_id, output_ref)
+            if not removed:
+                residual.append("MANIFEST_ROLLBACK_FAILED")
+        except Exception:  # noqa: BLE001
+            logger.warning("[field_compute] manifest rollback failed",
+                           exc_info=True)
+            residual.append("MANIFEST_ROLLBACK_FAILED")
+    return residual
 
 
 def _column_results(plan: ComputePlan,
@@ -700,6 +779,43 @@ async def save_to_project(session_id: str, output_ref: str, project_id: str,
         return False
 
 
+def _remove_from_project_sync(path: Path, project_id: str,
+                              output_ref: str) -> bool:
+    """删除单条项目记录（发布失败回滚用）；无匹配或文件不存在视为成功。"""
+    if not path.exists():
+        return True
+    records: List[Dict[str, Any]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+    except Exception:  # noqa: BLE001
+        return False
+    kept = [r for r in records
+            if not (r.get("project_id") == project_id
+                    and r.get("output_ref") == output_ref)]
+    if len(kept) == len(records):
+        return True
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for r in kept:
+                f.write(json.dumps(r, ensure_ascii=False, sort_keys=True,
+                                   separators=(",", ":"), default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+        return True
+    except Exception:  # noqa: BLE001
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        return False
+
+
 async def list_project_results(session_id: str, project_id: str
                                ) -> List[Dict[str, Any]]:
     """重开项目后找回公式/来源/成果 ref（不冒充 session ref 长期有效）。"""
@@ -753,5 +869,6 @@ async def discard_plan(session_id: str, plan_id: str) -> Optional[ComputePlan]:
 __all__ = [
     "describe_source", "create_plan", "preview", "execute", "get_plan",
     "list_plans", "get_result", "discard_plan", "save_to_project",
-    "list_project_results", "request_cancel", "MAX_ESTIMATED_OPS",
+    "list_project_results", "request_cancel", "is_executing",
+    "MAX_ESTIMATED_OPS",
 ]

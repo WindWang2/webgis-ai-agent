@@ -5,6 +5,9 @@
 - **幂等不依赖 ring**（独立评审 P2-11）：每条已发布收据同时按
   ``(compute_fingerprint, input_ref, input_content_hash)`` 写入稳定键文件；
   ``find_receipt`` 优先读该文件，因此 64 条 ring 溢出后幂等仍成立；
+- 已发布收据**先写稳定键、再写 ring**，ring 失败时删除刚写的稳定键，确保
+  「任一次写入失败 ⇒ 两个面都不存在已发布副本」（独立复审 P1）；
+- ``probe_publish()`` 在执行前探测 ring 与 ``by_key`` 两个写入面都可落盘；
 - ``published=False`` 的草稿收据在 store/登记之前写入，作为「收据可落盘」
   的前置闸门，且**不参与幂等、不对外可见**（独立评审 P1-3）。
 """
@@ -180,6 +183,38 @@ async def find_receipt(session_id: str, compute_fingerprint: str,
     return None
 
 
+async def probe_publish(session_id: str) -> bool:
+    """探测 ring 与稳定键两个写入面都可落盘（草稿闸门的一部分）。
+
+    修独立复审 P1：草稿闸门只验证 ring 可写时，最终 upsert 仍可能在
+    ``by_key`` 目录创建/fsync 失败；先探测两个目录，把该失败面提前到
+    store 与任何登记之前。
+    """
+    try:
+        await asyncio.to_thread(_probe_publish_sync, session_id)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _probe_publish_sync(session_id: str) -> None:
+    base = _storage_path(session_id, _RECEIPTS_FILE).parent
+    for directory in (base, base / "by_key"):
+        directory.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=str(directory), suffix=".probe")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write("{}")
+                f.flush()
+                os.fsync(f.fileno())
+        finally:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                logger.warning("[field_compute] probe cleanup failed",
+                               exc_info=True)
+
+
 async def append_receipt(session_id: str, receipt: ComputeReceipt) -> bool:
     try:
         await asyncio.to_thread(_append_receipt_sync, session_id, receipt)
@@ -195,16 +230,28 @@ def _append_receipt_sync(session_id: str, receipt: ComputeReceipt) -> None:
                        and r.input_ref == receipt.input_ref
                        and r.input_content_hash == receipt.input_content_hash)]
     records.append(receipt)
-    # 先写 ring（草稿也可写，不对外可见），再写稳定键（仅已发布）。
-    _append_sync(path, records)
+    # 稳定键先写、ring 后写：ring 失败时删掉刚写的稳定键，保证「任一次写入
+    # 失败 ⇒ 两个面都不存在已发布副本」（修独立复审 P1：不能出现 ring 里
+    # published=True 而稳定键缺失、被 fallback 幂等命中的组合）。
+    key_path: Optional[Path] = None
     if receipt.published:
         key = stable_key(receipt.compute_fingerprint, receipt.input_ref,
                          receipt.input_content_hash)
-        _atomic_write_json(_stable_receipt_path(session_id, key),
-                           receipt.to_bounded_dict())
+        key_path = _stable_receipt_path(session_id, key)
+        _atomic_write_json(key_path, receipt.to_bounded_dict())
+    try:
+        _append_sync(path, records)
+    except Exception:
+        if key_path is not None:
+            try:
+                key_path.unlink()
+            except OSError:
+                logger.warning("[field_compute] stable key rollback failed",
+                               exc_info=True)
+        raise
 
 
 __all__ = [
     "save_plan", "get_plan", "list_plans", "find_receipt", "append_receipt",
-    "stable_key",
+    "probe_publish", "stable_key",
 ]

@@ -28154,7 +28154,7 @@
   },
   "/api/v1/field-compute/plan/{plan_id}/cancel": {
    "post": {
-    "description": "请求服务端协作取消（执行循环每批检查；已发布成果不受影响）。",
+    "description": "请求服务端协作取消（执行循环每批检查；已发布成果不受影响）。\n\n只对**正在执行**的计划登记取消：计划不存在 → typed 404；计划已结束或\n尚未开始 → ``cancelled=false``（不留下会污染后续重提的陈旧取消键）。",
     "operationId": "cancel_plan_api_v1_field_compute_plan__plan_id__cancel_post",
     "parameters": [
      {

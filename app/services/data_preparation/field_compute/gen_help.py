@@ -104,9 +104,12 @@ def build() -> str:
         "`SNAPSHOT_CHANGED` 中止且不发布。预览后源变化 → `STALE_PLAN`，"
         "刷新预览即可继续。",
         "- 取消 → `CANCELLED`；`POST /field-compute/plan/{plan_id}/cancel` "
-        "请求服务端协作取消，取消是**可恢复态**，可原计划重提；写入失败 → "
-        "`STORE_FAILED` / `WRITE_FAILED`；均不发布半成品。同计划重复提交返回"
-        "既有收据（幂等，稳定键不受 ring 截断影响）。",
+        "仅对**正在执行**的计划登记取消（空闲/已结束返回 `cancelled=false`，"
+        "不留陈旧键），取消是**可恢复态**，可原计划重提；写入失败 → "
+        "`STORE_FAILED` / `WRITE_FAILED`。发布前先探测收据两个写入面；最终"
+        "收据写失败时撤销已写入的 session ref 与项目清单，**不发布半成品**，"
+        "也不会让未发布成果被幂等命中。同计划重复提交返回既有收据"
+        "（幂等，稳定键不受 ring 截断影响）。",
         "- 持久化如实区分：`session_ref`（会话级，重开会失效）/ "
         "`project_artifact`（项目清单真实落盘，可重开找回）；"
         "项目清单保存失败降级为 `session_ref` 并披露 `PROJECT_SAVE_FAILED`，"
