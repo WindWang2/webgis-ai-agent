@@ -1989,6 +1989,18 @@ class PiBridge:
         else:
             abort_token = None
         abort_pending_ids = self._rpc.pending_request_ids()
+        # ADR-0288（W07 / vendor C14）：用户级完全停止 = 先清 steer/follow-up
+        # 队列再 abort（上游 Esc 语义）—— 否则排队消息在 abort 后的下一
+        # agent run 里自行重启，产品语义的「停止任务」落空。system/policy
+        # 停止（会话删除/看门狗）同样不应让队列复活；steer 通道本身不受
+        # 影响。clear_queue 失败绝不阻断 abort（尽力而为，同会话守卫已过）。
+        try:
+            await self._rpc.request("clear_queue", {})
+        except Exception as exc:  # noqa: BLE001 — 清队尽力而为
+            logger.debug(
+                "[PiBridge] clear_queue before abort failed (session=%s): %s",
+                session_id, exc,
+            )
         result = await self._rpc.request("abort")
         # P1 (TOCTOU) / R2-5: the active sid above was read lock-free BEFORE
         # the abort RPC was awaited. In that gap the matching turn can end and

@@ -808,3 +808,73 @@ async def test_codemode_nested_calls_carry_parent_tool_call_id(make_harness):
     assert codemode_end is not None
     settled = [e for e in events if e.get("type") == "agent_settled"]
     assert len(settled) == 1
+
+
+async def test_graceful_stdin_eof_shutdown_and_adjacent_sigterm(harness):
+    """A14 / vendor C14：stdin EOF → vendor 有序 shutdown（dispose 等清理），
+    进程在窗口内**自行退出**（无需任何信号，exit code 0）；EOF 与 SIGTERM
+    相邻到达（进程管理器常见形态）时，首信号不截断清理 —— 仍有序退出
+    （SIGTERM 语义 exit code 143），绝不需要 SIGKILL 兜底。"""
+    import subprocess as sp
+
+    def _spawn() -> sp.Popen:
+        agent_dir = harness.tmp / f"agentdir_{time.monotonic_ns()}"
+        agent_dir.mkdir()
+        (agent_dir / "models.json").write_text(json.dumps({
+            "providers": {"webgis": {
+                "baseUrl": f"http://127.0.0.1:{harness.stub_port}/v1",
+                "api": "openai-completions", "apiKey": "$STUB_KEY",
+                "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},
+                "models": [{"id": "stub-model", "name": "stub-model", "reasoning": False}],
+            }},
+        }), encoding="utf-8")
+        (agent_dir / "settings.json").write_text(json.dumps({
+            "defaultProvider": "webgis", "defaultModel": "stub-model",
+        }), encoding="utf-8")
+        env = {
+            **os.environ,
+            "PI_CODING_AGENT_DIR": str(agent_dir),
+            "PI_SESSION_DIR": str(agent_dir / "sessions"),
+            "PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "STUB_KEY": "k",
+        }
+        return sp.Popen(
+            ["node", str(_vendor_entry()), "--mode", "rpc", "--no-session",
+             "--no-builtin-tools"],
+            stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.PIPE,
+            env=env, text=True,
+        )
+
+    # Case 1: 纯 EOF —— 有序自行退出（零信号）。
+    proc = _spawn()
+    try:
+        proc.stdin.write(json.dumps({"id": "r1", "type": "get_state"}) + "\n")
+        proc.stdin.flush()
+        line = proc.stdout.readline()
+        assert '"type":"response"' in line, f"no handshake response: {line[:200]!r}"
+        t0 = time.monotonic()
+        proc.stdin.close()
+        rc = proc.wait(timeout=10)
+        elapsed = time.monotonic() - t0
+        assert rc == 0, f"orderly EOF shutdown must exit 0, got {rc}"
+        assert elapsed < 8.0, f"shutdown took {elapsed:.2f}s — beyond the host window"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+    # Case 2: EOF + SIGTERM 相邻 —— 首信号不截断清理（vendor 语义），仍有序退出。
+    proc2 = _spawn()
+    try:
+        proc2.stdin.write(json.dumps({"id": "r2", "type": "get_state"}) + "\n")
+        proc2.stdin.flush()
+        line = proc2.stdout.readline()
+        assert '"type":"response"' in line, f"no handshake response: {line[:200]!r}"
+        proc2.stdin.close()
+        proc2.terminate()  # 立即跟随 —— 进程管理器常见形态
+        rc2 = proc2.wait(timeout=10)
+        # 有序终态二选一：0（EOF 清理先完成，信号落在退出后）或 143
+        # （SIGTERM 中断清理，vendor 语义码）。关键不变量：不需要 SIGKILL、
+        # 不悬挂 —— 首信号绝不触发 vendor 的"第二信号立即强退"路径。
+        assert rc2 in (0, 143), f"orderly outcome expected, got {rc2}"
+    finally:
+        if proc2.poll() is None:
+            proc2.kill()
