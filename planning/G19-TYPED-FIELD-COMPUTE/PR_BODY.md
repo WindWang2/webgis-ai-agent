@@ -100,8 +100,9 @@
 - 开放 `#2032`（UI 重设计）：只在 prepare panel 内加一行挂载，不动主题/布局/侧栏/面板宽度；冲突段已在 `INTERFACES.md §2` 列出。
 - 开放 `#2022`（G10 刷新）：不做自动刷新；提交前版本重核与 `SNAPSHOT_CHANGED` 是独立的计算一致性语义。
 - 开放 `#2021`（G11 简报）与 dependabot：不碰。
-- **PR 前新出现的 `#2073`（G13 能力生态生产装配）**：已用 `gh api pulls/2073/files` 分页核查其 29 个 changed files，与我的 9 个共享接线/生成物文件**零重叠**（`OVERLAP` 检查为空），无需冲突处理；其领地（`pi_availability_adapter` / `tool_surface_v3` / `tool_dispatch_service` 等）本 PR 不触碰。
-- G12–G18 / G20–G21：按 `INTERFACES.md §5` 让出所有权；本 PR 基于 `origin/master @8167052`，PR 前再次 fetch 确认主干未前进（`0 behind / 5 ahead`）。相关 3 个开放 PR（#2021/#2022/#2032）无正式 review submission / inline comments。
+- **并行 PR `#2073`（G13）与 `#2075`（G14）**：用 `gh api pulls/<n>/files` 分页核查 changed files，与我的 9 个共享接线/生成物文件**零重叠**（`#2075` 54 个文件全部在 `feature_edit/*` 与 `feature_edits` 路由/schema 内），无需冲突处理；G13/G14 的领地本 PR 不触碰。
+- **共享生成物是真实的跨 PR 冲突面**：`tests/quality/snapshots/openapi.json` / `docs/api-docs.md` / `docs/dev/endpoint-scope-matrix.csv` 会随各 PR 端点新增而各自刷新，合入顺序不同需按主干重生成；本 PR 只保证自己的新增段与既有段零改写（已用三版本结构化比对验证）。
+- G12–G18 / G20–G21：按 `INTERFACES.md §5` 让出所有权；本 PR 基于 `origin/master @8167052`，PR 前再次 fetch 确认主干未前进（`0 behind`，分支领先 9 commits）。相关 3 个开放 PR（#2021/#2022/#2032）无正式 review submission / inline comments。
 
 ## 迁移与回退
 

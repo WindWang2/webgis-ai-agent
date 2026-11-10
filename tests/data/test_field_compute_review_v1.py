@@ -306,7 +306,7 @@ class TestCancelOwnerLocks:
         assert ei.value.code == "CANCELLED"
         # 取消请求与活跃登记都在 finally 清理，不污染后续重提
         assert service._CANCEL_REQUESTS == {}
-        assert service._ACTIVE_EXEC == set()
+        assert service._ACTIVE_EXEC == {}
         # 取消后重提原计划可正常执行（可恢复态）
         receipt = await service.execute(plan.plan_id, sid)
         assert receipt.output_ref.startswith("ref:fc-")
@@ -346,6 +346,17 @@ class TestCancelOwnerLocks:
         # 数据隔离由 session 归属与 ref 命名空间保证。
         receipt = await service.execute(plan.plan_id, sid, owner="bob")
         assert receipt.output_ref.startswith("ref:fc-")
+
+    def test_active_registration_is_reference_counted(self):
+        """同一计划可能排队执行：先完成者不得摘掉排队者的活跃登记。"""
+        key = service._cancel_key("sess-refcount", "plan-refcount")
+        service._mark_active(key)
+        service._mark_active(key)
+        assert service.is_executing("sess-refcount", "plan-refcount") is True
+        service._unmark_active(key)
+        assert service.is_executing("sess-refcount", "plan-refcount") is True
+        service._unmark_active(key)
+        assert service.is_executing("sess-refcount", "plan-refcount") is False
 
     def test_exec_lock_table_is_weak(self):
         import weakref

@@ -59,8 +59,9 @@ MAX_ESTIMATED_OPS = 5_000_000
 #: 弱引用锁表：锁对象在最后一次 execute 结束后可被 GC，避免长驻进程无界累积。
 _EXEC_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = \
     weakref.WeakValueDictionary()
-#: 活跃执行登记（execute 入口 → finally 清理）；只有活跃计划才接受取消请求。
-_ACTIVE_EXEC: "set[str]" = set()
+#: 活跃执行登记（execute 入口 +1 → finally -1）；同一计划可能有排队执行，
+#: 用计数而不是集合，避免先完成的调用把仍在执行/排队的登记摘掉。
+_ACTIVE_EXEC: "Dict[str, int]" = {}
 #: 协作取消请求：key → 登记时刻（单调查时钟）。带 TTL 且只对活跃执行登记，
 #: 避免「对已结束计划取消」把 key 永久留在集合里、并让同一计划的后续重提
 #: 第一批就误判 CANCELLED（独立复审 P2）。
@@ -90,14 +91,26 @@ def _prune_cancel_requests(now: Optional[float] = None) -> None:
 
 
 def is_executing(session_id: str, plan_id: str) -> bool:
-    return _cancel_key(session_id, plan_id) in _ACTIVE_EXEC
+    return _ACTIVE_EXEC.get(_cancel_key(session_id, plan_id), 0) > 0
+
+
+def _mark_active(key: str) -> None:
+    _ACTIVE_EXEC[key] = _ACTIVE_EXEC.get(key, 0) + 1
+
+
+def _unmark_active(key: str) -> None:
+    remaining = _ACTIVE_EXEC.get(key, 0) - 1
+    if remaining > 0:
+        _ACTIVE_EXEC[key] = remaining
+    else:
+        _ACTIVE_EXEC.pop(key, None)
 
 
 def request_cancel(session_id: str, plan_id: str) -> bool:
     """登记协作取消请求；仅对**正在执行**的计划生效（返回 False 表示无活跃执行）。"""
     key = _cancel_key(session_id, plan_id)
     _prune_cancel_requests()
-    if key not in _ACTIVE_EXEC:
+    if _ACTIVE_EXEC.get(key, 0) <= 0:
         return False
     _CANCEL_REQUESTS[key] = time.monotonic()
     return True
@@ -415,17 +428,18 @@ async def execute(plan_id: str, session_id: str, *, project_id: str = "",
         raise ExecError("STALE_PLAN", "确认参数与已预览参数不一致（generation 失效）")
 
     cancel_key = _cancel_key(session_id, plan.plan_id)
-    # 活跃登记在取锁之前：排队等待期间也允许用户取消，且执行结束后立即摘除，
-    # 后到的 cancel 请求只会得到 cancelled=False，不会留下污染重提的陈旧键。
-    _ACTIVE_EXEC.add(cancel_key)
+    # 活跃登记在取锁之前：排队等待期间也允许用户取消；用计数保证先完成的
+    # 调用不会摘掉仍在排队/执行的登记，执行全部结束后才摘除并清理取消键。
+    _mark_active(cancel_key)
     try:
         async with _exec_lock(session_id, plan.compute_fingerprint):
             return await _execute_locked(plan, session_id,
                                          project_id=project_id,
                                          cancel_key=cancel_key)
     finally:
-        _ACTIVE_EXEC.discard(cancel_key)
-        _CANCEL_REQUESTS.pop(cancel_key, None)
+        _unmark_active(cancel_key)
+        if not is_executing(session_id, plan.plan_id):
+            _CANCEL_REQUESTS.pop(cancel_key, None)
 
 
 async def _maybe_upgrade_project(existing: ComputeReceipt, session_id: str,
