@@ -457,7 +457,12 @@ async def _maybe_upgrade_project(existing: ComputeReceipt, session_id: str,
         degraded = tuple(existing.degraded)
         if "PROJECT_SAVE_FAILED" not in degraded:
             degraded += ("PROJECT_SAVE_FAILED",)
-        return existing.model_copy(update={"degraded": degraded})
+        updated = existing.model_copy(update={"degraded": degraded})
+        # 回写台账：之后的重开/查询也要看到真实降级，而不是只在本次响应里。
+        if not await store.append_receipt(session_id, updated):
+            logger.warning("[field_compute] degraded receipt not persisted for "
+                           "%s", updated.output_ref)
+        return updated
     # 升级成功必须清掉早前失败留下的 PROJECT_SAVE_FAILED，否则 UI 会一边显示
     # 「已持久化到项目」一边显示「保存失败」（独立复审 P2）。
     cleaned = tuple(d for d in existing.degraded if d != "PROJECT_SAVE_FAILED")
@@ -479,6 +484,9 @@ async def _execute_locked(plan: ComputePlan, session_id: str,
         existing = await store.find_receipt(
             session_id, plan.compute_fingerprint, plan.input_ref, content_hash)
         if existing is not None:
+            # 取消意图优先于幂等短路：排队执行期间用户已取消时，不能因为
+            # 「成果已存在」就把这次提交判成成功（否则取消被静默吞掉）。
+            _check_cancel(cancel_key)
             return await _maybe_upgrade_project(
                 existing, session_id, project_id, plan)
 

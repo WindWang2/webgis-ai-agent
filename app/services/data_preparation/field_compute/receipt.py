@@ -172,9 +172,28 @@ async def drop_published(session_id: str, receipt: ComputeReceipt) -> bool:
     try:
         await asyncio.to_thread(_unlink_if_exists,
                                 _stable_receipt_path(session_id, key))
+    except Exception:  # noqa: BLE001
+        return False
+    # ring 里的同键记录也必须撤掉：否则 find_receipt 的 fallback 仍会命中
+    # 已撤销的成果（返回一个已被删除的 output_ref）。
+    try:
+        await asyncio.to_thread(_drop_from_ring_sync, session_id, receipt)
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def _drop_from_ring_sync(session_id: str, receipt: ComputeReceipt) -> None:
+    path = _storage_path(session_id, _RECEIPTS_FILE)
+    if not path.exists():
+        return
+    records = [
+        r for r in _load_sync(path, ComputeReceipt)
+        if not (r.compute_fingerprint == receipt.compute_fingerprint
+                and r.input_ref == receipt.input_ref
+                and r.input_content_hash == receipt.input_content_hash)
+    ]
+    _append_sync(path, records)
 
 
 def _unlink_if_exists(path: Path) -> None:
