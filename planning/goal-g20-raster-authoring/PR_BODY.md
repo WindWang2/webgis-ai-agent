@@ -49,7 +49,13 @@
   - `app/main.py`（+1 import / +1 `include_router`）、`app/tools/__init__.py`（+1 行 `_TOOL_MODULES`）——与 `#2022` 同区追加。
   - `frontend/components/layout/context-panel.tsx`（+1 import / +1 行条件挂载 `<RasterAuthoringLauncher />`）——与 `#2032` 同文件；不改主题/布局骨架/面板宽度。
   - `app/lib/cartography/mapspec_schema.py` 只新增 raster 子模型、`MapSpecLayer.raster_style` 与 `SCHEMA_EXPORT_MODELS` 三项，不动 `MapSpecFrame` / `MapSpecLayerLabel` / flow 子模型与 `KNOWN_VERSIONS`；ADR 使用无数字编号 `docs/adr/G20-RASTER-EXPRESSION.md`，不抢号。
-  - `tests/quality/snapshots/openapi.json` / `api_contract_fields.json` 按仓库流程刷新；**同时吸收 master 上 `#2035` 遗留的 `UndoAgentCommitBody` 漂移**（开放 issue `#2007` 已记录该基线漂移），属 additive，不改变既有端点。
+  - `tests/quality/snapshots/openapi.json` / `api_contract_fields.json` 按仓库流程刷新；**同时吸收 master 上 `#2035` 遗留的 `UndoAgentCommitBody` 漂移**（开放 issue `#2007` 已记录该基线漂移），属 additive，不改变既有端点。**`#2074`（G19）也改 openapi.json**，合并后需按最新主干重跑一次快照流程。
+
+**PR 前再次 fetch 的实际情况**：`origin/master` 仍为 `816705218a…`（本分支 4 commits ahead / 0 behind，无需 merge）；新增开放 PR `#2073`(G13)、`#2074`(G19)、`#2075`(G14)、`#2076`(G15)、`#2077`(G16)。逐一核对 changed files：
+- `#2073` / `#2075` 与本任务 0 个共享文件；
+- `#2074` 共享 `app/main.py`、`app/tools/__init__.py`、`openapi.json`（均为文件末尾/列表末尾的 additive 行）；
+- `#2076`(G15) 把 `KNOWN_VERSIONS/LATEST_VERSION` 推到 **2.0**，`#2077`(G16) 推到 **2.1**，且两者都改 `mapspec_schema.py` / `types.generated.ts`；`#2077` 另改 `mapspec-to-svg.ts`、`mapspec_to_svg.py`、`runtime.ts`。
+- 本分支对当前 base（1.9）保持 `KNOWN_VERSIONS` 不变是正确的：新增模型全部为 additive optional，不需要 upgrader；字段分区与 frame/label 不相交。**合并顺序校正清单**（供合并者）：① 以最新主干的 `KNOWN_VERSIONS`/`LATEST_VERSION`/`SUPPORTED_MAPSPEC_VERSIONS` 为准；② 合并后重跑 `python -m app.lib.cartography.ts_projection` 生成 `types.generated.ts` 并跑 `test_ts_projection_contract.py`；③ 重跑 OpenAPI/字段快照流程；④ 若 `#2077` 先合入，复核 `mapspec-to-svg.ts` / `mapspec_to_svg.py` 的 raster 分支与 label adapter 两处 additive 分支是否都保留。未 cherry-pick 任何他人未合并提交。
 
 ## 基线既有失败（如实隔离，非本任务引入）
 

@@ -45,6 +45,23 @@
 - `#2022` 改 `app/main.py`、`app/tools/__init__.py`（新增 router/tool 模块）。
   本任务同样只在这两个共享文件做**单行 append**，冲突时按最新主干重新校正。
 - G15/G16/G21 都可能改 `app/lib/cartography/mapspec_schema.py`。本任务只新增
-  `NumericRasterMapSpecSource` / `MapSpecRasterExpression` 两个模型与
-  `MapSpecLayer.raster_style` 一个字段，不碰 `MapSpecFrame`、`MapSpecLayerLabel`、
-  flow 子模型、`KNOWN_VERSIONS`（见 INTERFACES.md 版本决策）。
+  `NumericRasterMapSpecSource` / `RasterStretchBounds` / `RasterExpressionSpec`
+  三个模型与 `MapSpecLayer.raster_style` 一个字段，不碰 `MapSpecFrame`、
+  `MapSpecLayerLabel`、flow 子模型、`KNOWN_VERSIONS`（见 INTERFACES.md 版本决策）。
+
+## PR 前二次 fetch 复核（2026-11-10 末）
+
+`origin/master` 仍为 `816705218a…`（本分支 ahead 4 / behind 0，无需 merge）。
+新出现开放 PR（均为兄弟任务，未 cherry-pick）：
+
+| PR | 任务 | 与本任务共享文件 | 状态 |
+|---|---|---|---|
+| `#2073` | G13 能力生态 | 0 | owned-by-other |
+| `#2074` | G19 字段计算 | `app/main.py`、`app/tools/__init__.py`、`openapi.json` | additive 追加行；合并后重跑快照 |
+| `#2075` | G14 要素编辑 | 0 | owned-by-other |
+| `#2076` | G15 多画幅 | `mapspec_schema.py`、`tools/__init__.py`、`types.generated.ts`、schema 测试 | 把版本推到 2.0；字段分区不相交 |
+| `#2077` | G16 标注 | `mapspec_schema.py`、`mapspec-to-svg.ts/.py`、`runtime.ts`、`types.generated.ts`、`tools/__init__.py` | 把版本推到 2.1；两个 additive raster/label 分支需并存 |
+| `#2032` | UI 重设计 | `context-panel.tsx` | 本任务仅 +1 import / +1 条件挂载 |
+| `#2022` | G10 数据刷新 | `main.py`、`tools/__init__.py` | additive 追加行 |
+
+合并顺序校正清单见 `PR_BODY.md`。
