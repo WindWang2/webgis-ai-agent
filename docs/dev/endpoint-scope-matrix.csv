@@ -151,6 +151,15 @@ GET,/api/v1/extensions/marketplace/packages,extensions:read,N,Y
 GET,/api/v1/extensions/marketplace/packages/{package_id},extensions:read,N,Y
 GET,/api/v1/extensions/marketplace/packages/{package_id}/versions/{version},extensions:read,N,Y
 GET,/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download,extensions:read,N,Y
+GET,/api/v1/field-compute/catalog,gis:read,N,N
+POST,/api/v1/field-compute/describe,gis:write,N,Y
+POST,/api/v1/field-compute/plan,gis:write,N,Y
+DELETE,/api/v1/field-compute/plan/{plan_id},gis:write,N,Y
+POST,/api/v1/field-compute/plan/{plan_id}/execute,gis:write,N,Y
+POST,/api/v1/field-compute/plan/{plan_id}/preview,gis:write,N,Y
+GET,/api/v1/field-compute/plans,gis:read,N,Y
+GET,/api/v1/field-compute/project-results,gis:read,N,Y
+GET,/api/v1/field-compute/result,gis:read,N,Y
 GET,/api/v1/geoai/artifact-geojson,gis:read,N,Y
 POST,/api/v1/geoai/embed,gis:write,N,Y
 GET,/api/v1/geoai/models,gis:read,N,Y

@@ -693,13 +693,27 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
 | `POST` | `/api/v1/data-preparation/inspect` | Inspect | InspectResponse |
-| `POST` | `/api/v1/data-preparation/plan` | Create Plan | PlanResponse |
+| `POST` | `/api/v1/data-preparation/plan` | Create Plan | app__schemas__data_preparation_schema__PlanResponse |
 | `POST` | `/api/v1/data-preparation/plan/{plan_id}/preview` | Preview Plan | PreviewResponse |
 | `POST` | `/api/v1/data-preparation/plan/{plan_id}/execute` | Execute | ExecuteResponse |
-| `GET` | `/api/v1/data-preparation/plans` | Plans | PlanListResponse |
+| `GET` | `/api/v1/data-preparation/plans` | Plans | app__schemas__data_preparation_schema__PlanListResponse |
 | `DELETE` | `/api/v1/data-preparation/plan/{plan_id}` | Discard | DiscardPlanResponse |
 | `POST` | `/api/v1/data-preparation/bindings/fields` | Bind Fields | FieldBindingResponse |
 | `GET` | `/api/v1/data-preparation/plan/{plan_id}/receipt` | Plan Receipt | ReceiptSummaryOut |
+
+### 字段计算
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/field-compute/catalog` | Catalog | object |
+| `POST` | `/api/v1/field-compute/describe` | Describe | object |
+| `POST` | `/api/v1/field-compute/plan` | Create Plan | app__schemas__field_compute_schema__PlanResponse |
+| `POST` | `/api/v1/field-compute/plan/{plan_id}/preview` | Preview Plan | object |
+| `POST` | `/api/v1/field-compute/plan/{plan_id}/execute` | Execute Plan | object |
+| `GET` | `/api/v1/field-compute/plans` | Plans | app__schemas__field_compute_schema__PlanListResponse |
+| `GET` | `/api/v1/field-compute/result` | Result | object |
+| `GET` | `/api/v1/field-compute/project-results` | Project Results | object |
+| `DELETE` | `/api/v1/field-compute/plan/{plan_id}` | Discard Plan | DiscardResponse |
 
 ### 知识库管理
 
@@ -1170,6 +1184,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：433（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：442（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
