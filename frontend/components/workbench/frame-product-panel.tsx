@@ -22,6 +22,12 @@ import {
   type FrameProductView,
 } from '@/lib/cartography/frame-product';
 
+/** frames 整表 patch 基底：committed 原始槽逐字携带（data/where/
+ * time_window/sync_group 等不丢），编辑只覆写目标键。 */
+function framesPatchBase(view: FrameProductView): Array<Record<string, unknown>> {
+  return view.slots.map((s) => ({ ...s.raw }));
+}
+
 function useFrameProductView(): FrameProductView {
   const subscribe = useCallback((cb: () => void) => subscribeFrameProduct(cb), []);
   return useSyncExternalStore(subscribe, getFrameProductSnapshot, getFrameProductSnapshot);
@@ -114,12 +120,7 @@ export function FrameProductPanel() {
                 onBlur={(e) => {
                   const next = e.target.value.trim();
                   if (!next || next === slot.title) return;
-                  const frames = view.slots.map((s) => ({
-                    frame_id: s.frameId,
-                    ...(s.title ? { title: s.title } : {}),
-                    legend: s.legend,
-                    ...(s.syncGroup ? { sync_group: s.syncGroup } : {}),
-                  }));
+                  const frames = framesPatchBase(view);
                   frames[index] = { ...frames[index], title: next };
                   void runPatch({ frames }, 'workbench.frameProduct.saved');
                 }}
@@ -154,16 +155,8 @@ export function FrameProductPanel() {
                 onClick={() => {
                   const ids = view.slots.map((s) => s.frameId);
                   [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
-                  const byId = new Map(view.slots.map((s) => [s.frameId, s]));
-                  const frames = ids.map((fid) => {
-                    const s = byId.get(fid)!;
-                    return {
-                      frame_id: s.frameId,
-                      ...(s.title ? { title: s.title } : {}),
-                      legend: s.legend,
-                      ...(s.syncGroup ? { sync_group: s.syncGroup } : {}),
-                    };
-                  });
+                  const byId = new Map(view.slots.map((s) => [s.frameId, s.raw]));
+                  const frames = ids.map((fid) => ({ ...byId.get(fid)! }));
                   void runPatch({ frames }, 'workbench.frameProduct.saved');
                 }}
                 className="rounded p-1 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-30"
@@ -177,16 +170,8 @@ export function FrameProductPanel() {
                 onClick={() => {
                   const ids = view.slots.map((s) => s.frameId);
                   [ids[index + 1], ids[index]] = [ids[index], ids[index + 1]];
-                  const byId = new Map(view.slots.map((s) => [s.frameId, s]));
-                  const frames = ids.map((fid) => {
-                    const s = byId.get(fid)!;
-                    return {
-                      frame_id: s.frameId,
-                      ...(s.title ? { title: s.title } : {}),
-                      legend: s.legend,
-                      ...(s.syncGroup ? { sync_group: s.syncGroup } : {}),
-                    };
-                  });
+                  const byId = new Map(view.slots.map((s) => [s.frameId, s.raw]));
+                  const frames = ids.map((fid) => ({ ...byId.get(fid)! }));
                   void runPatch({ frames }, 'workbench.frameProduct.saved');
                 }}
                 className="rounded p-1 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-30"
@@ -214,17 +199,13 @@ export function FrameProductPanel() {
                       aria-label={t('workbench.frameProduct.syncGroup', { group: g })}
                       disabled={busy}
                       onClick={() => {
-                        const frames = view.slots.map((s) => ({
-                          frame_id: s.frameId,
-                          ...(s.title ? { title: s.title } : {}),
-                          legend: s.legend,
-                          ...(s.syncGroup ? { sync_group: s.syncGroup } : {}),
-                        }));
-                        frames[index] = {
-                          ...frames[index],
-                          sync_group: inGroup ? undefined : g,
+                        const frames = framesPatchBase(view);
+                        const target = { ...frames[index] } as {
+                          sync_group?: string;
                         };
-                        if (inGroup) delete (frames[index] as { sync_group?: string }).sync_group;
+                        if (inGroup) delete target.sync_group;
+                        else target.sync_group = g;
+                        frames[index] = target;
                         void runPatch({ frames }, 'workbench.frameProduct.saved');
                       }}
                       className={`flex items-center gap-0.5 rounded px-1.5 py-0.5 transition-colors ${
@@ -245,12 +226,7 @@ export function FrameProductPanel() {
                 disabled={busy}
                 value={slot.legend}
                 onChange={(e) => {
-                  const frames = view.slots.map((s) => ({
-                    frame_id: s.frameId,
-                    ...(s.title ? { title: s.title } : {}),
-                    legend: s.legend,
-                    ...(s.syncGroup ? { sync_group: s.syncGroup } : {}),
-                  }));
+                  const frames = framesPatchBase(view);
                   frames[index] = { ...frames[index], legend: e.target.value };
                   void runPatch({ frames }, 'workbench.frameProduct.saved');
                 }}

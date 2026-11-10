@@ -21,6 +21,9 @@ import type { FrameProductConfig, MapSpec } from '@/lib/mapspec-compiler/types';
 
 export interface FrameProductSlotView {
   frameId: string;
+  /** committed 原始槽载荷（含 data 绑定）—— patch 整表必须原样携带，
+   * 只覆写被编辑键；丢失 data 会破坏共享图例契约或静默删掉帧过滤。 */
+  raw: Record<string, unknown>;
   /** 画幅登记标题（layout.frames[].title）—— 显示序 = 产品帧序。 */
   title: string;
   enabled: boolean;
@@ -78,6 +81,7 @@ export function projectFrameProduct(spec: MapSpec | null | undefined): FrameProd
     const data = raw.data;
     slots.push({
       frameId: raw.frame_id,
+      raw: raw as unknown as Record<string, unknown>,
       title: raw.title ?? registered?.title ?? raw.frame_id,
       enabled: registered?.enabled !== false,
       legend: typeof raw.legend === 'string' ? raw.legend : 'shared',

@@ -205,16 +205,17 @@ def _canon_json(payload: Any) -> str:
 
 def _apply_shared_expression(
     doc: Dict[str, Any], layer_id: str, shared: Dict[str, Any]
-) -> Tuple[Dict[str, Any], Tuple[str, ...]]:
-    """共享分级（breaks/method/palette/k）覆写绑定层 legend_spec。
+) -> Tuple[Dict[str, Any], Tuple[str, ...], bool]:
+    """共享分级（breaks/method/palette/k）覆写绑定层 legend_spec + paint。
 
     只在共享域键上覆写（breaks/method/palette/palette_colors/labels/k/
     domain 标记）—— 字段/单位/nodata 保留原 spec 语义。层无 legend_spec
-    （如 basemap）→ 披露跳过，不伪造图例。
+    （如 basemap）→ 披露跳过，不伪造图例（返回 hit=False）。paint 重投影
+    失败 → 披露（地图停留在局部分级而图例是共享域 —— 漂移必须可见）。
     """
     breaks = shared.get("breaks")
     if not isinstance(breaks, list) or len(breaks) < 2:
-        return doc, ("shared_expression_not_computed",)
+        return doc, ("shared_expression_not_computed",), False
     layers_raw = doc.get("layers")
     layers = layers_raw if isinstance(layers_raw, list) else []
     new_layers: List[Any] = []
@@ -250,8 +251,8 @@ def _apply_shared_expression(
                 str(legend.get("palette") or "Blues"), n_classes, breaks, lo, hi)
             if colors:
                 legend["palette_colors"] = list(colors)
-        except Exception:  # noqa: BLE001 — 色带重算失败保留原色（标签仍一致）
-            pass
+        except Exception:  # noqa: BLE001 — 色带重算失败保留原色 + 披露
+            disclosures.append("shared_expression_palette_recompute_failed")
         hit = True
         # paint 同步重投影（spec_to_paint 是 legend→paint 的单一构造点 ——
         # 渲染器按 paint 上色；只改 legend 不改 paint 会让地图色与图例漂移）。
@@ -267,13 +268,14 @@ def _apply_shared_expression(
             else:
                 new_layers.append({**layer, "legend_spec": legend})
         except Exception:  # noqa: BLE001 — paint 重投影失败不阻断图例盖章
+            disclosures.append("shared_expression_paint_reproject_failed")
             new_layers.append({**layer, "legend_spec": legend})
     if not hit:
         disclosures.append("shared_expression_layer_without_legend")
-        return doc, tuple(disclosures)
+        return doc, tuple(disclosures), False
     out = dict(doc)
     out["layers"] = new_layers
-    return out, tuple(disclosures)
+    return out, tuple(disclosures), True
 
 
 def _graduated_label(lo: float, hi: float) -> str:
@@ -405,8 +407,12 @@ def resolve_frame_document(
                 and slot.get("legend") in (None, "shared", "shared_plus_frame")
                 and layer_id
             ):
-                doc, step_disc = _apply_shared_expression(doc, layer_id, shared)
-                applied.append("shared_expression")
+                doc, step_disc, shared_hit = _apply_shared_expression(
+                    doc, layer_id, shared)
+                if shared_hit:
+                    applied.append("shared_expression")
+                else:
+                    applied.append("shared_expression_skipped")
                 disclosures.extend(step_disc)
 
     return FrameResolution(

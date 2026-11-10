@@ -236,3 +236,44 @@ async def test_category_compare_with_shared(ref_store):
     assert [s["title"] for s in slots] == ["武侯", "锦江", "高新"]
     # 类别帧 where 过滤互斥且完备（并集 = 全量）。
     assert all(s["data"]["where"]["field"] == "district" for s in slots)
+
+
+async def test_panel_patch_must_carry_data_bindings(ref_store):
+    """review#1（P0）：frames 整表 patch 只覆写被编辑键 —— data 绑定丢失
+    会被 schema 契约拒绝（共享图例画幅必须携带 data.field），不静默接受。"""
+    sid = f"g15-{uuid.uuid4().hex[:10]}"
+    await _seed_layer(sid)
+    await fps.bind_frame_product(
+        sid, "ref:three", product_kind="time_series", field="per_10k")
+    spec = await _spec(sid)
+    frames = spec["frame_product"]["frames"]
+    # 面板真实负载（raw 携带 data，只改标题）→ 接受。
+    ok_frames = [dict(f) for f in frames]
+    ok_frames[1]["title"] = "2022（改名）"
+    out = await fps.update_frame_product(sid, {"frames": ok_frames})
+    assert out["status"] == "ok", out
+    # 旧缺陷负载（丢 data）→ 契约拒绝（不静默删除帧过滤）。
+    bad_frames = [
+        {"frame_id": f["frame_id"], "title": f.get("title"), "legend": f["legend"]}
+        for f in frames
+    ]
+    out2 = await fps.update_frame_product(sid, {"frames": bad_frames})
+    assert out2["status"] == "refused"
+    assert "data" in out2["message"] or "field" in out2["message"]
+
+
+async def test_rate_shared_with_denominator_journey(ref_store):
+    """review#4：rate 语义经 denominator 声明走共享分级（不再静默降级）。"""
+    sid = f"g15-{uuid.uuid4().hex[:10]}"
+    await _seed_layer(sid)
+    out = await fps.bind_frame_product(
+        sid, "ref:three", product_kind="time_series",
+        field="per_10k", semantics="other",
+        denominator="population", unit="个/万人",
+    )
+    assert out["status"] == "ok", out
+    assert out["shared_expression"]["domain_status"] == "complete"
+    spec = await _spec(sid)
+    shared = spec["frame_product"]["shared_expression"]
+    assert shared["denominator"] == "population"
+    assert shared["unit"] == "个/万人"

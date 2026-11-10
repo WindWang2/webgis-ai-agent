@@ -71,8 +71,10 @@ not_observed；空帧显式 `frame_no_data`；required 集合按目标收窄；
 ### D7 资源边界
 
 - 产品画幅 ≤ 12（MAX_PRODUCT_FRAMES；常见 2/3/4/6）；同步组 ≤ 4。
-- 交互运行时：活跃 MapLibre ≤ 2（主图 + 激活画幅），其余受控快照/按需
-  激活；相机同步组纯函数化（resolveSyncPair N 方推广，幂等收敛断回声）。
+- 相机同步组：**契约 + 纯函数已交付**（`frame-sync.ts`：resolveSyncPair
+  N 方推广，幂等收敛断回声，vitest 锁定）；多画幅交互视窗运行时（快照
+  LRU + 按需激活，活跃 MapLibre ≤ 2）**未接线** —— 本 PR 面板可声明
+  sync_group，联动传播待交互视窗落地（诚实边界，不冒充已交付）。
 - 导出：槽 SVG 各 ≤8MB、页 ≤ 8MB、总 32MB（沿用出版预算）。
 
 ### D8 诚实可用性

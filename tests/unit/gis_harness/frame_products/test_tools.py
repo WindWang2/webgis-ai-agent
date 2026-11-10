@@ -47,7 +47,6 @@ async def ref_store(monkeypatch):
     import app.services.session_data as sd
 
     monkeypatch.setattr(sd.session_data_manager, "resolve_alias", _resolve_alias)
-    monkeypatch.setattr.session_data_manager if False else None
     monkeypatch.setattr(sd.session_data_manager, "get_ref_descriptor", _get_ref_descriptor)
     monkeypatch.setattr(sd.session_data_manager, "get_ref_data_shared", _get_ref_data_shared)
     return fcs

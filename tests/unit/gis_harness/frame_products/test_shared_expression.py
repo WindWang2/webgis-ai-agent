@@ -99,25 +99,31 @@ class TestUnionBreaks:
 
 
 class TestEligibility:
-    def test_count_vs_rate_refused(self):
-        """计数（ratio：零有意义、值域 0..N）与率（rate）不同帧混布 → 拒绝。"""
-        # f1 计数：整数计数分布；f2 率：0-1 归一化 + rate 字段证据。
-        count_fc = _fc([0, 120, 340, 900], key="count")
-        # 显式 pin 不同测量语义模拟两帧语义不同。
-        compute_shared_expression(
-            [("f1", count_fc), ("f2", _fc([0.02, 0.5, 0.9], key="count"))],
-            "count",
-            explicit_measurement=None,
-        )
-        # 字段名相同且推导一致时不拒绝 —— 但显式混合时必须拒绝：
-        out2 = compute_shared_expression(
+    def test_count_vs_rate_declared_conflict_refused(self):
+        """声明语义与数据推导语义矛盾（声明 count、数据推导 rate）→ 拒绝。"""
+        out = compute_shared_expression(
             [("f1", _fc([100, 200])), ("f2", _fc([0.1, 0.4]))],
             "pop_per_km2",
             explicit_measurement="rate",
             semantics="count",
         )
-        assert out2.refused
-        assert out2.refusal_code == "declared_semantics_conflict"
+        assert out.refused
+        assert out.refusal_code == "declared_semantics_conflict"
+
+    def test_same_field_cross_frame_mixing_documented(self):
+        """review#4：bind 同名字段跨帧混布（f1 计数量级、f2 归一化率）。
+
+        字段名 + 数据源一致是 bind 契约的身份证据 —— 推导器对同名同源
+        字段得到同一 measurement kind，mismatch 门在此路径不触发（这是
+        契约设计：跨帧可比性由「同字段同源」+ 调用方显式 semantics 声明
+        承担；显式声明与推导矛盾时拒绝 —— 见上一用例）。本用例锚定该
+        现状，防悄悄变更。"""
+        out = compute_shared_expression(
+            [("f1", _fc([0, 120, 340, 900])), ("f2", _fc([0.02, 0.5, 0.9]))],
+            "value",
+        )
+        assert out.ok  # 同名字段 → 同推导 → 不 mismatch
+        assert out.config["breaks"] is not None  # 并集分级仍真实计算
 
     def test_rate_requires_denominator(self):
         out = compute_shared_expression(

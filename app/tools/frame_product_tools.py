@@ -52,6 +52,11 @@ class FrameProductBindArgs(FrameProductPlanArgs):
                                   description="共享分级方法（quantiles/equal_interval/natural_breaks/…）")
     k: Optional[int] = Field(None, ge=2, le=9, description="分级段数")
     palette: Optional[str] = Field(None, max_length=32, description="色板 id")
+    semantics: Optional[str] = Field(None, max_length=16, description=(
+        "声明数值语义 count|ratio|index|other（与数据推导矛盾时拒绝共享）"))
+    unit: Optional[str] = Field(None, max_length=32, description="单位（进图例）")
+    denominator: Optional[str] = Field(None, max_length=64, description=(
+        "分母字段/口径（rate 语义共享分级的必备声明）"))
     expected_revision: Optional[int] = Field(None, ge=0, description="CAS 基线（可选）")
     force: bool = Field(False, description="已绑定时强制重建")
 
@@ -78,7 +83,8 @@ def _bind_kwargs(args: FrameProductBindArgs) -> dict:
         fields=_parse_fields(args.fields), time_field=args.time_field or None,
         frames_limit=args.frames_limit, title=args.title or None,
         shared=args.shared, method=args.method or None, k=args.k,
-        palette=args.palette or None,
+        palette=args.palette or None, semantics=args.semantics or None,
+        unit=args.unit or None, denominator=args.denominator or None,
         expected_revision=args.expected_revision, force=args.force,
     )
 
@@ -188,6 +194,8 @@ def register_frame_product_tools(registry: ToolRegistry) -> None:
         frames_limit: int = 6, title: Optional[str] = None,
         shared: Optional[bool] = None, method: Optional[str] = None,
         k: Optional[int] = None, palette: Optional[str] = None,
+        semantics: Optional[str] = None, unit: Optional[str] = None,
+        denominator: Optional[str] = None,
         expected_revision: Optional[int] = None, force: bool = False,
         session_id: str = "",
     ) -> dict:
@@ -201,6 +209,7 @@ def register_frame_product_tools(registry: ToolRegistry) -> None:
                 field=field, split_field=split_field, fields=fields,
                 time_field=time_field, frames_limit=frames_limit, title=title,
                 shared=shared, method=method, k=k, palette=palette,
+                semantics=semantics, unit=unit, denominator=denominator,
                 expected_revision=expected_revision, force=force)
             return await fps.bind_frame_product(session_id, ref_id,
                                                 **_bind_kwargs(args))

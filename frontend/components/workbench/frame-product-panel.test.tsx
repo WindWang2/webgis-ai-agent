@@ -122,6 +122,20 @@ describe('FrameProductPanel', () => {
     // frame_id 身份与顺序保持。
     expect(sent.patch.frames?.map((f) => f.frame_id)).toEqual([
       'fp-t-2020', 'fp-t-2022', 'fp-t-2024']);
+    // review#1（P0）：data 绑定/时间窗必须原样携带 —— 只覆写被编辑键。
+    expect(sent.patch.frames?.[0]).toMatchObject({
+      frame_id: 'fp-t-2020',
+      legend: 'shared',
+      data: {
+        ref: 'r',
+        layer_id: 'l',
+        field: 'v',
+        content_revision: 2,
+        time_window: expect.objectContaining({
+          start: '2020-01-01T00:00:00Z',
+        }),
+      },
+    });
 
     // 激活第三幅（active_frame patch）。
     const activateBtn = screen.getByLabelText('激活画幅 fp-t-2024');

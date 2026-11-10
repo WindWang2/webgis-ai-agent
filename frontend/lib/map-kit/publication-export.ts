@@ -1,4 +1,5 @@
 import { exportNotificationTitle } from './export-notification';
+import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
 /**
  * C14：publication vector PDF 导出运行面（前端入口 —— 路由文档化的
  * 「backend-only 待接线」交付）。
@@ -33,7 +34,7 @@ export interface VectorPdfExportRequest {
    */
   pageProfile?: string;
   atlas?: {
-    driver: 'frames' | 'category' | 'feature';
+    driver: 'frames' | 'category' | 'feature' | 'product';
     layerId?: string;
     categoryProperty?: string;
     featuresPerPage?: number;
@@ -107,22 +108,36 @@ export function vectorPdfRequestFromSettings(settings: Record<string, unknown>):
   };
   if (settings['atlasEnabled'] !== true) return req;
   const driver = settings['atlasDriver'];
-  req.atlas = {
-    driver: driver === 'category' || driver === 'feature' ? driver : 'frames',
+  // G15：frame_product 在场 → 产品页（同页并置；精确语义只有后端能承载）。
+  let effectiveDriver: 'frames' | 'category' | 'feature' | 'product' =
+    driver === 'category' || driver === 'feature' ? driver : 'frames';
+  try {
+    const committed = getCommittedMapSpec() as
+      | { frame_product?: { enabled?: boolean } }
+      | null;
+    if (committed?.frame_product && committed.frame_product.enabled !== false) {
+      effectiveDriver = 'product';
+    }
+  } catch {
+    /* spec 面缺席 → 既有语义 */
+  }
+  const atlasPolicy: AtlasRequestPolicy = {
+    driver: effectiveDriver,
     includeCover: settings['atlasIncludeCover'] !== false,
   };
+  req.atlas = atlasPolicy;
   if (typeof settings['atlasLayerId'] === 'string' && settings['atlasLayerId']) {
-    req.atlas.layerId = settings['atlasLayerId'];
+    atlasPolicy.layerId = settings['atlasLayerId'];
   }
   if (
-    req.atlas.driver === 'category' &&
+    atlasPolicy.driver === 'category' &&
     typeof settings['atlasCategoryProperty'] === 'string' &&
     settings['atlasCategoryProperty']
   ) {
-    req.atlas.categoryProperty = settings['atlasCategoryProperty'];
+    atlasPolicy.categoryProperty = settings['atlasCategoryProperty'];
   }
   if (typeof settings['atlasTitle'] === 'string' && settings['atlasTitle']) {
-    req.atlas.atlasTitle = settings['atlasTitle'];
+    atlasPolicy.atlasTitle = settings['atlasTitle'];
   }
   return req;
 }

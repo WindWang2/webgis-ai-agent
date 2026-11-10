@@ -10,8 +10,9 @@ SetFrameProductBody origin=user CAS），MapSpec 是唯一 desired state：
 - 单期数据不做 time_series 产品（typed refusal）；
 - 共享分级资格由 shared_expression.compute 判定，拒绝时不降级伪共享；
 - bind 失败不留空壳成功产品（frames 先写、产品后写；产品写失败时
-  frames 登记是惰性无害的 —— 无产品引用的画幅不参与任何渲染，回执
-  如实披露）。
+  frames 登记保留 —— 注意其**不是完全惰性**：缺省（无 atlas 策略的）
+  导出仍按 layout.frames 逐帧分页，每页渲染主文档整幅（无产品过滤）；
+  回执如实披露该副作用）。
 """
 from __future__ import annotations
 
@@ -324,6 +325,22 @@ def plan_from_data(
         return _refusal("plan_frames_insufficient",
                         "计划产出的画幅不足 2 个（小倍数产品的最低要求）")
 
+    # review#9：frame_id 去重（长 slug 截断可碰撞 → 确定性哈希后缀）。
+    seen_ids: set = set()
+    for f in frames:
+        fid = f["frame_id"]
+        if fid in seen_ids:
+            import hashlib
+
+            digest = hashlib.sha256(
+                str(f.get("title") or fid).encode("utf-8")).hexdigest()[:6]
+            f["frame_id"] = f"{fid}-{digest}"[:64]
+            fid = f["frame_id"]
+            while fid in seen_ids:
+                f["frame_id"] = f"{f['frame_id']}-x"[:64]
+                fid = f["frame_id"]
+        seen_ids.add(fid)
+
     # 统一计算每帧参与共享分级的过滤后数据（binding_where 单一路径）。
     for f in frames:
         f["shared_fc"] = (
@@ -387,6 +404,9 @@ async def bind_frame_product(
     method: Optional[str] = None,
     k: Optional[int] = None,
     palette: Optional[str] = None,
+    semantics: Optional[str] = None,
+    unit: Optional[str] = None,
+    denominator: Optional[str] = None,
     expected_revision: Optional[int] = None,
     force: bool = False,
 ) -> Dict[str, Any]:
@@ -462,6 +482,8 @@ async def bind_frame_product(
         outcome = compute_shared_expression(
             frame_datasets, shared_field,
             method=method, k=k, palette=palette,
+            semantics=semantics or "other", unit=unit,
+            denominator=denominator,
         )
         if outcome.refused:
             shared_refusal = {
@@ -547,13 +569,15 @@ async def bind_frame_product(
     if shared_cfg is not None:
         config["shared_expression"] = shared_cfg
     if shared_refusal is not None:
-        config["disclosures"] = (config["disclosures"] + [
-            f"shared_refused:{shared_refusal['code']}"])[:8]
+        # 拒绝通知前置（截断不会吞掉科学拒绝原因 —— review#8）。
+        config["disclosures"] = [f"shared_refused:{shared_refusal['code']}"] + (
+            config["disclosures"] or [])[:7]
 
     product_result = await _apply(
         session_id,
         _set_frame_product_intent(config=config),
         reason="frame_product bind: 产品契约",
+        expected_revision=expected_revision,
     )
     if product_result.is_error:
         return _refusal(
@@ -659,6 +683,11 @@ async def unbind_frame_product(
     return {
         "status": "ok",
         "note": "产品语义已移除；layout.frames 画幅登记保留（可重新绑定）",
+        "disclosures": [
+            "frames_registry_retained: 保留的 layout.frames 仍驱动缺省导出"
+            "的逐帧分页（每页 = 主文档整幅，无产品过滤）；如不需要请经"
+            "layout_set 清空 frames",
+        ],
     }
 
 

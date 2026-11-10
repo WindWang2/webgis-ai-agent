@@ -746,7 +746,7 @@ def _compile_product_page(
         # 槽位 svg：编译器原 viewBox（内容坐标系）+ 槽尺寸（preserve
         # aspect 默认 meet，与单帧页渲染同一几何口径）；div overflow
         # 即裁剪（clip 语义）。
-        vb_attr = _slot_viewboxes[i]
+        vb_attr = _slot_viewboxes[i] or f"0 0 {slot_w} {slot_h}"
         slot_html.append(
             f'<div style="position:absolute;left:{left:.2f}mm;'
             f'top:{top:.2f}mm;width:{sw:.2f}mm;height:{sh:.2f}mm;'
@@ -761,7 +761,7 @@ def _compile_product_page(
         html_parts.append(
             f'<div style="position:absolute;left:6%;right:6%;'
             f'top:{band_top:.2f}mm">'
-            + _shared_legend_band_html(doc, page)
+            + _shared_legend_band_html(doc, page, shared_legend_spec)
             + "</div>")
     html_parts.append("</div>")
     html_body = "".join(html_parts)
@@ -773,13 +773,20 @@ def _compile_product_page(
     )
 
 
-def _shared_legend_band_html(doc: Dict[str, Any], page: PageLayoutIR) -> str:
-    """共享图例带（PDF/HTML 面）—— swatch + 标签（与 SVG 面同数据源）。"""
+def _shared_legend_band_html(
+    doc: Dict[str, Any],
+    page: PageLayoutIR,
+    shared_legend_spec: Optional[Dict[str, Any]],
+) -> str:
+    """共享图例带（PDF/HTML 面）—— 与 SVG 面同数据源（resolver 盖章的
+    共享图例，不读主文档局部分级 —— review#2：两面包同源）。"""
     from app.lib.cartography.render_scene import derive_legend_items
 
     product_raw = doc.get("frame_product")
     product = product_raw if isinstance(product_raw, dict) else {}
     shared = product.get("shared_expression")
+    if not isinstance(shared_legend_spec, dict):
+        return ""
 
     def _esc(s: str) -> str:
         return (s.replace("&", "&amp;").replace("<", "&lt;")
@@ -795,12 +802,8 @@ def _shared_legend_band_html(doc: Dict[str, Any], page: PageLayoutIR) -> str:
             f'Shared classification &middot; {_esc(field_label)}'
             + (f'（{_esc(unit)}）' if unit else "")
             + "</div>")
-    entries: List[Dict[str, Any]] = []
-    for layer in (doc.get("layers") or []):
-        if isinstance(layer, dict) and isinstance(layer.get("legend_spec"), dict):
-            model = derive_legend_items(layer["legend_spec"])
-            entries = (model or {}).get("entries") or []
-            break
+    model = derive_legend_items(shared_legend_spec)
+    entries = (model or {}).get("entries") or []
     swatches = []
     for e in entries[:12]:
         color = str(e.get("color") or "#cccccc")
