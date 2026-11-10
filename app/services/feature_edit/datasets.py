@@ -278,11 +278,22 @@ async def promote_sketch(
         })
     first_geometry = clean_features[0]["geometry"]["type"]
     base = first_geometry[5:] if first_geometry.startswith("Multi") else first_geometry
+    # 升格即物化稳定身份：草图要素无既有 id 键，不物化则首个编辑无法寻址。
+    # 物化方案与首编辑路径同源（fingerprint:index 决定性）—— 之后的首个
+    # plan 看到 has_wfids=True，不再重复物化，链指纹自始在物化后空间。
+    from app.services.data_ingest.pipeline import compute_payload_fingerprint
+    from app.services.feature_edit.identity import materialize_wfids
+
     data: Dict[str, Any] = {
         "geojson": {"type": "FeatureCollection", "features": clean_features},
         "geometry_type": base,
         "origin_kind": "sketch",
     }
+    fingerprint = compute_payload_fingerprint(data)
+    materialized_fc, _assigned = materialize_wfids(
+        data["geojson"], fingerprint
+    )
+    data["geojson"] = materialized_fc
     decl = _normalize_topology(topology)
     if decl:
         data["topology"] = decl
