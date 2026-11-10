@@ -117,6 +117,8 @@ _TOOL_MODULES = [
     # G06 / CAP-03 + M5：条件多分位数分区栅格统计 / 线网服务覆盖一致性
     # 两项真实原生原语（独立模块防并发冲突；执行真相仍是 registry.dispatch）
     ("app.tools.capability_ecosystem_tools", "register_capability_ecosystem_tools"),
+    # G20：持久化数值栅格表达 / 真实像元检视（独立模块防并发冲突）
+    ("app.tools.raster_expression_tools", "register_raster_expression_tools"),
 ]
 
 

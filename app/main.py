@@ -1106,6 +1106,9 @@ from app.api.routes import version as version_routes  # noqa: E402
 
 app.include_router(version_routes.router, prefix="/api/v1", tags=["系统"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
+# G20：持久化数值栅格表达工作台（独立 router，layer.py 零修改）
+from app.api.routes import raster_authoring as raster_authoring_routes  # noqa: E402
+app.include_router(raster_authoring_routes.router, prefix="/api/v1", tags=["栅格表达工作台"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
