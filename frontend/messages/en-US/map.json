@@ -56,7 +56,11 @@
     "snappingOnTitle": "Vertex snapping: on (snaps to existing vertices while drawing/editing)",
     "snappingOffTitle": "Vertex snapping: off",
     "sketchCount": "{count} sketch features",
-    "sketchEmpty": "No sketch created yet"
+    "sketchEmpty": "No sketch created yet",
+    "editLabels": "Edit labels",
+    "editLabelsTitle": "Label edit mode: click a label to drag/hide/pin/retext",
+    "editLabelsDisabled": "No labeled layers",
+    "labelToolAria": "Label tool: {label}"
   },
   "poi": {
     "focus": "Focus location",
@@ -488,5 +492,23 @@
     "gridSvg": "SVG grid",
     "decisionMethod": "Decision ({method})"
   },
-  "refSourceBudget": "The map has reached the loading limit of {limit} active data references. {omitted} more references are not loaded. Remove some layers to load them."
+  "refSourceBudget": "The map has reached the loading limit of {limit} active data references. {omitted} more references are not loaded. Remove some layers to load them.",
+  "labelEditor": {
+    "title": "Label editing",
+    "hint": "Click a label on the map to edit; drag to move, arrows to nudge, Enter to commit, Esc to cancel.",
+    "hide": "Hide label",
+    "show": "Unhide",
+    "pin": "Pin position",
+    "unpin": "Unpin",
+    "text": "Edit label text",
+    "textHint": "Display text only — source data untouched",
+    "resetPosition": "Restore auto position",
+    "resetText": "Restore field text",
+    "resetVisibility": "Unhide",
+    "resetAll": "Clear all overrides",
+    "callout": "Show leader line",
+    "noSelection": "Select a label first (click a label or its feature)",
+    "conflict": "This pinned label conflicts with another label/obstacle",
+    "keyboardHint": "Arrows nudge · Shift+Arrows larger step · Enter commit · Esc cancel"
+  }
 }

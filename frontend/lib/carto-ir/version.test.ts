@@ -145,10 +145,10 @@ describe("migrateMapSpec：forward version → fail-safe 拒绝", () => {
     expect(result.disclosures[0]?.detail).toContain('spec version "9.9" is not in the supported vocabulary');
   });
 
-  it('词表外的版本 "2.0" 同样拒绝（未知 = forward fail-safe）', () => {
-    const result = expectMigratedFail(migrateMapSpec({ version: "2.0", layers: [] }));
+  it('词表外的版本 "9.9" 同样拒绝（未知 = forward fail-safe）', () => {
+    const result = expectMigratedFail(migrateMapSpec({ version: "9.9", layers: [] }));
     expect(result.reason).toBe("forward_version");
-    expect(result.version).toBe("2.0");
+    expect(result.version).toBe("9.9");
   });
 });
 

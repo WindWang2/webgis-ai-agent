@@ -433,6 +433,64 @@ export async function commitLayerStyleAndCommit(
   });
 }
 
+/**
+ * G16（v2.1）：要素级标注 authoring 提交（UI 手势通道）。
+ *
+ * 与 Pi 工具（webgis_label_author）同一意图/CAS/撤销栈；原子 —— 服务端
+ * 任一 op 拒绝整笔 400（错误消息含 per-op findings）。成功后以权威 spec
+ * reconcile（pinned/hidden/text 子层由 runtime 重挂）。
+ */
+export async function commitLabelAuthoring(
+  layerId: string,
+  ops: Array<Record<string, unknown>>,
+  labelsConfig?: Record<string, unknown>,
+): Promise<void> {
+  const specLayerId = mapspecLayerId(layerId);
+  if (!specLayerId) return;
+  if (ops.length === 0 && !labelsConfig) return;
+  const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+  const mutationId = newMutationId();
+  await enqueueUserMutation(async () => {
+    const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+    if (!sessionId || sessionId !== enqueuedSessionId) return;
+    try {
+      const data = await apiFetch<MutationResponse>(
+        `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/mapspec/mutations`,
+        {
+          method: 'POST',
+          body: {
+            intent: 'patch_layer_label_authoring',
+            expected_revision: revision,
+            layer_id: specLayerId,
+            ops,
+            ...(labelsConfig ? { labels_config: labelsConfig } : {}),
+            client_mutation_id: mutationId,
+          },
+          ownerToken,
+          timeoutMs: 60_000,
+          label: 'MapSpec label authoring mutation',
+        },
+      );
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
+      if (typeof data.mutation_revision === 'number') {
+        setMapSpecRevision(data.mutation_revision);
+      }
+      applyCommittedMapSpec(data.mapspec, data.mutation_revision);
+    } catch (err) {
+      // 原子拒绝/网络失败：toast 说明（复用 rollback 通道），状态不
+      // 乐观更新 —— 权威 spec 未动，无需回滚。
+      toastRollback(intentsLabel(ops), err);
+      throw err;
+    }
+  });
+}
+
+function intentsLabel(ops: Array<Record<string, unknown>>): string {
+  const first = ops[0];
+  if (first && first.op === 'reset') return '标注恢复';
+  return '标注调整';
+}
+
 // U-3（#885）：非 409 失败（网络断开/5xx/会话过期）此前静默回滚——用户点
 // 删除图层消失一秒后又弹回，全程无解释，弱网下看起来像按钮坏了。复用
 // superseded 路径的 toast 模式，按操作语义给文案。

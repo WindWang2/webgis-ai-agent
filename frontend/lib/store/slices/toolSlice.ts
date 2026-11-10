@@ -26,7 +26,8 @@ export type MapToolId =
   | 'draw_line'
   | 'draw_polygon'
   | 'edit_vertices'
-  | 'delete_feature';
+  | 'delete_feature'
+  | 'edit_labels';
 
 export const MAP_TOOLS: readonly MapToolId[] = [
   'measure_distance',
@@ -37,6 +38,7 @@ export const MAP_TOOLS: readonly MapToolId[] = [
   'draw_polygon',
   'edit_vertices',
   'delete_feature',
+  'edit_labels',
 ];
 
 export interface ToolSlice {
