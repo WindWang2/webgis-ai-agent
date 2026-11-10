@@ -46,6 +46,11 @@ class FeatureDelta(TypedDict):
     presence: NotRequired[Literal["created", "removed"]]
     feature_before: NotRequired[dict | None]
     feature_after: NotRequired[dict | None]
+    # removed 记录要素在操作前列表中的位置；其逆（created）按该位置重插 ——
+    # undo 恢复的不仅是内容还有次序（载荷指纹含列表序，位置漂移会让链
+    # 完整性断言诚实失败）。created 的原生新要素（split/merge 子）无 index，
+    # 按推导顺序追加。
+    index: NotRequired[int]
 
 
 class LineageEvent(TypedDict):

@@ -56,6 +56,16 @@ async def build_and_store_plan(
     payload = await session_data_manager.get(session_id, ref_id)
     if payload is None:
         return {}, [{"code": "dataset_not_found", "message": f"ref not resolvable in this session: {str(ref_id)[:48]}"}]
+    # G14/V20：只读源拒绝直接编辑 —— typed finding + 派生副本指引（原源零写入）。
+    if isinstance(payload, dict) and payload.get("read_only") is True:
+        return {}, [{
+            "code": "dataset_read_only_source",
+            "message": (
+                "this dataset is read-only; create an editable copy "
+                "(feature-edits datasets editable-copy) before editing"
+            ),
+            "detail": {"ref_id": str(ref_id)[:64]},
+        }]
     descriptor = await session_data_manager.get_ref_descriptor(session_id, ref_id) or {}
     revision = int(descriptor.get("content_revision") or 0)
 

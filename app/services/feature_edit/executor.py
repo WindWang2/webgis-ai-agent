@@ -41,6 +41,12 @@ from app.services.feature_edit.journal import (
 from app.services.feature_edit.plan import derive_changes, extract_fc
 from app.services.session_data import session_data_manager
 
+
+def _declared_geometry_type(payload: Any) -> Optional[str]:
+    from app.services.feature_edit.datasets import extract_geometry_type_declaration
+
+    return extract_geometry_type_declaration(payload)
+
 logger = logging.getLogger(__name__)
 
 # 进程内 per-session 编辑锁：同波并发工具（turn 锁透传时）的 RMW 串行化。
@@ -246,9 +252,11 @@ async def commit_plan(
         for target_ref in _prefetch_target_refs(plan.get("ops") or []):
             target_payload, _ = await _load_ref(session_id, target_ref)
             target_payloads[target_ref] = target_payload
+        derive_targets = plan.get("target_wfids_ordered") or plan.get("target_wfids") or []
         deltas, schema_ops, derive_findings, _, lineage_events = derive_changes(
-            fc, plan.get("ops") or [], plan.get("target_wfids") or [], target_payloads,
+            fc, plan.get("ops") or [], derive_targets, target_payloads,
             plan_seed=plan_id,
+            geometry_type=_declared_geometry_type(payload),
         )
         if derive_findings:
             # 数据在预览后仍变了内容形态（同指纹不应发生——防御面）。

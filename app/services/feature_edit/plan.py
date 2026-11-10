@@ -56,6 +56,12 @@ from app.services.feature_edit.identity import (
 from app.services.feature_edit.journal import apply_deltas_to_features, apply_schema_ops_to_features
 from app.services.feature_edit.topology import check_topology, extract_topology_declaration
 
+
+def _declared_geometry_type(payload: Any) -> Optional[str]:
+    from app.services.feature_edit.datasets import extract_geometry_type_declaration
+
+    return extract_geometry_type_declaration(payload)
+
 __all__ = [
     "build_plan",
     "derive_changes",
@@ -185,6 +191,7 @@ def derive_changes(
     target_payloads: Dict[str, Any],
     *,
     plan_seed: str = "",
+    geometry_type: Optional[str] = None,
 ) -> Tuple[List[FeatureDelta], List[RenameField], List[EditFinding], List[OperationSummary], List[Dict[str, Any]]]:
     """对已物化 fc 顺序求 ops 的完整 diff（preview 与 commit 同一路径）。
 
@@ -193,6 +200,8 @@ def derive_changes(
     出 dataset_not_found）。deltas 是绝对态（before=操作前值, after=操作后值），
     按序应用即顺序语义。plan_seed（=plan_id）驱动 create/split/merge 新生
     身份的决定性派生 —— preview 与 commit 重求值得到同一批 wfid。
+    geometry_type：envelope 声明的期望基类型（typed 空图层）—— create 的
+    新要素基类型必须一致（typed 语义可校验，不靠猜）。
     """
     findings: List[EditFinding] = []
     deltas: List[FeatureDelta] = []
@@ -268,6 +277,32 @@ def derive_changes(
                     child_index += 1000
                     new_wfid = wfid_for_created(seed, op_index, child_index)
                 existing_wfids.add(new_wfid)
+                if geometry_type is not None:
+                    from shapely.geometry import shape as _shape
+
+                    try:
+                        created_base = _shape(item["geometry"])
+                        created_base_name = created_base.geom_type
+                        base = (
+                            created_base_name[5:]
+                            if created_base_name.startswith("Multi")
+                            else created_base_name
+                        )
+                    except Exception:
+                        create_findings.append(
+                            finding("invalid_geometry", "created feature geometry is malformed")
+                        )
+                        continue
+                    if base != geometry_type:
+                        create_findings.append(
+                            finding(
+                                "geometry_type_mismatch",
+                                "created feature base type differs from the dataset's declared type",
+                                expected=geometry_type,
+                                got=base,
+                            )
+                        )
+                        continue
                 reserved = sorted(set(props) & set(RESERVED_FIELD_NAMES))
                 if reserved:
                     create_findings.append(
@@ -367,17 +402,19 @@ def _existing_wfid_set(fc: GeoJSONFeatureCollection) -> set:
 
 
 def _delete_deltas(fc: GeoJSONFeatureCollection, wfids: set) -> List[FeatureDelta]:
-    """delete 的 removed 快照（完整要素深拷贝；存在性由命中集合证明）。"""
+    """delete 的 removed 快照（完整要素深拷贝 + 原位置 index —— undo 恢复次序）。"""
     import copy as _copy
 
     out: List[FeatureDelta] = []
-    for feature in fc.get("features") or []:
+    for index, feature in enumerate(fc.get("features") or []):
         if not isinstance(feature, dict):
             continue
         props = feature.get("properties")
         wfid = props.get(WFID_PROP) if isinstance(props, dict) else None
         if isinstance(wfid, str) and wfid in wfids:
-            out.append({"wfid": wfid, "presence": "removed", "feature_before": _copy.deepcopy(feature)})
+            out.append(
+                {"wfid": wfid, "presence": "removed", "feature_before": _copy.deepcopy(feature), "index": index}
+            )
     return out
 
 
@@ -456,6 +493,9 @@ def build_plan(
             finding("feature_not_found", "requested ids not resolvable in dataset", ids=missing[:8])
         )
     wfids = sorted(set(wfid_map.values()))
+    # 解析序（用户显式顺序）保留给 merge 的 first 策略 —— 排序集破坏
+    # "取第一个父要素" 的用户语义。
+    ordered_wfids = list(dict.fromkeys(wfid_map[i] for i in ids if i in wfid_map))
     if len(wfids) > MAX_PLAN_TARGETS:
         findings.append(finding("target_limit_exceeded", "too many target features", limit=MAX_PLAN_TARGETS))
     from app.services.feature_edit.contracts import GEOMETRY_OPS as _GEO_OPS, MAX_GEOMETRY_TARGETS
@@ -472,8 +512,9 @@ def build_plan(
         )
 
     deltas, schema_ops, derive_findings, op_summaries, lineage_events = derive_changes(
-        preview_fc, ops if isinstance(ops, list) else [], wfids, target_payloads or {},
+        preview_fc, ops if isinstance(ops, list) else [], ordered_wfids or wfids, target_payloads or {},
         plan_seed=plan_id,
+        geometry_type=_declared_geometry_type(payload),
     )
     findings.extend(derive_findings)
     # G14：journal 单条字节闸 —— 结构性 delta 内嵌完整快照，超预算诚实拒绝
@@ -517,6 +558,7 @@ def build_plan(
         "ref_id": ref_id,
         "ops": [op for op in ops if isinstance(op, dict)][:MAX_OPS_PER_PLAN],
         "target_wfids": wfids[:MAX_PLAN_TARGETS],
+        "target_wfids_ordered": ordered_wfids[:MAX_PLAN_TARGETS],
         "target_ids": ids[:MAX_PLAN_TARGETS],
         "needs_materialization": materialize,
         "validation": findings,

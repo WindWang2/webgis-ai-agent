@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 from shapely.geometry.base import BaseGeometry
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from shapely.geometry import mapping, shape
 from shapely.ops import nearest_points, transform as shapely_transform, split as shapely_split, unary_union
@@ -510,6 +510,16 @@ def split_feature(
         return [], guard_findings, None
     if not targets:
         return [], [finding("feature_not_found", "split target missing", wfid=wfid)], None
+    parent_index = next(
+        (
+            i
+            for i, f in enumerate(fc.get("features") or [])
+            if isinstance(f, dict)
+            and isinstance(f.get("properties"), dict)
+            and f["properties"].get(WFID_PROP) == wfid
+        ),
+        None,
+    )
     _w, feature, _positions = targets[0]
     geometry = feature.get("geometry")
     if not isinstance(geometry, dict):
@@ -539,9 +549,10 @@ def split_feature(
         out_parts.append(part)
     props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
     parent_snapshot = copy_feature_snapshot(feature)
-    deltas: List[FeatureDelta] = [
-        {"wfid": wfid, "presence": "removed", "feature_before": parent_snapshot}
-    ]
+    parent_delta: FeatureDelta = {"wfid": wfid, "presence": "removed", "feature_before": parent_snapshot}
+    if parent_index is not None:
+        parent_delta["index"] = parent_index  # undo 原位复活（恢复列表次序）
+    deltas: List[FeatureDelta] = [parent_delta]
     children: List[str] = []
     for child_index, part in enumerate(out_parts):
         child_wfid = wfid_for_created(plan_seed, op_index, child_index)
@@ -674,14 +685,18 @@ def merge_features(
         "geometry": _geometry_out(union),
         "properties": merged_props,
     }
-    deltas: List[FeatureDelta] = [
-        {
-            "wfid": w,
-            "presence": "removed",
-            "feature_before": copy_feature_snapshot(f),
-        }
-        for w, f in zip(wfids, ordered)
-    ]
+    # 父要素原位 index（undo 恢复次序；按列表内出现顺序）
+    index_of = {
+        cast(dict, f.get("properties") or {}).get(WFID_PROP): i
+        for i, f in enumerate(fc.get("features") or [])
+        if isinstance(f, dict)
+    }
+    deltas: List[FeatureDelta] = []
+    for w, f in zip(wfids, ordered):
+        d: FeatureDelta = {"wfid": w, "presence": "removed", "feature_before": copy_feature_snapshot(f)}
+        if w in index_of:
+            d["index"] = index_of[w]
+        deltas.append(d)
     deltas.append({"wfid": child_wfid, "presence": "created", "feature_after": child_feature})
     lineage = {"kind": "merge", "parent_wfids": [w for w in wfids if w in by_wfid], "child_wfids": [child_wfid]}
     summary_extra = {"conflict_fields": conflict_fields[:24]} if conflict_fields else {}

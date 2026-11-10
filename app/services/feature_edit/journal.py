@@ -137,11 +137,14 @@ def apply_deltas_to_features(
     返回 (new_features, applied_wfids)。update 未命中的 wfid 跳过（调用方
     在 preview 阶段已保证存在；commit 阶段的偏差由指纹 CAS 兜底拒绝）。
     copy-on-write：只有被命中的要素被复制。
+
+    三遍应用（同一 plan 内删除/更新不指向同一 wfid —— plan 校验拒绝）：
+    ① removed 移除；② created 按序插入（带 index 的按原位重插 —— undo 恢复
+    次序；无 index 追加）；③ modified 就地更新。
     """
     out = list(features)
     applied: List[str | None] = []
-    # 两遍：先移除（presence=removed），再更新/追加 —— 同一 plan 里删除与
-    # 更新不允许指向同一 wfid（plan 校验拒绝），顺序防御仅保证正确性兜底。
+    # ① 移除
     removed_wfids = {
         d.get("wfid")
         for d in deltas
@@ -157,6 +160,35 @@ def apply_deltas_to_features(
             )
         ]
         applied.extend(sorted(w for w in removed_wfids if w))
+    # ② 出生（幂等：同 wfid 已存在跳过）
+    seen_wfids: set = set()
+    for delta in deltas:
+        if not isinstance(delta, dict) or delta.get("presence") != "created":
+            continue
+        wfid = delta.get("wfid")
+        feature_after = delta.get("feature_after")
+        if not (isinstance(wfid, str) and isinstance(feature_after, dict)):
+            continue
+        if any(
+            isinstance(f, dict)
+            and cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP) == wfid
+            for f in out
+        ) or wfid in seen_wfids:
+            continue
+        new_feature = copy.deepcopy(feature_after)
+        props = new_feature.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            new_feature["properties"] = props
+        props[WFID_PROP] = wfid
+        index = delta.get("index")
+        if isinstance(index, int) and not isinstance(index, bool) and 0 <= index <= len(out):
+            out.insert(index, new_feature)
+        else:
+            out.append(new_feature)
+        seen_wfids.add(wfid)
+        applied.append(wfid)
+    # ③ 更新
     by_wfid = {
         cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP): (i, f)
         for i, f in enumerate(out)
@@ -165,27 +197,10 @@ def apply_deltas_to_features(
     for delta in deltas:
         if not isinstance(delta, dict):
             continue
-        wfid = delta.get("wfid")
         presence = delta.get("presence")
-        if presence == "removed":
-            continue  # 已在第一遍处理
-        if presence == "created":
-            feature_after = delta.get("feature_after")
-            if (
-                isinstance(wfid, str)
-                and isinstance(feature_after, dict)
-                and wfid not in by_wfid
-            ):
-                new_feature = copy.deepcopy(feature_after)
-                props = new_feature.get("properties")
-                if not isinstance(props, dict):
-                    props = {}
-                    new_feature["properties"] = props
-                props[WFID_PROP] = wfid
-                out.append(new_feature)
-                by_wfid[wfid] = (len(out) - 1, new_feature)
-                applied.append(wfid)
+        if presence in ("removed", "created"):
             continue
+        wfid = delta.get("wfid")
         hit = by_wfid.get(wfid)
         if hit is None:
             continue
@@ -277,13 +292,14 @@ def invert_deltas(deltas: List[FeatureDelta]) -> List[FeatureDelta]:
             )
             continue
         if presence == "removed":
-            out.append(
-                {
-                    "wfid": delta.get("wfid"),
-                    "presence": "created",
-                    "feature_after": copy.deepcopy(delta.get("feature_before")),
-                }
-            )
+            revived: FeatureDelta = {
+                "wfid": delta.get("wfid"),
+                "presence": "created",
+                "feature_after": copy.deepcopy(delta.get("feature_before")),
+            }
+            if isinstance(delta.get("index"), int) and not isinstance(delta.get("index"), bool):
+                revived["index"] = delta["index"]  # 原位重插 —— undo 恢复次序
+            out.append(revived)
             continue
         inv: FeatureDelta = {"wfid": delta.get("wfid")}
         fields = delta.get("fields")
