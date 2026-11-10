@@ -8,8 +8,8 @@
 | branch | `zcode/goal-g20-raster-authoring-20261110T131721Z` |
 | worktree | `C:\Users\wangj.KEVIN\projects\webgis-worktrees\goal-g20-raster-authoring-20261110T131721Z` |
 | base | `master` @ `816705218a5aa6202bf15d745cb31cddb3437f44` |
-| head | `49f117fd05ea96db91ae2b08501e0b53e376244e`（5 commits，正常 push，无强推） |
-| base/head 关系 | ahead 5 / behind 0（PR 前 `git fetch origin --prune` 复核，master 未前进） |
+| head | PR 创建时 `49f117fd05ea96db91ae2b08501e0b53e376244e`；末笔为 docs-only 的 handoff 回填（正常 push、无强推）。**权威当前值**以 `gh pr view 2078 --json headRefOid` / `git rev-parse HEAD` 为准。 |
+| base/head 关系 | PR 创建时 ahead 5 / behind 0（`git fetch origin --prune` 复核，master 未前进）；末笔 docs-only 提交使 ahead 增加 1，仍 behind 0。 |
 | 线上 CI | 按任务书 A **未等待、未轮询**；PR 正文如实区分本地通过 / 基线失败 / 环境阻塞 / 未运行项目 |
 | 是否 merge / 发布 | **未 merge、未发布、未删除分支或 worktree** |
 
