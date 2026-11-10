@@ -70,6 +70,39 @@ class ExportBody(BaseModel):
     format: str = Field(default="png", pattern=r"^(png|svg|pdf)$")
 
 
+# ─── 已登记栅格 ref 列表（工作台选择器；有界、owner-scoped）─────────────────
+
+@router.get("/refs")
+async def list_raster_refs(
+    session_id: str = Query(..., min_length=8, max_length=128),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    conv: Conversation = Depends(require_owned_session),
+):
+    from app.services.session_data import session_data_manager
+
+    refs = await session_data_manager.list_refs(session_id)
+    token = await _owned(session_id, owner_token, conv)
+    out = []
+    for ref_id in list(refs)[:32]:
+        res = await session_data_manager.get_ref_data(
+            session_id, ref_id, owner_token=token
+        )
+        if not res.success or not isinstance(res.data, dict):
+            continue
+        payload = res.data
+        path = payload.get("file_path") or payload.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        out.append({
+            "ref_id": ref_id,
+            "alias": refs.get(ref_id, ""),
+            "kind": payload.get("kind"),
+            # 未开文件头验证；选定后 descriptor 端点才做真实读取与披露。
+            "verified": False,
+        })
+    return {"success": True, "refs": out, "truncated": len(refs) > 32}
+
+
 # ─── 元数据 / 直方图 ───────────────────────────────────────────────────────
 
 @router.get("/descriptor/{ref_id}")

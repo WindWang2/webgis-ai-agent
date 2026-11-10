@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import io
-import math
 
 import numpy as np
 import pytest
@@ -228,7 +227,7 @@ async def test_commit_restores_style_and_two_layers_do_not_cross_color(
     assert receipt_a["state"] == "committed"
     spec_a = receipt_a["expression"]
     doc = await _read_mapspec(session_id)
-    layer_a = next(l for l in doc["layers"] if l["id"] == "layer-a")
+    layer_a = next(item for item in doc["layers"] if item["id"] == "layer-a")
     assert layer_a["raster_style"]["style_id"] == receipt_a["style_id"]
     assert layer_a["legend_spec"]["min"] == 0
     assert doc["sources"][source_id_for(ref)]["type"] == "numeric_raster"
@@ -239,7 +238,7 @@ async def test_commit_restores_style_and_two_layers_do_not_cross_color(
         expected_revision=receipt_a["mapspec_revision"],
     )
     doc2 = await _read_mapspec(session_id)
-    styles = {l["id"]: l["raster_style"]["style_id"] for l in doc2["layers"]}
+    styles = {item["id"]: item["raster_style"]["style_id"] for item in doc2["layers"]}
     assert styles["layer-a"] == spec_a["style_id"]
     assert styles["layer-b"] == receipt_b["style_id"]
     assert styles["layer-a"] != styles["layer-b"]
@@ -247,7 +246,7 @@ async def test_commit_restores_style_and_two_layers_do_not_cross_color(
     assert (await resolve_committed_expression(session_id, "layer-a")).spec.style_id == spec_a["style_id"]
     # 刷新 = 重新读权威 MapSpec，恢复同一表达
     reloaded = await _read_mapspec(session_id)
-    assert next(l for l in reloaded["layers"] if l["id"] == "layer-a")["raster_style"] == layer_a["raster_style"]
+    assert next(item for item in reloaded["layers"] if item["id"] == "layer-a")["raster_style"] == layer_a["raster_style"]
 
 
 @pytest.mark.asyncio

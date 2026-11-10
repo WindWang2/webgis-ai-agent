@@ -1,7 +1,7 @@
 """G20 渲染投影：规范表达 → 真实瓦片参数 / 有界单幅快照。"""
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import numpy as np
 

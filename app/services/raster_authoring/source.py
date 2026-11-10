@@ -199,9 +199,7 @@ async def resolve_source(
                 raw = json.loads(raw)
             except ValueError:
                 pass
-        data = raw
-        res_data = data
-        res_error_type = None
+        res_data = raw
     else:
         res = await session_data_manager.get_ref_data(
             session_id, ref_id, owner_token=owner_token

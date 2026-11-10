@@ -102,7 +102,8 @@ def _layer_payload(layer_id: str, sid: str, spec: RasterExpressionSpec,
 def _receipt(*, spec: RasterExpressionSpec, source: RasterSource, legend: Dict[str, Any],
              statement: Dict[str, Any], layer_id: str, sid: str, committed: bool,
              revision: Optional[int] = None, mutations: int = 0,
-             mapspec_fingerprint: Optional[str] = None) -> Dict[str, Any]:
+             mapspec_fingerprint: Optional[str] = None,
+             mapspec: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {
         "success": True,
         "committed": committed,
@@ -112,6 +113,9 @@ def _receipt(*, spec: RasterExpressionSpec, source: RasterSource, legend: Dict[s
         "ref_id": source.ref_id,
         "mapspec_revision": revision,
         "mapspec_fingerprint": mapspec_fingerprint,
+        # 与既有 user-mutation 通道同款：回灌权威文档让 live map 立即 reconcile，
+        # 而不是等下一条 SSE（否则「提交成功但地图仍旧」）。
+        **({"mapspec": mapspec} if isinstance(mapspec, dict) else {}),
         "mutations": mutations,
         # ① 数据版本 ② 表达版本 ③ 统计口径 ④ 提交状态
         "data_revision": spec.data_revision,
@@ -203,7 +207,9 @@ async def commit_expression(
 ) -> Dict[str, Any]:
     """一次可恢复的持久提交（同源双层互不串色；样式+图例原子一致）。"""
     from app.services.gis_world_state.mutation import apply_gis_mutation
-    from app.services.mapspec.intents import UpsertLayerIntent, UpsertSourceIntent
+    from app.services.mapspec.intents import (
+        InitProjectIntent, UpsertLayerIntent, UpsertSourceIntent,
+    )
 
     source = await resolve_source(
         session_id, ref_id, owner_token, trusted_dispatch=trusted_dispatch
@@ -213,12 +219,23 @@ async def commit_expression(
     statement = expression_statement(spec, source)
     sid = source_id_for(ref_id)
     mapspec = await _read_mapspec(session_id)
+    mutations = 0
+    revision = int(expected_revision)
+    # 全新会话尚无权威文档：先走既有 InitProjectIntent（同样受 CAS/锁保护），
+    # 否则 UpsertLayer 会产出缺 version 的文档，被前端版本协商门拒绝。
+    if not mapspec.get("version"):
+        init_result = await apply_gis_mutation(
+            session_id, InitProjectIntent(), origin=origin, actor=actor,
+            expected_revision=revision, engine=_engine(),
+        )
+        _apply_result_error(init_result)
+        revision = int(init_result.mutation_revision or revision)
+        mutations += 1
+        mapspec = await _read_mapspec(session_id)
     existing_layer = _find_layer(mapspec, layer_id)
     sources = mapspec.get("sources") or {}
     existing_source = sources.get(sid) if isinstance(sources, dict) else None
     entry = _source_entry(source)
-    mutations = 0
-    revision = int(expected_revision)
 
     # 首挂载 / 数据修订变化 → 先更新数据身份（不携带样式，不重算数据）。
     if not isinstance(existing_source, dict) or existing_source.get("dataRevision") != source.data_revision:
@@ -246,6 +263,7 @@ async def commit_expression(
         layer_id=layer_id, sid=sid, committed=True,
         revision=int(result.mutation_revision or revision), mutations=mutations,
         mapspec_fingerprint=result.mapspec_fingerprint,
+        mapspec=result.mapspec if isinstance(result.mapspec, dict) else None,
     )
 
 

@@ -78,7 +78,7 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
             return await coro
         except RasterExpressionError as exc:
             return error_payload(exc)
-        except Exception as exc:  # noqa: BLE001 - 工具错误契约
+        except Exception:  # noqa: BLE001 - 工具错误契约
             logger.warning("[raster_expression] tool failed", exc_info=True)
             return {
                 "success": False, "code": "RENDER_FAILED",
@@ -89,7 +89,6 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_raster_expression_describe",
-        capabilities=["raster_expression_inspect"],
         domains=["raster", "cartography"],
         tier=2,
         args_model=DescribeArgs,
@@ -102,6 +101,8 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
             "要改颜色/波段用 webgis_raster_expression_apply。"
         ),
         side_effect="cacheable_read",
+        # 内部会话数据源，不访问外部网络（registry 完整度闸要求显式声明）。
+        network=False,
         deterministic=True,
         latency_class="medium",
         memory_class="medium",
@@ -150,7 +151,6 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_raster_expression_apply",
-        capabilities=["raster_expression_apply"],
         domains=["raster", "cartography", "mapspec"],
         tier=2,
         args_model=ApplyArgs,
@@ -163,6 +163,7 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
             "webgis_raster_expression_probe。"
         ),
         side_effect="state_mutation",
+        network=False,
         deterministic=False,
         latency_class="slow",
         memory_class="medium",
@@ -226,7 +227,6 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_raster_expression_probe",
-        capabilities=["raster_expression_probe"],
         domains=["raster", "analysis"],
         tier=2,
         args_model=ProbeArgs,
@@ -237,6 +237,8 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
             "\n何时用：『告诉我点击位置各波段的原始值和单位』。"
         ),
         side_effect="cacheable_read",
+        # 内部会话数据源，不访问外部网络（registry 完整度闸要求显式声明）。
+        network=False,
         deterministic=True,
         latency_class="medium",
         memory_class="light",
@@ -285,7 +287,6 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_raster_expression_export",
-        capabilities=["raster_expression_export"],
         domains=["raster", "cartography"],
         tier=2,
         args_model=ExportArgs,
@@ -296,6 +297,7 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
             "PDF 明确拒绝而非静默丢层。"
         ),
         side_effect="state_mutation",
+        network=False,
         deterministic=False,
         latency_class="slow",
         memory_class="medium",
@@ -303,6 +305,7 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
         tags=("栅格", "导出", "单幅", "expression snapshot"),
         output_semantic_type="reference",
         result_size_policy="ref_offload",
+        produced_refs=("artifact",),
         required_context=("map_state",),
         failure_modes=("invalid_args", "superseded", "unsupported_format"),
     )

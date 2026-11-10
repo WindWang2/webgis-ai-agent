@@ -1,5 +1,7 @@
 "use client"
 import { useT } from '@/lib/i18n/useT';
+// G20：像元检视的地图点击广播（局部接线，不改既有交互）
+import { publishMapClick } from '@/lib/raster-authoring/map-click';
 import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from "react"
 import { AlertTriangle, RefreshCw } from "lucide-react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
@@ -1167,6 +1169,11 @@ export function MapPanel({
   const handleMapClick = useCallback((evt: any) => {
     const map = mapRef.current?.getMap()
     if (!map) return
+
+    // G20：像元检视订阅（只广播坐标，不改变下面的选择/测距/草图语义）。
+    if (Number.isFinite(evt?.lngLat?.lng) && Number.isFinite(evt?.lngLat?.lat)) {
+      publishMapClick([evt.lngLat.lng, evt.lngLat.lat])
+    }
 
     // V7：草图工具激活时点选语义归 SketchEditor（它通过 map.on('click')
     // 自行接管），这里不得再触发 POI/要素选择。

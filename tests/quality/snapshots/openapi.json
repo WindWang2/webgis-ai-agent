@@ -1072,6 +1072,18 @@
    },
    "Body_upload_files_api_v1_upload_post": {
     "properties": {
+     "attribution": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据归因/来源署名声明。随 license 一同进入语义身份证与产物台账",
+      "title": "Attribution"
+     },
      "crs": {
       "anyOf": [
        {
@@ -1098,6 +1110,18 @@
       },
       "title": "Files",
       "type": "array"
+     },
+     "license": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据许可证声明（如 CC-BY-4.0）。非空时进入数据集语义身份证（observed）；缺省如实 unknown，不虚构",
+      "title": "License"
      },
      "register_ref": {
       "default": false,
@@ -2554,6 +2578,52 @@
     "description": "GET /geocompute/cluster/workers 响应。",
     "properties": {},
     "title": "ClusterWorkersResponse",
+    "type": "object"
+   },
+   "CommitBody": {
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "expression": {
+      "additionalProperties": true,
+      "title": "Expression",
+      "type": "object"
+     },
+     "layer_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Layer Id",
+      "type": "string"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "expression",
+     "layer_id",
+     "expected_revision"
+    ],
+    "title": "CommitBody",
     "type": "object"
    },
    "ComponentPlacement": {
@@ -4379,6 +4449,30 @@
     "title": "ExploreStatusResponse",
     "type": "object"
    },
+   "ExportBody": {
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "format": {
+      "default": "png",
+      "pattern": "^(png|svg|pdf)$",
+      "title": "Format",
+      "type": "string"
+     }
+    },
+    "title": "ExportBody",
+    "type": "object"
+   },
    "ExportDiagnosticsResponse": {
     "additionalProperties": true,
     "description": "GET /export/diagnostics/{filename} 返回（sidecar 内容透传）。",
@@ -4464,6 +4558,39 @@
      "ref"
     ],
     "title": "ExportLineageInfo",
+    "type": "object"
+   },
+   "ExpressionBody": {
+    "properties": {
+     "expression": {
+      "additionalProperties": true,
+      "title": "Expression",
+      "type": "object"
+     },
+     "layer_id": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Layer Id"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "expression"
+    ],
+    "title": "ExpressionBody",
     "type": "object"
    },
    "FeatureEditPreviewRequest": {
@@ -4836,6 +4963,28 @@
      "agent_runtime": {
       "title": "Agent Runtime",
       "type": "string"
+     },
+     "agent_runtime_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Mode"
+     },
+     "agent_runtime_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Reason"
      },
      "pi_vendor": {
       "anyOf": [
@@ -9015,6 +9164,19 @@
       "title": "Component Id",
       "type": "string"
      },
+     "component_type": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Component Type"
+     },
      "enabled": {
       "anyOf": [
        {
@@ -9759,6 +9921,68 @@
      "plan_id"
     ],
     "title": "PreviewResponse",
+    "type": "object"
+   },
+   "ProbeBody": {
+    "properties": {
+     "bands": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "integer"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bands"
+     },
+     "crs": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": "EPSG:4326",
+      "title": "Crs"
+     },
+     "data_revision": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Data Revision"
+     },
+     "points": {
+      "items": {},
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Points",
+      "type": "array"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "points"
+    ],
+    "title": "ProbeBody",
     "type": "object"
    },
    "ProfileRequest": {
@@ -14820,6 +15044,62 @@
     "title": "ToolsListResponse",
     "type": "object"
    },
+   "UndoAgentCommitBody": {
+    "description": "PR-D：撤销/重做一段 Agent 地图提交（Ctrl+Z 撤销整笔 Agent 提交）。\n\n``(base_revision, agent_revision]`` 必须是连续的 Agent 提交；服务端在锁内\n校验当前制图指纹（用户在其后有未撤销的改动 → 拒绝，不覆盖用户编辑）。",
+    "properties": {
+     "agent_revision": {
+      "minimum": 1.0,
+      "title": "Agent Revision",
+      "type": "integer"
+     },
+     "base_revision": {
+      "minimum": 0.0,
+      "title": "Base Revision",
+      "type": "integer"
+     },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "direction": {
+      "default": "undo",
+      "enum": [
+       "undo",
+       "redo"
+      ],
+      "title": "Direction",
+      "type": "string"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "undo_agent_commit",
+      "title": "Intent",
+      "type": "string"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision",
+     "base_revision",
+     "agent_revision"
+    ],
+    "title": "UndoAgentCommitBody",
+    "type": "object"
+   },
    "UnitConversionEvidence": {
     "additionalProperties": false,
     "description": "非米单位 → 米的显式换算证据（DECISIONS D2：不静默换算）。",
@@ -15242,6 +15522,18 @@
       ],
       "title": "Atlas Pages"
      },
+     "constraint_layout": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Constraint Layout"
+     },
      "filename": {
       "title": "Filename",
       "type": "string"
@@ -15387,6 +15679,18 @@
       "additionalProperties": true,
       "title": "Mapspec",
       "type": "object"
+     },
+     "page_profile": {
+      "anyOf": [
+       {
+        "maxLength": 32,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Profile"
      },
      "session_id": {
       "anyOf": [
@@ -20175,7 +20479,8 @@
           "set_scene": "#/components/schemas/SetSceneBody",
           "set_temporal_view": "#/components/schemas/SetTemporalViewBody",
           "set_time": "#/components/schemas/SetTimeBody",
-          "set_view": "#/components/schemas/SetViewBody"
+          "set_view": "#/components/schemas/SetViewBody",
+          "undo_agent_commit": "#/components/schemas/UndoAgentCommitBody"
          },
          "propertyName": "intent"
         },
@@ -20227,6 +20532,9 @@
          },
          {
           "$ref": "#/components/schemas/PatchWorkbenchDeltaBody"
+         },
+         {
+          "$ref": "#/components/schemas/UndoAgentCommitBody"
          }
         ],
         "title": "Req"
@@ -26896,7 +27204,7 @@
   },
   "/api/v1/export/diagnostics/{filename}": {
    "get": {
-    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。",
+    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。\nB-5（review-fix-rereview-20261108）：匿名会话导出主体是\n``session:<sid>`` —— 此前硬性 Bearer + user_id 比对把匿名导出者永远\n挡在门外（下载可走签名 URL，诊断面被认证模型锁死）。现与\n_export_principal 同源：session 主体凭 X-Session-Token 读取。",
     "operationId": "get_export_diagnostics_api_v1_export_diagnostics__filename__get",
     "parameters": [
      {
@@ -26906,6 +27214,22 @@
       "schema": {
        "title": "Filename",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],
@@ -37691,6 +38015,601 @@
     "tags": [
      "项目工作区",
      "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/descriptor/{ref_id}": {
+   "get": {
+    "operationId": "descriptor_api_v1_raster_authoring_descriptor__ref_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "逗号分隔的 1-based 波段",
+      "in": "query",
+      "name": "histogram_bands",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "逗号分隔的 1-based 波段",
+       "title": "Histogram Bands"
+      }
+     },
+     {
+      "in": "query",
+      "name": "buckets",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maximum": 64,
+         "minimum": 2,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Buckets"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Descriptor",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/export": {
+   "post": {
+    "description": "冻结一次 MapSpec 修订 → 真实 PNG / 离线可读 SVG → 受权下载引用。",
+    "operationId": "export_map_api_v1_raster_authoring_export_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExportBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Export Map",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/expression/commit": {
+   "post": {
+    "operationId": "commit_api_v1_raster_authoring_expression_commit_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CommitBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Commit",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/expression/preview": {
+   "post": {
+    "operationId": "preview_api_v1_raster_authoring_expression_preview_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExpressionBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/probe": {
+   "post": {
+    "operationId": "probe_api_v1_raster_authoring_probe_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ProbeBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Probe",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/refs": {
+   "get": {
+    "operationId": "list_raster_refs_api_v1_raster_authoring_refs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Raster Refs",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/tiles/{ref_id}/{z}/{x}/{y}.png": {
+   "get": {
+    "description": "用 layer 的已提交表达渲染 XYZ PNG。\n\n- 凭证由前端 ``buildTileTransformRequest`` 注入 header（URL 不含 owner token）；\n- ``style_id`` 与当前 MapSpec 比对，过期 URL 直接 409，不出旧像素；\n- 缓存身份含 (style_id, layer_id, data_revision)；复用 singleflight / epoch / ETag。",
+    "operationId": "styled_tile_api_v1_raster_authoring_tiles__ref_id___z___x___y__png_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "z",
+      "required": true,
+      "schema": {
+       "title": "Z",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "x",
+      "required": true,
+      "schema": {
+       "title": "X",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "y",
+      "required": true,
+      "schema": {
+       "title": "Y",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "style_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 8,
+       "title": "Style Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     },
+     {
+      "in": "header",
+      "name": "If-None-Match",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "If-None-Match"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Styled Tile",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
     ]
    }
   },

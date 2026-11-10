@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.schemas.raster_spec import (
     RASTER_EXPRESSION_SCHEMA_VERSION,
-    RASTER_EXPRESSION_MODES,
     RASTER_RESAMPLINGS,
     RasterExpressionError,
     RasterExpressionSpec,
