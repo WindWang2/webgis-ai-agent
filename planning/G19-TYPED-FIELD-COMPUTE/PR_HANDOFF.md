@@ -46,7 +46,7 @@
 
 | 类 | 结果 |
 |---|---|
-| 后端定向 | **82 passed（35.12s）= 核心 44 + 评审修复 24 + API 8 + Pi 工具 6**，单进程 `--no-cov --basetemp` |
+| 后端定向 | **83 passed（47.71s）= 核心 44 + 评审修复 25 + API 8 + Pi 工具 6**，单进程 `--no-cov --basetemp` |
 | 契约门禁 | **23 passed**（OpenAPI 快照 / api-docs drift / 端点矩阵） |
 | 前端定向 | **21 passed**（组件 8 + 错误信封解析 3 + i18n 键完整性 10），threads pool 单 worker |
 | 静态 | `ruff check` All checks passed；`tsc --noEmit` 新增文件 0 错误（8 个既有 `scene3d/*`）；ESLint 新增文件 0 警告；i18n 143/143；`git diff --check` 通过 |

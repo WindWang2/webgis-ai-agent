@@ -101,7 +101,7 @@
 
 | 项目 | 结果 |
 |---|---|
-| 后端 G19 全量 | **82 passed**（44 + 24 + 8 + 6，35.12s） |
+| 后端 G19 全量 | **83 passed**（44 + 25 + 8 + 6，47.71s） |
 | 契约门禁 | **23 passed**（29.42s） |
 | 前端 | **21 passed**（组件 8 + 错误解析 3 + i18n 10） |
 | 静态 | `ruff` All checks passed；`tsc` 新增 0 错误；ESLint 0 警告；i18n 143/143；`git diff --check` 通过 |
@@ -116,7 +116,7 @@
   3. 稳定键回滚 — `drop_published` 按 stable_key 删除、`_rollback_unpublished` 失败写 `STABLE_KEY_ROLLBACK_FAILED`（通过）。
   4. 测试证据 — ring 失败用例真走 `_append_sync`、并发取消用例真跑两任务；组件两项真断言行为（通过）。
 - 3 条 P3 建议，**已全部落实**：
-  1. 幂等短路前先 `_check_cancel`，避免排队期间已取消却被判成功；
+  1. 幂等短路前先 `_check_cancel`，避免排队期间已取消却被判成功；命中取消时转成 typed `CANCELLED` 并写回计划状态（补 `test_idempotent_hit_respects_cancel`）；
   2. 升级失败降级回写台账（`append_receipt`），重开/查询也看到真实状态；
   3. `drop_published` 同时撤除 ring 记录（否则 fallback 仍命中已撤销成果），并补成功删除路径用例；ring 失败用例增加「抛错前稳定键已存在」断言，防假通过。
 

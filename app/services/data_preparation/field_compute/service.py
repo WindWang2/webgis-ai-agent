@@ -486,7 +486,12 @@ async def _execute_locked(plan: ComputePlan, session_id: str,
         if existing is not None:
             # 取消意图优先于幂等短路：排队执行期间用户已取消时，不能因为
             # 「成果已存在」就把这次提交判成成功（否则取消被静默吞掉）。
-            _check_cancel(cancel_key)
+            try:
+                _check_cancel(cancel_key)
+            except OperationCancelled as exc:
+                plan.state = "cancelled"
+                await store.save_plan(plan)
+                raise ExecError("CANCELLED", str(exc)[:200]) from exc
             return await _maybe_upgrade_project(
                 existing, session_id, project_id, plan)
 

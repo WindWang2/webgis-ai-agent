@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 
 import pytest
 
@@ -482,6 +483,25 @@ class TestCancelOwnerLocks:
         assert service._CANCEL_REQUESTS == {}
         again = await service.execute(plan.plan_id, sid)
         assert again.output_ref == receipt.output_ref
+
+    async def test_idempotent_hit_respects_cancel(self):
+        """幂等短路前必须尊重取消意图（排队期间已取消不得判成功）。"""
+        sid = "sess-fc-rev-cancel-idem"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        first = await service.execute(plan.plan_id, sid)
+        assert first.output_ref.startswith("ref:fc-")
+        key = service._cancel_key(sid, plan.plan_id)
+        service._mark_active(key)             # 模拟排队中被用户取消
+        service._CANCEL_REQUESTS[key] = time.monotonic()
+        try:
+            with pytest.raises(ExecError) as ei:
+                await service.execute(plan.plan_id, sid)
+            assert ei.value.code == "CANCELLED"
+        finally:
+            service._CANCEL_REQUESTS.pop(key, None)
+            service._unmark_active(key)
 
     async def test_preview_allowed_after_cancel(self):
         sid = "sess-fc-rev-cancel-preview"

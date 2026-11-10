@@ -48,10 +48,10 @@
 | 项 | 结果 |
 |---|---|
 | `pytest tests/data/test_field_compute_v1.py -q --no-cov` | **44 passed** |
-| `pytest tests/data/test_field_compute_review_v1.py -q --no-cov` | **24 passed**（三轮独立评审修复的针对性回归） |
+| `pytest tests/data/test_field_compute_review_v1.py -q --no-cov` | **25 passed**（三轮独立评审修复的针对性回归） |
 | `pytest tests/data/test_field_compute_api_v1.py -q --no-cov` | **8 passed**（真实 ASGI 路由 + 鉴权 + cancel 端点） |
 | `pytest tests/unit/test_field_compute_tools_v1.py -q --no-cov` | **6 passed**（真实 `ToolRegistry.dispatch`） |
-| 四份合并复跑 | **82 passed（35.12s）= 44 + 24 + 8 + 6** |
+| 四份合并复跑 | **83 passed（47.71s）= 44 + 25 + 8 + 6** |
 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q --no-cov` | **23 passed**（刷新生成物 + schema 消歧修复后） |
 | `vitest run <组件 + 错误解析 + i18n 门禁> --pool=threads --maxWorkers=1` | **21 passed**（组件 8 + 错误解析 3 + i18n 键完整性 10） |
 | `ruff check`（全部新增/改动 Python） | All checks passed |

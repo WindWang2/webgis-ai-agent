@@ -15,10 +15,10 @@
 | 项 | 命令 | 结果 |
 |---|---|---|
 | 核心回归（IR/解释器/服务层） | `pytest tests/data/test_field_compute_v1.py -q --no-cov -p no:cacheprovider` | **44 passed**（`--collect-only` 实测 44 用例；含 selection 过期/可靠命中） |
-| 独立评审修复回归 | `pytest tests/data/test_field_compute_review_v1.py -q --no-cov -p no:cacheprovider` | **24 passed**：原 12 项（OpenAPI 短名、时区、项目保存失败、收据闸门、幂等升级、computed_rows、abort 几何、取消、owner、ring/manifest、弱引用锁）+ 第二轮 5 项（发布面探测、最终 upsert 失败回滚、升级清除 `PROJECT_SAVE_FAILED`、执行中取消、空闲/已结束取消不污染）+ 第三轮 7 项（稳定键写失败不发布、ring 失败删稳定键、`drop_published` 成功路径、回滚残留披露、升级失败降级、引用计数、排队取消不丢） |
+| 独立评审修复回归 | `pytest tests/data/test_field_compute_review_v1.py -q --no-cov -p no:cacheprovider` | **25 passed**：原 12 项（OpenAPI 短名、时区、项目保存失败、收据闸门、幂等升级、computed_rows、abort 几何、取消、owner、ring/manifest、弱引用锁）+ 第二轮 5 项（发布面探测、最终 upsert 失败回滚、升级清除 `PROJECT_SAVE_FAILED`、执行中取消、空闲/已结束取消不污染）+ 第三轮 8 项（稳定键写失败不发布、ring 失败删稳定键、`drop_published` 成功路径、回滚残留披露、升级失败降级、引用计数、排队取消不丢、幂等短路尊重取消） |
 | API 路由层（真实 ASGI + 鉴权） | `pytest tests/data/test_field_compute_api_v1.py -q --no-cov -p no:cacheprovider` | **8 passed（32.47s）**：catalog/越权 404/describe→plan→preview→execute→result→项目清单/typed 422/stale 409 + cancel 端点 2 项（不存在计划 typed 404；空闲/已结束 `cancelled=false` 且不影响后续执行） |
 | Pi 工具面（真实 `ToolRegistry.dispatch`） | `pytest tests/unit/test_field_compute_tools_v1.py -q --no-cov -p no:cacheprovider` | **6 passed（79.18s）** |
-| 全量 G19 后端合并复跑 | `pytest <4 个文件> -q --no-cov -p no:cacheprovider --basetemp=<tmp>` | **82 passed（35.12s）= 44 + 24 + 8 + 6**（第三轮复审新增 5 项） |
+| 全量 G19 后端合并复跑 | `pytest <4 个文件> -q --no-cov -p no:cacheprovider --basetemp=<tmp>` | **83 passed（47.71s）= 44 + 25 + 8 + 6**（第三轮复审新增 6 项） |
 | API 契约门禁 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q --no-cov` | 首轮 3 failed（生成物过期）→ 刷新生成物后 **23 passed（70.73s）** |
 | 生成物刷新 | `API_SNAPSHOT_UPDATE=1 pytest tests/quality/test_api_compatibility.py::test_snapshot_matches_and_no_breaking_changes`；`python scripts/gen_api_docs.py`；`python scripts/generate_endpoint_scope_matrix.py` | 快照/api-docs/矩阵三个生成物全部随本 PR 提交 |
 | 契约帮助文档 | `python app/services/data_preparation/field_compute/gen_help.py` | 由 `function_help()` + `contracts` + `CANONICAL_UNITS` 生成 `docs/field-compute-contract.md`（46 行表格） |
