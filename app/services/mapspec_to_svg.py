@@ -1928,6 +1928,11 @@ def compile_mapspec_to_svg_detailed(
                                         "kind": _lkind,
                                         "x": _ax,
                                         "y": _ay,
+                                        # R2-P3：callout 引线端点 = 原始要素
+                                        # 锚点（非 pin 位移不改锚 —— 位移只
+                                        # 是标签放置的搜索基准）。
+                                        "anchor_x": float(x),
+                                        "anchor_y": float(y),
                                         "angle": _alang,
                                         "font_px": base_size * dpi_scale,
                                         "font_size_attr": font_size,
@@ -2172,7 +2177,11 @@ def compile_mapspec_to_svg_detailed(
                         _bx1, _by1 = p.x, p.y
                     else:
                         _bx1, _by1 = p.x - _w_c / 2.0, p.y - _h_c / 2.0
-                    _ax_c, _ay_c = float(r["x"]), float(r["y"])
+                    _ax_c, _ay_c = (
+                        (float(r["anchor_x"]), float(r["anchor_y"]))
+                        if r.get("anchor_x") is not None and r.get("anchor_y") is not None
+                        else (float(r["x"]), float(r["y"]))
+                    )
                     _cx_c = _bx1 + _w_c / 2.0
                     _cy_c = _by1 + _h_c / 2.0
                     _dx_c, _dy_c = _cx_c - _ax_c, _cy_c - _ay_c

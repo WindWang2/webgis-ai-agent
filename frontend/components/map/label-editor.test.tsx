@@ -203,13 +203,18 @@ describe('LabelEditor R1 review fixes', () => {
     expect(commitLabelAuthoring).not.toHaveBeenCalled();
   });
 
-  it('P2-11：键盘微调 Enter 不双计（无已提交 offset 的标签）', async () => {
-    const { ref, handlers } = makeMapRef();
+  it('P2-11：键盘微调 Enter 不双计 —— 真实 bug 路径（无已提交 offset）', async () => {
+    // 旧缺陷只在目标**没有**已提交 offset 时触发（预览落入 pendingOffset
+    // 被当基准再加）。让 mock 返回 s2（spec 覆写只有 s1）。
+    const { ref, handlers, map } = makeMapRef();
+    map.queryRenderedFeatures = () => [{
+      layer: { id: 'schools-label' },
+      id: 's2',
+      properties: { name: '第二小学' },
+    }];
     act(() => useHudStore.getState().setActiveMapTool('edit_labels'));
     render(<LabelEditor mapRef={ref} />);
     const down = Array.from(handlers.get('mousedown') ?? [])[0] as never as (e: unknown) => void;
-    // 选中 s2（spec 覆写是 s1 的 —— mock queryRenderedFeatures 返回 s1；
-    // 直接验证 Enter 数学：预览 (0.25,0) 后 Enter 应提交 (0.25,0) 而非 (0.5,0)。
     act(() => down({ point: { x: 0, y: 0 }, lngLat: { lng: 116, lat: 39 } }));
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
@@ -219,7 +224,32 @@ describe('LabelEditor R1 review fixes', () => {
     });
     expect(commitLabelAuthoring).toHaveBeenCalledTimes(1);
     const [, ops] = commitLabelAuthoring.mock.calls[0];
-    // s1 有既有 offset (1,2)：Enter = 1+0.25（而非 1+0.25+0.25 双计）。
-    expect(ops[0].set.offset).toEqual({ dx: 1.25, dy: 2 });
+    // 无既有 offset：Enter = 0.25（而非 0.25+0.25=0.5 双计）。
+    expect(ops[0].featureId).toBe('s2');
+    expect(ops[0].set.offset).toEqual({ dx: 0.25, dy: 0 });
+  });
+
+  it('P2-11b：连续方向键跨 effect 重挂累计（nudge ref 存活）', async () => {
+    const { ref, handlers, map } = makeMapRef();
+    map.queryRenderedFeatures = () => [{
+      layer: { id: 'schools-label' },
+      id: 's2',
+      properties: { name: '第二小学' },
+    }];
+    act(() => useHudStore.getState().setActiveMapTool('edit_labels'));
+    render(<LabelEditor mapRef={ref} />);
+    const down = Array.from(handlers.get('mousedown') ?? [])[0] as never as (e: unknown) => void;
+    act(() => down({ point: { x: 0, y: 0 }, lngLat: { lng: 116, lat: 39 } }));
+    // 三次 ArrowRight（每次 setTarget → effect 重挂 —— 旧实现闭包清零）。
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      });
+    }
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    const [, ops] = commitLabelAuthoring.mock.calls[0];
+    expect(ops[0].set.offset).toEqual({ dx: 0.75, dy: 0 });
   });
 });

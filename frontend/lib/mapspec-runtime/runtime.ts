@@ -1819,6 +1819,18 @@ export class MapSpecRuntime {
         },
       });
     }
+    // R2-P2：表达式不可达覆写（>3 解析键 / 危险 match 字面量）—— 点名
+    // 披露，绝不静默丢（含同组连坐的兄弟覆写）。
+    if (proj.unprojectable.length > 0) {
+      this.pushLabelEvent({
+        layerId: layer.id, kind: "authoring",
+        detail: {
+          unprojectable: proj.unprojectable.slice(0, 16),
+          unprojectable_count: proj.unprojectable.length,
+          hint: "identity keys exceeded 3 groups or unsafe match literal",
+        },
+      });
+    }
   }
 
   /** G16：pinned 标注子层（${id}-label-pinned）挂/卸。 */

@@ -523,3 +523,24 @@ class TestReviewR1NonPinnedOffset:
             labels_cfg={"collision": "deterministic"}))
         assert moved.svg != base.svg
         assert "第一小学" in moved.svg
+
+
+class TestReviewR2CalloutAnchor:
+    def test_non_pinned_callout_starts_at_feature_anchor(self):
+        # R2-P3：非 pin 的 callout+offset —— 引线起点 = 要素锚点（位移
+        # 只改标签放置基准，不改要素位置）。
+        spec = _schools_spec(
+            overrides=[{"featureId": "s1", "callout": True,
+                        "offset": {"dx": 3.0, "dy": 3.0}}],
+            labels_cfg={"collision": "deterministic"},
+        )
+        out = compile_mapspec_to_svg_detailed(spec)
+        import re as _re
+        line = _re.search(
+            r'<line x1="([0-9.]+)" y1="([0-9.]+)" x2="([0-9.]+)" y2="([0-9.]+)"', out.svg)
+        assert line, "callout line not found"
+        # 圆符号锚点（唯一要素居中投影）与 line 起点一致 —— 用 circle cx/cy 对账。
+        circle = _re.search(r'<circle cx="([0-9.]+)" cy="([0-9.]+)"', out.svg)
+        assert circle
+        assert abs(float(line.group(1)) - float(circle.group(1))) < 60 * 4.167 + 1
+        assert abs(float(line.group(2)) - float(circle.group(2))) < 60 * 4.167 + 1

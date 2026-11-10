@@ -226,8 +226,10 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
   useEffect(() => {
     if (!active || !target?.pendingOffset) return;
     return registerEscapeHandler(40, () => {
-      // 取消 = 丢弃预览 + 标记拖动中止（mouseup 零提交）。
+      // 取消 = 丢弃预览 + 标记拖动中止（mouseup 零提交）+ 清 startPx
+      // （后续 move 不再复活预览）。
       dragState.current.cancelled = true;
+      dragState.current.startPx = null;
       setTarget((prev) => (prev ? { ...prev, pendingOffset: null } : null));
       return true;
     });

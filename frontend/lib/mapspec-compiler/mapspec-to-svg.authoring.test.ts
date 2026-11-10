@@ -148,3 +148,28 @@ describe('TS 孪生 label authoring 导出（G16）', () => {
     expect(plain).toBe(emptyOverrides);
   });
 });
+
+describe('TS 孪生 authoring 披露（R2）', () => {
+  it('orphan/stale/pinned_conflict 诊断经 onDiagnostic 上报（Python 孪生）', () => {
+    const diags: Array<[string, string]> = [];
+    const spec = schoolsSpec(
+      [{ featureId: 'ghost', text: '幽灵' }, { featureId: 's1', pinned: true, offset: { dx: 0.1, dy: 0.1 } }],
+      { collision: 'deterministic' });
+    spec.sources.schools.inlineData.features = [
+      pt('s1', 116.44, 39.96, '第一小学'),
+      pt('s2', 116.46, 39.96, '第二小学'),
+    ];
+    spec.sources.schools.content_revision = 5;
+    (spec.layers[0].label as { authoring: { overrides: unknown[] } }).authoring.overrides.push(
+      { featureId: 's2', hidden: true, sourceRevision: 1 });
+    const svg = compileMapSpecToSvg(spec as never, {
+      ...OPTS,
+      onDiagnostic: (code: string, detail: string) => { diags.push([code, detail]); },
+    });
+    const codes = diags.map(([c]) => c);
+    expect(codes).toContain('label_authoring_orphan');
+    expect(codes).toContain('label_authoring_stale');
+    expect(codes).toContain('label_authoring_applied');
+    expect(svg).not.toContain('幽灵');
+  });
+});

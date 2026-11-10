@@ -1260,6 +1260,9 @@ function compileMapSpecToSvgBody(
               kind: lkind,
               x: a.x + autoShift.x,
               y: a.y + autoShift.y,
+              // R2-P3：callout 端点 = 原始要素锚点（Python 孪生）。
+              anchorX: a.x,
+              anchorY: a.y,
               angle: a.angle,
               fontPx: baseSize * dpiScale,
               fontSizeAttr: fontSize,
@@ -1414,7 +1417,7 @@ function compileMapSpecToSvgBody(
         const [wc, hc] = estimateLabelBox(r.text, fs);
         const bx1 = r.kind === "point" ? p.x : p.x - wc / 2;
         const by1 = r.kind === "point" ? p.y : p.y - hc / 2;
-        const axC = Number(r.x), ayC = Number(r.y);
+        const axC = Number(r.anchorX ?? r.x), ayC = Number(r.anchorY ?? r.y);
         const cxC = bx1 + wc / 2, cyC = by1 + hc / 2;
         const dxC = cxC - axC, dyC = cyC - ayC;
         let tEdge = 1;
