@@ -337,7 +337,7 @@ class TestPlan:
 
     def test_derive_changes_same_path_for_commit(self):
         fc, _ = self._ctx()
-        deltas, schema_ops, findings, _ = derive_changes(
+        deltas, schema_ops, findings, _, lineage = derive_changes(
             fc, [{"op": "set_fields", "fields": {"type": "小学"}}],
             [f["properties"][WFID_PROP] for f in fc["features"]], {},
         )

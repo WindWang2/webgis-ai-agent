@@ -130,11 +130,14 @@ async def _save_journal(session_id: str, journals: Dict[str, EditJournal], ref_i
 
 
 def _receipt(entry: JournalEntry, stamp_status: str = "pending", mapspec_revision: Optional[int] = None) -> EditReceipt:
-    return {
+    deltas = entry.get("deltas") or []
+    created_wfids = [d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "created"]
+    retired_wfids = [d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "removed"]
+    receipt: EditReceipt = {
         "entry_seq": entry.get("seq"),
         "kind": entry.get("kind"),
         "ref_id": entry.get("ref_id"),
-        "changed_wfids": list(dict.fromkeys(d.get("wfid") for d in entry.get("deltas") or []))[:64],
+        "changed_wfids": list(dict.fromkeys(d.get("wfid") for d in deltas))[:64],
         "schema_ops": entry.get("schema_ops") or [],
         "content_revision_after": entry.get("content_revision_after"),
         "fingerprint_after": entry.get("fingerprint_after"),
@@ -145,6 +148,12 @@ def _receipt(entry: JournalEntry, stamp_status: str = "pending", mapspec_revisio
         "stamp_status": stamp_status,
         "mapspec_revision": mapspec_revision,
     }
+    if created_wfids or retired_wfids:
+        receipt["created_wfids"] = [w for w in created_wfids if w][:64]
+        receipt["retired_wfids"] = [w for w in retired_wfids if w][:64]
+    if entry.get("lineage"):
+        receipt["lineage_events"] = entry["lineage"][:8]
+    return receipt
 
 
 def _head_summary(journal: EditJournal) -> JournalHeadSummary:
@@ -237,8 +246,9 @@ async def commit_plan(
         for target_ref in _prefetch_target_refs(plan.get("ops") or []):
             target_payload, _ = await _load_ref(session_id, target_ref)
             target_payloads[target_ref] = target_payload
-        deltas, schema_ops, derive_findings, _ = derive_changes(
-            fc, plan.get("ops") or [], plan.get("target_wfids") or [], target_payloads
+        deltas, schema_ops, derive_findings, _, lineage_events = derive_changes(
+            fc, plan.get("ops") or [], plan.get("target_wfids") or [], target_payloads,
+            plan_seed=plan_id,
         )
         if derive_findings:
             # 数据在预览后仍变了内容形态（同指纹不应发生——防御面）。
@@ -254,6 +264,24 @@ async def commit_plan(
             new_payload: Any = {**payload, "geojson": new_fc}
         else:
             new_payload = new_fc
+
+        # G14/WP06：提交期拓扑复核（预览已查；指纹 CAS 后仍复核 = 防御面，
+        # 规则声明随载荷走 —— envelope 变化即数据变化，由上方 CAS 拒绝）。
+        from app.services.feature_edit.topology import check_topology, extract_topology_declaration
+
+        topology_declaration = extract_topology_declaration(payload)
+        if topology_declaration.get("rules") and deltas:
+            affected = list(
+                set(plan.get("target_wfids") or [])
+                | {d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "created"}
+            )
+            topo_findings = check_topology(new_fc, [w for w in affected if w], topology_declaration)
+            if topo_findings:
+                raise FeatureEditBlocked(
+                    "topology_violation",
+                    "edit violates the dataset's declared topology rules",
+                    {"findings": topo_findings[:8]},
+                )
 
         fp_after = compute_payload_fingerprint(new_payload)
         # 链指纹定义在「物化后空间」：物化是一次性数据集身份升级（首次编辑
@@ -323,6 +351,8 @@ async def commit_plan(
             "content_revision_after": current_revision,  # overwrite 后更新
             "created_at": time.time(),
         }
+        if lineage_events:
+            entry["lineage"] = lineage_events[:8]
         journals[ref_id] = append_entry(journal, entry)
         ok = await session_data_manager.overwrite(session_id, ref_id, new_payload)
         if not ok:

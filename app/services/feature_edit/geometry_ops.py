@@ -26,7 +26,7 @@ import math
 from typing import Any, Dict, List, Optional, Tuple
 
 from shapely.geometry import mapping, shape
-from shapely.ops import nearest_points, transform as shapely_transform
+from shapely.ops import nearest_points, transform as shapely_transform, split as shapely_split, unary_union
 from shapely.strtree import STRtree
 from shapely.validation import make_valid
 
@@ -37,6 +37,7 @@ from app.services.feature_edit.contracts import (
     WFID_PROP,
     finding,
 )
+from app.services.feature_edit.identity import wfid_for_created
 from app.services.feature_edit.journal import MAX_GEOMETRY_POSITIONS, count_positions
 
 __all__ = [
@@ -44,6 +45,9 @@ __all__ = [
     "move_by",
     "snap_to_ref",
     "geodesic_distance_m",
+    "replace_geometry",
+    "split_feature",
+    "merge_features",
 ]
 
 _GEOD = None
@@ -356,3 +360,344 @@ def snap_to_ref(
         "tolerance_m": tolerance_m,
     }
     return deltas, findings, summary
+
+# ─── G14：replace_geometry / split_feature / merge_features ────────────────
+
+def _base_geom_type(geom: BaseGeometry) -> str:
+    """几何基类型（Multi 折叠到单型面：Point/LineString/Polygon）。"""
+    name = geom.geom_type
+    if name.startswith("Multi") or name == "GeometryCollection":
+        return name[5:] if name.startswith("Multi") else "Geometry"
+    return name
+
+
+def _parse_geometry(raw: Any) -> Tuple[Optional[BaseGeometry], Optional[EditFinding]]:
+    """输入几何解析（畸形 → invalid_geometry finding，不抛异常）。"""
+    if not isinstance(raw, dict) or not isinstance(raw.get("type"), str):
+        return None, finding("invalid_geometry", "geometry must be a GeoJSON geometry object")
+    try:
+        geom = shape(raw)
+    except Exception:
+        return None, finding("invalid_geometry", "geometry coordinates are malformed")
+    if geom.is_empty:
+        return None, finding("invalid_geometry", "geometry is empty")
+    return geom, None
+
+
+def replace_geometry(
+    fc: GeoJSONFeatureCollection,
+    wfids: set,
+    geometry: Any,
+) -> Tuple[List[FeatureDelta], List[EditFinding]]:
+    """整几何替换（顶点编辑的提交面：前端手势结束时给最终几何，一次一计划）。
+
+    类型守卫：新几何基类型必须与目标既有基类型一致（Point↔Point、
+    Line↔Line（含 Multi）、Polygon↔Polygon（含 Multi））—— 跨基类型变形
+    属不同语义（typed 拒绝，不允许静默变类）。有效性走 _validate_after。
+    """
+    findings: List[EditFinding] = []
+    geom, bad = _parse_geometry(geometry)
+    if bad is not None:
+        return [], [bad]
+    targets, guard_findings = _common_guards(fc, wfids)
+    if guard_findings:
+        return [], guard_findings
+    deltas: List[FeatureDelta] = []
+    for wfid, feature, _positions in targets:
+        existing = feature.get("geometry")
+        if not isinstance(existing, dict):
+            findings.append(finding("invalid_geometry", "existing geometry unparseable", wfid=wfid))
+            continue
+        try:
+            existing_geom = shape(existing)
+        except Exception:
+            findings.append(finding("invalid_geometry", "existing geometry unparseable", wfid=wfid))
+            continue
+        if _base_geom_type(geom) != _base_geom_type(existing_geom):
+            findings.append(
+                finding(
+                    "geometry_type_mismatch",
+                    "replacement geometry base type differs from the feature",
+                    wfid=wfid,
+                    existing=_base_geom_type(existing_geom),
+                    replacement=_base_geom_type(geom),
+                )
+            )
+            continue
+        bad = _validate_after(geom)
+        if bad is not None:
+            findings.append({**bad, "wfid": wfid})
+            continue
+        new_geometry = _geometry_out(geom)
+        if new_geometry != existing:
+            deltas.append({"wfid": wfid, "geometry_before": existing, "geometry_after": new_geometry})
+    return deltas, findings
+
+
+def _validate_split_parts(parent: BaseGeometry, parts: List[BaseGeometry]) -> Optional[str]:
+    """分割结果的诚实性检查（<2 部分 = 未真正分割）。"""
+    if len(parts) < 2:
+        return "split_not_dividing"
+    if any(p.is_empty for p in parts):
+        return "split_not_dividing"
+    return None
+
+
+def _split_polygon_or_line(
+    geom: BaseGeometry, splitter: BaseGeometry
+) -> Tuple[Optional[List[BaseGeometry]], Optional[str]]:
+    """几何分割（shapely split；返回 (parts, reason)。
+
+    - Polygon：splitter 为 LineString —— 需贯穿外环；洞随所在部分保留
+      （split 是几何级操作，洞自动归属包含它的部分）。
+    - LineString：splitter 为 LineString/Point —— 交点切段。
+    - Multi：逐 part 分割，全部 parts 汇总；无任何 part 被分 → not dividing。
+    """
+    from shapely.geometry import MultiPolygon
+
+    try:
+        result = shapely_split(geom, splitter)
+    except Exception:
+        return None, "split_not_dividing"
+    parts = [g for g in getattr(result, "geoms", [result]) if not g.is_empty]
+    if geom.geom_type == "Polygon":
+        # shapely split 对洞的处理：交点在洞环上时结果可能重组 —— 以
+        # 「部分 ∪ = 原几何（容差内）」为不变量，逐部分保留洞。
+        return (parts if len(parts) >= 2 else None), (None if len(parts) >= 2 else "split_not_dividing")
+    if geom.geom_type == "MultiPolygon":
+        out: List[BaseGeometry] = []
+        divided_any = False
+        for part in geom.geoms:
+            sub = _split_polygon_or_line(part, splitter)
+            sub_parts, sub_reason = sub
+            if sub_parts is None:
+                out.append(part)  # 该 part 未被分割线穿过 —— 原样保留
+                continue
+            divided_any = True
+            out.extend(sub_parts)
+        if not divided_any:
+            return None, "split_not_dividing"
+        # 未命中的 part 与命中 parts 同级返回（调用方逐个建 child）
+        return out, None
+    if geom.geom_type in ("LineString", "MultiLineString"):
+        return (parts if len(parts) >= 2 else None), (None if len(parts) >= 2 else "split_not_dividing")
+    return None, "split_not_dividing"
+
+
+def split_feature(
+    fc: GeoJSONFeatureCollection,
+    wfid: str,
+    line: Any,
+    *,
+    plan_seed: str,
+    op_index: int,
+) -> Tuple[List[FeatureDelta], List[EditFinding], Optional[Dict[str, Any]]]:
+    """单要素分割：parent 退役（removed 快照）+ children 出生（继承字段）。
+
+    返回 (deltas, findings, lineage_event)。children 字段完整继承 parent
+    （显式规则；血缘 parent→children 记录在 lineage）。Point 不可分割
+    （typed 拒绝）。child wfid 由 (plan_seed, op_index, child_index)
+    决定性派生 —— redo/重放同身份。
+    """
+    findings: List[EditFinding] = []
+    splitter, bad = _parse_geometry(line)
+    if bad is not None:
+        return [], [bad], None
+    if splitter.geom_type not in ("LineString", "MultiLineString"):
+        return [], [finding("invalid_op", "split line must be a (Multi)LineString")], None
+    targets, guard_findings = _common_guards(fc, {wfid})
+    if guard_findings:
+        return [], guard_findings, None
+    if not targets:
+        return [], [finding("feature_not_found", "split target missing", wfid=wfid)], None
+    _w, feature, _positions = targets[0]
+    geometry = feature.get("geometry")
+    if not isinstance(geometry, dict):
+        return [], [finding("invalid_geometry", "target geometry unparseable", wfid=wfid)], None
+    try:
+        parent_geom = shape(geometry)
+    except Exception:
+        return [], [finding("invalid_geometry", "target geometry unparseable", wfid=wfid)], None
+    base = _base_geom_type(parent_geom)
+    if base == "Point":
+        return [], [finding("invalid_op", "point features cannot be split", wfid=wfid)], None
+    parts, reason = _split_polygon_or_line(parent_geom, splitter)
+    if parts is None:
+        return [], [
+            finding(
+                reason or "split_not_dividing",
+                "split line does not divide the target geometry into >=2 parts",
+                wfid=wfid,
+            )
+        ], None
+    # 每部分独立校验（洞保真由 shapely 结构保证；非法部分拒绝整单）
+    out_parts: List[BaseGeometry] = []
+    for part in parts:
+        bad = _validate_after(part)
+        if bad is not None:
+            return [], [{**bad, "wfid": wfid}], None
+        out_parts.append(part)
+    props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    parent_snapshot = copy_feature_snapshot(feature)
+    deltas: List[FeatureDelta] = [
+        {"wfid": wfid, "presence": "removed", "feature_before": parent_snapshot}
+    ]
+    children: List[str] = []
+    for child_index, part in enumerate(out_parts):
+        child_wfid = wfid_for_created(plan_seed, op_index, child_index)
+        child_props = {k: v for k, v in props.items()}
+        child_props[WFID_PROP] = child_wfid
+        child_feature = {
+            "type": "Feature",
+            "geometry": _geometry_out(part),
+            "properties": child_props,
+        }
+        deltas.append(
+            {"wfid": child_wfid, "presence": "created", "feature_after": child_feature}
+        )
+        children.append(child_wfid)
+    lineage = {"kind": "split", "parent_wfids": [wfid], "child_wfids": children}
+    return deltas, findings, lineage
+
+
+def merge_features(
+    fc: GeoJSONFeatureCollection,
+    wfids: List[str],
+    field_policy: Dict[str, Any],
+    *,
+    plan_seed: str,
+    op_index: int,
+) -> Tuple[List[FeatureDelta], List[EditFinding], Optional[Dict[str, Any]]]:
+    """同类要素合并：parents 全退役 + 单一 child 出生（unary_union）。
+
+    字段继承（显式规则，op summary 披露差异面）：
+    - mode=first（缺省）：按 wfids 列出顺序取第一个非缺失值；与后续父要素
+      不同的字段列入 summary.conflict_fields（可见，不静默）。
+    - mode=require_identical：任一字段在父要素间不一致 → merge_conflict
+      finding（除非 overrides 显式给值）。
+    合并结果必须单部分（Polygon/LineString/Point；Multi 结果 = 不相邻
+    → merge_disjoint 拒绝）。Line 合并用 linemerge 语义（unary_union 对
+    共端点线自动合并；分离线 → MultiLineString → 拒绝）。
+    """
+    findings: List[EditFinding] = []
+    wfid_set = set(wfids)
+    targets, guard_findings = _common_guards(fc, wfid_set)
+    if guard_findings:
+        return [], guard_findings, None
+    if len(targets) < 2:
+        return [], [finding("invalid_op", "merge requires at least 2 target features")], None
+    by_wfid = {w: f for w, f, _p in targets}
+    ordered = [by_wfid[w] for w in wfids if w in by_wfid]
+    base_types = set()
+    for w, f, _p in targets:
+        geometry = f.get("geometry")
+        if not isinstance(geometry, dict):
+            return [], [finding("invalid_geometry", "merge target geometry unparseable", wfid=w)], None
+        try:
+            g = shape(geometry)
+        except Exception:
+            return [], [finding("invalid_geometry", "merge target geometry unparseable", wfid=w)], None
+        if g.is_empty:
+            return [], [finding("invalid_geometry", "merge target geometry is empty", wfid=w)], None
+        base_types.add(_base_geom_type(g))
+    if len(base_types) != 1:
+        return [], [
+            finding("merge_type_mixed", "merge targets mix geometry base types", types=sorted(base_types))
+        ], None
+    mode = (field_policy or {}).get("mode", "first")
+    overrides = (field_policy or {}).get("overrides") or {}
+    if mode not in ("first", "require_identical"):
+        return [], [finding("invalid_op", "field_policy.mode must be first|require_identical")], None
+    # 字段继承预演（差异面披露）
+    merged_props: Dict[str, Any] = {}
+    conflict_fields: List[str] = []
+    all_keys: List[str] = []
+    seen_keys = set()
+    for f in ordered:
+        props = f.get("properties") if isinstance(f.get("properties"), dict) else {}
+        for key in props:
+            if key not in seen_keys:
+                seen_keys.add(key)
+                all_keys.append(key)
+    for key in all_keys:
+        if key == WFID_PROP:
+            continue
+        values = [
+            (f.get("properties") or {}).get(key, _MISSING) for f in ordered
+        ]
+        present_vals = [v for v in values if v is not _MISSING]
+        if not present_vals:
+            merged_props[key] = None
+            continue
+        distinct = []
+        for v in present_vals:
+            if v not in distinct:
+                distinct.append(v)
+        if key in overrides:
+            merged_props[key] = overrides[key]
+            if len(distinct) > 1:
+                conflict_fields.append(key)
+            continue
+        if len(distinct) == 1:
+            merged_props[key] = distinct[0]
+            continue
+        # 多值
+        if mode == "require_identical":
+            findings.append(
+                finding(
+                    "merge_conflict",
+                    "field differs across merge parents and require_identical is set",
+                    field=key,
+                    values=[str(v)[:48] for v in distinct[:6]],
+                )
+            )
+            continue
+        merged_props[key] = distinct[0]  # first（按列出顺序）
+        conflict_fields.append(key)
+    if findings:
+        return [], findings, None
+    # 几何合并
+    geoms = [shape(f.get("geometry")) for f in ordered]
+    try:
+        union = unary_union(geoms)
+    except Exception:
+        return [], [finding("invalid_op", "geometry union failed")], None
+    if union.geom_type.startswith("Multi") or union.geom_type == "GeometryCollection":
+        return [], [finding("merge_disjoint", "merge result is multi-part (targets not adjacent)")], None
+    bad = _validate_after(union)
+    if bad is not None:
+        return [], [bad], None
+    child_wfid = wfid_for_created(plan_seed, op_index, 0)
+    merged_props[WFID_PROP] = child_wfid
+    child_feature = {
+        "type": "Feature",
+        "geometry": _geometry_out(union),
+        "properties": merged_props,
+    }
+    deltas: List[FeatureDelta] = [
+        {
+            "wfid": w,
+            "presence": "removed",
+            "feature_before": copy_feature_snapshot(f),
+        }
+        for w, f in zip(wfids, ordered)
+    ]
+    deltas.append({"wfid": child_wfid, "presence": "created", "feature_after": child_feature})
+    lineage = {"kind": "merge", "parent_wfids": [w for w in wfids if w in by_wfid], "child_wfids": [child_wfid]}
+    summary_extra = {"conflict_fields": conflict_fields[:24]} if conflict_fields else {}
+    return deltas, findings, {"lineage": lineage, "extra": summary_extra}
+
+
+class _Missing:
+    def __repr__(self) -> str:  # pragma: no cover — 调试可读性
+        return "<missing>"
+
+
+_MISSING = _Missing()
+
+
+def copy_feature_snapshot(feature: GeoJSONFeature) -> Dict[str, Any]:
+    """完整要素快照（undo 复活用；deep copy 隔离后续变更）。"""
+    import copy as _copy
+
+    return _copy.deepcopy(feature)

@@ -128,19 +128,64 @@ def apply_deltas_to_features(
 ) -> Tuple[List[GeoJSONFeature], List[str | None]]:
     """把 per-feature deltas 应用到 features（按 WFID_PROP 寻址）。
 
-    返回 (new_features, applied_wfids)。未命中的 wfid 跳过（调用方在
-    preview 阶段已保证存在；commit 阶段的偏差由指纹 CAS 兜底拒绝）。
+    G14 结构性语义（presence）：
+    - ``created``：feature_after 追加为新要素（同 wfid 已存在则跳过 ——
+      幂等重放/redo 不产生重复要素）；
+    - ``removed``：按 wfid 从集合中移除（undo 用完整快照复活）；
+    - 缺省 presence：原 update 语义（字段 + 几何替换）。
+
+    返回 (new_features, applied_wfids)。update 未命中的 wfid 跳过（调用方
+    在 preview 阶段已保证存在；commit 阶段的偏差由指纹 CAS 兜底拒绝）。
     copy-on-write：只有被命中的要素被复制。
     """
-    by_wfid = {
-        cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP): (i, f)
-        for i, f in enumerate(features)
-        if isinstance(f, dict)
-    }
     out = list(features)
     applied: List[str | None] = []
+    # 两遍：先移除（presence=removed），再更新/追加 —— 同一 plan 里删除与
+    # 更新不允许指向同一 wfid（plan 校验拒绝），顺序防御仅保证正确性兜底。
+    removed_wfids = {
+        d.get("wfid")
+        for d in deltas
+        if isinstance(d, dict) and d.get("presence") == "removed" and d.get("wfid")
+    }
+    if removed_wfids:
+        out = [
+            f
+            for f in out
+            if not (
+                isinstance(f, dict)
+                and cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP) in removed_wfids
+            )
+        ]
+        applied.extend(sorted(w for w in removed_wfids if w))
+    by_wfid = {
+        cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP): (i, f)
+        for i, f in enumerate(out)
+        if isinstance(f, dict)
+    }
     for delta in deltas:
+        if not isinstance(delta, dict):
+            continue
         wfid = delta.get("wfid")
+        presence = delta.get("presence")
+        if presence == "removed":
+            continue  # 已在第一遍处理
+        if presence == "created":
+            feature_after = delta.get("feature_after")
+            if (
+                isinstance(wfid, str)
+                and isinstance(feature_after, dict)
+                and wfid not in by_wfid
+            ):
+                new_feature = copy.deepcopy(feature_after)
+                props = new_feature.get("properties")
+                if not isinstance(props, dict):
+                    props = {}
+                    new_feature["properties"] = props
+                props[WFID_PROP] = wfid
+                out.append(new_feature)
+                by_wfid[wfid] = (len(out) - 1, new_feature)
+                applied.append(wfid)
+            continue
         hit = by_wfid.get(wfid)
         if hit is None:
             continue
@@ -168,6 +213,7 @@ def apply_deltas_to_features(
         if delta.get("geometry_after") is not None:
             new_feature["geometry"] = copy.deepcopy(delta["geometry_after"])
         out[i] = new_feature
+        by_wfid[wfid] = (i, new_feature)
         applied.append(wfid)
     return out, applied
 
@@ -212,9 +258,33 @@ def invert_schema_ops(schema_ops: List[RenameField]) -> List[RenameField]:
 
 
 def invert_deltas(deltas: List[FeatureDelta]) -> List[FeatureDelta]:
-    """per-feature deltas 的逆：before/after 互换。"""
+    """per-feature deltas 的逆：before/after 互换。
+
+    G14 结构性语义：created ↔ removed 互换（快照原样搬移，wfid 不变 ——
+    undo/redo 复用同一身份，绝不重新生成）。快照缺失的 malformed entry
+    按 update 逆处理（防御面：entry 由本服务构造，不应出现）。
+    """
     out: List[FeatureDelta] = []
     for delta in deltas or []:
+        presence = delta.get("presence")
+        if presence == "created":
+            out.append(
+                {
+                    "wfid": delta.get("wfid"),
+                    "presence": "removed",
+                    "feature_before": copy.deepcopy(delta.get("feature_after")),
+                }
+            )
+            continue
+        if presence == "removed":
+            out.append(
+                {
+                    "wfid": delta.get("wfid"),
+                    "presence": "created",
+                    "feature_after": copy.deepcopy(delta.get("feature_before")),
+                }
+            )
+            continue
         inv: FeatureDelta = {"wfid": delta.get("wfid")}
         fields = delta.get("fields")
         if isinstance(fields, dict):
