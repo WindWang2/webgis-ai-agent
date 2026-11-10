@@ -23,4 +23,13 @@ Verdict: **no P0; 1×P1 + 8×P2 + several P3**. Full coverage list included: one
 - MVT (>5000 feature) layers have no inline features → map gestures can't pick features; server-side ops still work (documented limitation).
 - `dataset_read_only` reserved code stays reserved (used `dataset_read_only_source`).
 
-## Round 2 (re-review): pending — see PR_HANDOFF for final verdict.
+## Round 2 (re-review of c0dc82393): found NEW blocking regression
+The P1 fix's collection-time upper bound (`index <= len(out)` after removals) mis-routed well-formed high removed-indices to the append path → multi-delete undo scrambled order → fingerprint 409 (35 failing patterns N≤8 scan vs 0 pre-fix). Also: `datasets._artifact_metadata` isinstance(dict) no-op; commit-time envelope recheck unreachable behind CAS (metadata window still open).
+
+## Round 3 (final verification of 4c1801382): **NON-BLOCKING — clear to merge**
+- Reviewer independently re-verified with own exhaustive sweep beyond the author's (N≤9, every subset size, in-order + 3 random delta shuffles, mixed delete+created shuffled, malformed-index clamp determinism): **0 order/fingerprint failures**; old no-presence journals degrade to update semantics.
+- Three genuine REST regressions verified (first-3-of-4 / scattered {1,4,5}-of-7 / tail {3,4}-of-5, exact wfid+name order, no 409).
+- `_artifact_metadata` fix verified; commit_plan metadata read_only mirror verified with correct FeatureEditBlocked passthrough; promote non-dict guard = typed INVALID_FEATURES.
+- Full suite 123 passed (reviewer reproduced).
+- Remaining known limitations = accepted P3s (m²→deg² lon-only approx, per-op MAX_CREATED naming, MVT edit gating, Multi* hit-testing) — none blocking. Verdict: "Ship it."
+
