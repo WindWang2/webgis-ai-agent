@@ -68,7 +68,7 @@ RUN cd vendor/pi && npm ci --no-audit --no-fund && npm run build \
 # Stage 3: Backend Python Dependencies
 # 与 .python-version / requirements.lock 及下方 site-packages COPY 保持 3.12；
 # bookworm 与 GDAL runtime 包名及 node-runtime 的 glibc 基线一致。
-FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS backend-deps
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS backend-deps
 WORKDIR /app/backend
 
 # Install GDAL/GEOS/PROJ system libraries required by rasterio, pyogrio, geopandas
@@ -84,7 +84,7 @@ RUN pip install --no-cache-dir --break-system-packages \
     && uv pip install --system --no-cache -r requirements.lock
 
 # Stage 4: Final Runner
-FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runner
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS runner
 WORKDIR /app/backend
 
 # #662：生产容器离线加载 RAG embedding 模型 —— 未缓存时首用秒级失败（有界），
