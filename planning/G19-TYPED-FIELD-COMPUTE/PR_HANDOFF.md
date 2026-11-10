@@ -1,14 +1,14 @@
 # G19-TYPED-FIELD-COMPUTE — PR_HANDOFF
 
-> PR URL 在 `gh pr create` 成功后回填；此处不预填任何链接。
+> PR 已创建；复审结论回填后刷新 PR 正文与 head SHA。
 
 | 项 | 内容 |
 |---|---|
-| PR URL | 待填（真实 `gh pr create` 返回值） |
+| PR URL | https://github.com/WindWang2/webgis-ai-agent/pull/2074 （`gh pr create` 真实返回值） |
 | branch | `zcode/goal-g19-typed-field-compute-20261110T131120Z` |
 | worktree | `C:/Users/wangj.KEVIN/projects/webgis-worktrees/goal-g19-typed-field-compute-20261110T131120Z` |
 | base SHA | `816705218a5aa6202bf15d745cb31cddb3437f44`（`origin/master`，PR 前再次 fetch 确认未前进） |
-| head SHA | `031da7e5c5b5e2c7839901fd3ce4f0f9599e5ea7`（5 commits，0 behind / 5 ahead） |
+| head SHA | 本轮复审修复 commit（`fix(g19): 复审 P1/P2 清偿 ...`，见 PR 页面最新 SHA）；前序 `30eb8fcfb`，base `8167052`，0 behind |
 | BASE_BRANCH | `master`（`gh repo view --json defaultBranchRef` 实测） |
 | 状态 | 未自动 merge / 未发布 / 未删除分支或 worktree |
 
@@ -46,10 +46,10 @@
 
 | 类 | 结果 |
 |---|---|
-| 后端定向 | **68 passed**（核心 45 + 评审修复 12 + API 6 + Pi 工具 6），单进程 `--no-cov` |
+| 后端定向 | **75 passed（83.87s）= 核心 44 + 评审修复 17 + API 8 + Pi 工具 6**，单进程 `--no-cov` |
 | 契约门禁 | **23 passed**（OpenAPI 快照 / api-docs drift / 端点矩阵） |
-| 前端定向 | **9 passed**（组件 6 + 错误信封解析 3），threads pool 单 worker |
-| 静态 | `ruff check` All checks passed；`tsc --noEmit` 新增文件 0 错误；ESLint 新增文件 0 警告；i18n 141/141；`git diff --check` 通过 |
+| 前端定向 | **19 passed**（组件 6 + 错误信封解析 3 + i18n 键完整性 10），threads pool 单 worker |
+| 静态 | `ruff check` All checks passed；`tsc --noEmit` 新增文件 0 错误（8 个既有 `scene3d/*`）；ESLint 新增文件 0 警告；i18n 143/143；`git diff --check` 通过 |
 | 21 场景 | 见 `TEST_MATRIX.md`；UI 单列、真实 Pi/渲染回执、全量前端构建等边界如实声明 |
 | 线上 CI | **不等待、不轮询**（仓库 CLAUDE.md:41 + 任务书 A）；门禁未关闭/未降级 |
 
@@ -59,11 +59,13 @@
 
 - 第一轮：独立 reviewer（未参与实现）冷读判定不可进 PR，4 个 P1 + 9 个影响验收 P2；详见 `REVIEW.md`。
 - 修复：最小集合 1–9 全部完成 + owner/错误信封/夹具等附加项，commit `031da7e5c`，12 项针对性回归全通过。
-- 复审：同一 reviewer 复审中，结论回填 `REVIEW.md` 第二轮；**不得由作者自行标记通过**。
+- 第二轮复审（两位独立 reviewer 冷读 `031da7e5c`）：13 项原阻塞 10 彻底修复 / 2 部分修复 / 1 以如实声明达成；新发现 1 个 P1（最终收据 upsert 失败仍有可见半成品 + 未发布成果可被幂等命中）与 3 个影响验收 P2（cancel 端点 500、升级残留 `PROJECT_SAVE_FAILED`、`_CANCEL_REQUESTS` 无界/陈旧键）。
+- 第三轮修复：`probe_publish()` 发布面探测、稳定键先写+ring 失败回滚、最终 upsert 失败撤销 ref 与项目清单、升级清理 degraded、`_ACTIVE_EXEC` + TTL 取消语义、cancel 端点 typed 映射与真实 ASGI 覆盖、`cancelled` 可恢复、前端空集合/取消三态文案。新增 7 项回归（17 review + 2 API）。
+- 第三轮复审：待独立 reviewer 冷读 `031da7e5c..HEAD`；**不得由作者自行标记通过**。
 
 ## 迁移 / 回退
 
-纯新增域 + additive 接线，无数据迁移、无 DB schema 变更、无破坏性 API 变更。回退 = revert 本 PR 的 5 个 commit；已生成的 `ref:fc-*` 是会话内数据，不依赖迁移。
+纯新增域 + additive 接线，无数据迁移、无 DB schema 变更、无破坏性 API 变更。回退 = revert 本 PR 的全部 commit；已生成的 `ref:fc-*` 是会话内数据，不依赖迁移。
 
 ## 未测限制（如实）
 

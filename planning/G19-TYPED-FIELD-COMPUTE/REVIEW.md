@@ -44,16 +44,47 @@
 | 9 | receipt 增加按 `(fingerprint,input_ref,content_hash)` 的**稳定键文件**（不受 64 条 ring 影响）；manifest 改为按 project 独立文件且**不截断**；`_EXEC_LOCKS` 改 `WeakValueDictionary`；UI 明确声明「一次编辑一列，多列链式走 Pi/API」 | `receipt.py`、`service.py`、`field-compute-panel.tsx`、i18n | `test_ring_overflow_keeps_idempotency`、`test_manifest_does_not_silently_drop_history`、`test_exec_lock_table_is_weak` |
 | 10（附加） | owner 由服务端认证上下文注入、忽略 body 覆盖；降级为提示性元数据，不当权限门禁（隔离在 session 层）；收敛测试容差；修组件夹具为真实常量；`not_evaluated` 恒含；`parseFieldComputeError` 兼容统一错误信封 `data` 并补真实单测；清理临时 tsconfig | `routes`、`service.py`、组件测试、`field-compute.ts`、`field-compute.test.ts` | `test_owner_is_metadata_not_a_gate`、`field-compute.test.ts`（3 项）、i18n 141/141 |
 
-**修复后真实执行**：`ruff check` All checks passed；G19 后端回归 **68 passed**（核心 45 + 评审修复 12 + API 6 + 工具 6，含 `-k scope` 1 项）；前端 Vitest **9 passed**；`tsc --noEmit` 新增文件 0 错误（8 个既有 `scene3d/*`）；ESLint 新增文件 0 警告；i18n 141/141；契约门禁 23 passed；`git diff --check` 通过。
-
-## 复审
-
-- **状态**：待独立 reviewer 复审（用同一 reviewer 的 resume，冷读新 diff 与修复证据，不预设通过）。
-- 复审输入：`REVIEW.md` 本表、`test_field_compute_review_v1.py` 12 项回归、`git diff c97aa988d..HEAD`、上述真实命令输出。
-- **待填**：复审结论、残余 P0/P1 / 影响验收 P2 是否清零、是否可以进入 PR。
+**修复后真实执行（第一轮修复 commit `031da7e5c`）**：`ruff check` All checks passed；G19 后端回归 **68 passed**（核心 44 + 评审修复 12 + API 6 + 工具 6）；前端 Vitest **9 passed**；`tsc --noEmit` 新增文件 0 错误（8 个既有 `scene3d/*`）；ESLint 新增文件 0 警告；i18n 141/141；契约门禁 23 passed；`git diff --check` 通过。
 
 ---
 
-## 复审结果（第二轮）
+## 第二轮：独立复审（rereview）
 
-> 待 reviewer 回填；主 Agent 不得自行标记通过。
+两位独立 reviewer 分别冷读 `c97aa988d..031da7e5c`（第 6 个文档 commit `30eb8fcfb` 未触及核心文件，但已按复审要求核对）：
+
+| Reviewer | 13 项原阻塞 | 新发现 |
+|---|---|---|
+| `review-rereview`（第一轮同一 reviewer） | 10 已修复 / 2 部分修复（P1-3 收据闸门、P2-8 取消联动）/ 1 以如实声明达成 | **1 个 P1**：最终已发布收据 upsert 失败仍有可见半成品，且稳定键写入失败时 ring 里 `published=True` 会被 `find_receipt` 幂等命中「未发布」成果；**2 个 P2**：cancel 端点对不存在计划返回 500（未包 `_raise_typed`）、`_maybe_upgrade_project` 不清 `PROJECT_SAVE_FAILED` |
+| `focused-rereviewer`（全新冷读） | 13/13 已修复（逐条 `file:line` 核对，含 OpenAPI `$ref` 递归比对） | **1 个 P2**：`_CANCEL_REQUESTS` 无界 `set`，对非执行中计划的 cancel 会永久残留键，并让同一 plan 的后续重提第一批就误判 `CANCELLED` |
+
+两位 reviewer 均未发现「把未跑项目写成已验证」；同时指出两处证据偏差：`test_receipt_gate_failure_writes_nothing` 只覆盖草稿闸门失败（不覆盖最终 upsert）、`test_cancel_endpoint_stops_execution` 名为 endpoint 实为服务层直调。均已在本轮修正。
+
+## 第三轮：修复（commit 见 PR）
+
+| # | 修复内容 | 位置 | 回归 |
+|---|---|---|---|
+| 1 | 发布面探测：`probe_publish()` 在草稿闸门处同时探测 `field_compute/` 与 `field_compute/by_key/` 可写（mkdtemp+fsync+remove），把稳定键失败面提前到 store 之前 | `receipt.py`、`service.py` | `test_publish_probe_failure_writes_nothing` |
+| 2 | 稳定键**先写**、ring **后写**；ring 失败即删除刚写的稳定键 ⇒ 「任一次写入失败都不会留下已发布副本」，杜绝「未发布成果被幂等命中」 | `receipt.py` | `test_final_receipt_failure_rolls_back_visible_result`（断言 `find_receipt` 为 None） |
+| 3 | 最终 upsert 失败**回滚全部可见面**：`delete_ref` 撤销 session ref、`_remove_from_project_sync` 撤销项目清单条目；回滚不完整时在错误 detail 如实列出残留码 | `service.py` | 同上（断言 `sdm.get` 为 None、项目清单为空） |
+| 4 | `_maybe_upgrade_project` 升级成功时清除 `PROJECT_SAVE_FAILED` 并检查 `append_receipt` 返回值（失败仅告警，不清空已真实保存的项目） | `service.py` | `test_upgrade_clears_stale_project_save_failure` |
+| 5 | 取消语义：`_ACTIVE_EXEC` 在**取锁之前**登记、`finally` 清理；`request_cancel` 仅对活跃执行返回 True；`_CANCEL_REQUESTS` 改为 `key→monotonic` 字典 + 300s TTL 剪枝 | `service.py` | `test_cancel_during_execution_stops_it`（并发、批间检查）、`test_cancel_on_idle_or_finished_plan_is_noop`（False + 重提不受污染） |
+| 6 | cancel 端点包 `try/except (CompileError, ExecError) → _raise_typed`；文档说明「仅执行中登记，空闲/已结束返回 `cancelled=false`」 | `routes/field_compute.py` | `test_unknown_plan_is_typed_404`、`test_idle_plan_cancel_is_false_and_not_poisoned`（真实 ASGI） |
+| 7 | `preview` 与 `execute` 状态机对齐：`cancelled` 是可恢复态，只有 `executed`/`rejected` 终态 | `service.py` | `test_preview_allowed_after_cancel` |
+| 8 | 前端：入图要求 `features.length > 0`（合法空集合不再报成功）；取消结果三态（`true` 已请求 / `false` 服务端无活跃执行 / `null` 未确认）分别用 `cancelRequested` / `cancelNoActive` / `cancelLocalOnly` 文案，不再无条件宣称已服务端取消 | `field-compute-panel.tsx`、两个 i18n json（143 键） | 组件测试 6 项 + i18n 门禁 10 项 |
+| 9 | 测试证据修正：cancel 端点补真实 ASGI 覆盖；用例数按实际统计（44 + 17 + 8 + 6 = 75），删除「45 核心 / 68 passed」的算术偏差 | `tests/data/test_field_compute_api_v1.py`、`TEST_MATRIX.md` | 见下 |
+
+## 第三轮验证（真实执行）
+
+| 项目 | 命令 | 结果 |
+|---|---|---|
+| 后端 G19 全量 | `pytest tests/data/test_field_compute_v1.py tests/data/test_field_compute_review_v1.py tests/data/test_field_compute_api_v1.py tests/unit/test_field_compute_tools_v1.py -q --no-cov` | **75 passed**（44 + 17 + 8 + 6），83.87s |
+| 契约门禁 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q` | **23 passed**（快照 diff 仅 cancel 端点 description 一行） |
+| 前端 | `vitest run field-compute-panel.test.tsx lib/api/field-compute.test.ts test/i18n/key-completeness.test.ts --pool=threads --maxWorkers=1` | **19 passed**（6 + 3 + 10） |
+| 静态 | `ruff check`（全部新增/改动 Python）、`tsc --noEmit`、`eslint --max-warnings 0` | All checks passed；新增 TS 0 错误（8 个既有 `scene3d/*`）；ESLint 0 警告 |
+| 空白/一致性 | `git diff --check`、i18n zh/en 键集合 | 通过；143/143 一致 |
+
+## 第三轮复审状态
+
+- **状态**：已推送修复（分支 head 见 `PR_HANDOFF.md`），等待独立 reviewer 对 `031da7e5c..HEAD` 复审。
+- **不得自行标记通过**：主 Agent 只记录真实执行证据，是否清零由 reviewer 判定。
+- 残余已知项（非阻塞，已在 PR 正文披露）：artifact/provenance/descriptor 三类登记为 additive 证据，回滚只撤销 ref 与项目清单（registry 无删除 API）；真实 Pi 进程 + 渲染回执、浏览器端旅程、线上 CI 仍未运行（`blocked`/`not_evaluated`）。

@@ -14,20 +14,20 @@
 
 | 项 | 命令 | 结果 |
 |---|---|---|
-| 核心回归（IR/解释器/服务层） | `pytest tests/data/test_field_compute_v1.py -q --no-cov -p no:cacheprovider` | **45 passed**（含 selection 过期/可靠命中用例） |
-| 独立评审修复回归 | `pytest tests/data/test_field_compute_review_v1.py -q --no-cov -p no:cacheprovider` | **12 passed（158.18s）**：OpenAPI 短名、时区、项目保存失败、收据闸门、幂等升级、computed_rows、abort 几何、取消端点、owner、ring/manifest、弱引用锁 |
-| API 路由层（真实 ASGI + 鉴权） | `pytest tests/data/test_field_compute_api_v1.py -q --no-cov -p no:cacheprovider` | **6 passed（89.80s）**：catalog/越权 404/describe→plan→preview→execute→result→项目清单/typed 422/stale 409 |
+| 核心回归（IR/解释器/服务层） | `pytest tests/data/test_field_compute_v1.py -q --no-cov -p no:cacheprovider` | **44 passed**（`--collect-only` 实测 44 用例；含 selection 过期/可靠命中） |
+| 独立评审修复回归 | `pytest tests/data/test_field_compute_review_v1.py -q --no-cov -p no:cacheprovider` | **17 passed（51.62s）**：原 12 项（OpenAPI 短名、时区、项目保存失败、收据闸门、幂等升级、computed_rows、abort 几何、取消、owner、ring/manifest、弱引用锁）+ 复审新增 5 项（发布面探测、最终 upsert 失败回滚、升级清除 `PROJECT_SAVE_FAILED`、执行中取消、空闲/已结束取消不污染重提） |
+| API 路由层（真实 ASGI + 鉴权） | `pytest tests/data/test_field_compute_api_v1.py -q --no-cov -p no:cacheprovider` | **8 passed（32.47s）**：catalog/越权 404/describe→plan→preview→execute→result→项目清单/typed 422/stale 409 + cancel 端点 2 项（不存在计划 typed 404；空闲/已结束 `cancelled=false` 且不影响后续执行） |
 | Pi 工具面（真实 `ToolRegistry.dispatch`） | `pytest tests/unit/test_field_compute_tools_v1.py -q --no-cov -p no:cacheprovider` | **6 passed（79.18s）** |
-| 全量 G19 后端合并复跑 | `pytest <4 个文件> -q --no-cov -p no:cacheprovider` | 修复前 66 passed / 2 failed → 修复后 **68 passed** |
+| 全量 G19 后端合并复跑 | `pytest <4 个文件> -q --no-cov -p no:cacheprovider` | **75 passed（83.87s）= 44 + 17 + 8 + 6**（第二轮修复前为 68；本轮 +7 项复审回归） |
 | API 契约门禁 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q --no-cov` | 首轮 3 failed（生成物过期）→ 刷新生成物后 **23 passed（70.73s）** |
 | 生成物刷新 | `API_SNAPSHOT_UPDATE=1 pytest tests/quality/test_api_compatibility.py::test_snapshot_matches_and_no_breaking_changes`；`python scripts/gen_api_docs.py`；`python scripts/generate_endpoint_scope_matrix.py` | 快照/api-docs/矩阵三个生成物全部随本 PR 提交 |
 | 契约帮助文档 | `python app/services/data_preparation/field_compute/gen_help.py` | 由 `function_help()` + `contracts` + `CANONICAL_UNITS` 生成 `docs/field-compute-contract.md`（46 行表格） |
 | i18n | Python 比较 zh/en `fieldCompute.json` | **137 / 137 键完全一致** |
 | ruff | `ruff check`（全部新增/改动 Python 文件） | **All checks passed** |
 | `git diff --check` | `git diff --check` | 通过（仅 `endpoint-scope-matrix.csv` 一条 CRLF 提示，非错误） |
-| 前端定向测试 | `vitest run components/sidebar/data-preparation/field-compute-panel.test.tsx lib/api/field-compute.test.ts --pool=threads --maxWorkers=1` | **9 passed（22.51s）**：组件 6 项（选数据→describe→写公式→预览→执行→结果表/入图、generation 失效、迟到响应丢弃、编译错误 code/hint、键盘可操作）+ 错误信封解析 3 项（legacy `detail` / 统一 `data` / 裸结构化体）。首轮 forks pool 曾 worker 超时，改用 threads pool + 复用主工作区依赖的目录联接后真实跑通 |
+| 前端定向测试 | `vitest run components/sidebar/data-preparation/field-compute-panel.test.tsx lib/api/field-compute.test.ts test/i18n/key-completeness.test.ts --pool=threads --maxWorkers=1` | **19 passed（20.66s）**：组件 6 项（选数据→describe→写公式→预览→执行→结果表/入图、generation 失效、迟到响应丢弃、编译错误 code/hint、键盘可操作）+ 错误信封解析 3 项（legacy `detail` / 统一 `data` / 裸结构化体）+ i18n 键完整性 10 项。threads pool + 目录联接后稳定跑通 |
 | ESLint（新增前端文件） | `eslint <4 个新增文件> --max-warnings 0` | **0 警告** |
-| i18n | Python 比较 zh/en `fieldCompute.json` | **141 / 141 键完全一致**（修复新增 4 个键） |
+| i18n | Python 比较 zh/en `fieldCompute.json` + `vitest run test/i18n/key-completeness.test.ts --pool=threads --maxWorkers=1` | **143 / 143 键完全一致**（本轮新增 `cancelNoActive` / `cancelLocalOnly`）；i18n 键完整性门禁 **10 passed** |
 | 线上 CI | — | **不等待、不轮询**（CLAUDE.md:41 + 任务书 A） |
 
 ## 必须通过的用户与故障场景（任务书 §5）
@@ -51,7 +51,7 @@
 | 15 | 第二批读取时源被编辑/刷新：固定快照或检测中止，不发布混合 revision | ✅ passed | `test_snapshot_changed_mid_execution_aborts`（发布前二次核对 `SNAPSHOT_CHANGED`，收据未登记）+ `test_anchor_detects_content_and_schema_change` |
 | 16 | 模型试图导入模块/访问文件：契约校验拒绝，主进程无副作用 | ✅ passed | `test_host_code_attempts_rejected`、`test_invalid_formula_returns_typed_code_no_host_side_effect` |
 | 17 | 极深 AST/超长字符串：预算内结束，给资源边界原因 | ✅ passed | `test_ast_depth_and_long_string_budgets`、`test_unsafe_integer_literal_rejected` |
-| 18 | 计算中取消或写入失败：无可见半成品，原件及其他结果不变 | ✅ passed | `test_cancel_and_write_failure_publish_nothing`（`CANCELLED`）、`test_write_failure_is_typed`（`STORE_FAILED`）、原件属性断言 |
+| 18 | 计算中取消或写入失败：无可见半成品，原件及其他结果不变 | ✅ passed | `test_cancel_and_write_failure_publish_nothing`（`CANCELLED`）、`test_write_failure_is_typed`（`STORE_FAILED`）、**复审新增** `test_final_receipt_failure_rolls_back_visible_result`（最终收据失败 → `delete_ref` 后 `sdm.get=None`、项目清单为空、`find_receipt=None`）、`test_publish_probe_failure_writes_nothing`；原件属性断言 |
 | 19 | 同计划重复提交：返回已完成成果或安全恢复，不重复登记 | ✅ passed | `test_full_journey_and_original_immutable`（同 `output_ref` + 同 `created_at`） |
 | 20 | 项目保存后重新打开：真正找回数据与公式/来源，过期 session ref 不冒充持久成功 | ✅ passed（本工作台语义） | `test_full_journey`（`persistence=project_artifact`、磁盘 `project_manifest.jsonl` 回读公式/来源/output_ref）；未接入 G18 项目 DB 导出（属其所有权） |
 | 21 | UI 与 Pi 用同一公式：等价结果，均能继续查表和制图 | ✅ passed | 后端 `test_dispatch_preview_apply_result_and_next_turn_field`（真实 `ToolRegistry.dispatch` + 同公式 service 等价 + 真实字段名经 `CartographyService.classify` 可分级）；前端 **6 passed** 组件测试覆盖「选数据→写公式→预览→生成→结果表/入图」；两侧调用同一 `/api/v1/field-compute/*` service。真实地图渲染回执仍 `not_evaluated`（见下） |
@@ -64,14 +64,16 @@
 | 输入 revision 冲突 | ✅ passed | `test_stale_plan_after_source_change_rejected` / `test_owner_change_and_fingerprint_drift_rejected` |
 | 取消、重复提交、owner 变化、断开后恢复 | ✅ passed | 对应 4 个服务层用例；幂等收据可重放 |
 | 恢复后仍能解释公式与来源；原件属性/几何不变 | ✅ passed | `test_full_journey`（深拷贝快照比对原件） |
-| 失败任务不污染已完成派生成果 | ✅ passed | `test_snapshot_changed_mid_execution_aborts`（`find_receipt=None`） |
+| 失败任务不污染已完成派生成果 | ✅ passed | `test_snapshot_changed_mid_execution_aborts`（`find_receipt=None`）、`test_final_receipt_failure_rolls_back_visible_result`（回滚后无可见成果） |
+| 取消只对活跃执行生效、不留陈旧键 | ✅ passed | `test_cancel_during_execution_stops_it`（执行中 → True → `CANCELLED`，finally 清空 `_CANCEL_REQUESTS`/`_ACTIVE_EXEC`）、`test_cancel_on_idle_or_finished_plan_is_noop`（未开始/已结束 → False，且重提不被误判） |
+| 收据发布面可写性前置探测 | ✅ passed | `test_publish_probe_failure_writes_nothing`（`probe_publish=False` → `WRITE_FAILED`，`fc` store 零调用） |
 | 批大小不变性 | ✅ passed | `test_batch_size_invariance`（1 / 7 / 100 三档结果逐字节相同） |
 | 带洞/多部件面/跨经线 | ✅ passed | `test_geodesic_area_holes_multipart_and_dateline`（Geod + 洞标记 + dateline 披露） |
 | 有界基准（机器/输入量/峰值内存/耗时） | ✅ passed（有界口径） | 真实执行：Windows AMD64 / Python 3.13.9、`OMP_NUM_THREADS=1`；输入 **5,000 行 × 3 列**（密度/变化率/代码补齐）、`batch_size=2000`、输出 5,000 行、`computed_rows=5000`、`errors=0`；**耗时 1.008s**，`tracemalloc` 峰值 **1.81 MiB**（仅解释器执行期新增分配，不含预构造输入与 `freeze()` 深拷贝）。明确声明：这是 5,000 行合成夹具的实测，**不据此承诺 10 万/千万行能力**；50,000 行上限有硬闸但万行级峰值内存基准未跑 |
 
 ## 未运行 / 环境阻塞（如实披露）
 
-1. **前端全量构建 / 全量 Vitest / Playwright 浏览器旅程**：未运行（资源纪律与同机并行任务限制）。定向组件 + 错误解析测试 9 passed、`tsc --noEmit` 新增文件 0 错误、ESLint 0 警告、i18n 141/141 一致；不把未跑项目写成通过。
+1. **前端全量构建 / 全量 Vitest / Playwright 浏览器旅程**：未运行（资源纪律与同机并行任务限制）。定向组件 + 错误解析 + i18n 门禁 19 passed、`tsc --noEmit` 新增文件 0 错误、ESLint 0 警告、i18n 143/143 一致；不把未跑项目写成通过。
 2. **真实 Pi 进程 + stub LLM 全链路 → MapSpec mutation → 渲染回执**：本环境无 Node extension/runtime 与浏览器渲染服务；已用真实 `ToolRegistry.dispatch` 覆盖工具→服务→成果→既有分类引擎的数据面闭环，`MapSpec`/渲染回执保持 `not_evaluated`，不伪造。
 3. **线上 CI**：按授权不等待、不轮询。
 4. **既有仓库失败**：preparation 9 项（Windows descriptor 冒号）、前端 8 项（scene3d 缺 three），均在干净基线复现且位于未改动文件，见 `BASELINE.md`。

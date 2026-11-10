@@ -8,7 +8,9 @@ P2-11 ring/manifest 不截断、P2-13 弱引用锁。
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 
 import pytest
 
@@ -145,6 +147,90 @@ class TestPublishSequence:
         assert await rc.find_receipt(sid, plan.compute_fingerprint, ref,
                                      plan.anchor.content_hash) is None
 
+    async def test_publish_probe_failure_writes_nothing(self, monkeypatch):
+        sid = "sess-fc-rev-probe"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        fc_writes: list = []
+        real_store = sdm.store
+
+        async def _rec(*a, **kw):
+            if kw.get("prefix") == "fc":
+                fc_writes.append(a)
+            return await real_store(*a, **kw)
+
+        async def _not_writable(_sid):
+            return False
+
+        monkeypatch.setattr(sdm, "store", _rec)
+        monkeypatch.setattr(rc, "probe_publish", _not_writable)
+        with pytest.raises(ExecError) as ei:
+            await service.execute(plan.plan_id, sid, project_id="proj-probe")
+        assert ei.value.code == "WRITE_FAILED"
+        assert fc_writes == []
+        assert await service.list_project_results(sid, "proj-probe") == []
+
+    async def test_final_receipt_failure_rolls_back_visible_result(
+            self, monkeypatch):
+        """复审 P1：最终已发布收据写入失败时不得留下可见半成品。"""
+        sid = "sess-fc-rev-finalfail"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        written: list = []
+        real_store = sdm.store
+
+        async def _rec(*a, **kw):
+            out = await real_store(*a, **kw)
+            if kw.get("prefix") == "fc":
+                written.append(out)
+            return out
+
+        real_append = rc.append_receipt
+
+        async def _fail_published(session_id, receipt):
+            if getattr(receipt, "published", False):
+                return False
+            return await real_append(session_id, receipt)
+
+        monkeypatch.setattr(sdm, "store", _rec)
+        monkeypatch.setattr(rc, "append_receipt", _fail_published)
+        with pytest.raises(ExecError) as ei:
+            await service.execute(plan.plan_id, sid, project_id="proj-finalfail")
+        assert ei.value.code == "WRITE_FAILED"
+        assert "回滚" in ei.value.detail
+        # ① session ref 已撤销（不留下能被 get_result 读到的孤儿成果）
+        assert len(written) == 1
+        assert await sdm.get(sid, written[0]) is None
+        # ② 项目清单已撤销（重开项目看不到）
+        assert await service.list_project_results(sid, "proj-finalfail") == []
+        # ③ 幂等查找不得命中「未发布」成果
+        assert await rc.find_receipt(sid, plan.compute_fingerprint, ref,
+                                     plan.anchor.content_hash) is None
+
+    async def test_upgrade_clears_stale_project_save_failure(self, monkeypatch):
+        """复审 P2：项目升级成功后不得残留 PROJECT_SAVE_FAILED。"""
+        sid = "sess-fc-rev-upgrade-clean"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        real_save = service.save_to_project
+
+        async def _fail(*_a, **_kw):
+            return False
+        monkeypatch.setattr(service, "save_to_project", _fail)
+        first = await service.execute(plan.plan_id, sid, project_id="proj-up2")
+        assert first.persistence == "session_ref"
+        assert "PROJECT_SAVE_FAILED" in first.degraded
+
+        monkeypatch.setattr(service, "save_to_project", real_save)
+        second = await service.execute(plan.plan_id, sid, project_id="proj-up2")
+        assert second.output_ref == first.output_ref
+        assert second.persistence == "project_artifact"
+        assert "PROJECT_SAVE_FAILED" not in second.degraded
+        assert len(await service.list_project_results(sid, "proj-up2")) == 1
+
     async def test_idempotent_upgrade_from_session_to_project(self):
         sid = "sess-fc-rev-upgrade"
         ref = await _seed(sid)
@@ -193,18 +279,62 @@ class TestAbortGeometry:
 # ── P2-8 / P2-10 / P2-13：取消端点、owner 元数据、锁有界 ──────────────────
 
 class TestCancelOwnerLocks:
-    async def test_cancel_endpoint_stops_execution(self):
+    async def test_cancel_during_execution_stops_it(self, monkeypatch):
         sid = "sess-fc-rev-cancel"
         ref = await _seed(sid)
         plan = await _plan(sid, ref,
                            [{"name": "密度", "expression": "{人口} / {面积 平方千米}"}])
+        # 4 行 → 4 批，批间检查取消；只有「执行中」才接受取消请求。
+        monkeypatch.setattr(service, "MAX_BATCH_ROWS", 1)
+        entered = threading.Event()
+        release = threading.Event()
+        real_eval = service.evaluate_rows
+
+        def _slow(rows, cols, mask, cfg, **kw):
+            entered.set()
+            release.wait(10)
+            return real_eval(rows, cols, mask, cfg, **kw)
+
+        monkeypatch.setattr(service, "evaluate_rows", _slow)
+        task = asyncio.create_task(service.execute(plan.plan_id, sid))
+        assert await asyncio.to_thread(entered.wait, 10)
+        assert service.is_executing(sid, plan.plan_id) is True
         assert service.request_cancel(sid, plan.plan_id) is True
+        release.set()
         with pytest.raises(ExecError) as ei:
-            await service.execute(plan.plan_id, sid)
+            await task
         assert ei.value.code == "CANCELLED"
-        # 取消后再次提交可正常执行（请求已被清理，不污染后续任务）
+        # 取消请求与活跃登记都在 finally 清理，不污染后续重提
+        assert service._CANCEL_REQUESTS == {}
+        assert service._ACTIVE_EXEC == set()
+        # 取消后重提原计划可正常执行（可恢复态）
         receipt = await service.execute(plan.plan_id, sid)
         assert receipt.output_ref.startswith("ref:fc-")
+
+    async def test_cancel_on_idle_or_finished_plan_is_noop(self):
+        sid = "sess-fc-rev-cancel-idle"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        # 未开始：拒绝登记（旧实现无条件 add，陈旧键会让重提第一批就 CANCELLED）
+        assert service.request_cancel(sid, plan.plan_id) is False
+        receipt = await service.execute(plan.plan_id, sid)
+        assert receipt.output_ref.startswith("ref:fc-")
+        # 已结束：同样拒绝，且不残留任何键
+        assert service.request_cancel(sid, plan.plan_id) is False
+        assert service._CANCEL_REQUESTS == {}
+        again = await service.execute(plan.plan_id, sid)
+        assert again.output_ref == receipt.output_ref
+
+    async def test_preview_allowed_after_cancel(self):
+        sid = "sess-fc-rev-cancel-preview"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        plan.state = "cancelled"
+        assert await rc.save_plan(plan)
+        preview = await service.preview(plan.plan_id, sid)
+        assert preview["kind"] == "sample"
 
     async def test_owner_is_metadata_not_a_gate(self):
         sid = "sess-fc-rev-owner"

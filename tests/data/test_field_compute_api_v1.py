@@ -186,3 +186,46 @@ class TestApiJourney:
         detail = body.get("detail") if isinstance(body.get("detail"), dict) \
             else body.get("data")
         assert detail["code"] == "STALE_PLAN"
+
+
+class TestCancelEndpoint:
+    """cancel 端点真实 ASGI 覆盖（复审：不能只用服务层直调冒充端点验证）。"""
+
+    async def test_unknown_plan_is_typed_404(self, client):
+        sid = "sess-fc-api-cancel-404"
+        await _seed_ref(sid)
+        resp = await client.post(
+            "/api/v1/field-compute/plan/fc-does-not-exist/cancel",
+            params={"session_id": sid})
+        assert resp.status_code == 404, resp.text
+        body = resp.json()
+        detail = body.get("detail") if isinstance(body.get("detail"), dict) \
+            else body.get("data")
+        assert detail["code"] == "PLAN_NOT_FOUND"
+
+    async def test_idle_plan_cancel_is_false_and_not_poisoned(self, client):
+        sid = "sess-fc-api-cancel-idle"
+        ref = await _seed_ref(sid)
+        p = await client.post("/api/v1/field-compute/plan", json={
+            "session_id": sid, "source_ref": ref,
+            "columns": [{"name": "密度", "expression": "{人口} / 1"}],
+        })
+        plan = p.json()["plan"]
+
+        before = await client.post(
+            f"/api/v1/field-compute/plan/{plan['plan_id']}/cancel",
+            params={"session_id": sid})
+        assert before.status_code == 200
+        assert before.json()["cancelled"] is False
+
+        ex = await client.post(
+            f"/api/v1/field-compute/plan/{plan['plan_id']}/execute",
+            params={"session_id": sid}, json={})
+        assert ex.status_code == 200, ex.text
+        assert ex.json()["receipt"]["output_ref"].startswith("ref:fc-")
+
+        after = await client.post(
+            f"/api/v1/field-compute/plan/{plan['plan_id']}/cancel",
+            params={"session_id": sid})
+        assert after.status_code == 200
+        assert after.json()["cancelled"] is False

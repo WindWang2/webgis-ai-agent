@@ -47,16 +47,17 @@
 
 | 项 | 结果 |
 |---|---|
-| `pytest tests/data/test_field_compute_v1.py -q --no-cov` | **45 passed** |
-| `pytest tests/data/test_field_compute_review_v1.py -q --no-cov` | **12 passed**（独立评审修复针对性回归） |
-| `pytest tests/data/test_field_compute_api_v1.py -q --no-cov` | **6 passed**（真实 ASGI 路由 + 鉴权） |
+| `pytest tests/data/test_field_compute_v1.py -q --no-cov` | **44 passed** |
+| `pytest tests/data/test_field_compute_review_v1.py -q --no-cov` | **17 passed**（两轮独立评审修复的针对性回归） |
+| `pytest tests/data/test_field_compute_api_v1.py -q --no-cov` | **8 passed**（真实 ASGI 路由 + 鉴权 + cancel 端点） |
 | `pytest tests/unit/test_field_compute_tools_v1.py -q --no-cov` | **6 passed**（真实 `ToolRegistry.dispatch`） |
+| 四份合并复跑 | **75 passed（83.87s）= 44 + 17 + 8 + 6** |
 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q --no-cov` | **23 passed**（刷新生成物 + schema 消歧修复后） |
-| `vitest run <组件 + 错误解析> --pool=threads --maxWorkers=1` | **9 passed** |
+| `vitest run <组件 + 错误解析 + i18n 门禁> --pool=threads --maxWorkers=1` | **19 passed**（组件 6 + 错误解析 3 + i18n 键完整性 10） |
 | `ruff check`（全部新增/改动 Python） | All checks passed |
 | `git diff --check` / `git diff --cached --check` | 通过 |
 | `tsc --noEmit` / `eslint <新增前端文件>` | 新增文件 0 类型错误 / 0 警告（8 个既有 `scene3d/*` 错误隔离） |
-| i18n zh/en `fieldCompute.json` | 141 / 141 键一致 |
+| i18n zh/en `fieldCompute.json` | 143 / 143 键一致 |
 | 21 个用户与故障场景 | 见 `planning/G19-TYPED-FIELD-COMPUTE/TEST_MATRIX.md`（UI 单列等边界如实声明） |
 
 **⚠️ 既有失败（干净 base `8167052` 可复现，位于未改动文件）**
@@ -76,7 +77,23 @@
 
 关键修复：① 契约模型加 `FieldCompute` 前缀，重生成三份生成物并验证既有 OpenAPI 短名/`$ref` 零变化；② 项目保存失败降级 `persistence` 并如实披露；③ 发布顺序改为「收据草稿闸门 → store → 登记 → 已发布收据」，收据落盘失败时零可见半成品；④ `datetime_part` 用表达式自带时区；⑤ 幂等命中补做项目保存；⑥ `computed_rows` 真实统计；⑦ abort 下几何阻断只降级该列；⑧ 新增服务端 cancel 端点并联动前端、入图失败移除占位图层；⑨ 稳定键收据/manifest 不截断、弱引用锁、UI 单列声明；另修 owner 语义、错误信封解析、组件夹具与 lint。
 
-> 复审结论：`REVIEW.md` 第二轮待回填（由同一独立 reviewer 冷读新 diff 与回归证据，不预设通过）。
+### 第二轮复审（两位独立 reviewer 冷读 `031da7e5c`）
+
+| Reviewer | 结论 |
+|---|---|
+| 第一轮同一 reviewer | 10/13 彻底修复、2 项部分修复、1 项以如实声明达成；新发现 **1 个 P1**（最终已发布收据 upsert 失败仍有可见半成品，且稳定键写失败时 ring 里 `published=True` 会被幂等命中「未发布」成果）+ **2 个 P2**（cancel 端点未包 typed 映射返回 500；项目升级残留 `PROJECT_SAVE_FAILED`） |
+| 全新冷读 reviewer | 13/13 全部清零（逐条 `file:line` + OpenAPI `$ref` 递归比对）；新发现 **1 个 P2**（`_CANCEL_REQUESTS` 无界 `set`，对非执行中计划取消会永久残留键并让后续重提首批 `CANCELLED`） |
+
+已全部修复（本轮 commit）：
+
+1. **发布面探测**：`probe_publish()` 在草稿闸门同时探测 `field_compute/` 与 `by_key/`（mkdtemp + fsync + remove），把稳定键失败面提前到 store 与任何登记之前。
+2. **写入顺序 + 回滚**：稳定键先写、ring 后写，ring 失败即删刚写的稳定键；最终 upsert 失败时 `delete_ref` 撤销 session ref、撤销项目清单条目，回滚不完整则在错误 detail 列出残留码。⇒ 「未发布成果」既不可读、也不能被幂等命中。
+3. **升级清理**：项目升级成功清除 `PROJECT_SAVE_FAILED` 并检查收据写回结果，UI 不再自相矛盾。
+4. **取消语义**：`_ACTIVE_EXEC` 在取锁前登记、`finally` 清理；`request_cancel` 仅对执行中计划返回 True；`_CANCEL_REQUESTS` 改为带 TTL 的字典；cancel 端点包 `_raise_typed`（不存在计划 → typed 404），并补真实 ASGI 覆盖。
+5. **状态机对齐**：`cancelled` 在 preview/execute 都是可恢复态。
+6. **前端**：合法空 `FeatureCollection` 不再报加载成功；取消结果三态（已请求 / 服务端无活跃执行 / 未确认）分别用不同文案，不再无条件宣称已服务端取消。
+
+> 第三轮复审：由独立 reviewer 冷读 `031da7e5c..HEAD`；`REVIEW.md` 记录逐项证据，主 Agent 不自行标记通过。
 
 ## 与其他 PR 的关系
 
@@ -88,7 +105,7 @@
 
 ## 迁移与回退
 
-纯新增域 + additive 接线，无数据迁移、无 schema 变更、无破坏性 API 变更（OpenAPI 为 additive 新端点）。回退 = revert 本 PR 的 4 个 commit；已生成的 `ref:fc-*` 为会话内数据，不依赖数据库迁移。
+纯新增域 + additive 接线，无数据迁移、无 schema 变更、无破坏性 API 变更（OpenAPI 为 additive 新端点）。回退 = revert 本 PR 的全部 commit；已生成的 `ref:fc-*` 为会话内数据，不依赖数据库迁移。
 
 ## 交付清单
 
