@@ -38,7 +38,8 @@ class AtlasRequestPolicy(BaseModel):
     )
 
     driver: str = Field(default="frames")
-    """frames | category | feature（非法值 → 400 atlas_policy_invalid）。"""
+    """frames | category | feature | product（G15 同页多画幅；非法值 → 400
+    atlas_policy_invalid）。product 需要 MapSpec 已绑定启用的 frame_product。"""
     layerId: Optional[str] = Field(default=None, max_length=120)
     """类别/特征驱动目标图层 id；缺省自动定位首个内联 geojson 图层。"""
     categoryProperty: Optional[str] = Field(default=None, max_length=120)

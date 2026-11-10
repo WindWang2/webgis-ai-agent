@@ -80,9 +80,12 @@ class AtlasPolicy(_Bounded):
     - ``feature``：按 ``features_per_page`` 分块分页（每页一块 bbox）。
     - ``time``（GOAL 03）：按 ``temporal`` 契约的真实时间帧分页（每帧一
       页；页文档 = 帧窗口过滤 + 页帧 cursor 盖章 —— SVG 时间注记随页）。
+    - ``product``（G15）：``frame_product`` 契约的**同页并置**单页 —— 页
+      拥有 N 个画幅内容矩形（frame_slots），不是逐帧分页。旧 frames 驱动
+      语义零变化；product 页是显式选择（需要已启用的 frame_product）。
     """
 
-    driver: Literal["frames", "category", "feature", "time"] = "frames"
+    driver: Literal["frames", "category", "feature", "time", "product"] = "frames"
     layer_id: str = Field(default="", max_length=120)
     """类别/特征驱动的目标 layer id；空 = 自动定位首个内联 geojson 图层。"""
     category_property: str = Field(default="", max_length=120)
@@ -112,6 +115,25 @@ class PagePaper(_Bounded):
         return int(self.height_mm * PX_PER_MM)
 
 
+class FrameSlotIR(_Bounded):
+    """产品页内一个画幅的内容矩形（G15；归一化 0..1 页面坐标）。
+
+    rect 为页面坐标系（含标题带）内该画幅的地图区矩形；标题带由导出
+    面在 slot 上方渲染（rect.y 之上）。bounds = 该画幅有效范围
+    （resolve_effective_bounds；None = 用主文档 view）。
+    """
+
+    frame_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(default="", max_length=200)
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+    w: float = Field(gt=0.0, le=1.0)
+    h: float = Field(gt=0.0, le=1.0)
+    bounds: Optional[List[float]] = None
+    legend: str = Field(default="shared", max_length=24)
+    """shared | independent | shared_plus_frame（产品槽图例策略）。"""
+
+
 class PageLayoutIR(_Bounded):
     """单页版面（决策面；无要素载荷 —— 引用帧下标或过滤描述符）。"""
 
@@ -125,6 +147,9 @@ class PageLayoutIR(_Bounded):
     """页面地图范围 WSEN（封面 = None）。"""
     frame_index: Optional[int] = None
     """frames 驱动：对应 enabled ``layout.frames`` 下标；None = 单帧整幅或过滤页。"""
+    frame_slots: Optional[List[FrameSlotIR]] = None
+    """G15 product 驱动：本页拥有的画幅内容矩形（None = 既有单帧语义；
+    消费方按 presence 分派，不改旧路径）。"""
     filter_layer_id: str = Field(default="", max_length=120)
     """category/feature 驱动：被过滤图层 id。"""
     filter_property: str = Field(default="", max_length=120)
@@ -215,6 +240,38 @@ def page_geometry(frame: Optional[Dict[str, Any]]) -> Tuple[float, float, Option
             except (TypeError, ValueError, ZeroDivisionError, OverflowError):
                 bounds = None
     return (page_w, page_h, bounds)
+
+
+def resolve_effective_bounds(frame: Optional[Dict[str, Any]]) -> Optional[List[float]]:
+    """画幅 → WSEN 有效范围（extent 优先；view → zoom 换算，与 page_geometry
+    同口径 —— lib 层单一事实；frame_products resolver 消费本函数）。"""
+    if not isinstance(frame, dict):
+        return None
+    extent = frame.get("extent")
+    if isinstance(extent, list) and len(extent) == 4:
+        try:
+            vals = [float(v) for v in extent]
+            if all(v == v for v in vals) and vals[0] < vals[2] and vals[1] < vals[3]:
+                return vals
+        except (TypeError, ValueError):
+            return None
+        return None
+    view = frame.get("view")
+    if isinstance(view, dict) and isinstance(view.get("center"), list) \
+            and len(view["center"]) >= 2:
+        try:
+            lng, lat = float(view["center"][0]), float(view["center"][1])
+            zoom = max(-2.0, min(float(view.get("zoom", 10.0)), 22.0))
+            span = 360.0 / (2.0 ** zoom)
+
+            def _clamp(v: float) -> float:
+                return max(min(v, 85.0), -85.0)
+
+            return [lng - span / 2, _clamp(lat - span / 4),
+                    lng + span / 2, _clamp(lat + span / 4)]
+        except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+            return None
+    return None
 
 
 def _paper_of(page_w: float, page_h: float, frame: Optional[Dict[str, Any]]) -> PagePaper:
@@ -438,6 +495,8 @@ def plan_publication_pages(
             document, layers, policy, degradations)
     elif policy.driver == "time":
         page_specs, degradations = _time_pages(document, policy, degradations)
+    elif policy.driver == "product":
+        page_specs, degradations = _product_page(document, degradations)
     else:
         page_specs, degradations = _feature_pages(
             document, layers, policy, degradations)
@@ -500,6 +559,7 @@ def plan_publication_pages(
             paper=sp["paper"],
             bounds=sp.get("bounds"),
             frame_index=sp.get("frame_index"),
+            frame_slots=sp.get("frame_slots"),
             filter_layer_id=str(sp.get("filter_layer_id") or ""),
             filter_property=str(sp.get("filter_property") or ""),
             filter_value=str(sp.get("filter_value") or ""),
@@ -578,6 +638,99 @@ def _time_pages(
             },
         })
     return page_specs, degradations
+
+
+def _product_page(
+    document: Dict[str, Any],
+    degradations: List[Dict[str, str]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    """product 驱动（G15）：frame_product 契约 → 单页 N 画幅内容矩形。
+
+    网格 = product.grid.columns（1..3）× ceil(N/C) 行；内容区页边 6%、
+    槽间缝 2%、槽标题带 8%（导出面渲染）。共享图例带（shared_expression
+    存在且 computed）占页面底部 12%（shared/shared_plus_frame 槽共享同一
+    图例；independent 槽各自携带图例 —— 由导出面按 slot.legend 分派）。
+    缺 frame_product / 未启用 → typed 拒绝（产品页是显式选择）。
+    """
+    product_raw = document.get("frame_product")
+    product = product_raw if isinstance(product_raw, dict) else None
+    if not isinstance(product, dict) or not product.get("enabled"):
+        raise MapSpecSchemaError(
+            "product_page_no_frame_product",
+            "product 驱动需要已启用的 frame_product 契约（先 frame_product_bind）",
+        )
+    slots = [s for s in (product.get("frames") or []) if isinstance(s, dict)]
+    if len(slots) < 2:
+        raise MapSpecSchemaError(
+            "product_page_frames_insufficient",
+            "frame_product 画幅不足 2 个 —— 产品页是并置语义，不是单幅",
+        )
+    grid = product.get("grid") if isinstance(product.get("grid"), dict) else {}
+    columns = int(grid.get("columns") or 3)
+    columns = max(1, min(columns, 3))
+    rows = -(-len(slots) // columns)  # ceil
+
+    # 内容区（归一化）：页边 6%；共享图例带（存在时）底部 12%。
+    shared = product.get("shared_expression")
+    has_shared_band = (
+        isinstance(shared, dict)
+        and isinstance(shared.get("breaks"), list)
+        and len(shared["breaks"]) >= 2
+        and any(s.get("legend") in (None, "shared", "shared_plus_frame")
+                for s in slots)
+    )
+    margin = 0.06
+    gap = 0.02
+    title_band = 0.08
+    legend_band = 0.12 if has_shared_band else 0.0
+    content_w = 1.0 - 2 * margin
+    content_h = 1.0 - 2 * margin - legend_band
+    slot_w = (content_w - (columns - 1) * gap) / columns
+    slot_h = (content_h - (rows - 1) * gap) / rows
+
+    layout_frames_raw = (document.get("layout") or {}).get("frames") \
+        if isinstance(document.get("layout"), dict) else None
+    layout_frames = {
+        str(f.get("id")): f
+        for f in (layout_frames_raw or [])
+        if isinstance(f, dict) and f.get("id")
+    }
+
+    frame_slots: List[FrameSlotIR] = []
+    for i, slot in enumerate(slots):
+        fid = str(slot.get("frame_id") or "")
+        col = i % columns
+        row = i // columns
+        x = margin + col * (slot_w + gap)
+        y = margin + row * (slot_h + gap)
+        # 槽标题带在槽内顶部（导出面渲染标题文本；地图区 = 槽高 - 标题带）。
+        map_rect = {"x": x, "y": y + title_band * slot_h,
+                    "w": slot_w, "h": slot_h * (1.0 - title_band)}
+        frame = layout_frames.get(fid)
+        bounds = resolve_effective_bounds(frame)
+        # 标题优先级：产品槽显式标题 > 画幅登记标题（MapSpecFrame.title）> id。
+        layout_title = str(frame.get("title") or "") if isinstance(frame, dict) else ""
+        frame_slots.append(FrameSlotIR(
+            frame_id=fid,
+            title=str(slot.get("title") or layout_title or fid)[:200],
+            x=round(map_rect["x"], 6), y=round(map_rect["y"], 6),
+            w=round(map_rect["w"], 6), h=round(map_rect["h"], 6),
+            bounds=bounds,
+            legend=str(slot.get("legend") or "shared")[:24],
+        ))
+
+    page_w, page_h = 420.0, 297.0  # A3 landscape（并置多幅的默认版面）
+    title = str((product.get("grid") or {}).get("title") or "")[:200]
+    return [{
+        "page_id": "product",
+        "title": title,
+        "frame_index": None,
+        "frame_slots": frame_slots,
+        "paper": PagePaper(width_mm=page_w, height_mm=page_h, profile="a3_landscape",
+                           orientation="landscape"),
+        "bounds": None,
+        "has_shared_band": has_shared_band,
+    }], degradations
 
 
 def _category_pages(

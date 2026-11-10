@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.lib.cartography.plan_ir import digest_of
+from app.lib.cartography.publication_ir import resolve_effective_bounds
 from app.services.feature_pages import evaluate_where, parse_where_param
 
 __all__ = [
@@ -231,11 +232,26 @@ def _apply_shared_expression(
         if shared.get("palette"):
             legend["palette"] = str(shared["palette"])
         legend["shared_scope"] = True  # 渲染/图例可识别「同域分级」标记
-        # 分级变了，标签重算（与 build_graduated_spec 同格式）。
+        # 分级变了，标签与色带同步重算（与 build_graduated_spec 同格式 ——
+        # palette_colors 与 breaks 类数不一致是图例/渲染失配源）。
         legend["labels"] = [
             _graduated_label(float(breaks[i]), float(breaks[i + 1]))
             for i in range(len(breaks) - 1)
         ]
+        try:
+            from app.lib.cartography.thematic_spec import resolve_thematic_colors
+
+            n_classes = len(breaks) - 1
+            lo = min(
+                (float(b) for b in legend.get("breaks", [])), default=0.0)
+            hi = max(
+                (float(b) for b in legend.get("breaks", [])), default=1.0)
+            colors = resolve_thematic_colors(
+                str(legend.get("palette") or "Blues"), n_classes, breaks, lo, hi)
+            if colors:
+                legend["palette_colors"] = list(colors)
+        except Exception:  # noqa: BLE001 — 色带重算失败保留原色（标签仍一致）
+            pass
         hit = True
         new_layers.append({**layer, "legend_spec": legend})
     if not hit:
@@ -305,34 +321,6 @@ def _effective_fingerprint(frame_id: str, doc: Dict[str, Any]) -> str:
         "view": doc.get("view"),
     }
     return "frame-sha256:" + digest_of(projection)[:40]
-
-
-def resolve_effective_bounds(frame: Optional[Dict[str, Any]]) -> Optional[List[float]]:
-    """画幅 → WSEN 有效范围（extent 优先；view → zoom 换算，与 publication 同口径）。"""
-    if not isinstance(frame, dict):
-        return None
-    extent = frame.get("extent")
-    if isinstance(extent, list) and len(extent) == 4:
-        try:
-            vals = [float(v) for v in extent]
-            if all(v == v for v in vals) and vals[0] < vals[2] and vals[1] < vals[3]:
-                return vals
-        except (TypeError, ValueError):
-            return None
-        return None
-    view = frame.get("view")
-    if isinstance(view, dict) and isinstance(view.get("center"), list) \
-            and len(view["center"]) >= 2:
-        try:
-            lng, lat = float(view["center"][0]), float(view["center"][1])
-            zoom = max(-2.0, min(float(view.get("zoom", 10.0)), 22.0))
-            span = 360.0 / (2.0 ** zoom)
-            clamp = lambda v: max(min(v, 85.0), -85.0)  # noqa: E731
-            return [lng - span / 2, clamp(lat - span / 4),
-                    lng + span / 2, clamp(lat + span / 4)]
-        except (TypeError, ValueError, ZeroDivisionError, OverflowError):
-            return None
-    return None
 
 
 def resolve_frame_document(
