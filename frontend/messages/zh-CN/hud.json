@@ -123,6 +123,7 @@
     "probeX": "经度 / X",
     "probeY": "纬度 / Y",
     "probeCrs": "坐标 CRS",
+    "probeBands": "检视波段（可多选，单次最多 16）",
     "probeRun": "读取当前点",
     "probeRowCol": "源行列",
     "probeRaw": "原始值",

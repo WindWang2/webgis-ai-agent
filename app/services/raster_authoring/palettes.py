@@ -66,7 +66,8 @@ MATPLOTLIB_COLORMAPS = frozenset(
     _MATPLOTLIB_CONTINUOUS + tuple(f"{n}_r" for n in _MATPLOTLIB_CONTINUOUS)
 )
 
-#: 面向 UI 的合法色带词表（稳定顺序，图例/面板同源）。
+#: 面向 UI 的合法色带词表（稳定顺序，图例/面板同源）。别名键本身也在
+#: 词表内，但解析时**先做别名映射**，避免 "grey" 之类别名绕过到不存在的 LUT。
 KNOWN_COLORMAPS = tuple(sorted(set(COLOR_PALETTES) | set(PALETTE_ALIASES) | MATPLOTLIB_COLORMAPS))
 
 _LUT_CACHE: dict[tuple[str, int], np.ndarray] = {}
@@ -74,18 +75,20 @@ _LUT_CACHE_MAX = 64
 
 
 def canonical_colormap(name: Optional[str]) -> Optional[str]:
-    """输入色带名 → 规范名；未知返回 None（绝不静默回落）。"""
+    """输入色带名 → 规范名；未知返回 None（绝不静默回落）。
+
+    别名映射先于白名单检查：``"grey"`` / ``"Viridis"`` 等别名必须归一到
+    真正有 LUT 的规范名，否则会通过校验却在瓦片渲染期 502。
+    """
     if not isinstance(name, str) or not name.strip():
         return None
     raw = name.strip()
-    if raw in KNOWN_COLORMAPS:
-        return raw
-    alias = PALETTE_ALIASES.get(raw)
-    if alias is not None and (alias in COLOR_PALETTES or alias in MATPLOTLIB_COLORMAPS):
-        return alias
+    canonical = PALETTE_ALIASES.get(raw, raw)
+    if canonical in COLOR_PALETTES or canonical in MATPLOTLIB_COLORMAPS:
+        return canonical
     # 反向 cartography 色带（COLOR_PALETTES 里的名字 + "_r"）
-    if raw.endswith("_r") and raw[:-2] in COLOR_PALETTES:
-        return raw
+    if canonical.endswith("_r") and canonical[:-2] in COLOR_PALETTES:
+        return canonical
     return None
 
 

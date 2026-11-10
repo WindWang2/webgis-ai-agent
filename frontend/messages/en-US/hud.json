@@ -123,6 +123,7 @@
     "probeX": "Longitude / X",
     "probeY": "Latitude / Y",
     "probeCrs": "Coordinate CRS",
+    "probeBands": "Bands to inspect (multi-select, up to 16)",
     "probeRun": "Read this point",
     "probeRowCol": "Source row/col",
     "probeRaw": "Raw value",

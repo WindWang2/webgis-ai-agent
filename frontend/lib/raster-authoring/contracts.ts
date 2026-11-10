@@ -67,7 +67,20 @@ export interface RasterDescriptor {
     probe: boolean;
     classified_semantics_requires_declaration: boolean;
   };
-  defaults: RasterExpressionDraft;
+  /** 后端 default_expression_request：表达式**请求体**，不是面板草稿。
+   *  stretch 恒为 "auto"（有界采样）；面板必须归一化，不能把近似统计
+   *  当成用户手动输入的精确端点提交。 */
+  defaults: {
+    schema_version: typeof RASTER_EXPRESSION_SCHEMA_VERSION;
+    mode: 'single' | 'rgb';
+    bands: number[];
+    stretch: 'auto';
+    colormap?: string;
+    opacity: number;
+    resampling: (typeof RASTER_RESAMPLINGS)[number];
+    classification: (typeof RASTER_CLASSIFICATIONS)[number];
+    autoStretch?: boolean;
+  };
   disclosures: string[];
 }
 
@@ -193,15 +206,24 @@ export interface RasterExportResult {
 export function defaultDraft(descriptor: RasterDescriptor): RasterExpressionDraft {
   const d = descriptor.defaults;
   const first = descriptor.bands[0];
+  const perChannel = d.bands.map((b) => {
+    const info = descriptor.bands[b - 1];
+    return [info?.vmin ?? 0, info?.vmax ?? 1] as [number, number];
+  });
   return {
-    ...d,
+    schema_version: RASTER_EXPRESSION_SCHEMA_VERSION,
+    mode: d.mode,
     bands: [...d.bands],
+    // 后端默认 stretch="auto"：绝不把 2048 边降采样的 vmin/vmax 伪造成
+    // 用户手动锁定的精确全量范围。
+    autoStretch: d.autoStretch ?? d.stretch === 'auto',
     stretchMin: first?.vmin ?? 0,
     stretchMax: first?.vmax ?? 1,
-    perChannel: d.bands.map((b) => {
-      const info = descriptor.bands[b - 1];
-      return [info?.vmin ?? 0, info?.vmax ?? 1] as [number, number];
-    }),
+    perChannel,
+    colormap: d.colormap ?? 'gray',
+    opacity: d.opacity,
+    resampling: d.resampling,
+    classification: d.classification,
   };
 }
 
@@ -231,11 +253,20 @@ export function draftFromCommitted(
 
 /** 草稿 → 后端 expression 请求体（显式值，不让服务端猜）。 */
 export function buildExpressionRequest(draft: RasterExpressionDraft): Record<string, unknown> {
+  // RGB 手动模式只有逐通道端点参与渲染；全局 min/max 由逐通道端点派生，
+  // 避免面板上两个死滑块改变 style_id 却不改变任何像素（P2-4）。
+  const rgbManual = draft.mode === 'rgb' && !draft.autoStretch;
+  const globalMin = rgbManual
+    ? Math.min(...draft.perChannel.map((p) => p[0]))
+    : draft.stretchMin;
+  const globalMax = rgbManual
+    ? Math.max(...draft.perChannel.map((p) => p[1]))
+    : draft.stretchMax;
   const stretch: Record<string, unknown> | 'auto' = draft.autoStretch
     ? 'auto'
     : {
-        min: draft.stretchMin,
-        max: draft.stretchMax,
+        min: globalMin,
+        max: globalMax,
         ...(draft.mode === 'rgb' ? { per_channel: draft.perChannel } : {}),
       };
   return {
@@ -289,15 +320,28 @@ export function isDraftDirty(
 ): boolean {
   if (!committed) return true;
   const req = buildExpressionRequest(draft);
+  const committedAuto = (committed.stretch?.source ?? 'manual') !== 'manual';
+  // auto ↔ manual 的切换本身就是一次新提交；逐通道端点也必须参与判定，
+  // 否则「只改某个通道范围」永远不算 dirty，提交按钮恒灰。
+  if (draft.autoStretch !== committedAuto) return true;
+  if (!draft.autoStretch) {
+    const expectedChannels = committed.bands.map((_, i) => {
+      const pair = committed.stretch?.per_channel?.[i];
+      return [pair?.[0] ?? committed.stretch?.min ?? 0,
+              pair?.[1] ?? committed.stretch?.max ?? 1];
+    });
+    if (JSON.stringify(draft.perChannel) !== JSON.stringify(expectedChannels)) return true;
+    if (draft.mode === 'single' &&
+        (draft.stretchMin !== committed.stretch?.min ||
+         draft.stretchMax !== committed.stretch?.max)) return true;
+  }
   return (
     req.mode !== committed.mode ||
     JSON.stringify(req.bands) !== JSON.stringify(committed.bands) ||
     (committed.colormap ?? null) !== (req.colormap ?? null) ||
     (committed.resampling ?? 'bilinear') !== req.resampling ||
     (committed.classification ?? 'continuous') !== req.classification ||
-    (committed.opacity ?? 1) !== req.opacity ||
-    (!draft.autoStretch &&
-      (draft.stretchMin !== committed.stretch.min || draft.stretchMax !== committed.stretch.max))
+    (committed.opacity ?? 1) !== req.opacity
   );
 }
 

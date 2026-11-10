@@ -16,7 +16,7 @@ from app.schemas.raster_spec import (
     RasterStretchBounds,
 )
 from app.services.raster_authoring.descriptor import band_stats
-from app.services.raster_authoring.palettes import canonical_colormap
+from app.services.raster_authoring.palettes import canonical_colormap, colormap_lut
 from app.services.raster_authoring.source import RasterSource
 
 AUTO_STRETCH_METHOD = "minmax_decimated_2048"
@@ -214,6 +214,14 @@ def resolve_expression(request: Mapping[str, Any], source: RasterSource) -> Rast
                 f"unknown colormap {colormap!r}",
                 field="colormap",
                 correction_hint="Choose a name from the descriptor's supported palette list.",
+            )
+        # 提交期就证明 LUT 可解析；绝不把「通过校验但瓦片渲染 502」的
+        # 假成功写进 MapSpec（图例色样与像素共用这一个 LUT）。
+        if colormap_lut(canonical, 8) is None:
+            raise RasterExpressionError(
+                "UNKNOWN_COLORMAP",
+                f"colormap {colormap!r} resolves to no color LUT",
+                field="colormap",
             )
         colormap = canonical
     elif colormap:

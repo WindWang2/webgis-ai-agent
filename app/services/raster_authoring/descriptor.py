@@ -99,7 +99,8 @@ def histogram(
 
     n = bounded_buckets(buckets)
     with rasterio.open(source.path) as src:
-        scale = min(1.0, MAX_RASTER_STATS_SIDE / float(max(src.width, src.height)))
+        native_side = int(max(src.width, src.height))
+        scale = min(1.0, MAX_RASTER_STATS_SIDE / float(native_side))
         out_h = max(1, int(round(src.height * scale)))
         out_w = max(1, int(round(src.width * scale)))
         window = src.read(
@@ -129,7 +130,7 @@ def histogram(
         "total_samples": int(arr.size), "approximate": True,
         "method": "histogram_decimated_2048", "all_nodata": False,
         "sample_truncation": truncation_fact(
-            requested=int(max(out_h, out_w)), used=int(min(MAX_RASTER_STATS_SIDE, max(out_h, out_w))),
+            requested=native_side, used=int(max(out_h, out_w)),
             what="histogram_side",
         ),
     }
@@ -174,6 +175,11 @@ def describe(source: RasterSource, *, histogram_bands: Optional[List[int]] = Non
         disclosures.append("two_band_default: single-band display; explicit two-band RGB is unsupported")
     if all(b.get("vmin") is None for b in band_list):
         disclosures.append("all_nodata: no finite valid samples in the decimated read")
+    if source.bands_truncated:
+        disclosures.append(
+            "bands_truncated: descriptor statistics and band tags cover only the first "
+            f"{len(band_list)} of {source.band_count} bands (bounded read)"
+        )
 
     from app.services.raster_authoring.contract import default_expression_request
 

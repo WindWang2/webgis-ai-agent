@@ -53,6 +53,29 @@ const btnCls =
   'hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-status-accent ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
 
+/**
+ * 无图层时的首次挂载入口：只要求会话里已有登记的栅格 ref，不要求
+ * HUD 里先有一个 raster/tile 图层。挂载后由回灌的权威 MapSpec 驱动地图。
+ */
+export function RasterAuthoringLauncher() {
+  const t = useT('hud');
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="px-3 pb-2 border-t border-edge-subtle pt-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+      >
+        {t('rasterAuthoring.title')}
+      </button>
+      {open && <RasterAuthoringPanel layerId="raster-authoring-main" />}
+    </div>
+  );
+}
+
+
 export function RasterAuthoringPanel({
   layerId, refId, committedStyle, committedLegend, onCommitted,
 }: Props) {
@@ -67,6 +90,7 @@ export function RasterAuthoringPanel({
   const [loadError, setLoadError] = useState<RasterErrorPayload | null>(null);
   const [point, setPoint] = useState<[string, string]>(['', '']);
   const [crs, setCrs] = useState('EPSG:4326');
+  const [probeBands, setProbeBands] = useState<number[]>([]);
   const [followClicks, setFollowClicks] = useState(false);
   const [busy, setBusy] = useState(false);
   const probeAbort = useRef<AbortController | null>(null);
@@ -122,6 +146,11 @@ export function RasterAuthoringPanel({
       .then((info) => {
         if (!alive) return;
         setDescriptor(info);
+        // 像元检视默认读「各波段」而不是只显示波段（Pi 工具同语义）；
+        // 后端单次上限 16，超出时由面板显式选择分页。
+        setProbeBands(Array.from(
+          { length: Math.min(info.band_count, 16) }, (_, i) => i + 1,
+        ));
         const committed = committedStyle ?? null;
         const draft = committed ? draftFromCommitted(info, committed) : defaultDraft(info);
         dispatch({ type: 'descriptor-loaded', draft, committed });
@@ -235,14 +264,14 @@ export function RasterAuthoringPanel({
     try {
       const result = await probePixels(
         { ...ctx, signal: controller.signal }, activeRef, [[x, y]], crs,
-        draft?.bands ?? [1], descriptor.data_revision,
+        probeBands, descriptor.data_revision,
       );
       dispatch({ type: 'probe-ok', seq, result });
     } catch (err) {
       if (controller.signal.aborted) return;
       dispatch({ type: 'probe-failed', seq, error: asRasterError(err) });
     }
-  }, [ctx, descriptor, point, crs, draft, activeRef]);
+  }, [ctx, descriptor, point, crs, probeBands, activeRef]);
 
   // 地图点选：快速点击 A、B 时只有最后一次响应能写面板（reducer 用 seq 裁决）。
   useEffect(() => {
@@ -263,6 +292,9 @@ export function RasterAuthoringPanel({
       useToastStore.getState().addToast(errorText(asRasterError(err).code), 'error');
     }
   }, [ctx, cursor.revision, t, errorText]);
+
+  // 卸载/切换数据源时中止仍在排队的窗口读取，不在后台继续大读取。
+  useEffect(() => () => { probeAbort.current?.abort(); }, [activeRef]);
 
   const focusError = useCallback(() => {
     const key = state.errorField;
@@ -398,7 +430,9 @@ export function RasterAuthoringPanel({
           />
           {t('rasterAuthoring.stretchAuto')}
         </label>
-        {!draft.autoStretch && (
+        {/* RGB 手动模式只有逐通道端点参与渲染；全局滑块若不隐藏就是改了
+            style_id 却不改像素的死控件。 */}
+        {!draft.autoStretch && draft.mode === 'single' && (
           <div className="flex gap-1.5">
             <input
               ref={(el) => { fieldRefs.current.stretch = el; }}
@@ -585,6 +619,27 @@ export function RasterAuthoringPanel({
             {t('rasterAuthoring.probeRun')}
           </button>
         </div>
+        <label className={labelCls} htmlFor={`ra-probe-bands-${layerId}`}>
+          {t('rasterAuthoring.probeBands')}
+        </label>
+        <select
+          id={`ra-probe-bands-${layerId}`}
+          multiple
+          size={Math.min(4, Math.max(2, probeBands.length))}
+          aria-label={t('rasterAuthoring.probeBands')}
+          className={inputCls}
+          value={probeBands.map(String)}
+          onChange={(e) => setProbeBands(
+            Array.from(e.target.selectedOptions, (o) => Number(o.value)),
+          )}
+        >
+          {Array.from({ length: Math.min(descriptor.band_count, 16) }, (_, i) => i + 1)
+            .map((b) => (
+              <option key={b} value={b}>
+                {bandLabel(descriptor.bands[b - 1], b, locale)}
+              </option>
+            ))}
+        </select>
         {state.probe?.points.map((p) => (
           <div key={p.id} className="text-caption">
             <p className="font-mono">{p.status} · {t('rasterAuthoring.probeRowCol')} {p.row},{p.col}</p>

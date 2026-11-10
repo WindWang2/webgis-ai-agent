@@ -44,6 +44,8 @@ import { LayersTab } from '@/components/sidebar/layers-tab';
 import { ComponentsTab } from '@/components/sidebar/components-tab';
 // U-1（#883）：恢复样式编辑面板的生产入口（editingLayerId 驱动的钻入视图）。
 import { LayerStylePanel } from '@/components/hud/layer-style-panel';
+// G20：无图层时的栅格表达首次挂载入口（局部接线，不改布局骨架）
+import { RasterAuthoringLauncher } from '@/components/hud/raster-authoring-panel';
 import { AnalysisTab } from '@/components/sidebar/analysis-tab';
 import { MapStudioTab } from '@/components/sidebar/map-studio-tab';
 import { ProjectTab } from '@/components/sidebar/project-tab';
@@ -530,6 +532,7 @@ export function ContextPanel({
         {activeTab === 'layers' && (
           <PanelErrorBoundary label={t('panel.boundary.layers')}>
             {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
+            <RasterAuthoringLauncher />
           </PanelErrorBoundary>
         )}
         {activeTab === 'components' && (

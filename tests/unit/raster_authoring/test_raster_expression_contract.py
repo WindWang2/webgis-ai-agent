@@ -131,11 +131,15 @@ def test_per_channel_stretch_is_not_a_single_global_slider():
 
 
 def test_palette_names_have_one_explicit_mapping():
-    assert canonical_colormap("Viridis") == "Viridis"       # cartography hex stops
-    assert canonical_colormap("viridis") == "viridis"       # matplotlib
+    # 别名先归一：cartography 名称/常见拼写都落到真正有 LUT 的规范名，
+    # 绝不出现「通过校验但瓦片渲染期 502」的假成功（评审 P2-1）。
+    assert canonical_colormap("Viridis") == "viridis"       # cartography → matplotlib
+    assert canonical_colormap("viridis") == "viridis"
+    assert canonical_colormap("grey") == "gray"
     assert canonical_colormap("RdYlGn_r") == "RdYlGn_r"     # reversed cartography
     assert canonical_colormap("bogus") is None
-    assert colormap_lut("Viridis", 8).shape == (8, 3)
+    for name in ("Viridis", "grey", "RdYlGn_r", "Greens"):
+        assert colormap_lut(canonical_colormap(name) or "", 8).shape == (8, 3)
     assert colormap_lut("bogus", 8) is None
 
 

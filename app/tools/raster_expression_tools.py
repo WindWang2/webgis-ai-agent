@@ -208,6 +208,10 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
             "success": True,
             "committed": result["committed"],
             "state": result["state"],
+            # 与 UI 不同：工具回执必须保持有界（不放完整 MapSpec 进上下文）。
+            # live map 由 apply_gis_mutation 的既有 MapSpec 事件通道 reconcile，
+            # mapspec_revision 供调用方核对世代。
+            "reconcile_via": "mapspec_event",
             "layer_id": result["layer_id"],
             "mapspec_revision": result["mapspec_revision"],
             "data_revision": result["data_revision"],
@@ -320,6 +324,13 @@ def register_raster_expression_tools(registry: ToolRegistry) -> None:
         if format not in ("png", "svg", "pdf"):
             return error_payload(RasterExpressionError(
                 "EXPORT_UNSUPPORTED", f"unsupported export format {format!r}", field="format",
+            ))
+        if format == "pdf":
+            # 在渲染前拒绝，不做一遍注定失败的 2048² 快照计算。
+            return error_payload(RasterExpressionError(
+                "EXPORT_UNSUPPORTED",
+                "PDF does not embed numeric raster snapshots; use png or svg",
+                field="format",
             ))
         artifact = await _guard(export_snapshot(
             session_id, expected_revision=expected_revision, fmt=format,

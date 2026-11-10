@@ -18,8 +18,7 @@ function descriptor(bands: number): RasterDescriptor {
     capabilities: { numeric_bands: true, tiles: true, probe: true, classified_semantics_requires_declaration: true },
     defaults: {
       schema_version: 'raster_expression.v1', mode: bands < 3 ? 'single' : 'rgb',
-      bands: bands < 3 ? [1] : [1, 2, 3], autoStretch: true,
-      stretchMin: 0, stretchMax: 1, perChannel: [], colormap: 'gray',
+      bands: bands < 3 ? [1] : [1, 2, 3], stretch: 'auto', colormap: 'gray',
       opacity: 1, resampling: 'bilinear', classification: 'continuous',
     },
     disclosures: [],
@@ -41,7 +40,8 @@ describe('G20 expression draft contract', () => {
     const req = buildExpressionRequest(d) as Record<string, unknown>;
     expect(req.mode).toBe('rgb');
     expect(req.bands).toEqual([1, 2, 3]);
-    expect(req.stretch).toEqual({ min: 0, max: 500, per_channel: [[0, 100], [0, 200], [0, 300]] });
+    // RGB 下全局端点由逐通道派生（评审 P2-4：全局滑块不是死控件）。
+    expect(req.stretch).toEqual({ min: 0, max: 300, per_channel: [[0, 100], [0, 200], [0, 300]] });
     expect(req.colormap).toBeUndefined();
   });
 
@@ -59,6 +59,38 @@ describe('G20 expression draft contract', () => {
   it('never guesses a band role from index/dtype', () => {
     expect(bandLabel(descriptor(4).bands[3], 4, 'zh')).toBe('第 4 波段');
     expect(bandLabel(descriptor(4).bands[3], 4, 'en')).toBe('Band 4');
+  });
+
+  it('review P1-1: default draft keeps stretch=auto (never fakes an exact manual range)', () => {
+    const d = defaultDraft(descriptor(4));
+    expect(d.autoStretch).toBe(true);
+    const req = buildExpressionRequest(d) as { stretch: unknown };
+    expect(req.stretch).toBe('auto');
+  });
+
+  it('review P1-2 / P2-4: per-channel changes are dirty and RGB globals are derived', () => {
+    const committed = {
+      schema_version: 'raster_expression.v1', mode: 'rgb', bands: [4, 3, 2],
+      stretch: { min: 0, max: 300, source: 'manual', method: 'manual',
+        approximate: false, sample_count: null,
+        per_channel: [[0, 100], [0, 200], [0, 300]] },
+      opacity: 1, resampling: 'bilinear', classification: 'continuous',
+      data_revision: 'fp:1', style_id: 'abc',
+    } as unknown as RasterExpressionSpec;
+    const restored = draftFromCommitted(descriptor(4), committed);
+    expect(isDraftDirty(restored, committed)).toBe(false);
+    const changed = {
+      ...restored,
+      perChannel: restored.perChannel.map((p, i) =>
+        i === 1 ? [p[0], p[1] + 50] as [number, number] : p),
+    };
+    expect(isDraftDirty(changed, committed)).toBe(true);
+    expect(isDraftDirty({ ...restored, autoStretch: true }, committed)).toBe(true);
+    const req = buildExpressionRequest(changed) as {
+      stretch: { min: number; max: number; per_channel: number[][] };
+    };
+    expect(req.stretch.per_channel[1][1]).toBe(250);
+    expect(req.stretch.max).toBe(300);  // 全局端点由逐通道派生，不是死控件
   });
 
   it('detects dirty drafts and restores from a committed style', () => {

@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+from html import escape as html_escape
 from typing import Any, Dict, List, Sequence
 
 from PIL import Image, ImageDraw, ImageFont
@@ -168,9 +169,10 @@ def compose(entries: Sequence[Dict[str, Any]], *, fmt: str = "png",
         }
     encoded = base64.b64encode(png_bytes).decode("ascii")
     w, h = image.size
-    legend_json = json.dumps(
-        [e["legend"] for e in entries], ensure_ascii=False, separators=(",", ":")
-    ).replace("<", "\\u003c")
+    # <desc> 必须同时转义 & 和 <：band description 来自栅格 tag，可能含 "&"。
+    legend_json = html_escape(json.dumps(
+        [e["legend"] for e in entries], ensure_ascii=False, separators=(",", ":"),
+    ).replace("<", "\\u003c"))
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
         f'width="{w}" height="{h}" viewBox="0 0 {w} {h}">'

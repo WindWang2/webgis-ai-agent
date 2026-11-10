@@ -191,8 +191,9 @@ def _apply_result_error(result: Any) -> None:
             correction_hint="Re-read the MapSpec revision and resubmit.",
         )
     if result.is_error:
+        # MapSpec 校验拒绝是 4xx 输入/状态错误，不是服务端渲染故障（502）。
         raise RasterExpressionError(
-            "RENDER_FAILED",
+            "MUTATION_REJECTED",
             str(result.error_msg or "MapSpec mutation was rejected"),
             status_code=422,
             correction_hint=str(result.correction_hint or ""),
@@ -205,11 +206,15 @@ async def commit_expression(
     origin: str = "user", actor: str = "raster_authoring",
     mutation_id: Optional[str] = None, trusted_dispatch: bool = False,
 ) -> Dict[str, Any]:
-    """一次可恢复的持久提交（同源双层互不串色；样式+图例原子一致）。"""
+    """**单笔**可恢复的持久提交（一次 CAS / 一个 checkpoint / 一条 provenance）。
+
+    source 条目通过 ``UpsertLayerIntent.source_data`` 的 typed passthrough
+    （``mapspec_source.store_data`` 的 numeric_raster 分支）与 layer 在**同一
+    事务**内落笔：全新会话由引擎的 auto-init 骨架补 version；没有第二笔
+    mutation，因此失败时「nothing was written」为真，一次 undo 即回到上一表达。
+    """
     from app.services.gis_world_state.mutation import apply_gis_mutation
-    from app.services.mapspec.intents import (
-        InitProjectIntent, UpsertLayerIntent, UpsertSourceIntent,
-    )
+    from app.services.mapspec.intents import UpsertLayerIntent
 
     source = await resolve_source(
         session_id, ref_id, owner_token, trusted_dispatch=trusted_dispatch
@@ -219,49 +224,21 @@ async def commit_expression(
     statement = expression_statement(spec, source)
     sid = source_id_for(ref_id)
     mapspec = await _read_mapspec(session_id)
-    mutations = 0
-    revision = int(expected_revision)
-    # 全新会话尚无权威文档：先走既有 InitProjectIntent（同样受 CAS/锁保护），
-    # 否则 UpsertLayer 会产出缺 version 的文档，被前端版本协商门拒绝。
-    if not mapspec.get("version"):
-        init_result = await apply_gis_mutation(
-            session_id, InitProjectIntent(), origin=origin, actor=actor,
-            expected_revision=revision, engine=_engine(),
-        )
-        _apply_result_error(init_result)
-        revision = int(init_result.mutation_revision or revision)
-        mutations += 1
-        mapspec = await _read_mapspec(session_id)
     existing_layer = _find_layer(mapspec, layer_id)
-    sources = mapspec.get("sources") or {}
-    existing_source = sources.get(sid) if isinstance(sources, dict) else None
     entry = _source_entry(source)
-
-    # 首挂载 / 数据修订变化 → 先更新数据身份（不携带样式，不重算数据）。
-    if not isinstance(existing_source, dict) or existing_source.get("dataRevision") != source.data_revision:
-        src_result = await apply_gis_mutation(
-            session_id, UpsertSourceIntent(source_id=sid, source=entry),  # type: ignore[arg-type]
-            origin=origin, actor=actor, expected_revision=revision,
-            engine=_engine(), mutation_id=(f"{mutation_id}:source" if mutation_id else None),
-        )
-        _apply_result_error(src_result)
-        revision = int(src_result.mutation_revision or revision)
-        mutations += 1
-        mapspec = await _read_mapspec(session_id)
-        existing_layer = _find_layer(mapspec, layer_id)
-
     layer = _layer_payload(layer_id, sid, spec, legend, existing_layer)
+
     result = await apply_gis_mutation(
-        session_id, UpsertLayerIntent(layer=layer, source_data=None),  # type: ignore[arg-type]
-        origin=origin, actor=actor, expected_revision=revision,
-        engine=_engine(), mutation_id=(f"{mutation_id}:layer" if mutation_id else None),
+        session_id,
+        UpsertLayerIntent(layer=layer, source_data=entry),  # type: ignore[arg-type]
+        origin=origin, actor=actor, expected_revision=int(expected_revision),
+        engine=_engine(), mutation_id=mutation_id,
     )
     _apply_result_error(result)
-    mutations += 1
     return _receipt(
         spec=spec, source=source, legend=legend, statement=statement,
         layer_id=layer_id, sid=sid, committed=True,
-        revision=int(result.mutation_revision or revision), mutations=mutations,
+        revision=int(result.mutation_revision or expected_revision), mutations=1,
         mapspec_fingerprint=result.mapspec_fingerprint,
         mapspec=result.mapspec if isinstance(result.mapspec, dict) else None,
     )
@@ -282,13 +259,17 @@ class CommittedExpression:
 
 async def resolve_committed_expression(
     session_id: str, layer_id: str, *, style_id: Optional[str] = None,
+    mapspec: Optional[Dict[str, Any]] = None,
+    mapspec_revision: Optional[int] = None,
 ) -> CommittedExpression:
     """从**当前**权威 MapSpec 校验楼层样式 / 数据绑定。
 
     ``style_id`` 不匹配 → 409 STALE_STYLE（旧 URL 绝不出旧像素）；
     source 的 dataRevision 与样式绑定不一致 → 409 STALE_BINDING。
+    ``mapspec`` 由导出冻结路径显式传入，避免多次独立读造成修订混用。
     """
-    mapspec = await _read_mapspec(session_id)
+    if mapspec is None:
+        mapspec = await _read_mapspec(session_id)
     layer = _find_layer(mapspec, layer_id)
     if layer is None:
         raise RasterExpressionError(
@@ -325,7 +306,10 @@ async def resolve_committed_expression(
         spec=spec,
         data_revision=str(source_entry.get("dataRevision") or ""),
         layer=dict(layer),
-        mapspec_revision=await current_revision(session_id),
+        mapspec_revision=(
+            mapspec_revision if mapspec_revision is not None
+            else await current_revision(session_id)
+        ),
     )
 
 
@@ -339,25 +323,36 @@ async def frozen_layers(session_id: str, expected_revision: Optional[int] = None
             status_code=409,
             correction_hint="Re-read the MapSpec revision and export the current committed state.",
         )
-    mapspec = await _read_mapspec(session_id)
+    # 一次读取 = 一个冻结快照；所有层都从这同一份文档解析，不再各自重读。
+    snapshot = await _read_mapspec(session_id)
     numeric: List[Dict[str, Any]] = []
     omitted: List[str] = []
-    for layer in mapspec.get("layers") or []:
+    for layer in snapshot.get("layers") or []:
         if not isinstance(layer, dict):
             continue
         lid = str(layer.get("id") or "")
         if not isinstance(layer.get("raster_style"), dict):
             omitted.append(lid)
             continue
-        committed = await resolve_committed_expression(session_id, lid)
+        committed = await resolve_committed_expression(
+            session_id, lid, mapspec=snapshot, mapspec_revision=revision
+        )
         numeric.append({
             "layer_id": lid,
             "spec": committed.spec,
             "ref_id": committed.ref_id,
         })
+    # 导出期间若有新提交落地，宁可拒绝也不混用两个修订。
+    if await current_revision(session_id) != revision:
+        raise RasterExpressionError(
+            "CAS_SUPERSEDED",
+            "MapSpec revision changed while the export snapshot was being frozen",
+            status_code=409,
+            correction_hint="Re-export the current committed state.",
+        )
     return {
         "revision": revision,
-        "mapspec": mapspec,
+        "mapspec": snapshot,
         "numeric_layers": numeric,
         "omitted_layers": omitted,
     }

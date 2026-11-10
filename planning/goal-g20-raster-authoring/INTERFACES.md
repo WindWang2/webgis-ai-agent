@@ -11,11 +11,15 @@
 - 复用既有 intent（不新增 intent、不新增 Body codec、不改
   `tests/unit/test_mutation_registry_consistency.py` 的硬编码旗标集合、
   不改 `mutation_parity_corpus.golden.json`）：
-  - `UpsertSourceIntent` 仅在首次挂载/数据修订变化时写 `numeric_raster` 源；
-  - `UpsertLayerIntent` 原子写入整层（`raster_style` + `legend_spec` + `paint.opacity`），
-    `source_data=None` 使 `process_layer_ingestion` 保留既有源条目。
-  - 两者都有 `auto_checkpoint=True`、走 `SessionLockRegistry`、CAS `expected_revision`
-    与 `pre-commit` 校验；`origin="user"` 缺 CAS 由 engine 直接拒绝。
+  - **单笔** `UpsertLayerIntent(layer=…, source_data=<numeric_raster 源条目>)`
+    原子写入 source + layer（`raster_style` + `legend_spec`），全新会话由引擎的
+    auto-init 骨架补 `version`。`app/services/mapspec_source.py::store_data`
+    新增 `numeric_raster` typed passthrough 分支（与 model3d/vector 同款）。
+  - 独立评审 P1-3 后由「最多 3 笔」改为「恒 1 笔」：一次 CAS、一个
+    checkpoint、一条 provenance、一次 undo 即回到上一表达；失败时
+    「nothing was written」为真。
+  - 走 `SessionLockRegistry`、CAS `expected_revision` 与 `pre-commit` 校验；
+    `origin="user"` 缺 CAS 由 engine 直接拒绝。
 - 不写 `session_token` / owner token 进 MapSpec、日志、导出产物。
 
 ## 2. 契约版本与 schema 分区
@@ -132,6 +136,29 @@
   `raster_style` + 快照 data-URI（离线可读，不依赖 session URL）；无法忠实表达的
   格式显式 `degraded`/`unsupported` + 原因，不静默丢层。
 - 位图嵌入与源像元分辨率限制在产物 sidecar 中如实声明；DPI 提升不等于增加细节。
+
+## 7b. 评审后的补充接线（轮 5）
+
+- `app/services/mapspec_source.py::store_data`：`numeric_raster` typed
+  passthrough（additive 分支，旧 geojson/raster/vector/model3d/data_fabric
+  行为不变；`tests/unit/test_mapspec_source.py` 24 passed）。
+- `app/services/raster_authoring/delivery.py`：导出下载**恒**签发 HMAC 能力
+  URL（登录用户 `window.open` 不带 Bearer，裸路径必然 401）；沿用既有
+  `download_map_export` 的属主 + 签名双重校验。
+- `app/services/raster_authoring/source.py`：`_SOURCE_CACHE` 按
+  `(session, ref, path, mtime_ns, size)` 5s TTL；`_inspect_bounded` ≤16 波段
+  / ≤1024 边；`_read_band_meta` ≤64 波段；统一 `_open`（`rasterio_env` +
+  `open_raster`）。`bands_truncated` 通过 descriptor `disclosures` 暴露。
+- `frontend/components/layout/context-panel.tsx`：在 layers 分支追加 1 行
+  `<RasterAuthoringLauncher />`，供无 HUD 图层时首次挂载。**这是与开放
+  `#2032` 的唯一文本冲突段**（局部导入 + 局部挂载，不改布局骨架/主题）；
+  合并顺序以上游为准，必要时保留双方两行。
+- 面板：默认 `autoStretch=true`（不把近似统计写成精确 manual）；RGB 手动
+  模式全局端点由逐通道派生，隐藏全局死滑块；probe 默认请求全部波段（≤16）
+  并支持多选；卸载 abort 在途窗口读。
+- Pi `webgis_raster_expression_apply` 回执显式 `reconcile_via:"mapspec_event"`
+  + `mapspec_revision`；不把完整 MapSpec 塞进 LLM 上下文，live reconcile
+  由既有 agent MapSpec 事件通道承担。
 
 ## 8. 生命周期 / 预算
 

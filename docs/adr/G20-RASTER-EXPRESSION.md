@@ -18,11 +18,13 @@ G12–G21 并行，各任务不得抢占同一个 ADR 数字号；交叉引用�
 ## 决定
 
 1. **MapSpec 仍是唯一权威**。不新增 mutation intent、Body codec、第二 style
-   store / ID 系统 / 撤销栈 / evidence store。提交复用既有
-   `UpsertSourceIntent` + `UpsertLayerIntent`（经 `apply_gis_mutation` 的
-   session 锁、CAS `expected_revision`、checkpoint 与 undo/redo）。全新会话先
-   走既有 `InitProjectIntent`。样式与派生图例在**同一笔** `UpsertLayerIntent`
-   里原子写入。
+   store / ID 系统 / 撤销栈 / evidence store。提交为**单笔**
+   `UpsertLayerIntent(layer, source_data=<numeric_raster 源条目>)`，经
+   `apply_gis_mutation` 的 session 锁、CAS `expected_revision`、checkpoint
+   与 undo/redo；`mapspec_source.store_data` 的 `numeric_raster` typed
+   passthrough 保证 source 与 layer 落在同一事务（独立评审 P1-3 后由最初
+   的 2–3 笔改为恒 1 笔，撤销栈不再被污染、失败不留半状态）。全新会话由
+   引擎 auto-init 骨架补 `version`。样式与派生图例原子一致。
 2. **新增 raster 子模型 + 独立子契约版本**，不与 frame / label / flow 字段分区
    相交：
    - `NumericRasterMapSpecSource(type="numeric_raster")` 只承载数据身份

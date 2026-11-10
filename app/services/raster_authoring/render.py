@@ -64,13 +64,20 @@ def render_snapshot(source: RasterSource, spec: Any) -> Dict[str, Any]:
     from rasterio.enums import Resampling
 
     style = render_style(spec)
+    # 与瓦片同一重采样语义（分类栅格 nearest、连续量 bilinear/cubic），
+    # 避免导出位图与屏幕表达不一致。
+    resampling = {
+        "nearest": Resampling.nearest,
+        "bilinear": Resampling.bilinear,
+        "cubic": Resampling.cubic,
+    }[style.resampling]
     with rasterio.open(source.path) as src:
         scale = min(1.0, MAX_RASTER_SNAPSHOT_SIDE / float(max(src.width, src.height)))
         out_h = max(1, int(round(src.height * scale)))
         out_w = max(1, int(round(src.width * scale)))
         data = src.read(
             indexes=list(style.bands), out_shape=(len(style.bands), out_h, out_w),
-            masked=True, resampling=Resampling.nearest,
+            masked=True, resampling=resampling,
         )
         arr = np.ma.getdata(data)
         mask = np.ma.getmaskarray(data)
