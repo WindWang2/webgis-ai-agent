@@ -617,7 +617,7 @@ def _build_rules() -> List[TaskRule]:
     add("vegetation_index_request", "vegetation_index", SPEC_SPECIFIC - 2,
         r"(ndvi|evi|ndwi|nbr|植被指数|植被覆盖度?|绿度)")
     add("mobility_flow_request", "mobility_flow", SPEC_SPECIFIC,
-        r"(通勤流|出行流|客流|交通流|流向|流动|od\s*(?:矩阵|分析|联系|强度|流量|走廊)|"
+        r"(通勤流|通勤表|通勤联系|流图|出行流|客流|交通流|流向|流动|od\s*(?:矩阵|分析|联系|强度|流量|走廊)|"
         r"出行(od|分布)|commuting\s+(?:flows?|flow)|origin.destination|od\s+matrix)")
     add("simple_view", "simple_view", SPEC_DISPLAY,
         r"^(?:在地图上|地图上|在地图中|(?:帮我|请|把|将|咱|麻烦)[^，。?？]{0,10}|"

@@ -1154,14 +1154,14 @@ SEED_RECIPES: List[CartographyRecipe] = [
     CartographyRecipe(
         # ADR-0092 D7：mobility_flow / od_flow 产品 recipe —— 自然语言
         # 「分析 A 到 B 的出行流 / 展示各区通勤联系」→ OD 流向图产品。
-        # 能力链：od_matrix（成本/坐标对来源）→ od_flow_mapping（有界流向
-        # 线要素）→ flow_od_arc 主表达 + table/chart/statistics facets。
+        # 能力链：真实 od_table（坐标+流量）→ od_flow_mapping（有界流向
+        # 线要素）→ flow_od_arc 主表达；网络成本矩阵不是流量前置。
         id="od_flow_overview",
         name="OD 出行流向图",
         description="『通勤流/出行流/客流』：OD 对 → 有界主流向线要素 + 流量统计。",
         intent_tasks=["mobility_flow"],
         intent_cartography=["flow_od_arc"],
-        preferred_analysis=["od_matrix", "od_flow_mapping", "point_profile"],
+        preferred_analysis=["od_flow_mapping"],
         optional_analysis=["admin_boundary_query"],
         primary_cartography="flow_od_arc",
         secondary_cartography=[],

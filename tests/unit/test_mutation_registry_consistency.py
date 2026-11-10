@@ -48,7 +48,7 @@ def test_registry_kinds_unique_and_class_named():
 
 
 def test_auto_checkpoint_flags_match_baseline():
-    """提交期 auto checkpoint 的 7 类（重构前分支旗标逐字对应）。"""
+    """提交期 auto checkpoint：重构前 7 类 + G21 原子流图提交。"""
     expected = {
         "UpsertLayerIntent",
         "PatchLayerPresentationIntent",
@@ -57,6 +57,7 @@ def test_auto_checkpoint_flags_match_baseline():
         "RemoveLayerIntent",
         "ReorderLayersIntent",
         "ApplyVisualHealPatchIntent",
+        "ApplyFlowProductIntent",
     }
     actual = {
         d.intent_cls.__name__ for d in MUTATION_REGISTRY.all() if d.auto_checkpoint
@@ -77,6 +78,8 @@ def test_touches_layers_flags_match_cow_baseline():
         "ApplyVisualHealPatchIntent",
         # PR-D：撤销 Agent 提交 = checkpoint 回滚（整体替换层集，同 Rollback）。
         "UndoAgentCommitIntent",
+        # G21：原子替换 OD flow 图层族。
+        "ApplyFlowProductIntent",
     }
     actual = {
         d.intent_cls.__name__ for d in MUTATION_REGISTRY.all() if d.touches_layers
@@ -142,6 +145,7 @@ def test_op_labels_match_legacy_table():
         "SetTemporalViewIntent": "调整时态视图",
         # PR-D：新意图的有意标签（journal 可读性，经本表显式登记）。
         "UndoAgentCommitIntent": "撤销 Agent 提交",
+        "ApplyFlowProductIntent": "应用 OD 流图",
     }
     for d in MUTATION_REGISTRY.all():
         if d.intent_cls.__name__ in legacy:
@@ -179,9 +183,9 @@ def test_http_body_codec_coverage_and_roundtrip():
     body_classes = [
         v for k, v in vars(ms).items() if isinstance(v, type) and k.endswith("Body")
     ]
-    # PR-D：+UndoAgentCommitBody（16 → 17）
-    assert len(body_classes) == 17
-    # discriminated union 的 17 成员与 codec 表完全重合（漏登记在 CI 拦截）
+    # PR-D + G21：UndoAgentCommitBody / ApplyFlowProductBody（16 → 18）
+    assert len(body_classes) == 18
+    # discriminated union 的 18 成员与 codec 表完全重合（漏登记在 CI 拦截）
     assert union_members == {c.__name__ for c in body_classes}, union_members ^ {
         c.__name__ for c in body_classes
     }

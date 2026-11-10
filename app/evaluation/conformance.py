@@ -390,7 +390,7 @@ CONFORMANCE_FAMILIES: Tuple[ConformanceFamily, ...] = (
         ("通勤流分析", "OD 矩阵分析", "客流流动走廊"),
         ("commuting flows",),
         "mobility_flow", "od_flow_overview",
-        ("od_matrix",),
+        ("od_flow_mapping",),
         group="conformance-network",
     ),
     # ── accessibility ─────────────────────────────────────────────────
@@ -547,11 +547,11 @@ CONFORMANCE_FAMILIES: Tuple[ConformanceFamily, ...] = (
         group="conformance-decision",
     ),
     ConformanceFamily(
-        "od-matrix", "network", "OD 矩阵与流线",
-        ("医院之间od矩阵", "通勤流线图"),
+        "od-matrix", "network", "OD 通勤流线",
+        ("通勤流线图", "区县OD通勤联系"),
         (),
         "mobility_flow", "od_flow_overview",
-        ("od_matrix",),
+        ("od_flow_mapping",),
         expected_ontology_task="network.od_analysis",
         group="conformance-network",
     ),

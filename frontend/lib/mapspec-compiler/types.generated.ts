@@ -179,6 +179,29 @@ export interface MapSpecLayer {
   data_binding?: MapSpecLayerDataBinding;
   representation?: MapSpecLayerRepresentation;
   scale_profile?: Record<string, unknown>;
+  flow?: MapSpecLayerFlow;
+}
+
+export interface MapSpecLayerFlow {
+  schema_version: "od_flow.v1";
+  product_ref: string;
+  family_id: string;
+  source_ref: string;
+  source_revision: number;
+  source_fingerprint: string;
+  product_fingerprint: string;
+  direction_mode: "directed" | "undirected-total" | "net";
+  geometry: "straight" | "curve";
+  show_arrows: boolean;
+  weight_field: string;
+  source_weight_field: string;
+  weight_unit: string;
+  supported_modes: "directed" | "undirected-total" | "net"[];
+  node_totals_scope: "filtered" | "thresholded";
+  stats?: Record<string, unknown>;
+  encoding?: Record<string, unknown>;
+  time_window?: Record<string, unknown>;
+  filters?: Record<string, unknown>;
 }
 
 export interface MapSpecLayerExtrusion {

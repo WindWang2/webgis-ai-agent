@@ -78,9 +78,10 @@ Number = Union[StrictInt, StrictFloat]
 #: ``source`` 源覆盖键（artifact 带 generalized/aggregate_grid 的派生
 #: 工件源装配）+ ``layer.scale_profile`` 开放声明（ScaleRepresentation-
 #: Profile.v1 投影，权威 = app/lib/cartography/multiscale/profile.py）。
-#: 纯 additive：缺失 = 既有 v1.6/v1.7 语义，存量 spec 行为不变）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9")
-LATEST_VERSION = "1.9"
+#: 纯 additive：缺失 = 既有 v1.6/v1.7 语义，存量 spec 行为不变）；
+#: 1.10 = OD flow 产品绑定（layer.flow，G21；缺失 = 非 flow 图层）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10")
+LATEST_VERSION = "1.10"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -614,6 +615,30 @@ class MapSpecLayerRepresentation(_SpecModel):
     windows: List[MapSpecRepresentationWindow] = Field(default_factory=list)
 
 
+class MapSpecLayerFlow(_SpecModel):
+    """Session-owned OD flow product binding (v1.10 additive)."""
+
+    schema_version: Literal["od_flow.v1"]
+    product_ref: StrictStr
+    family_id: StrictStr
+    source_ref: StrictStr
+    source_revision: StrictInt
+    source_fingerprint: StrictStr
+    product_fingerprint: StrictStr
+    direction_mode: Literal["directed", "undirected-total", "net"]
+    geometry: Literal["straight", "curve"]
+    show_arrows: StrictBool
+    weight_field: StrictStr
+    source_weight_field: StrictStr
+    weight_unit: StrictStr
+    supported_modes: List[Literal["directed", "undirected-total", "net"]]
+    node_totals_scope: Literal["filtered", "thresholded"]
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    encoding: Dict[str, Any] = Field(default_factory=dict)
+    time_window: Optional[Dict[str, Any]] = None
+    filters: Dict[str, Any] = Field(default_factory=dict)
+
+
 class MapSpecLayer(_SpecModel):
     """图层。paint/layout/filter 是 MapLibre 开放面（Dict[Any]）；
     ``legend_spec`` 是工具层写入的专题图例标记（开放 dict，推导见
@@ -666,6 +691,8 @@ class MapSpecLayer(_SpecModel):
     #: Profile.v1 投影（to_mapspec_layer_block）。缺失 = 层无多尺度档案，
     #: 存量 spec 行为不变）。
     scale_profile: Optional[Dict[str, Any]] = None
+    #: v1.10 additive（G21）：OD flow 产品引用与统计/表达口径。
+    flow: Optional[MapSpecLayerFlow] = None
 
 
 class MapThresholds(_SpecModel):
@@ -1119,6 +1146,7 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("DataFabricMapSpecSource", DataFabricMapSpecSource),
     ("ClusterSourceConfig", ClusterSourceConfig),
     ("MapSpecLayer", MapSpecLayer),
+    ("MapSpecLayerFlow", MapSpecLayerFlow),
     ("MapSpecLayerExtrusion", MapSpecLayerExtrusion),
     ("MapSpecLayerVisibility", MapSpecLayerVisibility),
     ("MapSpecLayerBivariate", MapSpecLayerBivariate),
@@ -1248,6 +1276,8 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # layer.scale_profile 可选；缺失 = 既有语义，存量 spec 行为不变。
     # GOAL 04 多尺度制图综合）。
     ("1.8", "1.9"): lambda doc: doc,
+    # 1.10 相对 1.9 纯 additive（layer.flow 可选；缺失 = 非 OD flow 图层）。
+    ("1.9", "1.10"): lambda doc: doc,
 }
 
 

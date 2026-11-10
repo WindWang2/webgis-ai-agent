@@ -37,11 +37,13 @@ export const SUPPORTED_MAPSPEC_VERSIONS = [
   // v1.9（GOAL 04）：representation 窗口 source 覆盖 + layer.scale_profile
   //（纯 additive）。
   "1.9",
+  // v1.10（G21）：OD flow 产品绑定（layer.flow，纯 additive）。
+  "1.10",
 ] as const;
 
 export type SupportedMapSpecVersion = (typeof SUPPORTED_MAPSPEC_VERSIONS)[number];
 
-export const LATEST_SUPPORTED_MAPSPEC_VERSION: SupportedMapSpecVersion = "1.9";
+export const LATEST_SUPPORTED_MAPSPEC_VERSION: SupportedMapSpecVersion = "1.10";
 
 /** 版本缺省口径（= 后端 DEFAULT_VERSION）。 */
 export const DEFAULT_MAPSPEC_VERSION = "1.0";
@@ -206,6 +208,8 @@ const UPGRADERS: Record<string, Upgrader> = {
   // 1.9（GOAL 04）：representation 窗口 source 覆盖 + layer.scale_profile
   // 可选；缺失 = 既有语义，存量 spec 行为不变。
   "1.8->1.9": identityUpgrade,
+  // 1.10（G21）：layer.flow 可选；缺失 = 非 OD flow 图层。
+  "1.9->1.10": identityUpgrade,
 };
 
 function identityUpgrade(_spec: Record<string, unknown>, _d: MigrationDisclosure[]): void {

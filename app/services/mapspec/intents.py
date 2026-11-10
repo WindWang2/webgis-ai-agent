@@ -432,7 +432,16 @@ class PatchWorkbenchDeltaIntent:
     delta: Dict[str, Any]
 
 
+@dataclass
+class ApplyFlowProductIntent:
+    """Apply one session-owned OD flow preview as a single map transaction."""
+
+    product_ref: str
+    family_id: str
+
+
 MutationIntent = Union[
+    ApplyFlowProductIntent,
     InitProjectIntent,
     RefreshDataRevisionIntent,
     SetViewIntent,

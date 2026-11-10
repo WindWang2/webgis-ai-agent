@@ -54,7 +54,7 @@ _F = dict(
         ["raster_source"], [], []),
     flow=(
         "mobility_flow", "od_flow_overview",
-        ["od_matrix"], [], []),
+        ["od_flow_mapping"], [], []),
     equity=(
         "spatial_equity", "spatial_equity",
         ["poi_query", "admin_aggregation"], ["interpolation."],
@@ -490,7 +490,7 @@ _COMPOUND = [
     ("C024", "用克里金插值成都气温并显示误差", "raster_distribution",
      None, ["raster_source", "spatial_interpolation"], [], []),
     ("C025", "成都商圈客流来源的OD分析", "mobility_flow",
-     "od_flow_overview", ["od_matrix"], [], []),
+     "od_flow_overview", ["od_flow_mapping"], [], []),
     ("C026", "哪些地方适合建郊野公园", "site_selection",
      "site_selection", ["proximity_buffer", "mcda_evaluation"],
      ["site_selection"], []),
@@ -537,7 +537,7 @@ _STYLE_DEEP = [
     ("P012", "基于哨兵影像计算成都NDVI", "vegetation_index",
      None, ["raster_source"], []),
     ("P013", "早晚高峰跨区通勤的OD联系强度", "mobility_flow",
-     "od_flow_overview", ["od_matrix"], []),
+     "od_flow_overview", ["od_flow_mapping"], []),
     ("P014", "成都各区社区卫生服务的可及性是否均衡", "spatial_equity",
      "spatial_equity", ["poi_query", "admin_aggregation"], ["spatial_equity"]),
     ("P015", "想在学校密集区以外新开一家书店，位置怎么选", "site_selection",

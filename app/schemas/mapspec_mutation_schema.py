@@ -220,8 +220,16 @@ class UndoAgentCommitBody(ClientMutationIdMixin):
     direction: Literal["undo", "redo"] = "undo"
 
 
+class ApplyFlowProductBody(ClientMutationIdMixin):
+    intent: Literal["apply_flow_product"]
+    expected_revision: int = Field(ge=0)
+    product_ref: str = Field(min_length=8, max_length=200, pattern=r"^ref:flow-product-[A-Za-z0-9-]+$")
+    family_id: str = Field(min_length=1, max_length=96, pattern=r"^odf_[A-Za-z0-9_-]+$")
+
+
 UserMapSpecMutationRequest = Annotated[
     Union[
+        ApplyFlowProductBody,
         PatchLayerPresentationBody,
         PatchLayerStyleBody,
         PatchComponentBody,

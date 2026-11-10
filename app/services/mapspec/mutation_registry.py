@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from app.schemas.mapspec_mutation_schema import (
+    ApplyFlowProductBody,
     DuplicateComponentBody,
     InitProjectBody,
     PatchComponentBody,
@@ -42,6 +43,7 @@ from app.schemas.mapspec_mutation_schema import (
 )
 from app.services.mapspec import mutation_handlers as _h
 from app.services.mapspec.intents import (
+    ApplyFlowProductIntent,
     ApplyVisualHealPatchIntent,
     CheckpointIntent,
     DuplicateComponentIntent,
@@ -138,6 +140,12 @@ def _lt_upsert_layer(intent: UpsertLayerIntent) -> Tuple[List[str], List[str]]:
     return ([str(lid)] if isinstance(lid, str) and lid else [], [])
 
 
+def _lt_flow_product(intent: ApplyFlowProductIntent) -> Tuple[List[str], List[str]]:
+    from app.services.flow_product.mutation import flow_layer_ids
+
+    return (flow_layer_ids(intent.family_id), [])
+
+
 def _lt_visual_heal(intent: ApplyVisualHealPatchIntent) -> Tuple[List[str], List[str]]:
     # ADR-0186：锁面 = 全部缺陷靶图层 + 遮挡者（遮挡者会被重排/压透明度）
     targets: List[str] = []
@@ -229,6 +237,10 @@ def _pd_none(intent: Any) -> Dict[str, Any]:
 
 # ─── HTTP Body codec（原 intent_codec.body_to_intent 分支逐字迁入，
 #     含全部 ValueError 消息原文 —— 路由层 400 消息零漂移） ─────────────────────
+def _codec_apply_flow_product(req: Any) -> MutationIntent:
+    return ApplyFlowProductIntent(product_ref=req.product_ref, family_id=req.family_id)
+
+
 def _codec_patch_layer_style(req: Any) -> MutationIntent:
     return PatchLayerStyleIntent(
         layer_id=req.layer_id, paint=dict(req.paint),
@@ -481,6 +493,12 @@ class MutationRegistry:
 
 def _build_default_registry() -> MutationRegistry:
     reg = MutationRegistry()
+    reg.register(IntentDescriptor(
+        intent_cls=ApplyFlowProductIntent,
+        handler=_h._handle_applyflowproduct,
+        touches_layers=True, auto_checkpoint=True, op_label="应用 OD 流图",
+        lock_targets=_lt_flow_product, provenance_detail=_pd_none,
+    ), body_cls=ApplyFlowProductBody, body_codec=_codec_apply_flow_product)
     reg.register(IntentDescriptor(
         intent_cls=ApplyVisualHealPatchIntent,
         handler=_h._handle_applyvisualhealpatch,
