@@ -111,13 +111,20 @@ class PublicationBusyError(Exception):
 
 @dataclass
 class PageCompileOutcome:
-    """单页编译成功结果（svg 为最终页面体；无载荷摘要随行）。"""
+    """单页编译成功结果（svg 为最终页面体；无载荷摘要随行）。
+
+    G15：产品页额外携带 ``html_body``（CSS 定位槽位组合）—— WeasyPrint
+    内嵌 SVG 渲染器不支持 g transform/多嵌套 svg（实证：只渲染首个嵌套
+    svg、transform 被忽略），同页多画幅在 PDF 路径必须走 HTML 组合；
+    svg 字段仍是自包含产品页 SVG（单文件导出/结构核验消费者用）。
+    """
 
     svg: str
     width_mm: float
     height_mm: float
     page: PageLayoutIR
     svg_bytes: int = 0
+    html_body: Optional[str] = None
     frame_diagnostics: List[Any] = _dc_field(default_factory=list)
     rendered_component_types: List[str] = _dc_field(default_factory=list)
     omitted_components: List[Dict[str, Any]] = _dc_field(default_factory=list)
@@ -255,13 +262,15 @@ def assemble_pages_pdf(
             f"{font_face}\n"
             f"html, body {{ margin: 0; font-family: {font_stack}; }}\n"
             f"{svg_text_rule}"
-            "svg { width: 100%; height: 100%; }\n"
+            # G15：HTML 体页（fp-page）自带排版；svg 100% 规则只作用于
+            # 整页 SVG 页（旧语义逐字节不变），不覆盖 fp 槽位 svg 内联尺寸。
+            "div.page > svg { width: 100%; height: 100%; }\n"
             ".page { page-break-after: always; }\n"
             + "\n".join(rules)
             + "</style></head><body>"
             + "".join(
-                f'<div class="page page-{name}">{svg}</div>'
-                for (name, svg, _w, _h) in page_specs
+                f'<div class="page page-{name}">{body}</div>'
+                for (name, body, _w, _h) in page_specs
             )
             + "</body></html>"
         )
@@ -487,12 +496,23 @@ def _namespace_slot_svg(svg: str, prefix: str) -> str:
     return svg
 
 
-def _slot_inner(svg: str) -> str:
-    """完整 <svg> → 内部内容（去根标签；外层 <g> 负责定位/缩放）。"""
+def _slot_inner(svg: str) -> "tuple[str, str]":
+    """完整 <svg> → (内部内容, 原始 viewBox)。
+
+    编译器按自身几何（mm 口径）计算 viewBox 并靠 preserveAspectRatio
+    缩放到 width/height —— 重组必须携带原 viewBox（截面积内容坐标在
+    原坐标系，替换成槽像素坐标会让内容错位/溢出 = 空白帧）。
+    """
     import re
 
-    m = re.search(r"<svg[^>]*>(.*)</svg>", svg, re.DOTALL)
-    return m.group(1) if m else svg
+    m = re.search(r"<svg[^>]*>", svg)
+    vb = ""
+    if m:
+        vbm = re.search(r'viewBox="([^"]+)"', m.group(0))
+        if vbm:
+            vb = vbm.group(1)
+    c = re.search(r"<svg[^>]*>(.*)</svg>", svg, re.DOTALL)
+    return (c.group(1) if c else svg, vb)
 
 
 def _shared_legend_band_svg(
@@ -524,7 +544,7 @@ def _shared_legend_band_svg(
         label = str(e.get("label") or "")
         parts.append(
             f'<rect x="{x}" y="{y}" width="18" height="12" fill="{color}" '
-            f'stroke="#94a3b8" stroke-width="0.5"/>'
+            f'fill-opacity="0.6" stroke="#94a3b8" stroke-width="0.5"/>'
             f'<text x="{x + 24}" y="{y + 10}" font-family="sans-serif" '
             f'font-size="12" fill="#0f172a">{label}</text>'
         )
@@ -573,6 +593,8 @@ def _compile_product_page(
     total_bytes = 0
     rendered_types: set = set()
     shared_legend_spec: Optional[Dict[str, Any]] = None
+    _slot_svgs: List[str] = []
+    _slot_viewboxes: List[str] = []
     for i, slot in enumerate(page.frame_slots or []):
         try:
             res = resolve_frame_document(doc, slot.frame_id)
@@ -612,23 +634,29 @@ def _compile_product_page(
                         layer.get("legend_spec"), dict):
                     shared_legend_spec = dict(layer["legend_spec"])
                     break
-        inner = _namespace_slot_svg(
-            _slot_inner(comp.svg), f"fp{i}-")
+        _slot_svgs.append(comp.svg)
+        inner, slot_vb = _slot_inner(comp.svg)
+        _slot_viewboxes.append(slot_vb)
+        inner = _namespace_slot_svg(inner, f"fp{i}-")
         x = int(slot.x * w_px)
-        y = int(slot.y * h_px) - int(0.03 * h_px)  # 标题带在槽上方
+        # 槽标题带：槽顶上方独立行（与页标题保持 ≥ 一行距，不与页标题
+        # 同带 —— 视觉验收：标题/画幅标题重叠是缺陷）。
+        title_y = max(int(slot.y * h_px) - int(0.022 * h_px), 14)
+        map_y = int(slot.y * h_px)
         clip_id = f"fpclip{i}"
         title_esc = (
             str(slot.title or slot.frame_id)
             .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         )
+        vb_attr = f'viewBox="{slot_vb}"' if slot_vb else (
+            f'viewBox="0 0 {slot_w} {slot_h}"')
         slot_parts.append(
-            f'<text x="{x}" y="{max(y - 4, 12)}" font-family="sans-serif" '
+            f'<text x="{x}" y="{title_y}" font-family="sans-serif" '
             f'font-size="{max(12, slot_h // 24)}" font-weight="600" '
             f'fill="#0f172a">{title_esc}</text>'
-            f'<g clip-path="url(#{clip_id})" transform="translate({x},{y})">'
-            f'<svg width="{slot_w}" height="{slot_h}" '
-            f'viewBox="0 0 {slot_w} {slot_h}">{inner}</svg></g>'
-            f'<defs><clipPath id="{clip_id}"><rect x="{x}" y="{y}" '
+            f'<g clip-path="url(#{clip_id})" transform="translate({x},{map_y})">'
+            f'<svg width="{slot_w}" height="{slot_h}" {vb_attr}>{inner}</svg></g>'
+            f'<defs><clipPath id="{clip_id}"><rect x="{x}" y="{map_y}" '
             f'width="{slot_w}" height="{slot_h}"/></clipPath></defs>'
         )
         total_bytes += len(comp.svg.encode("utf-8"))
@@ -654,7 +682,7 @@ def _compile_product_page(
         t_esc = (page_title.replace("&", "&amp;").replace("<", "&lt;")
                  .replace(">", "&gt;"))
         header = (
-            f'<text x="{w_px // 2}" y="{int(margin_px * 0.7)}" '
+            f'<text x="{w_px // 2}" y="{int(margin_px * 0.52)}" '
             f'text-anchor="middle" font-family="sans-serif" '
             f'font-size="{max(16, h_px // 18)}" font-weight="700" '
             f'fill="#0f172a">{t_esc}</text>'
@@ -686,11 +714,106 @@ def _compile_product_page(
             "atlas_page_limit_truncated",
             f"product page svg budget at page {page.page_id}",
         )
+    # ── PDF 面：HTML 组合（CSS 定位槽位 div —— WeasyPrint 内嵌 SVG 渲染
+    #    器不支持 g transform/多嵌套 svg；HTML 是其原生排版模型）。svg
+    #    字段（上文）服务单文件 SVG 导出与结构核验，两消费面同数据源。──
+    def _esc_html(s: str) -> str:
+        return (s.replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;"))
+
+    html_parts: List[str] = [
+        f'<div style="position:relative;width:{page_w}mm;height:{page_h}mm;'
+        f'background:#ffffff;overflow:hidden">']
+    if page_title:
+        t_esc_h = _esc_html(page_title)
+        html_parts.append(
+            f'<div style="position:absolute;left:6%;right:6%;top:1.2%;'
+            f'text-align:center;font-weight:700;'
+            f'font-size:{max(7, page_h / 26):.1f}pt;color:#0f172a">{t_esc_h}</div>')
+
+    slot_html: List[str] = []
+    for i, slot in enumerate(page.frame_slots or []):
+        left = slot.x * page_w
+        top = slot.y * page_h
+        sw = slot.w * page_w
+        sh = slot.h * page_h
+        title_y = max(slot.y * page_h - 0.022 * page_h, 0.008) * 1.0
+        slot_html.append(
+            f'<div style="position:absolute;left:{left:.2f}mm;'
+            f'top:{title_y:.2f}mm;width:{sw:.2f}mm;font-weight:600;'
+            f'font-size:{max(6, sh / 18):.1f}pt;color:#0f172a">'
+            f'{_esc_html(str(slot.title or slot.frame_id))}</div>')
+        # 槽位 svg：编译器原 viewBox（内容坐标系）+ 槽尺寸（preserve
+        # aspect 默认 meet，与单帧页渲染同一几何口径）；div overflow
+        # 即裁剪（clip 语义）。
+        vb_attr = _slot_viewboxes[i]
+        slot_html.append(
+            f'<div style="position:absolute;left:{left:.2f}mm;'
+            f'top:{top:.2f}mm;width:{sw:.2f}mm;height:{sh:.2f}mm;'
+            f'overflow:hidden">'
+            f'<svg xmlns="http://www.w3.org/2000/svg" '
+            f'style="width:{sw:.2f}mm;height:{sh:.2f}mm" '
+            f'viewBox="{vb_attr}">{_namespace_slot_svg(_slot_inner(_slot_svgs[i])[0], f"fp{i}-")}</svg>'
+            f"</div>")
+    html_parts.extend(slot_html)
+    if has_shared_band:
+        band_top = 0.88 * page_h
+        html_parts.append(
+            f'<div style="position:absolute;left:6%;right:6%;'
+            f'top:{band_top:.2f}mm">'
+            + _shared_legend_band_html(doc, page)
+            + "</div>")
+    html_parts.append("</div>")
+    html_body = "".join(html_parts)
     return PageCompileOutcome(
         svg=svg, width_mm=page_w, height_mm=page_h, page=page,
         svg_bytes=byte_count, frame_diagnostics=frame_diagnostics,
         rendered_component_types=sorted(rendered_types),
+        html_body=html_body,
     )
+
+
+def _shared_legend_band_html(doc: Dict[str, Any], page: PageLayoutIR) -> str:
+    """共享图例带（PDF/HTML 面）—— swatch + 标签（与 SVG 面同数据源）。"""
+    from app.lib.cartography.render_scene import derive_legend_items
+
+    product_raw = doc.get("frame_product")
+    product = product_raw if isinstance(product_raw, dict) else {}
+    shared = product.get("shared_expression")
+
+    def _esc(s: str) -> str:
+        return (s.replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;"))
+
+    header = ""
+    field_label = ""
+    if isinstance(shared, dict):
+        field_label = str(shared.get("field") or "")
+        unit = str(shared.get("unit") or "")
+        header = (
+            f'<div style="font-size:5.5pt;color:#475569;margin-bottom:1mm">'
+            f'Shared classification &middot; {_esc(field_label)}'
+            + (f'（{_esc(unit)}）' if unit else "")
+            + "</div>")
+    entries: List[Dict[str, Any]] = []
+    for layer in (doc.get("layers") or []):
+        if isinstance(layer, dict) and isinstance(layer.get("legend_spec"), dict):
+            model = derive_legend_items(layer["legend_spec"])
+            entries = (model or {}).get("entries") or []
+            break
+    swatches = []
+    for e in entries[:12]:
+        color = str(e.get("color") or "#cccccc")
+        label = str(e.get("label") or "")
+        swatches.append(
+            f'<span style="display:inline-block;margin-right:6mm">'
+            f'<span style="display:inline-block;width:6mm;height:3mm;'
+            f'background:{_esc(color)};opacity:0.6;'
+            f'border:0.2pt solid #94a3b8;'
+            f'vertical-align:middle"></span>'
+            f'<span style="font-size:5.5pt;color:#0f172a;margin-left:1mm">'
+            f'{_esc(label)}</span></span>')
+    return header + "".join(swatches)
 
 
 def _render_toc_svg(ir: PublicationIR, cover: PageLayoutIR) -> str:
@@ -1120,7 +1243,10 @@ def _render_publication_pdf(
             continue
         _accumulated += len(outcome.svg.encode("utf-8"))
         page_specs.append((
-            f"p{page.page_number - 1}", outcome.svg,
+            f"p{page.page_number - 1}",
+            # G15：产品页优先 HTML 体（WeasyPrint SVG 内嵌限制，见
+            # PageCompileOutcome.html_body docstring）；既有页 = svg。
+            outcome.html_body or outcome.svg,
             outcome.width_mm, outcome.height_mm,
         ))
         if page.cover:

@@ -253,7 +253,21 @@ def _apply_shared_expression(
         except Exception:  # noqa: BLE001 — 色带重算失败保留原色（标签仍一致）
             pass
         hit = True
-        new_layers.append({**layer, "legend_spec": legend})
+        # paint 同步重投影（spec_to_paint 是 legend→paint 的单一构造点 ——
+        # 渲染器按 paint 上色；只改 legend 不改 paint 会让地图色与图例漂移）。
+        try:
+            from app.lib.cartography.thematic_spec import spec_to_paint
+
+            style_method, _warn = spec_to_paint(legend)
+            if style_method is not None:
+                paint = dict(layer.get("paint") or {})
+                paint["color"] = style_method
+                new_layers.append({**layer, "legend_spec": legend,
+                                   "paint": paint})
+            else:
+                new_layers.append({**layer, "legend_spec": legend})
+        except Exception:  # noqa: BLE001 — paint 重投影失败不阻断图例盖章
+            new_layers.append({**layer, "legend_spec": legend})
     if not hit:
         disclosures.append("shared_expression_layer_without_legend")
         return doc, tuple(disclosures)
