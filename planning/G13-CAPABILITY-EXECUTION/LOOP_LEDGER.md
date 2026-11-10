@@ -42,7 +42,12 @@
 - C03 测试先用注入 store（与全局 session_data_manager 真源分叉，ref 解析失败）
   → 改用生产全局单例 + 唯一 session id。
 - fake-URI 反验失败暴露 seam 对 v1 形状也铸 ref → 收紧到 v2 契约。
+- 主键 reuse 会把非 FC 封套当 geojson_ref 挂图层 → 改 `::analysis` 后缀键
+  （kriging uncertainty 先例）。
+- 自查发现：dispatch 复核与 list_available_tools 的快照调用在事件循环上
+  同步执行（冷缓存=秒级全量审计阻塞循环）→ 均改 `asyncio.to_thread`
+  （与 surface 投影同纪律）。
 
 ## 下一步
 
-- WP12：独立 review → 修复 → 复审 → PR。
+- WP12：独立 review → 修复 → 复审 → PR（进行中）。
