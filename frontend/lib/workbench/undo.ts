@@ -87,10 +87,11 @@ function currentSessionId(): string | null {
 }
 
 /** 命令入栈（正向执行已完成或即将完成 —— 载荷已定，async 完成不回写）。 */
-export function recordCommand(cmd: Omit<WorkbenchCommand, 'id' | 'ts' | 'sessionId'>): void {
+export function recordCommand(cmd: Omit<WorkbenchCommand, 'id' | 'ts' | 'sessionId'>): string {
+  const id = `cmd-${++seq}`;
   undoStack.push({
     ...cmd,
-    id: `cmd-${++seq}`,
+    id,
     ts: Date.now(),
     sessionId: currentSessionId(),
   });
@@ -106,6 +107,7 @@ export function recordCommand(cmd: Omit<WorkbenchCommand, 'id' | 'ts' | 'session
     reversible: true,
   });
   emitChange();
+  return id;
 }
 
 /** /goal 03：要素编辑命令 —— undo/redo 反向走同一 REST CAS 写路径
@@ -206,6 +208,20 @@ export function redo(): boolean {
   }
   emitChange();
   return true;
+}
+
+/**
+ * PR-D：重放失败（服务端拒绝 —— 冲突/过期）后把命令放回原栈。
+ * undo 失败 → 命令从 redo 栈顶回到 undo 栈；redo 失败反之。命令按 id
+ * 匹配（栈已被后续操作改写时不动 —— 只回退本命令那一步）。
+ */
+export function restoreAfterFailedReplay(cmdId: string, phase: 'undo' | 'redo'): void {
+  const from = phase === 'undo' ? redoStack : undoStack;
+  const top = from.at(-1);
+  if (!top || top.id !== cmdId) return;
+  from.pop();
+  (phase === 'undo' ? undoStack : redoStack).push(top);
+  emitChange();
 }
 
 /** 会话切换 / 恢复：清空两栈（跨会话命令不可撤销 —— 图层 id 语义已变）。 */

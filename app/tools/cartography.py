@@ -297,7 +297,7 @@ def register_cartography_tools(registry: ToolRegistry):
                "区分主分析结果 vs 辅助底图 (用 group 字段)。"
                "\n何时不用：(1) 按属性值分级着色 (主题图) — 用 create_thematic_map；"
                "(2) 想做交互过滤 — 用 apply_layer_filter。"
-               "\n关键约束：color 必须是 hex (#RRGGBB)；opacity 0-1；输出回写 properties.__style__。"
+               "\n关键约束：color 必须是 hex (#RRGGBB)；opacity 0-1；样式写入图层 paint（不改要素属性）。"
            ),
            args_model=ApplyStyleArgs,
            side_effect="state_mutation",
@@ -317,16 +317,12 @@ def register_cartography_tools(registry: ToolRegistry):
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             
-            # 这里我们不修改原始要素，而是返回一个带有 style hint 的结果
-            # 或者直接在 features 的 properties 中注入样式
-            features = data.get("features", [])
-            for f in features:
-                if "properties" not in f:
-                    f["properties"] = {}
-                f["properties"]["fill_color"] = color
-                f["properties"]["opacity"] = opacity
-                f["properties"]["stroke_width"] = stroke_width
-            
+            # PR-C：样式是图层级意图，不再逐要素写 properties.fill_color。
+            # 旧实现把颜色烙进每个要素：committed MapSpec 层的 paint 读不到它
+            # （编译器只认 paint.color，层显示成转换器默认色），HUD-only 层的
+            # coalesce(fill_color, style.color) 又让烙进去的要素色永远压过用户
+            # 在样式面板里改的颜色。现在只返回 style_applied，由 dispatcher
+            # 授权进 MapSpec 层 paint；用户 patch_layer_style 合并其上（user wins）。
             return {
                 "geojson": data,
                 "group": group,

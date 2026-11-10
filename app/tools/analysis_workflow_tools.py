@@ -11,7 +11,9 @@
 - 执行真相 = registry.dispatch（与 Pi 直调工具同缝）；
 - 状态单键持久（session store alias）+ per-workflow 分布式锁；
 - 返回载荷有界（refs/统计键/receipts 投影——FC 本体绝不进上下文）；
-- 命令发射 = 工具名本身（不新增前端 command 字符串面）。
+- 结果自标识走 ``tool`` 键（工具名本身）——**不用** ``command``：``command``
+  是前端地图命令通道的保留键（dispatcher 只转发 map-command 清单里的名字，
+  见 app/contracts/map_command_manifest.json）。
 """
 from __future__ import annotations
 
@@ -256,16 +258,16 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         session_id: Optional[str] = None,
         include_optional_steps: bool = True,
     ) -> dict:
-        command = "webgis_analysis_workflow_plan"
+        tool_name = "webgis_analysis_workflow_plan"
         if not session_id:
             return {"success": False, "message": "Missing session_id",
-                    "command": command}
+                    "tool": tool_name}
         try:
             bindings = _parse_bindings(role_refs)
             overrides = (json.loads(params) if isinstance(params, str)
                          else params) if params else None
         except (ValueError, json.JSONDecodeError) as exc:
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": "AWF_BAD_JSON",
                     "message": f"参数 JSON 非法：{exc}", "alternatives": []}
         # P3-1：内容寻址 id（sha256 前 10 hex——str hash 受 PYTHONHASHSEED
@@ -281,7 +283,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 tool_exists=(lambda n: True),  # run 期再真实校验注册面
             )
         except KeyError:
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": AWF_UNKNOWN_FAMILY,
                     "message": f"未知族 {family}（词表: {FAMILY_IDS}）",
                     "alternatives": list(FAMILY_IDS)}
@@ -291,7 +293,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             from app.services.gis_harness.analysis_workflows.discovery import (
                 next_step_for_blocked as _nsb,
             )
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": exc.code, "message": str(exc),
                     "next_step": _nsb(exc.code)}
         # P1-2/P3-3：单写者协议——plan 的 load/init/persist 全程持锁；
@@ -358,7 +360,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                     f"{b['role']}:{b['reason_code']}")
         return {
             "success": True,
-            "command": command,
+            "tool": tool_name,
             "workflow_id": wf_id,
             "family": family,
             "family_label": family_label(family),
@@ -435,10 +437,10 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         session_id: Optional[str] = None,
         data_facts: Optional[str] = None,
     ) -> dict:
-        command = "webgis_requirement_compile"
+        tool_name = "webgis_requirement_compile"
         if not session_id:
             return {"success": False, "message": "Missing session_id",
-                    "command": command}
+                    "tool": tool_name}
         from app.services.session_data import session_data_manager
         from app.services.gis_harness.requirement_ir import service as req_svc
         from app.services.gis_harness.requirement_ir.contracts import (
@@ -451,13 +453,13 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         state = await req_svc.load_state(session_data_manager, session_id)
         dump = state.document if state is not None else None
         if not isinstance(dump, dict):
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": "REQUIREMENT_DOCUMENT_ABSENT",
                     "message": "本会话尚无需求文档（先发起 GIS 请求）"}
         try:
             doc = RequirementDocument.model_validate(dump)
         except Exception:  # noqa: BLE001 — 损坏文档 = 诚实拒绝
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": "REQUIREMENT_DOCUMENT_INVALID",
                     "message": "需求文档不可解析"}
         facts = None
@@ -469,13 +471,13 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                         str(k): (v if isinstance(v, dict) else {})
                         for k, v in parsed.items()}
             except (ValueError, json.JSONDecodeError):
-                return {"success": False, "command": command, "declined": True,
+                return {"success": False, "tool": tool_name, "declined": True,
                         "reason_code": "AWF_BAD_JSON",
                         "message": "data_facts JSON 非法"}
         compilation = compile_requirement_to_tasks(doc, data_facts=facts)
         payload = compilation.to_bounded_dict()
         payload["success"] = True
-        payload["command"] = command
+        payload["tool"] = tool_name
         return payload
 
     # ── 工具 2：run ──────────────────────────────────────────────────────
@@ -514,7 +516,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         max_features: int = DEFAULT_MAX_FEATURES,
         session_id: Optional[str] = None,
     ) -> dict:
-        command = "webgis_analysis_workflow_run"
+        tool_name = "webgis_analysis_workflow_run"
         # P2-1a：预算是安全上限不是可协商参数——服务端钳制到
         # [1, DEFAULT_MAX_FEATURES]（调用方只能调低，不能解锁）。
         try:
@@ -524,17 +526,17 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             max_features = DEFAULT_MAX_FEATURES
         if not session_id:
             return {"success": False, "message": "Missing session_id",
-                    "command": command}
+                    "tool": tool_name}
         state = await _load_state(session_id, workflow_id)
         if state is None:
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": "AWF_WORKFLOW_NOT_FOUND",
                     "message": f"工作流 {workflow_id} 不存在——先 plan",
                     "alternatives": ["webgis_analysis_workflow_plan"]}
         registry_sync = _registry_sync()
         dispatch_fn = _production_dispatch()
         if registry_sync is None or dispatch_fn is None:
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": "AWF_REGISTRY_UNAVAILABLE",
                     "message": "工具注册表/分发服务不可用", "alternatives": []}
         from app.services.gis_harness.analysis_workflows.contracts import (
@@ -544,7 +546,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             contract = AnalysisWorkflowContract.model_validate(
                 state.contract_snapshot)
         except Exception:  # noqa: BLE001 — 快照损坏=诚实失败
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": "AWF_CONTRACT_SNAPSHOT_CORRUPT",
                     "message": "契约快照不可解析（需重新 plan）",
                     "alternatives": ["webgis_analysis_workflow_plan"]}
@@ -553,13 +555,13 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             try:
                 parsed_only = json.loads(only_steps)
             except (json.JSONDecodeError, TypeError):
-                return {"success": False, "command": command,
+                return {"success": False, "tool": tool_name,
                         "reason_code": "AWF_BAD_JSON",
                         "message": "only_steps 必须是步骤 id 的 JSON 数组"}
             # B6b：拒绝裸字符串（set("ab") 拆字符成怪过滤器——静默错行为）
             if not isinstance(parsed_only, list) or not all(
                     isinstance(x, str) for x in parsed_only):
-                return {"success": False, "command": command,
+                return {"success": False, "tool": tool_name,
                         "reason_code": "AWF_BAD_JSON",
                         "message": "only_steps 必须是字符串数组（非裸字符串）"}
             only = set(parsed_only)
@@ -570,7 +572,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             # 不回退锁外快照（可能缺锁窗口内他方写回）。
             reloaded = await _load_state(session_id, workflow_id)
             if reloaded is None:
-                return {"success": False, "command": command, "declined": True,
+                return {"success": False, "tool": tool_name, "declined": True,
                         "reason_code": "AWF_STATE_UNREADABLE",
                         "message": "锁内状态读取失败（不使用可能陈旧的快照）",
                         "alternatives": ["webgis_analysis_workflow_status"]}
@@ -591,7 +593,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
             for k, v in state.receipts.items()})
         return {
             "success": state.status in ("satisfied",),
-            "command": command,
+            "tool": tool_name,
             "workflow_id": workflow_id,
             "status": state.status,
             "steps": [
@@ -635,19 +637,19 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         workflow_id: str,
         session_id: Optional[str] = None,
     ) -> dict:
-        command = "webgis_analysis_workflow_status"
+        tool_name = "webgis_analysis_workflow_status"
         if not session_id:
             return {"success": False, "message": "Missing session_id",
-                    "command": command}
+                    "tool": tool_name}
         state = await _load_state(session_id, workflow_id)
         if state is None:
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": "AWF_WORKFLOW_NOT_FOUND",
                     "message": f"工作流 {workflow_id} 不存在",
                     "alternatives": ["webgis_analysis_workflow_plan"]}
         return {
             "success": True,
-            "command": command,
+            "tool": tool_name,
             "workflow_id": workflow_id,
             "status": state.status,
             # ADR-0284 D5（R1 评审 F-6）：科学终审投影从状态机透出（run 返回
@@ -703,14 +705,14 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
         params: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> dict:
-        command = "webgis_analysis_workflow_recompute"
+        tool_name = "webgis_analysis_workflow_recompute"
         if not session_id:
             return {"success": False, "message": "Missing session_id",
-                    "command": command}
+                    "tool": tool_name}
         registry_sync = _registry_sync()
         dispatch_fn = _production_dispatch()
         if registry_sync is None or dispatch_fn is None:
-            return {"success": False, "command": command, "declined": True,
+            return {"success": False, "tool": tool_name, "declined": True,
                     "reason_code": "AWF_REGISTRY_UNAVAILABLE",
                     "message": "工具注册表/分发服务不可用", "alternatives": []}
         from app.services.distributed_lock import session_lock_registry
@@ -720,7 +722,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 f"awf:{workflow_id}", fail_on_degraded=True):
             state = await _load_state(session_id, workflow_id)
             if state is None:
-                return {"success": False, "command": command, "declined": True,
+                return {"success": False, "tool": tool_name, "declined": True,
                         "reason_code": "AWF_WORKFLOW_NOT_FOUND",
                         "message": f"工作流 {workflow_id} 不存在",
                         "alternatives": ["webgis_analysis_workflow_plan"]}
@@ -734,7 +736,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 param_changes = (json.loads(params) if isinstance(params, str)
                                  else params) if params else {}
             except (ValueError, json.JSONDecodeError) as exc:
-                return {"success": False, "command": command,
+                return {"success": False, "tool": tool_name,
                         "reason_code": "AWF_BAD_JSON",
                         "message": f"参数 JSON 非法：{exc}"}
             # 重建契约（角色/参数变更进新快照），plan 复裁决
@@ -745,7 +747,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 s.step_id: dict(s.step_params) for s in contract.steps}
             for step_id, changes in (param_changes or {}).items():
                 if step_id not in merged_params:
-                    return {"success": False, "command": command,
+                    return {"success": False, "tool": tool_name,
                             "reason_code": "AWF_UNKNOWN_STEP",
                             "message": f"未知步骤 {step_id}"}
                 merged_params[step_id].update(changes or {})
@@ -847,7 +849,7 @@ def register_analysis_workflow_tools(registry: ToolRegistry) -> None:
                 and state.steps[sid].attempts > attempts_before.get(sid, 0))
         return {
             "success": state.status == "satisfied",
-            "command": command,
+            "tool": tool_name,
             "workflow_id": workflow_id,
             "status": state.status,
             "recomputed_steps": recomputed,

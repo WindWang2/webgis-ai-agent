@@ -57,6 +57,9 @@ class PatchComponentBody(ClientMutationIdMixin):
     intent: Literal["patch_component"]
     expected_revision: int = Field(ge=0)
     component_id: str = Field(min_length=1, max_length=128)
+    # PR-C：upsert 新建组件（Map Studio 首次开启指北针/比例尺/标题…）必须
+    # 声明类型；仅 patch 已有组件时可省略。合法性由 mutate_component 校验。
+    component_type: Optional[str] = Field(None, min_length=1, max_length=64)
     enabled: Optional[bool] = None
     position: Optional[str] = None
     placement: Optional[ComponentPlacement] = None
@@ -203,6 +206,20 @@ class PatchWorkbenchDeltaBody(ClientMutationIdMixin):
     delta: dict[str, Any]
 
 
+class UndoAgentCommitBody(ClientMutationIdMixin):
+    """PR-D：撤销/重做一段 Agent 地图提交（Ctrl+Z 撤销整笔 Agent 提交）。
+
+    ``(base_revision, agent_revision]`` 必须是连续的 Agent 提交；服务端在锁内
+    校验当前制图指纹（用户在其后有未撤销的改动 → 拒绝，不覆盖用户编辑）。
+    """
+
+    intent: Literal["undo_agent_commit"]
+    expected_revision: int = Field(ge=0)
+    base_revision: int = Field(ge=0)
+    agent_revision: int = Field(ge=1)
+    direction: Literal["undo", "redo"] = "undo"
+
+
 UserMapSpecMutationRequest = Annotated[
     Union[
         PatchLayerPresentationBody,
@@ -221,6 +238,7 @@ UserMapSpecMutationRequest = Annotated[
         InitProjectBody,
         SetWorkbenchStateBody,
         PatchWorkbenchDeltaBody,
+        UndoAgentCommitBody,
     ],
     Field(discriminator="intent"),
 ]

@@ -75,6 +75,8 @@ def test_touches_layers_flags_match_cow_baseline():
         "RollbackIntent",
         "RestoreStyleIntent",
         "ApplyVisualHealPatchIntent",
+        # PR-D：撤销 Agent 提交 = checkpoint 回滚（整体替换层集，同 Rollback）。
+        "UndoAgentCommitIntent",
     }
     actual = {
         d.intent_cls.__name__ for d in MUTATION_REGISTRY.all() if d.touches_layers
@@ -138,6 +140,8 @@ def test_op_labels_match_legacy_table():
         "SetSceneIntent": "调整场景",
         "RefreshDataRevisionIntent": "刷新数据版本戳",
         "SetTemporalViewIntent": "调整时态视图",
+        # PR-D：新意图的有意标签（journal 可读性，经本表显式登记）。
+        "UndoAgentCommitIntent": "撤销 Agent 提交",
     }
     for d in MUTATION_REGISTRY.all():
         if d.intent_cls.__name__ in legacy:
@@ -175,8 +179,9 @@ def test_http_body_codec_coverage_and_roundtrip():
     body_classes = [
         v for k, v in vars(ms).items() if isinstance(v, type) and k.endswith("Body")
     ]
-    assert len(body_classes) == 16
-    # discriminated union 的 16 成员与 codec 表完全重合（漏登记在 CI 拦截）
+    # PR-D：+UndoAgentCommitBody（16 → 17）
+    assert len(body_classes) == 17
+    # discriminated union 的 17 成员与 codec 表完全重合（漏登记在 CI 拦截）
     assert union_members == {c.__name__ for c in body_classes}, union_members ^ {
         c.__name__ for c in body_classes
     }

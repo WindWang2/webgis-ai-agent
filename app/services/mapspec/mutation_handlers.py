@@ -961,6 +961,84 @@ async def _handle_rollback(ctx: MutationContext) -> HandlerOut:
     )
 
 
+async def _handle_undoagentcommit(ctx: MutationContext) -> HandlerOut:
+    """PR-D：UndoAgentCommitIntent —— 撤销/重做一段 Agent 提交。
+
+    冲突判定全部在锁内、基于权威载入（不信任前端快照）：段连续性 →
+    指纹一致性 → checkpoint 可用性；任一失败返回机器可读 error_code，
+    spec 不变。
+    """
+    from app.services.mapspec import agent_undo
+
+    intent = ctx.intent
+    origin = ctx.origin
+
+    def _refuse(code: str, message: str, hint: str) -> MapSpecResult:
+        return MapSpecResult(
+            is_error=True, origin=origin, error_code=code,
+            error_msg=message, correction_hint=hint,
+        )
+
+    try:
+        segment = agent_undo.resolve_undo_segment(
+            ctx.pre_state,
+            base_revision=int(intent.base_revision),
+            agent_revision=int(intent.agent_revision),
+        )
+    except agent_undo.AgentUndoRefusal as refusal:
+        return _refuse(refusal.code, refusal.message, refusal.hint)
+    first, last = segment[0], segment[-1]
+    current_fp = agent_undo.fingerprint(ctx.loaded)
+    session_dir = ctx.store.get_session_dir(ctx.session_id)
+
+    if intent.direction == "redo":
+        redo_ckpt = last.get("redo_checkpoint_id")
+        if not redo_ckpt:
+            return _refuse(
+                agent_undo.ERR_NOT_UNDONE,
+                "Agent commit has not been undone; nothing to redo",
+                "该 Agent 提交尚未撤销，无需重做。",
+            )
+        if current_fp is None or current_fp != last.get("undone_fingerprint"):
+            return _refuse(
+                agent_undo.ERR_CONFLICT,
+                "Map changed after the undo; redo would overwrite those edits",
+                "撤销之后地图又有修改；重做会覆盖这些修改，已拒绝。",
+            )
+        target_ckpt = str(redo_ckpt)
+        updated = dict(last)
+    else:
+        if current_fp is None or current_fp != last.get("post_fingerprint"):
+            return _refuse(
+                agent_undo.ERR_CONFLICT,
+                "Map changed after the agent commit; undo would overwrite those edits",
+                "该 Agent 提交之后地图又有修改（未撤销）；整体撤销会覆盖这些修改，"
+                "已拒绝。请先撤销之后的修改。",
+            )
+        redo_res = await create_checkpoint(
+            ctx.loaded, session_dir, session_data_manager
+        )
+        target_ckpt = str(first["pre_checkpoint_id"])
+        updated = {**last, "redo_checkpoint_id": redo_res.get("checkpoint_id")}
+
+    rb_res = await rollback_checkpoint(session_dir, target_ckpt, session_data_manager)
+    if not rb_res.get("success"):
+        return _refuse(
+            agent_undo.ERR_EXPIRED,
+            rb_res.get("message", "Agent undo checkpoint unavailable"),
+            "撤销点对应的检查点已过期或其数据已不可用，无法撤销。",
+        )
+    restored = rb_res["mapspec"]
+    if intent.direction != "redo":
+        updated["undone_fingerprint"] = agent_undo.fingerprint(restored)
+    return MutationPlan(
+        mapspec=restored,
+        is_rollback=True,
+        ckpt_ref_count=rb_res.get("ref_count", 0),
+        extra_state_fields=agent_undo.replace_points_fields(ctx.pre_state, updated),
+    )
+
+
 async def _handle_restorestyle(ctx: MutationContext) -> HandlerOut:
     """RestoreStyleIntent 分支体（逐字迁移，见模块 docstring 的适配清单）。"""
     origin = ctx.origin
