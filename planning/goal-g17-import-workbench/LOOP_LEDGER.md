@@ -31,3 +31,13 @@
 - 产品决策：勾选未配置成员 → save_plan 自动落默认解释（save_plan 为显式确认点）
 - 修复：discovery `_MEMBER_SAFE_RE` 定义、read_only Workbook 无 context manager（discovery+interpretation 两处）
 - 既有噪声（非本任务）：dataset_semantics store 在 Windows 因文件名含 ':' 写失败（warning，既有行为）
+
+### R5+R6（2026-11-10）恢复/取消/预算 + 工具/API 全绿
+- resilience 6 例：预览恢复（场景 16）、提交中取消无迟到成功（17）、跨 owner 同 bytes（18）、
+  重启恢复+COMMITTING 归一化（19）、预算有界拒绝+清理（20，预算类 DiscoveryError 升级为整批拒绝）、
+  过期惰性清理
+- 工具 3 例（场景 21）：检查→计划→预览→提交→收据全链经真实 registry.dispatch；归属 NOT_FOUND；
+  runtime context 已验证会话胜过 LLM 传参（dispatcher 剥离 + 工具侧 _resolve 双层）
+- API 4 例：multipart 创建→详情/列表→计划→预览→commit 202+轮询→清理；404 归属；unsupported 披露；409 版本冲突
+- 修复：budget 类发现失败升级 DataImportError(413)+staging 清理；memory_class 词表 medium；
+  import_plan_configure 显式 args_model（registry 签名推导不支持 Dict 注解）

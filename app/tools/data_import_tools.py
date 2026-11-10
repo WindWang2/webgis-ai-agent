@@ -8,7 +8,9 @@ session_id 不可信，以 runtime context 已验证会话为准，且批次 own
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 from app.lib.runtime.context import current_runtime_context
 from app.services.data_import.service import DataImportError, get_data_import_service
@@ -28,6 +30,15 @@ def _resolve_session_id(provided: Optional[str]) -> Optional[str]:
 
 def _fail(code: str, message: str) -> Dict[str, Any]:
     return {"success": False, "code": code, "message": message, "data": None}
+
+
+class ImportPlanConfigureArgs(BaseModel):
+    """import_plan_configure 参数合同（显式模型：registry 不再从签名推导 Dict）。"""
+
+    batch_id: str = Field(..., min_length=3, max_length=64)
+    member_configs: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    selected: Optional[List[str]] = None
+    session_id: Optional[str] = None
 
 
 def register_data_import_tools(registry: ToolRegistry) -> None:
@@ -118,6 +129,7 @@ def register_data_import_tools(registry: ToolRegistry) -> None:
             "selected": "可选；勾选待导入成员 key 列表",
             "session_id": "可选；以当前运行时会话为准",
         },
+        args_model=ImportPlanConfigureArgs,
         side_effect="state_mutation",
         network=False,
         deterministic=True,
@@ -231,7 +243,7 @@ def register_data_import_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         latency_class="slow",
-        memory_class="moderate",
+        memory_class="medium",
         scale_class="medium",
         idempotent=True,
         tags=["导入", "提交", "commit", "数据集", "ingest"],

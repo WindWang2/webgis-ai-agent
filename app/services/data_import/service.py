@@ -33,6 +33,15 @@ from app.services.data_import.preview import build_preview
 
 logger = logging.getLogger(__name__)
 
+# 预算类发现失败：有界拒绝（整个批次拒绝 + staging 清理），不降级为注记
+_BOUNDED_DISCOVERY_FAILURES = {
+    "TOO_MANY_ZIP_ENTRIES",
+    "TOO_MANY_LAYERS",
+    "TOO_MANY_SHEETS",
+    "ZIP_EXPANSION_TOO_LARGE",
+    "ZIP_MEMBER_TOO_LARGE",
+}
+
 
 class DataImportError(Exception):
     """领域错误（code 稳定；API 层映射 HTTP，工具层映射 typed failure）。"""
@@ -60,6 +69,7 @@ class DataImportService:
         self._locks: Dict[str, asyncio.Lock] = {}
         self._cancel_events: Dict[str, asyncio.Event] = {}   # batch_id → commit cancel
         self._commit_tasks: Dict[str, asyncio.Task] = {}
+        self._committing_ids: set = set()   # 本实例在提交中的批次（重启后为空 → 状态归一化）
 
     # ── 锁 ────────────────────────────────────────────────────────────────
     def _lock(self, batch_id: str) -> asyncio.Lock:
@@ -94,6 +104,10 @@ class DataImportService:
                     discover_source, src, path, extract_root
                 )
             except DiscoveryError as e:
+                if e.code in _BOUNDED_DISCOVERY_FAILURES:
+                    # 预算类超限：有界拒绝整个批次并清理（场景 20），不静默降级
+                    await asyncio.to_thread(staging.delete_batch, state.batch_id)
+                    raise DataImportError(e.code, e.detail, status=413) from e
                 state.notes.append(f"{src.original_name}: 发现失败（{e.code}: {e.detail}）")
                 continue
             members.extend(ms)
@@ -117,6 +131,37 @@ class DataImportService:
                 None, staging.expire_batch, batch_id
             )
             raise DataImportError("EXPIRED", "staging 已过期；请重新上传", status=410)
+        # 进程重启/崩溃恢复：本实例没有该批次在飞的提交任务时，残留
+        # COMMITTING 不可能是活的 —— 无收据成员复位 planned（无收据即未完成，
+        # 场景 17：晚到结果不得显示成功）。
+        if (
+            state.status == BatchStatus.COMMITTING
+            and batch_id not in self._committing_ids
+        ):
+            task = self._commit_tasks.get(batch_id)
+            if task is None or task.done():
+                for m in state.members:
+                    if m.status == MemberStatus.COMMITTING:
+                        m.status = (
+                            MemberStatus.COMPLETED
+                            if m.member_key in state.receipts
+                            and state.receipts[m.member_key].status == "completed"
+                            else MemberStatus.PLANNED
+                            if m.member_key in state.plan_hashes
+                            else MemberStatus.DISCOVERED
+                        )
+                planned_keys = set(state.plan_hashes)
+                completed_keys = {
+                    k for k, r in state.receipts.items() if r.status == "completed"
+                }
+                if planned_keys and planned_keys <= completed_keys:
+                    state.status = BatchStatus.COMPLETED
+                elif completed_keys:
+                    state.status = BatchStatus.PARTIAL
+                else:
+                    state.status = BatchStatus.CONFIGURED
+                state.committing_since = None
+                staging.save_state(state)
         return state
 
     async def get_batch(self, batch_id: str, session_id: Optional[str]) -> ImportBatchState:
@@ -316,6 +361,7 @@ class DataImportService:
             state.last_commit_started_at = state.committing_since
             for m in targets:
                 m.status = MemberStatus.COMMITTING
+            self._committing_ids.add(batch_id)
             await asyncio.to_thread(staging.save_state, state)
 
         cancel_event = asyncio.Event()
@@ -438,6 +484,7 @@ class DataImportService:
         finally:
             self._commit_tasks.pop(batch_id, None)
             self._cancel_events.pop(batch_id, None)
+            self._committing_ids.discard(batch_id)
 
     # ── 取消 / 收据 ───────────────────────────────────────────────────────
     async def cancel_batch(self, batch_id: str, session_id: Optional[str]) -> Dict[str, Any]:
