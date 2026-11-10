@@ -59,6 +59,7 @@ _PRESERVED_META_KEYS = (
     # 输入传回，封套宣称的「可复用」就是假的。
     "data_ref",
     "artifact",
+    "read_back_hint",
 )
 
 

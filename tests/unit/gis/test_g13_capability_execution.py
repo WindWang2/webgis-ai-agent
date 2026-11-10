@@ -114,13 +114,15 @@ def _select(registry, query: str, **ctx_kw):
 # ── WP03：同代缓存 ───────────────────────────────────────────────────
 
 def _fresh_cache():
+    """换新缓存实例（R2 P3-7：模块全局单例可换，进程内无跨用例正确性
+    依赖；patch 一律经 monkeypatch 自动还原）。"""
     import app.lib.gis.capability_availability_cache as cac
 
     cac._CACHE = cac._SnapshotCache()
     return cac
 
 
-def test_c13_same_generation_single_flight_and_zero_hot_compile():
+def test_c13_same_generation_single_flight_and_zero_hot_compile(monkeypatch):
     """C13：10 个同代并发请求 → 恰好 1 次编译；命中路径零全量对账。"""
     cac = _fresh_cache()
     calls = {"n": 0}
@@ -131,7 +133,7 @@ def test_c13_same_generation_single_flight_and_zero_hot_compile():
         time.sleep(0.05)  # 让并发窗口真实形成
         return orig(**kw)
 
-    cac.compile_availability_snapshot = counting
+    monkeypatch.setattr(cac, "compile_availability_snapshot", counting)
     outs: list = []
     threads = [
         threading.Thread(
@@ -156,14 +158,18 @@ def test_c13_same_generation_single_flight_and_zero_hot_compile():
     assert calls["n"] == before, "同代命中路径不得触发全量编译"
 
 
-def test_cache_failure_keeps_last_good_and_recovers(monkeypatch):
-    """构建失败：last-good 服务 + 最小重试间隔；间隔过后可恢复重建。"""
+def test_cache_failure_backoff_no_storm_no_cross_generation(monkeypatch):
+    """R2 P2-1/P2-2：构建失败 → 退避窗口内同键读取**不重试全量编译**、
+    **不服务跨代 last-good**（证据缺席异常）；窗口过后真实重建。冷进程
+    （无 last-good）同样退避 —— 不做失败风暴。"""
     cac = _fresh_cache()
     good = cac.get_availability_snapshot(bootstrap=True)
     orig = cac.compile_availability_snapshot
     boom = {"on": True}
+    calls = {"n": 0}
 
     def flaky(**kw):
+        calls["n"] += 1
         if boom["on"]:
             raise RuntimeError("simulated registry audit failure")
         return orig(**kw)
@@ -176,9 +182,24 @@ def test_cache_failure_keeps_last_good_and_recovers(monkeypatch):
                         lambda: "drifted-generation")
     with pytest.raises(RuntimeError):
         cac.get_availability_snapshot(bootstrap=True)
-    # 退避窗口内：同键再取 → 服务 last-good（不冒充新代）。
-    served = cac.get_availability_snapshot(bootstrap=True)
-    assert served is good
+    assert calls["n"] == 1
+    # 退避窗口内：同键再取 → 不重试编译、不服务跨代 last-good，
+    # 抛证据缺席异常（调用方零贡献降级）。
+    for _ in range(3):
+        with pytest.raises(cac.AvailabilitySnapshotBackoff):
+            cac.get_availability_snapshot(bootstrap=True)
+    assert calls["n"] == 1, "退避窗口内不得反复跑全量对账（失败风暴）"
+    assert cac.availability_cache_stats()["backoff_suppressed"] >= 3
+
+    # 冷进程（无 last-good）同样退避：失效后同键失败 → 窗口内不重试。
+    cac.invalidate_availability_snapshot()
+    with pytest.raises(RuntimeError):
+        cac.get_availability_snapshot(bootstrap=True)
+    assert calls["n"] == 2
+    with pytest.raises(cac.AvailabilitySnapshotBackoff):
+        cac.get_availability_snapshot(bootstrap=True)
+    assert calls["n"] == 2, "冷进程退避窗口内也不得风暴重试"
+
     boom["on"] = False
     # 越过退避：把失败时间拨回过去 → 必须真实重建。
     with cac._CACHE._cache_lock:
@@ -324,8 +345,12 @@ def test_selector_time_context_suppresses_metric_tools(registry, monkeypatch):
 def test_wp04_real_pi_turn_marker_changes(registry, monkeypatch):
     """WP04 验收：真实 Pi turn 入口（compute_turn_active_tools → 激活名单）
     实际变化 —— 停用工具不出现在名单；披露面携带抑制原因。"""
-    from app.agent_pi_bridge import set_tool_registry
+    from app.agent_pi_bridge import get_tool_registry, set_tool_registry
 
+    try:
+        original_global = get_tool_registry()
+    except Exception:  # noqa: BLE001 — 进程内可能尚未初始化全局注册表
+        original_global = None
     set_tool_registry(registry)
     monkeypatch.setenv("PI_DYNAMIC_TOOL_SURFACE", "1")
     monkeypatch.setenv("PI_TOOL_ABI", "0")  # 不依赖 ABI receipt 面
@@ -334,35 +359,43 @@ def test_wp04_real_pi_turn_marker_changes(registry, monkeypatch):
     import importlib
 
     importlib.reload(pns)
+    try:
+        snap = _fake_snapshot([
+            _rec("network_service_coverage_consistency",
+                 "temporarily_unavailable",
+                 "service_area", ("provider_unavailable:not_evaluated",)),
+            _rec("network_service_area", "native_verified", "service_area"),
+        ])
+        _patch_snapshot(monkeypatch, snap)
 
-    snap = _fake_snapshot([
-        _rec("network_service_coverage_consistency", "temporarily_unavailable",
-             "service_area", ("provider_unavailable:not_evaluated",)),
-        _rec("network_service_area", "native_verified", "service_area"),
-    ])
-    _patch_snapshot(monkeypatch, snap)
+        disclosure: dict = {}
+        names = pns.compute_turn_active_tools(
+            "路网服务区 覆盖一致性 service area network",
+            disclosure=disclosure)
+        assert "network_service_coverage_consistency" not in names, (
+            "真实 turn 名单不得包含停用工具")
+        assert disclosure.get("availability_suppressed") == [
+            "network_service_coverage_consistency"], (
+            f"披露面须携带抑制名单：{disclosure}")
 
-    disclosure: dict = {}
-    names = pns.compute_turn_active_tools(
-        "路网服务区 覆盖一致性 service area network",
-        disclosure=disclosure)
-    assert "network_service_coverage_consistency" not in names, (
-        "真实 turn 名单不得包含停用工具")
-    assert disclosure.get("availability_suppressed") == [
-        "network_service_coverage_consistency"], (
-        f"披露面须携带抑制名单：{disclosure}")
-
-    # 反向：工具恢复（快照换代）→ 重新出现在真实名单。
-    snap_ok = _fake_snapshot([
-        _rec("network_service_coverage_consistency", "native_verified",
-             "service_area"),
-        _rec("network_service_area", "native_verified", "service_area"),
-    ])
-    _patch_snapshot(monkeypatch, snap_ok)
-    names2 = pns.compute_turn_active_tools(
-        "路网服务区 覆盖一致性 service area network")
-    assert "network_service_coverage_consistency" in names2, (
-        "恢复后重新发现可继续（C07 重新发现路径）")
+        # 反向：工具恢复（快照换代）→ 重新出现在真实名单。
+        snap_ok = _fake_snapshot([
+            _rec("network_service_coverage_consistency", "native_verified",
+                 "service_area"),
+            _rec("network_service_area", "native_verified", "service_area"),
+        ])
+        _patch_snapshot(monkeypatch, snap_ok)
+        names2 = pns.compute_turn_active_tools(
+            "路网服务区 覆盖一致性 service area network")
+        assert "network_service_coverage_consistency" in names2, (
+            "恢复后重新发现可继续（C07 重新发现路径）")
+    finally:
+        # R2 P3-7：还原模块全局（registry + env + 重载态），不泄漏到其它用例。
+        if original_global is not None:
+            set_tool_registry(original_global)
+        monkeypatch.delenv("PI_DYNAMIC_TOOL_SURFACE")
+        monkeypatch.delenv("PI_TOOL_ABI")
+        importlib.reload(pns)
 
 
 # ── WP06：算法绑定实质断言 ───────────────────────────────────────────
@@ -821,10 +854,12 @@ async def test_wp10_list_available_tools_discloses_availability(registry):
     assert zonal.get("availability") in (
         "native_verified", "available_unverified"), (
         f"发现面必须披露可用性状态，实际 {zonal.get('availability')!r}")
-    # 两个原语也在发现面（G13 绑定后 native_verified）。
-    if "conditional_quantile_zonal_stats" in rows:
-        assert rows["conditional_quantile_zonal_stats"][
-            "availability"] == "native_verified"
+    # 两个原语也在发现面（G13 绑定后 native_verified；raster 域硬断言，
+    # 不做 if 守卫 —— R2 review：守卫会让断言空洞）。
+    assert "conditional_quantile_zonal_stats" in rows, (
+        "分位数原语必须在 raster 域发现面（domains 含 raster）")
+    assert rows["conditional_quantile_zonal_stats"][
+        "availability"] == "native_verified"
 
 
 def test_wp10_denial_texts_consistent(monkeypatch):

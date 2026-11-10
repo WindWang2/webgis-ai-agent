@@ -144,9 +144,20 @@ def register_meta_tools(registry: ToolRegistry) -> None:
         out = {"domain": domain, "count": len(matched), "tools": matched}
         if unavailable_count:
             out["unavailable_count"] = unavailable_count
-            out["unavailable_note"] = (
+            note = (
                 f"{unavailable_count} 个工具当前结构不可用（停用/缺 provider/"
-                "声明态）；调用会得到 CAPABILITY_UNAVAILABLE 拒绝与替代建议。")
+                "声明态）")
+            try:
+                from app.services.chat.pi_availability_adapter import (
+                    dispatch_recheck_enabled,
+                )
+                if dispatch_recheck_enabled():
+                    note += "；调用会得到 CAPABILITY_UNAVAILABLE 拒绝与替代建议"
+                else:
+                    note += "；执行前复核已关闭，调用将由执行面如实报错"
+            except Exception:  # noqa: BLE001 — 文案面不阻断
+                pass
+            out["unavailable_note"] = note + "。"
         if hidden_tier3:
             out["hidden_tier3"] = hidden_tier3
             out["message"] = (

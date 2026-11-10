@@ -607,6 +607,25 @@ def _network_coverage_consistency_impl(
             schemes.setdefault(scheme, []).append(
                 (float(coords[0]), float(coords[1])))
 
+    # R2 P3-4：经纬度坐标的运行时启发式披露 —— 米制模式下边权是坐标
+    # 差的 hypot，WGS84 网络会静默把「度」当「米」。检测口径：全部坐标
+    # 落在经纬度合法域（|x|≤180 且 |y|≤90）即「疑似经纬度」（真实投影
+    # 网络通常迅速超出该域；近原点的小投影 fixture 会得到一条**可能是**
+    # 经纬度的保守提示 —— 只披露，绝不拒绝；时间模式边权来自属性秒数，
+    # 与坐标量纲无关，不提示）。与 zonal 原语 geographic_crs_warning
+    # 同纪律（CAP-O06）。
+    all_coords = [
+        (float(p[0]), float(p[1]))
+        for points in schemes.values() for p in points
+    ] + [
+        (float(x), float(y))
+        for feat in feats
+        for seg in _feature_segments(feat["geometry"])
+        for x, y in (seg[0], seg[1])
+    ]
+    geographic_input = bool(all_coords) and not time_mode and all(
+        abs(x) <= 180.0 and abs(y) <= 90.0 for x, y in all_coords)
+
     # G13 / WP08：两两比较 O(k²) —— 方案数独立上界，超限 typed 拒绝
     # （G06 冷审 N-03：边数有界 ≠ 比较矩阵有界）。
     if len(schemes) > MAX_SCHEMES:
@@ -713,6 +732,11 @@ def _network_coverage_consistency_impl(
             f"共 {len(names)} 个方案（上界 MAX_SCHEMES={MAX_SCHEMES}）；"
             "两两 Jaccard 全量计算，"
             "consistency 取最保守的最小值；pairwise_jaccard 给出完整矩阵"),
+        "geographic_crs_warning": (
+            "输入坐标全部落在经纬度合法域（|x|≤180, |y|≤90），疑似 WGS84/"
+            "度坐标：米制模式的边权是坐标差的 hypot，度不可按米解释 —— "
+            "请先重投影到米制 CRS（结果仅供拓扑一致性参考）"
+            if geographic_input else None),
         "unreachable_disclosure": (
             f"unreachable_facilities={unreachable_facilities}"
             f"（吸附节点在 cutoff 内无可达路径的设施；无覆盖 ≠ 零差异）"
@@ -745,6 +769,8 @@ def _network_coverage_consistency_impl(
     summary = (
         f"{len(names)} 个方案服务覆盖一致性：Jaccard={jaccard:.3f}"
         f"（cutoff={cutoff} {unit_label}）；"
-        f"覆盖边 A={len(a)} / B={len(b)}，A 独有 {len(only_a)}，B 独有 {len(only_b)}")
+        f"覆盖边 A={len(a)} / B={len(b)}，A 独有 {len(only_a)}，B 独有 {len(only_b)}"
+        + ("；注意：输入疑似经纬度坐标，长度量纲不可按米解释"
+           if geographic_input else ""))
     return {"summary": summary, "data": data, "artifact": artifact,
             "science": science, "budget": budget}

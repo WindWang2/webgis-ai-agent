@@ -54,6 +54,15 @@ def _cache_enabled() -> bool:
     return raw not in ("0", "false", "off", "no")
 
 
+class AvailabilitySnapshotBackoff(RuntimeError):
+    """退避窗口内的同代构建失败（R2 P2-1/P2-2）。
+
+    语义：证据缺席 —— 调用方（selector / dispatch 复核 / 发现面）按
+    「零贡献」降级：不抑制候选、不拒绝调用、不披露可用性。**不是**
+    旧代数据，也绝不在窗口内反复跑全量对账。
+    """
+
+
 @dataclass
 class _CacheEntry:
     key: str
@@ -76,12 +85,12 @@ class _SnapshotCache:
         self.stats: dict[str, int] = {
             "hits": 0, "misses": 0, "builds": 0,
             "build_failures": 0, "coalesced_builds": 0,
-            "stale_overwrites_prevented": 0,
+            "stale_overwrites_prevented": 0, "backoff_suppressed": 0,
         }
 
     # ── 结构键：全部 O(1)/轻量，绝无全量对账 ───────────────────────
     @staticmethod
-    def _structural_key(registry: Any = None) -> str:
+    def _structural_key(registry: Any = None, *, bootstrap: bool = False) -> str:
         from app.lib.gis.capability_availability import (
             _certification_digest, _extension_state_digest,
         )
@@ -125,30 +134,40 @@ class _SnapshotCache:
         parts.append(f"host:{_extension_state_digest()}")
         # 认证索引摘要（快照编译入参的默认空索引稳定为 ""）。
         parts.append(f"cert:{_certification_digest(None)}")
+        # R2 P3-2：bootstrap 标志进键 —— bootstrap 值来自全新构建的注册表
+        # 实例，与全局 registry 代可以瞬态一致；同键不同源会导致错配。
+        parts.append(f"boot:{int(bool(bootstrap))}")
         return "|".join(parts)
 
     def _lookup(
         self, key: str, *, count_miss: bool = True,
-    ) -> Optional[CapabilityAvailabilitySnapshot]:
-        """命中路径：读 entry / last-good（退避窗口内）/ 计数。"""
+    ) -> tuple[Optional[CapabilityAvailabilitySnapshot], bool]:
+        """命中路径：读 entry / 退避窗口判定 / 计数。
+
+        返回 ``(snapshot_or_None, suppressed_by_backoff)``：
+
+        - 同代 entry 命中 → ``(snapshot, False)``；
+        - 退避窗口内同键构建刚失败（R2 P2-1/P2-2 修复）→ ``(None, True)``：
+          **既不重试**秒级全量对账（冷进程失败风暴），**也不服务旧代
+          last-good**（结构漂移后的新代构建失败，旧代状态对刚撤权/停用
+          的工具可能已失真 —— 跨代数据不得冒充）。调用方按
+          「证据缺席 = 零贡献」降级；窗口过后首次读取真实重试。
+        """
         with self._cache_lock:
             entry = self._entry
             if entry is not None and entry.key == key:
                 self.stats["hits"] += 1
-                return entry.snapshot
+                return entry.snapshot, False
             failed_key, failed_at = self._last_failure or (None, 0.0)
             if (
-                entry is not None
-                and failed_key == key
+                failed_key == key
                 and (time.monotonic() - failed_at) < _MIN_RETRY_INTERVAL_S
             ):
-                # 同代构建刚失败且 last-good 存在：服务 last-good。
-                # 快照内部代字段仍是旧代真值，消费方可辨，不冒充新代。
-                self.stats["hits"] += 1
-                return entry.snapshot
+                self.stats["backoff_suppressed"] += 1
+                return None, True
             if count_miss:
                 self.stats["misses"] += 1
-            return None
+            return None, False
 
     def get(
         self,
@@ -156,25 +175,35 @@ class _SnapshotCache:
         registry: Any = None,
         bootstrap: bool = False,
     ) -> CapabilityAvailabilitySnapshot:
-        """取同代快照：命中直返；未命中/换代 → 单飞重建一次。"""
+        """取同代快照：命中直返；未命中/换代 → 单飞重建一次。
+
+        退避窗口内的同键失败（无论有无 last-good）→ 抛
+        :class:`AvailabilitySnapshotBackoff`（调用方按「证据缺席 = 零贡献」
+        降级 —— selector 失败零贡献、dispatch 复核放行、发现面不披露，
+        绝不以旧代冒充新代，也绝不在窗口内反复跑秒级全量对账）。
+        """
         if not _cache_enabled():
             self.stats["misses"] += 1
             return compile_availability_snapshot(
                 registry=registry, bootstrap=bootstrap)
 
-        key = self._structural_key(registry)
-        hit = self._lookup(key)
+        key = self._structural_key(registry, bootstrap=bootstrap)
+        hit, backoff = self._lookup(key)
         if hit is not None:
             return hit
+        if backoff:
+            raise AvailabilitySnapshotBackoff(key)
 
         with self._build_lock:
             # 双检：等锁期间同代构建已完成 → 直接命中（合并的并发重建；
             # 双检的 miss 不重复计数）。
-            hit = self._lookup(key, count_miss=False)
+            hit, backoff = self._lookup(key, count_miss=False)
             if hit is not None:
                 with self._cache_lock:
                     self.stats["coalesced_builds"] += 1
                 return hit
+            if backoff:
+                raise AvailabilitySnapshotBackoff(key)
             try:
                 snapshot = compile_availability_snapshot(
                     registry=registry, bootstrap=bootstrap)
@@ -192,7 +221,7 @@ class _SnapshotCache:
                 # 完成时校验当前键：等锁期间结构又漂移（更大概率是
                 # 下一读者已重建更新代）则本次结果不落缓存，防止旧代
                 # 覆盖新代。返回值本身仍是调用方请求代的真实快照。
-                current_key = self._structural_key(registry)
+                current_key = self._structural_key(registry, bootstrap=bootstrap)
                 if current_key != key:
                     self.stats["stale_overwrites_prevented"] += 1
                     self.stats["builds"] += 1

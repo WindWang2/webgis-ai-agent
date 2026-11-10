@@ -1481,10 +1481,11 @@ class ToolDispatchService:
                                      "pairwise_jaccard")
                     }
                     result["data"]["inline_rows_stripped"] = True
-                    result["data"]["read_back_hint"] = (
-                        f"完整结果经 data_ref 读取（{_artifact.get('rows', '')}"
-                        f" rows）；如需进一步分析，将参数设为 "
-                        f"\"{analysis_ref}\"。")
+                    # R2 P3-5：读回指引放顶层（slim 的 summary 分支会丢掉
+                    # data 键）—— LLM 必须看得到「下一步把 ref 传回来」。
+                    result["read_back_hint"] = (
+                        f"完整结果经 data_ref 读取；如需进一步分析/筛选，"
+                        f"把对应参数设为 \"{analysis_ref}\"。")
             # H-1: a Redis outage makes store() return the unavailable-ref
             # sentinel (``ref:redis-unavailable-…``) per the session-data
             # protocol. Treating that sentinel as a real ref authored a MapSpec

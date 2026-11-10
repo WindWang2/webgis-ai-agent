@@ -739,8 +739,20 @@ class DynamicToolSurface:
                     get_availability_snapshot,
                 )
 
+                # 前门豁免集 = CORE 前门 ∪ Pi native 前门（R2 P3-3：两集合
+                # 不一致会让「抑制披露」与「实际激活」自相矛盾；前门可见
+                # 性是产品路径，不是可用性问题 —— 执行闸仍是权威）。
+                front_door = set(CORE_TOOL_NAMES)
+                try:
+                    from app.services.chat.pi_native_surface import (
+                        NATIVE_TOOL_NAME_SET,
+                    )
+
+                    front_door |= set(NATIVE_TOOL_NAME_SET)
+                except Exception:  # noqa: BLE001 — 惰性导入失败按 CORE 集
+                    pass
                 snap = get_availability_snapshot(registry=self.registry)
-                names_pending = [n for n in scores if n not in CORE_TOOL_NAMES]
+                names_pending = [n for n in scores if n not in front_door]
                 verdicts = classify_candidates_availability(
                     snap, names_pending, query=query,
                     unknown_policy=VERDICT_KEEP)

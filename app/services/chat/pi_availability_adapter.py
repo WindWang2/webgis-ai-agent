@@ -115,7 +115,7 @@ def summarize_tool_qualification(
     registry: Any = None,
     permissions: Optional[frozenset[str]] = None,
 ) -> dict[str, Any]:
-    """单工具有界资格摘要（selector / dispatch / 诊断共用一个契约）。
+    """单工具有界资格摘要（WP02 统一消费契约；诊断/测试/后续消费方共用）。
 
     责任表（每层由谁决定、何时失效）：
     - ``structural_availability``：快照（编译期结构事实；同代缓存，
@@ -127,14 +127,36 @@ def summarize_tool_qualification(
     - ``provider``：descriptor 声明的 provider 依赖（真实健康探测属
       provider_eligibility，本视图不发起探测、不虚构 healthy）；
     - ``generations``：registry/catalog 代 + 快照指纹（判定可归因到层）。
+
+    快照获取失败/退避 → 结构层诚实 ``snapshot_unavailable:not_evaluated``
+    （与其余消费方同一 fail-open 纪律），不抛错。
     """
+    name = str(tool_name or "")
     if snapshot is None:
         from app.lib.gis.capability_availability_cache import (
             get_availability_snapshot,
         )
 
-        snapshot = get_availability_snapshot(registry=registry)
-    name = str(tool_name or "")
+        try:
+            snapshot = get_availability_snapshot(registry=registry)
+        except Exception:  # noqa: BLE001 — 证据缺席诚实留白
+            snapshot = None
+    if snapshot is None:
+        return {
+            "schema_version": QUALIFICATION_VIEW_SCHEMA,
+            "tool": name,
+            "in_snapshot": False,
+            "structural_availability": {
+                "status": "not_evaluated",
+                "reason_codes": ["snapshot_unavailable:not_evaluated"],
+                "unverified_reasons": [],
+            },
+            "generations": {},
+            "scientific_profile": "not_evaluated",
+            "permission": "not_evaluated",
+            "provider": {"declared": "unknown",
+                         "health": "not_evaluated"},
+        }
     rec = snapshot.for_tool(name)
     out: dict[str, Any] = {
         "schema_version": QUALIFICATION_VIEW_SCHEMA,
