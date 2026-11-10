@@ -418,6 +418,9 @@ export interface ToolCallEntry {
   /** V7：后端 step_id（tool_call/step_result 载荷在场时捕获）。终态匹配
    *  优先按 stepId（同 turn 两次同名工具不再错配），缺席回落工具名。 */
   stepId?: string;
+  /** ADR-0288：嵌套调用（如 codemode 脚本内的 GIS 调用）的父 step_id。
+   * 在场时该行渲染为父工具行下的子行；顶层调用缺席（零漂移）。 */
+  parentStepId?: string;
 }
 
 export type PlanProposalStatus = 'pending' | 'approved' | 'rejected' | 'revising';
