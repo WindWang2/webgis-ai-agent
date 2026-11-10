@@ -35,6 +35,7 @@ from app.schemas.mapspec_mutation_schema import (
     SetLayoutBody,
     SetTimeBody,
     SetTemporalViewBody,
+    SetFrameProductBody,
     SetSceneBody,
     SetViewBody,
     SetWorkbenchStateBody,
@@ -65,6 +66,7 @@ from app.services.mapspec.intents import (
     SetSceneAssetsIntent,
     SetScenarioModeIntent,
     SetTemporalViewIntent,
+    SetFrameProductIntent,
     SetTimeIntent,
     SetViewIntent,
     SetWorkbenchStateIntent,
@@ -337,6 +339,7 @@ def _codec_set_layout(req: Any) -> MutationIntent:
     return SetLayoutIntent(
         legend=req.legend, controls=req.controls, margins=req.margins,
         components=req.components,
+        frames=getattr(req, "frames", None),
     )
 
 
@@ -356,6 +359,10 @@ def _codec_set_time(req: Any) -> MutationIntent:
 
 def _codec_set_temporal_view(req: Any) -> MutationIntent:
     return SetTemporalViewIntent(config=req.config, patch=req.patch, remove=req.remove)
+
+
+def _codec_set_frame_product(req: Any) -> MutationIntent:
+    return SetFrameProductIntent(config=req.config, patch=req.patch, remove=req.remove)
 
 
 def _codec_init_project(req: Any) -> MutationIntent:
@@ -622,6 +629,13 @@ def _build_default_registry() -> MutationRegistry:
         # 时态控制层：spec-only 分支写入（temporal），不触碰 layers/显隐。
         op_label="调整时态视图", provenance_detail=_pd_none,
     ), body_cls=SetTemporalViewBody, body_codec=_codec_set_temporal_view)
+    reg.register(IntentDescriptor(
+        intent_cls=SetFrameProductIntent,
+        handler=_h._handle_setframeproduct,
+        # 多画幅产品层：spec-only 分支写入（frame_product），不触碰
+        # layers/显隐；画幅几何身份仍在 layout.frames。
+        op_label="调整多画幅产品", provenance_detail=_pd_none,
+    ), body_cls=SetFrameProductBody, body_codec=_codec_set_frame_product)
     reg.register(IntentDescriptor(
         intent_cls=SetViewIntent,
         handler=_h._handle_setview,
