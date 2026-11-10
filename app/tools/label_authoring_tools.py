@@ -207,14 +207,19 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
                 found = fid in hit
                 if found:
                     props = feats[hit[fid][0]].get("properties")
-            status = _la.override_status(
-                override or {}, feature_found=found if feats is not None else True,
-                current_revision=rev_now,
-                label_field=label_cfg.get("field"),
-                feature_properties=props,
-            ) if override is not None else (
-                "unverified" if feats is None else (
-                    "active" if found else "orphan"))
+            # R1-P3：ref 源（数据不可复核）→ unverified 如实披露
+            # （与 ADR-0289 §7 消费侧权威口径一致；此前误报 active）。
+            if feats is None:
+                status = "unverified" if override is not None else "unverified"
+            elif override is not None:
+                status = _la.override_status(
+                    override, feature_found=found,
+                    current_revision=rev_now,
+                    label_field=label_cfg.get("field"),
+                    feature_properties=props,
+                )
+            else:
+                status = "active" if found else "orphan"
             entry: Dict[str, Any] = {
                 "featureId": fid,
                 "status": status,
@@ -311,6 +316,13 @@ def register_label_authoring_tools(registry: ToolRegistry) -> None:
                         "message": f"Layer {layer_id} not found.",
                         "correction_hint": "Re-read MapSpec for valid layer ids."}
             label_cfg = layer.get("label") if isinstance(layer.get("label"), dict) else {}
+            if not label_cfg.get("field"):
+                return {"success": False,
+                        "message": f"Layer {layer_id} has no label config.",
+                        "correction_hint": (
+                            "Label authoring requires layer.label.field — "
+                            "enable labels for the layer first."
+                        )}
             current = []
             authoring = label_cfg.get("authoring")
             if isinstance(authoring, dict) and isinstance(authoring.get("overrides"), list):

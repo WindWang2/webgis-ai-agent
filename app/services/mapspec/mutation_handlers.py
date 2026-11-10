@@ -276,6 +276,22 @@ async def _handle_patchlayerlabelauthoring(ctx: MutationContext) -> HandlerOut:
     loaded = ctx.loaded
     intent = ctx.intent
 
+    # R1-P2：labels_config 键白名单在 handler 单一权威执行（REST codec
+    # 的 422 只是早退 —— 工具直调路径同样受限，不出现第二套规则）。
+    if intent.labels_config:
+        _allowed_cfg = {"obstaclePolicy", "forbiddenZones"}
+        _illegal_cfg = sorted(set(intent.labels_config) - _allowed_cfg)
+        if _illegal_cfg:
+            return MapSpecResult(
+                is_error=True,
+                origin=origin,
+                error_msg=(
+                    "patch_layer_label_authoring.labels_config allows only "
+                    f"{sorted(_allowed_cfg)}, got: {_illegal_cfg}"
+                ),
+                correction_hint="Only obstaclePolicy/forbiddenZones are G16-owned keys.",
+            )
+
     mapspec = {**loaded} if loaded else {}
     mapspec["layers"] = list(loaded.get("layers", []) if loaded else [])
 
@@ -312,8 +328,11 @@ async def _handle_patchlayerlabelauthoring(ctx: MutationContext) -> HandlerOut:
         if isinstance(data, dict):
             feats = data.get("features")
             if isinstance(feats, list) and feats:
+                # R1-P3：全量扫（有界 5000 —— id 键可能只在后面的要素上
+                # 出现；抽样前 50 曾误拒）。
                 has_any_identity = any(
-                    _la.resolve_feature_identity(f)[0] is not None for f in feats[:50]
+                    _la.resolve_feature_identity(f)[0] is not None
+                    for f in feats[:5000]
                 )
                 if not has_any_identity:
                     return MapSpecResult(
@@ -349,12 +368,17 @@ async def _handle_patchlayerlabelauthoring(ctx: MutationContext) -> HandlerOut:
     # 拒绝 = 整笔失败；全部 noop（reset 空条目）= 合法无变更提交；
     # preview.findings = 形状级早退（超限）同样整笔失败。
     if rejected or (preview is not None and preview.findings):
+        _shape_notes = (
+            [f"shape:{f}" for f in preview.findings]
+            if preview is not None and preview.findings else []
+        )
         return MapSpecResult(
             is_error=True,
             origin=origin,
             error_msg="Label authoring ops rejected: "
                       + "; ".join(
-                          f"{r.feature_id}:{','.join(r.findings)}" for r in rejected
+                          [f"{r.feature_id}:{','.join(r.findings)}" for r in rejected]
+                          + _shape_notes
                       )[:400],
             correction_hint=(
                 "Fix rejected targets (feature_not_found = id not in "

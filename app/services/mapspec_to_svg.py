@@ -1683,13 +1683,18 @@ def compile_mapspec_to_svg_detailed(
                             # text 决策）。pinned/offset 在锚点解析后接入。
                             _fid_lbl, _idk_lbl = _resolve_feature_identity(feat)
                             _ov_lbl = _authoring_by_fid.get(_fid_lbl) if _fid_lbl else None
+                            # 键 = 宿主原始层 id（__label_of；无则渲染层
+                            # 自身）—— 与失效披露的推导键一致；先注册空集，
+                            # 纯 orphan 覆写也能被披露（见 ADR-0289）。
+                            _seen_key = (
+                                layer.get("__label_of")
+                                if isinstance(layer.get("__label_of"), str)
+                                else (_lid or "")
+                            )
                             if _authoring_by_fid:
-                                # 键 = 标签渲染层 id（synthetic `${id}-label`）
-                                # —— 与失效披露的推导键一致；先注册空集，
-                                # 纯 orphan 覆写也能被披露（见 ADR-0289）。
-                                _authoring_seen_fids.setdefault(_lid or "", set())
+                                _authoring_seen_fids.setdefault(_seen_key, set())
                             if _ov_lbl is not None and _fid_lbl is not None:
-                                _authoring_seen_fids.setdefault(_lid or "", set()).add(_fid_lbl)
+                                _authoring_seen_fids.setdefault(_seen_key, set()).add(_fid_lbl)
                             _hidden_by_user = bool(_ov_lbl and _ov_lbl.get("hidden") is True)
                             if _hidden_by_user and not collision_mode:
                                 # legacy 模式：显式隐藏 → 不画（零元素）。
@@ -1901,6 +1906,22 @@ def compile_mapspec_to_svg_detailed(
                                     _anchors = [(float(x), float(y), _lang0)]
                                 for _ai, (_ax, _ay, _alang) in enumerate(_anchors):
                                     _id_suffix = "" if _ai == 0 else f"-r{_ai}"
+                                    # R1-P2：非 pin 的手工偏移对确定性求解 =
+                                    # 位移锚点（8 方位候选绕位移后锚点；与
+                                    # live text-offset / legacy 内联同语义 ——
+                                    # 三端一致，不静默丢弃）。
+                                    _ov_off_all = (
+                                        _ov_lbl.get("offset")
+                                        if (_ov_lbl and isinstance(_ov_lbl.get("offset"), dict)
+                                            and _ov_lbl.get("pinned") is not True and _ai == 0)
+                                        else None
+                                    )
+                                    if isinstance(_ov_off_all, dict):
+                                        try:
+                                            _ax += float(_ov_off_all["dx"]) * base_size * dpi_scale
+                                            _ay += float(_ov_off_all["dy"]) * base_size * dpi_scale
+                                        except (KeyError, TypeError, ValueError):
+                                            pass
                                     label_requests.append({
                                         "id": f"lbl{len(label_requests)}{_id_suffix}-{_lid}-{_fmt_num(coord[0])}-{_fmt_num(coord[1])}",
                                         "text": _coll_text,
@@ -1916,7 +1937,14 @@ def compile_mapspec_to_svg_detailed(
                                         "halo_w": halo_w,
                                         "halo_color": halo_color,
                                         "halo_opacity": halo_opacity,
-                                        "layer_id": _lid,
+                                        # G16（R1-P1）：身份按宿主原始层
+                                        # id（__label_of）—— 与障碍抽取侧
+                                        # 同键，自身墨迹豁免才可达。
+                                        "layer_id": (
+                                            layer.get("__label_of")
+                                            if isinstance(layer.get("__label_of"), str)
+                                            else _lid
+                                        ),
                                         "importance": _importance,
                                         # G16 authoring（hidden 请求也进求解 ——
                                         # suppressed(hidden_by_user) 是证据，
@@ -1990,7 +2018,8 @@ def compile_mapspec_to_svg_detailed(
         # G16：覆写失效披露（有界 ≤8 条/类）。orphan = 覆写目标在当前数据
         # 不存在（不应用、绝不漂移到别的要素）；stale = revision 变化但身份
         # 未断（照常应用 + 待复核标记）。
-        if _authoring_seen_fids:
+        if _authoring_seen_fids and not timed_out:
+            # timed_out：层迭代中途截断 —— orphan 判定不可靠，整体不披露。
             _orphan_n = 0
             _stale_n = 0
             for _layer_a in layers:
@@ -2001,16 +2030,26 @@ def compile_mapspec_to_svg_detailed(
                         (_label_a.get("authoring") or {}).get("overrides")
                         if isinstance(_label_a.get("authoring"), dict) else None, list)):
                     continue
-                # 标签渲染键：非 symbol/text 层经 _svg_layers 合成为
-                # `${id}-label`；raster/heatmap/background/hillshade 无
-                # 标签（其覆写无从核验 —— 保守不披露 orphan）。
+                # seen 键 = 宿主原始层 id（symbol 分支按 __label_of 注册；
+                # 原生 symbol/text 层即自身 id —— 两种情况都等于原始层 id）。
+                # raster/heatmap/background/hillshade 无标签（无从核验 ——
+                # 保守不披露）。
                 _layer_type_a = str(_layer_a.get("type", "circle"))
                 if _layer_type_a in ("raster", "heatmap", "background", "hillshade"):
                     continue
-                _layer_id_a = (
-                    str(_layer_a.get("id")) if _layer_type_a in ("symbol", "text")
-                    else f"{_layer_a.get('id', '')}-label"
+                _layer_id_a = str(_layer_a.get("id"))
+                # R1-P2：不可见/zoom 门外/超时的层从未进入标签迭代 —— 其
+                # 覆写不是 orphan（未评估 ≠ 不存在），不误报。
+                _layout_a = (
+                    _layer_a.get("layout")
+                    if isinstance(_layer_a.get("layout"), dict) else {}
                 )
+                if (_layout_a.get("visibility") == "none"
+                        or _layer_a.get("visible") is False):
+                    continue
+                if export_adjudicate_layer(_layer_a, _export_zoom) in (
+                        "hidden", "gated"):
+                    continue
                 _seen = _authoring_seen_fids.get(_layer_id_a, set())
                 _authoring_a = (
                     (_layer_a or {}).get("label", {}) or {}

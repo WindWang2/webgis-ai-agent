@@ -51,7 +51,9 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
     originOffset: [number, number];
     moved: boolean;
     wasDragging: boolean;
-  }>({ startPx: null, originOffset: [0, 0], moved: false, wasDragging: false });
+    /** Esc 取消：mouseup 不得再提交（零写入纪律）。 */
+    cancelled: boolean;
+  }>({ startPx: null, originOffset: [0, 0], moved: false, wasDragging: false, cancelled: false });
   const targetRef = useRef<EditTarget | null>(null);
   targetRef.current = target;
 
@@ -164,9 +166,10 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
       if (!tgt) return;
       dragState.current = {
         startPx: [e.point.x, e.point.y],
-        originOffset: readOffset(tgt),
+        originOffset: baseOffset(tgt),
         moved: false,
         wasDragging: true,
+        cancelled: false,
       };
       try {
         mapAny.dragPan.disable();
@@ -191,11 +194,12 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
     const onMouseUp = async () => {
       const ds = dragState.current;
       const tgt = targetRef.current;
-      dragState.current = { ...ds, startPx: null };
+      const cancelled = ds.cancelled;
+      dragState.current = { ...ds, startPx: null, cancelled: false };
       try {
         mapAny.dragPan.enable();
       } catch { /* mock */ }
-      if (!ds.moved || !tgt) return;
+      if (cancelled || !ds.moved || !tgt) return;
       const offset = tgt.pendingOffset ?? ds.originOffset;
       // 提交一笔：pin + offset（拖动即「固定在这里」）。
       setTarget({ ...tgt, pendingOffset: null });
@@ -222,24 +226,34 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
   useEffect(() => {
     if (!active || !target?.pendingOffset) return;
     return registerEscapeHandler(40, () => {
+      // 取消 = 丢弃预览 + 标记拖动中止（mouseup 零提交）。
+      dragState.current.cancelled = true;
       setTarget((prev) => (prev ? { ...prev, pendingOffset: null } : null));
       return true;
     });
   }, [active, target?.pendingOffset]);
 
   // 键盘微调（工具激活 + 有目标）：方向键 ±0.25em（Shift ×4）→ Enter 提交。
+  // nudged 用 ref：target 变更（预览更新）会重挂本 effect，闭包内变量
+  // 会清零 —— 累计步距必须跨重挂存活。
+  const nudgeRef = useRef<[number, number] | null>(null);
   useEffect(() => {
-    if (!active || !target) return;
-    let nudged: [number, number] | null = null;
+    if (!active || !target) {
+      nudgeRef.current = null;
+      return;
+    }
     const onKeyDown = (e: KeyboardEvent) => {
+      const nudged = nudgeRef.current;
       if (e.key === 'Enter' && nudged) {
         e.preventDefault();
-        const base = readOffset(target);
+        // R1-P2：基准 = 已提交 offset（不含 pendingOffset —— 它已含本组
+        // 微调，再加 nudged 会双计）。
+        const base = baseOffset(target);
         const next: [number, number] = [
           round2(base[0] + (nudged?.[0] ?? 0)),
           round2(base[1] + (nudged?.[1] ?? 0)),
         ];
-        nudged = null;
+        nudgeRef.current = null;
         void commit(target.specLayerId, [
           {
             featureId: target.featureId,
@@ -250,7 +264,8 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
         return;
       }
       if (e.key === 'Escape' && nudged) {
-        nudged = null;
+        nudgeRef.current = null;
+        setTarget((prev) => (prev ? { ...prev, pendingOffset: null } : null));
         return;
       }
       const step = NUDGE_EM * (e.shiftKey ? 4 : 1);
@@ -261,13 +276,13 @@ export function LabelEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null>
       const d = dirs[e.key];
       if (!d) return;
       e.preventDefault();
-      nudged = nudged ?? [0, 0];
-      nudged = [nudged[0] + d[0], nudged[1] + d[1]];
+      const base = nudgeRef.current ?? [0, 0];
+      nudgeRef.current = [base[0] + d[0], base[1] + d[1]];
       setTarget((prev) => (prev ? {
         ...prev,
         pendingOffset: [
-          round2(readOffset(prev)[0] + nudged![0]),
-          round2(readOffset(prev)[1] + nudged![1]),
+          round2(baseOffset(prev)[0] + nudgeRef.current![0]),
+          round2(baseOffset(prev)[1] + nudgeRef.current![1]),
         ],
       } : null));
     };
@@ -405,12 +420,12 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-function readOffset(tgt: EditTarget): [number, number] {
+/** 已提交基准（不含拖动/微调预览 —— Enter 计算用，防双计）。 */
+function baseOffset(tgt: EditTarget): [number, number] {
   const off = tgt.override?.offset as { dx?: number; dy?: number } | undefined;
   if (off && typeof off.dx === 'number' && typeof off.dy === 'number') {
     return [off.dx, off.dy];
   }
-  if (tgt.pendingOffset) return tgt.pendingOffset;
   return [0, 0];
 }
 

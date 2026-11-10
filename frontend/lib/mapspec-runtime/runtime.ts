@@ -1620,6 +1620,9 @@ export class MapSpecRuntime {
       // 标注被移除：只删子层。
       const labelId = `${layer.id}-label`;
       this.labelRegistrations.delete(labelId);
+      // G16（R1-P2）：authoring 子层（pinned/callout）同卸载 —— 否则
+      // 移除 label.field 后留下 allow-overlap ghost 文本层。
+      this.removeLabelAuthoringSublayers(layer.id);
       if (this.map.getLayer(labelId)) {
         try { this.map.removeLayer(labelId); } catch { /* already gone */ }
         renderer.noteStyleLayerRemoved(this.map, labelId);
@@ -1835,8 +1838,9 @@ export class MapSpecRuntime {
     const pinnedId = `${labelId}-pinned`;
     if (proj.pinned.length === 0 || !buildPinnedFilter(proj)) {
       this.removeLabelAuthoringSublayers(layer.id);
-      // callout 层独立于 pinned 存在/清空（非 pin 的 callout 也合法）。
-      this.applyLabelCalloutLayer(layer, labelId, proj, 0);
+      // callout 层独立于 pinned 存在/清空（非 pin 的 callout 也合法 ——
+      // R1-P2：字号用真实基准，0 会把引线算成长度 0 的退化线）。
+      this.applyLabelCalloutLayer(layer, labelId, proj, sizePx);
       return;
     }
     const pinnedFilter = buildPinnedFilter(proj);
@@ -2014,7 +2018,8 @@ export class MapSpecRuntime {
     });
   }
 
-  /** G16：卸载本层的 authoring 子层（label 移除/覆写清空时）。 */
+  /** G16：卸载本层的 authoring 子层（label 移除/覆写清空时）—— pinned
+   * 与 callout（层+合成源+注册表）一并，不留 ghost。 */
   private removeLabelAuthoringSublayers(layerId: string): void {
     const pinnedId = `${layerId}-label-pinned`;
     if (this.map.getLayer(pinnedId)) {
@@ -2022,6 +2027,17 @@ export class MapSpecRuntime {
       renderer.noteStyleLayerRemoved(this.map, pinnedId);
     }
     this.layerSourceIndex.delete(pinnedId);
+    const calloutId = `${layerId}-label-callout`;
+    if (this.map.getLayer(calloutId)) {
+      try { this.map.removeLayer(calloutId); } catch { /* already gone */ }
+      renderer.noteStyleLayerRemoved(this.map, calloutId);
+    }
+    this.layerSourceIndex.delete(calloutId);
+    const calloutSrc = `${layerId}-label-callout-src`;
+    if (this.map.getSource(calloutSrc)) {
+      try { this.map.removeSource(calloutSrc); } catch { /* already gone */ }
+    }
+    this.labelCalloutRegs.delete(`${layerId}-label`);
   }
 
   /** 全局 zoom 钩子（懒注册一次；跨档才重算 setFilter —— 有界工作集）。 */

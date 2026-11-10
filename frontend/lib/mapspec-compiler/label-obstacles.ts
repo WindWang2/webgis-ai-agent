@@ -232,13 +232,21 @@ export function extractZoneObstacles(
     const ring = zone?.ring;
     if (typeof zid !== 'string' || !Array.isArray(ring) || ring.length < 4) continue;
     const pts: Array<[number, number]> = [];
+    let ringValid = true;
     for (const p of ring) {
-      if (!Array.isArray(p) || p.length < 2) continue;
+      if (!Array.isArray(p) || p.length < 2) { ringValid = false; break; }
       const [pxRaw, pyRaw] = opts.project(p as number[]);
       const px = Number(pxRaw), py = Number(pyRaw);
-      if (Number.isFinite(px) && Number.isFinite(py)) pts.push([px, py]);
+      if (Number.isFinite(px) && Number.isFinite(py)) {
+        pts.push([px, py]);
+      } else {
+        // Python 孪生口径：任一点非法 → 弃整个 zone（部分环 = 错误
+        // 多边形，比缺角环诚实）。
+        ringValid = false;
+        break;
+      }
     }
-    if (pts.length < 4) continue;
+    if (!ringValid || pts.length < 4) continue;
     const xs = pts.map((p) => p[0]);
     const ys = pts.map((p) => p[1]);
     const minX = Math.min(...xs), maxX = Math.max(...xs);

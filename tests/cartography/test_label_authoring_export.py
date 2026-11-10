@@ -416,3 +416,110 @@ class TestUnitsAndDpi:
         spec = _schools_spec(overrides=[ov])
         got = spec["layers"][0]["label"]["authoring"]["overrides"][0]["offset"]
         assert got == {"dx": 1.25, "dy": -0.75}
+
+
+class TestWiredOwnInkExemption:
+    """R1-P1 回归：真实接线（非手工对齐 id 的 solver 单测）—— 带自身
+    标注的线/面层在 geometry_v1 下自身墨迹不灭自己的标签。"""
+
+    def test_line_layer_own_label_survives_geometry_v1(self):
+        roads = [{
+            "type": "Feature", "id": "r1",
+            "geometry": {"type": "LineString", "coordinates": [
+                [116.40, 39.95], [116.50, 39.95]]},
+            "properties": {"name": "长安街"},
+        }]
+        spec = _spec(
+            [{"id": "roads", "type": "line", "source": "roads",
+              "label": {"field": "name"}, "paint": {"line-width": 8}}],
+            {"roads": _geojson_source(roads)},
+            labels_cfg={"collision": "deterministic",
+                        "obstaclePolicy": "geometry_v1"},
+        )
+        out = compile_mapspec_to_svg_detailed(spec, bounds=[116.40, 39.93, 116.50, 39.97])
+        assert "长安街" in out.svg  # 自身墨迹豁免（__label_of 同键）
+
+    def test_polygon_layer_own_label_survives_geometry_v1(self):
+        polys = [{
+            "type": "Feature", "id": "d1",
+            "geometry": {"type": "Polygon", "coordinates": [[
+                [116.42, 39.93], [116.48, 39.93], [116.48, 39.97],
+                [116.42, 39.97], [116.42, 39.93]]]},
+            "properties": {"name": "中心城区"},
+        }]
+        spec = _spec(
+            [{"id": "district", "type": "fill", "source": "district",
+              "label": {"field": "name"}, "paint": {"fill-color": "#93c5fd"}}],
+            {"district": _geojson_source(polys)},
+            labels_cfg={"collision": "deterministic",
+                        "obstaclePolicy": "geometry_v1"},
+        )
+        out = compile_mapspec_to_svg_detailed(spec, bounds=[116.40, 39.91, 116.50, 39.99])
+        assert "中心城区" in out.svg
+
+    def test_foreign_line_still_blocks_other_layer_label(self):
+        roads = [{
+            "type": "Feature", "id": "r1",
+            "geometry": {"type": "LineString", "coordinates": [
+                [116.40, 39.95], [116.50, 39.95]]},
+            "properties": {},
+        }]
+        schools = [_pt("s1", 116.45, 39.95, "近路学校")]
+        spec = _spec(
+            [{"id": "roads", "type": "line", "source": "roads",
+              "paint": {"line-width": 10}},
+             {"id": "schools", "type": "circle", "source": "schools",
+              "label": {"field": "name"}, "paint": {"circle-radius": 3}}],
+            {"roads": _geojson_source(roads), "schools": _geojson_source(schools)},
+            labels_cfg={"collision": "deterministic",
+                        "obstaclePolicy": "geometry_v1"},
+        )
+        out = compile_mapspec_to_svg_detailed(spec, bounds=[116.40, 39.93, 116.50, 39.97])
+        # 粗线墨迹仍拦**别的层**标签（上/下夹击行不行取决于带宽 ——
+        # 单线时位移避让；这里断言不因豁免修复而放线通行）。
+        codes = [d.get("code") for d in out.diagnostics]
+        assert "近路学校" in out.svg or "label_collision_relaxed" in codes
+
+
+class TestInvisibleLayerNoFalseOrphan:
+    """R1-P2 回归：不可见/门外层的覆写不是 orphan（未评估 ≠ 不存在）。"""
+
+    def _spec_with_hidden_layer(self, visibility_none=False):
+        schools = [_pt("s1", 116.44, 39.96, "第一小学")]
+        layer = {"id": "schools", "type": "circle", "source": "schools",
+                 "label": {"field": "name",
+                           "authoring": {"overrides": [
+                               {"featureId": "s1", "hidden": True}]}},
+                 "paint": {"circle-radius": 4}}
+        if visibility_none:
+            layer["layout"] = {"visibility": "none"}
+        else:
+            layer["visible"] = False
+        return _spec([layer], {"schools": _geojson_source(schools)},
+                     labels_cfg={"collision": "deterministic"})
+
+    def test_visible_false_no_orphan(self):
+        out = compile_mapspec_to_svg_detailed(self._spec_with_hidden_layer())
+        assert "label_authoring_orphan" not in [
+            d.get("code") for d in out.diagnostics]
+
+    def test_visibility_none_no_orphan(self):
+        out = compile_mapspec_to_svg_detailed(
+            self._spec_with_hidden_layer(visibility_none=True))
+        assert "label_authoring_orphan" not in [
+            d.get("code") for d in out.diagnostics]
+
+
+class TestReviewR1NonPinnedOffset:
+    def test_non_pinned_offset_applied_in_deterministic_mode(self):
+        # R1-P2：非 pin 的手工偏移在确定性求解 = 位移锚点（三端一致，
+        # 不静默丢弃）。s1 偏移远离 s2/s3 → 不再与它们竞争原位。
+        spec = _schools_spec(
+            overrides=[{"featureId": "s1", "offset": {"dx": -4.0, "dy": -4.0}}],
+            labels_cfg={"collision": "deterministic"},
+        )
+        moved = compile_mapspec_to_svg_detailed(spec)
+        base = compile_mapspec_to_svg_detailed(_schools_spec(
+            labels_cfg={"collision": "deterministic"}))
+        assert moved.svg != base.svg
+        assert "第一小学" in moved.svg

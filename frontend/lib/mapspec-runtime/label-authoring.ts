@@ -54,6 +54,9 @@ export interface AuthoringProjection {
   offsetById: Map<string, [number, number]>;
   /** 解析键 → [featureId...]（表达式分组物料）。 */
   idsByKeys: Map<string | null, string[]>;
+  /** 表达式不可达的覆写目标（>3 个不同解析键 / 危险 match 字面量名）
+   *  —— 有名有姓，runtime 发 partial 披露事件，绝不静默丢。 */
+  unprojectable: string[];
 }
 
 type AnyFeature = { id?: unknown; properties?: Record<string, unknown> | null };
@@ -67,6 +70,7 @@ export function projectAuthoring(
     overrides: overrides ? [...overrides] : [],
     active: [], orphan: [], hiddenIds: [], pinned: [],
     textById: new Map(), offsetById: new Map(), idsByKeys: new Map(),
+    unprojectable: [],
   };
   if (!overrides || overrides.length === 0) return out;
   if (!features) {
@@ -97,13 +101,40 @@ export function projectAuthoring(
     bucket.push(ov.featureId);
     out.idsByKeys.set(idKey, bucket);
   }
+  // 表达式可达性：>3 个不同解析键或危险 match 字面量 → 逐个点名。
+  const keyList = Array.from(out.idsByKeys.keys());
+  if (keyList.length > 3) {
+    for (const k of keyList.slice(3)) {
+      out.unprojectable.push(...(out.idsByKeys.get(k) ?? []));
+    }
+  }
+  for (const ids of out.idsByKeys.values()) {
+    for (const fid of ids) {
+      if (UNSAFE_MATCH_LABELS.has(fid)) out.unprojectable.push(fid);
+    }
+  }
   return out;
 }
 
-/** 解析键 → 值表达式（顶层 id 用 ["id"]；属性键用 ["get", key]）。 */
+/**
+ * 解析键 → 值表达式（顶层 id 用 ["id"]；属性键用 ["get", key]）。
+ * R1-P1：恒 to-string —— MapLibre match 是严格类型相等（数值 id/属性
+ * 永不等于字符串标签），featureId 的 str() 归一只有经 to-string 才在
+ * 表达式侧成立（`1` ≡ `"1"` 契约）。
+ */
 function keyExpr(idKey: string | null): unknown[] {
-  return idKey === null ? ['id'] : ['get', idKey];
+  return idKey === null
+    ? ['to-string', ['id']]
+    : ['to-string', ['get', idKey]];
 }
+
+/** match 字面量危险名（原型链属性 —— MapLibre Match.parse 的 cases
+ * 对象会被继承属性污染，整个表达式被拒）：这些 id 不进 match（丢弃 +
+ * 由 runtime 披露事件）。 */
+const UNSAFE_MATCH_LABELS = new Set([
+  'toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__',
+  'isPrototypeOf', 'propertyIsEnumerable', 'toLocaleString',
+]);
 
 /** 分组 match：ids → values（成对），default 兜底。多键时 case 链。 */
 function groupedMatch(
@@ -112,7 +143,10 @@ function groupedMatch(
   fallback: unknown,
   maxKeys = 3,
 ): unknown | null {
-  const keys = Array.from(idsByKeys.keys()).filter((k) => (idsByKeys.get(k) ?? []).length > 0);
+  const keys = Array.from(idsByKeys.keys())
+    .filter((k) => (idsByKeys.get(k) ?? []).length > 0)
+    .filter((k) => (idsByKeys.get(k) ?? []).every(
+      (fid) => !UNSAFE_MATCH_LABELS.has(fid)));
   if (keys.length === 0) return null;
   const usable = keys.slice(0, maxKeys);
   const matchOf = (k: string | null): unknown[] => {
@@ -173,10 +207,13 @@ export function buildTextOffsetExpr(
   );
 }
 
-/** pinned ids → 只含 pinned 的 filter。 */
+/** pinned ids → 只含 pinned 的 filter（hidden 恒胜 —— 与导出侧
+ * `pinned and not hidden` 同口径：矛盾组合按用户显式隐藏处理）。 */
 export function buildPinnedFilter(proj: AuthoringProjection): unknown | null {
-  if (proj.pinned.length === 0) return null;
-  const pinnedIds = proj.pinned.map((o) => o.featureId);
+  const pinnedIds = proj.pinned
+    .filter((o) => o.hidden !== true)
+    .map((o) => o.featureId);
+  if (pinnedIds.length === 0) return null;
   return groupedMatch(
     filterKeys(proj, (fid) => pinnedIds.includes(fid)),
     () => true,

@@ -176,3 +176,50 @@ describe('LabelEditor（G16 UI）', () => {
     expect(ops[0].set.offset).toEqual({ dx: 6, dy: 5.33 });
   });
 });
+
+// ── R1 复审回归 ─────────────────────────────────────────────────────────
+describe('LabelEditor R1 review fixes', () => {
+  beforeEach(() => {
+    commitLabelAuthoring.mockClear();
+    useHudStore.getState().setActiveMapTool(null);
+  });
+
+  it('P2-10：拖动中 Esc → mouseup 零提交（取消纪律）', async () => {
+    const { ref, handlers } = makeMapRef();
+    act(() => useHudStore.getState().setActiveMapTool('edit_labels'));
+    render(<LabelEditor mapRef={ref} />);
+    const down = Array.from(handlers.get('mousedown') ?? [])[0] as never as (e: unknown) => void;
+    const move = Array.from(handlers.get('mousemove') ?? [])[0] as never as (e: unknown) => void;
+    const up = Array.from(handlers.get('mouseup') ?? [])[0] as never as (e: unknown) => void;
+    act(() => down({ point: { x: 0, y: 0 }, lngLat: { lng: 116, lat: 39 } }));
+    act(() => move({ point: { x: 30, y: 20 } }));
+    // Escape 栈：keydown 派发（capture）→ 取消标记。
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await act(async () => {
+      up({});
+    });
+    expect(commitLabelAuthoring).not.toHaveBeenCalled();
+  });
+
+  it('P2-11：键盘微调 Enter 不双计（无已提交 offset 的标签）', async () => {
+    const { ref, handlers } = makeMapRef();
+    act(() => useHudStore.getState().setActiveMapTool('edit_labels'));
+    render(<LabelEditor mapRef={ref} />);
+    const down = Array.from(handlers.get('mousedown') ?? [])[0] as never as (e: unknown) => void;
+    // 选中 s2（spec 覆写是 s1 的 —— mock queryRenderedFeatures 返回 s1；
+    // 直接验证 Enter 数学：预览 (0.25,0) 后 Enter 应提交 (0.25,0) 而非 (0.5,0)。
+    act(() => down({ point: { x: 0, y: 0 }, lngLat: { lng: 116, lat: 39 } }));
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(commitLabelAuthoring).toHaveBeenCalledTimes(1);
+    const [, ops] = commitLabelAuthoring.mock.calls[0];
+    // s1 有既有 offset (1,2)：Enter = 1+0.25（而非 1+0.25+0.25 双计）。
+    expect(ops[0].set.offset).toEqual({ dx: 1.25, dy: 2 });
+  });
+});

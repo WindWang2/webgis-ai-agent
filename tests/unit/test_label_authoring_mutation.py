@@ -218,3 +218,26 @@ class TestAuthoringMutation:
                    ["label"].get("authoring") or {}).get("overrides") or []
             s1 = next(o for o in ovs if o["featureId"] == "s1")
             assert s1.get("hidden") is True
+
+
+class TestReviewR1Regressions:
+    async def test_labels_config_allowlist_enforced_in_handler(self):
+        # R1-P2：工具直调路径（不经 REST codec）同样受限 —— 白名单在
+        # handler 单一权威执行。
+        engine = await _seed("sess-g16-r1a")
+        res = await engine.apply_mutation("sess-g16-r1a", PatchLayerLabelAuthoringIntent(
+            layer_id="schools",
+            ops=[{"featureId": "s1", "op": "set", "set": {"hidden": True}}],
+            labels_config={"maxLabels": 1}))
+        assert res.is_error is True
+        assert "obstaclePolicy" in res.error_msg or "maxLabels" in res.error_msg
+
+    async def test_shape_findings_in_error_message(self):
+        # R1-P3：形状级拒绝（ops 超限）错误消息带 findings 内容。
+        engine = await _seed("sess-g16-r1b")
+        res = await engine.apply_mutation("sess-g16-r1b", PatchLayerLabelAuthoringIntent(
+            layer_id="schools",
+            ops=[{"featureId": f"s{i}", "op": "set", "set": {"hidden": True}}
+                 for i in range(201)]))
+        assert res.is_error is True
+        assert "op_limit_exceeded" in res.error_msg

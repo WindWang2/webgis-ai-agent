@@ -169,3 +169,25 @@ class TestLabelAuthorJourney:
 def _ov_of(res) -> list:
     label = next(l for l in res.mapspec["layers"] if l["id"] == "schools")["label"]
     return (label.get("authoring") or {}).get("overrides") or []
+
+
+class TestReviewR1Regressions:
+    async def test_ref_source_inspect_reports_unverified(self):
+        # R1-P3：ref 源（数据不可复核）→ unverified 如实披露（非 active）。
+        sid = "sess-g16-r1-unverified"
+        engine = MapSpecLifecycleEngine()
+        # inlineData 置 None + dataPath ref → 工具侧 feats=None 分支。
+        await engine.apply_mutation(sid, UpsertLayerIntent(
+            layer={"id": "schools", "type": "circle", "source": "schools",
+                   "label": {"field": "name",
+                             "authoring": {"overrides": [
+                                 {"featureId": "s1", "hidden": True}]}},
+                   "paint": {"circle-radius": 4}},
+            source_data=_FC))
+        from app.services.mapspec.intents import UpsertSourceIntent
+        await engine.apply_mutation(sid, UpsertSourceIntent(
+            source_id="schools",
+            source={"type": "geojson", "dataPath": "ref:geojson-x"}))
+        insp = await webgis_label_inspect(sid, "schools", feature_ids=["s1"])
+        assert insp["success"] is True
+        assert insp["targets"][0]["status"] == "unverified"

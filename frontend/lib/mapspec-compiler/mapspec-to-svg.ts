@@ -576,6 +576,8 @@ function compileMapSpecToSvgBody(
     && mapspec?.layout?.labels?.obstaclePolicy === 'geometry_v1';
   const segmentObstacleGroups: ObstacleBox[][] = [];
   const circleObstaclesV1: ObstacleBox[] = [];
+  // G16（R1-P2）：覆写命中登记（键=宿主原始层 id）—— 失效披露用。
+  const authoringSeen = new Map<string, Set<string>>();
 
   const scaledWidth = width * dpiScale;
   const scaledHeight = height * dpiScale;
@@ -670,7 +672,10 @@ function compileMapSpecToSvgBody(
   const layers = (mapspec?.layers || []).flatMap((layer: { id: string; type: string; layout?: Record<string, unknown>; label?: { field?: string; size?: number; color?: string; haloColor?: string; haloWidth?: number } }) => {
     if (!layer.label?.field || ['raster', 'heatmap', 'background', 'hillshade', 'symbol', 'text'].includes(layer.type)) return [layer];
     const label = layer.label;
+    // G16（R1-P1）：__label_of 记宿主原始层 id —— 障碍身份豁免按原始层
+    // 寻址（Python _svg_layers 孪生）。运行时层视图键，不落盘。
     return [layer, { ...layer, id: `${layer.id}-label`, type: 'symbol',
+      __label_of: layer.id,
       layout: { ...layer.layout, 'text-field': ['get', label.field], 'text-size': label.size ?? 12 },
       paint: { 'text-color': label.color ?? '#000000', 'text-halo-color': label.haloColor ?? '#ffffff', 'text-halo-width': label.haloWidth ?? 1 },
     }];
@@ -1060,6 +1065,15 @@ function compileMapSpecToSvgBody(
         // G16：要素级 authoring（身份 + hidden/text；pinned/offset 在锚点后）。
         const { featureId: fidLbl } = resolveFeatureIdentity(feat as never);
         const ovLbl = authoringByFid.get(fidLbl ?? "\u0000");
+        const authoringKey = String(
+          (layer as { __label_of?: string }).__label_of ?? layer.id ?? "",
+        );
+        if (authoringByFid.size > 0) {
+          if (!authoringSeen.has(authoringKey)) authoringSeen.set(authoringKey, new Set());
+        }
+        if (ovLbl && fidLbl) {
+          (authoringSeen.get(authoringKey) ?? new Set<string>()).add(fidLbl);
+        }
         const hiddenByUser = Boolean(ovLbl?.hidden === true);
         if (hiddenByUser && !collisionMode) return; // legacy：不画
         const textFieldPattern = layout['text-field'] ?? paint['text-field'] ?? '{name}';
@@ -1234,12 +1248,18 @@ function compileMapSpecToSvgBody(
             // G16 authoring：hidden 请求也进求解（证据链）；pin/priority
             // 只挂首锚（覆写寻址要素，不是第 N 个重复位）。
             const ovOffset = (ovLbl?.offset ?? null) as { dx: number; dy: number } | null;
+            // R1-P2：非 pin 的手工偏移对确定性求解 = 位移锚点（8 方位候选
+            // 绕位移后锚点；与 live text-offset / legacy 内联同语义 ——
+            // 三端一致，不再静默丢弃）。
+            const autoShift = ovOffset && ovLbl?.pinned !== true && ai === 0
+              ? { x: ovOffset.dx * baseSize * dpiScale, y: ovOffset.dy * baseSize * dpiScale }
+              : { x: 0, y: 0 };
             labelRequests.push({
               id: `lbl${labelRequests.length}${idSuffix}-${layer.id}-${fmtNum((coord as [number, number])[0])}-${fmtNum((coord as [number, number])[1])}`,
               text: collText,
               kind: lkind,
-              x: a.x,
-              y: a.y,
+              x: a.x + autoShift.x,
+              y: a.y + autoShift.y,
               angle: a.angle,
               fontPx: baseSize * dpiScale,
               fontSizeAttr: fontSize,
@@ -1258,7 +1278,11 @@ function compileMapSpecToSvgBody(
                 : {}),
               ...(typeof ovLbl?.priority === "number" && ai === 0
                 ? { userPriority: ovLbl.priority } : {}),
-              layerId: String(layer.id ?? ''),
+              // R1-P1：身份按宿主原始层 id（与障碍抽取侧同键 ——
+              // 自身墨迹豁免可达）。
+              layerId: String(
+                (layer as { __label_of?: string }).__label_of ?? layer.id ?? '',
+              ),
               ...(fidLbl && ai === 0 ? { featureId: fidLbl } : {}),
               ...(ovLbl?.callout === true && ai === 0 ? { callout: true } : {}),
             });
@@ -1343,6 +1367,39 @@ function compileMapSpecToSvgBody(
       labelBudget,
       solveObstacles,
     );
+    // G16（R1-P2）：失效/应用/冲突披露 —— 与 Python 孪生（mapspec_to_svg.py
+    // 同名段）逐码对齐：orphan（目标不在当前数据，绝不渲染）、stale
+    // （revision 变化但身份未断 → 应用+披露）、applied/pinned 冲突计数。
+    // 不可见/zoom 门外层未进标签迭代 → 不误报 orphan（未评估 ≠ 不存在）。
+    {
+      let orphanN = 0;
+      let staleN = 0;
+      for (const rawLayer of (mapspec?.layers ?? []) as Array<Record<string, any>>) {
+        const labelCfgA = rawLayer?.label;
+        const overridesA = labelCfgA?.authoring?.overrides;
+        if (!Array.isArray(overridesA) || overridesA.length === 0) continue;
+        const typeA = String(rawLayer.type ?? "circle");
+        if (["raster", "heatmap", "background", "hillshade"].includes(typeA)) continue;
+        const visA = resolveLayerVisibility(rawLayer as never);
+        if (visA.visibility === "none") continue;
+        if (visA.gate.minzoom !== undefined && activeExportZoom < visA.gate.minzoom) continue;
+        if (visA.gate.maxzoom !== undefined && activeExportZoom >= visA.gate.maxzoom) continue;
+        const seenA = authoringSeen.get(String(rawLayer.id ?? "")) ?? new Set<string>();
+        const srcA = (sources as Record<string, any>)[String(rawLayer.source ?? "")];
+        const revA = typeof srcA?.content_revision === "number" ? srcA.content_revision : null;
+        for (const ovA of overridesA as Array<Record<string, unknown>>) {
+          if (!ovA || typeof ovA.featureId !== "string") continue;
+          if (!seenA.has(ovA.featureId)) orphanN += 1;
+          if (typeof ovA.sourceRevision === "number"
+              && revA !== null && ovA.sourceRevision !== revA) {
+            staleN += 1;
+          }
+        }
+      }
+      if (orphanN > 0) options.onDiagnostic?.("label_authoring_orphan", `count=${orphanN}`);
+      if (staleN > 0) options.onDiagnostic?.("label_authoring_stale", `count=${staleN}`);
+    }
+
     const byId = new Map(labelRequests.map((r) => [r.id, r]));
     const parts: string[] = [];
     const calloutParts: string[] = [];
@@ -1428,6 +1485,20 @@ function compileMapSpecToSvgBody(
     }
     if (solution.budgetExceeded) {
       options.onDiagnostic?.("label_budget_exceeded", String(labelBudget));
+    }
+    // G16（R1-P2）：pinned 冲突 + authoring 应用披露（Python 孪生）。
+    const st = solution.stats as Record<string, number | undefined>;
+    if (st.pinned_conflicts || st.pinned_obstacle_overlaps || st.pinned_offscreen) {
+      options.onDiagnostic?.(
+        "label_pinned_conflict",
+        `label=${st.pinned_conflicts ?? 0} obstacle=${st.pinned_obstacle_overlaps ?? 0} offscreen=${st.pinned_offscreen ?? 0}`,
+      );
+    }
+    if (st.hidden_by_user) {
+      options.onDiagnostic?.(
+        "label_authoring_applied",
+        `hidden=${st.hidden_by_user} pinned=${st.pinned_placed ?? 0}`,
+      );
     }
     if (parts.length > 0) {
       // G16：引线先画（文字压其上；Python 孪生同构）。
