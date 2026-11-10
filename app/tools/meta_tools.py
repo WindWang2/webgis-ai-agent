@@ -100,13 +100,17 @@ def register_meta_tools(registry: ToolRegistry) -> None:
         # G13 / WP10：可用性投影（同代缓存；任何失败 → 整段缺席，不影响
         # 发现语义）。为什么选它 / 为何暂不可执行对 LLM 可见 —— 与 selector
         # 抑制面、dispatch 拒绝面同一词表（capability-availability/v1）。
+        # 冷缓存重建是全量对账（秒级）—— 经 to_thread 执行，不阻塞循环。
         availability_by_tool: dict = {}
         try:
+            import asyncio
+
             from app.lib.gis.capability_availability_cache import (
                 get_availability_snapshot,
             )
 
-            snap = get_availability_snapshot(registry=registry)
+            snap = await asyncio.to_thread(
+                get_availability_snapshot, registry=registry)
             availability_by_tool = {
                 r.tool_id: r for r in snap.records if r.tool_id}
         except Exception:  # noqa: BLE001 — 投影缺席 = 不披露，不阻断发现
