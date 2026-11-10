@@ -1932,6 +1932,9 @@ def compile_mapspec_to_svg_detailed(
                                            if (_ov_lbl and isinstance(_ov_lbl.get("priority"), int) and _ai == 0) else {}),
                                         **({"feature_id": _fid_lbl}
                                            if (_fid_lbl and _ai == 0) else {}),
+                                        **({"callout": True}
+                                           if (_ov_lbl and _ov_lbl.get("callout") is True
+                                               and _ai == 0) else {}),
                                     })
                                 feature_count += 1
                                 continue
@@ -2097,10 +2100,42 @@ def compile_mapspec_to_svg_detailed(
             )
             by_id = {r["id"]: r for r in label_requests}
             parts: List[str] = []
+            callout_parts: List[str] = []
             for p in solution.placements:
                 if p.status != "placed":
                     continue
                 r = by_id[p.id]
+                # G16：受控 callout —— 锚点 → 标签盒边的引线（置于文字
+                # 之下；引线不参与碰撞/障碍 —— 不是允许文字重叠的借口，
+                # 端点=要素锚点与标签盒边（可解释））。
+                if r.get("callout"):
+                    _w_c, _h_c = _estimate_collision_box(r["text"], r["font_px"])
+                    if r["kind"] == "point":
+                        _bx1, _by1 = p.x, p.y
+                    else:
+                        _bx1, _by1 = p.x - _w_c / 2.0, p.y - _h_c / 2.0
+                    _ax_c, _ay_c = float(r["x"]), float(r["y"])
+                    _cx_c = _bx1 + _w_c / 2.0
+                    _cy_c = _by1 + _h_c / 2.0
+                    _dx_c, _dy_c = _cx_c - _ax_c, _cy_c - _ay_c
+                    _t_edge = 1.0
+                    for _d_comp, _lo, _hi in (
+                        (_dx_c, _bx1, _bx1 + _w_c),
+                        (_dy_c, _by1, _by1 + _h_c),
+                    ):
+                        if abs(_d_comp) > 1e-9:
+                            for _bnd in (_lo, _hi):
+                                _t_b = (_bnd - (_ax_c if _d_comp is _dx_c else _ay_c)) / _d_comp
+                                if 1e-9 < _t_b < _t_edge:
+                                    _t_edge = _t_b
+                    _ex_c = _ax_c + _dx_c * _t_edge
+                    _ey_c = _ay_c + _dy_c * _t_edge
+                    callout_parts.append(
+                        f'<line x1="{_fmt_num(_ax_c)}" y1="{_fmt_num(_ay_c)}" '
+                        f'x2="{_fmt_num(_ex_c)}" y2="{_fmt_num(_ey_c)}" '
+                        f'stroke="#64748b" stroke-width="{_fmt_num(0.75 * dpi_scale)}" '
+                        f'stroke-opacity="0.9" />'
+                    )
                 _fs = r["font_px"]
                 _lines = r["text"].split("\n")
                 if r["kind"] == "point":
@@ -2186,10 +2221,12 @@ def compile_mapspec_to_svg_detailed(
                     "label_authoring_applied",
                     detail=f"hidden={_hidden_n} pinned={_pin_stats.get('pinned_placed', 0)}",
                 )
-            if parts:
+            if parts or callout_parts:
+                # 引线先画（文字压在其上 —— 引线是可解释端点的装饰，
+                # 不是额外文字位）。
                 labels_group = (
                     '  <g class="mapspec-labels">\n    '
-                    + "\n    ".join(parts)
+                    + "\n    ".join(callout_parts + parts)
                     + "\n  </g>\n"
                 )
 

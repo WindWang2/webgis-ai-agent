@@ -1260,6 +1260,7 @@ function compileMapSpecToSvgBody(
                 ? { userPriority: ovLbl.priority } : {}),
               layerId: String(layer.id ?? ''),
               ...(fidLbl && ai === 0 ? { featureId: fidLbl } : {}),
+              ...(ovLbl?.callout === true && ai === 0 ? { callout: true } : {}),
             });
           }
           return;
@@ -1344,11 +1345,39 @@ function compileMapSpecToSvgBody(
     );
     const byId = new Map(labelRequests.map((r) => [r.id, r]));
     const parts: string[] = [];
+    const calloutParts: string[] = [];
     for (const p of solution.placements) {
       if (p.status !== "placed") continue;
       const r = byId.get(p.id)!;
       const fs = r.fontPx;
       const lines = String(r.text).split("\n");
+      // G16：受控 callout —— 锚点 → 标签盒边引线（Python 孪生同式；
+      // 不参与碰撞 —— 端点可解释：要素锚点与标签盒边）。
+      if (r.callout === true) {
+        const [wc, hc] = estimateLabelBox(r.text, fs);
+        const bx1 = r.kind === "point" ? p.x : p.x - wc / 2;
+        const by1 = r.kind === "point" ? p.y : p.y - hc / 2;
+        const axC = Number(r.x), ayC = Number(r.y);
+        const cxC = bx1 + wc / 2, cyC = by1 + hc / 2;
+        const dxC = cxC - axC, dyC = cyC - ayC;
+        let tEdge = 1;
+        for (const [d, lo, hi, o] of [
+          [dxC, bx1, bx1 + wc, axC],
+          [dyC, by1, by1 + hc, ayC],
+        ] as const) {
+          if (Math.abs(d) > 1e-9) {
+            for (const bnd of [lo, hi]) {
+              const tb = (bnd - o) / d;
+              if (tb > 1e-9 && tb < tEdge) tEdge = tb;
+            }
+          }
+        }
+        calloutParts.push(
+          `<line x1="${fmtNum(axC)}" y1="${fmtNum(ayC)}" `
+          + `x2="${fmtNum(axC + dxC * tEdge)}" y2="${fmtNum(ayC + dyC * tEdge)}" `
+          + `stroke="#64748b" stroke-width="${fmtNum(0.75 * dpiScale)}" stroke-opacity="0.9" />`,
+        );
+      }
       let tx: number, ty: number, anchor: string, baseline: string, transform = "";
       if (r.kind === "point") {
         // 渲染映射：求解盒左下角 → 基线 y（上升部补偿）—— Python 孪生同式。
@@ -1401,7 +1430,8 @@ function compileMapSpecToSvgBody(
       options.onDiagnostic?.("label_budget_exceeded", String(labelBudget));
     }
     if (parts.length > 0) {
-      labelsGroup = `  <g class="mapspec-labels">\n    ${parts.join("\n    ")}\n  </g>\n`;
+      // G16：引线先画（文字压其上；Python 孪生同构）。
+      labelsGroup = `  <g class="mapspec-labels">\n    ${calloutParts.concat(parts).join("\n    ")}\n  </g>\n`;
     }
   }
 

@@ -9,7 +9,21 @@ import { compileStyleMethod, isStyleMethodObject } from "@/lib/mapspec-compiler/
 // #1747：heatmapOnlyPaint 与 headless 编译器共用单一实现（导出 paint 与
 // live 逐键一致 —— 原生 heatmap-color 色带不再在导出里掉落）。
 import { heatmapOnlyPaint } from "@/lib/mapspec-compiler/heatmap-paint";
-import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
+import type {
+  LabelAuthoringOverride,
+  MapSpec,
+  MapSpecSource,
+  MapSpecLayer,
+} from "@/lib/mapspec-compiler/types";
+import {
+  buildAutoFilter,
+  buildPinnedFilter,
+  buildTextFieldExpr,
+  buildTextOffsetExpr,
+  projectAuthoring,
+  resolveFeatureIdentity,
+  type AuthoringProjection,
+} from "./label-authoring";
 import { toMapLibrePaint } from "@/lib/mapspec-runtime/paint-bridge";
 import { isRefOnlySource } from "@/lib/mapspec/ref-source-resolver";
 import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debouncer";
@@ -151,6 +165,17 @@ export class MapSpecRuntime {
    * 否则 lastLayerOrderKey 停留旧值 → 持久 z 漂移到下一个结构 patch。
    */
   private zSyncForcedByFallback = false;
+
+  // ── G16：受控 callout 引线层注册（`${id}-label-callout` + 合成源；
+  // em 偏移是屏幕语义 → 引线地理几何随 zoom/rotate 变，moveend 刷新）──
+  private labelCalloutRegs = new Map<string, {
+    mainLayerId: string;
+    sourceId: string;
+    field: string;
+    baseFontPx: number;
+    offsets: Array<{ featureId: string; idKey: string | null; dx: number; dy: number }>;
+  }>();
+  private calloutMoveHooked = false;
 
   // ── 标注运行时状态（ac-05，ADR-0154；只服务 `${id}-label` 子层）──────
   /** 标注决策/降级 evidence 环形日志（cap 200；getLabelEvents() 消费）。 */
@@ -1461,6 +1486,8 @@ export class MapSpecRuntime {
       try { this.map.removeLayer(labelId); } catch { /* already gone */ }
       renderer.noteStyleLayerRemoved(this.map, labelId);
     }
+    // G16：authoring 子层与 label 子层同生命周期。
+    this.removeLabelAuthoringSublayers(id);
     // v1.6（方向 5）：表达子层（rep 窗口层 + 簇三子层）与主层同生命
     // 周期 —— 删主层必须一并删除（注册表驱动，不扫全 style）。
     const repSubs = this.repSublayersByLayer.get(id) ?? [];
@@ -1610,6 +1637,10 @@ export class MapSpecRuntime {
     const layout = (layer.layout as any) ?? {};
     let strategy = normalizeLabelStrategy(labelSpec as any);
     const features = this.resolveSourceFeatures(layer.source, spec);
+    // G16：要素级 authoring 投影（orphan 不投影 + 事件披露）。
+    const authoringRaw = (labelSpec as any).authoring as
+      { overrides?: LabelAuthoringOverride[] } | undefined;
+    const proj = projectAuthoring(authoringRaw?.overrides, features as never);
     // 字号绝对基准（06 线符号律落地后由其给出；本线只乘比例系数）。
     const baseSize = Number(
       typeof labelSpec.size === "number" ? labelSpec.size : (layout.labelSize as number) ?? 12,
@@ -1633,6 +1664,7 @@ export class MapSpecRuntime {
         renderer.noteStyleLayerRemoved(this.map, labelId);
       }
       this.labelRegistrations.delete(labelId);
+      this.removeLabelAuthoringSublayers(layer.id);
       this.pushLabelEvent({
         layerId: layer.id, kind: "disabled",
         detail: { reason: "hover_only", field: labelSpec.field },
@@ -1658,6 +1690,7 @@ export class MapSpecRuntime {
         renderer.noteStyleLayerRemoved(this.map, labelId);
       }
       this.labelRegistrations.delete(labelId);
+      this.removeLabelAuthoringSublayers(layer.id);
         this.pushLabelEvent({
           layerId: layer.id, kind: "disabled",
           detail: { reason: "ink_ratio_extreme", inkRatio: Number(ink.toFixed(4)) },
@@ -1732,6 +1765,18 @@ export class MapSpecRuntime {
       def.layout["symbol-sort-key"] = buildSortKeyExpr(strategy.priorityField);
     }
     if (thinFilter) def.filter = thinFilter;
+    // G16：文字覆写 / 隐藏+pinned 排除 / 手工偏移（auto 子层 —— pinned
+    // 单独子层恒显示）。orphan 覆写不投影（事件披露，绝不漂移到别要素）。
+    if (proj.overrides.length > 0) {
+      const tfExpr = buildTextFieldExpr(proj, String(labelSpec.field));
+      if (tfExpr) def.layout["text-field"] = tfExpr;
+      const autoFilter = buildAutoFilter(proj);
+      if (autoFilter) {
+        def.filter = thinFilter ? ["all", autoFilter, thinFilter] : autoFilter;
+      }
+      const offsetExpr = buildTextOffsetExpr(proj, false);
+      if (offsetExpr) def.layout["text-offset"] = offsetExpr;
+    }
     const src = this.map.getSource(layer.source);
     if (src && (src as any).type === "vector") def["source-layer"] = "data";
     try {
@@ -1754,6 +1799,229 @@ export class MapSpecRuntime {
     } catch (err) {
       devOnly.warn(`[MapSpecRuntime] label sublayer failed for ${layer.id}:`, err);
     }
+
+    // G16：pinned 子层（恒显示 —— text-allow-overlap；与 auto 子层同一
+    // paint/字号/文字覆写；offset 为 pinned-only match）。插在 auto 子层
+    // 之下 → MapLibre 碰撞序先放置 pinned（auto 绕行，绝不移动 pinned）。
+    this.applyLabelAuthoringSublayers(layer, labelId, proj, {
+      labelVis, style, sizeExpr, field: String(labelSpec.field),
+      mainFilter: (this.map.getLayer(layer.id) as any)?.filter ?? null,
+    }, scaledBase);
+    if (proj.orphan.length > 0) {
+      this.pushLabelEvent({
+        layerId: layer.id, kind: "authoring",
+        detail: {
+          dropped_orphan: proj.orphan.slice(0, 16).map((o) => o.featureId),
+          orphan_count: proj.orphan.length,
+        },
+      });
+    }
+  }
+
+  /** G16：pinned 标注子层（${id}-label-pinned）挂/卸。 */
+  private applyLabelAuthoringSublayers(
+    layer: MapSpecLayer,
+    labelId: string,
+    proj: AuthoringProjection,
+    opts: {
+      labelVis: ReturnType<typeof resolveLayerVisibility>;
+      style: ReturnType<typeof resolveLabelStyle>;
+      sizeExpr: unknown;
+      field: string;
+      mainFilter: unknown[] | null;
+    },
+    sizePx: number,
+  ): void {
+    const pinnedId = `${labelId}-pinned`;
+    if (proj.pinned.length === 0 || !buildPinnedFilter(proj)) {
+      this.removeLabelAuthoringSublayers(layer.id);
+      // callout 层独立于 pinned 存在/清空（非 pin 的 callout 也合法）。
+      this.applyLabelCalloutLayer(layer, labelId, proj, 0);
+      return;
+    }
+    const pinnedFilter = buildPinnedFilter(proj);
+    const textExpr = buildTextFieldExpr(proj, opts.field)
+      ?? ["get", opts.field];
+    const offsetExpr = buildTextOffsetExpr(proj, true);
+    const def: any = {
+      id: pinnedId,
+      type: "symbol",
+      source: layer.source,
+      ...(opts.labelVis.gate.minzoom !== undefined ? { minzoom: opts.labelVis.gate.minzoom } : {}),
+      ...(opts.labelVis.gate.maxzoom !== undefined ? { maxzoom: opts.labelVis.gate.maxzoom } : {}),
+      paint: {
+        "text-color": opts.style.textColor,
+        "text-halo-color": opts.style.haloColor,
+        "text-halo-width": opts.style.haloWidth,
+      },
+      layout: {
+        "text-field": textExpr,
+        "text-size": opts.sizeExpr,
+        "text-allow-overlap": true,
+        "text-anchor": "center",
+        "text-max-width": opts.style.textMaxWidth,
+        "text-letter-spacing": opts.style.letterSpacing,
+        ...(offsetExpr ? { "text-offset": offsetExpr } : {}),
+        visibility: opts.labelVis.visibility,
+      },
+      // 主层 filter 同步（与主层同生命周期语义 —— 被滤要素的 pinned
+      // 标注同样不显示）。
+      filter: opts.mainFilter
+        ? ["all", opts.mainFilter, pinnedFilter]
+        : pinnedFilter,
+    };
+    const src = this.map.getSource(layer.source);
+    if (src && (src as any).type === "vector") def["source-layer"] = "data";
+    try {
+      if (this.map.getLayer(pinnedId)) this.removeLayerSafe(pinnedId);
+      // 插在 auto label 子层之下（beforeId=labelId；不存在则置顶 null）。
+      this.map.addLayer(def, this.map.getLayer(labelId) ? labelId : undefined);
+      this.layerSourceIndex.set(pinnedId, layer.source);
+      renderer.noteStyleLayerAdded(this.map, pinnedId);
+      this.pushLabelEvent({
+        layerId: layer.id, kind: "authoring",
+        detail: { pinned_count: proj.pinned.length },
+      });
+    } catch (err) {
+      devOnly.warn(`[MapSpecRuntime] pinned label sublayer failed for ${layer.id}:`, err);
+    }
+    this.applyLabelCalloutLayer(layer, labelId, proj, sizePx);
+  }
+
+  /** G16：callout 引线层（锚点 → 偏移标签的合成 GeoJSON 线源）。 */
+  private applyLabelCalloutLayer(
+    layer: MapSpecLayer,
+    labelId: string,
+    proj: AuthoringProjection,
+    sizePx: number,
+  ): void {
+    const calloutId = `${labelId}-callout`;
+    const srcId = `${labelId}-callout-src`;
+    const callouts = proj.active.filter(
+      (o) => o.callout === true && o.offset
+      && typeof o.offset.dx === "number" && typeof o.offset.dy === "number",
+    );
+    if (callouts.length === 0) {
+      this.labelCalloutRegs.delete(labelId);
+      if (this.map.getLayer(calloutId)) {
+        try { this.map.removeLayer(calloutId); } catch { /* gone */ }
+        renderer.noteStyleLayerRemoved(this.map, calloutId);
+      }
+      if (this.map.getSource(srcId)) {
+        try { this.map.removeSource(srcId); } catch { /* gone */ }
+      }
+      this.layerSourceIndex.delete(calloutId);
+      return;
+    }
+    const reg = {
+      mainLayerId: layer.id,
+      sourceId: layer.source,
+      field: "",
+      baseFontPx: sizePx,
+      offsets: callouts.map((o) => ({
+        featureId: o.featureId, idKey: o.idKey ?? null,
+        dx: o.offset!.dx, dy: o.offset!.dy,
+      })),
+    };
+    this.labelCalloutRegs.set(labelId, reg);
+    try {
+      if (!this.map.getSource(srcId)) {
+        (this.map as any).addSource(srcId, {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (this.map.getLayer(calloutId)) {
+        try { this.map.removeLayer(calloutId); } catch { /* gone */ }
+      }
+      this.map.addLayer({
+        id: calloutId,
+        type: "line",
+        source: srcId,
+        paint: { "line-color": "#64748b", "line-width": 1, "line-opacity": 0.9 },
+        layout: { visibility: "visible" },
+      } as any, this.map.getLayer(`${labelId}-pinned`) ? `${labelId}-pinned` : undefined);
+      this.layerSourceIndex.set(calloutId, srcId);
+      this.refreshCalloutLayer(labelId);
+      this.hookCalloutMove();
+    } catch (err) {
+      devOnly.warn(`[MapSpecRuntime] callout layer failed for ${layer.id}:`, err);
+    }
+  }
+
+  /** 重算一条 callout 线源（em 偏移 → 屏幕位移 → unproject 端点）。 */
+  private refreshCalloutLayer(labelId: string): void {
+    const reg = this.labelCalloutRegs.get(labelId);
+    const srcId = `${labelId}-callout-src`;
+    if (!reg || !this.map.getSource(srcId)) return;
+    const feats = this.resolveSourceFeatures(reg.sourceId);
+    if (!feats) return;
+    const idIndex = new Map<string, { lng: number; lat: number } | null>();
+    for (const f of feats) {
+      const rec = f as { id?: unknown; properties?: Record<string, unknown> | null; geometry?: { type?: string; coordinates?: unknown } };
+      const { featureId } = resolveFeatureIdentity(rec);
+      if (featureId === null || idIndex.has(featureId)) continue;
+      const geom = rec.geometry;
+      let anchor: { lng: number; lat: number } | null = null;
+      if (geom?.type === "Point" && Array.isArray(geom.coordinates)) {
+        anchor = { lng: Number(geom.coordinates[0]), lat: Number(geom.coordinates[1]) };
+      }
+      idIndex.set(featureId, anchor);
+    }
+    const featuresOut: unknown[] = [];
+    for (const off of reg.offsets) {
+      const anchor = idIndex.get(off.featureId);
+      if (!anchor) continue; // orphan：不画引线（不漂移）
+      try {
+        const p = (this.map as any).project([anchor.lng, anchor.lat]);
+        const labelPx = {
+          x: p.x + off.dx * reg.baseFontPx,
+          y: p.y + off.dy * reg.baseFontPx,
+        };
+        // 端点留 0.6em 间隙（不压符号/文字）。
+        const gap = 0.6 * reg.baseFontPx;
+        const len = Math.hypot(labelPx.x - p.x, labelPx.y - p.y) || 1;
+        const ux = (labelPx.x - p.x) / len, uy = (labelPx.y - p.y) / len;
+        const start = { x: p.x + ux * gap, y: p.y + uy * gap };
+        const end = { x: labelPx.x - ux * gap, y: labelPx.y - uy * gap };
+        const a = (this.map as any).unproject(start);
+        const b = (this.map as any).unproject(end);
+        featuresOut.push({
+          type: "Feature",
+          properties: { featureId: off.featureId },
+          geometry: { type: "LineString", coordinates: [[a.lng, a.lat], [b.lng, b.lat]] },
+        });
+      } catch { /* project/unproject 不可用（mock 环境）→ 跳过该线 */ }
+    }
+    try {
+      ((this.map.getSource(srcId) as any)?.setData)?.({
+        type: "FeatureCollection", features: featuresOut,
+      });
+    } catch { /* setData 不可用 → 保留空源 */ }
+  }
+
+  /** move（zoom/rotate/pan 后）统一刷新 callout 线（有界注册一次）。 */
+  private hookCalloutMove(): void {
+    if (this.calloutMoveHooked) return;
+    const mapAny = this.map as any;
+    if (typeof mapAny.on !== "function") return;
+    this.calloutMoveHooked = true;
+    mapAny.on("moveend", () => {
+      if (this.disposed) return;
+      for (const labelId of Array.from(this.labelCalloutRegs.keys())) {
+        this.refreshCalloutLayer(labelId);
+      }
+    });
+  }
+
+  /** G16：卸载本层的 authoring 子层（label 移除/覆写清空时）。 */
+  private removeLabelAuthoringSublayers(layerId: string): void {
+    const pinnedId = `${layerId}-label-pinned`;
+    if (this.map.getLayer(pinnedId)) {
+      try { this.map.removeLayer(pinnedId); } catch { /* already gone */ }
+      renderer.noteStyleLayerRemoved(this.map, pinnedId);
+    }
+    this.layerSourceIndex.delete(pinnedId);
   }
 
   /** 全局 zoom 钩子（懒注册一次；跨档才重算 setFilter —— 有界工作集）。 */

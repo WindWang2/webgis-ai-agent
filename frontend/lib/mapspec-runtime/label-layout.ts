@@ -500,7 +500,7 @@ export function labelOnlyLayerChange(prev: MapSpecLayer, next: MapSpecLayer): bo
 export interface LabelRuntimeEvent {
   seq: number;
   layerId: string;
-  kind: "degrade" | "thin" | "band" | "refield" | "disabled" | "skipped";
+  kind: "degrade" | "thin" | "band" | "refield" | "disabled" | "skipped" | "authoring";
   level?: number;
   detail: Record<string, unknown>;
 }
