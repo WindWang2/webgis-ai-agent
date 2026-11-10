@@ -248,3 +248,6 @@ class MutationPlan:
     restore_notes: Optional[Dict[str, Any]] = None
     checkpoint_id: Optional[str] = None
     ckpt_ref_count: int = 0
+    #: PR-D：随本笔提交单事务落地的 map_state 附加字段（如 agent 撤销点的
+    #: redo 记账）。与 dedup 存证合并进 save_mapspec(extra_fields=…)。
+    extra_state_fields: Optional[Dict[str, Any]] = None

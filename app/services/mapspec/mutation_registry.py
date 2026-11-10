@@ -38,6 +38,7 @@ from app.schemas.mapspec_mutation_schema import (
     SetSceneBody,
     SetViewBody,
     SetWorkbenchStateBody,
+    UndoAgentCommitBody,
 )
 from app.services.mapspec import mutation_handlers as _h
 from app.services.mapspec.intents import (
@@ -57,6 +58,7 @@ from app.services.mapspec.intents import (
     ReorderLayersIntent,
     RestoreStyleIntent,
     RollbackIntent,
+    UndoAgentCommitIntent,
     SetBasemapIntent,
     SetLayoutIntent,
     SetSceneIntent,
@@ -261,6 +263,15 @@ def _codec_patch_component(req: Any) -> MutationIntent:
         style=req.style,
         options=req.options,
         upsert=req.upsert,
+    )
+
+
+def _codec_undo_agent_commit(req: Any) -> MutationIntent:
+    """PR-D：UndoAgentCommitBody → UndoAgentCommitIntent。"""
+    return UndoAgentCommitIntent(
+        base_revision=int(req.base_revision),
+        agent_revision=int(req.agent_revision),
+        direction=str(req.direction or "undo"),
     )
 
 
@@ -553,6 +564,12 @@ def _build_default_registry() -> MutationRegistry:
         touches_layers=True, op_label="回滚",
         provenance_detail=_pd_none,
     ))
+    reg.register(IntentDescriptor(
+        intent_cls=UndoAgentCommitIntent,
+        handler=_h._handle_undoagentcommit,
+        touches_layers=True, op_label="撤销 Agent 提交",
+        provenance_detail=_pd_none,
+    ), body_cls=UndoAgentCommitBody, body_codec=_codec_undo_agent_commit)
     reg.register(IntentDescriptor(
         intent_cls=RestoreStyleIntent,
         handler=_h._handle_restorestyle,

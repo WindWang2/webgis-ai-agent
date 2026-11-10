@@ -12,7 +12,7 @@ import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';
 import type { SelectedFeatureInfo } from '@/lib/store/hud-types';
 import { reportLayerFetchFailure, syncSpecLayersToStore } from '@/lib/session/map-state-restore';
-import { commitMapSpecDocument, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { commitMapSpecDocument, getMapSpecSessionCursor, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { ingestRenderWork } from '@/lib/render-protocol/render-work';
 import { nextTurn, noteAgentDisplayed } from '@/lib/chat/turn-focus';
 import { flushInteractionBus } from '@/lib/interaction/bus';
@@ -74,6 +74,7 @@ import {
 } from '@/lib/api/chat';
 import { decideFeatureEditPlan, redoFeatureEdit, undoFeatureEdit } from '@/lib/api/feature-edit';
 import { featureEditCommand } from '@/lib/workbench/undo';
+import { observeAgentSpecEvent } from '@/lib/workbench/agent-commit-undo';
 import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import { ApiError } from '@/lib/api/transport';
 
@@ -615,10 +616,13 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         setMapSpecSessionCursor(eventSid, 0, bindToken);
       }
       const incomingRevision = data?.mutation_revision ?? data?.result?.mutation_revision;
+      // PR-D：推进前的游标 revision —— Agent 提交撤销段的起点。
+      const priorRevision = getMapSpecSessionCursor().revision;
       if (typeof incomingRevision === 'number' && sessionIdRef.current) {
         setMapSpecRevision(incomingRevision);
       }
       const incomingMapSpec = data?.mapspec ?? data?.result?.mapspec;
+      let agentSpecAccepted = false;
       if (incomingMapSpec) {
         // 携带 revision 提交：迟到的旧代次 SSE 事件（HTTP 响应已推进游标）
         // 不再把 committed spec 拉回旧代（ST-P3-1）。
@@ -633,7 +637,17 @@ export function useSSEStream(options: UseSSEStreamOptions) {
           // product-* 等后端直写图层只落 MapSpec 不走 addLayer 路径——镜像
           // 成 HUD 行，图层面板可见、ref 定向显隐可解析（幂等，见注释）。
           syncSpecLayersToStore(incomingMapSpec, sessionIdRef.current);
+          agentSpecAccepted = true;
         }
+      }
+      // PR-D：Agent 回合的每份新 committed spec 入撤销栈（按 revision 成段）。
+      if (typeof incomingRevision === 'number') {
+        observeAgentSpecEvent({
+          sessionId: sessionIdRef.current,
+          priorRevision,
+          incomingRevision,
+          specAccepted: agentSpecAccepted,
+        });
       }
       // ADR-0225（Goal 03）：执行信封收纳（render_work.v1；防御式解析 +
       // 代次门在 store 内 —— 形状非法/旧代/跨会话一律拒收，不影响主链）。

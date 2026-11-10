@@ -206,6 +206,20 @@ class PatchWorkbenchDeltaBody(ClientMutationIdMixin):
     delta: dict[str, Any]
 
 
+class UndoAgentCommitBody(ClientMutationIdMixin):
+    """PR-D：撤销/重做一段 Agent 地图提交（Ctrl+Z 撤销整笔 Agent 提交）。
+
+    ``(base_revision, agent_revision]`` 必须是连续的 Agent 提交；服务端在锁内
+    校验当前制图指纹（用户在其后有未撤销的改动 → 拒绝，不覆盖用户编辑）。
+    """
+
+    intent: Literal["undo_agent_commit"]
+    expected_revision: int = Field(ge=0)
+    base_revision: int = Field(ge=0)
+    agent_revision: int = Field(ge=1)
+    direction: Literal["undo", "redo"] = "undo"
+
+
 UserMapSpecMutationRequest = Annotated[
     Union[
         PatchLayerPresentationBody,
@@ -224,6 +238,7 @@ UserMapSpecMutationRequest = Annotated[
         InitProjectBody,
         SetWorkbenchStateBody,
         PatchWorkbenchDeltaBody,
+        UndoAgentCommitBody,
     ],
     Field(discriminator="intent"),
 ]

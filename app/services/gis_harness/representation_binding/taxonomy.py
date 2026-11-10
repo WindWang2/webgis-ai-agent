@@ -89,6 +89,7 @@ _TAXONOMY_TABLE: Dict[str, tuple] = {
     # Rollback/RestoreStyle：语义随 origin 动态判定——user 的 undo 触发语义
     # 重定基（undo_rebaseline），agent/system 的回滚属组织面不投影。
     "RollbackIntent": ("unbound", "undo_rebaseline"),
+    "UndoAgentCommitIntent": ("unbound", "undo_rebaseline"),
     "RestoreStyleIntent": ("unbound", "undo_rebaseline"),
 }
 
