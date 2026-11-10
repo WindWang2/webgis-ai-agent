@@ -82,6 +82,8 @@ _TOOL_MODULES = [
     ("app.tools.ingest_tools", "register_ingest_tools"),
     # 数据准备域：inspect→propose→prepare→bind 工具面（独立模块防并发冲突）
     ("app.tools.data_preparation_tools", "register_data_preparation_tools"),
+    # G17：staged 多文件/多成员导入工作台 —— 检查/计划/预览/提交/收据
+    ("app.tools.data_import_tools", "register_data_import_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
     ("app.tools.flow_tools", "register_flow_tools"),
     ("app.tools.dasymetric_tools", "register_dasymetric_tools"),
