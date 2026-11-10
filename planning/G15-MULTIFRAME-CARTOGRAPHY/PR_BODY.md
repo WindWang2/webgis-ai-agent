@@ -77,8 +77,11 @@
 
 ## 独立评审
 
-- 独立 reviewer（未参与实现）全量 diff 评审 → 发现项与修复见
-  `planning/G15-MULTIFRAME-CARTOGRAPHY/REVIEW.md`；复审结论随 PR 更新。
+- **R1**（reviewer 未参与实现；全量 diff + 现场复跑 + 3 项对抗复现）：
+  APPROVE-WITH-FIXES —— 3 blocker（面板 patch 丢 data 绑定 / PDF 图例带
+  读局部分级 / 导出路由与同步组为无消费者死码）+ 2 P2 + 6 P3，全部在
+  commit f8dfe6bad 修复（细节 `planning/G15-MULTIFRAME-CARTOGRAPHY/REVIEW.md`）。
+- **R2 复审**：结论见下方更新。
 
 ## 与其他 PR 的关系
 
