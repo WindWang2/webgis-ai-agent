@@ -41,3 +41,14 @@
 - API 4 例：multipart 创建→详情/列表→计划→预览→commit 202+轮询→清理；404 归属；unsupported 披露；409 版本冲突
 - 修复：budget 类发现失败升级 DataImportError(413)+staging 清理；memory_class 词表 medium；
   import_plan_configure 显式 args_model（registry 签名推导不支持 Dict 注解）
+
+### R7+R8（2026-11-10）前端工作台 + 旧契约回归
+- 前端：lib/api/data-import.ts（XHR 创建 + transport 其余）、components/data-import/import-workbench.tsx
+  （恢复/迟到守卫/有界渲染/配置面板/预览/收据/取消/清理）、dataset-manager 薄挂载（按钮+条件渲染）、
+  i18n dataImport 双语 + messages.ts 登记
+- vitest：client 8 例 + 组件 4 例 + 既有 dataset-manager/upload 测试 17/17 通过；tsc 我方文件 0 错
+  （scene3d/three 8 个错误在 master 基线同样存在，非本任务引入）
+- 旧契约回归（R8）：upload_identity_v4 + upload_api + shapefile + parser_crs×2 + upload_tools
+  40/40 全绿（场景 22：ignored_files/单文件契约/register_ref 不变）
+- 跨入口一致性：同一批次 plan_hash 与收据在 service(API)/工具(dispatcher) 两视角一致
+- 环境注：worktree frontend/node_modules 为主工作区 junction（基线相同，未改 package.json）

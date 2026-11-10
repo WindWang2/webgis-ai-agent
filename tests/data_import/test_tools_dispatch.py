@@ -144,3 +144,36 @@ async def test_tool_runtime_context_conflict_denied(env, registry):
         )
         assert r["success"] is True
         assert r["batch_id"] == state.batch_id      # 已验证会话胜出，注入参数被剥离
+
+
+async def test_cross_entry_same_batch_same_receipts(env, registry):
+    """场景 21 补充：浏览器（HTTP API 形态）与 Pi 工具作用于同一批次 ——
+    同一导入计划（plan_hash）与同一提交收据（batch.json 单一事实源）。"""
+    from app.services.data_import.service import get_data_import_service
+
+    state = await env.create_batch(SESSION, "user:t", [("x.geojson", GEO)])
+    key = state.members[0].member_key
+
+    # 「浏览器」入口：service（= API 路由调用的同一 facade）保存计划并预览
+    await env.save_plan(state.batch_id, SESSION, {key: {}}, selected=[key])
+    await env.preview_members(state.batch_id, SESSION, [key], row_limit=10)
+    via_service = await get_data_import_service().get_receipts(state.batch_id, SESSION)
+    plan_hash_service = (await env.get_batch(state.batch_id, SESSION)).plan_hashes[key]
+
+    # 「Pi 工具」入口：同一批次经真实 dispatcher 提交并读收据
+    r = await registry.dispatch(
+        "import_batch_commit",
+        {"batch_id": state.batch_id, "member_keys": [key], "session_id": SESSION},
+        session_id=SESSION,
+    )
+    assert r["success"] is True and r["status"] == "completed"
+    r2 = await registry.dispatch(
+        "import_batch_receipt", {"batch_id": state.batch_id, "session_id": SESSION},
+        session_id=SESSION,
+    )
+    receipt_tool = r2["receipts"][key]
+    assert receipt_tool["plan_hash"] == plan_hash_service
+    # 同一收据源：提交前 service 视角无收据，提交后两视角一致
+    assert via_service["receipts"] == {}
+    r3 = await get_data_import_service().get_receipts(state.batch_id, SESSION)
+    assert r3["receipts"][key]["output_ref"] == receipt_tool["output_ref"]
