@@ -97,8 +97,23 @@ def register_meta_tools(registry: ToolRegistry) -> None:
         for schema in registry.get_schemas():
             fn = schema.get("function", {})
             descriptions[fn.get("name", "")] = fn.get("description", "")
+        # G13 / WP10：可用性投影（同代缓存；任何失败 → 整段缺席，不影响
+        # 发现语义）。为什么选它 / 为何暂不可执行对 LLM 可见 —— 与 selector
+        # 抑制面、dispatch 拒绝面同一词表（capability-availability/v1）。
+        availability_by_tool: dict = {}
+        try:
+            from app.lib.gis.capability_availability_cache import (
+                get_availability_snapshot,
+            )
+
+            snap = get_availability_snapshot(registry=registry)
+            availability_by_tool = {
+                r.tool_id: r for r in snap.records if r.tool_id}
+        except Exception:  # noqa: BLE001 — 投影缺席 = 不披露，不阻断发现
+            availability_by_tool = {}
         matched = []
         hidden_tier3 = 0
+        unavailable_count = 0
         for name, meta in registry.all_metadata().items():
             if domain not in set(meta.get("domains", [])):
                 continue
@@ -108,12 +123,26 @@ def register_meta_tools(registry: ToolRegistry) -> None:
             if int(meta.get("tier", 1)) >= 3:
                 hidden_tier3 += 1
                 continue
-            matched.append({
+            row = {
                 "name": name,
                 "description": descriptions.get(name, ""),
                 "tier": meta.get("tier", 1),
-            })
+            }
+            rec = availability_by_tool.get(name)
+            if rec is not None:
+                row["availability"] = rec.availability_status
+                if rec.availability_status in (
+                        "declared_only", "temporarily_unavailable"):
+                    unavailable_count += 1
+                    row["unavailable_reasons"] = list(
+                        rec.unverified_reasons[:2])
+            matched.append(row)
         out = {"domain": domain, "count": len(matched), "tools": matched}
+        if unavailable_count:
+            out["unavailable_count"] = unavailable_count
+            out["unavailable_note"] = (
+                f"{unavailable_count} 个工具当前结构不可用（停用/缺 provider/"
+                "声明态）；调用会得到 CAPABILITY_UNAVAILABLE 拒绝与替代建议。")
         if hidden_tier3:
             out["hidden_tier3"] = hidden_tier3
             out["message"] = (

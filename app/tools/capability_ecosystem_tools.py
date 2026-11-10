@@ -40,13 +40,16 @@ from app.lib.geo_analysis.raster_guard import (
 )
 from app.tools.registry import ToolRegistry, tool
 
-# ── 有界预算（CAP-06 / CAP-O12）───────────────────────────────────────
+# ── 有界预算（CAP-06 / CAP-O12 / G13-WP08）────────────────────────────
 MAX_ZONES = 256
 MAX_QUANTILES = 16
 MAX_RASTER_CELLS = 40_000_000
 MAX_NETWORK_EDGES = 20_000
 MAX_FACILITIES = 2_000
 MAX_CUTOFF = 1_000_000.0
+#: G13 / WP08（G06 冷审 N-03）：两两 Jaccard 是 O(k²)，方案数必须有独立
+#: 上界 —— 边数有界不等于比较矩阵有界；超限 typed BUDGET_EXCEEDED。
+MAX_SCHEMES = 8
 
 _TIME_UNITS = frozenset({"seconds", "s", "sec", "second", "minutes", "min", "time"})
 _LENGTH_UNITS = frozenset({"meters", "m", "meter", "km", "kilometers", "metres"})
@@ -82,15 +85,22 @@ def _canonical(obj: Any) -> str:
 
 
 def _ref(prefix: str, payload: Any) -> dict[str, Any]:
+    """结果封套的产物声明（capability-artifact/v2，G13 / WP07）。
+
+    工具侧只产出**内容指纹**（同输入确定性可对拍）；``ref`` 与
+    ``stored`` 由 dispatch seam 铸造/回填 —— 工具直接执行（单测/CLI）时
+    ``ref=None, stored=False`` 是诚实现状，绝不伪造可翻页的
+    ``artifact://`` URI（G06 版本的合成 URI 无任何读取方，是写-only
+    的翻页承诺）。
+    """
     digest = hashlib.sha256(
         _canonical(payload).encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
     return {
-        "ref": f"artifact://{prefix}/{digest}",
+        "ref": None,
+        "stored": False,
         "kind": "analysis_artifact",
-        "schema_version": "capability-artifact/v1",
+        "schema_version": "capability-artifact/v2",
         "content_fingerprint": digest,
-        "pageable": True,
-        "page_size": 50,
     }
 
 
@@ -342,9 +352,10 @@ def _conditional_quantile_zonal_stats_impl(
     except Exception as exc:  # noqa: BLE001 — 路径/栅格错误是 typed 失败
         return _error("RASTER_UNREADABLE", f"cannot open raster: {exc}")
     # 经纬度 CRS 不得按米解释面积/长度（CAP-O06）。
-    geographic = bool(source_crs) and (
-        "4326" in source_crs or "longlat" in source_crs.lower()
-        or source_crs.lower().startswith("epsg:4326"))
+    # G13（G06 冷审 N-07）：去掉恒被 "4326" in source_crs 覆盖的死分支。
+    crs_text = str(source_crs or "").lower()
+    geographic = bool(crs_text) and (
+        "4326" in crs_text or "longlat" in crs_text or "crs:84" == crs_text)
     eff_nodata = nodata if nodata is not None else ds_nodata
     base_valid = np.isfinite(band)
     if eff_nodata is not None:
@@ -404,6 +415,13 @@ def _conditional_quantile_zonal_stats_impl(
     }
     artifact = _ref("conditional_quantile_zonal_stats", data)
     artifact["rows"] = len(rows)
+    small = sum(1 for r in rows if int(r.get("valid_pixel_count", 0)) < 30)
+    summary = (
+        f"{len(rows)} 个分区 · 条件分位数统计（{where_text or '无条件筛选'}）· "
+        f"分位数 {','.join(str(q) for q in qlist)} · "
+        f"有效像元 {data['total_valid_pixels']} · "
+        f"小样本分区（<30 像元，分位数 not_evaluated）{small} 个"
+        + ("· 经纬度栅格：面积/长度不可按米解释" if geographic else ""))
     science = {
         "method": "conditional multi-quantile zonal raster statistics",
         "quantile_method": "linear interpolation (numpy.quantile default)",
@@ -431,7 +449,7 @@ def _conditional_quantile_zonal_stats_impl(
         "elapsed_ms": round(elapsed * 1000, 3),
         "truncated": len(feats) >= MAX_ZONES,
     }
-    return {"data": data, "artifact": artifact,
+    return {"summary": summary, "data": data, "artifact": artifact,
             "science": science, "budget": budget}
 
 
@@ -589,11 +607,22 @@ def _network_coverage_consistency_impl(
             schemes.setdefault(scheme, []).append(
                 (float(coords[0]), float(coords[1])))
 
+    # G13 / WP08：两两比较 O(k²) —— 方案数独立上界，超限 typed 拒绝
+    # （G06 冷审 N-03：边数有界 ≠ 比较矩阵有界）。
+    if len(schemes) > MAX_SCHEMES:
+        return _error(
+            "BUDGET_EXCEEDED",
+            f"schemes={len(schemes)} > MAX_SCHEMES={MAX_SCHEMES}"
+            f"（两两 Jaccard 是 O(k²)，比较矩阵必须有界）",
+            f"把方案分组分批比较（每批 ≤{MAX_SCHEMES} 个），或只对比关键方案对")
+
     nodes = list(graph.nodes())
     def nearest(point):
         return min(nodes, key=lambda n: math.hypot(n[0] - point[0], n[1] - point[1]))
 
     coverage: dict[str, set[str]] = {}
+    # G13 / WP08：不可达设施 / 吸附失败分别披露 —— 无覆盖不是零差异。
+    unreachable_facilities = 0
     for scheme, points in schemes.items():
         reached_nodes: set[Any] = set()
         for p in points:
@@ -601,7 +630,11 @@ def _network_coverage_consistency_impl(
             try:
                 lengths = nx.single_source_dijkstra_path_length(
                     graph, src, cutoff=cutoff, weight="length")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — 单设施不可达：计数披露，不中断
+                unreachable_facilities += 1
+                continue
+            if not lengths:
+                unreachable_facilities += 1
                 continue
             reached_nodes.update(lengths.keys())
         covered = {eid for key, (eid, _l, _s) in edges.items()
@@ -649,6 +682,8 @@ def _network_coverage_consistency_impl(
         "consistent": bool(jaccard >= 1.0 - 1e-9),
         "pairwise_jaccard": pairwise,
         "scheme_count": len(names),
+        # G13 / WP08：不可达设施计数披露（无覆盖 ≠ 零差异）。
+        "unreachable_facilities": unreachable_facilities,
     }
     artifact = _ref("network_service_coverage_consistency", data)
     artifact["rows"] = len(edges)
@@ -675,8 +710,13 @@ def _network_coverage_consistency_impl(
             "time_unit": unit if time_mode else None,
         },
         "scheme_scope": (
-            f"共 {len(names)} 个方案；两两 Jaccard 全量计算，"
+            f"共 {len(names)} 个方案（上界 MAX_SCHEMES={MAX_SCHEMES}）；"
+            "两两 Jaccard 全量计算，"
             "consistency 取最保守的最小值；pairwise_jaccard 给出完整矩阵"),
+        "unreachable_disclosure": (
+            f"unreachable_facilities={unreachable_facilities}"
+            f"（吸附节点在 cutoff 内无可达路径的设施；无覆盖 ≠ 零差异）"
+            if unreachable_facilities else "all facilities reachable"),
         "assumptions": [
             "边权单位与 cost_unit 一致",
             "输入为投影/米制平面坐标（时间模式由边属性提供秒数，不用几何长度换算）",
@@ -701,5 +741,10 @@ def _network_coverage_consistency_impl(
         "elapsed_ms": round(elapsed * 1000, 3),
         "truncated": len(feats) >= MAX_NETWORK_EDGES or len(facs) >= MAX_FACILITIES,
     }
-    return {"data": data, "artifact": artifact,
+    unit_label = "秒（真实时间成本）" if time_mode else "米（平面长度）"
+    summary = (
+        f"{len(names)} 个方案服务覆盖一致性：Jaccard={jaccard:.3f}"
+        f"（cutoff={cutoff} {unit_label}）；"
+        f"覆盖边 A={len(a)} / B={len(b)}，A 独有 {len(only_a)}，B 独有 {len(only_b)}")
+    return {"summary": summary, "data": data, "artifact": artifact,
             "science": science, "budget": budget}

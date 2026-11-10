@@ -53,6 +53,12 @@ _PRESERVED_META_KEYS = (
     # design_digest；全量 design_candidates 走 details/raw 面）。Agent
     # 解释「为何选/为何弃」的通道——summary 分支此前整包丢弃。
     "design_digest",
+    # G13 / WP07：分析产物封套（capability-artifact/v2）的主 ref 与
+    # 有界 artifact 声明（ref/stored/fingerprint/rows）。summary 分支
+    # 此前丢弃它们 —— LLM 拿不到 ref 就无法在下一轮把上一次结果当
+    # 输入传回，封套宣称的「可复用」就是假的。
+    "data_ref",
+    "artifact",
 )
 
 

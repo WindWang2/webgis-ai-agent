@@ -143,11 +143,14 @@ def classify_candidates_availability(
     """对候选名单做逐工具可用性判定（纯函数、有界、确定性）。
 
     ``unknown_policy="suppress"``：快照/合法名集合里缺席 → 抑制
-    （hallucinated 或 declared_only —— rerank_candidates 既有语义）。
-    ``unknown_policy="keep"``：缺席 → 保留零贡献（生产 selector 的
-    fail-open 语义：结构快照可能落后，后置闸与 dispatch 才是权威）。
-    ``legal_names`` 显式给出合法工具名集合（hallucinated 判定）；
-    缺省用快照 records 的 tool_id 集。
+    （hallucinated 或 declared_only —— rerank_candidates 既有语义；
+    hallucinated 判定只在此策略下应用）。
+    ``unknown_policy="keep"``：缺席 → 保留零贡献，**不做** hallucinated
+    判定（生产 selector 的 fail-open 语义：候选名单来自活注册表检索，
+    快照可能落后于刚注册的工具；registry 存在性/合同闸后置，dispatch
+    是唯一执行权威）。
+    ``legal_names`` 显式给出合法工具名集合（suppress 策略的
+    hallucinated 判定）；缺省用快照 records 的 tool_id 集。
     """
     status_by_tool = {r.tool_id: r for r in snapshot.records if r.tool_id}
     legal = legal_names if legal_names is not None else set(status_by_tool)
@@ -156,7 +159,7 @@ def classify_candidates_availability(
     out: dict[str, CandidateAvailabilityVerdict] = {}
     for name in names:
         name = str(name)
-        if legal and name not in legal:
+        if unknown_policy == VERDICT_SUPPRESS and legal and name not in legal:
             out[name] = CandidateAvailabilityVerdict(
                 tool=name, status="", action=VERDICT_SUPPRESS,
                 reason="hallucinated_tool_name")
