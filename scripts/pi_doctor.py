@@ -100,6 +100,15 @@ def check_vendor() -> Report:
         "entry": ident.entry_kind,
         "node": ident.node_version,
     }
+    # ADR-0288（W08）：期望配置代（不可逆短指纹）—— 与 /config/llm 的
+    # expected_generation 及 worker spawn 锚定的生效代同一口径，可对账
+    # 「配置已更新但 worker 未换代」的中间态。缺席 = 解析失败（不计 FAIL）。
+    try:
+        from app.services.chat.model_config import config_generation
+
+        facts["expected_config_generation"] = config_generation() or None
+    except Exception:  # noqa: BLE001 — 观测面缺席不阻断诊断
+        facts["expected_config_generation"] = None
     if ident.matches_expected_pin is False:
         return Report(
             "vendor", WARN,

@@ -220,7 +220,11 @@ TURN_SCRIPTS = {
         {"tool": "webgis_map_intent", "args": {"query": "成都学校到地铁站最近设施匹配 邻近性分析"}},
         {"text": "邻近性分析计划已建立（最近设施能力已入面）。"},
     ],
+    # ADR-0288：nearest_facility 是 deferred 长尾 —— 模型面没有它时先
+    # tool_search 发现（merge 入 active 集）再直调；搜索先行让旅程对
+    # turn-2 选择器轮次差异稳健（无论是否已选中，声明面都补齐）。
     "执行最近设施匹配计算": [
+        {"tool": "tool_search", "args": {"query": "最近设施 邻近"}},
         {"tool": "nearest_facility", "args": {
             "source_points": INLINE_SCHOOLS_FC,
             "target_points": INLINE_METRO_FC,
