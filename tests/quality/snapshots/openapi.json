@@ -1072,6 +1072,18 @@
    },
    "Body_upload_files_api_v1_upload_post": {
     "properties": {
+     "attribution": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据归因/来源署名声明。随 license 一同进入语义身份证与产物台账",
+      "title": "Attribution"
+     },
      "crs": {
       "anyOf": [
        {
@@ -1098,6 +1110,18 @@
       },
       "title": "Files",
       "type": "array"
+     },
+     "license": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据许可证声明（如 CC-BY-4.0）。非空时进入数据集语义身份证（observed）；缺省如实 unknown，不虚构",
+      "title": "License"
      },
      "register_ref": {
       "default": false,
@@ -4837,6 +4861,28 @@
       "title": "Agent Runtime",
       "type": "string"
      },
+     "agent_runtime_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Mode"
+     },
+     "agent_runtime_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Reason"
+     },
      "pi_vendor": {
       "anyOf": [
        {
@@ -6270,6 +6316,39 @@
     "properties": {
      "config": {
       "$ref": "#/components/schemas/LLMConfig"
+     },
+     "expected_generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Generation"
+     },
+     "pi_workers_deferred": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pi Workers Deferred"
+     },
+     "pi_workers_recycled": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pi Workers Recycled"
      },
      "status": {
       "title": "Status",
@@ -9014,6 +9093,19 @@
       "minLength": 1,
       "title": "Component Id",
       "type": "string"
+     },
+     "component_type": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Component Type"
      },
      "enabled": {
       "anyOf": [
@@ -14820,6 +14912,62 @@
     "title": "ToolsListResponse",
     "type": "object"
    },
+   "UndoAgentCommitBody": {
+    "description": "PR-D：撤销/重做一段 Agent 地图提交（Ctrl+Z 撤销整笔 Agent 提交）。\n\n``(base_revision, agent_revision]`` 必须是连续的 Agent 提交；服务端在锁内\n校验当前制图指纹（用户在其后有未撤销的改动 → 拒绝，不覆盖用户编辑）。",
+    "properties": {
+     "agent_revision": {
+      "minimum": 1.0,
+      "title": "Agent Revision",
+      "type": "integer"
+     },
+     "base_revision": {
+      "minimum": 0.0,
+      "title": "Base Revision",
+      "type": "integer"
+     },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "direction": {
+      "default": "undo",
+      "enum": [
+       "undo",
+       "redo"
+      ],
+      "title": "Direction",
+      "type": "string"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "undo_agent_commit",
+      "title": "Intent",
+      "type": "string"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision",
+     "base_revision",
+     "agent_revision"
+    ],
+    "title": "UndoAgentCommitBody",
+    "type": "object"
+   },
    "UnitConversionEvidence": {
     "additionalProperties": false,
     "description": "非米单位 → 米的显式换算证据（DECISIONS D2：不静默换算）。",
@@ -15242,6 +15390,18 @@
       ],
       "title": "Atlas Pages"
      },
+     "constraint_layout": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Constraint Layout"
+     },
      "filename": {
       "title": "Filename",
       "type": "string"
@@ -15387,6 +15547,18 @@
       "additionalProperties": true,
       "title": "Mapspec",
       "type": "object"
+     },
+     "page_profile": {
+      "anyOf": [
+       {
+        "maxLength": 32,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Profile"
      },
      "session_id": {
       "anyOf": [
@@ -20175,7 +20347,8 @@
           "set_scene": "#/components/schemas/SetSceneBody",
           "set_temporal_view": "#/components/schemas/SetTemporalViewBody",
           "set_time": "#/components/schemas/SetTimeBody",
-          "set_view": "#/components/schemas/SetViewBody"
+          "set_view": "#/components/schemas/SetViewBody",
+          "undo_agent_commit": "#/components/schemas/UndoAgentCommitBody"
          },
          "propertyName": "intent"
         },
@@ -20227,6 +20400,9 @@
          },
          {
           "$ref": "#/components/schemas/PatchWorkbenchDeltaBody"
+         },
+         {
+          "$ref": "#/components/schemas/UndoAgentCommitBody"
          }
         ],
         "title": "Req"
@@ -26896,7 +27072,7 @@
   },
   "/api/v1/export/diagnostics/{filename}": {
    "get": {
-    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。",
+    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。\nB-5（review-fix-rereview-20261108）：匿名会话导出主体是\n``session:<sid>`` —— 此前硬性 Bearer + user_id 比对把匿名导出者永远\n挡在门外（下载可走签名 URL，诊断面被认证模型锁死）。现与\n_export_principal 同源：session 主体凭 X-Session-Token 读取。",
     "operationId": "get_export_diagnostics_api_v1_export_diagnostics__filename__get",
     "parameters": [
      {
@@ -26906,6 +27082,22 @@
       "schema": {
        "title": "Filename",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],

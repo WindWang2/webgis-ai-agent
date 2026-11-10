@@ -193,6 +193,9 @@ class PiRpcClient:
         # PI-03（ADR-0286 D4）：本次 spawn 的 dump registry_generation（空 =
         # v2 dump / 未锚定 —— bridge 的代漂移检测 fail-open 不回收）。
         self.spawn_surface_generation: str = ""
+        # ADR-0288（W08，#2061）：本次 spawn 的 LLM 配置代际（空 = 解析失败 /
+        # 未锚定 —— 配置换代回收 fail-open 不触发）。
+        self.spawn_config_generation: str = ""
         self._surface_dump_path: Optional[Path] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
@@ -382,20 +385,29 @@ class PiRpcClient:
             env["WEBGIS_API_BASE"] = (
                 f"http://127.0.0.1:{port}" if port else "http://127.0.0.1:18000"
             )
-        # audit4 #987: 后端 LLM 凭证映射进 Pi 子进程。仓内 models.json 指向
-        # 同一套 LLM_BASE_URL / LLM_MODEL，不读用户 ~/.pi。
+        # audit4 #987 → ADR-0288（W08，#2061）：后端 LLM 凭证映射进 Pi 子进程。
+        # 解析只走 ``model_config.resolve_llm_config``（Settings ⊕ 运行时覆盖
+        # 的**单一解析点**）—— 此前直读 Settings 导致 /config/llm 更新后
+        # 新 spawn 的 Pi 仍用旧配置（issue #2061：返回成功而对话用旧模型）。
+        # 本次 spawn 的配置代际一并锚定（bridge 的代漂移回收检测消费）。
         llm_base = ""
         llm_model = ""
         try:
-            from app.core.config import settings as _settings
-            llm_base = str(getattr(_settings, "LLM_BASE_URL", "") or "")
-            llm_model = str(getattr(_settings, "LLM_MODEL", "") or "")
+            from app.services.chat.model_config import (
+                config_generation,
+                resolve_llm_config,
+            )
+
+            _cfg = resolve_llm_config()
+            llm_base = str(_cfg.base_url or "")
+            llm_model = str(_cfg.model or "")
             if not env.get("OPENAI_API_KEY"):
-                _key = getattr(_settings, "LLM_API_KEY", "")
+                _key = str(_cfg.api_key or "")
                 if _key and "your-api-key" not in _key:
                     env["OPENAI_API_KEY"] = _key
+            self.spawn_config_generation = config_generation()
         except Exception:  # noqa: BLE001 — env 映射是尽力而为，绝不阻断 spawn
-            pass
+            self.spawn_config_generation = ""
 
         if llm_base and llm_model:
             _write_agent_text(PI_AGENT_DIR / "models.json",

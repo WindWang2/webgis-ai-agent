@@ -1849,23 +1849,22 @@ class PiBridge:
             return False
         return bool(current) and current != spawned
 
-    async def recycle_if_surface_stale(self) -> bool:
-        """PI-03（ADR-0286 D4）：代漂移 → turn 边界回收 worker。
+    async def _recycle_worker(self, *, stale, reason: str) -> bool:
+        """turn 边界回收 worker 的共享骨架（PI-03 ADR-0286 D4；ADR-0288
+        W08 起供 surface / config 两种代漂移共用）。
 
-        无在飞 turn 时 stop+start（下一次 spawn 重建 dump，新工具对下一
-        turn 可见——进程不重启）；有在飞 turn 时延迟（本 turn 用旧面跑完，
+        无在飞 turn 时 stop+start（下一次 spawn 重建 dump/models.json，新
+        世代对下一 turn 生效）；有在飞 turn 时延迟（本 turn 用旧代跑完，
         绝不杀活 turn）。返回 True 表示执行了回收。
         """
-        if not self.surface_generation_stale():
-            return False
         async with self._respawn_lock:
-            if not self.surface_generation_stale():  # 双检：并发下他人已回收
+            if not stale():  # 双检：并发下他人已回收
                 return False
             if self._active_turn_sid is not None or self._lock.locked():
                 logger.info(
-                    "[PiBridge] Deferring surface recycle: a turn is still "
+                    "[PiBridge] Deferring %s recycle: a turn is still "
                     "running on the stale-generation worker (session=%s)",
-                    self._active_turn_sid,
+                    reason, self._active_turn_sid,
                 )
                 return False
             # review P1-2：活 turn 检查与 stop() 之间存在 check-then-act 竞窗
@@ -1878,32 +1877,73 @@ class PiBridge:
                 await asyncio.wait_for(self._lock.acquire(), timeout=1.0)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 logger.info(
-                    "[PiBridge] Deferring surface recycle: turn lock busy "
+                    "[PiBridge] Deferring %s recycle: turn lock busy "
                     "(a turn is starting or running)",
+                    reason,
                 )
                 return False
             try:
                 if self._active_turn_sid is not None:
                     return False  # 双检：临界区内再确认（锁内新 turn 不会出现）
                 logger.info(
-                    "[PiBridge] Recycling Pi worker for surface generation drift "
-                    "(registry tools changed since spawn)",
+                    "[PiBridge] Recycling Pi worker for %s drift", reason,
                 )
                 try:
                     await self.stop()
                     await self.start()
                 except Exception:  # noqa: BLE001 — 回收失败留给既有 lazy respawn 兜底
-                    logger.exception("[PiBridge] surface recycle failed; lazy respawn will retry")
+                    logger.exception("[PiBridge] %s recycle failed; lazy respawn will retry", reason)
                     return False
             finally:
                 self._lock.release()
             try:
                 from app.services.chat.pi_surface_metrics import record_surface_recycle
 
-                record_surface_recycle("registry_generation_drift")
+                record_surface_recycle(reason)
             except Exception:  # noqa: BLE001
-                logger.debug("[PiBridge] surface recycle metric record failed", exc_info=True)
+                logger.debug("[PiBridge] recycle metric record failed", exc_info=True)
             return True
+
+    async def recycle_if_surface_stale(self) -> bool:
+        """PI-03（ADR-0286 D4）：registry 代漂移 → turn 边界回收 worker。"""
+        if not self.surface_generation_stale():
+            return False
+        return await self._recycle_worker(
+            stale=self.surface_generation_stale,
+            reason="registry_generation_drift",
+        )
+
+    def config_generation_stale(self) -> bool:
+        """ADR-0288（W08，#2061）：LLM 配置代漂移检测。
+
+        本次 spawn 锚定的 ``spawn_config_generation`` 与当前解析点
+        （``model_config.config_generation``，Settings ⊕ 运行时覆盖）不一致
+        → 已运行 worker 用的还是旧模型/端点/密钥。fail-open：任一侧无代际
+        事实（解析失败 / 旧 worker）→ False（不回收）。
+        """
+        spawned = getattr(self._rpc, "spawn_config_generation", None)
+        if not spawned:
+            return False
+        try:
+            from app.services.chat.model_config import config_generation
+
+            current = config_generation()
+        except Exception:  # noqa: BLE001 — 观测面绝不阻断
+            return False
+        return bool(current) and current != spawned
+
+    async def recycle_if_config_stale(self) -> bool:
+        """ADR-0288（W08，#2061）：配置代漂移 → turn 边界换代 worker。
+
+        新 turn 用确认过的新配置；当前在飞 turn 不切半套（延迟回收）。
+        返回 True 表示执行了换代。
+        """
+        if not self.config_generation_stale():
+            return False
+        return await self._recycle_worker(
+            stale=self.config_generation_stale,
+            reason="config_generation_drift",
+        )
 
     async def start(self) -> None:
         """Start the Pi subprocess (delegates to the RPC client)."""
