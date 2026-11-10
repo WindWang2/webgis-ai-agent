@@ -79,8 +79,12 @@ Number = Union[StrictInt, StrictFloat]
 #: 工件源装配）+ ``layer.scale_profile`` 开放声明（ScaleRepresentation-
 #: Profile.v1 投影，权威 = app/lib/cartography/multiscale/profile.py）。
 #: 纯 additive：缺失 = 既有 v1.6/v1.7 语义，存量 spec 行为不变）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9")
-LATEST_VERSION = "1.9"
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "2.0", "2.1")
+# 2.0 = G15 多画幅/图册帧产物（号位由 G15 分支占用，本线只登记恒等
+# 上船 —— 见 _UPGRADERS 注释，两种合并顺序均收敛）。
+# 2.1 = G16 要素级标注 authoring（layer.label.authoring +
+# layout.labels.obstaclePolicy/forbiddenZones，纯 additive optional）。
+LATEST_VERSION = "2.1"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -451,6 +455,64 @@ class MapSpecLabelZoomBand(_SpecModel):
     sizeRatio: Optional[Number] = None
 
 
+class LabelOffsetOverride(_SpecModel):
+    """手工偏移（G16，v2.1 additive）。canonical 单位 = em（无量纲、
+    相对该标签自身字号）：live ``text-offset`` 原生 em；导出像素 =
+    em × font_px（font_px 已含 dpi/72 缩放）—— 偏移与字号同乘 dpi_scale，
+    DPI/缩放变化不改变相对位置语义，绝不持久化绝对屏幕像素。"""
+
+    dx: Number
+    dy: Number
+
+
+class LabelAuthoringOverride(_SpecModel):
+    """单要素标注覆写（G16，v2.1 additive）。
+
+    身份 = 所在 ``MapSpecLayerLabel``（层级嵌套 ⇒ layer.id + layer.source
+    隐式确定，跨层绝不混写）+ ``featureId``（canonical ``str()`` 值，与
+    FEATURE_ID_KEYS 链/``_wfid`` 契约同源 —— ``1`` ≡ ``"1"``）。
+    业务边界（code point/offset 幅度/条目数）由
+    :mod:`app.lib.cartography.label_authoring` 单一权威校验，schema 层
+    只承载类型。语义纪律见该模块 docstring（reset 作用域互斥、
+    user-wins、失效判定）。"""
+
+    featureId: StrictStr
+    #: 身份解析命中的键（None = GeoJSON 顶层 feature.id；"_wfid"/"id"/
+    #: "OBJECTID"/…）。写入路径盖章，消费侧复核用。
+    idKey: Optional[StrictStr] = None
+    #: 显式隐藏（reset scope=visibility 才解除；优先于任何自动显示）。
+    hidden: Optional[StrictBool] = None
+    #: 固定当前位置/偏移 —— 自动布局永不移动它；冲突如实报告不解锁。
+    pinned: Optional[StrictBool] = None
+    #: 手工偏移（em，见 LabelOffsetOverride）。
+    offset: Optional[LabelOffsetOverride] = None
+    #: 显式文字覆写（≤120 code point；reset scope=text 才恢复字段文字）。
+    text: Optional[StrictStr] = None
+    #: 受控引线（callout）—— 端点 = 锚点→标签盒近端，可解释。
+    callout: Optional[StrictBool] = None
+    #: 手工优先级（小值先放；|v| ≤ 1000；用户项恒先于自动项求解）。
+    priority: Optional[StrictInt] = None
+    #: 作者溯源（user 手势 / agent 工具）。
+    origin: Optional[Literal["user", "agent"]] = None
+    #: 写入时 source 的 content_revision（消费侧 stale 判定依据）。
+    sourceRevision: Optional[Number] = None
+    #: 画幅作用域（G15 frame id；缺省 = 全部画幅）。
+    frameId: Optional[StrictStr] = None
+    #: 作者备注（≤80 字符；纯展示，不参与布局）。
+    note: Optional[StrictStr] = None
+
+
+class LabelAuthoringConfig(_SpecModel):
+    """层标注 authoring 载体（G16，v2.1 additive）。
+
+    有界：``overrides`` ≤ 256 条（超出 = typed ``authoring_limit_exceeded``
+    拒绝 —— 大规模覆写诉求走分批/工具化，绝不无界内联）。确定性序列化
+    序 = featureId 字典序（label_authoring.sort_overrides_stable）。"""
+
+    overrides: Optional[List[LabelAuthoringOverride]] = Field(
+        default=None, max_length=256)
+
+
 class MapSpecLayerLabel(_SpecModel):
     field: StrictStr
     size: Optional[Any] = None
@@ -470,6 +532,9 @@ class MapSpecLayerLabel(_SpecModel):
     sizeRatio: Optional[Number] = None
     #: "auto" = 随底图亮度自适应文字/晕圈配色；缺省 static（#1007 契约不变）。
     haloMode: Optional[Literal["auto", "static"]] = None
+    #: 要素级 authoring 覆写（G16，v2.1 additive；缺失 = 纯自动标注，
+    #: 存量 spec 行为逐字节不变）。
+    authoring: Optional[LabelAuthoringConfig] = None
 
 
 class MapSpecLayerExtrusion(_SpecModel):
@@ -800,6 +865,19 @@ class MapSpecFrame(_SpecModel):
     enabled: Optional[StrictBool] = None
 
 
+class LabelForbiddenZone(_SpecModel):
+    """显式禁入面（G16，v2.1 additive）——「禁止文字压入此区域」的作者
+    声明。与面图元的边界/填充语义正交：任何面图层自身填充默认**不是**
+    障碍（区内标签可放），只有本类型（或 boundary 障碍策略）才禁文字。"""
+
+    id: StrictStr
+    #: GeoJSON Polygon 外环（[lng,lat]×N，右手序；≤128 点；洞不支持 ——
+    #: 禁入面是作者手绘语义，复杂洞诉求拆成多个面）。
+    ring: List[List[Number]] = Field(min_length=4, max_length=128)
+    origin: Optional[Literal["user", "agent"]] = None
+    note: Optional[StrictStr] = None
+
+
 class MapLabelConfig(_SpecModel):
     """导出标签通道（v1.1 additive）。collision 缺省 = 既有无碰撞放置
     （byte parity 保住）；``"deterministic"`` = 双孪生确定性碰撞求解。"""
@@ -808,6 +886,16 @@ class MapLabelConfig(_SpecModel):
 
     collision: Optional[Literal["deterministic"]] = None
     maxLabels: Optional[StrictInt] = None
+    # ── G16（v2.1 additive）────────────────────────────────────────────
+    #: 障碍策略。缺省/``circles_legacy`` = 既有行为逐字节不变（circle
+    #: AABB、匿名、保留前 200）。``geometry_v1`` = 带身份线墨迹（实际
+    #: stroke width）+ 面边界墨迹 + circle + 禁入面 + 页面组件遮挡，
+    #: 自身锚点豁免（同 layer+feature 不拦自己），预算公平分配并披露
+    #: 截断 —— 新规则只在显式声明下生效。
+    obstaclePolicy: Optional[Literal["circles_legacy", "geometry_v1"]] = None
+    #: 显式禁入面（≤8 个）。
+    forbiddenZones: Optional[List[LabelForbiddenZone]] = Field(
+        default=None, max_length=8)
 
 
 #: 组件图显式边类型（V7 Goal 08 Phase B：Component Graph）。
@@ -1127,6 +1215,11 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("MapSpecLayerRepresentation", MapSpecLayerRepresentation),
     ("MapSpecLayerLabel", MapSpecLayerLabel),
     ("MapSpecLabelZoomBand", MapSpecLabelZoomBand),
+    # v2.1（G16）：要素级标注 authoring 契约类型。
+    ("LabelOffsetOverride", LabelOffsetOverride),
+    ("LabelAuthoringOverride", LabelAuthoringOverride),
+    ("LabelAuthoringConfig", LabelAuthoringConfig),
+    ("LabelForbiddenZone", LabelForbiddenZone),
     ("MapSpecLegendConfig", MapSpecLegendConfig),
     ("MapSpecControlConfig", MapSpecControlConfig),
     ("ComponentPlacement", ComponentPlacement),
@@ -1248,6 +1341,14 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # layer.scale_profile 可选；缺失 = 既有语义，存量 spec 行为不变。
     # GOAL 04 多尺度制图综合）。
     ("1.8", "1.9"): lambda doc: doc,
+    # 2.0 相对 1.9 纯 additive（G15 多画幅帧字段；号位由 G15 分支占用，
+    # 本线登记恒等上船 —— G15 先合则字段已在，后合则号位已让出，两种
+    # 合并顺序下旧 spec 语义均不变）。
+    ("1.9", "2.0"): lambda doc: doc,
+    # 2.1 相对 2.0 纯 additive（G16 要素级标注 authoring：layer.label
+    # .authoring + layout.labels.obstaclePolicy/forbiddenZones；缺失 =
+    # 既有自动标注语义，存量 spec 行为逐字节不变）。
+    ("2.0", "2.1"): lambda doc: doc,
 }
 
 

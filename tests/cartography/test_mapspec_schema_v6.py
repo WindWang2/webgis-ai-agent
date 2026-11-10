@@ -185,8 +185,9 @@ class TestVersioningAndMigration:
     def test_known_versions(self):
         # ADR-0193：1.3 additive（顶层 scenario_mode 推演视图协议）。
         # C11：1.5 additive（layer.visibility/bivariate/data_binding 语义层）。
-        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9")
-        assert LATEST_VERSION == "1.9"
+        # G16：2.0 号位留给 G15（本线恒等上船），2.1 = label authoring。
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "2.0", "2.1")
+        assert LATEST_VERSION == "2.1"
         assert DEFAULT_VERSION == "1.0"
 
     def test_missing_version_defaults_to_1_0_and_migrates(self):
@@ -225,7 +226,7 @@ class TestVersioningAndMigration:
         assert result.effective_version == LATEST_VERSION
 
     def test_forward_version_flagged_and_rejected(self):
-        raw = {"version": "2.0", "layers": [], "sources": {}}
+        raw = {"version": "9.9", "layers": [], "sources": {}}
         result = parse_mapspec(raw)
         assert result.forward_version is True
         assert result.migrated is False

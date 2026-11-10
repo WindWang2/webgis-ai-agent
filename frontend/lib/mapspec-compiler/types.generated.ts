@@ -239,6 +239,7 @@ export interface MapSpecLayerLabel {
   zoomBands?: MapSpecLabelZoomBand[];
   sizeRatio?: number;
   haloMode?: "auto" | "static";
+  authoring?: LabelAuthoringConfig;
 }
 
 export interface MapSpecLabelZoomBand {
@@ -246,6 +247,37 @@ export interface MapSpecLabelZoomBand {
   maxZoom: number;
   topRatio?: number;
   sizeRatio?: number;
+}
+
+export interface LabelOffsetOverride {
+  dx: number;
+  dy: number;
+}
+
+export interface LabelAuthoringOverride {
+  featureId: string;
+  idKey?: string;
+  hidden?: boolean;
+  pinned?: boolean;
+  offset?: LabelOffsetOverride;
+  text?: string;
+  callout?: boolean;
+  priority?: number;
+  origin?: "user" | "agent";
+  sourceRevision?: number;
+  frameId?: string;
+  note?: string;
+}
+
+export interface LabelAuthoringConfig {
+  overrides?: LabelAuthoringOverride[];
+}
+
+export interface LabelForbiddenZone {
+  id: string;
+  ring: number[][];
+  origin?: "user" | "agent";
+  note?: string;
 }
 
 export interface MapSpecLegendConfig {
@@ -307,6 +339,8 @@ export interface MapSpecFrame {
 export interface MapLabelConfig {
   collision?: "deterministic";
   maxLabels?: number;
+  obstaclePolicy?: "circles_legacy" | "geometry_v1";
+  forbiddenZones?: LabelForbiddenZone[];
 }
 
 export interface ComponentLinkSpec {
