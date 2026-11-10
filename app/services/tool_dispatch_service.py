@@ -1556,10 +1556,15 @@ class ToolDispatchService:
                         f"{analysis_key}::uncertainty" if analysis_key else None,
                         "uncertainty",
                     ),
-                    # G13 / WP07：分析封套产物以主 analysis_key 登记
-                    # （复用层 find_reusable_artifact 同键命中 → 同参重跑
-                    # 直接读回同一 ref，数据逐位一致）。
-                    (analysis_ref, analysis_key, "primary"),
+                    # G13 / WP07：分析封套产物以**后缀键**登记（kriging
+                    # uncertainty 先例）—— 主键命中 reuse 会把非 FC 封套当
+                    # geojson_ref 挂地图层；后缀键避免遮蔽主产物，读回走
+                    # data_ref（C03 路径）而非 reuse 改写。
+                    (
+                        analysis_ref,
+                        f"{analysis_key}::analysis" if analysis_key else None,
+                        "analysis",
+                    ),
                 ):
                     if isinstance(minted, str) and minted.startswith("ref:"):
                         await register_tool_artifact(
