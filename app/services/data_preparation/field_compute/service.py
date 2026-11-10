@@ -1,0 +1,707 @@
+"""字段计算工作台服务层（G19 / WP06–WP10）—— API、UI、Pi 工具的**同一业务真相**。
+
+阶段：``describe → compile → preview → execute(compute → write → register →
+publish)``。预览与全量共用 ``interpreter.evaluate_rows``；CPU 密集计算经
+``asyncio.to_thread`` offload；取消与行级 abort 都有明确 terminal 状态。
+
+原子可见性：输出 ref 只在「计算完成 + store 成功 + 收据落盘」之后返回；
+取消/失败/写入失败都不发布，临时 ref 不被任何响应引用。幂等键 =
+``compute_fingerprint + input_ref + input_content_hash``。
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import tempfile
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from app.lib.cancellation import OperationCancelled, current_token
+
+from app.services.data_preparation.field_compute import receipt as store
+from app.services.data_preparation.field_compute.contracts import (
+    FUNCTION_SET_VERSION, IR_VERSION, MAX_BATCH_ROWS, MAX_PREVIEW_ROWS,
+    MAX_ROW_OPS, MAX_ROWS, ColumnResult, CompileError,
+    ComputePlan, ComputeReceipt, ExecError, ScopeSpec,
+)
+from app.services.data_preparation.field_compute.functions import (
+    function_help, node_count, static_type, static_unit, uses_geometry,
+)
+from app.services.data_preparation.field_compute.geometry import (
+    gate_reason_detail, geometry_gate,
+)
+from app.services.data_preparation.field_compute.interpreter import (
+    BatchResult, ColumnStats, EvalConfig, RowAbort, evaluate_rows,
+)
+from app.services.data_preparation.field_compute.parser import (
+    CompileContext, compile_columns, render_expression,
+)
+from app.services.data_preparation.field_compute.scope import resolve_scope
+from app.services.data_preparation.field_compute.snapshot import (
+    build_anchor, build_output_payload, canonical_hash, extract_rows, freeze,
+    parse_payload, verify_anchor,
+)
+from app.services.data_preparation.field_compute.units import describe as unit_describe
+
+logger = logging.getLogger(__name__)
+
+#: 预估操作数闸门（启动前拒绝明显超预算的任务）。
+MAX_ESTIMATED_OPS = 5_000_000
+#: 每 (session, fingerprint) 一把执行锁（并发幂等）。
+_EXEC_LOCKS: Dict[str, "asyncio.Lock"] = {}
+
+
+def _exec_lock(session_id: str, fingerprint: str) -> "asyncio.Lock":
+    key = f"{session_id}:{fingerprint}"
+    lock = _EXEC_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _EXEC_LOCKS[key] = lock
+    return lock
+
+
+def _check_cancel() -> None:
+    token = current_token()
+    if token is not None and token.cancelled:
+        raise OperationCancelled(token.reason or "field compute cancelled",
+                                 job_id=token.job_id)
+
+
+async def _payload(session_id: str, ref: str) -> Any:
+    from app.services.session_data import session_data_manager
+    payload = await session_data_manager.get(session_id, ref)
+    if payload is None:
+        raise ExecError("INPUT_REF_MISSING", ref)
+    return payload
+
+
+async def _descriptor_fingerprint(session_id: str, ref: str) -> str:
+    try:
+        from app.services.dataset_semantics import get_dataset_semantic_store
+        rec = await get_dataset_semantic_store().get(session_id, ref)
+        if rec.ok and rec.descriptor is not None:
+            return rec.descriptor.descriptor_fingerprint or ""
+    except Exception:  # noqa: BLE001 — additive evidence
+        pass
+    return ""
+
+
+async def _selection_payload(session_id: str, scope: ScopeSpec) -> Any:
+    if scope.mode != "selection" or not scope.selection_ref:
+        return None
+    from app.services.session_data import session_data_manager
+    return await session_data_manager.get(session_id, scope.selection_ref)
+
+
+def _infer_types(rows: Sequence[Dict[str, Any]]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for r in rows[:200]:
+        for k, v in r.items():
+            if v is None:
+                t = "any"
+            elif isinstance(v, bool):
+                t = "boolean"
+            elif isinstance(v, (int, float)):
+                t = "number"
+            elif isinstance(v, str):
+                t = "string"
+            else:
+                t = "any"
+            prev = out.get(k)
+            if prev is None:
+                out[k] = t
+            elif prev != t:
+                out[k] = "any"
+    return out
+
+
+def _scope_features(rows: Sequence[Tuple[Dict[str, Any], Any]]
+                    ) -> List[Dict[str, Any]]:
+    return [{"properties": props} for props, _ in rows]
+
+
+# ── describe ───────────────────────────────────────────────────────────────
+
+async def describe_source(session_id: str, source_ref: str) -> Dict[str, Any]:
+    """有界源描述：schema/字段/单位提示/函数/范围/预算/CRS 资格（无数据本体）。"""
+    payload = await _payload(session_id, source_ref)
+    shape, rows, crs, crs_source, _meta = parse_payload(payload)
+    types = _infer_types(rows)
+    fields = []
+    for name in sorted({k for r in rows for k in r.keys()}):
+        fields.append({
+            "name": name,
+            "dtype": types.get(name, "any"),
+            "unit_hint": "",              # 字段名不作可信单位证据
+            "unit_confidence": "undeclared",
+            "sample": [r.get(name) for r in rows[:3] if name in r][:3],
+        })
+    mode, reason = geometry_gate(crs, crs_source)
+    return {
+        "input_ref": source_ref,
+        "data_shape": shape,
+        "row_count": len(rows),
+        "crs": crs,
+        "crs_source": crs_source,
+        "fields": fields[:64],
+        "sample_rows": [dict(r) for r in rows[:5]],
+        "function_set_version": FUNCTION_SET_VERSION,
+        "ir_version": IR_VERSION,
+        "functions": function_help(),
+        "scope_modes": sorted({"all_rows", "selection", "predicate"}),
+        "error_policies": ["null", "abort"],
+        "limits": {"max_rows": MAX_ROWS, "max_columns": 8,
+                   "max_ops_per_row": MAX_ROW_OPS,
+                   "preview_rows": MAX_PREVIEW_ROWS},
+        "geometry": {
+            "mode": mode, "block_reason": reason or None,
+            "detail": gate_reason_detail(mode, reason, crs),
+        },
+        "unit_declaration_required": True,
+        "note": "字段名只是提示；科学单位必须由 field_units 显式声明（user-declared）",
+    }
+
+
+# ── compile ────────────────────────────────────────────────────────────────
+
+async def create_plan(req: Dict[str, Any]) -> Dict[str, Any]:
+    """编译 + 版本锚 + 落盘（不执行、不产出公开 ref）。"""
+    session_id = str(req.get("session_id") or "")
+    source_ref = str(req.get("source_ref") or "")
+    owner = str(req.get("owner") or "anonymous")
+    if not session_id or not source_ref.startswith("ref:"):
+        raise CompileError("INVALID_PREDICATE", "session_id / source_ref(ref:) 必填")
+    payload = await _payload(session_id, source_ref)
+    frozen = freeze(payload)                 # 编译期锚定的一致快照
+    shape, rows, crs, crs_source, _meta = parse_payload(frozen)
+    fp_desc = await _descriptor_fingerprint(session_id, source_ref)
+    anchor = build_anchor(frozen, source_ref, fp_desc)
+
+    scope = ScopeSpec.model_validate(req.get("scope") or {})
+    rows_with_geom, _ = extract_rows(frozen)
+    feats = _scope_features(rows_with_geom)
+    selection_payload = await _selection_payload(session_id, scope)
+    mask, scope_summary = resolve_scope(
+        scope, feats, anchor.available_fields, selection_payload)
+
+    ctx = CompileContext(
+        available_fields=anchor.available_fields,
+        field_types=_infer_types(rows),
+        field_units=dict(req.get("field_units") or {}),
+        timezone=str(req.get("timezone") or "UTC"),
+        date_format=str(req.get("date_format") or ""),
+        crs=crs,
+    )
+    columns, order = compile_columns(req.get("columns") or [], ctx)
+    estimated_ops = len(rows) * sum(node_count(c.expression) for c in columns)
+    if estimated_ops > MAX_ESTIMATED_OPS:
+        raise CompileError("BUDGET_EXCEEDED",
+                           f"预估操作数 {estimated_ops} > {MAX_ESTIMATED_OPS}",
+                           hint="缩小作用范围或减少计算列")
+
+    plan = ComputePlan(
+        plan_id=f"fc-{uuid.uuid4().hex[:16]}",
+        session_id=session_id, owner=owner, input_ref=source_ref,
+        anchor=anchor, scope=scope, columns=columns,
+        field_units=dict(req.get("field_units") or {}),
+        timezone=ctx.timezone, date_format=ctx.date_format,
+        error_policy=str(req.get("error_policy") or "null"),
+        created_at=time.time(),
+    )
+    plan.compute_fingerprint = plan.compute_hash()
+    if not await store.save_plan(plan):
+        raise ExecError("WRITE_FAILED", "计划台账落盘失败")
+    mode, reason = geometry_gate(crs, crs_source)
+    return {
+        "plan": plan,
+        "data_shape": shape,
+        "column_order": order,
+        "scope_summary": scope_summary,
+        "geometry": {"mode": mode, "block_reason": reason or None,
+                     "detail": gate_reason_detail(mode, reason, crs)},
+        "estimated_ops": estimated_ops,
+        "warnings": _compile_warnings(columns, crs, mode, reason),
+    }
+
+
+def _compile_warnings(columns, crs: str, mode: str, reason: str) -> List[str]:
+    out: List[str] = []
+    if reason and any(uses_geometry(c.expression) for c in columns):
+        out.append(f"几何列被阻断：{gate_reason_detail(mode, reason, crs)}"
+                   "（其他不依赖几何的列仍可执行）")
+    return out
+
+
+# ── 预览 / 执行共用 ────────────────────────────────────────────────────────
+
+async def _prepare(plan: ComputePlan, session_id: str
+                   ) -> Tuple[Any, List[Tuple[Dict[str, Any], Any]],
+                              List[bool], Dict[str, Any], str, str, str]:
+    """载入 → 重核版本锚 → 冻结快照 → 解析范围（预览与执行共用）。"""
+    payload = await _payload(session_id, plan.input_ref)
+    shape, rows, crs, crs_source, _meta = parse_payload(payload)
+    now = build_anchor(payload, plan.input_ref)
+    if (now.content_hash != plan.anchor.content_hash
+            or now.schema_fingerprint != plan.anchor.schema_fingerprint):
+        raise ExecError("STALE_PLAN",
+                        "预览后源/schema 已改变 —— 旧计划被拒绝，请刷新预览")
+    frozen = freeze(payload)                 # 固定快照（此后所有批次只读它）
+    rows_with_geom, _ = extract_rows(frozen)
+    feats = _scope_features(rows_with_geom)
+    selection_payload = await _selection_payload(session_id, plan.scope)
+    mask, scope_summary = resolve_scope(
+        plan.scope, feats, plan.anchor.available_fields, selection_payload)
+    return frozen, rows_with_geom, mask, scope_summary, crs, crs_source, shape
+
+
+def _eval_config(plan: ComputePlan, crs: str, crs_source: str) -> EvalConfig:
+    mode, reason = geometry_gate(crs, crs_source)
+    field_units = dict(plan.field_units)
+    for c in plan.columns:
+        if c.declared_unit:
+            field_units[c.name] = c.declared_unit
+    return EvalConfig(
+        field_units=field_units,
+        column_units={c.name: c.declared_unit for c in plan.columns},
+        timezone=plan.timezone, date_format=plan.date_format,
+        error_policy=plan.error_policy,
+        geometry_mode=mode, geometry_block_reason=reason, crs=crs,
+        unselected_policy=plan.scope.unselected_policy,
+    )
+
+
+def _column_meta(plan: ComputePlan) -> List[Dict[str, Any]]:
+    out = []
+    for c in plan.columns:
+        info = static_unit(c.expression, plan.field_units,
+                           declared_column_units={
+                               x.name: x.declared_unit for x in plan.columns})
+        out.append({
+            "name": c.name,
+            "expression": c.expression.canonical(),
+            "formula": render_expression(c.expression),
+            "dtype": static_type(c.expression, {}),
+            "unit": info.unit, "unit_status": info.status,
+            "unit_dimension": info.dimension,
+            "measurement_kind": info.measurement_kind,
+            "derived_from": dict(info.derived_from),
+            "declared_unit": c.declared_unit,
+        })
+    return out
+
+
+async def preview(plan_id: str, session_id: str, *, generation: int = 0
+                  ) -> Dict[str, Any]:
+    """采样预览（sample/estimate 明确标注；不落任何 store、不产出公开 ref）。"""
+    plan = await store.get_plan(session_id, plan_id)
+    if plan is None:
+        raise ExecError("PLAN_NOT_FOUND", plan_id)
+    if plan.state in ("executed", "cancelled", "rejected"):
+        raise ExecError("PLAN_REJECTED", f"计划状态 {plan.state}")
+    frozen, rows_wg, mask, scope_summary, crs, crs_source, shape = await _prepare(
+        plan, session_id)
+    sample = rows_wg[:MAX_PREVIEW_ROWS]
+    cfg = _eval_config(plan, crs, crs_source)
+    batch = await asyncio.to_thread(
+        evaluate_rows, sample, list(plan.columns), mask[:len(sample)], cfg,
+        batch_size=min(len(sample), MAX_BATCH_ROWS))
+    columns_meta = _column_meta(plan)
+    before_after = []
+    for i in range(min(10, len(sample))):
+        before = {k: sample[i][0].get(k) for k in
+                  list(plan.anchor.available_fields)[:8]}
+        after = {c.name: batch.rows[i].get(c.name) for c in plan.columns}
+        before_after.append({"row": i, "before": before, "after": after})
+    total_errors = sum(s.errors for s in batch.stats.values())
+    total_nulls = sum(s.nulls for s in batch.stats.values())
+    degraded: List[str] = []
+    if cfg.geometry_block_reason and any(
+            uses_geometry(c.expression) for c in plan.columns):
+        degraded.append("GEOMETRY_BLOCKED")
+    plan.state = "previewed"
+    await store.save_plan(plan)
+    return {
+        "plan_id": plan.plan_id,
+        "generation": generation,
+        "compute_fingerprint": plan.compute_fingerprint,
+        "kind": "sample",
+        "sampled_rows": len(sample),
+        "total_rows": len(rows_wg),
+        "truncated": len(rows_wg) > len(sample),
+        "data_shape": shape,
+        "columns": [{**m,
+                     "computed": batch.stats[m["name"]].computed,
+                     "nulls": batch.stats[m["name"]].nulls,
+                     "errors": batch.stats[m["name"]].errors}
+                    for m in columns_meta],
+        "before_after": before_after,
+        "null_count_sample": total_nulls,
+        "error_count_sample": total_errors,
+        "error_samples": [e for s in batch.stats.values()
+                          for e in s.samples][:8],
+        "sample_error_rate_estimate": (
+            round(total_errors / max(len(sample) * len(plan.columns), 1), 6)),
+        "scope": scope_summary,
+        "unit_summary": {m["name"]: unit_describe(
+            m["unit"], m["unit_status"], m["unit_dimension"])
+            for m in columns_meta},
+        "precision_policy": batch.precision_policy,
+        "geometry": batch.geometry_evidence,
+        "budget": {
+            "row_count": len(rows_wg),
+            "estimated_ops": len(rows_wg) * sum(
+                node_count(c.expression) for c in plan.columns),
+            "max_rows": MAX_ROWS, "max_ops_per_row": MAX_ROW_OPS,
+            "within_budget": len(rows_wg) <= MAX_ROWS,
+        },
+        "degraded": degraded,
+        "confirmation": {
+            "params_fingerprint": plan.compute_fingerprint,
+            "note": "确认执行的参数必须与本次预览的 params_fingerprint 一致；"
+                    "表单/范围/单位任一变更都会使旧预览失效",
+        },
+        "next_actions": ["execute", "refresh_preview", "edit_expression"],
+    }
+
+
+async def execute(plan_id: str, session_id: str, *, project_id: str = "",
+                  owner: str = "", expected_fingerprint: str = ""
+                  ) -> ComputeReceipt:
+    """有界批执行 → 原子派生登记（取消/失败不发布半成品）。"""
+    plan = await store.get_plan(session_id, plan_id)
+    if plan is None:
+        raise ExecError("PLAN_NOT_FOUND", plan_id)
+    if plan.state in ("cancelled", "rejected"):
+        raise ExecError("PLAN_REJECTED", f"计划状态 {plan.state}")
+    if expected_fingerprint and expected_fingerprint != plan.compute_fingerprint:
+        raise ExecError("STALE_PLAN", "确认参数与已预览参数不一致（generation 失效）")
+    if owner and plan.owner and owner != plan.owner:
+        raise ExecError("OWNER_MISMATCH", "计划 owner 与执行者不一致")
+
+    async with _exec_lock(session_id, plan.compute_fingerprint):
+        return await _execute_locked(plan, session_id, project_id=project_id)
+
+
+async def _execute_locked(plan: ComputePlan, session_id: str,
+                          *, project_id: str) -> ComputeReceipt:
+    # 幂等（在版本重核之后）：同计划 + 同内容锚 → 既有成果。
+    current = await _payload(session_id, plan.input_ref)
+    content_hash = canonical_hash(current)
+    existing = await store.find_receipt(
+        session_id, plan.compute_fingerprint, plan.input_ref, content_hash)
+    if existing is not None:
+        return existing
+
+    frozen, rows_wg, mask, scope_summary, crs, crs_source, _shape = await _prepare(
+        plan, session_id)
+    cfg = _eval_config(plan, crs, crs_source)
+    columns = list(plan.columns)
+
+    # ① compute：分批 offload（CPU 不堵塞事件循环）+ 每批协作取消。
+    new_rows: List[Dict[str, Any]] = []
+    stats: Dict[str, ColumnStats] = {c.name: ColumnStats() for c in columns}
+    precision = ""
+    geometry_evidence: Dict[str, Any] = {}
+    try:
+        for start in range(0, len(rows_wg), MAX_BATCH_ROWS):
+            _check_cancel()
+            chunk = rows_wg[start:start + MAX_BATCH_ROWS]
+            chunk_mask = mask[start:start + len(chunk)]
+            batch: BatchResult = await asyncio.to_thread(
+                evaluate_rows, chunk, columns, chunk_mask, cfg,
+                batch_size=len(chunk))
+            new_rows.extend(batch.rows)
+            for name, st in batch.stats.items():
+                acc = stats[name]
+                acc.computed += st.computed
+                acc.nulls += st.nulls
+                acc.errors += st.errors
+                acc.samples.extend(st.samples)
+            precision = precision or batch.precision_policy
+            geometry_evidence = batch.geometry_evidence
+    except OperationCancelled as exc:
+        plan.state = "cancelled"
+        await store.save_plan(plan)
+        raise ExecError("CANCELLED", str(exc)[:200]) from exc
+    except RowAbort as exc:
+        plan.state = "rejected"
+        await store.save_plan(plan)
+        raise ExecError("ABORTED_BY_ROW_ERROR",
+                        f"row {exc.row_index} / {exc.column}: {exc.code}") from exc
+    if len(new_rows) != len(rows_wg):
+        raise ExecError("WRITE_FAILED", "结果行数与输入行数不一致")
+
+    # ② 发布前二次版本核对（源在第二批被编辑/刷新 → 中止且不发布）。
+    latest = await _payload(session_id, plan.input_ref)
+    verify_anchor(latest, plan.anchor)
+
+    # ③ write：一次性写入新 ref（原件绝不覆写）。
+    from app.services.session_data import session_data_manager
+    subset = mask if plan.scope.subset_export else None
+    output_payload = build_output_payload(frozen, new_rows, subset=subset)
+    output_ref = await session_data_manager.store(
+        session_id, output_payload, prefix="fc")
+    if not output_ref:
+        raise ExecError("STORE_FAILED", "session store 拒绝派生成果")
+
+    # ④ register：additive 登记（既有 Windows descriptor store 缺陷下降级披露）。
+    descriptor_minted, degraded = await _register_output(
+        session_id, plan, output_ref, output_payload, project_id, crs,
+        cfg.geometry_block_reason, precision)
+
+    column_results = []
+    for m in _column_meta(plan):
+        st = stats[m["name"]]
+        column_results.append(ColumnResult(
+            name=m["name"], dtype=m["dtype"], unit=m["unit"],
+            unit_status=m["unit_status"],
+            measurement_kind=m["measurement_kind"],
+            derived_from=m["derived_from"],
+            dependencies=tuple(_deps_of(plan, m["name"])),
+            expression=m["expression"], computed=st.computed,
+            nulls=st.nulls, errors=st.errors,
+            error_samples=tuple(st.samples[:8])))
+
+    receipt = ComputeReceipt(
+        plan_id=plan.plan_id, compute_fingerprint=plan.compute_fingerprint,
+        input_ref=plan.input_ref, output_ref=output_ref,
+        input_content_hash=canonical_hash(frozen),
+        output_content_hash=canonical_hash(output_payload),
+        row_count=len(rows_wg), computed_rows=len(rows_wg),
+        selected_rows=sum(1 for s in mask if s),
+        skipped_rows=sum(1 for s in mask if not s),
+        null_count=sum(s.nulls for s in stats.values()),
+        error_count=sum(s.errors for s in stats.values()),
+        columns=tuple(column_results), scope=scope_summary,
+        geometry=geometry_evidence,
+        formula_summary=tuple(
+            f"{m['name']} = {m['formula']}" for m in _column_meta(plan)),
+        unit_summary={m["name"]: unit_describe(
+            m["unit"], m["unit_status"], m["unit_dimension"])
+            for m in _column_meta(plan)},
+        precision_policy=precision,
+        persistence="project_artifact" if project_id else "session_ref",
+        descriptor_minted=descriptor_minted, degraded=tuple(degraded),
+        created_at=time.time(),
+    )
+    # ⑤ publish：收据落盘是 ready 的必要条件；失败即不返回 output_ref。
+    if not await store.append_receipt(session_id, receipt):
+        logger.warning("[field_compute] receipt persist failed; output ref %s "
+                       "stays unpublished", output_ref)
+        raise ExecError("WRITE_FAILED", "收据落盘失败 —— 成果未发布")
+    plan.state = "executed"
+    await store.save_plan(plan)
+    return receipt
+
+
+def _deps_of(plan: ComputePlan, name: str) -> List[str]:
+    from app.services.data_preparation.field_compute.functions import dependencies
+    for c in plan.columns:
+        if c.name == name:
+            return list(dependencies(c.expression))
+    return []
+
+
+async def _register_output(session_id: str, plan: ComputePlan, output_ref: str,
+                           output_payload: Any, project_id: str, crs: str,
+                           geometry_block_reason: str, precision: str
+                           ) -> Tuple[bool, List[str]]:
+    """既有 provenance / descriptor / artifact 入口（增值面，失败不阻断）。"""
+    degraded: List[str] = []
+    minted = False
+    try:
+        from app.lib.data.profile import DatasetProfileV3, profile_features
+        from app.lib.gis.dataset_descriptor import SourceRef
+        from app.services.dataset_semantics import (
+            derive_descriptor_from_v3, get_dataset_semantic_store,
+        )
+        _shape, rows, _c, _s, _m = parse_payload(output_payload)
+        vp, _q = profile_features(
+            [{"type": "Feature", "geometry": None, "properties": r} for r in rows],
+            crs=crs)
+        out_profile = DatasetProfileV3(target_ref=output_ref, category="vector",
+                                       crs=crs, extent=vp.extent, vector=vp)
+        descriptor = derive_descriptor_from_v3(
+            out_profile, dataset_key=output_ref, features=[],
+            source_refs=[SourceRef(type="ref", ref=plan.input_ref,
+                                   fingerprint=plan.anchor.descriptor_fingerprint)],
+            provenance=[{"producer": "field_compute",
+                         "method": f"plan:{plan.compute_fingerprint}"}],
+        )
+        put = await get_dataset_semantic_store().put(
+            session_id, output_ref, descriptor.with_fingerprints())
+        minted = bool(put.ok)
+        if not minted:
+            degraded.append("DESCRIPTOR_MINT_SKIPPED")
+    except Exception as exc:  # noqa: BLE001
+        degraded.append("DESCRIPTOR_MINT_SKIPPED")
+        logger.warning("[field_compute] descriptor mint skipped: %s", exc)
+    try:
+        from app.services.dataset_semantics.provenance import record_transformation
+        await record_transformation(
+            session_id, output_ref=output_ref,
+            output_fingerprint=plan.anchor.descriptor_fingerprint,
+            inputs=[{"ref": plan.input_ref,
+                     "descriptor_fingerprint": plan.anchor.descriptor_fingerprint}],
+            algorithm="field_compute", algorithm_version=FUNCTION_SET_VERSION,
+            parameters=plan.compute_fingerprint,
+        )
+    except Exception:  # noqa: BLE001
+        degraded.append("PROVENANCE_SKIPPED")
+    try:
+        from app.services.artifact_registry import register_artifact
+        await register_artifact(
+            session_id, artifact_id=output_ref, artifact_type="dataset",
+            producer_tool="compute_fields",
+            inputs=[plan.input_ref],
+            metadata={
+                "field_compute_plan_id": plan.plan_id,
+                "compute_fingerprint": plan.compute_fingerprint,
+                "ir_version": IR_VERSION,
+                "function_set_version": FUNCTION_SET_VERSION,
+                "formula_summary": [f"{c.name} = {render_expression(c.expression)}"
+                                    for c in plan.columns],
+                "scope": plan.scope.canonical(),
+                "project_id": project_id or None,
+                "precision_policy": precision,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        degraded.append("ARTIFACT_REGISTER_SKIPPED")
+    if geometry_block_reason:
+        degraded.append(f"GEOMETRY_BLOCKED:{geometry_block_reason}")
+    if precision:
+        degraded.append(f"PRECISION:{precision}")
+    if project_id:
+        ok = await save_to_project(session_id, output_ref, project_id, plan)
+        if not ok:
+            degraded.append("PROJECT_SAVE_FAILED")
+    return minted, degraded
+
+
+# ── 项目持久化（真实磁盘，非 session ref 冒充）──────────────────────────────
+
+def _manifest_path(session_id: str) -> Path:
+    from app.services.mapspec.store import BASE_STORAGE_DIR
+    root = BASE_STORAGE_DIR.resolve()
+    d = (root / str(session_id)).resolve()
+    if d.parent != root:
+        raise ValueError("invalid session id for project manifest")
+    return d / "field_compute" / "project_manifest.jsonl"
+
+
+def _append_manifest_sync(path: Path, record: Dict[str, Any]) -> None:
+    records: List[Dict[str, Any]] = []
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        records.append(json.loads(line))
+        except Exception:  # noqa: BLE001
+            records = []
+    records = [r for r in records
+               if not (r.get("project_id") == record.get("project_id")
+                       and r.get("output_ref") == record.get("output_ref"))]
+    records.append(record)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for r in records[-128:]:
+                f.write(json.dumps(r, ensure_ascii=False, sort_keys=True,
+                                   separators=(",", ":"), default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+async def save_to_project(session_id: str, output_ref: str, project_id: str,
+                          plan: ComputePlan) -> bool:
+    """项目级持久清单（真实文件 + 可回读）；失败 False 如实披露。"""
+    record = {
+        "project_id": project_id, "output_ref": output_ref,
+        "input_ref": plan.input_ref, "plan_id": plan.plan_id,
+        "compute_fingerprint": plan.compute_fingerprint,
+        "formula_summary": [f"{c.name} = {render_expression(c.expression)}"
+                            for c in plan.columns],
+        "field_units": plan.field_units, "scope": plan.scope.canonical(),
+        "timezone": plan.timezone, "error_policy": plan.error_policy,
+        "input_content_hash": plan.anchor.content_hash,
+        "saved_at": time.time(),
+    }
+    try:
+        await asyncio.to_thread(_append_manifest_sync,
+                                _manifest_path(session_id), record)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def list_project_results(session_id: str, project_id: str
+                               ) -> List[Dict[str, Any]]:
+    """重开项目后找回公式/来源/成果 ref（不冒充 session ref 长期有效）。"""
+    path = _manifest_path(session_id)
+    if not path.exists():
+        return []
+    try:
+        lines = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        return [json.loads(line) for line in lines.splitlines()
+                if line.strip() and json.loads(line).get("project_id") == project_id]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+# ── 结果与计划查询 ─────────────────────────────────────────────────────────
+
+async def get_plan(session_id: str, plan_id: str) -> ComputePlan:
+    plan = await store.get_plan(session_id, plan_id)
+    if plan is None:
+        raise ExecError("PLAN_NOT_FOUND", plan_id)
+    return plan
+
+
+async def list_plans(session_id: str) -> List[ComputePlan]:
+    return await store.list_plans(session_id)
+
+
+async def get_result(session_id: str, output_ref: str) -> Dict[str, Any]:
+    """回读验证：真实数据可读 + 字段可查 + 有界样本（不把 unknown 当通过）。"""
+    payload = await _payload(session_id, output_ref)
+    shape, rows, crs, _src, _meta = parse_payload(payload)
+    fields = sorted({k for r in rows for k in r.keys()})
+    return {
+        "output_ref": output_ref, "data_shape": shape, "crs": crs,
+        "row_count": len(rows), "fields": fields[:64],
+        "sample_rows": [dict(r) for r in rows[:5]],
+        "readable": True,
+    }
+
+
+async def discard_plan(session_id: str, plan_id: str) -> Optional[ComputePlan]:
+    plan = await store.get_plan(session_id, plan_id)
+    if plan is None:
+        return None
+    if plan.state == "executed":
+        raise CompileError("INVALID_PREDICATE", "已执行计划不可作废")
+    plan.state = "rejected"
+    await store.save_plan(plan)
+    return plan
+
+
+__all__ = [
+    "describe_source", "create_plan", "preview", "execute", "get_plan",
+    "list_plans", "get_result", "discard_plan", "save_to_project",
+    "list_project_results", "MAX_ESTIMATED_OPS",
+]
