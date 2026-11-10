@@ -81,7 +81,13 @@
   APPROVE-WITH-FIXES —— 3 blocker（面板 patch 丢 data 绑定 / PDF 图例带
   读局部分级 / 导出路由与同步组为无消费者死码）+ 2 P2 + 6 P3，全部在
   commit f8dfe6bad 修复（细节 `planning/G15-MULTIFRAME-CARTOGRAPHY/REVIEW.md`）。
-- **R2 复审**：结论见下方更新。
+- **R2 复审**：APPROVE-WITH-FIXES —— 发现 R1 修复引入的 CAS-superseded
+  假成功（P0）+ atlas 门（P2）+ 2 P3，commit db8d79357 修复（superseded
+  typed 拒绝、链式 CAS 基线、门提升、测试判别力、词表早校验 + 3 个
+  CAS 语义测试）。
+- **R3 终审**：**APPROVE** —— reviewer 独立执行验证（含交错写入者竞态、
+  atlas 门 5 场景）；遗留 2 项 P3 非阻塞（其一已顺手修复：显式
+  category/feature 选择不再被产品静默覆写）。
 
 ## 与其他 PR 的关系
 

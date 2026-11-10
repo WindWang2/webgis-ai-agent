@@ -42,3 +42,15 @@ golden additive；资源界真实；无 ChatEngine 复活；ADR-0288 唯一；i1
 
 修复后验证：后端 6925 passed / 0 failed（含 3 个新 CAS 测试）；前端 650
 passed + tsc 0 错误。
+
+
+## R3 终审（对 R2 修复的复审）
+
+**APPROVE** —— R1/R2 全部发现经 reviewer 独立执行验证关闭（含新增的
+「两笔写之间交错写入者」竞态复现：chained CAS 落 refused + 部分状态如实
+披露；atlas 门 5 场景执行验证 —— 非产品路径逐字节保持）。遗留 2 项 P3
+非阻塞：显式 category/feature 选择被产品覆写（本 PR 交付前已顺手修复：
+仅 driver 未选/frames 时自动路由）；解绑后保留帧分页按诚实披露处置。
+
+评审证据链：R1（APPROVE-WITH-FIXES，3 blocker）→ 修复 f8dfe6bad →
+R2（APPROVE-WITH-FIXES，新 P0 CAS）→ 修复 db8d79357 → R3（APPROVE）。

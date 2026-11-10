@@ -116,7 +116,11 @@ export function vectorPdfRequestFromSettings(settings: Record<string, unknown>):
     const committed = getCommittedMapSpec() as
       | { frame_product?: { enabled?: boolean } }
       | null;
-    if (committed?.frame_product && committed.frame_product.enabled !== false) {
+    // R3-P3：显式 category/feature 选择是用户明确意图 —— 不被产品静默
+    // 覆写；自动路由仅在 driver 未选或 frames（缺省）时生效。
+    const productPresent =
+      !!committed?.frame_product && committed.frame_product.enabled !== false;
+    if (productPresent && driver !== 'category' && driver !== 'feature') {
       effectiveDriver = 'product';
     }
   } catch {
