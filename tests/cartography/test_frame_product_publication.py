@@ -8,8 +8,6 @@
 """
 from __future__ import annotations
 
-import uuid
-from types import SimpleNamespace
 from typing import Any, Dict
 
 import pytest

@@ -75,7 +75,7 @@ async def _seed_layer(sid: str) -> None:
 async def test_plan_is_readonly_with_evidence(registry, ref_store):
     out = await registry.dispatch("frame_product_plan", session_id="s-x", arguments={
         "ref_id": "ref:ind", "product_kind": "time_series",
-        "field": "per_10k", 
+        "field": "per_10k",
     })
     assert out["ok"] is True
     assert [f["frame_id"] for f in out["frames"]] == ["fp-t-2022", "fp-t-2024"]
@@ -84,14 +84,10 @@ async def test_plan_is_readonly_with_evidence(registry, ref_store):
 
 
 async def test_plan_single_period_refused(registry, ref_store):
-    out = await registry.dispatch("frame_product_plan", session_id="s-x", arguments={
-        "ref_id": "ref:ind", "product_kind": "category_compare",
-        "split_field": "district", 
-    })
-    # district 有 3 值 → ok；改用不存在的字段验证拒绝
+    # district 有 3 值 → ok（此处不消费）；改用不存在的字段验证拒绝
     out2 = await registry.dispatch("frame_product_plan", session_id="s-x", arguments={
         "ref_id": "ref:ind", "product_kind": "category_compare",
-        "split_field": "ghost", 
+        "split_field": "ghost",
     })
     assert out2["status"] == "refused"
     assert out2["code"] == "category_values_insufficient"
@@ -103,7 +99,7 @@ async def test_bind_status_update_unbind_journey(registry, ref_store):
 
     bind = await registry.dispatch("frame_product_bind", session_id=sid, arguments={
         "ref_id": "ref:ind", "product_kind": "time_series",
-        "field": "per_10k", "title": "两年对比", 
+        "field": "per_10k", "title": "两年对比",
     })
     assert bind["status"] == "ok", bind
     assert bind["shared_expression"]["domain_status"] == "complete"
@@ -119,7 +115,7 @@ async def test_bind_status_update_unbind_journey(registry, ref_store):
     new_frames[1]["title"] = "2024（改名）"
     upd = await registry.dispatch("frame_product_update", session_id=sid, arguments={
         "patch": {"frames": new_frames, "active_frame": "fp-t-2024"},
-        
+
     })
     assert upd["status"] == "ok", upd
 

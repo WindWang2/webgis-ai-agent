@@ -104,7 +104,7 @@ class TestEligibility:
         # f1 计数：整数计数分布；f2 率：0-1 归一化 + rate 字段证据。
         count_fc = _fc([0, 120, 340, 900], key="count")
         # 显式 pin 不同测量语义模拟两帧语义不同。
-        out = compute_shared_expression(
+        compute_shared_expression(
             [("f1", count_fc), ("f2", _fc([0.02, 0.5, 0.9], key="count"))],
             "count",
             explicit_measurement=None,

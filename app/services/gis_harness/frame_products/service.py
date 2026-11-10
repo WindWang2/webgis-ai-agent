@@ -407,9 +407,9 @@ async def bind_frame_product(
     # 目标层：显式给出 → 必须已存在（不静默挂层）；缺省 → 首个引用该
     # ref 的层，找不到则要求先建层（诚实义务）。
     layer_ids = [
-        str(l.get("id"))
-        for l in (spec.get("layers") or [])
-        if isinstance(l, dict) and isinstance(l.get("id"), str)
+        str(layer.get("id"))
+        for layer in (spec.get("layers") or [])
+        if isinstance(layer, dict) and isinstance(layer.get("id"), str)
     ]
     if layer_id:
         if layer_id not in layer_ids:
@@ -698,7 +698,7 @@ async def frame_product_status(session_id: str) -> Dict[str, Any]:
             entry["resolve"] = {"error": f"{type(exc).__name__}: {exc}"}
         frames_out.append(entry)
     shared = product.get("shared_expression")
-    return {
+    out = {
         "status": "ok",
         "bound": True,
         "enabled": product.get("enabled"),

@@ -194,6 +194,10 @@ async def test_status_and_unbind(ref_store):
     status = await fps.frame_product_status(sid)
     assert status["bound"] is True
     assert len(status["frames"]) == 3
+    # WP11 终验块随 status 携带（回归锚：曾因 return 后死代码缺失）。
+    assert status["verification"]["status"] == "incomplete"
+    assert len(status["verification"]["frames"]) == 3
+    assert status["verification"]["summary"]["not_observed"] == 3
     fp2024 = next(f for f in status["frames"] if f["frame_id"] == "fp-t-2024")
     assert fp2024["resolve"]["filtered_feature_count"] == 2
     assert "time_window" in fp2024["resolve"]["applied"] or \
