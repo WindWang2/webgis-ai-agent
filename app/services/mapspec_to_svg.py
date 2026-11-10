@@ -1354,8 +1354,7 @@ def compile_mapspec_to_svg_detailed(
                     _rev_raw = _src_layer.get("content_revision")
                     if isinstance(_rev_raw, (int, float)) and not isinstance(_rev_raw, bool):
                         _source_rev_now = float(_rev_raw)
-                if _authoring_by_fid:
-                    _authoring_seen_fids.setdefault(_lid or "", set())
+
 
                 # AC-06：background 无源层（spec 契约 source:"" 哨兵）—— 全画布
                 # 底色矩形，不再被下方 `not src` 短路静默丢弃（与前端孪生同字节；
@@ -1684,6 +1683,11 @@ def compile_mapspec_to_svg_detailed(
                             # text 决策）。pinned/offset 在锚点解析后接入。
                             _fid_lbl, _idk_lbl = _resolve_feature_identity(feat)
                             _ov_lbl = _authoring_by_fid.get(_fid_lbl) if _fid_lbl else None
+                            if _authoring_by_fid:
+                                # 键 = 标签渲染层 id（synthetic `${id}-label`）
+                                # —— 与失效披露的推导键一致；先注册空集，
+                                # 纯 orphan 覆写也能被披露（见 ADR-0289）。
+                                _authoring_seen_fids.setdefault(_lid or "", set())
                             if _ov_lbl is not None and _fid_lbl is not None:
                                 _authoring_seen_fids.setdefault(_lid or "", set()).add(_fid_lbl)
                             _hidden_by_user = bool(_ov_lbl and _ov_lbl.get("hidden") is True)
@@ -1989,10 +1993,25 @@ def compile_mapspec_to_svg_detailed(
         if _authoring_seen_fids:
             _orphan_n = 0
             _stale_n = 0
-            for _layer_id_a, _seen in _authoring_seen_fids.items():
-                _layer_a = next(
-                    (ly for ly in layers if isinstance(ly, dict)
-                     and str(ly.get("id")) == _layer_id_a), None)
+            for _layer_a in layers:
+                if not isinstance(_layer_a, dict):
+                    continue
+                _label_a = _layer_a.get("label")
+                if not (isinstance(_label_a, dict) and isinstance(
+                        (_label_a.get("authoring") or {}).get("overrides")
+                        if isinstance(_label_a.get("authoring"), dict) else None, list)):
+                    continue
+                # 标签渲染键：非 symbol/text 层经 _svg_layers 合成为
+                # `${id}-label`；raster/heatmap/background/hillshade 无
+                # 标签（其覆写无从核验 —— 保守不披露 orphan）。
+                _layer_type_a = str(_layer_a.get("type", "circle"))
+                if _layer_type_a in ("raster", "heatmap", "background", "hillshade"):
+                    continue
+                _layer_id_a = (
+                    str(_layer_a.get("id")) if _layer_type_a in ("symbol", "text")
+                    else f"{_layer_a.get('id', '')}-label"
+                )
+                _seen = _authoring_seen_fids.get(_layer_id_a, set())
                 _authoring_a = (
                     (_layer_a or {}).get("label", {}) or {}
                 ) if isinstance((_layer_a or {}).get("label"), dict) else {}

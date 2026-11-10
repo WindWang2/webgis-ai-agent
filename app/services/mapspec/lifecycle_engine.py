@@ -121,6 +121,7 @@ from app.services.mapspec.intents import (  # noqa: E402
     PatchComponentIntent,  # noqa: F401
     PatchLayerPresentationIntent,  # noqa: F401
     PatchLayerStyleIntent,  # noqa: F401
+    PatchLayerLabelAuthoringIntent,  # noqa: F401 — G16 parity/corpus 引用面
     PatchWorkbenchDeltaIntent,  # noqa: F401
     RebindComponentIntent,  # noqa: F401
     RemoveComponentIntent,  # noqa: F401

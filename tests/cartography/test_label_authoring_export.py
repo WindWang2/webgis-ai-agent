@@ -59,6 +59,18 @@ def _schools_spec(overrides=None, labels_cfg=None, features=None):
 
 
 class TestAuthoringExportBehavior:
+    def test_no_spurious_orphan_when_targets_exist(self):
+        # 回归：全部目标命中时不得发 label_authoring_orphan（synthetic
+        # `${id}-label` 层键位曾致误报 —— 见 ADR-0289 披露键推导）。
+        spec = _schools_spec(
+            overrides=[{"featureId": "s1", "pinned": True},
+                       {"featureId": "s2", "hidden": True}],
+            labels_cfg={"collision": "deterministic"},
+        )
+        out = compile_mapspec_to_svg_detailed(spec)
+        codes = [d.get("code") for d in out.diagnostics]
+        assert "label_authoring_orphan" not in codes
+
     def test_pinned_offset_survives_export(self):
         spec = _schools_spec(
             overrides=[{

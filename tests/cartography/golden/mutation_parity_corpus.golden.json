@@ -889,6 +889,489 @@
    }
   }
  ],
+ "patch_label_authoring_atomic_reject": [
+  {
+   "result": {
+    "correction_hint": "Fix rejected targets (feature_not_found = id not in current source; text_too_long >120 code points; offset_out_of_range >24em) and retry atomically.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "Label authoring ops rejected: ghost:feature_not_found",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 1,
+    "runtime_layer_ids": [
+     "ly-lbl2"
+    ]
+   }
+  }
+ ],
+ "patch_label_authoring_set_reset": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 9
+     },
+     "final_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "representation_report": null,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "ly-lbl",
+         "source_exists": true,
+         "source_id": "src-lbl"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Layer 'ly-lbl' is bound to source 'src-lbl'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Source 'src-lbl' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "ly-lbl",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Layer 'ly-lbl' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-lbl"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Source 'src-lbl' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": true,
+        "evidence": {
+         "bbox": [
+          116.4,
+          39.9,
+          116.5,
+          39.9
+         ],
+         "source_id": "src-lbl"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Source 'src-lbl' has a finite ordered extent",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 2
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Layer 'ly-lbl' source contains 2 features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": true,
+        "evidence": {
+         "geometry_types": [
+          "Point"
+         ],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [
+          "Point"
+         ],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Layer 'ly-lbl' type 'circle' matches source geometry",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "ly-lbl",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VIEWPORT_COVERS_RESULTS",
+        "evaluated": false,
+        "evidence": {
+         "visible_layers_checked": 1
+        },
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "view center/zoom absent — viewport coverage not computable",
+        "repairability": "not_repairable",
+        "rule": "VIEWPORT_COVERS_RESULTS",
+        "severity": "info",
+        "source_id": null,
+        "status": "not_evaluated",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 6,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "warning",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "partial",
+     "suppressed_repairs": [],
+     "termination_reason": "deterministic_evidence_incomplete"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "ly-lbl"
+    ],
+    "mapspec_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": [
+     "ly-lbl"
+    ]
+   }
+  },
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 1,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 9
+     },
+     "final_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "representation_report": null,
+     "review": {
+      "checks": [
+       {
+        "check": "SOURCE_LAYER_REF",
+        "evaluated": true,
+        "evidence": {
+         "layer_id": "ly-lbl",
+         "source_exists": true,
+         "source_id": "src-lbl"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Layer 'ly-lbl' is bound to source 'src-lbl'",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_LAYER_REF",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "SOURCE_ADDRESSABILITY",
+        "evaluated": true,
+        "evidence": {
+         "carrier_kinds": [
+          "inlineData"
+         ],
+         "source_type": "geojson"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Source 'src-lbl' has a runtime-addressable data carrier",
+        "repairability": "not_repairable",
+        "rule": "SOURCE_ADDRESSABILITY",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_VISIBILITY",
+        "evaluated": true,
+        "evidence": {
+         "evidence_scope": "desired_structural_state",
+         "expected_visible": true,
+         "layer_id": "ly-lbl",
+         "layout_visibility": "visible",
+         "visibility_contract": "MapLibre layout.visibility defaults to visible",
+         "visibility_source": "maplibre_default_visible",
+         "visible": true
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Layer 'ly-lbl' is intended to be visible",
+        "repairability": "not_repairable",
+        "rule": "RESULT_VISIBILITY",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "CRS_EVIDENCE",
+        "evaluated": false,
+        "evidence": {
+         "crs": null,
+         "crs_status": "unknown",
+         "source_id": "src-lbl"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Source 'src-lbl' has no authoritative CRS evidence",
+        "repairability": "not_repairable",
+        "rule": "CRS_EVIDENCE",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "BBOX_VALIDITY",
+        "evaluated": true,
+        "evidence": {
+         "bbox": [
+          116.4,
+          39.9,
+          116.5,
+          39.9
+         ],
+         "source_id": "src-lbl"
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Source 'src-lbl' has a finite ordered extent",
+        "repairability": "not_repairable",
+        "rule": "BBOX_VALIDITY",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "RESULT_DATA_PRESENCE",
+        "evaluated": true,
+        "evidence": {
+         "feature_count": 2
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Layer 'ly-lbl' source contains 2 features",
+        "repairability": "not_repairable",
+        "rule": "RESULT_DATA_PRESENCE",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "GEOMETRY_LAYER_TYPE",
+        "evaluated": true,
+        "evidence": {
+         "geometry_types": [
+          "Point"
+         ],
+         "layer_type": "circle",
+         "mixed_geometry": false,
+         "supported_geometry_types": [
+          "Point"
+         ],
+         "unsupported_geometry_types": []
+        },
+        "evidence_class": "deterministic",
+        "layer_id": "ly-lbl",
+        "message": "Layer 'ly-lbl' type 'circle' matches source geometry",
+        "repairability": "not_repairable",
+        "rule": "GEOMETRY_LAYER_TYPE",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "pass",
+        "suggested_fix": null
+       },
+       {
+        "check": "VISUAL_OVERLAP",
+        "evaluated": false,
+        "evidence": {
+         "pixel_evidence_available": false
+        },
+        "evidence_class": "visual",
+        "layer_id": "ly-lbl",
+        "message": "Rendered label overlap requires visual evidence",
+        "repairability": "not_repairable",
+        "rule": "VISUAL_OVERLAP",
+        "severity": "info",
+        "source_id": "src-lbl",
+        "status": "not_evaluated",
+        "suggested_fix": null
+       },
+       {
+        "check": "VIEWPORT_COVERS_RESULTS",
+        "evaluated": false,
+        "evidence": {
+         "visible_layers_checked": 1
+        },
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "view center/zoom absent — viewport coverage not computable",
+        "repairability": "not_repairable",
+        "rule": "VIEWPORT_COVERS_RESULTS",
+        "severity": "info",
+        "source_id": null,
+        "status": "not_evaluated",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 6,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [
+       "general_analysis"
+      ],
+      "status": "warning",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "partial",
+     "suppressed_repairs": [],
+     "termination_reason": "deterministic_evidence_incomplete"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": "<ckpt>",
+    "has_mapspec": true,
+    "is_compiled": true,
+    "layer_ids": [
+     "ly-lbl"
+    ],
+    "mapspec_fingerprint": "carto-sha256:51e78244764c2fc00e0c46c2c0f0e93d4cd7a8f5ae27d5df0fbbfab40da56dd6",
+    "mutation_revision": 3,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": []
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 3,
+    "runtime_layer_ids": [
+     "ly-lbl"
+    ]
+   }
+  }
+ ],
  "patch_presentation_hide_and_opacity": [
   {
    "result": {
