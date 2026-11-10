@@ -48,12 +48,12 @@
 | 项 | 结果 |
 |---|---|
 | `pytest tests/data/test_field_compute_v1.py -q --no-cov` | **44 passed** |
-| `pytest tests/data/test_field_compute_review_v1.py -q --no-cov` | **17 passed**（两轮独立评审修复的针对性回归） |
+| `pytest tests/data/test_field_compute_review_v1.py -q --no-cov` | **23 passed**（三轮独立评审修复的针对性回归） |
 | `pytest tests/data/test_field_compute_api_v1.py -q --no-cov` | **8 passed**（真实 ASGI 路由 + 鉴权 + cancel 端点） |
 | `pytest tests/unit/test_field_compute_tools_v1.py -q --no-cov` | **6 passed**（真实 `ToolRegistry.dispatch`） |
-| 四份合并复跑 | **75 passed（83.87s）= 44 + 17 + 8 + 6** |
+| 四份合并复跑 | **81 passed（38.81s）= 44 + 23 + 8 + 6** |
 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q --no-cov` | **23 passed**（刷新生成物 + schema 消歧修复后） |
-| `vitest run <组件 + 错误解析 + i18n 门禁> --pool=threads --maxWorkers=1` | **19 passed**（组件 6 + 错误解析 3 + i18n 键完整性 10） |
+| `vitest run <组件 + 错误解析 + i18n 门禁> --pool=threads --maxWorkers=1` | **21 passed**（组件 8 + 错误解析 3 + i18n 键完整性 10） |
 | `ruff check`（全部新增/改动 Python） | All checks passed |
 | `git diff --check` / `git diff --cached --check` | 通过 |
 | `tsc --noEmit` / `eslint <新增前端文件>` | 新增文件 0 类型错误 / 0 警告（8 个既有 `scene3d/*` 错误隔离） |
@@ -93,7 +93,20 @@
 5. **状态机对齐**：`cancelled` 在 preview/execute 都是可恢复态。
 6. **前端**：合法空 `FeatureCollection` 不再报加载成功；取消结果三态（已请求 / 服务端无活跃执行 / 未确认）分别用不同文案，不再无条件宣称已服务端取消。
 
-> 第三轮复审：由独立 reviewer 冷读 `031da7e5c..HEAD`；`REVIEW.md` 记录逐项证据，主 Agent 不自行标记通过。
+### 第三轮复审（全新 reviewer 冷读 `9461505c9`）
+
+4 个遗留项中 3 项判定已修（发布原子性、cancel typed 404、升级清理），另发现 **3 个功能性 P2 + 2 项证据映射偏差**：
+
+| 发现 | 修复 |
+|---|---|
+| `_execute_locked` 内层 `finally` 无条件 pop 取消键：排队执行时先完成者会清掉取消 | 改为「仅当本次是最后一个活跃执行才 pop」；补两并发任务都必须 `CANCELLED` 的回归 |
+| `_maybe_upgrade_project` 失败分支不再追加 `PROJECT_SAVE_FAILED` | 恢复追加（去重），`session_ref` 与降级标记一致；补回归 |
+| 最终 upsert 失败未删除稳定键；ring 失败删键失败无人重试/披露 | 新增 `receipt.drop_published()` 由 service 回滚调用，失败写入 `STABLE_KEY_ROLLBACK_FAILED` residual 码；`_prune_cancel_requests` 不再裁剪有活跃执行的 key；补 receipt 层与 residual 两项回归 |
+| 证据映射：行 2 的测试没走 `_append_receipt_sync` 真实逻辑；行 8 的组件测试未覆盖空集合/取消三态 | 新增 receipt 层 ring 失败测试；组件测试新增「空 FeatureCollection 不报成功」「`cancelled=false` → `cancelNoActive`」两项 |
+
+**如实更正**：原表述「任一次写入失败都不会留下已发布副本」已改为「尽力回滚；删除失败以 residual 码披露」。additive 登记（descriptor/provenance/artifact）在发布失败后**不删除**（registry 无删除 API），它们指向已删除 ref，不构成可读成果；这是已知限制，不声称「完全无痕」。
+
+> 第四轮复审：由独立 reviewer 冷读 `9461505c9..HEAD`，只核上述 3 个 P2 + 2 项证据修正并扫描新问题；`REVIEW.md` 记录逐项证据，主 Agent 不自行标记通过。
 
 ## 与其他 PR 的关系
 

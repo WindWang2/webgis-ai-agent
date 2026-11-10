@@ -77,14 +77,37 @@
 
 | 项目 | 命令 | 结果 |
 |---|---|---|
-| 后端 G19 全量 | `pytest tests/data/test_field_compute_v1.py tests/data/test_field_compute_review_v1.py tests/data/test_field_compute_api_v1.py tests/unit/test_field_compute_tools_v1.py -q --no-cov` | **75 passed**（44 + 17 + 8 + 6），83.87s |
+| 后端 G19 全量 | `pytest tests/data/test_field_compute_v1.py tests/data/test_field_compute_review_v1.py tests/data/test_field_compute_api_v1.py tests/unit/test_field_compute_tools_v1.py -q --no-cov` | **81 passed**（44 + 23 + 8 + 6），38.81s（`--basetemp` 隔离，避免 pytest 清理触发宿主 safe-delete 守卫） |
 | 契约门禁 | `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q` | **23 passed**（快照 diff 仅 cancel 端点 description 一行） |
-| 前端 | `vitest run field-compute-panel.test.tsx lib/api/field-compute.test.ts test/i18n/key-completeness.test.ts --pool=threads --maxWorkers=1` | **19 passed**（6 + 3 + 10） |
+| 前端 | `vitest run field-compute-panel.test.tsx lib/api/field-compute.test.ts test/i18n/key-completeness.test.ts --pool=threads --maxWorkers=1` | **21 passed**（组件 8 + 错误解析 3 + i18n 10） |
 | 静态 | `ruff check`（全部新增/改动 Python）、`tsc --noEmit`、`eslint --max-warnings 0` | All checks passed；新增 TS 0 错误（8 个既有 `scene3d/*`）；ESLint 0 警告 |
 | 空白/一致性 | `git diff --check`、i18n zh/en 键集合 | 通过；143/143 一致 |
 
-## 第三轮复审状态
+## 第三轮复审（rereview）结果
 
-- **状态**：已推送修复（分支 head 见 `PR_HANDOFF.md`），等待独立 reviewer 对 `031da7e5c..HEAD` 复审。
-- **不得自行标记通过**：主 Agent 只记录真实执行证据，是否清零由 reviewer 判定。
-- 残余已知项（非阻塞，已在 PR 正文披露）：artifact/provenance/descriptor 三类登记为 additive 证据，回滚只撤销 ref 与项目清单（registry 无删除 API）；真实 Pi 进程 + 渲染回执、浏览器端旅程、线上 CI 仍未运行（`blocked`/`not_evaluated`）。
+独立 reviewer（全新冷读，未参与实现）逐项核对 4 个遗留项，结论：前三项已修（发布原子性 / cancel typed 404 / 升级清理），但新发现 **3 个功能性 P2 + 2 项证据映射偏差**：
+
+| # | 发现 | 复核 |
+|---|---|---|
+| P2-1 | `_execute_locked` 内部 `finally` 无条件 `pop` 取消键：排队执行时先完成者会清掉取消，队列中下一次照常执行 | 已改为「仅当本次是最后一个活跃执行（`_ACTIVE_EXEC<=1`）才 pop」；补 `test_queued_execution_cancel_is_not_lost`（两并发任务都必须 `CANCELLED`） |
+| P2-2 | `_maybe_upgrade_project` 失败分支不再追加 `PROJECT_SAVE_FAILED`，幂等命中后才失败的旅程会显示 `session_ref` 却无降级标记 | 已恢复追加（去重）；补 `test_upgrade_failure_marks_degraded` |
+| P2-3 | 最终 upsert 失败时 `_rollback_unpublished` 未删除稳定键；`_append_receipt_sync` 的 ring 失败删除失败时无人重试/披露 | 新增 `receipt.drop_published()`（service 回滚时调用），失败以 `STABLE_KEY_ROLLBACK_FAILED` 写入错误 detail；`_prune_cancel_requests` 不再裁剪有活跃执行的 key。补 `test_ring_write_failure_removes_stable_key`、`test_final_failure_reports_stable_key_residual` |
+| 证据-1 | REVIEW 表行 2 用 `test_final_receipt_failure_rolls_back_visible_result` 映射「ring 失败删键」，但该测试 mock 的是 `append_receipt`，没走 `_append_receipt_sync` 真实逻辑 | 新增 receipt 层测试直接驱动 `_append_sync` 抛错并断言稳定键不存在 |
+| 证据-2 | 行 8（前端空集合/取消三态）映射到组件测试，但原 6 项并未覆盖这两个行为 | 组件测试新增 2 项：空 `FeatureCollection` → `removeLayer` + `loadIncomplete` warning；`cancelled=false` → `cancelNoActive` 文案 |
+
+**如实边界**：additive 登记（descriptor/provenance/artifact）在最终发布失败后**不删除**（registry 无删除 API），它们指向已删除的 ref，不构成可读成果；原「任一次写入失败都不会留下已发布副本」已改为「尽力回滚且在残留时以 residual 码披露」，不再声称完全无痕。
+
+## 第三轮复审后验证（真实执行）
+
+| 项目 | 结果 |
+|---|---|
+| 后端 G19 全量 | **81 passed**（44 + 23 + 8 + 6） |
+| 契约门禁 | **23 passed** |
+| 前端 | **21 passed**（组件 8 + 错误解析 3 + i18n 10） |
+| 静态 | `ruff` All checks passed；`tsc` 新增 0 错误；ESLint 0 警告；i18n 143/143；`git diff --check` 通过 |
+
+## 状态
+
+- 已推送修复并发起**第四轮独立复审**（全新 reviewer，只核上述 3 个 P2 + 2 项证据修正，并扫描新引入问题）。
+- **不得由作者自行标记通过**：是否清零由 reviewer 判定。
+- 残余已知项（非阻塞，已在 PR 正文披露）：additive 三类登记不可回滚（仅撤销 ref/清单/稳定键）；真实 Pi 进程 + 渲染回执、浏览器端旅程、线上 CI 未运行（`blocked`/`not_evaluated`）。

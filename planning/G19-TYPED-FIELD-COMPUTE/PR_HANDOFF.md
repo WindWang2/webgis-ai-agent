@@ -46,10 +46,11 @@
 
 | 类 | 结果 |
 |---|---|
-| 后端定向 | **75 passed（83.87s）= 核心 44 + 评审修复 17 + API 8 + Pi 工具 6**，单进程 `--no-cov` |
+| 后端定向 | **81 passed（38.81s）= 核心 44 + 评审修复 23 + API 8 + Pi 工具 6**，单进程 `--no-cov --basetemp` |
 | 契约门禁 | **23 passed**（OpenAPI 快照 / api-docs drift / 端点矩阵） |
-| 前端定向 | **19 passed**（组件 6 + 错误信封解析 3 + i18n 键完整性 10），threads pool 单 worker |
+| 前端定向 | **21 passed**（组件 8 + 错误信封解析 3 + i18n 键完整性 10），threads pool 单 worker |
 | 静态 | `ruff check` All checks passed；`tsc --noEmit` 新增文件 0 错误（8 个既有 `scene3d/*`）；ESLint 新增文件 0 警告；i18n 143/143；`git diff --check` 通过 |
+| 已知限制 | 发布失败回滚覆盖稳定键/session ref/项目清单；descriptor/provenance/artifact 三类 additive 登记无删除 API，不随回滚移除（指向已删除 ref，不构成可读成果） |
 | 21 场景 | 见 `TEST_MATRIX.md`；UI 单列、真实 Pi/渲染回执、全量前端构建等边界如实声明 |
 | 线上 CI | **不等待、不轮询**（仓库 CLAUDE.md:41 + 任务书 A）；门禁未关闭/未降级 |
 
@@ -61,7 +62,9 @@
 - 修复：最小集合 1–9 全部完成 + owner/错误信封/夹具等附加项，commit `031da7e5c`，12 项针对性回归全通过。
 - 第二轮复审（两位独立 reviewer 冷读 `031da7e5c`）：13 项原阻塞 10 彻底修复 / 2 部分修复 / 1 以如实声明达成；新发现 1 个 P1（最终收据 upsert 失败仍有可见半成品 + 未发布成果可被幂等命中）与 3 个影响验收 P2（cancel 端点 500、升级残留 `PROJECT_SAVE_FAILED`、`_CANCEL_REQUESTS` 无界/陈旧键）。
 - 第三轮修复：`probe_publish()` 发布面探测、稳定键先写+ring 失败回滚、最终 upsert 失败撤销 ref 与项目清单、升级清理 degraded、`_ACTIVE_EXEC` + TTL 取消语义、cancel 端点 typed 映射与真实 ASGI 覆盖、`cancelled` 可恢复、前端空集合/取消三态文案。新增 7 项回归（17 review + 2 API）。
-- 第三轮复审：待独立 reviewer 冷读 `031da7e5c..HEAD`；**不得由作者自行标记通过**。
+- 第三轮复审（全新 reviewer，冷读 `9461505c9`）：4 个遗留项 3 项判定已修，另发现 3 个功能性 P2（排队取消被先完成者清掉、升级失败丢降级标记、最终失败未删稳定键且删键失败无披露）+ 2 项证据映射偏差。
+- 第四轮修复：条件化取消键清理 + 两并发任务回归；恢复 `PROJECT_SAVE_FAILED`；`drop_published()` 删除稳定键并在失败时写 `STABLE_KEY_ROLLBACK_FAILED`；TTL 剪枝跳过活跃执行；receipt 层 ring 失败测试与组件空集合/取消三态测试。
+- 第四轮复审：待独立 reviewer 冷读 `9461505c9..HEAD`；**不得由作者自行标记通过**。
 
 ## 迁移 / 回退
 

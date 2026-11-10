@@ -16,7 +16,9 @@ import pytest
 
 from app.services.data_preparation.field_compute import receipt as rc
 from app.services.data_preparation.field_compute import service
-from app.services.data_preparation.field_compute.contracts import ExecError
+from app.services.data_preparation.field_compute.contracts import (
+    ComputeReceipt, ExecError,
+)
 from app.services.data_preparation.field_compute.interpreter import (
     EvalConfig, evaluate_rows,
 )
@@ -209,6 +211,39 @@ class TestPublishSequence:
         assert await rc.find_receipt(sid, plan.compute_fingerprint, ref,
                                      plan.anchor.content_hash) is None
 
+    async def test_stable_key_write_failure_never_publishes_or_poisons(
+            self, monkeypatch):
+        """P1 根因：稳定键写失败时 ring 不得留下 published=True 的 final。
+
+        复现复审描述的组合：草稿闸门通过 → store/登记/项目清单已写 →
+        最终收据的稳定键写失败。此时必须回滚可见面，且 `find_receipt`
+        不能命中任何「未发布」成果（否则下次幂等会返回已删除的 output_ref）。
+        """
+        sid = "sess-fc-rev-keyfail"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        real_write = rc._atomic_write_json
+
+        def _fail(path, payload):
+            if "by_key" in str(path):
+                raise OSError("simulated disk full")
+            return real_write(path, payload)
+
+        monkeypatch.setattr(rc, "_atomic_write_json", _fail)
+        with pytest.raises(ExecError) as ei:
+            await service.execute(plan.plan_id, sid, project_id="proj-keyfail")
+        assert ei.value.code == "WRITE_FAILED"
+        assert "回滚" in ei.value.detail
+        # 恢复真实写入后复查：不得留下已发布收据、项目清单条目
+        monkeypatch.setattr(rc, "_atomic_write_json", real_write)
+        assert await rc.find_receipt(sid, plan.compute_fingerprint, ref,
+                                     plan.anchor.content_hash) is None
+        assert await service.list_project_results(sid, "proj-keyfail") == []
+        # 重试可正常产出新成果（回滚不留陈旧状态）
+        again = await service.execute(plan.plan_id, sid)
+        assert again.output_ref.startswith("ref:fc-")
+
     async def test_upgrade_clears_stale_project_save_failure(self, monkeypatch):
         """复审 P2：项目升级成功后不得残留 PROJECT_SAVE_FAILED。"""
         sid = "sess-fc-rev-upgrade-clean"
@@ -230,6 +265,63 @@ class TestPublishSequence:
         assert second.persistence == "project_artifact"
         assert "PROJECT_SAVE_FAILED" not in second.degraded
         assert len(await service.list_project_results(sid, "proj-up2")) == 1
+
+    async def test_ring_write_failure_removes_stable_key(self, monkeypatch):
+        """ring 写失败时稳定键必须被删除（否则 fallback 幂等会命中未发布成果）。"""
+        receipt = ComputeReceipt(
+            plan_id="p", compute_fingerprint="fp-ring",
+            input_ref="ref:in", output_ref="ref:out",
+            input_content_hash="h-ring", output_content_hash="o",
+            published=True)
+
+        def _boom(_path, _records):
+            raise OSError("simulated ring write failure")
+
+        monkeypatch.setattr(rc, "_append_sync", _boom)
+        assert await rc.append_receipt("sess-fc-rev-ringfail", receipt) is False
+        key = rc.stable_key("fp-ring", "ref:in", "h-ring")
+        assert not rc._stable_receipt_path("sess-fc-rev-ringfail", key).exists()
+        assert await rc.find_receipt(
+            "sess-fc-rev-ringfail", "fp-ring", "ref:in", "h-ring") is None
+
+    async def test_final_failure_reports_stable_key_residual(self, monkeypatch):
+        """稳定键回滚失败时必须在错误 detail 如实列出残留码。"""
+        sid = "sess-fc-rev-residual"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+
+        async def _fail_published(_session_id, receipt):
+            return not getattr(receipt, "published", False)
+
+        async def _drop_fail(_session_id, _receipt):
+            return False
+
+        monkeypatch.setattr(rc, "append_receipt", _fail_published)
+        monkeypatch.setattr(rc, "drop_published", _drop_fail)
+        with pytest.raises(ExecError) as ei:
+            await service.execute(plan.plan_id, sid)
+        assert ei.value.code == "WRITE_FAILED"
+        assert "STABLE_KEY_ROLLBACK_FAILED" in ei.value.detail
+
+    async def test_upgrade_failure_marks_degraded(self, monkeypatch):
+        """幂等命中后项目保存仍失败：必须保留 session_ref 并标 PROJECT_SAVE_FAILED。"""
+        sid = "sess-fc-rev-upgrade-fail"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / 1"}])
+        first = await service.execute(plan.plan_id, sid)
+        assert first.persistence == "session_ref"
+
+        async def _fail(*_a, **_kw):
+            return False
+
+        monkeypatch.setattr(service, "save_to_project", _fail)
+        second = await service.execute(plan.plan_id, sid, project_id="proj-up3")
+        assert second.output_ref == first.output_ref
+        assert second.persistence == "session_ref"
+        assert "PROJECT_SAVE_FAILED" in second.degraded
+        assert await service.list_project_results(sid, "proj-up3") == []
 
     async def test_idempotent_upgrade_from_session_to_project(self):
         sid = "sess-fc-rev-upgrade"
@@ -310,6 +402,35 @@ class TestCancelOwnerLocks:
         # 取消后重提原计划可正常执行（可恢复态）
         receipt = await service.execute(plan.plan_id, sid)
         assert receipt.output_ref.startswith("ref:fc-")
+
+    async def test_queued_execution_cancel_is_not_lost(self, monkeypatch):
+        """同一计划排队执行：取消请求不得被先完成的调用静默清掉。"""
+        sid = "sess-fc-rev-cancel-queue"
+        ref = await _seed(sid)
+        plan = await _plan(sid, ref,
+                           [{"name": "密度", "expression": "{人口} / {面积 平方千米}"}])
+        monkeypatch.setattr(service, "MAX_BATCH_ROWS", 1)
+        entered = threading.Event()
+        release = threading.Event()
+        real_eval = service.evaluate_rows
+
+        def _slow(rows, cols, mask, cfg, **kw):
+            entered.set()
+            release.wait(10)
+            return real_eval(rows, cols, mask, cfg, **kw)
+
+        monkeypatch.setattr(service, "evaluate_rows", _slow)
+        first = asyncio.create_task(service.execute(plan.plan_id, sid))
+        assert await asyncio.to_thread(entered.wait, 10)
+        second = asyncio.create_task(service.execute(plan.plan_id, sid))
+        await asyncio.sleep(0)          # 让第二个任务完成活跃登记并进入排队
+        assert service.request_cancel(sid, plan.plan_id) is True
+        release.set()
+        results = await asyncio.gather(first, second, return_exceptions=True)
+        codes = [getattr(r, "code", "") for r in results]
+        assert codes == ["CANCELLED", "CANCELLED"], codes
+        assert service._CANCEL_REQUESTS == {}
+        assert service._ACTIVE_EXEC == {}
 
     async def test_cancel_on_idle_or_finished_plan_is_noop(self):
         sid = "sess-fc-rev-cancel-idle"

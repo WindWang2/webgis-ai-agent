@@ -20,6 +20,8 @@ const mockCreatePlan = vi.fn();
 const mockPreview = vi.fn();
 const mockExecute = vi.fn();
 const mockGetResult = vi.fn();
+const mockCancelPlan = vi.fn();
+const mockAddToast = vi.fn();
 const mockListUploads = vi.fn();
 const mockFetchRefGeoJSON = vi.fn();
 const mockAddLayer = vi.fn();
@@ -33,6 +35,7 @@ vi.mock('@/lib/api/field-compute', () => ({
     preview: (...a: unknown[]) => mockPreview(...a),
     execute: (...a: unknown[]) => mockExecute(...a),
     getResult: (...a: unknown[]) => mockGetResult(...a),
+    cancelPlan: (...a: unknown[]) => mockCancelPlan(...a),
   },
   // 与真实实现同口径：从 {body:{detail:{...}}} 提取 code/detail/position/hint。
   parseFieldComputeError: (err: any) => {
@@ -68,7 +71,7 @@ vi.mock('@/lib/store/useHudStore', () => ({
 }));
 
 vi.mock('@/components/ui/toast', () => ({
-  useToastStore: (sel: (s: unknown) => unknown) => sel({ addToast: vi.fn() }),
+  useToastStore: (sel: (s: unknown) => unknown) => sel({ addToast: mockAddToast }),
 }));
 
 // 确定性 translator：把 key 与所有参数值拼回字符串，便于断言真实数据值。
@@ -229,6 +232,41 @@ describe('FieldComputePanel', () => {
       expect(mockAddLayer).toHaveBeenCalledWith(expect.objectContaining({ _refId: 'ref:fc-9' }));
       expect(mockFetchRefGeoJSON).toHaveBeenCalledWith('ref:fc-9', 'sess-1', { ownerToken: null });
     });
+  });
+
+  it('入图：合法但空的结果不报成功，移除占位图层', async () => {
+    await renderPanel();
+    fillFormula();
+    fireEvent.submit(screen.getByTestId('fc-form'));
+    await screen.findByTestId('fc-preview-view');
+    fireEvent.click(screen.getByTestId('fc-execute'));
+    await screen.findByTestId('fc-receipt');
+
+    // beforeEach 的 fetchRefGeoJSON 返回空 FeatureCollection（合法但无要素）
+    fireEvent.click(screen.getByTestId('fc-load-map'));
+    await waitFor(() => expect(mockRemoveLayer).toHaveBeenCalled());
+    expect(mockUpdateLayer).not.toHaveBeenCalled();
+    expect(mockAddToast.mock.calls.at(-1)?.[0]).toContain('loadIncomplete');
+    expect(mockAddToast.mock.calls.at(-1)?.[1]).toBe('warning');
+  });
+
+  it('取消：服务端无活跃执行时用 cancelNoActive，不谎称已服务端取消', async () => {
+    let resolvePreview: (v: unknown) => void = () => {};
+    mockPreview.mockReturnValue(new Promise((res) => { resolvePreview = res; }));
+    mockCancelPlan.mockResolvedValue({ plan_id: 'fc-1', cancelled: false });
+
+    await renderPanel();
+    fillFormula();
+    fireEvent.submit(screen.getByTestId('fc-form'));
+
+    fireEvent.click(await screen.findByTestId('fc-cancel'));
+    await waitFor(() => expect(mockCancelPlan).toHaveBeenCalledWith(
+      'fc-1', 'sess-1', expect.objectContaining({ ownerToken: null })));
+    expect((await screen.findByTestId('fc-cancel-note')).textContent)
+      .toContain('cancelNoActive');
+
+    // 清理挂起的预览 promise，避免 act 警告
+    await act(async () => { resolvePreview(makePreview(0)); });
   });
 
   it('参数变更使旧预览失效并标记 stale', async () => {
