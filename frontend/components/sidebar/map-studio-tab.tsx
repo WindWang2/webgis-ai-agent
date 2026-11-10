@@ -17,6 +17,14 @@ import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { devOnly } from '@/lib/utils/logger';
 import { useT } from '@/lib/i18n/useT';
+import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import {
+  commitStudioText,
+  commitStudioToggle,
+  studioExportParams,
+  useStudioLayout,
+  type StudioToggleKey,
+} from '@/lib/mapspec/studio-layout';
 
 const iconForType: Record<string, string> = {
   png: '🖼',
@@ -33,6 +41,39 @@ const DECORATION_ITEMS = [
   { key: 'showMetadata', labelKey: 'studio.decoration.showMetadata' },
   { key: 'showGraticules', labelKey: 'studio.decoration.showGraticules' },
 ] as const;
+
+/** PR-C：这三项是制图意图 —— 读写 MapSpec 组件；其余仍是本地输出参数。 */
+const SPEC_TOGGLES: ReadonlySet<string> = new Set<StudioToggleKey>(['showCompass', 'showScale', 'showLegend']);
+
+/**
+ * MapSpec 文本组件（标题/副标题）的草稿输入：从 spec 初始化；失焦/回车时
+ * 经 patch_component 提交（逐键提交会把每个字符变成一次 revision）。
+ * spec 回流（Agent 改标题等）且输入未在编辑时同步为新真相。
+ */
+function useSpecTextDraft(specValue: string, kind: 'title' | 'subtitle') {
+  const [draft, setDraft] = useState(specValue);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing) setDraft(specValue);
+  }, [specValue, editing]);
+  const commit = () => {
+    setEditing(false);
+    if (draft.trim() === specValue) return;
+    void commitStudioText(kind, draft).catch((err) => {
+      devOnly.warn(`[MapStudioTab] ${kind} commit failed`, err);
+      setDraft(specValue);
+    });
+  };
+  return {
+    value: draft,
+    onFocus: () => setEditing(true),
+    onChange: (e: { target: { value: string } }) => setDraft(e.target.value),
+    onBlur: commit,
+    onKeyDown: (e: { key: string; currentTarget: { blur: () => void } }) => {
+      if (e.key === 'Enter') e.currentTarget.blur();
+    },
+  };
+}
 
 const PAPER_LABEL_KEYS: Record<ExportSettings['paperSize'], string> = {
   screen: 'studio.paperScreen',
@@ -119,6 +160,11 @@ export function MapStudioTab() {
   const setExports = useHudStore((s) => s.setExports);
   const { dispatchAction } = useMapAction();
   const authUser = useAuthUser();
+  // PR-C：标题/副标题/指北针/比例尺/图例的唯一真相是 committed MapSpec
+  const studioLayout = useStudioLayout();
+  const titleDraft = useSpecTextDraft(studioLayout.title, 'title');
+  const subtitleDraft = useSpecTextDraft(studioLayout.subtitle, 'subtitle');
+
 
   // Helper to update specific fields
   const handleChange = (key: keyof typeof exportSettings, value: string | number | boolean) => {
@@ -129,6 +175,17 @@ export function MapStudioTab() {
     }
   };
 
+  const isDecorationOn = (key: (typeof DECORATION_ITEMS)[number]['key']): boolean =>
+    SPEC_TOGGLES.has(key) ? studioLayout[key as StudioToggleKey] : Boolean(exportSettings[key]);
+  const toggleDecoration = (key: (typeof DECORATION_ITEMS)[number]['key'], value: boolean) => {
+    if (SPEC_TOGGLES.has(key)) {
+      void commitStudioToggle(key as StudioToggleKey, value).catch((err) => {
+        devOnly.warn('[MapStudioTab] decoration commit failed', err);
+      });
+      return;
+    }
+    handleChange(key, value);
+  };
   // Export-mode visibility fix: the tab stays mounted while the context panel
   // collapses, so isExportMode must follow leftPanelOpen too — otherwise the
   // export mask stays on the map with the panel hidden. Cleanup still resets
@@ -221,8 +278,8 @@ export function MapStudioTab() {
 
   // 折叠时分区标题下的一行摘要
   const filledDocFields = [
-    exportSettings.title,
-    exportSettings.subtitle,
+    studioLayout.title,
+    studioLayout.subtitle,
     exportSettings.author,
     exportSettings.dataSource,
   ].filter(Boolean).length;
@@ -230,7 +287,7 @@ export function MapStudioTab() {
     filledDocFields === 0
       ? t('sidebar.studio.docSummaryEmpty')
       : t('sidebar.studio.docSummaryFilled', { filled: filledDocFields });
-  const enabledElements = DECORATION_ITEMS.filter((el) => exportSettings[el.key]).length;
+  const enabledElements = DECORATION_ITEMS.filter((el) => isDecorationOn(el.key)).length;
   const elementSummary = t('sidebar.studio.elementSummary', {
     enabled: enabledElements,
     total: DECORATION_ITEMS.length,
@@ -350,8 +407,8 @@ export function MapStudioTab() {
                   <input
                     id={titleId}
                     type="text"
-                    value={exportSettings.title}
-                    onChange={(e) => handleChange('title', e.target.value)}
+                    {...titleDraft}
+                    disabled={!studioLayout.hasSpec}
                     placeholder={t('sidebar.studio.mainTitlePh')}
                     className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
@@ -364,8 +421,8 @@ export function MapStudioTab() {
                   <input
                     id={subtitleId}
                     type="text"
-                    value={exportSettings.subtitle}
-                    onChange={(e) => handleChange('subtitle', e.target.value)}
+                    {...subtitleDraft}
+                    disabled={!studioLayout.hasSpec}
                     placeholder={t('sidebar.studio.subTitlePh')}
                     className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
@@ -405,7 +462,8 @@ export function MapStudioTab() {
             <StudioSection title={t('sidebar.studio.mapElements')} summary={elementSummary}>
               <div className="grid grid-cols-2 gap-2.5">
                 {DECORATION_ITEMS.map((el) => {
-                  const enabled = exportSettings[el.key];
+                  const enabled = isDecorationOn(el.key);
+                  const specBacked = SPEC_TOGGLES.has(el.key);
                   return (
                     <label
                       key={el.key}
@@ -426,7 +484,8 @@ export function MapStudioTab() {
                       <input
                         type="checkbox"
                         checked={enabled}
-                        onChange={(e) => handleChange(el.key, e.target.checked)}
+                        onChange={(e) => toggleDecoration(el.key, e.target.checked)}
+                        disabled={specBacked && !studioLayout.hasSpec}
                         className="rounded w-3.5 h-3.5"
                         style={{ accentColor: 'var(--agent-accent, #16a34a)' }}
                       />
@@ -666,7 +725,11 @@ export function MapStudioTab() {
                   exportSettings.format === 'vector-pdf'
                     ? 'export_vector_pdf'
                     : 'export_map',
-                params: { ...exportSettings },
+                // PR-C：制图内容只取 MapSpec；本地只贡献 DPI/纸张等输出参数
+                params: studioExportParams(
+                  exportSettings as unknown as Record<string, unknown>,
+                  getCommittedMapSpec(),
+                ),
               });
             }}
           >

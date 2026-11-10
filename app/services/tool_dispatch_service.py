@@ -237,6 +237,32 @@ def _get_governor_adapter(registry: "ToolRegistry"):
     return None
 
 
+def _base_layer_with_explicit_paint(base: Dict[str, Any], style_applied: Any) -> Dict[str, Any]:
+    """工具显式的图层级样式（``style_applied``，如 apply_layer_style）→ 层 paint。
+
+    PR-C：样式进 MapSpec 层 paint（语义方言 color/opacity/width，与前端
+    ``layerStyleToPaint`` / ``patch_layer_style`` 同键），转换器把它作为
+    existing paint 合并（非专题层保留显式 color）。用户随后的
+    ``patch_layer_style`` 合并在其上 —— 用户编辑天然胜出，不再被逐要素
+    ``fill_color`` 压住。缺席/非法值 → 原样返回 base（行为不变）。
+    """
+    if not isinstance(style_applied, dict):
+        return base
+    paint: Dict[str, Any] = {}
+    color = style_applied.get("color")
+    if isinstance(color, str) and color:
+        paint["color"] = color
+    opacity = style_applied.get("opacity")
+    if isinstance(opacity, (int, float)) and not isinstance(opacity, bool) and 0 <= opacity <= 1:
+        paint["opacity"] = float(opacity)
+    width = style_applied.get("stroke_width", style_applied.get("strokeWidth"))
+    if isinstance(width, (int, float)) and not isinstance(width, bool) and width >= 0:
+        paint["width"] = float(width)
+    if not paint:
+        return base
+    return {**base, "paint": paint}
+
+
 class ToolDispatchService:
     """工具调度的单一拥有者。两条 agent 路径都应经由本服务。"""
 
@@ -1696,14 +1722,17 @@ class ToolDispatchService:
             converted_layer, _, conversion_warnings = await asyncio.to_thread(
                 convert_analysis_to_mapspec_layer,
                 analysis_payload,
-                {
-                    "id": layer_id,
-                    "source": source_id,
-                    "provenance": {
-                        "tool_call_id": tool_call_id,
-                        "result_ref": result_ref,
+                _base_layer_with_explicit_paint(
+                    {
+                        "id": layer_id,
+                        "source": source_id,
+                        "provenance": {
+                            "tool_call_id": tool_call_id,
+                            "result_ref": result_ref,
+                        },
                     },
-                },
+                    result.get("style_applied"),
+                ),
             )
             # profile 已在 analysis_payload 构建前派生——payload 与
             # source_data 共用同一份（#688 收尾）。

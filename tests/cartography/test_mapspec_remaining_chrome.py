@@ -192,3 +192,64 @@ async def test_empty_session_init_project_via_http(client, clean_session):
     stored = await mapspec_store_instance.get_mapspec(clean_session)
     assert stored["version"] == "1.0"
     assert stored["layers"] == []
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_studio_patch_component_upsert_creates_typed_component_via_http(
+    client, clean_session,
+):
+    """PR-C：Map Studio 首次开启/命名装饰组件 —— patch_component 携带
+    component_type + upsert 经 user 通道新建；此前 body 无 component_type，
+    mutate_component 拿不到类型 → upsert 永远 no-op（Studio 无法写 spec）。"""
+    engine = MapSpecLifecycleEngine()
+    seeded = await _seed_two_layers(engine, clean_session)
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{clean_session}/mapspec/mutations",
+        json={
+            "intent": "patch_component",
+            "expected_revision": seeded.mutation_revision,
+            "component_id": "title",
+            "component_type": "title",
+            "upsert": True,
+            "enabled": True,
+            "options": {"text": "Studio 标题"},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    stored = await mapspec_store_instance.get_mapspec(clean_session)
+    titles = [c for c in stored["layout"]["components"] if c["type"] == "title"]
+    assert len(titles) == 1
+    assert titles[0]["options"]["text"] == "Studio 标题"
+    assert titles[0]["enabled"] is True
+
+    # 陈旧 revision → 409 superseded（CAS 不因 upsert 放宽）
+    stale = await client.post(
+        f"/api/v1/chat/sessions/{clean_session}/mapspec/mutations",
+        json={
+            "intent": "patch_component",
+            "expected_revision": seeded.mutation_revision,
+            "component_id": "north-arrow",
+            "component_type": "north_arrow",
+            "upsert": True,
+            "enabled": False,
+        },
+    )
+    assert stale.status_code == 409
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_patch_component_rejects_oversized_component_type(client, clean_session):
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{clean_session}/mapspec/mutations",
+        json={
+            "intent": "patch_component",
+            "expected_revision": 0,
+            "component_id": "x",
+            "component_type": "t" * 65,
+            "upsert": True,
+            "enabled": True,
+        },
+    )
+    assert resp.status_code == 422
