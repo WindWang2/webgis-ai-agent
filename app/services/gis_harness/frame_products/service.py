@@ -772,9 +772,51 @@ async def frame_product_status(session_id: str) -> Dict[str, Any]:
         "disclosures": product.get("disclosures", []),
     }
     # WP11：逐画幅终验（有界 frame 证据；观察回执缺席 = 诚实 not_observed）。
+    # G25：浏览器多画幅运行时经 cartographic-observation 上报的 frames 行
+    # （服务端 fingerprint 门已盖章 revision）接入 observed —— 逐画幅观察
+    # 从「契约」变「真值」；缺席 = not_observed（绝不伪造 live_observed）。
     from app.services.gis_harness.frame_products.verification import (
         verify_frame_product,
     )
 
-    out["verification"] = verify_frame_product(spec)
+    observed: Dict[str, Dict[str, Any]] = {}
+    current_mutation_revision: Optional[int] = None
+    try:
+        from app.services.session_data import session_data_manager
+
+        state = await session_data_manager.get_map_state(session_id)
+        mut_rev = state.get("_cartographic_mutation_revision")
+        if isinstance(mut_rev, int):
+            current_mutation_revision = mut_rev
+        stored = state.get("_cartographic_observation")
+        if isinstance(stored, dict) and isinstance(stored.get("frames"), list):
+            stamped_revision = stored.get("mapspec_revision")
+            for row in stored["frames"]:
+                if not isinstance(row, dict):
+                    continue
+                fid = row.get("frame_id")
+                mode = row.get("mode")
+                if not isinstance(fid, str) or not isinstance(mode, str):
+                    continue
+                # 服务端盖章 revision 优先（客户端 mapspec_revision 是诊断值）。
+                revision = (
+                    stamped_revision
+                    if isinstance(stamped_revision, int)
+                    else row.get("mapspec_revision")
+                )
+                entry: Dict[str, Any] = {
+                    "revision": revision if isinstance(revision, int) else -1,
+                    "mode": mode,
+                }
+                if isinstance(row.get("fingerprint"), str):
+                    entry["fingerprint"] = row["fingerprint"]
+                observed[fid] = entry
+    except Exception:  # noqa: BLE001 — 观察读取失败按缺席（不阻断 status）
+        observed = {}
+
+    out["verification"] = verify_frame_product(
+        spec,
+        observed or None,
+        mapspec_revision=current_mutation_revision,
+    )
     return out
