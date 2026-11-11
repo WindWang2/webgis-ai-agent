@@ -40,6 +40,7 @@ import zhModelops from '@/messages/zh-CN/modelops.json'
 import zhCompositionAssets from '@/messages/zh-CN/compositionAssets.json'
 import zhDataPreparation from '@/messages/zh-CN/dataPreparation.json'
 import zhMarket from '@/messages/zh-CN/market.json'
+import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -72,6 +73,7 @@ import enModelops from '@/messages/en-US/modelops.json'
 import enCompositionAssets from '@/messages/en-US/compositionAssets.json'
 import enDataPreparation from '@/messages/en-US/dataPreparation.json'
 import enMarket from '@/messages/en-US/market.json'
+import enDataDelivery from '@/messages/en-US/dataDelivery.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -107,6 +109,7 @@ export interface AppMessages {
   market: typeof zhMarket
   compositionAssets: typeof zhCompositionAssets
   dataPreparation: typeof zhDataPreparation
+  dataDelivery: typeof zhDataDelivery
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -124,6 +127,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     drawers: zhDrawers,
     compositionAssets: zhCompositionAssets,
     dataPreparation: zhDataPreparation,
+    dataDelivery: zhDataDelivery,
     story: zhStory,
     geoai: zhGeoai,
     commands: zhCommands,
@@ -159,6 +163,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     drawers: enDrawers as unknown as AppMessages['drawers'],
     compositionAssets: enCompositionAssets as unknown as AppMessages['compositionAssets'],
     dataPreparation: enDataPreparation as unknown as AppMessages['dataPreparation'],
+    dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],
     commands: enCommands as unknown as AppMessages['commands'],

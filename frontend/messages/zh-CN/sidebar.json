@@ -388,7 +388,8 @@
     "groupByAria": "分组字段（group by）",
     "noGroup": "不分组",
     "statsModeHint": "result_mode 将切换为 statistics（仅返回聚合结果，不传输 geometry）",
-    "aggFieldRequired": "请选择聚合字段后再运行或解释查询。"
+    "aggFieldRequired": "请选择聚合字段后再运行或解释查询。",
+    "deliver": "交付数据"
   },
   "explain": {
     "queryFingerprint": "查询指纹",

@@ -276,5 +276,6 @@
     "replan": "Regenerate GC plan (dry-run)",
     "runPlan": "Generate GC plan (dry-run)",
     "locateInArtifactCenter": "Locate in artifact center {id}"
-  }
+  },
+  "deliverData": "Deliver data"
 }

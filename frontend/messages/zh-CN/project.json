@@ -276,5 +276,6 @@
     "replan": "重新生成回收计划（dry-run）",
     "runPlan": "生成回收计划（dry-run）",
     "locateInArtifactCenter": "在产物中心定位 {id}"
-  }
+  },
+  "deliverData": "交付数据"
 }

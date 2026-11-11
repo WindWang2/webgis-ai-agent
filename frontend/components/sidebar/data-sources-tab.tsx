@@ -32,6 +32,8 @@ import { PreviewModal } from './data-sources/preview-modal';
 import { DatasetInspector } from './data-sources/dataset-inspector';
 import { ExplainResultsPanel, type TypedQueryError } from './data-sources/explain-results-panel';
 import { PrepareFlow } from './data-preparation/prepare-flow';
+import { DataDeliveryDialog } from '@/components/data-delivery/delivery-dialog';
+import type { DeliverySourceRef } from '@/lib/api/data-delivery';
 
 // A-F-08: debounce window re-exported so consumers/tests keep importing it from
 // the tab entry point (constant itself lives with the catalog hook).
@@ -115,6 +117,9 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
   const [activeDescriptor, setActiveDescriptor] = useState<DatasetDescriptor | null>(null);
   const [previewResult, setPreviewResult] = useState<QueryResult | null>(null);
   const [materializingId, setMaterializingId] = useState<string | null>(null);
+  // G18 数据交付：物化 refs 的会话身份（物化后即可交付真实文件）
+  const [refByItem, setRefByItem] = useState<Record<string, string>>({});
+  const [deliverySource, setDeliverySource] = useState<DeliverySourceRef | null>(null);
 
   // ── V2 数据工作台状态（数据集检视器 + 查询计划/结果） ─────────────────
   const inspectedIdRef = useRef<string | null>(null);
@@ -353,6 +358,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         style: { color: '#16a34a' },
       });
 
+      setRefByItem((prev) => ({ ...prev, [item.id]: res.ref_id }));
       addToast(t('sidebar.ds.materializeSuccess', { count: res.feature_count }), 'success');
 
       // Fetch-on-demand (#463): hydrate the layer with the stored payload so
@@ -586,6 +592,16 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
             onRunQuery={(spec) => runQuery(spec)}
             onExplain={runExplain}
             onMaterialize={handleMaterializeAndLoad}
+            onDeliver={
+              inspectedItem && sessionId && refByItem[inspectedItem.id]
+                ? () =>
+                    setDeliverySource({
+                      kind: 'session_ref' as const,
+                      session_id: sessionId ?? undefined,
+                      ref: refByItem[inspectedItem.id],
+                    })
+                : undefined
+            }
           />
         </div>
       )}
@@ -629,6 +645,12 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
 
       {/* Preview Modal */}
       {previewResult && <PreviewModal result={previewResult} onClose={closePreview} />}
+      {/* G18 数据交付（物化 refs → 可下载文件） */}
+      <DataDeliveryDialog
+        open={deliverySource !== null}
+        onClose={() => setDeliverySource(null)}
+        source={deliverySource}
+      />
     </div>
   );
 }

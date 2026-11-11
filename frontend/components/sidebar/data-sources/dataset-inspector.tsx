@@ -1,7 +1,7 @@
 'use client';
 
 import { useId, useState } from 'react';
-import { Download, Play, Sigma, Table2 } from 'lucide-react';
+import { Download, PackageOpen, Play, Sigma, Table2 } from 'lucide-react';
 import type { CatalogItem, DatasetDescriptor, QuerySpec } from '@/lib/api/data-fabric';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { StatusBadge } from '@/components/shared/status-badge';
@@ -34,6 +34,8 @@ export interface DatasetInspectorProps {
   onRunQuery: (spec: QuerySpec) => void;
   onExplain: (spec: QuerySpec) => void;
   onMaterialize: (item: CatalogItem) => void;
+  /** G18 数据交付：该目录项已有物化 ref 时提供入口（主体在独立对话框）。 */
+  onDeliver?: () => void;
 }
 
 /**
@@ -55,6 +57,7 @@ export function DatasetInspector({
   onRunQuery,
   onExplain,
   onMaterialize,
+  onDeliver,
 }: DatasetInspectorProps) {
   // ── 查询构建器状态 ────────────────────────────────────────────────────
   const [selectedFields, setSelectedFields] = useState<string[]>([]);
@@ -497,6 +500,16 @@ export function DatasetInspector({
             <Download size={12} aria-hidden />
             <span>{materializing ? t('sidebar.inspector.materializing') : t('sidebar.inspector.materialize')}</span>
           </button>
+          {onDeliver && (
+            <button
+              type="button"
+              onClick={onDeliver}
+              className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-caption text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+            >
+              <PackageOpen size={12} aria-hidden />
+              <span>{t('sidebar.inspector.deliver')}</span>
+            </button>
+          )}
         </div>
       </section>
     </div>

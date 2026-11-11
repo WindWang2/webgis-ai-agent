@@ -22,9 +22,12 @@ import {
   Copy,
   GitBranch,
   Check,
+  PackageOpen,
 } from 'lucide-react';
 
 import { ConfirmAction } from '@/components/shared/confirm-action';
+import { DataDeliveryDialog } from '@/components/data-delivery/delivery-dialog';
+import type { DeliverySourceRef } from '@/lib/api/data-delivery';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
 import { InlineNotice } from '@/components/shared/inline-notice';
@@ -69,6 +72,8 @@ export function ArtifactCenter({
   const addToast = useToastStore((s) => s.addToast);
   const [expandedId, setExpandedId] = useState('');
   const [copiedId, setCopiedId] = useState('');
+  // G18 数据交付：行级入口（薄挂载；主体在独立对话框组件）
+  const [deliverySource, setDeliverySource] = useState<DeliverySourceRef | null>(null);
   const [sortNewest, setSortNewest] = useState(true);
   const lastFocused = useRef('');
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -290,6 +295,19 @@ export function ArtifactCenter({
                       <button
                         type="button"
                         onClick={() => {
+                          setDeliverySource({
+                            kind: 'project_artifact',
+                            project_id: projectId,
+                            artifact_id: a.id,
+                          });
+                        }}
+                        className="flex items-center gap-1 rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-sunken"
+                      >
+                        <PackageOpen size={11} aria-hidden /> {t('deliverData')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
                           void handleLineage(a);
                         }}
                         className="flex items-center gap-1 rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-sunken"
@@ -337,6 +355,12 @@ export function ArtifactCenter({
           )}
         </div>
       )}
+      <DataDeliveryDialog
+        open={deliverySource !== null}
+        onClose={() => setDeliverySource(null)}
+        source={deliverySource}
+        projectId={projectId}
+      />
     </section>
   );
 }
