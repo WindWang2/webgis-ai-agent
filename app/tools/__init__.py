@@ -134,6 +134,8 @@ _TOOL_MODULES = [
     ("app.tools.project_data_refresh_tools", "register_project_data_refresh_tools"),
     # G20：持久化数值栅格表达 / 真实像元检视（独立模块防并发冲突）
     ("app.tools.raster_expression_tools", "register_raster_expression_tools"),
+    # G26：矢量+数值栅格混合地图统一出版导出（独立模块防并发冲突）
+    ("app.tools.mixed_map_export_tools", "register_mixed_map_export_tools"),
 ]
 
 

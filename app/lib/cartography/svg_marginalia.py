@@ -181,7 +181,11 @@ def render_legend_box(x: float, y: float, legend: Dict[str, Any], *,
     padding = 12.0
     unit = str(legend.get("unit") or "").strip()
     unit_dy = 15.0 if unit else 0.0  # review P3-4:降部字母余量
-    height = padding * 2 + 18.0 + unit_dy + len(shown) * item_h
+    # G26（P4）：notes 脚注行（constant/all-nodata/approximate 等诚实说明；
+    # ≤2 条；缺席时输出与历史逐字节一致）。
+    notes = [str(n) for n in (legend.get("notes") or []) if str(n).strip()][:2]
+    notes_dy = 14.0 * len(notes) if notes else 0.0
+    height = padding * 2 + 18.0 + unit_dy + len(shown) * item_h + notes_dy
     title = legend.get("title") or "图例"
     parts = [
         f'<rect x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(width)}" height="{_fmt(height)}" fill="rgba(255, 255, 255, 0.9)" stroke="#cbd5e1" stroke-width="1" rx="6" />',
@@ -202,6 +206,12 @@ def render_legend_box(x: float, y: float, legend: Dict[str, Any], *,
         parts.append(
             f'<text x="{_fmt(x + padding + 24)}" y="{_fmt(iy)}" font-family="sans-serif" '
             f'font-size="11" fill="#1e293b">{escape_svg_text(e.get("label", ""))}</text>'
+        )
+    for j, note in enumerate(notes):
+        ny = y + padding + 22.0 + unit_dy + len(shown) * item_h + j * 14.0
+        parts.append(
+            f'<text x="{_fmt(x + padding)}" y="{_fmt(ny)}" font-family="sans-serif" '
+            f'font-size="9" fill="#94a3b8">{escape_svg_text(note[:60])}</text>'
         )
     return f'<g class="chrome-legend">{"".join(parts)}</g>'
 

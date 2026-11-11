@@ -30,6 +30,7 @@ from app.schemas.map_schema import (
     GeoJSONExportRequest,
     GeoJSONExportResponse,
     MapExportResponse,
+    MixedMapExportRequest,
     PdfExportResponse,
     VectorPdfExportResponse,
     VectorPdfRequest,
@@ -713,6 +714,91 @@ async def export_map_as_vector_pdf(
         "atlas": result.atlas,
         "atlas_pages": result.atlas_pages if result.atlas else None,
         "constraint_layout": result.constraint_layout,
+    }
+
+
+@router.post("/export/mixed", tags=["地图制图"])
+async def export_map_as_mixed(
+    body: MixedMapExportRequest,
+    _user: dict = Depends(get_current_user_optional_with_version),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """G26：会话权威 MapSpec → 矢量+数值栅格混合地图（PNG/SVG/PDF 统一编译）。
+
+    - 冻结一个 MapSpec 修订（``expected_revision`` CAS 可选）；栅格 ref 的
+      owner 校验在解析层执行（trusted owner token 路径与会话隔离同 G20）。
+    - ``partial_policy=blocking``（默认）：导出会遗漏图层 → 409 typed 拒绝
+      （完整地图承诺不放宽）；``allow_partial``：manifest 携带完整遗漏清单。
+    - PDF：既有 publication 链（WeasyPrint 互斥 + 图像对象 + 可提取文本）；
+      SVG：自包含 data URI；PNG：服务端 rsvg 能力探测（缺席 503 typed）。
+    - 产物 + manifest sidecar + lineage 复用既有 export 目录/所有权/签名下载。
+    """
+    from app.services.mixed_map_export import (
+        MixedMapExportError,
+        export_mixed_map,
+        persist_mixed_export,
+    )
+    from app.services.auth_history_bridge import verify_session_owner
+
+    # 会话属主校验（跨租户读守卫）：混合导出从权威 MapSpec 读全文档。
+    try:
+        await verify_session_owner(
+            db, body.session_id,
+            user_id=_user.get("user_id") or None,
+            owner_token=owner_token or None,
+        )
+    except Exception as exc:  # noqa: BLE001 - 属主校验失败 → 403（不泄漏细节）
+        raise HTTPException(status_code=403, detail={"code": "session_not_owned",
+                                                     "message": "会话不属于当前用户"}) from exc
+
+    export_owner = await _export_principal(_user, body.session_id, owner_token, db)
+    try:
+        artifact = await export_mixed_map(
+            body.session_id,
+            fmt=body.format,
+            expected_revision=body.expected_revision,
+            owner_token=owner_token,
+            target_dpi=body.target_dpi if body.target_dpi is not None else 300,
+            partial_policy=body.partial_policy,
+            title=body.title or "",
+        )
+    except MixedMapExportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message,
+                    **({"details": exc.details} if exc.details else {})},
+        )
+
+    delivered = await persist_mixed_export(
+        body.session_id, artifact, principal=export_owner,
+        user_id=_user.get("user_id"), owner_token=owner_token, db=db,
+    )
+    manifest = delivered["manifest"]
+    return {
+        "success": True,
+        "filename": delivered["filename"],
+        "url": delivered["download_url"],
+        "manifest_url": delivered["manifest_url"],
+        "format": body.format,
+        "media_type": delivered["media_type"],
+        "bytes": delivered["bytes"],
+        "mapspec_revision": manifest.get("mapspec_revision"),
+        "partial": manifest.get("partial", False),
+        "omitted_layers": manifest.get("omitted_layers", []),
+        "raster_layers": [
+            {k: p.get(k) for k in ("layer_id", "style_id", "data_revision",
+                                   "overlap", "embedded", "width", "height")}
+            for p in (manifest.get("raster_layers") or [])[:12]
+        ],
+        "renderer": manifest.get("renderer", {}),
+        "checksum": manifest.get("checksum"),
+        "render_diagnostics": manifest.get("diagnostics", []),
+        "message": (
+            "混合地图已生成（矢量 + 数值栅格统一编译）。"
+            if not manifest.get("partial")
+            else "混合地图已生成（显式 allow_partial；遗漏清单见 omitted_layers）。"
+        ),
     }
 
 
