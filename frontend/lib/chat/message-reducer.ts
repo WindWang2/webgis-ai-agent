@@ -32,6 +32,8 @@ export interface ChatStreamMessage {
   resultId?: string;
   /** 方向 3：requirement IR blocking 澄清卡片（SSE clarification 事件挂载）。 */
   clarification?: ClarificationCardState;
+  /** G28：任务完成语义卡（task_complete.goal_satisfaction 挂载）。 */
+  goalSatisfaction?: import('@/lib/types/goal-satisfaction').GoalSatisfactionView;
   /** /goal 03：要素编辑提案卡状态（EditProposalCard 渲染）。 */
   featureEditProposal?: import('@/lib/types/feature-edit').FeatureEditProposalState;
   [key: string]: unknown;
@@ -231,6 +233,24 @@ export function attachClarification(
   }
   const copy = [...prev];
   copy[idx] = { ...prev[idx], clarification: args.clarification };
+  return copy;
+}
+
+/**
+ * G28（A24）：task_complete.goal_satisfaction 挂到本轮助手消息
+ * （GoalSatisfactionCard 渲染 —— 「计算完成、地图等待显示」≠「任务失败」）。
+ *
+ * 覆盖语义：终态载荷每轮一份，新 verdict 直接覆盖旧卡（同 messageId）；
+ * 解析为 null 的载荷不挂载（零漂移）。
+ */
+export function attachGoalSatisfaction(
+  prev: ChatStreamMessage[],
+  args: { messageId: string; goal: import('@/lib/types/goal-satisfaction').GoalSatisfactionView },
+): ChatStreamMessage[] {
+  const idx = findIndexById(prev, args.messageId);
+  if (idx === -1) return prev;
+  const copy = [...prev];
+  copy[idx] = { ...prev[idx], goalSatisfaction: args.goal };
   return copy;
 }
 

@@ -972,6 +972,19 @@ def map_product_block(
             )
             if report is not None:
                 block["goal_satisfaction"] = report.to_bounded_dict()
+                # G28 P5：有限修复计划（规则→注册动作映射，纯披露；执行
+                # 走既有 mutation/CAS 路径并由消费方过 loop_budget 闸）。
+                # user-wins 披露 → blocker 停止（用户锁优先，不驱动强开）。
+                from app.services.gis_harness.goal_satisfaction.repair_actions import (
+                    repair_plan_for,
+                )
+
+                plan = repair_plan_for(
+                    report,
+                    user_owned_divergence=bool(user_hidden_layers),
+                )
+                if plan is not None:
+                    block["goal_repair_plan"] = plan
         except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
             logger.debug("[MapFinalizer] goal satisfaction failed",
                          exc_info=True)
