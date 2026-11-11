@@ -59,6 +59,14 @@ dump +3.6% 加性字节、spawn→ready 持平 0.42-0.46s、停机最坏 +8s=语
 redislite 16379（真实协议）。| journeys 4/4；chat 组件 91；全 Pi 单测 236 |
 通过 | commit c2ff31d (Wave 8)。
 
+第10轮 | 第二轮复审 BLOCK（N1 scope 死存储致 SURFACE_SCOPE_VIOLATION 生产不可达
++ N2 receipt 缺席被扫入复检；各有一个分支既有测试失败为证，第一轮测试口径漏跑
+test_pi_surface_abi_route.py）→ 修复（scope_mismatch 传播恢复 + 复检收窄为实际
+grant 工具 + abi_route 旧测试按 ADR-0288 语义重写 6/6 + 字段契约快照刷新）→
+第三轮终审 **PROCEED**（P0/P1 全闭合；PARTIAL×2+P3×2 如实留记；reviewer 额外
+发现 2 个范围外基线失败与 PR diff 零相关）。推送分支 + 创建 PR #2081。|
+PROCEED + PR | 通过 | 收尾。
+
 第9轮 | 独立评审（BLOCK: P1×4+P2×4+P3×1）→ 全部修复并提交：
 P1-1 grant 语义对齐 vendor（deferred 天生合法；只接受 deferred 非前门；恢复
 tier3/destructive/hidden/未注册名拒绝+零执行）；P1-2 config 换代在 chat.py turn
