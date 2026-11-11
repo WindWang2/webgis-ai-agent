@@ -191,6 +191,121 @@
     "title": "AdminChildrenResponse",
     "type": "object"
    },
+   "AdoptRefreshRequest": {
+    "additionalProperties": false,
+    "description": "客户端声明的 CAS 锚点；服务端一律重新读取权威 revision/指纹复核。",
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "maximum": 1000000000.0,
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "proposal_fingerprint": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Proposal Fingerprint"
+     }
+    },
+    "title": "AdoptRefreshRequest",
+    "type": "object"
+   },
+   "AdoptionReceipt": {
+    "additionalProperties": false,
+    "description": "采纳 / 放弃 / 回退回执（三态分离，禁止互相替代）。",
+    "properties": {
+     "action": {
+      "title": "Action",
+      "type": "string"
+     },
+     "map_observation": {
+      "default": "unverified",
+      "title": "Map Observation",
+      "type": "string"
+     },
+     "mapspec_fingerprint": {
+      "default": "",
+      "title": "Mapspec Fingerprint",
+      "type": "string"
+     },
+     "proposal_fingerprint": {
+      "default": "",
+      "title": "Proposal Fingerprint",
+      "type": "string"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "replayed": {
+      "default": false,
+      "title": "Replayed",
+      "type": "boolean"
+     },
+     "restored_snapshot_id": {
+      "default": "",
+      "title": "Restored Snapshot Id",
+      "type": "string"
+     },
+     "revision_after": {
+      "default": 0,
+      "title": "Revision After",
+      "type": "integer"
+     },
+     "revision_before": {
+      "default": 0,
+      "title": "Revision Before",
+      "type": "integer"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "task_execution": {
+      "default": "not_run",
+      "title": "Task Execution",
+      "type": "string"
+     },
+     "tool_execution": {
+      "default": "not_run",
+      "title": "Tool Execution",
+      "type": "string"
+     },
+     "version_adoption": {
+      "default": "unchanged",
+      "title": "Version Adoption",
+      "type": "string"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "proposal_id",
+     "action",
+     "status"
+    ],
+    "title": "AdoptionReceipt",
+    "type": "object"
+   },
    "Anchor": {
     "additionalProperties": false,
     "description": "锚 = (kind, id[, layer_id])。stale 判定见 services/review/anchors.py。",
@@ -1000,6 +1115,46 @@
     "title": "AutofixRequest",
     "type": "object"
    },
+   "BlockCreateRequest": {
+    "properties": {
+     "block": {
+      "additionalProperties": true,
+      "title": "Block",
+      "type": "object"
+     },
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "expected_revision",
+     "block"
+    ],
+    "title": "BlockCreateRequest",
+    "type": "object"
+   },
+   "BlockPatchRequest": {
+    "properties": {
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "patch": {
+      "additionalProperties": true,
+      "title": "Patch",
+      "type": "object"
+     }
+    },
+    "required": [
+     "expected_revision",
+     "patch"
+    ],
+    "title": "BlockPatchRequest",
+    "type": "object"
+   },
    "Body_export_map_as_pdf_api_v1_export_pdf_post": {
     "properties": {
      "author": {
@@ -1072,6 +1227,18 @@
    },
    "Body_upload_files_api_v1_upload_post": {
     "properties": {
+     "attribution": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据归因/来源署名声明。随 license 一同进入语义身份证与产物台账",
+      "title": "Attribution"
+     },
      "crs": {
       "anyOf": [
        {
@@ -1098,6 +1265,18 @@
       },
       "title": "Files",
       "type": "array"
+     },
+     "license": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据许可证声明（如 CC-BY-4.0）。非空时进入数据集语义身份证（observed）；缺省如实 unknown，不虚构",
+      "title": "License"
      },
      "register_ref": {
       "default": false,
@@ -1234,6 +1413,48 @@
     "title": "Body_upload_visual_snapshot_api_v1_chat_sessions__session_id__visual_snapshots_post",
     "type": "object"
    },
+   "BriefDraftRequest": {
+    "properties": {
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     }
+    },
+    "title": "BriefDraftRequest",
+    "type": "object"
+   },
+   "BriefPatchRequest": {
+    "properties": {
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "BriefPatchRequest",
+    "type": "object"
+   },
    "CameraKeyframe": {
     "additionalProperties": true,
     "description": "单个相机关键帧：章内归一进度 t 处的观察位姿。",
@@ -1305,6 +1526,20 @@
     ],
     "title": "CameraKeyframe",
     "type": "object"
+   },
+   "CandidateStatus": {
+    "enum": [
+     "pending",
+     "running",
+     "partial",
+     "succeeded",
+     "failed",
+     "cancelled",
+     "discarded",
+     "adopted"
+    ],
+    "title": "CandidateStatus",
+    "type": "string"
    },
    "CanvasActionDTO": {
     "additionalProperties": false,
@@ -2036,6 +2271,17 @@
     "title": "CeleryTaskStatusResponse",
     "type": "object"
    },
+   "ChangeEvidence": {
+    "description": "差异判定证据四态（UPD-02）。",
+    "enum": [
+     "exact",
+     "conservative",
+     "unknown",
+     "unverified"
+    ],
+    "title": "ChangeEvidence",
+    "type": "string"
+   },
    "ChangeIn": {
     "description": "单个变更输入（dimension × target_kind）。",
     "examples": [
@@ -2112,6 +2358,46 @@
      "changes"
     ],
     "title": "ChangesRequest",
+    "type": "object"
+   },
+   "ChapterCreateRequest": {
+    "properties": {
+     "chapter": {
+      "additionalProperties": true,
+      "title": "Chapter",
+      "type": "object"
+     },
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "expected_revision",
+     "chapter"
+    ],
+    "title": "ChapterCreateRequest",
+    "type": "object"
+   },
+   "ChapterPatchRequest": {
+    "properties": {
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "patch": {
+      "additionalProperties": true,
+      "title": "Patch",
+      "type": "object"
+     }
+    },
+    "required": [
+     "expected_revision",
+     "patch"
+    ],
+    "title": "ChapterPatchRequest",
     "type": "object"
    },
    "ChartArtifactResponse": {
@@ -2255,6 +2541,92 @@
      "content"
     ],
     "title": "ChatResponse",
+    "type": "object"
+   },
+   "CheckReceipt": {
+    "additionalProperties": false,
+    "description": "「检查更新」回执（类型化，供 UI / Pi 投影）。",
+    "properties": {
+     "changed": {
+      "default": 0,
+      "title": "Changed",
+      "type": "integer"
+     },
+     "checked_at": {
+      "title": "Checked At",
+      "type": "number"
+     },
+     "inventory": {
+      "$ref": "#/components/schemas/SourceInventory"
+     },
+     "missing": {
+      "default": 0,
+      "title": "Missing",
+      "type": "integer"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "sources_total": {
+      "default": 0,
+      "title": "Sources Total",
+      "type": "integer"
+     },
+     "stale": {
+      "default": false,
+      "title": "Stale",
+      "type": "boolean"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     },
+     "unchanged": {
+      "default": 0,
+      "title": "Unchanged",
+      "type": "integer"
+     },
+     "unverifiable": {
+      "default": 0,
+      "title": "Unverifiable",
+      "type": "integer"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "project_id",
+     "checked_at"
+    ],
+    "title": "CheckReceipt",
+    "type": "object"
+   },
+   "CheckUpdatesRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "establish_baseline": {
+      "default": true,
+      "title": "Establish Baseline",
+      "type": "boolean"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "CheckUpdatesRequest",
     "type": "object"
    },
    "ClarificationAnswerItem": {
@@ -2554,6 +2926,52 @@
     "description": "GET /geocompute/cluster/workers 响应。",
     "properties": {},
     "title": "ClusterWorkersResponse",
+    "type": "object"
+   },
+   "CommitBody": {
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "expression": {
+      "additionalProperties": true,
+      "title": "Expression",
+      "type": "object"
+     },
+     "layer_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Layer Id",
+      "type": "string"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "expression",
+     "layer_id",
+     "expected_revision"
+    ],
+    "title": "CommitBody",
     "type": "object"
    },
    "ComponentPlacement": {
@@ -3274,53 +3692,6 @@
     "title": "DatasetCommitRequest",
     "type": "object"
    },
-   "DatasetCreateRequest": {
-    "properties": {
-     "cube_contract": {
-      "anyOf": [
-       {
-        "additionalProperties": true,
-        "maxProperties": 32,
-        "type": "object"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Cube Contract"
-     },
-     "default_branch": {
-      "default": "main",
-      "maxLength": 128,
-      "title": "Default Branch",
-      "type": "string"
-     },
-     "description": {
-      "default": "",
-      "maxLength": 512,
-      "title": "Description",
-      "type": "string"
-     },
-     "name": {
-      "maxLength": 128,
-      "minLength": 1,
-      "title": "Name",
-      "type": "string"
-     },
-     "session_id": {
-      "maxLength": 128,
-      "minLength": 1,
-      "title": "Session Id",
-      "type": "string"
-     }
-    },
-    "required": [
-     "session_id",
-     "name"
-    ],
-    "title": "DatasetCreateRequest",
-    "type": "object"
-   },
    "DatasetDetachResponse": {
     "description": "DELETE /projects/{project_id}/datasets/{dataset_id} 响应。",
     "examples": [
@@ -3670,6 +4041,33 @@
       ],
       "title": "Dy M"
      },
+     "features": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Features"
+     },
+     "field_policy": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Field Policy"
+     },
      "fields": {
       "anyOf": [
        {
@@ -3707,13 +4105,42 @@
       ],
       "title": "From"
      },
+     "geometry": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Geometry"
+     },
+     "line": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Line"
+     },
      "op": {
       "enum": [
        "set_fields",
        "rename_field",
        "repair_geometry",
        "move_by",
-       "snap_to_ref"
+       "snap_to_ref",
+       "create_features",
+       "delete_features",
+       "replace_geometry",
+       "split_feature",
+       "merge_features"
       ],
       "title": "Op",
       "type": "string"
@@ -3750,6 +4177,17 @@
        }
       ],
       "title": "Tolerance M"
+     },
+     "wfid": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Wfid"
      }
     },
     "required": [
@@ -3797,6 +4235,27 @@
      }
     },
     "title": "EditTargetModel",
+    "type": "object"
+   },
+   "EditableCopyRequest": {
+    "additionalProperties": false,
+    "description": "V20：只读源派生编辑副本。",
+    "properties": {
+     "name": {
+      "anyOf": [
+       {
+        "maxLength": 96,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     }
+    },
+    "title": "EditableCopyRequest",
     "type": "object"
    },
    "ElevationProfileAvailability": {
@@ -4107,6 +4566,17 @@
     "title": "EvaluateRequest",
     "type": "object"
    },
+   "EvidenceLevel": {
+    "description": "版本证据级别（决定能否声称精确变化）。",
+    "enum": [
+     "content_exact",
+     "revision_token",
+     "timestamp_only",
+     "none"
+    ],
+    "title": "EvidenceLevel",
+    "type": "string"
+   },
    "ExecutePlanRequest": {
     "properties": {
      "plan": {
@@ -4128,6 +4598,60 @@
      "plan"
     ],
     "title": "ExecutePlanRequest",
+    "type": "object"
+   },
+   "ExecuteRefreshRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "cancel": {
+      "default": false,
+      "title": "Cancel",
+      "type": "boolean"
+     }
+    },
+    "title": "ExecuteRefreshRequest",
+    "type": "object"
+   },
+   "ExecuteRefreshResponse": {
+    "additionalProperties": false,
+    "properties": {
+     "candidate": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/RefreshCandidate"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "conflicts": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Conflicts",
+      "type": "array"
+     },
+     "preserved": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Preserved",
+      "type": "array"
+     },
+     "receipt": {
+      "additionalProperties": true,
+      "title": "Receipt",
+      "type": "object"
+     },
+     "replayed": {
+      "default": false,
+      "title": "Replayed",
+      "type": "boolean"
+     }
+    },
+    "title": "ExecuteRefreshResponse",
     "type": "object"
    },
    "ExecuteResponse": {
@@ -4379,6 +4903,30 @@
     "title": "ExploreStatusResponse",
     "type": "object"
    },
+   "ExportBody": {
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "format": {
+      "default": "png",
+      "pattern": "^(png|svg|pdf)$",
+      "title": "Format",
+      "type": "string"
+     }
+    },
+    "title": "ExportBody",
+    "type": "object"
+   },
    "ExportDiagnosticsResponse": {
     "additionalProperties": true,
     "description": "GET /export/diagnostics/{filename} 返回（sidecar 内容透传）。",
@@ -4466,6 +5014,66 @@
     "title": "ExportLineageInfo",
     "type": "object"
    },
+   "ExpressionBody": {
+    "properties": {
+     "expression": {
+      "additionalProperties": true,
+      "title": "Expression",
+      "type": "object"
+     },
+     "layer_id": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Layer Id"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "expression"
+    ],
+    "title": "ExpressionBody",
+    "type": "object"
+   },
+   "FeatureCounts": {
+    "description": "精确要素差异计数（只有 EXACT 证据才允许非 None）。",
+    "properties": {
+     "added": {
+      "default": 0,
+      "title": "Added",
+      "type": "integer"
+     },
+     "attribute_changed": {
+      "default": 0,
+      "title": "Attribute Changed",
+      "type": "integer"
+     },
+     "geometry_changed": {
+      "default": 0,
+      "title": "Geometry Changed",
+      "type": "integer"
+     },
+     "removed": {
+      "default": 0,
+      "title": "Removed",
+      "type": "integer"
+     }
+    },
+    "title": "FeatureCounts",
+    "type": "object"
+   },
    "FeatureEditPreviewRequest": {
     "additionalProperties": false,
     "properties": {
@@ -4551,6 +5159,301 @@
     "title": "FieldBindingResponse",
     "type": "object"
    },
+   "FieldComputeCancelResponse": {
+    "properties": {
+     "cancelled": {
+      "title": "Cancelled",
+      "type": "boolean"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan_id",
+     "cancelled"
+    ],
+    "title": "FieldComputeCancelResponse",
+    "type": "object"
+   },
+   "FieldComputeColumnSpec": {
+    "properties": {
+     "declared_unit": {
+      "default": "",
+      "title": "Declared Unit",
+      "type": "string"
+     },
+     "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+     },
+     "expression": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": true,
+        "type": "object"
+       }
+      ],
+      "description": "文本公式或闭合 IR dict；两者编译为同一个 IR",
+      "title": "Expression"
+     },
+     "name": {
+      "description": "新字段名（不得与输入字段/保留字段冲突）",
+      "title": "Name",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "expression"
+    ],
+    "title": "FieldComputeColumnSpec",
+    "type": "object"
+   },
+   "FieldComputeDescribeRequest": {
+    "properties": {
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "source_ref"
+    ],
+    "title": "FieldComputeDescribeRequest",
+    "type": "object"
+   },
+   "FieldComputeDiscardResponse": {
+    "properties": {
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan_id",
+     "state"
+    ],
+    "title": "FieldComputeDiscardResponse",
+    "type": "object"
+   },
+   "FieldComputeExecuteRequest": {
+    "properties": {
+     "expected_fingerprint": {
+      "default": "",
+      "description": "已看到预览的 confirmation.params_fingerprint",
+      "title": "Expected Fingerprint",
+      "type": "string"
+     },
+     "owner": {
+      "default": "",
+      "title": "Owner",
+      "type": "string"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "title": "FieldComputeExecuteRequest",
+    "type": "object"
+   },
+   "FieldComputePlanListResponse": {
+    "properties": {
+     "plans": {
+      "items": {
+       "$ref": "#/components/schemas/FieldComputePlanOut"
+      },
+      "title": "Plans",
+      "type": "array"
+     }
+    },
+    "title": "FieldComputePlanListResponse",
+    "type": "object"
+   },
+   "FieldComputePlanOut": {
+    "properties": {
+     "columns": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Columns",
+      "type": "array"
+     },
+     "compute_fingerprint": {
+      "title": "Compute Fingerprint",
+      "type": "string"
+     },
+     "content_hash": {
+      "default": "",
+      "title": "Content Hash",
+      "type": "string"
+     },
+     "data_shape": {
+      "default": "",
+      "title": "Data Shape",
+      "type": "string"
+     },
+     "error_policy": {
+      "default": "null",
+      "title": "Error Policy",
+      "type": "string"
+     },
+     "input_ref": {
+      "title": "Input Ref",
+      "type": "string"
+     },
+     "owner": {
+      "default": "",
+      "title": "Owner",
+      "type": "string"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     },
+     "timezone": {
+      "default": "UTC",
+      "title": "Timezone",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan_id",
+     "compute_fingerprint",
+     "state",
+     "input_ref"
+    ],
+    "title": "FieldComputePlanOut",
+    "type": "object"
+   },
+   "FieldComputePlanRequest": {
+    "properties": {
+     "columns": {
+      "items": {
+       "$ref": "#/components/schemas/FieldComputeColumnSpec"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Columns",
+      "type": "array"
+     },
+     "date_format": {
+      "default": "",
+      "title": "Date Format",
+      "type": "string"
+     },
+     "error_policy": {
+      "default": "null",
+      "title": "Error Policy",
+      "type": "string"
+     },
+     "field_units": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "description": "user-declared canonical unit（字段名只是提示，不是单位证据）",
+      "title": "Field Units",
+      "type": "object"
+     },
+     "owner": {
+      "default": "",
+      "title": "Owner",
+      "type": "string"
+     },
+     "scope": {
+      "additionalProperties": true,
+      "title": "Scope",
+      "type": "object"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_ref": {
+      "title": "Source Ref",
+      "type": "string"
+     },
+     "timezone": {
+      "default": "UTC",
+      "title": "Timezone",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "source_ref",
+     "columns"
+    ],
+    "title": "FieldComputePlanRequest",
+    "type": "object"
+   },
+   "FieldComputePlanResponse": {
+    "properties": {
+     "column_order": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Column Order",
+      "type": "array"
+     },
+     "data_shape": {
+      "title": "Data Shape",
+      "type": "string"
+     },
+     "estimated_ops": {
+      "default": 0,
+      "title": "Estimated Ops",
+      "type": "integer"
+     },
+     "geometry": {
+      "additionalProperties": true,
+      "title": "Geometry",
+      "type": "object"
+     },
+     "plan": {
+      "$ref": "#/components/schemas/FieldComputePlanOut"
+     },
+     "scope_summary": {
+      "additionalProperties": true,
+      "title": "Scope Summary",
+      "type": "object"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "plan",
+     "data_shape"
+    ],
+    "title": "FieldComputePlanResponse",
+    "type": "object"
+   },
    "FieldProposalOut": {
     "properties": {
      "candidates": {
@@ -4627,6 +5530,17 @@
      "severity"
     ],
     "title": "FindingOut",
+    "type": "object"
+   },
+   "FreezeRequest": {
+    "properties": {
+     "allow_draft": {
+      "default": false,
+      "title": "Allow Draft",
+      "type": "boolean"
+     }
+    },
+    "title": "FreezeRequest",
     "type": "object"
    },
    "GCExecuteRequest": {
@@ -4836,6 +5750,28 @@
      "agent_runtime": {
       "title": "Agent Runtime",
       "type": "string"
+     },
+     "agent_runtime_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Mode"
+     },
+     "agent_runtime_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Reason"
      },
      "pi_vendor": {
       "anyOf": [
@@ -6270,6 +7206,39 @@
     "properties": {
      "config": {
       "$ref": "#/components/schemas/LLMConfig"
+     },
+     "expected_generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Generation"
+     },
+     "pi_workers_deferred": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pi Workers Deferred"
+     },
+     "pi_workers_recycled": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pi Workers Recycled"
      },
      "status": {
       "title": "Status",
@@ -9015,6 +9984,19 @@
       "title": "Component Id",
       "type": "string"
      },
+     "component_type": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Component Type"
+     },
      "enabled": {
       "anyOf": [
        {
@@ -9712,6 +10694,53 @@
     "title": "PolicyUpsertRequest",
     "type": "object"
    },
+   "PreviewRefreshRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "dag": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dag"
+     },
+     "max_bytes": {
+      "default": 8388608,
+      "maximum": 268435456.0,
+      "minimum": 1.0,
+      "title": "Max Bytes",
+      "type": "integer"
+     },
+     "max_features": {
+      "default": 50000,
+      "maximum": 1000000.0,
+      "minimum": 1.0,
+      "title": "Max Features",
+      "type": "integer"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "style_only": {
+      "default": false,
+      "title": "Style Only",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "PreviewRefreshRequest",
+    "type": "object"
+   },
    "PreviewResponse": {
     "properties": {
      "degraded": {
@@ -9759,6 +10788,68 @@
      "plan_id"
     ],
     "title": "PreviewResponse",
+    "type": "object"
+   },
+   "ProbeBody": {
+    "properties": {
+     "bands": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "integer"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bands"
+     },
+     "crs": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": "EPSG:4326",
+      "title": "Crs"
+     },
+     "data_revision": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Data Revision"
+     },
+     "points": {
+      "items": {},
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Points",
+      "type": "array"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "points"
+    ],
+    "title": "ProbeBody",
     "type": "object"
    },
    "ProfileRequest": {
@@ -10224,6 +11315,43 @@
     "title": "PromoteArtifactsResponse",
     "type": "object"
    },
+   "PromoteSketchRequest": {
+    "additionalProperties": false,
+    "description": "V02：草图升格为持久数据集。",
+    "properties": {
+     "features": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "minItems": 1,
+      "title": "Features",
+      "type": "array"
+     },
+     "name": {
+      "maxLength": 96,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "topology": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/TopologyDeclaration"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "name",
+     "features"
+    ],
+    "title": "PromoteSketchRequest",
+    "type": "object"
+   },
    "PromptSegmentBody": {
     "properties": {
      "artifact": {
@@ -10342,28 +11470,6 @@
     "title": "PromptSegmentBody",
     "type": "object"
    },
-   "ProposalListResponse": {
-    "additionalProperties": true,
-    "properties": {
-     "proposals": {
-      "items": {
-       "additionalProperties": true,
-       "type": "object"
-      },
-      "title": "Proposals",
-      "type": "array"
-     },
-     "session_id": {
-      "title": "Session Id",
-      "type": "string"
-     }
-    },
-    "required": [
-     "session_id"
-    ],
-    "title": "ProposalListResponse",
-    "type": "object"
-   },
    "ProposalProjectionResponse": {
     "additionalProperties": true,
     "description": "GET proposal 详情投影（proposal + 锚态 + 冲突 + 策略 verdict）。",
@@ -10406,6 +11512,19 @@
     ],
     "title": "ProposalProjectionResponse",
     "type": "object"
+   },
+   "ProposalStatus": {
+    "enum": [
+     "preview",
+     "executing",
+     "ready",
+     "adopted",
+     "discarded",
+     "drifted",
+     "failed"
+    ],
+    "title": "ProposalStatus",
+    "type": "string"
    },
    "QualificationReason": {
     "additionalProperties": false,
@@ -11153,6 +12272,354 @@
     "title": "RefineBody",
     "type": "object"
    },
+   "RefreshCandidate": {
+    "additionalProperties": false,
+    "description": "隔离候选运行状态（新产物先写 candidate 命名空间，不污染当前地图）。",
+    "properties": {
+     "adoptable": {
+      "default": false,
+      "title": "Adoptable",
+      "type": "boolean"
+     },
+     "attempts": {
+      "default": 0,
+      "title": "Attempts",
+      "type": "integer"
+     },
+     "baseline_fingerprint": {
+      "default": "",
+      "title": "Baseline Fingerprint",
+      "type": "string"
+     },
+     "cancelled": {
+      "default": false,
+      "title": "Cancelled",
+      "type": "boolean"
+     },
+     "candidate_doc_path": {
+      "default": "",
+      "title": "Candidate Doc Path",
+      "type": "string"
+     },
+     "candidate_fingerprint": {
+      "default": "",
+      "title": "Candidate Fingerprint",
+      "type": "string"
+     },
+     "candidate_id": {
+      "title": "Candidate Id",
+      "type": "string"
+     },
+     "completed_nodes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Completed Nodes",
+      "type": "array"
+     },
+     "created_at": {
+      "default": 0.0,
+      "title": "Created At",
+      "type": "number"
+     },
+     "failed_nodes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Failed Nodes",
+      "type": "array"
+     },
+     "hard_semantic_errors": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Hard Semantic Errors",
+      "type": "array"
+     },
+     "last_error": {
+      "default": "",
+      "title": "Last Error",
+      "type": "string"
+     },
+     "merge_conflicts": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Merge Conflicts",
+      "type": "array"
+     },
+     "merge_preserved": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Merge Preserved",
+      "type": "array"
+     },
+     "progress": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Progress",
+      "type": "array"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "retry_key": {
+      "default": "",
+      "title": "Retry Key",
+      "type": "string"
+     },
+     "source_version_set": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Source Version Set",
+      "type": "object"
+     },
+     "status": {
+      "$ref": "#/components/schemas/CandidateStatus",
+      "default": "pending"
+     },
+     "updated_at": {
+      "default": 0.0,
+      "title": "Updated At",
+      "type": "number"
+     }
+    },
+    "required": [
+     "candidate_id",
+     "proposal_id",
+     "project_id"
+    ],
+    "title": "RefreshCandidate",
+    "type": "object"
+   },
+   "RefreshPlan": {
+    "additionalProperties": false,
+    "description": "UPD-03 只读更新计划（不新建第二 DAG，复用 compute_affected_subgraph）。",
+    "properties": {
+     "changed_dimensions": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Changed Dimensions",
+      "type": "array"
+     },
+     "conflicts": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Conflicts",
+      "type": "array"
+     },
+     "conservative": {
+      "default": false,
+      "title": "Conservative",
+      "type": "boolean"
+     },
+     "decisions": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Decisions",
+      "type": "object"
+     },
+     "estimated_budget": {
+      "additionalProperties": true,
+      "title": "Estimated Budget",
+      "type": "object"
+     },
+     "explanations": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Explanations",
+      "type": "array"
+     },
+     "preserved_user_edits": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Preserved User Edits",
+      "type": "array"
+     },
+     "proposal_fingerprint": {
+      "default": "",
+      "title": "Proposal Fingerprint",
+      "type": "string"
+     },
+     "recompute": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Recompute",
+      "type": "array"
+     },
+     "reuse": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Reuse",
+      "type": "array"
+     },
+     "reuse_fingerprint": {
+      "default": "",
+      "title": "Reuse Fingerprint",
+      "type": "string"
+     },
+     "style_only": {
+      "default": false,
+      "title": "Style Only",
+      "type": "boolean"
+     },
+     "style_only_reason": {
+      "default": "",
+      "title": "Style Only Reason",
+      "type": "string"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "title": "RefreshPlan",
+    "type": "object"
+   },
+   "RefreshProposal": {
+    "additionalProperties": false,
+    "description": "只读预览提案（绑定输入版本集 / MapSpec revision / 用户锁 / owner）。",
+    "properties": {
+     "adopted_mapspec_fingerprint": {
+      "default": "",
+      "title": "Adopted Mapspec Fingerprint",
+      "type": "string"
+     },
+     "adopted_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Adopted Revision"
+     },
+     "baseline_snapshot_id": {
+      "default": "",
+      "title": "Baseline Snapshot Id",
+      "type": "string"
+     },
+     "created_at": {
+      "default": 0.0,
+      "title": "Created At",
+      "type": "number"
+     },
+     "diffs": {
+      "items": {
+       "$ref": "#/components/schemas/SourceDiff"
+      },
+      "title": "Diffs",
+      "type": "array"
+     },
+     "inventory": {
+      "$ref": "#/components/schemas/SourceInventory"
+     },
+     "mapspec_fingerprint": {
+      "default": "",
+      "title": "Mapspec Fingerprint",
+      "type": "string"
+     },
+     "mapspec_revision": {
+      "default": 0,
+      "title": "Mapspec Revision",
+      "type": "integer"
+     },
+     "org_id": {
+      "default": "",
+      "title": "Org Id",
+      "type": "string"
+     },
+     "owner_id": {
+      "default": "",
+      "title": "Owner Id",
+      "type": "string"
+     },
+     "plan": {
+      "$ref": "#/components/schemas/RefreshPlan"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "proposal_fingerprint": {
+      "default": "",
+      "title": "Proposal Fingerprint",
+      "type": "string"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+     },
+     "session_id": {
+      "default": "",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_versions": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Source Versions",
+      "type": "object"
+     },
+     "status": {
+      "$ref": "#/components/schemas/ProposalStatus",
+      "default": "preview"
+     },
+     "updated_at": {
+      "default": 0.0,
+      "title": "Updated At",
+      "type": "number"
+     },
+     "user_locks": {
+      "items": {
+       "type": "string"
+      },
+      "title": "User Locks",
+      "type": "array"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "proposal_id",
+     "project_id"
+    ],
+    "title": "RefreshProposal",
+    "type": "object"
+   },
    "RefreshRequest": {
     "description": "POST /auth/refresh 请求体。",
     "examples": [
@@ -11191,6 +12658,25 @@
      "status"
     ],
     "title": "RefreshSkillsResponse",
+    "type": "object"
+   },
+   "RegenerateRequest": {
+    "properties": {
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "mode": {
+      "default": "metrics_only",
+      "title": "Mode",
+      "type": "string"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "RegenerateRequest",
     "type": "object"
    },
    "RegisterRequest": {
@@ -13083,6 +14569,70 @@
     "title": "SessionTerrainSourceEntry",
     "type": "object"
    },
+   "SetFrameProductBody": {
+    "description": "多画幅产品层用户面写入（G15；frame_product.v1 契约体）。\n\nconfig/patch/remove 语义与 SetFrameProductIntent 一一对应；用户工作台\n画幅编辑（激活画幅/排序/标题/同步组/图例策略）走 patch +\nexpected_revision CAS。",
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "config": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Config"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "set_frame_product",
+      "title": "Intent",
+      "type": "string"
+     },
+     "patch": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Patch"
+     },
+     "remove": {
+      "default": false,
+      "title": "Remove",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision"
+    ],
+    "title": "SetFrameProductBody",
+    "type": "object"
+   },
    "SetLayoutBody": {
     "properties": {
      "client_mutation_id": {
@@ -13133,6 +14683,21 @@
       "minimum": 0.0,
       "title": "Expected Revision",
       "type": "integer"
+     },
+     "frames": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Frames"
      },
      "intent": {
       "const": "set_layout",
@@ -13547,23 +15112,6 @@
     "title": "SetWorkbenchStateBody",
     "type": "object"
    },
-   "ShareRequest": {
-    "description": "POST /reports/{report_id}/share 请求体。",
-    "examples": [
-     {
-      "ttl_days": 7
-     }
-    ],
-    "properties": {
-     "ttl_days": {
-      "default": 7,
-      "title": "Ttl Days",
-      "type": "integer"
-     }
-    },
-    "title": "ShareRequest",
-    "type": "object"
-   },
    "SkillListItem": {
     "description": "已加载技能文件条目。",
     "examples": [
@@ -13739,6 +15287,290 @@
     "title": "SourceDetailResponse",
     "type": "object"
    },
+   "SourceDiff": {
+    "additionalProperties": false,
+    "description": "UPD-02 差异报告：精确 / 保守 / 未知 / 未验证分别披露。",
+    "properties": {
+     "alignment": {
+      "default": "unavailable",
+      "title": "Alignment",
+      "type": "string"
+     },
+     "bbox_changed": {
+      "default": false,
+      "title": "Bbox Changed",
+      "type": "boolean"
+     },
+     "change_class": {
+      "default": "unknown",
+      "title": "Change Class",
+      "type": "string"
+     },
+     "crs_changed": {
+      "default": false,
+      "title": "Crs Changed",
+      "type": "boolean"
+     },
+     "denominator_changed": {
+      "default": false,
+      "title": "Denominator Changed",
+      "type": "boolean"
+     },
+     "evidence": {
+      "$ref": "#/components/schemas/ChangeEvidence",
+      "default": "unknown"
+     },
+     "exact_counts": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/FeatureCounts"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "expanded_dependencies": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Expanded Dependencies",
+      "type": "array"
+     },
+     "features_added": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Features Added",
+      "type": "array"
+     },
+     "features_attribute_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Features Attribute Changed",
+      "type": "array"
+     },
+     "features_geometry_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Features Geometry Changed",
+      "type": "array"
+     },
+     "features_removed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Features Removed",
+      "type": "array"
+     },
+     "fields_added": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fields Added",
+      "type": "array"
+     },
+     "fields_removed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fields Removed",
+      "type": "array"
+     },
+     "fields_type_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fields Type Changed",
+      "type": "array"
+     },
+     "fields_unit_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fields Unit Changed",
+      "type": "array"
+     },
+     "logical_id": {
+      "title": "Logical Id",
+      "type": "string"
+     },
+     "method_version_changed": {
+      "default": false,
+      "title": "Method Version Changed",
+      "type": "boolean"
+     },
+     "raster_tiles_changed": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Raster Tiles Changed",
+      "type": "array"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     },
+     "sampled": {
+      "default": false,
+      "title": "Sampled",
+      "type": "boolean"
+     },
+     "seed_targets": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Seed Targets",
+      "type": "array"
+     },
+     "temporal_changed": {
+      "default": false,
+      "title": "Temporal Changed",
+      "type": "boolean"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "logical_id"
+    ],
+    "title": "SourceDiff",
+    "type": "object"
+   },
+   "SourceInventory": {
+    "properties": {
+     "fingerprint": {
+      "default": "",
+      "title": "Fingerprint",
+      "type": "string"
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/SourceInventoryItem"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "title": "SourceInventory",
+    "type": "object"
+   },
+   "SourceInventoryItem": {
+    "additionalProperties": false,
+    "description": "UPD-01 来源清单条目（有界，可直接投影给 UI/Pi）。",
+    "properties": {
+     "baseline_version": {
+      "default": "",
+      "title": "Baseline Version",
+      "type": "string"
+     },
+     "bbox": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox"
+     },
+     "crs": {
+      "default": "",
+      "title": "Crs",
+      "type": "string"
+     },
+     "current_version": {
+      "default": "",
+      "title": "Current Version",
+      "type": "string"
+     },
+     "display_name": {
+      "default": "",
+      "title": "Display Name",
+      "type": "string"
+     },
+     "evidence": {
+      "$ref": "#/components/schemas/EvidenceLevel",
+      "default": "none"
+     },
+     "kind": {
+      "default": "vector",
+      "title": "Kind",
+      "type": "string"
+     },
+     "logical_id": {
+      "title": "Logical Id",
+      "type": "string"
+     },
+     "note": {
+      "default": "",
+      "title": "Note",
+      "type": "string"
+     },
+     "owner_id": {
+      "default": "",
+      "title": "Owner Id",
+      "type": "string"
+     },
+     "state": {
+      "$ref": "#/components/schemas/SourceState",
+      "default": "version_unknown"
+     },
+     "temporal_window": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Temporal Window"
+     },
+     "verdict": {
+      "default": "unknown",
+      "title": "Verdict",
+      "type": "string"
+     }
+    },
+    "required": [
+     "logical_id"
+    ],
+    "title": "SourceInventoryItem",
+    "type": "object"
+   },
    "SourceListResponse": {
     "additionalProperties": true,
     "description": "GET /data-fabric/sources 响应。",
@@ -13762,6 +15594,18 @@
     "properties": {},
     "title": "SourceProbeResponse",
     "type": "object"
+   },
+   "SourceState": {
+    "description": "来源可用性词表（与 project_runtime.promotion 既有分类映射）。",
+    "enum": [
+     "pinned",
+     "refreshable",
+     "ephemeral",
+     "missing",
+     "version_unknown"
+    ],
+    "title": "SourceState",
+    "type": "string"
    },
    "SourceSyncResponse": {
     "additionalProperties": true,
@@ -13903,6 +15747,69 @@
      "status"
     ],
     "title": "StartExploreResponse",
+    "type": "object"
+   },
+   "StatusResponse": {
+    "additionalProperties": false,
+    "properties": {
+     "adopted_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Adopted Revision"
+     },
+     "candidate_attempts": {
+      "default": 0,
+      "title": "Candidate Attempts",
+      "type": "integer"
+     },
+     "candidate_status": {
+      "default": "not_started",
+      "title": "Candidate Status",
+      "type": "string"
+     },
+     "mapspec_revision": {
+      "default": 0,
+      "title": "Mapspec Revision",
+      "type": "integer"
+     },
+     "progress": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Progress",
+      "type": "array"
+     },
+     "proposal_fingerprint": {
+      "default": "",
+      "title": "Proposal Fingerprint",
+      "type": "string"
+     },
+     "proposal_id": {
+      "title": "Proposal Id",
+      "type": "string"
+     },
+     "proposal_status": {
+      "title": "Proposal Status",
+      "type": "string"
+     },
+     "recoverable": {
+      "default": true,
+      "title": "Recoverable",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "proposal_id",
+     "proposal_status"
+    ],
+    "title": "StatusResponse",
     "type": "object"
    },
    "StoryChapter": {
@@ -14820,6 +16727,97 @@
     "title": "ToolsListResponse",
     "type": "object"
    },
+   "TopologyDeclaration": {
+    "additionalProperties": false,
+    "properties": {
+     "rules": {
+      "items": {
+       "enum": [
+        "no_overlap",
+        "no_self_intersection",
+        "no_duplicate_points"
+       ],
+       "type": "string"
+      },
+      "minItems": 1,
+      "title": "Rules",
+      "type": "array"
+     },
+     "tolerance_m": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tolerance M"
+     }
+    },
+    "required": [
+     "rules"
+    ],
+    "title": "TopologyDeclaration",
+    "type": "object"
+   },
+   "UndoAgentCommitBody": {
+    "description": "PR-D：撤销/重做一段 Agent 地图提交（Ctrl+Z 撤销整笔 Agent 提交）。\n\n``(base_revision, agent_revision]`` 必须是连续的 Agent 提交；服务端在锁内\n校验当前制图指纹（用户在其后有未撤销的改动 → 拒绝，不覆盖用户编辑）。",
+    "properties": {
+     "agent_revision": {
+      "minimum": 1.0,
+      "title": "Agent Revision",
+      "type": "integer"
+     },
+     "base_revision": {
+      "minimum": 0.0,
+      "title": "Base Revision",
+      "type": "integer"
+     },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "direction": {
+      "default": "undo",
+      "enum": [
+       "undo",
+       "redo"
+      ],
+      "title": "Direction",
+      "type": "string"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "undo_agent_commit",
+      "title": "Intent",
+      "type": "string"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision",
+     "base_revision",
+     "agent_revision"
+    ],
+    "title": "UndoAgentCommitBody",
+    "type": "object"
+   },
    "UnitConversionEvidence": {
     "additionalProperties": false,
     "description": "非米单位 → 米的显式换算证据（DECISIONS D2：不静默换算）。",
@@ -15242,6 +17240,18 @@
       ],
       "title": "Atlas Pages"
      },
+     "constraint_layout": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Constraint Layout"
+     },
      "filename": {
       "title": "Filename",
       "type": "string"
@@ -15387,6 +17397,18 @@
       "additionalProperties": true,
       "title": "Mapspec",
       "type": "object"
+     },
+     "page_profile": {
+      "anyOf": [
+       {
+        "maxLength": 32,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Profile"
      },
      "session_id": {
       "anyOf": [
@@ -17184,6 +19206,19 @@
     "title": "WorkspaceSnapshotSummary",
     "type": "object"
    },
+   "app__api__routes__brief__ShareRequest": {
+    "properties": {
+     "ttl_days": {
+      "default": 7,
+      "maximum": 30.0,
+      "minimum": 1.0,
+      "title": "Ttl Days",
+      "type": "integer"
+     }
+    },
+    "title": "ShareRequest",
+    "type": "object"
+   },
    "app__schemas__chat_schema__SkillsListResponse": {
     "description": "GET /chat/skills 响应（MD 技能目录，可选鉴权）。",
     "examples": [
@@ -17220,6 +19255,90 @@
      }
     },
     "title": "SkillsListResponse",
+    "type": "object"
+   },
+   "app__schemas__feature_edit_schema__DatasetCreateRequest": {
+    "additionalProperties": false,
+    "description": "V01：创建空 typed 矢量数据集。",
+    "properties": {
+     "geometry_type": {
+      "enum": [
+       "Point",
+       "LineString",
+       "Polygon"
+      ],
+      "title": "Geometry Type",
+      "type": "string"
+     },
+     "name": {
+      "maxLength": 96,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "topology": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/TopologyDeclaration"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "name",
+     "geometry_type"
+    ],
+    "title": "DatasetCreateRequest",
+    "type": "object"
+   },
+   "app__schemas__lakehouse_schema__DatasetCreateRequest": {
+    "properties": {
+     "cube_contract": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "maxProperties": 32,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cube Contract"
+     },
+     "default_branch": {
+      "default": "main",
+      "maxLength": 128,
+      "title": "Default Branch",
+      "type": "string"
+     },
+     "description": {
+      "default": "",
+      "maxLength": 512,
+      "title": "Description",
+      "type": "string"
+     },
+     "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "name"
+    ],
+    "title": "DatasetCreateRequest",
     "type": "object"
    },
    "app__schemas__lakehouse_schema__PublishRequest": {
@@ -17267,6 +19386,72 @@
      "object_ids"
     ],
     "title": "PublishRequest",
+    "type": "object"
+   },
+   "app__schemas__project_data_refresh_schema__ProposalListResponse": {
+    "additionalProperties": false,
+    "properties": {
+     "count": {
+      "default": 0,
+      "title": "Count",
+      "type": "integer"
+     },
+     "items": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "project_id"
+    ],
+    "title": "ProposalListResponse",
+    "type": "object"
+   },
+   "app__schemas__report_schema__ShareRequest": {
+    "description": "POST /reports/{report_id}/share 请求体。",
+    "examples": [
+     {
+      "ttl_days": 7
+     }
+    ],
+    "properties": {
+     "ttl_days": {
+      "default": 7,
+      "title": "Ttl Days",
+      "type": "integer"
+     }
+    },
+    "title": "ShareRequest",
+    "type": "object"
+   },
+   "app__schemas__review_schema__ProposalListResponse": {
+    "additionalProperties": true,
+    "properties": {
+     "proposals": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Proposals",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "ProposalListResponse",
     "type": "object"
    },
    "app__schemas__workflow_runtime_schema__PublishRequest": {
@@ -18125,6 +20310,1510 @@
     ]
    }
   },
+  "/api/v1/briefs/sessions/{session_id}": {
+   "get": {
+    "description": "读会话简报完整 spec + stale 标记（产物更新 → 受影响自动块披露）。",
+    "operationId": "get_session_brief_api_v1_briefs_sessions__session_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Get Session Brief Api V1 Briefs Sessions  Session Id  Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Session Brief",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   },
+   "patch": {
+    "description": "改标题（乐观 revision）。",
+    "operationId": "patch_brief_meta_api_v1_briefs_sessions__session_id__patch",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BriefPatchRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Patch Brief Meta Api V1 Briefs Sessions  Session Id  Patch"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Patch Brief Meta",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/blocks": {
+   "post": {
+    "operationId": "create_block_api_v1_briefs_sessions__session_id__blocks_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BlockCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Create Block Api V1 Briefs Sessions  Session Id  Blocks Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Block",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/blocks/{block_id}": {
+   "delete": {
+    "operationId": "remove_block_api_v1_briefs_sessions__session_id__blocks__block_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "block_id",
+      "required": true,
+      "schema": {
+       "title": "Block Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "expected_revision",
+      "required": true,
+      "schema": {
+       "minimum": 1,
+       "title": "Expected Revision",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Remove Block Api V1 Briefs Sessions  Session Id  Blocks  Block Id  Delete"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Remove Block",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   },
+   "patch": {
+    "description": "更新块（locked 块内容编辑需先解锁；409 = revision 冲突）。",
+    "operationId": "patch_block_api_v1_briefs_sessions__session_id__blocks__block_id__patch",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "block_id",
+      "required": true,
+      "schema": {
+       "title": "Block Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BlockPatchRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Patch Block Api V1 Briefs Sessions  Session Id  Blocks  Block Id  Patch"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Patch Block",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/chapters": {
+   "post": {
+    "operationId": "create_chapter_api_v1_briefs_sessions__session_id__chapters_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ChapterCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Create Chapter Api V1 Briefs Sessions  Session Id  Chapters Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Chapter",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/chapters/{chapter_id}": {
+   "delete": {
+    "operationId": "remove_chapter_api_v1_briefs_sessions__session_id__chapters__chapter_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "chapter_id",
+      "required": true,
+      "schema": {
+       "title": "Chapter Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "expected_revision",
+      "required": true,
+      "schema": {
+       "minimum": 1,
+       "title": "Expected Revision",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Remove Chapter Api V1 Briefs Sessions  Session Id  Chapters  Chapter Id  Delete"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Remove Chapter",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   },
+   "patch": {
+    "operationId": "patch_chapter_api_v1_briefs_sessions__session_id__chapters__chapter_id__patch",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "chapter_id",
+      "required": true,
+      "schema": {
+       "title": "Chapter Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ChapterPatchRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Patch Chapter Api V1 Briefs Sessions  Session Id  Chapters  Chapter Id  Patch"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Patch Chapter",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/draft": {
+   "post": {
+    "description": "从会话真实产物生成简报草稿（幂等创建：已存在 → 409 引导编辑）。",
+    "operationId": "create_brief_draft_api_v1_briefs_sessions__session_id__draft_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BriefDraftRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Create Brief Draft Api V1 Briefs Sessions  Session Id  Draft Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Brief Draft",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/evidence/{fact_id}": {
+   "get": {
+    "description": "事实 → 完整链路（绑定/权威值/复算/依赖事实/产物投影）。",
+    "operationId": "inspect_evidence_api_v1_briefs_sessions__session_id__evidence__fact_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "fact_id",
+      "required": true,
+      "schema": {
+       "title": "Fact Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Inspect Evidence Api V1 Briefs Sessions  Session Id  Evidence  Fact Id  Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect Evidence",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/preflight": {
+   "post": {
+    "operationId": "run_brief_preflight_api_v1_briefs_sessions__session_id__preflight_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Run Brief Preflight Api V1 Briefs Sessions  Session Id  Preflight Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Run Brief Preflight",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/regenerate": {
+   "post": {
+    "description": "重生成（manual/locked 块永不覆盖；BRF-O03/O11）。",
+    "operationId": "regenerate_brief_api_v1_briefs_sessions__session_id__regenerate_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RegenerateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Regenerate Brief Api V1 Briefs Sessions  Session Id  Regenerate Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Regenerate Brief",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/releases": {
+   "get": {
+    "operationId": "list_brief_releases_api_v1_briefs_sessions__session_id__releases_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response List Brief Releases Api V1 Briefs Sessions  Session Id  Releases Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Brief Releases",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   },
+   "post": {
+    "description": "冻结发布（幂等；预检 blocked → 409 携带报告）。",
+    "operationId": "freeze_release_api_v1_briefs_sessions__session_id__releases_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/FreezeRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Freeze Release Api V1 Briefs Sessions  Session Id  Releases Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Freeze Release",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/releases/{release_id}/download": {
+   "get": {
+    "description": "owner 私有 HTML 下载（CAS digest 校验）。",
+    "operationId": "download_release_html_api_v1_briefs_sessions__session_id__releases__release_id__download_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "release_id",
+      "required": true,
+      "schema": {
+       "title": "Release Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Download Release Html Api V1 Briefs Sessions  Session Id  Releases  Release Id  Download Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Download Release Html",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/releases/{release_id}/facts.csv": {
+   "get": {
+    "operationId": "download_release_csv_api_v1_briefs_sessions__session_id__releases__release_id__facts_csv_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "release_id",
+      "required": true,
+      "schema": {
+       "title": "Release Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Download Release Csv Api V1 Briefs Sessions  Session Id  Releases  Release Id  Facts Csv Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Download Release Csv",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/releases/{release_id}/manifest": {
+   "get": {
+    "operationId": "get_release_manifest_api_v1_briefs_sessions__session_id__releases__release_id__manifest_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "release_id",
+      "required": true,
+      "schema": {
+       "title": "Release Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Get Release Manifest Api V1 Briefs Sessions  Session Id  Releases  Release Id  Manifest Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Release Manifest",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/sessions/{session_id}/releases/{release_id}/share": {
+   "delete": {
+    "description": "撤销分享（服务端读取即刻失败；已下载离线副本无法收回 —— UI 披露）。",
+    "operationId": "unshare_release_api_v1_briefs_sessions__session_id__releases__release_id__share_delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "release_id",
+      "required": true,
+      "schema": {
+       "title": "Release Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Unshare Release Api V1 Briefs Sessions  Session Id  Releases  Release Id  Share Delete"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Unshare Release",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   },
+   "post": {
+    "description": "显式分享（默认不分享；token 只授予该 release 只读素材）。",
+    "operationId": "share_release_api_v1_briefs_sessions__session_id__releases__release_id__share_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "release_id",
+      "required": true,
+      "schema": {
+       "title": "Release Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__brief__ShareRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Share Release Api V1 Briefs Sessions  Session Id  Releases  Release Id  Share Post"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Share Release",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/shared/{share_code}": {
+   "get": {
+    "description": "公共元数据投影（不含 session/内部 ref）。",
+    "operationId": "shared_brief_info_api_v1_briefs_shared__share_code__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "share_code",
+      "required": true,
+      "schema": {
+       "title": "Share Code",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Shared Brief Info Api V1 Briefs Shared  Share Code  Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Shared Brief Info",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/briefs/shared/{share_code}/view": {
+   "get": {
+    "description": "匿名只读查看冻结 HTML（CSP sandbox；单文件自解压，无服务端状态）。",
+    "operationId": "shared_brief_view_api_v1_briefs_shared__share_code__view_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "share_code",
+      "required": true,
+      "schema": {
+       "title": "Share Code",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Shared Brief View Api V1 Briefs Shared  Share Code  View Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Shared Brief View",
+    "tags": [
+     "MapBrief",
+     "MapBrief"
+    ]
+   }
+  },
   "/api/v1/chat/completions": {
    "post": {
     "description": "非流式对话接口",
@@ -18919,6 +22608,318 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/datasets": {
+   "post": {
+    "operationId": "create_edit_dataset_api_v1_chat_sessions__session_id__feature_edits_datasets_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__schemas__feature_edit_schema__DatasetCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Edit Dataset Api V1 Chat Sessions  Session Id  Feature Edits Datasets Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Edit Dataset",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/datasets/promote-sketch": {
+   "post": {
+    "operationId": "promote_sketch_dataset_api_v1_chat_sessions__session_id__feature_edits_datasets_promote_sketch_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PromoteSketchRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Promote Sketch Dataset Api V1 Chat Sessions  Session Id  Feature Edits Datasets Promote Sketch Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Promote Sketch Dataset",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/editable-copy": {
+   "post": {
+    "operationId": "make_editable_copy_api_v1_chat_sessions__session_id__feature_edits_datasets__ref_id__editable_copy_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/EditableCopyRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Make Editable Copy Api V1 Chat Sessions  Session Id  Feature Edits Datasets  Ref Id  Editable Copy Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Make Editable Copy",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/qualification": {
+   "get": {
+    "operationId": "get_edit_qualification_api_v1_chat_sessions__session_id__feature_edits_datasets__ref_id__qualification_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Edit Qualification Api V1 Chat Sessions  Session Id  Feature Edits Datasets  Ref Id  Qualification Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Edit Qualification",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/feature-edits/plans/{plan_id}": {
    "get": {
     "operationId": "get_feature_edit_plan_api_v1_chat_sessions__session_id__feature_edits_plans__plan_id__get",
@@ -19390,6 +23391,108 @@
      }
     ],
     "summary": "Feature Edit History",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/lineage": {
+   "get": {
+    "description": "血缘有界投影（标注/多画幅/selection/分析的公开读取面；不读 journal 私有结构）。",
+    "operationId": "get_feature_lineage_api_v1_chat_sessions__session_id__feature_edits__ref_id__lineage_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "wfid",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Wfid"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Feature Lineage Api V1 Chat Sessions  Session Id  Feature Edits  Ref Id  Lineage Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Feature Lineage",
     "tags": [
      "AI对话",
      "AI对话"
@@ -20171,11 +24274,13 @@
           "remove_component": "#/components/schemas/RemoveComponentBody",
           "remove_layer": "#/components/schemas/RemoveLayerBody",
           "reorder_layers": "#/components/schemas/ReorderLayersBody",
+          "set_frame_product": "#/components/schemas/SetFrameProductBody",
           "set_layout": "#/components/schemas/SetLayoutBody",
           "set_scene": "#/components/schemas/SetSceneBody",
           "set_temporal_view": "#/components/schemas/SetTemporalViewBody",
           "set_time": "#/components/schemas/SetTimeBody",
-          "set_view": "#/components/schemas/SetViewBody"
+          "set_view": "#/components/schemas/SetViewBody",
+          "undo_agent_commit": "#/components/schemas/UndoAgentCommitBody"
          },
          "propertyName": "intent"
         },
@@ -20220,6 +24325,9 @@
           "$ref": "#/components/schemas/SetTemporalViewBody"
          },
          {
+          "$ref": "#/components/schemas/SetFrameProductBody"
+         },
+         {
           "$ref": "#/components/schemas/InitProjectBody"
          },
          {
@@ -20227,6 +24335,9 @@
          },
          {
           "$ref": "#/components/schemas/PatchWorkbenchDeltaBody"
+         },
+         {
+          "$ref": "#/components/schemas/UndoAgentCommitBody"
          }
         ],
         "title": "Req"
@@ -20520,7 +24631,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/ProposalListResponse"
+         "$ref": "#/components/schemas/app__schemas__review_schema__ProposalListResponse"
         }
        }
       },
@@ -26896,7 +31007,7 @@
   },
   "/api/v1/export/diagnostics/{filename}": {
    "get": {
-    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。",
+    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。\nB-5（review-fix-rereview-20261108）：匿名会话导出主体是\n``session:<sid>`` —— 此前硬性 Bearer + user_id 比对把匿名导出者永远\n挡在门外（下载可走签名 URL，诊断面被认证模型锁死）。现与\n_export_principal 同源：session 主体凭 X-Session-Token 读取。",
     "operationId": "get_export_diagnostics_api_v1_export_diagnostics__filename__get",
     "parameters": [
      {
@@ -26906,6 +31017,22 @@
       "schema": {
        "title": "Filename",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],
@@ -27469,6 +31596,685 @@
     "summary": "Download Package",
     "tags": [
      "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
+  "/api/v1/field-compute/catalog": {
+   "get": {
+    "description": "函数集与限制（只读契约；不需要会话）。",
+    "operationId": "catalog_api_v1_field_compute_catalog_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Catalog Api V1 Field Compute Catalog Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Catalog",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/describe": {
+   "post": {
+    "operationId": "describe_api_v1_field_compute_describe_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/FieldComputeDescribeRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Describe Api V1 Field Compute Describe Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Describe",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/plan": {
+   "post": {
+    "operationId": "create_plan_api_v1_field_compute_plan_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/FieldComputePlanRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FieldComputePlanResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Plan",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/plan/{plan_id}": {
+   "delete": {
+    "operationId": "discard_plan_api_v1_field_compute_plan__plan_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FieldComputeDiscardResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Discard Plan",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/plan/{plan_id}/cancel": {
+   "post": {
+    "description": "请求服务端协作取消（执行循环每批检查；已发布成果不受影响）。\n\n只对**正在执行**的计划登记取消：计划不存在 → typed 404；计划已结束或\n尚未开始 → ``cancelled=false``（不留下会污染后续重提的陈旧取消键）。",
+    "operationId": "cancel_plan_api_v1_field_compute_plan__plan_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FieldComputeCancelResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Plan",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/plan/{plan_id}/execute": {
+   "post": {
+    "operationId": "execute_plan_api_v1_field_compute_plan__plan_id__execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/FieldComputeExecuteRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Execute Plan Api V1 Field Compute Plan  Plan Id  Execute Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute Plan",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/plan/{plan_id}/preview": {
+   "post": {
+    "operationId": "preview_plan_api_v1_field_compute_plan__plan_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "generation",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Generation",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Preview Plan Api V1 Field Compute Plan  Plan Id  Preview Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview Plan",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/plans": {
+   "get": {
+    "operationId": "plans_api_v1_field_compute_plans_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FieldComputePlanListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plans",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/project-results": {
+   "get": {
+    "operationId": "project_results_api_v1_field_compute_project_results_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Project Results Api V1 Field Compute Project Results Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Project Results",
+    "tags": [
+     "字段计算"
+    ]
+   }
+  },
+  "/api/v1/field-compute/result": {
+   "get": {
+    "operationId": "result_api_v1_field_compute_result_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "output_ref",
+      "required": true,
+      "schema": {
+       "title": "Output Ref",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Result Api V1 Field Compute Result Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Result",
+    "tags": [
+     "字段计算"
     ]
    }
   },
@@ -30089,7 +34895,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/DatasetCreateRequest"
+        "$ref": "#/components/schemas/app__schemas__lakehouse_schema__DatasetCreateRequest"
        }
       }
      },
@@ -34678,6 +39484,894 @@
     ]
    }
   },
+  "/api/v1/projects/{project_id}/data-refresh/check": {
+   "post": {
+    "description": "手动「检查更新」（默认手动；本轮无后台定时器/自动抓取）。",
+    "operationId": "check_updates_api_v1_projects__project_id__data_refresh_check_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CheckUpdatesRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CheckReceipt"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Check Updates",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/preview": {
+   "post": {
+    "description": "只读影响预览：不写 MapSpec / 数据集 / 版本 / 基线，只落 proposal 账本。",
+    "operationId": "preview_refresh_api_v1_projects__project_id__data_refresh_preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PreviewRefreshRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RefreshProposal"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview Refresh",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals": {
+   "get": {
+    "description": "有界提案清单（刷新页面后恢复候选/进度的入口）。",
+    "operationId": "list_proposals_api_v1_projects__project_id__data_refresh_proposals_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/app__schemas__project_data_refresh_schema__ProposalListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Proposals",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}": {
+   "get": {
+    "operationId": "get_proposal_api_v1_projects__project_id__data_refresh_proposals__proposal_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RefreshProposal"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Proposal",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/adopt": {
+   "post": {
+    "description": "原子 CAS 采纳；客户端声明的 revision/指纹只作提示，服务端双核对。",
+    "operationId": "adopt_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__adopt_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AdoptRefreshRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AdoptionReceipt"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Adopt Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/compare": {
+   "get": {
+    "operationId": "compare_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__compare_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Compare Candidate Api V1 Projects  Project Id  Data Refresh Proposals  Proposal Id  Compare Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Compare Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/discard": {
+   "post": {
+    "operationId": "discard_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__discard_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AdoptionReceipt"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Discard Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/execute": {
+   "post": {
+    "description": "执行获授权的隔离候选（或取消）；失败/取消不污染当前成果。",
+    "operationId": "execute_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExecuteRefreshRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ExecuteRefreshResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/explain": {
+   "get": {
+    "description": "Pi / UI 解释「为什么更新、哪些结果过期、哪些不可判定」。",
+    "operationId": "explain_stale_api_v1_projects__project_id__data_refresh_proposals__proposal_id__explain_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Explain Stale Api V1 Projects  Project Id  Data Refresh Proposals  Proposal Id  Explain Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Explain Stale",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/rollback": {
+   "post": {
+    "description": "回退：新 revision（forward revert）或既有 runtime snapshot resume。",
+    "operationId": "rollback_candidate_api_v1_projects__project_id__data_refresh_proposals__proposal_id__rollback_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AdoptionReceipt"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Rollback Candidate",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/status": {
+   "get": {
+    "operationId": "proposal_status_api_v1_projects__project_id__data_refresh_proposals__proposal_id__status_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Proposal Status",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-refresh/sources": {
+   "get": {
+    "description": "来源版本清单（逻辑身份 / 内容版本 / 证据级别 / 五态）。",
+    "operationId": "list_sources_api_v1_projects__project_id__data_refresh_sources_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Sources Api V1 Projects  Project Id  Data Refresh Sources Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Sources",
+    "tags": [
+     "Project Data Refresh (G10)",
+     "Project Data Refresh (G10)"
+    ]
+   }
+  },
   "/api/v1/projects/{project_id}/data-usage": {
    "get": {
     "description": "Per-project durable data usage + limits + upcoming retention candidates.",
@@ -37694,6 +43388,601 @@
     ]
    }
   },
+  "/api/v1/raster-authoring/descriptor/{ref_id}": {
+   "get": {
+    "operationId": "descriptor_api_v1_raster_authoring_descriptor__ref_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "逗号分隔的 1-based 波段",
+      "in": "query",
+      "name": "histogram_bands",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "逗号分隔的 1-based 波段",
+       "title": "Histogram Bands"
+      }
+     },
+     {
+      "in": "query",
+      "name": "buckets",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maximum": 64,
+         "minimum": 2,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Buckets"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Descriptor",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/export": {
+   "post": {
+    "description": "冻结一次 MapSpec 修订 → 真实 PNG / 离线可读 SVG → 受权下载引用。",
+    "operationId": "export_map_api_v1_raster_authoring_export_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExportBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Export Map",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/expression/commit": {
+   "post": {
+    "operationId": "commit_api_v1_raster_authoring_expression_commit_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CommitBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Commit",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/expression/preview": {
+   "post": {
+    "operationId": "preview_api_v1_raster_authoring_expression_preview_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExpressionBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/probe": {
+   "post": {
+    "operationId": "probe_api_v1_raster_authoring_probe_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ProbeBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Probe",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/refs": {
+   "get": {
+    "operationId": "list_raster_refs_api_v1_raster_authoring_refs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Raster Refs",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-authoring/tiles/{ref_id}/{z}/{x}/{y}.png": {
+   "get": {
+    "description": "用 layer 的已提交表达渲染 XYZ PNG。\n\n- 凭证由前端 ``buildTileTransformRequest`` 注入 header（URL 不含 owner token）；\n- ``style_id`` 与当前 MapSpec 比对，过期 URL 直接 409，不出旧像素；\n- 缓存身份含 (style_id, layer_id, data_revision)；复用 singleflight / epoch / ETag。",
+    "operationId": "styled_tile_api_v1_raster_authoring_tiles__ref_id___z___x___y__png_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "z",
+      "required": true,
+      "schema": {
+       "title": "Z",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "x",
+      "required": true,
+      "schema": {
+       "title": "X",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "path",
+      "name": "y",
+      "required": true,
+      "schema": {
+       "title": "Y",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "style_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 8,
+       "title": "Style Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     },
+     {
+      "in": "header",
+      "name": "If-None-Match",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "If-None-Match"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Styled Tile",
+    "tags": [
+     "栅格表达工作台",
+     "栅格表达工作台"
+    ]
+   }
+  },
   "/api/v1/ready": {
    "get": {
     "description": "就绪检查：本进程硬依赖数据库与 Redis；LLM/Celery 属于降级信号。\n\n任一依赖不可达时返回 HTTP 503，让 k8s readinessProbe 暂停把流量打过来；\n全部就绪时返回 HTTP 200。\n\nSEC-11：响应体只返回极简状态（不附带 DB/Redis/Celery 的具体连通细节），\n因为 /ready 是无鉴权端点——之前的 body 会把内部依赖拓扑（哪个挂了、\n哪个连着）泄露给任意调用方，便于攻击者做侦察。详细连通信息只在服务端\n日志里保留，运维仍可定位故障点。",
@@ -38166,7 +44455,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/ShareRequest",
+        "$ref": "#/components/schemas/app__schemas__report_schema__ShareRequest",
         "default": {
          "ttl_days": 7
         }
@@ -43440,7 +49729,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/DatasetCreateRequest"
+        "$ref": "#/components/schemas/app__schemas__lakehouse_schema__DatasetCreateRequest"
        }
       }
      },

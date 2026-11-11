@@ -451,6 +451,266 @@
    }
   }
  ],
+ "frame_product_bind_patch_remove": [
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 1
+     },
+     "final_fingerprint": "carto-sha256:78f161f0d1d4b4afbe9429e16ef9840c9d66808669cc347074cad23a9593e873",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:78f161f0d1d4b4afbe9429e16ef9840c9d66808669cc347074cad23a9593e873",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "representation_report": null,
+     "review": {
+      "checks": [
+       {
+        "check": "VIEWPORT_COVERS_RESULTS",
+        "evaluated": false,
+        "evidence": {
+         "visible_layers_checked": 0
+        },
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "view center/zoom absent — viewport coverage not computable",
+        "repairability": "not_repairable",
+        "rule": "VIEWPORT_COVERS_RESULTS",
+        "severity": "info",
+        "source_id": null,
+        "status": "not_evaluated",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:78f161f0d1d4b4afbe9429e16ef9840c9d66808669cc347074cad23a9593e873",
+    "mutation_revision": 2,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 1
+     },
+     "final_fingerprint": "carto-sha256:78f161f0d1d4b4afbe9429e16ef9840c9d66808669cc347074cad23a9593e873",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:78f161f0d1d4b4afbe9429e16ef9840c9d66808669cc347074cad23a9593e873",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "representation_report": null,
+     "review": {
+      "checks": [
+       {
+        "check": "VIEWPORT_COVERS_RESULTS",
+        "evaluated": false,
+        "evidence": {
+         "visible_layers_checked": 0
+        },
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "view center/zoom absent — viewport coverage not computable",
+        "repairability": "not_repairable",
+        "rule": "VIEWPORT_COVERS_RESULTS",
+        "severity": "info",
+        "source_id": null,
+        "status": "not_evaluated",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:78f161f0d1d4b4afbe9429e16ef9840c9d66808669cc347074cad23a9593e873",
+    "mutation_revision": 3,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 3,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "cartographic_review": {
+     "attempts": [],
+     "counters": {
+      "full_data_loads": 0,
+      "metadata_sources": 0,
+      "repair_attempts": 0,
+      "review_invocations": 1,
+      "rule_invocations": 1
+     },
+     "final_fingerprint": "carto-sha256:78f161f0d1d4b4afbe9429e16ef9840c9d66808669cc347074cad23a9593e873",
+     "grammar_audit": null,
+     "initial_fingerprint": "carto-sha256:78f161f0d1d4b4afbe9429e16ef9840c9d66808669cc347074cad23a9593e873",
+     "locked_suppressed": [],
+     "repair_count": 0,
+     "representation_report": null,
+     "review": {
+      "checks": [
+       {
+        "check": "VIEWPORT_COVERS_RESULTS",
+        "evaluated": false,
+        "evidence": {
+         "visible_layers_checked": 0
+        },
+        "evidence_class": "desired_state",
+        "layer_id": null,
+        "message": "view center/zoom absent — viewport coverage not computable",
+        "repairability": "not_repairable",
+        "rule": "VIEWPORT_COVERS_RESULTS",
+        "severity": "info",
+        "source_id": null,
+        "status": "not_evaluated",
+        "suggested_fix": null
+       }
+      ],
+      "complete": false,
+      "error_count": 0,
+      "evaluated_count": 0,
+      "findings": [],
+      "no_deterministic_failures": true,
+      "ok": false,
+      "passed": false,
+      "profiles": [],
+      "status": "not_evaluated",
+      "warning_count": 0
+     },
+     "stage": "desired_state",
+     "status": "not_evaluated",
+     "suppressed_repairs": [],
+     "termination_reason": "missing_evidence"
+    },
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": true,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": "carto-sha256:78f161f0d1d4b4afbe9429e16ef9840c9d66808669cc347074cad23a9593e873",
+    "mutation_revision": 4,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "No sources defined in MapSpec"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 4,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "frame_product_dangling_refused": [
+  {
+   "result": {
+    "correction_hint": "画幅身份登记在 layout.frames[].id —— 先创建对应 MapSpecFrame，再绑定产品画幅（frame_product_bind 会一并处理）。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "frame_product.frames 引用了不存在的画幅身份：ghost-1, ghost-2",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "frame_product_remove_noop": [
+  {
+   "result": {
+    "cartographic_review": null,
+    "cartography_findings": [],
+    "checkpoint_id": null,
+    "has_mapspec": false,
+    "is_compiled": false,
+    "layer_ids": [],
+    "mapspec_fingerprint": null,
+    "mutation_revision": 0,
+    "origin": "agent",
+    "runtime_observation_seq": 0,
+    "success": true,
+    "warnings": [
+     "frame_product 未绑定，remove 为 no-op"
+    ]
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
  "init_project_bare": [
   {
    "result": {
@@ -593,6 +853,38 @@
    "state": {
     "dedup_ids": [],
     "revision": 1,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
+ "layout_frames_write_and_product_guard": [
+  {
+   "result": {
+    "correction_hint": "先经 frame_product 更新移除该画幅，再替换帧登记。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "layout.frames 替换将删除产品引用的画幅：fp-b",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
+    "runtime_layer_ids": []
+   }
+  },
+  {
+   "result": {
+    "correction_hint": "帧 id 必须唯一（画幅身份）。",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "layout.frames id 重复：dup",
+    "origin": "agent",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 2,
     "runtime_layer_ids": []
    }
   }

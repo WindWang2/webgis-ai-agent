@@ -60,7 +60,8 @@
     "editLabels": "编辑标注",
     "editLabelsTitle": "标注编辑模式：点击标签拖动/隐藏/固定/改文字",
     "editLabelsDisabled": "暂无带标注的图层",
-    "labelToolAria": "标注工具：{label}"
+    "labelToolAria": "标注工具：{label}",
+    "splitFeatureTitle": "分割要素（选编辑目标后可用）"
   },
   "poi": {
     "focus": "聚焦位置",
@@ -166,7 +167,11 @@
     "drawPolygon": "绘制多边形",
     "drawLine": "绘制线",
     "drawPoint": "绘制点",
-    "deleteFeature": "删除草图要素"
+    "deleteFeature": "删除草图要素",
+    "saveDataset": "保存为数据集",
+    "promoting": "保存中…",
+    "promoteFailed": "保存失败，请重试",
+    "promotedName": "草图数据集 {date}"
   },
   "decision": {
     "weightSource": "权重来源：",
@@ -493,6 +498,35 @@
     "decisionMethod": "决策（{method}）"
   },
   "refSourceBudget": "地图已达到 {limit} 个活跃数据引用的加载上限，另有 {omitted} 个引用暂未加载。请移除部分图层后重试。",
+  "edit": {
+    "editing": "正在编辑",
+    "stop": "结束编辑",
+    "defaultLabel": "要素编辑",
+    "createPoint": "新增点",
+    "createLine": "新增线",
+    "createPolygon": "新增面",
+    "deleteFeature": "删除要素",
+    "editVertices": "顶点编辑",
+    "splitFeature": "分割要素",
+    "mergeFeatures": "合并要素",
+    "mergeSelected": "合并选中（{count}）",
+    "submitting": "正在提交",
+    "failed": "未提交",
+    "saved": "已保存",
+    "staleConflict": "数据已被其他操作更新，请重试",
+    "expired": "操作已过期，请重试",
+    "networkError": "网络错误，请重试",
+    "noStableId": "该要素没有稳定身份，无法编辑",
+    "attrsPlaceholder": "新要素属性（JSON，可选）",
+    "attrsInvalidJson": "属性不是合法 JSON",
+    "attrsNotObject": "属性必须是对象",
+    "splitPickTarget": "点击要分割的要素",
+    "splitDrawLine": "画分割线，Enter 完成",
+    "pickTarget": "选择要编辑的图层",
+    "createEmptyTitle": "新建空图层",
+    "createFailed": "创建失败",
+    "newLayerName": "新图层"
+  },
   "labelEditor": {
     "title": "标注编辑",
     "hint": "点击地图上的标签进行编辑；拖动移动，方向键微调，Enter 确认，Esc 取消。",

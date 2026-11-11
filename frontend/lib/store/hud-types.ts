@@ -293,6 +293,9 @@ export interface HudState extends WorkbenchSlice {
   sketchDirty: import('./slices/toolSlice').ToolSlice['sketchDirty'];
   setSketchDirty: import('./slices/toolSlice').ToolSlice['setSketchDirty'];
   clearToolState: import('./slices/toolSlice').ToolSlice['clearToolState'];
+  /* ─── G14：真实图层编辑目标 ─── */
+  editTarget: import('./slices/toolSlice').ToolSlice['editTarget'];
+  setEditTarget: import('./slices/toolSlice').ToolSlice['setEditTarget'];
 
   /* ─── Copilot（ADR-0194：画布意图工具 / 高亮 / 生成式微 UI / 上报遥测）─── */
   copilotTool: import('./slices/copilotSlice').CopilotSlice['copilotTool'];
@@ -334,6 +337,10 @@ export interface HudState extends WorkbenchSlice {
   setFontSize: (size: number) => void;
   sidebarWidth: number;
   setSidebarWidth: (width: number) => void;
+  /** 面板「展开为宽视图」：数据密集页签（运维/驾驶舱/数据湖/结果表格）
+   *  临时加宽到视口约一半，不改写用户拖拽的 sidebarWidth。 */
+  panelExpanded: boolean;
+  setPanelExpanded: (expanded: boolean) => void;
 
   /* ─── v2 Feature Data ─── */
   opsLog: OpLogEntry[];
@@ -418,6 +425,9 @@ export interface ToolCallEntry {
   /** V7：后端 step_id（tool_call/step_result 载荷在场时捕获）。终态匹配
    *  优先按 stepId（同 turn 两次同名工具不再错配），缺席回落工具名。 */
   stepId?: string;
+  /** ADR-0288：嵌套调用（如 codemode 脚本内的 GIS 调用）的父 step_id。
+   * 在场时该行渲染为父工具行下的子行；顶层调用缺席（零漂移）。 */
+  parentStepId?: string;
 }
 
 export type PlanProposalStatus = 'pending' | 'approved' | 'rejected' | 'revising';

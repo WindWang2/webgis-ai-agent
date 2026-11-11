@@ -29,6 +29,11 @@ export interface MapSpecToSvgOptions {
    * 经此上报（与后端孪生 diagnostics 数组同码表）。
    */
   onDiagnostic?: (code: string, detail: string) => void;
+  /**
+   * G20：数值栅格层的离线位图嵌入（data URI）。会话绑定的 XYZ tile URL
+   * 不能进离线 SVG；缺席时编译器明确发诊断而不是静默输出坏链接。
+   */
+  numericRasterSnapshot?: (layerId: string, styleId: string) => string | null;
 }
 
 import { computeOversampleBoost, resolveOversampledTileGrid, mercY } from "../map-kit/oversample";
@@ -828,6 +833,26 @@ function compileMapSpecToSvgBody(
       const opacity = escapeSvgAttr(fmtNum(Number(rawOpacity ?? 1)));
       const tiles = src.tiles || (src.url ? [src.url] : []);
       const tileUrl = tiles[0] || "";
+      // G20：会话绑定的数值栅格瓦片 URL 离线不可解析 —— 用嵌入位图或
+      // 明确诊断；绝不静默输出一个打开后空白的 <image>。
+      const numericStyleId = (layer as { raster_style?: { style_id?: string } }).raster_style?.style_id
+        ?? (/style_id=([^&]+)/.exec(tileUrl)?.[1] ?? "");
+      if (numericStyleId || tileUrl.includes("__SESSION_ID__")) {
+        const snapshot = options.numericRasterSnapshot?.(
+          String(layer.id ?? ""), numericStyleId,
+        );
+        if (snapshot && snapshot.startsWith("data:image/")) {
+          elementsSvg += `<image x="${fmtNum(minX)}" y="${fmtNum(minY)}" width="${fmtNum(maxX - minX)}" height="${fmtNum(maxY - minY)}" href="${escapeSvgAttr(snapshot)}" opacity="${opacity}" preserveAspectRatio="none" />\n`;
+        } else {
+          // 复用既有权威词表码（layer_ref_unavailable = 未水合的层不得静默
+          // 消失），detail 明确 G20 数值栅格需要离线快照。
+          options.onDiagnostic?.(
+            "layer_ref_unavailable",
+            `numeric_raster_offline_snapshot_required:${String(layer.id ?? "")}`,
+          );
+        }
+        return;
+      }
       if (tileUrl) {
         const zoomBoost = computeOversampleBoost(targetDpi);
         const tileItems = resolveOversampledTileGrid({

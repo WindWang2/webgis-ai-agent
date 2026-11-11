@@ -283,3 +283,61 @@ def test_map_unknown_event_type_returns_none():
     event = {"type": "some_future_event_type", "data": "whatever"}
     sse = map_event_to_sse(event, session_id="s1")
     assert sse is None
+
+
+# ---------------------------------------------------------------------------
+# ADR-0288（W06）：嵌套调用投影 —— parentToolCallId → parent_tool_call_id。
+# ---------------------------------------------------------------------------
+
+def test_nested_tool_execution_events_project_parent_linkage():
+    """带 parentToolCallId 的 start/end 事件投影加性 ``parent_tool_call_id``
+    字段；顶层事件无该字段（旧消费者零漂移）。子事件 id 形如 <parent>/<n>。"""
+    parent_id = "call_codemode_1"
+    start = map_event_to_sse({
+        "type": "tool_execution_start",
+        "toolCallId": f"{parent_id}/1",
+        "toolName": "webgis_map_intent",
+        "parentToolCallId": parent_id,
+    }, session_id="s1")
+    assert start is not None
+    assert "event: step_start" in start
+    assert "parent_tool_call_id" in start and parent_id in start
+
+    end = map_event_to_sse({
+        "type": "tool_execution_end",
+        "toolCallId": f"{parent_id}/1",
+        "toolName": "webgis_map_intent",
+        "parentToolCallId": parent_id,
+        "result": {"content": [{"type": "text", "text": "ok"}]},
+        "isError": False,
+    }, session_id="s1", cache_lookup=lambda t: None)
+    assert end is not None
+    assert "event: step_result" in end
+    assert "parent_tool_call_id" in end and parent_id in end
+
+    # 顶层事件：字段缺席（不是空串 —— 旧契约逐字节兼容）
+    top_start = map_event_to_sse({
+        "type": "tool_execution_start",
+        "toolCallId": "call_top_1",
+        "toolName": "webgis_map_intent",
+    }, session_id="s1")
+    assert top_start is not None
+    assert "parent_tool_call_id" not in top_start
+
+
+def test_nested_error_child_projects_step_error_with_parent():
+    """部分失败（A4/W06）：子调用失败 → step_error 携带父归属 —— 已成功
+    兄弟结果不受影响（各自独立 step 事件），失败清晰可追踪。"""
+    parent_id = "call_codemode_2"
+    err = map_event_to_sse({
+        "type": "tool_execution_end",
+        "toolCallId": f"{parent_id}/2",
+        "toolName": "query_local_poi",
+        "parentToolCallId": parent_id,
+        "result": {"content": [{"type": "text", "text": "district required"}]},
+        "isError": True,
+    }, session_id="s1", cache_lookup=lambda t: None)
+    assert err is not None
+    assert "event: step_error" in err
+    assert "parent_tool_call_id" in err and parent_id in err
+    assert "district required" in err

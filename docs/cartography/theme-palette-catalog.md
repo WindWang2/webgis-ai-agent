@@ -25,6 +25,7 @@
 | Set2 | qualitative | ✓ | — | 0.035 |
 | Viridis | perceptual_uniform | ✓ | ✓ | 0.0694 |
 | YlOrRd | sequential | ✓ | ✓ | 0.108 |
+| blues | native_heatmap | — | — | 0.0 |
 | classic | native_heatmap | — | — | 0.0 |
 | magma | native_heatmap | ✓ | — | 0.0 |
 | thermal | native_heatmap | — | — | 0.0 |

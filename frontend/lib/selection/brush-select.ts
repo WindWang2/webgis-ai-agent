@@ -20,7 +20,8 @@ export interface BrushHit {
 }
 
 /** 与 lib/store/layer-data.ts 的 FEATURE_ID_KEYS 保持同一解析序。 */
-export const BRUSH_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id', 'featureId', 'feature_id'];
+// G14：_wfid 最优先（与 feature-id.ts / layer-data.ts 同序 —— 三侧同要素同 id）
+export const BRUSH_ID_KEYS = ['_wfid', 'id', 'OBJECTID', 'fid', 'osm_id', '@id', 'featureId', 'feature_id'];
 
 /**
  * 从命中要素解析稳定 id 字段：优先 properties 中的候选键（与表格行 id

@@ -1468,6 +1468,11 @@ class ToolRegistry:
                 # would inline full FeatureCollections into tool arguments.
                 if name == "webgis_map_product":
                     skip_keys.update({"primary_ref", "overlay_refs"})
+                # G15 frame_product_update 的 patch 是 MapSpec 产品契约载荷
+                # （嵌套 data.ref/where/time_window 是声明，不是数据请求）——
+                # 与 webgis_map_product 同门：工具自身经 session_data 解析。
+                if name == "frame_product_update":
+                    skip_keys.update({"ref", "where", "time_window"})
                 # 显示收尾钩子的 show_refs 是引用列表（ref/别名/名称混合）——
                 # 工具自身经 resolve_layer_ref 逐个解析；transparent resolution
                 # 会把列表里的 ref: 元素解成整个 FeatureCollection 载荷。

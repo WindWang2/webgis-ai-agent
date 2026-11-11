@@ -41,6 +41,12 @@ from app.services.feature_edit.journal import (
 from app.services.feature_edit.plan import derive_changes, extract_fc
 from app.services.session_data import session_data_manager
 
+
+def _declared_geometry_type(payload: Any) -> Optional[str]:
+    from app.services.feature_edit.datasets import extract_geometry_type_declaration
+
+    return extract_geometry_type_declaration(payload)
+
 logger = logging.getLogger(__name__)
 
 # 进程内 per-session 编辑锁：同波并发工具（turn 锁透传时）的 RMW 串行化。
@@ -130,11 +136,14 @@ async def _save_journal(session_id: str, journals: Dict[str, EditJournal], ref_i
 
 
 def _receipt(entry: JournalEntry, stamp_status: str = "pending", mapspec_revision: Optional[int] = None) -> EditReceipt:
-    return {
+    deltas = entry.get("deltas") or []
+    created_wfids = [d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "created"]
+    retired_wfids = [d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "removed"]
+    receipt: EditReceipt = {
         "entry_seq": entry.get("seq"),
         "kind": entry.get("kind"),
         "ref_id": entry.get("ref_id"),
-        "changed_wfids": list(dict.fromkeys(d.get("wfid") for d in entry.get("deltas") or []))[:64],
+        "changed_wfids": list(dict.fromkeys(d.get("wfid") for d in deltas))[:64],
         "schema_ops": entry.get("schema_ops") or [],
         "content_revision_after": entry.get("content_revision_after"),
         "fingerprint_after": entry.get("fingerprint_after"),
@@ -145,6 +154,12 @@ def _receipt(entry: JournalEntry, stamp_status: str = "pending", mapspec_revisio
         "stamp_status": stamp_status,
         "mapspec_revision": mapspec_revision,
     }
+    if created_wfids or retired_wfids:
+        receipt["created_wfids"] = [w for w in created_wfids if w][:64]
+        receipt["retired_wfids"] = [w for w in retired_wfids if w][:64]
+    if entry.get("lineage"):
+        receipt["lineage_events"] = entry["lineage"][:8]
+    return receipt
 
 
 def _head_summary(journal: EditJournal) -> JournalHeadSummary:
@@ -225,6 +240,23 @@ async def commit_plan(
                 },
             )
 
+        # R3 P2-2 + R4：提交期只读复核（fail-closed）。envelope 标记变更会先被
+        # 指纹 CAS 拒（此处是纵深防御）；metadata-only 标记不改载荷指纹 ——
+        # 在此显式复核，闭合「预览后才被治理标记只读」的 pending 窗口。
+        if isinstance(payload, dict) and payload.get("read_only") is True:
+            raise FeatureEditBlocked("dataset_read_only_source", "source became read-only after preview")
+        try:
+            from app.services.artifact_registry import get_artifact
+
+            rec = await get_artifact(session_id, ref_id)
+            md = getattr(rec, "metadata", None)
+            if isinstance(md, dict) and md.get("read_only") is True:
+                raise FeatureEditBlocked("dataset_read_only_source", "source became read-only after preview")
+        except FeatureEditBlocked:
+            raise
+        except Exception:  # noqa: BLE001 — ledger 不可达不改变提交资格
+            pass
+
         # 重新求值（与 preview 同一纯函数路径；载荷在锁内冷读，指纹已验）。
         fc = extract_fc(payload)
         if fc is None:
@@ -237,8 +269,11 @@ async def commit_plan(
         for target_ref in _prefetch_target_refs(plan.get("ops") or []):
             target_payload, _ = await _load_ref(session_id, target_ref)
             target_payloads[target_ref] = target_payload
-        deltas, schema_ops, derive_findings, _ = derive_changes(
-            fc, plan.get("ops") or [], plan.get("target_wfids") or [], target_payloads
+        derive_targets = plan.get("target_wfids_ordered") or plan.get("target_wfids") or []
+        deltas, schema_ops, derive_findings, _, lineage_events = derive_changes(
+            fc, plan.get("ops") or [], derive_targets, target_payloads,
+            plan_seed=plan_id,
+            geometry_type=_declared_geometry_type(payload),
         )
         if derive_findings:
             # 数据在预览后仍变了内容形态（同指纹不应发生——防御面）。
@@ -254,6 +289,24 @@ async def commit_plan(
             new_payload: Any = {**payload, "geojson": new_fc}
         else:
             new_payload = new_fc
+
+        # G14/WP06：提交期拓扑复核（预览已查；指纹 CAS 后仍复核 = 防御面，
+        # 规则声明随载荷走 —— envelope 变化即数据变化，由上方 CAS 拒绝）。
+        from app.services.feature_edit.topology import check_topology, extract_topology_declaration
+
+        topology_declaration = extract_topology_declaration(payload)
+        if topology_declaration.get("rules") and deltas:
+            affected = list(
+                set(plan.get("target_wfids") or [])
+                | {d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "created"}
+            )
+            topo_findings = check_topology(new_fc, [w for w in affected if w], topology_declaration)
+            if topo_findings:
+                raise FeatureEditBlocked(
+                    "topology_violation",
+                    "edit violates the dataset's declared topology rules",
+                    {"findings": topo_findings[:8]},
+                )
 
         fp_after = compute_payload_fingerprint(new_payload)
         # 链指纹定义在「物化后空间」：物化是一次性数据集身份升级（首次编辑
@@ -323,6 +376,8 @@ async def commit_plan(
             "content_revision_after": current_revision,  # overwrite 后更新
             "created_at": time.time(),
         }
+        if lineage_events:
+            entry["lineage"] = lineage_events[:8]
         journals[ref_id] = append_entry(journal, entry)
         ok = await session_data_manager.overwrite(session_id, ref_id, new_payload)
         if not ok:

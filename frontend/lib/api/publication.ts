@@ -12,7 +12,7 @@ import { apiFetch } from '@/lib/api/transport';
 
 /** atlas 分页策略请求面（与后端 AtlasRequestPolicy 同形，camelCase）。 */
 export interface AtlasRequestPolicy {
-  driver: 'frames' | 'category' | 'feature';
+  driver: 'frames' | 'category' | 'feature' | 'product';
   layerId?: string;
   categoryProperty?: string;
   featuresPerPage?: number;

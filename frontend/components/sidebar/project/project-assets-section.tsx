@@ -10,16 +10,17 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Database, Package, Camera, ShieldCheck, Trash2 } from 'lucide-react';
+import { Database, Package, Camera, ShieldCheck, Trash2, RefreshCw } from 'lucide-react';
 
 import { DatasetManager } from './dataset-manager';
 import { ArtifactCenter } from './artifact-center';
 import { SnapshotTimeline } from './snapshot-timeline';
 import { QualityPanel } from './quality-panel';
 import { DataGcPanel } from './gc-panel';
+import { DataRefreshPanel } from './data-refresh-panel';
 import { useT } from '@/lib/i18n/useT';
 
-export type AssetTab = 'datasets' | 'artifacts' | 'snapshots' | 'quality' | 'gc';
+export type AssetTab = 'datasets' | 'artifacts' | 'snapshots' | 'quality' | 'gc' | 'refresh';
 
 export const ASSET_TABS: Array<{ value: AssetTab; labelKey: string; icon: typeof Database }> = [
   { value: 'datasets', labelKey: 'khcy90', icon: Database },
@@ -27,6 +28,8 @@ export const ASSET_TABS: Array<{ value: AssetTab; labelKey: string; icon: typeof
   { value: 'snapshots', labelKey: 'khzn6', icon: Camera },
   { value: 'quality', labelKey: 'kqcxj', icon: ShieldCheck },
   { value: 'gc', labelKey: 'kga8k', icon: Trash2 },
+  // G10：数据版本变化 → 影响预览 → 增量更新 → 采纳/回退
+  { value: 'refresh', labelKey: 'g10Tab', icon: RefreshCw },
 ];
 
 export interface ProjectAssetsSectionProps {
@@ -121,6 +124,13 @@ export function ProjectAssetsSection({
               setLocalFocus(id);
               onTabChange('artifacts');
             }}
+          />
+        )}
+        {tab === 'refresh' && (
+          <DataRefreshPanel
+            projectId={projectId}
+            sessionId={sessionId}
+            authed={authed}
           />
         )}
       </div>

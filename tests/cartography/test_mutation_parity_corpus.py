@@ -705,6 +705,112 @@ CASES = [
         ],
     },
     {
+        "name": "frame_product_bind_patch_remove",
+        "seed": [
+            {
+                # G15：layout.frames 意图写面（此前唯一写者 = simulation 整文档）。
+                "class": "SetLayoutIntent",
+                "fields": {
+                    "frames": [
+                        {"id": "fp-2022", "title": "2022",
+                         "extent": [103.9, 30.5, 104.3, 30.9]},
+                        {"id": "fp-2024", "title": "2024",
+                         "extent": [103.9, 30.5, 104.3, 30.9]},
+                    ]
+                },
+            }
+        ],
+        "actions": [
+            {
+                "class": "SetFrameProductIntent",
+                "fields": {
+                    "config": {
+                        "schema_version": "frame_product.v1",
+                        "enabled": True,
+                        "product_kind": "time_series",
+                        "grid": {"columns": 2, "title": "两年对比"},
+                        "frames": [
+                            {"frame_id": "fp-2022",
+                             "data": {"ref": "ref:ind", "layer_id": "districts",
+                                      "field": "indicator", "content_revision": 1}},
+                            {"frame_id": "fp-2024",
+                             "data": {"ref": "ref:ind", "layer_id": "districts",
+                                      "field": "indicator", "content_revision": 1}},
+                        ],
+                    }
+                },
+            },
+            {"class": "SetFrameProductIntent",
+             "fields": {"patch": {"active_frame": "fp-2024"}}},
+            {"class": "SetFrameProductIntent", "fields": {"remove": True}},
+        ],
+    },
+    {
+        "name": "frame_product_dangling_refused",
+        "actions": [
+            {
+                "class": "SetFrameProductIntent",
+                "fields": {
+                    "config": {
+                        "enabled": True,
+                        "product_kind": "category_compare",
+                        "grid": {"columns": 2},
+                        "frames": [
+                            {"frame_id": "ghost-1"},
+                            {"frame_id": "ghost-2"},
+                        ],
+                    }
+                },
+            }
+        ],
+    },
+    {
+        "name": "frame_product_remove_noop",
+        "actions": [
+            {"class": "SetFrameProductIntent", "fields": {"remove": True}},
+        ],
+    },
+    {
+        "name": "layout_frames_write_and_product_guard",
+        "seed": [
+            {
+                "class": "SetLayoutIntent",
+                "fields": {
+                    "frames": [
+                        {"id": "fp-a", "title": "A"},
+                        {"id": "fp-b", "title": "B"},
+                    ]
+                },
+            },
+            {
+                "class": "SetFrameProductIntent",
+                "fields": {
+                    "config": {
+                        "enabled": True,
+                        "product_kind": "variable_compare",
+                        "grid": {"columns": 2},
+                        "frames": [
+                            {"frame_id": "fp-a"},
+                            {"frame_id": "fp-b"},
+                        ],
+                    }
+                },
+            },
+        ],
+        "actions": [
+            {
+                # 整表替换删掉 fp-b → 产品引用悬空 → 整笔拒绝。
+                "class": "SetLayoutIntent",
+                "fields": {"frames": [{"id": "fp-a"}]},
+            },
+            {
+                # 非法帧（重复 id）→ typed 拒绝。
+                "class": "SetLayoutIntent",
+                "fields": {"frames": [{"id": "dup"}, {"id": "dup"}]},
+            },
+        ],
+    },
+    {
         "name": "set_scenario_mode_invalid",
         "actions": [
             {"class": "SetScenarioModeIntent", "fields": {"scenario_mode": "hologram"}}

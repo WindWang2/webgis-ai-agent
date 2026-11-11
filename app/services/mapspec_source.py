@@ -45,6 +45,14 @@ def store_data(entry: Dict[str, Any], data: Any) -> None:
             entry["type"] = "model3d"
             for k, v in data.items():
                 entry[k] = v
+        elif data.get("type") == "numeric_raster" and isinstance(data.get("refId"), str):
+            # G20：数值栅格源 dict 原样透传（数据身份 refId/dataRevision +
+            # 范围证据；不含要素体、不含凭证）。与 model3d/vector 同款
+            # typed passthrough，使一次 UpsertLayerIntent 即可原子创建
+            # source + layer（无需第二笔 mutation）。
+            entry["type"] = "numeric_raster"
+            for k, v in data.items():
+                entry[k] = v
         elif (
             data.get("type") == "vector"
             and isinstance(data.get("tiles"), list)

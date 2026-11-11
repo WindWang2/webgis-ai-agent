@@ -38,12 +38,18 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         description=(
             "数据集要素编辑预览（不改原数据，暂存计划）：类型/枚举/单位校验 + before/after diff + "
             "plan_id（TTL 10min）。词表 set_fields/rename_field/repair_geometry/"
-            "move_by(米制)/snap_to_ref。违规即拒。"
+            "move_by(米制)/snap_to_ref + 结构性 create_features(新要素，服务端分稳定id)/"
+            "delete_features/replace_geometry(顶点编辑后的整几何)/split_feature(分割线)/"
+            "merge_features(字段继承策略)。违规即拒；结构性操作恒需用户确认。"
         ),
         param_descriptions={
-            "ops": "编辑操作（≤8），如 [{\"op\":\"set_fields\",\"fields\":{\"type\":\"小学\"}}]",
+            "ops": (
+                "编辑操作（≤8），如 [{\"op\":\"set_fields\",\"fields\":{\"type\":\"小学\"}}] 或 "
+                "[{\"op\":\"create_features\",\"features\":[{\"geometry\":{...},\"properties\":{...}}]}] "
+                "或 [{\"op\":\"split_feature\",\"wfid\":\"wf1-…\",\"line\":{\"type\":\"LineString\",\"coordinates\":[[…]]}}]"
+            ),
             "ref_id": "目标 ref（ref:…）；缺省取当前选中",
-            "feature_ids": "目标要素 id；缺省取选中集",
+            "feature_ids": "目标要素 id（delete/replace/merge 用；缺省取选中集）",
         },
     )
     async def webgis_vector_feature_edit_preview(
@@ -186,3 +192,121 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
                 for e in entries
             ],
         }
+
+    @tool(
+        registry,
+        tier=2,
+        domains=["dataset"],
+        name="vector_dataset_provision",
+        side_effect="state_mutation",
+        network=False,
+        data_mutations=["session_state"],
+        tags=["要素编辑", "数据集", "空图层", "草图升格"],
+        capabilities=["dataset_ingest"],
+        latency_class="medium",
+        memory_class="medium",
+        deterministic=False,
+        description=(
+            "为要素编辑提供目标数据集：创建空 typed 矢量图层（geometry_type="
+            "Point/LineString/Polygon，可声明拓扑规则）或把一组内联要素升格为持久"
+            "数据集（origin=sketch）。返回真实 ref/descriptor/挂层 id —— "
+            "list_datasets/分析与制图立即可见。只读源请走 editable-copy 语义"
+            "（REST）或在响应里按 dataset_read_only_source 指引处理。"
+        ),
+        param_descriptions={
+            "name": "数据集显示名",
+            "geometry_type": "期望几何基类型（空图层必填）",
+            "features": "升格要素 [{geometry, properties}]（与 geometry_type 二选一）",
+            "topology_rules": "声明拓扑规则（如 ['no_overlap']）",
+        },
+    )
+    async def webgis_vector_dataset_provision(
+        name: str,
+        geometry_type: Optional[str] = None,
+        features: Optional[List[Dict[str, Any]]] = None,
+        topology_rules: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not session_id:
+            return {"success": False, "code": "MISSING_SESSION", "message": "Missing session_id"}
+        from app.services.feature_edit import datasets as fe_datasets
+
+        topology = {"rules": topology_rules} if topology_rules else None
+        if features:
+            result = await fe_datasets.promote_sketch(
+                session_id, features=features, name=name, topology=topology
+            )
+        else:
+            if not geometry_type:
+                return {"success": False, "code": "INVALID_ARGS",
+                        "message": "geometry_type is required when creating an empty dataset"}
+            result = await fe_datasets.create_empty_dataset(
+                session_id, name=name, geometry_type=geometry_type, topology=topology
+            )
+        if not result.get("ok"):
+            return {"success": False, "code": result.get("error_code"),
+                    "message": result.get("error")}
+        return {
+            "success": True,
+            "ref_id": result["ref_id"],
+            "layer_id": result.get("layer_id"),
+            "name": result.get("name"),
+            "geometry_type": result.get("geometry_type"),
+            "feature_count": result.get("feature_count"),
+            "content_revision": result.get("content_revision"),
+            "message": (
+                "dataset provisioned and mounted; use vector_feature_edit_preview "
+                "with ref_id to add/edit features"
+            ),
+        }
+
+    @tool(
+        registry,
+        tier=2,
+        domains=["dataset"],
+        name="vector_feature_lineage",
+        side_effect="cacheable_read",
+        network=False,
+        deterministic=False,
+        tags=["要素编辑", "lineage", "血缘", "分割", "合并"],
+        capabilities=["dataset_ingest"],
+        latency_class="fast",
+        memory_class="light",
+        description=(
+            "查询数据集（ref:…）的分割/合并血缘事件（parent→children / parents→child，"
+            "绑定 journal seq 与数据版本）。旧引用（标注/选择/分析）持有已退役 wfid 时，"
+            "按 lineage 事件显式失效或迁移，绝不按数组位置猜对象。"
+        ),
+        param_descriptions={"ref_id": "数据集 ref（ref:…）", "wfid": "可选：只看与该身份相关的事件"},
+    )
+    async def webgis_vector_feature_lineage(
+        ref_id: str,
+        wfid: Optional[str] = None,
+        limit: int = 20,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not session_id:
+            return {"success": False, "code": "MISSING_SESSION", "message": "Missing session_id"}
+        payload = await session_data_manager.get(session_id, ref_id)
+        if payload is None:
+            return {"success": False, "code": "DATASET_NOT_FOUND",
+                    "message": f"ref not resolvable in this session: {str(ref_id)[:48]}"}
+        journals = await fe_executor._load_journals(session_id)
+        journal = journals.get(ref_id) or {}
+        events: List[Dict[str, Any]] = []
+        for entry in reversed(journal.get("entries") or []):
+            for event in entry.get("lineage") or []:
+                if wfid and wfid not in (event.get("parent_wfids") or []) and wfid not in (event.get("child_wfids") or []):
+                    continue
+                events.append(
+                    {
+                        "seq": entry.get("seq"),
+                        "kind": event.get("kind"),
+                        "parent_wfids": event.get("parent_wfids") or [],
+                        "child_wfids": event.get("child_wfids") or [],
+                        "content_revision_after": entry.get("content_revision_after"),
+                    }
+                )
+            if len(events) >= max(1, min(int(limit), 50)):
+                break
+        return {"success": True, "ref_id": ref_id, "events": events[: max(1, min(int(limit), 50))]}

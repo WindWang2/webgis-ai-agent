@@ -972,6 +972,86 @@ async def _handle_setlayout(ctx: MutationContext) -> HandlerOut:
                 ),
             )
         layout["composition"] = comp_block
+    if intent.frames is not None:
+        # G15：layout.frames 整表写入（MapSpecFrame.v1.1 语义的意图写面，
+        # 此前唯一写者 = simulation 整文档构建）。逐帧经 MapSpecFrame
+        # schema 复验 + id 唯一 + MAX_SPEC_FRAMES 封顶 —— 确定性拒绝，
+        # 不留半更新状态。帧删除导致 frame_product 悬空由
+        # _handle_setframeproduct 的锁内复核拒绝（产品 bind 路径）；
+        # 直接整表替换时此处对在册产品引用做防御复核。
+        from pydantic import ValidationError
+
+        from app.lib.cartography.mapspec_schema import (
+            MAX_SPEC_FRAMES,
+            MapSpecFrame,
+        )
+
+        if len(intent.frames) > MAX_SPEC_FRAMES:
+            return MapSpecResult(
+                is_error=True,
+                origin=origin,
+                error_msg=f"layout.frames 超上限 {MAX_SPEC_FRAMES}。",
+                correction_hint="减少帧数（atlas 与产品画幅共用此帽）。",
+            )
+        validated: list = []
+        ids: list = []
+        for fr in intent.frames:
+            if not isinstance(fr, dict):
+                return MapSpecResult(
+                    is_error=True, origin=origin,
+                    error_msg="layout.frames entries must be objects.",
+                    correction_hint="每帧是 MapSpecFrame（id/title/view/extent/…）。",
+                )
+            try:
+                parsed = MapSpecFrame.model_validate(fr)
+            except ValidationError as exc:
+                first = exc.errors()[0]
+                return MapSpecResult(
+                    is_error=True,
+                    origin=origin,
+                    error_msg=(
+                        "layout.frames 帧不合法："
+                        f"{first.get('loc', '?')} {first.get('msg', 'invalid')}"
+                    ),
+                    correction_hint="帧字段见 MapSpecFrame（v1.1 additive）。",
+                )
+            fid = parsed.id
+            if fid is None:
+                # 无 id 帧：派生稳定 id（帧身份是不变式 —— 不允许匿名登记）。
+                fid = f"frame-{len(validated) + 1}"
+                parsed.id = fid
+            if fid in ids:
+                return MapSpecResult(
+                    is_error=True, origin=origin,
+                    error_msg=f"layout.frames id 重复：{fid}",
+                    correction_hint="帧 id 必须唯一（画幅身份）。",
+                )
+            ids.append(fid)
+            validated.append(parsed.model_dump(mode="json", exclude_none=True))
+        # 防御复核：整表替换后 frame_product 引用不得悬空（悬空 = 拒绝整笔，
+        # 不落半更新状态；产品 bind 正常路径在锁内同判）。
+        product_raw = mapspec.get("frame_product")
+        product = product_raw if isinstance(product_raw, dict) else None
+        if isinstance(product, dict):
+            product_refs = {
+                str(f.get("frame_id"))
+                for f in (product.get("frames") or [])
+                if isinstance(f, dict)
+            }
+            dropped = product_refs - set(ids)
+            if dropped:
+                return MapSpecResult(
+                    is_error=True,
+                    origin=origin,
+                    error_msg=(
+                        "layout.frames 替换将删除产品引用的画幅："
+                        + ", ".join(sorted(dropped)[:5])
+                    ),
+                    correction_hint=(
+                        "先经 frame_product 更新移除该画幅，再替换帧登记。"
+                    ),
+                )
+        layout["frames"] = validated
     mapspec["layout"] = layout
     return MutationPlan(mapspec=mapspec)
 
@@ -1453,6 +1533,104 @@ async def _handle_settemporalview(ctx: MutationContext) -> HandlerOut:
         ctx, "SetTemporalViewIntent 需要 config/patch/remove 之一"
     )
 
+
+def _frame_product_terminal_error(ctx: MutationContext, msg: str, hint: str = "") -> MapSpecResult:
+    return MapSpecResult(
+        is_error=True,
+        origin=ctx.origin,
+        error_msg=msg,
+        correction_hint=hint or "frame_product 变更被拒绝；请先 frame_product_bind 建立产品契约。",
+    )
+
+
+async def _handle_setframeproduct(ctx: MutationContext) -> HandlerOut:
+    """SetFrameProductIntent 分支体（G15 多画幅产品层）。
+
+    写入面 mapspec["frame_product"]（v2.0 FrameProductContract.v1）。COW：
+    顶层浅拷 + frame_product 分支整体新建。config/patch 均经
+    FrameProductConfig 复验；patch 的跨分支一致性（frame_id →
+    layout.frames[].id 存在性）在 schema 不可见处由本 handler 锁内复核 ——
+    悬空引用终局拒绝（D2：画幅身份单一事实 = layout.frames）。
+    remove 只删产品语义，绝不动 layout.frames（画幅登记保留）。
+    """
+    from pydantic import ValidationError
+
+    from app.lib.cartography.mapspec_schema import FrameProductConfig
+
+    loaded = ctx.loaded
+    intent = ctx.intent
+    mapspec = {**loaded} if loaded else {}
+
+    def _dangling_frame_ids(cfg_dict: dict) -> list:
+        layout_raw = mapspec.get("layout")
+        layout = layout_raw if isinstance(layout_raw, dict) else {}
+        frames_raw = layout.get("frames")
+        known = {
+            str(f.get("id"))
+            for f in (frames_raw if isinstance(frames_raw, list) else [])
+            if isinstance(f, dict) and f.get("id")
+        }
+        return [
+            str(f.get("frame_id"))
+            for f in (cfg_dict.get("frames") or [])
+            if isinstance(f, dict) and str(f.get("frame_id")) not in known
+        ]
+
+    if intent.remove:
+        if "frame_product" not in mapspec:
+            return MapSpecResult(
+                is_error=False, origin=ctx.origin,
+                warnings=["frame_product 未绑定，remove 为 no-op"],
+            )
+        mapspec.pop("frame_product", None)
+        return MutationPlan(mapspec=mapspec)
+
+    if intent.config is not None:
+        try:
+            cfg = FrameProductConfig.model_validate(intent.config)
+        except ValidationError as exc:
+            return _frame_product_terminal_error(
+                ctx, f"frame_product 契约不合法：{exc.errors()[0].get('msg', 'invalid')}"
+            )
+        dangling = _dangling_frame_ids(intent.config)
+        if dangling:
+            return _frame_product_terminal_error(
+                ctx,
+                "frame_product.frames 引用了不存在的画幅身份："
+                + ", ".join(dangling[:5]),
+                "画幅身份登记在 layout.frames[].id —— 先创建对应 MapSpecFrame，"
+                "再绑定产品画幅（frame_product_bind 会一并处理）。",
+            )
+        mapspec["frame_product"] = cfg.model_dump(mode="json")
+        return MutationPlan(mapspec=mapspec)
+
+    if intent.patch is not None:
+        existing = mapspec.get("frame_product")
+        if not isinstance(existing, dict) or not existing:
+            return _frame_product_terminal_error(ctx, "frame_product 未绑定，无法增量控制")
+        merged = {**existing}
+        for key, value in intent.patch.items():
+            merged[key] = value
+        try:
+            cfg = FrameProductConfig.model_validate(merged)
+        except ValidationError as exc:
+            return _frame_product_terminal_error(
+                ctx, f"frame_product 增量控制后契约不合法：{exc.errors()[0].get('msg', 'invalid')}"
+            )
+        dangling = _dangling_frame_ids(merged)
+        if dangling:
+            return _frame_product_terminal_error(
+                ctx,
+                "patch 后 frame_product.frames 悬空引用："
+                + ", ".join(dangling[:5]),
+                "先在 layout.frames 建立画幅身份，或从产品中移除该画幅。",
+            )
+        mapspec["frame_product"] = cfg.model_dump(mode="json")
+        return MutationPlan(mapspec=mapspec)
+
+    return _frame_product_terminal_error(
+        ctx, "SetFrameProductIntent 需要 config/patch/remove 之一"
+    )
 
 async def _handle_refreshdatarevision(ctx: MutationContext) -> HandlerOut:
     """RefreshDataRevisionIntent 分支体（/goal 03 要素编辑盖章）。

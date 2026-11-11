@@ -157,6 +157,8 @@ class SetLayoutBody(ClientMutationIdMixin):
     margins: Optional[dict[str, Any]] = None
     # CartographyComponent 列表（id/type/enabled/position/priority/style/options）
     components: Optional[list[dict[str, Any]]] = None
+    # G15：spec 级 atlas 帧整表写入（MapSpecFrame 列表；None = 不触碰）
+    frames: Optional[list[dict[str, Any]]] = None
 
 
 class SetTimeBody(ClientMutationIdMixin):
@@ -181,6 +183,21 @@ class SetTemporalViewBody(ClientMutationIdMixin):
     """
 
     intent: Literal["set_temporal_view"]
+    expected_revision: int = Field(ge=0)
+    config: Optional[dict[str, Any]] = None
+    patch: Optional[dict[str, Any]] = None
+    remove: bool = False
+
+
+class SetFrameProductBody(ClientMutationIdMixin):
+    """多画幅产品层用户面写入（G15；frame_product.v1 契约体）。
+
+    config/patch/remove 语义与 SetFrameProductIntent 一一对应；用户工作台
+    画幅编辑（激活画幅/排序/标题/同步组/图例策略）走 patch +
+    expected_revision CAS。
+    """
+
+    intent: Literal["set_frame_product"]
     expected_revision: int = Field(ge=0)
     config: Optional[dict[str, Any]] = None
     patch: Optional[dict[str, Any]] = None
@@ -250,6 +267,7 @@ UserMapSpecMutationRequest = Annotated[
         SetLayoutBody,
         SetTimeBody,
         SetTemporalViewBody,
+        SetFrameProductBody,
         InitProjectBody,
         SetWorkbenchStateBody,
         PatchWorkbenchDeltaBody,

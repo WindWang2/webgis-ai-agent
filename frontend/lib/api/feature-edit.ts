@@ -6,10 +6,37 @@ import { apiFetch } from '@/lib/api/transport';
 import type {
   FeatureEditDecisionResult,
   FeatureEditHistoryEntry,
+  FeatureEditOpPayload,
+  FeatureEditPreviewSummary,
+  FeatureEditProvisionResult,
+  FeatureEditQualification,
+  FeatureEditLineageEvent,
   FeatureEditUndoResult,
 } from '@/lib/types/feature-edit';
 
 const BASE = (sessionId: string) => `/api/v1/chat/sessions/${sessionId}/feature-edits`;
+
+/** G14：预览（不改数据；返回有界 diff + plan_id）。 */
+export function previewFeatureEdit(
+  sessionId: string,
+  target: { refId: string; featureIds?: string[] },
+  ops: FeatureEditOpPayload[],
+  ownerToken?: string | null,
+): Promise<FeatureEditPreviewSummary> {
+  return apiFetch<FeatureEditPreviewSummary>(`${BASE(sessionId)}/preview`, {
+    method: 'POST',
+    body: {
+      target: {
+        mode: 'explicit',
+        ref_id: target.refId,
+        ...(target.featureIds ? { feature_ids: target.featureIds } : {}),
+      },
+      ops,
+    },
+    ownerToken,
+    label: 'FeatureEdit',
+  });
+}
 
 /** 用户在提案卡上的显式决策（approve = 服务端同事务执行：CAS/入账/盖章/广播）。 */
 export function decideFeatureEditPlan(
@@ -78,6 +105,79 @@ export function setFeatureEditPolicy(
   return apiFetch(`${BASE(sessionId)}/policy`, {
     method: 'PUT',
     body: { mode },
+    ownerToken,
+    label: 'FeatureEdit',
+  });
+}
+
+// ── G14 数据集 provisioning ────────────────────────────────────────────────
+
+export function createEditDataset(
+  sessionId: string,
+  req: { name: string; geometryType: 'Point' | 'LineString' | 'Polygon'; topologyRules?: string[] },
+  ownerToken?: string | null,
+): Promise<FeatureEditProvisionResult> {
+  return apiFetch<FeatureEditProvisionResult>(`${BASE(sessionId)}/datasets`, {
+    method: 'POST',
+    body: {
+      name: req.name,
+      geometry_type: req.geometryType,
+      ...(req.topologyRules ? { topology: { rules: req.topologyRules } } : {}),
+    },
+    ownerToken,
+    label: 'FeatureEdit',
+  });
+}
+
+export function promoteSketchDataset(
+  sessionId: string,
+  req: { name: string; features: Array<{ type: 'Feature'; geometry: GeoJSON.Geometry; properties?: Record<string, unknown> }> },
+  ownerToken?: string | null,
+): Promise<FeatureEditProvisionResult> {
+  return apiFetch<FeatureEditProvisionResult>(`${BASE(sessionId)}/datasets/promote-sketch`, {
+    method: 'POST',
+    body: { name: req.name, features: req.features },
+    ownerToken,
+    label: 'FeatureEdit',
+  });
+}
+
+export function createEditableCopy(
+  sessionId: string,
+  refId: string,
+  name?: string,
+  ownerToken?: string | null,
+): Promise<FeatureEditProvisionResult> {
+  return apiFetch<FeatureEditProvisionResult>(
+    `${BASE(sessionId)}/datasets/${encodeURIComponent(refId)}/editable-copy`,
+    {
+      method: 'POST',
+      body: name ? { name } : {},
+      ownerToken,
+      label: 'FeatureEdit',
+    },
+  );
+}
+
+export function getEditQualification(
+  sessionId: string,
+  refId: string,
+  ownerToken?: string | null,
+): Promise<FeatureEditQualification> {
+  return apiFetch<FeatureEditQualification>(
+    `${BASE(sessionId)}/datasets/${encodeURIComponent(refId)}/qualification`,
+    { ownerToken, label: 'FeatureEdit' },
+  );
+}
+
+export function getFeatureLineage(
+  sessionId: string,
+  refId: string,
+  wfid?: string,
+  ownerToken?: string | null,
+): Promise<{ ref_id: string; events: FeatureEditLineageEvent[] }> {
+  const q = wfid ? `?wfid=${encodeURIComponent(wfid)}` : '';
+  return apiFetch(`${BASE(sessionId)}/${encodeURIComponent(refId)}/lineage${q}`, {
     ownerToken,
     label: 'FeatureEdit',
   });

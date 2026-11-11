@@ -708,6 +708,26 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             },
           }));
         }
+      } else if (event.event === 'step_start') {
+        // ADR-0288（W06）：嵌套调用（codemode 脚本内 GIS 调用）只产生
+        // step_start/step_result（无 tool_call —— 非模型直发）。带
+        // parent_tool_call_id 的 step_start 为父工具行挂一条子行；顶层
+        // step_start 忽略（行由 tool_call 事件创建，避免双行）。
+        const parentStepId = typeof data?.parent_tool_call_id === 'string'
+          ? data.parent_tool_call_id
+          : undefined;
+        const toolName = typeof data?.tool === 'string' ? data.tool : '';
+        if (parentStepId && toolName) {
+          setMessages((prev) => appendToolCall(prev, {
+            messageId: thinkingId,
+            toolCall: {
+              tool: toolName,
+              stepId: typeof data.step_id === 'string' ? data.step_id : undefined,
+              parentStepId,
+              startedAt: Date.now(),
+            },
+          }));
+        }
       } else if (event.event === "step_result") {
         // #1009: 分支内收窄到 step_result 最小契约（字段漂移由 tsc 捕获）
         const payload = event.data as StepResultPayload;

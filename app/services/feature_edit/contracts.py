@@ -31,6 +31,12 @@ MAX_SNAP_TOLERANCE_M = 500.0        # snap 容差上限
 # （undo 保真），20×2048 顶点会击穿 64KB 预算；10×1024 上限 ≈ 250KB 最坏
 # 单条（append_entry 的字节闸保底 ≥1 条，预算语义见 ADR）。
 MAX_GEOMETRY_TARGETS = 10
+# G14：结构性编辑（增/删/分割/合并）的规模门 —— journal 单条需内嵌出生/
+# 消失要素的完整快照（undo 保真），上限与字节预算（下方）联合保证有界。
+MAX_CREATED_PER_PLAN = 50           # create_features 单 plan 新增要素上限
+MAX_DELETED_PER_PLAN = 50           # delete_features 单 plan 删除要素上限
+MAX_MERGE_PARENTS = 10              # merge_features 单次合并父要素上限
+MAX_JOURNAL_ENTRY_BYTES = 256 * 1024  # 单 journal entry 序列化字节上限（entry_too_large）
 
 # ─── 稳定要素身份 ──────────────────────────────────────────────────────────
 WFID_PROP = "_wfid"                 # 物化稳定 id 的 properties 键（系统保留）
@@ -43,7 +49,12 @@ FEATURE_ID_KEYS: tuple = ("id", "OBJECTID", "fid", "osm_id", "@id", "featureId",
 # ─── 编辑词表（封闭集；schema 层拒绝未知 op） ─────────────────────────────
 ATTRIBUTE_OPS = frozenset({"set_fields", "rename_field"})
 GEOMETRY_OPS = frozenset({"repair_geometry", "move_by", "snap_to_ref"})
-EDIT_OPS = ATTRIBUTE_OPS | GEOMETRY_OPS
+# G14 结构性操作：改变要素集合成员关系（出生/消失/血缘）。恒不 safe ——
+# 一律需要用户确认（提案卡/owner REST），与坐标变更同一信任边界。
+STRUCTURAL_OPS = frozenset(
+    {"create_features", "delete_features", "replace_geometry", "split_feature", "merge_features"}
+)
+EDIT_OPS = ATTRIBUTE_OPS | GEOMETRY_OPS | STRUCTURAL_OPS
 
 REPAIR_FIXES = frozenset({"make_valid", "close_ring", "dedupe_vertices"})
 
@@ -83,7 +94,24 @@ FINDING_CODES = frozenset({
     "plan_expired",              # plan TTL 已过
     "plan_state_invalid",        # plan 状态机非法迁移
     "policy_denied",             # policy 拒绝（非 safe 而走自动通道）
+    # ── G14 结构性编辑 finding codes ──
+    "entry_too_large",           # 单 journal entry 序列化超预算（undo 快照不可承受）
+    "geometry_type_mismatch",    # replace_geometry/split/merge 的几何类型与数据集/目标不符
+    "split_not_dividing",        # 分割线未真正贯穿目标几何（<2 部分）
+    "merge_disjoint",            # 合并结果非单一部分（要素不相邻/不相交）
+    "merge_type_mixed",          # 合并目标几何基类型不一致
+    "topology_violation",        # 声明的拓扑规则被违反（带定位与受影响对）
+    "reserved_id",               # 试图在 properties 里提供保留身份字段（_wfid）
+    "invalid_geometry",          # 输入几何畸形（无法解析/空坐标）
+    "merge_conflict",            # field_policy=require_identical 时字段值不一致
+    "dataset_read_only_source",  # 源只读，需先派生编辑副本
 })
+
+# ─── 数据集级拓扑声明（envelope "topology" 键；G14 provisioning 写入） ─────
+TOPOLOGY_RULES = frozenset({"no_overlap", "no_self_intersection", "no_duplicate_points"})
+# no_overlap 判定容差：线性米；重叠面积超过 tolerance_m² 才算违规（米制经
+# Geod 在要素局部纬度换算为平方度比较）。
+DEFAULT_TOPOLOGY_TOLERANCE_M = 1.0
 
 
 def finding(code: str, message: str, **detail: Any) -> EditFinding:

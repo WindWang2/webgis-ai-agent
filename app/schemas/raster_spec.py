@@ -313,3 +313,292 @@ def apply_colormap_u8(gray: Any, colormap: str) -> Optional[Any]:
     if lut is None:
         return None
     return lut[gray]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G20 / raster_expression.v1 —— 可执行的栅格表达契约
+#
+# 与旧 ``RasterStyleSpec`` 的关系：旧类保持逐字兼容（``tests/unit/test_raster_spec.py``
+# 是它的消费者）。新类是**唯一**进入 MapSpec 与数据面的规范表达：
+#   - 严格（不静默剔除用户选择，越界/NaN/反向/未知色带/2 波段 RGB 都返回具体错误）；
+#   - 可序列化（``model_dump`` 即 MapSpec 中的 ``layer.raster_style``）；
+#   - 与数据身份解耦（``data_revision`` 只记录绑定，不重算遥感数据指纹）；
+#   - ``style_id`` 是规范样式 + 数据修订的内容哈希，瓦片缓存/导出快照都用它。
+#
+# 统计口径（manual / bounded_sample / descriptor + method + sample_count +
+# approximate）随样式冻结，缩放与导出绝不悄悄重估自动范围。
+# ─────────────────────────────────────────────────────────────────────────────
+
+import hashlib
+import json
+import math
+from typing import Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
+
+RASTER_EXPRESSION_SCHEMA_VERSION = "raster_expression.v1"
+RASTER_EXPRESSION_MODES = ("single", "rgb")
+RASTER_RESAMPLINGS = ("nearest", "bilinear", "cubic")
+RASTER_CLASSIFICATIONS = ("continuous", "classified")
+RASTER_STRETCH_SOURCES = ("manual", "bounded_sample", "descriptor")
+
+#: 表达域预算（窗口/波段/点数/直方图桶的其余上限见 raster_authoring/budgets.py）
+MAX_EXPRESSION_BANDS = 3
+MAX_RASTER_PROBE_POINTS = 16
+MAX_RASTER_PROBE_BANDS = 16
+MAX_RASTER_HISTOGRAM_BUCKETS = 64
+MAX_RASTER_STATS_SIDE = 2048
+MAX_RASTER_SNAPSHOT_SIDE = 2048
+
+#: 稳定错误码（UI 与 Pi 同源；errors.py 是唯一分类表）
+RASTER_ERROR_CODES = (
+    "SCHEMA_VERSION_UNSUPPORTED",
+    "EMPTY_BANDS",
+    "BAND_COUNT_UNSUPPORTED",
+    "BAND_OUT_OF_RANGE",
+    "BAND_NOT_INTEGER",
+    "STRETCH_NON_FINITE",
+    "STRETCH_REVERSED",
+    "STRETCH_CHANNEL_MISMATCH",
+    "STRETCH_SAMPLE_UNBOUNDED",
+    "UNKNOWN_COLORMAP",
+    "UNSUPPORTED_RESAMPLING",
+    "CLASSIFIED_INTERPOLATION",
+    "OPACITY_OUT_OF_RANGE",
+    "COLORMAP_ON_RGB",
+    "SOURCE_UNAVAILABLE",
+    "SOURCE_NOT_NUMERIC_RASTER",
+    "SOURCE_PATH_REJECTED",
+    "NO_CRS",
+    "INVALID_CRS",
+    "OUTSIDE_EXTENT",
+    "MASKED_PIXEL",
+    "PARTIALLY_MASKED",
+    "STALE_BINDING",
+    "STALE_STYLE",
+    "BUDGET_EXCEEDED",
+    "RENDER_FAILED",
+    "EXPORT_UNSUPPORTED",
+    "CAS_SUPERSEDED",
+    "MUTATION_REJECTED",
+)
+
+
+class RasterExpressionError(Exception):
+    """带稳定 code / 字段 / 修复指引的领域错误（HTTP 与工具回执共用）。"""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        field: Optional[str] = None,
+        correction_hint: str = "",
+        status_code: int = 422,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code if code in RASTER_ERROR_CODES else "RENDER_FAILED"
+        self.message = message
+        self.field = field
+        self.correction_hint = correction_hint
+        self.status_code = status_code
+        self.details = details or {}
+
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "success": False,
+            "code": self.code,
+            "message": self.message,
+            "correction_hint": self.correction_hint,
+        }
+        if self.field:
+            out["field"] = self.field
+        if self.details:
+            out["details"] = self.details
+        return out
+
+
+class RasterStretchBounds(BaseModel):
+    """已解析（冻结）的拉伸端点与统计口径。
+
+    ``per_channel`` 长度必须等于表达的波段数；每项 ``[min, max]``。
+    ``source="bounded_sample"`` 时 ``approximate`` 必须为 True 且带
+    ``sample_count`` —— 近似分位数绝不能被写成精确全量结论。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    min: StrictFloat
+    max: StrictFloat
+    source: Literal[RASTER_STRETCH_SOURCES] = "manual"  # type: ignore[valid-type]
+    method: StrictStr = "manual"
+    sample_count: Optional[StrictInt] = None
+    approximate: StrictBool = False
+    per_channel: Optional[List[List[StrictFloat]]] = None
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> "RasterStretchBounds":
+        for label, value in (("min", self.min), ("max", self.max)):
+            if not math.isfinite(float(value)):
+                raise RasterExpressionError(
+                    "STRETCH_NON_FINITE",
+                    f"stretch.{label} must be finite, got {value!r}",
+                    field=f"stretch.{label}",
+                    correction_hint="Provide finite numeric stretch endpoints.",
+                )
+        if self.max < self.min:
+            raise RasterExpressionError(
+                "STRETCH_REVERSED",
+                f"stretch.max ({self.max}) is below stretch.min ({self.min})",
+                field="stretch.max",
+                correction_hint="Set stretch.max >= stretch.min.",
+            )
+        if self.source == "bounded_sample":
+            if not self.approximate or not self.sample_count or self.sample_count <= 0:
+                raise RasterExpressionError(
+                    "STRETCH_SAMPLE_UNBOUNDED",
+                    "bounded_sample stretch requires approximate=True and a positive sample_count",
+                    field="stretch.source",
+                    correction_hint="Disclose the sampling method and sample size.",
+                )
+        for ch in self.per_channel or []:
+            if len(ch) != 2 or any(not math.isfinite(float(v)) for v in ch):
+                raise RasterExpressionError(
+                    "STRETCH_NON_FINITE",
+                    "each per_channel entry must be a finite [min, max] pair",
+                    field="stretch.per_channel",
+                )
+            if ch[1] < ch[0]:
+                raise RasterExpressionError(
+                    "STRETCH_REVERSED",
+                    f"per-channel stretch is reversed: {ch!r}",
+                    field="stretch.per_channel",
+                )
+        return self
+
+
+class RasterExpressionSpec(BaseModel):
+    """规范栅格表达（MapSpec ``layer.raster_style`` 的唯一形状）。
+
+    - ``mode="single"`` → 恰好 1 个 1-based 波段 + 可选 colormap；
+    - ``mode="rgb"`` → 恰好 3 个 1-based 波段（允许重复波段做灰度复合）；
+      2 波段数据集显式请求 RGB 必须由 ``contract.resolve_expression`` 拒绝，
+      绝不产生渲染器不支持的二元 RGB。
+    - ``classification="classified"`` 时 ``resampling`` 必须为 ``nearest``。
+    - ``style_id`` 由 ``finalize()`` 计算，不参与哈希自身。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[RASTER_EXPRESSION_SCHEMA_VERSION] = RASTER_EXPRESSION_SCHEMA_VERSION  # type: ignore[valid-type]
+    mode: Literal[RASTER_EXPRESSION_MODES]  # type: ignore[valid-type]
+    bands: List[StrictInt]
+    stretch: RasterStretchBounds
+    colormap: Optional[StrictStr] = None
+    opacity: StrictFloat = 1.0
+    resampling: Literal[RASTER_RESAMPLINGS] = "bilinear"  # type: ignore[valid-type]
+    classification: Literal[RASTER_CLASSIFICATIONS] = "continuous"  # type: ignore[valid-type]
+    #: 绑定的数据修订（字符串，来源 = ref descriptor 的 content_revision 或内容指纹）
+    data_revision: StrictStr = ""
+    #: 内容哈希（见 finalize）；空串 = 尚未 final 的候选
+    style_id: StrictStr = ""
+
+    @model_validator(mode="after")
+    def _validate_shape(self) -> "RasterExpressionSpec":
+        expected = 1 if self.mode == "single" else 3
+        if not self.bands:
+            raise RasterExpressionError(
+                "EMPTY_BANDS", "bands must not be empty", field="bands",
+                correction_hint="Choose one band (single) or three bands (RGB).",
+            )
+        if len(self.bands) != expected:
+            raise RasterExpressionError(
+                "BAND_COUNT_UNSUPPORTED",
+                f"mode={self.mode!r} requires exactly {expected} 1-based band(s), got {len(self.bands)}",
+                field="bands",
+                correction_hint=(
+                    "Use mode='single' with one band, or mode='rgb' with exactly three bands "
+                    "(repeating a band index is allowed for a grey composite)."
+                ),
+            )
+        if len(self.bands) > MAX_EXPRESSION_BANDS:
+            raise RasterExpressionError(
+                "BAND_COUNT_UNSUPPORTED", "at most 3 bands can be rendered",
+                field="bands",
+            )
+        for b in self.bands:
+            if b < 1:
+                raise RasterExpressionError(
+                    "BAND_OUT_OF_RANGE", f"band index must be 1-based and >= 1, got {b}",
+                    field="bands",
+                )
+        if self.mode == "rgb" and self.colormap:
+            raise RasterExpressionError(
+                "COLORMAP_ON_RGB",
+                "colormap applies to single-band expressions only",
+                field="colormap",
+                correction_hint="Remove colormap for an RGB band combination.",
+            )
+        if not (0.0 <= float(self.opacity) <= 1.0):
+            raise RasterExpressionError(
+                "OPACITY_OUT_OF_RANGE", f"opacity must be within [0,1], got {self.opacity}",
+                field="opacity",
+            )
+        if self.classification == "classified" and self.resampling != "nearest":
+            raise RasterExpressionError(
+                "CLASSIFIED_INTERPOLATION",
+                "classified rasters must use nearest resampling; interpolation invents intermediate classes",
+                field="resampling",
+                correction_hint="Set resampling='nearest' or declare classification='continuous'.",
+            )
+        if self.stretch.per_channel is not None and len(self.stretch.per_channel) != len(self.bands):
+            raise RasterExpressionError(
+                "STRETCH_CHANNEL_MISMATCH",
+                f"stretch.per_channel has {len(self.stretch.per_channel)} entries for {len(self.bands)} bands",
+                field="stretch.per_channel",
+                correction_hint="Provide one [min, max] pair per selected band.",
+            )
+        return self
+
+    def canonical_payload(self) -> Dict[str, Any]:
+        """稳定 JSON 载荷（``style_id`` 剔除，避免自引用）。"""
+        data = self.model_dump(mode="json", exclude={"style_id"})
+        # dict 键序由 model_dump 声明序固定；json.dumps 不重排
+        return data
+
+    def compute_style_id(self) -> str:
+        raw = json.dumps(
+            self.canonical_payload(), ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+    def finalize(self) -> "RasterExpressionSpec":
+        """回填内容哈希（幂等；已存在且不一致 → 视为被篡改）。"""
+        expected = self.compute_style_id()
+        if self.style_id and self.style_id != expected:
+            raise RasterExpressionError(
+                "STALE_STYLE",
+                "raster_style.style_id does not match the canonical style payload",
+                field="style_id",
+                correction_hint="Re-submit the expression through the authoritative commit path.",
+                status_code=409,
+            )
+        return self.model_copy(update={"style_id": expected})
+
+    def channel_stretch(self, channel: int) -> Tuple[float, float]:
+        """渲染/图例/导出共用的逐通道端点（单一样式侧真相）。"""
+        if self.stretch.per_channel is not None:
+            pair = self.stretch.per_channel[channel]
+            return float(pair[0]), float(pair[1])
+        return float(self.stretch.min), float(self.stretch.max)

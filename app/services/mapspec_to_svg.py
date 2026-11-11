@@ -1412,6 +1412,16 @@ def compile_mapspec_to_svg_detailed(
                         opacity = _escape_svg_attr(_fmt_num(_safe_float(raw_opacity, 1.0)))
                         tiles = src.get("tiles") or ([src.get("url")] if src.get("url") else [])
                         tile_url_template = tiles[0] if (isinstance(tiles, list) and tiles and tiles[0]) else ""
+                        # G20：会话绑定的数值栅格瓦片 URL 离线不可解析 ——
+                        # 绝不输出打开后空白的 <image>；复用权威词表
+                        # layer_ref_unavailable 明确披露需要嵌入快照。
+                        if "style_id=" in tile_url_template or "__SESSION_ID__" in tile_url_template:
+                            _emit_diag(
+                                "layer_ref_unavailable",
+                                detail="numeric_raster_offline_snapshot_required",
+                                layer_id=layer.get("id"),
+                            )
+                            continue
                         if tile_url_template:
                             zoom_boost = _compute_oversample_boost(target_dpi_val)
                             is_template = any(k in tile_url_template for k in ("{x}", "{y}", "{z}", "{TILECOL}", "{TILEROW}", "{TILEMATRIX}"))

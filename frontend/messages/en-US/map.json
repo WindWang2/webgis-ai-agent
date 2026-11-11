@@ -60,7 +60,8 @@
     "editLabels": "Edit labels",
     "editLabelsTitle": "Label edit mode: click a label to drag/hide/pin/retext",
     "editLabelsDisabled": "No labeled layers",
-    "labelToolAria": "Label tool: {label}"
+    "labelToolAria": "Label tool: {label}",
+    "splitFeatureTitle": "Split feature (pick an edit target first)"
   },
   "poi": {
     "focus": "Focus location",
@@ -166,7 +167,11 @@
     "drawPolygon": "Draw polygon",
     "drawLine": "Draw line",
     "drawPoint": "Draw point",
-    "deleteFeature": "Delete sketch feature"
+    "deleteFeature": "Delete sketch feature",
+    "saveDataset": "Save as dataset",
+    "promoting": "Saving…",
+    "promoteFailed": "Save failed; try again",
+    "promotedName": "Sketch dataset {date}"
   },
   "decision": {
     "weightSource": "Weight source:",
@@ -493,6 +498,35 @@
     "decisionMethod": "Decision ({method})"
   },
   "refSourceBudget": "The map has reached the loading limit of {limit} active data references. {omitted} more references are not loaded. Remove some layers to load them.",
+  "edit": {
+    "editing": "Editing",
+    "stop": "Stop editing",
+    "defaultLabel": "Feature edit",
+    "createPoint": "Add point",
+    "createLine": "Add line",
+    "createPolygon": "Add polygon",
+    "deleteFeature": "Delete feature",
+    "editVertices": "Edit vertices",
+    "splitFeature": "Split feature",
+    "mergeFeatures": "Merge features",
+    "mergeSelected": "Merge selected ({count})",
+    "submitting": "Submitting",
+    "failed": "Not submitted",
+    "saved": "saved",
+    "staleConflict": "Data was updated by another action; try again",
+    "expired": "The change expired; try again",
+    "networkError": "Network error; try again",
+    "noStableId": "This feature has no stable identity and cannot be edited",
+    "attrsPlaceholder": "New feature attributes (JSON, optional)",
+    "attrsInvalidJson": "Attributes are not valid JSON",
+    "attrsNotObject": "Attributes must be an object",
+    "splitPickTarget": "Click the feature to split",
+    "splitDrawLine": "Draw the split line; press Enter to finish",
+    "pickTarget": "Pick a layer to edit",
+    "createEmptyTitle": "Create empty layer",
+    "createFailed": "Creation failed",
+    "newLayerName": "New layer"
+  },
   "labelEditor": {
     "title": "Label editing",
     "hint": "Click a label on the map to edit; drag to move, arrows to nudge, Enter to commit, Esc to cancel.",

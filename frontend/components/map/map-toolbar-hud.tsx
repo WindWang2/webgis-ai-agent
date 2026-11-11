@@ -45,6 +45,7 @@ import {
   SKETCH_LAYER_ID,
 } from '@/lib/edit/sketch-store'
 import type { MapToolId } from '@/lib/store/slices/toolSlice'
+import { FeatureEditToolGroup } from './feature-edit-toolbar'
 
 export type MeasureMode = 'none' | 'distance' | 'area'
 
@@ -307,14 +308,17 @@ export function MapToolbarHUD({
 
   return (
     <div
-      className={`absolute right-4 top-4 z-30 flex flex-col items-end gap-2 font-sans select-none pointer-events-none md:top-4 ${className}`}
+      // 右侧 chrome 列：指北针占 top-3 槽（MapDecorations / MapSpec 右上槽），
+      // 工具条从其下方起（12 + 30 + 10 = 52px），二者不再互相压盖；
+      // 场景控制器移到指北针左侧（见 scene-controller）。
+      className={`absolute right-3 top-[52px] z-30 flex flex-col items-end gap-2 font-sans select-none pointer-events-none ${className}`}
       data-testid="map-toolbar-hud"
     >
       {/* Toast Feedback */}
       {feedbackToast && (
         <div
           role="status"
-          className="pointer-events-auto rounded-md bg-surface-raised/95 dark:bg-surface-overlay/95 px-2.5 py-1 text-micro font-medium text-ink shadow-agent-md border border-edge-subtle backdrop-blur-md animate-in fade-in slide-in-from-top-1"
+          className="map-chrome pointer-events-auto px-2.5 py-1 text-micro font-medium animate-in fade-in slide-in-from-top-1"
         >
           {feedbackToast}
         </div>
@@ -323,7 +327,7 @@ export function MapToolbarHUD({
       {/* Measurement Mode Live Floating HUD Panel */}
       {activeMode !== 'none' && (
         <div
-          className="pointer-events-auto flex flex-col gap-1.5 rounded-lg border border-edge-subtle bg-surface-raised/95 dark:bg-surface-overlay/90 p-3 text-ink shadow-agent-lg backdrop-blur-md w-64 max-w-[calc(100vw-32px)]"
+          className="map-chrome pointer-events-auto flex w-64 max-w-[calc(100vw-32px)] flex-col gap-1.5 p-3"
           data-testid="measurement-active-hud"
         >
           <div className="flex items-center justify-between border-b border-edge-subtle pb-1.5">
@@ -392,7 +396,11 @@ export function MapToolbarHUD({
       )}
 
       {/* Main Floating Toolstrip */}
-      <div className="pointer-events-auto flex flex-col items-center rounded-lg border border-edge-subtle bg-surface-raised/90 dark:bg-surface-overlay/85 p-1 shadow-agent-md backdrop-blur-md transition-all">
+      {/* 统一 map-chrome 容器配方（不透明度来自 --map-chrome-bg）。旧的
+          bg-surface-raised/90 在 Tailwind 3 下对 var() 颜色不生成任何规则，
+          工具条在影像底图上实际是透明的；backdrop-blur 在持续重绘的画布上
+          也是最贵的滤镜。 */}
+      <div className="map-chrome pointer-events-auto flex flex-col items-center p-1 transition-all">
         {/* Collapse Toggle for compact viewports */}
         <button
           type="button"
@@ -522,6 +530,9 @@ export function MapToolbarHUD({
         {/* V7：草图编辑工具组 —— 激活态/吸附读 toolSlice（全局工具唯一真相），
             可用性按状态推导（edit/delete 需要草图要素存在）。 */}
         {!collapsed && <SketchToolGroup />}
+
+        {/* G14：真实图层编辑入口（目标层选择 + 分割工具；独立组件最小接入）。 */}
+        {!collapsed && <FeatureEditToolGroup />}
       </div>
     </div>
   )

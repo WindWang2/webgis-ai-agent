@@ -181,6 +181,9 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   // 手柄处 clamp，tweaks 滑杆 240–480 可绕过并使 separator 的 aria-min/max 失真）。
   setSidebarWidth: (width) =>
     set({ sidebarWidth: Math.min(420, Math.max(280, Math.round(width))) }),
+  // 宽视图是临时视图态（不持久化）：刷新回到用户自己的 sidebarWidth。
+  panelExpanded: false,
+  setPanelExpanded: (expanded) => set({ panelExpanded: expanded }),
 
   /* ─── v2 Feature Data ─── */
   opsLog: [],

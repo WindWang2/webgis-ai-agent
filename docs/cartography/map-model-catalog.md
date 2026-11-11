@@ -3,7 +3,7 @@
 > 由 `app.lib.cartography.catalog_docs` 从 MapModelRegistry 生成；
 > 手改无效。真值：`model_library.py` + `model_packs/`（ADR-0238）。
 
-共 80 个模型（native 77 / planned 3）。
+共 80 个模型（native 78 / planned 2）。
 
 | id | 名称 | 几何 | 图层 | 分级 | 色系 | 默认色带 | 状态 | 降级 |
 |---|---|---|---|---|---|---|---|---|
@@ -67,7 +67,7 @@
 | service_area_overlay | 服务区叠加 | polygon | fill | graduated | sequential | Blues | native | proximity_overlay |
 | simple_point_map | 轻量点图 | point | circle | none | none | — | native | — |
 | site_selection_result | 选址评价结果图 | polygon | fill | graduated | sequential | Greens | native | administrative_choropleth |
-| small_multiple_map | 小倍数地图组 | polygon/point/raster | fill | graduated | sequential | Blues | planned | — |
+| small_multiple_map | 小倍数地图组 | polygon/point | fill | graduated | sequential | Blues | native | — |
 | spectral_index_surface | 光谱指数面 | raster | raster | none | perceptual_uniform | Viridis | native | raster_surface |
 | stream_order_map | 河网分级图 | line | line | graduated | sequential | Blues | native | graduated_line |
 | suitability_classes | 适宜性分级图 | polygon | fill | graduated | sequential | Greens | native | administrative_choropleth |
@@ -99,8 +99,4 @@
 - planned：需要面积保持变形算法（Gastner-Newman 扩散等）与变形后几何的渲染契约，本分支未实现
 - 变形图必须同时披露原始地理轮廓参照（inset），否则读者失去地理定位
 - V5（ADR-0118 D8）：导出请求携带 cartogram 意图时诚实降级（cartogram_unsupported，按未变形几何渲染）—— 不伪造变形支持
-
-### small_multiple_map（小倍数地图组）
-- planned：需要多画幅组合运行时（多个 MapSpec 画面的并置/联动布局），当前单画布 MapSpec 无法承载 —— 诚实保留 planned
-- V5（ADR-0118 D8）导出侧最小真实闭环：ExportRequest.frames 多帧运行时（逐帧 filter/extent 确定性执行 → pdf pages / png grid 拼板）可作为小倍数导出承载面；spec 级多画幅模型仍待后续 Epic
 
