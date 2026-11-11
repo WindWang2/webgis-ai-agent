@@ -120,7 +120,9 @@
       "market": "市场"
     },
     "resizeAria": "调整面板宽度",
-    "resizeTitle": "拖拽调整面板宽度（双击复位）"
+    "resizeTitle": "拖拽调整面板宽度（双击复位）",
+    "expandWide": "展开为宽视图",
+    "collapseWide": "恢复常规宽度"
   },
   "panelError": {
     "title": "{label}面板遇到错误",

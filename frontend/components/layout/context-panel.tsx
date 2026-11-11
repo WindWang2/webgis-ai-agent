@@ -31,6 +31,8 @@ import {
   LayoutDashboard,
   Activity,
   Radar,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -39,6 +41,8 @@ import type { AiStatus } from '@/lib/store/hud-types';
 import type { AgentRuntime } from '@/lib/agent-runtime';
 import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 import { PanelHeader } from '@/components/shared/panel-header';
+import { IconButton } from '@/components/shared/icon-button';
+import { effectivePanelWidth } from '@/lib/utils/workspace-inset';
 import { ChatTab } from '@/components/sidebar/chat-tab';
 import { LayersTab } from '@/components/sidebar/layers-tab';
 import { ComponentsTab } from '@/components/sidebar/components-tab';
@@ -162,6 +166,10 @@ export function ContextPanel({
   const toggleLeftPanel = useHudStore((s) => s.toggleLeftPanel);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
+  // 宽视图（数据密集页签：运维表格、驾驶舱、数据湖、结果对比）。只在
+  // desktop 档提供 —— thin/mobile 本就是覆盖/全宽 sheet。
+  const panelExpanded = useHudStore((s) => s.panelExpanded);
+  const setPanelExpanded = useHudStore((s) => s.setPanelExpanded);
   const layerCount = useHudStore((s) => s.layers.length);
   // U-1（#883）：editingLayerId 非空时图层 tab 钻入样式编辑视图。
   const editingLayerId = useHudStore((s) => s.editingLayerId);
@@ -366,6 +374,8 @@ export function ContextPanel({
     if (target && focusNeedsRestore) target.focus();
   }, [leftPanelOpen]);
 
+  const wideActive = layoutMode === 'desktop' && panelExpanded;
+
   // P5 mobile 档：面板 bottom-sheet 化（拖拽把手两档吸附 + 焦点圈闭），
   // 地图全屏优先（不推挤 inset）。tab 内容与 docked 档完全同源。
   if (layoutMode === 'mobile') {
@@ -482,14 +492,19 @@ export function ContextPanel({
       style={{
         bottom: hudOpen ? 234 : 24,
         // 拖拽中读命令式草稿变量（pointermove 不产生重渲染）；平时读 store。
-        width: dragging ? 'var(--panel-draft-w)' : sidebarWidth,
+        width: dragging
+          ? 'var(--panel-draft-w)'
+          : wideActive
+            ? effectivePanelWidth(sidebarWidth, true)
+            : sidebarWidth,
         maxWidth: 'calc(100vw - var(--railW))',
         transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-110%)',
         visibility: leftPanelOpen ? 'visible' : 'hidden',
         transition: dragging
           ? 'none'
-          : 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.25s, bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          : 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.25s, bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
+      data-panel-wide={wideActive ? 'true' : undefined}
     >
       <PanelHeader
         icon={meta.icon}
@@ -498,6 +513,17 @@ export function ContextPanel({
         badge={badge}
         onClose={handleClose}
         id={`workspace-panel-title`}
+        actions={
+          layoutMode === 'desktop' ? (
+            <IconButton
+              label={wideActive ? t('panel.collapseWide') : t('panel.expandWide')}
+              icon={wideActive ? Minimize2 : Maximize2}
+              active={wideActive}
+              onClick={() => setPanelExpanded(!panelExpanded)}
+              data-testid="panel-wide-toggle"
+            />
+          ) : undefined
+        }
       />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -601,7 +627,7 @@ export function ContextPanel({
           注意 hover/focus 着色必须用可编译的 token 类：Tailwind 3 对
           var() 颜色加 /NN 透明度修饰符会静默丢弃整个规则（旧实现的
           hover:bg-[var(--agent-accent,#16a34a)]/30 从未生效过）。 */}
-      {layoutMode === 'desktop' && (
+      {layoutMode === 'desktop' && !wideActive && (
       <div
         ref={separatorRef}
         role="separator"

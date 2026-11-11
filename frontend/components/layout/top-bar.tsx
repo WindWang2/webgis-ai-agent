@@ -21,6 +21,7 @@ import type { GeolocationError } from '@/lib/hooks/use-geolocation';
 // 三档唯一真相（matchMedia + useSyncExternalStore）而非裸 CSS 断点 —— 同一
 // 判据在 vitest 里可装 matchMedia mock 直接断言折叠行为（390px 命中测试）。
 import { useLayoutMode } from '@/lib/hooks/use-layout-mode';
+import { useHydrated } from '@/lib/hooks/use-hydrated';
 import BaselayerSwitcher from '@/components/map/baselayer-switcher';
 
 interface TopBarProps {
@@ -46,7 +47,11 @@ function ViewToggleGlyph({ is3D }: { is3D: boolean }) {
 
 export default function TopBar({ sessionName, onNewSession, onRequestLocation, locationLoading = false, locationError = null }: TopBarProps) {
   const t = useT('layout.topbar');
-  const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
+  // leftPanelOpen 的客户端初值依赖视口宽度（窄屏为 false），SSR 恒为 true：
+  // hydrate 前按服务端默认值渲染折叠按钮，避免 390px 下 #418 hydration 失败。
+  const hydrated = useHydrated();
+  const storeLeftPanelOpen = useHudStore((s) => s.leftPanelOpen);
+  const leftPanelOpen = hydrated ? storeLeftPanelOpen : true;
   const toggleLeftPanel = useHudStore((s) => s.toggleLeftPanel);
   const aiStatus = useHudStore((s) => s.aiStatus);
   const setSettingsOpen = useHudStore((s) => s.setSettingsOpen);
