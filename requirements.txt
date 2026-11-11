@@ -37,6 +37,7 @@ shapely>=2.1.2
 rasterio>=1.4.0
 rasterstats>=0.21.0
 pyogrio>=0.13.0
+openpyxl>=3.1.5  # G17 导入工作台：XLSX 工作表读取（read_only；生产可用）
 # pandas 上界 <3.0（#1512）：此前 spec 写的是 <4.0.0，resolver 选中 pandas 3.0.6，
 # 注释宣称的「保持 2.x」从未真正生效 —— Backend Tests 全量跑完后暴露 ~60 例
 # StringDtype（np.asarray 对 pandas 3 默认字符串扩展 dtype 的不兼容）与扩展平台

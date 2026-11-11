@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Lock,
   Upload,
+  FileStack,
 } from 'lucide-react';
 
 import { ConfirmAction } from '@/components/shared/confirm-action';
@@ -38,6 +39,7 @@ import {
   useProjectDatasets,
 } from '@/lib/hooks/use-project-assets';
 import { uploadFile } from '@/lib/api/upload';
+import { ImportWorkbench } from '@/components/data-import/import-workbench';
 import type { DatasetSourceType } from '@/lib/api/project-assets';
 import type { ProjectDataset } from '@/lib/api/project';
 import { formatCrs, shortId } from '@/lib/workflow/recovery';
@@ -62,9 +64,12 @@ export interface DatasetManagerProps {
 
 export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManagerProps) {
   const t = useT('project');
+  const importT = useT('dataImport');
   const ds = useProjectDatasets(projectId);
   const addToast = useToastStore((s) => s.addToast);
   const [showAttach, setShowAttach] = useState(false);
+  // G17 导入工作台（薄挂载：仅一个开关 + 条件渲染，主体在 data-import/ 域）
+  const [showImport, setShowImport] = useState(false);
   const [expandedId, setExpandedId] = useState('');
   const [filter, setFilter] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -163,6 +168,13 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
             title={authed ? undefined : t('auth.loginRequiredSettings')}
             onClick={() => setShowAttach(!showAttach)}
           />
+          <IconButton
+            label={importT('openButton')}
+            icon={FileStack}
+            iconSize={15}
+            active={showImport}
+            onClick={() => setShowImport(!showImport)}
+          />
         </span>
       </div>
 
@@ -170,6 +182,8 @@ export function DatasetManager({ projectId, authed, onOpenInMap }: DatasetManage
         <p className="flex items-center gap-1.5 text-caption text-ink-muted">
           <Lock size={12} aria-hidden /> {t('k6ztlgw')}</p>
       )}
+
+      {showImport && <ImportWorkbench onClose={() => setShowImport(false)} />}
 
       {ds.error && <InlineNotice variant="error">{ds.error}</InlineNotice>}
 
