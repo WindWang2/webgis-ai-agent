@@ -83,6 +83,30 @@ fresh-spec 复检条件 `not_selected = receipt is None or ...` 把「receipt �
 `frontend/node_modules/.bin/jiti` 的环境差异；补符号链接后 19/19 通过，
 master 基线同通过）。
 
-## 第三轮复审记录
+## 第三轮复审记录（终审）
 
-（待第三轮 reviewer 返回后填写）
+- Reviewer：同一独立 subagent（第三轮）。
+- 裁决：**PROCEED** —— 全部 P0/P1 闭合且有实测证据；剩余仅如实留记的
+  PARTIAL×2（P2-1 同会话后继窗口 / P2-2 declared_nearest 证据字段化）+
+  P3×2（N4 J7 计数 vacuous 存量 / 测试名陈旧 nit），不构成合入门槛。
+- 逐项：**N1 FIXED**（四个场景实测：native 面外直调 →
+  SURFACE_SCOPE_VIOLATION 拒绝；deferred 面外 → grant+执行且可观测；
+  receipt 缺席+伪造 echo → 放行；已 grant+过期 echo →
+  SURFACE_FINGERPRINT_MISMATCH fail-closed 仍在）；
+  **N2 FIXED**（复检收窄为实际 grant 工具；`test_no_receipt_echo_is_ignored_for_compat`
+  转绿）；**N3 FIXED**（字段快照刷新，含 2 存量漂移字段说明）。
+- 新引入问题：无（控制流重排经推演无新洞：selected 走 receipt 校验 / grant 走
+  fresh-spec / kill-switch=0 整体跳过）。
+- Reviewer 额外核查：更宽子集（`-k "pi or surface or context_assembly"`，
+  2156 passed）暴露 2 个失败（`gis/test_platform_capabilities.py::
+  [plan_workflow_orchestration]`、`gis_harness/scene3d/::
+  test_analysis_orchestration_staleness.py`）—— 经 `git diff --stat` 核实所在
+  文件与本 PR diff **零改动**，属基线存量/环境问题，不在本 PR 范围。
+- 一个 P3 nit（无需行动）：`test_scope_enforcement_off_by_default` 名称陈旧
+  （默认 ON 下依赖 deferred grant 放行），断言在两种语义下均成立。
+
+## 总结论
+
+- 独立评审 3 轮：BLOCK(P1×4+P2×4+P3×1) → BLOCK(N1/N2 P1) → **PROCEED**。
+- 全部 P0/P1 闭合；PARTIAL×2 与 P3×2 如实留记于 PR body「残余风险」。
+- 满足任务书 §F：独立 review 无阻塞 → 推送并创建 PR。
