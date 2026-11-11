@@ -1072,6 +1072,18 @@
    },
    "Body_upload_files_api_v1_upload_post": {
     "properties": {
+     "attribution": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据归因/来源署名声明。随 license 一同进入语义身份证与产物台账",
+      "title": "Attribution"
+     },
      "crs": {
       "anyOf": [
        {
@@ -1098,6 +1110,18 @@
       },
       "title": "Files",
       "type": "array"
+     },
+     "license": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "数据许可证声明（如 CC-BY-4.0）。非空时进入数据集语义身份证（observed）；缺省如实 unknown，不虚构",
+      "title": "License"
      },
      "register_ref": {
       "default": false,
@@ -3454,6 +3478,983 @@
     "title": "DatasetTagRequest",
     "type": "object"
    },
+   "DeliveryCapabilitiesResponse": {
+    "additionalProperties": false,
+    "description": "GET /data-delivery/capabilities —— 运行时真实驱动探测 + 硬帽 + 版本。",
+    "properties": {
+     "cancel_endpoint": {
+      "default": "",
+      "title": "Cancel Endpoint",
+      "type": "string"
+     },
+     "formats": {
+      "items": {
+       "$ref": "#/components/schemas/FormatCapability"
+      },
+      "title": "Formats",
+      "type": "array"
+     },
+     "limits": {
+      "$ref": "#/components/schemas/DeliveryLimitsView"
+     },
+     "writer_versions": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Writer Versions",
+      "type": "object"
+     }
+    },
+    "required": [
+     "limits"
+    ],
+    "title": "DeliveryCapabilitiesResponse",
+    "type": "object"
+   },
+   "DeliveryCrsSpec": {
+    "additionalProperties": false,
+    "description": "目标坐标系与坐标政策（缺 CRS 不默认 4326）。",
+    "properties": {
+     "allow_unknown_source_crs": {
+      "default": false,
+      "title": "Allow Unknown Source Crs",
+      "type": "boolean"
+     },
+     "coordinate_precision": {
+      "anyOf": [
+       {
+        "maximum": 15.0,
+        "minimum": 6.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "GeoJSON 坐标小数位（显式有损选项，默认关闭=全精度）",
+      "title": "Coordinate Precision"
+     },
+     "target_crs": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "目标 CRS（如 \"EPSG:4326\"）；None = 不变换（格式要求除外）",
+      "title": "Target Crs"
+     }
+    },
+    "title": "DeliveryCrsSpec",
+    "type": "object"
+   },
+   "DeliveryFieldSelection": {
+    "additionalProperties": false,
+    "description": "字段投影与重命名（有界；Shapefile 长字段名映射的显式载体）。",
+    "properties": {
+     "field_map": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "输出字段名映射（如 Shapefile ≤10 字符约束的显式解）",
+      "title": "Field Map"
+     },
+     "fields": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 256,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fields"
+     },
+     "include_geometry": {
+      "default": true,
+      "title": "Include Geometry",
+      "type": "boolean"
+     }
+    },
+    "title": "DeliveryFieldSelection",
+    "type": "object"
+   },
+   "DeliveryJobCreateRequest": {
+    "additionalProperties": false,
+    "description": "POST /data-delivery/jobs 请求。",
+    "properties": {
+     "acknowledged_losses": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Acknowledged Losses",
+      "type": "array"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "登记交付成果到项目（可选；源为项目产物时推荐）",
+      "title": "Project Id"
+     },
+     "spec": {
+      "$ref": "#/components/schemas/DeliverySpec"
+     }
+    },
+    "required": [
+     "spec"
+    ],
+    "title": "DeliveryJobCreateRequest",
+    "type": "object"
+   },
+   "DeliveryJobCreateResponse": {
+    "properties": {
+     "idempotent_reuse": {
+      "default": false,
+      "title": "Idempotent Reuse",
+      "type": "boolean"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "job_id",
+     "status"
+    ],
+    "title": "DeliveryJobCreateResponse",
+    "type": "object"
+   },
+   "DeliveryJobView": {
+    "additionalProperties": false,
+    "description": "GET /data-delivery/jobs/{id} —— 状态 + 完成后的回执。",
+    "properties": {
+     "completed_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Completed At"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "download_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Download Url"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     },
+     "error_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Code"
+     },
+     "filename": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Filename"
+     },
+     "format": {
+      "anyOf": [
+       {
+        "enum": [
+         "geojson",
+         "gpkg",
+         "geoparquet",
+         "csv",
+         "shapefile_zip",
+         "flatgeobuf"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Format"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "progress": {
+      "default": 0,
+      "title": "Progress",
+      "type": "integer"
+     },
+     "progress_message": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Progress Message"
+     },
+     "receipt": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/DeliveryReceipt"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "spec_fingerprint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Spec Fingerprint"
+     },
+     "stage": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Stage"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "job_id",
+     "status"
+    ],
+    "title": "DeliveryJobView",
+    "type": "object"
+   },
+   "DeliveryLimitsView": {
+    "additionalProperties": true,
+    "description": "交付硬帽（UI/工具同源的能力投影）。",
+    "properties": {
+     "data_object_publish_budget_bytes": {
+      "title": "Data Object Publish Budget Bytes",
+      "type": "integer"
+     },
+     "max_fields": {
+      "title": "Max Fields",
+      "type": "integer"
+     },
+     "max_ids": {
+      "title": "Max Ids",
+      "type": "integer"
+     },
+     "max_output_bytes": {
+      "title": "Max Output Bytes",
+      "type": "integer"
+     },
+     "max_rows_per_delivery": {
+      "title": "Max Rows Per Delivery",
+      "type": "integer"
+     },
+     "max_temp_disk_bytes": {
+      "title": "Max Temp Disk Bytes",
+      "type": "integer"
+     },
+     "read_batch_rows": {
+      "title": "Read Batch Rows",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "max_rows_per_delivery",
+     "max_output_bytes",
+     "max_temp_disk_bytes",
+     "max_fields",
+     "max_ids",
+     "read_batch_rows",
+     "data_object_publish_budget_bytes"
+    ],
+    "title": "DeliveryLimitsView",
+    "type": "object"
+   },
+   "DeliveryMember": {
+    "description": "交付包成员（多文件 ZIP/分层也有单一 manifest）。",
+    "properties": {
+     "bytes": {
+      "default": 0,
+      "title": "Bytes",
+      "type": "integer"
+     },
+     "path": {
+      "title": "Path",
+      "type": "string"
+     },
+     "role": {
+      "default": "data",
+      "title": "Role",
+      "type": "string"
+     },
+     "rows": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rows"
+     },
+     "sha256": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sha256"
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "title": "DeliveryMember",
+    "type": "object"
+   },
+   "DeliveryPreview": {
+    "additionalProperties": false,
+    "description": "POST /data-delivery/preview 返回 —— 执行前保真与范围协商。",
+    "properties": {
+     "blocking_issues": {
+      "items": {
+       "$ref": "#/components/schemas/LossItem"
+      },
+      "title": "Blocking Issues",
+      "type": "array"
+     },
+     "downloadable_after": {
+      "default": "completed",
+      "title": "Downloadable After",
+      "type": "string"
+     },
+     "estimate_note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Estimate Note"
+     },
+     "estimated_bytes": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Estimated Bytes"
+     },
+     "estimated_rows": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Estimated Rows"
+     },
+     "field_name_map_applied": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Field Name Map Applied"
+     },
+     "formats": {
+      "items": {
+       "$ref": "#/components/schemas/FormatCapability"
+      },
+      "title": "Formats",
+      "type": "array"
+     },
+     "losses": {
+      "items": {
+       "$ref": "#/components/schemas/LossItem"
+      },
+      "title": "Losses",
+      "type": "array"
+     },
+     "requested_format": {
+      "$ref": "#/components/schemas/FormatCapability"
+     },
+     "required_acknowledgments": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Required Acknowledgments",
+      "type": "array"
+     },
+     "scope_note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scope Note"
+     },
+     "source": {
+      "$ref": "#/components/schemas/SourceIdentity"
+     },
+     "spec_fingerprint": {
+      "title": "Spec Fingerprint",
+      "type": "string"
+     }
+    },
+    "required": [
+     "spec_fingerprint",
+     "source",
+     "requested_format"
+    ],
+    "title": "DeliveryPreview",
+    "type": "object"
+   },
+   "DeliveryReceipt": {
+    "additionalProperties": true,
+    "description": "执行回执 —— 实际证据，非承诺。",
+    "properties": {
+     "artifact_ref": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Artifact Ref"
+     },
+     "bytes_total": {
+      "default": 0,
+      "title": "Bytes Total",
+      "type": "integer"
+     },
+     "content_sha256": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Sha256"
+     },
+     "crs": {
+      "additionalProperties": true,
+      "title": "Crs",
+      "type": "object"
+     },
+     "data_object_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Data Object Id"
+     },
+     "delivery_id": {
+      "title": "Delivery Id",
+      "type": "string"
+     },
+     "durable": {
+      "default": "unknown",
+      "title": "Durable",
+      "type": "string"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     },
+     "error_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Code"
+     },
+     "field_map_applied": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Field Map Applied"
+     },
+     "filename": {
+      "title": "Filename",
+      "type": "string"
+     },
+     "format": {
+      "enum": [
+       "geojson",
+       "gpkg",
+       "geoparquet",
+       "csv",
+       "shapefile_zip",
+       "flatgeobuf"
+      ],
+      "title": "Format",
+      "type": "string"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "losses_applied": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Losses Applied",
+      "type": "array"
+     },
+     "members": {
+      "items": {
+       "$ref": "#/components/schemas/DeliveryMember"
+      },
+      "title": "Members",
+      "type": "array"
+     },
+     "project_artifact_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Artifact Id"
+     },
+     "row_count": {
+      "default": 0,
+      "title": "Row Count",
+      "type": "integer"
+     },
+     "scope": {
+      "additionalProperties": true,
+      "title": "Scope",
+      "type": "object"
+     },
+     "source": {
+      "additionalProperties": true,
+      "title": "Source",
+      "type": "object"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "timings": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "title": "Timings",
+      "type": "object"
+     },
+     "writer_versions": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Writer Versions",
+      "type": "object"
+     }
+    },
+    "required": [
+     "delivery_id",
+     "job_id",
+     "format",
+     "status",
+     "filename"
+    ],
+    "title": "DeliveryReceipt",
+    "type": "object"
+   },
+   "DeliveryScope": {
+    "additionalProperties": false,
+    "description": "交付范围 —— full / 稳定 ID 列表 / typed predicate+bbox。",
+    "properties": {
+     "bbox": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "maxItems": 4,
+        "minItems": 4,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox"
+     },
+     "id_field": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "稳定 ID 字段；缺省自动探测 feature.id → properties._wfid",
+      "title": "Id Field"
+     },
+     "ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 500,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ids"
+     },
+     "ids_truncated": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "选择上下文的服务端派生截断标记（interaction IR ids_truncated）",
+      "title": "Ids Truncated"
+     },
+     "predicate": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "typed 谓词（feature_pages.evaluate_where 兼容子集；同快照精确重放）",
+      "title": "Predicate"
+     },
+     "selection_matched_count": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "选择上下文的真实命中数（matched_count）；大于所携 ID 数即截断证据",
+      "title": "Selection Matched Count"
+     },
+     "subset_ack": {
+      "default": false,
+      "title": "Subset Ack",
+      "type": "boolean"
+     },
+     "type": {
+      "default": "full",
+      "enum": [
+       "full",
+       "ids",
+       "filter"
+      ],
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "title": "DeliveryScope",
+    "type": "object"
+   },
+   "DeliverySourceRef": {
+    "additionalProperties": false,
+    "description": "交付源锚 —— 指向一个已登记的数据引用或项目产物修订。\n\n恰好一种 kind 生效；对应字段必须在字符集白名单内（路由/服务层\n复检，绝不把 ref 文本拼接成未经校验的本地路径）。",
+    "properties": {
+     "artifact_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Artifact Id"
+     },
+     "kind": {
+      "enum": [
+       "session_ref",
+       "fabric_parquet",
+       "project_artifact",
+       "table_rows"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "ref": {
+      "anyOf": [
+       {
+        "maxLength": 256,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref"
+     },
+     "revision_no": {
+      "anyOf": [
+       {
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revision No"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "table_ref": {
+      "anyOf": [
+       {
+        "maxLength": 256,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Table Ref"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "DeliverySourceRef",
+    "type": "object"
+   },
+   "DeliverySpec": {
+    "additionalProperties": false,
+    "description": "交付规格 v1 —— 预览与执行的同一冻结输入。",
+    "properties": {
+     "crs": {
+      "$ref": "#/components/schemas/DeliveryCrsSpec"
+     },
+     "fields": {
+      "$ref": "#/components/schemas/DeliveryFieldSelection"
+     },
+     "filename": {
+      "default": "delivery",
+      "maxLength": 100,
+      "title": "Filename",
+      "type": "string"
+     },
+     "format": {
+      "enum": [
+       "geojson",
+       "gpkg",
+       "geoparquet",
+       "csv",
+       "shapefile_zip",
+       "flatgeobuf"
+      ],
+      "title": "Format",
+      "type": "string"
+     },
+     "geometry_grouping": {
+      "default": "single",
+      "enum": [
+       "single",
+       "by_type"
+      ],
+      "title": "Geometry Grouping",
+      "type": "string"
+     },
+     "scope": {
+      "$ref": "#/components/schemas/DeliveryScope"
+     },
+     "source": {
+      "$ref": "#/components/schemas/DeliverySourceRef"
+     },
+     "spreadsheet_safe": {
+      "default": false,
+      "title": "Spreadsheet Safe",
+      "type": "boolean"
+     },
+     "version": {
+      "default": 1,
+      "title": "Version",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "source",
+     "format"
+    ],
+    "title": "DeliverySpec",
+    "type": "object"
+   },
    "DeprecateRequest": {
     "properties": {
      "note": {
@@ -4629,6 +5630,63 @@
     "title": "FindingOut",
     "type": "object"
    },
+   "FormatCapability": {
+    "description": "格式能力投影（来自真实驱动探测，非扩展名声明）。",
+    "properties": {
+     "available": {
+      "title": "Available",
+      "type": "boolean"
+     },
+     "constrained": {
+      "default": false,
+      "title": "Constrained",
+      "type": "boolean"
+     },
+     "extensions": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Extensions",
+      "type": "array"
+     },
+     "format": {
+      "enum": [
+       "geojson",
+       "gpkg",
+       "geoparquet",
+       "csv",
+       "shapefile_zip",
+       "flatgeobuf"
+      ],
+      "title": "Format",
+      "type": "string"
+     },
+     "notes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "required": [
+     "format",
+     "available"
+    ],
+    "title": "FormatCapability",
+    "type": "object"
+   },
    "GCExecuteRequest": {
     "properties": {
      "plan": {
@@ -4836,6 +5894,28 @@
      "agent_runtime": {
       "title": "Agent Runtime",
       "type": "string"
+     },
+     "agent_runtime_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Mode"
+     },
+     "agent_runtime_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Runtime Reason"
      },
      "pi_vendor": {
       "anyOf": [
@@ -6897,6 +7977,44 @@
      "message"
     ],
     "title": "LogoutResponse",
+    "type": "object"
+   },
+   "LossItem": {
+    "description": "一条格式损失/降级声明（声明与实际改变一一对应，由 oracle 验证）。",
+    "properties": {
+     "code": {
+      "title": "Code",
+      "type": "string"
+     },
+     "fields": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fields"
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     },
+     "requires_ack": {
+      "default": false,
+      "title": "Requires Ack",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "code",
+     "message"
+    ],
+    "title": "LossItem",
     "type": "object"
    },
    "MapActionAck": {
@@ -9014,6 +10132,19 @@
       "minLength": 1,
       "title": "Component Id",
       "type": "string"
+     },
+     "component_type": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Component Type"
      },
      "enabled": {
       "anyOf": [
@@ -13739,6 +14870,173 @@
     "title": "SourceDetailResponse",
     "type": "object"
    },
+   "SourceFieldInfo": {
+    "description": "源字段（类型为有界推断，标注 inferred）。",
+    "properties": {
+     "inferred_type": {
+      "default": "unknown",
+      "title": "Inferred Type",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "sample_values": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sample Values"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "title": "SourceFieldInfo",
+    "type": "object"
+   },
+   "SourceGeometrySummary": {
+    "properties": {
+     "has_z": {
+      "default": false,
+      "title": "Has Z",
+      "type": "boolean"
+     },
+     "null_or_empty_count": {
+      "default": 0,
+      "title": "Null Or Empty Count",
+      "type": "integer"
+     },
+     "sampled_rows": {
+      "default": 0,
+      "title": "Sampled Rows",
+      "type": "integer"
+     },
+     "types": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Types",
+      "type": "array"
+     }
+    },
+    "title": "SourceGeometrySummary",
+    "type": "object"
+   },
+   "SourceIdentity": {
+    "description": "源身份与完整性证据（快照锚）。",
+    "properties": {
+     "artifact_revision_no": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Artifact Revision No"
+     },
+     "completeness": {
+      "additionalProperties": true,
+      "title": "Completeness",
+      "type": "object"
+     },
+     "content_fingerprint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Fingerprint"
+     },
+     "content_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Revision"
+     },
+     "crs": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Crs"
+     },
+     "crs_known": {
+      "default": false,
+      "title": "Crs Known",
+      "type": "boolean"
+     },
+     "fields": {
+      "items": {
+       "$ref": "#/components/schemas/SourceFieldInfo"
+      },
+      "title": "Fields",
+      "type": "array"
+     },
+     "geometry": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SourceGeometrySummary"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "is_table": {
+      "default": false,
+      "title": "Is Table",
+      "type": "boolean"
+     },
+     "kind": {
+      "enum": [
+       "session_ref",
+       "fabric_parquet",
+       "project_artifact",
+       "table_rows"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+     },
+     "row_count": {
+      "default": 0,
+      "title": "Row Count",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "SourceIdentity",
+    "type": "object"
+   },
    "SourceListResponse": {
     "additionalProperties": true,
     "description": "GET /data-fabric/sources 响应。",
@@ -14820,6 +16118,62 @@
     "title": "ToolsListResponse",
     "type": "object"
    },
+   "UndoAgentCommitBody": {
+    "description": "PR-D：撤销/重做一段 Agent 地图提交（Ctrl+Z 撤销整笔 Agent 提交）。\n\n``(base_revision, agent_revision]`` 必须是连续的 Agent 提交；服务端在锁内\n校验当前制图指纹（用户在其后有未撤销的改动 → 拒绝，不覆盖用户编辑）。",
+    "properties": {
+     "agent_revision": {
+      "minimum": 1.0,
+      "title": "Agent Revision",
+      "type": "integer"
+     },
+     "base_revision": {
+      "minimum": 0.0,
+      "title": "Base Revision",
+      "type": "integer"
+     },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "direction": {
+      "default": "undo",
+      "enum": [
+       "undo",
+       "redo"
+      ],
+      "title": "Direction",
+      "type": "string"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "undo_agent_commit",
+      "title": "Intent",
+      "type": "string"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision",
+     "base_revision",
+     "agent_revision"
+    ],
+    "title": "UndoAgentCommitBody",
+    "type": "object"
+   },
    "UnitConversionEvidence": {
     "additionalProperties": false,
     "description": "非米单位 → 米的显式换算证据（DECISIONS D2：不静默换算）。",
@@ -15242,6 +16596,18 @@
       ],
       "title": "Atlas Pages"
      },
+     "constraint_layout": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Constraint Layout"
+     },
      "filename": {
       "title": "Filename",
       "type": "string"
@@ -15387,6 +16753,18 @@
       "additionalProperties": true,
       "title": "Mapspec",
       "type": "object"
+     },
+     "page_profile": {
+      "anyOf": [
+       {
+        "maxLength": 32,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Profile"
      },
      "session_id": {
       "anyOf": [
@@ -20175,7 +21553,8 @@
           "set_scene": "#/components/schemas/SetSceneBody",
           "set_temporal_view": "#/components/schemas/SetTemporalViewBody",
           "set_time": "#/components/schemas/SetTimeBody",
-          "set_view": "#/components/schemas/SetViewBody"
+          "set_view": "#/components/schemas/SetViewBody",
+          "undo_agent_commit": "#/components/schemas/UndoAgentCommitBody"
          },
          "propertyName": "intent"
         },
@@ -20227,6 +21606,9 @@
          },
          {
           "$ref": "#/components/schemas/PatchWorkbenchDeltaBody"
+         },
+         {
+          "$ref": "#/components/schemas/UndoAgentCommitBody"
          }
         ],
         "title": "Req"
@@ -23458,6 +24840,398 @@
     "tags": [
      "系统配置",
      "配置管理"
+    ]
+   }
+  },
+  "/api/v1/data-delivery/capabilities": {
+   "get": {
+    "description": "交付能力查询 —— 运行时真实驱动探测（可用/受限/不可用 + 约束说明）。\n\n纯静态探测（无数据访问），可选认证 —— 与地图导出能力查询同宽。",
+    "operationId": "delivery_capabilities_api_v1_data_delivery_capabilities_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeliveryCapabilitiesResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delivery Capabilities",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   }
+  },
+  "/api/v1/data-delivery/jobs": {
+   "get": {
+    "description": "本人可见的交付任务（server state 恢复 —— 页面刷新/项目重开后重建）。",
+    "operationId": "list_jobs_api_v1_data_delivery_jobs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Project Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/DeliveryJobView"
+         },
+         "title": "Response List Jobs Api V1 Data Delivery Jobs Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Jobs",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   },
+   "post": {
+    "description": "提交交付任务（服务端复检 + 损失确认强制；幂等键防重复制造输出）。",
+    "operationId": "create_delivery_job_api_v1_data_delivery_jobs_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DeliveryJobCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeliveryJobCreateResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Delivery Job",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   }
+  },
+  "/api/v1/data-delivery/jobs/{job_id}": {
+   "get": {
+    "description": "交付任务状态 + 完成后的完整回执。",
+    "operationId": "get_job_api_v1_data_delivery_jobs__job_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeliveryJobView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Job",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   }
+  },
+  "/api/v1/data-delivery/jobs/{job_id}/download": {
+   "get": {
+    "description": "受控下载：授权（creator/会话/项目/owner token）→ receipt 成员校验。",
+    "operationId": "download_delivery_api_v1_data_delivery_jobs__job_id__download_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "member",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 255,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Member"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Download Delivery",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   }
+  },
+  "/api/v1/data-delivery/preview": {
+   "post": {
+    "description": "交付预览：源身份/完整性、逐格式能力、损失与阻断项、需确认清单。",
+    "operationId": "delivery_preview_api_v1_data_delivery_preview_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DeliverySpec"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeliveryPreview"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delivery Preview",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
     ]
    }
   },
@@ -26896,7 +28670,7 @@
   },
   "/api/v1/export/diagnostics/{filename}": {
    "get": {
-    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。",
+    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。\nB-5（review-fix-rereview-20261108）：匿名会话导出主体是\n``session:<sid>`` —— 此前硬性 Bearer + user_id 比对把匿名导出者永远\n挡在门外（下载可走签名 URL，诊断面被认证模型锁死）。现与\n_export_principal 同源：session 主体凭 X-Session-Token 读取。",
     "operationId": "get_export_diagnostics_api_v1_export_diagnostics__filename__get",
     "parameters": [
      {
@@ -26906,6 +28680,22 @@
       "schema": {
        "title": "Filename",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],

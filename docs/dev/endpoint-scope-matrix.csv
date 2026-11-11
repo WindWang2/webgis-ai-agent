@@ -90,6 +90,12 @@ POST,/api/v1/config/rag/test,admin:write,Y,N
 GET,/api/v1/config/skills,admin:read,Y,N
 POST,/api/v1/config/skills/refresh,admin:write,Y,N
 POST,/api/v1/config/skills/upload,admin:write,Y,N
+GET,/api/v1/data-delivery/capabilities,gis:read,N,Y
+GET,/api/v1/data-delivery/jobs,gis:read,N,Y
+POST,/api/v1/data-delivery/jobs,gis:write,N,Y
+GET,/api/v1/data-delivery/jobs/{job_id},gis:read,N,Y
+GET,/api/v1/data-delivery/jobs/{job_id}/download,gis:read,N,Y
+POST,/api/v1/data-delivery/preview,gis:write,N,Y
 GET,/api/v1/data-fabric/catalog,gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id},gis:read,N,Y
 GET,/api/v1/data-fabric/catalog/{item_id}/descriptor,gis:read,N,Y

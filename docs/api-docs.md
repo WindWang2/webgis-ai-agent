@@ -875,6 +875,17 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/data-fabric/catalog/{item_id}/features/stream` | Stream Catalog Item Features Http | object |
 | `POST` | `/api/v1/data-fabric/materialize` | Materialize Catalog Item | MaterializeResponse |
 
+### Data Delivery / 数据交付
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/data-delivery/capabilities` | Delivery Capabilities | DeliveryCapabilitiesResponse |
+| `POST` | `/api/v1/data-delivery/preview` | Delivery Preview | DeliveryPreview |
+| `POST` | `/api/v1/data-delivery/jobs` | Create Delivery Job | — |
+| `GET` | `/api/v1/data-delivery/jobs` | List Jobs | array |
+| `GET` | `/api/v1/data-delivery/jobs/{job_id}` | Get Job | DeliveryJobView |
+| `GET` | `/api/v1/data-delivery/jobs/{job_id}/download` | Download Delivery | object |
+
 ### Lakehouse / 空间数据湖仓
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1170,6 +1181,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：433（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：439（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

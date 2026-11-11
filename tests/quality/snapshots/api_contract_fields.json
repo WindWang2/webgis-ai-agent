@@ -233,6 +233,52 @@
   "__model__": "app__schemas__config_schema__SkillsListResponse",
   "skills": "array<SkillListItem>"
  },
+ "GET /api/v1/data-delivery/capabilities": {
+  "__model__": "DeliveryCapabilitiesResponse",
+  "cancel_endpoint": "string",
+  "formats": "array<FormatCapability>",
+  "limits": "DeliveryLimitsView",
+  "writer_versions": "object"
+ },
+ "GET /api/v1/data-delivery/jobs": {
+  "__array_of__": {
+   "__model__": "DeliveryJobView",
+   "completed_at": "null|string",
+   "created_at": "null|string",
+   "download_url": "null|string",
+   "error": "null|string",
+   "error_code": "null|string",
+   "filename": "null|string",
+   "format": "null|string",
+   "job_id": "string",
+   "progress": "integer",
+   "progress_message": "null|string",
+   "receipt": "DeliveryReceipt|null",
+   "spec_fingerprint": "null|string",
+   "stage": "null|string",
+   "status": "string"
+  }
+ },
+ "GET /api/v1/data-delivery/jobs/{job_id}": {
+  "__model__": "DeliveryJobView",
+  "completed_at": "null|string",
+  "created_at": "null|string",
+  "download_url": "null|string",
+  "error": "null|string",
+  "error_code": "null|string",
+  "filename": "null|string",
+  "format": "null|string",
+  "job_id": "string",
+  "progress": "integer",
+  "progress_message": "null|string",
+  "receipt": "DeliveryReceipt|null",
+  "spec_fingerprint": "null|string",
+  "stage": "null|string",
+  "status": "string"
+ },
+ "GET /api/v1/data-delivery/jobs/{job_id}/download": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/data-fabric/catalog": {
   "__model__": "CatalogListResponse"
  },
@@ -368,6 +414,8 @@
  "GET /api/v1/health": {
   "__model__": "HealthResponse",
   "agent_runtime": "string",
+  "agent_runtime_mode": "null|string",
+  "agent_runtime_reason": "null|string",
   "pi_vendor": "null|string",
   "pi_workers_alive": "null|string",
   "service": "string",
@@ -1274,6 +1322,29 @@
   "security": "string",
   "status": "string"
  },
+ "POST /api/v1/data-delivery/jobs [202]": {
+  "__model__": "DeliveryJobCreateResponse",
+  "idempotent_reuse": "boolean",
+  "job_id": "string",
+  "message": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-delivery/preview": {
+  "__model__": "DeliveryPreview",
+  "blocking_issues": "array<LossItem>",
+  "downloadable_after": "string",
+  "estimate_note": "null|string",
+  "estimated_bytes": "integer|null",
+  "estimated_rows": "integer|null",
+  "field_name_map_applied": "null|object",
+  "formats": "array<FormatCapability>",
+  "losses": "array<LossItem>",
+  "requested_format": "FormatCapability",
+  "required_acknowledgments": "array<string>",
+  "scope_note": "null|string",
+  "source": "SourceIdentity",
+  "spec_fingerprint": "string"
+ },
  "POST /api/v1/data-fabric/catalog/{item_id}/explain": {
   "__model__": "CatalogExplainResponse"
  },
@@ -1367,6 +1438,7 @@
   "__model__": "VectorPdfExportResponse",
   "atlas": "boolean",
   "atlas_pages": "array<object>|null",
+  "constraint_layout": "null|object",
   "filename": "string",
   "format": "string",
   "frames_rendered": "integer",

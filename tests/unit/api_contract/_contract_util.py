@@ -29,6 +29,7 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/reports/{report_id}/download"): "file download bytes",
     ("GET", "/api/v1/reports/shared/{share_code}/view"): "file view bytes",
     ("GET", "/api/v1/export/download/{filename}"): "file download bytes",
+    ("GET", "/api/v1/data-delivery/jobs/{job_id}/download"): "data delivery file bytes",
     ("GET", "/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png"): "PNG tile bytes",
     ("GET", "/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png"): "PNG terrain tile bytes",
     ("GET", "/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt"): "MVT tile bytes",
