@@ -6,7 +6,7 @@ import uuid
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1503,6 +1503,7 @@ async def list_sessions(
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session_detail(
     session_id: str,
+    request: Request,
     conv: Conversation = Depends(require_owned_session),
     db: AsyncSession = Depends(get_async_db),
     limit: int = Query(
@@ -1545,7 +1546,7 @@ async def get_session_detail(
     page = list(result.scalars().all())
     page.reverse()
 
-    return {
+    payload = {
         "id": conv.id,
         "title": conv.title,
         "createdAt": conv.created_at.timestamp() * 1000,
@@ -1564,6 +1565,20 @@ async def get_session_detail(
             for m in page
         ],
     }
+    # G22-P6（恢复可读性）：?recovery=1 —— 恢复摘要仅在显式请求时附挂
+    # （默认响应字节不变）。flag 经原始 Request 读取而非 Query 参数、
+    # recovery 不入 SessionDetailResponse —— OpenAPI 契约面（含快照）不变；
+    # 附挂时直接返回 JSONResponse 绕过 response_model 的字段过滤。摘要内部
+    # best-effort，失败按「未恢复」折叠不红。
+    if request.query_params.get("recovery", "").strip().lower() in ("1", "true"):
+        try:
+            from app.services.chat.recovery_summary import build_recovery_summary
+
+            payload["recovery"] = await build_recovery_summary(session_id)
+        except Exception:  # noqa: BLE001 — 摘要是附挂面，绝不使恢复请求失败
+            payload["recovery"] = {"status": "ok", "recovered": False}
+        return JSONResponse(content=payload)
+    return payload
 
 
 # ── 澄清闭环（方向 3 / ADR-0222）──────────────────────────────────────

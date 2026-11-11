@@ -25,6 +25,7 @@ import {
 } from '@/lib/agent-runtime';
 import { CitationSourcesProvider, CitationSourceList, splitCitationBlocks, type CitationSource } from '@/components/chat/citation';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
+import { RecoveryBanner } from '@/components/chat/recovery-banner';
 import { adaptChartData } from "@/lib/chart-adapter";
 import { useLocale, useT } from '@/lib/i18n/useT';
 
@@ -512,6 +513,10 @@ const t = useT();
         ownerToken={ownerToken}
         refreshKey={messages.length}
       />
+      {/* G22-P6（会话恢复可读性）：恢复摘要横幅挂在 transcript 上方 —— 自水合
+          `?recovery=1`，未恢复 / 拉取失败整条隐藏（同 SessionPlanPanel 降级
+          约定），技术 id 只进 title 诊断属性。 */}
+      <RecoveryBanner sessionId={sessionId} ownerToken={ownerToken} />
       {/* Messages scroll area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !isBusy && (
