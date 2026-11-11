@@ -196,4 +196,9 @@ export class FrameCameraHub {
   memberIds(): string[] {
     return [...this.entries.keys()];
   }
+
+  /** id 当前绑定的 map 实例（context loss 重建检测用；未登记 null）。 */
+  entryMap(id: string): HubMapLike | null {
+    return this.entries.get(id)?.map ?? null;
+  }
 }

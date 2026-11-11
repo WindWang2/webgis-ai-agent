@@ -89,6 +89,15 @@ export function latestFrameObservationRows(): FrameObservationRow[] | null {
   return latestRows;
 }
 
+/**
+ * 观察行失效（评审 M2）：网格关闭/会话切换时必须清空 —— 否则后续所有
+ * cartographic-observation POST 永久回放旧声明（帧视窗早已卸载却仍报
+ * live_observed/snapshot），污染服务端终验。「曾观察」≠「正在观察」。
+ */
+export function clearFrameObservations(): void {
+  latestRows = null;
+}
+
 /** 页面挂点（grid 每次投影刷新时发布；e2e/评估只读）。 */
 export function publishFrameObservations(input: FrameObservationInput): FrameObservationRow[] {
   const rows = collectFrameObservationRows(input);

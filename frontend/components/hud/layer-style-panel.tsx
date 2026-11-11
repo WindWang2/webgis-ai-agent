@@ -7,6 +7,12 @@ import { motion } from 'framer-motion';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { LayerStyle } from '@/lib/types/layer';
 import { setLayerOpacityAndCommit } from '@/lib/mapspec/user-mutation';
+import {
+  commitLayerOverrideForFrame,
+  frameEditScopeLabel,
+  resolveEditScope,
+} from '@/lib/cartography/frame-edit-scope';
+import { getFrameGridSnapshot } from '@/lib/cartography/frame-grid-store';
 import { getCommittedMapSpec, subscribeMapSpecLive } from '@/lib/mapspec/session-cursor';
 import { useT } from '@/lib/i18n/useT';
 import { t as tNow } from '@/lib/i18n/t';
@@ -186,6 +192,30 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const commitOpacity = (val: number) => {
     if (draftOpacity === null || val === layer.opacity) return;
     setDraftOpacity(null);
+    // G25（P2 编辑范围路由）：多画幅网格打开且有活动画幅时，「允许
+    // override」的图层操作落到该帧 layerOverrides（仅本幅 —— 其余帧与
+    // 根层默认值不动）；无活动画幅走既有根级 presentation 提交。
+    const gridSnap = getFrameGridSnapshot();
+    const frameScope = resolveEditScope(gridSnap.open, gridSnap.activeFrameId);
+    if (frameScope === 'frame_only' && gridSnap.activeFrameId) {
+      const specLayerId = layer._mapspecLayerId || layer.id;
+      void commitLayerOverrideForFrame(gridSnap.activeFrameId, {
+        layerId: specLayerId,
+        override: { opacity: val },
+      })
+        .then((outcome) => {
+          if (outcome !== 'superseded') {
+            updateLayer(layer.id, { opacity: val });
+          }
+        })
+        .catch(() => {
+          useToastStore.getState().addToast(
+            t('hud.layerStyle.frameOverrideFailed', { scope: frameEditScopeLabel(frameScope) }),
+            'error',
+          );
+        });
+      return;
+    }
     // audit #842: 经带回滚的 wrapper 提交 —— 裸 void commitLayerPresentation
     // 失败时 unhandled rejection 且本地透明度不回滚（与服务端分叉）。
     void setLayerOpacityAndCommit(layer.id, val);

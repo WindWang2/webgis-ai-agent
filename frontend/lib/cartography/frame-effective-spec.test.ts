@@ -108,7 +108,7 @@ describe('resolveFrameEffectiveSpec', () => {
     const s = spec();
     const slot = s.frame_product!.frames[0] as { data: Record<string, unknown> };
     delete slot.data.where;
-    slot.data.time_window = { time_field: 'year', start: 2020, end: 2024 };
+    slot.data.time_window = { time_field: 'year', time_representation: 'year_int', start: 2020, end: 2024 };
     const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
     expect(out.applied).toEqual(['layer_overrides', 'time_window']);
     const src = (out.document.sources as Record<string, Record<string, unknown>>)['src-0'];
@@ -130,6 +130,37 @@ describe('resolveFrameEffectiveSpec', () => {
     const src = (out.document.sources as Record<string, Record<string, unknown>>)['src-0'];
     const payload = (src.inlineData ?? src.data) as { features: Array<{ properties: { year: number } }> };
     expect(payload.features[0].properties.year).toBe(2022);
+  });
+
+  it('time_window 缺 time_representation → 与后端一致跳过过滤（M6 对齐）', () => {
+    const s = spec();
+    const slot = s.frame_product!.frames[0] as { data: Record<string, unknown> };
+    delete slot.data.where;
+    slot.data.time_window = { time_field: 'year', start: 2020, end: 2024 }; // 无 representation
+    const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
+    expect(out.applied).toEqual(['layer_overrides']); // 不含 time_window（后端同款宽容）
+    expect(out.filteredFeatureCount).toBeNull();
+  });
+
+  it('independent 图例帧跳过共享分级；palette_colors 类数不匹配丢弃+披露（M6）', () => {
+    const s = spec();
+    s.frame_product!.shared_expression = {
+      field: 'per_10k', method: 'quantile', k: 4, palette: 'Viridis',
+      breaks: [0, 5, 10, 15, 20], domain_status: 'complete',
+    };
+    // independent 帧
+    const s2 = spec();
+    (s2.frame_product!.frames[0] as { legend?: string }).legend = 'independent';
+    s2.frame_product!.shared_expression = s.frame_product!.shared_expression;
+    const out2 = resolveFrameEffectiveSpec(s2, s2.frame_product, 'f-2022');
+    expect(out2.applied).not.toContain('shared_expression');
+    expect(out2.disclosures).toContain('shared_expression_skipped_independent_legend');
+    // palette_colors 类数不匹配（层 2 类 vs 共享 4 类）→ 丢弃 + 披露
+    const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
+    const layer = (out.document.layers as Array<{ legend_spec?: Record<string, unknown> }>)[0];
+    expect(layer.legend_spec!.breaks).toEqual([0, 5, 10, 15, 20]);
+    expect(layer.legend_spec!.palette_colors).toBeUndefined();
+    expect(out.disclosures).toContain('shared_expression_palette_colors_not_recomputed');
   });
 
   it('normalizeBoundaryValue：year_int/date_string/epoch_s + 契约时区口径', async () => {

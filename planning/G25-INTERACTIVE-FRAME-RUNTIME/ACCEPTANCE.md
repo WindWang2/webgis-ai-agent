@@ -9,12 +9,12 @@
 |---|---|---|---|---|
 | A01 | 三幅数据绑定真实可见 | ✓ | FrameGrid 瓦片 × resolveFrameEffectiveSpec（where/time_window 过滤真数据） | J18 mock：3 瓦片 data-frame-id 身份断言 + 活动瓦片 maplibre canvas 可见；frame-effective-spec 7/7 |
 | A02 | active frame 与主地图一致 | ✓ | 激活 optimistic + commitFrameProductPatch(active_frame)（面板/地图同一服务端真相） | frame-grid.test「激活另一幅」CAS 断言；J18 mock scope 徽标；J18 real 刷新恢复 |
-| A03 | 仅改第二幅不改一/三幅 | ✓ | commitLayerOverrideForFrame（set_layout frames 整表，其余帧逐字携带）；面板改名走 G15 同契约 | frame-edit-scope 4/4（fp-1 既有 override 不丢、fp-3 无 override 不变） |
+| A03 | 仅改第二幅不改一/三幅 | ✓ | commitLayerOverrideForFrame（set_layout frames 整表，其余帧逐字携带）已接入 layer-style-panel 不透明度（网格活动时仅本幅路由）；面板改名走 G15 同契约 | frame-edit-scope 4/4（fp-1 既有 override 不丢、fp-3 无 override 不变）+ layer-style-panel 6/6（路由回归） |
 | A04 | 同组 pan 传播 | ✓ | FrameCameraHub ①组内 resolveGroupSync + ②未挂载帧 expectedCamera | frame-camera-hub「同组 pan/zoom 传播」 |
 | A05 | 同组 zoom 传播 | ✓ | 同上（syncZoom 维度） | 同上 + 「zoom 维度关闭」反例 |
 | A06 | 不同组不传播 | ✓ | resolveGroupSync 组过滤（组 B/无组 target 无 patch） | frame-camera-hub 首用例断言 f3/f4 零 jumpTo |
 | A07 | 无回声循环 | ✓ | 三层：容差收敛 null / applying 代际门 / entry generation | frame-camera-hub「无回声」用例（f2 单次 jumpTo、f1 不回跳、二次 fire no-op） |
-| A08 | 不兼容投影明确拒绝 | ✓ | checkProjectionCompat（投影不匹配 typed 拒绝；MapSpec 全 3857 下的 CRS 缺口走 source error 可见面） | frame-runtime「投影不一致明确拒绝」 |
+| A08 | 不兼容投影明确拒绝 | ✓ | checkProjectionCompat 在帧挂载前接线（帧视图投影字段缺席=3857 兼容；不匹配 typed 拒绝 → error 瓦片）| frame-runtime「投影不一致明确拒绝」 |
 
 ## 资源与失效
 
@@ -33,10 +33,10 @@
 
 | # | 验收 | 状态 | 实现 | 证据 |
 |---|---|---|---|---|
-| A17 | 手动锁定 extent 保留 | ✓ | cameraWriteGuard + hub lockedExtent 目标跳过 | frame-camera-hub「锁定 extent」+ frame-runtime 守卫用例 |
+| A17 | 手动锁定 extent 保留 | ✓ | cameraWriteGuard 纯函数 + hub attach lockedExtent（layout.frames[].extent → 拒绝相机写入）已接线 | frame-camera-hub「锁定 extent」+ frame-runtime 守卫用例 |
 | A18 | 共享分级同值同色不重算 | ✓ | 共享 breaks 原样搬运 legend_spec（shared_scope 标记），paint 由 thematic-paint 同一确定性投影派生 | frame-effective-spec「breaks 原样搬运」 |
 | A19 | 逐 frame source 失败可见 | ✓ | 帧 typed error → error 态瓦片横幅 + 观察行 source_error；失败不阻塞其他帧 | frame-effective-spec typed error 用例；frame-grid resolve-error 事实推进 warmup |
-| A20 | 保存刷新恢复 active 与 group | ✓ | active_frame/组 = 服务端真相（CAS 持久）；草稿 sessionStorage 恢复 | J18 real ⑥（第二次 reload 后 scope=fp-r-b） |
+| A20 | 保存刷新恢复 active 与 group | △ | active_frame/组 = 服务端真相（CAS 持久）；草稿 sessionStorage 恢复 | mock 档夹具重放=恢复路径证据；real 档：平台缺口——制图 spec 仅经 live-turn SSE 到达浏览器，无 turn-less/reload 恢复通道（评审后如实降级，非本方向越权代修；server 侧持久已由 real ④ 终验回读证实） |
 | A21 | CAS 冲突不假成功 | ✓ | 全写路径 expected_revision + 409 superseded 静默回灌（G15 同门复用） | frame-edit-scope CAS 用例（expected_revision=12 断言） |
 | A22 | 快速切换不串帧 | ✓ | advanceLiveSlot 串行链（prior.then）+ facts 代际门 + hub attach 轮询去重 | frame-grid「键盘切换」连续 ']'/'[' 断言不串 |
 | A23 | 真实 Pi 更新 frame 被浏览器采用 | △ | 后端 frame_product 工具链 G15 已有；本方向消费 committed spec（live generation 订阅）。真实 Pi 子进程 × frame 更新 × 浏览器采用的三方联跑未在本分支单独取证（G15 real 旅程在 nightly 占位同样未取） | J18 real 走真实 mutation API（同一 SetFrameProductIntent 服务端路径） |

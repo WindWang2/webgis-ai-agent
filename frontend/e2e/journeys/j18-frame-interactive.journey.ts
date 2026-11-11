@@ -275,6 +275,15 @@ test.describe('journey-18 多画幅交互运行时', () => {
       },
     );
     expect(obsRes.ok(), `observation rejected: ${obsRes.status()} ${await obsRes.text()}`).toBeTruthy();
+    // m5：路由对指纹门拒绝也回 200（observation_accepted=false）—— 必须断言接受语义。
+    const obsBody = (await obsRes.json()) as {
+      observation_accepted?: boolean;
+      observation_rejection_reason?: string | null;
+    };
+    expect(
+      obsBody.observation_accepted,
+      `observation not accepted: ${obsBody.observation_rejection_reason}`,
+    ).toBe(true);
 
     // ④ frame_product_status 终验回读：逐帧行吸收观察（A: live_observed、
     //    B: snapshot、C: export_verified 被拒 → not_observed）。

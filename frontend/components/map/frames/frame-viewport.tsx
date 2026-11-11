@@ -196,6 +196,10 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
             // dataUrl 是不可变字符串 —— 直接从 live canvas 同步读取（idle 后
             // 像素即定格），不持 canvas/上下文引用（无泄漏面）。
             const dataUrl = live.toDataURL('image/png');
+            // 尺寸口径 = CSS 像素（评审 m1）：瓦片 ResizeObserver 同口径，
+            // 否则 HiDPI（DPR>1）下快照指纹的尺寸子句恒不匹配 → 全部误判
+            // stale。canvas.width 是 device px，除以 pixelRatio 归一。
+            const ratio = typeof map.getPixelRatio === 'function' ? map.getPixelRatio() : 1;
             return {
               dataUrl,
               bytes: dataUrl.length,
@@ -205,8 +209,8 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
                 bearing: map.getBearing(),
                 pitch: map.getPitch(),
               },
-              width: live.width,
-              height: live.height,
+              width: Math.round(live.width / (ratio || 1)),
+              height: Math.round(live.height / (ratio || 1)),
             };
           } catch {
             return null; // 捕获失败如实返回（不伪造空白成功 —— P6 契约）

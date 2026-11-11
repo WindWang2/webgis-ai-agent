@@ -17,8 +17,10 @@ worktree：`/home/kevin/projects/webgis/webgis-wt-g25-frame-runtime-20261111T173
 | M4 P4 资源（卸载捕获/context loss 代际/会话失效/30 次挂卸） | verified | frame-viewport.test 5/5 + grid 会话/A13 用例 |
 | M5 P6 观察生产者+后端接线 | verified | 前端 frame-observation（grid 观察用例）+ 后端 test_g25_observation_wiring 6/6 |
 | M6 P7 J18 mock 档（真实浏览器） | verified | playwright Chromium 通过（6.5s/10s 两轮稳定） |
-| M6 P7 J18 real 档（真后端） | in_progress | 本地栈已起（LLM stub/uvicorn/admin/前端 3325）；阻断=vendor/pi RPC entry 未构建 → 构建中 |
-| M7 独立 review + PR | not_started | — |
+| M6 P7 J18 real 档（真后端） | verified | 8.2s 通过：真登录→UI 真会话→runner-local 真实 mutation 管线种子→观察指纹门 POST（frames 增维/export_verified 拒绝）→status 逐帧终验回读 |
+| 全量回归（前端） | verified | 565 文件：仅 4 个 BASE 既有失败（stash 两侧复现；本方向 57 用例全绿、lint 0） |
+| 后端受影响面回归 | verified | frame_products 55/55 + 观察面 32/32 |
+| M7 独立 review + PR | in_progress | reviewer 已派（全量 diff + 10 重点面）；旅程因 #2090 撞号改 j18 |
 
 ## 关键修复记录（可证伪循环）
 

@@ -2,15 +2,18 @@
  * G25 帧有效文档前端解析器 —— 后端 `frame_products/resolver.py` 的 JS 等价
  * （渲染面），使浏览器交互画幅与服务端验证/出版读到**同一份**帧文档。
  *
- * 解析顺序（与后端逐位一致）：
+ * 解析顺序（与后端 resolver 对齐；已知边界差异如实披露，见文件尾
+ * 「两端一致性边界」）：
  * 1. layerOverrides（layout.frames[id].layerOverrides 逐键覆写，id 不可覆写）；
  * 2. data.where（feature_pages where AST —— where-ast.ts 同源求值器）；
  * 3. data.time_window（temporal [start,end) 窗：数值域 float 比较，字符串域
- *    字典序；仅数值/字符串字段命中 —— 后端 _in_window 同语义）；
+ *    字典序；仅数值/字符串字段命中 —— 后端 _in_window 同语义；缺
+ *    time_field/time_representation 时与后端一致跳过过滤）；
  * 4. shared_expression（共享分级 breaks/method/k/palette 写入绑定层
  *    legend_spec —— **同值同色、绝不重算**：运行时只搬运产品域的既有
- *    breaks，不在帧子集上重新分级；paint 由 MapSpecRuntime 的
- *    thematic-paint 从同一 legend_spec 确定性派生，图例/渲染不漂移）。
+ *    breaks，不在帧子集上重新分级；legend='independent' 帧跳过（后端
+ *    同款）；palette_colors 与新类数不一致时丢弃 + 披露（后端按 midpoint
+ *    重采样 —— 前端无 colormap 表，不伪造同色）。
  *
  * 失败语义（typed，绝不静默回退整幅主文档）：
  * - frame_layer_unavailable / frame_source_not_inline / frame_where_invalid /
@@ -283,17 +286,23 @@ export function resolveFrameEffectiveSpec(
     if (data.time_window && isRecord(data.time_window)) {
       const tw = data.time_window;
       const field = typeof tw.time_field === 'string' ? tw.time_field : '';
-      if (!field) {
-        throw new FrameEffectiveSpecError('frame_time_window_invalid', 'time_window requires time_field');
-      }
+      const representation = typeof tw.time_representation === 'string' ? tw.time_representation : '';
+      // 与后端 apply_time_window_to_doc 对齐：缺 time_field/representation
+      // → 跳过过滤（写入侧 bind 已校验；畸形 payload 不在此分叉两端行为）。
+      if (field && representation) {
       const predicate = timeWindowPredicate(tw);
       kept = kept.filter((f) => {
         const props = isRecord(f.properties) ? f.properties : {};
         return predicate(props[field]);
       });
       applied.push('time_window');
+      }
     }
-    filteredFeatureCount = kept.length;
+    // 仅在有过滤步骤生效时报告计数（后端 None = 无过滤步骤同义）。
+    const hasFilterStep = applied.includes('where_filter') || applied.includes('time_window');
+    if (hasFilterStep) {
+      filteredFeatureCount = kept.length;
+    }
     if (kept.length !== inline.features.length) {
       doc = withFilteredSource(doc, bound.sourceKey, kept);
     }
@@ -305,7 +314,13 @@ export function resolveFrameEffectiveSpec(
   if (isRecord(shared) && Array.isArray(shared.breaks) && (shared.breaks as unknown[]).length >= 2) {
     const breaks = (shared.breaks as unknown[]).map((b) => Number(b));
     const boundLayerId = typeof data?.layer_id === 'string' ? data.layer_id : null;
-    if (boundLayerId) {
+    const slotLegend = typeof (slotRaw as { legend?: unknown }).legend === 'string'
+      ? (slotRaw as { legend: string }).legend
+      : 'shared';
+    // 后端同款：独立图例帧不应用共享分级。
+    if (slotLegend === 'independent') {
+      disclosures.push('shared_expression_skipped_independent_legend');
+    } else if (boundLayerId) {
       const docRec = doc as unknown as Record<string, unknown>;
       const layers = Array.isArray(docRec.layers) ? [...docRec.layers] : [];
       let hit = false;
@@ -318,6 +333,18 @@ export function resolveFrameEffectiveSpec(
         legend.k = breaks.length - 1;
         if (typeof shared.palette === 'string' && shared.palette) legend.palette = shared.palette;
         legend.shared_scope = true; // 同域分级标记（渲染/图例可识别）
+        // palette_colors 一致性（M6）：类数与既有色带不一致或 palette 变更
+        // 时丢弃旧色带 + 披露（后端按 midpoint 重采样；前端无 colormap 表，
+        // 不伪造「同值同色」）。thematic-paint 走回退着色。
+        const prevColors = Array.isArray(legend.palette_colors) ? legend.palette_colors : null;
+        const paletteChanged =
+          typeof shared.palette === 'string' &&
+          !!legend.palette &&
+          shared.palette !== legend.palette;
+        if (!prevColors || prevColors.length !== breaks.length - 1 || paletteChanged) {
+          delete legend.palette_colors;
+          disclosures.push('shared_expression_palette_colors_not_recomputed');
+        }
         hit = true;
         return { ...layer, legend_spec: legend } as unknown as (typeof layers)[number];
       });
@@ -335,6 +362,15 @@ export function resolveFrameEffectiveSpec(
 
   return { frameId, document: doc, applied, filteredFeatureCount, disclosures };
 }
+
+// ── 两端一致性边界（评审 M6，如实披露）─────────────────────────────────
+// 1. iso_string：后端按 time_format_hint 与数据形状同构重渲染边界；前端
+//    无 hint 时原样比较（统一 Z 形状同构）。数据为非 Z 偏移/带小数秒且
+//    hint 在场时，两端边界帧划分可能不同（已知边界，不冒充逐位一致）。
+// 2. 目标层：后端 time_window 用 tw.layer_id（缺省首层）；前端用绑定层
+//    data.layer_id（bind 产物两者一致 —— 语义等价路径）。
+// 3. labels：后端重算 graduated 标签；前端图例由 breaks 派生展示，不落
+//    legend_spec.labels（显示层差异不影响分级/着色语义）。
 
 function findLayoutFrame(
   spec: MapSpec,

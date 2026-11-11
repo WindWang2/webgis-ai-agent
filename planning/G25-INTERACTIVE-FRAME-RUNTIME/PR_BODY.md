@@ -39,6 +39,14 @@
   real 档 = 真后端服务端闭环（runner-local 真实 mutation 管线种子 →
   观察指纹门 POST → status 逐帧终验回读）。
 
+## 与在途 PR 的关系
+
+- #2090（G28）先注册了 `j17` 旅程编号 → 本方向旅程改号 **j18**
+  （遵 #2084 唯一 ID 规则）；#2090 只消费既有 frame_evidence_rows，
+  与本分支 frame_products/ 后端改动无文件冲突。
+- #2087（G27）/#2088（G24）：map-panel.tsx / mapspec-runtime 加性冲突，
+  合并时语义解（均为小接入补丁）。
+
 ## 排除项（明确不做）
 
 - 不改 frame schema / shared_expression 计算 / PublicationIR 版面（G15/G26）。

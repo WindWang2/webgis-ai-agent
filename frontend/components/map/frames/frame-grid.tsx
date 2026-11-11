@@ -48,6 +48,8 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import { projectFrameProduct, commitFrameProductPatch } from '@/lib/cartography/frame-product';
 import {
+  cameraWriteGuard,
+  checkProjectionCompat,
   projectFrameRuntime,
   selectActiveSuccessor,
   snapshotFingerprint,
@@ -75,7 +77,7 @@ import {
 import { FrameCameraHub } from './frame-camera-hub';
 import { FrameViewport, type FrameViewportHandle } from './frame-viewport';
 import { mapInstanceRegistry } from './frame-instance-registry';
-import { publishFrameObservations } from '@/lib/cartography/frame-observation';
+import { clearFrameObservations, publishFrameObservations } from '@/lib/cartography/frame-observation';
 import { devOnly } from '@/lib/utils/logger';
 
 export interface FrameProductGridProps {
@@ -148,11 +150,19 @@ export function FrameProductGrid({
         if (current && viewportHandleRef.current) {
           const cap = await viewportHandleRef.current.capture();
           const sid = sessionRef.current ?? '';
-          if (cap && sid) {
-            const pv = projectFrameProduct(getCommittedMapSpec());
-            const slot = pv.slots.find((s) => s.frameId === current);
-            const fact = mountedFactsRef.current.get(current);
-            const specRev = fact && !fact.errorCode ? fact.resolvedSpecRevision : liveGenerationRef.current;
+          const pv = projectFrameProduct(getCommittedMapSpec());
+          const slot = pv.slots.find((s) => s.frameId === current);
+          // 快照版本诚实化（评审 M1）：只在「帧仍在产品内 + 无错误事实 +
+          // 已落定到 desired revision」时按当前版本入库；错误/loading/部分
+          // 渲染的像素不冒充当前版本（宁可无快照，A11/A12 姐妹条款）。
+          const fact = mountedFactsRef.current.get(current);
+          const settledClean =
+            !!slot &&
+            !!fact &&
+            !fact.errorCode &&
+            fact.resolvedSpecRevision === liveGenerationRef.current;
+          if (cap && sid && settledClean) {
+            const specRev = fact.resolvedSpecRevision;
             const size = { width: cap.width, height: cap.height };
             snapshotStoreRef.current!.put({
               sessionId: sid,
@@ -208,7 +218,10 @@ export function FrameProductGrid({
   );
 
   const handleClose = useCallback(() => {
-    void advanceLiveSlot(null).then(() => closeFrameGrid());
+    void advanceLiveSlot(null).then(() => {
+      closeFrameGrid();
+      clearFrameObservations(); // 评审 M2：关闭即失效（不回放旧声明）
+    });
   }, [advanceLiveSlot]);
 
   // ── 相机草稿：sessionStorage 恢复（客户端本地，永不进 schema）。──
@@ -242,6 +255,7 @@ export function FrameProductGrid({
     sessionRef.current = sessionId ?? null;
     if (previous && previous !== sessionId) {
       snapshotStoreRef.current!.invalidateSession(previous);
+      clearFrameObservations(); // 评审 M2：会话切换旧观察行不得进入新会话
       setExpectedCameras(new Map());
       setCameraDrafts(new Map());
       hubRef.current?.dispose();
@@ -270,6 +284,9 @@ export function FrameProductGrid({
     mapInstanceRegistry.budget();
 
   // ── 网格打开：live 槽位 = 活动画幅；warmup 队列 = 其余无快照帧（预算内）。──
+  // registryTick（M4）：预算被占用（对比视图）早退后，释放时自动重排。
+  // 打开时一次性排程（advanceLiveSlot/slots 经 ref 语义）。
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     if (!gridState.open || !bound) return;
     if (mapInstanceRegistry.liveCount() + 1 > mapInstanceRegistry.budget()) return; // 预算被占：不排程
@@ -279,8 +296,8 @@ export function FrameProductGrid({
       .map((s) => s.frameId)
       .filter((id) => id !== active && !snapshotStoreRef.current!.peek(id));
     setWarmupQueue(needWarmup);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 打开时一次性排程
-  }, [gridState.open, bound]);
+  }, [gridState.open, bound, registryTick]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // ── warmup 驱动：live 帧落定（reconciled 或 typed error）后推进队列。──
   useEffect(() => {
@@ -366,6 +383,9 @@ export function FrameProductGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 主图实例恒一
   }, [gridState.open, mapLoaded]);
 
+  // 帧表身份串（键盘/后继 effect 的 deps —— 同数换 id 时刷新闭包，评审 m3）。
+  const frameIdsKey = product.slots.map((x) => x.frameId).join('|');
+
   // ── Escape 关闭 + '[' / ']' 切换活动画幅（A25）。──
   useEffect(() => {
     if (!gridState.open || !bound) return;
@@ -399,8 +419,8 @@ export function FrameProductGrid({
       unregisterEscape();
       window.removeEventListener('keydown', onKey);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 键盘按当前帧表
-  }, [gridState.open, gridState.activeFrameId, bound, product.slots.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 键盘按当前帧表（activateFrame/handleClose 稳定引用语义）
+  }, [gridState.open, gridState.activeFrameId, bound, frameIdsKey]);
 
   // ── 帧删除/禁用：活动画幅确定性后继（A13 + 反馈）。──
   // 后继语义 = 被删者在**删除前产品序**中的下一个可用帧（环形）。因此
@@ -457,6 +477,18 @@ export function FrameProductGrid({
       hudOwnedRefs,
     );
     try {
+      // A08 接线（评审 M5）：挂载前显式投影判定 —— MapSpec 运行时全 3857，
+      // 帧视图投影字段缺席视为兼容（旧数据兼容）；未来字段出现时在此拒绝。
+      const layoutFrame = (getCommittedMapSpec()?.layout?.frames ?? []).find(
+        (f) => f && f.id === liveFrameId,
+      ) as { projection?: string } | undefined;
+      const compat = checkProjectionCompat(layoutFrame?.projection ?? null, 'EPSG:3857');
+      if (!compat.ok) {
+        return {
+          ok: false as const,
+          error: new FrameEffectiveSpecError('frame_layer_unavailable', `A08 ${compat.reason}`),
+        };
+      }
       const out = resolveFrameEffectiveSpec(resolved, getCommittedMapSpec()?.frame_product, liveFrameId);
       return { ok: true as const, out };
     } catch (e) {
@@ -574,13 +606,21 @@ export function FrameProductGrid({
     const timer = window.setInterval(() => {
       const map = viewportHandleRef.current?.getMap();
       if (!map) return;
-      if (liveAttachedRef.current === liveFrameId) return;
+      // 评审 M3：身份校验 —— context loss 重建后 maplibre 实例更换，旧
+      // 绑定必须重挂（否则同步组对该帧静默失效直到用户切换帧）。
+      const attachedMap = liveAttachedRef.current === liveFrameId ? hub.entryMap(liveFrameId) : null;
+      if (attachedMap === (map as unknown as never)) return;
       hub.attach({
         id: liveFrameId,
         kind: 'frame',
         map: map as unknown as never,
         syncGroup: product.slots.find((s) => s.frameId === liveFrameId)?.syncGroup ?? null,
         generation: mountedFacts.get(liveFrameId)?.generation ?? 1,
+        // 评审 M5：锁定 extent（layout.frames[].extent）→ 拒绝相机写入
+        //（A17 经 cameraWriteGuard 纯函数判定，不另写第二套真相）。
+        lockedExtent: !cameraWriteGuard(
+          (committedSpec?.layout?.frames ?? []).find((f) => f && f.id === liveFrameId) ?? null,
+        ).ok,
       });
       hub.setActiveFrame(gridState.activeFrameId);
       const prevAttached = liveAttachedRef.current;
