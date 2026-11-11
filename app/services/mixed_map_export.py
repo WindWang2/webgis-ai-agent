@@ -428,9 +428,13 @@ async def persist_mixed_export(
     manifest = artifact["manifest"]
     manifest["filename"] = filename
     sidecar = json.dumps(manifest, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    manifest_name = f"{filename}.manifest.json"
     await asyncio.to_thread(
-        _persist_export_file, f"{filename}.manifest.json", sidecar, ".json")
+        _persist_export_file, manifest_name, sidecar, ".json")
+    # 下载路由对未知 owner fail-closed —— manifest sidecar 同名注册所有权
+    # （与成品同 principal；签名 URL 另行签发）。
     await asyncio.to_thread(_set_export_owner, filename, principal)
+    await asyncio.to_thread(_set_export_owner, manifest_name, principal)
 
     # lineage：best-effort 增值记录（db 在场才执行 —— 无 DB 上下文时
     # record_export_lineage 自身 fail-closed 跳过）。
