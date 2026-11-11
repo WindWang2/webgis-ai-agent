@@ -289,7 +289,8 @@ class SourceSnapshot:
     def sample_features(self, limit: int = 50) -> List[Dict[str, Any]]:
         """有界样本读取（≤limit 行）—— 绝不整表物化。
 
-        parquet 载体只读第一批（≥limit 即止）；payload 载体切片。
+        parquet 载体经 iter_batches 惰性读（上界 = 单个 row group，
+        DEFAULT_ROW_GROUP_SIZE），取出前 limit 行即止；payload 载体切片。
         （评审 P1：ids 范围探测曾用 features()[:50] 整表读入内存。）
         """
         if self.parquet_path is not None:

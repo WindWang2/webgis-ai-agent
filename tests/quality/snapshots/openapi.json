@@ -4046,6 +4046,11 @@
       ],
       "title": "Content Sha256"
      },
+     "copy_mode": {
+      "default": "reencode",
+      "title": "Copy Mode",
+      "type": "string"
+     },
      "crs": {
       "additionalProperties": true,
       "title": "Crs",

@@ -242,6 +242,8 @@ class DeliveryReceipt(BaseModel):
     writer_versions: Dict[str, str] = Field(default_factory=dict)
     data_object_id: Optional[str] = None
     durable: str = "unknown"
+    copy_mode: str = "reencode"
+    """byte_copy（GeoParquet 无变换安全复制）| reencode（经 writer 重编码）。"""
     artifact_ref: Optional[str] = None
     project_artifact_id: Optional[str] = None
     timings: Dict[str, float] = Field(default_factory=dict)

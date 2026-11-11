@@ -242,7 +242,9 @@ class PyogrioWriter:
         return gpd.GeoDataFrame(df, geometry=gs, crs=self.ctx.crs_out)
 
     def close(self) -> WriterResult:
-        losses: List[str] = []
+        # 字段名损失码由 loss.analyze_losses 单点声明（truncated=自动映射 /
+        # mapped=显式映射，附 ack 语义）—— writer 不再重复发射，避免回执
+        # 出现重复码或把自动截断误标为显式映射（评审 NEW-1）。
         if self.driver == "ESRI Shapefile":
             zip_path = self.ctx.out_dir / f"{self.ctx.base_filename}.zip"
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -253,11 +255,9 @@ class PyogrioWriter:
                             ".shp", ".shx", ".dbf", ".prj", ".cpg"):
                         zf.write(member_file, member_file.name)
             members = [_member(zip_path, "data", self.rows)]
-            if self.ctx.field_map:
-                losses.append(dl_contracts.LOSS_FIELD_NAME_MAPPED)
         else:
             members = [_member(self.main_path, "data", self.rows)]  # type: ignore[arg-type]
-        return WriterResult(members=members, rows=self.rows, losses_applied=losses)
+        return WriterResult(members=members, rows=self.rows, losses_applied=[])
 
 
 class ShapefileGroupWriter(PyogrioWriter):

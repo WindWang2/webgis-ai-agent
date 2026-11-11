@@ -277,6 +277,12 @@ def analyze_losses(
                 fields=complex_fields[:20], requires_ack=(fmt == "csv"))
 
     # ── CSV 特有 ────────────────────────────────────────────────────────
+    if crs_spec.coordinate_precision is not None and fmt not in ("geojson", "csv"):
+        # 精度选项仅 GeoJSON/CSV(WKT) 兑现；其它格式静默忽略 = 说谎 → 阻断
+        # （评审 NEW-4：geoparquet fast path 曾对该选项无操作且无披露）。
+        out.block(dl_contracts.ERR_INVALID_SPEC,
+                  f"坐标小数位选项仅 GeoJSON/CSV 支持（{fmt} 不支持）—— "
+                  "请取消该选项或改用这两种格式")
     if fmt == "csv":
         if snapshot.is_table or not fields_sel.include_geometry:
             out.add(dl_contracts.LOSS_GEOMETRY_OMITTED,

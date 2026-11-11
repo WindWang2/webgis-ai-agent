@@ -13,6 +13,8 @@ import json
 import pytest
 
 from app.schemas.data_delivery_schema import (
+    DeliveryCrsSpec,
+    DeliveryFieldSelection,
     DeliveryScope,
     DeliverySourceRef,
     DeliverySpec,
@@ -205,3 +207,53 @@ async def test_fast_path_copy_mode_not_loss(delivery_env, actor):
     assert "fast_path_byte_copy" not in view.receipt.losses_applied
     assert view.receipt.timings.get("fast_path") is not None or \
         view.receipt.copy_mode == "byte_copy"
+
+
+async def test_field_name_codes_no_duplicate_or_mislabel(delivery_env, actor):
+    """NEW-1：字段名损失码单点来源 —— 无重复、不把自动截断误标为显式映射。"""
+    from app.services.session_data import session_data_manager
+
+    fc = {"type": "FeatureCollection",
+          "features": [{"type": "Feature", "id": "x",
+                        "geometry": {"type": "Point",
+                                     "coordinates": [116.4, 39.9]},
+                        "properties": {"population_total": 1,
+                                       "population_rate": 2}}],
+          "properties": {"schema_info": {"crs": "EPSG:4326"}}}
+    ref = await session_data_manager.store("sess-1", fc, prefix="test")
+
+    # 自动映射（无 field_map）：仅 field_name_truncated，不得出现 mapped
+    view_auto = await _deliver(DeliverySpec(
+        source=DeliverySourceRef(kind="session_ref", session_id="sess-1",
+                                 ref=ref),
+        format="shapefile_zip", filename="auto-map"), actor)
+    codes = view_auto.receipt.losses_applied
+    assert codes.count("field_name_truncated") == 1, codes
+    assert "field_name_mapped" not in codes, codes
+    assert len(codes) == len(set(codes)), f"回执损失码重复: {codes}"
+
+    # 显式映射：仅 field_name_mapped
+    view_explicit = await _deliver(DeliverySpec(
+        source=DeliverySourceRef(kind="session_ref", session_id="sess-1",
+                                 ref=ref),
+        fields=DeliveryFieldSelection(
+            field_map={"population_total": "pop_total",
+                       "population_rate": "pop_rate"}),
+        format="shapefile_zip", filename="explicit-map"), actor)
+    codes2 = view_explicit.receipt.losses_applied
+    assert codes2.count("field_name_mapped") == 1, codes2
+    assert "field_name_truncated" not in codes2, codes2
+
+
+async def test_coordinate_precision_blocked_for_binary_formats(delivery_env,
+                                                              seeded_session, actor):
+    """NEW-4：精度选项仅 GeoJSON/CSV 兑现 —— 其它格式预览阻断（不静默忽略）。"""
+    from app.services.data_delivery import preview_delivery
+
+    spec = DeliverySpec(
+        source=DeliverySourceRef(kind="session_ref", session_id="sess-1",
+                                 ref=seeded_session["ref"]),
+        crs=DeliveryCrsSpec(coordinate_precision=6),
+        format="geoparquet", filename="prec-gpq")
+    preview = await preview_delivery(spec, actor)
+    assert any(b.code == "INVALID_SPEC" for b in preview.blocking_issues)
