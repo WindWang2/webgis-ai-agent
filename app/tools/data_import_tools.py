@@ -313,7 +313,8 @@ def register_data_import_tools(registry: ToolRegistry) -> None:
                 return _fail(e.code, e.detail)
 
         task = service._commit_tasks.get(batch_id)
-        deadline = _asyncio.get_event_loop().time() + max(0, int(wait_max_s))
+        wait_s = min(max(int(wait_max_s), 0), 60)  # 运行时上界：不长时间占用调用
+        deadline = _asyncio.get_event_loop().time() + wait_s
         while task is not None and not task.done() and _asyncio.get_event_loop().time() < deadline:
             await _asyncio.sleep(0.25)
             task = service._commit_tasks.get(batch_id)

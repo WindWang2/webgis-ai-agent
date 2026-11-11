@@ -14,8 +14,9 @@ BASE=`b8f2a6ecc`（origin/master 2026-11-11）｜HEAD 见 PR。
   test_import_jobs.py 8  A01/A02/A03/A07-09/A11/A13/A16
   test_compute_jobs.py 6  job 化/收据短路/取消桥/排队收敛/A10/A14
   test_scale.py       3  300k RSS+行数完整/预算超限/ENOSPC（heavy 标记）
+  test_tools.py       6  状态工具×2（活跃/终态+可读/无记录/404 语义）+ wait=0 句柄分支×2
 .venv/bin/python -m pytest tests/data_import -q --no-cov        # 41/41（BASE 语义保持）
-.venv/bin/python -m pytest tests/jobs tests/delivery -q --no-cov # 288 + 57（durable 基座与 G18 回归）
+.venv/bin/python -m pytest tests/jobs tests/delivery -q --no-cov # jobs=247 + delivery=57（durable 基座与 G18 回归；此前 288 为 data_import+jobs 合计口径）
 .venv/bin/python -m pytest tests/data/test_field_compute*.py tests/unit/test_field_compute_tools_v1.py -q
                                                                # 123/124；1 失败为 BASE 预存
                                                                #（TestOpenApiCompatibility::test_existing_short_schema_names_preserved

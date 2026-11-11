@@ -501,6 +501,12 @@ async def execute(plan_id: str, session_id: str, *, project_id: str = "",
         status = str(result.get("status") or "")
         if status == "cancelled":
             raise ExecError("CANCELLED", "执行已被取消（收据未发布）")
+        if status in ("running", "pending", "queued"):
+            raise ExecError(
+                "JOB_INCOMPLETE",
+                f"执行仍在进行（job {result.get('job_id')} 由另一提交/副本认领）；"
+                "请稍后重提或查询任务中心，同键会收敛到既有结果",
+            )
         raise ExecError(
             "JOB_INCOMPLETE",
             f"执行未成功（job {result.get('job_id')} 终态 {status}）；"

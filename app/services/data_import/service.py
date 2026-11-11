@@ -70,6 +70,7 @@ def _interpretation_model(kind: str, payload: Dict[str, Any]):
 def _job_active_by_id(job_id: int) -> Optional[Dict[str, Any]]:
     """按 job id 查活跃性（短同步事务；终态/不存在返回 None）。"""
     from app.services.data_operations.runner import _sync_session
+    from app.services.jobs.lifecycle import is_terminal
 
     with _sync_session() as db:
         from app.models.db_model import AnalysisTask
@@ -80,7 +81,7 @@ def _job_active_by_id(job_id: int) -> Optional[Dict[str, Any]]:
             return None
         status = str(row.status)
         db.commit()
-    if status in ("completed", "failed", "cancelled", "stale"):
+    if is_terminal(status):
         return None
     return {"job_id": int(job_id), "status": status}
 
@@ -175,20 +176,29 @@ class DataImportService:
         # 晚到结果不得显示成功）。旧格式批次（active_job_id=None 且无 job 行）
         # 走同一归一化 —— 与 G17 行为兼容。
         if state.status == BatchStatus.COMMITTING:
-            active = self._active_commit_job(state)
+            # 写盘前 rev 复核（评审 B1）：读快照 → DB 探测之间若 runner 已把
+            # 终态/收据落盘（rev 递增），本进程的 stale 快照**不得覆写** ——
+            # 丢弃本次归一化/补记，返回最新事实，交由下一次读收敛。这是跨进程
+            # 读路径唯一的写点，rev 比对把「check-then-act」收敛为
+            # 「check-act-check」（写竞争窗口缩到 µs 级且被 rev 兜住）。
+            latest = await asyncio.to_thread(staging.load_state, batch_id)
+            if latest is None:
+                return state  # staging 恰被删除：交由上层 NOT_FOUND 语义
+            if latest.rev != state.rev:
+                return latest  # 期间有人写盘（多为 runner 落账）——不覆写
+            active = self._active_commit_job(latest)
             if active is not None:
                 # 另一副本（或本副本 runner 与内存登记之间的窗口）在推进：
                 # 绝不复位。顺带把 job_id 补记进状态（老文件/竞态兜底）。
-                if state.active_job_id != active["job_id"]:
-                    state.active_job_id = active["job_id"]
-                    await asyncio.get_running_loop().run_in_executor(
-                        None, staging.save_state, state
-                    )
-                return state
+                if latest.active_job_id != active["job_id"]:
+                    latest.active_job_id = active["job_id"]
+                    await asyncio.to_thread(staging.save_state, latest)
+                return latest
             if batch_id in self._committing_ids:
                 # 无 durable job（DB 不可达窗口）但本进程确有在飞 runner：
                 # 不复位 —— 宁可保守等待 stale 清扫，也不误杀本进程活任务。
-                return state
+                return latest
+            state = latest
             for m in state.members:
                 if m.status == MemberStatus.COMMITTING:
                     m.status = (
@@ -218,7 +228,7 @@ class DataImportService:
                 state.status = BatchStatus.CONFIGURED
             state.committing_since = None
             state.active_job_id = None
-            staging.save_state(state)
+            await asyncio.to_thread(staging.save_state, state)
         return state
 
     def _active_commit_job(self, state: ImportBatchState) -> Optional[Dict[str, Any]]:

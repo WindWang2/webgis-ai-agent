@@ -172,19 +172,24 @@ async def test_progress_writes_fenced_to_owner(ops_env):
 
     async def body(handle):
         ok_mine = await handle.progress(10, "mine", force=True)
-        # 冒用他人身份的写入必须被拒
-        ok_forged = await handle.progress(99, "forged", force=True) \
-            if False else True  # handle 只暴露自身身份；伪造经底层 API 验证
         return {"mine": ok_mine}
 
     status = await run_async_job(job_id, body, worker_id="w3")
     assert status == JobStatus.completed
     row = _job_row(ops_env, job_id)
     assert row["worker_id"] == "w3"
-    # 终态后进度写入不再生效（仅活跃可写）——底层语义直接验证
     from app.services.data_operations.runner import _sync_session
     from app.services.jobs.progress import JobProgress
 
+    # 伪造他人身份的进度写（fencing 拒绝）：本 job 属 w3/attempt=1，
+    # 冒用 w9 身份写必须 rowcount=0（A06「心跳/进度不造成双写」）
+    with _sync_session() as db:
+        forged = DurableJobStore.update_progress_sync(
+            db, job_id, JobProgress(progress=99, message="forged"),
+            worker_id="w9", attempt=1)
+        db.commit()
+    assert forged is False
+    # 终态后进度写入不再生效（仅活跃可写）
     with _sync_session() as db:
         ok = DurableJobStore.update_progress_sync(
             db, job_id, JobProgress(progress=50, message="late"),

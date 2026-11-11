@@ -15,9 +15,7 @@ G18（数据交付）把 durable 语义直接内联在 ``data_delivery/service.p
 
 任务体协议：``body(handle) -> Any``。正常返回 → ``mark_succeeded``（返回值经
 脱敏作 result_summary）；抛 :class:`OperationCancelled` → ``confirm_cancelled``；
-其它异常 → ``mark_failed`` 后原样上抛。任务体不写终态；需要 G18 式两阶段
-收尾（先算完再显式落终态）时传 ``manual_finish=True`` 自行负责终态写入
-（同样必须带 fencing）。
+其它异常 → ``mark_failed`` 后原样上抛。任务体不写终态。
 """
 from __future__ import annotations
 
@@ -263,7 +261,12 @@ async def async_durable_job(
     """
     token = cancellation_registry.register(job_id)
     handle = AsyncJobHandle(job_id, token, worker_id or default_worker_id(), 1)
-    handle.attempt = _claim(job_id, handle.worker_id)
+    try:
+        handle.attempt = _claim(job_id, handle.worker_id)
+    except BaseException:
+        # 认领失败（重复投递/并发副本先到）：不留 registry 条目（评审 m4）
+        cancellation_registry.discard(job_id)
+        raise
     if session_cancel_event is not None:
         handle.attach_cancel_event(session_cancel_event)
     handle._start_watchdog()
@@ -286,14 +289,12 @@ async def run_async_job(
     worker_id: Optional[str] = None,
     session_cancel_event: Optional[asyncio.Event] = None,
     result_ref_builder: Optional[Callable[[Any], str]] = None,
-    manual_finish: bool = False,
 ) -> JobStatus:
     """包装一次 asyncio 任务体并落 fenced 终态。
 
     Args:
         body: 任务体；正常返回值经脱敏作 result_summary。
         result_ref_builder: 从返回值构造 result_ref（≤512 字符）。
-        manual_finish: True 时 body 自行负责终态（G18 式两阶段收尾）。
 
     Returns:
         实际落定的终态（cancelling 期间完成 → cancelled，绝不虚报 completed）。
@@ -358,8 +359,6 @@ async def run_async_job(
                 exc_info=exc,
             )
             raise
-        if manual_finish:
-            return JobStatus.running
         with _sync_session() as db:
             final = DurableJobStore.mark_succeeded_sync(
                 db, job_id,
@@ -443,32 +442,6 @@ def submit_async_job(
         job_id, task_type, status, reused,
     )
     return job_id, status, reused
-
-
-def find_active_job_by_key(idempotency_key: str) -> Optional[tuple[int, str]]:
-    """按幂等键查活跃（非终态）job。返回 (job_id, status) 或 None。
-
-    领域恢复判据用它：存在活跃 job ⇒ 另一副本（或本副本的 runner）可能
-    正在推进，读路径绝不把状态归一化。
-    """
-    from sqlalchemy import select
-
-    from app.models.db_model import AnalysisTask
-
-    with _sync_session() as db:
-        job = db.execute(
-            select(AnalysisTask).where(
-                AnalysisTask.idempotency_key == idempotency_key
-            )
-        ).scalar_one_or_none()
-        if job is None:
-            return None
-        status = coerce_status(job.status)
-        if is_terminal(status):
-            return None
-        job_id, status_value = int(job.id), status.value
-        db.commit()
-    return job_id, status_value
 
 
 def find_active_jobs(

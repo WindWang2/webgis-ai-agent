@@ -91,11 +91,13 @@ async def test_a10_source_revision_change_typed_failure(ops_env):
     # 入口快照核对（STALE_PLAN）或发布前二次核对（SNAPSHOT_CHANGED）——
     # 都是 anchor 防线的 typed 拒绝，绝不静默执行新数据
     assert ei.value.code in ("SNAPSHOT_CHANGED", "STALE_PLAN")
-    # 不留任何收据（无可见半成品）
+    # 不留任何收据（无可见半成品）：按当前（新）内容 hash 查收据必须为空
     from app.services.data_preparation.field_compute import receipt as rc
+    from app.services.data_preparation.field_compute.snapshot import canonical_hash
 
     assert await rc.find_receipt(
-        SESS, plan.compute_fingerprint, plan.input_ref, "any") is None or True
+        SESS, plan.compute_fingerprint, plan.input_ref,
+        canonical_hash(changed)) is None
     jobs = _jobs(ops_env)
     # 失败可重提（新内容新计划）：job 落 failed（typed 上抛，无虚假成功）
     assert all(j["status"] in ("failed",) for j in jobs)
@@ -150,7 +152,6 @@ async def test_background_submit_and_join(ops_env):
             break
         await asyncio.sleep(0.05)
     assert status == "completed"
-    receipt = await fc_service.get_result(SESS, plan.input_ref) if False else None
     # 用 execute 再取一次：幂等短路返回收据
     receipt2 = await fc_service.execute(plan.plan_id, SESS)
     assert receipt2.output_ref.startswith("ref:fc-")

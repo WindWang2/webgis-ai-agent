@@ -323,3 +323,90 @@ async def test_resubmit_bootstraps_crashed_pending_job(ops_env):
     assert view.status.value == "configured"
     out = await svc.start_commit(state.batch_id, SESS, background=False)
     assert out["status"] == "completed"
+
+
+async def test_b1_slow_reader_never_clobbers_terminal_state(ops_env):
+    """评审 B1 回归：读快照冻结在提交中时刻，runner 完成落盘后，读方的
+    归一化不得用 stale 快照覆写终态（收据不丢、不诱发重复发布）。
+
+    构造：B 的第一次 load_state 返回提交中快照（模拟慢读），其后读真实
+    文件（修复后的写前重读）——rev 复核必须发现 runner 已落盘并放弃覆写。
+    """
+    import threading
+
+    import app.services.data_import.staging as staging_mod
+    from tests.data_operations.conftest import make_csv_bytes
+
+    svc_a = DataImportService()
+    csv = make_csv_bytes([[116.0 + i * 0.01, 39.0, i] for i in range(200)],
+                         ["lng", "lat", "v"])
+    state = await svc_a.create_batch(SESS, "user:b1", [("b1.csv", csv)])
+    key = state.members[0].member_key
+    await svc_a.save_plan(state.batch_id, SESS, {key: {"mode": "table"}},
+                          selected=[key])
+
+    entered = threading.Event()
+    release = threading.Event()
+    import app.services.data_import.service as svc_mod
+
+    real_commit_member = svc_mod.commit_member
+
+    async def slow_commit(*a, **kw):
+        entered.set()
+        await asyncio.get_running_loop().run_in_executor(None, release.wait, 10)
+        return await real_commit_member(*a, **kw)
+
+    svc_mod.commit_member = slow_commit
+    try:
+        accepted = await svc_a.start_commit(state.batch_id, SESS, background=True)
+        assert await asyncio.to_thread(entered.wait, 10)
+        # 冻结快照：提交中、无收据（B 的慢读从这一刻开始）
+        frozen = staging_mod.load_state(state.batch_id)
+        assert frozen.status.value == "committing" and not frozen.receipts
+        frozen_rev = frozen.rev
+        release.set()
+        task = svc_a._commit_tasks.get(state.batch_id)
+        assert task is not None
+        await asyncio.wait_for(asyncio.shield(task), timeout=60)
+        # runner 已完成：文件=completed+收据，job=completed
+        final_file = staging_mod.load_state(state.batch_id)
+        assert final_file.status.value == "completed" and final_file.receipts
+        from app.services.jobs.lifecycle import coerce_status
+
+        async with ops_env["async_factory"]() as db:
+            from app.services.jobs.store import DurableJobStore
+
+            job = await DurableJobStore.get(db, accepted["job_id"])
+            await db.commit()
+        assert job is not None and coerce_status(job.status).value == "completed"
+
+        # B 的读：第一次返回冻结快照（慢读），之后走真实文件（写前重读）
+        calls = {"n": 0}
+        real_load = staging_mod.load_state
+
+        def frozen_then_real(batch_id, data_dir=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return frozen
+            return real_load(batch_id, data_dir=data_dir)
+
+        staging_mod.load_state = frozen_then_real
+        try:
+            svc_b = DataImportService()
+            view = await svc_b.get_batch(state.batch_id, SESS)
+        finally:
+            staging_mod.load_state = real_load
+
+        # 不覆写：返回最新事实（completed + 收据在场）
+        assert view.status.value == "completed", view.status.value
+        assert view.receipts and view.receipts[key].status == "completed"
+        # 文件未被 stale 快照覆写（rev 不回退、收据仍在）
+        after = staging_mod.load_state(state.batch_id)
+        assert after.rev >= final_file.rev
+        assert after.receipts and after.status.value == "completed"
+        # 无重复发布：重提交幂等短路（收据在 + 可读）
+        out = await svc_b.start_commit(state.batch_id, SESS, background=False)
+        assert out["receipts"][key]["duplicate"] is True
+    finally:
+        svc_mod.commit_member = real_commit_member
+        release.set()

@@ -394,7 +394,8 @@ def register_field_compute_tools(registry: ToolRegistry) -> None:
         job_id = str(out.get("job_id") or "")
         # 有界等待（不长时间占用工具调用）；轮询 durable job 终态
         loop = _asyncio.get_event_loop()
-        deadline = loop.time() + max(0, int(wait_max_s))
+        wait_s = min(max(int(wait_max_s), 0), 60)  # 运行时上界：不长时间占用调用
+        deadline = loop.time() + wait_s
         while loop.time() < deadline:
             await _asyncio.sleep(0.25)
             done, payload = await _job_receipt_or_status(job_id)
