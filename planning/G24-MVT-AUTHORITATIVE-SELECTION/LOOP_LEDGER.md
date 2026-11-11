@@ -14,11 +14,17 @@
 | M5 | P3/P4/P5 客户端贯通 | verified | selection-store/brush/map-panel/table-panel 回归 128 passed；selection-table-data 3 passed；journey（A19/A22）2 passed |
 | M6 | P6 Pi 工具 + 旅程 | verified | `test_selection_tools.py` 5 + acceptance journey 2 passed（真实 dispatch） |
 | M7 | P7 大图层证据 | verified | 100k 档实测（132B/0 扫描）；1M gated |
-| M8 | 全量回归 | in_progress | 后端 tests/unit 全量进行中（无 -x）；前端全量 5198 passed / 4 failed（4 例预存：BASE 未触碰文件，`git diff b8f2a6ecc --stat` 空） |
-| M9 | 独立 review → fix | pending | reviewer = 未参与实现的第三 agent |
+| M8 | 全量回归 | verified | 后端 tests/unit 全量：**20486 passed / 47 failed / 27 errors**；74 项失败/错误清单在干净 BASE（b8f2a6ecc）同条件复跑**逐一一致**（同一批预存失败，G24 引入=0）。前端全量：5198 passed / 4 failed（4 例预存：BASE 未触碰文件）。IR 全族 175 passed（manifest additive 再生成后） |
+| M9 | 独立 review → fix | in_progress | Round 1 REQUEST_CHANGES（P1×2/P2×2/P3×7）→ fix commit 全部落地 → Round 2 re-review 进行中（REVIEW.md 记录映射） |
 | M10 | PR | pending | 推分支 → gh pr create（不合并） |
 
 ## 预存失败登记（BASE 同条件复现，非本方向引入）
+
+- 后端全量 47 failed + 27 errors：与 BASE 逐项一致（workflow_runtime/test_api 11E、
+  api_contract 8E+4E、gis_tool_conformance 注册审计 17 个 field_compute/import 工具
+  结构性 fail、session_lock/review_migration/data_fabric/audit4 等 —— 均他人 PR 带入的
+  预存问题域，本方向不吞并）。
+- Next 生产构建未本地执行（重任务锁被并行方向占用；tsc+vitest 全绿兜底，CI 构建）。
 
 - `tests/unit/api_contract/test_api_v2.py`：4 errors（干净 BASE worktree 复现一致）。
 - `frontend test/i18n/no-raw-cjk.test.ts`：`components/data-import/import-workbench.tsx:724`（#2079 带入的裸 CJK，本方向未触碰该文件）。
