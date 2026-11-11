@@ -286,6 +286,26 @@ class SourceSnapshot:
         raise SourceResolutionError(
             dl_contracts.ERR_SOURCE_EXPIRED, "源快照无可用载体")
 
+    def sample_features(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """有界样本读取（≤limit 行）—— 绝不整表物化。
+
+        parquet 载体只读第一批（≥limit 即止）；payload 载体切片。
+        （评审 P1：ids 范围探测曾用 features()[:50] 整表读入内存。）
+        """
+        if self.parquet_path is not None:
+            out: List[Dict[str, Any]] = []
+            for batch in self.iter_feature_batches(max(limit, 1)):
+                out.extend(batch)
+                if len(out) >= limit:
+                    break
+            return out[:limit]
+        if self.payload is not None:
+            if self.is_table:
+                return list(self.payload["rows"][:limit])
+            return list((self.payload.get("features") or [])[:limit])
+        raise SourceResolutionError(
+            dl_contracts.ERR_SOURCE_EXPIRED, "源快照无可用载体")
+
     def features(self) -> List[Dict[str, Any]]:
         """整表读取（表格行同构返回）—— 仅用于已在内存的 payload 或受限格式。"""
         if self.payload is not None:

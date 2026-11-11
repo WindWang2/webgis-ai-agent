@@ -277,7 +277,11 @@ async def submit_delivery(
             project_id=project_id,
             parameters=params,
             idempotency_key=key,
-            dispatch_spec={"task": "data_delivery.execute", "args": [params]},
+            # 评审 P1-3：交付执行体是进程内 runner（无 Celery task）——
+            # 不落 dispatch_spec（否则重试会入队一个不存在的任务并永久
+            # queued）；max_retries=0：重试语义 = 以同规格重新提交
+            # （幂等键复用/新建），由 submit 路径诚实兑现。
+            max_retries=0,
         )
         job_id = str(job.id)
         reused = job.idempotency_key != key or job.status != JobStatus.pending.value
@@ -485,9 +489,12 @@ def _execute_delivery_sync(
 
         target = staging / f"{base_name}.parquet"
         shutil.copyfile(snapshot.parquet_path, target)
+        if target.stat().st_size > dl_contracts.MAX_OUTPUT_BYTES:
+            raise DeliveryError(
+                dl_contracts.ERR_OUTPUT_BUDGET_EXCEEDED,
+                f"输出超过上限 {dl_contracts.MAX_OUTPUT_BYTES} 字节")
         members = [_member(target, "data", snapshot.row_count)]
         rows_written = snapshot.row_count
-        losses_applied.append("fast_path_byte_copy")
         progress(60, f"安全复制完成（{rows_written} 行，无中间格式转换）")
     else:
         writer = _build_writer(ctx, spec, snapshot, losses)
@@ -510,51 +517,35 @@ def _execute_delivery_sync(
                     dl_contracts.ERR_ROW_LIMIT_EXCEEDED,
                     f"实际行数超过上限 {dl_contracts.MAX_ROWS_PER_DELIVERY}")
             _check_output_budget(staging)
+            _check_main_output_budget(writer)
             if batches % 5 == 0:
                 progress(30, f"已写入 {rows_written} 行（批 {batches}）")
         result = writer.close()
         rows_written = result.rows
         members = [dict(m) for m in result.members]
         losses_applied.extend(result.losses_applied)
+        if result.extra.get("nan_inf_to_empty"):
+            losses_applied.append(dl_contracts.LOSS_NAN_INF_TO_EMPTY)
         _finalize_scope_stats(batch_filter)
-    # 声明与实际改变一一对应：预览声明的损失码合并进回执（保留计数型
-    # code 交给 writer 实测 —— formula_prefix_sanitized 以实际变换数为准）。
+    # 声明与实际改变一一对应（评审 P1-2）：预览损失分析只在条件真实成立时
+    # 发出 code，故凡分析声明的 code 即已应用；唯一例外是计数型
+    # formula_prefix_sanitized —— 以 writer 实测变换数为准（0 次变换不得
+    # 声明已应用）。
+    _WRITER_COUNTED_CODES = frozenset({dl_contracts.LOSS_FORMULA_PREFIX_SANITIZED})
     losses_applied.extend(
-        code for code in (
-            dl_contracts.LOSS_CRS_LABEL_UNKNOWN if (
-                snapshot.crs is None) else None,
-            dl_contracts.LOSS_COORDINATE_PRECISION_REDUCED if (
-                spec.crs.coordinate_precision is not None) else None,
-            dl_contracts.LOSS_MIXED_GEOMETRY_SINGLE_LAYER if (
-                spec.format == "gpkg"
-                and len(set((snapshot.geometry or {}).get("types") or [])) > 1
-                and spec.geometry_grouping == "single") else None,
-            dl_contracts.LOSS_GEOMETRY_SPLIT_BY_TYPE if (
-                spec.format in ("shapefile_zip", "gpkg")
-                and len(set((snapshot.geometry or {}).get("types") or [])) > 1
-                and spec.geometry_grouping == "by_type") else None,
-            dl_contracts.LOSS_GEOMETRY_OMITTED if (
-                spec.format == "csv" and (
-                    snapshot.is_table or not spec.fields.include_geometry)) else None,
-            dl_contracts.LOSS_FIELD_NAME_TRUNCATED if (
-                spec.format == "shapefile_zip" and losses.field_map
-                and not spec.fields.field_map) else None,
-            dl_contracts.LOSS_FIELD_NAME_MAPPED if (
-                spec.format == "shapefile_zip" and spec.fields.field_map) else None,
-        ) if code
+        l.code for l in losses.losses
+        if l.code not in _WRITER_COUNTED_CODES
     )
-    if snapshot.crs is None and any(
-            f.get("inferred_type") == "complex" for f in snapshot.fields):
-        losses_applied.extend(
-            code for code in (
-                dl_contracts.LOSS_NESTED_VALUE_JSON_ENCODED
-                if spec.format != "geojson" else None,
-            ) if code
-        )
     if rows_written == 0:
         raise DeliveryError(
             dl_contracts.ERR_WRITE_FAILED,
             "范围过滤后没有可交付行 —— 拒绝写空文件冒充成功（请检查选择/谓词）")
+    data_bytes = sum(m["bytes"] for m in members if m.get("role") == "data")
+    if data_bytes > dl_contracts.MAX_OUTPUT_BYTES:
+        raise DeliveryError(
+            dl_contracts.ERR_OUTPUT_BUDGET_EXCEEDED,
+            f"输出数据 {data_bytes} 字节超过上限 "
+            f"{dl_contracts.MAX_OUTPUT_BYTES}")
 
     # ── verify：独立读取路径反读（WP11 oracle 的在服务内面）────────────
     progress(88, "反读校验（独立读取路径）")
@@ -584,8 +575,8 @@ def _execute_delivery_sync(
         },
         writer_versions=dl_contracts.writer_versions(),
         durable="pending",
-        timings={"total_s": round(time.monotonic() - t0, 3),
-                 **({"fast_path": True} if fast_path else {})},
+        timings={"total_s": round(time.monotonic() - t0, 3)},
+        copy_mode="byte_copy" if fast_path else "reencode",
     )
     manifest = {
         "delivery_id": delivery_id,
@@ -633,8 +624,8 @@ async def _finalize_delivery(
         source_refs=_source_refs(spec),
         input_fingerprint=snapshot.content_fingerprint,
         budget=dl_contracts.DATA_OBJECT_PUBLISH_BUDGET_BYTES)
-    receipt.durable = "published" if durable else "oversized"
-    if durable:
+    receipt.durable = durable.get("state", "failed")
+    if durable.get("state") == "published":
         receipt.data_object_id = durable.get("data_object_id")
     if spec.source.session_id:
         receipt.artifact_ref = await dl_store.register_session_artifact(
@@ -672,6 +663,12 @@ async def _finalize_delivery(
             worker_id=worker_id,
         )
         db.commit()
+    if final_status is not None and str(getattr(final_status, "value",
+                                                final_status)) == "cancelled":
+        # 取消发生在发布之后：mark_succeeded_sync 已按合同收敛 cancelled；
+        # 此处清理孤儿终态目录（DataObject blob 为 CAS 共享内容，由 GC 引用
+        # 计数管理，不在此删）。completed 则保留可下载终态。
+        dl_store.discard_final(delivery_id)
     progress(100, "交付完成")
 
 
@@ -798,6 +795,21 @@ def _make_transform(field_pairs, spec: DeliverySpec, transformer,
         return out
 
     return transform
+
+
+def _check_main_output_budget(writer: Any) -> None:
+    """主输出文件字节硬帽（批间检查；压缩比不放大解读预算）。"""
+    path = getattr(writer, "path", None) or getattr(writer, "main_path", None)
+    if path is None:
+        return
+    try:
+        size = Path(path).stat().st_size
+    except OSError:
+        return
+    if size > dl_contracts.MAX_OUTPUT_BYTES:
+        raise DeliveryError(
+            dl_contracts.ERR_OUTPUT_BUDGET_EXCEEDED,
+            f"输出文件已超过上限 {dl_contracts.MAX_OUTPUT_BYTES} 字节")
 
 
 def _check_output_budget(staging: Path) -> None:
@@ -945,6 +957,10 @@ def _scope_dict(plan: ScopePlan, stats: Any, rows_written: int,
         "delivered": rows_written,
         "source_rows": snapshot.row_count,
     }
+    if plan.type == "filter":
+        # typed 谓词重放的命中数即交付数（执行前不可知，不得谎报 0）
+        base["requested"] = rows_written
+        return base
     if stats is not None:
         base["requested"] = stats.requested
         if stats.missing_ids:
@@ -1050,7 +1066,15 @@ def _get_delivery_job_sync(job_id: str, actor: DeliveryActor) -> DeliveryJobView
                 delivery_id = record.result_ref.rsplit("/", 1)[-1]
             if delivery_id:
                 receipt_data = dl_store.read_receipt(delivery_id)
-        receipt = DeliveryReceipt(**receipt_data) if receipt_data else None
+        receipt = None
+        if receipt_data is not None:
+            try:
+                receipt = DeliveryReceipt(**receipt_data)
+            except Exception as e:  # noqa: BLE001 — 损坏回执 → typed 500 语义
+                raise DeliveryError(
+                    dl_contracts.ERR_SOURCE_NOT_FOUND,
+                    f"交付回执损坏（{e}）—— 文件可能仍在，但回执不可信",
+                    status_code=500) from e
         return DeliveryJobView(
             job_id=str(record.id),
             status=record.status,

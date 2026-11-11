@@ -59,6 +59,11 @@ def discard_staging(delivery_id: str) -> None:
     shutil.rmtree(d, ignore_errors=True)
 
 
+def discard_final(delivery_id: str) -> None:
+    """清理本任务的终态交付目录（仅取消收敛/补偿路径；不碰源数据/共享 blob）。"""
+    shutil.rmtree(final_dir(delivery_id), ignore_errors=True)
+
+
 def atomic_publish(delivery_id: str) -> Path:
     """staging → 终态目录原子更名（同卷 os.replace；目标已存在 → typed 失败）。"""
     src = delivery_root() / _STAGING_DIRNAME / delivery_id
@@ -106,8 +111,12 @@ def publish_data_object_for_delivery(
     input_fingerprint: Optional[str] = None,
     payload: Optional[Dict[str, Any]] = None,
     budget: int = 256 * 1024 * 1024,
-) -> Optional[Dict[str, Any]]:
-    """终态包 → durable DataObject（CAS 去重；超预算 → None=oversized 诚实）。
+) -> Dict[str, Any]:
+    """终态包 → durable DataObject（CAS 去重）。
+
+    返回 ``{"state": "published"|"oversized"|"failed", ...}`` —— 三种终态
+    可区分（评审 P3：oversized 与 failed 曾被混为 None）。失败/超预算均
+    诚实降级，交付本体（磁盘 + 下载）不受影响。
 
     单一内容后端纪律：经既有 ``publish_data_object``，不建第二 store。
     """
@@ -120,7 +129,7 @@ def publish_data_object_for_delivery(
     d = final_dir(delivery_id)
     files = _files(delivery_id)
     if not files:
-        return None
+        return {"state": "failed", "error": "no delivery files"}
     source_files = {p.name: p for p in files}
     try:
         identity = publish_data_object(
@@ -141,11 +150,11 @@ def publish_data_object_for_delivery(
             "deduped": identity.deduped,
         }
     except DataObjectTooLargeError:
-        return None
+        return {"state": "oversized"}
     except Exception as e:  # noqa: BLE001 — durable 发布失败诚实降级
         logger.warning("[data-delivery] data object publish failed for %s: %s",
                        delivery_id, e)
-        return None
+        return {"state": "failed", "error": str(e)[:200]}
 
 
 async def register_session_artifact(

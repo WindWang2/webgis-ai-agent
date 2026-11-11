@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 #: 稳定 ID 的属性后备字段（与仓库既有要素身份约定一致）。
 WFID_FIELD = "_wfid"
 
+#: feature.id（顶层）在 ScopePlan/detect 中的哨兵载体名（不是属性键）。
+FEATURE_ID_FIELD = "__feature_id__"
+
 
 class ScopeError(SourceResolutionError):
     """范围协商失败（error_code + reason）。"""
@@ -45,6 +48,7 @@ class ScopePlan:
 
     type: str
     id_field: Optional[str] = None
+    """显式稳定 ID 字段（scope.id_field；缺省自动探测 feature.id→_wfid）。"""
     requested_ids: Optional[List[str]] = None
     predicate: Optional[Dict[str, Any]] = None
     bbox: Optional[List[float]] = None
@@ -77,7 +81,10 @@ class ScopeStats:
 
 
 def extract_stable_id(feature: Dict[str, Any], id_field: Optional[str]) -> Optional[str]:
-    """稳定 ID 提取：显式字段 → feature.id → properties._wfid。"""
+    """稳定 ID 提取：显式字段（含 FEATURE_ID_FIELD 哨兵）→ feature.id → _wfid。"""
+    if id_field == FEATURE_ID_FIELD:
+        fid = feature.get("id")
+        return str(fid) if fid is not None else None
     if id_field:
         props = feature.get("properties") or {}
         v = props.get(id_field)
@@ -94,7 +101,7 @@ def detect_id_field(sample: List[Dict[str, Any]]) -> Optional[str]:
     """从样本探测稳定 ID 载体（feature.id → _wfid；都没有 → None）。"""
     for f in sample[:50]:
         if f.get("id") is not None:
-            return "__feature_id__"
+            return FEATURE_ID_FIELD
     for f in sample[:50]:
         if (f.get("properties") or {}).get(WFID_FIELD) is not None:
             return WFID_FIELD
@@ -138,7 +145,9 @@ def negotiate_scope(snapshot: SourceSnapshot, scope: DeliveryScope) -> ScopePlan
             raise ScopeError(
                 dl_contracts.ERR_SELECTION_INCOMPLETE,
                 "表格源没有稳定要素 ID —— 请用 filter 范围或全量交付")
-        plan = ScopePlan(type="ids", requested_ids=list(dict.fromkeys(ids)))
+        plan = ScopePlan(type="ids",
+                         requested_ids=list(dict.fromkeys(ids)),
+                         id_field=scope.id_field)
         # 截断证据：matched_count > 携带数，或显式 ids_truncated —— 只有
         # 同快照可精确重放的 typed predicate 才能升级为完整选择。
         truncated = bool(scope.ids_truncated) or (
@@ -224,8 +233,9 @@ def make_batch_filter(
     if plan.type == "ids":
         id_set: Set[str] = set(plan.requested_ids or [])
         seen: Set[str] = set()
-        if not snapshot.is_table:
-            sample = snapshot.features()[:50]
+        id_field = plan.id_field
+        if not snapshot.is_table and id_field is None:
+            sample = snapshot.sample_features(50)  # 有界样本（评审 P1）
             id_field = detect_id_field(sample)
             if id_field is None:
                 raise ScopeError(
@@ -235,7 +245,7 @@ def make_batch_filter(
         def _ids(batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             out = []
             for f in batch:
-                fid = extract_stable_id(f, None)
+                fid = extract_stable_id(f, id_field)
                 if fid is not None and fid in id_set:
                     seen.add(fid)
                     out.append(f)

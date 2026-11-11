@@ -392,7 +392,8 @@ class GeoParquetWriter:
 
 # ── CSV writer（含 schema sidecar）────────────────────────────────────────
 
-def _csv_cell(v: Any, spreadsheet_safe: bool, counter: List[int]) -> str:
+def _csv_cell(v: Any, spreadsheet_safe: bool, counter: List[int],
+              nan_counter: Optional[List[int]] = None) -> str:
     from app.services.data_delivery.loss import sanitize_csv_cell
 
     if v is None:
@@ -401,6 +402,8 @@ def _csv_cell(v: Any, spreadsheet_safe: bool, counter: List[int]) -> str:
         return "true" if v else "false"
     if isinstance(v, float):
         if math.isnan(v) or math.isinf(v):
+            if nan_counter is not None:
+                nan_counter[0] += 1  # 如实计数 → 回执披露
             return ""  # CSV 无法表达 NaN/Inf → 空值（sidecar 约定）
         return repr(v)
     if isinstance(v, (dict, list)):
@@ -432,6 +435,7 @@ class CSVWriter:
         self._writer.writerow(list(ctx.fields) + (["geometry_wkt"] if self.geometry_column else []))
         self.rows = 0
         self._sanitized = [0]
+        self._nan_inf = [0]
         self._fields_meta = fields_meta or []
 
     def write_batch(self, rows: List[Dict[str, Any]]) -> None:
@@ -441,7 +445,7 @@ class CSVWriter:
         for row in rows:
             props = row.get("properties") if isinstance(row, dict) and "properties" in row else row
             vals = [_csv_cell((props or {}).get(k), self.ctx.spreadsheet_safe,
-                              self._sanitized)
+                              self._sanitized, self._nan_inf)
                     for k in self.ctx.fields]
             if self.geometry_column:
                 g = row.get("geometry") if isinstance(row, dict) else None
@@ -475,6 +479,8 @@ class CSVWriter:
             "rows": self.rows,
             "spreadsheet_safe": self.ctx.spreadsheet_safe,
             "sanitized_cells": self._sanitized[0],
+            "nan_inf_to_empty": self._nan_inf[0],
+            "crs": self.ctx.crs_out,
         }
         sidecar_path = self.ctx.out_dir / f"{self.ctx.base_filename}.schema.json"
         sidecar_path.write_text(
@@ -482,4 +488,5 @@ class CSVWriter:
         members.append(_member(sidecar_path, "schema"))
         result = WriterResult(members=members, rows=self.rows, losses_applied=losses)
         result.extra["sanitized_cells"] = self._sanitized[0]
+        result.extra["nan_inf_to_empty"] = self._nan_inf[0]
         return result
