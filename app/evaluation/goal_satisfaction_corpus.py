@@ -493,7 +493,153 @@ def _family_receipts() -> List[GoalSatisfactionCase]:
                           "statistics": "fulfilled"},
         expected_global="satisfied",
     ))
+    # ── G28 假成功反例（reviewer 重点：字符串有值 ≠ 完成）────────────────
+    # 假成功 #6：status=completed 字符串在场但无 content_sha256（产物身份
+    # 未核实）→ partial（artifact_unverified），不接受「生成了就说完成」。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-delivery-success-string-no-identity",
+        name="交付 status=completed 但无 sha256 → partial 不背书（假成功）",
+        family="receipts",
+        chapter={
+            "query": "交付案例",
+            "intent": _intent(exports=["geojson"]),
+            "analysis_steps": [_step("admin_aggregation", "complete")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"delivery": [{
+            "delivery_id": "d6", "job_id": "j6", "format": "geojson",
+            "status": "completed", "filename": "out.geojson",
+            "row_count": 55,
+        }]}),
+        expected_states={"export:geojson": "partial"},
+        must_not_pass=True,
+    ))
+    # A14/A13：一帧 live + 一帧 snapshot → 产品 incomplete（快照不冒充 live；
+    # frame_product 块由真实生产者 verify_frame_product 产出）。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-frame-snapshot-only-partial",
+        name="一帧 live 一帧 snapshot → 产品 partial（A13/A14）",
+        family="receipts",
+        chapter={
+            "query": "多画幅案例",
+            "intent": _intent(outputs=["map"]),
+            "analysis_steps": [_step("poi.query", "complete")],
+        },
+        map_product=_product(**{"frame_product": _frame_verification_block(
+            observed={"f1": {"revision": 7, "mode": "live_observed"},
+                      "f2": {"revision": 7, "mode": "snapshot"}})}),
+        expected_states={"map": "partial"},
+        must_not_pass=True,
+    ))
+    # A05（frame 面）：f2 在旧 revision 观察 → stale_observation 按未观察计。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-frame-stale-observation-partial",
+        name="旧 revision 的帧观察 → stale 按未观察计，不背书（A05）",
+        family="receipts",
+        chapter={
+            "query": "多画幅案例",
+            "intent": _intent(outputs=["map"]),
+            "analysis_steps": [_step("poi.query", "complete")],
+        },
+        map_product=_product(**{"frame_product": _frame_verification_block(
+            observed={"f1": {"revision": 7, "mode": "live_observed"},
+                      "f2": {"revision": 6, "mode": "live_observed"}})}),
+        expected_states={"map": "partial"},
+        must_not_pass=True,
+    ))
+    # 编辑族（S2/S3 回执面）：编辑 journal 头在场 → 编辑行 fulfilled（无 cap）。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-edit-committed-fulfilled",
+        name="编辑回执（journal 头 + 修订对账）→ 编辑行 fulfilled",
+        family="receipts",
+        chapter={
+            "query": "编辑案例",
+            "intent": _intent(outputs=["map"]),
+            "analysis_steps": [_step("feature_edit", "complete",
+                                     bound_ref="ref:c1")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"edit": [{
+            "ref_id": "ref:c1", "seq": 3, "kind": "apply",
+            "origin": "agent", "content_revision_after": 12,
+            "fingerprint_after": "fp-edit-12",
+            "created_count": 0, "removed_count": 0,
+        }]}),
+        expected_states={"analysis:feature_edit": "fulfilled"},
+    ))
+    # S6/A29：刷新采纳后旧观察 = stale → map partial（旧证据不合成新完成）。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-refresh-stale-observation-partial",
+        name="数据刷新后 render 观察陈旧 → map partial（A29/S6）",
+        family="receipts",
+        chapter={
+            "query": "刷新案例",
+            "intent": _intent(outputs=["map"]),
+            "analysis_steps": [_step("poi.query", "complete")],
+            "project_id": "proj-1",
+        },
+        map_product=_product(render="stale"),
+        receipts=_bundle({"refresh": [{
+            "proposal_id": "pr1", "action": "adopt", "status": "adopted",
+            "map_observation": "unverified",
+            "revision_before": 6, "revision_after": 8,
+        }]}),
+        expected_states={"map": "partial"},
+        must_not_pass=True,
+    ))
+    # P4 旗舰叙事：「已算出但未显示」≠「任务失败」—— 产品 READY、final
+    # verified、render 观察缺席（生产词 = "unknown"，contracts 默认）→
+    # map NOT_EVALUATED（诚实等待显示）、统计 fulfilled。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-computed-but-not-displayed",
+        name="已算出未显示：render unknown → map not_evaluated 而非 failed",
+        family="receipts",
+        chapter={
+            "query": "统计案例",
+            "intent": _intent(outputs=["map", "statistics"]),
+            "analysis_steps": [_step("admin_aggregation", "complete")],
+        },
+        map_product=_product(render="unknown"),
+        expected_states={"map": "not_evaluated",
+                          "analysis:admin_aggregation": "fulfilled"},
+        must_not_pass=True,
+    ))
     return cases
+
+
+def _frame_verification_block(
+    *,
+    observed: Dict[str, Dict[str, Any]],
+    mapspec_revision: int = 7,
+) -> Dict[str, Any]:
+    """真实生产者（G15 verify_frame_product）产出的终验块 —— 语料不手写
+    伪造形状（块键 = finalizer 持久化契约）。"""
+    from app.services.gis_harness.frame_products.verification import (
+        verify_frame_product,
+    )
+
+    spec = {
+        "version": "2.0",
+        "layers": [{"id": "lyr1", "source": "src1", "type": "circle"}],
+        "sources": {"src1": {
+            "type": "geojson",
+            "data": {"type": "FeatureCollection", "features": [
+                {"type": "Feature", "properties": {"district": "A"},
+                 "geometry": {"type": "Point", "coordinates": [104, 30]}},
+                {"type": "Feature", "properties": {"district": "B"},
+                 "geometry": {"type": "Point", "coordinates": [104.1, 30.1]}},
+            ]}}},
+        "layout": {"frames": [{"id": "f1"}, {"id": "f2"}]},
+        "frame_product": {"enabled": True, "frames": [
+            {"frame_id": "f1", "title": "A", "data": {
+                "ref": "ref:d1", "layer_id": "lyr1",
+                "where": {"op": "eq", "field": "district", "value": "A"}}},
+            {"frame_id": "f2", "title": "B", "data": {
+                "ref": "ref:d1", "layer_id": "lyr1",
+                "where": {"op": "eq", "field": "district", "value": "B"}}},
+        ]},
+    }
+    return verify_frame_product(spec, observed, mapspec_revision=mapspec_revision)
 
 
 # ── F-E：回退族（G6 #6 fallback 不可比）──────────────────────────────────
