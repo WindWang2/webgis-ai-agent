@@ -108,6 +108,9 @@ FINDING_CODES = frozenset({
     "reserved_id",               # 试图在 properties 里提供保留身份字段（_wfid）
     "invalid_geometry",          # 输入几何畸形（无法解析/空坐标）
     "merge_conflict",            # field_policy=require_identical 时字段值不一致
+    # ── G24（P0）重复自然键防线 ──
+    "ambiguous_target",          # 请求 id 命中多条要素（重复自然键）—— first-wins
+                                # 会编辑到用户没点的对象，typed 拒绝并披露重复数
     "dataset_read_only_source",  # 源只读，需先派生编辑副本
 })
 

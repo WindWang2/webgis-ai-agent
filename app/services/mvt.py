@@ -241,7 +241,7 @@ def _encode_value(v: Any) -> Optional[bytes]:
         # Number.MAX_SAFE_INTEGER 的整数一律以字符串下行：id 链两侧都是
         # str() 比较（_find_feature_by_id / _chain_stable_id），字符串往返
         # 精确；代价是这些数据集的瓦片字节变化（ETag 内容寻址，自然失效）。
-        if v < -(1 << 53) or v >= (1 << 53):
+        if v < -(1 << 53) + 1 or v > (1 << 53) - 1:
             return _encode_value(str(v))
         # GIS-P3-1: int_value is sint64 — emit the FULL 64-bit value. The old
         # 32-bit wrap silently corrupted real-world IDs > 2^31 (OSM ids,
