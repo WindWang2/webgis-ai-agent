@@ -370,12 +370,15 @@ async def test_pi_bridge_abort_calls_rpc_and_fails_pending():
 
     # ADR-0288（W07 / vendor C14）：用户级完全停止 = clear_queue → abort
     # （上游 Esc 语义 —— 不清队列时排队消息在 abort 后自行重启）。
-    assert rpc.request.await_args_list[0] == unittest.mock.call("clear_queue", {})
-    assert rpc.request.await_args_list[1] == unittest.mock.call("abort")
-    assert rpc.request.await_count == 2
+    # G22-P1：控制面改走 issue（写相位）/collect（响应相位）拆分。
+    assert rpc.issue.await_args_list == [
+        unittest.mock.call("clear_queue", {}),
+        unittest.mock.call("abort"),
+    ]
+    assert rpc.collect.await_count == 2
+    rpc.request.assert_not_called()
     rpc.fail_all_pending.assert_not_called()
     rpc.fail_pending_ids.assert_called_once_with({"req-1"}, "abort requested")
-    assert result == {"ok": True}
     assert pending.done()
     assert isinstance(pending.exception(), PiRpcError)
     assert "abort requested" in str(pending.exception())

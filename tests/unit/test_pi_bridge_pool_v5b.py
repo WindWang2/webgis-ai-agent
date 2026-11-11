@@ -13,6 +13,8 @@ Pool invariants:
           clobbering.
 """
 import asyncio
+from types import SimpleNamespace
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -130,6 +132,15 @@ async def test_abort_routes_to_owning_worker(monkeypatch):
 
     b._rpc.request = AsyncMock(side_effect=hang)
 
+    # G22-P1：控制面（clear_queue/abort）经写相位 issue 拆分。
+    async def _issue(cmd, data=None):
+        future = asyncio.get_running_loop().create_future()
+        future.set_result({"status": "ok"})
+        return SimpleNamespace(id=f"mock-{cmd}", command=cmd, future=future)
+
+    b._rpc.issue = AsyncMock(side_effect=_issue)
+    b._rpc.collect = AsyncMock(return_value={"status": "ok"})
+
     async def drive():
         async for _ in b.stream_prompt(message="m", session_id="sess-b"):
             pass
@@ -145,7 +156,7 @@ async def test_abort_routes_to_owning_worker(monkeypatch):
     result = await asyncio.wait_for(a.abort("sess-b"), timeout=3.0)
     assert result is not None
     # The abort RPC went to worker b (which owns the subprocess), not a.
-    abort_calls = [c for c in b._rpc.request.call_args_list if c.args and c.args[0] == "abort"]
+    abort_calls = [c for c in b._rpc.issue.call_args_list if c.args and c.args[0] == "abort"]
     assert abort_calls, "abort RPC must be sent to the owning worker"
     assert task.cancelled() or not task.done()  # turn ends via abort path or still draining
     task.cancel()
