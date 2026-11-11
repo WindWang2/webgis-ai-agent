@@ -36,7 +36,7 @@
 
 | 项 | 命令 / 结果 |
 |---|---|
-| 后端 6 测试文件 | `72 passed, 2 warnings`（R2 复审 reviewer 自行复跑 `72 passed in 0.86s`） |（较 R1 的 68 增加 F3/F9/F11 契约用例） |
+| 后端 6 测试文件 | `72 passed, 2 warnings`（reviewer R2 自行复跑 `71 passed in 0.86s`，其后补 A15 gate 用例增至 72；较 R1 的 68 增加 F3/F9/F11 等契约用例） |
 | 前端等价执行（tsc 纯 JS 转译 + Node） | `23 checks passed`（含收紧后的 `hasScalePortrayalConsumer`） |
 | 前端全量 tsc | `TOTAL 1 / G27_RELATED 0`（唯一为 `render-debouncer.ts` 基线） |
 | 真实规模性能探针 | 5000/20000/8000 真实要素，每档 0.446–0.505 ms，峰值 14–34 KB，`feature_count_unchanged=true`，`mutation_module_loaded=false` |

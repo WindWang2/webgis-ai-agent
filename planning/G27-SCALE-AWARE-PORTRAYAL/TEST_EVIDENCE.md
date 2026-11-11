@@ -49,7 +49,7 @@ node node_modules/typescript/bin/tsc --target ES2022 --module commonjs \
   --moduleResolution node --skipLibCheck --noCheck --outDir out *.ts
 node check.cjs
 ```
-**结果：`G27 frontend contract (tsc transpile + node): 23 checks passed`**。消费同一 `scale_portrayal_cases.json`，逐 case 断言 `topRatio`/`sizeRatio` 边界、A05 全 zoom 恒定、A28、A24。
+**结果：`G27 frontend contract (tsc transpile + node): 23 checks passed`**。消费同一 `scale_portrayal_cases.json`，逐 case 断言 `topRatio`/`sizeRatio` 边界、A05 全 zoom 恒定、A28、A24。前端 A15 已改为「同 zoom 幂等 + 跨 zoom 档位分化」的可证伪断言（DPI 不在前端解析面，不写恒真断言）；后端 A15 另补带 visibility gate 的 layer 用例覆盖 gated 裁决路径（R2 复审修正）。
 
 前端全量类型检查：
 ```
