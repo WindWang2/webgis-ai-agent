@@ -151,24 +151,34 @@ async def test_p2_3_zipset_colon_keys_distinct(env, tmp_path):
             zf.write(work / f"src_a{comp}", f"x/y:z{comp}")
         for comp in (".shp", ".dbf", ".shx", ".prj", ".cpg"):
             zf.write(work / f"src_b{comp}", f"x:y/z{comp}")
-    # 追加：sanitize 同名碰撞（'a:b' 与 'a_b' 同目录 → 同名 stem）
+    # 追加：真实 sanitize 碰撞对（同目录 'a:b' 与 'a_b' → 无哈希时同名 stem/目录）
     a.to_file(work / "src_c.shp", engine="pyogrio")
+    c = gpd.GeoDataFrame({"v": [3]}, geometry=[Point(2, 2)], crs="EPSG:4326")
+    c.to_file(work / "src_c.shp", engine="pyogrio")
+    d = gpd.GeoDataFrame({"v": [4]}, geometry=[Point(3, 3)], crs="EPSG:4326")
+    d.to_file(work / "src_d.shp", engine="pyogrio")
     with zipfile.ZipFile(zp, "a") as zf:
         for comp in (".shp", ".dbf", ".shx", ".prj", ".cpg"):
-            zf.write(work / f"src_c{comp}", f"x/a_b{comp}")
+            zf.write(work / f"src_c{comp}", f"x/a:b{comp}")
+            zf.write(work / f"src_d{comp}", f"x/a_b{comp}")
     state = await env.create_batch(SESSION, "u", [("colon.zip", zp.read_bytes())])
-    keys = [m.member_key for m in state.members]
-    assert len(keys) == len(set(keys)) == 3
-    # 提取目录不共享（防组件互相覆盖）
-    from app.services.data_import.discovery import zipset_dir_name
-
-    dirs = {m.container_ref for m in state.members}
-    assert len(dirs) == len(set(dirs)) == 3
-    await env.save_plan(state.batch_id, SESSION, {k: {} for k in keys}, selected=keys)
+    members = {m.member_key: m for m in state.members}
+    assert len(members) == 4
+    # 提取目录互不共享（防组件互相覆盖；无哈希时碰撞对会共享）
+    dirs = [m.container_ref for m in state.members]
+    assert len(set(dirs)) == 4
+    await env.save_plan(state.batch_id, SESSION, {k: {} for k in members}, selected=list(members))
     out = await env.start_commit(state.batch_id, SESSION, background=False)
     assert out["status"] == "completed"
-    vals = sorted(out["receipts"][k]["output_rows"] for k in keys)
-    assert vals == [1, 1, 1]
+    # 每个成员读到自己的 .shp（无哈希时碰撞对读到同一份 → v 值会重复/缺失）
+    from app.services.session_data import session_data_manager
+
+    seen = set()
+    for k, r in out["receipts"].items():
+        assert r["status"] == "completed"
+        data = await session_data_manager.get(SESSION, r["output_ref"])
+        seen.add(data["geojson"]["features"][0]["properties"]["v"])
+    assert seen == {1, 2, 3, 4}
 
 
 async def test_p2_4_diagnostics_readable(env, tmp_path):
@@ -207,19 +217,22 @@ async def test_p2_8_batch_expanded_budget(env, tmp_path, monkeypatch):
     g = gpd.GeoDataFrame({"v": [1]}, geometry=[Point(0, 0)], crs="EPSG:4326")
     g.to_file(work / "a.shp", engine="pyogrio")
     g.to_file(work / "b.shp", engine="pyogrio")
-    zp = tmp_path / "two2.zip"
-    with zipfile.ZipFile(zp, "w") as zf:
-        for name in ("a", "b"):
+    # 两个独立 zip：每个展开 ~940B（低于 per-zip 50MB 检查与批阈值），
+    # 但批次累计超过 MAX_BATCH_EXPANDED_BYTES → 只有批次级检查能拦下。
+    zp1 = tmp_path / "one.zip"
+    zp2 = tmp_path / "two2.zip"
+    for zp, name in ((zp1, "a"), (zp2, "b")):
+        with zipfile.ZipFile(zp, "w") as zf:
             for comp in (".shp", ".dbf", ".shx", ".prj", ".cpg"):
                 zf.write(work / f"{name}{comp}", f"{name}{comp}")
-    monkeypatch.setattr(budgets, "MAX_BATCH_EXPANDED_BYTES", 512)
+    # 单套展开 ~471B < 700 < 双套 942B：只有批次级累计能拦下（per-zip 检查不触发）
+    monkeypatch.setattr(budgets, "MAX_BATCH_EXPANDED_BYTES", 700)
     with pytest.raises(DataImportError) as ei:
-        await env.create_batch(SESSION, "u", [("two2.zip", zp.read_bytes())])
+        await env.create_batch(SESSION, "u", [("one.zip", zp1.read_bytes()), ("two2.zip", zp2.read_bytes())])
     assert ei.value.code == "ZIP_EXPANSION_TOO_LARGE"
     # 有界拒绝 → staging 清理（不留孤儿目录）
-    assert not (tmp_path / "import_batches").exists() or not any(
-        (tmp_path / "import_batches").iterdir()
-    )
+    left = list((tmp_path / "import_batches").iterdir()) if (tmp_path / "import_batches").exists() else []
+    assert left == []
 
 
 async def test_p2_9_cancel_intent_persisted(env, tmp_path):

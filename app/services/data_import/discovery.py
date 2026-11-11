@@ -269,6 +269,8 @@ def discover_zip(
                 f"{budgets.MAX_MEMBERS_PER_CONTAINER}",
             )
         members: List[MemberRecord] = []
+        # 分层由 discover_source 提供（extract_root/<source_id>）；
+        # preview/commit 与批次展开预算统计共用该口径。
         extract_dir.mkdir(parents=True, exist_ok=True)
         for (dirn, base), comps in sorted(complete.items()):
             key_dir = dirn if dirn not in (".", "") else "."

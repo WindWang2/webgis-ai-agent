@@ -204,3 +204,58 @@ async def test_api_plan_conflict_409(client):
     )
     assert r3.status_code == 409
     assert "PLAN_VERSION_CONFLICT" in r3.text
+
+
+async def test_api_diagnostics_endpoint(client):
+    """P2-4：拒绝行明细可经 API 读取；含 "/" 的 member_key 不被路由拦截。"""
+    # 150 行全部非法坐标 → 超内联上限 → 落 diag 产物
+    rows = [["abc", "39.8"] for _ in range(150)]
+    csv_text = "lng,lat\n" + "".join(f"{a},{b}\n" for a, b in rows)
+    r = await client.post(
+        "/api/v1/data-import/batches",
+        files=[("files", ("bad.csv", io.BytesIO(csv_text.encode("utf-8")), "text/csv"))],
+        data={"session_id": SESSION},
+    )
+    assert r.status_code == 200
+    batch_id = r.json()["batch_id"]
+    member_key = r.json()["members"][0]["member_key"]
+    rp = await client.post(
+        f"/api/v1/data-import/batches/{batch_id}/plan?session_id={SESSION}",
+        json={"member_configs": {member_key: {"mode": "points", "x_column": "lng",
+                                              "y_column": "lat", "source_crs_declared": "EPSG:4326"}},
+              "selected": [member_key]},
+    )
+    assert rp.status_code == 200
+    rc = await client.post(
+        f"/api/v1/data-import/batches/{batch_id}/commit?session_id={SESSION}", json={}
+    )
+    assert rc.status_code == 200
+    import asyncio
+
+    for _ in range(60):
+        rr = await client.get(
+            f"/api/v1/data-import/batches/{batch_id}/receipts?session_id={SESSION}"
+        )
+        if rr.json()["status"] != "committing":
+            break
+        await asyncio.sleep(0.5)
+    receipt = rr.json()["receipts"][member_key]
+    assert receipt["status"] == "completed"
+    assert receipt["rejected_rows"] == 150
+
+    # 明细端点可读
+    rd = await client.get(
+        f"/api/v1/data-import/batches/{batch_id}/diagnostics",
+        params={"session_id": SESSION, "member_key": member_key},
+    )
+    assert rd.status_code == 200, rd.text
+    body = rd.json()
+    assert body["lines"] == 150 and len(body["rows"]) == 150
+
+    # 含 "/" 的 member_key：路由可达成（返回业务 404，而非 FastAPI 路由 404）
+    rd2 = await client.get(
+        f"/api/v1/data-import/batches/{batch_id}/diagnostics",
+        params={"session_id": SESSION, "member_key": "c:src-1:zipset:sub/dir:setA"},
+    )
+    assert rd2.status_code == 404
+    assert "明细" in rd2.text or "diagnostics" in rd2.text.lower()

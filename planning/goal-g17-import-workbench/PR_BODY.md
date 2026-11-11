@@ -47,7 +47,7 @@
 
 ## 兼容与迁移
 
-- `/upload` 行为零变化；`data_parser.py` 仅尾部追加 5 个公共守卫别名（additive，其中 4 个被复用）。
+- `/upload` 行为零变化；`data_parser.py` 仅尾部追加 4 个公共守卫别名（additive，全部被复用）。
 - `requirements.txt/.lock` 新增 `openpyxl>=3.1.5`（XLSX 生产读取；read_only 模式不执行公式；运行时缺席诚实披露 `xlsx_engine_unavailable`）。lock 为手工 +5 行（`uv pip compile` 会重排平台 pin，故最小插入）。
 - 无 schema 迁移、无 ADR 编号占用（决策记录在 planning 账本）。
 

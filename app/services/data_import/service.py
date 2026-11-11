@@ -167,7 +167,14 @@ class DataImportService:
                 completed_keys = {
                     k for k, r in state.receipts.items() if r.status == "completed"
                 }
-                if planned_keys and planned_keys <= completed_keys:
+                if state.cancel_requested:
+                    # 取消意图跨重启保留（复审 P3）：复活为 cancelled 而非
+                    # configured/partial（无虚假成功，意图也不丢）。
+                    state.status = BatchStatus.CANCELLED
+                    for m in state.members:
+                        if m.status == MemberStatus.COMMITTING:
+                            m.status = MemberStatus.CANCELLED
+                elif planned_keys and planned_keys <= completed_keys:
                     state.status = BatchStatus.COMPLETED
                 elif completed_keys:
                     state.status = BatchStatus.PARTIAL

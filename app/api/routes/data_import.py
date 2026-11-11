@@ -283,10 +283,10 @@ async def receipts(
     return ReceiptsResponse(**out)
 
 
-@router.get("/data-import/batches/{batch_id}/diagnostics/{member_key}")
+@router.get("/data-import/batches/{batch_id}/diagnostics")
 async def get_diagnostics(
     batch_id: str,
-    member_key: str,
+    member_key: str = Query(..., max_length=300),
     session_id: str = Query(...),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user_optional_with_version),
@@ -315,7 +315,7 @@ async def get_diagnostics(
         "batch_id": batch_id,
         "member_key": member_key,
         "lines": len(lines),
-        "rows": lines[:5000],
+        "rows": lines[: budgets.DIAG_INLINE_MAX_ROWS],
     }
 
 

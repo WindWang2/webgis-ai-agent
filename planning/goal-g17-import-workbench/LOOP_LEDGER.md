@@ -71,3 +71,16 @@
 - 修复回归：tests/data_import/test_review_fixes.py 8/8（含 spy 断言 ingest crs 参数）
 - 全量 data_import 40/40；前端 12/12；旧契约回归进行中
 - 待复审：SendMessage 同一 reviewer
+
+### R11（2026-11-11）复审收尾（第二轮）
+- 复审判定：P0/P1 无残留；P2 中 10 项成立、2 项半成立；新发现 4 项
+- 本轮修复：
+  - 提交 zipset 目录哈希修复（ab848bbbd 已在 push 前提交）+ 测试补真实碰撞对（a:b/a_b 同目录），
+    红检通过（移除哈希 → 测试失败）
+  - DIAG_MAX_ROWS 真正接线（_write_diag 改用它 + 截断标记行）
+  - diagnostics 端点 member_key 改 query 参数（含 "/" 的 zipset 子目录键可达；测试钉死业务 404 vs 路由 404）
+  - P2-8 测试改双 zip（单套 471B < 阈值 700 < 双套 942B，per-zip 检查不触发 → 真红→绿）
+  - 取消意图跨重启保留（归一化时 cancel_requested → cancelled）
+  - DIAG_INLINE_MAX_ROWS 入 budgets（5000 魔法数收敛）
+  - 删除误跟踪的空文件 x；修 F401；PR_BODY 别名计数 5→4
+- 回归：data_import 41/41；前端 12/12；ruff 全绿

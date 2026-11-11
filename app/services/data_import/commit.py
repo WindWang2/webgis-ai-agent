@@ -68,10 +68,17 @@ def _write_diag(
         return None
     rel = f"{staging.member_safe_name(member.member_key)}-rejected.jsonl"
     path = staging.diag_dir(state) / rel
-    lines = [
-        json.dumps(r.to_dict(), ensure_ascii=False)
-        for r in result.rejects[: budgets.COMMIT_ROW_LIMIT]
-    ]
+    rows = result.rejects[: budgets.DIAG_MAX_ROWS]
+    lines = [json.dumps(r.to_dict(), ensure_ascii=False) for r in rows]
+    if len(result.rejects) > len(rows):
+        # 截断标记行（评审 P2-6 续：明细产物本身有界）
+        lines.append(
+            json.dumps(
+                {"truncated": True, "shown": len(rows),
+                 "reason": f"明细超过上限 {budgets.DIAG_MAX_ROWS} 行"},
+                ensure_ascii=False,
+            )
+        )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     state.diagnostics[member.member_key] = rel
     return rel

@@ -313,7 +313,7 @@ export async function getImportDiagnostics(
   opts?: { signal?: AbortSignal; ownerToken?: string | null }
 ): Promise<{ batch_id: string; member_key: string; lines: number; rows: string[] }> {
   return apiFetch(
-    `/api/v1/data-import/batches/${batchId}/diagnostics/${encodeURIComponent(memberKey)}${q(sessionId)}`,
+    `/api/v1/data-import/batches/${batchId}/diagnostics${q(sessionId)}&member_key=${encodeURIComponent(memberKey)}`,
     { signal: opts?.signal, label: LABEL, ownerToken: opts?.ownerToken }
   );
 }
