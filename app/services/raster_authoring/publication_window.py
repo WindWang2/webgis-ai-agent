@@ -24,7 +24,7 @@ import io
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Sequence, Tuple
 
 import numpy as np
 
@@ -90,7 +90,6 @@ def _cache_key(path: str, stat_key: Tuple[int, int], spec: RasterExpressionSpec,
 
 
 def _transparent_result(notes: Tuple[str, ...]) -> WindowRenderResult:
-    import struct
     from PIL import Image
 
     buf = io.BytesIO()

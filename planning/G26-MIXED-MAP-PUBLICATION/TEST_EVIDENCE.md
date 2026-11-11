@@ -98,3 +98,12 @@ cd frontend && npx vitest run lib/map-kit/publication-export.mixed.test.ts \
 无授权浏览器会话环境 —— 前端链路（导出列表/下载/HUD 消息/混合路由）以
 mock-API 级 vitest 覆盖；产物下载经签名 URL 在服务级可核验（A26 旅程）。
 如实记 partial，不冒充完成。
+
+## E7 — 前端全量失败归属核验（base/head 双侧）
+
+frontend `vitest run` 全量：5179 passed / 4 failed / 1 expected-fail。4 个失败
+（poi-info-panel translate 归一化、no-raw-cjk guard（G17 data-import 域裸中文）、
+comparison-view ×2 clip-path `0px` 归一化）—— 均不在本方向 diff 触达的模块图
+内。**base 侧复现**：同 SHA（b8f2a6e，G25 worktree，只读）运行同用例 → 同样
+3+ 失败（jsdom 31 升级归一化差异 + G17 既有裸中文）—— master 既有，非本向
+引入。本向触达文件（publication-export*.ts / api/publication.ts）全部通过。

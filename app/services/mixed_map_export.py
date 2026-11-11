@@ -202,9 +202,9 @@ async def export_mixed_map(
     bindings: Dict[str, Dict[str, Any]] = bound["bindings"]
     unbound: List[Dict[str, Any]] = bound["unbound"]
     unsupported = _unsupported_layer_report(doc)
-    has_raster_layers = bool(
-        [l for l in (doc.get("layers") or [])
-         if isinstance(l, dict) and isinstance(l.get("raster_style"), dict)])
+    has_raster_layers = any(
+        isinstance(layer, dict) and isinstance(layer.get("raster_style"), dict)
+        for layer in (doc.get("layers") or []))
 
     omitted = (
         [{"layer_id": u.get("layer_id"), "reason": u.get("code"),
@@ -270,7 +270,6 @@ def _pdf_options_payload(bindings: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
 def _export_pdf(doc: Dict[str, Any], bindings: Dict[str, Any],
                 target_dpi: int, title: str, manifest: Dict[str, Any],
                 has_raster_layers: bool) -> Dict[str, Any]:
-    from app.services.publication_export import PublicationPdfResult
     from app.services.publication_render_worker import render_publication_bounded
 
     try:
