@@ -171,6 +171,19 @@ def _frame_gate(map_product: Optional[Dict[str, Any]]):
         verified = min(verified, rows_verified)
         snapshot_only = max(snapshot_only, rows_snapshot)
     if required <= 0:
+        # 复审第二轮加固：行在场时 required=0 只可能是双伪造（summary 与行
+        # 标志同时伪造）—— 生产者（verify_frame_product）对启用产品的每个
+        # 槽位恒发 required=True，且空 required 集不可能产出 complete 状态
+        # → fail-closed（绝不静默放行）。
+        if frame_rows and str(fp.get("status")) == "complete":
+            def _gate_double_forge(out):
+                out.verdict = ReqState.PARTIAL
+                out.failed_rule = R_FRAME_INCOMPLETE
+                out.missing.append("frame_summary_rows_mismatch")
+                out.next_action = "reobserve"
+                return out
+
+            return _gate_double_forge
         return None
     if verified < required:
         problems = [str(p)[:48] for p in (fp.get("problems") or [])[:4]]

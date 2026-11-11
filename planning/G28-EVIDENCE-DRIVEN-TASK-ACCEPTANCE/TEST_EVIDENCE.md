@@ -7,7 +7,7 @@
 | 11-12 | `pytest tests/unit/gis_harness/test_goal_satisfaction_{v1,wiring,corpus}.py --no-cov -q` | 38 passed（含 112→118 案例语料） |
 | 11-12 | `pytest tests/unit/gis_harness/test_goal_satisfaction_finalizer_wiring.py --no-cov -q` | 15 passed（1 处 facet not_bound 修正后） |
 | 11-12 | `pytest tests/unit/gis_harness/test_goal_satisfaction_repair_actions.py ...wiring... --no-cov -q` | 31→32 passed（MAX_BLOCKERS 4→6 修正） |
-| 11-12 | 全 goal_satisfaction 套件（v1+wiring+corpus+finalizer+repair） | 62 passed |
+| 11-12 | 全 goal_satisfaction 套件（v1+wiring+corpus+finalizer+repair） | 62 passed（复审修复后 **64** passed：+2 评审回归）|
 | 11-12 | `pytest tests/unit/gis_harness/test_{runtime_state_machine_v7,claim_ingest_session_1391,map_product_unified_completeness,map_completion}.py --no-cov -q` | 97 passed（finalizer 邻接回归） |
 | 11-12 | `pytest tests/unit/gis_harness --no-cov -q`（全目录） | 3464 passed, 28 failed, 23 errors, 1 skipped + 1 deselected |
 | 11-12 | 干净 BASE 复现（临时 worktree @b8f2a6ecc，同文件集） | 失败名单**逐项一致**（51 项，`comm` 零差异）→ 全部 pre-existing，G28 零引入 |
