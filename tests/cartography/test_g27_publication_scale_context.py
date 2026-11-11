@@ -106,6 +106,40 @@ def test_a15_dpi_only_affects_sampling_and_size_not_visibility():
     assert export_adjudicate_layer(LAYER, 10.0) == "render"
 
 
+def test_a15_gate_path_is_also_dpi_invariant():
+    """R2 补边界：带结构 zoom 门的 layer，裁决摘要随 zoom 分化但不受 DPI 影响。
+
+    R1 F4 指出 A15 用的 DOC layer 无 gate，`visibility_semantics` 恒
+    `...:render` 可能掩盖「DPI 只影响 gate 裁决」的误接。此处用带门 layer
+    覆盖 gated 路径，并断言换到门内 zoom 后摘要确实变化（证明它由真实
+    `export_adjudicate_layer` 填充，而非常量）。
+    """
+    doc_gate = {
+        **DOC,
+        "view": {"zoom": 7, "center": [116.4, 39.9]},
+        "layers": [{"id": "L1", "source": "s1", "type": "circle",
+                    "visibility": {"min_zoom": 8.0, "max_zoom": 14.0}}],
+    }
+    ir = plan_publication_pages(doc_gate)
+    by_dpi = {
+        dpi: plan_scale_contexts(ir, doc_gate, target_dpi=dpi,
+                                 logical_viewport_px=[1200, 800])
+        for dpi in (72, 300, 600)
+    }
+    signatures = {
+        dpi: tuple(c.visibility_semantics for c in contexts)
+        for dpi, contexts in by_dpi.items()
+    }
+    assert len(set(signatures.values())) == 1           # 与 DPI 无关
+    assert all("gated" in v for v in signatures[72])   # 真走了 gate 裁决
+
+    doc_in = {**doc_gate, "view": {"zoom": 10, "center": [116.4, 39.9]}}
+    inside = plan_scale_contexts(
+        plan_publication_pages(doc_in), doc_in, target_dpi=300)
+    assert all("render" in c.visibility_semantics for c in inside)
+    assert inside[0].visibility_semantics != by_dpi[300][0].visibility_semantics
+
+
 def test_a16_non_mercator_crs_does_not_use_fixed_formula():
     ir = _ir()
     contexts = plan_scale_contexts(

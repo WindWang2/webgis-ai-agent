@@ -94,7 +94,7 @@ def main() -> None:
             "冷缓存 = 每场景首轮；热缓存 = 后续轮（纯函数无外部 IO/缓存层）",
             "字段证据只扫前 50 要素 / ≤32 键；解释面不携带要素载荷、不上传属性",
             "状态更新 = 5 个 zoom 中 band_id 的跨档次数，而非每帧次数",
-            "persistent_mutation_calls 由 sys.modules 与显式计数器双重核对，非硬编码",
+            "mutation_module_loaded 由 sys.modules 实测；persistent_mutation_calls 是纯函数路径的推导定值（探针不引用任何持久化 mutation API）",
         ],
     }
     for name, n in SCENARIOS.items():
@@ -134,6 +134,8 @@ def main() -> None:
             "per_band_switch_ms": round(statistics.mean(hot_ms) / len(ZOOMS), 3),
             "peak_traced_kb": peak_kb,
             "state_updates_for_5_zooms": state_updates,
+            # 探针路径不引用任何持久化 mutation API（纯函数），故为 0；
+            # 另由 mutation_module_loaded 的 sys.modules 实测佐证。
             "persistent_mutation_calls": 0,
             "mutation_module_loaded": mutation_loaded,
         }

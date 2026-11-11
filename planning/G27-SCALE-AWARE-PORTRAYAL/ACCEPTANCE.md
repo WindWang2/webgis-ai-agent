@@ -12,17 +12,17 @@
 | A06 锁定字号/pin 优先 | verified | precedence 2 | `pinned-size-wins` case + `test_scale_portrayal_v1.py` pin 族 |
 | A07 未锁标注密度正确变化 | verified | `lod_for_zoom` + `build_label_zoom_bands` | 4 档单调不降 + 逐 case topRatio |
 | A08 无效 policy typed 诊断 | verified | `validate_scale_policy` | corpus `unknown-*`/`invalid-*`/`fixed-density-missing-ratio` + service rejected 回执 |
-| A09 缩放不产生每帧 mutation | verified（静态+设计） | runtime `zoomend` 只做跨档重算 + `webgis:zoom` 只读广播 | `runtime.ts:2153-2184`；UI 仅显式按钮走 REST；perf_probe `frame_mutations=0` |
+| A09 缩放不产生每帧 mutation | verified（静态+设计） | runtime `zoomend` 只做跨档重算 + `webgis:zoom` 只读广播 | `runtime.ts:2153-2184`；UI 仅显式按钮走 REST；perf_probe `mutation_module_loaded=false` / `persistent_mutation_calls=0` |
 | A10 快速缩放取消旧计算不串状态 | partial | UI epoch token + 跨档去抖；runtime 跨档幂等 | 前端 `scale-portrayal-panel.tsx` epoch 守卫；**浏览器快速手势实证 blocked** |
 | A11 渲染抽稀不改分析 count | verified | `AggregationSemantics(visual_only)` 既有 + 固定 disclosure | `test_g27_component_portrayal.py` + perf_probe `feature_count_unchanged` |
 | A12 legend 维持完整数据域 | partial | `component_portrayal_state` `full_domain` | 7 个 zoom 档位快照零变化 |
 | A13 传输 LOD 不误作统计样本 | verified | 固定 disclosure（第 3/4 条） | `test_scale_portrayal_corpus_parity.py` + 前端常量断言 |
 | A14 热力图 px/距离语义披露 | verified | 固定 disclosure（第 2 条）+ `unit` 词表校验 | `validate_scale_policy` unknown unit 诊断 |
-| A15 DPI 改变不导致可见层变化 | verified | `physical_scale_context`（DPI 仅换算通道） | R1 修复后可证伪断言：三种 DPI 物理分母互异、语义 zoom/extent/真实裁决摘要逐位相同（`test_g27_publication_scale_context.py::test_a15_*`）+ `test_scale_portrayal_v1.py` dpi 族 |
+| A15 DPI 改变不导致可见层变化 | verified（后端） | `physical_scale_context`（DPI 仅换算通道） | R1 修复后可证伪断言：三种 DPI 物理分母互异、语义 zoom/extent/真实裁决摘要逐位相同（`test_g27_publication_scale_context.py::test_a15_*`）+ `test_scale_portrayal_v1.py` dpi 族 |
 | A16 不同 CRS/纬度不套错公式 | verified | `WEB_MERCATOR_CRS` 门 + 中心纬度 | `test_a16_*` + 纬度不同分母不同 + 组件 scale_bar 降级 |
 | A17 模板选型与组件变体真实支持 | partial | `component_portrayal_state` 白名单核对，不发明 variant | `test_a17_unsupported_variant_is_disclosed_not_invented` |
 | A18 组件布局不因档位切换重叠 | partial | 输出无 placement 变更、输入不被原地修改 | `test_a18_component_layout_rect_never_touched` |
-| A19 局部 policy 支持 CAS/undo | partial | `UpsertLayerIntent` + `apply_gis_mutation(expected_revision)` | `test_a19_a20_commit_is_local_with_cas_and_undo_chain` + superseded 回执 |
+| A19 局部 policy 支持 CAS/undo | partial | `UpsertLayerIntent` + `apply_gis_mutation(expected_revision)` | `test_a19_a20_commit_payload_is_local_with_cas_params` + superseded 回执 |
 | A20 只改一个 layer 不全图重置 | partial | 单 layer 深拷贝 + 命名空间子键 | 同上（intent 仅携带 L1，L2 不受影响） |
 | A21 多 frame 各自等价 viewport | partial | `plan_scale_contexts` 逐页 bounds/viewport | `test_a21_each_frame_consumes_its_own_extent_and_viewport` |
 | A22 Agent 读取真实 effective policy | verified（工具注册 + service） | `webgis_inspect_scale_portrayal` → `inspect_scale_portrayal` | `test_inspect_returns_bounded_real_effective_policy`；**Pi RPC 实跑 blocked** |

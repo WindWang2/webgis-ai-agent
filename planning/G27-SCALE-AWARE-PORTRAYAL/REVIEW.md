@@ -18,7 +18,7 @@
 | F3 | P1 | **代码修复** | converter 改用共享 `SCALE_POLICY_NAMESPACE` 常量，并新增与 service 同源的有界 `_g27_available_fields`（前 50 要素 / ≤32 键）传入 `resolve_effective_scale_portrayal`。新增 `test_f3_converter_and_service_agree_on_priority_field` 契约用例。 |
 | F4 | P1 | **重写断言** | `plan_scale_contexts` 的 `visibility_semantics` 改为由真实 `export_adjudicate_layer` 裁决结果填充（不再硬编码常量）；A15 测试改为「三种 DPI 的物理分母互不相同，但语义 zoom / frame extent / 逻辑 viewport / 真实裁决摘要逐位相同」——可证伪。ACCEPTANCE 指向修正后的测试。 |
 | F5 | P1 | **代码修复 + 表述降级** | ① `project_scale_portrayal_spec` 默认不再投影文档级 `thresholds.maxFeatures`（原实现投影后被 converter 与 service 双双丢弃，且自动改写会影响存量导出语义）；`decimate_budget` 保留为解释面 display-budget 披露，仅 `include_budget=True` 显式请求时才返回。② `component_portrayal_state` 在 `inspect_scale_portrayal` 真实回执中成为生产消费者（组件状态随 UI/Agent 回执输出）。③ `terrain_maxzoom` 明确只进解释面（任务规定 terrain 不扩展）。INTERFACES/ADR/PR_BODY 相应降级；A12/A17/A18 降为 `partial`。 |
-| F6 | P1 | **真实规模重测** | `perf_probe.py` 改为真实构造 5000/20000/8000 个合成要素，测量完整解析链；`feature_count_unchanged` 逐轮断言 `len(features)==n`；`persistent_mutation_calls` 由 `sys.modules` 核对而非硬编码。新数据见 TEST_EVIDENCE §4。A25 仍标注「真实浏览器帧时间 blocked」。 |
+| F6 | P1 | **真实规模重测** | `perf_probe.py` 改为真实构造 5000/20000/8000 个合成要素，测量完整解析链；`feature_count_unchanged` 逐轮断言 `len(features)==n`；`mutation_module_loaded` 由 `sys.modules` 实测；`persistent_mutation_calls` 为纯函数路径的推导定值（探针不引用任何持久化 mutation API）。新数据见 TEST_EVIDENCE §4。A25 仍标注「真实浏览器帧时间 blocked」。 |
 | F7 | P2 | **文档明确 + 状态同步** | 明确 `applied` 唯一权威在后端 `EffectiveScalePortrayal`；前端 `isScalePortrayalApplied` 只是**更保守的本地显示投影**（有 explanation 时完全以它为准），不是第二套完成判定。`LOOP_LEDGER` 不再停在 L0。 |
 | F8 | P2 | **代码修复** | `resolve_effective_scale_portrayal` 的解释面 `label_zoom_bands` 统一取 `spec_label_zoom_bands()`（[0,24)），与 spec 投影/runtime 消费值逐位一致；`INTERFACES.md` 与前端常量注释同步；新增 parity 断言。 |
 | F9 | P2 | **代码修复** | service 对 `origin="user"` 且缺 `expected_revision` 的 commit 返回 typed `MISSING_EXPECTED_REVISION` 回执，不静默落库；新增用例。 |
@@ -36,13 +36,13 @@
 
 | 项 | 命令 / 结果 |
 |---|---|
-| 后端 6 测试文件 | `71 passed, 2 warnings`（较 R1 的 68 增加 F3/F9/F11 契约用例） |
+| 后端 6 测试文件 | `72 passed, 2 warnings`（R2 复审 reviewer 自行复跑 `72 passed in 0.86s`） |（较 R1 的 68 增加 F3/F9/F11 契约用例） |
 | 前端等价执行（tsc 纯 JS 转译 + Node） | `23 checks passed`（含收紧后的 `hasScalePortrayalConsumer`） |
 | 前端全量 tsc | `TOTAL 1 / G27_RELATED 0`（唯一为 `render-debouncer.ts` 基线） |
 | 真实规模性能探针 | 5000/20000/8000 真实要素，每档 0.446–0.505 ms，峰值 14–34 KB，`feature_count_unchanged=true`，`mutation_module_loaded=false` |
 | 语法 | 15 个新增/修改 `.py` `py_compile` Exit 0 |
 | 起始工作区 | `M vendor/pi` + `.claude/skills/*` + `_tmp_47_*` 仍只读保留 |
 
-**R2 结论（待 reviewer 复审确认）**：P0/P1/P2 的**代码级阻断**（F3 判定不一致、F4 空断言、F5 假接线、F6 空跑、F8 档位漂移）已修复并有可复跑实证；F1 流程门槛已补齐。剩余均为**外部阻断**：真实 Pi 子进程 RPC 全链、本地真实浏览器 E2E、真实 CAS 引擎链（依赖栈）、真实浏览器帧时间（4 GiB VA 硬限）。这些在 ACCEPTANCE 中如实标 `blocked/partial`，PR 以 Draft 提交，不给 Ready 结论。
+**R2 结论（同一独立 reviewer 已复审确认）**：代码级阻断归零，同意以 Draft PR 提交；点名的文档/测试诚实性残留已在 `docs(g27)` 收尾 commit 中修正。：P0/P1/P2 的**代码级阻断**（F3 判定不一致、F4 空断言、F5 假接线、F6 空跑、F8 档位漂移）已修复并有可复跑实证；F1 流程门槛已补齐。剩余均为**外部阻断**：真实 Pi 子进程 RPC 全链、本地真实浏览器 E2E、真实 CAS 引擎链（依赖栈）、真实浏览器帧时间（4 GiB VA 硬限）。这些在 ACCEPTANCE 中如实标 `blocked/partial`，PR 以 Draft 提交，不给 Ready 结论。
 
 > reviewer 本人不得给自己 approval；本文件由主 Agent 记录，R2 结论由独立 reviewer 复审后确认或驳回。

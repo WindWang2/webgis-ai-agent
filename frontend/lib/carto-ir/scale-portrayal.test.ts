@@ -177,7 +177,11 @@ describe("G27 有效策略与可解释交互", () => {
     }
   });
 
-  it("A15：DPI 不参与前端策略裁决（同 zoom 两次解析逐位一致）", () => {
+  it("A15 前端侧：DPI 不在前端解析面；同 zoom 幂等且跨 zoom 档位分化", () => {
+    // R1 F4 前端残余修正：resolveScalePortrayalView 无 DPI 入参，
+    // 旧「同参两次相等」是恒真空转。DPI 只由后端 physical_scale_context
+    // 处理（后端 A15 实证见 test_g27_publication_scale_context.py），
+    // 此处改证前端解析的幂等性与跨档可证伪行为。
     const layer = layerFor({
       id: "D", zoom: 10, layer: {}, policy: autoPolicy,
       available_fields: [], expected: {},
@@ -187,6 +191,10 @@ describe("G27 有效策略与可解释交互", () => {
     expect(a).toEqual(b);
     expect(a.visibility).toBe("visible");
     expect(a.bandId).toBe("lod-2");
+    const low = resolveScalePortrayalView(layer, 4);
+    const high = resolveScalePortrayalView(layer, 16);
+    expect(low.bandId).not.toBe(high.bandId);
+    expect(low.topRatio).toBeLessThan(high.topRatio);
   });
 
   it("A24：解释面有界（diagnostics ≤8，披露 ≤8），前端不自称 tier 权威", () => {

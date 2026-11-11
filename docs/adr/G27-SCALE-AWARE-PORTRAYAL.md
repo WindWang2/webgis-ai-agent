@@ -23,7 +23,7 @@ precedence：用户隐藏（全 zoom 保持、`applied=false`）> 人工 pin/锁
 
 ### D2 — 只投影既有 spec 字段
 
-`project_scale_portrayal_spec()` 默认只产出 `layer.label.zoomBands`（既有字段）。`decimate_budget` 保留在有界解释面作为 display-budget 披露，**不自动改写**文档级 `thresholds.maxFeatures`（R1 F5：原实现投影后被两条落笔路径丢弃，且改写会影响存量导出语义）；仅 `include_budget=True` 显式请求时才返回该投影。policy 持久化在**既有开放 dict** `layer.scale_profile.g27_scale_portrayal` 命名空间内 —— 不新增 schema 字段、不 bump MapSpec 版本、不重生成 `types.generated.ts`。旧 spec 无该键 → 零改动（A01）。
+`project_scale_portrayal_spec()` 默认只产出 `layer.label.zoomBands`（既有字段）。`terrain_maxzoom_for_zoom` 只进解释面（任务规定 terrain 不扩展），`component_portrayal_state` 经 service 回执成为生产消费者但未接 renderer 变体渲染。`decimate_budget` 保留在有界解释面作为 display-budget 披露，**不自动改写**文档级 `thresholds.maxFeatures`（R1 F5：原实现投影后被两条落笔路径丢弃，且改写会影响存量导出语义）；仅 `include_budget=True` 显式请求时才返回该投影。policy 持久化在**既有开放 dict** `layer.scale_profile.g27_scale_portrayal` 命名空间内 —— 不新增 schema 字段、不 bump MapSpec 版本、不重生成 `types.generated.ts`。旧 spec 无该键 → 零改动（A01）。
 
 **修复的真实漂移**：`scene_lod.LOD_BANDS` 的 [3,19) 是参考区间；直接投影会让 z<3 与 z≥19 出现无档死带，且前端 `activeBandIndex` 与后端 `lod_for_zoom` 的 [3,18] 钳制在 z=19 处 `sizeRatio` 不一致（1.0 vs 1.1）。`spec_label_zoom_bands()` 只把首档 `minZoom` 钳到 0、末档 `maxZoom` 钳到 24，四档 topRatio/sizeRatio 与相邻边界一字不改；共享 corpus 双向漂移闸锁定（A03/A04）。
 
@@ -49,5 +49,5 @@ precedence：用户隐藏（全 zoom 保持、`applied=false`）> 人工 pin/锁
 
 - **兼容**：全链路 opt-in。旧项目 / 未知 schema / 无效 policy 逐位不变且 typed 降级；新策略回退 = 移除命名空间子键与自投影 zoomBands（authored 值保留）。
 - **权限**：REST 挂 `require_owned_session`；工具走 ToolRegistry tier/session/CAS 守卫；未放宽任何 user-wins / 锁 / 取消语义。
-- **性能**：纯函数、零 IO；每档切换 ~0.33 ms、峰值 18–34 KB、5 zoom 仅 4 次状态更新、0 次 frame mutation；不遍历/上传要素属性。
+- **性能**：纯函数、零 IO；真实合成 5000/20000/8000 要素的探针显示每档切换落在 0.446–0.734 ms（三次复跑区间，受宿主并行负载影响）、峰值 14–34 KB、5 zoom 3 次状态更新、`mutation_module_loaded=false`；字段证据只扫前 50 要素，不遍历/上传全量属性。
 - **未实证**：真实 Pi 子进程 RPC 全链、本地真实浏览器 E2E 被宿主 `ulimit -v` 4 GiB 硬限（所有 wasm 工具链无法实例化）阻断，见 `planning/G27-SCALE-AWARE-PORTRAYAL/TEST_EVIDENCE.md`。vitest 用例已入库供 CI。

@@ -5,7 +5,7 @@
 与既有权威纯函数（scene_lod / scale_rules / representation）**只读**合成为
 一份有版本的 :class:`EffectiveScalePortrayal`（解释面 + 有效档位），再由
 :func:`project_scale_portrayal_spec` 投影到**既有** spec 字段
-（``label.zoomBands`` / ``thresholds.maxFeatures``），由
+（``label.zoomBands``；``decimate_budget`` 仅作解释面披露，不自动改写导出预算），由
 :func:`bounded_explanation` 产出有界的 UI/Agent/遥测解释面。
 
 纪律：

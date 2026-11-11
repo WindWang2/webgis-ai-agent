@@ -30,7 +30,7 @@ MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
   tests/cartography/test_g27_component_portrayal.py \
   -q -p no:cacheprovider --confcutdir=tests/cartography -o addopts=
 ```
-**结果：`71 passed, 2 warnings in 0.87s`**（R2 修复+主线整合后；历史：`45` → `63` → `68`（R1 reviewer 复跑）→ `70`，随 F3/F9/F11 契约用例增长）。
+**结果：`72 passed, 2 warnings in 0.87s`**（R2 修复+主线整合后；历史：`45` → `63` → `68`（R1 reviewer 复跑）→ `70`，随 F3/F9/F11 契约用例增长）。
 
 隔离参数理由（实证，非降低门禁）：根 `tests/conftest.py` 会拉起 `app.models.init_db`/faiss/celery/chat 全套链，最小 venv 下原命令 `Exit 137 SIGTERM`；`pytest.ini` 的 `addopts` 含 `--cov=app`（需未安装的 pytest-cov）。`--confcutdir` 是 pytest 官方隔离选项，被测契约与断言不变。完整 CI 车道仍以仓库原命令为准，本方向未改 `pytest.ini`。
 
@@ -83,7 +83,7 @@ R2 真实规模：**真实构造** 5000 labels / 20000 热力点 / 8000 线网�
 | heatmap_points | 20000 | 2.391 | 2.230 ± 0.136 | 0.446 | 14 | 3 | 0 | ✅ |
 | line_network | 8000 | 2.442 | 2.523 ± 0.602 | 0.505 | 14 | 3 | 0 | ✅ |
 
-R1 F6 修正后（三次复跑每档切换落在 0.446–0.734 ms，宿主 7 路并行负载导致波动，量级一致）：三种规模**真实构造**合成 FeatureCollection（原为描述符数字空跑）；`feature_count_unchanged` 逐轮断言 `len(features)==n`，`persistent_mutation_calls` 由 `sys.modules` 核对 `mutation_module_loaded=false`，非硬编码。字段证据只扫前 50 要素 / ≤32 键，解释面不携带要素载荷、不上传属性；**未靠删数据换基准**。真实浏览器帧时间因 §5 阻断未测。
+R1 F6 修正后（三次复跑每档切换落在 0.446–0.734 ms，宿主 7 路并行负载导致波动，量级一致）：三种规模**真实构造**合成 FeatureCollection（原为描述符数字空跑）；`feature_count_unchanged` 逐轮断言 `len(features)==n`，`mutation_module_loaded` 由 `sys.modules` 实测为 false；`persistent_mutation_calls` 是纯函数路径的推导定值（探针不引用任何持久化 mutation API），非独立计数器实测。字段证据只扫前 50 要素 / ≤32 键，解释面不携带要素载荷、不上传属性；**未靠删数据换基准**。真实浏览器帧时间因 §5 阻断未测。
 
 ## 5. 环境阻断（如实记录，未伪造通过）
 
@@ -100,7 +100,7 @@ R1 F6 修正后（三次复跑每档切换落在 0.446–0.734 ms，宿主 7 路
 
 ## 6. 基线 / HEAD 同条件对照
 
-- R1：BASE 与 HEAD 的 `tsc --noEmit` 唯一错误均为 `toolSlice.ts:32 TS1109`（#2085 在途），本方向 0 相关错误。R2：主线整合后该错误消失，剩余 `render-debouncer.ts` 本地基线错误，本方向仍 0 相关错误。
+- R1：BASE 与 HEAD 的 `tsc --noEmit` 唯一错误均为 `toolSlice.ts:32 TS1109`（#2085 在途），本方向 0 相关错误。R2：主线整合后该错误消失，剩余 `render-debouncer.ts(1,13) TS1192` 本地基线错误，本方向仍 0 相关错误（reviewer R2 自行复跑确认 `TOTAL 1 / G27_RELATED 0`）。
 - 独立 review 两轮（R1 findings → 修复 → R2 复验）见 `REVIEW.md`；reviewer 自行复跑 `68 passed` / `23 checks`。
 - 起始工作区 `M vendor/pi`、`.claude/skills/*`、`_tmp_47_*` 全程只读保留，未 checkout/reset/删除。
 - 未改 master、未合并、未删他人分支/worktree、未等线上 CI、未改门禁。

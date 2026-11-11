@@ -143,6 +143,7 @@ def bounded_explanation(decision: EffectiveScalePortrayal) -> Dict[str, Any]: ..
 
 - `zoomBands` **取 `spec_label_zoom_bands()`**（`build_label_zoom_bands()` 的首尾边界钳到渲染器全域 [0,24)，四档系数/内部边界未改；camelCase 匹配 `normalizeBands`）。解释面 `label_zoom_bands` 与 spec 投影取同一份（R1 F8）。
 - `applied=false` / `disabled` → 返回 `{}`（旧 spec 零改动）。
+- 默认输出 `{"label": {"zoomBands": [...]}}`；`thresholds.maxFeatures` 仅在 `include_budget=True` 时返回（下方代码块保留该分支以说明 schema 形状）。
 - **`include_budget` 默认 False**（R1 F5）：`decimate_budget` 是解释面 display-budget 披露，**不自动改写**文档级 `thresholds.maxFeatures`（既有导出预算阈值）；仅调用方显式请求时返回该投影，避免「投影后被落笔路径静默丢弃」的假接线。
 - 该投影由主 Agent 在 `analysis_cartography_converter.py` 的既有落笔面 opt-in 写入；本模块不直接改 MapSpec。
 

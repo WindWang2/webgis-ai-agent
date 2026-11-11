@@ -30,10 +30,10 @@
 
 | 层 | 命令 / 结果 |
 |---|---|
-| 后端 unit/contract | 6 个测试文件 **`71 passed in 0.87s`**（R2 修复+主线整合后；R1 reviewer 自行复跑 `68 passed`） |
+| 后端 unit/contract | 6 个测试文件 **`72 passed in 0.87s`**（R2 修复+主线整合后；R1 reviewer 自行复跑 `68 passed`） |
 | 前端契约 | `lib/carto-ir/scale-portrayal.test.ts` 已入库；本地因 wasm 阻断改用 tsc 纯 JS 转译 + Node 执行**同一模块/同一 corpus**：`23 checks passed` |
 | 生产接线 | converter 落笔测试（A01/A02/user-wins/无效策略）、PublicationIR 多 frame + DPI + CRS 测试、service CAS/局部写/superseded 测试 |
-| 类型检查 | `tsc --noEmit -p tsconfig.json`：唯一错误 `toolSlice.ts:32 TS1109`（BASE 既有、正是开放 PR #2085 在途修复项），**G27 相关错误 0** |
+| 类型检查 | R2（主线整合后）`tsc --noEmit -p tsconfig.json`：`TOTAL 1 / G27_RELATED 0`，唯一错误 `lib/map-kit/render-debouncer.ts(1,13) TS1192`（maplibre-gl 无 default export，npm 单进程安装版本与 pnpm-lock 差异的本地基线）；R1 时的 `toolSlice.ts:32 TS1109` 已随 #2085 合入修复 |
 | 性能 | **真实合成** 5000/20000/8000 要素，5 次重复：每档 0.446–0.505 ms、峰值 14–34 KB、5 zoom 3 次状态更新、`mutation_module_loaded=false`、feature_count 全程不变 |
 | 独立 review | `REVIEW.md`：R1 独立 reviewer 复跑并给出 1 BLOCKER + 4 P1 + 4 P2 + 2 P3 → `fix(g27)` 修复 commit → R2 复验；未参与实现的同一 reviewer 复审结论见文末 |
 

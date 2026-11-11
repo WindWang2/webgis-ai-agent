@@ -20,7 +20,7 @@
 - **R1**（未参与实现的 `g27-reviewer`）：自行复跑 `68 passed` / `23 checks` / py_compile / diff，**阻断未归零**，1 BLOCKER + 4 P1 + 4 P2 + 2 P3；实跑坐实 converter 与 service 对同一 `priority_field` policy 判定相反。详见 `REVIEW.md`。
 - **主线整合**：`origin/master` 前进到 `b8f2a6ecc`（#2084/#2085/#2086 已合并，开放 PR 清空）；`git merge --no-edit origin/master` → `5cbefc82b`，ort 无冲突；`toolSlice.ts` TS1109 基线错误消失。
 - **R1 修复**：F1 REVIEW.md + fix commit + ledger；F2 A19/A20 降级；F3 converter/service 字段证据统一；F4 A15 可证伪 + `visibility_semantics` 真实裁决；F5 移除 thresholds 假接线 + 组件接 service 回执 + 表述降级；F6 真实规模重测；F7/F8/F10/F12 权威统一与判据收紧；F9 user CAS 基线；F11 常量与异常零部分写入。
-- **R2 复验**：后端 `71 passed`、前端等价 `23 checks passed`、tsc `TOTAL 1 / G27_RELATED 0`（`render-debouncer` 本地基线）、真实规模探针 `feature_count_unchanged=true` / `mutation_module_loaded=false`。
+- **R2 复验**：后端 `72 passed`、前端等价 `23 checks passed`、tsc `TOTAL 1 / G27_RELATED 0`（`render-debouncer` 本地基线）、真实规模探针 `feature_count_unchanged=true` / `mutation_module_loaded=false`。
 - **最新 SHA**：见 `git log -1`；下一步 = 独立 reviewer 复审 →（若通过）push 分支 + 创建 **Draft PR**。
 - **未解阻断（外部）**：真实 Pi 子进程 RPC 全链、本地真实浏览器 E2E、真实 `apply_gis_mutation` CAS/undo 引擎链（`pydantic_settings` 等 Web 依赖缺失）、真实浏览器帧时间 —— 全部由 `ulimit -Hv=4 GiB` / 最小 venv 造成，已在 ACCEPTANCE/PR_BODY 标 blocked/partial，**未伪造通过**。
 - **用户约束仍全部保留**；未合并、未改 master、未删他人 worktree、未降门禁。
