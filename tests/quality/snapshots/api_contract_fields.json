@@ -1,4 +1,13 @@
 {
+ "DELETE /api/v1/briefs/sessions/{session_id}/blocks/{block_id}": {
+  "__type__": "unknown"
+ },
+ "DELETE /api/v1/briefs/sessions/{session_id}/chapters/{chapter_id}": {
+  "__type__": "unknown"
+ },
+ "DELETE /api/v1/briefs/sessions/{session_id}/releases/{release_id}/share": {
+  "__type__": "unknown"
+ },
  "DELETE /api/v1/chat/sessions/{session_id}": {
   "__model__": "ClearSessionResponse",
   "status": "string"
@@ -8,8 +17,19 @@
   "message": "null|string",
   "success": "boolean|null"
  },
+ "DELETE /api/v1/data-import/batches/{batch_id}": {
+  "__model__": "DeleteResponse",
+  "batch_id": "string",
+  "deleted": "boolean",
+  "note": "string"
+ },
  "DELETE /api/v1/data-preparation/plan/{plan_id}": {
   "__model__": "DiscardPlanResponse",
+  "plan_id": "string",
+  "state": "string"
+ },
+ "DELETE /api/v1/field-compute/plan/{plan_id}": {
+  "__model__": "FieldComputeDiscardResponse",
   "plan_id": "string",
   "state": "string"
  },
@@ -98,6 +118,30 @@
   "role": "null|string",
   "user_id": "null|string",
   "username": "null|string"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/evidence/{fact_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/releases": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/releases/{release_id}/download": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/releases/{release_id}/facts.csv": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/releases/{release_id}/manifest": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/shared/{share_code}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/shared/{share_code}/view": {
+  "__type__": "unknown"
  },
  "GET /api/v1/chat/sessions": {
   "__model__": "SessionListResponse",
@@ -188,7 +232,7 @@
   "session_id": "string"
  },
  "GET /api/v1/chat/sessions/{session_id}/review/proposals": {
-  "__model__": "ProposalListResponse",
+  "__model__": "app__schemas__review_schema__ProposalListResponse",
   "proposals": "array<object>",
   "session_id": "string"
  },
@@ -326,6 +370,37 @@
   "source_type": "null|string",
   "status": "null|string"
  },
+ "GET /api/v1/data-import/batches": {
+  "__model__": "BatchListResponse",
+  "batches": "array<object>"
+ },
+ "GET /api/v1/data-import/batches/{batch_id}": {
+  "__model__": "BatchDetailResponse",
+  "attribution": "string",
+  "batch_id": "string",
+  "created_at": "string",
+  "expires_at": "string",
+  "interpretations": "object",
+  "license": "string",
+  "members": "array<object>",
+  "notes": "array<string>",
+  "plan_hashes": "object",
+  "plan_version": "integer",
+  "previewed_hashes": "object",
+  "receipts": "object",
+  "session_id": "string",
+  "sources": "array<object>",
+  "status": "string",
+  "updated_at": "string"
+ },
+ "GET /api/v1/data-import/batches/{batch_id}/receipts": {
+  "__model__": "ReceiptsResponse",
+  "batch_id": "string",
+  "notes": "array<string>",
+  "plan_version": "integer",
+  "receipts": "object",
+  "status": "string"
+ },
  "GET /api/v1/data-lifecycle/gc/plans": {
   "__model__": "Page_Dict_str__Any__",
   "has_more": "boolean",
@@ -389,6 +464,10 @@
  },
  "GET /api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download": {
   "__type__": "unknown"
+ },
+ "GET /api/v1/field-compute/plans": {
+  "__model__": "FieldComputePlanListResponse",
+  "plans": "array<FieldComputePlanOut>"
  },
  "GET /api/v1/geocompute/cluster/metrics": {
   "__model__": "ClusterMetricsResponse"
@@ -604,6 +683,48 @@
   "counts": "object",
   "facts": "array<object>",
   "project_id": "string"
+ },
+ "GET /api/v1/projects/{project_id}/data-refresh/proposals": {
+  "__model__": "app__schemas__project_data_refresh_schema__ProposalListResponse",
+  "count": "integer",
+  "items": "array<object>",
+  "project_id": "string"
+ },
+ "GET /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}": {
+  "__model__": "RefreshProposal",
+  "adopted_mapspec_fingerprint": "string",
+  "adopted_revision": "integer|null",
+  "baseline_snapshot_id": "string",
+  "created_at": "number",
+  "diffs": "array<SourceDiff>",
+  "inventory": "SourceInventory",
+  "mapspec_fingerprint": "string",
+  "mapspec_revision": "integer",
+  "org_id": "string",
+  "owner_id": "string",
+  "plan": "RefreshPlan",
+  "project_id": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "schema_version": "integer",
+  "session_id": "string",
+  "source_versions": "object",
+  "status": "ProposalStatus",
+  "updated_at": "number",
+  "user_locks": "array<string>",
+  "warnings": "array<string>"
+ },
+ "GET /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/status": {
+  "__model__": "StatusResponse",
+  "adopted_revision": "integer|null",
+  "candidate_attempts": "integer",
+  "candidate_status": "string",
+  "mapspec_revision": "integer",
+  "progress": "array<object>",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "proposal_status": "string",
+  "recoverable": "boolean"
  },
  "GET /api/v1/projects/{project_id}/data-usage": {
   "__model__": "DataUsageResponse",
@@ -1050,6 +1171,15 @@
   "__model__": "LivenessResponse",
   "status": "string"
  },
+ "PATCH /api/v1/briefs/sessions/{session_id}": {
+  "__type__": "unknown"
+ },
+ "PATCH /api/v1/briefs/sessions/{session_id}/blocks/{block_id}": {
+  "__type__": "unknown"
+ },
+ "PATCH /api/v1/briefs/sessions/{session_id}/chapters/{chapter_id}": {
+  "__type__": "unknown"
+ },
  "POST /api/v1/atlas/jobs": {
   "__model__": "AtlasSubmitResponse",
   "idempotent_reuse": "boolean",
@@ -1088,6 +1218,27 @@
   "refresh_token": "null|string",
   "token_type": "string",
   "user": "UserInfo"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/blocks": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/chapters": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/draft": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/preflight": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/regenerate": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/releases": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/releases/{release_id}/share": {
+  "__type__": "unknown"
  },
  "POST /api/v1/chat/completions": {
   "__model__": "ChatResponse",
@@ -1377,6 +1528,42 @@
  "POST /api/v1/data-fabric/sources/{source_id}/sync": {
   "__model__": "SourceSyncResponse"
  },
+ "POST /api/v1/data-import/batches": {
+  "__model__": "BatchCreateResponse",
+  "batch_id": "string",
+  "created_at": "string",
+  "expires_at": "string",
+  "members": "array<object>",
+  "notes": "array<string>",
+  "session_id": "string",
+  "sources": "array<object>",
+  "status": "string"
+ },
+ "POST /api/v1/data-import/batches/{batch_id}/cancel": {
+  "__model__": "CancelResponse",
+  "batch_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-import/batches/{batch_id}/commit": {
+  "__model__": "CommitAcceptedResponse",
+  "batch_id": "string",
+  "members": "array<string>",
+  "poll": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-import/batches/{batch_id}/plan": {
+  "__model__": "PlanSaveResponse",
+  "batch_id": "string",
+  "plan_hashes": "object",
+  "plan_version": "integer",
+  "status": "string"
+ },
+ "POST /api/v1/data-import/batches/{batch_id}/preview": {
+  "__model__": "app__schemas__data_import_schema__PreviewResponse",
+  "batch_id": "string",
+  "plan_version": "integer",
+  "previews": "array<object>"
+ },
  "POST /api/v1/data-preparation/bindings/fields": {
   "__model__": "FieldBindingResponse",
   "bound_fields": "array<string>",
@@ -1403,7 +1590,7 @@
   "receipt": "ReceiptSummaryOut"
  },
  "POST /api/v1/data-preparation/plan/{plan_id}/preview": {
-  "__model__": "PreviewResponse",
+  "__model__": "app__schemas__data_preparation_schema__PreviewResponse",
   "degraded": "array<string>",
   "estimated_rows_after": "integer",
   "plan_id": "string",
@@ -1466,6 +1653,21 @@
   "target_dpi": "integer|null",
   "url": "string",
   "vector": "boolean"
+ },
+ "POST /api/v1/field-compute/plan": {
+  "__model__": "FieldComputePlanResponse",
+  "column_order": "array<string>",
+  "data_shape": "string",
+  "estimated_ops": "integer",
+  "geometry": "object",
+  "plan": "FieldComputePlanOut",
+  "scope_summary": "object",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/field-compute/plan/{plan_id}/cancel": {
+  "__model__": "FieldComputeCancelResponse",
+  "cancelled": "boolean",
+  "plan_id": "string"
  },
  "POST /api/v1/geocompute/cluster/ledger/limits": {
   "__model__": "LedgerLimitsResponse"
@@ -1545,6 +1747,103 @@
  },
  "POST /api/v1/projects/{project_id}/data-gc/plan": {
   "__model__": "DataGcPlanResponse"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/check": {
+  "__model__": "CheckReceipt",
+  "changed": "integer",
+  "checked_at": "number",
+  "inventory": "SourceInventory",
+  "missing": "integer",
+  "project_id": "string",
+  "sources_total": "integer",
+  "stale": "boolean",
+  "truncated": "boolean",
+  "unchanged": "integer",
+  "unverifiable": "integer",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/preview": {
+  "__model__": "RefreshProposal",
+  "adopted_mapspec_fingerprint": "string",
+  "adopted_revision": "integer|null",
+  "baseline_snapshot_id": "string",
+  "created_at": "number",
+  "diffs": "array<SourceDiff>",
+  "inventory": "SourceInventory",
+  "mapspec_fingerprint": "string",
+  "mapspec_revision": "integer",
+  "org_id": "string",
+  "owner_id": "string",
+  "plan": "RefreshPlan",
+  "project_id": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "schema_version": "integer",
+  "session_id": "string",
+  "source_versions": "object",
+  "status": "ProposalStatus",
+  "updated_at": "number",
+  "user_locks": "array<string>",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/adopt": {
+  "__model__": "AdoptionReceipt",
+  "action": "string",
+  "map_observation": "string",
+  "mapspec_fingerprint": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "replayed": "boolean",
+  "restored_snapshot_id": "string",
+  "revision_after": "integer",
+  "revision_before": "integer",
+  "status": "string",
+  "task_execution": "string",
+  "tool_execution": "string",
+  "version_adoption": "string",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/discard": {
+  "__model__": "AdoptionReceipt",
+  "action": "string",
+  "map_observation": "string",
+  "mapspec_fingerprint": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "replayed": "boolean",
+  "restored_snapshot_id": "string",
+  "revision_after": "integer",
+  "revision_before": "integer",
+  "status": "string",
+  "task_execution": "string",
+  "tool_execution": "string",
+  "version_adoption": "string",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/execute": {
+  "__model__": "ExecuteRefreshResponse",
+  "candidate": "RefreshCandidate|null",
+  "conflicts": "array<object>",
+  "preserved": "array<string>",
+  "receipt": "object",
+  "replayed": "boolean"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/rollback": {
+  "__model__": "AdoptionReceipt",
+  "action": "string",
+  "map_observation": "string",
+  "mapspec_fingerprint": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "replayed": "boolean",
+  "restored_snapshot_id": "string",
+  "revision_after": "integer",
+  "revision_before": "integer",
+  "status": "string",
+  "task_execution": "string",
+  "tool_execution": "string",
+  "version_adoption": "string",
+  "warnings": "array<string>"
  },
  "POST /api/v1/projects/{project_id}/datasets": {
   "__model__": "ProjectDatasetResponse",
