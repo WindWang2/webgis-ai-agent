@@ -831,6 +831,8 @@ def map_product_block(
     tenant_id: str = "",
     user_hidden_layers: Optional[List[str]] = None,
     workflow_disclosures: Optional[List[str]] = None,
+    receipts: Optional[Dict[str, Any]] = None,
+    frame_verification: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -924,9 +926,38 @@ def map_product_block(
         block["task_complete"] = _is_task_complete(block)
     except Exception:  # noqa: BLE001 — 折叠失败按旧形状（缺键）
         observe_optional_failure(__name__)
+    # G28（P1/P3 接线）：权威回执摘要 + frame 逐帧终验随块持久化 ——
+    # evidence/evaluator 的消费面（``_frame_product_evidence``/frame 闸读
+    # ``frame_product`` 键；additive 键，旧读者忽略；输入缺席 → 键省略）。
+    if receipts is not None:
+        try:
+            from app.services.gis_harness.goal_satisfaction.receipts import (
+                bounded_capability_receipts,
+            )
+
+            receipts_summary = bounded_capability_receipts(receipts)
+            if receipts_summary is not None:
+                block["capability_receipts"] = receipts_summary
+        except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
+            logger.debug("[MapFinalizer] capability receipts summary failed",
+                         exc_info=True)
+    if frame_verification is not None:
+        try:
+            bounded_frame = dict(frame_verification) if isinstance(
+                frame_verification, dict) else None
+            if bounded_frame is not None and bounded_frame.get("status"):
+                bounded_frame["problems"] = [
+                    str(p)[:48]
+                    for p in (bounded_frame.get("problems") or [])[:24]]
+                block["frame_product"] = bounded_frame
+        except Exception:  # noqa: BLE001 — 增值投影，绝不阻断终验
+            logger.debug("[MapFinalizer] frame verification persist failed",
+                         exc_info=True)
     # ADR-0183（G5 接线 W2）：goal satisfaction 评估随块持久化 —— 「地图
     # READY ≠ 任务完成」的任务语义层（比较缺位/导出未兑现/证据不足不
     # PASS）。additive 键，旧读者忽略；评估失败绝不阻断 finalization。
+    # G28 P1：评估同时消费锁外预取的权威回执快照（迟到结果不改当前裁决，
+    # A20 —— 新回执经下一次终验触发才进入裁决）。
     if chapter:
         try:
             from app.services.gis_harness.goal_satisfaction import (
@@ -937,6 +968,7 @@ def map_product_block(
                 chapter,
                 map_product=block,
                 cartographic_review=cartographic_review,
+                receipts=receipts,
             )
             if report is not None:
                 block["goal_satisfaction"] = report.to_bounded_dict()
@@ -1186,6 +1218,43 @@ async def maybe_finalize_map_product(
     validated_goal = goal_key(chapter, plan.user_goal)
     revision_after_run = await _current_mapspec_revision(session_id)
 
+    # G28（P1/P3 接线）：权威回执 bundle + frame 逐帧终验在锁外预取（与
+    # awf_runs 同纪律 —— 不拉长最热锁）。只读公开面；任一失败 → 缺席
+    # （评估零漂移降级）；bundle 是**评估快照** —— 迟到结果不改本次裁决。
+    goal_receipts: Optional[Dict[str, Any]] = None
+    frame_verification: Optional[Dict[str, Any]] = None
+    try:
+        from app.services.gis_harness.goal_satisfaction.receipts import (
+            collect_capability_receipts,
+        )
+
+        goal_receipts = await collect_capability_receipts(session_id, chapter)
+    except Exception:  # noqa: BLE001 — 预取失败按无回执评估（零漂移）
+        logger.debug("[MapFinalizer] goal receipts preload failed session=%s",
+                     session_id, exc_info=True)
+    try:
+        from app.services.gis_harness.goal_satisfaction.facets import (
+            frame_verification_facet,
+        )
+        from app.services.mapspec_store import mapspec_store
+
+        _frame_spec: Optional[Dict[str, Any]] = None
+        try:
+            _frame_spec = await mapspec_store.get_mapspec(session_id) or None
+        except Exception:  # noqa: BLE001 — spec 读失败 → 无 frame 切面
+            _frame_spec = None
+        frame_verification = await frame_verification_facet(
+            session_id,
+            spec=_frame_spec,
+            mapspec_revision=revision_after_run,
+            export_receipts=(
+                chapter.get("export_receipts")
+                if isinstance(chapter, dict) else None),
+        )
+    except Exception:  # noqa: BLE001 — 切面失败按缺席（零漂移）
+        logger.debug("[MapFinalizer] frame facet preload failed session=%s",
+                     session_id, exc_info=True)
+
     # G02-GIS-EXECUTION-COMPILER（C2 验收桥，review-B P2-4）：族运行加载
     # 只依赖 session_id（与 chapter 无依赖）——在会话锁**外**预取，避免
     # 拉长最热锁的持锁时间（1 次 list_refs + ≤8 次别名解析/get）。
@@ -1363,6 +1432,8 @@ async def maybe_finalize_map_product(
                     ),
                     session_id=session_id,
                     workflow_disclosures=awf_disclosures,
+                    receipts=goal_receipts,
+                    frame_verification=frame_verification,
                 )
                 await save_session_plan(fresh)
                 # ADR-0183：SSE 透传真源（result 字段只在**持久化成功后**

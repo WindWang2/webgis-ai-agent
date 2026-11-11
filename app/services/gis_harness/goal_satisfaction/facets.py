@@ -80,11 +80,16 @@ async def frame_verification_facet(
 
     observed = frame_observed_receipts(observation, export_receipts)
     try:
-        return verify_frame_product(
+        verification = verify_frame_product(
             spec, observed, mapspec_revision=mapspec_revision)
     except Exception:  # noqa: BLE001 — 切面失败 = 诚实缺席（绝不阻断终验）
         logger.debug("[GoalFacets] frame verification failed", exc_info=True)
         return None
+    # not_bound（未启用产品语义）→ None：块键省略，旧形状零漂移。
+    if not isinstance(verification, dict) \
+            or verification.get("status") == "not_bound":
+        return None
+    return verification
 
 
 def frame_facet_summary(
