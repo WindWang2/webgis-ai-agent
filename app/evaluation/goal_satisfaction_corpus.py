@@ -40,6 +40,9 @@ class GoalSatisfactionCase:
     expected_states: Dict[str, str] = field(default_factory=dict)  # req_id → state
     expected_signal: Optional[str] = None
     must_not_pass: bool = False     # True：判 satisfied 即 false-PASS（最高优先级指标）
+    # G28 P1/P6（加性）：权威回执 bundle 快照 —— 交付/计算/导入/编辑/栅格
+    # 族案例的独立输入面（None = 旧行为零漂移）。
+    receipts: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -69,11 +72,14 @@ def _intent(**kw) -> Dict[str, Any]:
 
 
 def _step(cap: str, status: str = "complete", purpose: str = "",
-          params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+          params: Optional[Dict[str, Any]] = None,
+          bound_ref: str = "") -> Dict[str, Any]:
     row: Dict[str, Any] = {"capability": cap, "status": status,
                            "purpose": purpose or cap}
     if params:
         row["params"] = params
+    if bound_ref:
+        row["bound_ref"] = bound_ref
     return row
 
 
@@ -234,11 +240,13 @@ def _family_data_sufficiency() -> List[GoalSatisfactionCase]:
     return cases
 
 
-# ── F-D：导出交付族（3 × 3 + G6 #7 stale export）─────────────────────────
+# ── F-D：导出交付族（地图出版 3 × 3 + G6 #7 stale export；G28 语义更新：
+#    csv 属数据交付族 —— A16 路径绑定生效，地图导出回执不背书交付需求；
+#    交付需求由 delivery 回执面单独覆盖，见 _family_receipts）──────────────
 
 def _family_export() -> List[GoalSatisfactionCase]:
     cases = []
-    for fmt in ("png", "pdf", "csv"):
+    for fmt in ("png", "pdf"):
         for label, receipts, state, mnp in [
             ("current", [_receipt(fmt)], "fulfilled", False),
             ("stale", [_receipt(fmt, revision=3)], "partial", True),
@@ -258,6 +266,233 @@ def _family_export() -> List[GoalSatisfactionCase]:
                 expected_states={f"export:{fmt}": state},
                 must_not_pass=mnp,
             ))
+    # G28 A16：交付族格式（csv）的地图导出回执不再背书（旧 oracle 更新；
+    # 语义理由：生产中 map-export 从不产出 csv，csv 由 data_delivery 服务）。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-export-csv-map-export-receipt-rejected",
+        name="数据交付需求（csv）不被地图导出回执背书（A16）",
+        family="export",
+        chapter={
+            "query": "导出案例",
+            "intent": _intent(exports=["csv"]),
+            "analysis_steps": [_step("admin_aggregation")],
+            "export_receipts": [_receipt("csv")],
+        },
+        map_product=_product(),
+        expected_states={"export:csv": "not_evaluated"},
+        must_not_pass=True,
+    ))
+    return cases
+
+
+# ── F-R：G28 权威回执族（delivery/计算/导入；假成功反例见各 case）────────
+
+def _bundle(families: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+    return {"session_id": "s1", "families": families}
+
+
+def _family_receipts() -> List[GoalSatisfactionCase]:
+    cases = []
+    # A16 正例：csv 交付需求由 data_delivery 回执背书（scope 完整 + sha256）。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-delivery-current-fulfilled",
+        name="交付需求由完整 delivery 回执背书（A16 正例）",
+        family="receipts",
+        chapter={
+            "query": "交付案例",
+            "intent": _intent(exports=["csv"]),
+            "analysis_steps": [_step("admin_aggregation")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"delivery": [{
+            "delivery_id": "d1", "job_id": "j1", "format": "csv",
+            "status": "completed", "filename": "schools.csv",
+            "row_count": 120, "content_sha256": "a" * 64,
+            "scope_missing_ids": [], "scope_subset_of_selection": False,
+        }]}),
+        expected_states={"export:csv": "fulfilled"},
+        expected_global="satisfied",  # 纯交付任务（无地图意图）合法全绿（A15 同族）
+    ))
+    # A17/A07 负例：scope 缺失（subset_of_selection）→ 交付不冒充完整。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-delivery-scope-subset-partial",
+        name="交付 scope 缺失子集 → partial，不冒充完整交付（A07/A17）",
+        family="receipts",
+        chapter={
+            "query": "交付案例",
+            "intent": _intent(exports=["geojson"]),
+            "analysis_steps": [_step("admin_aggregation", "complete")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"delivery": [{
+            "delivery_id": "d2", "job_id": "j2", "format": "geojson",
+            "status": "completed", "filename": "zones.geojson",
+            "row_count": 40, "content_sha256": "b" * 64,
+            "scope_missing_ids": ["f1", "f2", "f3"],
+        }]}),
+        expected_states={"export:geojson": "partial", "analysis:admin_aggregation": "fulfilled"},
+        must_not_pass=True,
+    ))
+    # A18 负例：同名工件不同 checksum → 混用拒绝。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-delivery-artifact-mismatch",
+        name="同名工件不同 checksum → 双侧 mismatch，不背书（A18）",
+        family="receipts",
+        chapter={
+            "query": "交付案例",
+            "intent": _intent(exports=["shp"]),
+            "analysis_steps": [_step("admin_aggregation", "complete")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"delivery": [
+            {"delivery_id": "d3", "job_id": "j3", "format": "shp",
+             "status": "completed", "filename": "same.shp",
+             "row_count": 10, "content_sha256": "c" * 64,
+             "scope_missing_ids": []},
+            {"delivery_id": "d4", "job_id": "j4", "format": "shp",
+             "status": "completed", "filename": "same.shp",
+             "row_count": 99, "content_sha256": "d" * 64,
+             "scope_missing_ids": []},
+        ]}),
+        expected_states={"export:shp": "partial"},
+        must_not_pass=True,
+    ))
+    # A19 负例：取消的交付 job ≠ complete。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-delivery-cancelled-absent",
+        name="取消的交付 job → 回执缺席，不得判 complete（A19）",
+        family="receipts",
+        chapter={
+            "query": "交付案例",
+            "intent": _intent(exports=["xlsx"]),
+            "analysis_steps": [_step("admin_aggregation")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"delivery": [{
+            "delivery_id": "d5", "job_id": "j5", "format": "xlsx",
+            "status": "cancelled",
+        }]}),
+        expected_states={"export:xlsx": "not_evaluated"},
+        must_not_pass=True,
+    ))
+    # A07 负例：计算回执 skipped_rows>0 → partial population（不得冒充全集）。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-compute-partial-population",
+        name="字段计算 skipped/error 行 → 总体 partial（A07）",
+        family="receipts",
+        chapter={
+            "query": "计算案例",
+            "intent": _intent(),
+            "analysis_steps": [_step("field_compute", "complete",
+                                     bound_ref="ref:ds1")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"compute": [{
+            "plan_id": "p1", "compute_fingerprint": "cf1",
+            "input_ref": "ref:ds1", "output_ref": "ref:ds1-out",
+            "row_count": 500, "computed_rows": 320,
+            "skipped_rows": 180, "error_count": 0,
+            "columns": [{"name": "dens", "unit": "", "unit_status": "declared",
+                          "measurement_kind": "count", "computed": True}],
+        }]}),
+        expected_states={"analysis:field_compute": "partial"},
+        must_not_pass=True,
+    ))
+    # A08/A09 负例：密度列单位未声明 → 不得 PASS（计数≠密度）。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-compute-density-undeclared",
+        name="密度列 unit undeclared → 不得背书（A08/A09）",
+        family="receipts",
+        chapter={
+            "query": "计算案例",
+            "intent": _intent(),
+            "analysis_steps": [_step("field_compute", "complete",
+                                     bound_ref="ref:ds2")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"compute": [{
+            "plan_id": "p2", "compute_fingerprint": "cf2",
+            "input_ref": "ref:ds2", "output_ref": "ref:ds2-out",
+            "row_count": 100, "computed_rows": 100,
+            "skipped_rows": 0, "error_count": 0,
+            "columns": [{"name": "density", "unit": "",
+                          "unit_status": "undeclared",
+                          "measurement_kind": "density", "computed": True}],
+        }]}),
+        expected_states={"analysis:field_compute": "partial"},
+        must_not_pass=True,
+    ))
+    # A03 独立证伪面：工具行 done 但权威回执 failed → FAILED。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-import-failed-contradicts-row",
+        name="工具行 complete 但导入回执 failed → FAILED（A03 回执面）",
+        family="receipts",
+        chapter={
+            "query": "导入案例",
+            "intent": _intent(),
+            "analysis_steps": [_step("data_import", "complete",
+                                     bound_ref="ref:imp1")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"import": [{
+            "member_key": "m1", "status": "failed", "output_ref": "ref:imp1",
+            "error_code": "PARSE_FAILED",
+        }]}),
+        expected_states={"analysis:data_import": "failed"},
+        must_not_pass=True,
+    ))
+    # A11 正例：导入 completed + 0 行 = 合法空结果（非失败）。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-import-empty-legal",
+        name="导入 completed 且 0 行 → 合法空结果 fulfilled（A11）",
+        family="receipts",
+        chapter={
+            "query": "导入案例",
+            "intent": _intent(),
+            "analysis_steps": [_step("data_import", "complete",
+                                     bound_ref="ref:imp2")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"import": [{
+            "member_key": "m2", "status": "completed", "output_ref": "ref:imp2",
+            "input_rows": 0, "output_rows": 0, "rejected_rows": 0,
+        }]}),
+        expected_states={"analysis:data_import": "fulfilled"},
+    ))
+    # A25 兼容：旧回执缺字段（全部 unknown）→ 无码、不假 fail 也不假 pass。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-legacy-fields-unknown-neutral",
+        name="旧回执缺字段 → unknown 中性处理（A25）",
+        family="receipts",
+        chapter={
+            "query": "计算案例",
+            "intent": _intent(),
+            "analysis_steps": [_step("field_compute", "complete",
+                                     bound_ref="ref:old")],
+        },
+        map_product=_product(),
+        receipts=_bundle({"compute": [{
+            "plan_id": "p3", "compute_fingerprint": "cf3",
+            "input_ref": "ref:old", "output_ref": "ref:old-out",
+            "columns": [],
+        }]}),
+        expected_states={"analysis:field_compute": "fulfilled"},
+    ))
+    # A15/A30：合法无地图任务（纯统计）不被浏览器要求阻断。
+    cases.append(GoalSatisfactionCase(
+        case_id="GC-receipt-no-map-statistics-legal",
+        name="纯统计任务无地图意图 → 不要求 render 证据（A15）",
+        family="receipts",
+        chapter={
+            "query": "统计案例",
+            "intent": _intent(outputs=["statistics"]),
+            "analysis_steps": [_step("admin_aggregation", "complete")],
+        },
+        map_product=None,
+        expected_states={"analysis:admin_aggregation": "fulfilled",
+                          "statistics": "fulfilled"},
+        expected_global="satisfied",
+    ))
     return cases
 
 
@@ -1088,6 +1323,7 @@ def build_goal_satisfaction_cases() -> List[GoalSatisfactionCase]:
         + _family_quality_and_honesty()
         + _family_spec_and_edges()
         + _family_combinations()
+        + _family_receipts()
     )
 
 
@@ -1099,6 +1335,7 @@ def run_goal_satisfaction_case(case: GoalSatisfactionCase) -> GoalCaseResult:
     report = evaluate_goal_satisfaction(
         case.chapter,
         map_product=case.map_product,
+        receipts=case.receipts,
     )
     got_global = report.verdict.value if report else "none"
     if report is None:

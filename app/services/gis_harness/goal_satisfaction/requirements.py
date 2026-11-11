@@ -42,6 +42,14 @@ _COMPARISON_ZH_MARKERS = ("对比", "比较", "变化检测")
 _STATISTICS_NAME_MARKERS = ("aggregat", "statistic")
 _STATISTICS_ZH_MARKERS = ("聚合", "统计")
 
+#: G28 A16：数据交付格式词表（G18 data_delivery 家族）—— 这些格式的
+#: export 意图派生 delivery_expected 需求（证据必须来自 data_delivery
+#: 回执，地图出版导出回执不背书）。词表与 G18 FormatCapability 对齐。
+DATA_DELIVERY_FORMATS = frozenset({
+    "shp", "shapefile", "geojson", "gdb", "filegdb", "gpkg",
+    "geopackage", "csv", "xlsx", "kml", "kmz", "geojsonseq",
+})
+
 
 def _capability_category(capability: str) -> str:
     """capability → registry category（缺席 = ""，不虚构）。"""
@@ -132,11 +140,13 @@ def derive_goal_contract(
     # 2) 显式交付/产出意图（export / comparison / statistics / chart）
     #    先于 analysis 行入约 —— 它们是用户显式要求，绝不可被行数量挤出。
     for fmt in export_intents[:8]:
+        fmt_clean = fmt.strip().lower()
         if not _append(GoalRequirement(
                 id=f"export:{fmt}"[:64], kind=RequirementKind.EXPORT,
                 summary=f"export delivery: {fmt}", required=True,
-                export_format=fmt[:16],
+                export_format=fmt_clean[:16],
                 scope_name=scope_name[:64],
+                delivery_expected=fmt_clean in DATA_DELIVERY_FORMATS,
                 source="intent:export_intents",
         )):
             break
@@ -246,4 +256,5 @@ __all__ = [
     "derive_goal_contract",
     "contract_fingerprint",
     "classify_capability",
+    "DATA_DELIVERY_FORMATS",
 ]

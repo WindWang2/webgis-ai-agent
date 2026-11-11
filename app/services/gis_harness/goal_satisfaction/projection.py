@@ -20,12 +20,26 @@ def _dict(value: Any) -> Dict[str, Any]:
 def bounded_payload(block: Any) -> Optional[Dict[str, Any]]:
     """存储块 → SSE/task_complete 有界载荷（verdict/signal/counts/缺失面）。
 
-    非 dict / 空块 → None（调用方省略该键，零漂移）。
+    G28 P4 加性（A24）：``requirements`` 逐需求行（id/kind/verdict/缺失码/
+    建议动作）—— 前端无需开发日志即可区分「计算完成、地图等待显示」与
+    「任务失败」。旧读者忽略新键，零漂移。
     """
     gs = _dict(block)
     if not gs or not gs.get("verdict"):
         return None
     counts = gs.get("counts") if isinstance(gs.get("counts"), dict) else {}
+    requirements = []
+    for row in (gs.get("requirements") or [])[:12]:
+        if not isinstance(row, dict):
+            continue
+        requirements.append({
+            "id": str(row.get("requirement_id") or "")[:64],
+            "kind": str(row.get("kind") or "")[:16],
+            "verdict": str(row.get("verdict") or "")[:16],
+            "missing": [str(m)[:96]
+                        for m in (row.get("missing") or [])[:3]],
+            "next_action": str(row.get("next_action") or "")[:64],
+        })
     return {
         "verdict": str(gs.get("verdict") or "")[:24],
         "signal": str(gs.get("signal") or "")[:32],
@@ -33,6 +47,7 @@ def bounded_payload(block: Any) -> Optional[Dict[str, Any]]:
         "missing_summary": [str(m)[:96]
                             for m in (gs.get("missing_summary") or [])[:6]],
         "summary_line": str(gs.get("summary_line") or "")[:240],
+        "requirements": requirements,
     }
 
 

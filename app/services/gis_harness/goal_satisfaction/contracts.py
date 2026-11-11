@@ -74,6 +74,11 @@ class EvidenceKind(str, Enum):
     EXPORT_RECEIPT = "export_receipt"          # 导出回执（format+revision）
     USER_OVERRIDE = "user_override"            # user-wins 披露（隐藏层等）
     VISUAL = "visual"                          # L5 visual judge 摘要（只降级不背书）
+    # G28（ADR-0183 加性扩展）：新能力权威回执的只读投影 —— 生产写入者
+    # 各自在源服务（feature_edit/field_compute/data_import/data_delivery/
+    # raster_authoring/frame_products）；本层只消费不重算。
+    CAPABILITY_RECEIPT = "capability_receipt"  # G14/G17/G19/G20 能力回执投影
+    DATA_REFRESH = "data_refresh"              # G10 数据刷新采纳/检查回执
 
 
 #: 证据分级：只有 deterministic/structural 能背书 PASS；visual 只降级；
@@ -135,6 +140,10 @@ class GoalRequirement(BaseModel):
     scope_name: str = ""               # intent.scope.name（scope-match 规则输入）
     group_by: str = ""                 # intent.group_by（filter-match 规则输入）
     source: str = ""                   # 派生来源（intent:output_intents 等，审计面）
+    # G28 加性：数据交付格式（shp/geojson/csv…）→ 证据必须来自 data_delivery
+    # 回执（A16：数据导出与地图出版任务类型不混 —— 地图导出回执不背书本类
+    # 需求）。默认 False = 旧行为零漂移。
+    delivery_expected: bool = False
 
     def to_bounded_dict(self) -> dict:
         return {
@@ -149,6 +158,7 @@ class GoalRequirement(BaseModel):
             "scope_name": self.scope_name[:64],
             "group_by": self.group_by[:48],
             "source": self.source[:64],
+            "delivery_expected": self.delivery_expected,
         }
 
 

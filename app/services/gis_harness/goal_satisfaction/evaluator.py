@@ -48,6 +48,11 @@ from app.services.gis_harness.completion.contracts import (  # noqa: E402
 )
 from .evidence import build_evidence_registry, data_family_blockers
 from .requirements import classify_capability
+from .semantics import (
+    conflicted_artifact_names,
+    caps_for_receipt_row,
+)
+from .receipts import bound_receipt_rows
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +78,39 @@ R_FORBIDDEN_MET = "forbidden_outcome_present"
 R_NO_COMPARISON_ARTIFACT = "comparison_artifact_missing"
 R_NO_STATISTICS = "statistics_artifact_missing"
 R_NO_CHART = "chart_artifact_missing"
+# ── G28（P1/P2/P3 加性规则；receipt 权威回执语义闸 + frame 切面）────────
+R_RECEIPT_PARTIAL = "receipt_population_partial"
+R_RECEIPT_DENSITY_DENOM = "receipt_density_without_denominator"
+R_RECEIPT_RATE_TIMEBASE = "receipt_rate_without_timebase"
+R_RECEIPT_UNIT = "receipt_unit_undeclared"
+R_RECEIPT_CRS = "receipt_crs_unverified"
+R_RECEIPT_ARTIFACT = "receipt_artifact_mismatch"
+R_RECEIPT_SNAPSHOT = "receipt_observation_snapshot"
+R_RECEIPT_SCOPE = "receipt_scope_subset"
+R_RECEIPT_FAILED = "receipt_failed"
+R_RECEIPT_CANCELLED = "receipt_cancelled"
+R_ARTIFACT_UNVERIFIED = "artifact_unverified"
+R_DELIVERY_RECEIPT_ABSENT = "delivery_receipt_absent"
+R_FRAME_INCOMPLETE = "frame_product_incomplete"
+R_FRAME_SNAPSHOT_ONLY = "frame_product_snapshot_only"
+
+#: 证据类型前缀 → 交付路径标记（A16：数据交付与地图出版回执不混背）。
+_DELIVERY_DETAIL_PREFIX = "delivery:"
+_MAP_EXPORT_DETAIL_PREFIX = "map_export:"
+
+#: 语义 cap 码 → 失败规则 id（semantics.py 词表对齐）。
+_CAP_RULE_MAP = {
+    "population_partial": R_RECEIPT_PARTIAL,
+    "density_without_denominator": R_RECEIPT_DENSITY_DENOM,
+    "rate_without_timebase": R_RECEIPT_RATE_TIMEBASE,
+    "unit_undeclared": R_RECEIPT_UNIT,
+    "crs_unverified": R_RECEIPT_CRS,
+    "artifact_checksum_mismatch": R_RECEIPT_ARTIFACT,
+    "observation_snapshot_not_live": R_RECEIPT_SNAPSHOT,
+    "scope_subset": R_RECEIPT_SCOPE,
+    "receipt_failed": R_RECEIPT_FAILED,
+    "receipt_cancelled": R_RECEIPT_CANCELLED,
+}
 
 #: proxy 族降级（结论不可表述为原生分析 → partial + 披露）。
 _PROXY_CLASSES = frozenset({"proxy", "approximation", "degraded"})
@@ -95,6 +133,50 @@ def _verdict_token(map_product: Optional[Dict[str, Any]]) -> str:
     return str(
         verdict.get("verdict") if isinstance(verdict, dict) else verdict or ""
     )
+
+
+def _frame_gate(map_product: Optional[Dict[str, Any]]):
+    """frame_product 终验块 → 闸函数（None = 无闸；闭包写 out 的部分应用）。
+
+    只消费 G15 ``verify_frame_product`` 产出的有界块（status ∈
+    complete/incomplete）；required 帧 verified < required → PARTIAL +
+    逐帧缺口码；required 全 verified 但存在 snapshot 观察的可选帧 →
+    PARTIAL + snapshot_only 披露（A14：快照不冒充 live）。
+    """
+    fp = _dict(map_product).get("frame_product")
+    if not isinstance(fp, dict) or fp.get("status") not in (
+            "complete", "incomplete"):
+        return None
+    summary = _dict(fp.get("summary"))
+    required = int(summary.get("required") or 0)
+    verified = int(summary.get("verified") or 0)
+    snapshot_only = int(summary.get("snapshot_only") or 0)
+    if required <= 0:
+        return None
+    if verified < required:
+        problems = [str(p)[:48] for p in (fp.get("problems") or [])[:4]]
+
+        def _gate(out):
+            out.verdict = ReqState.PARTIAL
+            out.failed_rule = R_FRAME_INCOMPLETE
+            out.missing.extend(problems)
+            out.uncertainty.append(f"frames verified {verified}/{required}")
+            out.next_action = "reobserve"
+            return out
+
+        return _gate
+    if snapshot_only > 0:
+
+        def _gate_snapshot(out):
+            out.verdict = ReqState.PARTIAL
+            out.failed_rule = R_FRAME_SNAPSHOT_ONLY
+            out.uncertainty.append(
+                f"snapshot_only frames={snapshot_only} (not live)")
+            out.next_action = "reobserve"
+            return out
+
+        return _gate_snapshot
+    return None
 
 
 def _finding_codes(map_product: Optional[Dict[str, Any]]) -> List[str]:
@@ -217,6 +299,12 @@ def _eval_map_requirement(
                 out.missing.append(f"render:{render_status or 'absent'}")
                 out.next_action = "reobserve"
                 return out
+        # G28 P3（A13/A14/A05）：多画幅产品逐帧闸 —— 产品块上 frame_product
+        # 终验（G15 verify_frame_product 只消费）incomplete → 整图 partial；
+        # 一幅成功绝不汇总为产品完成；旧 revision 观察 → stale 按未观察计。
+        frame_gate = _frame_gate(map_product)
+        if frame_gate is not None:
+            return frame_gate(out)
         out.verdict = ReqState.FULFILLED
         return out
     if verdict_token == VERDICT_NEEDS_REPAIR:
@@ -243,6 +331,7 @@ def _eval_row_requirement(
     evidence: List[GoalEvidence],
     chapter: Dict[str, Any],
     map_product: Optional[Dict[str, Any]],
+    receipts: Optional[Dict[str, Any]] = None,
 ) -> ReqVerdict:
     """analysis / comparison / statistics / chart 的行证据裁决。
 
@@ -306,6 +395,13 @@ def _eval_row_requirement(
             out.missing.append(R_NO_CHART)
             return out
 
+    # ── G28 P1/P2：绑定回执的语义闸（背书在证后才降级 —— 闸只降级不升级；
+    #    回执缺席/缺字段 = 无码 unknown，兼容面零漂移，A25）。─────────────
+    if receipts is not None:
+        cap_out = _receipt_caps_verdict(requirement, chapter, receipts, out)
+        if cap_out is not None:
+            return cap_out
+
     # ── 在证后的降级规则（顺序即优先级）──────────────────────────────
     blockers = data_family_blockers(chapter, map_product)
     if blockers:
@@ -363,6 +459,92 @@ def _row_for(
     return None
 
 
+# ── G28 P1/P2：绑定回执语义闸 ────────────────────────────────────────────
+
+_RECEIPT_FAMILIES = ("compute", "import", "edit", "delivery")
+
+#: cap 码 → 可重试动作（有界词；repair_actions.py 消费同一词表）。
+_CAP_NEXT_ACTION = {
+    "population_partial": "rerun_complete",
+    "density_without_denominator": "requalify",
+    "rate_without_timebase": "requalify",
+    "unit_undeclared": "requalify",
+    "crs_unverified": "requalify",
+    "artifact_checksum_mismatch": "rerun_complete",
+    "observation_snapshot_not_live": "reobserve",
+    "scope_subset": "resolve_data",
+    "receipt_failed": "retry_step",
+    "receipt_cancelled": "retry_step",
+}
+
+
+def _bound_refs_for(requirement: GoalRequirement,
+                    chapter: Dict[str, Any]) -> List[str]:
+    """需求 → 相关行 bound_ref 清单（ANALYSIS 单行；statistics/comparison/
+    chart 族按分类行全量，去重有界）。"""
+    refs: List[str] = []
+    rows: List[Dict[str, Any]] = []
+    if requirement.kind == RequirementKind.ANALYSIS:
+        row = _row_for(requirement, chapter)
+        if row is not None:
+            rows.append(row)
+    else:
+        classification = {
+            RequirementKind.COMPARISON: "comparison",
+            RequirementKind.STATISTICS: "statistics",
+        }.get(requirement.kind)
+        if classification is not None:
+            caps = _rows_by_classification(chapter, classification)
+            for row in _rows(chapter.get("analysis_steps"))[:32]:
+                if str(row.get("capability") or "") in caps:
+                    rows.append(row)
+    for row in rows[:8]:
+        ref = str(row.get("bound_ref") or "").strip()
+        if ref and ref not in refs:
+            refs.append(ref)
+    return refs[:8]
+
+
+def _receipt_caps_verdict(
+    requirement: GoalRequirement,
+    chapter: Dict[str, Any],
+    receipts: Dict[str, Any],
+    out: ReqVerdict,
+) -> Optional[ReqVerdict]:
+    """绑定回执 cap 码 → 降级裁决（None = 无绑定/无码，零漂移）。
+
+    hard cap（receipt_failed/cancelled）→ FAILED（工具行 done 但权威回执
+    失败 = 事实矛盾，不得 PASS）；其余 cap → PARTIAL + 规则 + 动作。
+    """
+    refs = _bound_refs_for(requirement, chapter)
+    if not refs:
+        return None
+    caps: List[str] = []
+    for ref in refs:
+        for family in _RECEIPT_FAMILIES:
+            for row in bound_receipt_rows(receipts, family, ref)[:2]:
+                caps.extend(caps_for_receipt_row(family, row))
+    caps = list(dict.fromkeys(caps))[:6]
+    if not caps:
+        return None
+    hard = [c for c in caps if c in ("receipt_failed", "receipt_cancelled")]
+    if hard:
+        out.verdict = ReqState.FAILED
+        out.failed_rule = _CAP_RULE_MAP[hard[0]]
+        out.missing.append(f"receipt:{hard[0]}")
+        out.next_action = _CAP_NEXT_ACTION.get(hard[0], "retry_step")
+        return out
+    rule = _CAP_RULE_MAP.get(caps[0])
+    if rule is None:
+        return None
+    out.verdict = ReqState.PARTIAL
+    out.failed_rule = rule
+    out.missing.append(f"receipt:{caps[0]}")
+    out.next_action = _CAP_NEXT_ACTION.get(caps[0], "reobserve")
+    out.uncertainty.append(f"receipt cap: {caps[0]}")
+    return out
+
+
 def _worst_fallback(chapter: Dict[str, Any]) -> Tuple[str, str]:
     """章节回退 → 最差 downgrade_class（not_allowed > proxy 族 > equivalent）。"""
     worst_class, note = "equivalent", ""
@@ -380,14 +562,30 @@ def _worst_fallback(chapter: Dict[str, Any]) -> Tuple[str, str]:
 def _eval_export_requirement(
     requirement: GoalRequirement,
     evidence: List[GoalEvidence],
+    receipts: Optional[Dict[str, Any]] = None,
 ) -> ReqVerdict:
     out = ReqVerdict(requirement_id=requirement.id, kind=requirement.kind)
     receipt_id = f"export_receipt:{requirement.export_format}"
     receipt = next((e for e in evidence if e.id == receipt_id), None)
+    if receipt is None and requirement.delivery_expected and receipts:
+        # 交付需求也接受 delivery:<fmt> 命名回执（适配器产出两种 id 形态）。
+        receipt = next(
+            (e for e in evidence
+             if e.id.startswith("export_receipt:delivery:")
+             and e.detail.startswith(_DELIVERY_DETAIL_PREFIX)
+             and f"fmt={requirement.export_format}" in e.detail), None)
+        if receipt is not None:
+            receipt_id = receipt.id
     out.evidence_ids = [receipt_id]
     if receipt is None or receipt.status == EvidenceStatus.ABSENT:
         out.missing.append(R_EXPORT_ABSENT)
-        out.next_action = "export_product"
+        out.next_action = ("run_delivery" if requirement.delivery_expected
+                           else "export_product")
+        return out
+    if receipt.status == EvidenceStatus.FAILED:
+        out.verdict = ReqState.FAILED
+        out.failed_rule = R_RECEIPT_FAILED
+        out.next_action = "retry_step"
         return out
     if receipt.status == EvidenceStatus.STALE:
         out.verdict = ReqState.PARTIAL
@@ -396,8 +594,73 @@ def _eval_export_requirement(
             f"export revision {receipt.revision[:24]} != current")
         out.next_action = "reexport"
         return out
+    # ── G28 A16：交付路径绑定 —— 数据交付需求不被地图出版回执背书，
+    #    反之亦然（detail 前缀 = 生产写入者标记）。
+    detail = receipt.detail or ""
+    is_delivery = detail.startswith(_DELIVERY_DETAIL_PREFIX)
+    if requirement.delivery_expected and not is_delivery:
+        out.missing.append(R_DELIVERY_RECEIPT_ABSENT)
+        out.next_action = "run_delivery"
+        return out
+    if not requirement.delivery_expected and is_delivery:
+        out.missing.append(R_EXPORT_ABSENT)
+        out.next_action = "export_product"
+        return out
+    if is_delivery and receipts is not None:
+        cap_out = _delivery_caps_verdict(requirement, receipts, out)
+        if cap_out is not None:
+            return cap_out
     out.verdict = ReqState.FULFILLED
     return out
+
+
+def _delivery_caps_verdict(
+    requirement: GoalRequirement,
+    receipts: Dict[str, Any],
+    out: ReqVerdict,
+) -> Optional[ReqVerdict]:
+    """交付回执语义闸（scope/身份/取消；None = 无码）。"""
+    rows = [r for r in _dict(receipts.get("families")).get("delivery", [])
+            if isinstance(r, dict)
+            and str(r.get("format") or "").strip().lower()
+            == requirement.export_format]
+    if not rows:
+        return None
+    caps: List[str] = []
+    for row in rows[:2]:
+        caps.extend(caps_for_receipt_row("delivery", row))
+    conflicted = conflicted_artifact_names(
+        [r for r in _dict(receipts.get("families")).get("delivery", [])
+         if isinstance(r, dict)])
+    for row in rows[:2]:
+        if str(row.get("filename") or "").strip() in conflicted:
+            caps.append("artifact_checksum_mismatch")
+    caps = list(dict.fromkeys(caps))[:6]
+    hard = [c for c in caps if c in ("receipt_failed", "receipt_cancelled")]
+    if hard:
+        out.verdict = ReqState.FAILED
+        out.failed_rule = _CAP_RULE_MAP[hard[0]]
+        out.missing.append(f"receipt:{hard[0]}")
+        out.next_action = _CAP_NEXT_ACTION.get(hard[0], "retry_step")
+        return out
+    if caps:
+        rule = _CAP_RULE_MAP.get(caps[0])
+        if rule is not None:
+            out.verdict = ReqState.PARTIAL
+            out.failed_rule = rule
+            out.missing.append(f"receipt:{caps[0]}")
+            out.next_action = _CAP_NEXT_ACTION.get(caps[0], "resolve_data")
+            out.uncertainty.append(f"receipt cap: {caps[0]}")
+            return out
+    # 身份可验证性：completed 但无 content_sha256 → 不判 fulfilled（诚实
+    # unknown —— 「文件生成了」≠「产物身份已核实」，A27 工件面）。
+    if not any(str(r.get("content_sha256") or "").strip() for r in rows[:2]):
+        out.missing.append(R_ARTIFACT_UNVERIFIED)
+        out.verdict = ReqState.PARTIAL
+        out.failed_rule = R_ARTIFACT_UNVERIFIED
+        out.next_action = "reexport"
+        return out
+    return None
 
 
 def _eval_requirement(
@@ -405,6 +668,7 @@ def _eval_requirement(
     evidence: List[GoalEvidence],
     chapter: Dict[str, Any],
     map_product: Optional[Dict[str, Any]],
+    receipts: Optional[Dict[str, Any]] = None,
 ) -> ReqVerdict:
     if requirement.polarity == "must_not":
         out = ReqVerdict(requirement_id=requirement.id,
@@ -434,9 +698,9 @@ def _eval_requirement(
         return _eval_map_requirement(
             requirement, evidence, chapter, map_product)
     if requirement.kind == RequirementKind.EXPORT:
-        return _eval_export_requirement(requirement, evidence)
+        return _eval_export_requirement(requirement, evidence, receipts)
     return _eval_row_requirement(
-        requirement, evidence, chapter, map_product)
+        requirement, evidence, chapter, map_product, receipts)
 
 
 # ── 全局聚合 + 信号 ──────────────────────────────────────────────────────
@@ -540,8 +804,13 @@ def evaluate_goal_satisfaction(
     user_goal: str = "",
     map_product: Optional[Dict[str, Any]] = None,
     cartographic_review: Optional[Dict[str, Any]] = None,
+    receipts: Optional[Dict[str, Any]] = None,
 ) -> Optional[GoalSatisfactionReport]:
     """评估入口（纯函数、零 IO、fail-closed）。
+
+    ``receipts``（G28 P1 加性，默认 None = 旧调用零漂移）：finalizer 锁外
+    预取的权威回执 bundle —— 评估只消费调用快照（迟到结果不改当前裁决，
+    A20：下一次终验触发才见新回执）。
 
     返回 None = 章节/契约面不存在（调用方保持既有行为零漂移）；
     返回 report.verdict == not_evaluated = 契约在但证据不足（诚实三态）。
@@ -551,9 +820,9 @@ def evaluate_goal_satisfaction(
         return None
     chapter = chapter if isinstance(chapter, dict) else {}
     evidence = build_evidence_registry(
-        chapter, map_product, cartographic_review)
+        chapter, map_product, cartographic_review, receipts=receipts)
     verdicts = [
-        _eval_requirement(r, evidence, chapter, map_product)
+        _eval_requirement(r, evidence, chapter, map_product, receipts)
         for r in contract.requirements
     ]
     verdict = _aggregate(verdicts, contract)
