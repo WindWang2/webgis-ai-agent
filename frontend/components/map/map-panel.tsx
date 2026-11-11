@@ -184,9 +184,12 @@ import {
   getSelectionFilterExpression,
   getSelectionIdFilterExpression,
   publishSelection,
+  registerSelectionHandleReleaser,
   subscribeSelection,
   getSelectionGeneration,
 } from "@/lib/selection/selection-store"
+import { createSelectionHandle, releaseSelectionHandle } from "@/lib/api/selection-handles"
+import { getSessionIdentity } from "@/lib/store/session-identity"
 import { publishViewportContext } from "@/lib/selection/viewport-context"
 import {
   normalizeScreenRect,
@@ -354,6 +357,17 @@ export function MapPanel({
   const brushSelectActive = useHudStore((s) => s.activeMapTool === 'brush_select')
   const brushRectRef = useRef<HTMLDivElement | null>(null)
   const brushStartRef = useRef<{ x: number; y: number } | null>(null)
+
+  /* G24/P3：注册选择句柄释放器 —— 清空/替换/会话切换时 fire-and-forget
+   * DELETE（失败静默：服务端 TTL/revision 失效兜底，不阻塞 UI）。 */
+  useEffect(() => {
+    registerSelectionHandleReleaser((handle, refId) => {
+      const { sessionId, ownerToken } = getSessionIdentity()
+      if (!sessionId || !refId) return
+      void releaseSelectionHandle({ sessionId, refId, handle, ownerToken })
+    })
+    return () => { registerSelectionHandleReleaser(null) }
+  }, [])
 
   const [webglError, setWebglError] = useState<string | null>(null)
   const [mapKey, setMapKey] = useState(0)
@@ -1509,6 +1523,50 @@ export function MapPanel({
               })
             : t('map.brush.matched', { count: projection.matched_count }),
         )
+      }
+      /* G24/P3：截断框选 → 服务端权威句柄（A11/A12 —— 渲染命中不是全集；
+       * handle 承载 scope+revision+权威计数）。迟到守卫：epoch 变化或已有
+       * 更新选择（revision 前进）时丢弃回填，不覆盖新选择（A17/A20）。 */
+      const familyLayer = brushRef
+        ? (useHudStore.getState().layers as Array<{
+            id: string; _refId?: string; _descriptor?: { content_revision?: number } | unknown;
+          }>).find((l) => l.id === family)
+        : undefined
+      const familyRevRaw = familyLayer?._descriptor as { content_revision?: number } | undefined
+      const familyRev = typeof familyRevRaw?.content_revision === 'number' ? familyRevRaw.content_revision : null
+      if (projection.truncated && brushRef && bbox && familyRev != null) {
+        const publishedRev = getSelection()?.revision ?? 0
+        const epochAtPublish = getSelectionEpoch()
+        void createSelectionHandle({
+          sessionId: getSessionIdentity().sessionId ?? '',
+          refId: brushRef,
+          scope: { kind: 'bbox', bbox },
+          revision: familyRev,
+          ownerToken: getSessionIdentity().ownerToken,
+        }).then((meta) => {
+          if (epochAtPublish !== getSelectionEpoch()) return
+          const nowSel = getSelection()
+          if (!nowSel || nowSel.revision !== publishedRev) return
+          // 服务端权威计数替换渲染面计数；ids 保持首批样本（有界）
+          publishSelection('brush', {
+            source: 'map',
+            layer_id: family,
+            artifact_ref: brushRef.startsWith('ref:') ? brushRef : undefined,
+            selected_ids: projection.selected_ids,
+            id_field: projection.id_field ?? undefined,
+            predicate: { kind: 'bbox', bbox },
+            matched_count: meta.count ?? projection.matched_count,
+            handle: meta.handle,
+            handle_count: meta.count ?? undefined,
+            handle_count_exact: meta.count_exact,
+            bbox,
+          })
+          if (meta.count_exact && typeof meta.count === 'number') {
+            setBrushFeedback(t('map.brush.matchedAuthoritative', { count: meta.count }))
+          }
+        }).catch(() => {
+          /* 句柄创建失败：保留有界谓词选择（诚实降级，不伪造全集） */
+        })
       }
     }
     canvas.addEventListener('mousedown', onDown)

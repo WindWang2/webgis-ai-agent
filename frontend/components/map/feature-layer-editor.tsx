@@ -21,8 +21,9 @@ import type { GeoJSONSource, MapGeoJSONFeature, MapMouseEvent } from 'maplibre-g
 import { useHudStore } from '@/lib/store/useHudStore';
 import { getSessionIdentity } from '@/lib/store/session-identity';
 import { getSelection, subscribeSelection, getSelectionGeneration } from '@/lib/selection/selection-store';
-import { ensureLayerData } from '@/lib/store/layer-data';
 import { submitEditOps, featureIdFromProperties, type SubmitEditResult } from '@/lib/edit/layer-edit-bridge';
+import { pickAuthoritativeFeature } from '@/lib/edit/mvt-pick';
+import { preciseFeatureHit } from '@/lib/edit/geometry-hit';
 import { useT } from '@/lib/i18n/useT';
 
 const DRAFT_SOURCE = 'wb-feedit-src';
@@ -40,20 +41,12 @@ type EditStatus =
   | { state: 'failed'; message: string; retry?: () => void }
   | { state: 'done'; what: string };
 
-/** 从 HUD 行取目标图层要素集（必要时走既有 hydrate 通道）。 */
-async function targetFeatures(layerId: string): Promise<GeoJSON.Feature[]> {
-  const layer = (useHudStore.getState().layers ?? []).find((l) => l.id === layerId);
-  if (!layer) return [];
-  const inline = (layer.source as { features?: GeoJSON.Feature[] } | undefined)?.features;
-  if (inline?.length) return inline;
-  try {
-    await ensureLayerData(layerId, 'selection-detail');
-    const row = (useHudStore.getState().layers ?? []).find((l) => l.id === layerId);
-    const feats = (row?.source as { features?: GeoJSON.Feature[] } | undefined)?.features;
-    if (feats?.length) return feats;
-  } catch { /* hydrate 失败按空集处理（诚实：无法编辑未载入的目标） */ }
-  return [];
-}
+/**
+ * 编辑目标要素获取（G24/P2 重构）：
+ * - inline 图层：直接读 HUD 行 source.features（本地精确命中）；
+ * - MVT 大图层：本地行没有内联要素 —— 候选 id → 服务端权威回查
+ *   （pickEditTarget，见下）；绝不为拾取整包拉取 FeatureCollection。
+ */
 
 function closeRing(points: [number, number][]): [number, number][] {
   if (points.length >= 3) {
@@ -71,52 +64,19 @@ function ringOf(geometry: GeoJSON.Geometry): [number, number][] {
   return [];
 }
 
-/** 射线法点在环内（含边界近似由容差像素吸收）。 */
-function pointInRing(lng: number, lat: number, ring: [number, number][]): boolean {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
-/** 要素命中（R3 P2-5）：顶点近邻 OR 面/线几何包含点击点（面=外环减洞）。 */
+/**
+ * 要素命中（G24/P2 起统一走 geometry-hit.preciseFeatureHit）：
+ * 线=逐段距离（长线段中段可命中，A09）；面=外环减洞（A08）；
+ * Multi* 按真实部件（A10）。返回命中距离供多候选择近。
+ */
 function featureHit(
   feature: GeoJSON.Feature,
   lngLat: [number, number],
   project: (p: [number, number]) => { x: number; y: number },
   point: { x: number; y: number },
   tolerancePx: number,
-): boolean {
-  const g = feature.geometry;
-  if (!g) return false;
-  if (g.type === 'Point') {
-    const p = project([g.coordinates[0], g.coordinates[1]]);
-    return Math.hypot(p.x - point.x, p.y - point.y) <= tolerancePx;
-  }
-  if (g.type === 'LineString') {
-    for (const c of g.coordinates) {
-      const p = project([c[0], c[1]]);
-      if (Math.hypot(p.x - point.x, p.y - point.y) <= tolerancePx) return true;
-    }
-    return false;
-  }
-  if (g.type === 'Polygon') {
-    const rings = (g.coordinates as [number, number][][]);
-    if (!pointInRing(lngLat[0], lngLat[1], rings[0])) return false;
-    for (let h = 1; h < rings.length; h++) {
-      if (pointInRing(lngLat[0], lngLat[1], rings[h])) return false; // 洞内不算命中
-    }
-    return true;
-  }
-  // Multi* / 其它：退化为顶点近邻
-  for (const c of ringOf(g as GeoJSON.Geometry)) {
-    const p = project(c);
-    if (Math.hypot(p.x - point.x, p.y - point.y) <= tolerancePx) return true;
-  }
-  return false;
+): { hit: boolean; distPx: number } {
+  return preciseFeatureHit(feature, lngLat, project, point, tolerancePx);
 }
 
 export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null> }) {
@@ -157,6 +117,54 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   }, [editTarget?.refId]);
 
   const getMap = useCallback(() => mapRef.current?.getMap() ?? null, [mapRef]);
+
+  /**
+   * 编辑目标拾取（G24/P2）：inline 图层沿用本地精确命中（A01 不回退）；
+   * MVT/无内联数据图层走 queryRenderedFeatures 候选 id → 服务端权威回查
+   * → 对原始几何精确命中（瓦片裁剪/简化几何绝不直接当编辑对象）。
+   * 命中距离最近者胜（多候选可解释）；无稳定 id → noStableId 反馈。
+   */
+  const pickEditTarget = useCallback(async (
+    lngLat: [number, number],
+    point: { x: number; y: number },
+  ): Promise<{ id: string; feature: GeoJSON.Feature } | null> => {
+    const layer = layers.find((l) => l.id === editTarget?.layerId);
+    if (!layer || !refId) return null;
+    const m = getMap();
+    if (!m) return null;
+    const tolerance = 6;
+    const inline = (layer.source as { features?: GeoJSON.Feature[] } | undefined)?.features;
+    if (inline?.length) {
+      const proj = (c: [number, number]) => m.project(c);
+      let best: { feature: GeoJSON.Feature; dist: number } | null = null;
+      for (const f of inline) {
+        if (!f.geometry || f.geometry.type === 'GeometryCollection') continue;
+        const r = featureHit(f, lngLat, proj, point, tolerance);
+        if (!r.hit) continue;
+        if (!best || r.distPx < best.dist) best = { feature: f, dist: r.distPx };
+      }
+      if (!best) return null;
+      const fid = featureIdFromProperties(
+        best.feature.properties as Record<string, unknown> | null,
+        (best.feature as { id?: unknown }).id,
+      );
+      if (!fid) { setStatus({ state: 'failed', message: t('map.edit.noStableId') }); return null; }
+      return { id: fid, feature: best.feature };
+    }
+    // MVT / ref 层：权威拾取（瓦片几何只是候选 id 载体）
+    const descriptor = layer._descriptor as { content_revision?: number } | undefined;
+    const picked = await pickAuthoritativeFeature({
+      map: m,
+      point,
+      lngLat,
+      layerId: layer.id,
+      refId,
+      revision: descriptor?.content_revision ?? null,
+      tolerancePx: tolerance,
+      signal: refreshAbortRef.current?.signal,
+    });
+    return picked ? { id: picked.id, feature: picked.feature } : null;
+  }, [layers, editTarget, refId, getMap, t]);
 
   /* ─── draft 源挂载 + 数据同步（本地预览唯一渲染面） ─── */
   useEffect(() => {
@@ -318,29 +326,8 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       if (active === 'draw_line' || active === 'draw_polygon' || active === 'split_feature') {
         // split 两阶段：未选目标时首击=选目标；已选目标后击点=画分割线
         if (active === 'split_feature' && !splitTarget && !draftRef.current?.points.length) {
-          const feats = await targetFeatures(editTarget.layerId);
-          const m0 = getMap();
-          if (m0) {
-            const proj0 = (c: [number, number]) => m0.project(c);
-            let best0: { feature: GeoJSON.Feature; dist: number } | null = null;
-            for (const f of feats) {
-              if (!f.geometry || f.geometry.type === 'GeometryCollection') continue;
-              if (!featureHit(f, lngLat, proj0, e.point, 6)) continue;
-              let dist0 = Infinity;
-              for (const c of ringOf(f.geometry)) {
-                const p = proj0(c as [number, number]);
-                dist0 = Math.min(dist0, Math.hypot(p.x - e.point.x, p.y - e.point.y));
-              }
-              if (!best0 || dist0 < best0.dist) best0 = { feature: f, dist: dist0 };
-            }
-            if (best0) {
-              const fid = featureIdFromProperties(
-                best0.feature.properties as Record<string, unknown> | null,
-                (best0.feature as { id?: unknown }).id,
-              );
-              if (fid) { setSplitTarget(fid); return; }
-            }
-          }
+          const picked = await pickEditTarget(lngLat, e.point);
+          if (picked) { setSplitTarget(picked.id); return; }
           return;
         }
         if (active === 'split_feature' && !splitTarget) return;
@@ -359,35 +346,12 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
         return;
       }
       if (active === 'delete_feature' || active === 'edit_vertices') {
-        const feats = await targetFeatures(editTarget.layerId);
-        const tolerance = 6;
-        // 最近要素命中（容差像素内；比 queryRenderedFeatures 更稳 —— HUD 行
-        // source 与 mapspec 内联数据同源）
-        let best: { feature: GeoJSON.Feature; dist: number } | null = null;
-        const m = getMap();
-        if (!m) return;
-        const proj = (c: [number, number]) => m.project(c);
-        for (const f of feats) {
-          if (!f.geometry || f.geometry.type === 'GeometryCollection') continue;
-          if (!featureHit(f, lngLat, proj, e.point, tolerance)) continue;
-          // 命中要素中取首个顶点最近者（多重叠时选择最贴近顶点的对象）
-          let dist = Infinity;
-          for (const c of ringOf(f.geometry)) {
-            const p = proj(c as [number, number]);
-            dist = Math.min(dist, Math.hypot(p.x - e.point.x, p.y - e.point.y));
-          }
-          if (!best || dist < best.dist) best = { feature: f, dist };
-        }
-        if (!best) return;
-        const fid = featureIdFromProperties(
-          best.feature.properties as Record<string, unknown> | null,
-          (best.feature as { id?: unknown }).id,
-        );
-        if (!fid) { setStatus({ state: 'failed', message: t('map.edit.noStableId') }); return; }
+        const picked = await pickEditTarget(lngLat, e.point);
+        if (!picked) return;
         if (active === 'delete_feature') {
-          await submit([{ op: 'delete_features' }], { featureIds: [fid], labelKey: 'map.edit.deleteFeature', what: t('map.edit.deleteFeature') });
+          await submit([{ op: 'delete_features' }], { featureIds: [picked.id], labelKey: 'map.edit.deleteFeature', what: t('map.edit.deleteFeature') });
         } else {
-          setVertexTarget({ featureId: fid, geometry: best.feature.geometry });
+          setVertexTarget({ featureId: picked.id, geometry: picked.feature.geometry ?? null });
         }
         return;
       }
@@ -399,7 +363,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
     map.on('click', onClick);
     map.on('dblclick', onDblClick);
     return () => { map.off('click', onClick); map.off('dblclick', onDblClick); };
-  }, [tool, mapReady, getMap, editTarget, refId, submit, parseAttributes, bump, t, splitTarget, completeDraft]);
+  }, [tool, mapReady, getMap, editTarget, refId, submit, parseAttributes, bump, t, splitTarget, completeDraft, pickEditTarget]);
 
   /* ─── 顶点拖拽（edit_vertices + vertexTarget）─── */
   useEffect(() => {
