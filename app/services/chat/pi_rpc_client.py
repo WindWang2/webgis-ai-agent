@@ -401,10 +401,14 @@ class PiRpcClient:
             _cfg = resolve_llm_config()
             llm_base = str(_cfg.base_url or "")
             llm_model = str(_cfg.model or "")
-            if not env.get("OPENAI_API_KEY"):
-                _key = str(_cfg.api_key or "")
-                if _key and "your-api-key" not in _key:
-                    env["OPENAI_API_KEY"] = _key
+            # review-P1（W08）：解析结果（runtime override > Settings，且
+            # Settings.LLM_API_KEY 本身可源自 env）是**唯一权威** —— 必须覆盖
+            # 继承的 OPENAI_API_KEY。旧逻辑「env 已有则保留」会让 /config/llm
+            # 更新后的新 key 被继承的旧 key 压过，而 generation 却哈希新 key
+            # → 期望/生效对账失真。解析为空则保留 env 现状（诚实未配置）。
+            _key = str(_cfg.api_key or "")
+            if _key and "your-api-key" not in _key:
+                env["OPENAI_API_KEY"] = _key
             self.spawn_config_generation = config_generation()
         except Exception:  # noqa: BLE001 — env 映射是尽力而为，绝不阻断 spawn
             self.spawn_config_generation = ""

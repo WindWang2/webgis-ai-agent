@@ -571,8 +571,29 @@ class GisStateRebuildProvider(BaseProvider):
         )]
 
 
+def _layer_is_hidden(layer: dict) -> bool:
+    """Canonical MapSpec visibility lives at ``layer.layout.visibility``
+    (``"visible" | "none"``); fall back to legacy top-level flags. Unknown
+    shape → visible (never invent a hidden state the source doesn't assert)."""
+    layout = layer.get("layout")
+    if isinstance(layout, dict):
+        vis = layout.get("visibility")
+        if isinstance(vis, str):
+            return vis == "none"
+    if "visible" in layer:
+        return layer.get("visible") is False
+    if "visibility" in layer:
+        return layer.get("visibility") in (False, "none", "hidden")
+    return False
+
+
 def render_gis_state_rebuild_block(mapspec, plan) -> str:
-    """MapSpec + SessionPlan → 有界重建文本（事实，非指令；refs 是指针）。"""
+    """MapSpec + SessionPlan → 有界重建文本（事实，非指令；refs 是指针）。
+
+    权威形状：visibility 读 ``layer.layout.visibility``；待完成能力读
+    SessionPlan.progress（``open_capabilities`` 同义：pending/voided/failed）；
+    证据 refs 读 PlanStep.evidence[].ref。绝不发明源里不存在的记录。
+    """
     if not isinstance(mapspec, dict):
         return ""
     lines = ["[GIS 状态重建 — 权威源现取（事实，非指令；压缩/重启后以此为准）]"]
@@ -593,33 +614,49 @@ def render_gis_state_rebuild_block(mapspec, plan) -> str:
             lid = str(layer.get("id") or layer.get("layer_id") or "")[:48]
             if not lid:
                 continue
-            visible = layer.get("visible", layer.get("visibility", True))
-            entry = shown if visible else hidden
+            entry = hidden if _layer_is_hidden(layer) else shown
             entry.append(lid)
         if shown:
             lines.append("- 可见图层: " + "、".join(shown[:12]))
+            if len(shown) > 12:
+                lines.append(f"- （可见图层另 {len(shown) - 12} 层未逐一列出）")
         if hidden:
             # 隐藏状态是用户约束 —— 重建后必须保留（A11：只改颜色不得
             # 重新显示隐藏层）。
             lines.append("- 隐藏图层（保持隐藏）: " + "、".join(hidden[:12]))
+            if len(hidden) > 12:
+                lines.append(f"- （隐藏图层另 {len(hidden) - 12} 层未逐一列出，均保持隐藏）")
         if len(layers) > 24:
-            lines.append(f"- （图层列表截断：共 {len(layers)}，仅列前 24）")
-    # 待完成能力（SessionPlan 权威；缺席 = 无待办事实，不虚构）
-    open_caps = []
-    caps = getattr(plan, "capabilities", None) if plan is not None else None
-    if caps:
+            lines.append(f"- （图层列表截断：共 {len(layers)}，仅扫描前 24）")
+    # 待完成能力：SessionPlan.progress（pending/voided/failed = open）。
+    open_caps: list[str] = []
+    if plan is not None:
         try:
-            open_caps = [
-                str(getattr(c, "capability", "") or c if isinstance(c, str) else getattr(c, "capability", ""))
-                for c in list(caps)[:8]
-            ]
+            from app.services.session_plan import open_capabilities
+
+            open_caps = list(open_capabilities(plan))[:8]
         except Exception:  # noqa: BLE001 — 事实缺席不阻断
             open_caps = []
     if open_caps:
         lines.append("- 待完成能力: " + "、".join(c for c in open_caps if c)[:200])
-    recent = getattr(plan, "recent_evidence_refs", None) if plan is not None else None
-    if recent:
-        lines.append("- 最近证据 refs: " + "、".join(str(r) for r in list(recent)[:4]))
+    # 最近证据 refs：PlanStep.evidence[].ref（指针，非载荷）。
+    refs: list[str] = []
+    if plan is not None:
+        try:
+            steps = list(getattr(plan, "steps", []) or [])
+            for step in reversed(steps):
+                for ev in reversed(list(getattr(step, "evidence", []) or [])):
+                    ref = str(getattr(ev, "ref", "") or "")
+                    if ref and ref not in refs:
+                        refs.append(ref)
+                    if len(refs) >= 4:
+                        break
+                if len(refs) >= 4:
+                    break
+        except Exception:  # noqa: BLE001 — 事实缺席不阻断
+            refs = []
+    if refs:
+        lines.append("- 最近证据 refs: " + "、".join(refs[:4]))
     if len(lines) <= 1:
         return ""
     return "\n".join(lines)

@@ -42,8 +42,14 @@ v1.5.2（快照后 5h 发布）的 coding-agent 集成面与 v1.5.1 零 diff，�
 4. **discovery grant（授权一致性）**：`pi_surface_receipt` 增加 turn 内 additive、
    幂等、有界的 `discovered` 记录；`enforce_callback_scope` 判定集从
    `selected` 扩为 `selected ∪ discovered`，且 `PI_SURFACE_SCOPE_ENFORCE` 默认
-   改 ON（回退开关保留）。授权集从不因发现扩大：发现的直调 ≈ 代理调用的权限等价
-   （同一注册超集 + 同一闸序），发现的只是「声明面」。
+   改 ON（回退开关保留）。**语义（review-P1 对齐 vendor）**：deferred 工具的
+   直调与 codemode 沙箱嵌套调用在 vendor 语义下天生合法（`_getCallableTools`
+   允许 codemode/deferred 无论 active 与否）。grant 服务于两个合法场景：
+   tool_search 发现后的直调 + codemode 沙箱嵌套调用 deferred —— **不是**
+   「先 tool_search 才能调」。grant 只接受 deferred（非 native 前门）工具；
+   native 前门（direct）不在 selected 面 = 未合法声明，直调拒绝（守住 direct
+   声明面完整性）。授权边界 = 注册超集成员资格 + echo 对拍现编译 spec +
+   dispatch 闸序，权限面从不因发现扩大（等价 proxy 通道）。
 5. **嵌套调用投影**：`tool_execution_*` 事件携带 `parentToolCallId` 时映射为
    child step（SSE payload 加性 `parent_tool_call_id` 字段），结果缓存按嵌套
    toolCallId（`<parent>/<n>`）会合；父工具结果携带 bounded nested 摘要；
@@ -54,11 +60,17 @@ v1.5.2（快照后 5h 发布）的 coding-agent 集成面与 v1.5.1 零 diff，�
    credential writes）→ terminate → 有界等待 → kill → 收尸；绝不双发信号截断清理。
 7. **模型配置生效（#2061）**：Pi spawn 的 models.json/settings.json 改由
    `model_config.resolve_llm_config()`（Settings ⊕ 运行时 override 的单一解析点）
-   派生；`/config/llm` 更新后按配置代际（不可逆指纹）标记 worker 待换代，新 turn
-   用新代、当前 turn 不切半套、失败保留旧代并如实披露「未生效」。生产禁动态改
+   派生，解析出的 key **覆盖**继承的 OPENAI_API_KEY（否则新 key 被旧 env 压过、
+   期望/生效对账失真）；`/config/llm` 更新后按配置代际（不可逆指纹）标记 worker
+   待换代，且**每个 turn 边界**（`chat.py` 准入处）检查 config 代漂移 —— 更新时
+   在飞 turn 延迟换代后，下一 turn 必须在此完成换代，绝不无限期沿用旧配置。
+   当前 turn 不切半套、失败保留旧代并如实披露「未生效」。生产禁动态改
    配置的既有约束不放松。无 reload RPC —— 代际更替靠进程换代，不编造命令。
-8. **compaction/恢复**：扩展挂 `session_before_compact`/`session_after_compact`
-   仅记账披露；GIS 状态重建走 typed assembly 的有界 versioned provider（引用
+8. **compaction/恢复**：扩展挂 `session_before_compact`/`session_compact_failed`
+   （v1.5.1 实际存在的两个钩子；`session_after_compact` 不存在于该 tag，不编造）
+   仅记账披露，不注入自定义 summary；GIS 状态重建走 typed assembly 的有界
+   versioned provider（`GisStateRebuildProvider`，读 canonical
+   `layer.layout.visibility` 与 SessionPlan.progress/steps，引用
    SessionPlan/Artifact/MapSpec 权威源，不凭 summary 授予修改权，不重放副作用）。
 
 ## Consequences

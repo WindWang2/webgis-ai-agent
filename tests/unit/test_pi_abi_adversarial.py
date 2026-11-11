@@ -181,6 +181,31 @@ def toy_registry():
     registry.register(
         "adv_cancel", "adv cancel", cancel_tool, parameters=empty_params)
 
+    # ADR-0288 review-P1：负面类型 —— 永远不在注册超集内（registered_surface_names
+    # 逐出），其 bare-name 直调必须拒绝。计数器证明零执行。
+    counts.update({"tier3": 0, "destructive": 0, "hidden": 0})
+
+    def tier3_tool(session_id=None):
+        counts["tier3"] += 1
+        return {"success": True, "message": "tier3"}
+
+    def destructive_tool(session_id=None):
+        counts["destructive"] += 1
+        return {"success": True, "message": "destructive"}
+
+    def hidden_tool(session_id=None):
+        counts["hidden"] += 1
+        return {"success": True, "message": "hidden"}
+
+    registry.register(
+        "adv_tier3", "adv tier3", tier3_tool, parameters=empty_params, tier=3)
+    registry.register(
+        "adv_destructive", "adv destructive", destructive_tool,
+        parameters=empty_params, side_effect="destructive")
+    registry.register(
+        "adv_hidden", "adv hidden", hidden_tool,
+        parameters=empty_params, status="hidden")
+
     old_registry = bridge_mod._tool_registry
     set_tool_registry(registry)
     yield registry, counts
@@ -571,12 +596,16 @@ def test_receipt_store_bounded_and_session_scoped():
 async def test_scope_enforcement_attack_matrix(toy_registry, client, monkeypatch):
     """ADR-0288：scope 校验默认 ON + discovery grant 契约。
 
-    - 注册超集内的 bare-name 直调（不在 turn selected 面）→ discovery grant
-      放行并真实执行（发现只改声明；权限面=注册超集+dispatch 闸）；
-    - **伪造/过期 echo**（fingerprint 与 registry 现编译不符）→ typed
-      SURFACE_SCOPE_VIOLATION 拒绝，零执行（A6 撤权/过期 schema 反例）；
-    - webgis_execute 代理路径不受 scope 校验（既有语义）；
-    - kill-switch（=0）回 G12 前放行行为。"""
+    语义澄清（review-P1 对齐）：**deferred 工具直调在 vendor 语义下天生合法**
+    （codemode 沙箱不经声明即可调用 deferred —— 同一权限面）。grant 的作用是
+    「记录 + 授权一致性校验」（注册超集成员 ∧ 指纹对拍），不是先决授权门槛。
+    真正的授权边界 = 注册超集成员资格 + 指纹对拍 + dispatch 闸序。
+
+    - 注册超集内的 bare-name 直调（deferred）→ grant 记录 + 真实执行；
+    - **未授权类型（tier-3/destructive/hidden）直调 → 拒绝，零执行**（见下方
+      test_scope_enforcement_negative_types_rejected）；
+    - 伪造/过期 echo → typed SURFACE_FINGERPRINT_MISMATCH 拒绝，零执行；
+    - proxy 通道语义不变；kill-switch 回退。"""
     registry, counts = toy_registry
     session_id, turn_id = "sess-adv-scope", "turn-adv-scope"
     receipt = _mint_receipt(registry, session_id, turn_id, ["adv_inface"])
@@ -644,6 +673,52 @@ async def test_scope_enforcement_attack_matrix(toy_registry, client, monkeypatch
     )
     assert resp3.json()["isError"] is False
     assert counts["outface"] == 3
+
+
+async def test_scope_enforcement_negative_types_rejected(toy_registry, client):
+    """review-P1 恢复的真正负面断言：未授权类型（tier-3 / destructive /
+    hidden）的 bare-name 直调必须**拒绝且零执行** —— 它们不在注册超集内，
+    discovery grant 无从铸造。这是 scope 校验的真实安全边界。"""
+    registry, counts = toy_registry
+    session_id, turn_id = "sess-adv-neg", "turn-adv-neg"
+    _mint_receipt(registry, session_id, turn_id, ["adv_inface"])
+    token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
+    await _register(session_id, turn_id)
+
+    for tool_name, counter_key in (
+        ("adv_tier3", "tier3"),
+        ("adv_destructive", "destructive"),
+        ("adv_hidden", "hidden"),
+    ):
+        resp = await client.post(
+            "/pi-tools/execute", headers=_headers(),
+            json=_body(f"call-neg-{tool_name}", tool_name, {}, token),
+        )
+        assert resp.status_code == 200, tool_name
+        data = resp.json()
+        assert data["isError"] is True, f"{tool_name} must be rejected, got {data}"
+        # 拒绝发生在 dispatch 之前 —— 计数器绝不动
+        assert counts[counter_key] == 0, (
+            f"{tool_name} must NOT execute (counter={counts[counter_key]})"
+        )
+        # 拒绝是 typed 的（scope/tier 语义），不是伪造成功
+        assert data.get("details"), f"{tool_name} rejection must be typed"
+
+
+async def test_scope_enforcement_unregistered_name_rejected(toy_registry, client):
+    """未注册名直调 → resolve 阶段 reject（discover-via 指引），零执行。"""
+    registry, counts = toy_registry
+    session_id, turn_id = "sess-adv-unreg", "turn-adv-unreg"
+    _mint_receipt(registry, session_id, turn_id, ["adv_inface"])
+    token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
+    await _register(session_id, turn_id)
+    resp = await client.post(
+        "/pi-tools/execute", headers=_headers(),
+        json=_body("call-unreg", "adv_does_not_exist", {}, token),
+    )
+    data = resp.json()
+    assert data["isError"] is True
+    assert "native_surface_reject" in str(data.get("details", {}))
 
 
 # ---------------------------------------------------------------------------

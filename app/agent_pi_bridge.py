@@ -2034,6 +2034,23 @@ class PiBridge:
         # agent run 里自行重启，产品语义的「停止任务」落空。system/policy
         # 停止（会话删除/看门狗）同样不应让队列复活；steer 通道本身不受
         # 影响。clear_queue 失败绝不阻断 abort（尽力而为，同会话守卫已过）。
+        #
+        # review-P2：clear_queue 是**全局**操作（清的是当前在飞 turn 的队列），
+        # 与 abort 一样有 TOCTOU 面 —— 发出前**再校验** snapshot 的 turn 仍是
+        # 在飞者，若已翻转（同会话后继/跨会话新 turn）则跳过 clear+abort，
+        # 绝不清错队列或误杀新 turn。
+        active_before_clear = self._active_turn_sid
+        if (
+            session_id is not None
+            and active_before_clear is not None
+            and active_before_clear != session_id
+        ):
+            logger.warning(
+                "[PiBridge] abort(session_id=%s) skipped before clear_queue: "
+                "active turn flipped to %s; not clearing another turn's queue",
+                session_id, active_before_clear,
+            )
+            return {}
         try:
             await self._rpc.request("clear_queue", {})
         except Exception as exc:  # noqa: BLE001 — 清队尽力而为

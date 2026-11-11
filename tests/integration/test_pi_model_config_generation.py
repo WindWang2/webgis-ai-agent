@@ -90,7 +90,7 @@ def _boot_stub(tmp: Path, tag: str) -> tuple[int, Path]:
     err_file = tmp / f"stub_err_{tag}_{time.monotonic_ns()}.log"
     env = {**os.environ, "STUB_PORT": "0", "STUB_LOG": str(log)}
     with open(err_file, "w") as fh:
-        proc = subprocess.Popen(
+        subprocess.Popen(
             ["node", str(js)], stdout=subprocess.DEVNULL, stderr=fh, env=env
         )
     deadline = time.monotonic() + 10
@@ -116,7 +116,8 @@ async def test_config_update_reaches_real_pi_requests(tmp_path, monkeypatch):
     key_a, key_b = "sk-test-aaaa", "sk-test-bbbb"
 
     from app.services.chat.pi_compat import pi_vendor_identity
-    entry = Path(pi_vendor_identity().entry_path)
+
+    assert pi_vendor_identity().entry_built, "vendor entry must be built for this lane"
 
     async def spawn_and_prompt() -> None:
         client = PiRpcClient(cwd=tmp_path)
@@ -182,6 +183,10 @@ async def test_config_update_reaches_real_pi_requests(tmp_path, monkeypatch):
         gen_b = model_config.config_generation()
         assert gen_a != gen_b, "config generation must change across the update"
 
+        # review-P1-3：模拟**继承的旧 env key** 仍在场 —— 解析出的新 key 必须
+        # 覆盖它，否则真实请求会用旧 key 而新 generation 却声称已生效。
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-inherited-old-env")
+
         # 新 spawn（换代后）→ 真实请求落到 stub B。
         await spawn_and_prompt()
         rows_b = [json.loads(x) for x in log_b.read_text().splitlines() if x.strip()]
@@ -240,5 +245,15 @@ async def test_config_generation_stale_and_deferred_recycle(tmp_path, monkeypatc
         bridge._active_turn_sid = "live-session"
         assert bridge.config_generation_stale() is True
         assert await bridge.recycle_if_config_stale() is False
+
+        # review-P1-2：turn 结束（active=None）后，**下一 turn 边界**必须能
+        # 完成换代 —— 这是 chat.py 准入处 recycle_if_config_stale 的语义。
+        bridge._active_turn_sid = None
+        assert bridge.config_generation_stale() is True, (
+            "deferred update must remain stale after the turn ends"
+        )
+        assert await bridge.recycle_if_config_stale() is True, (
+            "the next turn boundary MUST resume the deferred recycle"
+        )
     finally:
         mc.clear_runtime_overrides()

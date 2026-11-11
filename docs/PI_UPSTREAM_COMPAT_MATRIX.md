@@ -64,9 +64,12 @@
   RPC/扩展/发现/嵌套/停机面与 v1.5.1 **零 diff**（仅 anthropic 版本串、
   missing-cwd fork UX、失败导入清理、docs/lockfile）。无本任务所需能力且无
   浸泡 → 不升；后续升 v1.5.2 = pin-only 变更（重新跑本节清单即可）。
-- **回退**：gitlink 回 v1.5.0 + 重跑 build-vendor（幂等）；G12 新行为全部有
-  env kill-switch（`PI_NATIVE_DISCOVERY`、`PI_SURFACE_SCOPE_ENFORCE`、
-  `PI_GRACEFUL_STOP_TIMEOUT_S`），回退 pin 时一并关闭即可恢复 v1.5.0 行为。
+- **回退**：gitlink 回 v1.5.0 + 重跑 build-vendor（幂等）**并**回退
+  `pi_compat.PI_MIN_VENDOR_TAG` 至 v1.5.0（floor 是协议下限声明，回退 pin 不
+  回退 floor 会让 v1.5.0 被 doctor 判 FAIL）；G12 新行为用 env kill-switch
+  关闭（`PI_NATIVE_DISCOVERY=0`、`PI_SURFACE_SCOPE_ENFORCE=0`、
+  `PI_GRACEFUL_STOP_TIMEOUT_S` 按需），即可恢复 v1.5.0 行为。config 代际换代
+  无独立开关（fail-open 无锚不触发），rebuild 域无 mapspec 即 skip。
 
 ## 5. 版本历史
 
