@@ -47,17 +47,24 @@ _LAYER_NAME = "data"
 
 
 def _chain_stable_id(feature: Any) -> Optional[str]:
-    """FEATURE_ID_KEYS 链（顶层 id 优先）→ 稳定 id；无 → None。
+    """FEATURE_ID_KEYS 链 → 稳定 id；无 → None。
 
     与 feature_pages.resolve_feature_stable_id / layer.py::_find_feature_by_id
     同链同语义（常量取自 feature_pages 单一真相，避免三处漂移）。
+    G24/P0：``properties._wfid`` 先于顶层 id（G14 物化后 WFID 是唯一跨
+    revision 稳定寻址键；前端拾取链同序）。None-ness 不变 → 瓦片字节与
+    位置 id 语义不变；feature_id_index 因此能按 wfid 命中已编辑数据集。
     """
     if not isinstance(feature, dict):
         return None
+    props = feature.get("properties")
+    if isinstance(props, dict):
+        wfid = props.get("_wfid")
+        if isinstance(wfid, (str, int)) and not isinstance(wfid, bool):
+            return str(wfid)
     top = feature.get("id")
     if isinstance(top, (str, int)) and not isinstance(top, bool):
         return str(top)
-    props = feature.get("properties")
     if isinstance(props, dict):
         for key in FEATURE_ID_KEYS:
             value = props.get(key)

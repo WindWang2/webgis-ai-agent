@@ -517,17 +517,26 @@ def _count_scan(
 
 
 def resolve_feature_stable_id(feature: Any) -> Optional[str]:
-    """FEATURE_ID_KEYS 链（顶层 id 优先）→ 稳定 id；无 → None。
+    """FEATURE_ID_KEYS 链 → 稳定 id；无 → None。
 
     与 #1873 feature_edit.identity.resolve_feature_id 同语义（本模块不依赖
     feature_edit，避免服务方向反转）。
+    G24/P0：``properties._wfid`` 先于顶层 id —— G14 物化后 WFID 是唯一
+    跨 revision 稳定寻址键（前端 featureIdFromProperties/brush 同序），
+    否则 MVT 索引路径（feature_id_index）对已编辑数据集按 wfid 回查 404。
+    None-ness 不变（有 _wfid 的要素原本也必有链内 id 或本就无 id）→ 瓦片
+    字节/位置 id 语义不变。
     """
     if not isinstance(feature, dict):
         return None
+    props = feature.get("properties")
+    if isinstance(props, dict):
+        wfid = props.get("_wfid")
+        if isinstance(wfid, (str, int)) and not isinstance(wfid, bool):
+            return str(wfid)
     top = feature.get("id")
     if isinstance(top, (str, int)) and not isinstance(top, bool):
         return str(top)
-    props = feature.get("properties")
     if isinstance(props, dict):
         for key in FEATURE_ID_KEYS:
             value = props.get(key)
