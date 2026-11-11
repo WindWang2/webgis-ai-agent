@@ -138,6 +138,22 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['real'],
     owner: 'g10-project-data-refresh',
   },
+  {
+    id: 'j15',
+    file: 'journeys/j15-pi-mapspec-stub.journey.ts',
+    title: 'Pi stub 对话提交 MapSpec：revision 递增→图层与图例可见',
+    smoke: false,
+    modes: ['mock', 'real'],
+    owner: 'pi-only-engine',
+  },
+  {
+    id: 'j16',
+    file: 'journeys/j16-frame-product.journey.ts',
+    title: '多画幅产品：恢复→标题 CAS 修改→激活画幅',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'g15-multiframe-cartography',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);

@@ -14,7 +14,7 @@
 | 基准（真实耗时，非 mock timing） | test_frame_product_benchmarks.py（4，slow 标记） | ✅ |
 | 前端投影/CAS 提交/导出路由/同步组 | frame-product.test.ts（15） | ✅ |
 | 面板组件旅程（恢复三幅/改名 CAS/激活） | frame-product-panel.test.tsx（2） | ✅ |
-| 浏览器端到端（mock 档，真实 app shell） | e2e/journeys/j14-frame-product.journey.ts（1 passed @本机） | ✅ |
+| 浏览器端到端（mock 档，真实 app shell） | e2e/journeys/j16-frame-product.journey.ts（1 passed @本机） | ✅ |
 | 旧链回归 | publication/atlas/export_frames/model packs/registry 6946 通过 | ✅ |
 
 ## 已知基线失败（非本 PR 引入）
