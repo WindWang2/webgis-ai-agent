@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -921,6 +921,95 @@ def publication_preflight(ir: PublicationIR, document: Dict[str, Any]) -> List[D
     return warnings[:MAX_ATLAS_PAGES]
 
 
+# ── G27（P5）：出版等价视窗 —— 加性解析入口，不改既有 IR 模型 ───────────
+
+
+class PublicationScaleContext(_Bounded):
+    """单页出版等价视窗（refs-only / 有界 / 不参与可见层裁决）。
+
+    - ``frame_extent``：该页实际 WSEN（``page_geometry`` /
+      ``resolve_effective_bounds`` 已解析）；
+    - ``logical_viewport_px``：逻辑视口（缺省取该页纸张 px 几何）；
+    - ``target_dpi``：**只**用于输出采样与物理尺寸，绝不参与可见层或
+      表达裁决（A15 —— 不能单凭 300DPI 把地图当成放大数级）；
+    - ``semantic_zoom`` 恒取 ``spec.view.zoom``（authored）；
+    - 非 Web Mercator / 缺有效纬度 → ``scale_denominator=None`` +
+      ``assumptions`` 披露，不对所有 CRS 套同一公式（A16）。
+    """
+
+    page_id: str = Field(min_length=1, max_length=120)
+    frame_extent: Optional[List[float]] = None
+    crs: str = Field(default="EPSG:3857", max_length=32)
+    logical_viewport_px: List[int] = Field(
+        default_factory=lambda: [0, 0], max_length=2)
+    target_dpi: float = 300.0
+    semantic_zoom: Optional[float] = None
+    scale_denominator: Optional[int] = None
+    assumptions: List[str] = Field(default_factory=list, max_length=8)
+    visibility_semantics: str = "live_export_shared"
+
+
+def plan_scale_contexts(
+    ir: PublicationIR,
+    document: Dict[str, Any],
+    *,
+    crs: str = "EPSG:3857",
+    target_dpi: float = 300.0,
+    logical_viewport_px: Optional[Sequence[int]] = None,
+) -> List[PublicationScaleContext]:
+    """逐页出版等价视窗（G27 的 scale resolver seam）。
+
+    live 与 export 的可见层裁决共用 ``representation.export_adjudicate_layer``
+    与前端 ``visibility.ts``；本函数只产出**解释与物理口径**，不改任何
+    可见层、分类、图例或字号相对关系。多 frame 各自消费自己的 bounds 与
+    viewport（A21）。旧项目零变化：IR 模型/指纹不改，调用为 opt-in。
+    """
+    from app.lib.cartography.representation import export_zoom_of_mapspec
+    from app.lib.cartography.scale_portrayal import physical_scale_context
+
+    semantic_zoom = export_zoom_of_mapspec(
+        document if isinstance(document, dict) else {})
+    doc_crs = (crs or "EPSG:3857")[:32]
+    dpi = (float(target_dpi)
+           if isinstance(target_dpi, (int, float)) and target_dpi > 0
+           else 300.0)
+    viewport = [
+        int(v) for v in (logical_viewport_px or [])[:2]
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    ]
+    out: List[PublicationScaleContext] = []
+    for page in ir.pages[:MAX_SPEC_FRAMES + 1]:
+        bounds = (list(page.bounds)
+                  if isinstance(page.bounds, list) and len(page.bounds) == 4
+                  else None)
+        vp = ([viewport[0], viewport[1]] if len(viewport) == 2
+              else [page.paper.width_px, page.paper.height_px])
+        physical = physical_scale_context(
+            zoom=semantic_zoom,
+            frame={"extent": bounds} if bounds else None,
+            crs=doc_crs,
+            target_dpi=dpi,
+        )
+        assumptions = list(physical.get("assumptions") or [])
+        assumptions.append(
+            "输出 DPI 只影响采样与物理尺寸；可见层/分类/图例/字号相对关系"
+            "由 live 与 export 共用同一裁决 seam，不因 DPI 改变")
+        assumptions.append(
+            "frame extent / CRS / 逻辑 viewport 显式传入；屏幕 zoom→物理比例尺"
+            "依赖纬度与投影假设，非 Web Mercator 不套固定公式")
+        out.append(PublicationScaleContext(
+            page_id=page.page_id,
+            frame_extent=bounds,
+            crs=doc_crs,
+            logical_viewport_px=vp,
+            target_dpi=dpi,
+            semantic_zoom=semantic_zoom,
+            scale_denominator=physical.get("scale_denominator"),
+            assumptions=assumptions[:8],
+        ))
+    return out
+
+
 __all__ = [
     "PUBLICATION_IR_VERSION",
     "PX_PER_MM",
@@ -932,8 +1021,10 @@ __all__ = [
     "PagePaper",
     "PageLayoutIR",
     "PublicationIR",
+    "PublicationScaleContext",
     "page_geometry",
     "enabled_frames",
     "plan_publication_pages",
+    "plan_scale_contexts",
     "publication_preflight",
 ]

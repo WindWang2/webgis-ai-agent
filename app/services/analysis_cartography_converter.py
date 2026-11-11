@@ -929,6 +929,47 @@ def convert_analysis_to_mapspec_layer(
             except Exception as rep_exc:  # noqa: BLE001 - 表达计划不阻断出图
                 warnings.append(f"representation_projection_skipped: {rep_exc}")
 
+        # ── G27（P2 生产接线）：尺度表达策略 opt-in 落笔 ───────────────────
+        # 唯一新增接入点：仅当 base_layer 显式声明 g27 policy 时，把
+        # scene_lod 的四档决策投影进**既有**字段 layer.label.zoomBands。
+        # 前端 normalizeLabelStrategy → buildTextSizeExpr / bandTopRatio /
+        # selectTopLabels 是真实 runtime 消费者（不是纯函数自证）。
+        # 纪律：
+        # - 旧 spec 无该声明 → 零改动（A01 默认渲染不变）；
+        # - authored 已有 zoomBands → user-wins，不覆盖；
+        # - zoomBands 是全 zoom 域声明，authoring 参考 zoom 不产生 per-frame
+        #   mutation（zoom 手势属 observed camera，不写 desired spec）；
+        # - 解析失败绝不阻断出图（与 representation 落笔同纪律）。
+        _g27_profile = base_layer.get("scale_profile")
+        _g27_policy = (
+            _g27_profile.get("g27_scale_portrayal")
+            if isinstance(_g27_profile, dict) else None
+        )
+        if _g27_policy is not None:
+            try:
+                from app.lib.cartography.scale_portrayal import (
+                    project_scale_portrayal_spec,
+                    resolve_effective_scale_portrayal,
+                )
+
+                _g27_decision = resolve_effective_scale_portrayal(
+                    zoom=11.0,  # authoring 参考点（= representation_at_scale 缺省）
+                    layer=res_layer,
+                    policy=_g27_policy,
+                )
+                _g27_patch = project_scale_portrayal_spec(_g27_decision)
+                _g27_bands = (_g27_patch.get("label") or {}).get("zoomBands")
+                if _g27_bands:
+                    _g27_label = res_layer.get("label")
+                    if not isinstance(_g27_label, dict):
+                        _g27_label = {}
+                    if not _g27_label.get("zoomBands"):
+                        _g27_label["zoomBands"] = _g27_bands
+                        res_layer["label"] = _g27_label
+            except Exception as g27_exc:  # noqa: BLE001 - 尺度策略不阻断出图
+                warnings.append(f"scale_portrayal_projection_skipped: {g27_exc}")
+                unique_warnings = list(dict.fromkeys(warnings))
+
         return res_layer, inline_geojson, unique_warnings
 
     except Exception as e:

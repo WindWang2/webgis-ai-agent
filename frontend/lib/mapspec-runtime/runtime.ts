@@ -2154,6 +2154,13 @@ export class MapSpecRuntime {
       if (this.disposed) return;
       let zoom = 0;
       try { zoom = mapAny.getZoom(); } catch { return; }
+      // G27：observed camera 只读广播（分档去抖在 UI 侧）—— 不写 desired
+      // spec、不触发任何 mutation；广播失败不影响既有渲染链。
+      try {
+        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+          window.dispatchEvent(new CustomEvent("webgis:zoom", { detail: { zoom } }));
+        }
+      } catch { /* 只读广播，失败不影响渲染 */ }
       for (const [labelId, reg] of Array.from(this.labelRegistrations)) {
         if (reg.strategy.zoomBands.length === 0) continue; // 无 bands：无跨档语义
         const band = activeBandIndex(zoom, reg.strategy.zoomBands);
