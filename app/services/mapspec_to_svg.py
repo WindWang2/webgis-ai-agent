@@ -220,6 +220,9 @@ class SvgCompilation:
     #: {component_id, type, code}）。非 include_chrome 路径恒空（旧形状不变）。
     rendered_component_types: List[str] = dataclass_field(default_factory=list)
     omitted_components: List[Dict[str, str]] = dataclass_field(default_factory=list)
+    #: G26：数值栅格层的地理对齐嵌入回执（每层一条；PDF HTML 面分层层叠
+    #: 与导出 manifest 消费。无栅格嵌入时恒空 —— 旧调用面形状不变）。
+    raster_placements: List[Dict[str, Any]] = dataclass_field(default_factory=list)
 
 
 def _resolve_export_thresholds(
@@ -1073,7 +1076,12 @@ def compile_mapspec_to_svg_detailed(
     include_chrome: bool = False,
     bounds: Any = None,
     max_labels: Any = None,
+    raster_bindings: Any = None,
 ) -> SvgCompilation:
+    """G26：``raster_bindings``（layer_id → 冻结绑定 dict）在场时，数值
+    栅格层按冻结表达以地理对齐 data-URI 窗口嵌入（图层顺序保持）；缺席
+    时 numeric_raster 源诚实披露 ``layer_ref_unavailable``（不再静默丢层）。
+    其余参数语义不变。"""
     cap, timeout_ms_val = _resolve_export_thresholds(
         mapspec, max_features, timeout_ms)
     # W6/MINOR-8：标签预算解析——显式入参 > spec labels.maxLabels > 默认；
@@ -1129,6 +1137,8 @@ def compile_mapspec_to_svg_detailed(
     # Circle obstacles include the label's own point across layers. All
     # candidates must avoid visible ink; exhaustion is disclosed suppression.
     glyph_obstacles: List[Tuple[float, float, float, float]] = []
+    # G26：数值栅格嵌入回执（绑定在场时逐层填充；见 _embed_numeric_raster_window）
+    raster_placements: List[Dict[str, Any]] = []
 
     def _emit_diag(code: str, detail: str = "", layer_id: Any = None,
                    component_id: Any = None) -> None:
@@ -1284,6 +1294,119 @@ def compile_mapspec_to_svg_detailed(
                 layer_id=_guard_finding["layer_id"],
             )
 
+        # G26：数值栅格出版窗口嵌入（与矢量层同一投影闭包 —— proj_x 线性
+        # lon、proj_y 线性 merc-y，对画布像素网格为 EPSG:3857 仿射；窗口
+        # 渲染器据此重投影，放置矩形与矢量要素逐像素同口径）。
+        def _canvas_x(lon: float) -> float:
+            return scaled_padding + ((lon - min_x) / range_x) * (
+                scaled_width - scaled_padding * 2)
+
+        def _canvas_y(lat: float) -> float:
+            norm_y = (_merc_y(lat) - merc_min_y) / range_merc_y
+            return scaled_height - scaled_padding - norm_y * (
+                scaled_height - scaled_padding * 2)
+
+        def _embed_numeric_raster_window(layer: Dict[str, Any],
+                                         binding: Dict[str, Any],
+                                         opacity_attr: str) -> str:
+            import base64 as _b64
+            from app.services.raster_authoring.publication_window import (
+                render_publication_window,
+            )
+
+            lid = str(layer.get("id") or "")
+            # 目标网格分辨率 = 声明覆盖矩形（缺省=整个视图）在画布上的像素
+            # 尺寸；实际覆盖以渲染结果为准（部分相交 → 只盖交集）。
+            decl = binding.get("source_bounds")
+            try:
+                bw = max(min_x, float(decl[0])) if isinstance(decl, list) and len(decl) == 4 else min_x
+                bs = max(min_y, float(decl[1])) if isinstance(decl, list) and len(decl) == 4 else min_y
+                be = min(max_x, float(decl[2])) if isinstance(decl, list) and len(decl) == 4 else max_x
+                bn = min(max_y, float(decl[3])) if isinstance(decl, list) and len(decl) == 4 else max_y
+            except (TypeError, ValueError):
+                bw, bs, be, bn = min_x, min_y, max_x, max_y
+            out_w = max(1, int(round(_canvas_x(be) - _canvas_x(bw))))
+            out_h = max(1, int(round(_canvas_y(bs) - _canvas_y(bn))))
+            res = render_publication_window(
+                str(binding.get("path") or ""), tuple(binding.get("stat_key") or (0, 0)),
+                binding.get("spec") or {},
+                [min_x, min_y, max_x, max_y], out_w, out_h,
+            )
+            if res.overlap == "none":
+                _emit_diag(
+                    "raster_window_no_overlap",
+                    detail=f"layer={lid} view=({min_x:.4f},{min_y:.4f},"
+                           f"{max_x:.4f},{max_y:.4f})",
+                    layer_id=lid,
+                )
+                raster_placements.append({
+                    "layer_id": lid, "style_id": binding.get("style_id"),
+                    "data_revision": binding.get("data_revision"),
+                    "overlap": "none", "x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0,
+                    "bounds_wsen": None, "width": res.width, "height": res.height,
+                    "notes": list(res.notes), "embedded": False,
+                })
+                return ""
+            # 放置矩形 = 实际覆盖范围经同一投影闭包（clamp 到画布）。
+            aw, as_, ae, an = res.bounds_wsen
+            x0 = max(_canvas_x(aw), 0.0)
+            x1 = min(_canvas_x(ae), float(scaled_width))
+            y0 = max(_canvas_y(an), 0.0)
+            y1 = min(_canvas_y(as_), float(scaled_height))
+            if (x1 - x0) < 0.5 or (y1 - y0) < 0.5:
+                _emit_diag(
+                    "raster_window_no_overlap",
+                    detail=f"layer={lid} coverage degenerate in canvas",
+                    layer_id=lid,
+                )
+                return ""
+            degraded = []
+            if res.truncated:
+                degraded.append("resolution_capped")
+            if res.overlap == "partial":
+                degraded.append("partial_coverage")
+            if res.all_nodata:
+                degraded.append("all_nodata")
+            if res.constant:
+                degraded.append("constant_stretch")
+            degraded.extend(n for n in res.notes if n not in degraded)
+            if degraded:
+                _emit_diag(
+                    "raster_window_degraded",
+                    detail=f"layer={lid} " + ",".join(degraded[:6]),
+                    layer_id=lid,
+                )
+            uri = "data:image/png;base64," + _b64.b64encode(res.png_bytes).decode("ascii")
+            fragment = (
+                f'<image x="{_fmt_num(x0)}" y="{_fmt_num(y0)}" '
+                f'width="{_fmt_num(x1 - x0)}" height="{_fmt_num(y1 - y0)}" '
+                f'href="{uri}" opacity="{opacity_attr}" '
+                f'data-g26-raster="{_escape_svg_attr(lid)}" '
+                f'data-g26-style="{_escape_svg_attr(str(binding.get("style_id") or ""))}" '
+                f'preserveAspectRatio="none" />\n'
+            )
+            _emit_diag(
+                "raster_window_embedded",
+                detail=f"layer={lid} style={str(binding.get('style_id'))[:16]} "
+                       f"grid={res.width}x{res.height} "
+                       f"bounds=({aw:.4f},{as_:.4f},{ae:.4f},{an:.4f})",
+                layer_id=lid,
+            )
+            raster_placements.append({
+                "layer_id": lid,
+                "style_id": binding.get("style_id"),
+                "data_revision": binding.get("data_revision"),
+                "overlap": res.overlap,
+                "x": round(x0, 2), "y": round(y0, 2),
+                "w": round(x1 - x0, 2), "h": round(y1 - y0, 2),
+                "bounds_wsen": [round(v, 6) for v in res.bounds_wsen],
+                "width": res.width, "height": res.height,
+                "notes": list(res.notes),
+                "truncated": res.truncated,
+                "embedded": True,
+            })
+            return fragment
+
         layers = mapspec.get("layers", [])
         if isinstance(layers, list):
             for layer in _svg_layers(layers):
@@ -1410,6 +1533,23 @@ def compile_mapspec_to_svg_detailed(
                     if layer_type == "raster":
                         raw_opacity = _resolve_paint_value(paint.get("raster-opacity") or paint.get("opacity"), None, 1.0)
                         opacity = _escape_svg_attr(_fmt_num(_safe_float(raw_opacity, 1.0)))
+                        # G26：numeric_raster 源 + 冻结绑定 → 地理对齐窗口
+                        # 嵌入（同一图层顺序）；无绑定的调用面 → 诚实披露
+                        # （此前 tiles 缺席时静默丢层）。
+                        if isinstance(src, dict) and src.get("type") == "numeric_raster":
+                            _binding = None
+                            if isinstance(raster_bindings, dict):
+                                _binding = raster_bindings.get(str(layer.get("id") or ""))
+                            if isinstance(_binding, dict):
+                                elements_svg += _embed_numeric_raster_window(
+                                    layer, _binding, opacity)
+                                continue
+                            _emit_diag(
+                                "layer_ref_unavailable",
+                                detail="numeric_raster_offline_snapshot_required",
+                                layer_id=layer.get("id"),
+                            )
+                            continue
                         tiles = src.get("tiles") or ([src.get("url")] if src.get("url") else [])
                         tile_url_template = tiles[0] if (isinstance(tiles, list) and tiles and tiles[0]) else ""
                         # G20：会话绑定的数值栅格瓦片 URL 离线不可解析 ——
@@ -2345,6 +2485,7 @@ def compile_mapspec_to_svg_detailed(
             timed_out=timed_out,
             rendered_component_types=chrome_coverage.get("rendered") or [],
             omitted_components=chrome_coverage.get("omitted") or [],
+            raster_placements=raster_placements,
         )
 
     except Exception:
