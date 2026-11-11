@@ -250,6 +250,30 @@ class TestPartialPolicy:
             "A20：显式 partial 携带完整遗漏清单"
 
 
+class TestPureRasterView:
+    """review Round-2 nit-3：纯栅格会话（无矢量 extent）→ SVG/PNG 面使用
+    栅格并集合成范围（不退化为世界视图）。"""
+
+    @pytest.mark.asyncio
+    async def test_raster_only_svg_uses_raster_extent(self, owner_root,
+                                                      session_id, store_root):
+        from app.services.raster_authoring.service import current_revision
+
+        ref = await register_raster_ref(session_id, _regional_tif(owner_root))
+        await commit_expression(
+            session_id, ref, "raster-layer",
+            {"bands": [1], "stretch": {"min": 0, "max": 400},
+             "colormap": "viridis"},
+            expected_revision=await current_revision(session_id),
+        )
+        artifact = await export_mixed_map(session_id, fmt="svg")
+        m = artifact["manifest"]
+        assert m["view"]["synthetic_extent"] == [10.0, 15.0, 20.0, 25.0]
+        p = next(x for x in m["raster_layers"] if x["embedded"])
+        # 放置矩形覆盖画布主体（世界视图下仅 ~3%）
+        assert p["w"] >= 1000 and p["h"] >= 600, (p["w"], p["h"])
+
+
 class TestPostCompileRecheck:
     """review P1-2 回归：编译期窗口失败不得被 blocking 放行为 complete。"""
 

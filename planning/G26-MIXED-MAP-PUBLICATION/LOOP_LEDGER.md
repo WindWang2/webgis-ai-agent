@@ -59,3 +59,17 @@
   下载 URL 服务级已验证）——如实记录，不冒充完成。
 - Docker slim 运行时无 rsvg-convert：PNG 面 typed 降级（能力探测 + 503），
   非本方向阻断（部署面依赖登记在 PR_BODY）。
+
+## M6 独立评审循环（2026-11-12）
+
+- Round 1：APPROVE-WITH-FIXES（4×P1 / 5×P2，无 P0；reviewer 独立复跑 80
+  用例 + Pi 旅程 + 字节稳定性探针）。详见 REVIEW.md。
+- 修复：commit 9b5323daa（P1-1 旋转 transform / P1-2 编译后复检 / P1-3 前端
+  码表归一 / P1-4 合成 extent / P2 全关 + 4 个新回归测试）。
+- 修复后全量：受影响目录 **3589 passed**（+4 新测试）；Pi 旅程 1 passed；
+  前端 16 passed。
+- Round 2 复审：进行中（同一 reviewer，未参与实现）。
+
+## 最终出口
+
+- Round 2 通过后：推送分支 → 创建 PR（不合并、不动保护）→ 输出总结。

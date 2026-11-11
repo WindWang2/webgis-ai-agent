@@ -34,3 +34,16 @@ state_mutation/refs-only）。
 ## Round 2（复审）
 
 reviewer 对修复 commit 复审（见下），确认 P1×4 / P2×5 全部关闭。
+
+### Round 2 结论（reviewer 独立复跑 + 实证探针）
+
+- 必需套件 83 passed（0 警告）；前端 16 passed；无绑定输出与 base 字节一致。
+- **P1×4 / P2×5 全部 CLOSED**（旋转 40px→1px + 真实足迹 alpha 0.36；
+  blocking 编译期触发而诚实 no-overlap 放行；前端分支可达（真实大写码）；
+  纯栅格视图 3%→96% 画布）。
+- 判定：**APPROVE**。
+- 残留 nit（非阻断）：nit-1 复检消费 24 截断表 / nit-2 mock 未用
+  importActual / nit-3 纯栅格无自动测试 / nit-4 model3d 白名单 —— 其中
+  nit-1/3/4 已随后续 commit 修复（复检改用未截断回执、纯栅格服务测试、
+  model3d 枚举为遗漏）；nit-2（mock 面改 importActual）与分层体失败码名
+  复用（atlas_page_limit_truncated）作为已知残留记录，不阻断。

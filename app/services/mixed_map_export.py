@@ -158,8 +158,13 @@ def _unsupported_layer_report(
                 out.append({"layer_id": lid,
                             "reason": "numeric_raster_without_expression"})
             continue
-        if stype in ("geojson", "vector", "model3d"):
+        if stype in ("geojson", "vector"):
             continue  # 矢量面 —— 编译链承载
+        if stype == "model3d":
+            # review Round-2 nit-4：编译链不渲染 3D 资产源 —— 枚举为遗漏
+            # （不静默、不冒充已承载）。
+            out.append({"layer_id": lid, "reason": "model3d_not_in_publication_chain"})
+            continue
         if stype in ("raster", "wms", "wmts", "pmtiles", "data_fabric"):
             tiles = src.get("tiles") or ([src.get("url")] if src.get("url") else [])
             template = tiles[0] if isinstance(tiles, list) and tiles \
@@ -373,7 +378,9 @@ def _export_pdf(doc: Dict[str, Any], bindings: Dict[str, Any],
     manifest["diagnostics"] = [d for d in (result.diagnostics or [])][:40]
     manifest["checksum"] = _checksum(result.pdf)
     if recheck is not None and bindings:
-        recheck(manifest["raster_layers"], manifest["diagnostics"])
+        # 复检消费**未截断**的回执（manifest 展示面才截 24 条 —— review
+        # Round-2 nit-1：>24 放置时截断表会把在场层误判为缺席 → 假 blocking）。
+        recheck(list(result.raster_layers or []), manifest["diagnostics"])
     return {
         "bytes": result.pdf, "media_type": "application/pdf",
         "extension": ".pdf", "manifest": manifest,
