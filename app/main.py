@@ -41,6 +41,7 @@ from app.api.routes import display_confirmation as display_confirmation_routes  
 from app.api.routes import situation_views as situation_views_routes  # noqa: E402  # ADR-0285
 from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0226
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
+from app.api.routes import data_delivery as data_delivery_routes  # noqa: E402  # G18 数据交付
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
 # replay + Mission Portfolio 只读投影（org 域；runtime 默认关，读路径常开）。
 from app.api.routes import spatial_events as spatial_events_routes  # noqa: E402
@@ -1143,6 +1144,7 @@ app.include_router(data_lifecycle_routes.router, prefix="/api/v1", tags=["数据
 app.include_router(template_versions_routes.router, prefix="/api/v1", tags=["地图制图模板 V9（版本化）"])
 app.include_router(composition_template_assets_routes.router, prefix="/api/v1", tags=["组合模板资产（G04）"])
 app.include_router(data_fabric.router, prefix="/api/v1", tags=["Data Fabric / 数据织网"])
+app.include_router(data_delivery_routes.router, prefix="/api/v1", tags=["Data Delivery / 数据交付"])  # G18
 app.include_router(lakehouse_routes.router, prefix="/api/v1", tags=["Lakehouse / 空间数据湖仓"])
 app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["Lakehouse / 数据集版本（V8）"])
 app.include_router(extensions_marketplace_routes.router, prefix="/api/v1", tags=["Extension Marketplace / 扩展市场（只读）"])
