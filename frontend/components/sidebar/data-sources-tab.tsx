@@ -32,6 +32,7 @@ import { PreviewModal } from './data-sources/preview-modal';
 import { DatasetInspector } from './data-sources/dataset-inspector';
 import { ExplainResultsPanel, type TypedQueryError } from './data-sources/explain-results-panel';
 import { PrepareFlow } from './data-preparation/prepare-flow';
+import { FieldComputePanel } from './data-preparation/field-compute-panel';
 
 // A-F-08: debounce window re-exported so consumers/tests keep importing it from
 // the tab entry point (constant itself lives with the catalog hook).
@@ -603,6 +604,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           className="flex min-h-0 flex-1 flex-col overflow-y-auto"
         >
           <PrepareFlow sessionId={sessionId} ownerToken={ownerToken} />
+          <FieldComputePanel sessionId={sessionId} ownerToken={ownerToken} />
         </div>
       )}
       {activeSubTab === 'explain' && (
