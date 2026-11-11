@@ -8,7 +8,9 @@
  * id 在场时返回 '$id'（MapLibre ['id'] 表达式语义，properties 取不到）。
  * 返回 null = 无稳定 id（发布侧不虚构过滤）。
  */
-export const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'FID', 'osm_id', '@id', 'featureId', 'feature_id'] as const;
+// G14：_wfid 最优先 —— 已编辑数据集的稳定身份（后端 ADR-0277「物化后一律
+// WFID 寻址」）；未物化层无该键，解析序不变。
+export const FEATURE_ID_KEYS = ['_wfid', 'id', 'OBJECTID', 'fid', 'FID', 'osm_id', '@id', 'featureId', 'feature_id'] as const;
 
 export function resolveFeatureId(
   properties: Record<string, unknown> | null | undefined,

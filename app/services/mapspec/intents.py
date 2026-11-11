@@ -222,6 +222,10 @@ class SetLayoutIntent:
     # intent_lock_targets 只看 components —— 身份块/边不是锁目标。
     component_links: Optional[List[MapSpecComponentLinkPayload]] = None
     composition: Optional[CompositionIdentityPayload] = None
+    # G15：spec 级 atlas 帧整表写入（MapSpecFrame.v1.1 语义的意图写面）。
+    # None = 不触碰既有 frames；[] = 清空（frame_product 引用悬空由其
+    # handler 拒绝，这里只管帧登记本身的合法性）。
+    frames: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -276,6 +280,24 @@ class PatchLayerStyleIntent:
     layer_id: str
     # #1550：paint 补丁具名化（MapSpecPaintPayload —— 后端写面键集）。
     paint: MapSpecPaintPayload = field(default_factory=_empty_paint)
+
+
+@dataclass
+class PatchLayerLabelAuthoringIntent:
+    """要素级标注 authoring 突变（G16，v2.1）。
+
+    ops = [{featureId, op: set|reset, set?: {...}, scope?: ...}]（≤200，
+    词表/边界由 label_authoring 单一权威校验）；labels_config 为
+    MapLabelConfig 的 additive 补丁（obstaclePolicy/forbiddenZones ——
+    G16 所有权键）。原子语义：任一 op 被拒 → 整笔失败（typed findings
+    附 per-op 回执），绝不部分写入。origin/sourceRevision 由 handler
+    盖章（patch 不可覆写 —— 溯源是写入路径的事）。UI 手势与 Pi 工具
+    共用本意图（user-wins 由 apply_gis_mutation 的 origin/CAS 承载）。
+    """
+
+    layer_id: str
+    ops: List[Dict[str, Any]] = field(default_factory=list)
+    labels_config: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -374,6 +396,24 @@ class SetTemporalViewIntent:
 
 
 @dataclass
+class SetFrameProductIntent:
+    """多画幅产品层写入（G15，FrameProductContract.v1 → mapspec["frame_product"]）。
+
+    三种互斥用法（service 层保证恰一；与 SetTemporalViewIntent 同门）：
+    - config：完整契约替换（bind —— config 已在 service 层经
+      FrameProductConfig 校验 + 跨分支一致性（frame_id → layout.frames）
+      复核；handler 复验 schema，坏文档终局拒绝）；
+    - patch：增量控制（键级合并进既有 frame_product 后整体复验 ——
+      active_frame / frames 整表 / grid / shared_expression / quality 等）；
+    - remove：解绑（删除 frame_product 分支；未绑定时 no-op 终局回执。
+      只删产品语义，绝不删除 layout.frames 画幅身份登记）。
+    """
+
+    config: Optional[Dict[str, Any]] = None
+    patch: Optional[Dict[str, Any]] = None
+    remove: bool = False
+
+@dataclass
 class RefreshDataRevisionIntent:
     """要素编辑后的数据新鲜度盖章（/goal 03）。
 
@@ -454,7 +494,9 @@ MutationIntent = Union[
     SetBasemapIntent,
     SetTimeIntent,
     SetTemporalViewIntent,
+    SetFrameProductIntent,
     PatchLayerStyleIntent,
+    PatchLayerLabelAuthoringIntent,
     SetWorkbenchStateIntent,
     SetScenarioModeIntent,
     SetSceneIntent,

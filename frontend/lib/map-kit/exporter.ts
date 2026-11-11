@@ -42,7 +42,10 @@ import { getComparisonExport } from '@/lib/map/comparison-export-registry';
 import { sceneEvidenceSnapshot, tileMissDetail, tileMissSnapshot } from '@/lib/mapspec-runtime/adapter';
 import { metersPerPixelAt } from './meters-per-pixel';
 import type { ExportFrame, FrameLayout } from './frame-composer';
-import { specFramesToExportFrames } from './spec-frames';
+import {
+  productFramesToExportFrames,
+  specFramesToExportFrames,
+} from './spec-frames';
 import {
   enterHighDpiRender,
   MapIdleTimeoutError,
@@ -1613,10 +1616,18 @@ async function runFrameExport(
     dpi: number;
     showWatermark: boolean;
     showMetadata: boolean;
+    /** G15：产品在场时客户端 canvas 不可等价承载的语义（如实披露）。 */
+    productLimitations?: string[];
   },
 ): Promise<ExportOutcome> {
   const { map, getHudState } = deps;
   const { composeFrames, composeGridCanvas } = await import('./frame-composer');
+  const productDegradations = (ctx.productLimitations ?? []).length
+    ? [{
+        code: 'layer_filter_unsupported' as const,
+        detail: `frame_product client export: ${(ctx.productLimitations ?? []).join(', ')}`,
+      }]
+    : [];
   // review-r1（死码修复）：容器语义决定单帧跳过码 —— pdf→pages（atlas）发
   // atlas_page_skipped；png/svg→grid（small-multiple）发
   // small_multiple_panel_skipped。词表两码各有真实发射路径（ADR-0118 D1）。
@@ -1636,6 +1647,7 @@ async function runFrameExport(
     throw new Error('多帧导出失败：所有帧均未完成（地图在预算内未就绪）');
   }
   const fmt = fmtEarlyFrame;
+  composed.degradations = [...productDegradations, ...composed.degradations];
   const degradationNote = formatDegradationNote(composed.degradations);
   // review-r2：成功消息必须注明跳过帧数（此前「N 帧成功」不提跳过 —— 跳过
   // 信息只藏在降级清单里，清单超 8 条时还会被截断）。review-r1：两种容器
@@ -1880,6 +1892,8 @@ async function runExportInternal(
   // V6（W9）：spec 级 frames 适配 —— 请求未显式给 frames 时，committed spec
   // 的 layout.frames（spec 级 atlas）经 spec-frames 适配层参与导出。
   let specLevelFrames: ExportFrame[] = [];
+  // G15：产品在场时客户端 canvas 导出的如实限制（不返回近似图冒充原样）。
+  let productLimitations: string[] = [];
   try {
     const { getCommittedMapSpec } = await import('@/lib/mapspec/session-cursor');
     const committed = getCommittedMapSpec();
@@ -1889,10 +1903,22 @@ async function runExportInternal(
     );
     layoutOpts = (exportLayoutComp?.options ?? {}) as Record<string, unknown>;
     if (!Array.isArray(req.frames) || req.frames.length === 0) {
-      const adapted = specFramesToExportFrames(
-        (committed?.layout as { frames?: never[] } | undefined)?.frames,
-      );
-      specLevelFrames = adapted.frames;
+      const product = (committed as unknown as {
+        frame_product?: { enabled?: boolean };
+      })?.frame_product;
+      if (product && product.enabled !== false) {
+        // 产品画幅投影：where 过滤/范围/标题真实承载。
+        const adapted = productFramesToExportFrames(
+          committed as Parameters<typeof productFramesToExportFrames>[0],
+        );
+        specLevelFrames = adapted.frames;
+        productLimitations = adapted.limitations;
+      } else {
+        const adapted = specFramesToExportFrames(
+          (committed?.layout as { frames?: never[] } | undefined)?.frames,
+        );
+        specLevelFrames = adapted.frames;
+      }
     }
   } catch {
     /* spec 面缺席 → 内置默认 */
@@ -2088,6 +2114,7 @@ async function runExportInternal(
       Array.isArray(req.frames) && req.frames.length > 0 ? req.frames : specLevelFrames;
     if (effectiveFrames.length > 0) {
       return await runFrameExport(deps, req, effectiveFrames, {
+        productLimitations,
         title: effTitle,
         subtitle: effSubtitle,
         author,

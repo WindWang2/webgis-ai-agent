@@ -1,0 +1,88 @@
+{
+  "name": "authoring_pinned_conflict",
+  "viewport": [
+    0,
+    0,
+    200,
+    200
+  ],
+  "labels": [
+    {
+      "id": "P1",
+      "text": "固定甲",
+      "kind": "point",
+      "x": 100,
+      "y": 100,
+      "angle": 0.0,
+      "font_size": 12,
+      "priority": 0,
+      "pinned": true,
+      "layer_id": "L",
+      "feature_id": "a"
+    },
+    {
+      "id": "P2",
+      "text": "固定乙",
+      "kind": "point",
+      "x": 104,
+      "y": 103,
+      "angle": 0.0,
+      "font_size": 12,
+      "priority": 0,
+      "pinned": true,
+      "layer_id": "L",
+      "feature_id": "b"
+    },
+    {
+      "id": "A1",
+      "text": "自动",
+      "kind": "point",
+      "x": 100,
+      "y": 100,
+      "angle": 0.0,
+      "font_size": 12,
+      "priority": 1
+    }
+  ],
+  "expected": {
+    "placements": [
+      {
+        "id": "P1",
+        "x": 82.0,
+        "y": 92.8,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": "",
+        "pinned": true
+      },
+      {
+        "id": "P2",
+        "x": 86.0,
+        "y": 95.8,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": "",
+        "pinned": true,
+        "conflict": true
+      },
+      {
+        "id": "A1",
+        "x": 100,
+        "y": 100,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "collision"
+      }
+    ],
+    "stats": {
+      "total": 3,
+      "placed": 2,
+      "suppressed": 1,
+      "collisions": 1,
+      "hidden_by_user": 0,
+      "pinned_placed": 2,
+      "pinned_conflicts": 1
+    },
+    "budgetExceeded": false
+  }
+}

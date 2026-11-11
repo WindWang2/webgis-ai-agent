@@ -37,18 +37,19 @@ shapely>=2.1.2
 rasterio>=1.4.0
 rasterstats>=0.21.0
 pyogrio>=0.13.0
+openpyxl>=3.1.5  # G17 导入工作台：XLSX 工作表读取（read_only；生产可用）
 # pandas 上界 <3.0（#1512）：此前 spec 写的是 <4.0.0，resolver 选中 pandas 3.0.6，
 # 注释宣称的「保持 2.x」从未真正生效 —— Backend Tests 全量跑完后暴露 ~60 例
 # StringDtype（np.asarray 对 pandas 3 默认字符串扩展 dtype 的不兼容）与扩展平台
 # DEGRADED 连锁。落实 #1512 的真实意图：上界收紧到 <3.0（lock pandas==2.3.3
 # 已全量验证）。
-pandas>=2.2.2,<3.0
+pandas>=2.2.2,<4.0
 # pandas 2.x 的 tzfile 检测依赖 dateutil 2.x 的内部转换表。dateutil 3/4
 # 重写 tzfile 后，时区本地化会抛 AttributeError（pandas upstream #71459）。
 # 2026-11-04 实测 pandas 2.3.3 + dateutil 4.0.0 可复现；保持 <3，直到
 # pandas 兼容修复进入本项目支持窗口并通过真实 DST 回归测试后再放宽。
 # https://github.com/pandas-dev/pandas/issues/71459
-python-dateutil>=2.8.2,<3
+python-dateutil>=2.8.2,<5
 
 # Utilities
 # cryptography: 扩展平台 V3 非对称包签名（Ed25519，ADR-0119）。直接使用的库

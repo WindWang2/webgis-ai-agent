@@ -26,7 +26,10 @@ export type MapToolId =
   | 'draw_line'
   | 'draw_polygon'
   | 'edit_vertices'
-  | 'delete_feature';
+  | 'delete_feature'
+  | 'edit_labels';
+  // G14：真实图层编辑（需先选定 editTarget）
+  | 'split_feature';
 
 export const MAP_TOOLS: readonly MapToolId[] = [
   'measure_distance',
@@ -37,7 +40,15 @@ export const MAP_TOOLS: readonly MapToolId[] = [
   'draw_polygon',
   'edit_vertices',
   'delete_feature',
+  'edit_labels',
+  'split_feature',
 ];
+
+/** G14：真实图层编辑目标（HUD 行 ↔ ref 绑定；null = 未进入编辑）。 */
+export interface EditTarget {
+  layerId: string;
+  refId: string;
+}
 
 export interface ToolSlice {
   activeMapTool: MapToolId | null;
@@ -49,7 +60,10 @@ export interface ToolSlice {
   /** 草图有未保存变更（save/cancel 纪律的脏标记）。 */
   sketchDirty: boolean;
   setSketchDirty: (dirty: boolean) => void;
-  /** 会话切换复位（工具激活态/脏标记不跨会话；吸附是偏好，保留）。 */
+  /** G14：真实图层编辑目标；设置时若草图工具在持先退出（互斥）。 */
+  editTarget: EditTarget | null;
+  setEditTarget: (target: EditTarget | null) => void;
+  /** 会话切换复位（工具激活态/脏标记/编辑目标不跨会话；吸附是偏好，保留）。 */
   clearToolState: () => void;
 }
 
@@ -60,5 +74,16 @@ export const createToolSlice: StateCreator<HudState, [], [], ToolSlice> = (set) 
   toggleSnapping: () => set((s) => ({ snappingEnabled: !s.snappingEnabled })),
   sketchDirty: false,
   setSketchDirty: (dirty) => set({ sketchDirty: dirty }),
-  clearToolState: () => set({ activeMapTool: null, sketchDirty: false }),
+  editTarget: null,
+  setEditTarget: (target) =>
+    set((s) => ({
+      editTarget: target,
+      // 退出编辑目标时清结构编辑工具；进入时清草图类工具（手势互斥）
+      activeMapTool: target
+        ? (s.activeMapTool && ['draw_point', 'draw_line', 'draw_polygon', 'edit_vertices', 'delete_feature'].includes(s.activeMapTool)
+            ? null
+            : s.activeMapTool)
+        : (s.activeMapTool === 'split_feature' ? null : s.activeMapTool),
+    })),
+  clearToolState: () => set({ activeMapTool: null, sketchDirty: false, editTarget: null }),
 });

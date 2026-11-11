@@ -157,6 +157,33 @@ PI_JOURNEY_E2E=1 python -m pytest tests/integration/test_pi_stub_llm_journeys.py
 
 - 取消旅程的跨线程 SSE 取消窗口在本 sandbox 不稳定 → 取消语义由
   `test_runtime_chaos_pi.py`（16 项确定性）+ 单元级锁定，全栈旅程不含该段。
-- `PI_SURFACE_SCOPE_ENFORCE`（面成员硬校验）默认 OFF——setActiveTools 不可用
-  的 vendor 形态下全超集激活是接受的降级。
+- `PI_SURFACE_SCOPE_ENFORCE`（面成员硬校验）**默认 ON**（ADR-0288）——发现
+  （tool_search）的 discovery grant 提供了注册面内直调的合法路径；kill-switch
+  `PI_SURFACE_SCOPE_ENFORCE=0` 回到 G12 前放行行为。
 - fork / 跨 turn sequence 不提供（§3）。
+
+## 12. G12 运行时语义（ADR-0288，v1.5.1 pin）
+
+- **原生发现**：`tool_search` / `codemode` 常驻激活（`PI_NATIVE_DISCOVERY=0`
+  回退）。长尾超集以 `exposure:"deferred"` 注册 —— 声明面外但可发现、可
+  调用；发现命中 **merge** 进 active 集（前门不丢），下一模型请求生效；
+  每轮 `before_agent_start` 重置为该轮投影面（发现不跨 turn 泄漏）。
+- **discovery grant**：注册超集内的直调若不在 turn selected 面，经
+  `pi_bridge_surface_gate` 铸造 turn 内 grant（≤16/turn、幂等、随 turn 回收）；
+  echo 对拍 registry **现编译** spec 指纹 —— 撤权/schema 漂移后旧 echo 失效。
+  权限面从不因发现扩大（等价 proxy 通道；dispatch 闸序不变）。
+- **嵌套调用**：`tool_execution_*` 事件携带 `parentToolCallId` → SSE 投影
+  `parent_tool_call_id`（additive）；子事件 id `<parent>/<n>`；终态仍由
+  `agent_settled` 唯一裁决；重复 child end 由 toolCallId 终态去重覆盖。
+- **完全停止**：用户级停止 = `clear_queue` → `abort`（排队 steer/follow-up
+  不再自行重启）；进程停机 = stdin EOF → `PI_GRACEFUL_STOP_TIMEOUT_S`（默认
+  8s，vendor dispose 等 tool settlement/credential writes）→ 单次 SIGTERM →
+  `PI_TERM_STOP_TIMEOUT_S`（2s）→ SIGKILL。最坏停机时延较 G12 前增加（换取
+  vendor 有序清理），turn 内 abort 语义不变。
+- **配置代际**：Pi spawn 只经 `model_config.resolve_llm_config()`（单一解析
+  点）取配置并锚定 `spawn_config_generation`（不可逆短指纹）；`/config/llm`
+  更新后按代漂移在 turn 边界换代 worker（在飞 turn 延迟），响应披露
+  expected_generation / recycled / deferred；生产禁动态改配置不变。
+- **compaction/恢复**：扩展只记账（before/failed 钩子），不注入自定义
+  summary；权威重建走 typed assembly 的 `GIS_STATE_REBUILD` 块（MapSpec/
+  SessionPlan 现取：图层含隐藏态、待完成能力、证据 refs；缺失不虚构）。

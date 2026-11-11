@@ -234,17 +234,41 @@ def test_no_echo_passes():
     ) is None
 
 
-def test_scope_enforcement_default_off_then_opt_in(monkeypatch):
+def test_scope_enforcement_default_on_then_kill_switch(monkeypatch):
+    """ADR-0288：scope 校验默认 ON；selected ∪ discovered 放行；kill-switch
+    显式 0 回到 G12 前放行行为。"""
     _mint(names=("a",))
-    # 默认 OFF：面外工具不拒
-    assert enforce_callback_scope(session_id="s", turn_id="t", resolved_tool="zzz") is None
-    monkeypatch.setenv("PI_SURFACE_SCOPE_ENFORCE", "1")
+    # 默认 ON：面外且未 grant 的工具拒绝
     assert enforce_callback_scope(
         session_id="s", turn_id="t", resolved_tool="zzz",
     ) == "SURFACE_SCOPE_VIOLATION"
     assert enforce_callback_scope(
         session_id="s", turn_id="t", resolved_tool="a",
     ) is None
+    # discovered grant 集合放行（grant 铸造在 gate 侧，这里验证消费 + 纪律）
+    from app.services.chat.pi_surface_receipt import (
+        _DISCOVERY_GRANT_MAX,
+        discovered_store,
+        record_discovered_tool,
+    )
+
+    discovered_store.clear()
+    assert record_discovered_tool("s", "t", "disc1", "fp-1") is True
+    assert enforce_callback_scope(
+        session_id="s", turn_id="t", resolved_tool="disc1",
+    ) is None
+    # 幂等：重复 grant 同一工具仍 True；每 turn 上限拒绝超额
+    assert record_discovered_tool("s", "t", "disc1", "fp-other") is True
+    for i in range(_DISCOVERY_GRANT_MAX + 4):
+        ok = record_discovered_tool("s", "t2", f"tool-{i}", "")
+        if i >= _DISCOVERY_GRANT_MAX:
+            assert ok is False, "grant bound must reject beyond the per-turn cap"
+    # kill-switch：显式 0 → 全放行（G12 前 master 行为）
+    monkeypatch.setenv("PI_SURFACE_SCOPE_ENFORCE", "0")
+    assert enforce_callback_scope(
+        session_id="s", turn_id="t", resolved_tool="zzz",
+    ) is None
+    monkeypatch.delenv("PI_SURFACE_SCOPE_ENFORCE", raising=False)
     # receipt 缺席 → 放行（兼容）
     assert enforce_callback_scope(
         session_id="nope", turn_id="nope", resolved_tool="zzz",

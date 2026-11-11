@@ -104,9 +104,17 @@ def profile_fields(fc: GeoJSONFeatureCollection) -> Dict[str, FieldProfileRecord
 
 
 def validate_set_fields(
-    fields: Dict[str, Any], field_profiles: Dict[str, FieldProfileRecord]
+    fields: Dict[str, Any],
+    field_profiles: Dict[str, FieldProfileRecord],
+    *,
+    allow_new_fields: bool = False,
 ) -> List[EditFinding]:
-    """set_fields 的词表/类型/枚举校验（返回 findings；空 = 通过）。"""
+    """set_fields 的词表/类型/枚举校验（返回 findings；空 = 通过）。
+
+    allow_new_fields=True（create_features 的属性面）：数据集尚未观测到的
+    字段名放行 —— 新要素携带新列是数据集自然生长面，不是 schema 改名；
+    已有 profile 的字段仍受类型/枚举约束。
+    """
     findings: List[EditFinding] = []
     if not isinstance(fields, dict) or not fields:
         return [finding("invalid_op", "set_fields requires a non-empty fields map")]
@@ -122,6 +130,14 @@ def validate_set_fields(
             continue
         profile = field_profiles.get(name)
         if profile is None:
+            if allow_new_fields:
+                # R3 P2-8：新字段放行仍限标量 —— list/dict 值不进编辑词表
+                # （json_field_type 面），否则一旦入库就永不可经 set_fields 修改。
+                if json_field_type(value) == "unsupported":
+                    findings.append(
+                        finding("type_mismatch", "only scalar values are editable", field=name)
+                    )
+                continue
             findings.append(
                 finding(
                     "unknown_field",

@@ -1,5 +1,7 @@
 "use client"
 import { useT } from '@/lib/i18n/useT';
+// G20：像元检视的地图点击广播（局部接线，不改既有交互）
+import { publishMapClick } from '@/lib/raster-authoring/map-click';
 import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from "react"
 import { AlertTriangle, RefreshCw } from "lucide-react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
@@ -109,6 +111,8 @@ export function sceneAssetsIdentity(committed: unknown): string {
 import { MapActionHandler } from "./map-action-handler"
 import { SceneController } from "./scene-controller"
 import { SketchEditor } from "./sketch-editor"
+import { LabelEditor } from "./label-editor"
+import { FeatureLayerEditor } from "./feature-layer-editor"
 import { SpatialSketchTool } from "@/components/copilot/spatial-sketch-tool"
 import { WidgetHost } from "@/components/copilot/generative-widgets/widget-host"
 import { LegendStack } from "./legend-stack"
@@ -1168,11 +1172,18 @@ export function MapPanel({
     const map = mapRef.current?.getMap()
     if (!map) return
 
+    // G20：像元检视订阅（只广播坐标，不改变下面的选择/测距/草图语义）。
+    if (Number.isFinite(evt?.lngLat?.lng) && Number.isFinite(evt?.lngLat?.lat)) {
+      publishMapClick([evt.lngLat.lng, evt.lngLat.lat])
+    }
+
     // V7：草图工具激活时点选语义归 SketchEditor（它通过 map.on('click')
     // 自行接管），这里不得再触发 POI/要素选择。
     const sketchTool = useHudStore.getState().activeMapTool
     if (sketchTool === 'draw_point' || sketchTool === 'draw_line' || sketchTool === 'draw_polygon'
-      || sketchTool === 'delete_feature' || sketchTool === 'edit_vertices') {
+      || sketchTool === 'delete_feature' || sketchTool === 'edit_vertices'
+      || sketchTool === 'edit_labels') {
+      // G16：标注编辑模式点选语义归 LabelEditor（不触发 POI/要素选择）。
       return
     }
 
@@ -1798,6 +1809,9 @@ export function MapPanel({
         >
         <MapActionHandler />
         <SketchEditor mapRef={mapRef} />
+        <LabelEditor mapRef={mapRef} />
+        {/* G14：真实图层编辑手势面（editTarget 在场时激活；与草图工具互斥）。 */}
+        <FeatureLayerEditor mapRef={mapRef} />
         {/* ADR-0194：画布 copilot 手势覆层 + 生成式微 UI 挂载点（默认无工具/无卡片时不渲染）。 */}
         <SpatialSketchTool mapRef={mapRef} />
         <WidgetHost />

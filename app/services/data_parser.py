@@ -614,3 +614,12 @@ def get_upload_dir(base_dir: str, upload_id: str) -> Path:
     upload_dir = Path(base_dir) / "uploads" / upload_id
     upload_dir.mkdir(parents=True, exist_ok=True)
     return upload_dir
+
+
+# ── G17 导入工作台可复用原语（公共别名，additive；ADR 见 planning/goal-g17-import-workbench）──
+# staged 导入域（app/services/data_import/）与上传解析共用同一批不可信
+# 内容守卫，避免复制安全关键逻辑造成两处漂移。语义与上方私有实现一致。
+check_untrusted_vector_content = _check_untrusted_vector_content
+check_detected_driver = _check_detected_driver
+validate_shapefile_zip = _validate_shapefile_zip
+geojson_declares_crs = _geojson_declares_crs

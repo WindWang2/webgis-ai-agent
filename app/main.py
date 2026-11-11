@@ -40,6 +40,7 @@ from app.api.routes import map_operations as map_operations_routes  # noqa: E402
 from app.api.routes import display_confirmation as display_confirmation_routes  # noqa: E402  # ADR-0278
 from app.api.routes import situation_views as situation_views_routes  # noqa: E402  # ADR-0285
 from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0226
+from app.api.routes import project_data_refresh as project_data_refresh_routes  # noqa: E402  # G10
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
 from app.api.routes import data_delivery as data_delivery_routes  # noqa: E402  # G18 数据交付
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
@@ -58,6 +59,8 @@ from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 # 文件，不改任何既有路由的签名/response_model（§8 冲突契约）。
 from app.api.routes import data_quality as data_quality_routes
 from app.api.routes import data_preparation as data_preparation_routes  # noqa: E402
+from app.api.routes import data_import as data_import_routes  # noqa: E402  # G17 staged 导入工作台
+from app.api.routes import field_compute as field_compute_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
 from app.api.routes import composition_template_assets as composition_template_assets_routes
@@ -1107,6 +1110,9 @@ from app.api.routes import version as version_routes  # noqa: E402
 
 app.include_router(version_routes.router, prefix="/api/v1", tags=["系统"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
+# G20：持久化数值栅格表达工作台（独立 router，layer.py 零修改）
+from app.api.routes import raster_authoring as raster_authoring_routes  # noqa: E402
+app.include_router(raster_authoring_routes.router, prefix="/api/v1", tags=["栅格表达工作台"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
@@ -1130,6 +1136,8 @@ app.include_router(atlas_jobs_routes.router, prefix="/api/v1", tags=["地图制�
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
 app.include_router(data_preparation_routes.router, prefix="/api/v1", tags=["数据准备"])
+app.include_router(data_import_routes.router, prefix="/api/v1", tags=["数据导入工作台"])
+app.include_router(field_compute_routes.router, prefix="/api/v1", tags=["字段计算"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(ws_collab.router, prefix="/api/v1", tags=["WebSocket 协作"])
@@ -1152,6 +1160,7 @@ app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
 app.include_router(mission_runtime_routes.router, prefix="/api/v1", tags=["Mission Runtime"])
 app.include_router(project_runtime_routes.router, prefix="/api/v1", tags=["Project Runtime"])  # ADR-0226
+app.include_router(project_data_refresh_routes.router, prefix="/api/v1", tags=["Project Data Refresh (G10)"])
 app.include_router(project_knowledge_routes.router, prefix="/api/v1", tags=["Project Knowledge"])
 app.include_router(geoai_routes.router, prefix="/api/v1", tags=["GeoAI"])
 # Agent Ops Cockpit：只读投影面（无写端点；operator 动作沿用 mission-runtime 路由）
@@ -1166,6 +1175,10 @@ app.include_router(security_admin_routes.router, prefix="/api/v1", tags=["Securi
 from app.api.routes import storymap as storymap_routes  # noqa: E402
 
 app.include_router(storymap_routes.router, prefix="/api/v1", tags=["StoryMap"])
+# G11 证据化地图简报（ADR-0288）：草稿/编辑/预检/冻结/私有分享
+from app.api.routes import brief as brief_routes  # noqa: E402
+
+app.include_router(brief_routes.router, prefix="/api/v1", tags=["MapBrief"])
 app.include_router(pi_tools.router, tags=["PI工具"])
 # Spatial Event Control Plane + Mission Portfolio（只读投影；additive）。
 app.include_router(spatial_events_routes.router, prefix="/api/v1", tags=["Spatial Events"])

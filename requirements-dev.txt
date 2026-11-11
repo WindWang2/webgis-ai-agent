@@ -27,7 +27,7 @@ fakeredis[lua]>=2.40.0
 
 # Excel parsing for local stats / yearbook ingest tests
 openpyxl>=3.1.5
-python-calamine>=0.9.0
+python-calamine>=0.9.1
 
 # 与 requirements.txt / requirements.lock 同步，避免 CI 约束安装冲突。
 pypdf>=6.21.4  # WeasyPrint 70 ObjStm 页对象结构化读取（test_report_service_vector_svg）

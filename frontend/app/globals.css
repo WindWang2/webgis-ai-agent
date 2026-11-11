@@ -13,7 +13,7 @@
      bare HSL triples because shadcn utilities wrap them in `hsl(...)`. Keep the
      two in step: `bg-card` and `bg-[var(--surface-panel)]` must land on the
      same colour or the panel chrome splits in two. */
-  --background: 208 41% 90%;          /* --surface-canvas #dbe6f1 */
+  --background: 212 37% 92%;          /* --surface-canvas #e3eaf2 */
   --foreground: 222 47% 11%;          /* --text-primary   #0f172a */
 
   --card: 207 55% 98%;                /* --surface-panel  #f7fafd */
@@ -59,7 +59,10 @@
   */
 
   /* ── Surfaces: canvas → panel → raised → overlay, plus interaction states ── */
-  --surface-canvas: #dbe6f1;          /* the map / page bed */
+  /* UI redesign (2026-11)：画布底色提亮一档、略降饱和 —— 原 #dbe6f1 偏蓝偏暗，
+     面板（#f7fafd）与画布之间的过渡显得发灰；新值让面板边界靠阴影/描边
+     而非色差表达，整体更接近专业 GIS 工作站的中性底。 */
+  --surface-canvas: #e3eaf2;          /* the map / page bed */
   --surface-panel: #f7fafd;           /* nav rail, context panel, top bar */
   --surface-raised: #ffffff;          /* cards and rows inside a panel */
   --surface-overlay: #fafcfe;         /* drawers, modals, map chrome */
@@ -127,9 +130,11 @@
   /* ── Radius. Tight corners read as precision instrumentation. ── */
   --radius-xs: 3px;
   --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  /* UI redesign (2026-11)：中大档圆角各放宽 2px —— 卡片/浮层/地图 chrome
+     的 6px 与 4px 控件几乎无层级差，放宽后「控件 < 卡片 < 浮层」一眼可辨。 */
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
   --radius-pill: 999px;
 
   /* ── Typography. A 6-step dense scale; the audit found 12 raw px values
@@ -155,8 +160,13 @@
   --icon-sm: 12px;
   --icon-md: 14px;
   --icon-lg: 16px;
-  --panel-pad: 10px;
-  --panel-gap: 6px;
+  /* 面板内边距 10 → 12：中文密排时 10px 的行首留白过紧（审计截图中卡片
+     文字几乎贴边）；12px 与 8px 栅格对齐。 */
+  --panel-pad: 12px;
+  --panel-gap: 8px;
+  /* 地图浮层 chrome 与地图边缘/彼此之间的统一间距（右侧 chrome 列：
+     指北针 top-3 → 工具条 52px → 场景控制器在指北针左侧）。 */
+  --map-gutter: 12px;
   /* Right-hand drawer width (settings, template gallery).
      The constraint is "the map stays visible", not "the drawer gets what it
      wants". 1024 is the minimum target: visible map = 1024 − 48 (rail) − 330
@@ -176,7 +186,7 @@
   --map-chrome-text: #0f172a;
   --map-chrome-text-muted: #5b6b82;
   --map-chrome-shadow: 0 4px 16px rgba(15, 23, 42, 0.10), 0 1px 3px rgba(15, 23, 42, 0.06);
-  --map-chrome-radius: var(--radius-md);
+  --map-chrome-radius: var(--radius-lg);
 
   /* Standardized Semantic Theme Design Tokens - Light Theme
      Retained for the ~475 existing `var(--theme-*)` call sites; each now
@@ -371,7 +381,9 @@ html {
 body {
   background: var(--surface-canvas);
   color: var(--text-primary);
-  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  /* CJK 回退显式列出：DM Sans 不含汉字，原先汉字落到 system-ui 的任意字体，
+     Windows/Linux 上常是宋体/位图字体，与拉丁字形的字重/x-height 明显不搭。 */
+  font-family: 'DM Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', 'Noto Sans CJK SC', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -486,6 +498,26 @@ body {
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
+}
+
+/* ═══ Horizontal tab strips ═══
+   面板内的子页签（数据 / 数据湖 / 制图 / 运维 / 设置 …）都是各自实现的
+   WAI-APG tablist。在 280–330px 面板里，中文页签名会被 flex 压缩成逐字竖排
+   （「空/间/目/录」「数/据/集」）。统一约定：横向 tablist 单行不换行、超出
+   时横向滚动（隐藏滚动条，键盘焦点移动会自动滚入可视区）；竖向 tablist
+   （nav rail、设置侧栏）不受影响。 */
+[role='tablist']:not([aria-orientation='vertical']) {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+[role='tablist']:not([aria-orientation='vertical'])::-webkit-scrollbar {
+  display: none;
+}
+[role='tablist']:not([aria-orientation='vertical']) > [role='tab'] {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* ═══ Selection ═══ */

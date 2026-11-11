@@ -39,6 +39,8 @@ import zhTable from '@/messages/zh-CN/table.json'
 import zhModelops from '@/messages/zh-CN/modelops.json'
 import zhCompositionAssets from '@/messages/zh-CN/compositionAssets.json'
 import zhDataPreparation from '@/messages/zh-CN/dataPreparation.json'
+import zhDataImport from '@/messages/zh-CN/dataImport.json'
+import zhFieldCompute from '@/messages/zh-CN/fieldCompute.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import enCommon from '@/messages/en-US/common.json'
@@ -72,6 +74,8 @@ import enTable from '@/messages/en-US/table.json'
 import enModelops from '@/messages/en-US/modelops.json'
 import enCompositionAssets from '@/messages/en-US/compositionAssets.json'
 import enDataPreparation from '@/messages/en-US/dataPreparation.json'
+import enDataImport from '@/messages/en-US/dataImport.json'
+import enFieldCompute from '@/messages/en-US/fieldCompute.json'
 import enMarket from '@/messages/en-US/market.json'
 import enDataDelivery from '@/messages/en-US/dataDelivery.json'
 import type { AppLocale } from './config'
@@ -110,6 +114,8 @@ export interface AppMessages {
   compositionAssets: typeof zhCompositionAssets
   dataPreparation: typeof zhDataPreparation
   dataDelivery: typeof zhDataDelivery
+  dataImport: typeof zhDataImport
+  fieldCompute: typeof zhFieldCompute
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -128,6 +134,8 @@ export const messages: Record<AppLocale, AppMessages> = {
     compositionAssets: zhCompositionAssets,
     dataPreparation: zhDataPreparation,
     dataDelivery: zhDataDelivery,
+    dataImport: zhDataImport,
+    fieldCompute: zhFieldCompute,
     story: zhStory,
     geoai: zhGeoai,
     commands: zhCommands,
@@ -164,6 +172,8 @@ export const messages: Record<AppLocale, AppMessages> = {
     compositionAssets: enCompositionAssets as unknown as AppMessages['compositionAssets'],
     dataPreparation: enDataPreparation as unknown as AppMessages['dataPreparation'],
     dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
+    dataImport: enDataImport as unknown as AppMessages['dataImport'],
+    fieldCompute: enFieldCompute as unknown as AppMessages['fieldCompute'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],
     commands: enCommands as unknown as AppMessages['commands'],

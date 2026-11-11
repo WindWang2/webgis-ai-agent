@@ -38,7 +38,20 @@ const VIEWPORTS = [
   { name: '1024x768', width: 1024, height: 768 },
 ];
 
-const THEMES = ['light', 'dark'];
+// 仅经 --viewports 显式选择的附加视口（不进默认矩阵，基线体量不变）。
+// 390x844：手机竖屏，useLayoutMode 的 mobile 档 —— 底部 rail + sheet。
+const EXTRA_VIEWPORTS = [{ name: '390x844', width: 390, height: 844 }];
+
+// --viewports 1440x900,390x844 / --themes light：按需缩小矩阵（默认全量）。
+const VIEWPORT_FILTER = argOf('viewports', '').split(',').filter(Boolean);
+const THEME_FILTER = argOf('themes', '').split(',').filter(Boolean);
+const ACTIVE_VIEWPORTS = VIEWPORT_FILTER.length
+  ? [...VIEWPORTS, ...EXTRA_VIEWPORTS].filter((v) => VIEWPORT_FILTER.includes(v.name))
+  : VIEWPORTS;
+
+const THEMES = THEME_FILTER.length
+  ? ['light', 'dark'].filter((t) => THEME_FILTER.includes(t))
+  : ['light', 'dark'];
 
 /**
  * Each surface is reached the way a user reaches it — by clicking the nav rail
@@ -64,9 +77,9 @@ const SURFACES = [
   { name: 'lakehouse-catalog', tab: '数据湖', restoreSession: true },
   { name: 'lakehouse-datasets', tab: '数据湖', restoreSession: true, clickSubTab: '数据集' },
   { name: 'layers', tab: '图层' },
-  { name: 'analysis', tab: '分析' },
+  { name: 'analysis', tab: '分析', mode: 'analyze' },
   { name: 'tasks', tab: '任务' },
-  { name: 'map-studio', tab: '制图' },
+  { name: 'map-studio', tab: '制图', mode: 'compose' },
   // V9（ADR-0145）：智能资产面板（rail 追加组；modelops 未打 fixture，
   // 捕获的是其确定性诚实空态 —— 注册表工具经 /chat/tools/execute 走
   // 通用空数组分支）。
@@ -86,12 +99,14 @@ const SURFACES = [
     layer + long ref, statistic w/ metrics, warning (unreachable facilities),
     partial (grid too dense) and failed (correction hint).
   */
-  { name: 'results-empty', tab: '结果' },
-  { name: 'results-list', tab: '结果', seedResults: true },
-  { name: 'results-detail', tab: '结果', seedResults: true, openResult: '热点分析' },
-  { name: 'results-detail-warning', tab: '结果', seedResults: true, openResult: '等时圈分析' },
-  { name: 'results-detail-partial', tab: '结果', seedResults: true, openResult: '核密度表面' },
-  { name: 'results-detail-failed', tab: '结果', seedResults: true, openResult: '时空聚类' },
+  // 对话流内的工具卡/结果卡（seed 后停留在对话页签，不切 tab）。
+  { name: 'chat-results', seedResults: true, mode: 'analyze' },
+  { name: 'results-empty', tab: '结果', mode: 'analyze' },
+  { name: 'results-list', tab: '结果', seedResults: true, mode: 'analyze' },
+  { name: 'results-detail', tab: '结果', seedResults: true, mode: 'analyze', openResult: '热点分析' },
+  { name: 'results-detail-warning', tab: '结果', seedResults: true, mode: 'analyze', openResult: '等时圈分析' },
+  { name: 'results-detail-partial', tab: '结果', seedResults: true, mode: 'analyze', openResult: '核密度表面' },
+  { name: 'results-detail-failed', tab: '结果', seedResults: true, mode: 'analyze', openResult: '时空聚类' },
   /*
     Narrowest panel (280px, the resize clamp floor) and widest (420px) via the
     real keyboard resize path on the drag separator — proves the detail survives
@@ -100,6 +115,7 @@ const SURFACES = [
   {
     name: 'results-detail-narrow',
     tab: '结果',
+    mode: 'analyze',
     seedResults: true,
     openResult: '热点分析',
     panelArrows: -6,
@@ -107,6 +123,7 @@ const SURFACES = [
   {
     name: 'results-detail-wide',
     tab: '结果',
+    mode: 'analyze',
     seedResults: true,
     openResult: '热点分析',
     panelArrows: 7,
@@ -862,8 +879,14 @@ async function applyTheme(page, theme) {
   }, theme);
 }
 
-async function clickRailTab(page, label) {
+async function clickRailTab(page, label, { toggle = false } = {}) {
   const tab = page.locator(`[role="tab"][aria-label*="${label}"]`).first();
+  // 点击已激活的 rail 页签 = 折叠面板（地图优先）。打开某个面板时跳过已激活页签，
+  // 只有 collapse surface 显式 toggle。
+  if (!toggle && (await tab.count()) && (await tab.getAttribute('aria-selected')) === 'true') {
+    const panelOpen = await page.locator('#workspace-panel[aria-hidden="false"]').count();
+    if (panelOpen) return true;
+  }
   if (await tab.count()) {
     await tab.click({ timeout: 5000 }).catch(() => {});
     return true;
@@ -891,6 +914,9 @@ async function seedResults(page) {
   // active rail tab would TOGGLE the panel closed, so fill directly. Wait for
   // hydration rather than assuming the app mounted within the page-settle wait.
   const input = page.locator('textarea[aria-label="输入空间分析指令"]');
+  // analyze 模式记忆的默认页签是「分析」而非对话：先确保对话面板打开
+  // （clickRailTab 对已激活且展开的页签不做 toggle）。
+  await clickRailTab(page, '对话');
   try {
     await input.waitFor({ state: 'visible', timeout: 10000 });
   } catch {
@@ -955,7 +981,7 @@ async function capture() {
   const failures = [];
   let shots = 0;
 
-  for (const vp of VIEWPORTS) {
+  for (const vp of ACTIVE_VIEWPORTS) {
     for (const theme of THEMES) {
       const context = await browser.newContext({
         viewport: { width: vp.width, height: vp.height },
@@ -985,9 +1011,21 @@ async function capture() {
         await mkdir(dir, { recursive: true });
 
         try {
+          // 每个 surface 从干净的持久化状态起步：上一个 surface 的面板宽度
+          // （chat-narrow 的 280px）、模式与激活页签会经 localStorage 串到下一张。
+          await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
+          await page.evaluate(() => localStorage.clear()).catch(() => {});
           await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
           await page.waitForTimeout(1500);
 
+          // 工作台模式只改变 rail 页签组合（MODE_TABS）：分析/结果在 analyze、
+          // 制图在 compose —— 先切模式，页签才存在可点（seed 的「结果」徽标信号同理）。
+          if (surface.mode) {
+            const modeBtn = page.locator(`[data-testid="mode-${surface.mode}"]`).first();
+            if (await modeBtn.count()) await modeBtn.click({ timeout: 5000 }).catch(() => {});
+            else throw new Error(`mode button "${surface.mode}" not found`);
+            await page.waitForTimeout(300);
+          }
           if (surface.restoreSession) {
             // 历史会话 → 选第一条：走真实的 selectSession → map-state → 图层恢复。
             await clickTopBarButton(page, '历史会话');
@@ -1025,7 +1063,7 @@ async function capture() {
           if (surface.panelArrows !== undefined && !(await resizePanel(page, surface.panelArrows))) {
             throw new Error('panel resize separator not found');
           }
-          if (surface.collapse) await clickRailTab(page, surface.tab);
+          if (surface.collapse) await clickRailTab(page, surface.tab, { toggle: true });
           if (surface.hud) {
             const chevron = page
               .locator('button[aria-label*="展开"], button[aria-label*="HUD"]')
