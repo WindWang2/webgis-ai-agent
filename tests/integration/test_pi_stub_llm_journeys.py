@@ -554,9 +554,8 @@ def main() -> int:
             # node 紧凑输出（{"key":"…"}）→ 计数恒 0、断言 vacuous。对齐
             # separators 后计数真实；rec_before >= 1 由 pytest 侧反 vacuous
             # 锁钉死（J6_MSG 已发过至少一次真实请求）。
-            rec_before = rec.read_text().count(
-                json.dumps({"key": J6_MSG}, ensure_ascii=False,
-                           separators=(",", ":")))
+            _needle = '"key":' + json.dumps(J6_MSG, ensure_ascii=False)
+            rec_before = rec.read_text().count(_needle)
             payload = {"message": J6_MSG, "session_id": RUN + "-cd"}
             req = urllib.request.Request(
                 "http://127.0.0.1:{}/api/v1/chat/stream".format(api_port),
@@ -571,9 +570,7 @@ def main() -> int:
                 body7 = resp7.read().decode("utf-8", "replace")
             (WORK / "sse_resume.log").write_text(body7, encoding="utf-8")
             ev7 = _parse_sse(body7)
-            rec_after = rec.read_text().count(
-                json.dumps({"key": J6_MSG}, ensure_ascii=False,
-                           separators=(",", ":")))
+            rec_after = rec.read_text().count(_needle)
             verdict["journeys"]["J7"] = {
                 "names": [e["event"] for e in ev7],
                 "llm_calls": rec_after - rec_before,
