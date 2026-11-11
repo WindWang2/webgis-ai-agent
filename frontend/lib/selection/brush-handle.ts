@@ -38,16 +38,23 @@ export interface BrushHandleFlowParams {
   epochAtPublish: number;
 }
 
-export interface BrushHandleOutcome {
-  handle: string;
-  count: number | null;
-  countExact: boolean;
-}
+/**
+ * 判别结果（R2-1：失败必须可反馈，迟到必须可区分 —— 二者对 UI 语义不同）：
+ * - augmented：建柄成功且守卫通过（已补发布 + IR 补发）；
+ * - discarded：迟到（epoch/revision 前进）—— 本次框选已被更新交互取代，
+ *   静默丢弃（不得弹「失败」，用户已在新上下文里）；
+ * - failed：建柄失败（网络/409/410…）—— 调用方给出诚实反馈，选择保持
+ *   有界谓词形态（不伪造全集）。
+ */
+export type BrushHandleOutcome =
+  | { status: 'augmented'; handle: string; count: number | null; countExact: boolean }
+  | { status: 'discarded' }
+  | { status: 'failed' };
 
-/** 异步建柄 + 守卫 + 补发布 + IR 补发。失败/迟到 → null（零 mutation）。 */
+/** 异步建柄 + 守卫 + 补发布 + IR 补发（零服务端 mutation on failure/late）。 */
 export async function augmentBrushSelectionWithHandle(
   p: BrushHandleFlowParams,
-): Promise<BrushHandleOutcome | null> {
+): Promise<BrushHandleOutcome> {
   const { ownerToken } = getSessionIdentity();
   let meta: SelectionHandleMeta;
   try {
@@ -59,13 +66,13 @@ export async function augmentBrushSelectionWithHandle(
       ownerToken,
     });
   } catch {
-    return null; // 建柄失败（网络/409/410…）：保持谓词选择（诚实降级）
+    return { status: 'failed' }; // 建柄失败：保持谓词选择（诚实降级）
   }
   // 迟到守卫 1：会话世代
-  if (getSelectionEpoch() !== p.epochAtPublish) return null;
+  if (getSelectionEpoch() !== p.epochAtPublish) return { status: 'discarded' };
   // 迟到守卫 2：store 里仍是本次发布的选中（未被更新的交互替换）
   const now = getSelection();
-  if (!now || now.revision !== p.publishedRevision) return null;
+  if (!now || now.revision !== p.publishedRevision) return { status: 'discarded' };
   const authoritative = meta.count_exact && typeof meta.count === 'number';
   publishSelection('brush', {
     source: 'map',
@@ -89,5 +96,10 @@ export async function augmentBrushSelectionWithHandle(
     bbox: p.bbox,
     selectionHandle: meta.handle,
   });
-  return { handle: meta.handle, count: meta.count, countExact: meta.count_exact && authoritative };
+  return {
+    status: 'augmented',
+    handle: meta.handle,
+    count: meta.count,
+    countExact: meta.count_exact && authoritative,
+  };
 }

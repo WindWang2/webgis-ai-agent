@@ -1550,12 +1550,17 @@ export function MapPanel({
           publishedRevision: publishedRev,
           epochAtPublish,
         }).then((outcome) => {
-          if (!outcome) return
+          if (outcome.status === 'failed') {
+            // 建柄失败：保留有界谓词选择 + 诚实反馈（不伪造全集）
+            setBrushFeedback(t('map.brush.authoritativeFailed'))
+            return
+          }
+          if (outcome.status === 'discarded') return // 迟到：已被新交互取代，静默
           if (outcome.countExact && typeof outcome.count === 'number') {
             setBrushFeedback(t('map.brush.matchedAuthoritative', { count: outcome.count }))
           }
         }).catch(() => {
-          // 建柄失败：保留有界谓词选择 + 诚实反馈（不伪造全集）
+          // 模块自身异常兜底（同 failed 语义）
           setBrushFeedback(t('map.brush.authoritativeFailed'))
         })
       }

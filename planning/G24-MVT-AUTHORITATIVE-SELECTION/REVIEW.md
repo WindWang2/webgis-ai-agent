@@ -1,7 +1,7 @@
 # G24 REVIEW — 独立评审循环记录
 
 Reviewer：未参与实现的独立 subagent（本目录外）；全程只读 + 自行复跑。
-轮次：review（HEAD=`566624daa`）→ fix（commit `1a4a3e25` 系列，见下）→ re-review。
+轮次：review（HEAD=`566624daa`）→ fix（`254d9a3f1` + docs `8921ba126`）→ re-review（R2 findings）→ fix（见 Round 2）→ re-review。
 
 ## Round 1 — verdict: REQUEST_CHANGES（2026-11-12）
 
@@ -40,7 +40,21 @@ Reviewer：未参与实现的独立 subagent（本目录外）；全程只读 + 
 
 （re-review 结论由 reviewer 复核后回填：见下方「Round 2 结论」。）
 
+## Round 2 — verdict: REQUEST_CHANGES（narrow，仅 R2-1 一项阻断）
+
+Reviewer 确认 Round 1 P1×2/P2×2 全部真修复（代码直读 + 自行复跑：后端 165
+passed 含 IR 127；前端 150 passed；tsc 0；manifest JSON 语义 diff 验证纯增量）。
+剩余 findings：
+
+| # | 严重度 | finding | 修复 |
+|---|---|---|---|
+| R2-1 | P2（阻断） | `authoritativeFailed` 在真实失败路径不可达（brush-handle 吞错返 null，map-panel 早退；.catch 只兜 then 回调异常）| 返回值改判别联合 `{status: augmented|discarded|failed}`；map-panel 仅 `failed` 反馈、`discarded` 静默；测试同步改判别式（5 passed） |
+| R2-2 | P3 | 截断框选双 `feature_selected` 事件未披露 | INTERFACES §2 双事件语义节（同 layer 取最新；计数差异=披露） |
+| R2-3 | P3 | REVIEW.md 引用不存在 commit hash | 改为 `254d9a3f1`/`8921ba126` |
+| R2-4 | P3 | manifest 再生成重排全文缩进（232± 行噪音） | 以 BASE 文本为模板做手术式单键插入 —— diff 2 行纯增量（drift 闸绿） |
+| R2-5 | P3 | bus 映射/后端摄入无直接测试 | emitters.test +1 例（映射/缺省/128 裁剪）；IR test_contracts +1 例（透传/裁剪/白名单隔离/标量语义） |
+
 ## Round 2 结论
 
-_PENDING_REVIEWER_
+_PENDING_REVIEWER_ROUND3_
 

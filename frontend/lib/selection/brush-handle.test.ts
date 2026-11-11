@@ -72,7 +72,7 @@ describe('augmentBrushSelectionWithHandle', () => {
       scope: {}, ttl_seconds: 600,
     });
     const out = await augmentBrushSelectionWithHandle({ ...BASE });
-    expect(out).toEqual({ handle: 'h-abc', count: 300, countExact: true });
+    expect(out).toEqual({ status: 'augmented', handle: 'h-abc', count: 300, countExact: true });
     const sel = getSelection();
     expect(sel?.handle).toBe('h-abc');
     expect(sel?.handle_count).toBe(300);
@@ -92,7 +92,7 @@ describe('augmentBrushSelectionWithHandle', () => {
       return { handle: 'h-x', count: 5, count_exact: true, revision: 7, scope: {}, ttl_seconds: 600 };
     });
     const out = await augmentBrushSelectionWithHandle({ ...BASE });
-    expect(out).toBeNull();
+    expect(out).toEqual({ status: 'discarded' });
     expect(emitMock).not.toHaveBeenCalled();
     expect(getSelection()?.handle).toBeUndefined();
   });
@@ -105,18 +105,18 @@ describe('augmentBrushSelectionWithHandle', () => {
       return { handle: 'h-y', count: 5, count_exact: true, revision: 7, scope: {}, ttl_seconds: 600 };
     });
     const out = await augmentBrushSelectionWithHandle({ ...BASE });
-    expect(out).toBeNull();
+    expect(out).toEqual({ status: 'discarded' });
     expect(emitMock).not.toHaveBeenCalled();
     // 新选择未被迟到的框选增强污染
     expect(getSelection()?.layer_id).toBe('other-layer');
     expect(getSelection()?.handle).toBeUndefined();
   });
 
-  it('建柄失败 → null（谓词选择保持，零 IR，服务端零 mutation 由 409/410 语义保证）', async () => {
+  it('建柄失败 → {status:"failed"}（R2-1：可反馈；谓词选择保持，零 IR）', async () => {
     createMock.mockRejectedValueOnce(new Error('conflict'));
     const before = getSelection();
     const out = await augmentBrushSelectionWithHandle({ ...BASE });
-    expect(out).toBeNull();
+    expect(out).toEqual({ status: 'failed' });
     const after = getSelection();
     expect(after?.revision).toBe(before?.revision);
     expect(after?.handle).toBeUndefined();
@@ -128,7 +128,9 @@ describe('augmentBrushSelectionWithHandle', () => {
       handle: 'h-unk', count: null, count_exact: false, revision: 7, scope: {}, ttl_seconds: 600,
     });
     const out = await augmentBrushSelectionWithHandle({ ...BASE });
-    expect(out?.countExact).toBe(false);
+    expect(out.status).toBe('augmented');
+    if (out.status !== 'augmented') return;
+    expect(out.countExact).toBe(false);
     expect(getSelection()?.handle_count_exact).toBeUndefined();
     expect(getSelection()?.matched_count).toBe(300); // 渲染面计数兜底披露
   });
