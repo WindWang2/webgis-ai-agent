@@ -42,6 +42,7 @@ import zhDataPreparation from '@/messages/zh-CN/dataPreparation.json'
 import zhDataImport from '@/messages/zh-CN/dataImport.json'
 import zhFieldCompute from '@/messages/zh-CN/fieldCompute.json'
 import zhMarket from '@/messages/zh-CN/market.json'
+import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -76,6 +77,7 @@ import enDataPreparation from '@/messages/en-US/dataPreparation.json'
 import enDataImport from '@/messages/en-US/dataImport.json'
 import enFieldCompute from '@/messages/en-US/fieldCompute.json'
 import enMarket from '@/messages/en-US/market.json'
+import enDataDelivery from '@/messages/en-US/dataDelivery.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -111,6 +113,7 @@ export interface AppMessages {
   market: typeof zhMarket
   compositionAssets: typeof zhCompositionAssets
   dataPreparation: typeof zhDataPreparation
+  dataDelivery: typeof zhDataDelivery
   dataImport: typeof zhDataImport
   fieldCompute: typeof zhFieldCompute
 }
@@ -130,6 +133,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     drawers: zhDrawers,
     compositionAssets: zhCompositionAssets,
     dataPreparation: zhDataPreparation,
+    dataDelivery: zhDataDelivery,
     dataImport: zhDataImport,
     fieldCompute: zhFieldCompute,
     story: zhStory,
@@ -167,6 +171,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     drawers: enDrawers as unknown as AppMessages['drawers'],
     compositionAssets: enCompositionAssets as unknown as AppMessages['compositionAssets'],
     dataPreparation: enDataPreparation as unknown as AppMessages['dataPreparation'],
+    dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
     dataImport: enDataImport as unknown as AppMessages['dataImport'],
     fieldCompute: enFieldCompute as unknown as AppMessages['fieldCompute'],
     story: enStory as unknown as AppMessages['story'],

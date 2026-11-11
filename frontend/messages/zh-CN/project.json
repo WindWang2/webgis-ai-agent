@@ -321,5 +321,6 @@
   "g10ConfirmRollback": "确认回退到采纳前版本？",
   "g10NeedAuth": "需要登录账号才能检查项目数据更新",
   "g10NeedSession": "需要会话上下文（session_id）",
-  "g10LoadFailed": "项目数据刷新请求失败"
+  "g10LoadFailed": "项目数据刷新请求失败",
+  "deliverData": "交付数据"
 }

@@ -542,6 +542,12 @@ class MaterializationService:
             "total_matching": query_result.total_matching,
             "truncated": truncated,
             "has_more": has_more,
+            # G18：透传磁盘工件物理证据（既有契约测试 test_geoparquet_fast_lane_v5
+            # 期望 path；bytes/sha256/durable 为 additive 证据键）。
+            "path": written.get("path"),
+            "bytes": written.get("bytes"),
+            "content_sha256": written.get("content_sha256"),
+            "durable": written.get("durable"),
             "fingerprint": fingerprint,
             "is_demo": is_demo,
             "schema_info": query_result.schema_info,

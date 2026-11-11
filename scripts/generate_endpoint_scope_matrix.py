@@ -88,6 +88,9 @@ DOMAIN_RULES: dict[str, tuple[str, str] | str] = {
     "chat": ("session:read", "session:write"),
     "config": ("admin:read", "admin:write"),
     "data-fabric": ("gis:read", "gis:write"),
+    # G18 数据交付域：与 data-fabric 同族语义（ref/revision 数据面读 +
+    # 交付任务/下载写；capabilities 为静态探测走读语义）
+    "data-delivery": ("gis:read", "gis:write"),
     "data-lifecycle": ("gis:read", "gis:write"),
     "data-quality": ("gis:read", "gis:write"),
     # 数据准备域（inspect/plan/execute/bindings）：会话内数据面读写，

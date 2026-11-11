@@ -1115,6 +1115,215 @@
     "title": "AutofixRequest",
     "type": "object"
    },
+   "BatchCreateResponse": {
+    "description": "POST /data-import/batches 响应（创建即枚举成员）。",
+    "examples": [
+     {
+      "batch_id": "ib-0f1e2d3c4b5a6978877665544332211f",
+      "members": [
+       {
+        "crs": "EPSG:4326",
+        "crs_source": "source_metadata",
+        "display_name": "points",
+        "feature_count": 3,
+        "fields": [
+         "id",
+         "name"
+        ],
+        "geometry_type": "Point",
+        "kind": "vector",
+        "member_key": "c:src-1:gpkg:points"
+       }
+      ],
+      "notes": [],
+      "session_id": "sess-abc",
+      "sources": [
+       {
+        "ext": ".gpkg",
+        "original_name": "layers.gpkg",
+        "sha256": "9f86d0818…",
+        "size": 4096,
+        "source_id": "src-1"
+       }
+      ],
+      "status": "inspected"
+     }
+    ],
+    "properties": {
+     "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+     },
+     "created_at": {
+      "default": "",
+      "title": "Created At",
+      "type": "string"
+     },
+     "expires_at": {
+      "default": "",
+      "title": "Expires At",
+      "type": "string"
+     },
+     "members": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Members",
+      "type": "array"
+     },
+     "notes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "sources": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Sources",
+      "type": "array"
+     },
+     "status": {
+      "default": "inspected",
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "batch_id",
+     "session_id"
+    ],
+    "title": "BatchCreateResponse",
+    "type": "object"
+   },
+   "BatchDetailResponse": {
+    "properties": {
+     "attribution": {
+      "default": "",
+      "title": "Attribution",
+      "type": "string"
+     },
+     "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+     },
+     "created_at": {
+      "default": "",
+      "title": "Created At",
+      "type": "string"
+     },
+     "expires_at": {
+      "default": "",
+      "title": "Expires At",
+      "type": "string"
+     },
+     "interpretations": {
+      "additionalProperties": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Interpretations",
+      "type": "object"
+     },
+     "license": {
+      "default": "",
+      "title": "License",
+      "type": "string"
+     },
+     "members": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Members",
+      "type": "array"
+     },
+     "notes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+     },
+     "plan_hashes": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Plan Hashes",
+      "type": "object"
+     },
+     "plan_version": {
+      "default": 0,
+      "title": "Plan Version",
+      "type": "integer"
+     },
+     "previewed_hashes": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Previewed Hashes",
+      "type": "object"
+     },
+     "receipts": {
+      "additionalProperties": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Receipts",
+      "type": "object"
+     },
+     "session_id": {
+      "default": "",
+      "title": "Session Id",
+      "type": "string"
+     },
+     "sources": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Sources",
+      "type": "array"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "updated_at": {
+      "default": "",
+      "title": "Updated At",
+      "type": "string"
+     }
+    },
+    "required": [
+     "batch_id",
+     "status"
+    ],
+    "title": "BatchDetailResponse",
+    "type": "object"
+   },
+   "BatchListResponse": {
+    "properties": {
+     "batches": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Batches",
+      "type": "array"
+     }
+    },
+    "title": "BatchListResponse",
+    "type": "object"
+   },
    "BlockCreateRequest": {
     "properties": {
      "block": {
@@ -1153,6 +1362,40 @@
      "patch"
     ],
     "title": "BlockPatchRequest",
+    "type": "object"
+   },
+   "Body_create_batch_api_v1_data_import_batches_post": {
+    "properties": {
+     "attribution": {
+      "default": "",
+      "title": "Attribution",
+      "type": "string"
+     },
+     "files": {
+      "description": "一批本地数据文件",
+      "items": {
+       "contentMediaType": "application/octet-stream",
+       "type": "string"
+      },
+      "title": "Files",
+      "type": "array"
+     },
+     "license": {
+      "default": "",
+      "title": "License",
+      "type": "string"
+     },
+     "session_id": {
+      "description": "归属会话（已验证）",
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "files",
+     "session_id"
+    ],
+    "title": "Body_create_batch_api_v1_data_import_batches_post",
     "type": "object"
    },
    "Body_export_map_as_pdf_api_v1_export_pdf_post": {
@@ -1525,6 +1768,24 @@
      "center"
     ],
     "title": "CameraKeyframe",
+    "type": "object"
+   },
+   "CancelResponse": {
+    "properties": {
+     "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+     },
+     "status": {
+      "default": "cancelled",
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "batch_id"
+    ],
+    "title": "CancelResponse",
     "type": "object"
    },
    "CandidateStatus": {
@@ -2928,6 +3189,36 @@
     "title": "ClusterWorkersResponse",
     "type": "object"
    },
+   "CommitAcceptedResponse": {
+    "properties": {
+     "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+     },
+     "members": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Members",
+      "type": "array"
+     },
+     "poll": {
+      "default": "",
+      "title": "Poll",
+      "type": "string"
+     },
+     "status": {
+      "default": "committing",
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "batch_id"
+    ],
+    "title": "CommitAcceptedResponse",
+    "type": "object"
+   },
    "CommitBody": {
     "properties": {
      "client_mutation_id": {
@@ -2972,6 +3263,39 @@
      "expected_revision"
     ],
     "title": "CommitBody",
+    "type": "object"
+   },
+   "CommitRequest": {
+    "properties": {
+     "expected_plan_version": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Plan Version"
+     },
+     "member_keys": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "缺省 = 当前勾选成员",
+      "title": "Member Keys"
+     }
+    },
+    "title": "CommitRequest",
     "type": "object"
    },
    "ComponentPlacement": {
@@ -3823,6 +4147,1011 @@
      "version_id"
     ],
     "title": "DatasetTagRequest",
+    "type": "object"
+   },
+   "DeleteResponse": {
+    "properties": {
+     "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+     },
+     "deleted": {
+      "default": false,
+      "title": "Deleted",
+      "type": "boolean"
+     },
+     "note": {
+      "default": "仅清理未提交 staging；已提交数据集/ref 不受影响",
+      "title": "Note",
+      "type": "string"
+     }
+    },
+    "required": [
+     "batch_id"
+    ],
+    "title": "DeleteResponse",
+    "type": "object"
+   },
+   "DeliveryCapabilitiesResponse": {
+    "additionalProperties": false,
+    "description": "GET /data-delivery/capabilities —— 运行时真实驱动探测 + 硬帽 + 版本。",
+    "properties": {
+     "cancel_endpoint": {
+      "default": "",
+      "title": "Cancel Endpoint",
+      "type": "string"
+     },
+     "formats": {
+      "items": {
+       "$ref": "#/components/schemas/FormatCapability"
+      },
+      "title": "Formats",
+      "type": "array"
+     },
+     "limits": {
+      "$ref": "#/components/schemas/DeliveryLimitsView"
+     },
+     "writer_versions": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Writer Versions",
+      "type": "object"
+     }
+    },
+    "required": [
+     "limits"
+    ],
+    "title": "DeliveryCapabilitiesResponse",
+    "type": "object"
+   },
+   "DeliveryCrsSpec": {
+    "additionalProperties": false,
+    "description": "目标坐标系与坐标政策（缺 CRS 不默认 4326）。",
+    "properties": {
+     "allow_unknown_source_crs": {
+      "default": false,
+      "title": "Allow Unknown Source Crs",
+      "type": "boolean"
+     },
+     "coordinate_precision": {
+      "anyOf": [
+       {
+        "maximum": 15.0,
+        "minimum": 6.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "GeoJSON 坐标小数位（显式有损选项，默认关闭=全精度）",
+      "title": "Coordinate Precision"
+     },
+     "target_crs": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "目标 CRS（如 \"EPSG:4326\"）；None = 不变换（格式要求除外）",
+      "title": "Target Crs"
+     }
+    },
+    "title": "DeliveryCrsSpec",
+    "type": "object"
+   },
+   "DeliveryFieldSelection": {
+    "additionalProperties": false,
+    "description": "字段投影与重命名（有界；Shapefile 长字段名映射的显式载体）。",
+    "properties": {
+     "field_map": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "输出字段名映射（如 Shapefile ≤10 字符约束的显式解）",
+      "title": "Field Map"
+     },
+     "fields": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 256,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fields"
+     },
+     "include_geometry": {
+      "default": true,
+      "title": "Include Geometry",
+      "type": "boolean"
+     }
+    },
+    "title": "DeliveryFieldSelection",
+    "type": "object"
+   },
+   "DeliveryJobCreateRequest": {
+    "additionalProperties": false,
+    "description": "POST /data-delivery/jobs 请求。",
+    "properties": {
+     "acknowledged_losses": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Acknowledged Losses",
+      "type": "array"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "登记交付成果到项目（可选；源为项目产物时推荐）",
+      "title": "Project Id"
+     },
+     "spec": {
+      "$ref": "#/components/schemas/DeliverySpec"
+     }
+    },
+    "required": [
+     "spec"
+    ],
+    "title": "DeliveryJobCreateRequest",
+    "type": "object"
+   },
+   "DeliveryJobCreateResponse": {
+    "properties": {
+     "idempotent_reuse": {
+      "default": false,
+      "title": "Idempotent Reuse",
+      "type": "boolean"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "job_id",
+     "status"
+    ],
+    "title": "DeliveryJobCreateResponse",
+    "type": "object"
+   },
+   "DeliveryJobView": {
+    "additionalProperties": false,
+    "description": "GET /data-delivery/jobs/{id} —— 状态 + 完成后的回执。",
+    "properties": {
+     "completed_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Completed At"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "download_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Download Url"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     },
+     "error_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Code"
+     },
+     "filename": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Filename"
+     },
+     "format": {
+      "anyOf": [
+       {
+        "enum": [
+         "geojson",
+         "gpkg",
+         "geoparquet",
+         "csv",
+         "shapefile_zip",
+         "flatgeobuf"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Format"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "progress": {
+      "default": 0,
+      "title": "Progress",
+      "type": "integer"
+     },
+     "progress_message": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Progress Message"
+     },
+     "receipt": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/DeliveryReceipt"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "spec_fingerprint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Spec Fingerprint"
+     },
+     "stage": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Stage"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "job_id",
+     "status"
+    ],
+    "title": "DeliveryJobView",
+    "type": "object"
+   },
+   "DeliveryLimitsView": {
+    "additionalProperties": true,
+    "description": "交付硬帽（UI/工具同源的能力投影）。",
+    "properties": {
+     "data_object_publish_budget_bytes": {
+      "title": "Data Object Publish Budget Bytes",
+      "type": "integer"
+     },
+     "max_fields": {
+      "title": "Max Fields",
+      "type": "integer"
+     },
+     "max_ids": {
+      "title": "Max Ids",
+      "type": "integer"
+     },
+     "max_output_bytes": {
+      "title": "Max Output Bytes",
+      "type": "integer"
+     },
+     "max_rows_per_delivery": {
+      "title": "Max Rows Per Delivery",
+      "type": "integer"
+     },
+     "max_temp_disk_bytes": {
+      "title": "Max Temp Disk Bytes",
+      "type": "integer"
+     },
+     "read_batch_rows": {
+      "title": "Read Batch Rows",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "max_rows_per_delivery",
+     "max_output_bytes",
+     "max_temp_disk_bytes",
+     "max_fields",
+     "max_ids",
+     "read_batch_rows",
+     "data_object_publish_budget_bytes"
+    ],
+    "title": "DeliveryLimitsView",
+    "type": "object"
+   },
+   "DeliveryMember": {
+    "description": "交付包成员（多文件 ZIP/分层也有单一 manifest）。",
+    "properties": {
+     "bytes": {
+      "default": 0,
+      "title": "Bytes",
+      "type": "integer"
+     },
+     "path": {
+      "title": "Path",
+      "type": "string"
+     },
+     "role": {
+      "default": "data",
+      "title": "Role",
+      "type": "string"
+     },
+     "rows": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rows"
+     },
+     "sha256": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sha256"
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "title": "DeliveryMember",
+    "type": "object"
+   },
+   "DeliveryPreview": {
+    "additionalProperties": false,
+    "description": "POST /data-delivery/preview 返回 —— 执行前保真与范围协商。",
+    "properties": {
+     "blocking_issues": {
+      "items": {
+       "$ref": "#/components/schemas/LossItem"
+      },
+      "title": "Blocking Issues",
+      "type": "array"
+     },
+     "downloadable_after": {
+      "default": "completed",
+      "title": "Downloadable After",
+      "type": "string"
+     },
+     "estimate_note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Estimate Note"
+     },
+     "estimated_bytes": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Estimated Bytes"
+     },
+     "estimated_rows": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Estimated Rows"
+     },
+     "field_name_map_applied": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Field Name Map Applied"
+     },
+     "formats": {
+      "items": {
+       "$ref": "#/components/schemas/FormatCapability"
+      },
+      "title": "Formats",
+      "type": "array"
+     },
+     "losses": {
+      "items": {
+       "$ref": "#/components/schemas/LossItem"
+      },
+      "title": "Losses",
+      "type": "array"
+     },
+     "requested_format": {
+      "$ref": "#/components/schemas/FormatCapability"
+     },
+     "required_acknowledgments": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Required Acknowledgments",
+      "type": "array"
+     },
+     "scope_note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scope Note"
+     },
+     "source": {
+      "$ref": "#/components/schemas/SourceIdentity"
+     },
+     "spec_fingerprint": {
+      "title": "Spec Fingerprint",
+      "type": "string"
+     }
+    },
+    "required": [
+     "spec_fingerprint",
+     "source",
+     "requested_format"
+    ],
+    "title": "DeliveryPreview",
+    "type": "object"
+   },
+   "DeliveryReceipt": {
+    "additionalProperties": true,
+    "description": "执行回执 —— 实际证据，非承诺。",
+    "properties": {
+     "artifact_ref": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Artifact Ref"
+     },
+     "bytes_total": {
+      "default": 0,
+      "title": "Bytes Total",
+      "type": "integer"
+     },
+     "content_sha256": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Sha256"
+     },
+     "copy_mode": {
+      "default": "reencode",
+      "title": "Copy Mode",
+      "type": "string"
+     },
+     "crs": {
+      "additionalProperties": true,
+      "title": "Crs",
+      "type": "object"
+     },
+     "data_object_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Data Object Id"
+     },
+     "delivery_id": {
+      "title": "Delivery Id",
+      "type": "string"
+     },
+     "durable": {
+      "default": "unknown",
+      "title": "Durable",
+      "type": "string"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     },
+     "error_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Code"
+     },
+     "field_map_applied": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Field Map Applied"
+     },
+     "filename": {
+      "title": "Filename",
+      "type": "string"
+     },
+     "format": {
+      "enum": [
+       "geojson",
+       "gpkg",
+       "geoparquet",
+       "csv",
+       "shapefile_zip",
+       "flatgeobuf"
+      ],
+      "title": "Format",
+      "type": "string"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "losses_applied": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Losses Applied",
+      "type": "array"
+     },
+     "members": {
+      "items": {
+       "$ref": "#/components/schemas/DeliveryMember"
+      },
+      "title": "Members",
+      "type": "array"
+     },
+     "project_artifact_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Artifact Id"
+     },
+     "row_count": {
+      "default": 0,
+      "title": "Row Count",
+      "type": "integer"
+     },
+     "scope": {
+      "additionalProperties": true,
+      "title": "Scope",
+      "type": "object"
+     },
+     "source": {
+      "additionalProperties": true,
+      "title": "Source",
+      "type": "object"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "timings": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "title": "Timings",
+      "type": "object"
+     },
+     "writer_versions": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Writer Versions",
+      "type": "object"
+     }
+    },
+    "required": [
+     "delivery_id",
+     "job_id",
+     "format",
+     "status",
+     "filename"
+    ],
+    "title": "DeliveryReceipt",
+    "type": "object"
+   },
+   "DeliveryScope": {
+    "additionalProperties": false,
+    "description": "交付范围 —— full / 稳定 ID 列表 / typed predicate+bbox。",
+    "properties": {
+     "bbox": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "maxItems": 4,
+        "minItems": 4,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox"
+     },
+     "id_field": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "稳定 ID 字段；缺省自动探测 feature.id → properties._wfid",
+      "title": "Id Field"
+     },
+     "ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 500,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ids"
+     },
+     "ids_truncated": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "选择上下文的服务端派生截断标记（interaction IR ids_truncated）",
+      "title": "Ids Truncated"
+     },
+     "predicate": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "typed 谓词（feature_pages.evaluate_where 兼容子集；同快照精确重放）",
+      "title": "Predicate"
+     },
+     "selection_matched_count": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "选择上下文的真实命中数（matched_count）；大于所携 ID 数即截断证据",
+      "title": "Selection Matched Count"
+     },
+     "subset_ack": {
+      "default": false,
+      "title": "Subset Ack",
+      "type": "boolean"
+     },
+     "type": {
+      "default": "full",
+      "enum": [
+       "full",
+       "ids",
+       "filter"
+      ],
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "title": "DeliveryScope",
+    "type": "object"
+   },
+   "DeliverySourceRef": {
+    "additionalProperties": false,
+    "description": "交付源锚 —— 指向一个已登记的数据引用或项目产物修订。\n\n恰好一种 kind 生效；对应字段必须在字符集白名单内（路由/服务层\n复检，绝不把 ref 文本拼接成未经校验的本地路径）。",
+    "properties": {
+     "artifact_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Artifact Id"
+     },
+     "kind": {
+      "enum": [
+       "session_ref",
+       "fabric_parquet",
+       "project_artifact",
+       "table_rows"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "ref": {
+      "anyOf": [
+       {
+        "maxLength": 256,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref"
+     },
+     "revision_no": {
+      "anyOf": [
+       {
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revision No"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "table_ref": {
+      "anyOf": [
+       {
+        "maxLength": 256,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Table Ref"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "DeliverySourceRef",
+    "type": "object"
+   },
+   "DeliverySpec": {
+    "additionalProperties": false,
+    "description": "交付规格 v1 —— 预览与执行的同一冻结输入。",
+    "properties": {
+     "crs": {
+      "$ref": "#/components/schemas/DeliveryCrsSpec"
+     },
+     "fields": {
+      "$ref": "#/components/schemas/DeliveryFieldSelection"
+     },
+     "filename": {
+      "default": "delivery",
+      "maxLength": 100,
+      "title": "Filename",
+      "type": "string"
+     },
+     "format": {
+      "enum": [
+       "geojson",
+       "gpkg",
+       "geoparquet",
+       "csv",
+       "shapefile_zip",
+       "flatgeobuf"
+      ],
+      "title": "Format",
+      "type": "string"
+     },
+     "geometry_grouping": {
+      "default": "single",
+      "enum": [
+       "single",
+       "by_type"
+      ],
+      "title": "Geometry Grouping",
+      "type": "string"
+     },
+     "scope": {
+      "$ref": "#/components/schemas/DeliveryScope"
+     },
+     "source": {
+      "$ref": "#/components/schemas/DeliverySourceRef"
+     },
+     "spreadsheet_safe": {
+      "default": false,
+      "title": "Spreadsheet Safe",
+      "type": "boolean"
+     },
+     "version": {
+      "default": 1,
+      "title": "Version",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "source",
+     "format"
+    ],
+    "title": "DeliverySpec",
     "type": "object"
    },
    "DeprecateRequest": {
@@ -5530,6 +6859,63 @@
      "severity"
     ],
     "title": "FindingOut",
+    "type": "object"
+   },
+   "FormatCapability": {
+    "description": "格式能力投影（来自真实驱动探测，非扩展名声明）。",
+    "properties": {
+     "available": {
+      "title": "Available",
+      "type": "boolean"
+     },
+     "constrained": {
+      "default": false,
+      "title": "Constrained",
+      "type": "boolean"
+     },
+     "extensions": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Extensions",
+      "type": "array"
+     },
+     "format": {
+      "enum": [
+       "geojson",
+       "gpkg",
+       "geoparquet",
+       "csv",
+       "shapefile_zip",
+       "flatgeobuf"
+      ],
+      "title": "Format",
+      "type": "string"
+     },
+     "notes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "required": [
+     "format",
+     "available"
+    ],
+    "title": "FormatCapability",
     "type": "object"
    },
    "FreezeRequest": {
@@ -7868,6 +9254,44 @@
     "title": "LogoutResponse",
     "type": "object"
    },
+   "LossItem": {
+    "description": "一条格式损失/降级声明（声明与实际改变一一对应，由 oracle 验证）。",
+    "properties": {
+     "code": {
+      "title": "Code",
+      "type": "string"
+     },
+     "fields": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fields"
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     },
+     "requires_ack": {
+      "default": false,
+      "title": "Requires Ack",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "code",
+     "message"
+    ],
+    "title": "LossItem",
+    "type": "object"
+   },
    "MapActionAck": {
     "description": "单条地图动作终态 ACK（V3 闭环：前端上报命令执行终态）。",
     "examples": [
@@ -8956,6 +10380,124 @@
      }
     },
     "title": "MeResponse",
+    "type": "object"
+   },
+   "MemberConfig": {
+    "description": "单成员解释配置（save_plan 请求体成员项）。",
+    "properties": {
+     "delimiter": {
+      "anyOf": [
+       {
+        "maxLength": 3,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "分隔符（单字符）；缺省嗅探",
+      "title": "Delimiter"
+     },
+     "encoding": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "显式编码（如 utf-8/gb18030）；缺省探测回退",
+      "title": "Encoding"
+     },
+     "field_types": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "description": "列 → boolean|date|number|text；缺省原样字符串（不丢前导零）",
+      "title": "Field Types",
+      "type": "object"
+     },
+     "header_row": {
+      "default": 0,
+      "description": "表头行（0 基）",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "title": "Header Row",
+      "type": "integer"
+     },
+     "keep_fields": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "保留字段子集；缺省全部",
+      "title": "Keep Fields"
+     },
+     "mode": {
+      "default": "auto",
+      "description": "解释模式: auto|points|table|wkt",
+      "title": "Mode",
+      "type": "string"
+     },
+     "source_crs_declared": {
+      "anyOf": [
+       {
+        "maxLength": 100,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "源 CRS 声明（如 EPSG:32650）",
+      "title": "Source Crs Declared"
+     },
+     "wkt_column": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Wkt Column"
+     },
+     "x_column": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "X Column"
+     },
+     "y_column": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Y Column"
+     }
+    },
+    "title": "MemberConfig",
     "type": "object"
    },
    "MutationApplyResponse": {
@@ -10089,6 +11631,69 @@
     "title": "PatchComponentBody",
     "type": "object"
    },
+   "PatchLayerLabelAuthoringBody": {
+    "description": "G16 要素级标注 authoring（UI 标签编辑手势与 Pi 工具共用）。\n\nops 原子（任一拒绝 → 整笔 400 + per-op findings）；labels_config\n只收 obstaclePolicy/forbiddenZones（其余键 422）。",
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "minLength": 8,
+        "pattern": "^[A-Za-z0-9._:-]+$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "patch_layer_label_authoring",
+      "title": "Intent",
+      "type": "string"
+     },
+     "labels_config": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Labels Config"
+     },
+     "layer_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Layer Id",
+      "type": "string"
+     },
+     "ops": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "maxItems": 200,
+      "title": "Ops",
+      "type": "array"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision",
+     "layer_id"
+    ],
+    "title": "PatchLayerLabelAuthoringBody",
+    "type": "object"
+   },
    "PatchLayerPresentationBody": {
     "properties": {
      "client_mutation_id": {
@@ -10592,6 +12197,76 @@
     "title": "PlanRunSubmitResponse",
     "type": "object"
    },
+   "PlanSaveRequest": {
+    "properties": {
+     "expected_plan_version": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Plan Version"
+     },
+     "member_configs": {
+      "additionalProperties": {
+       "$ref": "#/components/schemas/MemberConfig"
+      },
+      "title": "Member Configs",
+      "type": "object"
+     },
+     "selected": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "勾选导入的成员 key 列表",
+      "title": "Selected"
+     }
+    },
+    "title": "PlanSaveRequest",
+    "type": "object"
+   },
+   "PlanSaveResponse": {
+    "properties": {
+     "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+     },
+     "plan_hashes": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Plan Hashes",
+      "type": "object"
+     },
+     "plan_version": {
+      "title": "Plan Version",
+      "type": "integer"
+     },
+     "status": {
+      "default": "",
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "batch_id",
+     "plan_version"
+    ],
+    "title": "PlanSaveResponse",
+    "type": "object"
+   },
    "PlanStepOut": {
     "properties": {
      "data_changed": {
@@ -10741,53 +12416,32 @@
     "title": "PreviewRefreshRequest",
     "type": "object"
    },
-   "PreviewResponse": {
+   "PreviewRequest": {
     "properties": {
-     "degraded": {
-      "items": {
-       "type": "string"
-      },
-      "title": "Degraded",
-      "type": "array"
+     "member_keys": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "缺省全部可预览成员",
+      "title": "Member Keys"
      },
-     "estimated_rows_after": {
-      "default": 0,
-      "title": "Estimated Rows After",
+     "row_limit": {
+      "default": 200,
+      "maximum": 2000.0,
+      "minimum": 1.0,
+      "title": "Row Limit",
       "type": "integer"
-     },
-     "plan_id": {
-      "title": "Plan Id",
-      "type": "string"
-     },
-     "quality_delta_sample": {
-      "additionalProperties": {
-       "type": "integer"
-      },
-      "title": "Quality Delta Sample",
-      "type": "object"
-     },
-     "sampled_rows": {
-      "default": 0,
-      "title": "Sampled Rows",
-      "type": "integer"
-     },
-     "steps": {
-      "items": {
-       "$ref": "#/components/schemas/PlanStepOut"
-      },
-      "title": "Steps",
-      "type": "array"
-     },
-     "truncated": {
-      "default": false,
-      "title": "Truncated",
-      "type": "boolean"
      }
     },
-    "required": [
-     "plan_id"
-    ],
-    "title": "PreviewResponse",
+    "title": "PreviewRequest",
     "type": "object"
    },
    "ProbeBody": {
@@ -12159,6 +13813,44 @@
      "output_ref"
     ],
     "title": "ReceiptSummaryOut",
+    "type": "object"
+   },
+   "ReceiptsResponse": {
+    "properties": {
+     "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+     },
+     "notes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+     },
+     "plan_version": {
+      "default": 0,
+      "title": "Plan Version",
+      "type": "integer"
+     },
+     "receipts": {
+      "additionalProperties": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Receipts",
+      "type": "object"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "batch_id",
+     "status"
+    ],
+    "title": "ReceiptsResponse",
     "type": "object"
    },
    "RecomputePlanResponse": {
@@ -15448,6 +17140,173 @@
      "logical_id"
     ],
     "title": "SourceDiff",
+    "type": "object"
+   },
+   "SourceFieldInfo": {
+    "description": "源字段（类型为有界推断，标注 inferred）。",
+    "properties": {
+     "inferred_type": {
+      "default": "unknown",
+      "title": "Inferred Type",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "sample_values": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sample Values"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "title": "SourceFieldInfo",
+    "type": "object"
+   },
+   "SourceGeometrySummary": {
+    "properties": {
+     "has_z": {
+      "default": false,
+      "title": "Has Z",
+      "type": "boolean"
+     },
+     "null_or_empty_count": {
+      "default": 0,
+      "title": "Null Or Empty Count",
+      "type": "integer"
+     },
+     "sampled_rows": {
+      "default": 0,
+      "title": "Sampled Rows",
+      "type": "integer"
+     },
+     "types": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Types",
+      "type": "array"
+     }
+    },
+    "title": "SourceGeometrySummary",
+    "type": "object"
+   },
+   "SourceIdentity": {
+    "description": "源身份与完整性证据（快照锚）。",
+    "properties": {
+     "artifact_revision_no": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Artifact Revision No"
+     },
+     "completeness": {
+      "additionalProperties": true,
+      "title": "Completeness",
+      "type": "object"
+     },
+     "content_fingerprint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Fingerprint"
+     },
+     "content_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Revision"
+     },
+     "crs": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Crs"
+     },
+     "crs_known": {
+      "default": false,
+      "title": "Crs Known",
+      "type": "boolean"
+     },
+     "fields": {
+      "items": {
+       "$ref": "#/components/schemas/SourceFieldInfo"
+      },
+      "title": "Fields",
+      "type": "array"
+     },
+     "geometry": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SourceGeometrySummary"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "is_table": {
+      "default": false,
+      "title": "Is Table",
+      "type": "boolean"
+     },
+     "kind": {
+      "enum": [
+       "session_ref",
+       "fabric_parquet",
+       "project_artifact",
+       "table_rows"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+     },
+     "row_count": {
+      "default": 0,
+      "title": "Row Count",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "SourceIdentity",
     "type": "object"
    },
    "SourceInventory": {
@@ -19255,6 +21114,81 @@
      }
     },
     "title": "SkillsListResponse",
+    "type": "object"
+   },
+   "app__schemas__data_import_schema__PreviewResponse": {
+    "properties": {
+     "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+     },
+     "plan_version": {
+      "title": "Plan Version",
+      "type": "integer"
+     },
+     "previews": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Previews",
+      "type": "array"
+     }
+    },
+    "required": [
+     "batch_id",
+     "plan_version"
+    ],
+    "title": "PreviewResponse",
+    "type": "object"
+   },
+   "app__schemas__data_preparation_schema__PreviewResponse": {
+    "properties": {
+     "degraded": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Degraded",
+      "type": "array"
+     },
+     "estimated_rows_after": {
+      "default": 0,
+      "title": "Estimated Rows After",
+      "type": "integer"
+     },
+     "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+     },
+     "quality_delta_sample": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Quality Delta Sample",
+      "type": "object"
+     },
+     "sampled_rows": {
+      "default": 0,
+      "title": "Sampled Rows",
+      "type": "integer"
+     },
+     "steps": {
+      "items": {
+       "$ref": "#/components/schemas/PlanStepOut"
+      },
+      "title": "Steps",
+      "type": "array"
+     },
+     "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "plan_id"
+    ],
+    "title": "PreviewResponse",
     "type": "object"
    },
    "app__schemas__feature_edit_schema__DatasetCreateRequest": {
@@ -24266,6 +26200,7 @@
           "duplicate_component": "#/components/schemas/DuplicateComponentBody",
           "init_project": "#/components/schemas/InitProjectBody",
           "patch_component": "#/components/schemas/PatchComponentBody",
+          "patch_layer_label_authoring": "#/components/schemas/PatchLayerLabelAuthoringBody",
           "patch_layer_presentation": "#/components/schemas/PatchLayerPresentationBody",
           "patch_layer_style": "#/components/schemas/PatchLayerStyleBody",
           "patch_workbench_delta": "#/components/schemas/PatchWorkbenchDeltaBody",
@@ -24290,6 +26225,9 @@
          },
          {
           "$ref": "#/components/schemas/PatchLayerStyleBody"
+         },
+         {
+          "$ref": "#/components/schemas/PatchLayerLabelAuthoringBody"
          },
          {
           "$ref": "#/components/schemas/PatchComponentBody"
@@ -27572,6 +29510,398 @@
     ]
    }
   },
+  "/api/v1/data-delivery/capabilities": {
+   "get": {
+    "description": "交付能力查询 —— 运行时真实驱动探测（可用/受限/不可用 + 约束说明）。\n\n纯静态探测（无数据访问），可选认证 —— 与地图导出能力查询同宽。",
+    "operationId": "delivery_capabilities_api_v1_data_delivery_capabilities_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeliveryCapabilitiesResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delivery Capabilities",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   }
+  },
+  "/api/v1/data-delivery/jobs": {
+   "get": {
+    "description": "本人可见的交付任务（server state 恢复 —— 页面刷新/项目重开后重建）。",
+    "operationId": "list_jobs_api_v1_data_delivery_jobs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Project Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/DeliveryJobView"
+         },
+         "title": "Response List Jobs Api V1 Data Delivery Jobs Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Jobs",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   },
+   "post": {
+    "description": "提交交付任务（服务端复检 + 损失确认强制；幂等键防重复制造输出）。",
+    "operationId": "create_delivery_job_api_v1_data_delivery_jobs_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DeliveryJobCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeliveryJobCreateResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Delivery Job",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   }
+  },
+  "/api/v1/data-delivery/jobs/{job_id}": {
+   "get": {
+    "description": "交付任务状态 + 完成后的完整回执。",
+    "operationId": "get_job_api_v1_data_delivery_jobs__job_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeliveryJobView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Job",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   }
+  },
+  "/api/v1/data-delivery/jobs/{job_id}/download": {
+   "get": {
+    "description": "受控下载：授权（creator/会话/项目/owner token）→ receipt 成员校验。",
+    "operationId": "download_delivery_api_v1_data_delivery_jobs__job_id__download_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "member",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 255,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Member"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Download Delivery",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   }
+  },
+  "/api/v1/data-delivery/preview": {
+   "post": {
+    "description": "交付预览：源身份/完整性、逐格式能力、损失与阻断项、需确认清单。",
+    "operationId": "delivery_preview_api_v1_data_delivery_preview_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DeliverySpec"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeliveryPreview"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delivery Preview",
+    "tags": [
+     "Data Delivery / 数据交付",
+     "Data Delivery / 数据交付"
+    ]
+   }
+  },
   "/api/v1/data-fabric/catalog": {
    "get": {
     "description": "检索 Spatial Catalog 空间元数据索引目录\n\nDefault response is a slim summary (no `descriptor`, no `meta_profile`):\nthe dedicated ``GET /data-fabric/catalog/{id}/descriptor`` returns the\nfull payload on demand. Pass ``?summary=false`` to opt into the legacy\nshape with both fields populated.",
@@ -28973,6 +31303,748 @@
     ]
    }
   },
+  "/api/v1/data-import/batches": {
+   "get": {
+    "operationId": "list_batches_api_v1_data_import_batches_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BatchListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Batches",
+    "tags": [
+     "数据导入工作台"
+    ]
+   },
+   "post": {
+    "operationId": "create_batch_api_v1_data_import_batches_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_create_batch_api_v1_data_import_batches_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BatchCreateResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "创建导入批次（多文件 staging + 成员枚举）",
+    "tags": [
+     "数据导入工作台"
+    ]
+   }
+  },
+  "/api/v1/data-import/batches/{batch_id}": {
+   "delete": {
+    "operationId": "delete_batch_api_v1_data_import_batches__batch_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "title": "Batch Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeleteResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Batch",
+    "tags": [
+     "数据导入工作台"
+    ]
+   },
+   "get": {
+    "operationId": "get_batch_api_v1_data_import_batches__batch_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "title": "Batch Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BatchDetailResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Batch",
+    "tags": [
+     "数据导入工作台"
+    ]
+   }
+  },
+  "/api/v1/data-import/batches/{batch_id}/cancel": {
+   "post": {
+    "operationId": "cancel_api_v1_data_import_batches__batch_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "title": "Batch Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CancelResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel",
+    "tags": [
+     "数据导入工作台"
+    ]
+   }
+  },
+  "/api/v1/data-import/batches/{batch_id}/commit": {
+   "post": {
+    "operationId": "commit_api_v1_data_import_batches__batch_id__commit_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "title": "Batch Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CommitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CommitAcceptedResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Commit",
+    "tags": [
+     "数据导入工作台"
+    ]
+   }
+  },
+  "/api/v1/data-import/batches/{batch_id}/diagnostics": {
+   "get": {
+    "description": "拒绝行明细产物（同 owner；评审 P2-4：收据 diagnostics_ref 可落地读取）。",
+    "operationId": "get_diagnostics_api_v1_data_import_batches__batch_id__diagnostics_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "title": "Batch Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "member_key",
+      "required": true,
+      "schema": {
+       "maxLength": 300,
+       "title": "Member Key",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Diagnostics Api V1 Data Import Batches  Batch Id  Diagnostics Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Diagnostics",
+    "tags": [
+     "数据导入工作台"
+    ]
+   }
+  },
+  "/api/v1/data-import/batches/{batch_id}/plan": {
+   "post": {
+    "operationId": "save_plan_api_v1_data_import_batches__batch_id__plan_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "title": "Batch Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanSaveRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PlanSaveResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Save Plan",
+    "tags": [
+     "数据导入工作台"
+    ]
+   }
+  },
+  "/api/v1/data-import/batches/{batch_id}/preview": {
+   "post": {
+    "operationId": "preview_api_v1_data_import_batches__batch_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "title": "Batch Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PreviewRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/app__schemas__data_import_schema__PreviewResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview",
+    "tags": [
+     "数据导入工作台"
+    ]
+   }
+  },
+  "/api/v1/data-import/batches/{batch_id}/receipts": {
+   "get": {
+    "operationId": "receipts_api_v1_data_import_batches__batch_id__receipts_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "title": "Batch Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ReceiptsResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Receipts",
+    "tags": [
+     "数据导入工作台"
+    ]
+   }
+  },
   "/api/v1/data-lifecycle/assess": {
    "post": {
     "operationId": "run_assess_api_v1_data_lifecycle_assess_post",
@@ -30086,7 +33158,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/PreviewResponse"
+         "$ref": "#/components/schemas/app__schemas__data_preparation_schema__PreviewResponse"
         }
        }
       },

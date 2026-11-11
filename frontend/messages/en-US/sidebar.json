@@ -388,7 +388,8 @@
     "groupByAria": "Group-by field",
     "noGroup": "No grouping",
     "statsModeHint": "result_mode will switch to statistics (aggregate results only, no geometry transferred)",
-    "aggFieldRequired": "Choose an aggregate field before running or explaining the query."
+    "aggFieldRequired": "Choose an aggregate field before running or explaining the query.",
+    "deliver": "Deliver"
   },
   "explain": {
     "queryFingerprint": "Query fingerprint",

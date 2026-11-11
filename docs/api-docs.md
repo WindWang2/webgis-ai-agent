@@ -711,12 +711,27 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `POST` | `/api/v1/data-preparation/inspect` | Inspect | InspectResponse |
 | `POST` | `/api/v1/data-preparation/plan` | Create Plan | PlanResponse |
-| `POST` | `/api/v1/data-preparation/plan/{plan_id}/preview` | Preview Plan | PreviewResponse |
+| `POST` | `/api/v1/data-preparation/plan/{plan_id}/preview` | Preview Plan | app__schemas__data_preparation_schema__PreviewResponse |
 | `POST` | `/api/v1/data-preparation/plan/{plan_id}/execute` | Execute | ExecuteResponse |
 | `GET` | `/api/v1/data-preparation/plans` | Plans | PlanListResponse |
 | `DELETE` | `/api/v1/data-preparation/plan/{plan_id}` | Discard | DiscardPlanResponse |
 | `POST` | `/api/v1/data-preparation/bindings/fields` | Bind Fields | FieldBindingResponse |
 | `GET` | `/api/v1/data-preparation/plan/{plan_id}/receipt` | Plan Receipt | ReceiptSummaryOut |
+
+### 数据导入工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/data-import/batches` | 创建导入批次（多文件 staging + 成员枚举） | BatchCreateResponse |
+| `GET` | `/api/v1/data-import/batches` | List Batches | BatchListResponse |
+| `GET` | `/api/v1/data-import/batches/{batch_id}` | Get Batch | BatchDetailResponse |
+| `DELETE` | `/api/v1/data-import/batches/{batch_id}` | Delete Batch | DeleteResponse |
+| `POST` | `/api/v1/data-import/batches/{batch_id}/plan` | Save Plan | PlanSaveResponse |
+| `POST` | `/api/v1/data-import/batches/{batch_id}/preview` | Preview | app__schemas__data_import_schema__PreviewResponse |
+| `POST` | `/api/v1/data-import/batches/{batch_id}/commit` | Commit | CommitAcceptedResponse |
+| `POST` | `/api/v1/data-import/batches/{batch_id}/cancel` | Cancel | CancelResponse |
+| `GET` | `/api/v1/data-import/batches/{batch_id}/receipts` | Receipts | ReceiptsResponse |
+| `GET` | `/api/v1/data-import/batches/{batch_id}/diagnostics` | Get Diagnostics | object |
 
 ### 字段计算
 
@@ -906,6 +921,17 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/data-fabric/catalog/{item_id}/features` | Get Catalog Item Features Page | CatalogFeaturesPageResponse |
 | `GET` | `/api/v1/data-fabric/catalog/{item_id}/features/stream` | Stream Catalog Item Features Http | object |
 | `POST` | `/api/v1/data-fabric/materialize` | Materialize Catalog Item | MaterializeResponse |
+
+### Data Delivery / 数据交付
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/data-delivery/capabilities` | Delivery Capabilities | DeliveryCapabilitiesResponse |
+| `POST` | `/api/v1/data-delivery/preview` | Delivery Preview | DeliveryPreview |
+| `POST` | `/api/v1/data-delivery/jobs` | Create Delivery Job | — |
+| `GET` | `/api/v1/data-delivery/jobs` | List Jobs | array |
+| `GET` | `/api/v1/data-delivery/jobs/{job_id}` | Get Job | DeliveryJobView |
+| `GET` | `/api/v1/data-delivery/jobs/{job_id}/download` | Download Delivery | object |
 
 ### Lakehouse / 空间数据湖仓
 
@@ -1245,6 +1271,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：488（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：504（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
