@@ -8,6 +8,7 @@ import type { Map as MaplibreMap } from 'maplibre-gl';
 import {
   ArrowDown,
   ArrowUp,
+  ClipboardCheck,
   Eye,
   EyeOff,
   FileDown,
@@ -71,6 +72,8 @@ import {
 } from '@/lib/api/storymap';
 import { StoryNarrator } from '@/components/story/story-narrator';
 import { StoryDashboard } from '@/components/story/story-dashboard';
+// G11（ADR-0288）：证据化地图简报 —— 草稿/编辑/证据/预检/发布/分享面板
+import { BriefPanel } from '@/components/story/brief-panel';
 
 /** 播放模式下逐章节推进的间隔（ms）；PDF 逐章定位等待同源。 */
 const PLAY_INTERVAL_MS = 2500;
@@ -111,6 +114,7 @@ export function StoryView(): React.ReactElement {
 
   // ADR-0196：后端编排 spec（null = 本地派生兜底）与排版模式
   const [storySpec, setStorySpec] = useState<StoryMapSpecDto | null>(null);
+  const [briefPanelOpen, setBriefPanelOpen] = useState(false);
   const [immersive, setImmersive] = useState(false);
   const [bundleExporting, setBundleExporting] = useState(false);
 
@@ -708,6 +712,19 @@ export function StoryView(): React.ReactElement {
               >
                 {immersive ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
               </button>
+              {/* G11：证据化地图简报（草稿/编辑/证据/预检/发布/分享） */}
+              <button
+                aria-label={t('briefPanelAria')}
+                title={t('briefPanelTitleBtn')}
+                aria-pressed={briefPanelOpen}
+                data-testid="brief-panel-toggle"
+                onClick={() => setBriefPanelOpen((v) => !v)}
+                className={`rounded-md p-2 transition-colors hover:bg-surface-hover ${
+                  briefPanelOpen ? 'text-status-info' : 'text-ink-muted hover:text-status-info'
+                }`}
+              >
+                <ClipboardCheck className="h-4 w-4" />
+              </button>
               {!specView ? (
                 <button
                   aria-label={t('orchAria')}
@@ -953,6 +970,17 @@ export function StoryView(): React.ReactElement {
           </div>
         ) : null}
       </div>
+
+      {/* G11：证据化地图简报抽屉（右侧；与叙事列/地图独立的数据面） */}
+      {briefPanelOpen && sessionIdRef.current ? (
+        <div className="absolute inset-y-0 right-0 z-40 w-[360px] xl:w-[400px] border-l border-edge-subtle bg-surface-panel shadow-[-20px_0_40px_rgba(0,0,0,0.5)]">
+          <BriefPanel
+            sessionId={sessionIdRef.current}
+            onRequestOwnerToken={requestStoryOwnerToken}
+            onClose={() => setBriefPanelOpen(false)}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

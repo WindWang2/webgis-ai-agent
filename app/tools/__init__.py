@@ -50,6 +50,8 @@ _TOOL_MODULES = [
     ("app.tools.raster_tools_cog", "register_raster_cog_tools"),
     # ("app.tools.interpolation_network", "register_interpolation_network_tools"), # Deleted in v3.4 refactor
     ("app.tools.report", "register_report_tools"),
+    # G11（ADR-0288）：证据化地图简报工具面（草稿/证据/编辑/预检/发布/导出）
+    ("app.tools.brief_tools", "register_brief_tools"),
     ("app.tools.change_detection", "register_change_detection_tools"),
     ("app.tools.monitoring_report", "register_monitoring_report_tools"),
     ("app.tools.skills", "register_skill_tools"),

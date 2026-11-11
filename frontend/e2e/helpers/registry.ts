@@ -122,6 +122,14 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['mock'],
     owner: 'situated-agent-workbench-vnext',
   },
+  {
+    id: 'j13',
+    file: 'journeys/j13-brief-delivery.journey.ts',
+    title: '证据化地图简报：草稿→编辑/证据→预检→冻结→私有交付→分享',
+    smoke: true,
+    modes: ['mock', 'real'],
+    owner: 'goal-g11-evidence-map-briefs',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);
