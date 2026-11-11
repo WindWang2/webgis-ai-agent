@@ -299,3 +299,81 @@ is exactly where the three P1s live.
   branch (`git ls-tree` on both), and G18 adds zero files under `docs/adr/`;
   `tests/unit/gis_tool_conformance/test_bounded_modelops_results.py` (missing `fcntl` on Windows)
   touches no G18 file.
+
+---
+
+## Round 2（复审，独立 reviewer #2，未参与实现与一轮评审）
+
+**Verdict: PASS** —— 三个 P1 实质解决（P1-1/P1-3 完全；P1-2 修复漏报，残留一项
+P2 多报 NEW-1，已由作者当场修复并加回归）；若干 P3 建议，无阻断。
+
+### 逐项确认
+
+- **P1-1 有界读取 —— 已修复且完整。** scope.py ids 路径改用
+  `snapshot.sample_features(50)`；`features()` 无残留大表调用方；
+  `iter_batches` 惰性读取上界为单个 row group（dict 转换受 limit 截断）；
+  table_rows 分支为内存切片（正确）。回归：monkeypatch `features()` 抛错后
+  ids 范围仍可交付。
+- **P1-2 回执漏报 —— 已修复（除 NEW-1）。** service.py 合并分析声明的全部
+  损失码（除 writer 计数的 formula_prefix_sanitized）；`crs is None` 误闸
+  已移除；nan_inf_to_empty 逐单元格计数披露；coordinate_precision_reduced
+  可达回执。
+- **P1-3 重试入队不存在的任务 —— 已修复且完整。** max_retries=0 +
+  无 dispatch_spec；心跳随阶段推进落库；既有 lifespan sweep
+  （sweep_stale 5min / sweep_orphans 1h）覆盖崩溃行；重试经
+  retryable=False 诚实拒绝，恢复路径 = 同规格重提（幂等键释放后新建行），
+  无永久卡死。
+- **P2 输出字节硬帽 —— 正确。** 各 writer 主路径解析正确；Shapefile 运行期
+  由 1GiB 临时盘帽兜底、close 时成员合计硬捕；两帽互不重复计数；失败路径
+  全部清理 staging。
+
+### Round 2 新发现及处置
+
+- **NEW-1（P2，已修复）：** 字段名损失码多报/重复 —— writer 对任何非空
+  field_map 发射 field_name_mapped，与分析码合并后出现重复
+  （显式映射 ×2）或把自动截断误标为 mapped。修复：字段名码由
+  analyze_losses 单点声明，writer 不再发射；回归
+  test_field_name_codes_no_duplicate_or_mislabel（自动/显式两种路径 +
+  去重断言）。
+- **NEW-2（P3，已修复）：** copy_mode 经 extra="allow" 隐式透传、未进
+  OpenAPI。已在 DeliveryReceipt 声明 `copy_mode: str = "reencode"`。
+- **NEW-3（P3，接受）：** z_preserved/null_geometry_preserved 的计数来自
+  ≤2000 行样本（下界；保留语义本身逐行成立）。session_ref 源为全量画像。
+- **NEW-4（P3，已修复）：** coordinate_precision 对 GeoParquet/GPKG 等
+  格式曾静默无效。修复：预览阻断（该选项仅 GeoJSON/CSV 兑现），回归
+  test_coordinate_precision_blocked_for_binary_formats。
+- **NEW-5（P3，接受）：** 心跳随进度推进更新；单批 >5min 的极端场景理论
+  上可能被误判 stale（READ_BATCH_ROWS=2000 下不可见）。
+
+### Round 1 P3 处置
+
+关闭：filter requested、durable 三态、fast_path→copy_mode、CSV sidecar
+crs、损坏回执 typed 500、discard_final、orphan sweep 覆盖、id_field 接线。
+部分：NaN/Inf 进回执（预览仍静默）。保留：P3-3（历史公共项目可见性）、
+P3-8（列表 N+1）、P3-11（回写 sha）、P3-12（GDAL 门控 CSV 探测）、
+P3-14（fast path 仅 API）。
+
+### 复核通过项（抽样）
+
+执行期版本绑定复核；快照一次解析供 filter+writer 共用；下载成员名闸
+（无 `/ \ ..`）；DataObject owner_scope_allows（内容哈希 ≠ 跨用户令牌）；
+Shapefile ZIP 成员唯一/计数守恒；GeoJSON RFC 7946 + 独立反读；行帽双重
+强制；"full ≠ 源全集"标注。**旧协议零改动**（map.py/export 无 diff；
+materialization 仅 +6 additive 键）。**快照增量可证明 additive**（+5 条
+data-delivery 路径，0 净删除；±6500 行为既有陈旧项重排，与 PR #2022 的
+同文件再生成存在冲突面 —— PR 说明已注明）。
+
+### 测试证据（Round 2）
+
+| 命令 | 结果 |
+|---|---|
+| pytest tests/delivery -q --no-cov | 55 passed |
+| contract/snapshot 5 文件 | 28 passed（字节级 OpenAPI 闸绿） |
+| frontend tsc --noEmit | clean |
+| vitest components/data-delivery | 4 passed |
+
+### 环境阻塞（既有，非本任务）
+
+- tests/test_adr_numbering_contract.py：ADR 0286/0287 撞号（base 即存在）。
+- tests/unit/gis_tool_conformance/test_bounded_modelops_results.py：
+  Windows fcntl 缺失 7 errors（base 即存在）。
