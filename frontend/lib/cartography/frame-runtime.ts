@@ -146,15 +146,6 @@ export function projectFrameRuntime(inputs: FrameRuntimeInputs): FrameRuntimeSlo
     const snap = inputs.snapshots.get(slot.frameId) ?? null;
     const desiredDataRevision = slot.binding?.contentRevision ?? null;
     const active = inputs.activeFrameId === slot.frameId;
-    const desiredFp = snap
-      ? snapshotFingerprint({
-          sessionId: '',
-          frameId: slot.frameId,
-          specRevision: inputs.specRevision,
-          dataRevision: desiredDataRevision,
-          viewportSize: inputs.viewportSize,
-        })
-      : null;
     // 快照"当前"判定：条目版本 == 期望版本（指纹在 store 侧键控；此处按
     // 版本比较，使 spec/数据刷新后旧快照立即 stale —— A11）。
     const snapshotCurrent = !!(

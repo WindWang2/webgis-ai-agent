@@ -54,21 +54,21 @@ class MapInstanceRegistry {
     };
     this.entries.set(key, entry);
     this.emit();
-    const registry = this;
     let released = false;
     return {
       key,
       kind,
       generation,
-      release() {
+      // 箭头函数词法捕获 this（no-this-alias 纪律）。
+      release: () => {
         if (released) return;
         released = true;
-        const cur = registry.entries.get(key);
+        const cur = this.entries.get(key);
         // 只有当前代际才真注销（迟到 release 不影响新注册）。
         if (cur && cur.generation === generation && cur.active) {
           cur.active = false;
-          registry.entries.delete(key);
-          registry.emit();
+          this.entries.delete(key);
+          this.emit();
         }
       },
     };

@@ -5,7 +5,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- vi.mock hoist 纪律 */
 import { render, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { MapRef } from 'react-map-gl/maplibre';
 import { FrameViewport, type FrameViewportHandle } from './frame-viewport';
 import { makeMockMaplibreMap } from '../../../test/__mocks__/maplibre-map';
 import { mapInstanceRegistry } from './frame-instance-registry';
@@ -44,7 +43,7 @@ function mount() {
   const onMountedFact = vi.fn();
   const utils = render(
     <FrameViewport
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       ref={(h: any) => { handleRef.current = h; }}
       frameId="fp-1"
       effectiveSpec={spec}
@@ -126,7 +125,6 @@ describe('FrameViewport 生命周期（P4）', () => {
     const handleRef: { current: FrameViewportHandle | null } = { current: null };
     render(
       <FrameViewport
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ref={(h: any) => { handleRef.current = h; }}
         frameId="fp-1"
         effectiveSpec={spec}

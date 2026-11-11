@@ -506,7 +506,7 @@ export function FrameProductGrid({
       liveCount: mapInstanceRegistry.liveCount(),
       budget: mapInstanceRegistry.budget(),
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 每次投影刷新
+     
   }, [slots, liveGeneration, gridState.open]);
 
   // ── 事实回调（FrameViewport → mountedFacts）。──

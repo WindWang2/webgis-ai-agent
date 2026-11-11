@@ -17,7 +17,6 @@ import {
   closeFrameGrid,
   openFrameGrid,
   resetFrameGridForTest,
-  setActiveFrameRuntime,
 } from '@/lib/cartography/frame-grid-store';
 import {
   commitMapSpecDocument,

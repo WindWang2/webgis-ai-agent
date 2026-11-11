@@ -109,8 +109,9 @@ export class FrameCameraHub {
     if (this.disposed) return () => {};
     const key = entry.id;
     this.detach(key); // 旧代际/重复挂载先解绑（单槽位）
-    const hub = this;
-    const handler = () => hub.onMove(entry.id, entry.generation);
+    const { id, generation } = entry;
+    // 箭头词法捕获 this（no-this-alias 纪律）。
+    const handler = () => this.onMove(id, generation);
     entry.map.on('move', handler);
     const stored: HubEntry = { ...entry, handler };
     this.entries.set(key, stored);
