@@ -123,6 +123,15 @@ def _effective_zoom(spec: Dict[str, Any], observed_zoom: Optional[float]) -> flo
     return export_zoom_of_mapspec(spec)
 
 
+def _components_of_spec(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """页面组件声明（有界 32 条）—— P3 的生产输入面。"""
+    layout = spec.get("layout") if isinstance(spec.get("layout"), dict) else {}
+    comps = layout.get("components")
+    if not isinstance(comps, list):
+        return []
+    return [c for c in comps[:32] if isinstance(c, dict)]
+
+
 def _resolve(
     spec: Dict[str, Any], layer: Dict[str, Any], *,
     observed_zoom: Optional[float] = None,
@@ -165,6 +174,10 @@ async def inspect_scale_portrayal(
         "policy": copy.deepcopy(policy) if policy is not None else None,
         "explanation": sp.bounded_explanation(decision),
         "available_fields": _available_fields(spec, hit),
+        # review F5：组件状态在此成为**真实生产消费者**（不是孤立纯函数），
+        # 与 UI / Agent 回执同源；legend/colorbar 恒 full_domain。
+        "components": sp.component_portrayal_state(
+            decision, _components_of_spec(spec)),
     }
 
 
@@ -221,6 +234,14 @@ async def apply_scale_portrayal(
         return {"status": "rejected", "diagnostics": [
             {"code": "SCALE.POLICY.UNKNOWN_MODE", "field": "mode",
              "detail": "mode 只能是 preview | commit"}]}
+    # review F9：user-origin commit 的 CAS 基线由引擎强制必填。缺基线时
+    # 在此 typed 拒绝，绝不静默当成已提交（UI cursor 可能尚未取到 revision）。
+    if mode == "commit" and origin == "user" and expected_revision is None:
+        return {"status": "rejected", "diagnostics": [{
+            "code": "SCALE.POLICY.MISSING_EXPECTED_REVISION",
+            "field": "expected_revision",
+            "detail": "用户来源的 commit 必须携带 expected_revision（CAS 基线）",
+        }], "hint": "刷新 MapSpec revision 后重试；本次未产生任何 mutation"}
     spec = await _load_spec(session_id)
     hit = _match_layer(spec, layer)
     fields = _available_fields(spec, hit)

@@ -6,21 +6,30 @@
 from __future__ import annotations
 
 from app.lib.cartography import scale_portrayal as sp
+from app.lib.cartography.component_registry import get_component_registry
 
 AUTO = {"version": sp.SCALE_POLICY_VERSION, "mode": "auto_lod"}
 
+# review F10：白名单取自**真实组件 registry**（原实现自造字典，属自证）。
+_REGISTRY = get_component_registry()
+_LEGEND_VARIANTS = tuple(_REGISTRY.get("legend").variants)
+_CBAR_VARIANTS = tuple(_REGISTRY.get("continuous_colorbar").variants)
+_SCALE_VARIANTS = tuple(_REGISTRY.get("scale_bar").variants)
+LEGEND_VARIANT = _LEGEND_VARIANTS[0]
+CBAR_VARIANT = _CBAR_VARIANTS[0]
+SUPPORTED = {
+    "legend": _LEGEND_VARIANTS,
+    "continuous_colorbar": _CBAR_VARIANTS,
+    "scale_bar": _SCALE_VARIANTS,
+}
+
 COMPONENTS = [
-    {"id": "lg", "type": "legend", "variant": "boxed",
+    {"id": "lg", "type": "legend", "variant": LEGEND_VARIANT,
      "placement": {"x": 0.02, "y": 0.02, "width": 0.2, "height": 0.3}},
-    {"id": "cb", "type": "continuous_colorbar", "variant": "academic"},
-    {"id": "sb", "type": "scale_bar", "variant": "dual_unit"},
+    {"id": "cb", "type": "continuous_colorbar", "variant": CBAR_VARIANT},
+    {"id": "sb", "type": "scale_bar", "variant": _SCALE_VARIANTS[-1]},
     {"id": "lb", "type": "label_layer"},
 ]
-SUPPORTED = {
-    "legend": ("minimal", "boxed", "academic"),
-    "continuous_colorbar": ("academic",),
-    "scale_bar": ("minimal", "boxed", "academic", "dual_unit"),
-}
 
 
 def _decision(zoom: float):
@@ -39,8 +48,8 @@ def test_a12_legend_and_colorbar_keep_full_domain_across_all_bands():
         assert by_id["lg"]["state"] == "full_domain"
         assert by_id["cb"]["state"] == "full_domain"
         assert by_id["lb"]["state"] == "full_domain"
-        assert by_id["lg"]["variant"] == "boxed"       # 不新增/不换 variant
-        assert by_id["cb"]["variant"] == "academic"
+        assert by_id["lg"]["variant"] == LEGEND_VARIANT  # 真实 registry variant
+        assert by_id["cb"]["variant"] == CBAR_VARIANT
         # 完整数据域说明在场（不写回 source / 分析 / 统计 count）
         assert any("完整数据域" in x for x in by_id["lg"]["disclosures"])
         snapshots.append((by_id["lg"]["state"], by_id["lg"]["variant"],

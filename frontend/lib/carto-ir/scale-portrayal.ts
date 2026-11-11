@@ -37,7 +37,9 @@ export const G27_POLICY_NAMESPACE = "g27_scale_portrayal" as const;
 
 /**
  * 4 档 LOD 投影（**数据镜像，不是规则**）——逐值等于后端
- * `scene_lod.build_label_zoom_bands()`；由共享 corpus 双向漂移闸锁定。
+ * `spec_label_zoom_bands()` 的 spec 投影：由 `build_label_zoom_bands()`
+ * 的首尾边界钳到渲染器全域 [0,24)，四档 topRatio/sizeRatio 与 6/10/14
+ * 内部边界一字未改；共享 corpus 双向漂移闸锁定（review F8）。
  * 前端运行时真正消费的是 spec 的 `layer.label.zoomBands`，本常量仅供
  * UI 预览与契约测试，绝不作为第二权威参与渲染裁决。
  */
@@ -126,7 +128,17 @@ export function readScalePortrayalPolicy(layer: unknown): Record<string, unknown
 export function hasScalePortrayalConsumer(layer: unknown): boolean {
   const label = asRecord(asRecord(layer).label);
   const raw = label.zoomBands ?? label.zoom_bands;
-  return Array.isArray(raw) && raw.length > 0;
+  if (!Array.isArray(raw) || raw.length !== G27_LABEL_ZOOM_BANDS.length) return false;
+  // review F12：收紧为「确为 G27 spec 投影」而非任意非空数组 ——
+  // 逐位比对 4 档边界与系数，authored/其它来源的 bands 不算 G27 已接线。
+  return G27_LABEL_ZOOM_BANDS.every((expected, i) => {
+    const b = asRecord(raw[i]);
+    const num = (k: string) => (typeof b[k] === 'number' ? b[k] as number : NaN);
+    return num('minZoom') === expected.minZoom
+      && num('maxZoom') === expected.maxZoom
+      && num('topRatio') === expected.topRatio
+      && num('sizeRatio') === expected.sizeRatio;
+  });
 }
 
 function finiteInRange(value: unknown, lo: number, hi: number): boolean {

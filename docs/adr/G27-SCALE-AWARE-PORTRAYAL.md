@@ -23,7 +23,7 @@ precedence：用户隐藏（全 zoom 保持、`applied=false`）> 人工 pin/锁
 
 ### D2 — 只投影既有 spec 字段
 
-`project_scale_portrayal_spec()` 只产出 `layer.label.zoomBands` 与 `thresholds.maxFeatures`（均既有字段）。policy 持久化在**既有开放 dict** `layer.scale_profile.g27_scale_portrayal` 命名空间内 —— 不新增 schema 字段、不 bump MapSpec 版本、不重生成 `types.generated.ts`。旧 spec 无该键 → 零改动（A01）。
+`project_scale_portrayal_spec()` 默认只产出 `layer.label.zoomBands`（既有字段）。`decimate_budget` 保留在有界解释面作为 display-budget 披露，**不自动改写**文档级 `thresholds.maxFeatures`（R1 F5：原实现投影后被两条落笔路径丢弃，且改写会影响存量导出语义）；仅 `include_budget=True` 显式请求时才返回该投影。policy 持久化在**既有开放 dict** `layer.scale_profile.g27_scale_portrayal` 命名空间内 —— 不新增 schema 字段、不 bump MapSpec 版本、不重生成 `types.generated.ts`。旧 spec 无该键 → 零改动（A01）。
 
 **修复的真实漂移**：`scene_lod.LOD_BANDS` 的 [3,19) 是参考区间；直接投影会让 z<3 与 z≥19 出现无档死带，且前端 `activeBandIndex` 与后端 `lod_for_zoom` 的 [3,18] 钳制在 z=19 处 `sizeRatio` 不一致（1.0 vs 1.1）。`spec_label_zoom_bands()` 只把首档 `minZoom` 钳到 0、末档 `maxZoom` 钳到 24，四档 topRatio/sizeRatio 与相邻边界一字不改；共享 corpus 双向漂移闸锁定（A03/A04）。
 
@@ -39,7 +39,7 @@ precedence：用户隐藏（全 zoom 保持、`applied=false`）> 人工 pin/锁
 
 ### D5 — 科学语义与有界解释
 
-小尺度省略标注/符号是 **display-only**，固定 disclosures 明确：不写回 source / 分析结果 / 统计 count；`radius_px`（屏幕像素）≠ `bandwidth_m`（真实距离），跨 zoom 不保证同量纲；`decimate_budget` 与 data-plane 传输 LOD 均非统计样本。legend / colorbar / labels 组件恒 `full_domain`，不新增未经 renderer 支持的 variant，不改布局矩形。`bounded_explanation()` 字段/数组/字节全有界，裁剪优先保留 diagnostics。
+小尺度省略标注/符号是 **display-only**，固定 disclosures 明确：不写回 source / 分析结果 / 统计 count；`radius_px`（屏幕像素）≠ `bandwidth_m`（真实距离），跨 zoom 不保证同量纲；`decimate_budget` 与 data-plane 传输 LOD 均非统计样本。legend / colorbar / labels 组件恒 `full_domain`，不新增未经 renderer 支持的 variant，不改布局矩形；组件状态经 `inspect_scale_portrayal` 真实回执成为生产消费者（R1 F5），但**未接真实 renderer 变体渲染**（ACCEPTANCE 标 partial）。`bounded_explanation()` 字段/数组/字节全有界，裁剪优先保留 diagnostics。
 
 ### D6 — 明确不做
 

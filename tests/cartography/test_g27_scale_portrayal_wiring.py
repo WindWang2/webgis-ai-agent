@@ -126,3 +126,48 @@ def test_policy_is_not_written_as_a_new_spec_field():
     assert "g27_scale_portrayal" not in layer
     assert "scale_portrayal" not in layer
     assert set(layer["scale_profile"]) == {"g27_scale_portrayal"}
+
+
+def test_f3_converter_and_service_agree_on_priority_field():
+    """review F3：同一合法 policy 在两条生产路径的 applied 判定必须一致。
+
+    旧实现 converter 不传 available_fields，带 priority_field 的策略被误判
+    幽灵字段而整层不投影；service 传了证据面判为有效 —— 结果相反。
+    """
+    from app.lib.cartography.scale_portrayal import (
+        SCALE_POLICY_NAMESPACE, validate_scale_policy,
+    )
+    from app.services.gis_harness.scale_portrayal.service import _available_fields
+
+    policy = {"version": V, "mode": "auto_lod",
+              "priority_field": "population"}
+    spec = {
+        "layers": [{"id": "L", "source": "s",
+                    "label": {"field": "name"}}],
+        "sources": {"s": {"type": "geojson", "inlineData": FC}},
+    }
+    fields = _available_fields(spec, spec["layers"][0])
+    assert "population" in fields
+    assert validate_scale_policy(policy, available_fields=fields) == []
+
+    layer, warns = _convert({
+        "id": "L",
+        "scale_profile": {SCALE_POLICY_NAMESPACE: policy},
+    })
+    bands = (layer.get("label") or {}).get("zoomBands")
+    assert bands == sp.spec_label_zoom_bands()
+    assert "scale_portrayal_projection_skipped" not in " ".join(warns)
+
+
+def test_f11_exception_path_leaves_no_partial_projection():
+    """review F11：解析异常被吞成 warning 时，不得留下半投影状态。"""
+    from unittest.mock import patch
+
+    with patch(
+        "app.lib.cartography.scale_portrayal.resolve_effective_scale_portrayal",
+        side_effect=RuntimeError("probe"),
+    ):
+        layer, warns = _convert(_g27_layer())
+    assert not (layer.get("label") or {}).get("zoomBands")
+    assert any("scale_portrayal_projection_skipped" in w for w in warns)
+    assert layer["id"] == "L" and "paint" in layer  # 出图链未断

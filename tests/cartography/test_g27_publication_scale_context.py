@@ -64,28 +64,44 @@ def test_a21_each_frame_consumes_its_own_extent_and_viewport():
     assert contexts[0].scale_denominator is not None
     assert contexts[1].scale_denominator is not None
     assert contexts[0].scale_denominator != contexts[1].scale_denominator
-    assert all(c.visibility_semantics == "live_export_shared" for c in contexts)
+    assert all(c.visibility_semantics.startswith("live_export_shared:")
+               for c in contexts)
 
 
 def test_a15_dpi_only_affects_sampling_and_size_not_visibility():
+    """review F4：可证伪 —— DPI 确实改变物理分母，但不改变任何语义裁决。
+
+    旧断言把 `export_adjudicate_layer`（本就不接受 dpi）对同一 zoom 重复
+    调用三次再 set 去重，恒真。改为：三种 DPI 各自产出完整 scale context，
+    其 `visibility_semantics` 由 `plan_scale_contexts` 内部真实执行
+    `export_adjudicate_layer` 得到；若有人把 DPI 当语义 zoom 接进门控，
+    该摘要会随 DPI 变化，本断言即失败。
+    """
     ir = _ir()
     by_dpi = {
         dpi: plan_scale_contexts(ir, DOC, target_dpi=dpi,
                                  logical_viewport_px=[1200, 800])
         for dpi in (72, 300, 600)
     }
-    for contexts in by_dpi.values():
-        assert [c.frame_extent for c in contexts] == [
-            [116.0, 39.0, 117.0, 40.0], [120.0, 30.0, 121.0, 31.0]]
-        assert all(c.semantic_zoom == 10.0 for c in contexts)
-        assert all(c.visibility_semantics == "live_export_shared" for c in contexts)
-    # 可见层裁决函数不接受 DPI：三种 DPI 下逐 zoom 的裁决逐位相同
-    for zoom in (0.0, 7.9, 8.0, 10.0, 13.9, 14.0, 24.0):
-        verdicts = {
-            export_adjudicate_layer(LAYER, zoom)
-            for _ in by_dpi
-        }
-        assert len(verdicts) == 1
+    # ① DPI 真的进入了采样/尺寸换算通道（分母三值互不相同）
+    denominators = {
+        dpi: tuple(c.scale_denominator for c in contexts)
+        for dpi, contexts in by_dpi.items()
+    }
+    assert len(set(denominators.values())) == 3
+    assert all(all(d is not None for d in ds) for ds in denominators.values())
+    # ② 但语义 zoom / frame extent / 逻辑 viewport / 真实可见层裁决摘要
+    #    与 DPI 完全无关（逐位比对三种 DPI 产出的上下文）
+    signatures = {
+        dpi: tuple((tuple(c.frame_extent or []), c.semantic_zoom,
+                    c.visibility_semantics, tuple(c.logical_viewport_px))
+                   for c in contexts)
+        for dpi, contexts in by_dpi.items()
+    }
+    assert len(set(signatures.values())) == 1
+    assert all(c.visibility_semantics.startswith("live_export_shared:")
+               for contexts in by_dpi.values() for c in contexts)
+    assert all(c.semantic_zoom == 10.0 for contexts in by_dpi.values() for c in contexts)
     assert export_adjudicate_layer(LAYER, 7.9) == "gated"
     assert export_adjudicate_layer(LAYER, 10.0) == "render"
 

@@ -129,7 +129,10 @@ export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
       setMessage(status === 'committed'
         ? `已提交（revision ${String(data?.mapspec_revision ?? '')}）`
         : status === 'superseded' ? '版本已变化，请重试' : `未应用：${status || '未知回执'}`);
-      await refreshMapSpecAfterExternalMutation();
+      await refreshMapSpecAfterExternalMutation(
+        sessionId,
+        typeof data?.mapspec_revision === 'number' ? data.mapspec_revision : undefined,
+      );
       await loadExplanation(zoom);
     } catch (err) {
       setMessage(`提交失败：${err instanceof Error ? err.message : String(err)}`);

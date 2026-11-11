@@ -121,8 +121,13 @@ async def test_ghost_field_reference_is_rejected(stub_load, stub_mutation):
 
 
 @pytest.mark.asyncio
-async def test_a19_a20_commit_is_local_with_cas_and_undo_chain(
+async def test_a19_a20_commit_payload_is_local_with_cas_params(
         stub_load, stub_mutation):
+    """隔离 fixture：只证明 service 构造的局部 layer 与 CAS 参数/回执映射。
+
+    真实 apply_gis_mutation 的锁/revision/provenance/undo 引擎守卫未在本
+    最小 venv 执行（外部阻断，R1 F2）—— 测试名不再暗示 undo 链已实证。
+    """
     out = await svc.apply_scale_portrayal(
         "sess", "L1", policy=AUTO, mode="commit",
         expected_revision=5, operation_id="op-1", note="test")
@@ -179,3 +184,21 @@ async def test_restore_auto_removes_namespace_but_keeps_authored_bands(
     assert "g27_scale_portrayal" not in layer["scale_profile"]
     assert layer["scale_profile"]["some_other_profile"] == {"keep": True}
     assert layer["label"]["zoomBands"] == authored  # user-wins
+
+
+@pytest.mark.asyncio
+async def test_f9_user_origin_commit_requires_cas_baseline(stub_load, stub_mutation):
+    """R1 F9：user-origin commit 缺 expected_revision 必须 typed 拒写。"""
+    rejected = await svc.apply_scale_portrayal(
+        "sess", "L1", policy=AUTO, mode="commit",
+        origin="user", actor="mapspec_route")
+    assert rejected["status"] == "rejected"
+    assert rejected["diagnostics"][0]["code"] == \
+        "SCALE.POLICY.MISSING_EXPECTED_REVISION"
+    assert "intent" not in stub_mutation        # 没有任何 mutation
+
+    committed = await svc.apply_scale_portrayal(
+        "sess", "L1", policy=AUTO, mode="commit", expected_revision=5,
+        origin="user", actor="mapspec_route")
+    assert committed["status"] == "committed"
+    assert stub_mutation["kwargs"]["expected_revision"] == 5

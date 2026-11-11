@@ -408,7 +408,11 @@ def resolve_effective_scale_portrayal(
     gate = _representation.zoom_gate_of_layer(layer_dict)
 
     # ── precedence 5：自动 LOD（三个零消费符号成为真实生产调用）
-    bands = _scene_lod.build_label_zoom_bands()
+    # review F8：解释面与 spec 投影必须取**同一份**档表。权威
+    # `LOD_BANDS` 的 [3,19) 参考区间经 spec_label_zoom_bands() 钳到渲染器
+    # 全域 [0,24)（只钳首尾，四档系数/内部边界一字不改），否则 UI/Agent
+    # 解释与实际写入 label.zoomBands 的档位数值会漂移。
+    bands = spec_label_zoom_bands()
     active_idx = _active_band_index(effective_zoom, bands)
     active_band = dict(bands[active_idx])
     lod = _scene_lod.lod_for_zoom(effective_zoom)
@@ -496,25 +500,34 @@ def resolve_effective_scale_portrayal(
 
 
 def project_scale_portrayal_spec(
-    decision: EffectiveScalePortrayal, *, include_bands: bool = True
+    decision: EffectiveScalePortrayal, *,
+    include_bands: bool = True,
+    include_budget: bool = False,
 ) -> Dict[str, Any]:
     """EffectiveScalePortrayal → 既有 spec 字段（不新增 spec 字段）。
 
-    ``applied=false`` / disabled → ``{}``（旧 spec 零改动）。zoomBands 直接
-    取 :func:`scene_lod.build_label_zoom_bands`（camelCase，匹配
+    ``applied=false`` / disabled → ``{}``（旧 spec 零改动）。zoomBands 取
+    :func:`spec_label_zoom_bands`（camelCase，匹配
     ``label-layout.ts::normalizeBands``）。
+
+    review F5：``decimate_budget`` **默认不投影**到文档级
+    ``thresholds.maxFeatures``。该字段是既有导出预算阈值，自动覆写会改变
+    存量导出语义且两条落笔路径都只处理 layer（原实现投影后被静默丢弃，
+    属"看起来接了其实没接"）。它保留在 ``EffectiveScalePortrayal`` 的有界
+    解释面作为 display budget 披露；仅当调用方显式
+    ``include_budget=True``（明确要改导出预算）时才返回该投影。
     """
     if not decision.applied:
         return {}
-    spec: Dict[str, Any] = {
-        "thresholds": {"maxFeatures": int(decision.decimate_budget)},
-    }
+    spec: Dict[str, Any] = {}
+    if include_budget:
+        spec["thresholds"] = {"maxFeatures": int(decision.decimate_budget)}
     if include_bands:
         bands = [
             {k: b[k] for k in ("minZoom", "maxZoom", "topRatio", "sizeRatio")}
             for b in spec_label_zoom_bands()
         ]
-        return {"label": {"zoomBands": bands}, **spec}
+        spec = {"label": {"zoomBands": bands}, **spec}
     return spec
 
 

@@ -149,7 +149,9 @@ def test_four_bands_top_ratio_monotonic_and_continuous():
     d = sp.resolve_effective_scale_portrayal(zoom=10.0, layer={"id": "L"}, policy=_AUTO)
     bands = d.label_zoom_bands
     assert len(bands) == 4
-    assert bands == build_label_zoom_bands()          # 直接取权威，camelCase
+    # review F8：解释面与 spec 投影取同一份钳到 [0,24) 的档表，
+    # 不再保留与 runtime 消费值不同的原始 [3,19) 快照。
+    assert bands == sp.spec_label_zoom_bands()
     for b in bands:
         assert set(b) == {"minZoom", "maxZoom", "topRatio", "sizeRatio"}
     tops = [b["topRatio"] for b in bands]
@@ -296,7 +298,7 @@ def test_physical_scale_context_shape():
 def test_project_spec_shape_and_camel_case():
     d = sp.resolve_effective_scale_portrayal(zoom=10.0, layer={"id": "L"}, policy=_AUTO)
     spec = sp.project_scale_portrayal_spec(d)
-    assert set(spec) == {"label", "thresholds"}    # 只有既有 spec 字段
+    assert set(spec) == {"label"}                  # 默认只有既有 spec 字段
     assert set(spec["label"]) == {"zoomBands"}
     bands = spec["label"]["zoomBands"]
     assert len(bands) == 4
@@ -305,13 +307,14 @@ def test_project_spec_shape_and_camel_case():
     # 前端 activeBandIndex 与后端 lod_for_zoom 的 [3,18] 钳制在 z=19 漂移。
     # 只钳首尾边界，四档 topRatio/sizeRatio 与相邻边界一字不改。
     assert bands == sp.spec_label_zoom_bands()
+    assert d.label_zoom_bands == sp.spec_label_zoom_bands()   # review F8
     for b in bands:
         assert set(b) == {"minZoom", "maxZoom", "topRatio", "sizeRatio"}
-    assert spec["thresholds"]["maxFeatures"] == d.decimate_budget
     json.dumps(spec, allow_nan=False)              # 可 JSON 序列化
-    no_bands = sp.project_scale_portrayal_spec(d, include_bands=False)
-    assert "label" not in no_bands
-    assert no_bands["thresholds"]["maxFeatures"] == d.decimate_budget
+    assert sp.project_scale_portrayal_spec(d, include_bands=False) == {}
+    budget_only = sp.project_scale_portrayal_spec(
+        d, include_bands=False, include_budget=True)
+    assert budget_only == {"thresholds": {"maxFeatures": d.decimate_budget}}
 
 
 def test_legacy_no_policy_project_empty():

@@ -56,15 +56,24 @@ def test_label_zoom_bands_match_spec_projection_and_authority():
 
 
 def test_every_corpus_zoom_has_exactly_one_active_band():
-    """所有语料 zoom（含 z=0 / z=19 / z=24 边界）恰落一档 —— 无死带。"""
+    """z ∈ [0,24) 恰落一档；z=24 按渲染器域上界显式钳末档（R1 F12）。
+
+    不再用 1e-9 把 24 偷偷拉回域内伪装「恰落一档」：24 是 MapLibre 域
+    闭边界，语义 = 钳到末档（与 representation_mode_at_zoom 同口径）。
+    """
     bands = sp.spec_label_zoom_bands()
-    zooms = [float(c["zoom"]) for c in _corpus()["cases"]] + [0.0, 2.9, 19.0, 23.9, 24.0]
+    zooms = [float(c["zoom"]) for c in _corpus()["cases"]] + [0.0, 2.9, 19.0, 23.9]
     for zoom in zooms:
         hits = [
             i for i, b in enumerate(bands)
-            if b["minZoom"] <= min(24.0 - 1e-9, min(zoom, 24.0)) < b["maxZoom"]
+            if b["minZoom"] <= zoom < b["maxZoom"]
         ]
         assert len(hits) == 1, (zoom, hits)
+    assert bands[-1]["maxZoom"] == 24.0
+    assert sp.resolve_effective_scale_portrayal(
+        zoom=24.0, layer={"id": "L"},
+        policy={"version": sp.SCALE_POLICY_VERSION, "mode": "auto_lod"},
+    ).band_id == "lod-3"
 
 
 def test_bounded_explanation_is_bounded_and_keeps_diagnostics():
@@ -107,8 +116,16 @@ def test_spec_projection_only_uses_existing_spec_fields():
         zoom=10.0, layer={"id": "L"},
         policy={"version": sp.SCALE_POLICY_VERSION, "mode": "auto_lod"},
     )
+    # review F5：默认只投影既有 label.zoomBands；decimate_budget 是解释面
+    # 披露，不自动改写文档级导出预算（原实现投影后被两条落笔路径丢弃）。
     patch = sp.project_scale_portrayal_spec(decision)
-    assert set(patch) <= {"label", "thresholds"}
+    assert set(patch) == {"label"}
     assert set(patch["label"]) <= set(MapSpecLayerLabel.model_fields)
     assert set(patch["label"]["zoomBands"][0]) <= set(MapSpecLabelZoomBand.model_fields)
-    assert set(patch["thresholds"]) <= set(MapThresholds.model_fields)
+    # 解释面档表 == spec 投影档表（review F8）
+    assert decision.label_zoom_bands == sp.spec_label_zoom_bands()
+    assert patch["label"]["zoomBands"] == sp.spec_label_zoom_bands()
+    # 显式要求预算时，字段也必须落在既有 schema 内
+    with_budget = sp.project_scale_portrayal_spec(decision, include_budget=True)
+    assert set(with_budget) == {"label", "thresholds"}
+    assert set(with_budget["thresholds"]) <= set(MapThresholds.model_fields)

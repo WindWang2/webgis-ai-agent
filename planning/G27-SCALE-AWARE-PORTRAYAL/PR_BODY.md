@@ -17,7 +17,9 @@
 5. **P3 组件语义**：`component_portrayal_state` 让 legend/colorbar/scale/labels 消费同一解析结果，保持完整数据域/分类/单位，不发明 variant、不改布局；四条固定 disclosures 覆盖 display-only / px vs 米 / DPI / 非统计样本。
 6. **P4 可解释交互**：`ScalePortrayalPanel` 挂进 `LayerStylePanel`（当前档位、隐藏原因、覆盖、恢复自动、键盘可达）；`webgis_inspect_scale_portrayal` / `webgis_apply_scale_portrayal` 两个真实 ToolRegistry 工具；service + 受验权 REST（GET/POST `/chat/sessions/{sid}/scale-portrayal`），局部写走既有 `UpsertLayerIntent` + `apply_gis_mutation` CAS/undo，只改一个 layer。
 7. **P5 出版等价视窗**：`plan_scale_contexts()` 加性解析逐页 frame extent/CRS/逻辑 viewport/DPI；DPI 只影响采样与尺寸；非 Web Mercator 不套固定公式；IR 模型与 fingerprint 不变。
-8. **P6/P7**：有界 explanation（≤4096B、数组/字符串/诊断优先保留）、性能探针、backend pytest 与 frontend vitest 消费**同一份** 17-case corpus。
+8. **P6/P7**：有界 explanation（≤4096B、数组/字符串/诊断优先保留）、真实规模性能探针、backend pytest 与 frontend vitest 消费**同一份** 17-case corpus。
+
+> R1 review 修复：统一 converter/service 字段证据面、解释面与 spec 档表、移除「投影后丢弃」的 `thresholds` 假象（`decimate_budget` 改为解释面披露，不自动改写既有导出预算）、组件状态接入真实 service 回执、A15 断言改为可证伪、`visibility_semantics` 由真实裁决填充、组件白名单改用真实 `component_registry`、前端消费者判据收紧、user-origin CAS 基线校验、异常路径零部分写入。详见 `REVIEW.md`。
 
 ## 明确不做 / 排除项
 
@@ -28,12 +30,12 @@
 
 | 层 | 命令 / 结果 |
 |---|---|
-| 后端 unit/contract | 6 个测试文件 `68 passed in 0.73s`（隔离 venv 单 worker，两轮自复跑一致） |
+| 后端 unit/contract | 6 个测试文件 **`71 passed in 0.87s`**（R2 修复+主线整合后；R1 reviewer 自行复跑 `68 passed`） |
 | 前端契约 | `lib/carto-ir/scale-portrayal.test.ts` 已入库；本地因 wasm 阻断改用 tsc 纯 JS 转译 + Node 执行**同一模块/同一 corpus**：`23 checks passed` |
 | 生产接线 | converter 落笔测试（A01/A02/user-wins/无效策略）、PublicationIR 多 frame + DPI + CRS 测试、service CAS/局部写/superseded 测试 |
 | 类型检查 | `tsc --noEmit -p tsconfig.json`：唯一错误 `toolSlice.ts:32 TS1109`（BASE 既有、正是开放 PR #2085 在途修复项），**G27 相关错误 0** |
-| 性能 | 5000/20000/8000 规模，5 次重复：每档 ~0.33 ms、峰值 18–34 KB、5 zoom 仅 4 次状态更新、0 次 frame mutation、feature_count 全程不变 |
-| 独立 review | 见 `REVIEW.md`（findings → 修复 commit → 复验） |
+| 性能 | **真实合成** 5000/20000/8000 要素，5 次重复：每档 0.446–0.505 ms、峰值 14–34 KB、5 zoom 3 次状态更新、`mutation_module_loaded=false`、feature_count 全程不变 |
+| 独立 review | `REVIEW.md`：R1 独立 reviewer 复跑并给出 1 BLOCKER + 4 P1 + 4 P2 + 2 P3 → `fix(g27)` 修复 commit → R2 复验；未参与实现的同一 reviewer 复审结论见文末 |
 
 ## 兼容 / 回退
 
@@ -46,5 +48,5 @@
 
 - **真实 Pi 子进程 + 本地 stub LLM + 真实工具/服务全链未跑**：后端服务栈依赖（`pydantic_settings` 等）与 Pi vendor 依赖未在本方向最小 venv 安装；工具/service/API 有隔离 fixture 测试，但不声称 RPC 全链实证。
 - **本地真实浏览器 E2E 未跑**：宿主 `ulimit -Hv = 4 GiB` 硬限（无法提高）使 pnpm 多 worker、Vitest/Vite、Node amaro 的所有 wasm 工具链 `WebAssembly.instantiate(): Out of memory`。前端依赖已用单进程 npm 装好，vitest 用例与最小配置已入库供 CI；本地以 tsc+Node 等价执行替代，但**不等价于 Playwright 真实旅程**。
-- A02/A10/A23/A25 因此为 partial / blocked；A17/A18 为静态实现验证，未接真实 renderer 变体渲染。详见 `ACCEPTANCE.md` / `TEST_EVIDENCE.md`。
+- A02/A10/A23/A25 因此为 partial / blocked；A12/A17/A18/A19/A20/A21 在 R1 后如实降为 partial（纯函数 + 真实 registry/CAS 参数静态验证；真实 `apply_gis_mutation` 引擎链与 renderer 变体渲染未实跑）。详见 `ACCEPTANCE.md` / `TEST_EVIDENCE.md` / `REVIEW.md`。
 - 未等待线上 CI；未关闭/修改任何门禁；未降低安全阈值；未合并。

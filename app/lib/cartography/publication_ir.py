@@ -964,11 +964,24 @@ def plan_scale_contexts(
     可见层、分类、图例或字号相对关系。多 frame 各自消费自己的 bounds 与
     viewport（A21）。旧项目零变化：IR 模型/指纹不改，调用为 opt-in。
     """
-    from app.lib.cartography.representation import export_zoom_of_mapspec
+    from app.lib.cartography.representation import (
+        export_adjudicate_layer,
+        export_zoom_of_mapspec,
+    )
     from app.lib.cartography.scale_portrayal import physical_scale_context
 
     semantic_zoom = export_zoom_of_mapspec(
         document if isinstance(document, dict) else {})
+    # review F4/F10：visibility_semantics 由**真实裁决结果**填充，而不是
+    # 硬编码常量。若有人把 DPI 误接进 zoom 门，本摘要会随 DPI 变化，
+    # 使 A15 的「三种 DPI 裁决一致」成为可证伪断言。
+    layers = ([lyr for lyr in (document.get("layers") or [])
+               if isinstance(lyr, dict)][:16]
+              if isinstance(document, dict) else [])
+    verdicts = sorted({str(export_adjudicate_layer(lyr, semantic_zoom))
+                       for lyr in layers})
+    visibility_semantics = (
+        "live_export_shared:" + ("|".join(verdicts) or "no_layers"))[:80]
     doc_crs = (crs or "EPSG:3857")[:32]
     dpi = (float(target_dpi)
            if isinstance(target_dpi, (int, float)) and target_dpi > 0
@@ -1006,6 +1019,7 @@ def plan_scale_contexts(
             semantic_zoom=semantic_zoom,
             scale_denominator=physical.get("scale_denominator"),
             assumptions=assumptions[:8],
+            visibility_semantics=visibility_semantics,
         ))
     return out
 

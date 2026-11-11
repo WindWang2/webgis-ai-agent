@@ -30,7 +30,7 @@ MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
   tests/cartography/test_g27_component_portrayal.py \
   -q -p no:cacheprovider --confcutdir=tests/cartography -o addopts=
 ```
-**结果：`68 passed, 2 warnings in 0.73s`**（自复跑两次一致：`45 passed` → `63 passed` → `68 passed` 随新增测试增长）。
+**结果：`71 passed, 2 warnings in 0.87s`**（R2 修复+主线整合后；历史：`45` → `63` → `68`（R1 reviewer 复跑）→ `70`，随 F3/F9/F11 契约用例增长）。
 
 隔离参数理由（实证，非降低门禁）：根 `tests/conftest.py` 会拉起 `app.models.init_db`/faiss/celery/chat 全套链，最小 venv 下原命令 `Exit 137 SIGTERM`；`pytest.ini` 的 `addopts` 含 `--cov=app`（需未安装的 pytest-cov）。`--confcutdir` 是 pytest 官方隔离选项，被测契约与断言不变。完整 CI 车道仍以仓库原命令为准，本方向未改 `pytest.ini`。
 
@@ -55,7 +55,7 @@ node check.cjs
 ```
 node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 ```
-**结果：`TOTAL_ERRORS 1`，`G27_RELATED 0`** —— 唯一错误 `lib/store/slices/toolSlice.ts(32,3): error TS1109: Expression expected.`，正是**开放 PR #2085**（任务明确避开）在途修复的 MapToolId 联合类型语法问题。属 BASE 既有失败，本方向未触碰该文件，未顺手修复、未降低门禁。
+**R1 结果**：`TOTAL_ERRORS 1 / G27_RELATED 0`，唯一错误 `toolSlice.ts(32,3) TS1109`（当时开放 PR #2085 在途修复项）。**R2（主线整合后）结果**：`TOTAL 1 / G27_RELATED 0`，唯一错误变为 `lib/map-kit/render-debouncer.ts(1,13) TS1192`（maplibre-gl 无 default export）—— 由 npm 单进程安装版本与 pnpm-lock 版本差异产生的本地基线，非 G27 引入；`toolSlice.ts` 已随 #2085 合入修复。本方向未触碰这两个文件、未降低门禁。
 
 ## 3. 生产调用图证据（P0/P2）
 
@@ -75,15 +75,15 @@ node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 ```
 TMPDIR=/home/kevin <venv>/python planning/G27-SCALE-AWARE-PORTRAYAL/perf_probe.py
 ```
-规模 5000 labels / 20000 热力点 / 8000 线网描述符，5 次重复，5 个 zoom（3/6/10/14/19）：
+R2 真实规模：**真实构造** 5000 labels / 20000 热力点 / 8000 线网要素，5 次重复，5 个 zoom（3/6/10/14/19）：
 
-| 场景 | 冷缓存 ms | 热缓存均值±σ ms | 每档切换 ms | 峰值 traced KB | 状态更新/5 zoom | frame mutation | feature_count 不变 |
-|---|---|---|---|---|---|---|---|
-| large_labels | 2.451 | 1.654 ± 0.043 | 0.331 | 34 | 4 | 0 | ✅ |
-| heatmap_points | 1.745 | 1.790 ± 0.106 | 0.358 | 18 | 4 | 0 | ✅ |
-| line_network | 1.994 | 1.694 ± 0.039 | 0.339 | 18 | 4 | 0 | ✅ |
+| 场景 | 真实要素数 | 冷缓存 ms | 热缓存均值±σ ms | 每档切换 ms | 峰值 traced KB | 状态更新/5 zoom | 持久化 mutation | feature_count 不变 |
+|---|---|---|---|---|---|---|---|---|
+| large_labels | 5000 | 2.661 | 2.356 ± 0.359 | 0.471 | 34 | 3 | 0 | ✅ |
+| heatmap_points | 20000 | 2.391 | 2.230 ± 0.136 | 0.446 | 14 | 3 | 0 | ✅ |
+| line_network | 8000 | 2.442 | 2.523 ± 0.602 | 0.505 | 14 | 3 | 0 | ✅ |
 
-无外部 IO/缓存层，冷=首轮；解释面不携带要素载荷、不遍历/上传属性；**未靠删数据换基准**。真实浏览器帧时间因 §5 阻断未测。
+R1 F6 修正后（三次复跑每档切换落在 0.446–0.734 ms，宿主 7 路并行负载导致波动，量级一致）：三种规模**真实构造**合成 FeatureCollection（原为描述符数字空跑）；`feature_count_unchanged` 逐轮断言 `len(features)==n`，`persistent_mutation_calls` 由 `sys.modules` 核对 `mutation_module_loaded=false`，非硬编码。字段证据只扫前 50 要素 / ≤32 键，解释面不携带要素载荷、不上传属性；**未靠删数据换基准**。真实浏览器帧时间因 §5 阻断未测。
 
 ## 5. 环境阻断（如实记录，未伪造通过）
 
@@ -94,11 +94,13 @@ TMPDIR=/home/kevin <venv>/python planning/G27-SCALE-AWARE-PORTRAYAL/perf_probe.p
 | Node 22 `--experimental-strip-types` | `node:internal/deps/amaro … WebAssembly.Instance(): Out of memory` | 同上 |
 | `--poolOptions` 无效 | `CACError: Unknown option --poolOptions`（vitest 4.1.12） | 改用合法 `--maxWorkers=1 --pool=forks` |
 | 真实 Pi 子进程 / 本地后端 / 浏览器 E2E | 后端服务栈依赖（`pydantic_settings` 等）未装；Pi vendor 依赖未装；wasm 工具链不可用 | **blocked**；工具/api/service 有隔离 fixture 测试，但不声称 RPC/浏览器全链实证 |
+| 真实 `apply_gis_mutation` CAS/undo 引擎链 | `pydantic_settings` → `app.core.config` 未装，最小 venv 无法启动 GISWorldState 门面 | **blocked**（R1 F2）；A19/A20 已降为 partial，测试名不再含 `undo_chain`，不冒充引擎级实证 |
 | `/goal` / goal-loop skill | `~/.workbuddy/commands`、`<repo>/.claude/commands` 不存在；无已安装可调用入口 | 按指令「缺失不阻断」，用本会话原生流程推进；未虚构参数 |
 | Goal 配额 | 无已授权的真实配额读取/配置入口 | 如实记录有效预算=本会话上下文；未按 3.2 亿空转 |
 
 ## 6. 基线 / HEAD 同条件对照
 
-- BASE 与 HEAD 的 `tsc --noEmit` 唯一错误均为 `toolSlice.ts:32 TS1109`（#2085 在途），本方向 0 相关错误。
+- R1：BASE 与 HEAD 的 `tsc --noEmit` 唯一错误均为 `toolSlice.ts:32 TS1109`（#2085 在途），本方向 0 相关错误。R2：主线整合后该错误消失，剩余 `render-debouncer.ts` 本地基线错误，本方向仍 0 相关错误。
+- 独立 review 两轮（R1 findings → 修复 → R2 复验）见 `REVIEW.md`；reviewer 自行复跑 `68 passed` / `23 checks`。
 - 起始工作区 `M vendor/pi`、`.claude/skills/*`、`_tmp_47_*` 全程只读保留，未 checkout/reset/删除。
 - 未改 master、未合并、未删他人分支/worktree、未等线上 CI、未改门禁。

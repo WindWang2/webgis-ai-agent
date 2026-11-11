@@ -940,9 +940,42 @@ def convert_analysis_to_mapspec_layer(
         # - zoomBands 是全 zoom 域声明，authoring 参考 zoom 不产生 per-frame
         #   mutation（zoom 手势属 observed camera，不写 desired spec）；
         # - 解析失败绝不阻断出图（与 representation 落笔同纪律）。
+        # review F11：命名空间取共享常量，不硬编码字面量。
+        from app.lib.cartography.scale_portrayal import (
+            SCALE_POLICY_NAMESPACE as _G27_NS,
+        )
+
+        def _g27_available_fields(layer_dict, geojson_fc):
+            """与 service._available_fields 同源的有界字段证据面。
+
+            只扫前 50 个要素 / 最多 32 个属性键（refs-only 纪律，不遍历
+            全量、不上传属性），保证带 priority_field 的 policy 在 converter
+            与 service 两条生产路径得到一致的 applied 判定（review F3）。
+            """
+            fields = []
+            label = layer_dict.get("label") \
+                if isinstance(layer_dict.get("label"), dict) else {}
+            binding = layer_dict.get("data_binding") \
+                if isinstance(layer_dict.get("data_binding"), dict) else {}
+            for source in (label, binding):
+                for key in ("field", "priorityField", "priority_field",
+                            "class_field", "x_field", "y_field"):
+                    v = source.get(key)
+                    if isinstance(v, str) and v and v not in fields:
+                        fields.append(v)
+            for feat in (_iter_features(geojson_fc) if geojson_fc else [])[:50]:
+                props = (feat or {}).get("properties") if isinstance(feat, dict) else None
+                if isinstance(props, dict):
+                    for k in props:
+                        if isinstance(k, str) and k not in fields:
+                            fields.append(k)
+                        if len(fields) >= 32:
+                            return fields[:32]
+            return fields[:32]
+
         _g27_profile = base_layer.get("scale_profile")
         _g27_policy = (
-            _g27_profile.get("g27_scale_portrayal")
+            _g27_profile.get(_G27_NS)
             if isinstance(_g27_profile, dict) else None
         )
         if _g27_policy is not None:
@@ -952,10 +985,12 @@ def convert_analysis_to_mapspec_layer(
                     resolve_effective_scale_portrayal,
                 )
 
+                _g27_fields = _g27_available_fields(res_layer, inline_geojson)
                 _g27_decision = resolve_effective_scale_portrayal(
-                    zoom=11.0,  # authoring 参考点（= representation_at_scale 缺省）
+                    zoom=11.0,  # authoring 参考点；zoomBands 是全 zoom 域声明
                     layer=res_layer,
                     policy=_g27_policy,
+                    available_fields=_g27_fields,
                 )
                 _g27_patch = project_scale_portrayal_spec(_g27_decision)
                 _g27_bands = (_g27_patch.get("label") or {}).get("zoomBands")
