@@ -258,6 +258,16 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"[lifespan] collab bus skipped: {e}")
 
+    # G22-P3：清扫本实例前缀的陈旧 Redis active_turn key（上个崩溃/重启
+    # 进程的遗留；TTL 15min 只是有界兜底）。best-effort，绝不阻断启动。
+    try:
+        from app.services.chat.pi_turn_context import pi_turn_registry
+
+        await pi_turn_registry.sweep_own_keys()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[lifespan] pi turn registry sweep skipped: {e}")
+
     registry = ToolRegistry()
     init_tools(registry)
     # ADR-0243：扩展平台引导（默认全关）。必须发生在 runtime manifest 编译

@@ -233,6 +233,15 @@ async def test_stream_writer_loss_targets_consumer_and_aborts_rpc(turn_host, mon
             started.set()
         return {}
     rpc.request = AsyncMock(side_effect=request)
+
+    # G22-P1：控制面（clear_queue/abort）经写相位 issue 拆分。
+    async def _issue(command, data=None):
+        fut = asyncio.get_running_loop().create_future()
+        fut.set_result({})
+        return SimpleNamespace(id=f"i-{command}", command=command, future=fut)
+
+    rpc.issue = AsyncMock(side_effect=_issue)
+    rpc.collect = AsyncMock(return_value={})
     async def consume():
         return [event async for event in bridge.PiBridge(rpc=rpc).stream_prompt("goal", session_id="low-session")]
     task = asyncio.create_task(consume())
@@ -240,7 +249,7 @@ async def test_stream_writer_loss_targets_consumer_and_aborts_rpc(turn_host, mon
     lock.lost = True
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 1)
-    assert any(call.args[0] == "abort" for call in rpc.request.call_args_list)
+    assert any(call.args[0] == "abort" for call in rpc.issue.call_args_list)
     turn_id = turn_host.await_args.args[1]
     assert bridge.pop_turn_abort_source(turn_id) == "policy"
     lock.release.assert_called_once()
