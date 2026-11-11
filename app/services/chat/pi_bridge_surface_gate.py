@@ -32,9 +32,11 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from app.services.chat.pi_surface_receipt import (
+    discovered_store,
     enforce_callback_scope,
     record_discovered_tool,
     surface_receipt_store,
+    surface_scope_enforce_enabled,
     verify_callback_fingerprints,
 )
 
@@ -232,23 +234,21 @@ def stale_surface_gate(
                     registry, session_id, str(request.verifiedTurnId), tool_name, echo,
                 ):
                     scope_mismatch = None
-            if scope_mismatch is None:
-                # 已发现的直调（不在 turn selected 面）：后续调用的 echo 对拍
-                # **现编译** spec —— 撤权/schema 变更后旧 echo 失效（A6）。
-                # 与 grant 同族：kill-switch（=0）时整体跳过，回到 G12 前行为。
-                from app.services.chat.pi_surface_receipt import (
-                    surface_scope_enforce_enabled,
-                )
-
-                if surface_scope_enforce_enabled():
-                    receipt = surface_receipt_store.lookup(
-                        session_id, str(request.verifiedTurnId)
-                    )
-                    not_selected = receipt is None or tool_name not in receipt.selected
-                    if not_selected and echo and not _echo_matches_fresh_spec(
-                        registry, tool_name, echo
-                    ):
-                        mismatch = "SURFACE_FINGERPRINT_MISMATCH"
+            if scope_mismatch is not None:
+                # review-P1(N1)：scope 违规**必须传播**为 typed 拒绝 —— 曾因
+                # 死存储（未赋回 mismatch）使 SURFACE_SCOPE_VIOLATION 在生产
+                # 不可达、native 面外直调被放行。
+                mismatch = scope_mismatch
+            elif echo and surface_scope_enforce_enabled():
+                # 已发现/已 grant 的直调（不在 turn selected 面）：后续调用的
+                # echo 对拍**现编译** spec —— 撤权/schema 变更后旧 echo 失效
+                # （A6）。复检对象限定为**本 turn 实际 grant 过的工具**
+                # （review-P1(N2)：receipt 缺席 = 兼容放行路径，绝不能把
+                # 「无 receipt」扫入复检）。
+                if discovered_store.contains(
+                    session_id, str(request.verifiedTurnId), tool_name
+                ) and not _echo_matches_fresh_spec(registry, tool_name, echo):
+                    mismatch = "SURFACE_FINGERPRINT_MISMATCH"
         if mismatch is None:
             return None
         try:

@@ -368,6 +368,8 @@
  "GET /api/v1/health": {
   "__model__": "HealthResponse",
   "agent_runtime": "string",
+  "agent_runtime_mode": "null|string",
+  "agent_runtime_reason": "null|string",
   "pi_vendor": "null|string",
   "pi_workers_alive": "null|string",
   "service": "string",
@@ -1251,6 +1253,9 @@
  "POST /api/v1/config/llm": {
   "__model__": "LLMConfigUpdateResponse",
   "config": "LLMConfig",
+  "expected_generation": "null|string",
+  "pi_workers_deferred": "integer|null",
+  "pi_workers_recycled": "integer|null",
   "status": "string"
  },
  "POST /api/v1/config/llm/test": {
@@ -1367,6 +1372,7 @@
   "__model__": "VectorPdfExportResponse",
   "atlas": "boolean",
   "atlas_pages": "array<object>|null",
+  "constraint_layout": "null|object",
   "filename": "string",
   "format": "string",
   "frames_rendered": "integer",
