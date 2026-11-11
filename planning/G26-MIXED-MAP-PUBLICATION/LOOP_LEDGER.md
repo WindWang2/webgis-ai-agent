@@ -73,3 +73,10 @@
 ## 最终出口
 
 - Round 2 通过后：推送分支 → 创建 PR（不合并、不动保护）→ 输出总结。
+
+## 最终出口（2026-11-12）
+
+- BASE `b8f2a6ecc` → HEAD `262cbe7d5`（9 commits；推送时 master 未移动，无冲突）。
+- PR：https://github.com/WindWang2/webgis-ai-agent/pull/2091（**未合并、不动保护**）。
+- 无本方向遗留进程（/tmp 的 Nov-11 stub 属兄弟方向，未触碰）。
+- 退出状态：实证完成（A27 真实浏览器一项如实记 partial，外部环境无授权浏览器会话）。
