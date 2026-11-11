@@ -205,12 +205,19 @@ class TestIRSelectedIds:
         assert payload is not None
         assert payload["selected_ids"] == ["sch-0", "sch-2", "sch-4"]
 
-    def test_normalize_caps_list_at_eight_and_rejects_oversized(self):
+    def test_normalize_caps_list_and_rejects_oversized(self):
+        # SW-02（#2004）后 selected_ids 上限与前端 selection-store 三方对齐为
+        # 50（宽载荷预算 4KB）；G07 M3 派生 selected_ids_omitted 诚实披露。
         many = [f"id-{i}" for i in range(12)]
         payload = normalize_payload("feature_selected", {"layer_id": "l", "feature_id": "id-0", "selected_ids": many})
-        assert payload is not None and len(payload["selected_ids"]) == 8  # list 面 ≤8
-        # 超预算整事件拒收（512B 纪律 —— 诚实拒绝而非静默截断语义集）
-        huge = ["x" * 120] * 8
+        assert payload is not None and len(payload["selected_ids"]) == 12  # ≤50 不截断
+        assert "selected_ids_omitted" not in payload
+        over = [f"id-{i}" for i in range(60)]
+        payload = normalize_payload("feature_selected", {"layer_id": "l", "feature_id": "id-0", "selected_ids": over})
+        assert payload is not None and len(payload["selected_ids"]) == 50  # list 面 ≤50
+        assert payload["ids_truncated"] is True and payload["selected_ids_omitted"] == 10
+        # 超宽载荷预算整事件拒收（4KB 纪律 —— 诚实拒绝而非静默截断语义集）
+        huge = ["x" * 120] * 50
         assert normalize_payload("feature_selected", {"layer_id": "l", "selected_ids": huge}) is None
 
     def test_projection_carries_selected_ids(self):

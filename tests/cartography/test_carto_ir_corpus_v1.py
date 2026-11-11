@@ -119,7 +119,7 @@ class TestCorpusParse:
         assert result.document["layers"][0]["visibility"] == {"min_zoom": "8"}
 
     def test_forward_version_still_rejected(self):
-        spec = {"version": "2.0", "layers": []}
+        spec = {"version": "9.9", "layers": []}
         with pytest.raises(ms.MapSpecSchemaError) as ei:
             ms.require_parseable_mapspec(spec)
         assert ei.value.code == "mapspec_forward_version"

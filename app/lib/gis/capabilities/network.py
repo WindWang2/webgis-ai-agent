@@ -26,7 +26,10 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             domain="network",
             description="等时圈/网络可达服务区。",
             input_artifact_types=["poi_feature_set", "point_feature_set"],
-            output_artifact_types=["service_area"],
+            # G13：+stats_table —— 多方案覆盖一致性（network.service_coverage
+            # .consistency）的产物是覆盖边集 Jaccard/差异统计表，不是服务区面；
+            # 能力层承认该输出（additive），算法层仍按 capability 声明校验。
+            output_artifact_types=["service_area", "stats_table"],
             compatible_map_models=["proximity_overlay"],
             purpose_template="网络服务区",
         ),

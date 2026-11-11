@@ -33,6 +33,15 @@ const FALLBACK_NATIVE = [
 
 const EXECUTE_PROXY_NAME = "webgis_execute";
 
+// ADR-0288（W04）：上游内置发现入口 —— `--no-builtin-tools` 只清默认工具
+// 选择，内置扩展（tool-search/codemode）仍以 defaultActive:false +
+// exposure:"model-only" 注册（C11）。把它们并入常驻激活集后，模型可
+// tool_search 发现 deferred 长尾（C12 merge 语义，前门不丢），或经 codemode
+// 沙箱做有界只读组合（C13）。两者只能被模型直调，脚本不可触达。
+// PI_NATIVE_DISCOVERY=0（spawn env）一键回退 G12 前行为。
+const DISCOVERY_ENTRY_TOOLS = ["tool_search", "codemode"];
+const NATIVE_DISCOVERY_ENABLED = process.env.PI_NATIVE_DISCOVERY !== "0";
+
 // ADR-0103: per-turn dynamic tool surface. Python attaches the projection to
 // the turn prompt. Only its final control paragraph is authoritative.
 const ACTIVE_TOOLS_SUFFIX_RE = /(?:^|\n\n)\[WEBGIS_ACTIVE_TOOLS:(\[[^\r\n]*?\])\](?:\[工具面(?:提示|资格)\][^\r\n]*)*$/;
@@ -255,7 +264,13 @@ export default function webgisToolsExtension(pi) {
   // vocabulary; if the schema dump missed, wrapping still reaches Python.
   const nativeNames = new Set(nativeTools.map((tool) => tool.name).filter(Boolean));
   // webgis_execute is registered below and always part of the active surface.
-  const alwaysActive = new Set([...FALLBACK_NATIVE, EXECUTE_PROXY_NAME]);
+  // ADR-0288：发现入口（tool_search/codemode）常驻激活 —— 它们不在 dump
+  // 注册面（vendor 内置扩展注册），须经 alwaysActive 白名单进入声明面。
+  const alwaysActive = new Set([
+    ...FALLBACK_NATIVE,
+    EXECUTE_PROXY_NAME,
+    ...(NATIVE_DISCOVERY_ENABLED ? DISCOVERY_ENTRY_TOOLS : []),
+  ]);
 
   const applyActiveTools = (names, why) => {
     if (typeof pi.setActiveTools !== "function") {
@@ -268,6 +283,7 @@ export default function webgisToolsExtension(pi) {
       // #review M1 (defense in depth): the Python projector caps the surface
       // at k_max (default 30); enforce a hard ceiling here so a forged or
       // oversized marker can never activate the whole superset.
+      // 发现入口占用常驻名额（≤2），不动 48 上限。
       const MAX_ACTIVE = 48;
       const active = [...new Set([...alwaysActive, ...(names || [])])]
         .filter((name) => nativeNames.has(name) || alwaysActive.has(name))
@@ -293,7 +309,12 @@ export default function webgisToolsExtension(pi) {
   for (const tool of nativeTools) {
     if (!tool?.name) continue;
     const toolFingerprint = toolFingerprints.get(tool.name);
-    pi.registerTool({
+    // dump v4（ADR-0288）：透传原生封套 —— exposure（前门 direct / 长尾
+    // deferred，deferred 可被上游 tool_search 发现并入 active 集）、
+    // namespace（域分组，tool_search 的 namespace 权重）、annotations
+    // （side_effect 派生的 MCP 语义提示；提示不是授权，执行仍回 Python 闸）。
+    // 字段缺席（v2 dump / 旧投影）= 保持默认行为，零漂移。
+    const registration = {
       name: tool.name,
       label: tool.label || tool.name,
       description: tool.description || tool.name,
@@ -305,7 +326,15 @@ export default function webgisToolsExtension(pi) {
           toolFingerprint,
         });
       },
-    });
+    };
+    if (tool.exposure) registration.exposure = tool.exposure;
+    if (tool.namespace && typeof tool.namespace === "object") {
+      registration.namespace = tool.namespace;
+    }
+    if (tool.annotations && typeof tool.annotations === "object") {
+      registration.annotations = tool.annotations;
+    }
+    pi.registerTool(registration);
   }
 
   pi.registerTool({
@@ -318,6 +347,8 @@ export default function webgisToolsExtension(pi) {
       "Restyle (color, legend position, title) uses webgis_component_update, not a new POI query.",
       "webgis_cartography_status is a ZERO-argument read of the server cartography verdict AFTER the map has changed. Call it as webgis_cartography_status {}. It does not accept city, topic, scope, or query.",
     ].join("\n"),
+    // 代理可派发读写混合的长尾 —— readOnlyHint 未知即缺席（保守语义）。
+    exposure: "direct",
     promptSnippet:
       "Long-tail GIS via webgis_execute(toolName, arguments). First for 分布/密度: webgis_map_intent {query}. After map changes only: webgis_cartography_status {}.",
     promptGuidelines: [
@@ -376,6 +407,22 @@ export default function webgisToolsExtension(pi) {
     // in before_agent_start keeps applying the marker-driven surface.
     pi.on("session_start", async () => {
       applyDefaultActiveTools("default(session_start)");
+    });
+
+    // ADR-0288（W09）：compaction 生命周期 —— 只记账披露，绝不改写 summary
+    // （不可信数据不当指令；自定义摘要 = summary 获得事实话语权，拒绝）。
+    // 压缩后的权威状态重建由后端 typed assembly 的 GIS 状态重建块
+    // （GisStateRebuildProvider，MapSpec/SessionPlan 现取）承担 —— 隐藏层/
+    // 待办/证据 refs 不随压缩丢失，也不凭 summary 授予修改权。
+    pi.on("session_before_compact", async (event) => {
+      console.log(`[webgis-tools] compaction starting (reason=${event?.reason ?? "?"})`);
+      return {}; // 不注入自定义 summary —— 保持 vendor 默认压缩内容
+    });
+    pi.on("session_compact_failed", async (event) => {
+      console.error(
+        `[webgis-tools] compaction failed (fromHandler=${event?.fromBeforeCompactHandler ?? "?"})`,
+      );
+      return {};
     });
 
     pi.on("before_agent_start", async (event) => {

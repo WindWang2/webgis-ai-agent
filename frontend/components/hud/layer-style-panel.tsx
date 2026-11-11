@@ -10,6 +10,8 @@ import { setLayerOpacityAndCommit } from '@/lib/mapspec/user-mutation';
 import { getCommittedMapSpec, subscribeMapSpecLive } from '@/lib/mapspec/session-cursor';
 import { useT } from '@/lib/i18n/useT';
 import { t as tNow } from '@/lib/i18n/t';
+// G20：栅格专属工作台（局部挂载，不改全局布局/主题）
+import { RasterAuthoringPanel } from '@/components/hud/raster-authoring-panel';
 
 /** 渲染模式 id → 消息键（spec 层型语义见 specPaintPatchFrom）。 */
 const MODE_LABELS: Record<string, string> = {
@@ -24,6 +26,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const layers = useHudStore((s) => s.layers);
   const updateLayer = useHudStore((s) => s.updateLayer);
   const setEditingLayerId = useHudStore((s) => s.setEditingLayerId);
+  const [showRasterAuthoring, setShowRasterAuthoring] = useState(false);
 
   const layer = layers.find((l) => l.id === editingLayerId);
   // audit #840: committed MapSpec 存在时，HUD 层样式不进入 paint
@@ -56,6 +59,28 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
     );
     return hit?.type;
   })();
+  // G20：数值栅格层挂局部表达工作台；旧 PNG / 瓦片层没有数值源，
+  // 只显示「从已登记栅格绑定」的选择器，绝不出现伪波段/伪像元控件。
+  const numericRaster = (() => {
+    const doc = committedSpec as {
+      layers?: Array<Record<string, unknown>>;
+      sources?: Record<string, Record<string, unknown>>;
+    } | null;
+    const hit = doc?.layers?.find(
+      (l) => l?.id === specLayerKey
+        || (typeof l?.id === 'string' && l.id.startsWith(`${specLayerKey}__`)),
+    );
+    if (!hit || !hit.raster_style || typeof hit.source !== 'string') return null;
+    const src = doc?.sources?.[hit.source];
+    if (!src || src.type !== 'numeric_raster') return null;
+    return {
+      layerId: String(hit.id),
+      refId: typeof src.refId === 'string' ? src.refId : undefined,
+      committedStyle: hit.raster_style as never,
+      committedLegend: (hit.legend_spec ?? null) as never,
+    };
+  })();
+
   const specPaintPatchFrom = (patch: Partial<LayerStyle>): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     const push = (k: string, v: unknown) => { if (v !== undefined) out[k] = v; };
@@ -379,6 +404,24 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         {/* === RASTER CONTROLS === */}
         {(layer.type === 'raster' || layer.type === 'tile') && (
           <>
+            {/* G20：数值栅格表达工作台入口。旧亮度/对比/饱和控件仍按
+                specBacked 禁用并如实说明，不新增静默无效的旋钮。 */}
+            <button
+              type="button"
+              aria-expanded={showRasterAuthoring}
+              onClick={() => setShowRasterAuthoring((v) => !v)}
+              className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+            >
+              {t('rasterAuthoring.title')}
+            </button>
+            {showRasterAuthoring && (
+              <RasterAuthoringPanel
+                layerId={numericRaster?.layerId ?? String(specLayerKey ?? layer.id)}
+                refId={numericRaster?.refId}
+                committedStyle={numericRaster?.committedStyle ?? null}
+                committedLegend={numericRaster?.committedLegend ?? null}
+              />
+            )}
             <div>
               <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">
                 {t('style.brightness')} <span className="text-ink-disabled font-mono">{brightness.toFixed(1)}</span>

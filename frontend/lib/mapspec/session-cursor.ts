@@ -20,12 +20,20 @@ let pendingOpSeq = 0;
 let pendingMeta: Record<string, { mutationId?: string; gen?: number }> = {};
 const listeners = new Set<() => void>();
 
+/** G16：spec 快照版本号（toolbar 等消费 useSyncExternalStore 的响应源；
+// 发布点 bump —— 与 listeners 通知同一原子面）。 */
+let specSnapshotVersion = 0;
+export function getSpecSnapshotVersion(): number {
+  return specSnapshotVersion;
+}
+
 function curRevision(): number {
   return revision;
 }
 
 function emit(): void {
   generation += 1;
+  specSnapshotVersion += 1;
   listeners.forEach((listener) => listener());
 }
 

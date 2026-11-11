@@ -25,6 +25,7 @@ from app.schemas.mapspec_mutation_schema import (
     DuplicateComponentBody,
     InitProjectBody,
     PatchComponentBody,
+    PatchLayerLabelAuthoringBody,
     PatchLayerPresentationBody,
     PatchLayerStyleBody,
     PatchWorkbenchDeltaBody,
@@ -35,6 +36,7 @@ from app.schemas.mapspec_mutation_schema import (
     SetLayoutBody,
     SetTimeBody,
     SetTemporalViewBody,
+    SetFrameProductBody,
     SetSceneBody,
     SetViewBody,
     SetWorkbenchStateBody,
@@ -48,6 +50,7 @@ from app.services.mapspec.intents import (
     InitProjectIntent,
     MutationIntent,
     PatchComponentIntent,
+    PatchLayerLabelAuthoringIntent,
     PatchLayerPresentationIntent,
     PatchLayerStyleIntent,
     PatchWorkbenchDeltaIntent,
@@ -65,6 +68,7 @@ from app.services.mapspec.intents import (
     SetSceneAssetsIntent,
     SetScenarioModeIntent,
     SetTemporalViewIntent,
+    SetFrameProductIntent,
     SetTimeIntent,
     SetViewIntent,
     SetWorkbenchStateIntent,
@@ -227,6 +231,17 @@ def _pd_none(intent: Any) -> Dict[str, Any]:
     return {}
 
 
+def _pd_label_authoring(intent: PatchLayerLabelAuthoringIntent) -> Dict[str, Any]:
+    n_set = sum(1 for op in intent.ops if (op or {}).get("op", "set") == "set")
+    return {
+        "layer_id": intent.layer_id,
+        "ops": len(intent.ops),
+        "set_ops": n_set,
+        "reset_ops": len(intent.ops) - n_set,
+        "labels_config": bool(intent.labels_config),
+    }
+
+
 # ─── HTTP Body codec（原 intent_codec.body_to_intent 分支逐字迁入，
 #     含全部 ValueError 消息原文 —— 路由层 400 消息零漂移） ─────────────────────
 def _codec_patch_layer_style(req: Any) -> MutationIntent:
@@ -244,6 +259,29 @@ def _codec_patch_layer_presentation(req: Any) -> MutationIntent:
         layer_id=req.layer_id,
         visible=req.visible,
         opacity=req.opacity,
+    )
+
+
+def _codec_patch_layer_label_authoring(req: Any) -> MutationIntent:
+    # G16：labels_config 只收 G16 所有权键（obstaclePolicy/forbiddenZones）
+    # —— 其余键 422（不借道本意图改写别人拥有的 labels 配置）。
+    cfg = getattr(req, "labels_config", None)
+    if cfg is not None:
+        allowed = {"obstaclePolicy", "forbiddenZones"}
+        illegal = sorted(set(cfg) - allowed)
+        if illegal:
+            raise ValueError(
+                "patch_layer_label_authoring.labels_config allows only "
+                f"{sorted(allowed)}, got: {illegal}"
+            )
+    if not req.ops and not cfg:
+        raise ValueError(
+            "patch_layer_label_authoring requires ops and/or labels_config"
+        )
+    return PatchLayerLabelAuthoringIntent(
+        layer_id=req.layer_id,
+        ops=[dict(op) for op in req.ops],
+        labels_config=dict(cfg) if cfg else None,
     )
 
 
@@ -337,6 +375,7 @@ def _codec_set_layout(req: Any) -> MutationIntent:
     return SetLayoutIntent(
         legend=req.legend, controls=req.controls, margins=req.margins,
         components=req.components,
+        frames=getattr(req, "frames", None),
     )
 
 
@@ -356,6 +395,10 @@ def _codec_set_time(req: Any) -> MutationIntent:
 
 def _codec_set_temporal_view(req: Any) -> MutationIntent:
     return SetTemporalViewIntent(config=req.config, patch=req.patch, remove=req.remove)
+
+
+def _codec_set_frame_product(req: Any) -> MutationIntent:
+    return SetFrameProductIntent(config=req.config, patch=req.patch, remove=req.remove)
 
 
 def _codec_init_project(req: Any) -> MutationIntent:
@@ -529,6 +572,16 @@ def _build_default_registry() -> MutationRegistry:
         lock_targets=_lt_layer_id,
     ), body_cls=PatchLayerStyleBody, body_codec=_codec_patch_layer_style)
     reg.register(IntentDescriptor(
+        intent_cls=PatchLayerLabelAuthoringIntent,
+        handler=_h._handle_patchlayerlabelauthoring,
+        # 标注表现是 presentation 决策（不改数据/几何/语义）；构造新层
+        # dict —— touches_layers=True 走深拷贝回滚快照。
+        effect_class=PRESENTATION, touches_layers=True, auto_checkpoint=True,
+        op_label="调整标注", provenance_detail=_pd_label_authoring,
+        lock_targets=_lt_layer_id,
+    ), body_cls=PatchLayerLabelAuthoringBody,
+        body_codec=_codec_patch_layer_label_authoring)
+    reg.register(IntentDescriptor(
         intent_cls=PatchWorkbenchDeltaIntent,
         handler=_h._handle_patchworkbenchdelta,
         collab_event="delta", collab_payload=_cp_workbench_delta,
@@ -622,6 +675,13 @@ def _build_default_registry() -> MutationRegistry:
         # 时态控制层：spec-only 分支写入（temporal），不触碰 layers/显隐。
         op_label="调整时态视图", provenance_detail=_pd_none,
     ), body_cls=SetTemporalViewBody, body_codec=_codec_set_temporal_view)
+    reg.register(IntentDescriptor(
+        intent_cls=SetFrameProductIntent,
+        handler=_h._handle_setframeproduct,
+        # 多画幅产品层：spec-only 分支写入（frame_product），不触碰
+        # layers/显隐；画幅几何身份仍在 layout.frames。
+        op_label="调整多画幅产品", provenance_detail=_pd_none,
+    ), body_cls=SetFrameProductBody, body_codec=_codec_set_frame_product)
     reg.register(IntentDescriptor(
         intent_cls=SetViewIntent,
         handler=_h._handle_setview,

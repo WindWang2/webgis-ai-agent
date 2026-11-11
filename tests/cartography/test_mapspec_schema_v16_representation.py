@@ -30,8 +30,8 @@ class TestVersionV16:
         # v1.8（GOAL 04 多尺度表达档案）起 LATEST 前移；v1.6 语义不变。
         assert ms.KNOWN_VERSIONS == (
             "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8",
-            "1.9")
-        assert ms.LATEST_VERSION == "1.9"
+            "1.9", "2.0", "2.1")
+        assert ms.LATEST_VERSION == "2.1"
         assert ms.DEFAULT_VERSION == "1.0"
 
     def test_v15_migrates_identity_to_latest(self):
@@ -48,12 +48,12 @@ class TestVersionV16:
         assert r15.effective_version == "1.5" and r15.migrated is False
 
     def test_forward_version_flagged_and_rejected_by_consumers(self):
-        r = ms.parse_mapspec({"version": "2.0", "view": {}, "sources": {}, "layers": []})
+        r = ms.parse_mapspec({"version": "9.9", "view": {}, "sources": {}, "layers": []})
         assert r.forward_version is True
         # parse 本身永不抛（坏文档可诊断）；publication 消费入口显式拒绝。
         with pytest.raises(ms.MapSpecSchemaError) as exc:
             ms.require_parseable_mapspec(
-                {"version": "2.0", "view": {}, "sources": {}, "layers": []})
+                {"version": "9.9", "view": {}, "sources": {}, "layers": []})
         assert exc.value.code == "mapspec_forward_version"
 
 

@@ -15,7 +15,8 @@
       "drawLine": "绘制线",
       "drawPolygon": "绘制面",
       "editVertices": "顶点编辑",
-      "deleteFeature": "要素删除"
+      "deleteFeature": "要素删除",
+      "splitFeature": "分割要素"
     },
     "currentExecution": "当前执行",
     "graphHeading": "意图与执行链",

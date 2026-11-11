@@ -309,17 +309,19 @@ export function SceneController({ getMap, sessionId }: { getMap?: () => MapViewS
   );
 
   return (
-    <div className="pointer-events-auto absolute right-2 top-14 z-20 print:hidden">
+    // 与指北针同一行、位于其左侧（right = 12 + 30 + 10）：旧的 right-2 top-14
+    // 被右侧工具条整块压住，只露出半个图标、文字标签不可见。
+    <div className="pointer-events-auto absolute right-[52px] top-3 z-30 print:hidden">
       <button
         type="button"
         aria-label={t('sceneController.title')}
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => setOpen((v) => !v)}
-        className={`flex h-8 items-center gap-1 rounded-sm px-2 text-xs transition-colors ${
+        className={`map-chrome flex h-control-lg items-center gap-1 whitespace-nowrap px-2 text-caption transition-colors ${
           mode !== '2d'
-            ? 'bg-status-accent-soft font-bold text-status-accent'
-            : 'bg-surface-panel text-ink-secondary hover:bg-surface-hover hover:text-ink'
+            ? 'font-semibold text-status-accent'
+            : 'text-ink-secondary hover:text-ink'
         }`}
       >
         <Boxes className="h-4 w-4" aria-hidden />

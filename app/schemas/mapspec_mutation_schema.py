@@ -47,6 +47,20 @@ class PatchLayerStyleBody(ClientMutationIdMixin):
     paint: dict[str, Any] = Field(min_length=1)
 
 
+class PatchLayerLabelAuthoringBody(ClientMutationIdMixin):
+    """G16 要素级标注 authoring（UI 标签编辑手势与 Pi 工具共用）。
+
+    ops 原子（任一拒绝 → 整笔 400 + per-op findings）；labels_config
+    只收 obstaclePolicy/forbiddenZones（其余键 422）。
+    """
+
+    intent: Literal["patch_layer_label_authoring"]
+    expected_revision: int = Field(ge=0)
+    layer_id: str = Field(min_length=1, max_length=200)
+    ops: List[Dict[str, Any]] = Field(default_factory=list, max_length=200)
+    labels_config: Optional[Dict[str, Any]] = None
+
+
 class PatchComponentBody(ClientMutationIdMixin):
     """组件局部突变（UI 拖拽/缩放/折叠收尾提交）。
 
@@ -143,6 +157,8 @@ class SetLayoutBody(ClientMutationIdMixin):
     margins: Optional[dict[str, Any]] = None
     # CartographyComponent 列表（id/type/enabled/position/priority/style/options）
     components: Optional[list[dict[str, Any]]] = None
+    # G15：spec 级 atlas 帧整表写入（MapSpecFrame 列表；None = 不触碰）
+    frames: Optional[list[dict[str, Any]]] = None
 
 
 class SetTimeBody(ClientMutationIdMixin):
@@ -167,6 +183,21 @@ class SetTemporalViewBody(ClientMutationIdMixin):
     """
 
     intent: Literal["set_temporal_view"]
+    expected_revision: int = Field(ge=0)
+    config: Optional[dict[str, Any]] = None
+    patch: Optional[dict[str, Any]] = None
+    remove: bool = False
+
+
+class SetFrameProductBody(ClientMutationIdMixin):
+    """多画幅产品层用户面写入（G15；frame_product.v1 契约体）。
+
+    config/patch/remove 语义与 SetFrameProductIntent 一一对应；用户工作台
+    画幅编辑（激活画幅/排序/标题/同步组/图例策略）走 patch +
+    expected_revision CAS。
+    """
+
+    intent: Literal["set_frame_product"]
     expected_revision: int = Field(ge=0)
     config: Optional[dict[str, Any]] = None
     patch: Optional[dict[str, Any]] = None
@@ -224,6 +255,7 @@ UserMapSpecMutationRequest = Annotated[
     Union[
         PatchLayerPresentationBody,
         PatchLayerStyleBody,
+        PatchLayerLabelAuthoringBody,
         PatchComponentBody,
         SetViewBody,
         SetSceneBody,
@@ -235,6 +267,7 @@ UserMapSpecMutationRequest = Annotated[
         SetLayoutBody,
         SetTimeBody,
         SetTemporalViewBody,
+        SetFrameProductBody,
         InitProjectBody,
         SetWorkbenchStateBody,
         PatchWorkbenchDeltaBody,

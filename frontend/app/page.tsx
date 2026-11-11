@@ -19,7 +19,7 @@ import { useChatStore } from '@/lib/store/useChatStore';
 import { deleteSession } from '@/lib/api/chat';
 import { describeApiError } from '@/lib/api/transport';
 import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
-import { mapInsetLeft, mapChromeLeft } from '@/lib/utils/workspace-inset';
+import { mapInsetLeft, mapChromeLeft, effectivePanelWidth } from '@/lib/utils/workspace-inset';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
 import { useRegisterCommands } from '@/lib/commands/registry';
@@ -128,6 +128,7 @@ export default function Home() {
   const templatesOpen = useHudStore((s) => s.templatesOpen);
   const setTemplatesOpen = useHudStore((s) => s.setTemplatesOpen);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
+  const panelExpanded = useHudStore((s) => s.panelExpanded);
   // 地图 inset 只在 desktop 档推挤地图（thin 覆盖、mobile 全屏优先）
   const insetOpen = layoutMode === 'desktop' && leftPanelOpen;
 
@@ -402,7 +403,9 @@ export default function Home() {
           marginBottom: 24,
           // UI V4：地图 chrome（图例等）的水平避让偏移。地图容器真实收缩后
           // （见下方 wrapper），展开时 chrome 只需呼吸间距；收起时避开 rail。
-          ['--map-chrome-left' as string]: `${mapChromeLeft(leftPanelOpen)}px`,
+          // 只有面板真实推挤地图（desktop 档展开）时 chrome 才只需呼吸间距；
+          // thin 覆盖档/收起时避开竖排 rail，mobile 档 rail 在底部。
+          ['--map-chrome-left' as string]: `${mapChromeLeft(insetOpen, { railVisible: !isMobile })}px`,
           // UI V4：地图 chrome 的底部基线。workspace 已经预留 24px 状态条，
           // HUD 展开到 210px 时需要再抬 186px。所有底部 chrome（读数条、比例尺、
           // 热力图例、专题图例）都从这一个变量堆叠，因此不会互相压盖 ——
@@ -423,7 +426,7 @@ export default function Home() {
             top: 0,
             bottom: 0,
             right: 0,
-            left: mapInsetLeft(insetOpen, sidebarWidth),
+            left: mapInsetLeft(insetOpen, effectivePanelWidth(sidebarWidth, panelExpanded)),
             transition: 'left 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
           }}
         >
@@ -441,7 +444,12 @@ export default function Home() {
             <MemoSpatialCrosshair />
             {/* ADR-0285 D5：情境状态条（服务端 situation/turn-chain 投影，
                 刷新/重连即时恢复；不依赖 localStorage）。 */}
-            <div className='pointer-events-none absolute left-2 top-2 z-20'>
+            {/* 左缘与图例列同源（--map-chrome-left）：面板收起时地图容器从 0 起，
+                旧的 left-2 让情境条被竖排 rail 盖住一半。 */}
+            <div
+              className='pointer-events-none absolute top-3 z-20'
+              style={{ left: 'var(--map-chrome-left, 12px)' }}
+            >
               <SituationStatusBar />
             </div>
             {/* Workspace V2：停靠面板宿主（右/下 dock；面板实例从 chrome

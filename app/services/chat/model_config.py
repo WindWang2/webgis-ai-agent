@@ -91,3 +91,26 @@ def resolve_llm_config(role: ModelRole | str = ModelRole.EXECUTION) -> LLMConfig
         temperature=settings.LLM_TEMPERATURE,
         timeout_s=settings.LLM_TIMEOUT_S,
     )
+
+
+# ---------------------------------------------------------------------------
+# 配置代际（ADR-0288 / W08，#2061）：期望态 vs 实际生效态的可对账指纹。
+#
+# Pi 子进程在 spawn 时读取一份解析后的配置快照（models.json/settings.json
+# 由 ``pi_rpc_client._spawn_process`` 写盘）；运行时覆盖（/config/llm）改的
+# 是本模块的 override —— 两边可能不一致（旧 worker 仍在跑旧配置）。
+# ``config_generation()`` 给解析结果一个**不可逆**短指纹：日志/receipt/诊断
+# 面可对账「期望代 vs 某 worker 的生效代」，绝不泄露 key 明文。
+# ---------------------------------------------------------------------------
+
+def config_generation() -> str:
+    """当前解析后配置（execution 角色）的不可逆短指纹（sha256[:16]）。
+
+    输入 = 基础三元组（运行时覆盖 > Settings）；输出稳定、不可逆 ——
+    同配置同指纹，改任一元素即换代。
+    """
+    import hashlib
+
+    base_url, model, api_key = _base_triple()
+    payload = f"{base_url}\n{model}\n{api_key}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

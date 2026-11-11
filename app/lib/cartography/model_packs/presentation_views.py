@@ -15,19 +15,26 @@ PRESENTATION_VIEWS_PACK: List[MapModel] = [
     m(
         id="small_multiple_map", name_zh="小倍数地图组",
         purpose_zh="同一表达跨多个属性/时期的并置小图（比较形态学）",
-        geometry_kinds=["polygon", "point", "raster"],
+        # G15 native 化的实证组合 = polygon/point（frame_product.v1 全链：
+        # 真实数据桶计划 → CAS 绑定 → 逐帧有效文档 → 共享分级 → 同页
+        # 出版 PNG/SVG/PDF，见 tests/cartography/test_frame_product_*）。
+        # raster 未实证 —— 不入 kinds，诚实留在 pitfalls。
+        geometry_kinds=["polygon", "point"],
         maplibre_layer_type="fill",
         classification="graduated",
         color_scheme_kind="sequential", default_palette="Blues",
-        runtime_status="planned",
+        runtime_status="native",
         accepted_artifact_types=["admin_aggregate_table", "grid_aggregate"],
         qgis_renderer="atlas / 多版面",
         pitfalls_zh=[
-            "planned：需要多画幅组合运行时（多个 MapSpec 画面的并置/联动"
-            "布局），当前单画布 MapSpec 无法承载 —— 诚实保留 planned",
-            "V5（ADR-0118 D8）导出侧最小真实闭环：ExportRequest.frames 多帧"
-            "运行时（逐帧 filter/extent 确定性执行 → pdf pages / png grid "
-            "拼板）可作为小倍数导出承载面；spec 级多画幅模型仍待后续 Epic",
+            "native 前提：MapSpec frame_product.v1 契约（frame_product_bind"
+            "建立画幅身份与数据绑定）—— 无契约时仍是单画布，不自动并置",
+            "共享色带是资格契约：字段含义/单位/分母/测量语义不一致（如计数"
+            "对率）拒绝共享，回落独立图例并披露",
+            "raster 图层组合未实证（帧过滤语义只覆盖内联 geojson）—— 栅格"
+            "多画幅仍走 V5 ExportRequest.frames 导出面，诚实降级",
+            "客户端 canvas PNG/SVG 网格不承载 layerOverrides/纸型/共享图例带"
+            "—— 精确语义走后端 publication 产品页（atlas.driver=product）",
         ],
         sources=[_QGIS_URL],
     ),

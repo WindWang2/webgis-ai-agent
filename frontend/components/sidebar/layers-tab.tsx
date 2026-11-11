@@ -1236,20 +1236,22 @@ export function LayersTab() {
   return (
     <div className="flex flex-col h-full">
       {/* Stats header + 搜索 + 新建分组 */}
-      <div className="flex shrink-0 items-center gap-3 border-b border-edge-subtle bg-surface-panel px-panel py-1">
-        <span className="text-micro text-ink-disabled" title={t('sidebar.layers.orderHint')}>
+      {/* 统计 + 搜索行：统计项不换行（旧版固定 w-40 的搜索框把「总图层」「可见」
+          挤成逐字竖排）；搜索框改为弹性占满剩余宽度。 */}
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-edge-subtle bg-surface-panel px-panel py-1">
+        <span className="shrink-0 whitespace-nowrap text-micro text-ink-disabled" title={t('sidebar.layers.orderHint')}>
           {t('sidebar.layers.topIndicator')}
         </span>
         {[
           { label: t('sidebar.layers.statTotal'), value: layers.length },
           { label: t('sidebar.layers.statVisible'), value: visibleCount },
         ].map((stat) => (
-          <div key={stat.label} className="flex items-baseline gap-1">
+          <div key={stat.label} className="flex shrink-0 items-baseline gap-1 whitespace-nowrap">
             <span className="text-body font-semibold tabular-nums text-ink">{stat.value}</span>
             <span className="text-micro text-ink-muted">{stat.label}</span>
           </div>
         ))}
-        <div className="ml-auto flex w-40 items-center">
+        <div className="ml-auto flex min-w-[96px] max-w-[200px] flex-1 items-center">
           <SearchField
             value={search}
             onChange={setSearch}

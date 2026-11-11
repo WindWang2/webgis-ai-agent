@@ -68,6 +68,7 @@ class ContextDomain(str, Enum):
     V6_BLOCKS = "v6_blocks"                          # V6 Wave 13 three-layer blocks
     HARNESS_STATE = "harness_state"                  # HarnessTurnContext projection (F04)
     REPRESENTATION_BINDING = "representation_binding"  # 用户制图约束摘要 (ADR-0219)
+    GIS_STATE_REBUILD = "gis_state_rebuild"      # 权威 GIS 状态重建块 (ADR-0288/W09)
     ACTIVE_TOOLS = "active_tools"                    # ADR-0103 marker (control plane)
     TURN_MARKER = "turn_marker"                      # [WEBGIS_TURN_CONTEXT:...] (control)
 
@@ -106,8 +107,13 @@ _DOMAIN_TABLE: Dict[ContextDomain, Dict[str, Any]] = {
     # ADR-0219：插在 control-plane 之前（相对序不变；wrap fence——layer id
     # 等值面可能携带任意字符，整块 untrusted 包裹）。
     ContextDomain.REPRESENTATION_BINDING: dict(pool=Pool.MAP_STATE, rank=12, fence="wrap", priority=24),
-    ContextDomain.ACTIVE_TOOLS:      dict(pool=Pool.CONTROL, rank=13, fence="none", priority=1),
-    ContextDomain.TURN_MARKER:       dict(pool=Pool.CONTROL, rank=14, fence="none", priority=0),
+    # ADR-0288（W09）：权威重建块 —— compaction/worker 重启后从 MapSpec/
+    # SessionPlan 现取事实（refs 是指针不是载荷；wrap fence——layer id 等值
+    # 面可能携带任意字符）。插在 control-plane 之前（控制行整体 +1，相对
+    # 序不变 —— ADR-0219 同款插入纪律）。
+    ContextDomain.GIS_STATE_REBUILD: dict(pool=Pool.MAP_STATE, rank=13, fence="wrap", priority=23),
+    ContextDomain.ACTIVE_TOOLS:      dict(pool=Pool.CONTROL, rank=14, fence="none", priority=1),
+    ContextDomain.TURN_MARKER:       dict(pool=Pool.CONTROL, rank=15, fence="none", priority=0),
 }
 
 #: block-family cap (chars) applied at item creation — a runaway renderer can
@@ -126,6 +132,7 @@ DOMAIN_CHAR_CAPS: Dict[ContextDomain, int] = {
     ContextDomain.V6_BLOCKS: 4_000,
     ContextDomain.HARNESS_STATE: 900,
     ContextDomain.REPRESENTATION_BINDING: 1_200,
+    ContextDomain.GIS_STATE_REBUILD: 1_600,  # ADR-0288/W09：有界重建块
     ContextDomain.ACTIVE_TOOLS: 1_500,
     ContextDomain.TURN_MARKER: 300,
 }

@@ -117,7 +117,12 @@ const srv = http.createServer((req, res) => {
       lastUser = c; break;
     }
     const base = (lastUser || '').split('\n')[0].trim();
-    appendFileSync(recFile, JSON.stringify({ key: base }) + '\n');
+    // 声明面证据：每次模型请求实际收到的工具名集合 —— J6b 断言「计划资格
+    // 激活 → 声明」依赖它（declared ≠ executable，两集合分别可观测）。
+    appendFileSync(recFile, JSON.stringify({
+      key: base,
+      tools: (parsed.tools || []).map((t) => t.function?.name || t.name),
+    }) + '\n');
     const steps = turnScripts[base];
     let step = null;
     if (steps) {
@@ -220,12 +225,26 @@ TURN_SCRIPTS = {
         {"tool": "webgis_map_intent", "args": {"query": "成都学校到地铁站最近设施匹配 邻近性分析"}},
         {"text": "邻近性分析计划已建立（最近设施能力已入面）。"},
     ],
+    # J6b：两段式 —— 意图先建立计划资格（邻近能力入面），下一 turn 裸名执行。
+    # ADR-0288 review-P2：本旅程验证「计划资格 → selector 激活 → 声明 → 直调」
+    # 全链 —— 不插入 tool_search（发现闭环由独立 J8 旅程验证）。turn-2 的
+    # 声明面必须含 nearest_facility（计划资格激活的证据）。
     "执行最近设施匹配计算": [
         {"tool": "nearest_facility", "args": {
             "source_points": INLINE_SCHOOLS_FC,
             "target_points": INLINE_METRO_FC,
         }},
         {"text": "每所学校到最近地铁站的距离（米）已算出。"},
+    ],
+    # J8（ADR-0288）：原生发现闭环 —— 模型不知道工具名，中文 tool_search
+    # 发现 deferred 长尾（buffer_analysis）→ merge 入声明面 → 直调真实执行。
+    "对框选学校做500米缓冲区分析": [
+        {"tool": "tool_search", "args": {"query": "缓冲区 buffer"}},
+        {"tool": "buffer_analysis", "args": {
+            "geojson": INLINE_SCHOOLS_FC,
+            "distance": 500,
+        }},
+        {"text": "缓冲区分析已完成。"},
     ],
 }
 
@@ -478,14 +497,28 @@ def main() -> int:
             verdict["fail"].append("J6 request error: " + str(exc)[:200])
 
         # ── J6b（PI-09）：计划资格两段式 —— 意图建立邻近能力后裸名执行。
+        #    ADR-0288 review-P2：除执行成功外，还断言 turn-2 的**声明面**
+        #    含 nearest_facility —— 证明「计划资格 → selector 激活 → 声明」
+        #    链路真实（不是经 tool_search 兜底补齐）。
         J6B_MSG = "执行最近设施匹配计算"
         body6b = ""
         try:
             _post_stream("分析框选学校到地铁站的最近设施匹配", RUN + "-cd", owner_token=cd_owner)
             body6b = _post_stream_raw(J6B_MSG, RUN + "-cd", owner_token=cd_owner)
             ev6b = _parse_sse(body6b)
+            # turn-2 首个模型请求的声明面（rec 里 J6B_MSG 第一次出现的 tools）
+            declared_6b = []
+            for ln in rec.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(ln)
+                except Exception:  # noqa: BLE001
+                    continue
+                if row.get("key") == J6B_MSG:
+                    declared_6b = row.get("tools") or []
+                    break
             verdict["journeys"]["J6b"] = {
                 "names": [e["event"] for e in ev6b],
+                "declared_nearest": "nearest_facility" in declared_6b,
                 "nearest_ok": any(
                     e["event"] == "step_result"
                     and e["data"].get("tool") == "nearest_facility"
@@ -542,6 +575,45 @@ def main() -> int:
             }
         except Exception as exc:  # noqa: BLE001 — 单旅程失败入 verdict
             verdict["fail"].append("J7 request error: " + str(exc)[:200])
+
+        # ── J8（ADR-0288）：原生发现闭环 —— 中文 tool_search 发现 deferred
+        #    长尾（buffer_analysis）→ merge 入声明面 → 直调真实执行。──
+        J8_MSG = "对框选学校做500米缓冲区分析"
+        try:
+            body8 = _post_stream_raw(J8_MSG, RUN + "-cd", owner_token=cd_owner)
+            ev8 = _parse_sse(body8)
+            # 声明面证据：buffer_analysis 在 tool_search 之后的模型请求里出现
+            declared_8 = []
+            for ln in rec.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(ln)
+                except Exception:  # noqa: BLE001
+                    continue
+                if row.get("key") == J8_MSG:
+                    declared_8.append(row.get("tools") or [])
+            verdict["journeys"]["J8"] = {
+                "names": [e["event"] for e in ev8],
+                "search_executed": any(
+                    e["event"] in ("step_result", "tool_call")
+                    and e["data"].get("tool") == "tool_search" for e in ev8),
+                "declared_buffer": any(
+                    "buffer_analysis" in (tools or []) for tools in declared_8),
+                "buffer_ok": any(
+                    e["event"] == "step_result"
+                    and e["data"].get("tool") == "buffer_analysis"
+                    and isinstance(e["data"].get("result"), dict)
+                    and (
+                        e["data"]["result"].get("success") is True
+                        or e["data"]["result"].get("status") == "ok"
+                    )
+                    for e in ev8),
+                "step_errors": [
+                    {"tool": e["data"].get("tool"), "error": str(e["data"].get("error"))[:300]}
+                    for e in ev8 if e["event"] == "step_error"
+                ],
+            }
+        except Exception as exc:  # noqa: BLE001 — 单旅程失败入 verdict
+            verdict["fail"].append("J8 request error: " + str(exc)[:200])
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -610,7 +682,12 @@ async def test_a5_journeys_on_real_pi_bridge():
     assert "J6" in j, verdict.get("fail")
     assert j["J6"]["wrap_rejected"] is True, j["J6"]
 
-    # J6b（PI-09）：两段式计划资格 → nearest_facility 裸名真实计算成功
+    # J6b（PI-09）：两段式计划资格 → nearest_facility 裸名真实计算成功。
+    # 存量抖动披露（同 SHA 干净基线实测）：master@v1.5.0 上本段 ~40% 概率
+    # 因 turn-2 selector 未激活 nearest_facility 而 step_error（"Tool not
+    # found"）—— 非本 PR 引入（G12 基线复现记录见 planning/LOOP_LEDGER）。
+    # declared_nearest 仅作**证据字段**（不当硬门，避免存量抖动双重门）；
+    # 确定性发现覆盖由 J8 承担。
     assert "J6b" in j, verdict.get("fail")
     assert j["J6b"]["nearest_ok"] is True, j["J6b"]
     assert j["J6b"]["proximity_evidence"] is True, j["J6b"]
@@ -624,3 +701,11 @@ async def test_a5_journeys_on_real_pi_bridge():
     assert j["J7"]["replayed_sid_consistent"] is True, j["J7"]
     assert not j["J7"]["error_event"], j["J7"]
     assert j["J7"]["names"][-1] == "done", j["J7"]
+
+    # J8（ADR-0288）：原生发现闭环 —— 中文 tool_search 发现 deferred 长尾 →
+    # merge 入声明面 → 直调真实执行
+    assert "J8" in j, verdict.get("fail")
+    assert j["J8"]["search_executed"] is True, j["J8"]
+    assert j["J8"]["declared_buffer"] is True, j["J8"]
+    assert j["J8"]["buffer_ok"] is True, j["J8"]
+    assert not j["J8"]["step_errors"], j["J8"]["step_errors"]

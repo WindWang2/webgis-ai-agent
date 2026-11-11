@@ -92,7 +92,38 @@ async def update_llm_config(
         api_key=req.api_key,
         use_prompt_caching=req.use_prompt_caching
     )
-    return LLMConfigUpdateResponse(status="ok", config=LLMConfig(**get_engine().get_config()))
+    # ADR-0288（W08，#2061）：Pi 子进程在 spawn 时快照 LLM 配置 —— 更新后
+    # 按配置代漂移在 turn 边界换代 worker（在飞 turn 不切半套，跑完换）。
+    # 期望/生效分开披露；换代失败留给 lazy respawn 兜底，绝不如实报成功。
+    recycled = 0
+    deferred = 0
+    try:
+        from app.agent_pi_bridge import get_bridge_pool
+
+        # 只扫已存在的 worker（不主动 spawn）；无池 = Pi 尚未启动 —— 下次
+        # spawn 自然用新配置，无需换代。
+        pool = get_bridge_pool()
+        for bridge in (list(pool.bridges) if pool is not None else []):
+            if await bridge.recycle_if_config_stale():
+                recycled += 1
+            elif bridge.config_generation_stale():
+                deferred += 1  # 在飞 turn 延迟换代（新 turn 用新代）
+    except Exception:  # noqa: BLE001 — 换代是尽力而为，更新本身已生效
+        logger.warning("[config/llm] Pi worker recycle sweep failed", exc_info=True)
+    expected_gen = ""
+    try:
+        from app.services.chat.model_config import config_generation
+
+        expected_gen = config_generation()
+    except Exception:  # noqa: BLE001
+        expected_gen = ""
+    return LLMConfigUpdateResponse(
+        status="ok",
+        config=LLMConfig(**get_engine().get_config()),
+        expected_generation=expected_gen or None,
+        pi_workers_recycled=recycled,
+        pi_workers_deferred=deferred,
+    )
 
 
 def _provider_error_detail(err: httpx.HTTPError) -> str:

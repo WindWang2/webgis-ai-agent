@@ -115,6 +115,25 @@ def _env_float(name: str, default: float) -> float:
 PI_RPC_TIMEOUT = _env_float("PI_RPC_TIMEOUT", 300.0)
 PI_STARTUP_READY_TIMEOUT = _env_float("PI_STARTUP_READY_TIMEOUT", 10.0)
 
+# ADR-0288（W07）/ C14：v1.5.1 停机语义 —— stdin EOF 触发 vendor 有序
+# shutdown()（dispose 等 tool settlement + credential writes，**可合法耗时
+# 数秒**）；首 SIGTERM 同为有序清理；**第二**信号才立即强退。宿主侧对应：
+# EOF → 有界等待（本值，默认 8s）→ 单次 SIGTERM → 有界等待 → SIGKILL。
+# 我们绝不在窗口内重复发信号（会截断 vendor 清理）。
+PI_GRACEFUL_STOP_TIMEOUT = _env_float("PI_GRACEFUL_STOP_TIMEOUT_S", 8.0)
+#: SIGTERM 后的等待窗（终止信号已发，vendor 此刻要么已清理完要么卡死）。
+PI_TERM_STOP_TIMEOUT = _env_float("PI_TERM_STOP_TIMEOUT_S", 2.0)
+
+
+def _drain_and_close_stdin(proc: subprocess.Popen) -> None:
+    """Close the child's stdin — v1.5.1 rpc-mode treats EOF as an orderly
+    shutdown request (onInputEnd → shutdown()). Safe when already closed."""
+    try:
+        if proc.stdin is not None and not proc.stdin.closed:
+            proc.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass  # child already gone / pipe torn down — EOF already delivered
+
 
 
 # Review F16: environment allowlist for the Pi subprocess.
@@ -174,6 +193,9 @@ class PiRpcClient:
         # PI-03（ADR-0286 D4）：本次 spawn 的 dump registry_generation（空 =
         # v2 dump / 未锚定 —— bridge 的代漂移检测 fail-open 不回收）。
         self.spawn_surface_generation: str = ""
+        # ADR-0288（W08，#2061）：本次 spawn 的 LLM 配置代际（空 = 解析失败 /
+        # 未锚定 —— 配置换代回收 fail-open 不触发）。
+        self.spawn_config_generation: str = ""
         self._surface_dump_path: Optional[Path] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
@@ -363,20 +385,33 @@ class PiRpcClient:
             env["WEBGIS_API_BASE"] = (
                 f"http://127.0.0.1:{port}" if port else "http://127.0.0.1:18000"
             )
-        # audit4 #987: 后端 LLM 凭证映射进 Pi 子进程。仓内 models.json 指向
-        # 同一套 LLM_BASE_URL / LLM_MODEL，不读用户 ~/.pi。
+        # audit4 #987 → ADR-0288（W08，#2061）：后端 LLM 凭证映射进 Pi 子进程。
+        # 解析只走 ``model_config.resolve_llm_config``（Settings ⊕ 运行时覆盖
+        # 的**单一解析点**）—— 此前直读 Settings 导致 /config/llm 更新后
+        # 新 spawn 的 Pi 仍用旧配置（issue #2061：返回成功而对话用旧模型）。
+        # 本次 spawn 的配置代际一并锚定（bridge 的代漂移回收检测消费）。
         llm_base = ""
         llm_model = ""
         try:
-            from app.core.config import settings as _settings
-            llm_base = str(getattr(_settings, "LLM_BASE_URL", "") or "")
-            llm_model = str(getattr(_settings, "LLM_MODEL", "") or "")
-            if not env.get("OPENAI_API_KEY"):
-                _key = getattr(_settings, "LLM_API_KEY", "")
-                if _key and "your-api-key" not in _key:
-                    env["OPENAI_API_KEY"] = _key
+            from app.services.chat.model_config import (
+                config_generation,
+                resolve_llm_config,
+            )
+
+            _cfg = resolve_llm_config()
+            llm_base = str(_cfg.base_url or "")
+            llm_model = str(_cfg.model or "")
+            # review-P1（W08）：解析结果（runtime override > Settings，且
+            # Settings.LLM_API_KEY 本身可源自 env）是**唯一权威** —— 必须覆盖
+            # 继承的 OPENAI_API_KEY。旧逻辑「env 已有则保留」会让 /config/llm
+            # 更新后的新 key 被继承的旧 key 压过，而 generation 却哈希新 key
+            # → 期望/生效对账失真。解析为空则保留 env 现状（诚实未配置）。
+            _key = str(_cfg.api_key or "")
+            if _key and "your-api-key" not in _key:
+                env["OPENAI_API_KEY"] = _key
+            self.spawn_config_generation = config_generation()
         except Exception:  # noqa: BLE001 — env 映射是尽力而为，绝不阻断 spawn
-            pass
+            self.spawn_config_generation = ""
 
         if llm_base and llm_model:
             _write_agent_text(PI_AGENT_DIR / "models.json",
@@ -469,7 +504,14 @@ class PiRpcClient:
                 await asyncio.sleep(0.2)
 
     async def stop(self) -> None:
-        """Stop the Pi subprocess."""
+        """Stop the Pi subprocess (ADR-0288 / W07, vendor C14).
+
+        升序收敛，窗口分开记录：stdin EOF（vendor 有序 shutdown：dispose 等
+        tool settlement + credential writes）→ ``PI_GRACEFUL_STOP_TIMEOUT``（默
+        认 8s）内等自然退出 → 单次 SIGTERM → ``PI_TERM_STOP_TIMEOUT``（2s）→
+        SIGKILL → 收尸。绝不双发信号（vendor 语义：第二信号立即强退、截断
+        清理）；SIGTERM 只在 EOF 窗超时后才发（此刻清理要么完成要么卡死）。
+        """
         proc = self._process
         if proc is None:
             return
@@ -480,17 +522,40 @@ class PiRpcClient:
         # skipped reader/stderr task reclamation. Work on a local handle.
         try:
             proc = self._process
-            proc.terminate()
-            await asyncio.sleep(0.5)
-            if proc.poll() is None:
-                proc.kill()
-                # #810: SIGKILL 后必须 wait 收尸 —— 否则 node 子进程以 defunct
-                # 僵尸态驻留到解释器退出（懒回收依赖下一次 Popen 创建，而
-                # 单例桥关闭后不会再有）。每个 lifespan 周期泄一个僵尸。
+            _t0 = time.monotonic()
+            # 1) 有序：stdin EOF → vendor shutdown()（dispose 可合法耗时数秒）
+            _drain_and_close_stdin(proc)
+            try:
+                # proc.wait 是阻塞调用 —— offload 到 worker 线程，绝不冻结
+                # 事件循环上其他并发会话（#1438 同款纪律）。
+                await asyncio.to_thread(proc.wait, timeout=PI_GRACEFUL_STOP_TIMEOUT)
+                logger.info(
+                    "[PiRpcClient] orderly stop via stdin EOF after %.2fs",
+                    time.monotonic() - _t0,
+                )
+            except subprocess.TimeoutExpired:
+                # 2) EOF 窗超时：单次 SIGTERM（vendor 首信号=有序、第二=强退；
+                #    我们只发一次，绝不截断清理）。
+                proc.terminate()
                 try:
-                    proc.wait(timeout=2)
-                except (ProcessLookupError, subprocess.TimeoutExpired):
-                    pass
+                    await asyncio.to_thread(proc.wait, timeout=PI_TERM_STOP_TIMEOUT)
+                    logger.warning(
+                        "[PiRpcClient] SIGTERM stop after EOF window (%.2fs); "
+                        "orderly cleanup did not finish in %ss",
+                        time.monotonic() - _t0, PI_GRACEFUL_STOP_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired:
+                    # 3) 强制：SIGKILL + 收尸（#810：不留 defunct 僵尸）。
+                    proc.kill()
+                    try:
+                        await asyncio.to_thread(proc.wait, timeout=2)
+                    except (ProcessLookupError, subprocess.TimeoutExpired):
+                        pass
+                    logger.error(
+                        "[PiRpcClient] SIGKILL stop after %.2fs (EOF+SIGTERM "
+                        "windows both expired)",
+                        time.monotonic() - _t0,
+                    )
         finally:
             if self._process is proc:
                 self._process = None

@@ -560,6 +560,18 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/layers/terrain-sources` | List Terrain Sources | MapResourceAvailabilitySummary |
 | `GET` | `/api/v1/layer-types` | Get Layer Types | LayerTypesResponse |
 
+### 栅格表达工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/raster-authoring/refs` | List Raster Refs | object |
+| `GET` | `/api/v1/raster-authoring/descriptor/{ref_id}` | Descriptor | object |
+| `POST` | `/api/v1/raster-authoring/probe` | Probe | object |
+| `POST` | `/api/v1/raster-authoring/expression/preview` | Preview | object |
+| `POST` | `/api/v1/raster-authoring/expression/commit` | Commit | object |
+| `GET` | `/api/v1/raster-authoring/tiles/{ref_id}/{z}/{x}/{y}.png` | Styled Tile | object |
+| `POST` | `/api/v1/raster-authoring/export` | Export Map | object |
+
 ### 报告生成
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -612,6 +624,11 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/history` | Feature Edit History | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/policy` | Get Feature Edit Policy | object |
 | `PUT` | `/api/v1/chat/sessions/{session_id}/feature-edits/policy` | Put Feature Edit Policy | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets` | Create Edit Dataset | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/promote-sketch` | Promote Sketch Dataset | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/editable-copy` | Make Editable Copy | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/qualification` | Get Edit Qualification | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/lineage` | Get Feature Lineage | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/map-operations` | List Map Operations | MapOperationListResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}` | Get Map Operation | MapOperationReceiptResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}/commit` | Commit Pending Map Operation | MapOperationReceiptResponse |
@@ -629,7 +646,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
 | `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals` | Create Review Proposal | — |
-| `GET` | `/api/v1/chat/sessions/{session_id}/review/proposals` | List Review Proposals | ProposalListResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/review/proposals` | List Review Proposals | app__schemas__review_schema__ProposalListResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}` | Get Review Proposal | ProposalProjectionResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/submit` | Submit Review Proposal | ProposalProjectionResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/review/proposals/{proposal_id}/comments` | Add Review Comment | ProposalProjectionResponse |
@@ -700,6 +717,21 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/data-preparation/plan/{plan_id}` | Discard | DiscardPlanResponse |
 | `POST` | `/api/v1/data-preparation/bindings/fields` | Bind Fields | FieldBindingResponse |
 | `GET` | `/api/v1/data-preparation/plan/{plan_id}/receipt` | Plan Receipt | ReceiptSummaryOut |
+
+### 字段计算
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/field-compute/catalog` | Catalog | object |
+| `POST` | `/api/v1/field-compute/describe` | Describe | object |
+| `POST` | `/api/v1/field-compute/plan` | Create Plan | FieldComputePlanResponse |
+| `POST` | `/api/v1/field-compute/plan/{plan_id}/preview` | Preview Plan | object |
+| `POST` | `/api/v1/field-compute/plan/{plan_id}/execute` | Execute Plan | object |
+| `POST` | `/api/v1/field-compute/plan/{plan_id}/cancel` | Cancel Plan | FieldComputeCancelResponse |
+| `GET` | `/api/v1/field-compute/plans` | Plans | FieldComputePlanListResponse |
+| `GET` | `/api/v1/field-compute/result` | Result | object |
+| `GET` | `/api/v1/field-compute/project-results` | Project Results | object |
+| `DELETE` | `/api/v1/field-compute/plan/{plan_id}` | Discard Plan | FieldComputeDiscardResponse |
 
 ### 知识库管理
 
@@ -988,6 +1020,23 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}` | Delete Runtime Snapshot | RuntimeSnapshotDeleteResponse |
 | `POST` | `/api/v1/projects/{project_id}/runtime-snapshots/{snapshot_id}/resume` | Resume Runtime Snapshot | RuntimeSnapshotResumeResponse |
 
+### Project Data Refresh (G10)
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/check` | Check Updates | CheckReceipt |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/sources` | List Sources | object |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/preview` | Preview Refresh | RefreshProposal |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals` | List Proposals | app__schemas__project_data_refresh_schema__ProposalListResponse |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}` | Get Proposal | RefreshProposal |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/status` | Proposal Status | StatusResponse |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/explain` | Explain Stale | object |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/execute` | Execute Candidate | ExecuteRefreshResponse |
+| `GET` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/compare` | Compare Candidate | object |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/adopt` | Adopt Candidate | AdoptionReceipt |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/discard` | Discard Candidate | AdoptionReceipt |
+| `POST` | `/api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/rollback` | Rollback Candidate | AdoptionReceipt |
+
 ### Project Knowledge
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1056,6 +1105,32 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/storymap/export` | Export Storymap | object |
 | `POST` | `/api/v1/storymap/sessions/{session_id}/spec` | Save Session Story Spec | object |
 | `GET` | `/api/v1/storymap/sessions/{session_id}/spec` | Get Session Story Spec | StoryMapSpec |
+
+### MapBrief
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/briefs/sessions/{session_id}/draft` | Create Brief Draft | object |
+| `GET` | `/api/v1/briefs/sessions/{session_id}` | Get Session Brief | object |
+| `PATCH` | `/api/v1/briefs/sessions/{session_id}` | Patch Brief Meta | object |
+| `POST` | `/api/v1/briefs/sessions/{session_id}/blocks` | Create Block | object |
+| `PATCH` | `/api/v1/briefs/sessions/{session_id}/blocks/{block_id}` | Patch Block | object |
+| `DELETE` | `/api/v1/briefs/sessions/{session_id}/blocks/{block_id}` | Remove Block | object |
+| `POST` | `/api/v1/briefs/sessions/{session_id}/chapters` | Create Chapter | object |
+| `PATCH` | `/api/v1/briefs/sessions/{session_id}/chapters/{chapter_id}` | Patch Chapter | object |
+| `DELETE` | `/api/v1/briefs/sessions/{session_id}/chapters/{chapter_id}` | Remove Chapter | object |
+| `POST` | `/api/v1/briefs/sessions/{session_id}/regenerate` | Regenerate Brief | object |
+| `GET` | `/api/v1/briefs/sessions/{session_id}/evidence/{fact_id}` | Inspect Evidence | object |
+| `POST` | `/api/v1/briefs/sessions/{session_id}/preflight` | Run Brief Preflight | object |
+| `POST` | `/api/v1/briefs/sessions/{session_id}/releases` | Freeze Release | object |
+| `GET` | `/api/v1/briefs/sessions/{session_id}/releases` | List Brief Releases | object |
+| `GET` | `/api/v1/briefs/sessions/{session_id}/releases/{release_id}/manifest` | Get Release Manifest | object |
+| `GET` | `/api/v1/briefs/sessions/{session_id}/releases/{release_id}/download` | Download Release Html | object |
+| `GET` | `/api/v1/briefs/sessions/{session_id}/releases/{release_id}/facts.csv` | Download Release Csv | object |
+| `POST` | `/api/v1/briefs/sessions/{session_id}/releases/{release_id}/share` | Share Release | object |
+| `DELETE` | `/api/v1/briefs/sessions/{session_id}/releases/{release_id}/share` | Unshare Release | object |
+| `GET` | `/api/v1/briefs/shared/{share_code}` | Shared Brief Info | object |
+| `GET` | `/api/v1/briefs/shared/{share_code}/view` | Shared Brief View | object |
 
 ### PI工具
 
@@ -1170,6 +1245,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：433（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：488（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

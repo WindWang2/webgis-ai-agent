@@ -368,6 +368,8 @@
  "GET /api/v1/health": {
   "__model__": "HealthResponse",
   "agent_runtime": "string",
+  "agent_runtime_mode": "null|string",
+  "agent_runtime_reason": "null|string",
   "pi_vendor": "null|string",
   "pi_workers_alive": "null|string",
   "service": "string",
@@ -705,6 +707,15 @@
  },
  "GET /api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}": {
   "__model__": "WorkspaceSnapshotInspectResponse"
+ },
+ "GET /api/v1/raster-authoring/descriptor/{ref_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/raster-authoring/refs": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/raster-authoring/tiles/{ref_id}/{z}/{x}/{y}.png": {
+  "__type__": "unknown"
  },
  "GET /api/v1/ready": {
   "__model__": "ReadyResponse",
@@ -1251,6 +1262,9 @@
  "POST /api/v1/config/llm": {
   "__model__": "LLMConfigUpdateResponse",
   "config": "LLMConfig",
+  "expected_generation": "null|string",
+  "pi_workers_deferred": "integer|null",
+  "pi_workers_recycled": "integer|null",
   "status": "string"
  },
  "POST /api/v1/config/llm/test": {
@@ -1367,6 +1381,7 @@
   "__model__": "VectorPdfExportResponse",
   "atlas": "boolean",
   "atlas_pages": "array<object>|null",
+  "constraint_layout": "null|object",
   "filename": "string",
   "format": "string",
   "frames_rendered": "integer",
@@ -1738,6 +1753,18 @@
  },
  "POST /api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/restore": {
   "__model__": "WorkspaceSnapshotRestoreResponse"
+ },
+ "POST /api/v1/raster-authoring/export": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/raster-authoring/expression/commit": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/raster-authoring/expression/preview": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/raster-authoring/probe": {
+  "__type__": "unknown"
  },
  "POST /api/v1/reports": {
   "__model__": "ApiResponse",
