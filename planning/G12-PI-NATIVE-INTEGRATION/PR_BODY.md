@@ -130,7 +130,18 @@ native7 schema 12,986→13,815；spawn→ready 0.42-0.46s 持平；停机最坏�
     新增确定性 J8 发现旅程（存量抖动经 master@v1.5.0 干净基线复现，如实披露）`；
     `P2-3 fresh-spec fail-open → 非空 echo fail-closed`；`P2-4 层截断披露`
   - `P3-1 compaction 钩子名/回退文档修正`
-- 第二轮（复审）：见 REVIEW.md「复审记录」
+- 第二轮裁决：**BLOCK — N1（P1，scope 死存储致 SURFACE_SCOPE_VIOLATION 生产不可
+  达）+ N2（P1，receipt 缺席被扫入 fresh-spec 复检的兼容回归）** → 均已修复
+  （scope_mismatch 传播恢复 + 复检条件收窄为实际 grant 工具；旧 abi_route 测试
+  按 ADR-0288 真实语义重写为三断言，6/6 通过）。P1-1..P1-4/P2-3/P2-4/P3-1 判
+  FIXED；P2-1/P2-2/N4 为 PARTIAL/P3 留记（REVIEW.md 如实记录）。N3 字段契约
+  快照已按门机制刷新（含本 PR 3 加性字段 + 2 存量漂移字段）。
+- 测试口径修正（reviewer 指正）：第一轮「unit 240」未覆盖
+  `test_pi_surface_abi_route.py`（该文件当时实际红——N1/N2 之证）。现按其口径
+  实跑 `pytest tests/unit -k pi` → **1849 passed / 77 skipped / 1 xfailed**；
+  唯一失败为本 worktree 环境差异（缺 frontend jiti；补链接后 19/19，master 基线
+  同过）。
+- 第三轮（终审）：见 REVIEW.md「第三轮复审记录」
 
 ## 风险与回滚（Compatibility & Rollback）
 
