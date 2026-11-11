@@ -231,6 +231,44 @@ class RasterMapSpecSource(_SpecModel):
     imageSize: Optional[List[Number]] = None
 
 
+# ── G20 additive：数值栅格（raster_expression.v1）源子模型 ────────────────
+# 与 G15 frame / G16 label / G21 flow 字段分区不相交。本模型只承载**数据身份**
+# （ref + 修订 + 指纹 + grid 元信息），表达状态一律在 layer.raster_style。
+# 同源可被多个图层以不同样式引用，源条目不因换色而改写（数据指纹不污染）。
+# 文档版本保持 1.9：纯 additive optional + extra="allow" + canonical 保序
+# 深拷贝，旧文档 parse_mapspec 结果逐位不变，无需迁移；子契约版本独立演进。
+from app.schemas.raster_spec import (  # noqa: E402
+    RASTER_EXPRESSION_SCHEMA_VERSION as _RASTER_EXPRESSION_SCHEMA_VERSION,
+    RasterExpressionSpec as _RasterExpressionSpec,
+    RasterStretchBounds as _RasterStretchBounds,
+)
+
+RasterExpressionSpec = _RasterExpressionSpec
+RasterStretchBounds = _RasterStretchBounds
+RASTER_EXPRESSION_SCHEMA_VERSION = _RASTER_EXPRESSION_SCHEMA_VERSION
+
+
+class NumericRasterMapSpecSource(_SpecModel):
+    """数值栅格 ref 的 MapSpec 源（GeoTIFF/COG，未烘焙成 PNG）。
+
+    - ``refId``：owner-scoped session ref（不是本地路径、不是 tile URL）；
+    - ``dataRevision`` / ``dataFingerprint``：数据身份，样式改动不重算；
+    - ``bounds``：EPSG:4326 范围证据（无 CRS 时为源坐标范围，见 ``crs``）；
+    - 不含 owner token / session URL / 过期签名。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["numeric_raster"]
+    schema_version: Literal["raster_expression.v1"] = "raster_expression.v1"
+    refId: StrictStr
+    bounds: List[Number]  # [w, s, e, n]
+    crs: Optional[StrictStr] = None
+    dataRevision: StrictStr
+    dataFingerprint: Optional[StrictStr] = None
+    bandCount: Optional[StrictInt] = None
+
+
 class DataFabricMapSpecSource(_SpecModel):
     """Data Fabric lazy/materialized 协议源（ADR-0050）；键面以
     ``mapspec_source.store_data`` 实际写入为准，其余开放。"""
@@ -299,6 +337,7 @@ MapSpecSource = Union[
     GeoJSONMapSpecSource,
     VectorMapSpecSource,
     RasterMapSpecSource,
+    NumericRasterMapSpecSource,
     RasterDemMapSpecSource,
     DataFabricMapSpecSource,
     Model3dMapSpecSource,
@@ -666,6 +705,10 @@ class MapSpecLayer(_SpecModel):
     #: Profile.v1 投影（to_mapspec_layer_block）。缺失 = 层无多尺度档案，
     #: 存量 spec 行为不变）。
     scale_profile: Optional[Dict[str, Any]] = None
+    #: G20 additive：数值栅格表达（``raster_expression.v1``）。样式在**层**上，
+    #: 数据身份在 ``NumericRasterMapSpecSource`` 上 —— 同一 ref 的两个图层可
+    #: 携带不同 style_id 而互不串色。旧 PNG 图层缺席该字段，行为不变。
+    raster_style: Optional[RasterExpressionSpec] = None
 
 
 class MapThresholds(_SpecModel):
@@ -1311,6 +1354,10 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("GeoJSONMapSpecSource", GeoJSONMapSpecSource),
     ("VectorMapSpecSource", VectorMapSpecSource),
     ("RasterMapSpecSource", RasterMapSpecSource),
+    # G20：数值栅格源 + 表达契约（子契约版本 raster_expression.v1）
+    ("NumericRasterMapSpecSource", NumericRasterMapSpecSource),
+    ("RasterStretchBounds", RasterStretchBounds),
+    ("RasterExpressionSpec", RasterExpressionSpec),
     ("RasterDemMapSpecSource", RasterDemMapSpecSource),
     ("DataFabricMapSpecSource", DataFabricMapSpecSource),
     ("ClusterSourceConfig", ClusterSourceConfig),

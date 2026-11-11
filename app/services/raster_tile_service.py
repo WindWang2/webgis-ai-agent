@@ -19,6 +19,7 @@ import io
 import collections
 import os
 import threading
+from dataclasses import dataclass
 from typing import Tuple, Dict, Optional
 import numpy as np
 from PIL import Image
@@ -57,6 +58,54 @@ logger = logging.getLogger(__name__)
 # PERF-F6: bounded (was unbounded per-path growth over process lifetime).
 _CRS_LESS_WARNED: "set[str]" = set()
 _CRS_LESS_WARNED_MAX = 4096
+
+
+# ─── G20 / raster_expression.v1：权威样式进入数据面 ─────────────────────────
+# 旧 ``cmap_name`` / ``bands`` 两个 Query 参数保持逐字兼容（style=None 时
+# 缓存键、渲染体、错误兜底与基线一致）。style 非 None 时，bands / stretch /
+# resampling / colormap / opacity / data_revision 全部真实进入渲染与缓存身份。
+@dataclass(frozen=True)
+class RasterRenderStyle:
+    """一次已提交表达的渲染投影（由 raster_authoring.render 构造）。"""
+
+    bands: Tuple[int, ...]
+    stretch: Optional[Tuple[Tuple[float, float], ...]]
+    colormap: Optional[str]
+    opacity: float
+    resampling: str
+    style_id: str = ""
+    data_revision: str = ""
+
+    @property
+    def cache_identity(self) -> str:
+        """样式 + 数据版本的内容身份（不同层同 ref 不串色、旧数据不出旧像素）。"""
+        return "|".join((
+            self.style_id or "unstyled",
+            self.data_revision or "unversioned",
+            ",".join(str(b) for b in self.bands),
+            self.colormap or "",
+            self.resampling,
+            str(self.opacity),
+            repr(self.stretch or ()),
+        ))
+
+
+class RasterTileError(RuntimeError):
+    """样式瓦片渲染失败（可观测，不用透明 PNG 伪装有效空白地图）。"""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _resampling_for(name: str) -> "Resampling":
+    """表达声明的重采样 → rasterio 枚举；分类数据只能 nearest。"""
+    return {
+        "nearest": Resampling.nearest,
+        "bilinear": Resampling.bilinear,
+        "cubic": Resampling.cubic,
+    }[name]
 
 
 def _channel_valid_mask(arr: np.ndarray, nodata_val) -> np.ndarray:
@@ -314,6 +363,7 @@ def render_raster_tile(
     tile_size: int = 256,
     cmap_name: Optional[str] = None,
     bands: Optional[Tuple[int, ...]] = None,
+    style: Optional[RasterRenderStyle] = None,
 ) -> bytes:
     """Render a 256x256 PNG tile for the given XYZ coordinates from a GeoTIFF.
 
@@ -322,13 +372,34 @@ def render_raster_tile(
       此前是死参数——只进缓存键不进渲染体。
     - ``bands``：1-based 波段组合（≤3）；缺省前 min(3, count)。
     - 样式（cmap/bands）进缓存键：换样式 = 新缓存条目，绝不重算遥感产物。
+
+    G20：``style`` 非 None 时消费**已提交**的完整表达（bands / 冻结的逐通道
+    stretch / resampling / colormap / opacity），并把 ``style_id + data_revision``
+    加入缓存身份。style=None 时行为与基线逐字一致（旧 PNG/旧 tile 回归）。
     """
-    if bands is not None and len(bands) not in (1, 3):
+    if style is not None:
+        if len(style.bands) not in (1, 3):
+            raise RasterTileError(
+                "BAND_COUNT_UNSUPPORTED", "styled render requires one or three bands"
+            )
+        if style.stretch is not None and len(style.stretch) != len(style.bands):
+            raise RasterTileError(
+                "STRETCH_CHANNEL_MISMATCH", "styled render needs one stretch pair per band"
+            )
+        if not 0.0 <= style.opacity <= 1.0:
+            raise RasterTileError("OPACITY_OUT_OF_RANGE", "styled opacity out of range")
+        if style.resampling not in ("nearest", "bilinear", "cubic"):
+            raise RasterTileError(
+                "UNSUPPORTED_RESAMPLING", f"unsupported resampling {style.resampling!r}"
+            )
+    elif bands is not None and len(bands) not in (1, 3):
         raise ValueError("Raster rendering supports one band or three RGB bands")
     if z < 0 or z > 22 or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         return _transparent_tile_png(tile_size)
 
     key = (raster_path, z, x, y, tile_size, cmap_name or "", bands or ())
+    if style is not None:
+        key = key + (style.cache_identity,)
     cached = _get_cached_tile(key)
     if cached is not None:
         return cached
@@ -396,7 +467,14 @@ def render_raster_tile(
             # Issue #410: read ONLY the bands we render (max 3) — the previous
             # full-band read decoded every band of a >3-band raster (~2x waste).
             # C5：band selection（RasterStyleSpec.normalized_bands 语义同构）
-            if bands:
+            if style is not None:
+                indexes = tuple(int(b) for b in style.bands)
+                if any(b < 1 or b > src.count for b in indexes):
+                    raise RasterTileError(
+                        "BAND_OUT_OF_RANGE",
+                        "committed expression references a band absent from the current data revision",
+                    )
+            elif bands:
                 indexes = tuple(b for b in bands if 1 <= b <= src.count)[:3]
             else:
                 indexes = (1,) if src.count < 3 else (1, 2, 3)
@@ -426,18 +504,23 @@ def render_raster_tile(
 
             # Dataset-global stretch bounds (per band) so adjacent tiles share
             # one normalization instead of per-tile min/max (seam fix, #410).
-            try:
-                # C5：只对请求的波段子集计算/缓存全局 stretch（#595 纪律同样
-                # 适用于 stats 读取——绝不解码 >3 波段栅格的全部波段）
-                stats = _get_band_stats(raster_path, src, indexes)
-            except Exception:
-                logger.debug(
-                    "[raster_tile_service] global stats unavailable for %s, "
-                    "falling back to per-tile normalization",
-                    raster_path,
-                    exc_info=True,
-                )
-                stats = None
+            if style is not None and style.stretch is not None:
+                # G20：提交期冻结的全局范围（含 method/sample_count）随 style_id
+                # 进入缓存身份。每个数据版本只解析一次，绝不按瓦片各算范围。
+                stats = tuple((float(lo), float(hi)) for lo, hi in style.stretch)
+            else:
+                try:
+                    # C5：只对请求的波段子集计算/缓存全局 stretch（#595 纪律同样
+                    # 适用于 stats 读取——绝不解码 >3 波段栅格的全部波段）
+                    stats = _get_band_stats(raster_path, src, indexes)
+                except Exception:
+                    logger.debug(
+                        "[raster_tile_service] global stats unavailable for %s, "
+                        "falling back to per-tile normalization",
+                        raster_path,
+                        exc_info=True,
+                    )
+                    stats = None
 
             # Destination array for reproject
             dst_data = np.zeros((count, tile_size, tile_size), dtype=src.dtypes[0])
@@ -449,7 +532,7 @@ def render_raster_tile(
                 src_crs=src_crs,
                 dst_transform=dst_transform,
                 dst_crs="EPSG:3857",
-                resampling=Resampling.bilinear,
+                resampling=_resampling_for(style.resampling if style is not None else "bilinear"),
                 src_nodata=src.nodata,
                 # #596: with no declared nodata, `or 0` conflated "0 is
                 # nodata" with "0 is data". dst_nodata=None leaves the
@@ -499,7 +582,13 @@ def render_raster_tile(
                     stretch = stats[c] if stats is not None else ()
                     rgb[:, :, c] = np.where(valid_mask, _normalize_channel(arr, valid_mask, *stretch), 0)
 
-                band_valid = _channel_valid_mask(dst_data, nodata_val).any(axis=0) & coverage_mask
+                # G20：已提交表达的 RGB mask 规则 = 所有通道都有效才绘制
+                # （与 probe 的 PARTIALLY_MASKED 同源），避免把某一通道的
+                # 黑色填充值解释为真实低值。style=None 保留基线 any() 语义。
+                channel_mask = _channel_valid_mask(dst_data, nodata_val)
+                band_valid = (
+                    channel_mask.all(axis=0) if style is not None else channel_mask.any(axis=0)
+                ) & coverage_mask
                 alpha = np.where(band_valid, 255, 0).astype(np.uint8)
                 rgba = np.dstack([rgb, alpha])
                 img = Image.fromarray(rgba, "RGBA")
@@ -520,7 +609,18 @@ def render_raster_tile(
                 alpha = np.where(valid_mask, 255, 0).astype(np.uint8)
                 # C5：单波段着色——样式改动只换缓存键，不重跑遥感计算
                 rgb_out = None
-                if cmap_name:
+                if style is not None and style.colormap:
+                    # 与图例/导出同一个 LUT；未知名在提交期已拒绝，此处
+                    # 再次 fail-closed（绝不静默回落灰度）。
+                    from app.services.raster_authoring.palettes import colormap_lut
+
+                    lut = colormap_lut(style.colormap, 256)
+                    if lut is None:
+                        raise RasterTileError(
+                            "UNKNOWN_COLORMAP", f"colormap {style.colormap!r} has no LUT"
+                        )
+                    rgb_out = lut[gray]
+                elif cmap_name:
                     from app.schemas.raster_spec import apply_colormap_u8
 
                     colored = apply_colormap_u8(gray, cmap_name)
@@ -532,6 +632,14 @@ def render_raster_tile(
                     rgba = np.dstack([gray, gray, gray, alpha])
                 img = Image.fromarray(rgba, "RGBA")
 
+            if style is not None and style.opacity < 1.0:
+                # 透明度只在服务端瓦片里应用一次（compiler/runtime 不再叠加
+                # MapLibre raster-opacity，避免双重衰减）。
+                rgba[:, :, 3] = np.rint(
+                    rgba[:, :, 3].astype(np.float32) * float(style.opacity)
+                ).astype(np.uint8)
+                img = Image.fromarray(rgba, "RGBA")
+
             buf = io.BytesIO()
             img.save(buf, format="PNG", compress_level=1)
             png_bytes = buf.getvalue()
@@ -539,7 +647,18 @@ def render_raster_tile(
             _set_cached_tile(key, png_bytes)
             return png_bytes
 
+    except RasterTileError:
+        # 已提交样式渲染失败：不缓存、不返回透明瓦片伪装有效空白地图。
+        raise
     except Exception as err:
+        if style is not None:
+            logger.warning(
+                "[raster_tile_service] styled tile failed z=%s x=%s y=%s: %s",
+                z, x, y, err,
+            )
+            raise RasterTileError(
+                "RENDER_FAILED", "committed raster expression could not be rendered"
+            ) from err
         logger.warning(f"[raster_tile_service] Failed to render tile z={z} x={x} y={y} for {raster_path}: {err}")
         return _transparent_tile_png(tile_size)
 

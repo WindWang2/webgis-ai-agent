@@ -61,6 +61,11 @@ import {
 } from "../carto-ir/representation";
 import { checkMapSpecVersion } from "../carto-ir/version";
 import { checkBivariateLayer } from "../carto-ir/bivariate";
+// G20：数值栅格源 → 每层独立的 XYZ 瓦片源（相对导入，headless CLI 同款纪律）
+import {
+  buildNumericRasterTileUrl,
+  numericRasterSourceId,
+} from "../raster-authoring/tile-url";
 // #1747：heatmap 表达窗子层的安全 paint 与 live runtime 单一实现
 // （此前只发 heatmap-radius，原生 heatmap-color 色带在导出里掉落）。
 import { heatmapOnlyPaint } from "./heatmap-paint";
@@ -71,7 +76,9 @@ import { heatmapOnlyPaint } from "./heatmap-paint";
  * validateMapSpec 产 UNKNOWN_SOURCE_TYPE 编译错误 + evidence，编译产物
  * 不再输出占位空源。
  */
-const KNOWN_SOURCE_TYPES = new Set(["raster", "geojson", "vector", "raster-dem"]);
+const KNOWN_SOURCE_TYPES = new Set([
+  "raster", "geojson", "vector", "raster-dem", "numeric_raster",
+]);
 
 /**
  * #1007：style 级 glyphs 模板进配置。缺省保留公共 demotiles 源；内网/
@@ -231,6 +238,14 @@ export function validateMapSpec(
         message: `Source "${sourceId}" has unknown type "${source.type}". Headless compilation refuses to emit a silent empty placeholder.`,
       });
       recordSymbolLawEvidence("unknown-source-type", { sourceType: source.type }, sourceId);
+    }
+    if (source.type === "numeric_raster") {
+      // 诚实披露：headless 编译产物只承载会话占位符，离线静态渲染必须由
+      // POST /api/v1/raster-authoring/export 生成嵌入位图，不能假装可渲染。
+      warnings.push(
+        `Source "${sourceId}" is a numeric raster; headless style.json carries a session placeholder. ` +
+        `Use the raster-expression export endpoint for an offline, self-contained snapshot.`,
+      );
     }
   }
 
@@ -510,6 +525,24 @@ export function compileMapSpec(
       // validateMapSpec 报告（UNKNOWN_SOURCE_TYPE），这里直接跳过。
       continue;
     }
+    if (source.type === "numeric_raster") {
+      // G20：数值栅格不给原始 source 建 MapLibre 源 —— 每个消费它的层各建
+      // 一个派生 raster source（style_id 不同则瓦片 URL / 缓存身份不同）。
+      // 旧 `type:"raster"` 烘焙 PNG 分支逐字保留在下方。
+      for (const layer of spec.layers || []) {
+        if (layer.source !== key || layer.type !== "raster") continue;
+        const styleId = layer.raster_style?.style_id;
+        if (!styleId) continue;
+        sources[numericRasterSourceId(key, layer.id)] = {
+          type: "raster",
+          tiles: [buildNumericRasterTileUrl(source.refId, layer.id, styleId)],
+          tileSize: 256,
+          minzoom: 0,
+          maxzoom: 20,
+        } as SourceSpecification;
+      }
+      continue;
+    }
     if (source.type === "raster") {
       // Raster source (ADR-0011) → MapLibre `image` source. The colormap is
       // baked into the PNG at render time; the source carries the image URL +
@@ -625,6 +658,11 @@ export function compileMapSpec(
       paint: {},
       ...(layer.filter ? { filter: layer.filter } : {}),
     };
+    // G20：数值栅格层引用派生 source（每层独立瓦片 URL）；透明度已在
+    // 服务端瓦片应用一次，不再叠加 MapLibre raster-opacity。
+    if (srcDef?.type === "numeric_raster" && layer.raster_style?.style_id) {
+      maplibreLayer.source = numericRasterSourceId(layer.source, layer.id);
+    }
     // Vector source layers require `source-layer` in MapLibre. MapSpecLayer
     // carries an optional `sourceLayer` passthrough; default to "data" (the
     // encoder's layer name in mvt.py).
@@ -882,7 +920,8 @@ export function compileMapSpec(
         // Raster layer (ADR-0011): colors are baked into the source image; the
         // only paint property is opacity. A raster layer references its
         // (already-emitted) `image` source by id.
-        if (layer.paint.opacity !== undefined)
+        // G20：数值栅格的 opacity 在服务端瓦片应用一次；此处跳过以免双重衰减。
+        if (srcDef?.type !== "numeric_raster" && layer.paint.opacity !== undefined)
           maplibreLayer.paint["raster-opacity"] = compileStyleMethod(layer.paint.opacity);
       } else if (layerType === "fill-extrusion") {
         // ADR-0095: First-class 3D extrusion paint compiling
