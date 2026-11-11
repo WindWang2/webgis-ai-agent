@@ -82,3 +82,76 @@ export function vectorPdfErrorCode(err: unknown): string | null {
   if (status === 429) return 'vector_pdf_busy';
   return null;
 }
+
+// ── G26：统一混合地图导出（POST /api/v1/export/mixed）──────────────────────
+//
+// 契约（app/schemas/map_schema.py MixedMapExportRequest）：服务端从会话
+// 权威 MapSpec 冻结修订编译（无客户端载荷 —— 栅格 ref owner 校验在服务端
+// 解析层执行）；blocking 默认（会遗漏层 → 409 EXPORT_BLOCKED_INCOMPLETE）。
+
+export interface MixedMapExportResult {
+  success: boolean;
+  filename: string;
+  url: string;
+  manifest_url?: string | null;
+  format: 'png' | 'svg' | 'pdf';
+  media_type: string;
+  bytes: number;
+  mapspec_revision?: number | null;
+  partial: boolean;
+  omitted_layers: Array<{ layer_id: string; reason: string; message?: string }>;
+  raster_layers: Array<{
+    layer_id: string; style_id?: string; data_revision?: string;
+    overlap?: string; embedded?: boolean; width?: number; height?: number;
+  }>;
+  renderer: Record<string, unknown>;
+  checksum?: string;
+  render_diagnostics?: Array<Record<string, unknown>>;
+  message?: string;
+}
+
+export interface MixedMapExportParams {
+  sessionId: string;
+  format: 'png' | 'svg' | 'pdf';
+  expectedRevision?: number;
+  partialPolicy?: 'blocking' | 'allow_partial';
+  targetDpi?: number;
+  title?: string;
+}
+
+export function exportMixedMap(
+  params: MixedMapExportParams,
+): Promise<MixedMapExportResult> {
+  return apiFetch<MixedMapExportResult>('/api/v1/export/mixed', {
+    method: 'POST',
+    body: {
+      session_id: params.sessionId,
+      format: params.format,
+      ...(params.expectedRevision != null
+        ? { expected_revision: params.expectedRevision }
+        : {}),
+      partial_policy: params.partialPolicy ?? 'blocking',
+      ...(params.targetDpi ? { target_dpi: params.targetDpi } : {}),
+      ...(params.title ? { title: params.title } : {}),
+    },
+    timeoutMs: 150_000, // 与 vector-pdf 同预算（PDF worker 110s + 余量）
+    label: 'Mixed map export error',
+  });
+}
+
+/** 混合导出 typed 错误码提取（与 vectorPdfErrorCode 同信封）。 */
+export function mixedExportErrorCode(err: unknown): string | null {
+  const body = (err as { body?: { detail?: unknown } } | null | undefined)?.body;
+  const detail = body?.detail;
+  if (
+    detail &&
+    typeof detail === 'object' &&
+    typeof (detail as { code?: unknown }).code === 'string'
+  ) {
+    return (detail as { code: string }).code;
+  }
+  if (typeof detail === 'string' && detail) return detail;
+  const status = (err as { status?: number } | null | undefined)?.status;
+  if (status === 503) return 'png_rasterizer_unavailable';
+  return null;
+}

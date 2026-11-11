@@ -356,3 +356,76 @@ class TestFreezeConsistency:
         p = comp.raster_placements[0]
         assert p["style_id"] == spec.style_id
         assert p["data_revision"] == "fp:test"
+
+
+@pytest.mark.skipif(not HAS_PYPDF, reason="pypdf not installed")
+class TestMultiFramePlacements:
+    def test_four_frames_each_extent_aligned_unique_ids(self, tmp_path):
+        """A17/A18：4 帧各自 extent → 每帧窗口对齐；PDF 4 页各含图像；
+        槽/帧命名空间不串（raster_layers 每帧独立 bounds）。"""
+        tif = _gradient_tif(tmp_path / "grad.tif", w=16, h=16)
+        spec = _spec([1], colormap="viridis", stretch=(0.0, 250.0))
+        doc = _mixed_spec([10.0, 15.0, 20.0, 25.0], labels=True)
+        doc["layers"][0]["raster_style"] = spec.model_dump(mode="json")
+        # 4 帧不同 extent（西北象限 → 东南象限各一）
+        doc["layout"]["frames"] = [
+            {"id": "f-nw", "enabled": True, "extent": [10.0, 20.0, 15.0, 25.0]},
+            {"id": "f-ne", "enabled": True, "extent": [15.0, 20.0, 20.0, 25.0]},
+            {"id": "f-sw", "enabled": True, "extent": [10.0, 15.0, 15.0, 20.0]},
+            {"id": "f-se", "enabled": True, "extent": [15.0, 15.0, 20.0, 20.0]},
+        ]
+        bindings = {"raster-layer": _binding(
+            tif, spec, "raster-layer", "rsrc", [10.0, 15.0, 20.0, 25.0])}
+        result = render_publication_pdf(doc, target_dpi=110,
+                                        raster_bindings=bindings)
+        assert result.page_count == 4, "每帧一页"
+        assert len(result.raster_layers) == 4, "每帧一条嵌入回执"
+        bounds_list = [tuple(p["bounds_wsen"] or ()) for p in result.raster_layers]
+        # 各帧窗口互不相同且与帧 extent 对齐（西北帧 bounds 北界 > 东南帧）
+        assert len(set(bounds_list)) == 4
+        nw = next(p for p in result.raster_layers if p["page_id"] == "f-nw")
+        se = next(p for p in result.raster_layers if p["page_id"] == "f-se")
+        assert nw["bounds_wsen"][3] > se["bounds_wsen"][3] + 2.0, \
+            "西北帧覆盖北半、东南帧覆盖南半（extent 正确分窗）"
+        # PDF 每页恰绘制一个栅格图像（分层 <img> 面）。WeasyPrint 会把全
+        # 文档图像放共享 /Resources —— 计数必须按**内容流 Do 算子**（页实际
+        # 绘制的 XObject 引用），不能 walk 资源字典。
+        reader = pypdf.PdfReader(io.BytesIO(result.pdf))
+        assert len(reader.pages) == 4
+        import re as _re
+
+        for i, page in enumerate(reader.pages):
+            raw = page.get_contents().get_data()
+            drawn = set(_re.findall(rb"/(\w+) Do", raw))
+            xo = page.get("/Resources", {}).get("/XObject", {}) or {}
+            image_names = {
+                name[1:].decode() if isinstance(name, bytes) else str(name)[1:]
+                for name, ref in xo.items()
+                if ref.get_object().get("/Subtype") == "/Image"
+            }
+            drawn_images = {d.decode() for d in drawn} & image_names
+            assert len(drawn_images) == 1, (
+                f"页 {i} 恰绘制一个栅格图像（got {drawn_images}；"
+                f"其余 Do 为矢量 Form XObject）")
+            text = page.extract_text() or ""
+            assert "西部站" in text or "东部站" in text or "混合地图出版链" in text
+
+    def test_frames_disjoint_extent_disclosed_per_frame(self, tmp_path):
+        """A18 边界：某帧 extent 与栅格无交集 → 该帧 no_overlap 披露不嵌图。"""
+        tif = _gradient_tif(tmp_path / "grad.tif")
+        spec = _spec([1], colormap="viridis")
+        doc = _mixed_spec([10.0, 15.0, 20.0, 25.0], labels=False)
+        doc["layers"][0]["raster_style"] = spec.model_dump(mode="json")
+        doc["layout"]["frames"] = [
+            {"id": "f-hit", "enabled": True, "extent": [10.0, 15.0, 15.0, 25.0]},
+            {"id": "f-miss", "enabled": True, "extent": [100.0, 50.0, 110.0, 60.0]},
+        ]
+        bindings = {"raster-layer": _binding(
+            tif, spec, "raster-layer", "rsrc", [10.0, 15.0, 20.0, 25.0])}
+        result = render_publication_pdf(doc, target_dpi=96,
+                                        raster_bindings=bindings)
+        assert result.page_count == 2
+        by_page = {p["page_id"]: p for p in result.raster_layers}
+        assert by_page["f-hit"]["embedded"] is True
+        assert by_page["f-miss"]["overlap"] == "none"
+        assert by_page["f-miss"]["embedded"] is False
