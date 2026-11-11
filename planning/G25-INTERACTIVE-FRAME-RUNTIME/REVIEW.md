@@ -31,3 +31,25 @@
 
 修复轮完成后全量复跑：前端 8 文件 + hud 面板 + 后端观察接线全部通过，
 J18 mock 真实浏览器复跑通过；lint/typecheck 0。详见 TEST_EVIDENCE。
+
+
+## R2（同一 reviewer 复审修复提交 1bfd523f5 + 053445665）
+
+**最终结论：可提交。** 六项 MAJOR 与四项 MINOR 均实质修复并经独立验证
+（reviewer 自建不入仓仿真证伪 warmup 活锁假设；J18 mock 在修复后 HEAD
+独立复跑 11.3s 通过）。
+
+### R2 后续修复（本轮）
+- r1 锁定 extent 帧的初值相机放置过门（lockedExtentOnly 跳过 initialCamera
+  jumpTo）✅
+- r3 time_window 缺 start/end 对齐后端跳过 ✅
+- r2 面板路由分支的 UI 级测试：尝试 3 种定位/事件路径后按时间盒撤回
+  （jsdom 受控滑杆事件时序与 draft 状态闭包不稳定）；路由逻辑本体由
+  frame-edit-scope 4/4 + 类型/链接检查覆盖，UI 级断言登记 follow-up ✅（诚实降级）
+- N1（warmup 相位 registry tick 抖动，收敛已实证）：接受现状登记 follow-up
+
+### 残余 follow-up（不阻断）
+1. r2：打开网格态的 panel 路由 UI 测试（真实浏览器 J18 扩展可承载）。
+2. N1：调度 effect 改为「live 槽位空或预算刚释放」门，消除 warmup 相位抖动。
+3. m2/m4：32MiB 口径注释、多尺寸瓦片 viewportSize 抖动（等宽网格无症状）。
+4. iso_string×time_format_hint 同构渲染（两端一致性边界已披露）。

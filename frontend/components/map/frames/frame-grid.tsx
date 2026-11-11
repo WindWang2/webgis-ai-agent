@@ -688,6 +688,9 @@ export function FrameProductGrid({
       desiredDataRevision={
         product.slots.find((s) => s.frameId === frameId)?.binding?.contentRevision ?? null
       }
+      lockedExtentOnly={!cameraWriteGuard(
+        (committedSpec?.layout?.frames ?? []).find((f) => f && f.id === frameId) ?? null,
+      ).ok}
     />
   );
 

@@ -9,7 +9,7 @@
 |---|---|---|---|---|
 | A01 | 三幅数据绑定真实可见 | ✓ | FrameGrid 瓦片 × resolveFrameEffectiveSpec（where/time_window 过滤真数据） | J18 mock：3 瓦片 data-frame-id 身份断言 + 活动瓦片 maplibre canvas 可见；frame-effective-spec 7/7 |
 | A02 | active frame 与主地图一致 | ✓ | 激活 optimistic + commitFrameProductPatch(active_frame)（面板/地图同一服务端真相） | frame-grid.test「激活另一幅」CAS 断言；J18 mock scope 徽标；J18 real 刷新恢复 |
-| A03 | 仅改第二幅不改一/三幅 | ✓ | commitLayerOverrideForFrame（set_layout frames 整表，其余帧逐字携带）已接入 layer-style-panel 不透明度（网格活动时仅本幅路由）；面板改名走 G15 同契约 | frame-edit-scope 4/4（fp-1 既有 override 不丢、fp-3 无 override 不变）+ layer-style-panel 6/6（路由回归） |
+| A03 | 仅改第二幅不改一/三幅 | ✓ | commitLayerOverrideForFrame（set_layout frames 整表，其余帧逐字携带）已接入 layer-style-panel 不透明度（网格活动时仅本幅路由）；面板改名走 G15 同契约 | frame-edit-scope 4/4（fp-1 既有 override 不丢、fp-3 无 override 不变）；面板既有 6/6 无回归；UI 级路由分支测试登记为 follow-up（评审 r2，见 REVIEW.md） |
 | A04 | 同组 pan 传播 | ✓ | FrameCameraHub ①组内 resolveGroupSync + ②未挂载帧 expectedCamera | frame-camera-hub「同组 pan/zoom 传播」 |
 | A05 | 同组 zoom 传播 | ✓ | 同上（syncZoom 维度） | 同上 + 「zoom 维度关闭」反例 |
 | A06 | 不同组不传播 | ✓ | resolveGroupSync 组过滤（组 B/无组 target 无 patch） | frame-camera-hub 首用例断言 f3/f4 零 jumpTo |

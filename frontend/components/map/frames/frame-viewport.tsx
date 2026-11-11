@@ -66,6 +66,9 @@ export interface FrameViewportProps {
   desiredSpecRevision: number;
   desiredDataRevision: number | null;
   onContextLost?: (frameId: string, generation: number) => void;
+  /** 锁定 extent（A17，评审 r1）：true 时初始相机不做 draft/main 对齐放置
+   * （初值 jumpTo 也过 extent 门 —— 锁定帧不被任何相机写入移动）。 */
+  lockedExtentOnly?: boolean;
 }
 
 /**
@@ -84,6 +87,7 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
       desiredSpecRevision,
       desiredDataRevision,
       onContextLost,
+      lockedExtentOnly = false,
     },
     ref,
   ) {
@@ -224,7 +228,8 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
       setMapReady(true);
       reportFact(null);
       // 初相机对齐（draft→expected→main 由父级排好；无则 spec view 落地）。
-      if (initialCamera) {
+      // 锁定 extent 帧（评审 r1）：初值放置同样过 extent 门 —— 保持 spec view。
+      if (initialCamera && !lockedExtentOnly) {
         mapRef.current?.getMap()?.jumpTo({
           center: initialCamera.center,
           zoom: initialCamera.zoom,
@@ -232,7 +237,7 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
           pitch: initialCamera.pitch,
         });
       }
-    }, [initialCamera, reportFact]);
+    }, [initialCamera, lockedExtentOnly, reportFact]);
 
     const handleMoveEnd = useCallback(() => {
       const map = mapRef.current?.getMap();
