@@ -139,7 +139,12 @@ export function exportMixedMap(
   });
 }
 
-/** 混合导出 typed 错误码提取（与 vectorPdfErrorCode 同信封）。 */
+/**
+ * 混合导出 typed 错误码提取（与 vectorPdfErrorCode 同信封）。
+ * 后端码表大小写不一（mixed 面 = RASTER_ERROR_CODES 大写；vector 路由 =
+ * 小写）—— 统一归一小写（review P1-3：大小写失配曾使 blocked/busy 分支
+ * 成为死代码）。
+ */
 export function mixedExportErrorCode(err: unknown): string | null {
   const body = (err as { body?: { detail?: unknown } } | null | undefined)?.body;
   const detail = body?.detail;
@@ -148,9 +153,9 @@ export function mixedExportErrorCode(err: unknown): string | null {
     typeof detail === 'object' &&
     typeof (detail as { code?: unknown }).code === 'string'
   ) {
-    return (detail as { code: string }).code;
+    return (detail as { code: string }).code.toLowerCase();
   }
-  if (typeof detail === 'string' && detail) return detail;
+  if (typeof detail === 'string' && detail) return detail.toLowerCase();
   const status = (err as { status?: number } | null | undefined)?.status;
   if (status === 503) return 'png_rasterizer_unavailable';
   return null;

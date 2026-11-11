@@ -307,7 +307,19 @@ def compile_publication_page(
     # 否则单张合法嵌入即触发 8MB 页预算误拒。（getattr：atlas executor 等
     # 调用面以 SimpleNamespace 桩替 compile 结果 —— 新字段缺席按空处理。）
     _page_placements: List[Dict[str, Any]] = list(
-        getattr(comp, "raster_placements", None) or [])
+        getattr(comp, "raster_placements", None) or[])
+    # review P2-2：嵌入在场但分层体无法构建（防御路径）→ typed 页失败，
+    # 绝不退回整页 SVG（WeasyPrint 会静默丢 <image> 却留下 embedded 回执）。
+    _layered_body: Optional[str] = None
+    if _page_placements:
+        _layered_body = _layered_page_html(comp.svg, _page_placements,
+                                           page_w, page_h)
+        if _layered_body is None and any(
+                p.get("embedded") for p in _page_placements):
+            raise PageCompileFailure(
+                "atlas_page_limit_truncated",
+                f"layered raster page body could not be built at page {page.page_id}",
+            )
     _stripped = _strip_raster_images(comp.svg) if _page_placements else comp.svg
     svg_bytes = len(_stripped.encode("utf-8"))
     if svg_bytes > min(svg_budget_remaining, _MAX_PAGE_SVG_BYTES):
@@ -335,8 +347,7 @@ def compile_publication_page(
     return PageCompileOutcome(
         svg=comp.svg, width_mm=page_w, height_mm=page_h, page=page,
         svg_bytes=svg_bytes,
-        html_body=_layered_page_html(comp.svg, _page_placements,
-                                     page_w, page_h),
+        html_body=_layered_body,
         frame_diagnostics=frame_items,
         rendered_component_types=[str(t) for t in (comp.rendered_component_types or [])],
         omitted_components=[dict(o) for o in (comp.omitted_components or [])

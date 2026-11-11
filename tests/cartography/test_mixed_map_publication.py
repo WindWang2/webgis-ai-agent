@@ -239,11 +239,20 @@ class TestMixedPng:
         assert int(png[2, 2, 0]) <= 12 and int(png[2, 2, 2]) <= 12
         se = int(png[397, 397, 0])
         assert abs(se - round(77 / 400 * 255)) <= 14, se
-        # 栅格在矢量圆点之下：西部站(11.5,22)处应见深色圆点（#111111）
-        cx = int((11.5 - VIEW[0]) / (VIEW[2] - VIEW[0]) * 400)
-        cy = int((VIEW[3] - 22.0) / (VIEW[3] - VIEW[1]) * 400)
-        patch = png[cy - 4:cy + 4, cx - 4:cx + 4]
-        assert patch.min() <= 60, f"圆点覆盖处应有深色符号（min={patch.min()}）"
+        # 栅格在矢量圆点之下（review P2-3 收紧）：东部站(18,17)处圆点必须
+        # 显著暗于**该处栅格背景**（该处渐变值 ≈ (8*10+6.4)=86 → 灰 55，
+        # 圆点 #111111 → 17 —— 对比 ≥25 才算真叠放，不是栅格自身暗）。
+        cx = int((18.0 - VIEW[0]) / (VIEW[2] - VIEW[0]) * 400)
+        cy = int((VIEW[3] - 17.0) / (VIEW[3] - VIEW[1]) * 400)
+        dot_patch = png[cy - 3:cy + 4, cx - 3:cx + 4]
+        # 背景取东南无要素区（19.2, 16.0：离两点及其标注都远）—— 该处
+        # 渐变值 ≈ 77 → 灰 ≈49；避开东部站右侧的标注文本。
+        bx = int((19.2 - VIEW[0]) / (VIEW[2] - VIEW[0]) * 400)
+        by = int((VIEW[3] - 16.0) / (VIEW[3] - VIEW[1]) * 400)
+        bg_patch = png[by - 3:by + 4, bx - 3:bx + 4]
+        assert int(dot_patch.min()) <= 30, f"圆点覆盖处深色符号（min={dot_patch.min()}）"
+        assert int(bg_patch.min()) >= 35, f"无要素纯栅格背景应亮于圆点（min={bg_patch.min()}）"
+        assert int(bg_patch.min()) - int(dot_patch.min()) >= 20, "圆点 vs 栅格对比"
 
     def test_two_rasters_align_by_coordinates(self, tmp_path):
         """A04：两个不同 extent 栅格按同一坐标对齐（同图叠放不居中错位）。"""

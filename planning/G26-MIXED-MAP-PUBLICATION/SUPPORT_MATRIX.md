@@ -34,7 +34,7 @@ BASE `b8f2a6ecc`（G26 前）→ 本分支 HEAD。证据 = 测试名/文件（te
 | EPSG:3857 | ✅ | 同网格恒等/重投影 |
 | 其它投影 CRS（UTM 等） | ✅ | rasterio.warp 重投影到画布 3857 仿射网格（A05）；不可重投影 → typed INVALID_CRS |
 | 无 CRS | ⚠️ 与瓦片服务同语义（视为 3857 + 披露 no_crs_assumed_3857） | notes 披露 |
-| 旋转 affine（b/d≠0） | ⚠️ 角点足迹包络 + coverage mask 透明空角 + 披露 | notes: rotated_affine_envelope |
+| 旋转 affine（b/d≠0） | ✅ 真实窗口 transform 重投影（旋转项保留；review P1-1 修复）+ 角点足迹包络 + coverage 透明空角 + 披露 | `test_rotated_hot_pixel_lands_at_projected_position`（热像元 ±3px + 空角透明） |
 | north-up | ✅ | 本轮 must-have |
 | pitch/terrain 3D | ❌ | 既有 svg_3d_perspective_degrade 披露（诚实拒绝） |
 

@@ -110,7 +110,10 @@ class TestExportMixedMap:
         assert "data:image/png;base64," in svg, "栅格 data URI 内嵌"
         assert "data-g26-raster" in svg
         assert "北部站" in svg and "<text" in svg, "矢量标注保留"
-        assert "session" not in svg.lower() or "session_id" not in svg, "A12：不携带 session 依赖"
+        # A12（review P2-3 收紧）：产物不得携带会话身份/凭据面（严格子串）
+        for forbidden in ("sessionId", "session_id", "session_id=", "owner_token",
+                          "X-Session-Token", "/api/v1/sessions/"):
+            assert forbidden not in svg, f"A12: 产物携带会话依赖 {forbidden!r}"
         m = artifact["manifest"]
         assert m["schema_version"] == "mixed_map_export.v1"
         assert m["mapspec_revision"] >= 1
@@ -165,9 +168,15 @@ class TestExportMixedMap:
         assert img.format == "PNG"
         assert img.size[0] >= 800
         arr = np.array(img.convert("RGB"))
-        # 渐变（值 0..(7*8+15)=228+）在 viridis 色带下两端明显不同
-        assert int(arr[10, 10, 0]) != int(arr[-10, -10, 0]) or \
-            int(arr[10, 10, 2]) != int(arr[-10, -10, 2]), "栅格渐变真实呈现"
+        h, wpx = arr.shape[0], arr.shape[1]
+        # 渐变真实呈现：画布内取两远点（25%/75%），viridis 色带下两端通道
+        # 差显著（角采样不可靠 —— 纵横比拟合留白属正常版面行为）。
+        c1, c2 = arr[int(h * 0.25), int(wpx * 0.25)], arr[int(h * 0.75), int(wpx * 0.75)]
+        assert abs(int(c1[0]) - int(c2[0])) + abs(int(c1[2]) - int(c2[2])) >= 40, \
+            f"栅格渐变两端通道差（{c1} vs {c2}）"
+        cy, cx = arr.shape[0] // 2, arr.shape[1] // 2
+        assert not (int(arr[cy, cx][0]) > 240 and int(arr[cy, cx][1]) > 240), \
+            "中心不得是空白白底"
 
     @pytest.mark.asyncio
     async def test_expected_revision_cas(self, owner_root, session_id, store_root):
@@ -241,6 +250,56 @@ class TestPartialPolicy:
             "A20：显式 partial 携带完整遗漏清单"
 
 
+class TestPostCompileRecheck:
+    """review P1-2 回归：编译期窗口失败不得被 blocking 放行为 complete。"""
+
+    @pytest.mark.asyncio
+    async def test_window_failure_blocks_and_partial_lists(
+            self, owner_root, session_id, store_root):
+        from app.services.gis_world_state.mutation import apply_gis_mutation
+        from app.services.mapspec.intents import UpsertLayerIntent
+        from app.services.raster_authoring.service import (
+            _engine, current_revision as cr,
+        )
+
+        ref_tif = _regional_tif(owner_root)
+        ref = await register_raster_ref(session_id, ref_tif)
+        receipt = await commit_expression(
+            session_id, ref, "raster-layer",
+            {"bands": [1], "stretch": {"min": 0, "max": 400},
+             "colormap": "viridis"},
+            expected_revision=await cr(session_id),
+        )
+        # 单点矢量 → 自动范围退化 → 冻结成功但窗口渲染 typed 失败
+        vec = {"id": "vec", "source": "vec-src", "type": "circle",
+               "paint": {"circle-radius": 4}, "label": {"field": "name"}}
+        vecsrc = {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"name": "孤点"},
+             "geometry": {"type": "Point",
+                          "coordinates": [12.0, 22.0]}}]}
+        await apply_gis_mutation(
+            session_id, UpsertLayerIntent(layer=vec, source_data=vecsrc),
+            origin="user", actor="g26-test",
+            expected_revision=int(receipt["mapspec_revision"]),
+            engine=_engine())
+
+        with pytest.raises(MixedMapExportError) as ei:
+            await export_mixed_map(session_id, fmt="svg")
+        assert ei.value.code == "EXPORT_BLOCKED_INCOMPLETE", \
+            "窗口编译失败 → blocking 必须拒绝（不得 complete）"
+        assert any(o["layer_id"] == "raster-layer"
+                   for o in ei.value.details["omitted"])
+
+        artifact = await export_mixed_map(
+            session_id, fmt="svg", partial_policy="allow_partial")
+        m = artifact["manifest"]
+        assert m["partial"] is True
+        assert any(o["layer_id"] == "raster-layer"
+                   and "raster_window_failed" in str(o.get("reason", ""))
+                   or o.get("reason") == "raster_layer_missing_in_output"
+                   for o in m["omitted_layers"]), m["omitted_layers"]
+
+
 class TestPersist:
     @pytest.mark.asyncio
     async def test_persist_writes_artifact_manifest_owner(
@@ -260,7 +319,10 @@ class TestPersist:
         assert manifest["checksum"].startswith("sha256:")
         assert delivered["download_url"].startswith("/api/v1/export/download/")
         assert "?" in delivered["download_url"], "签名能力 URL"
-        assert (export_dir / f"{name}.owner").is_file() or True  # owner 侧车 best-effort 内存表
+        # owner 注册（进程内表 → 下载路由 fail-closed 语义的输入）
+        from app.api.routes.map import _get_export_owner
+        assert _get_export_owner(name) == f"session:{session_id}"
+        assert _get_export_owner(f"{name}.manifest.json") == f"session:{session_id}"
 
 
 class TestRasterOnlyToolCompat:

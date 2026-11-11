@@ -82,11 +82,12 @@ vi.mock('@/lib/api/publication', () => ({
   }),
   mixedExportErrorCode: vi.fn(
     (err: { body?: { detail?: { code?: string } | string }; status?: number }) => {
+      // 与真实实现同口径：码表统一小写（大小写归一）。
       const detail = err?.body?.detail;
       if (detail && typeof detail === 'object' && typeof detail.code === 'string') {
-        return detail.code;
+        return detail.code.toLowerCase();
       }
-      if (typeof detail === 'string' && detail) return detail;
+      if (typeof detail === 'string' && detail) return detail.toLowerCase();
       return null;
     },
   ),
@@ -204,13 +205,15 @@ describe('runVectorPdfExport → 混合路由（G26）', () => {
     expect(mixedCalls).toHaveLength(0);
   });
 
-  it('blocking 冲突 → 如实呈现遗漏清单（不伪成功）', async () => {
+  it('blocking 冲突 → 如实呈现遗漏清单（不伪成功；后端真实大写码）', async () => {
     cursorState.committed = SPEC_WITH_RASTER_STYLE;
+    // 后端真实信封：mixed 面 = RASTER_ERROR_CODES 大写（review P1-3：大小写
+    // 归一在此验证 —— 死代码回归锁）。
     mockedMixed.mockRejectedValueOnce({
       status: 409,
       body: {
         detail: {
-          code: 'export_blocked_incomplete',
+          code: 'EXPORT_BLOCKED_INCOMPLETE',
           message: 'omitted',
           omitted: [{ layer_id: 'basemap', reason: 'external_tiles_licence_not_embedded' }],
         },

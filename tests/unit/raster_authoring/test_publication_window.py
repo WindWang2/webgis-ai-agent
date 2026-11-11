@@ -132,6 +132,95 @@ class TestFullOverlapAlignment:
             assert a[y, x, 3] == b[y, x, 3] == 255
 
 
+class TestExoticCrs:
+    def test_unwarpable_crs_typed_reject_not_silent(self, owner_root):
+        """A05：可解析但 GDAL 无法 warp 的 CRS → typed 拒绝（诚实失败，
+        不静默、不错位输出）。"""
+        import rasterio
+        from rasterio.transform import from_origin
+
+        wkt = (
+            'PROJCS["FakeOblique",GEOGCS["GCS_WGS_1984",'
+            'DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],'
+            'PRIMEM["Greenwich",0],UNIT["Degree",0.0174532925199433]],'
+            'PROJECTION["Hotine_Oblique_Mercator_Two_Point_Natural_Origin"],'
+            'PARAMETER["False_Easting",0],PARAMETER["False_Northing",0],'
+            'UNIT["Meter",1]]')
+        rows, cols = np.mgrid[0:8, 0:8]
+        vals = (rows * 10 + cols).astype("float32")[None]
+        path = owner_root / "oblique.tif"
+        with rasterio.open(
+            path, "w", driver="GTiff", width=8, height=8, count=1,
+            dtype="float32", crs=wkt,
+            transform=from_origin(10.0, 25.0, 1.25, 1.25),
+        ) as dst:
+            dst.write(vals)
+        with pytest.raises(RasterExpressionError) as ei:
+            render_publication_window(
+                str(path), _stat_key(path), _spec_payload(),
+                [10.0, 15.0, 20.0, 25.0], 64, 64,
+            )
+        assert ei.value.code in ("INVALID_CRS", "RENDER_FAILED"), ei.value.code
+
+
+class TestRotatedAffine:
+    def test_rotated_hot_pixel_lands_at_projected_position(self, owner_root):
+        """旋转 affine（review P1-1 回归）：热像元必须落在其地理投影位置，
+        空角由 coverage 透明（不得 north-up 重建错位 ~1/3 画幅）。"""
+        import rasterio
+        from rasterio.transform import Affine, from_origin
+
+        # 100×100 网格绕像幅中心旋转 25°（像素空间）；单热像元 (60, 40)
+        size, res = 100, 0.1
+        base = from_origin(10.0, 25.0, res, res)
+        half = size / 2.0
+        rot = base * (
+            Affine.translation(half, half) * Affine.rotation(25.0)
+            * Affine.translation(-half, -half))
+        values = np.full((size, size), -9999.0, dtype="float32")
+        hot_col, hot_row = 60, 40
+        values[hot_row, hot_col] = 500.0
+        path = owner_root / "rotated.tif"
+        with rasterio.open(
+            path, "w", driver="GTiff", width=size, height=size, count=1,
+            dtype="float32", crs="EPSG:4326", transform=rot, nodata=-9999.0,
+        ) as dst:
+            dst.write(values, 1)
+        # nearest：单热像元不被双线性核涂抹（质心 = 投影位置 ±1px）；
+        # style_id 事后不可改（篡改检测）—— 从构造期带 nearest。
+        from app.schemas.raster_spec import RasterExpressionSpec, RasterStretchBounds
+
+        spec = RasterExpressionSpec(
+            mode="single", bands=[1],
+            stretch=RasterStretchBounds(min=0.0, max=500.0),
+            resampling="nearest", data_revision="fp:test",
+        ).finalize().model_dump(mode="json")
+        res = render_publication_window(
+            str(path), _stat_key(path), spec,
+            [9.0, 14.0, 21.0, 26.0], 120, 120,
+        )
+        assert res.overlap in ("full", "partial")
+        px = _png_pixels(res.png_bytes)
+        # 热像元地理坐标 → **结果图像素**（图幅自身 3857 包络；y 轴线性于
+        # merc-y 而非 lat —— 断言口径与渲染网格同构）。
+        from rasterio.warp import transform as _proj_pts
+
+        gx, gy = rot * (hot_col + 0.5, hot_row + 0.5)
+        (mx,), (my,) = _proj_pts("EPSG:4326", "EPSG:3857", [gx], [gy])
+        b = res.bounds_3857
+        ex = (mx - b[0]) / (b[2] - b[0]) * res.width
+        ey = (b[3] - my) / (b[3] - b[1]) * res.height
+        a = px[:, :, 3]
+        lit = np.argwhere(a > 0)
+        assert len(lit) > 0, "旋转源必须有可见像元"
+        ys, xs = lit[:, 0], lit[:, 1]
+        # 可见像元质心 ≈ 热像元投影位置（±3px：nearest 像元归属 + 包络取整）
+        assert abs(xs.mean() - ex) <= 3.0, (xs.mean(), ex)
+        assert abs(ys.mean() - ey) <= 3.0, (ys.mean(), ey)
+        # 旋转包络空角必须透明（coverage 不满覆盖）
+        assert a.mean() < 0.98, "空角不得被涂满（coverage 需真实覆盖）"
+
+
 class TestNoOverlapAndNodata:
     def test_disjoint_view_returns_transparent_not_edge_pixels(self, owner_root):
         """完全不相交：透明 1×1 + overlap=none —— 绝不夹边缘像元。"""

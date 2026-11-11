@@ -126,15 +126,22 @@ def _frame_with_extent(doc: Dict[str, Any],
     return raster_union
 
 
-def _unsupported_layer_report(doc: Dict[str, Any]) -> List[Dict[str, str]]:
-    """按图层枚举不可嵌入的层（烘焙 raster/外部瓦片/hillshade 等），供
-    blocking 判定与 omitted 清单 —— A19/A20 的完整遗漏事实源。"""
+def _unsupported_layer_report(
+    doc: Dict[str, Any],
+    bindings: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[Dict[str, str]]:
+    """按图层枚举不可嵌入的层（烘焙 raster/外部瓦片/hillshade/悬空源引用/
+    未知源类型/无表达 numeric_raster），供 blocking 判定与 omitted 清单 ——
+    A19/A20 的完整遗漏事实源（review P2-1：悬空/未知也不得凭空消失）。"""
     out: List[Dict[str, str]] = []
+    bound_layers = set(bindings or {})
     sources = doc.get("sources") if isinstance(doc.get("sources"), dict) else {}
     for layer in doc.get("layers") or []:
         if not isinstance(layer, dict):
             continue
         lid = str(layer.get("id") or "")
+        if lid in bound_layers:
+            continue  # 冻结绑定承载（嵌入成败由编译后复检裁决）
         ltype = str(layer.get("type") or "")
         if ltype == "hillshade":
             out.append({"layer_id": lid, "reason": "hillshade_not_vectorizable"})
@@ -142,10 +149,17 @@ def _unsupported_layer_report(doc: Dict[str, Any]) -> List[Dict[str, str]]:
         sid = layer.get("source")
         src = sources.get(sid) if isinstance(sid, str) else None
         if not isinstance(src, dict):
+            out.append({"layer_id": lid, "reason": "source_ref_dangling"})
             continue
         stype = str(src.get("type") or "")
         if stype == "numeric_raster":
-            continue  # 冻结绑定承载（缺席时由绑定层披露）
+            # 有源无表达（未提交 raster_style）→ 无法按冻结表达嵌入
+            if not isinstance(layer.get("raster_style"), dict):
+                out.append({"layer_id": lid,
+                            "reason": "numeric_raster_without_expression"})
+            continue
+        if stype in ("geojson", "vector", "model3d"):
+            continue  # 矢量面 —— 编译链承载
         if stype in ("raster", "wms", "wmts", "pmtiles", "data_fabric"):
             tiles = src.get("tiles") or ([src.get("url")] if src.get("url") else [])
             template = tiles[0] if isinstance(tiles, list) and tiles \
@@ -156,7 +170,48 @@ def _unsupported_layer_report(doc: Dict[str, Any]) -> List[Dict[str, str]]:
             else:
                 out.append({"layer_id": lid,
                             "reason": "raster_source_not_embedded_offline"})
+        else:
+            out.append({"layer_id": lid, "reason": f"source_type_unsupported:{stype[:32]}"})
     return out
+
+
+def _post_compile_omissions(
+    bindings: Dict[str, Dict[str, Any]],
+    raster_layers: List[Dict[str, Any]],
+    diagnostics: List[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    """编译后复检（review P1-2）：冻结绑定的层必须真正进产物（embedded）
+    或诚实披露无交集（overlap=none）；否则 = 遗漏（窗口渲染失败被编译面
+    降级为诊断 —— blocking 不得放行为 complete）。"""
+    seen: Dict[str, str] = {}
+    window_failed: Dict[str, str] = {}
+    for p in raster_layers:
+        if not isinstance(p, dict):
+            continue
+        lid = str(p.get("layer_id") or "")
+        if p.get("embedded"):
+            seen[lid] = "embedded"
+        elif str(p.get("overlap") or "") == "none":
+            seen[lid] = "no_overlap"
+    for d in diagnostics:
+        if not isinstance(d, dict):
+            continue
+        detail = str(d.get("detail") or "")
+        if d.get("code") == "layer_ref_unavailable" \
+                and "numeric_raster_window_failed" in detail:
+            code = detail.partition("numeric_raster_window_failed:")[2][:40] \
+                or "RENDER_FAILED"
+            window_failed[str(d.get("layer_id") or "")] = code
+    omissions: List[Dict[str, str]] = []
+    for lid in bindings:
+        if seen.get(lid) in ("embedded", "no_overlap"):
+            continue
+        omissions.append({
+            "layer_id": lid,
+            "reason": f"raster_window_failed:{window_failed.get(lid, 'unknown')}"
+            if lid in window_failed else "raster_layer_missing_in_output",
+        })
+    return omissions
 
 
 async def export_mixed_map(
@@ -201,7 +256,7 @@ async def export_mixed_map(
     )
     bindings: Dict[str, Dict[str, Any]] = bound["bindings"]
     unbound: List[Dict[str, Any]] = bound["unbound"]
-    unsupported = _unsupported_layer_report(doc)
+    unsupported = _unsupported_layer_report(doc, bindings)
     has_raster_layers = any(
         isinstance(layer, dict) and isinstance(layer.get("raster_style"), dict)
         for layer in (doc.get("layers") or []))
@@ -233,6 +288,25 @@ async def export_mixed_map(
         layout["frames"] = frames
         compile_doc["layout"] = layout
 
+    def _recheck_omissions(raster_layers: List[Dict[str, Any]],
+                           diagnostics: List[Dict[str, Any]]) -> None:
+        """编译后遗漏复检（P1-2）：blocking 放行条件 = 冻结绑定层全部真实
+        embedded / no-overlap 披露；allow_partial 则并入清单。"""
+        post = _post_compile_omissions(bindings, raster_layers, diagnostics)
+        if not post:
+            return
+        if partial_policy == "blocking":
+            raise MixedMapExportError(
+                "EXPORT_BLOCKED_INCOMPLETE",
+                "raster layers failed to embed at compile time; pass "
+                "partial_policy='allow_partial' for an explicit omission manifest",
+                status_code=409,
+                details={"omitted": post[:12]},
+            )
+        omitted.extend(post)
+        manifest["partial"] = True
+        manifest["omitted_layers"] = omitted
+
     manifest: Dict[str, Any] = {
         "schema_version": MIXED_EXPORT_SCHEMA_VERSION,
         "format": fmt,
@@ -252,13 +326,15 @@ async def export_mixed_map(
     if fmt == "pdf":
         artifact = await asyncio.to_thread(
             _export_pdf, compile_doc, bindings, target_dpi, title, manifest,
-            has_raster_layers)
+            has_raster_layers, _recheck_omissions)
     elif fmt == "svg":
         artifact = await asyncio.to_thread(
-            _export_svg, compile_doc, bindings, manifest, has_raster_layers)
+            _export_svg, compile_doc, bindings, manifest, has_raster_layers,
+            synthetic_extent, _recheck_omissions)
     else:
         artifact = await asyncio.to_thread(
-            _export_png, compile_doc, bindings, manifest, has_raster_layers)
+            _export_png, compile_doc, bindings, manifest, has_raster_layers,
+            synthetic_extent, _recheck_omissions)
     return artifact
 
 
@@ -269,7 +345,8 @@ def _pdf_options_payload(bindings: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
 
 def _export_pdf(doc: Dict[str, Any], bindings: Dict[str, Any],
                 target_dpi: int, title: str, manifest: Dict[str, Any],
-                has_raster_layers: bool) -> Dict[str, Any]:
+                has_raster_layers: bool,
+                recheck: Any = None) -> Dict[str, Any]:
     from app.services.publication_render_worker import render_publication_bounded
 
     try:
@@ -295,6 +372,8 @@ def _export_pdf(doc: Dict[str, Any], bindings: Dict[str, Any],
     }
     manifest["diagnostics"] = [d for d in (result.diagnostics or [])][:40]
     manifest["checksum"] = _checksum(result.pdf)
+    if recheck is not None and bindings:
+        recheck(manifest["raster_layers"], manifest["diagnostics"])
     return {
         "bytes": result.pdf, "media_type": "application/pdf",
         "extension": ".pdf", "manifest": manifest,
@@ -326,24 +405,29 @@ def _map_pdf_error(exc: Exception) -> Exception:
 
 
 def _compile_single_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
-                        width: int = 1200, height: int = 800) -> Any:
+                        width: int = 1200, height: int = 800,
+                        bounds: Any = None) -> Any:
     from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 
     return compile_mapspec_to_svg_detailed(
         doc, target_dpi=150, width=width, height=height, padding=24,
-        include_chrome=True, raster_bindings=bindings or None,
+        include_chrome=True, bounds=bounds, raster_bindings=bindings or None,
     )
 
 
 def _export_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
-                manifest: Dict[str, Any], has_raster_layers: bool) -> Dict[str, Any]:
+                manifest: Dict[str, Any], has_raster_layers: bool,
+                synthetic_extent: Any = None,
+                recheck: Any = None) -> Dict[str, Any]:
     if not has_raster_layers:
         raise MixedMapExportError(
             "EXPORT_UNSUPPORTED",
             "no numeric raster layer in the frozen MapSpec; "
             "use the vector publication export instead",
         )
-    comp = _compile_single_svg(doc, bindings)
+    # review P1-4：编译器不读 layout.frames extent —— 合成范围必须显式
+    # 作为 bounds 传入（否则纯栅格导出退化为 -180..180 世界视图）。
+    comp = _compile_single_svg(doc, bindings, bounds=synthetic_extent)
     svg = comp.svg
     manifest["raster_layers"] = [dict(p) for p in (comp.raster_placements or [])]
     manifest["renderer"] = {
@@ -353,6 +437,8 @@ def _export_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
     }
     manifest["diagnostics"] = [d for d in (comp.diagnostics or [])][:40]
     manifest["checksum"] = _checksum(svg.encode("utf-8"))
+    if recheck is not None and bindings:
+        recheck(manifest["raster_layers"], manifest["diagnostics"])
     return {
         "bytes": svg.encode("utf-8"), "media_type": "image/svg+xml",
         "extension": ".svg", "manifest": manifest,
@@ -360,7 +446,9 @@ def _export_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
 
 
 def _export_png(doc: Dict[str, Any], bindings: Dict[str, Any],
-                manifest: Dict[str, Any], has_raster_layers: bool) -> Dict[str, Any]:
+                manifest: Dict[str, Any], has_raster_layers: bool,
+                synthetic_extent: Any = None,
+                recheck: Any = None) -> Dict[str, Any]:
     import subprocess
     import tempfile
     from pathlib import Path
@@ -379,7 +467,8 @@ def _export_png(doc: Dict[str, Any], bindings: Dict[str, Any],
             "export svg or pdf, or use the browser canvas export",
             status_code=503,
         )
-    comp = _compile_single_svg(doc, bindings, width=1600, height=1100)
+    comp = _compile_single_svg(doc, bindings, width=1600, height=1100,
+                               bounds=synthetic_extent)
     with tempfile.TemporaryDirectory(prefix="g26-png-") as tmp:
         out = Path(tmp) / "out.png"
         proc = subprocess.run(
@@ -400,6 +489,8 @@ def _export_png(doc: Dict[str, Any], bindings: Dict[str, Any],
     }
     manifest["diagnostics"] = [d for d in (comp.diagnostics or [])][:40]
     manifest["checksum"] = _checksum(png)
+    if recheck is not None and bindings:
+        recheck(manifest["raster_layers"], manifest["diagnostics"])
     return {
         "bytes": png, "media_type": "image/png",
         "extension": ".png", "manifest": manifest,

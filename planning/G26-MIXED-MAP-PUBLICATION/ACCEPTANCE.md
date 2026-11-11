@@ -23,7 +23,7 @@
 | A16 | 高 DPI 有真实分辨率披露 | ✅ | manifest `renderer.effective_dpi` + 窗口 `truncated` 披露（`test_max_side_truncation_disclosed`；resolution_capped note） |
 | A17 | 四 frame 资源不串 id/clip | ✅ | `test_four_frames_each_extent_aligned_unique_ids`（4 帧唯一 bounds + 每页恰一绘制图像 + 帧命名空间既有 fp{i}-） |
 | A18 | 每 frame extent 和 raster 正确 | ✅ | 同上（NW/SE 帧覆盖南北分区断言）+ `test_frames_disjoint_extent_disclosed_per_frame` |
-| A19 | 未支持底图/层不能标完整成功 | ✅ | `test_missing_binding_discloses_not_silent` + `test_external_basemap_blocking_vs_partial`（EXPORT_BLOCKED_INCOMPLETE）+ PDF 披露不误报（`test_pdf_without_bindings_still_discloses_omission`） |
+| A19 | 未支持底图/层不能标完整成功（含编译期窗口失败） | ✅ | `test_missing_binding_discloses_not_silent` + `test_external_basemap_blocking_vs_partial`（EXPORT_BLOCKED_INCOMPLETE）+ **编译后复检**（`TestPostCompileRecheck`：窗口失败不得报 complete，review P1-2）+ PDF 披露不误报（`test_pdf_without_bindings_still_discloses_omission`） |
 | A20 | 显式 partial 有完整遗漏清单 | ✅ | manifest `omitted_layers`（layer_id+reason）断言 |
 | A21 | PDF 任意网络/file 读取被拒 | ✅ | `test_external_and_non_png_schemes_denied`（http/https/file/svg+xml 全拒）+ 既有 `test_url_fetch_denied` |
 | A22 | 大像素/内存超预算 typed 失败 | ✅ | 窗口 2048 边 + 22M 像元解码预算（truncated 披露）；嵌入 24MB fetcher 拒绝；页预算 typed PageCompileFailure；PNG rasterizer 缺席 503 typed |

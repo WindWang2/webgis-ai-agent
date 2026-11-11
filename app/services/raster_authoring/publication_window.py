@@ -269,8 +269,12 @@ def _render_window(
 
         win_raw = from_bounds(*win_src_bounds, transform=src.transform)
         try:
-            win = win_raw.round_offsets().round_shape().intersection(
-                Window(0, 0, src.width, src.height))
+            # round_shape 在 rasterio 2.0 移除 —— 显式取整（同语义）。
+            _rounded = Window(
+                col_off=round(win_raw.col_off), row_off=round(win_raw.row_off),
+                width=max(1, round(win_raw.width)),
+                height=max(1, round(win_raw.height)))
+            win = _rounded.intersection(Window(0, 0, src.width, src.height))
         except rasterio.errors.WindowError:
             return _transparent_result(("no_overlap_with_view",))
         if win.width <= 0 or win.height <= 0:
@@ -312,7 +316,14 @@ def _render_window(
             indexes=indexes, window=win, out_shape=(count, dec_h, dec_w),
             resampling=resampling,
         )
-        win_transform = rasterio.transform.from_bounds(*win_bounds, dec_w, dec_h)
+        # 真实降采样窗口 transform（rasterio 文档模式）：保留源 affine 的
+        # 全部项 —— **旋转项不能丢**。此前误用 from_bounds(窗口包络) 重建
+        # north-up transform，旋转源经 warp 后整体错位 ~1/3 画幅（独立评审
+        # P1-1 实证）；同式对 north-up 窗口与 from_bounds 等价。
+        from rasterio.transform import Affine as _Affine
+
+        win_transform = src.window_transform(win) * _Affine.scale(
+            win.width / dec_w, win.height / dec_h)
 
         nodata_val = src.nodata
         # 目标网格 = 交集窗口的 3857 包络 @ (out_w, out_h)。

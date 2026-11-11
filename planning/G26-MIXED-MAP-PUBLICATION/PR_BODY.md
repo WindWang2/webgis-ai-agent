@@ -77,6 +77,14 @@
 
 ## 兼容 / 回退
 
+- **行为变化披露**：numeric_raster 源层带静态（非 style_id）瓦片模板 URL 时，
+  既有 SVG 编译曾输出远程 `<image>` 外链；现统一披露
+  `numeric_raster_offline_snapshot_required`（离线可解析性优先 —— 无绑定调用
+  面的外链行为不再静默保留）。G20 提交链的真实会话瓦片 URL 此前即被披露，
+  golden/回归全部通过。
+- **画布口径**：服务端 SVG/PNG 混合导出为固定画布（SVG 1200×800 / PNG
+  1600×1100 @150DPI，v1；DPI 语义由 PDF 面承载）。
+
 - 纯 MapSpec additive（无 schema 变更、无迁移）；无 `raster_bindings` 入参的
   所有既有调用面（vector PDF/atlas/frame product/canvas 链）输出不变。
 - fetcher 放行仅限服务端自组 data URI（字体/图像），http/file/外链仍全拒
