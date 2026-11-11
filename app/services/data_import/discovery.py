@@ -205,8 +205,16 @@ def _group_shapefile_sets(zf: zipfile.ZipFile) -> Dict[Tuple[str, str], Dict[str
 
 
 def zipset_dir_name(key_dir: str, base: str) -> str:
-    """zipset 提取子目录的确定式名称（discovery 与 preview/commit 共用）。"""
-    return "set-" + _MEMBER_SAFE_RE.sub("_", f"{key_dir}__{base}")[:120]
+    """zipset 提取子目录的确定式名称（discovery 与 preview/commit 共用）。
+
+    sanitize 会丢信息（'a:b' 与 'a_b' 同名）—— 追加原始 (dir, base) 的短
+    哈希保证不同组件集永不共享提取目录（防互相覆盖的数据损坏）。
+    """
+    import hashlib
+
+    safe = _MEMBER_SAFE_RE.sub("_", f"{key_dir}__{base}")[:100]
+    digest = hashlib.sha1(f"{key_dir}\x00{base}".encode("utf-8")).hexdigest()[:8]
+    return f"set-{safe}-{digest}"
 
 
 def zipset_component_name(base: str) -> str:

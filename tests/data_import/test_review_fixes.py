@@ -151,16 +151,24 @@ async def test_p2_3_zipset_colon_keys_distinct(env, tmp_path):
             zf.write(work / f"src_a{comp}", f"x/y:z{comp}")
         for comp in (".shp", ".dbf", ".shx", ".prj", ".cpg"):
             zf.write(work / f"src_b{comp}", f"x:y/z{comp}")
+    # 追加：sanitize 同名碰撞（'a:b' 与 'a_b' 同目录 → 同名 stem）
+    a.to_file(work / "src_c.shp", engine="pyogrio")
+    with zipfile.ZipFile(zp, "a") as zf:
+        for comp in (".shp", ".dbf", ".shx", ".prj", ".cpg"):
+            zf.write(work / f"src_c{comp}", f"x/a_b{comp}")
     state = await env.create_batch(SESSION, "u", [("colon.zip", zp.read_bytes())])
     keys = [m.member_key for m in state.members]
-    assert len(keys) == len(set(keys)) == 2
+    assert len(keys) == len(set(keys)) == 3
+    # 提取目录不共享（防组件互相覆盖）
+    from app.services.data_import.discovery import zipset_dir_name
+
+    dirs = {m.container_ref for m in state.members}
+    assert len(dirs) == len(set(dirs)) == 3
     await env.save_plan(state.batch_id, SESSION, {k: {} for k in keys}, selected=keys)
     out = await env.start_commit(state.batch_id, SESSION, background=False)
     assert out["status"] == "completed"
-    vals = sorted(
-        out["receipts"][k]["output_rows"] for k in keys
-    )
-    assert vals == [1, 1]
+    vals = sorted(out["receipts"][k]["output_rows"] for k in keys)
+    assert vals == [1, 1, 1]
 
 
 async def test_p2_4_diagnostics_readable(env, tmp_path):
