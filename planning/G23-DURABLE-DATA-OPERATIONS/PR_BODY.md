@@ -24,6 +24,10 @@ BASE `b8f2a6ecc` → HEAD `e4bcb4dbb`（5 commits，+4722/−169，45 文件）
 - **执行语义**：at-least-once 执行（认领互斥防重复执行体）+ effectively-once 提交（收据幂等键+ref 可读复核+fenced 终态）。不宣称跨文件系统/SessionStore 分布式 ACID——收据与披露如实承载边界。
 - 取消前已发布产物不可回滚：`retained_refs` 明示保留；源文件任何路径不被修改（A16 测试）。
 
+## 生成物刷新
+
+- `tests/quality/snapshots/openapi.json`：API_SNAPSHOT_UPDATE=1 显式刷新（+68 行，全部为加性字段：job_id/idempotent_reuse/cancel_requested/member_status/background/message；breaking=0，机制为仓库指定流程）。
+
 ## 排除项 / 非目标
 
 - 不新建任务表/DAG/工作流（workflow_runtime/geocompute/Celery include 不动）；不改 G18 writer 本体；不动 Pi vendor（G22）；无 Alembic 迁移（复用 analysis_tasks 既有列）。
