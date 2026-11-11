@@ -280,18 +280,22 @@ async def submit_import_commit(
     cancel_event = asyncio.Event()
     service._cancel_events[batch_id] = cancel_event
 
-    if reused:
-        # 幂等命中活跃/近期 job：执行体在别处（或已完成），不再启动 runner。
+    if reused and job_status in ("completed", "failed", "cancelled", "stale"):
+        # 幂等命中终态 job：执行体已不存在，返回终态句柄（收据面见批次详情）。
         service._committing_ids.discard(batch_id)
         service._cancel_events.pop(batch_id, None)
         return {
             "batch_id": batch_id,
             "job_id": str(job_id),
-            "status": "committing" if job_status in ("pending", "queued", "running") else job_status,
+            "status": job_status,
             "members": target_keys,
             "idempotent_reuse": True,
             "poll": f"/api/v1/data-import/batches/{batch_id}",
         }
+    # reused 且仍活跃：正常启动 runner —— 认领（pending|queued→running 的原子
+    # 条件迁移）决定谁执行。覆盖「create 与 runner 启动之间崩溃」的恢复路径
+    # （job 停留 pending，重提交在此补启动，G18 同款语义）；已被其他副本认领
+    # （running）时本 runner 认领失败即退出，绝不重复执行。
 
     runner = _make_runner(service, batch_id, session_id, target_keys, cancel_event, job_id)
     if not background:

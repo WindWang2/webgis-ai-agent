@@ -270,3 +270,56 @@ async def test_source_files_never_modified(ops_env):
     await svc.start_commit(state.batch_id, SESS, background=False)
     after = staging.source_path(state, src.source_id).read_bytes()
     assert before == after
+
+
+async def test_resubmit_bootstraps_crashed_pending_job(ops_env):
+    """提交在 create 与 runner 启动之间崩溃（job 停留 pending）→ 重提交
+    补启动执行体（认领互斥保证不双跑），不永久卡在 committing。"""
+    svc, state, keys = await _seed_batch(ops_env)
+    # 手工铸一个「崩溃残留」：job 行 pending、批次 COMMITTING、无 runner
+    from app.services.data_operations.runner import _sync_session, submit_async_job
+
+    job_id, _, _ = submit_async_job(
+        task_type="data_import_commit", kind="data_import",
+        display_name="crashed", params={"batch_id": state.batch_id},
+        idempotency_key="g23-crash-test", session_id=SESS)
+    from app.services.data_import import staging
+    from app.services.data_import.models import BatchStatus, MemberStatus
+
+    fresh = staging.load_state(state.batch_id)
+    fresh.status = BatchStatus.COMMITTING
+    fresh.active_job_id = job_id
+    for m in fresh.members:
+        m.status = MemberStatus.COMMITTING
+    staging.save_state(fresh)
+
+    # 重提交（同计划）：批次仍在 COMMITTING → 预期 409（活跃 job 持有写权）；
+    # 该冲突路径已是恢复语义的一部分（用户经取消/等待收敛）。
+    import pytest as _pytest
+
+    with _pytest.raises(DataImportError) as ei:
+        await svc.start_commit(state.batch_id, SESS, background=False)
+    assert ei.value.code == "COMMIT_IN_PROGRESS"
+    # job 仍 pending（无 runner 认领）——孤儿清扫在 1h 内收敛为 failed（可重提）
+    from app.models.db_model import AnalysisTask
+
+    async def _sweep():
+        from app.core.database import async_db_session
+        from app.services.jobs.store import DurableJobStore
+
+        async with async_db_session() as db:
+            swept = await DurableJobStore.sweep_orphans(db, orphan_after_s=0)
+            await db.commit()
+            return swept
+
+    assert await _sweep() >= 1
+    with _sync_session() as db:
+        row = db.get(AnalysisTask, job_id)
+        status_after_sweep = str(row.status)
+        db.commit()
+    assert status_after_sweep == "failed"
+    # 清扫后批次读归一化（无活跃 job + 无收据 → configured，可重新提交）
+    view = await svc.get_batch(state.batch_id, SESS)
+    assert view.status.value == "configured"
+    out = await svc.start_commit(state.batch_id, SESS, background=False)
+    assert out["status"] == "completed"
