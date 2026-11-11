@@ -142,6 +142,7 @@ class MemberRecord(BaseModel):
     container_ref_detail: Optional[str] = None
     # 发现期元数据（metadata 读取，不整读数据）
     fields: List[str] = Field(default_factory=list)      # 有界（≤ budgets.MAX_COLUMNS_SHOWN）
+    fields_total: Optional[int] = None                    # 真实字段总数（披露截断；评审 P2-1）
     geometry_type: Optional[str] = None
     feature_count: Optional[int] = None   # 未知时 None（诚实）
     crs: Optional[str] = None
@@ -231,6 +232,7 @@ class ImportBatchState(BaseModel):
     attribution: str = ""
     committing_since: Optional[str] = None
     last_commit_started_at: Optional[str] = None
+    cancel_requested: bool = False            # 取消意图（评审 P2-9：锁窗口期也生效）
 
 
 def canonical_interpretation(payload: Dict[str, Any]) -> Dict[str, Any]:

@@ -27,6 +27,7 @@ import {
   commitImportBatch,
   deleteImportBatch,
   getImportBatch,
+  getImportDiagnostics,
   getImportReceipts,
   listImportBatches,
   previewImportMembers,
@@ -67,6 +68,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [receipts, setReceipts] = useState<Record<string, ImportReceipt> | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // creating|plan|preview|commit|cancel
+  const [diag, setDiag] = useState<{ key: string; lines: number; rows: string[] } | null>(null);
   const [pct, setPct] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const genRef = useRef(0);
@@ -94,6 +96,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
         const detail = await getImportBatch(batchId, sessionId, { ownerToken });
         if (genRef.current !== gen) return; // 迟到响应丢弃
         setActive(detail);
+        setSelectedOverride(null);
         const next: Record<string, Draft> = {};
         for (const m of detail.members ?? []) {
           next[m.member_key] = draftFromServer(detail.interpretations?.[m.member_key]);
@@ -118,7 +121,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
   const poll = useBoundedPoll<{ status: string; receipts: Record<string, ImportReceipt> }>({
     enabled: active?.status === 'committing' && busy === null,
     resetKey: active?.batch_id ?? '',
-    pollIntervalMs: 1500,
+    pollIntervalMs: 3000, // useBoundedPoll 下限 MIN_POLL_INTERVAL_MS=3000
     fetcher: async (signal: AbortSignal) => {
       if (!sessionId || !active) {
         return { status: 'unknown', receipts: {} };
@@ -144,9 +147,55 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
   }, [poll.data]);
 
   const members = active?.members ?? [];
-  const selectedKeys = useMemo(
-    () => members.filter((m) => m.selected && !m.unsupported_reason).map((m) => m.member_key),
-    [members]
+  // P0-1（评审）：本地乐观选择态 + 即时落服务端（保存即确认点）。
+  const [selectedOverride, setSelectedOverride] = useState<Set<string> | null>(null);
+  const selectedKeys = useMemo(() => {
+    if (selectedOverride) return [...selectedOverride];
+    return members.filter((m) => m.selected && !m.unsupported_reason).map((m) => m.member_key);
+  }, [members, selectedOverride]);
+  // 批次切换/重载后同步服务器事实源（清除乐观覆盖）
+  useEffect(() => {
+    setSelectedOverride(null);
+  }, [active?.batch_id, active?.plan_version]);
+
+  const showDiagnostics = useCallback(
+    async (memberKey: string) => {
+      if (!sessionId || !active) return;
+      try {
+        const out = await getImportDiagnostics(active.batch_id, memberKey, sessionId, { ownerToken });
+        setDiag({ key: memberKey, lines: out.lines, rows: out.rows.slice(0, 20) });
+      } catch (e) {
+        setError(String((e as Error).message ?? e));
+      }
+    },
+    [active, sessionId, ownerToken]
+  );
+
+  const toggleSelect = useCallback(
+    (memberKey: string) => {
+      if (!active) return;
+      const base = new Set(
+        selectedOverride
+          ? [...selectedOverride]
+          : members.filter((m) => m.selected && !m.unsupported_reason).map((m) => m.member_key)
+      );
+      if (base.has(memberKey)) {
+        base.delete(memberKey);
+      } else {
+        base.add(memberKey);
+      }
+      setSelectedOverride(base); // 乐观：勾选立即响应
+      void (async () => {
+        if (!sessionId) return;
+        try {
+          await saveImportPlan(active.batch_id, sessionId, { selected: [...base] }, { ownerToken });
+        } catch (e) {
+          setError(String((e as Error).message ?? e));
+          setSelectedOverride(null); // 失败回滚到服务器事实源
+        }
+      })();
+    },
+    [active, members, selectedOverride, sessionId, ownerToken]
   );
   const focusMember = members.find((m) => m.member_key === focusKey) ?? null;
   const shownMembers = members.slice(0, MEMBER_RENDER_CAP);
@@ -206,6 +255,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
 
   const handlePreview = async () => {
     if (!sessionId || !active || !selectedKeys.length) return;
+    const gen = ++genRef.current; // 评审 P2-10：切换批次后旧预览不得挂到新批次
     setBusy('preview');
     setError(null);
     try {
@@ -215,6 +265,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
         { member_keys: selectedKeys, row_limit: 200 },
         { ownerToken }
       );
+      if (genRef.current !== gen) return;
       setPreview(out.previews);
     } catch (e) {
       setError(String((e as Error).message ?? e));
@@ -405,7 +456,9 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
                   key={m.member_key}
                   member={m}
                   focused={m.member_key === focusKey}
+                  selected={selectedKeys.includes(m.member_key)}
                   onFocus={() => setFocusKey(m.member_key)}
+                  onToggle={toggleSelect}
                   t={t}
                 />
               ))}
@@ -647,10 +700,43 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
                       {t('receiptError', { p0: r.error_code, p1: r.error_message ?? '' })}
                     </span>
                   )}
+                  {r.diagnostics_ref && (
+                    <button
+                      type="button"
+                      className="underline-offset-2 hover:underline"
+                      onClick={() => void showDiagnostics(key)}
+                      data-testid={`diag-${key}`}
+                    >
+                      {t('viewRejects')}
+                    </button>
+                  )}
                 </div>
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {diag && (
+        <div className="rounded border p-2 text-xs" data-testid="diag-panel">
+          <div className="flex items-center justify-between">
+            <span className="font-medium">
+              {t('rejectDetail')} · {diag.lines} 行
+            </span>
+            <button type="button" className="underline" onClick={() => setDiag(null)}>
+              {t('close')}
+            </button>
+          </div>
+          <ul className="mt-1 max-h-32 overflow-y-auto font-mono text-[11px] text-muted-foreground">
+            {diag.rows.map((r, i) => (
+              <li key={i} className="truncate">{r}</li>
+            ))}
+          </ul>
+          {diag.lines > diag.rows.length && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {t('diagMore', { p0: String(diag.lines - diag.rows.length) })}
+            </p>
+          )}
         </div>
       )}
 
@@ -683,12 +769,16 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
 function MemberRow({
   member,
   focused,
+  selected,
   onFocus,
+  onToggle,
   t,
 }: {
   member: ImportMember;
   focused: boolean;
+  selected: boolean;
   onFocus: () => void;
+  onToggle: (key: string) => void;
   t: ReturnType<typeof useT>;
 }) {
   const disabled = Boolean(member.unsupported_reason);
@@ -701,10 +791,14 @@ function MemberRow({
       <td>
         <input
           type="checkbox"
-          checked={member.selected && !disabled}
+          checked={selected && !disabled}
           disabled={disabled}
-          readOnly
+          onChange={(e) => {
+            e.stopPropagation();
+            onToggle(member.member_key);
+          }}
           aria-label={member.display_name}
+          data-testid={`member-select-${member.member_key}`}
         />
       </td>
       <td className="truncate px-1" title={member.display_name}>

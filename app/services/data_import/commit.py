@@ -194,6 +194,20 @@ async def commit_member(
         receipt.elapsed_ms = int((time.monotonic() - started) * 1000)
         return receipt
 
+    if member.kind == MemberKind.TABLE and result.truncated:
+        # 评审 P1-2：表格路径与矢量一致 —— 超 COMMIT_ROW_LIMIT 诚实失败，
+        # 不静默截断（预览用小限额是有意的，提交用全量预算）。
+        receipt.input_rows = result.rows_scanned
+        receipt.rejected_rows = len(result.rejects)
+        receipt.error_code = "ROW_BUDGET_EXCEEDED"
+        receipt.error_message = (
+            f"表格行数超过提交预算 {budgets.COMMIT_ROW_LIMIT}，"
+            "已拒绝（不静默截断）；请分批或缩减数据"
+        )
+        receipt.finished_at = utc_now_iso()
+        receipt.elapsed_ms = int((time.monotonic() - started) * 1000)
+        return receipt
+
     receipt.input_rows = result.rows_scanned
     receipt.rejected_rows = len(result.rejects)
     receipt.geometry_type = result.geometry_family or None
@@ -231,7 +245,10 @@ async def commit_member(
                 )
             from app.services.data_ingest.pipeline import get_ingest_pipeline
 
-            confirmed_crs = ev.crs if crs_confirmed else ""
+            # 输出 CRS 诚实（评审 P1-1）：重投影后坐标已是 EPSG:4326 —— 摄入
+            # 收到的 crs 必须是 OUTPUT CRS；源 CRS 由收据 crs_evidence 承载
+            # （与旧上传 data_parser.py:357-365 → upload.py:363 契约一致）。
+            confirmed_crs = "EPSG:4326" if transformed else (ev.crs if crs_confirmed else "")
             ingest = await get_ingest_pipeline().ingest(
                 state.session_id,
                 fc,

@@ -74,5 +74,8 @@
   "close": "关闭",
   "refresh": "刷新",
   "notes": "披露",
-  "restoreHint": "批次配置保存在服务器；刷新页面后可恢复"
+  "restoreHint": "批次配置保存在服务器；刷新页面后可恢复",
+  "viewRejects": "查看拒绝行明细",
+  "rejectDetail": "拒绝行明细",
+  "diagMore": "另有 {p0} 行未展示"
 }

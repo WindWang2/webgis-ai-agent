@@ -33,6 +33,13 @@
 | preview/commit 间篡改解释 | …diverted_mapping… | hash 重推导权威比对（PLAN_HASH_MISMATCH）+ save_plan 列校验 |
 | 伪造未登记 ref | …forged_ref… | 幂等复用前 `_verify_output_readable`（假 ref 不显示就绪） |
 
+## 评审修复回归（tests/data_import/test_review_fixes.py，8 例）
+
+P1-1 输出 CRS（spy 断言 ingest 参数）/ P1-2 表格超限诚实失败 / P2-1 列截断披露 /
+P2-2 XLSX header_row / P2-3 zipset 冒号键与安全文件名 / P2-4 diag 产物可读 /
+P2-8 批次展开预算+清理 / P2-9 取消意图持久化。前端：import-workbench.test.tsx
+P0-1 勾选落服务端用例。修复前全部失败（已验证红→绿）。
+
 ## 其他覆盖
 
 - API 合同：test_api_routes.py（multipart 创建→轮询→清理；404 归属；409 冲突；unsupported 披露）

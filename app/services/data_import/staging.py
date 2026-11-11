@@ -33,6 +33,7 @@ from app.services.data_import.models import (
 
 logger = logging.getLogger(__name__)
 
+NOTES_MAX = 64
 _MEMBER_SAFE_RE = re.compile(r"[^A-Za-z0-9._\-]")
 
 
@@ -202,6 +203,8 @@ def save_state(state: ImportBatchState, *, data_dir: Optional[str] = None) -> No
     from app.services.data_import.models import utc_now_iso
 
     state.updated_at = utc_now_iso()
+    # notes 唯一截断点（评审 P2-5）：任意路径 append 都收敛于此，防无界增长
+    state.notes = list(state.notes)[-NOTES_MAX:]
     state.rev += 1
     root = batch_root(state.batch_id, data_dir)
     _atomic_write_json(root / "batch.json", json.loads(state.model_dump_json()))

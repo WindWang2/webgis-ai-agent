@@ -283,6 +283,42 @@ async def receipts(
     return ReceiptsResponse(**out)
 
 
+@router.get("/data-import/batches/{batch_id}/diagnostics/{member_key}")
+async def get_diagnostics(
+    batch_id: str,
+    member_key: str,
+    session_id: str = Query(...),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _user: dict = Depends(get_current_user_optional_with_version),
+) -> Dict[str, Any]:
+    """拒绝行明细产物（同 owner；评审 P2-4：收据 diagnostics_ref 可落地读取）。"""
+    async with async_db_session() as db:
+        await _verify_owner(db, session_id, _user, owner_token)
+    try:
+        state = await get_data_import_service().get_batch(batch_id, session_id)
+    except DataImportError as e:
+        raise _to_http(e) from e
+    rel = state.diagnostics.get(member_key)
+    if not rel or "/" in rel or ".." in rel:
+        raise HTTPException(status_code=404, detail="该成员无拒绝行明细（或未超内联上限）")
+    from app.services.data_import import staging
+
+    path = staging.diag_dir(state) / rel
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="明细产物不存在（staging 已过期或已清理）")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"明细读取失败: {e}") from e
+    lines = [ln for ln in content.splitlines() if ln.strip()]
+    return {
+        "batch_id": batch_id,
+        "member_key": member_key,
+        "lines": len(lines),
+        "rows": lines[:5000],
+    }
+
+
 @router.delete("/data-import/batches/{batch_id}", response_model=DeleteResponse)
 async def delete_batch(
     batch_id: str,

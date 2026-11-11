@@ -106,6 +106,37 @@ describe('ImportWorkbench', () => {
     await waitFor(() => expect(screen.getByText(/empty_sheet/)).toBeTruthy());
   });
 
+  it('P0-1：勾选成员即时落服务端（saveImportPlan selected）并乐观更新', async () => {
+    api.listImportBatches.mockResolvedValue([]);
+    api.getImportBatch.mockResolvedValue({
+      ...BATCH,
+      members: [MEMBER, { ...MEMBER, member_key: 'f:src-2', display_name: 'b.csv' }],
+    });
+    api.saveImportPlan.mockResolvedValue({ batch_id: 'ib-111', plan_version: 1, plan_hashes: {}, status: 'configured' });
+    api.listImportBatches.mockResolvedValue([
+      { batch_id: 'ib-111', status: 'inspected', created_at: '', updated_at: '', expires_at: '',
+        file_count: 2, member_count: 2, selected_count: 0, completed_count: 0, plan_version: 0,
+        terminal: false, notes: [] },
+    ]);
+    render(<ImportWorkbench onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /ib-111/ }));
+    await waitFor(() => expect(screen.getByText('table.csv')).toBeTruthy());
+
+    const checkbox = screen.getByTestId('member-select-f:src-1') as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(api.saveImportPlan).toHaveBeenCalledWith(
+      'ib-111', 'sess-1', { selected: ['f:src-1'] }, expect.anything()
+    ));
+    // 乐观态：立即勾上
+    await waitFor(() => {
+      expect((screen.getByTestId('member-select-f:src-1') as HTMLInputElement).checked).toBe(true);
+    });
+    // 保存计划按钮不再因未选择而禁用
+    const saveBtn = screen.getByText('保存解释计划').closest('button') as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(false);
+  });
+
   it('提交轮询由 useBoundedPoll 驱动且仅在 committing 态启用', async () => {
     (useBoundedPoll as ReturnType<typeof vi.fn>).mockClear();
     api.listImportBatches.mockResolvedValue([]);

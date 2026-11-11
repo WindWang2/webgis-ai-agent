@@ -306,6 +306,18 @@ export async function getImportReceipts(
   });
 }
 
+export async function getImportDiagnostics(
+  batchId: string,
+  memberKey: string,
+  sessionId: string,
+  opts?: { signal?: AbortSignal; ownerToken?: string | null }
+): Promise<{ batch_id: string; member_key: string; lines: number; rows: string[] }> {
+  return apiFetch(
+    `/api/v1/data-import/batches/${batchId}/diagnostics/${encodeURIComponent(memberKey)}${q(sessionId)}`,
+    { signal: opts?.signal, label: LABEL, ownerToken: opts?.ownerToken }
+  );
+}
+
 export async function deleteImportBatch(
   batchId: string,
   sessionId: string,

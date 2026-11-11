@@ -114,6 +114,7 @@ def build_preview(
     payload: Dict[str, Any] = {
         "member_key": member.member_key,
         "kind": member.kind.value,
+        "columns_total": member.fields_total if member.fields_total else len(result.columns),
         "effective_mode": result.effective_mode or ("vector" if member.kind == MemberKind.VECTOR else ""),
         "columns": result.columns,
         "column_kinds": result.column_kinds,

@@ -97,12 +97,25 @@ class DataImportService:
         root = staging.batch_root(state.batch_id)
         extract_root = root / "sources" / "extract"
         members: List[MemberRecord] = []
+        expanded_total = 0
         for src in state.sources:
             path = staging.source_path(state, src.source_id)
             try:
                 ms, notes = await asyncio.to_thread(
                     discover_source, src, path, extract_root
                 )
+                # 批次级展开预算（评审 P2-8）：按本源解压后累计，超限整批拒绝
+                src_extract = extract_root / src.source_id
+                if src_extract.exists():
+                    expanded_total += sum(
+                        p.stat().st_size for p in src_extract.rglob("*") if p.is_file()
+                    )
+                    if expanded_total > budgets.MAX_BATCH_EXPANDED_BYTES:
+                        raise DiscoveryError(
+                            "ZIP_EXPANSION_TOO_LARGE",
+                            f"批次展开合计 {expanded_total} 字节超过预算 "
+                            f"{budgets.MAX_BATCH_EXPANDED_BYTES}",
+                        )
             except DiscoveryError as e:
                 if e.code in _BOUNDED_DISCOVERY_FAILURES:
                     # 预算类超限：有界拒绝整个批次并清理（场景 20），不静默降级
@@ -176,7 +189,13 @@ class DataImportService:
         task = self._commit_tasks.get(batch_id)
         if task is not None and not task.done():
             raise DataImportError("COMMIT_IN_PROGRESS", "提交进行中，请先取消", status=409)
-        ok = await asyncio.to_thread(staging.delete_batch, batch_id)
+        # 删除持锁（评审 P2-9b）：与 start_commit 检查-写入互斥，防竞态逃逸
+        # 成未检索任务
+        async with self._lock(batch_id):
+            task = self._commit_tasks.get(batch_id)
+            if task is not None and not task.done():
+                raise DataImportError("COMMIT_IN_PROGRESS", "提交进行中，请先取消", status=409)
+            ok = await asyncio.to_thread(staging.delete_batch, batch_id)
         self._cancel_events.pop(batch_id, None)
         self._commit_tasks.pop(batch_id, None)
         self._locks.pop(batch_id, None)
@@ -357,6 +376,7 @@ class DataImportService:
                 if m.status == MemberStatus.COMMITTING:
                     m.status = MemberStatus.PLANNED
             state.status = BatchStatus.COMMITTING
+            state.cancel_requested = False
             state.committing_since = utc_now_iso()
             state.last_commit_started_at = state.committing_since
             for m in targets:
@@ -483,7 +503,7 @@ class DataImportService:
             # 批次终态
             async with self._lock(batch_id):
                 fresh = await self._load_owned(batch_id, session_id)
-                if cancelled and cancel_event.is_set():
+                if fresh.cancel_requested or (cancelled and cancel_event.is_set()):
                     fresh.status = BatchStatus.CANCELLED
                     for m in fresh.members:
                         if m.status == MemberStatus.COMMITTING:
@@ -517,14 +537,22 @@ class DataImportService:
         if event is None:
             if state.status != BatchStatus.COMMITTING:
                 raise DataImportError("NOT_COMMITTING", f"当前状态 {state.status.value}", status=409)
+            # 无在飞任务（锁窗口期/重启后）：落取消意图，_run_commit 终态写
+            # 之前会读到 cancel_requested 并服从（评审 P2-9 竞态修复）。
             async with self._lock(batch_id):
                 fresh = await self._load_owned(batch_id, session_id)
+                fresh.cancel_requested = True
                 fresh.status = BatchStatus.CANCELLED
                 for m in fresh.members:
                     if m.status == MemberStatus.COMMITTING:
                         m.status = MemberStatus.CANCELLED
                 await asyncio.to_thread(staging.save_state, fresh)
             return {"batch_id": batch_id, "status": "cancelled"}
+        # 在飞任务：先落意图（防晚到终态写覆盖），再协作取消
+        async with self._lock(batch_id):
+            fresh = await self._load_owned(batch_id, session_id)
+            fresh.cancel_requested = True
+            await asyncio.to_thread(staging.save_state, fresh)
         event.set()
         task = self._commit_tasks.get(batch_id)
         if task is not None:
@@ -553,9 +581,12 @@ def _validate_columns(member: MemberRecord, interp: Any) -> None:
         if interp.keep_fields and member.fields:
             missing = [c for c in interp.keep_fields if c not in set(member.fields)]
             if missing:
+                hint = ""
+                if member.fields_total and member.fields_total > len(member.fields):
+                    hint = f"（发现期清单有界展示 {len(member.fields)}/{member.fields_total}，可能因此误判）"
                 raise DataImportError(
                     "COLUMN_NOT_FOUND",
-                    f"字段不存在: {', '.join(missing)}；可用: {', '.join(member.fields[:20])}",
+                    f"字段不存在: {', '.join(missing)}{hint}；可用: {', '.join(member.fields[:20])}",
                 )
         return
     if not isinstance(interp, TableInterpretation):

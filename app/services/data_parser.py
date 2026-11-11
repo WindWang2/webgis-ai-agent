@@ -623,4 +623,3 @@ check_untrusted_vector_content = _check_untrusted_vector_content
 check_detected_driver = _check_detected_driver
 validate_shapefile_zip = _validate_shapefile_zip
 geojson_declares_crs = _geojson_declares_crs
-detect_csv_columns = _detect_csv_columns

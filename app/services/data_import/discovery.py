@@ -82,10 +82,11 @@ def _crs_name(info: Dict[str, Any]) -> Optional[str]:
     return text or None
 
 
-def _fields_from_info(info: Dict[str, Any]) -> List[str]:
-    fields = info.get("fields")
-    names = [str(f) for f in (fields or [])][: budgets.MAX_COLUMNS_SHOWN]
-    return names
+def _fields_from_info(info: Dict[str, Any]) -> Tuple[List[str], int]:
+    """返回 (展示字段[≤上限], 真实总数) —— 评审 P2-1：截断必须可披露。"""
+    fields = info.get("fields") or []
+    names = [str(f) for f in fields][: budgets.MAX_COLUMNS_SHOWN]
+    return names, len(fields)
 
 
 def _vector_member(
@@ -106,7 +107,8 @@ def _vector_member(
         container=container,
         kind=MemberKind.VECTOR,
         display_name=display_name,
-        fields=_fields_from_info(info),
+        fields=_fields_from_info(info)[0],
+        fields_total=_fields_from_info(info)[1],
         geometry_type=str(geom) if geom else None,
         feature_count=int(info["features"]) if info.get("features") is not None else None,
         crs=crs,
@@ -207,6 +209,17 @@ def zipset_dir_name(key_dir: str, base: str) -> str:
     return "set-" + _MEMBER_SAFE_RE.sub("_", f"{key_dir}__{base}")[:120]
 
 
+def zipset_component_name(base: str) -> str:
+    """zipset 组件落盘用的安全 stem（评审 P2-3 续：Windows 文件名禁 ':' 等）。"""
+    return _MEMBER_SAFE_RE.sub("_", base)[:100] or "shapefile"
+
+
+def _key_part(text: str) -> str:
+    """member_key 片段转义：'%' 先行，冒号转 '%3A'（评审 P2-3：防不同
+    (目录, basename) 组合生成同一 member_key 造成串成员）。"""
+    return text.replace("%", "%25").replace(":", "%3A")
+
+
 def discover_zip(
     path: Path, source: SourceFile, extract_dir: Path
 ) -> Tuple[List[MemberRecord], List[str]]:
@@ -254,14 +267,15 @@ def discover_zip(
             set_dir = extract_dir / zipset_dir_name(key_dir, base)
             set_dir.mkdir(exist_ok=True)
             size_bytes = 0
+            safe_base = zipset_component_name(base)
             for ext, entry in sorted(comps.items()):
-                target = set_dir / f"{base}{ext}"
+                target = set_dir / f"{safe_base}{ext}"
                 data = zf.read(entry)
                 size_bytes += len(data)
                 if len(data) > 64 * 1024 * 1024:  # pragma: no cover - 单组件防御
                     raise DiscoveryError("ZIP_MEMBER_TOO_LARGE", entry)
                 target.write_bytes(data)
-            shp_path = set_dir / f"{base}.shp"
+            shp_path = set_dir / f"{safe_base}.shp"
             try:
                 check_untrusted_vector_content(shp_path, ".shp")
                 info = _read_info_bounded(shp_path)
@@ -271,14 +285,14 @@ def discover_zip(
             # member_key 用容器内目录+basename（与 UI 排序无关；同 zip 重传可复现）
             m = _vector_member(
                 source,
-                f"c:{source.source_id}:zipset:{key_dir}:{base}",
+                f"c:{source.source_id}:zipset:{_key_part(key_dir)}:{_key_part(base)}",
                 ContainerKind.ZIPSET,
                 f"{base} ({key_dir})" if key_dir != "." else base,
                 info,
                 size_bytes=size_bytes,
             )
             m.container_ref = zipset_dir_name(key_dir, base)
-            m.container_ref_detail = base
+            m.container_ref_detail = safe_base   # 安全文件名（与提取一致）
             members.append(m)
     return members, notes
 
@@ -307,7 +321,8 @@ def _sniff_csv(path: Path, encoding: Optional[str]) -> Tuple[str, List[str], Opt
         except csv.Error:
             delim = ","
         header = next(csv.reader(io.StringIO(first_lines[0]), delimiter=delim or ","))
-        columns = [c.strip() for c in header][: budgets.MAX_COLUMNS_SHOWN]
+        # 返回完整列名（截断在成员层做并披露 fields_total —— 评审 P2-1）
+        columns = [c.strip() for c in header]
         return enc, columns, delim
     raise DiscoveryError(
         "ENCODING_UNDECODABLE", f"{path.name}: 无法按候选编码解码（{last_err}）"
@@ -327,7 +342,8 @@ def discover_csv(path: Path, source: SourceFile) -> Tuple[List[MemberRecord], Li
         container=ContainerKind.FILE,
         kind=MemberKind.TABLE,
         display_name=source.original_name,
-        fields=columns,
+        fields=columns[: budgets.MAX_COLUMNS_SHOWN],
+        fields_total=len(columns),
         feature_count=None,
         crs=None,
         crs_source="unknown",
@@ -413,6 +429,7 @@ def discover_xlsx(path: Path, source: SourceFile) -> Tuple[List[MemberRecord], L
                 display_name=f"{source.original_name} :: {sheet}",
                 container_ref=sheet,
                 fields=columns,
+                fields_total=len(columns),
                 feature_count=None,
                 crs=None,
                 crs_source="unknown",

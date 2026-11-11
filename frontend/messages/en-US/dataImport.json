@@ -74,5 +74,8 @@
   "close": "Close",
   "refresh": "Refresh",
   "notes": "Disclosures",
-  "restoreHint": "Batch config lives on the server; restore after page refresh"
+  "restoreHint": "Batch config lives on the server; restore after page refresh",
+  "viewRejects": "View rejected rows",
+  "rejectDetail": "Rejected rows detail",
+  "diagMore": "{p0} more rows hidden"
 }

@@ -19,6 +19,7 @@ SUPPORTED_EXTS = {".geojson", ".json", ".gpkg", ".kml", ".zip", ".csv", ".xlsx"}
 PREVIEW_DEFAULT_ROWS = 200
 PREVIEW_MAX_ROWS = 2000
 REJECT_INLINE_MAX = 100                          # 内联拒绝行样本上限
+DIAG_MAX_ROWS = 10_000                           # 拒绝行明细产物行上限
 RAW_EXCERPT_MAX_CHARS = 200                      # 单拒绝行原文摘录上限
 MAX_COLUMNS_SHOWN = 64                           # 成员清单字段上限（超出计数披露）
 SAMPLE_COLUMNS_IN_PREVIEW = 64

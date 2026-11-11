@@ -168,9 +168,9 @@ def infer_column_kinds(sample: Dict[str, List[str]], limit: int = 200) -> Dict[s
             sug, obs = "number", "number"
         elif kinds == {"boolean"}:
             sug, obs = "boolean", "boolean"
-        elif kinds == {"date"} or kinds == {"date", "number"} and False:
+        elif kinds == {"date"}:
             sug, obs = "date", "date"
-        elif kinds == {"number", "text"} or "text" in kinds or len(kinds) > 1:
+        elif kinds and len(kinds) > 1:
             sug, obs = "text", "mixed:" + ",".join(sorted(kinds))
         elif not kinds:
             sug, obs = "text", "unparseable"
@@ -191,41 +191,50 @@ def _read_csv_rows(
 
     chain: Tuple[str, ...] = (interp.encoding,) if interp.encoding else ("utf-8-sig", "utf-8", "gb18030")
     last_err: Optional[Exception] = None
-    df = None
+    # 分块读取（评审 P2-7）：取消检查落在块边界，500k 行解析期间取消可生效；
+    # 读够 row_limit+1 即停（+1 用于截断探测）。
+    chunk_rows: List[Dict[str, str]] = []
+    truncated = False
     used_enc = ""
     for enc in chain:
+        chunk_rows = []
+        truncated = False
         try:
-            df = pd.read_csv(
+            reader = pd.read_csv(
                 path,
                 dtype=str,
                 keep_default_na=False,
                 sep=interp.delimiter if interp.delimiter else None,
                 engine="python",
                 skiprows=interp.header_row if interp.header_row > 0 else 0,
-                nrows=row_limit + 1 if row_limit else None,
                 encoding=enc,
                 on_bad_lines="error",
+                chunksize=5000,
             )
             used_enc = enc
+            for chunk in reader:
+                cancel()
+                for rec in chunk.to_dict(orient="records"):
+                    chunk_rows.append(
+                        {str(k): ("" if v is None else str(v)) for k, v in rec.items()}
+                    )
+                    if len(chunk_rows) > row_limit:
+                        truncated = True
+                        break
+                if truncated:
+                    break
             break
         except UnicodeDecodeError as e:
             last_err = e
             continue
         except pd.errors.ParserError as e:
             raise InterpretationError("CSV_PARSE_FAILED", str(e)[:200]) from e
-    if df is None:
+    if not used_enc:
         raise InterpretationError(
             "ENCODING_UNDECODABLE",
             f"无法按候选编码解码（{interp.encoding or 'utf-8/gb18030'}）：{last_err}",
         )
-    truncated = len(df) > row_limit
-    if truncated:
-        df = df.iloc[:row_limit]
-    rows = []
-    for i, rec in enumerate(df.to_dict(orient="records")):
-        if i % budgets.COMMIT_CANCEL_CHECK_ROWS == 0:
-            cancel()
-        rows.append({str(k): ("" if v is None else str(v)) for k, v in rec.items()})
+    rows = chunk_rows[:row_limit]
     return rows, None, truncated, used_enc, interp.delimiter or ","
 
 
@@ -271,7 +280,12 @@ def _read_xlsx_rows(
         ws = wb[sheet]
         header: List[str] = []
         data_count = 0
+        skipped = 0
+        header_row = max(0, int(getattr(interp, "header_row", 0) or 0))
         for row in ws.iter_rows(values_only=True):
+            if skipped < header_row:
+                skipped += 1
+                continue
             if not header:
                 if all(v is None or str(v).strip() == "" for v in row):
                     continue  # 跳过表头前的空行（header_row 语义由前端行选择决定）
@@ -507,7 +521,6 @@ def interpret_vector(
     gdf: Any,
     interp: VectorInterpretation,
     *,
-    declared_crs_fallback: Optional[str] = None,
     crs_source_hint: str = "source_metadata",
     row_limit: int,
     cancel: CancelCheck = lambda: None,
@@ -531,9 +544,6 @@ def interpret_vector(
         evidence = CrsEvidence(
             crs_source="declared", crs=crs_name, declared_by_user=crs_name
         )
-    elif declared_crs_fallback:
-        evidence = CrsEvidence(crs_source=crs_source_hint, crs=declared_crs_fallback)
-        crs_name = declared_crs_fallback
     else:
         evidence = CrsEvidence(crs_source="unknown", crs=None)
     result.crs_evidence = evidence

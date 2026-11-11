@@ -60,3 +60,14 @@
   提交 217s/553MB——O(N) 如实披露）、20×4500 小文件批次、取消往返 6.2s、清理无残留
 - 文档：docs/data-import-workbench.md（格式矩阵/资源限制/真实降级）、TEST_MATRIX.md（22 场景全落位）
 - 全量 data_import 套件 32/32
+
+### R10（2026-11-11）独立评审 → 修复
+- 独立 reviewer（未参与实现）结论：P0×1（前端无勾选控件）+ P1×2（输出 CRS 标签/
+  表格静默截断）+ P2×12
+- 修复全部落位：P0-1 受控勾选（乐观+落服务端+回滚）；P1-1 摄入收 OUTPUT CRS；
+  P1-2 表格 ROW_BUDGET_EXCEEDED；P2 族（列披露/XLSX header_row/zipset 冒号转义+
+  安全组件名/diag 端点+取消意图+删除锁/批次展开预算/notes 截断/diag 上限/
+  分块读取/前端守卫+轮询/死代码清理）
+- 修复回归：tests/data_import/test_review_fixes.py 8/8（含 spy 断言 ingest crs 参数）
+- 全量 data_import 40/40；前端 12/12；旧契约回归进行中
+- 待复审：SendMessage 同一 reviewer
