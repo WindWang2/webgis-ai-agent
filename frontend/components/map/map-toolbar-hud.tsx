@@ -1,6 +1,11 @@
 'use client'
 import { registerEscapeHandler } from '@/lib/utils/escape-stack';
 import { useT } from '@/lib/i18n/useT';
+import {
+  getCommittedMapSpec,
+  getSpecSnapshotVersion,
+  subscribeMapSpecLive,
+} from '@/lib/mapspec/session-cursor'
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import {
@@ -23,6 +28,7 @@ import {
   Hexagon,
   MousePointerSquareDashed,
   Magnet,
+  Tags,
 } from 'lucide-react'
 import type { MapRef } from 'react-map-gl/maplibre'
 import { useHudStore, type HudState } from '@/lib/store/useHudStore'
@@ -544,6 +550,16 @@ function SketchToolGroup() {
     (s: HudState) => s.layers?.some((l) => l.id === SKETCH_LAYER_ID) ?? false,
   )
   const canEdit = sketchFeatureCount > 0
+  // G16：任一 spec 层带 label.field 才可进标注编辑（committed spec 响应
+  // 式读取 —— session-cursor 发布，Agent/用户写入都会触发）。
+  const specVersion = useSyncExternalStore(subscribeMapSpecLive, getSpecSnapshotVersion)
+  const hasLabelLayer = useMemo(() => {
+    void specVersion
+    const spec = getCommittedMapSpec() as {
+      layers?: Array<{ label?: { field?: unknown } }>
+    } | null
+    return (spec?.layers ?? []).some((l) => Boolean(l?.label?.field))
+  }, [specVersion])
 
   const toggleTool = useCallback((tool: MapToolId) => {
     const store = useHudStore.getState()
@@ -576,6 +592,15 @@ function SketchToolGroup() {
       icon: Trash2,
       disabled: !canEdit,
       disabledReason: t('map.toolbar.deleteFeatureDisabled'),
+    },
+    {
+      // G16：要素级标注编辑（点击标签拖动/隐藏/固定/改文字）。
+      id: 'edit_labels',
+      label: t('map.toolbar.editLabels'),
+      title: hasLabelLayer ? t('map.toolbar.editLabelsTitle') : t('map.toolbar.editLabelsDisabled'),
+      icon: Tags,
+      disabled: !hasLabelLayer,
+      disabledReason: t('map.toolbar.editLabelsDisabled'),
     },
   ]
 

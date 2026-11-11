@@ -38,6 +38,15 @@ export interface MapSpecToSvgOptions {
 
 import { computeOversampleBoost, resolveOversampledTileGrid, mercY } from "../map-kit/oversample";
 import { wrapLabelMultilingual, type Box } from "@/lib/label-geometry";
+import type { ObstacleBox } from "./label-obstacles";
+import {
+  extractComponentObstacles,
+  extractLineObstacles,
+  extractPolygonBoundaryObstacles,
+  extractZoneObstacles,
+  interleaveBudgeted,
+  resolveFeatureIdentity,
+} from "./label-obstacles";
 import {
   estimateLabelBox,
   fitLabel,
@@ -562,10 +571,18 @@ function compileMapSpecToSvgBody(
   const labelRequests: Array<any> = [];
   // W2.1（ADR-0283 D3）：点符号图元障碍盒（circle 层；AABB，中心即锚点，
   // 边长 = 2×(radius + stroke/2)）。每层采样前 200 个点（与求解侧
-  // MAX_OBSTACLES_PER_SOLVE 同值；line/polygon 图元障碍为后续波次）。
+  // MAX_OBSTACLES_PER_SOLVE 同值）。
   // Cross-layer circle symbols include the label's own point: every candidate
   // must avoid their visible ink. Exhaustion suppresses with collision disclosure.
   const glyphObstacles: Box[] = [];
+  // G16（v2.1）：geometry_v1 = 带身份线/面边界/circle/禁入面/页面组件
+  // 障碍 + 公平预算交错 + 自身墨迹豁免；缺省 circles_legacy 不变。
+  const geometryV1 = collisionMode
+    && mapspec?.layout?.labels?.obstaclePolicy === 'geometry_v1';
+  const segmentObstacleGroups: ObstacleBox[][] = [];
+  const circleObstaclesV1: ObstacleBox[] = [];
+  // G16（R1-P2）：覆写命中登记（键=宿主原始层 id）—— 失效披露用。
+  const authoringSeen = new Map<string, Set<string>>();
 
   const scaledWidth = width * dpiScale;
   const scaledHeight = height * dpiScale;
@@ -660,7 +677,10 @@ function compileMapSpecToSvgBody(
   const layers = (mapspec?.layers || []).flatMap((layer: { id: string; type: string; layout?: Record<string, unknown>; label?: { field?: string; size?: number; color?: string; haloColor?: string; haloWidth?: number } }) => {
     if (!layer.label?.field || ['raster', 'heatmap', 'background', 'hillshade', 'symbol', 'text'].includes(layer.type)) return [layer];
     const label = layer.label;
+    // G16（R1-P1）：__label_of 记宿主原始层 id —— 障碍身份豁免按原始层
+    // 寻址（Python _svg_layers 孪生）。运行时层视图键，不落盘。
     return [layer, { ...layer, id: `${layer.id}-label`, type: 'symbol',
+      __label_of: layer.id,
       layout: { ...layer.layout, 'text-field': ['get', label.field], 'text-size': label.size ?? 12 },
       paint: { 'text-color': label.color ?? '#000000', 'text-halo-color': label.haloColor ?? '#ffffff', 'text-halo-width': label.haloWidth ?? 1 },
     }];
@@ -872,6 +892,46 @@ function compileMapSpecToSvgBody(
     if (layerType === 'fill-extrusion') options.onDiagnostic?.('layer_approximated_extrusion', `layer=${layer.id}`);
     const features: unknown[] = srcData.type === "FeatureCollection" ? srcData.features ?? [] : [srcData];
 
+    // G16：本层 authoring 覆写索引（featureId → override；Python 孪生同构）。
+    const authoringByFid = new Map<string, Record<string, unknown>>();
+    const labelCfgMap = (layer as { label?: Record<string, unknown> }).label;
+    if (labelCfgMap && typeof labelCfgMap === 'object') {
+      const authoring = labelCfgMap.authoring as { overrides?: unknown[] } | undefined;
+      if (authoring && Array.isArray(authoring.overrides)) {
+        for (const ov of authoring.overrides) {
+          if (ov && typeof ov === 'object' && typeof (ov as Record<string, unknown>).featureId === 'string') {
+            authoringByFid.set((ov as Record<string, unknown>).featureId as string, ov as Record<string, unknown>);
+          }
+        }
+      }
+    }
+
+    // G16 geometry_v1：线/面边界逐段墨迹障碍（每层一次；面填充不是障碍）。
+    if (geometryV1 && layerType === 'line') {
+      const seg = extractLineObstacles(features as never, {
+        layerId: String(layer.id ?? ''),
+        project: (pt) => {
+          const [px, py] = project(pt as [number, number]);
+          return [Number(px), Number(py)];
+        },
+        strokeWidth: (fp) =>
+          Number(resolvePaintValue(paint['line-width'] ?? paint['width'], fp, 2)) * dpiScale,
+        viewport: [0, 0, scaledWidth, scaledHeight],
+      });
+      if (seg.length > 0) segmentObstacleGroups.push(seg);
+    } else if (geometryV1 && (layerType === 'fill' || layerType === 'fill-extrusion')) {
+      const poly = extractPolygonBoundaryObstacles(features as never, {
+        layerId: String(layer.id ?? ''),
+        project: (pt) => {
+          const [px, py] = project(pt as [number, number]);
+          return [Number(px), Number(py)];
+        },
+        strokeWidth: () => 1.0 * dpiScale,
+        viewport: [0, 0, scaledWidth, scaledHeight],
+      });
+      if (poly.length > 0) segmentObstacleGroups.push(poly);
+    }
+
     features.forEach((rawFeat: unknown) => {
       const feat = rawFeat as {
         geometry?: { type?: string; coordinates?: any };
@@ -913,7 +973,17 @@ function compileMapSpecToSvgBody(
             baseRadius * dpiScale + (baseStrokeWidth > 0 ? baseStrokeWidth * dpiScale / 2 : 0);
           const gx = Number(x);
           const gy = Number(y);
-          glyphObstacles.push([gx - obsExt, gy - obsExt, gx + obsExt, gy + obsExt]);
+          const obsBox: Box = [gx - obsExt, gy - obsExt, gx + obsExt, gy + obsExt];
+          if (geometryV1) {
+            // G16：circle 补身份（恒不豁免自身 —— 点符号避让是设计）。
+            const { featureId } = resolveFeatureIdentity(feat as never);
+            circleObstaclesV1.push({
+              box: obsBox, kind: "circle",
+              layerId: String(layer.id ?? ""), featureId: featureId ?? undefined,
+            });
+          } else {
+            glyphObstacles.push(obsBox);
+          }
           layerGlyphObsN += 1;
         }
       } else if (layerType === "line" && (geom.type === "LineString" || geom.type === "MultiLineString")) {
@@ -1017,8 +1087,23 @@ function compileMapSpecToSvgBody(
         });
       } else if (layerType === "symbol" || layerType === "text") {
         const layout = layer.layout || {};
+        // G16：要素级 authoring（身份 + hidden/text；pinned/offset 在锚点后）。
+        const { featureId: fidLbl } = resolveFeatureIdentity(feat as never);
+        const ovLbl = authoringByFid.get(fidLbl ?? "\u0000");
+        const authoringKey = String(
+          (layer as { __label_of?: string }).__label_of ?? layer.id ?? "",
+        );
+        if (authoringByFid.size > 0) {
+          if (!authoringSeen.has(authoringKey)) authoringSeen.set(authoringKey, new Set());
+        }
+        if (ovLbl && fidLbl) {
+          (authoringSeen.get(authoringKey) ?? new Set<string>()).add(fidLbl);
+        }
+        const hiddenByUser = Boolean(ovLbl?.hidden === true);
+        if (hiddenByUser && !collisionMode) return; // legacy：不画
         const textFieldPattern = layout['text-field'] ?? paint['text-field'] ?? '{name}';
-        const rawText = resolveLabelText(textFieldPattern, props);
+        let rawText: string | undefined | null = resolveLabelText(textFieldPattern, props);
+        if (ovLbl && typeof ovLbl.text === 'string') rawText = ovLbl.text;
         if (rawText === undefined) options.onDiagnostic?.('label_expression_unsupported', String(layer.id ?? ''));
         if (!rawText) return;
 
@@ -1050,8 +1135,19 @@ function compileMapSpecToSvgBody(
         }
         if (!coord) return;
 
-        const [x, y] = project(coord as [number, number]);
+        const [xRaw, yRaw] = project(coord as [number, number]);
         const baseSize = Number(resolvePaintValue(layout["text-size"] ?? paint["text-size"] ?? layout["labelSize"] ?? paint["labelSize"], props, 12));
+        // G16：legacy 模式手工偏移 —— canonical em × 出口字号（求解器同式）。
+        const ovOff = ovLbl?.offset as { dx?: number; dy?: number } | undefined;
+        let x = xRaw;
+        let y = yRaw;
+        if (
+          ovOff && typeof ovOff.dx === "number" && typeof ovOff.dy === "number"
+          && Number.isFinite(ovOff.dx) && Number.isFinite(ovOff.dy) && !collisionMode
+        ) {
+          x = fmtNum(Number(x) + ovOff.dx * baseSize * dpiScale);
+          y = fmtNum(Number(y) + ovOff.dy * baseSize * dpiScale);
+        }
         const fontSize = fmtNum(baseSize * dpiScale);
         const color = escapeSvgAttr(resolvePaintValue(paint["text-color"] ?? layout["text-color"] ?? paint["labelColor"] ?? layout["labelColor"], props, "#000000"));
         const opacity = escapeSvgAttr(fmtNum(Number(resolvePaintValue(paint["text-opacity"] ?? layout["text-opacity"] ?? paint["labelOpacity"] ?? layout["labelOpacity"], props, 1))));
@@ -1174,12 +1270,24 @@ function compileMapSpecToSvgBody(
           for (let ai = 0; ai < anchors.length; ai += 1) {
             const a = anchors[ai];
             const idSuffix = ai === 0 ? "" : `-r${ai}`;
+            // G16 authoring：hidden 请求也进求解（证据链）；pin/priority
+            // 只挂首锚（覆写寻址要素，不是第 N 个重复位）。
+            const ovOffset = (ovLbl?.offset ?? null) as { dx: number; dy: number } | null;
+            // R1-P2：非 pin 的手工偏移对确定性求解 = 位移锚点（8 方位候选
+            // 绕位移后锚点；与 live text-offset / legacy 内联同语义 ——
+            // 三端一致，不再静默丢弃）。
+            const autoShift = ovOffset && ovLbl?.pinned !== true && ai === 0
+              ? { x: ovOffset.dx * baseSize * dpiScale, y: ovOffset.dy * baseSize * dpiScale }
+              : { x: 0, y: 0 };
             labelRequests.push({
               id: `lbl${labelRequests.length}${idSuffix}-${layer.id}-${fmtNum((coord as [number, number])[0])}-${fmtNum((coord as [number, number])[1])}`,
               text: collText,
               kind: lkind,
-              x: a.x,
-              y: a.y,
+              x: a.x + autoShift.x,
+              y: a.y + autoShift.y,
+              // R2-P3：callout 端点 = 原始要素锚点（Python 孪生）。
+              anchorX: a.x,
+              anchorY: a.y,
               angle: a.angle,
               fontPx: baseSize * dpiScale,
               fontSizeAttr: fontSize,
@@ -1190,6 +1298,21 @@ function compileMapSpecToSvgBody(
               haloColor,
               haloOpacity,
               importance,
+              ...(hiddenByUser && ai === 0 ? { hidden: true } : {}),
+              ...(ovLbl?.pinned === true && ai === 0
+                ? (ovOffset
+                  ? { pinned: true, offsetEm: [ovOffset.dx, ovOffset.dy] as [number, number] }
+                  : { pinned: true })
+                : {}),
+              ...(typeof ovLbl?.priority === "number" && ai === 0
+                ? { userPriority: ovLbl.priority } : {}),
+              // R1-P1：身份按宿主原始层 id（与障碍抽取侧同键 ——
+              // 自身墨迹豁免可达）。
+              layerId: String(
+                (layer as { __label_of?: string }).__label_of ?? layer.id ?? '',
+              ),
+              ...(fidLbl && ai === 0 ? { featureId: fidLbl } : {}),
+              ...(ovLbl?.callout === true && ai === 0 ? { callout: true } : {}),
             });
           }
           return;
@@ -1220,6 +1343,37 @@ function compileMapSpecToSvgBody(
       .sort((a, b) => b.imp - a.imp || a.i - b.i);
     const rankOf = new Map<number, number>();
     order.forEach((o, rank) => rankOf.set(o.i, rank));
+    // G16 geometry_v1：zones → components → 线/面段（图层序）→ circles
+    // 公平交错；截断如实披露（Python 孪生同构）。
+    let solveObstacles: readonly (Box | ObstacleBox)[] | undefined =
+      glyphObstacles.length > 0 ? glyphObstacles : undefined;
+    if (geometryV1) {
+      const vpSolve = [0, 0, scaledWidth, scaledHeight];
+      const zoneObs = extractZoneObstacles(
+        (mapspec?.layout?.labels?.forbiddenZones ?? []) as never,
+        {
+          project: (pt) => {
+            const [px, py] = project(pt as [number, number]);
+            return [Number(px), Number(py)];
+          },
+          viewport: vpSolve,
+        },
+      );
+      const compObs = extractComponentObstacles(
+        (mapspec?.layout?.components ?? []) as never,
+        { viewport: vpSolve, scale: dpiScale },
+      );
+      const inter = interleaveBudgeted([
+        zoneObs, compObs, ...segmentObstacleGroups, circleObstaclesV1,
+      ]);
+      if (inter.truncated > 0) {
+        options.onDiagnostic?.(
+          "label_obstacles_budget",
+          `kept=${inter.obstacles.length} truncated=${inter.truncated} policy=geometry_v1(interleaved)`,
+        );
+      }
+      solveObstacles = inter.obstacles.length > 0 ? inter.obstacles : undefined;
+    }
     const solution = solveExportLabels(
       labelRequests.map((r: Record<string, unknown>, i: number) => ({
         id: r.id as string,
@@ -1230,18 +1384,85 @@ function compileMapSpecToSvgBody(
         angle: r.angle as number,
         fontSize: r.fontPx as number,
         priority: rankOf.get(i) ?? i,
+        hidden: r.hidden as boolean | undefined,
+        pinned: r.pinned as boolean | undefined,
+        offsetEm: r.offsetEm as [number, number] | undefined,
+        userPriority: r.userPriority as number | undefined,
+        layerId: r.layerId as string | undefined,
+        featureId: r.featureId as string | undefined,
       })),
       [0, 0, scaledWidth, scaledHeight],
       labelBudget,
-      glyphObstacles.length > 0 ? glyphObstacles : undefined,
+      solveObstacles,
     );
+    // G16（R1-P2）：失效/应用/冲突披露 —— 与 Python 孪生（mapspec_to_svg.py
+    // 同名段）逐码对齐：orphan（目标不在当前数据，绝不渲染）、stale
+    // （revision 变化但身份未断 → 应用+披露）、applied/pinned 冲突计数。
+    // 不可见/zoom 门外层未进标签迭代 → 不误报 orphan（未评估 ≠ 不存在）。
+    {
+      let orphanN = 0;
+      let staleN = 0;
+      for (const rawLayer of (mapspec?.layers ?? []) as Array<Record<string, any>>) {
+        const labelCfgA = rawLayer?.label;
+        const overridesA = labelCfgA?.authoring?.overrides;
+        if (!Array.isArray(overridesA) || overridesA.length === 0) continue;
+        const typeA = String(rawLayer.type ?? "circle");
+        if (["raster", "heatmap", "background", "hillshade"].includes(typeA)) continue;
+        const visA = resolveLayerVisibility(rawLayer as never);
+        if (visA.visibility === "none") continue;
+        if (visA.gate.minzoom !== undefined && activeExportZoom < visA.gate.minzoom) continue;
+        if (visA.gate.maxzoom !== undefined && activeExportZoom >= visA.gate.maxzoom) continue;
+        const seenA = authoringSeen.get(String(rawLayer.id ?? "")) ?? new Set<string>();
+        const srcA = (sources as Record<string, any>)[String(rawLayer.source ?? "")];
+        const revA = typeof srcA?.content_revision === "number" ? srcA.content_revision : null;
+        for (const ovA of overridesA as Array<Record<string, unknown>>) {
+          if (!ovA || typeof ovA.featureId !== "string") continue;
+          if (!seenA.has(ovA.featureId)) orphanN += 1;
+          if (typeof ovA.sourceRevision === "number"
+              && revA !== null && ovA.sourceRevision !== revA) {
+            staleN += 1;
+          }
+        }
+      }
+      if (orphanN > 0) options.onDiagnostic?.("label_authoring_orphan", `count=${orphanN}`);
+      if (staleN > 0) options.onDiagnostic?.("label_authoring_stale", `count=${staleN}`);
+    }
+
     const byId = new Map(labelRequests.map((r) => [r.id, r]));
     const parts: string[] = [];
+    const calloutParts: string[] = [];
     for (const p of solution.placements) {
       if (p.status !== "placed") continue;
       const r = byId.get(p.id)!;
       const fs = r.fontPx;
       const lines = String(r.text).split("\n");
+      // G16：受控 callout —— 锚点 → 标签盒边引线（Python 孪生同式；
+      // 不参与碰撞 —— 端点可解释：要素锚点与标签盒边）。
+      if (r.callout === true) {
+        const [wc, hc] = estimateLabelBox(r.text, fs);
+        const bx1 = r.kind === "point" ? p.x : p.x - wc / 2;
+        const by1 = r.kind === "point" ? p.y : p.y - hc / 2;
+        const axC = Number(r.anchorX ?? r.x), ayC = Number(r.anchorY ?? r.y);
+        const cxC = bx1 + wc / 2, cyC = by1 + hc / 2;
+        const dxC = cxC - axC, dyC = cyC - ayC;
+        let tEdge = 1;
+        for (const [d, lo, hi, o] of [
+          [dxC, bx1, bx1 + wc, axC],
+          [dyC, by1, by1 + hc, ayC],
+        ] as const) {
+          if (Math.abs(d) > 1e-9) {
+            for (const bnd of [lo, hi]) {
+              const tb = (bnd - o) / d;
+              if (tb > 1e-9 && tb < tEdge) tEdge = tb;
+            }
+          }
+        }
+        calloutParts.push(
+          `<line x1="${fmtNum(axC)}" y1="${fmtNum(ayC)}" `
+          + `x2="${fmtNum(axC + dxC * tEdge)}" y2="${fmtNum(ayC + dyC * tEdge)}" `
+          + `stroke="#64748b" stroke-width="${fmtNum(0.75 * dpiScale)}" stroke-opacity="0.9" />`,
+        );
+      }
       let tx: number, ty: number, anchor: string, baseline: string, transform = "";
       if (r.kind === "point") {
         // 渲染映射：求解盒左下角 → 基线 y（上升部补偿）—— Python 孪生同式。
@@ -1293,8 +1514,23 @@ function compileMapSpecToSvgBody(
     if (solution.budgetExceeded) {
       options.onDiagnostic?.("label_budget_exceeded", String(labelBudget));
     }
+    // G16（R1-P2）：pinned 冲突 + authoring 应用披露（Python 孪生）。
+    const st = solution.stats as Record<string, number | undefined>;
+    if (st.pinned_conflicts || st.pinned_obstacle_overlaps || st.pinned_offscreen) {
+      options.onDiagnostic?.(
+        "label_pinned_conflict",
+        `label=${st.pinned_conflicts ?? 0} obstacle=${st.pinned_obstacle_overlaps ?? 0} offscreen=${st.pinned_offscreen ?? 0}`,
+      );
+    }
+    if (st.hidden_by_user) {
+      options.onDiagnostic?.(
+        "label_authoring_applied",
+        `hidden=${st.hidden_by_user} pinned=${st.pinned_placed ?? 0}`,
+      );
+    }
     if (parts.length > 0) {
-      labelsGroup = `  <g class="mapspec-labels">\n    ${parts.join("\n    ")}\n  </g>\n`;
+      // G16：引线先画（文字压其上；Python 孪生同构）。
+      labelsGroup = `  <g class="mapspec-labels">\n    ${calloutParts.concat(parts).join("\n    ")}\n  </g>\n`;
     }
   }
 

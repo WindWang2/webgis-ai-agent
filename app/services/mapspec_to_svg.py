@@ -45,6 +45,27 @@ from app.lib.cartography.label_collision import (
 from app.lib.cartography.label_collision import (
     solve_export_labels as _solve_export_labels,
 )
+from app.lib.cartography.label_authoring import (
+    resolve_feature_identity as _resolve_feature_identity,
+)
+from app.lib.cartography.label_collision import (
+    ObstacleBox as _ObstacleBox,
+)
+from app.lib.cartography.label_obstacles import (
+    extract_component_obstacles as _extract_component_obstacles,
+)
+from app.lib.cartography.label_obstacles import (
+    extract_line_obstacles as _extract_line_obstacles,
+)
+from app.lib.cartography.label_obstacles import (
+    extract_polygon_boundary_obstacles as _extract_polygon_boundary_obstacles,
+)
+from app.lib.cartography.label_obstacles import (
+    extract_zone_obstacles as _extract_zone_obstacles,
+)
+from app.lib.cartography.label_obstacles import (
+    interleave_budgeted as _interleave_budgeted,
+)
 from app.lib.cartography.label_field_guard import (
     check_label_fields as _check_label_fields,
 )
@@ -1089,6 +1110,16 @@ def compile_mapspec_to_svg_detailed(
     _layout_cfg = mapspec.get("layout") if isinstance(mapspec, dict) else None
     _labels_cfg = _layout_cfg.get("labels") if isinstance(_layout_cfg, dict) else None
     collision_mode = isinstance(_labels_cfg, dict) and _labels_cfg.get("collision") == "deterministic"
+    # G16（v2.1 additive）：geometry_v1 = 带身份线/面边界/circle/禁入面/
+    # 页面组件障碍 + 公平预算交错 + 自身墨迹豁免；缺省 circles_legacy
+    # 行为逐字节不变（新规则只在显式声明下生效）。
+    _obstacle_policy = (
+        _labels_cfg.get("obstaclePolicy") if isinstance(_labels_cfg, dict) else None
+    )
+    geometry_v1 = collision_mode and _obstacle_policy == "geometry_v1"
+    _authoring_seen_fids: Dict[str, set] = {}  # layer_id → 命中覆写的 fid 集
+    _segment_obstacle_groups: List[List[_ObstacleBox]] = []  # 图层级（绘制序）
+    _circle_obstacles_v1: List[_ObstacleBox] = []
     label_requests: List[Dict[str, Any]] = []
     # W2.1（ADR-0283 D3）：点符号图元障碍盒（circle 层；AABB，中心即锚点，
     # 边长 = 2×(radius + stroke/2)）。每层采样前 _MAX_OBSTACLES_PER_LAYER
@@ -1307,6 +1338,23 @@ def compile_mapspec_to_svg_detailed(
                 _lid = layer.get("id")
                 _lid = str(_lid) if _lid is not None else None
                 _layer_type = layer.get("type", "circle")
+                # G16：本层 authoring 覆写索引（featureId → override dict）
+                # + 源 content_revision（stale 判定）。无 authoring → 空。
+                _label_cfg_map = layer.get("label")
+                _authoring_by_fid: Dict[str, Dict[str, Any]] = {}
+                if isinstance(_label_cfg_map, dict):
+                    _authoring_cfg = _label_cfg_map.get("authoring")
+                    if isinstance(_authoring_cfg, dict):
+                        for _ov in _authoring_cfg.get("overrides") or []:
+                            if isinstance(_ov, dict) and isinstance(_ov.get("featureId"), str):
+                                _authoring_by_fid[_ov["featureId"]] = _ov
+                _source_rev_now: Optional[float] = None
+                _src_layer = sources.get(layer.get("source")) if isinstance(sources, dict) else None
+                if isinstance(_src_layer, dict):
+                    _rev_raw = _src_layer.get("content_revision")
+                    if isinstance(_rev_raw, (int, float)) and not isinstance(_rev_raw, bool):
+                        _source_rev_now = float(_rev_raw)
+
 
                 # AC-06：background 无源层（spec 契约 source:"" 哨兵）—— 全画布
                 # 底色矩形，不再被下方 `not src` 短路静默丢弃（与前端孪生同字节；
@@ -1523,10 +1571,20 @@ def compile_mapspec_to_svg_detailed(
                                     if base_stroke_w > 0 else 0.0
                                 )
                                 _ogx, _ogy = float(x), float(y)
-                                glyph_obstacles.append((
+                                _obs_box = (
                                     _ogx - _obs_ext, _ogy - _obs_ext,
                                     _ogx + _obs_ext, _ogy + _obs_ext,
-                                ))
+                                )
+                                if geometry_v1:
+                                    # G16：circle 补身份（circle 恒不豁免
+                                    # 自身 —— 点符号避让是设计；身份供
+                                    # 跨层区分与诊断）。
+                                    _fid_c, _ = _resolve_feature_identity(feat)
+                                    _circle_obstacles_v1.append(_ObstacleBox(
+                                        box=_obs_box, kind="circle",
+                                        layer_id=_lid, feature_id=_fid_c))
+                                else:
+                                    glyph_obstacles.append(_obs_box)
                                 _layer_glyph_obs_n += 1
 
                         elif layer_type == "line" and geom.get("type") in ("LineString", "MultiLineString"):
@@ -1631,8 +1689,33 @@ def compile_mapspec_to_svg_detailed(
                             layout = layer.get("layout", {})
                             if not isinstance(layout, dict):
                                 layout = {}
+                            # G16：要素级 authoring 覆写（身份解析 + hidden/
+                            # text 决策）。pinned/offset 在锚点解析后接入。
+                            _fid_lbl, _idk_lbl = _resolve_feature_identity(feat)
+                            _ov_lbl = _authoring_by_fid.get(_fid_lbl) if _fid_lbl else None
+                            # 键 = 宿主原始层 id（__label_of；无则渲染层
+                            # 自身）—— 与失效披露的推导键一致；先注册空集，
+                            # 纯 orphan 覆写也能被披露（见 ADR-0289）。
+                            _seen_key = (
+                                layer.get("__label_of")
+                                if isinstance(layer.get("__label_of"), str)
+                                else (_lid or "")
+                            )
+                            if _authoring_by_fid:
+                                _authoring_seen_fids.setdefault(_seen_key, set())
+                            if _ov_lbl is not None and _fid_lbl is not None:
+                                _authoring_seen_fids.setdefault(_seen_key, set()).add(_fid_lbl)
+                            _hidden_by_user = bool(_ov_lbl and _ov_lbl.get("hidden") is True)
+                            if _hidden_by_user and not collision_mode:
+                                # legacy 模式：显式隐藏 → 不画（零元素）。
+                                continue
                             text_field_pattern = layout.get("text-field", paint.get("text-field", "{name}"))
                             raw_text = _svg_label_text(text_field_pattern, props)
+                            if _ov_lbl and isinstance(_ov_lbl.get("text"), str):
+                                # 显式文字覆写（≤120 code point，写入口径已
+                                # 校验）：字段文字缺失也照样显示 —— 用户文字
+                                # 就是文字，且「修改标签文字」≠「修改数据」。
+                                raw_text = _ov_lbl["text"]
                             if raw_text is None:
                                 _emit_diag("label_expression_unsupported", str(layer.get("id", "")))
                             if not raw_text:
@@ -1697,6 +1780,16 @@ def compile_mapspec_to_svg_detailed(
 
                             x, y = project(coord)
                             base_size = _safe_float(_resolve_paint_value(layout.get("text-size") or paint.get("text-size") or layout.get("labelSize") or paint.get("labelSize"), props, 12.0), 12.0)
+                            # G16：legacy 模式的手工偏移 —— canonical em ×
+                            # 出口字号（= base × dpi/72），与 collision 求解
+                            # 器同式；DPI 变化不改变相对位置语义。
+                            _ov_off = _ov_lbl.get("offset") if _ov_lbl else None
+                            if isinstance(_ov_off, dict) and not collision_mode:
+                                try:
+                                    x = _fmt_num(float(x) + float(_ov_off["dx"]) * base_size * dpi_scale)
+                                    y = _fmt_num(float(y) + float(_ov_off["dy"]) * base_size * dpi_scale)
+                                except (KeyError, TypeError, ValueError):
+                                    pass
                             font_size = _fmt_num(base_size * dpi_scale)
                             color = _escape_svg_attr(_resolve_paint_value(paint.get("text-color") or layout.get("text-color") or paint.get("labelColor") or layout.get("labelColor"), props, "#000000"))
                             opacity = _escape_svg_attr(_fmt_num(_safe_float(_resolve_paint_value(paint.get("text-opacity") or layout.get("text-opacity") or paint.get("labelOpacity") or layout.get("labelOpacity"), props, 1.0), 1.0)))
@@ -1823,12 +1916,33 @@ def compile_mapspec_to_svg_detailed(
                                     _anchors = [(float(x), float(y), _lang0)]
                                 for _ai, (_ax, _ay, _alang) in enumerate(_anchors):
                                     _id_suffix = "" if _ai == 0 else f"-r{_ai}"
+                                    # R1-P2：非 pin 的手工偏移对确定性求解 =
+                                    # 位移锚点（8 方位候选绕位移后锚点；与
+                                    # live text-offset / legacy 内联同语义 ——
+                                    # 三端一致，不静默丢弃）。
+                                    _ov_off_all = (
+                                        _ov_lbl.get("offset")
+                                        if (_ov_lbl and isinstance(_ov_lbl.get("offset"), dict)
+                                            and _ov_lbl.get("pinned") is not True and _ai == 0)
+                                        else None
+                                    )
+                                    if isinstance(_ov_off_all, dict):
+                                        try:
+                                            _ax += float(_ov_off_all["dx"]) * base_size * dpi_scale
+                                            _ay += float(_ov_off_all["dy"]) * base_size * dpi_scale
+                                        except (KeyError, TypeError, ValueError):
+                                            pass
                                     label_requests.append({
                                         "id": f"lbl{len(label_requests)}{_id_suffix}-{_lid}-{_fmt_num(coord[0])}-{_fmt_num(coord[1])}",
                                         "text": _coll_text,
                                         "kind": _lkind,
                                         "x": _ax,
                                         "y": _ay,
+                                        # R2-P3：callout 引线端点 = 原始要素
+                                        # 锚点（非 pin 位移不改锚 —— 位移只
+                                        # 是标签放置的搜索基准）。
+                                        "anchor_x": float(x),
+                                        "anchor_y": float(y),
                                         "angle": _alang,
                                         "font_px": base_size * dpi_scale,
                                         "font_size_attr": font_size,
@@ -1838,8 +1952,36 @@ def compile_mapspec_to_svg_detailed(
                                         "halo_w": halo_w,
                                         "halo_color": halo_color,
                                         "halo_opacity": halo_opacity,
-                                        "layer_id": _lid,
+                                        # G16（R1-P1）：身份按宿主原始层
+                                        # id（__label_of）—— 与障碍抽取侧
+                                        # 同键，自身墨迹豁免才可达。
+                                        "layer_id": (
+                                            layer.get("__label_of")
+                                            if isinstance(layer.get("__label_of"), str)
+                                            else _lid
+                                        ),
                                         "importance": _importance,
+                                        # G16 authoring（hidden 请求也进求解 ——
+                                        # suppressed(hidden_by_user) 是证据，
+                                        # 不占预算）。repeat 锚（-rN）只让首
+                                        # 锚携带 pin/hidden/priority（覆写
+                                        # 寻址的是要素，不是第 N 个重复位）。
+                                        **({"hidden": True} if (_hidden_by_user and _ai == 0) else {}),
+                                        **({
+                                            "pinned": True,
+                                            "offset_em": (
+                                                float(_ov_lbl["offset"]["dx"]),
+                                                float(_ov_lbl["offset"]["dy"]),
+                                            ),
+                                        } if (_ov_lbl and _ov_lbl.get("pinned") and _ai == 0 and isinstance(_ov_lbl.get("offset"), dict)) else
+                                        ({"pinned": True} if (_ov_lbl and _ov_lbl.get("pinned") and _ai == 0) else {})),
+                                        **({"user_priority": int(_ov_lbl["priority"])}
+                                           if (_ov_lbl and isinstance(_ov_lbl.get("priority"), int) and _ai == 0) else {}),
+                                        **({"feature_id": _fid_lbl}
+                                           if (_fid_lbl and _ai == 0) else {}),
+                                        **({"callout": True}
+                                           if (_ov_lbl and _ov_lbl.get("callout") is True
+                                               and _ai == 0) else {}),
                                     })
                                 feature_count += 1
                                 continue
@@ -1854,8 +1996,111 @@ def compile_mapspec_to_svg_detailed(
                         if len(elements_svg) > n_svg_before:
                             feature_count += 1
 
+                    # G16 geometry_v1：线/面边界逐段墨迹障碍（每层一次，
+                    # 实际 paint 宽；长线降采样段 AABB + 视口预筛在抽取
+                    # 器内 —— 绝不用整线巨型 bbox 禁满画布）。面**填充**
+                    # 不是障碍（区内标签可放；禁入面走 forbiddenZones）。
+                    if geometry_v1 and layer_type == "line":
+                        _seg_obs = _extract_line_obstacles(
+                            features,
+                            layer_id=_lid or "",
+                            project=lambda pt: (
+                                float(project(pt)[0]), float(project(pt)[1])),
+                            stroke_width=lambda _props: (
+                                _safe_float(_resolve_paint_value(
+                                    paint.get("line-width") or paint.get("width"),
+                                    _props, 2.0), 2.0) * dpi_scale),
+                            viewport=[0.0, 0.0, float(scaled_width), float(scaled_height)],
+                        )
+                        if _seg_obs:
+                            _segment_obstacle_groups.append(_seg_obs)
+                    elif geometry_v1 and layer_type in ("fill", "fill-extrusion"):
+                        # outline 恒 1.0 base 宽（fill 分支实际画出的口径）。
+                        _poly_obs = _extract_polygon_boundary_obstacles(
+                            features,
+                            layer_id=_lid or "",
+                            project=lambda pt: (
+                                float(project(pt)[0]), float(project(pt)[1])),
+                            stroke_width=lambda _props: 1.0 * dpi_scale,
+                            viewport=[0.0, 0.0, float(scaled_width), float(scaled_height)],
+                        )
+                        if _poly_obs:
+                            _segment_obstacle_groups.append(_poly_obs)
+
                 except Exception:
                     continue
+
+        # G16：覆写失效披露（有界 ≤8 条/类）。orphan = 覆写目标在当前数据
+        # 不存在（不应用、绝不漂移到别的要素）；stale = revision 变化但身份
+        # 未断（照常应用 + 待复核标记）。
+        if _authoring_seen_fids and not timed_out:
+            # timed_out：层迭代中途截断 —— orphan 判定不可靠，整体不披露。
+            _orphan_n = 0
+            _stale_n = 0
+            for _layer_a in layers:
+                if not isinstance(_layer_a, dict):
+                    continue
+                _label_a = _layer_a.get("label")
+                if not (isinstance(_label_a, dict) and isinstance(
+                        (_label_a.get("authoring") or {}).get("overrides")
+                        if isinstance(_label_a.get("authoring"), dict) else None, list)):
+                    continue
+                # seen 键 = 宿主原始层 id（symbol 分支按 __label_of 注册；
+                # 原生 symbol/text 层即自身 id —— 两种情况都等于原始层 id）。
+                # raster/heatmap/background/hillshade 无标签（无从核验 ——
+                # 保守不披露）。
+                _layer_type_a = str(_layer_a.get("type", "circle"))
+                if _layer_type_a in ("raster", "heatmap", "background", "hillshade"):
+                    continue
+                _layer_id_a = str(_layer_a.get("id"))
+                # R1-P2：不可见/zoom 门外/超时的层从未进入标签迭代 —— 其
+                # 覆写不是 orphan（未评估 ≠ 不存在），不误报。
+                _layout_a = (
+                    _layer_a.get("layout")
+                    if isinstance(_layer_a.get("layout"), dict) else {}
+                )
+                if (_layout_a.get("visibility") == "none"
+                        or _layer_a.get("visible") is False):
+                    continue
+                if export_adjudicate_layer(_layer_a, _export_zoom) in (
+                        "hidden", "gated"):
+                    continue
+                _seen = _authoring_seen_fids.get(_layer_id_a, set())
+                _authoring_a = (
+                    (_layer_a or {}).get("label", {}) or {}
+                ) if isinstance((_layer_a or {}).get("label"), dict) else {}
+                _authoring_list = (
+                    _authoring_a.get("authoring", {}) or {}
+                ).get("overrides") or [] if isinstance(
+                    _authoring_a.get("authoring"), dict) else []
+                _src_a = sources.get((_layer_a or {}).get("source")) if isinstance(sources, dict) else None
+                _rev_a = (
+                    _src_a.get("content_revision")
+                    if isinstance(_src_a, dict)
+                    and isinstance(_src_a.get("content_revision"), (int, float))
+                    and not isinstance(_src_a.get("content_revision"), bool)
+                    else None
+                )
+                for _ov_a in _authoring_list:
+                    if not isinstance(_ov_a, dict):
+                        continue
+                    _fid_a = _ov_a.get("featureId")
+                    if not isinstance(_fid_a, str) or _fid_a in _seen:
+                        continue
+                    _orphan_n += 1
+                for _ov_a in _authoring_list:
+                    if not isinstance(_ov_a, dict):
+                        continue
+                    _rev_ov = _ov_a.get("sourceRevision")
+                    if (
+                        _rev_ov is not None and _rev_a is not None
+                        and float(_rev_ov) != float(_rev_a)
+                    ):
+                        _stale_n += 1
+            if _orphan_n:
+                _emit_diag("label_authoring_orphan", detail=f"count={_orphan_n}")
+            if _stale_n:
+                _emit_diag("label_authoring_stale", detail=f"count={_stale_n}")
 
         viewbox_w = _fmt_num(scaled_width)
         viewbox_h = _fmt_num(scaled_height)
@@ -1876,25 +2121,98 @@ def compile_mapspec_to_svg_detailed(
                 ),
             )
             _rank_of = {orig: rank for rank, orig in enumerate(_order)}
+            # G16 geometry_v1：zones → components → 线/面段（图层绘制序）
+            # → circles 公平交错到 MAX_OBSTACLES_PER_SOLVE；截断数入
+            # label_obstacles_budget 诊断（后层关键墨迹不被静默丢掉）。
+            if geometry_v1:
+                _vp_solve = [0.0, 0.0, float(scaled_width), float(scaled_height)]
+                _zone_obs = _extract_zone_obstacles(
+                    ((_labels_cfg or {}).get("forbiddenZones") or []),
+                    project=lambda pt: (
+                        float(project(pt)[0]), float(project(pt)[1])),
+                    viewport=_vp_solve,
+                ) if isinstance(_labels_cfg, dict) else []
+                _comp_obs = _extract_component_obstacles(
+                    (mapspec.get("layout") or {}).get("components") or []
+                    if isinstance(mapspec.get("layout"), dict) else [],
+                    viewport=_vp_solve,
+                    scale=dpi_scale,  # 页面 px → SVG units
+                )
+                _all_obs, _obs_trunc_n = _interleave_budgeted(
+                    [_zone_obs, _comp_obs, *_segment_obstacle_groups,
+                     _circle_obstacles_v1])
+                if _obs_trunc_n > 0:
+                    _emit_diag(
+                        "label_obstacles_budget",
+                        detail=(
+                            f"kept={len(_all_obs)} truncated={_obs_trunc_n} "
+                            f"policy=geometry_v1(interleaved)"
+                        ),
+                    )
+                solve_obstacles: List[Any] = _all_obs or None
+            else:
+                solve_obstacles = glyph_obstacles or None
             solution = _solve_export_labels(
                 [
                     _CollisionLabel(
                         id=r["id"], text=r["text"], kind=r["kind"],
                         x=r["x"], y=r["y"], angle=r["angle"],
                         font_size=r["font_px"], priority=_rank_of[i],
+                        hidden=r.get("hidden"),
+                        pinned=r.get("pinned"),
+                        offset_em=r.get("offset_em"),
+                        user_priority=r.get("user_priority"),
+                        layer_id=r.get("layer_id"),
+                        feature_id=r.get("feature_id"),
                     )
                     for i, r in enumerate(label_requests)
                 ],
                 [0.0, 0.0, float(scaled_width), float(scaled_height)],
                 max_labels=_labels_budget,
-                obstacles=glyph_obstacles or None,
+                obstacles=solve_obstacles,
             )
             by_id = {r["id"]: r for r in label_requests}
             parts: List[str] = []
+            callout_parts: List[str] = []
             for p in solution.placements:
                 if p.status != "placed":
                     continue
                 r = by_id[p.id]
+                # G16：受控 callout —— 锚点 → 标签盒边的引线（置于文字
+                # 之下；引线不参与碰撞/障碍 —— 不是允许文字重叠的借口，
+                # 端点=要素锚点与标签盒边（可解释））。
+                if r.get("callout"):
+                    _w_c, _h_c = _estimate_collision_box(r["text"], r["font_px"])
+                    if r["kind"] == "point":
+                        _bx1, _by1 = p.x, p.y
+                    else:
+                        _bx1, _by1 = p.x - _w_c / 2.0, p.y - _h_c / 2.0
+                    _ax_c, _ay_c = (
+                        (float(r["anchor_x"]), float(r["anchor_y"]))
+                        if r.get("anchor_x") is not None and r.get("anchor_y") is not None
+                        else (float(r["x"]), float(r["y"]))
+                    )
+                    _cx_c = _bx1 + _w_c / 2.0
+                    _cy_c = _by1 + _h_c / 2.0
+                    _dx_c, _dy_c = _cx_c - _ax_c, _cy_c - _ay_c
+                    _t_edge = 1.0
+                    for _d_comp, _lo, _hi in (
+                        (_dx_c, _bx1, _bx1 + _w_c),
+                        (_dy_c, _by1, _by1 + _h_c),
+                    ):
+                        if abs(_d_comp) > 1e-9:
+                            for _bnd in (_lo, _hi):
+                                _t_b = (_bnd - (_ax_c if _d_comp is _dx_c else _ay_c)) / _d_comp
+                                if 1e-9 < _t_b < _t_edge:
+                                    _t_edge = _t_b
+                    _ex_c = _ax_c + _dx_c * _t_edge
+                    _ey_c = _ay_c + _dy_c * _t_edge
+                    callout_parts.append(
+                        f'<line x1="{_fmt_num(_ax_c)}" y1="{_fmt_num(_ay_c)}" '
+                        f'x2="{_fmt_num(_ex_c)}" y2="{_fmt_num(_ey_c)}" '
+                        f'stroke="#64748b" stroke-width="{_fmt_num(0.75 * dpi_scale)}" '
+                        f'stroke-opacity="0.9" />'
+                    )
                 _fs = r["font_px"]
                 _lines = r["text"].split("\n")
                 if r["kind"] == "point":
@@ -1950,9 +2268,9 @@ def compile_mapspec_to_svg_detailed(
             if _sup_n:
                 # W2.1：障碍在场时 detail 追加 obstacles 计数（复用既有码，
                 # 不新增降级码；legacy 无障碍路径 detail 保持 byte-stable）。
-                _obs_note = (
-                    f" obstacles={len(glyph_obstacles)}" if glyph_obstacles else ""
-                )
+                _obs_count = len(glyph_obstacles) if glyph_obstacles else (
+                    len(_all_obs) if geometry_v1 and _all_obs else 0)
+                _obs_note = f" obstacles={_obs_count}" if _obs_count else ""
                 _emit_diag(
                     "label_collision_relaxed",
                     detail=(
@@ -1962,10 +2280,30 @@ def compile_mapspec_to_svg_detailed(
                 )
             if solution.budget_exceeded:
                 _emit_diag("label_budget_exceeded", detail=str(_labels_budget))
-            if parts:
+            # G16：pinned 冲突如实披露（user-wins —— 不自动解锁/移动）。
+            _pin_stats = solution.stats
+            if _pin_stats.get("pinned_conflicts") or _pin_stats.get(
+                    "pinned_obstacle_overlaps") or _pin_stats.get("pinned_offscreen"):
+                _emit_diag(
+                    "label_pinned_conflict",
+                    detail=(
+                        f"label={_pin_stats.get('pinned_conflicts', 0)} "
+                        f"obstacle={_pin_stats.get('pinned_obstacle_overlaps', 0)} "
+                        f"offscreen={_pin_stats.get('pinned_offscreen', 0)}"
+                    ),
+                )
+            _hidden_n = _pin_stats.get("hidden_by_user", 0)
+            if _hidden_n:
+                _emit_diag(
+                    "label_authoring_applied",
+                    detail=f"hidden={_hidden_n} pinned={_pin_stats.get('pinned_placed', 0)}",
+                )
+            if parts or callout_parts:
+                # 引线先画（文字压在其上 —— 引线是可解释端点的装饰，
+                # 不是额外文字位）。
                 labels_group = (
                     '  <g class="mapspec-labels">\n    '
-                    + "\n    ".join(parts)
+                    + "\n    ".join(callout_parts + parts)
                     + "\n  </g>\n"
                 )
 

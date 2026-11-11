@@ -283,6 +283,24 @@ class PatchLayerStyleIntent:
 
 
 @dataclass
+class PatchLayerLabelAuthoringIntent:
+    """要素级标注 authoring 突变（G16，v2.1）。
+
+    ops = [{featureId, op: set|reset, set?: {...}, scope?: ...}]（≤200，
+    词表/边界由 label_authoring 单一权威校验）；labels_config 为
+    MapLabelConfig 的 additive 补丁（obstaclePolicy/forbiddenZones ——
+    G16 所有权键）。原子语义：任一 op 被拒 → 整笔失败（typed findings
+    附 per-op 回执），绝不部分写入。origin/sourceRevision 由 handler
+    盖章（patch 不可覆写 —— 溯源是写入路径的事）。UI 手势与 Pi 工具
+    共用本意图（user-wins 由 apply_gis_mutation 的 origin/CAS 承载）。
+    """
+
+    layer_id: str
+    ops: List[Dict[str, Any]] = field(default_factory=list)
+    labels_config: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class PatchComponentIntent:
     """Component-local mutation (UI drag/resize/collapse or agent chrome edit).
 
@@ -478,6 +496,7 @@ MutationIntent = Union[
     SetTemporalViewIntent,
     SetFrameProductIntent,
     PatchLayerStyleIntent,
+    PatchLayerLabelAuthoringIntent,
     SetWorkbenchStateIntent,
     SetScenarioModeIntent,
     SetSceneIntent,

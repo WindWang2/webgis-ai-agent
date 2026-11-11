@@ -36,6 +36,7 @@ const TOOL_LABEL_KEYS: Record<MapToolId, string> = {
   draw_polygon: 'runPanel.tools.drawPolygon',
   edit_vertices: 'runPanel.tools.editVertices',
   delete_feature: 'runPanel.tools.deleteFeature',
+  edit_labels: 'map.toolbar.editLabels',
   split_feature: 'runPanel.tools.splitFeature',
 };
 

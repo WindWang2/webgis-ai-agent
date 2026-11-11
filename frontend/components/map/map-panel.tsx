@@ -111,6 +111,7 @@ export function sceneAssetsIdentity(committed: unknown): string {
 import { MapActionHandler } from "./map-action-handler"
 import { SceneController } from "./scene-controller"
 import { SketchEditor } from "./sketch-editor"
+import { LabelEditor } from "./label-editor"
 import { FeatureLayerEditor } from "./feature-layer-editor"
 import { SpatialSketchTool } from "@/components/copilot/spatial-sketch-tool"
 import { WidgetHost } from "@/components/copilot/generative-widgets/widget-host"
@@ -1180,7 +1181,9 @@ export function MapPanel({
     // 自行接管），这里不得再触发 POI/要素选择。
     const sketchTool = useHudStore.getState().activeMapTool
     if (sketchTool === 'draw_point' || sketchTool === 'draw_line' || sketchTool === 'draw_polygon'
-      || sketchTool === 'delete_feature' || sketchTool === 'edit_vertices') {
+      || sketchTool === 'delete_feature' || sketchTool === 'edit_vertices'
+      || sketchTool === 'edit_labels') {
+      // G16：标注编辑模式点选语义归 LabelEditor（不触发 POI/要素选择）。
       return
     }
 
@@ -1806,6 +1809,7 @@ export function MapPanel({
         >
         <MapActionHandler />
         <SketchEditor mapRef={mapRef} />
+        <LabelEditor mapRef={mapRef} />
         {/* G14：真实图层编辑手势面（editTarget 在场时激活；与草图工具互斥）。 */}
         <FeatureLayerEditor mapRef={mapRef} />
         {/* ADR-0194：画布 copilot 手势覆层 + 生成式微 UI 挂载点（默认无工具/无卡片时不渲染）。 */}

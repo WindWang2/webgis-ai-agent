@@ -32,6 +32,8 @@ _TOOL_MODULES = [
     ("app.tools.nature_resources", "register_nature_resource_tools"),
     # 批量图册发布（atlas durable job 提交面）
     ("app.tools.atlas_export_tools", "register_atlas_export_tools"),
+    # G16（v2.1）：要素级标注 authoring —— inspect / author（统一写路径）
+    ("app.tools.label_authoring_tools", "register_label_authoring_tools"),
     ("app.tools.upload_tools", "register_upload_tools"),
     ("app.tools.web_crawler", "register_crawler_tools"),
     ("app.tools.chinese_maps", "register_chinese_map_tools"),

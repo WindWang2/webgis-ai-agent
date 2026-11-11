@@ -57,6 +57,10 @@
     "snappingOffTitle": "顶点吸附：关",
     "sketchCount": "草图要素 {count} 个",
     "sketchEmpty": "尚未创建草图",
+    "editLabels": "编辑标注",
+    "editLabelsTitle": "标注编辑模式：点击标签拖动/隐藏/固定/改文字",
+    "editLabelsDisabled": "暂无带标注的图层",
+    "labelToolAria": "标注工具：{label}",
     "splitFeatureTitle": "分割要素（选编辑目标后可用）"
   },
   "poi": {
@@ -522,5 +526,23 @@
     "createEmptyTitle": "新建空图层",
     "createFailed": "创建失败",
     "newLayerName": "新图层"
+  },
+  "labelEditor": {
+    "title": "标注编辑",
+    "hint": "点击地图上的标签进行编辑；拖动移动，方向键微调，Enter 确认，Esc 取消。",
+    "hide": "隐藏标签",
+    "show": "取消隐藏",
+    "pin": "固定位置",
+    "unpin": "解除固定",
+    "text": "修改标签文字",
+    "textHint": "仅改显示文字，不修改数据字段",
+    "resetPosition": "恢复自动位置",
+    "resetText": "恢复字段文字",
+    "resetVisibility": "解除隐藏",
+    "resetAll": "清除全部覆写",
+    "callout": "显示引线",
+    "noSelection": "先选择一个标签（点击标签或其要素）",
+    "conflict": "该固定标签与其他标签/障碍冲突",
+    "keyboardHint": "方向键微调 · Shift+方向键加大步距 · Enter 提交 · Esc 取消"
   }
 }

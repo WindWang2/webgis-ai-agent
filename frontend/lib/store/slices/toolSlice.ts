@@ -27,6 +27,7 @@ export type MapToolId =
   | 'draw_polygon'
   | 'edit_vertices'
   | 'delete_feature'
+  | 'edit_labels';
   // G14：真实图层编辑（需先选定 editTarget）
   | 'split_feature';
 
@@ -39,6 +40,7 @@ export const MAP_TOOLS: readonly MapToolId[] = [
   'draw_polygon',
   'edit_vertices',
   'delete_feature',
+  'edit_labels',
   'split_feature',
 ];
 

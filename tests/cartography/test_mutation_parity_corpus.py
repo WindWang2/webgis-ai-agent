@@ -336,6 +336,70 @@ CASES = [
             }
         ],
     },
+    # ── PatchLayerLabelAuthoring（G16，v2.1）─────────────────────────────────
+    {
+        "name": "patch_label_authoring_set_reset",
+        "seed": [{
+            "class": "UpsertLayerIntent",
+            "fields": {
+                "layer": _layer("ly-lbl", source="src-lbl", label={"field": "name"}),
+                "source_data": {"type": "FeatureCollection", "features": [
+                    {"type": "Feature", "id": "f1",
+                     "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+                     "properties": {"name": "第一"}},
+                    {"type": "Feature", "id": "f2",
+                     "geometry": {"type": "Point", "coordinates": [116.5, 39.9]},
+                     "properties": {"name": "第二"}},
+                ]},
+            },
+        }],
+        "actions": [
+            {
+                "class": "PatchLayerLabelAuthoringIntent",
+                "fields": {
+                    "layer_id": "ly-lbl",
+                    "ops": [
+                        {"featureId": "f1", "op": "set",
+                         "set": {"pinned": True, "offset": {"dx": 1.5, "dy": -0.5}}},
+                        {"featureId": "f2", "op": "set", "set": {"hidden": True}},
+                    ],
+                },
+            },
+            {
+                "class": "PatchLayerLabelAuthoringIntent",
+                "fields": {
+                    "layer_id": "ly-lbl",
+                    "ops": [{"featureId": "f2", "op": "reset", "scope": "visibility"}],
+                },
+            },
+        ],
+    },
+    {
+        "name": "patch_label_authoring_atomic_reject",
+        "seed": [{
+            "class": "UpsertLayerIntent",
+            "fields": {
+                "layer": _layer("ly-lbl2", source="src-lbl2", label={"field": "name"}),
+                "source_data": {"type": "FeatureCollection", "features": [
+                    {"type": "Feature", "id": "f1",
+                     "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+                     "properties": {"name": "第一"}},
+                ]},
+            },
+        }],
+        "actions": [
+            {
+                "class": "PatchLayerLabelAuthoringIntent",
+                "fields": {
+                    "layer_id": "ly-lbl2",
+                    "ops": [
+                        {"featureId": "f1", "op": "set", "set": {"hidden": True}},
+                        {"featureId": "ghost", "op": "set", "set": {"hidden": True}},
+                    ],
+                },
+            },
+        ],
+    },
     # ── UpsertSource ─────────────────────────────────────────────────────────
     {
         "name": "upsert_source_basic",

@@ -225,6 +225,27 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "层声明的标注字段不在源字段集，标注按回退链渲染或缺失"
             "（{detail}）",
         ),
+        # —— G16（v2.1）要素级标注 authoring 披露 ──────────────────────
+        RenderDiagnosticSpec(
+            "label_authoring_applied", "info",
+            "要素级标注覆写已应用（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_authoring_orphan", "warning",
+            "覆写目标要素在当前数据不存在，该覆写未应用（不漂移到其他要素；{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_authoring_stale", "warning",
+            "覆写绑定的数据 revision 与当前不一致，覆写照常应用并标记待复核（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_pinned_conflict", "warning",
+            "用户固定标签与已放置标签/障碍/视口冲突：保留用户决定并报告（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_obstacles_budget", "info",
+            "图元障碍预算截断（公平交错分配；{detail}）",
+        ),
         # —— 高 DPI 渲染策略（ADR-0157 P1）——
         RenderDiagnosticSpec(
             "highdpi_rerender_timeout_degraded", "warning",
@@ -381,6 +402,12 @@ def catalog_section() -> List[Dict[str, str]]:
 #: （ADR-0118 D1 死码禁止的自动化收口，取代仅注释级约束）。
 EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "label_expression_unsupported": ("app.services.mapspec_to_svg",),
+    # G16（v2.1）要素级标注 authoring 披露（后端导出链发射）。
+    "label_authoring_applied": ("app.services.mapspec_to_svg",),
+    "label_authoring_orphan": ("app.services.mapspec_to_svg",),
+    "label_authoring_stale": ("app.services.mapspec_to_svg",),
+    "label_pinned_conflict": ("app.services.mapspec_to_svg",),
+    "label_obstacles_budget": ("app.services.mapspec_to_svg",),
     "layer_coordinates_invalid": ("app.services.mapspec_to_svg",),
     "chart_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
     "table_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
