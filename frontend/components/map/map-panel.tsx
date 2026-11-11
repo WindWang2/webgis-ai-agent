@@ -188,7 +188,8 @@ import {
   subscribeSelection,
   getSelectionGeneration,
 } from "@/lib/selection/selection-store"
-import { createSelectionHandle, releaseSelectionHandle } from "@/lib/api/selection-handles"
+import { releaseSelectionHandle } from "@/lib/api/selection-handles"
+import { augmentBrushSelectionWithHandle } from "@/lib/selection/brush-handle"
 import { getSessionIdentity } from "@/lib/store/session-identity"
 import { publishViewportContext } from "@/lib/selection/viewport-context"
 import {
@@ -1525,8 +1526,8 @@ export function MapPanel({
         )
       }
       /* G24/P3：截断框选 → 服务端权威句柄（A11/A12 —— 渲染命中不是全集；
-       * handle 承载 scope+revision+权威计数）。迟到守卫：epoch 变化或已有
-       * 更新选择（revision 前进）时丢弃回填，不覆盖新选择（A17/A20）。 */
+       * handle 承载 scope+revision+权威计数；补发 IR selection_handle 给
+       * Agent）。迟到守卫/补发布/IR 补发在 brush-handle 模块（可测）。 */
       const familyLayer = brushRef
         ? (useHudStore.getState().layers as Array<{
             id: string; _refId?: string; _descriptor?: { content_revision?: number } | unknown;
@@ -1537,35 +1538,25 @@ export function MapPanel({
       if (projection.truncated && brushRef && bbox && familyRev != null) {
         const publishedRev = getSelection()?.revision ?? 0
         const epochAtPublish = getSelectionEpoch()
-        void createSelectionHandle({
+        void augmentBrushSelectionWithHandle({
           sessionId: getSessionIdentity().sessionId ?? '',
           refId: brushRef,
-          scope: { kind: 'bbox', bbox },
+          layerId: family,
+          bbox,
           revision: familyRev,
-          ownerToken: getSessionIdentity().ownerToken,
-        }).then((meta) => {
-          if (epochAtPublish !== getSelectionEpoch()) return
-          const nowSel = getSelection()
-          if (!nowSel || nowSel.revision !== publishedRev) return
-          // 服务端权威计数替换渲染面计数；ids 保持首批样本（有界）
-          publishSelection('brush', {
-            source: 'map',
-            layer_id: family,
-            artifact_ref: brushRef.startsWith('ref:') ? brushRef : undefined,
-            selected_ids: projection.selected_ids,
-            id_field: projection.id_field ?? undefined,
-            predicate: { kind: 'bbox', bbox },
-            matched_count: meta.count ?? projection.matched_count,
-            handle: meta.handle,
-            handle_count: meta.count ?? undefined,
-            handle_count_exact: meta.count_exact,
-            bbox,
-          })
-          if (meta.count_exact && typeof meta.count === 'number') {
-            setBrushFeedback(t('map.brush.matchedAuthoritative', { count: meta.count }))
+          selectedIds: projection.selected_ids,
+          idField: projection.id_field,
+          matchedCountRendered: projection.matched_count,
+          publishedRevision: publishedRev,
+          epochAtPublish,
+        }).then((outcome) => {
+          if (!outcome) return
+          if (outcome.countExact && typeof outcome.count === 'number') {
+            setBrushFeedback(t('map.brush.matchedAuthoritative', { count: outcome.count }))
           }
         }).catch(() => {
-          /* 句柄创建失败：保留有界谓词选择（诚实降级，不伪造全集） */
+          // 建柄失败：保留有界谓词选择 + 诚实反馈（不伪造全集）
+          setBrushFeedback(t('map.brush.authoritativeFailed'))
         })
       }
     }

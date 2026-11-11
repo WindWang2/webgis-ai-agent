@@ -1,7 +1,8 @@
 """G24 验收旅程：选中（权威 handle）→ 核实 → 编辑预览/授权 → 新 revision。
 
 旅程语义（A25/A26/A19/A22 的服务端侧链路）：
-- Turn 1 用户框选大图层（IR feature_selected 携带 handle + matched_count）；
+- Turn 1 用户框选大图层（服务端句柄；前端 IR 补发 selection_handle 的
+  客户端半边在 frontend/lib/selection/brush-handle.test.ts 钉住）；
 - Turn 2 Agent 用 webgis_selection_inspect 核实全集（count/completeness/
   revision；不偷传 fixture 内部 id —— 工具只接受服务端 handle）；
 - Turn 3 对选中对象发起真实 feature_edit（preview→approve 全链），编辑

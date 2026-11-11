@@ -52,8 +52,11 @@ def _chain_stable_id(feature: Any) -> Optional[str]:
     与 feature_pages.resolve_feature_stable_id / layer.py::_find_feature_by_id
     同链同语义（常量取自 feature_pages 单一真相，避免三处漂移）。
     G24/P0：``properties._wfid`` 先于顶层 id（G14 物化后 WFID 是唯一跨
-    revision 稳定寻址键；前端拾取链同序）。None-ness 不变 → 瓦片字节与
-    位置 id 语义不变；feature_id_index 因此能按 wfid 命中已编辑数据集。
+    revision 稳定寻址键；前端拾取链同序）。feature_id_index 因此能按
+    wfid 命中已编辑数据集。瓦片字节影响面（有意为之，正确性优先）：
+    仅物化后**原本无其它链内 id** 的要素（编辑创建件）不再编码 field-1
+    位置 id —— 其瓦片寻址改走 properties._wfid（跨 revision 稳定，优于
+    位置 id）；其余数据集字节不变（ETag 内容寻址自然失效）。
     """
     if not isinstance(feature, dict):
         return None

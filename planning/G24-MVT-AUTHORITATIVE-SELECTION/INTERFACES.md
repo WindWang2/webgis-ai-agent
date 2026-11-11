@@ -35,6 +35,7 @@ ids 解析 first-wins（与回查一致），`missing_ids` 明示；计数 > 250
 ### Pi 工具（`app/tools/selection_tools.py`，tier 2，cacheable_read）
 - `webgis_pick_detail(ref_id, feature_id)` → found/count=1/completeness=exact/revision/properties≤24/geometry_summary（类型/顶点数/bbox，**无坐标**）
 - `webgis_selection_inspect(ref_id, handle, page_size≤200, cursor?)` → count/count_exact/completeness/revision/scope/ids_page/has_more（410→typed stale；跨会话→selection_not_found）
+- **handle 的 Agent 获取通道**：截断框选建柄成功后 map-panel 经 `brush-handle.ts` 补发 IR `feature_selected`（payload 新增 `selection_handle` ≤128 字符，contracts.py 白名单 additive）；工具只认服务端句柄
 
 ## 3. 新增前端契约
 

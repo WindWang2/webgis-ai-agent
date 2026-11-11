@@ -301,7 +301,7 @@ export function publishSelection(
       ? Math.max(0, Math.floor(payload.matched_count as number))
       : undefined,
     // G24/P3：句柄有界透传（不进事件环属性集 —— ring 只存 context 引用）
-    handle: payload.handle ? String(payload.handle).slice(0, 64) : undefined,
+    handle: payload.handle ? String(payload.handle).slice(0, 128) : undefined, // 与 IR 契约 MAX_STR_VALUE_CHARS 对齐（服务端句柄 32 字符，留格式余量）
     handle_count: Number.isFinite(payload.handle_count)
       ? Math.max(0, Math.floor(payload.handle_count as number))
       : undefined,

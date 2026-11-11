@@ -242,7 +242,7 @@ function PagedTableBody({
     : (table.featureCount != null ? tp('paged.totalSuffix', { total: table.featureCount }) : '');
 
   return (
-    <div className="flex h-full min-h-40 flex-col gap-1" data-testid="table-panel-paged" data-paged-status={table.status}>
+    <div className="flex h-full min-h-40 flex-col gap-1" data-testid="table-panel-paged" data-paged-status={view.status}>
       {/* 工具条：搜索（服务端 or-contains 下推）+ 视口窗口 + 计数披露 */}
       <div className="flex items-center gap-1.5">
         <input
@@ -279,7 +279,7 @@ function PagedTableBody({
           </button>
         ) : null}
         <span className="shrink-0 text-caption tabular-nums text-map-chrome-ink-muted" data-testid="table-panel-count">
-          {tp('paged.countLine', { shown: table.rows.length, matched: matchedText, total: totalText })}
+          {tp('paged.countLine', { shown: view.rows.length, matched: matchedText, total: totalText })}
         </span>
       </div>
       {view.error != null ? (
@@ -405,7 +405,7 @@ function PagedTableBody({
               {view.loadingMore ? tp('paged.loadingMore') : tp('paged.loadMore')}
             </button>
           )}
-          {table.truncated && (
+          {!selectionViewActive && table.truncated && (
             <div className="shrink-0 text-caption text-map-chrome-ink-muted">{tp('paged.truncatedPage')}</div>
           )}
           {table.idMode === 'positional' && (

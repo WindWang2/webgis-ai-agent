@@ -9,6 +9,7 @@
   不做任何 mutation。
 """
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from app.services.selection_handles import (
@@ -125,14 +126,29 @@ def register_selection_tools(registry: ToolRegistry) -> None:
     ) -> Dict[str, Any]:
         if not session_id:
             return {"error": "session_required", "message": "缺少 session_id"}
-        from app.services.selection_handles import find_feature_by_addressable_id
 
         features, revision = await _authorized_features(session_id, ref_id)
         if features is None:
             return {"error": "ref_not_found", "message": f"ref 不存在或无权访问: {ref_id}"}
-        # 寻址语义与 /feature/{fid} 一致（_wfid → 顶层 id → 链内键；first-wins）
-        found = find_feature_by_addressable_id(features, str(feature_id))
-        target = found[1] if found else None
+        # 寻址语义与 /feature/{fid} 一致（_wfid → 顶层 id → 链内键；first-wins）。
+        # 大图层纪律：瓦片服务常驻的 spatial index 在场时走 feature_id_index
+        # O(1)（与路由同款）；否则线性回退下放线程池，不在事件循环上全扫。
+        target = None
+        from app.services.mvt import spatial_index_cache
+
+        index_entry = spatial_index_cache.get((session_id, ref_id))
+        if index_entry is not None:
+            def _indexed_lookup() -> "object | None":
+                idx = index_entry.feature_id_index().get(str(feature_id))
+                return index_entry.features[idx] if idx is not None else None
+
+            target = await asyncio.to_thread(_indexed_lookup)
+        if target is None:
+            from app.services.selection_handles import find_feature_by_addressable_id
+
+            found = await asyncio.to_thread(
+                find_feature_by_addressable_id, features, str(feature_id))
+            target = found[1] if found else None
         if target is None:
             return {
                 "error": "feature_not_found",
@@ -173,7 +189,7 @@ def register_selection_tools(registry: ToolRegistry) -> None:
         ),
         param_descriptions={
             "ref_id": "选择集所属图层 ref（ref:…）",
-            "handle": "服务端选择句柄（选择事件携带）",
+            "handle": "服务端选择句柄（截断框选后 feature_selected 事件补发的 selection_handle；内存会话操作台/回放可直接引用）",
             "page_size": "id 枚举页大小（≤200，缺省 50；只报 id 不报几何）",
             "cursor": "续页游标（首页缺省）",
         },
@@ -193,16 +209,17 @@ def register_selection_tools(registry: ToolRegistry) -> None:
         try:
             entry = handle_store.get(session_id, ref_id, handle)
         except SelectionHandleError as exc:
-            return {
-                "error": f"selection_{exc.code}",
-                "message": exc.message,
-                **({"current_revision": exc.detail["current_revision"]} if exc.code == "stale" else {}),
-            }
+            # 与路由同语义：过期句柄即刻释放（stale 只在路由层带 revision 附注）
+            if exc.code == "expired":
+                handle_store.release(session_id, ref_id, handle)
+            return {"error": f"selection_{exc.code}", "message": exc.message}
         # revision 一致性（数据刷新 → 旧 handle 描述的全集不再可信）
         descriptor = await session_data_manager.get_ref_descriptor(session_id, ref_id)
         current_revision = descriptor.get("content_revision") if descriptor else None
         if (entry.revision is not None and current_revision is not None
                 and int(entry.revision) != int(current_revision)):
+            # 与路由同语义：数据刷新 → 释放失效句柄（不复活）
+            handle_store.release(session_id, ref_id, handle)
             return {
                 "error": "selection_stale",
                 "message": "数据已更新（revision 前进），选择集句柄失效；请让用户重新框选",

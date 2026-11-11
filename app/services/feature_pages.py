@@ -524,8 +524,8 @@ def resolve_feature_stable_id(feature: Any) -> Optional[str]:
     G24/P0：``properties._wfid`` 先于顶层 id —— G14 物化后 WFID 是唯一
     跨 revision 稳定寻址键（前端 featureIdFromProperties/brush 同序），
     否则 MVT 索引路径（feature_id_index）对已编辑数据集按 wfid 回查 404。
-    None-ness 不变（有 _wfid 的要素原本也必有链内 id 或本就无 id）→ 瓦片
-    字节/位置 id 语义不变。
+    注意：编辑创建件（仅 _wfid、无其它链内 id）经本链判为「有稳定 id」，
+    不再投影位置 id —— 寻址改走 wfid（跨 revision 稳定），有意为之。
     """
     if not isinstance(feature, dict):
         return None

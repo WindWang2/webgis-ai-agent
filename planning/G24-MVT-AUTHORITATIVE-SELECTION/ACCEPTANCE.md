@@ -22,16 +22,16 @@
 | A14 | 跨日期变更线范围正确 | `_normalise_bbox` w>e 拆两箱 | handles test AM split + routes AM 例 | ✅ |
 | A15 | 过期 revision 拒绝写 | G14 CAS（既有）+ create v=409 | routes `test_create_with_stale_v_409` + feature_edit 既有 stale 用例 | ✅ |
 | A16 | 跨租户 id/handle 拒绝 | 三重绑定 + require_owned_session | routes cross-session 404 + tools cross-session 例 | ✅ |
-| A17 | 换 session 迟到响应不污染 | brush 句柄 epoch+revision 守卫；单选 seq（既有） | map-panel 既有 selection-truth + 新守卫代码（review 复核） | ✅（守卫逻辑随 vitest map-panel 套件回归） |
+| A17 | 换 session 迟到响应不污染 | brush 句柄 epoch+revision 守卫（brush-handle.ts）；单选 seq（既有） | brush-handle.test 5 例（epoch/revision/失败三向守卫）+ map-panel 既有 selection-truth | ✅ |
 | A18 | 编辑成功真实 commit + undo | G14（既有）+ 权威拾取接线 | feature_edit 既有 123 例 + editor test delete 提交 | ✅ |
-| A19 | split/merge 后 selection 消费 lineage | `applyLineageToSelection` + 回执 wfids | journey split 例（服务端血缘）+ bridge 行为（layer-edit-bridge.test 既有 V17 扩展，P5） | ✅ |
+| A19 | split/merge 后 selection 消费 lineage | `applyLineageToSelection` + 回执 wfids | journey split 例（服务端血缘）+ layer-edit-bridge.lineage.test 7 例（替换/纯create/跨ref/清空） | ✅ |
 | A20 | 取消手势零服务端 mutation | pick AbortSignal；Escape 零写（既有 V05） | mvt-pick.test A17 取消零请求 + editor 未命中零提交 | ✅ |
 | A21 | 标注与 fieldcompute 同一 scope | fieldcompute 经 materialize ref（ScopeSpec 不变）；标注链同 FEATURE_ID_KEYS | journey materialize（fieldcompute 通道）+ G16 链统一（identity guards） | ✅（通道级；未改标注 UI） |
 | A22 | 数据刷新旧 handle 不静默复用 | revision 前进 → 410 + 释放 | routes revision 失效 + tools stale + hook stale 三层 | ✅ |
 | A23 | 缓存按 owner/source revision 隔离 | ref_lifecycle epoch（既有）+ handle revision 绑定 | 既有 mvt epoch race 套件 + handles 410 | ✅ |
 | A24 | 百万点档传输/内存有界 | 100k 档证据 + 1M 档 gated | test_g24_scale_evidence（100k：132B/0 扫描；1M G24_MILLION=1） | ✅（100k 实测；1M 档位披露） |
 | A25 | 真实浏览器 MVT 点击到编辑走通 | — | **blocked/未做**：Playwright E2E 未在本方向 worktree 执行（重资源锁被并行方向长期占用 + 浏览器环境依赖 dev server 全栈）；以组件级 vitest（真实 maplibre mock 层之上）+ 服务端旅程测试覆盖同等断言，浏览器级留待集成 | ⚠️ 部分（见 TEST_EVIDENCE「边界」） |
-| A26 | 真实 Pi 查询选择集不偷传 id | selection_inspect 只认 handle | journey Turn 2（工具只接受 handle/ref） | ✅ |
+| A26 | 真实 Pi 查询选择集不偷传 id | selection_inspect 只认 handle；Agent 获取通道 = feature_selected 补发 selection_handle（bus） | journey Turn 2 + brush-handle.test（IR 补发断言） | ✅ |
 | A27 | readonly 远程瓦片明确限制 | 无 ref → 不进编辑通道（editTarget 需 `_refId`）；pick 链对无 ref 层不生效 | 既有 editTarget 语义 + mvt-pick sessionId/refId 前置（review 复核） | ✅（语义边界；无专门 UI 文案） |
 | A28 | 旧 schema/project/无 selection 不崩 | 可选字段 + 空态 | 全量回归（selection-store/v4、map-panel、feature_edit 既有套件） | ✅ |
 

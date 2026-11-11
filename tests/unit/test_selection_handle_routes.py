@@ -8,7 +8,9 @@
 - A14 跨日期变更线范围正确（AM 拆分）；
 - A16 跨会话 handle 拒绝；
 - A22 数据刷新（revision 前进）旧 handle 410；
-- A20/materialize 超预算 typed 拒绝；权限（owner_token 不符）403。
+- materialize 超预算 typed 拒绝（路由级）。
+- 403 PermissionDenied（owner_token 不符）路径由 session_data 共享授权层
+  语义承载（与 /features 同通道，不在本文件重复钉）。
 """
 from __future__ import annotations
 
@@ -277,3 +279,36 @@ async def test_unknown_ref_404(client, store):
             json={"kind": "ids", "ids": ["1"]},
         )
         assert r.status_code == 404
+
+
+async def test_materialize_over_budget_route_typed_reject(client, store):
+    """A20：物化超预算 → 422 selection_over_budget（绝不静默截断）。"""
+    import app.services.selection_handles as sh
+
+    big = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "id": i,
+             "geometry": {"type": "Point", "coordinates": [104.0 + i * 1e-05, 30.0]},
+             "properties": {"i": i}}
+            for i in range(sh.MAX_MATERIALIZE_FEATURES + 5)
+        ],
+    }
+    sid = "sess-g24-route-ob"
+    ref = await _seed_ref(store, sid, big)
+    with _patched_store(store):
+        created = (
+            await client.post(
+                f"/api/v1/layers/data/{ref}/selection?session_id={sid}",
+                json={"kind": "where", "where": {"field": "i", "op": "gte", "value": 0}},
+            )
+        ).json()
+        assert created["count"] == sh.MAX_MATERIALIZE_FEATURES + 5  # 计数可证（< 250k 精确上限）
+        r = await client.post(
+            f"/api/v1/layers/data/{ref}/selection/{created['handle']}/materialize"
+            f"?session_id={sid}"
+        )
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        assert detail["error"] == "selection_over_budget"
+        assert detail["actual"] == sh.MAX_MATERIALIZE_FEATURES + 5
