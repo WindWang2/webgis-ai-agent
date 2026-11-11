@@ -54,7 +54,15 @@ passed 含 IR 127；前端 150 passed；tsc 0；manifest JSON 语义 diff 验证
 | R2-4 | P3 | manifest 再生成重排全文缩进（232± 行噪音） | 以 BASE 文本为模板做手术式单键插入 —— diff 2 行纯增量（drift 闸绿） |
 | R2-5 | P3 | bus 映射/后端摄入无直接测试 | emitters.test +1 例（映射/缺省/128 裁剪）；IR test_contracts +1 例（透传/裁剪/白名单隔离/标量语义） |
 
-## Round 2 结论
+## Round 2 结论（= Round 3 verdict）
 
-_PENDING_REVIEWER_ROUND3_
+**Round 3 — verdict: APPROVE（2026-11-12，独立 reviewer 代码直读 + 复跑）。**
+R2-1..R2-5 全部落地并验证：后端 166 passed（含 IR 摄入新例）、前端 186
+passed、tsc 0、manifest 对 BASE diff 为 2 行纯增量单键插入（reviewer 亲自
+核验）。残留 3 条非阻断注记：① selection_handle int 标量透传语义已文档化
+（工具按字符串比对不命中，无害）；② map-panel `.catch` 兜底仅在模块内部
+异常时触发，反馈措辞略宽泛但安全诚实；③ 本结论回填。
+三轮评审闭环：Round 1（P1×2/P2×2/P3×7）→ fix → Round 2（R2-1..R2-5）→
+fix → Round 3 APPROVE。安全姿态/身份链正确性/竞态守卫/计数诚实/A25 边界
+披露均经独立复核。**G24 分支可进入 PR（M10）。**
 

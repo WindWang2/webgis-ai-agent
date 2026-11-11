@@ -15,7 +15,7 @@
 | M6 | P6 Pi 工具 + 旅程 | verified | `test_selection_tools.py` 5 + acceptance journey 2 passed（真实 dispatch） |
 | M7 | P7 大图层证据 | verified | 100k 档实测（132B/0 扫描）；1M gated |
 | M8 | 全量回归 | verified | 后端 tests/unit 全量：**20486 passed / 47 failed / 27 errors**；74 项失败/错误清单在干净 BASE（b8f2a6ecc）同条件复跑**逐一一致**（同一批预存失败，G24 引入=0）。前端全量：5198 passed / 4 failed（4 例预存：BASE 未触碰文件）。IR 全族 175 passed（manifest additive 再生成后） |
-| M9 | 独立 review → fix | in_progress | Round 1 REQUEST_CHANGES（P1×2/P2×2/P3×7）→ fix commit 全部落地 → Round 2 re-review 进行中（REVIEW.md 记录映射） |
+| M9 | 独立 review → fix | verified | 三轮闭环：R1 REQUEST_CHANGES（P1×2/P2×2/P3×7）→ fix → R2 narrow RC（R2-1..R2-5）→ fix → **R3 APPROVE**（reviewer 复跑 166 后端/186 前端/tsc 0/manifest 2 行纯增量）；REVIEW.md 全记录 |
 | M10 | PR | pending | 推分支 → gh pr create（不合并） |
 
 ## 预存失败登记（BASE 同条件复现，非本方向引入）
