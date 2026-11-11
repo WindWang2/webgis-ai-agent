@@ -154,6 +154,14 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['mock'],
     owner: 'g15-multiframe-cartography',
   },
+  {
+    id: 'j17',
+    file: 'journeys/j17-goal-satisfaction.journey.ts',
+    title: '任务完成语义卡：task_complete.goal_satisfaction 逐需求渲染',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'g28-evidence-task-acceptance',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);
