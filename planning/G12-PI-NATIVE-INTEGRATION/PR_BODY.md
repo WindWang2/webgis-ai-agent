@@ -94,6 +94,16 @@ redislite 于 127.0.0.1:16379 承载 writer-lock 域——CI nightly 由 compose
 - 纪律：本地串行；`--no-cov`；不等线上 CI；未跑 3 万级全量 pytest。
 - 关键 Oracle 两遍一致：journeys 车道 4 连跑全过（此前 J6b 抖动已在发现优先改法后消除）；
   contract/doctor 多轮复跑稳定。
+- **存量抖动披露（诚实项）**：J6b（两段式计划资格→裸名执行）在 master@v1.5.0 干净
+  基线（另一 worktree，同 fixture）10 跑 4 失败、同签名（`nearest_ok:False`，
+  step_error "Tool not found"）—— turn-2 selector 未稳定激活 nearest_facility 的
+  **存量行为**，非本 PR 引入（G12 分支同签名复现率相当）。本 PR 恢复 J6b 原始流程
+  （不插 tool_search 掩盖），另增**确定性** J8 发现旅程（driver 3/3：中文
+  tool_search → 声明面 merge → buffer_analysis 真实执行、零 step_error）承担发现
+  闭环覆盖。J6b 的 `declared_nearest` 为证据字段（非硬门）。
+- 评审后回归（第一轮 BLOCK 修复Commit）：unit 全 Pi 面 240 passed；vendor
+  contract + schema golden 13 passed；config lane 2 passed；pi_doctor 六域无 FAIL；
+  ruff 全绿；J8 driver 3/3。
 
 基线对比（同 fixture 一次采足，v1.5.0@master代码 vs v1.5.1@本PR）：
 注册超集成员**完全一致**（388 工具）；dump 字节 1,022,950→1,060,111（+3.6%，封套加性）；
@@ -105,8 +115,22 @@ native7 schema 12,986→13,815；spawn→ready 0.42-0.46s 持平；停机最坏�
 
 - Reviewer：独立 general-purpose subagent（未参与实现；给定 base/head SHA + 完整 diff +
   用户场景，未预设通过）
-- 结论与逐条清偿：见 `planning/G12-PI-NATIVE-INTEGRATION/REVIEW.md`（随评审完成后更新）
-- 未清偿项：见 REVIEW.md
+- 第一轮裁决：**BLOCK — P1×4 + P2×4 + P3×1**（详见
+  `planning/G12-PI-NATIVE-INTEGRATION/REVIEW.md`）
+- 计数（第一轮）：P0 ×0 / P1 ×4 / P2 ×4 / P3 ×1 —— **全部清偿**：
+  - `P1-1 grant 自授权 → 语义对齐 vendor（_getCallableTypes 源码核实）：deferred
+    直调/沙箱嵌套天生合法，grant 只接受 deferred 非前门；恢复 tier-3/destructive/
+    hidden/未注册名拒绝 + 计数器零执行测试`
+  - `P1-2 换代不恢复 → chat.py turn 准入处补 recycle_if_config_stale（下一 turn
+    边界完成换代）+ 断言`
+  - `P1-3 继承 key 压过解析 key → 解析 key 覆盖 env + 继承 env 场景测试`
+  - `P1-4 rebuild 读错形状 → canonical layer.layout.visibility + open_capabilities +
+    PlanStep.evidence；测试改用真实 SessionPlan/MapSpec`
+  - `P2-1 clear_queue TOCTOU → 发出前重校验在飞身份`；`P2-2 J6b 掩盖 → 恢复两段式 +
+    新增确定性 J8 发现旅程（存量抖动经 master@v1.5.0 干净基线复现，如实披露）`；
+    `P2-3 fresh-spec fail-open → 非空 echo fail-closed`；`P2-4 层截断披露`
+  - `P3-1 compaction 钩子名/回退文档修正`
+- 第二轮（复审）：见 REVIEW.md「复审记录」
 
 ## 风险与回滚（Compatibility & Rollback）
 

@@ -59,4 +59,13 @@ dump +3.6% 加性字节、spawn→ready 持平 0.42-0.46s、停机最坏 +8s=语
 redislite 16379（真实协议）。| journeys 4/4；chat 组件 91；全 Pi 单测 236 |
 通过 | commit c2ff31d (Wave 8)。
 
-第9轮 | 终检 + 独立评审。| 见 REVIEW.md | | PR。
+第9轮 | 独立评审（BLOCK: P1×4+P2×4+P3×1）→ 全部修复并提交：
+P1-1 grant 语义对齐 vendor（deferred 天生合法；只接受 deferred 非前门；恢复
+tier3/destructive/hidden/未注册名拒绝+零执行）；P1-2 config 换代在 chat.py turn
+准入恢复；P1-3 解析 key 覆盖继承 env；P1-4 rebuild 读 canonical
+layout.visibility + open_capabilities + PlanStep.evidence（测试改真实形状）；
+P2-1 clear_queue 前重校验；P2-2 J6b 恢复两段式 + 新增确定性 J8 发现旅程
+（driver 3/3）+ 存量抖动经 master@v1.5.0 干净基线 10 跑 4 失败同签名复现（如实
+披露，非本 PR 引入）；P2-3 fresh-spec 非空 echo fail-closed；P2-4 层截断披露；
+P3-1 钩子名/回退文档。| unit 240 passed；contract+golden 13 passed；config 2
+passed；doctor 无 FAIL；ruff 全绿；J8 driver 3/3 | 通过 | 复审 → PR。
