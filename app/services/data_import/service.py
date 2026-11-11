@@ -176,11 +176,12 @@ class DataImportService:
         # 晚到结果不得显示成功）。旧格式批次（active_job_id=None 且无 job 行）
         # 走同一归一化 —— 与 G17 行为兼容。
         if state.status == BatchStatus.COMMITTING:
-            # 写盘前 rev 复核（评审 B1）：读快照 → DB 探测之间若 runner 已把
-            # 终态/收据落盘（rev 递增），本进程的 stale 快照**不得覆写** ——
-            # 丢弃本次归一化/补记，返回最新事实，交由下一次读收敛。这是跨进程
-            # 读路径唯一的写点，rev 比对把「check-then-act」收敛为
-            # 「check-act-check」（写竞争窗口缩到 µs 级且被 rev 兜住）。
+            # 写盘前 rev 复核（评审 B1/B1-R，两段）：
+            # ① 探测前重读 —— 挡住「读快照 → 探测」期间 runner 已落盘的情况；
+            # ② 探测后、任何写盘前再复核一次 —— 探测见到终态 ⇒ runner 的
+            #    最终写盘（严格先于其 DB 终态提交）必已发生 ⇒ 重读必见更高
+            #    rev ⇒ 放弃覆写。A11 崩溃对账/清扫恢复场景无并发写者、rev
+            #    稳定 ⇒ 复核通过、归一化照常 —— 该复核恰好区分这两类场景。
             latest = await asyncio.to_thread(staging.load_state, batch_id)
             if latest is None:
                 return state  # staging 恰被删除：交由上层 NOT_FOUND 语义
@@ -189,16 +190,27 @@ class DataImportService:
             active = self._active_commit_job(latest)
             if active is not None:
                 # 另一副本（或本副本 runner 与内存登记之间的窗口）在推进：
-                # 绝不复位。顺带把 job_id 补记进状态（老文件/竞态兜底）。
+                # 绝不复位。顺带把 job_id 补记进状态（老文件/竞态兜底）——
+                # 补记写盘前同样复核 rev（探测期间的收据写不得被覆盖）。
                 if latest.active_job_id != active["job_id"]:
-                    latest.active_job_id = active["job_id"]
-                    await asyncio.to_thread(staging.save_state, latest)
+                    pre_write = await asyncio.to_thread(staging.load_state, batch_id)
+                    if pre_write is None or pre_write.rev != latest.rev:
+                        return pre_write if pre_write is not None else latest
+                    pre_write.active_job_id = active["job_id"]
+                    await asyncio.to_thread(staging.save_state, pre_write)
+                    return pre_write
                 return latest
             if batch_id in self._committing_ids:
                 # 无 durable job（DB 不可达窗口）但本进程确有在飞 runner：
                 # 不复位 —— 宁可保守等待 stale 清扫，也不误杀本进程活任务。
                 return latest
-            state = latest
+            # ② 探测后复核（B1-R 主洞）：见上
+            post_probe = await asyncio.to_thread(staging.load_state, batch_id)
+            if post_probe is None:
+                return latest
+            if post_probe.rev != latest.rev:
+                return post_probe
+            state = post_probe
             for m in state.members:
                 if m.status == MemberStatus.COMMITTING:
                     m.status = (

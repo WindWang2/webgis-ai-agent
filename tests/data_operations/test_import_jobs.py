@@ -380,32 +380,41 @@ async def test_b1_slow_reader_never_clobbers_terminal_state(ops_env):
             await db.commit()
         assert job is not None and coerce_status(job.status).value == "completed"
 
-        # B 的读：第一次返回冻结快照（慢读），之后走真实文件（写前重读）
-        calls = {"n": 0}
+        # B 的读：前 freeze_depth 次返回冻结快照（慢读/慢重读/慢探测
+        # 跨越 runner 收尾 —— 评审 round1 变体 A 与 round2 变体 B），
+        # 之后走真实文件。两种深度都必须不覆写终态。
         real_load = staging_mod.load_state
 
-        def frozen_then_real(batch_id, data_dir=None):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                return frozen
-            return real_load(batch_id, data_dir=data_dir)
+        def _make_loader(freeze_depth: int):
+            calls = {"n": 0}
 
-        staging_mod.load_state = frozen_then_real
-        try:
-            svc_b = DataImportService()
-            view = await svc_b.get_batch(state.batch_id, SESS)
-        finally:
-            staging_mod.load_state = real_load
+            def loader(batch_id, data_dir=None):
+                calls["n"] += 1
+                if calls["n"] <= freeze_depth:
+                    return frozen
+                return real_load(batch_id, data_dir=data_dir)
 
-        # 不覆写：返回最新事实（completed + 收据在场）
-        assert view.status.value == "completed", view.status.value
-        assert view.receipts and view.receipts[key].status == "completed"
-        # 文件未被 stale 快照覆写（rev 不回退、收据仍在）
-        after = staging_mod.load_state(state.batch_id)
-        assert after.rev >= final_file.rev
-        assert after.receipts and after.status.value == "completed"
+            return loader
+
+        for depth in (1, 2):
+            # depth=1：慢首读（探测前复核兜住）；depth=2：慢首读+慢重读
+            #（探测期间收尾 —— 探测后复核 B1-R 兜住）。两者都不覆写终态。
+            staging_mod.load_state = _make_loader(depth)
+            try:
+                svc_b = DataImportService()
+                view = await svc_b.get_batch(state.batch_id, SESS)
+            finally:
+                staging_mod.load_state = real_load
+            assert view.status.value == "completed", (
+                f"depth={depth}: {view.status.value}")
+            assert view.receipts and view.receipts[key].status == "completed"
+            after = staging_mod.load_state(state.batch_id)
+            assert after.rev >= final_file.rev, f"depth={depth}: rev 回退"
+            assert after.receipts and after.status.value == "completed"
+
         # 无重复发布：重提交幂等短路（收据在 + 可读）
-        out = await svc_b.start_commit(state.batch_id, SESS, background=False)
+        out = await DataImportService().start_commit(
+            state.batch_id, SESS, background=False)
         assert out["receipts"][key]["duplicate"] is True
     finally:
         svc_mod.commit_member = real_commit_member

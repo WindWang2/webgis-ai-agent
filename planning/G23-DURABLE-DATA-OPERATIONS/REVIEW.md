@@ -139,3 +139,60 @@
 | NOTE4 | 删除死代码 manual_finish 参数、find_active_job_by_key | grep 零残留 |
 
 修复后复跑：tests/data_operations **32/32**（含 B1/M1 新增 7 用例）+ data_import/jobs/delivery/tools/api-compat **395 通过**；field_compute 76/77（1=BASE 预存）；双进程 repro false_reset=false；双 uvicorn 集成 **5/5**（evidence-integration-report.json 已更新）。
+
+---
+
+# 复审结论（Round 2 · 2026-11-12 · 独立复验，不采信修复自述）
+
+复审范围：`d72225bce..7248bc236`（修复 commit `b1293a4a1` + 台账 `7248bc236`）。
+
+## 复验复跑（全部自行执行）
+
+| 命令 | 结果 |
+|---|---|
+| `pytest tests/data_operations -q --no-cov -p no:cacheprovider` | **32 passed** in 20.33s |
+| `pytest tests/data_import tests/jobs tests/delivery tests/data/test_field_compute_{api_v1,review_v1,v1}.py tests/unit/test_field_compute_tools_v1.py -q` | **427 passed, 1 failed**（唯一失败仍为 BASE 预存的 OpenAPI schema 名测试，round 1 已在 b8f2a6ecc 独立归因） |
+| `run_repro.sh`（双真实进程） | **false_reset_reproduced=false** |
+| 双 uvicorn 集成（独立复跑） | **S1-S5 5/5 pass:true**（另核对仓库内 evidence-integration-report.json 为修复后新跑：plan_id/采样数已更新） |
+| 我方 TOCTOU 脚本变体 A（round-1 原型：仅冻结第一次 load） | **CLOBBER_REPRODUCED=False —— round-1 复现的覆写已被修复阻断**（rev 复核命中，返回 completed+收据） |
+| 我方 TOCTOU 脚本变体 B（冻结第一+第二次 load = 慢重读） | **CLOBBER_REPRODUCED=True —— 残留窗口仍可打穿**（见 B1-R） |
+
+## 逐项复验状态
+
+| 项 | 状态 | 复验说明 |
+|---|---|---|
+| B1 (P0) | **部分修复** | 写前重读+rev 复核真实生效：变体 A 被阻断、回归测试真实覆盖（冻结首读→修复路径 re-read 命中 rev 差→返回最新事实，其余全真实路径，非自测 stub；该测试在修复前代码上必然失败）。**但复核位置在 DB 探测之前**，探测→写盘之间无守卫 → 残留 B1-R（阻断，见下） |
+| M1 (P1) | 已修复（余一小缺口） | test_tools.py 6 用例经真实 ToolRegistry dispatch；wait=0 句柄分支×2 用真实慢化注入断言 job_id+guidance+不伪造完成；not_found 404 语义在。缺口：两个状态工具的**活跃/running 视图**仍未测（test_import_commit_status_running_then_completed 的 docstring 承诺 running 但小 fixture 立即完成、实际只断言 completed）——非阻断，建议补 |
+| m1 | 已修复 | A06 伪造身份写改经 store 层 API 实测 rowcount=0（验证 handle 所依赖的 fencing 谓词，手法正当）；A10 按新内容 hash 实查收据为 None；死行已删 |
+| m2 | 已修复 | 两工具 `min(max(int(wait_max_s),0),60)` 运行时 clamp（代码核实） |
+| m3 | 已修复 | 归一化写 to_thread；`_job_active_by_id` 改 `is_terminal()`（消除硬编码漂移） |
+| m4 | 已修复 | `async_durable_job` 认领失败显式 discard（try/except BaseException 包裹 `_claim`） |
+| m5 | 已修复 | running/pending/queued → 「执行仍在进行…请稍后重提或查询任务中心」（措辞与事实一致） |
+| NOTE1/2/7 | 已处理 | INTERFACES.md「已知边界」登记 owner-scope 入口分歧与 delete 残窗；TEST_EVIDENCE 口径更正（jobs=247） |
+| NOTE4 | 已处理 | `manual_finish`/`find_active_job_by_key` 删除，grep 零残留 |
+| NOTE3/5/6/8 | 登记为后续项 | 可接受（sync-in-async 与 G18 范式一致、可读性探针整载、抖动贴边、OpenAPI 宽松均为既有面） |
+
+## 阻断项 B1-R（本轮唯一阻断；B1 的残留半边）
+
+- **位置**：`app/services/data_import/service.py:184-189` —— rev 复核（187）在 `_active_commit_job` DB 探测（189）**之前**；探测返回「无活跃 job」到归一化写盘（231）之间无任何守卫。补记写（193-195）同理。
+- **原理**：runner 的收尾顺序是「最终状态写盘（rev+1）→ DB 终态提交」。探测要返回 terminal，必然发生在 runner 终态提交之后；而此时 runner 的最终写盘**也已发生**。但读者的 rev 复核早已做完（在探测前）——探测期间才落盘的 rev+1 不会被看见 → 归一化仍以 stale 快照覆写。现实触发面：读者的单条探测 SQL（含连接池获取）延迟超过 runner 收尾时长（负载下的池等待/查询排队即可造成），跨进程才可能（同进程探测无 await，事件循环内原子）。
+- **复现步骤**（确定性，真实代码路径）：
+  1. `.venv/bin/python -I /tmp/g23_review_toctou_v2.py 2`（冻结前两次 load_state，等价于「重读慢/探测延迟跨越 runner 收尾」）→ 输出 `CLOBBER_REPRODUCED = True`，终态 batch.json=configured、receipts=[]、rev 回退，job 行=completed（脚本在 /tmp，可提供入库）。
+  2. 对照 `... v2.py 1` → `False`（round-1 原型已被现修复阻断）。
+- **建议修复（3 行级，且可证完备）**：在 `_active_commit_job` 返回 None（且非本进程在飞）之后、**任何写盘之前**再复核一次 rev：重读 `fresh = load_state(batch_id)`，若 `fresh.rev != latest.rev` → 返回 fresh 放弃本次归一化（补记写 193-195 前同法）。完备性论证：探测见到 terminal ⇒ runner 的最终写盘（严格先于其终态提交）必已发生 ⇒ 探测后重读必见更高 rev ⇒ 放弃覆写；而 A11 崩溃对账/stale 清扫恢复场景无并发写者、rev 稳定 ⇒ 复核通过、归一化照常 —— 该复核恰好区分这两类场景，是语义完备的闭包（`staging.save_state(expected_rev=...)` CAS 亦可）。配套把变体 B 固化为回归测试（现有 test_b1 只冻结首读，测不到本残留）。另请更正 184 处注释「写竞争窗口缩到 µs 级且被 rev 兜住」——对探测期间的写不成立。
+- **阻断理由**：与本轮 BLOCKER 同类同损害（收据静默丢失、事实源分歧、重提交重复发布），可确定性复现，修复极小；修复后即可 approve。
+
+## 最终 verdict：**request-changes**
+
+- 唯一阻断：**B1-R**（上节，含复现步骤与完备修复建议）。
+- 其余全部通过复验：B1 主洞已闭合、M1/m1-m5/NOTE 如实修复、四组复跑+双进程+双 uvicorn 集成全绿（唯一失败为 BASE 预存且已归因）。B1-R 修掉并补变体 B 回归测试后，无需第三轮全量复审，我方按本节复现步骤回归验证即可转 approve。
+
+---
+
+# B1-R 修复记录（实现方，round-3）
+
+按复审建议实施：`_active_commit_job` 返回无活跃 job 后、归一化写盘前**再复核一次 rev**（`post_probe` 重读，rev 变 → 返回最新事实放弃覆写）；活跃分支的补记写盘前同法（`pre_write` 重读）。184 处不实的「µs 级」注释已重写为两段复核的完备性论证（探测见终态 ⇒ runner 最终写盘必已发生 ⇒ 探测后重读必见更高 rev）。
+
+- 变体 B 固化为回归：`test_b1_slow_reader_never_clobbers_terminal_state` 参数化 freeze_depth∈{1,2}（depth=2 = 冻结首读+探测前重读，探测后复核兜住），断言不覆写/rev 不回退/收据在/重提 duplicate。
+- 残留边界（如实登记）：post_probe 读 → save 的 µs 窗口内仅剩**非 job 写者**（save_plan/preview 在 COMMITTING 态被 409 拒绝；delete 会令 save 失败而非覆写）。文件级全闭需 save_state CAS（后续项，非本轮阻断）。
+- 复跑：tests/data_operations 33/33（B1 双变体并入）；data_import+jobs+delivery+fc-tools+api-compat 395 通过；run_repro false_reset=false；双 uvicorn 集成 5/5（evidence 已更新）。

@@ -28,11 +28,11 @@
       "a_view_after_restart": "configured"
     },
     "S5": {
-      "plan_id": "fc-1bdb7819d3d54137",
+      "plan_id": "fc-8d3e2072bc724160",
       "job": "5",
       "a_job_view_status": "running",
       "a_cancel": {
-        "plan_id": "fc-1bdb7819d3d54137",
+        "plan_id": "fc-8d3e2072bc724160",
         "cancelled": true
       },
       "job_final": "cancelled",
@@ -40,9 +40,9 @@
     }
   },
   "resource": {
-    "samples": 28,
-    "rss_peak_a_kb": 742032,
-    "rss_peak_b_kb": 839004,
-    "data_dir_peak_bytes": 40642487
+    "samples": 26,
+    "rss_peak_a_kb": 740840,
+    "rss_peak_b_kb": 837804,
+    "data_dir_peak_bytes": 40634247
   }
 }
