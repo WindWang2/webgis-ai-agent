@@ -1,13 +1,15 @@
 # Pi Native GIS Agent Runtime Contract（G01-PI-NATIVE-RUNTIME）
 
-> 状态：与 `zcode/goal-pi-native-gis-runtime-20261107` 分支代码同步（ADR-0286）。
+> 状态：与 `zcode/goal-pi-native-gis-runtime-20261107` 分支代码同步（ADR-0286）；
+> G12（ADR-0288）与 G22 增补。当前 vendor pin **v1.5.2**（gitlink `b4afdddf`，
+> 见 PI_UPSTREAM_COMPAT_MATRIX §4 正式裁决；协议 floor v1.5.1）。
 > 本文是 Pi 运行时的**行为契约**——每条声明都有测试锚点；改动契约须改本文 + 测试。
 
 ## 1. 角色与唯一事实源
 
 | 事实 | 权威 | Pi 侧消费 |
 |---|---|---|
-| Agent 运行宿主 | vendored Pi v1.5.0（gitlink `f9a263655`） | `PiBridge` spawn `rpc-entry`（`--no-builtin-tools --no-session`） |
+| Agent 运行宿主 | vendored Pi v1.5.2（gitlink `b4afdddf`；G22 前为 v1.5.1/v1.5.0） | `PiBridge` spawn `rpc-entry`（`--no-builtin-tools --no-session`） |
 | 工具执行入口 | GIS `ToolRegistry` / `ToolDispatchService` | `dispatch_tool` 唯一管线（capability bind 在 dispatch 内是唯一执行权威） |
 | 会话/turn 台账 | `harness_kernel`（turn_journal / TurnStatus） | `begin_turn`/`end_turn`；settle coordinator 是唯一结算编排 |
 | 地图事实 | MapSpec / 状态权威 | settle 效果序（`run_settle_effects`）投影 |
