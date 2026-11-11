@@ -7,7 +7,7 @@ BASE_SHA：`b8f2a6ecc777d0ae633202034b609a48a8d140d9`（origin/master，fetch �
 ## 0. 仓库与并行纪律核实
 
 - 仓库 = WindWang2/webgis-ai-agent（remote origin 核实）。
-- 开放 PR：#2087（G27 多尺度表达）、#2088（G24 MVT 权威拾取）。两者均未注册新 journey（J17 空闲）；均改 `app/tools/__init__.py`（加性，合并可解）；#2088 改 `frontend/components/map/map-panel.tsx`（本方向在 map-panel 只做最小 hook 挂载，降低冲突面）。
+- 开放 PR：#2087（G27 多尺度表达）、#2088（G24 MVT 权威拾取）。两者均未注册新 journey（J18 空闲）；均改 `app/tools/__init__.py`（加性，合并可解）；#2088 改 `frontend/components/map/map-panel.tsx`（本方向在 map-panel 只做最小 hook 挂载，降低冲突面）。
 - 本机 worktree：g21/g09/g22/g23/g24/g27/g3dv2 等在途，无 g25 冲突路径。
 - 宿主级重任务锁：`/home/kevin/projects/webgis/.heavy-task.lock`（flock；已核实其他方向在用）。
 - 硬件：16 核 / 62GiB RAM（可用 ~36GiB）。编译预算：默认 -j2，锁内重任务串行。
@@ -43,9 +43,9 @@ BASE_SHA：`b8f2a6ecc777d0ae633202034b609a48a8d140d9`（origin/master，fetch �
 - **无 camera 字段** —— camera 是运行时态，客户端本地（session 级）持久化，不扩 schema（schema 所有权在 G15/frame schema 边界外）。
 
 ### e2e registry（#2084 规则）
-- `frontend/e2e/helpers/registry.ts` JOURNEYS 数组：j1–j16 已占用。新增 = 新文件 `journeys/jN-*.journey.ts` + registry 登记 {id,file,title,smoke,modes,owner}。G25 使用 **j17**（已核实两开放 PR 均未占用）。
+- `frontend/e2e/helpers/registry.ts` JOURNEYS 数组：j1–j16 已占用。新增 = 新文件 `journeys/jN-*.journey.ts` + registry 登记 {id,file,title,smoke,modes,owner}。G25 使用 **j18**（已核实两开放 PR 均未占用）。
 - playwright config：`E2E_MODE=mock|real`，mock 走 page.route fixtures，real 需 E2E_API_URL(:8001) 真后端；`testMatch **/*.journey.ts`；retries=0。
-- J16（j16-frame-product.journey.ts，mock-only）：三画幅恢复 + 改名 CAS + 激活 —— **面板旅程，无地图渲染、无交互视窗**。G25 的 J17 必须是真地图交互。
+- J16（j16-frame-product.journey.ts，mock-only）：三画幅恢复 + 改名 CAS + 激活 —— **面板旅程，无地图渲染、无交互视窗**。G25 的 J18 必须是真地图交互。
 
 ## 2. 后端基线（调查员补充后完善）
 
@@ -69,7 +69,7 @@ BASE_SHA：`b8f2a6ecc777d0ae633202034b609a48a8d140d9`（origin/master，fetch �
 | P4 资源/失效 | ComparisonView 自清理范本 | 帧级清理清单、context loss 代际重挂+观察重绑、resize 只更新受影响帧、快照 stale 传播 |
 | P5 编辑/Agent 定位 | 面板编辑全有 | 面板↔地图激活一致、键盘切换、scope 明示（仅本幅/同组/整个产品）、stable frame_id 定位核实 |
 | P6 逐画幅观察 | verification.py 存在（服务端） | 前端逐帧观察生产者（加载/source error/范围/camera/snapshot-live 级别）+ 接入现有验证链 |
-| P7 真浏览器验收 | J16 面板 mock 旅程 | J17 真实多画幅交互旅程（mock 档全量 + real 档真后端）+ registry 登记 |
+| P7 真浏览器验收 | J16 面板 mock 旅程 | J18 真实多画幅交互旅程（mock 档全量 + real 档真后端）+ registry 登记 |
 
 ## 5. 已知约束与红线（执行时遵守）
 

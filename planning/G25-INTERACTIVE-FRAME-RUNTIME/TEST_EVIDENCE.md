@@ -29,10 +29,10 @@ Chromium 1.65；16 核 / 62GiB。重任务均持 `.heavy-task.lock`。
 
 ## 3. 真实浏览器（Playwright Chromium，WebGL）
 
-### J17 mock 档 ✅
+### J18 mock 档 ✅
 
 命令（独立端口，见 §5 教训）：
-`E2E_MODE=mock E2E_PORT=3325 pnpm exec playwright test e2e/journeys/j17-frame-interactive.journey.ts --workers=1`
+`E2E_MODE=mock E2E_PORT=3325 pnpm exec playwright test e2e/journeys/j18-frame-interactive.journey.ts --workers=1`
 
 - 3 轮稳定通过（6.5s / 10.0s / 13.6s→修复后）。断言链：入口 chip →
   三瓦片稳定 frame_id → 活动瓦片**真实 maplibre canvas**（WebGL）→
@@ -42,7 +42,7 @@ Chromium 1.65；16 核 / 62GiB。重任务均持 `.heavy-task.lock`。
 - 旁证：j1 @smoke 同环境通过（4.6s）→ 环境健康；j16 通过（4.8s）→
   G15 面板旅程不回归。
 
-### J17 real 档 ✅（真实服务端半场端到端，8.2s 通过）
+### J18 real 档 ✅（真实服务端半场端到端，8.2s 通过）
 
 本地栈（全部本方向独立启动，独立端口/数据目录）：
 - LLM stub `node e2e/tools/llm-stub.mjs` :8767（确定性 OpenAI 线协议）

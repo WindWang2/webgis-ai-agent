@@ -155,8 +155,8 @@ export const JOURNEYS: JourneyEntry[] = [
     owner: 'g15-multiframe-cartography',
   },
   {
-    id: 'j17',
-    file: 'journeys/j17-frame-interactive.journey.ts',
+    id: 'j18',
+    file: 'journeys/j18-frame-interactive.journey.ts',
     title: '多画幅交互运行时：真实地图网格→激活CAS→键盘→预算→刷新恢复',
     smoke: false,
     modes: ['mock', 'real'],

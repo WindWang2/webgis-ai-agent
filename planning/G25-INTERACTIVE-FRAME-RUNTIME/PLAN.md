@@ -7,7 +7,7 @@
 
 **核心判断**：G15 已交付数据面（schema/投影/CAS/验证），G25 交付**运行面**——把持久 frame 产品变成能分别交互的地图画幅。ComparisonView（双图互同步范本）证明本仓库已有「第二张 maplibre 地图 + MapSpecRuntime reconcile + 相机纯函数同步 + 防回声」的全部构件；G25 把它推广到 N 画幅 + 有界资源 + 快照 + 观察。
 
-**所有权**：`frontend/components/map/frames/`（新目录，组件+测试）、`frontend/lib/cartography/frame-runtime*.ts`（新运行时契约纯函数+store）、`frontend/e2e/journeys/j17-*.journey.ts`（新旅程）。接入点：map-panel 挂载（~2 行）、map-studio-tab 面板增强（小补丁）、registry 登记（1 条目）。后端：只读消费现有 frame_products API；仅在观察对接需要时加只读字段/路由（加性）。
+**所有权**：`frontend/components/map/frames/`（新目录，组件+测试）、`frontend/lib/cartography/frame-runtime*.ts`（新运行时契约纯函数+store）、`frontend/e2e/journeys/j18-*.journey.ts`（新旅程）。接入点：map-panel 挂载（~2 行）、map-studio-tab 面板增强（小补丁）、registry 登记（1 条目）。后端：只读消费现有 frame_products API；仅在观察对接需要时加只读字段/路由（加性）。
 
 ## 分层架构
 
@@ -58,7 +58,7 @@ FrameGridController (P1, 新组件, 网格编排)
 | P4 | 清理清单入 FrameViewport/registry/snapshot store；context loss 代际；resize 定向 | 各组件测试 + `frame-snapshot-store.test.ts` |
 | P5 | map-studio-tab/panel 一致性小补丁 + 键盘切换 + scope 命名 | `frame-grid.test.tsx` + panel 测试补充 |
 | P6 | `frontend/lib/cartography/frame-observation.ts` + 挂点 | `frame-observation.test.ts` |
-| P7 | `frontend/e2e/journeys/j17-frame-interactive.journey.ts` + registry + real 档 fixture | journey 自身 |
+| P7 | `frontend/e2e/journeys/j18-frame-interactive.journey.ts` + registry + real 档 fixture | journey 自身 |
 
 ## 关键设计决策（可证伪）
 
@@ -69,7 +69,7 @@ FrameGridController (P1, 新组件, 网格编排)
 5. **主图联动语义**：活动画幅与主图双向同步（同 ComparisonView pan/zoom 协议）；帧间同步按 sync_group。主图不属于任何 sync_group（它是工作台根视图）——A06「不同组不传播」以帧组为界。
 6. **投影不兼容拒绝**：不同 projection（frame spec 的 projection ≠ 主图）→ 明确拒绝挂载并给原因（A08），不复制坐标。锁定 extent（frame data.where 有 bbox 锁定或 spec extent 锁定）→ 相机写入被拒 + 披露。**待实现时按调查员报告的 spec 投影字段核实**。
 7. **观察不撒谎**：未挂载帧 = `not_observed`；快照帧 = `snapshot` + fingerprint（非 live）；旧 revision 快照 ≠ verified。frameA 完成不得填 frameB。
-8. **J17 双档**：mock 档（page.route fixture 全网格交互断言）+ real 档（真后端 uvicorn :8001 + 真浏览器）。real 档 blocked 时标 blocked（A28）。
+8. **J18 双档**：mock 档（page.route fixture 全网格交互断言）+ real 档（真后端 uvicorn :8001 + 真浏览器）。real 档 blocked 时标 blocked（A28）。
 
 ## 执行顺序（每轮: 读→失败用例→实现→回归→自审→ledger）
 
@@ -78,7 +78,7 @@ FrameGridController (P1, 新组件, 网格编排)
 3. **M3（P2+P5 编辑接线）**：激活流、scope 路由、面板一致性、键盘。
 4. **M4（P4 资源）**：清理审计、context loss、resize、stale 传播。
 5. **M5（P6 观察）**：观察生产者 + 挂点 + 服务端字段对齐。
-6. **M6（P7 验收）**：J17 mock + real 旅程、验收矩阵 A01–A28 映射、性能采样。
+6. **M6（P7 验收）**：J18 mock + real 旅程、验收矩阵 A01–A28 映射、性能采样。
 7. **M7**：独立 review → fix → 复审 → PR。
 
 ## 预算与资源纪律

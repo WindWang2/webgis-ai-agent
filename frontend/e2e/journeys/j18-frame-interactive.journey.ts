@@ -1,5 +1,5 @@
 /**
- * Journey 17 — G25 多画幅真实交互运行时（mock 档 + real 档）。
+ * Journey 18 — G25 多画幅真实交互运行时（mock 档 + real 档）。
  *
  * mock 档（真实浏览器 + 全 API 夹具）：三画幅产品恢复 → 打开网格 →
  * 活动画幅渲染真实 maplibre 地图（WebGL 画布）→ 活实例预算 ≤2（A09，
@@ -120,7 +120,7 @@ async function readObservation(page: Page): Promise<{ rows: ObsRow[]; liveCount:
   });
 }
 
-test.describe('journey-17 多画幅交互运行时', () => {
+test.describe('journey-18 多画幅交互运行时', () => {
   test('mock：网格三幅真实地图 · 激活CAS · 键盘 · 预算 · 诚实观察', async ({ page }) => {
     test.skip(MODE !== 'mock', 'mock-mode variant');
     const world = defaultWorld();

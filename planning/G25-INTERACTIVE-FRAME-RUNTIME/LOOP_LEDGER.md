@@ -8,7 +8,7 @@ worktree：`/home/kevin/projects/webgis/webgis-wt-g25-frame-runtime-20261111T173
 
 | 里程碑 | 状态 | 证据 |
 |---|---|---|
-| M0 侦察（master/PR/review/文件） | verified | RECON.md（BASE 重fetch；#2084-2086 已合入；J17 编号空闲核实） |
+| M0 侦察（master/PR/review/文件） | verified | RECON.md（BASE 重fetch；#2084-2086 已合入；J18 编号空闲核实） |
 | M1 P0 契约层（frame-runtime/where-ast/后继/守卫） | verified | vitest where-ast 8/8 + frame-runtime 9/9 |
 | M1 P3 相机 hub（resolveGroupSync 接线+三层防回声） | verified | frame-camera-hub 8/8 |
 | M2 P1 纯模块（instance registry/snapshot LRU/effective-spec） | verified | frame-runtime-stores + effective-spec 7/7（含 time_window 归一） |
@@ -16,8 +16,8 @@ worktree：`/home/kevin/projects/webgis/webgis-wt-g25-frame-runtime-20261111T173
 | M3 P2/P5 编辑接线（激活 CAS/scope 路由/键盘/面板一致） | verified | frame-edit-scope 4/4 + grid 键盘/激活用例 |
 | M4 P4 资源（卸载捕获/context loss 代际/会话失效/30 次挂卸） | verified | frame-viewport.test 5/5 + grid 会话/A13 用例 |
 | M5 P6 观察生产者+后端接线 | verified | 前端 frame-observation（grid 观察用例）+ 后端 test_g25_observation_wiring 6/6 |
-| M6 P7 J17 mock 档（真实浏览器） | verified | playwright Chromium 通过（6.5s/10s 两轮稳定） |
-| M6 P7 J17 real 档（真后端） | in_progress | 本地栈已起（LLM stub/uvicorn/admin/前端 3325）；阻断=vendor/pi RPC entry 未构建 → 构建中 |
+| M6 P7 J18 mock 档（真实浏览器） | verified | playwright Chromium 通过（6.5s/10s 两轮稳定） |
+| M6 P7 J18 real 档（真后端） | in_progress | 本地栈已起（LLM stub/uvicorn/admin/前端 3325）；阻断=vendor/pi RPC entry 未构建 → 构建中 |
 | M7 独立 review + PR | not_started | — |
 
 ## 关键修复记录（可证伪循环）
@@ -57,7 +57,7 @@ worktree：`/home/kevin/projects/webgis/webgis-wt-g25-frame-runtime-20261111T173
 
 ## 下一步（按序）
 
-1. vendor/pi 构建完成 → 重启后端 → J17 real 档复跑至通过（或如实 blocked）。
+1. vendor/pi 构建完成 → 重启后端 → J18 real 档复跑至通过（或如实 blocked）。
 2. 全量前端回归复跑（确认 i18n 修复后仅剩 BASE 4 失败）。
 3. 受影响后端回归（frame_products 单元 + mapspec mutation 合同）。
 4. ACCEPTANCE.md 矩阵 A01-A28 逐项映射 + TEST_EVIDENCE 汇总。

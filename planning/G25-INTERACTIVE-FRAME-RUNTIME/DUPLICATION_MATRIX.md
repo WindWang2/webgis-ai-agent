@@ -14,7 +14,7 @@ BASE `b8f2a6ecc`。原则：已合入能力复用不重建；下表「本任务�
 | 逐画幅验证 | `verification.py`（observed 契约就绪，OBSERVATION_MODES 四级） | G15 WP11 已合入 | 生产者 + DTO frames 字段 + status 接线（P6） | `verify_frame_product(document, observed)` | 不改终验判定语义（G28） |
 | 观察上报通道 | `POST cartographic-observation`（fingerprint 门 + latest-wins） | P9 已合入 | `frames` 增维可选字段（加性，同 scene3d_assets 先例） | `CartographicRuntimeObservationRequest` 加字段 | 不新建 endpoint/store |
 | 面板编辑 | `frame-product-panel.tsx`（激活/改名/组/图例/排序/隐藏/解绑） | G15 WP07 已合入 | 激活态一致性、键盘、scope 命名（P5 小补丁） | `commitFrameProductPatch` | 不重做面板 |
-| 面板 e2e | `j16-frame-product.journey.ts`（mock-only，零地图断言） | G15 + #2084 已合入 | 新 J17 交互旅程（不占 j15/j16） | registry.ts 登记 | 不改 j16 |
+| 面板 e2e | `j16-frame-product.journey.ts`（mock-only，零地图断言） | G15 + #2084 已合入 | 新 J18 交互旅程（不占 j15/j16） | registry.ts 登记 | 不改 j16 |
 | Pi 工具 | `frame_product_tools.py` 5 工具 | G15 WP09 已合入 | 必要时只读 runtime 状态查询（P5，加性） | ToolRegistry | 不让后端以 visible 为写授权 |
 | PublicationIR 版面/栅格出版 | publication_export 走 resolver | G15/G26 边界 | 无 | — | 不做混合栅格出版（G26） |
 | 多尺度/拾取/数据交付 | G27 #2087 / G24 #2088 / G18 #2080 在途 | 开放 PR | 仅登记依赖（map-panel/tools/__init__ 加性冲突） | — | 不并入他人 PR 内容 |
