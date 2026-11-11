@@ -238,6 +238,8 @@ async def commit(
 ) -> CommitAcceptedResponse:
     async with async_db_session() as db:
         await _verify_owner(db, session_id, _user, owner_token)
+    from app.services.data_operations.import_jobs import JobActor
+
     try:
         out = await get_data_import_service().start_commit(
             batch_id,
@@ -245,6 +247,11 @@ async def commit(
             body.member_keys,
             body.expected_plan_version,
             background=True,
+            actor=JobActor(
+                user_id=_user.get("user_id"),
+                owner_token=owner_token,
+                org_id=_user.get("org_id"),
+            ),
         )
     except DataImportError as e:
         raise _to_http(e) from e
