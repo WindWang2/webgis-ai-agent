@@ -58,6 +58,20 @@ def _make_event_rpc(events):
             await rpc.events.put(ev)
 
     rpc.request = AsyncMock(side_effect=_seed)
+    # G22-P1：abort 控制面改走 issue（写相位）/collect（响应相位）拆分；
+    # 没有 issue 的 mock 会让 abort-on-disconnect 早退（token 不再 cancel
+    # → 泄漏守卫如实变红）。写相位同 _seed 语义：丢弃事件播种仅对 prompt
+    # 类调用有意义，控制命令直接返回已解 future。
+    async def _issue(cmd, data=None):
+        future = asyncio.get_running_loop().create_future()
+        future.set_result({})
+        return SimpleNamespace(id=f"mock-{cmd}", command=cmd, future=future)
+
+    async def _collect(issued, command=None):
+        return await issued.future
+
+    rpc.issue = AsyncMock(side_effect=_issue)
+    rpc.collect = AsyncMock(side_effect=_collect)
     return rpc
 
 
