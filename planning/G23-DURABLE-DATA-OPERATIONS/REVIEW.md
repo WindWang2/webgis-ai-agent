@@ -138,7 +138,7 @@
 | NOTE1/2/7 | INTERFACES.md 补边界登记（owner scope 入口分歧/delete 残窗）；TEST_EVIDENCE 数字口径更正（jobs=247） | 文档 |
 | NOTE4 | 删除死代码 manual_finish 参数、find_active_job_by_key | grep 零残留 |
 
-修复后复跑：tests/data_operations **32/32**（含 B1/M1 新增 7 用例）+ data_import/jobs/delivery/tools/api-compat **395 通过**；field_compute 76/77（1=BASE 预存）；双进程 repro false_reset=false；双 uvicorn 集成 **5/5**（evidence-integration-report.json 已更新）。
+修复后复跑：tests/data_operations 32 用例（B1 双变体并入既有用例，函数内循环不新增 collect 数）+ data_import/jobs/delivery/tools/api-compat **395 通过**；field_compute 76/77（1=BASE 预存）；双进程 repro false_reset=false；双 uvicorn 集成 **5/5**（evidence-integration-report.json 已更新）。
 
 ---
 
@@ -196,3 +196,34 @@
 - 变体 B 固化为回归：`test_b1_slow_reader_never_clobbers_terminal_state` 参数化 freeze_depth∈{1,2}（depth=2 = 冻结首读+探测前重读，探测后复核兜住），断言不覆写/rev 不回退/收据在/重提 duplicate。
 - 残留边界（如实登记）：post_probe 读 → save 的 µs 窗口内仅剩**非 job 写者**（save_plan/preview 在 COMMITTING 态被 409 拒绝；delete 会令 save 失败而非覆写）。文件级全闭需 save_state CAS（后续项，非本轮阻断）。
 - 复跑：tests/data_operations 33/33（B1 双变体并入）；data_import+jobs+delivery+fc-tools+api-compat 395 通过；run_repro false_reset=false；双 uvicorn 集成 5/5（evidence 已更新）。
+
+---
+
+# 最终 verdict（Round 3 · 2026-11-12 · 独立回归验证，B1-R 复验）
+
+复审对象：`55d079c65`（B1-R 修复）。按 Round 2 给出的路径逐项独立验证，不采信自述。
+
+## 回归验证结果（全部自行执行）
+
+| 项 | 命令/方法 | 结果 |
+|---|---|---|
+| TOCTOU 变体 B（Round-2 阻断项的复现） | `.venv/bin/python -I /tmp/g23_review_toctou_v2.py 2` | **CLOBBER_REPRODUCED=False** —— post_probe 重读（第 3 次 load）命中 rev 差，返回 completed+收据，不覆写 |
+| TOCTOU 变体 A（Round-1 原型，回归对照） | `.venv/bin/python -I /tmp/g23_review_toctou_v2.py 1` | **False**（保持被阻断） |
+| 实现核对 | `service.py _load_owned` 逐行 | ① 探测返回无活跃 job 后、归一化写盘前 `post_probe` 重读复核（rev 变→返回最新事实放弃覆写）✓；② 活跃分支补记写前 `pre_write` 重读复核，且 active_job_id 施加在**最新快照**上（字段级合并，优于仅放弃）✓；③ 179-184 注释已按完备性论证重写（两段复核+场景区分），不再有「µs 级兜住」的不实表述 ✓ |
+| 回归固化核对 | `test_b1_slow_reader_never_clobbers_terminal_state` | 参数化 freeze_depth∈{1,2}（函数内循环），depth=2 即 Round-2 变体 B（第 3 次读走真实文件、由 post_probe 复核兜住）；断言不覆写/rev 不回退/收据在/重提 duplicate——**真实覆盖，非自测 stub**；单独运行 1 passed，套件内通过 ✓ |
+| data_operations 套件 | `pytest tests/data_operations -q --no-cov -p no:cacheprovider` | **32 passed**（注意：实现方记录「33/33」有误——参数化为函数内循环不新增 pytest 用例，collect 亦为 32；数字更正，非实质问题） |
+| 广域回归 | data_import+jobs+delivery+fc 三套+fc-tools | **427 passed, 1 failed**（唯一失败仍为 round-1 已归因的 BASE 预存 OpenAPI 测试） |
+| 双进程复现 | `run_repro.sh` | **false_reset_reproduced=false** |
+| 双 uvicorn 集成（独立复跑） | `integration_two_process.py` | **S1-S5 5/5 pass:true** |
+
+## B1-R 闭包判定
+
+- **job 写者竞态已按构造闭合**：探测见到 terminal ⇒ runner 的最终写盘（严格先于其 DB 终态提交）必已发生 ⇒ 此后任何真实重读必见更高 rev ⇒ 放弃覆写。「冻结第 3 次读」不再构成合法的慢读等价物——慢读最终执行时读到的必是当前内容。A11 崩溃对账/清扫恢复场景无并发写者、rev 稳定，复核通过、归一化照常——与 Round-2 完备性论证一致。
+- **残留窗口（与实现方登记一致，非阻断）**：归一化路径 post_probe→save 的 µs 窗口仅剩非 job 写者（COMMITTING 态 save_plan/preview 409、delete 令 save 失败而非覆写）。一处登记措辞可更精确：**补记路径**（活跃 job 在场）pre_write→save 的 µs 窗口理论上仍面对 runner 的成员收据写——命中概率 ≈ µs 窗口/成员周期（~1e-6 量级），且属已登记的 save_state CAS 后续项覆盖范围。建议 CAS 后续项落地时一并消除。
+
+## 最终 verdict：**approve**
+
+- Round-1 BLOCKER（B1）与 Round-2 BLOCKER（B1-R）均已按建议修复并经我的原始复现脚本双变体独立回归验证闭合；回归测试真实固化两个变体。
+- Round-1 的 MAJOR/MINOR/NOTE 在 Round-2 全部复验通过；本轮无新增发现。
+- 非阻断遗留（均已登记，不构成本方向合入障碍）：M1 的小缺口（两状态工具的活跃/running 视图未测）、补记路径 µs 窗口与文件级 CAS、NOTE3/5/6/8 后续项、实现方台账「33/33」数字更正为 32。
+- 范围声明：本 approve 基于本地降级拓扑（SQLite/无 Redis/双 uvicorn 代理多副本）的验证面；真实 Postgres/Redis 与生产多副本长程行为、Pi 子进程端到端仍属 TEST_EVIDENCE 已如实登记的未验证边界。
