@@ -253,6 +253,39 @@ def _chain_id_of(feature: Any) -> Optional[str]:
     return None
 
 
+def _addressable_values(feature: Any) -> set:
+    """要素的可寻址 id 值集（_wfid → 顶层 id → FEATURE_ID_KEYS；与
+    layer.py::_find_feature_by_id 同语义）。物化后的数据集 canonical 链 id
+    是 WFID，但原始 id 仍是合法寻址键 —— 工具/句柄消费用这整个集合。"""
+    if not isinstance(feature, dict):
+        return set()
+    out: set = set()
+    props = feature.get("properties")
+    if isinstance(props, dict):
+        wfid = props.get("_wfid")
+        if wfid is not None:
+            out.add(str(wfid))
+    top = feature.get("id")
+    if top is not None:
+        out.add(str(top))
+    if isinstance(props, dict):
+        for key in FEATURE_ID_KEYS:
+            v = props.get(key)
+            if v is not None:
+                out.add(str(v))
+    return out
+
+
+def find_feature_by_addressable_id(features: List[Any], feature_id: str) -> Optional[Tuple[int, Any]]:
+    """请求 id 可经 _wfid → 顶层 id → FEATURE_ID_KEYS 任一键命中要素
+    （first-wins）。返回 (自然索引, 要素)。"""
+    fid_str = str(feature_id)
+    for i, f in enumerate(features):
+        if fid_str in _addressable_values(f):
+            return i, f
+    return None
+
+
 def _resolve_ids(features: List[Any], ids: List[str]) -> Tuple[List[int], List[str]]:
     """显式 id 集 → 自然索引列表（FC 序）+ 未命中 id 列表。
 
@@ -260,13 +293,19 @@ def _resolve_ids(features: List[Any], ids: List[str]) -> Tuple[List[int], List[s
     duplicate 已由 /features 的 duplicate_id_count 披露，这里不再重复投影。
     """
     want = set(ids)
-    found: Dict[str, int] = {}
+    claimed: set = set()
+    resolved: List[int] = []
     for i, f in enumerate(features):
-        sid = _chain_id_of(f)
-        if sid is not None and sid in want and sid not in found:
-            found[sid] = i
-    resolved = sorted(found.values())
-    missing = [i for i in ids if i not in found]
+        hits = want & _addressable_values(f)
+        if not hits:
+            continue
+        # first-wins：同值多要素（重复自然键）只取首个 —— 与回查/编辑一致
+        fresh = hits - claimed
+        if fresh:
+            resolved.append(i)
+            claimed |= hits
+    resolved.sort()
+    missing = [i for i in ids if i not in claimed]
     return resolved, missing
 
 

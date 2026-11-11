@@ -31,6 +31,9 @@ const DRAFT_LINE_LAYER = 'wb-feedit-draft-line';
 const DRAFT_POINT_LAYER = 'wb-feedit-draft-point';
 const EDIT_COLOR = '#f59e0b';
 
+/** 空图层行的稳定引用（`?? []` 每渲染新数组会让 useCallback 依赖抖动）。 */
+const EMPTY_LAYER_ROWS: unknown[] = [];
+
 type Draft =
   | { kind: 'line' | 'polygon' | 'split'; points: [number, number][] }
   | null;
@@ -86,7 +89,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   const editTarget = useHudStore((s) => s.editTarget);
   const setEditTarget = useHudStore((s) => s.setEditTarget);
   const setActiveMapTool = useHudStore((s) => s.setActiveMapTool);
-  const layers = (useHudStore((s) => s.layers) ?? []) as Array<{ id: string; name: string; source?: unknown; _refId?: string; _descriptor?: unknown; _mapspecLayerId?: string; _tileUrl?: string }>;
+  const layers = (useHudStore((s) => s.layers) ?? EMPTY_LAYER_ROWS) as Array<{ id: string; name: string; source?: unknown; _refId?: string; _descriptor?: unknown; _mapspecLayerId?: string; _tileUrl?: string }>;
   const [status, setStatus] = useState<EditStatus>({ state: 'idle' });
   const [attributesJson, setAttributesJson] = useState('');
   /** vertex 编辑：被选要素（HUD 行数据快照）与其几何 draft。 */

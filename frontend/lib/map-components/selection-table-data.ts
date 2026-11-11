@@ -139,7 +139,7 @@ export function useSelectionHandleTable({ layer, handle }: { layer: Layer; handl
         setState((s) => ({ ...s, status: 'error', loadingMore: false }));
       }
     })();
-  }, [state.status, state.nextCursor, state.loadingMore, sessionId, refId, handle, ownerToken]);
+  }, [state.status, state.nextCursor, state.loadingMore, sessionId, refId, handle, ownerToken, abortRef]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   return { ...state, loadMore, reload };

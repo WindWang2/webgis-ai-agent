@@ -8,7 +8,7 @@
  * 这里 mock submitEditOps 只观察是否被调用及参数。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { resetSelectionStore } from '@/lib/selection/selection-store';
 

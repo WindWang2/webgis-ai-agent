@@ -125,16 +125,14 @@ def register_selection_tools(registry: ToolRegistry) -> None:
     ) -> Dict[str, Any]:
         if not session_id:
             return {"error": "session_required", "message": "缺少 session_id"}
-        from app.services.selection_handles import _chain_id_of
+        from app.services.selection_handles import find_feature_by_addressable_id
 
         features, revision = await _authorized_features(session_id, ref_id)
         if features is None:
             return {"error": "ref_not_found", "message": f"ref 不存在或无权访问: {ref_id}"}
-        target = None
-        for f in features:
-            if _chain_id_of(f) == str(feature_id):
-                target = f
-                break
+        # 寻址语义与 /feature/{fid} 一致（_wfid → 顶层 id → 链内键；first-wins）
+        found = find_feature_by_addressable_id(features, str(feature_id))
+        target = found[1] if found else None
         if target is None:
             return {
                 "error": "feature_not_found",
