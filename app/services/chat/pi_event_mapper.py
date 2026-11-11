@@ -101,12 +101,20 @@ def _extract_text_from_event(event: dict) -> str:
 
 
 def _base_step_payload(event: dict, session_id: str, extra: dict) -> dict:
-    """Build base SSE payload with common fields shared across step events."""
+    """Build base SSE payload with common fields shared across step events.
+
+    ADR-0288（W06）：嵌套调用事件（vendor C13）携带 ``parentToolCallId`` ——
+    投影为加性 ``parent_tool_call_id`` 字段；顶层调用无该字段（旧消费者零
+    漂移），前端据它把子步骤挂到父工具行下。
+    """
     base = {
         "task_id": session_id,
         "step_id": event.get("toolCallId", ""),
         "session_id": session_id,
     }
+    parent = event.get("parentToolCallId")
+    if parent:
+        base["parent_tool_call_id"] = str(parent)
     base.update(extra)
     return base
 

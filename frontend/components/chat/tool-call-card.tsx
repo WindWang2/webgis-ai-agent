@@ -32,6 +32,8 @@ export interface ToolCallEntry {
   startedAt?: number;
   completedAt?: number;
   layerId?: string;
+  /** ADR-0288：嵌套调用的父 step_id（渲染为子行；顶层缺席）。 */
+  parentStepId?: string;
 }
 
 function formatDuration(ms: number): string {
@@ -447,9 +449,17 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
           aria-label={t('chat.toolCall.detailsAria')}
           className="border-t border-edge-subtle px-2.5 py-2 space-y-1 bg-surface-sunken/40"
         >
-          {calls.map((tc) => (
-            <ToolCallRow key={tc.id} call={tc} expanded={expanded} />
-          ))}
+          {calls.map((tc) =>
+            // ADR-0288：嵌套子行（parentStepId 在场）缩进挂靠父工具行，
+            // 视觉上归属父调用（codemode 等）；复用既有 token，不动主题。
+            tc.parentStepId ? (
+              <div key={tc.id} className="ml-4 border-l border-edge-subtle pl-2">
+                <ToolCallRow call={tc} expanded={expanded} />
+              </div>
+            ) : (
+              <ToolCallRow key={tc.id} call={tc} expanded={expanded} />
+            ),
+          )}
         </div>
       )}
     </div>

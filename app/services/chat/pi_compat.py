@@ -17,10 +17,13 @@ Scope / discipline:
       existing fail-closed spawn behavior (FileNotFoundError → ChatEngine);
       this module only makes the state observable (logs, /health, pi_doctor).
 
-Compatibility floor (ADR-0282): the bridge protocol implementation in this
-repo targets Pi >= v1.5.0 (pi-schema argument validation, delta-only
+Compatibility floor (ADR-0282 → ADR-0288): the bridge protocol implementation
+in this repo targets Pi >= v1.5.1 (pi-schema argument validation, delta-only
 ``message_update``, ``disposition`` on prompt responses, two-phase extension
-loading). ``PI_MIN_VENDOR_TAG`` is the floor this module reports against.
+loading; v1.5.1 adds the $ref-aware tool_search corpus, nested-call
+``parentToolCallId`` events and the clear_queue/ordered-shutdown RPC semantics
+this repo now consumes). ``PI_MIN_VENDOR_TAG`` is the floor this module
+reports against.
 """
 from __future__ import annotations
 
@@ -37,7 +40,9 @@ VENDOR_PI_DIR = REPO_ROOT / "vendor" / "pi"
 
 # Bridge protocol floor. Bump ONLY with an explicit ADR + contract-test update
 # (tests/integration/test_pi_vendor_contract.py pins the on-the-wire behavior).
-PI_MIN_VENDOR_TAG = "v1.5.0"
+# v1.5.1（ADR-0288）：native tool discovery（tool_search/codemode 内置扩展）、
+# nested parentToolCallId 事件、clear_queue/有序停机。
+PI_MIN_VENDOR_TAG = "v1.5.1"
 
 # Superproject-recorded submodule pin (gitlink). Read lazily; ``None`` when the
 # deployment ships without git metadata (e.g. production image) — identity then
@@ -192,8 +197,8 @@ def log_pi_vendor_identity() -> "PiVendorIdentity | None":
     line = ident.summary_line()
     if not ident.entry_built:
         logger.warning(
-            "%s — RPC entry NOT built; Pi bridge will fall back to ChatEngine "
-            "(build with scripts/build-vendor-pi.sh)",
+            "%s — RPC entry NOT built; the Pi-only chat path will fail closed "
+            "(503) until vendor/pi is built with scripts/build-vendor-pi.sh",
             line,
         )
     elif ident.matches_expected_pin is False:

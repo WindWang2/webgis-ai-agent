@@ -177,11 +177,85 @@ def _pi_parameters(function_schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# 原生工具封套（dump v4，ADR-0288）：exposure / namespace / annotations 投影。
+#
+# 红线：annotations 是 MCP 语义**提示**（readOnlyHint/destructiveHint/
+# idempotentHint），供上游权限/展示面消费 —— 不是授权事实；执行权威仍在
+# dispatcher 闸序（tier/input/owner/writer）。无法从注册事实派生的 hint
+# **缺席**（保守语义），绝不猜测。exposure 是声明策略（direct/deferred），
+# 不入 PiToolSpecV1 指纹（指纹口径 = schema + 安全/资源元数据，保持不变）。
+# ---------------------------------------------------------------------------
+
+#: 只读副作用类（readOnlyHint=true 的派生依据）。
+_READ_ONLY_SIDE_EFFECTS = frozenset({
+    "pure", "deterministic_compute", "cacheable_read",
+})
+#: 有副作用类（readOnlyHint=false；DESTRUCTIVE 额外 destructiveHint=true）。
+_MUTATING_SIDE_EFFECTS = frozenset({
+    "state_mutation", "artifact_creation", "external_side_effect", "destructive",
+})
+_NAMESPACE_NAME_RE = None  # compiled lazily; keep imports local-free
+
+
+def _native_annotations(desc: Any) -> dict[str, Any]:
+    """ToolDescriptor → 上游 ToolAnnotations（可派生才带，未知缺席）。"""
+    annotations: dict[str, Any] = {}
+    side_effect_raw = getattr(desc, "side_effect", None)
+    # SideEffectClass 是 str-Enum：str(member) 给出限定名而非 value —— 必须
+    # 取 .value（测试 test_native_annotations_conservative_semantics 钉住）。
+    side_effect = (
+        getattr(side_effect_raw, "value", "") if side_effect_raw is not None else ""
+    )
+    if not isinstance(side_effect, str):
+        side_effect = ""
+    if side_effect in _READ_ONLY_SIDE_EFFECTS:
+        annotations["readOnlyHint"] = True
+    elif side_effect in _MUTATING_SIDE_EFFECTS:
+        annotations["readOnlyHint"] = False
+        annotations["destructiveHint"] = side_effect == "destructive"
+    # UNCLASSIFIED/空 → 两 hint 均缺席（保守）。
+    idempotent = None
+    try:
+        idempotent = getattr(desc, "effective_idempotent", None)
+    except Exception:  # noqa: BLE001
+        idempotent = None
+    if idempotent is not None:
+        annotations["idempotentHint"] = bool(idempotent)
+    return annotations
+
+
+def _native_namespace(desc: Any) -> Optional[dict[str, Any]]:
+    """ToolDescriptor.domains → 上游 ToolNamespace（首个域，有界；缺席 = None）。
+
+    域名清洗为 ``gis.<slug>``（tool_search 的 namespace 权重据此分组），
+    只取第一个域保持投影确定性。
+    """
+    global _NAMESPACE_NAME_RE
+    if _NAMESPACE_NAME_RE is None:
+        import re
+
+        _NAMESPACE_NAME_RE = re.compile(r"[^a-z0-9_.-]+")
+    try:
+        domains = list(getattr(desc, "domains", ()) or ())
+    except Exception:  # noqa: BLE001 — 投影失败 = 缺席
+        return None
+    if not domains:
+        return None
+    raw = str(domains[0]).strip().lower()
+    if not raw:
+        return None
+    slug = _NAMESPACE_NAME_RE.sub("-", raw)[:32].strip("-.")
+    if not slug:
+        return None
+    return {"name": f"gis.{slug}"}
+
+
 def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
     """Live-registry schemas in Pi ``registerTool`` shape.
 
-    A native name missing from the registry raises rather than degrading to
-    an empty schema — the dump is the only source of Pi's native surface and
+    A native name missing from the registry raises rather than degrading to an
+    empty schema — the dump is the only source of Pi's native surface and
     must never silently drift from the registry
     (specs/pi-as-agent-host.md, user story 35)."""
     schemas = {
@@ -196,15 +270,28 @@ def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
     dumped: list[dict[str, Any]] = []
     for name in NATIVE_TOOL_NAMES:
         fn = schemas[name]
-        dumped.append(
-            {
-                "name": name,
-                "label": _LABELS.get(name, name),
-                "description": fn.get("description") or name,
-                "parameters": _pi_parameters(fn),
-                "promptSnippet": _SNIPPETS.get(name, ""),
-            }
-        )
+        entry: dict[str, Any] = {
+            "name": name,
+            "label": _LABELS.get(name, name),
+            "description": fn.get("description") or name,
+            "parameters": _pi_parameters(fn),
+            "promptSnippet": _SNIPPETS.get(name, ""),
+            # dump v4（ADR-0288）：前门恒 direct（注册即声明候选）；
+            # annotations 从 descriptor 派生（缺席 = 保守）。
+            "exposure": "direct",
+        }
+        try:
+            desc = registry.descriptor(name)
+        except Exception:  # noqa: BLE001 — descriptor 缺席 = hint 缺席
+            desc = None
+        if desc is not None:
+            annotations = _native_annotations(desc)
+            if annotations:
+                entry["annotations"] = annotations
+            namespace = _native_namespace(desc)
+            if namespace is not None:
+                entry["namespace"] = namespace
+        dumped.append(entry)
     return dumped
 
 
@@ -388,11 +475,28 @@ def _pi_tool_definition(registry: Any, name: str, *, dormant: bool) -> dict[str,
         # 裸名长尾面整体不可调用。传 function schema 本体（与
         # native_tools_for_pi 同源）。
         "parameters": _pi_parameters(fn),
+        # dump v4（ADR-0288）：长尾超集 = deferred —— 注册可调用、默认不声明，
+        # 可被上游 tool_search 发现并入 active 集（merge 语义，C12）。
+        # deferred 是**声明策略**：执行仍回到 webgis_execute 同一管线
+        # （分类集 ≡ registered_surface_names 的不变量保持）。
+        "exposure": "deferred",
     }
     if name in NATIVE_TOOL_NAME_SET:
         definition["promptSnippet"] = _SNIPPETS.get(name, "")
+        definition["exposure"] = "direct"
     if dormant:
         definition["dormant"] = True
+    try:
+        desc = registry.descriptor(name)
+    except Exception:  # noqa: BLE001 — descriptor 缺席 = hint 缺席
+        desc = None
+    if desc is not None:
+        annotations = _native_annotations(desc)
+        if annotations:
+            definition["annotations"] = annotations
+        namespace = _native_namespace(desc)
+        if namespace is not None:
+            definition["namespace"] = namespace
     return definition
     # 注：dormant 不压缩 —— 压缩后的 schema 会在激活时以非注册形态呈现给
     # 模型，违反「schema 从 registry 现取」的单一真相纪律。
@@ -403,16 +507,20 @@ def pi_surface_for_spawn(registry: Any) -> dict[str, Any]:
 
     - v2（``PI_TOOL_ABI=0``）：``{version:2, tools, default_active, execute_proxy}``
       —— master 行为原样（兼容回退 / kill switch）；
-    - v3（默认，ADR-0224）：v2 形状**加性**扩展（v2 解析方继续工作）——
+    - v3（ADR-0224）：v2 形状**加性**扩展（v2 解析方继续工作）——
       ``abi``（版本 + 策略）、``registry_generation``（runtime manifest 指纹，
       来源锚）、``surface_fingerprint``（dump 超集的 spec 级指纹）、
       per-tool ``spec``（PiToolSpecV1 序列化：tier/side-effect/资源分级/
-      凭证类/指纹）。扩展注册仍只用 name/label/description/parameters；
-      spec 是 fingerprint echo 与诊断面的契约，不是第二注册中心。
+      凭证类/指纹）；
+    - v4（默认，ADR-0288）：v3 基础上加性 per-tool 原生封套 —— ``exposure``
+      （前门/proxy=direct，长尾超集=deferred，tool_search 可发现）、
+      ``namespace``（domains 首域有界派生）、``annotations``（side_effect
+      派生 MCP 语义提示，可派生才带）。扩展注册透传这些字段；旧解析方
+      （只读 name/label/description/parameters）不受影响。
     - ``tools``: 注册超集（native 7 带 promptSnippet；其余为完整注册 schema
       + ``dormant`` 标记）；
     - ``default_active``: 冻结 native 面（兼容 Phase 1 行为）。
-    扩展注册全部 tools，随后 setActiveTools(default_active)。
+      扩展注册全部 tools，随后 setActiveTools(default_active)。
     """
     from app.services.chat.pi_tool_spec import (
         PI_TOOL_SPEC_ABI_VERSION,
@@ -453,12 +561,14 @@ def pi_surface_for_spawn(registry: Any) -> dict[str, Any]:
     }
     if not abi_on:
         return payload
-    # dump v3：加性字段（v2 keys 保留 —— 扩展 v2 解析继续工作）。
+    # dump v3→v4：加性字段（v2 keys 保留 —— 扩展 v2 解析继续工作）。
+    # v4 = v3 + 原生封套（exposure/namespace/annotations 已在
+    # native_tools_for_pi/_pi_tool_definition 逐工具写入 tools 条目）。
     for tool in payload["tools"]:
         spec = specs_by_name.get(tool.get("name", ""))
         if spec is not None:
             tool["spec"] = spec.to_dump_dict()
-    payload["version"] = 3
+    payload["version"] = 4
     payload["abi"] = {
         "version": PI_TOOL_SPEC_ABI_VERSION,
         "policy": PI_TOOL_SPEC_POLICY,

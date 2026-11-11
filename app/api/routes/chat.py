@@ -751,6 +751,15 @@ async def _ensure_pi_bridge_available(session_id: Optional[str] = None) -> bool:
                 await recycle_fn()
         except Exception:  # noqa: BLE001 — 增值回收绝不阻断 turn 准入
             logger.warning("[chat] surface recycle check failed", exc_info=True)
+        # ADR-0288（W08，#2061 review-P1）：配置代漂移同样在 **每个 turn 边界**
+        # 检查 —— /config/llm 更新时若在飞 turn 而 deferred，下一 turn 必须
+        # 在这里完成换代，否则旧模型/端点/密钥无限期沿用。
+        try:
+            config_recycle_fn = getattr(candidate, "recycle_if_config_stale", None)
+            if config_recycle_fn and callable(config_recycle_fn):
+                await config_recycle_fn()
+        except Exception:  # noqa: BLE001 — 增值回收绝不阻断 turn 准入
+            logger.warning("[chat] config recycle check failed", exc_info=True)
         # review P1-1：回收可能已 stop 但 start 失败（worker 现死）——复检
         # 活性，死了走既有 lazy respawn；仍死则本 turn fail-closed（503）。
         if _bridge_alive(candidate):

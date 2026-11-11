@@ -6715,6 +6715,39 @@
      "config": {
       "$ref": "#/components/schemas/LLMConfig"
      },
+     "expected_generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Generation"
+     },
+     "pi_workers_deferred": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pi Workers Deferred"
+     },
+     "pi_workers_recycled": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pi Workers Recycled"
+     },
      "status": {
       "title": "Status",
       "type": "string"

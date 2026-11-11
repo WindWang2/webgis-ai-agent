@@ -1262,6 +1262,9 @@
  "POST /api/v1/config/llm": {
   "__model__": "LLMConfigUpdateResponse",
   "config": "LLMConfig",
+  "expected_generation": "null|string",
+  "pi_workers_deferred": "integer|null",
+  "pi_workers_recycled": "integer|null",
   "status": "string"
  },
  "POST /api/v1/config/llm/test": {
