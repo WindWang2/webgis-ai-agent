@@ -210,7 +210,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         })
         .catch(() => {
           useToastStore.getState().addToast(
-            t('hud.layerStyle.frameOverrideFailed', { scope: frameEditScopeLabel(frameScope) }),
+            t('layerStyle.frameOverrideFailed', { scope: frameEditScopeLabel(frameScope) }),
             'error',
           );
         });
