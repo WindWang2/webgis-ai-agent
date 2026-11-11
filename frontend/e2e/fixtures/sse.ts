@@ -194,7 +194,7 @@ export function firstEventName(body: string): string {
 }
 
 /**
- * G15 journey-14 夹具：Agent 对话提交携带 frame_product 的三画幅产品。
+ * G15 journey-16 夹具：Agent 对话提交携带 frame_product 的三画幅产品。
  *
  * committed spec 形状 = 服务端 bind 后的真实投影（layout.frames 身份登记 +
  * frame_product 契约 + 共享分级）；journey 断言 Studio 画幅面板恢复三幅。

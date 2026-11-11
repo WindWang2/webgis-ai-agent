@@ -1,5 +1,5 @@
 /**
- * Journey 13 — stub-LLM / 夹具路径下的 Agent MapSpec 提交。
+ * Journey 15 — stub-LLM / 夹具路径下的 Agent MapSpec 提交。
  *
  * 断言：MapSpec revision 从 0 递增、图层可见、图例存在。
  * mock 档用确定性 SSE 夹具；real 档走 nightly 的确定性 LLM stub + 真实后端（Pi 对话路径）。
@@ -55,7 +55,7 @@ async function workbenchRevision(page: Page, sessionId: string, accessToken?: st
   return Number(data.revision ?? 0);
 }
 
-test.describe('journey-13 Pi stub MapSpec 提交', () => {
+test.describe('journey-15 Pi stub MapSpec 提交', () => {
   test('mock：对话提交后 revision 递增、图层可见、图例存在', async ({ page }) => {
     test.skip(MODE !== 'mock', 'mock-mode variant');
     const world = defaultWorld();

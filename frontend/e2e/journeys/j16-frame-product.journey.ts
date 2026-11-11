@@ -1,11 +1,11 @@
 /**
- * Journey 14 — G15 多画幅产品工作台旅程（mock 档）。
+ * Journey 16 — G15 多画幅产品工作台旅程（mock 档）。
  *
  * 真实浏览器路径：Agent 对话提交三画幅产品（SSE 夹具 = 服务端 bind 后的
  * spec 投影）→ Map Studio「画幅」子页签恢复三幅 + 共享分级摘要 →
  * 用户改第二幅标题（键级 CAS patch，frame_id 身份不变）→ 激活第三幅。
  */
-import { test, expect, type Page, type Response } from 'playwright/test';
+import { test, expect, type Response } from 'playwright/test';
 import {
   bootstrapMock,
   defaultWorld,
@@ -21,7 +21,7 @@ interface SentMutation {
   patch: { active_frame?: string; frames?: Array<{ frame_id: string; title?: string }> };
 }
 
-test.describe('journey-14 多画幅产品工作台', () => {
+test.describe('journey-16 多画幅产品工作台', () => {
   test('mock：三画幅恢复 · 改名 CAS · 激活画幅', async ({ page }) => {
     test.skip(MODE !== 'mock', 'mock-mode variant');
     const world = defaultWorld();
