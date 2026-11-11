@@ -558,7 +558,18 @@ class DataImportService:
                         )
                     fresh.receipts[key] = receipt
                     fresh.diagnostics.update(state.diagnostics)
-                    await asyncio.to_thread(staging.save_state, fresh)
+                    try:
+                        await asyncio.to_thread(staging.save_state, fresh)
+                    except OSError as exc:
+                        # A19：收据落盘失败 —— 成员按失败披露（typed），不虚称成功
+                        logger.exception("receipt persist failed for %s", key)
+                        if fm is not None:
+                            fm.status = MemberStatus.FAILED
+                        fresh.receipts[key] = CommitReceipt(
+                            member_key=key, plan_hash=plan_hash, status="failed",
+                            error_code="STAGING_WRITE_FAILED",
+                            error_message=f"收据写入失败: {exc}"[:200],
+                        )
                 # job 进度：已处理成员数 / 总数（真值，不伪造百分比）
                 if handle is not None:
                     await handle.progress(

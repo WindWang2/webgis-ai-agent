@@ -257,7 +257,25 @@ async def submit_import_commit(
         for m in targets:
             m.status = MemberStatus.COMMITTING
         service._committing_ids.add(batch_id)
-        await asyncio.to_thread(staging.save_state, state)
+        try:
+            await asyncio.to_thread(staging.save_state, state)
+        except OSError as exc:
+            # A19：staging 写失败（如磁盘满）→ typed 拒绝 + job 落 failed，
+            # 不留半启动状态、不裸抛 OSError
+            service._committing_ids.discard(batch_id)
+            from app.services.data_operations.runner import _sync_session
+            from app.services.jobs.store import DurableJobStore
+
+            with _sync_session() as db:
+                DurableJobStore.mark_failed_sync(
+                    db, job_id, error=exc, message="STAGING_WRITE_FAILED")
+                db.commit()
+            from app.services.data_import.service import DataImportError
+
+            raise DataImportError(
+                "STAGING_WRITE_FAILED",
+                f"staging 状态写入失败（{exc}）；提交未启动", status=507,
+            ) from exc
 
     cancel_event = asyncio.Event()
     service._cancel_events[batch_id] = cancel_event
