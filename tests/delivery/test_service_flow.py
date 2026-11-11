@@ -470,8 +470,9 @@ async def test_fabric_parquet_fast_path(delivery_env, seeded_session, actor):
         format="geoparquet", filename="fast")
     view = await _deliver(spec, actor)
     assert view.status == "completed", (view.error_code, view.error)
-    assert "fast_path_byte_copy" in view.receipt.losses_applied
-    src_sha = Path(written["path"]).read_bytes().__len__() and None
+    # fast path 标记进 copy_mode（不污染损失词汇表 —— 评审 P3）
+    assert view.receipt.copy_mode == "byte_copy"
+    assert "fast_path_byte_copy" not in view.receipt.losses_applied
     src = Path(written["path"])
     out, _, _, sha = await resolve_download(view.job_id, None, actor)
     assert out.read_bytes() == src.read_bytes(), "字节级一致（无中间格式）"
