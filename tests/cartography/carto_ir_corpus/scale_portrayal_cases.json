@@ -1,0 +1,296 @@
+{
+  "corpus_version": "g27-scale-portrayal/1.0.0",
+  "policy_modes": ["auto_lod", "fixed_density", "disabled"],
+  "units": ["zoom_level", "screen_px", "ground_m"],
+  "label_zoom_bands": [
+    {"minZoom": 0.0, "maxZoom": 6.0, "topRatio": 0.3, "sizeRatio": 0.8},
+    {"minZoom": 6.0, "maxZoom": 10.0, "topRatio": 0.6, "sizeRatio": 0.9},
+    {"minZoom": 10.0, "maxZoom": 14.0, "topRatio": 0.85, "sizeRatio": 1.0},
+    {"minZoom": 14.0, "maxZoom": 24.0, "topRatio": 1.0, "sizeRatio": 1.1}
+  ],
+  "cases": [
+    {
+      "id": "lod-boundary-z3",
+      "zoom": 3.0,
+      "layer": {"id": "L3"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": true,
+        "tier": "world",
+        "band_id": "lod-0",
+        "visibility": "visible",
+        "label_top_ratio": 0.3,
+        "symbol_size_ratio": 0.8,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "lod-boundary-z6",
+      "zoom": 6.0,
+      "layer": {"id": "L6"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": true,
+        "tier": "world",
+        "band_id": "lod-1",
+        "visibility": "visible",
+        "label_top_ratio": 0.6,
+        "symbol_size_ratio": 0.9,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "lod-boundary-z10",
+      "zoom": 10.0,
+      "layer": {"id": "L10"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": true,
+        "tier": "province",
+        "band_id": "lod-2",
+        "visibility": "visible",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 1.0,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "lod-boundary-z14",
+      "zoom": 14.0,
+      "layer": {"id": "L14"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": true,
+        "tier": "street",
+        "band_id": "lod-3",
+        "visibility": "visible",
+        "label_top_ratio": 1.0,
+        "symbol_size_ratio": 1.1,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "lod-boundary-z19",
+      "zoom": 19.0,
+      "layer": {"id": "L19"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": true,
+        "tier": "street",
+        "band_id": "lod-3",
+        "visibility": "visible",
+        "label_top_ratio": 1.0,
+        "symbol_size_ratio": 1.1,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "legacy-no-policy",
+      "zoom": 8.0,
+      "layer": {"id": "legacy"},
+      "policy": null,
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": false,
+        "tier": "province",
+        "band_id": "disabled",
+        "visibility": "visible",
+        "label_top_ratio": 0.6,
+        "symbol_size_ratio": 0.9,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "unknown-policy-mode",
+      "zoom": 10.0,
+      "layer": {"id": "U1"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "turbo_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": false,
+        "tier": "province",
+        "band_id": "disabled",
+        "visibility": "visible",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 1.0,
+        "diagnostics_contains": ["SCALE.POLICY.UNKNOWN_MODE"]
+      }
+    },
+    {
+      "id": "unknown-policy-version",
+      "zoom": 10.0,
+      "layer": {"id": "U2"},
+      "policy": {"version": "g27-scale-portrayal/0.9.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": false,
+        "tier": "province",
+        "band_id": "disabled",
+        "visibility": "visible",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 1.0,
+        "diagnostics_contains": ["SCALE.POLICY.UNKNOWN_VERSION"]
+      }
+    },
+    {
+      "id": "invalid-pinned-ratio",
+      "zoom": 10.0,
+      "layer": {"id": "U3"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod", "pinned_size_ratio": 99.0},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": false,
+        "tier": "province",
+        "band_id": "disabled",
+        "visibility": "visible",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 1.0,
+        "diagnostics_contains": ["SCALE.POLICY.INVALID_PINNED_RATIO"]
+      }
+    },
+    {
+      "id": "ghost-priority-field",
+      "zoom": 10.0,
+      "layer": {"id": "U4"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod", "priority_field": "ghost_field"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": false,
+        "tier": "province",
+        "band_id": "disabled",
+        "visibility": "visible",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 1.0,
+        "diagnostics_contains": ["SCALE.POLICY.GHOST_PRIORITY_FIELD"]
+      }
+    },
+    {
+      "id": "user-hidden-all-zooms",
+      "zoom": 6.0,
+      "layer": {"id": "H", "layout": {"visibility": "none"}},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": false,
+        "tier": "world",
+        "band_id": "disabled",
+        "visibility": "hidden_by_user",
+        "label_top_ratio": 0.6,
+        "symbol_size_ratio": 0.9,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "pinned-size-wins",
+      "zoom": 10.0,
+      "layer": {"id": "P"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod", "pinned_size_ratio": 2.5},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": true,
+        "tier": "province",
+        "band_id": "lod-2",
+        "visibility": "visible",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 2.5,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "fixed-density-missing-ratio",
+      "zoom": 10.0,
+      "layer": {"id": "F"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "fixed_density"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": false,
+        "tier": "province",
+        "band_id": "disabled",
+        "visibility": "visible",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 1.0,
+        "diagnostics_contains": ["SCALE.POLICY.FIXED_DENSITY_MISSING_RATIO"]
+      }
+    },
+    {
+      "id": "dpi-72-vs-300-same-visibility",
+      "zoom": 10.0,
+      "layer": {"id": "D"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "options": {"target_dpi": 72.0, "frame": {"center": [0.0, 30.0]}},
+      "expected": {
+        "applied": true,
+        "tier": "province",
+        "band_id": "lod-2",
+        "visibility": "visible",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 1.0,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "non-mercator-crs",
+      "zoom": 10.0,
+      "layer": {"id": "C"},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "options": {"crs": "EPSG:4326", "frame": {"center": [116.0, 39.0]}},
+      "expected": {
+        "applied": true,
+        "tier": "province",
+        "band_id": "lod-2",
+        "visibility": "visible",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 1.0,
+        "scale_denominator": null,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "degenerate-zoom-gate",
+      "zoom": 8.0,
+      "layer": {"id": "G", "visibility": {"min_zoom": 10.0, "max_zoom": 5.0}},
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": true,
+        "tier": "province",
+        "band_id": "lod-1",
+        "visibility": "visible",
+        "label_top_ratio": 0.6,
+        "symbol_size_ratio": 0.9,
+        "diagnostics_contains": []
+      }
+    },
+    {
+      "id": "hidden-representation-window",
+      "zoom": 10.0,
+      "layer": {
+        "id": "R",
+        "representation": {
+          "windows": [
+            {"min_zoom": 0.0, "max_zoom": 24.0, "mode": "hidden"}
+          ]
+        }
+      },
+      "policy": {"version": "g27-scale-portrayal/1.0.0", "mode": "auto_lod"},
+      "available_fields": ["name", "population"],
+      "expected": {
+        "applied": true,
+        "tier": "province",
+        "band_id": "lod-2",
+        "visibility": "hidden_by_representation",
+        "hidden_reason": "SCALE.HIDDEN.REPRESENTATION",
+        "label_top_ratio": 0.85,
+        "symbol_size_ratio": 1.0,
+        "diagnostics_contains": []
+      }
+    }
+  ]
+}
