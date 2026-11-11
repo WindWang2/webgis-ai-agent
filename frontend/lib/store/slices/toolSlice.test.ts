@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { MAP_TOOLS, type MapToolId } from './toolSlice';
 
 /**
  * ToolSlice（V7）—— 全局地图工具唯一真相。
@@ -11,6 +12,16 @@ import { useHudStore } from '@/lib/store/useHudStore';
 describe('toolSlice', () => {
   beforeEach(() => {
     useHudStore.getState().clearToolState();
+  });
+
+  // G14 and G16 extend the same closed union; merging either must retain both.
+  const mergedTools: MapToolId[] = ['edit_labels', 'split_feature'];
+  it.each(mergedTools)('retains %s in the shared tool vocabulary and state', (tool) => {
+    expect(MAP_TOOLS).toContain(tool);
+    useHudStore.getState().setActiveMapTool(tool);
+    expect(useHudStore.getState().activeMapTool).toBe(tool);
+    useHudStore.getState().clearToolState();
+    expect(useHudStore.getState().activeMapTool).toBeNull();
   });
 
   it('activating a tool replaces the previous one (mutual exclusion)', () => {
