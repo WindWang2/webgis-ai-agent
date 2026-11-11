@@ -6,7 +6,7 @@
 # 或 registry API（无 docker 环境时）。
 
 # Stage 1: Frontend Dependencies
-FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS frontend-deps
+FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS frontend-deps
 WORKDIR /app/frontend
 # pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。Node 25+
 # 不再内置 Corepack；用 npm 显式安装固定 pnpm 版本（应用仍由 pnpm 安装）。
@@ -16,7 +16,7 @@ COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Stage 2: Frontend Builder
-FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS frontend-builder
+FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS frontend-builder
 WORKDIR /app/frontend
 RUN npm install --global pnpm@10.15.1
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
@@ -82,12 +82,12 @@ COPY --from=pi-builder /app/vendor/pi/node_modules/jiti ./vendor/pi/node_modules
 # 基线；alpine 的 musl 二进制不可用）只复制 node 单二进制 —— 运行时只需
 # `node server.js` 与 Pi RPC 的 `node rpc-entry.js`，npm/corepack 不入
 # 镜像以控制体积。digest 与 Dockerfile.prod 的 node-runtime 阶段一致。
-FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-runtime
+FROM node:26-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS node-runtime
 
 # Stage 4c: Pi RPC runtime builder（ADR-0282；同 Dockerfile.prod 的
 # pi-builder —— bundle 及其锁定的 jiti 扩展加载器；backend-builder（compose api 目标）
 # 与 runner 两个消费者都复制该目录）。
-FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS pi-builder
+FROM node:26-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS pi-builder
 WORKDIR /app
 COPY vendor/pi/package.json vendor/pi/package-lock.json ./vendor/pi/
 RUN cd vendor/pi && npm ci --no-audit --no-fund && rm -rf node_modules
