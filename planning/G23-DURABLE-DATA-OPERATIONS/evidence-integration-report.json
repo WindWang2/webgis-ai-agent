@@ -1,0 +1,48 @@
+{
+  "scenarios": {
+    "S1": {
+      "batch_status_via_b": "committing",
+      "job_status_via_b": "running",
+      "job_kind": "data_import",
+      "pass": true
+    },
+    "S2": {
+      "cancel_response": "cancelling",
+      "batch_final_via_b": "cancelled",
+      "job_final_via_b": "cancelled",
+      "pass": true
+    },
+    "S3": {
+      "job2": "2",
+      "job2_final": "completed",
+      "batch_final": "completed",
+      "receipt_status": "completed",
+      "pass": true
+    },
+    "S4": {
+      "job4": "3",
+      "b_view_after_crash": "committing",
+      "stale_rows_injected": 1,
+      "b_view_after_sweep": "configured",
+      "pass": true,
+      "a_view_after_restart": "configured"
+    },
+    "S5": {
+      "plan_id": "fc-1681be5138d9441d",
+      "job": "5",
+      "a_job_view_status": "running",
+      "a_cancel": {
+        "plan_id": "fc-1681be5138d9441d",
+        "cancelled": true
+      },
+      "job_final": "cancelled",
+      "pass": true
+    }
+  },
+  "resource": {
+    "samples": 27,
+    "rss_peak_a_kb": 741280,
+    "rss_peak_b_kb": 833960,
+    "data_dir_peak_bytes": 40659642
+  }
+}
