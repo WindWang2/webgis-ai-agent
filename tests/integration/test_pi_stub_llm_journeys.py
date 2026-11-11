@@ -913,10 +913,14 @@ async def test_a5_journeys_on_real_pi_bridge():
     assert "map_product" not in g28_tc, jg28
     assert jg28.get("goal_satisfaction") is None, jg28
     assert jg28.get("persisted_goal_satisfaction") is None, jg28
-    # 若后续环境具备 render 观察使终验到终态，则 SSE 与落库块必须同裁决
-    #（软一致性 —— 硬面由单元/接线测试与前端旅程锁定）。
-    if isinstance(jg28.get("goal_satisfaction"), dict):
-        assert jg28["goal_satisfaction"].get("verdict") ==             (jg28.get("persisted_goal_satisfaction") or {}).get("verdict")
+    # 若后续环境具备 render 观察使终验到终态（map_finalization_seen=True），
+    # goal 投影必须在场且 SSE 与落库块同裁决（硬面）—— 本沙箱该分支诚实
+    # 未达（review 10ii：原软分支不可达，改为以观察面为条件）。
+    if jg28.get("map_finalization_seen"):
+        g28_gs2 = jg28.get("goal_satisfaction")
+        assert isinstance(g28_gs2, dict) and g28_gs2.get("verdict"), jg28
+        assert isinstance(jg28.get("persisted_goal_satisfaction"), dict), jg28
+        assert jg28["persisted_goal_satisfaction"].get("verdict") ==             g28_gs2.get("verdict"), jg28
 
     # J2：换色恰一次 LLM 调用（无数据重算）
     assert j["J2"]["llm_calls"] == 1, j["J2"]

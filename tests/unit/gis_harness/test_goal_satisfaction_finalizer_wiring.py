@@ -156,8 +156,11 @@ def test_late_receipt_does_not_change_persisted_verdict():
                      "input_ref": "ref:ds1", "output_ref": "ref:ds1-out",
                      "row_count": 100, "computed_rows": 100,
                      "skipped_rows": 0, "error_count": 0}]}}
-    stored_after = dict(stored)
-    assert stored_after == stored  # 块未被后续调用修改（快照语义）
+    # 快照语义 = 同输入重评估逐位一致（复审 10i：与字典自比对是恒真式，
+    # 改为对比「同输入确定性重评估」与「新输入改变了裁决」两侧）。
+    redone = map_product_block(MapCompletionResult(), 7, chapter=chapter,
+                               receipts=partial_bundle)
+    assert redone["goal_satisfaction"] == stored
     report_next = evaluate_goal_satisfaction(chapter,
                                              map_product=_product(),
                                              receipts=good_bundle)
@@ -295,3 +298,60 @@ def test_bounded_payload_includes_requirement_rows():
     assert rows[0]["next_action"] == "reobserve"
     assert rows[0]["verdict"] == "partial"
     json.dumps(payload, ensure_ascii=False)  # SSE 可序列化
+
+
+# ── 复审加固回归（P1 前缀伪造 + frame summary 一致性）────────────────────
+
+def test_delivery_prefix_forgery_rejected():
+    """评审 F1c：format=csv-forged 的完成回执（无 sha256）不得经子串绑定
+    冒充 csv 交付而 fulfilled —— fail-closed artifact_unverified。"""
+    chapter = {"query": "q", "intent": {"export_intents": ["csv"]},
+               "analysis_steps": []}
+    bundle = {"session_id": "s1", "families": {
+        "edit": [], "compute": [], "import": [], "raster": [], "refresh": [],
+        "delivery": [{"delivery_id": "dx", "job_id": "jx",
+                      "format": "csv-forged", "status": "completed",
+                      "filename": "x.csv", "row_count": 120}]}}
+    report = evaluate_goal_satisfaction(chapter, map_product=_product(),
+                                        receipts=bundle)
+    v = next(v for v in report.requirements if v.requirement_id == "export:csv")
+    assert v.verdict.value != "fulfilled"
+    assert v.failed_rule == "artifact_unverified"
+
+
+def test_frame_summary_forgery_fail_closed():
+    """评审 F3a/F3d：伪造 summary（complete / 全 verified / required=0）
+    不得越过逐行事实 —— 行在场时以更严一侧为准。"""
+    forged = {
+        "product_verdict": {"verdict": "READY", "reasons": []},
+        "final_map_status": "verified",
+        "render_status": "verified",
+        "checked_revision": 7,
+        "frame_product": {
+            "status": "complete", "mapspec_revision": 7,
+            "required_frames": ["f1", "f2"],
+            "frames": [
+                {"frame_id": "f1", "required": True, "binding": "bound",
+                 "observation": "not_observed"},
+                {"frame_id": "f2", "required": True, "binding": "bound",
+                 "observation": "not_observed"},
+            ],
+            "problems": [],
+            "summary": {"total": 2, "required": 2, "verified": 2,
+                        "live_observed": 2, "export_verified": 0,
+                        "snapshot_only": 0, "not_observed": 0},
+        },
+    }
+    report = evaluate_goal_satisfaction(_chapter(), map_product=forged)
+    map_v = next(v for v in report.requirements if v.requirement_id == "map")
+    assert map_v.verdict.value == "partial"
+    assert map_v.failed_rule == "frame_product_incomplete"
+    # required=0 伪造：行 required>0 仍设闸
+    forged0 = dict(forged)
+    forged0["frame_product"] = dict(forged["frame_product"])
+    forged0["frame_product"]["summary"] = dict(forged["frame_product"]["summary"])
+    forged0["frame_product"]["summary"]["required"] = 0
+    forged0["frame_product"]["summary"]["verified"] = 0
+    report0 = evaluate_goal_satisfaction(_chapter(), map_product=forged0)
+    map_v0 = next(v for v in report0.requirements if v.requirement_id == "map")
+    assert map_v0.verdict.value == "partial"

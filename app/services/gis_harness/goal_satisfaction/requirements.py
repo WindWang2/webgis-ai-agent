@@ -44,10 +44,13 @@ _STATISTICS_ZH_MARKERS = ("聚合", "统计")
 
 #: G28 A16：数据交付格式词表（G18 data_delivery 家族）—— 这些格式的
 #: export 意图派生 delivery_expected 需求（证据必须来自 data_delivery
-#: 回执，地图出版导出回执不背书）。词表与 G18 FormatCapability 对齐。
+#: 回执，地图出版导出回执不背书）。词表与 G18 FormatCapability 生产者
+#: 词表对齐（含 shapefile_zip/flatgeobuf/geoparquet —— 复审 P2：缺项会
+#: 让合法交付 fail-closed 永不识别）。
 DATA_DELIVERY_FORMATS = frozenset({
-    "shp", "shapefile", "geojson", "gdb", "filegdb", "gpkg",
-    "geopackage", "csv", "xlsx", "kml", "kmz", "geojsonseq",
+    "shp", "shapefile", "shapefile_zip", "geojson", "geojsonseq",
+    "gdb", "filegdb", "gpkg", "geopackage", "geoparquet",
+    "csv", "xlsx", "kml", "kmz", "flatgeobuf",
 })
 
 

@@ -13,7 +13,8 @@
 | 11-12 | 干净 BASE 复现（临时 worktree @b8f2a6ecc，同文件集） | 失败名单**逐项一致**（51 项，`comm` 零差异）→ 全部 pre-existing，G28 零引入 |
 | 11-12 | frontend `vitest run --project functional lib/types/goal-satisfaction.test.ts components/chat/goal-satisfaction-card.test.tsx` | 10 passed（vitest 4.1.12，local node_modules） |
 | 11-12 | frontend `tsc --noEmit`（React 19 JSX namespace 修正后） | exit 0 |
-| 11-12 | 旅程驱动 + pytest 侧 G28 断言（SSE goal 投影 ≡ 落库块 verdict） | 待跑（vendor 构建中） |
+| 11-12 | 旅程驱动 + pytest 侧 G28 断言（SSE goal 投影 ≡ 落库块 verdict） | **1 passed (58.5s)**（`PI_JOURNEY_E2E=1`，持宿主锁 heavy；vendor dd30101cf 本地构建） |
+| 11-12 | `node playwright/cli.js test e2e/journeys/j17-goal-satisfaction.journey.ts --workers=1`（真实 Chromium + next dev@3310 + 生产契约 SSE） | **1 passed (3.7s)** — GoalSatisfactionCard 渲染同一持久化裁决 |
 
 ## 失败 triage（全目录 28F+23E）
 
@@ -45,7 +46,15 @@ review_harness_medium(1F) / r1_review_fixes(1F)。
 - A21/A22/A23 repair 预算/无进展/不盲重写：repair_actions 套件（blocker 码 + expected_new_evidence + 路径注册）✅
 - A24 三面同裁决：bounded_payload.requirements + 前端 parser/card 测试 + 旅程断言（待 A26 实跑）⏳
 - A25 旧回执 unknown 中性：GC-receipt-legacy-fields-unknown-neutral ✅
-- A26 真实 Pi 闭环：待旅程实跑 ⏳
+- A26 真实 Pi 闭环：`PI_JOURNEY_E2E=1` 旅程套件全绿 —— 真实 Pi 子进程 + 脚本化
+  stub provider + 真实后端 + 真实工具链（合成标注 fixture 48 校 + 合成行政区，
+  走真实 ingest/GCJ→WGS/GPKG/dispatch/MapSpec 突变）；JG28 锁定诚实性：
+  产品组装成功但次要计划行 pending → 终验诚实 pending、不落块、task_complete
+  不携带 map_product/goal（queued/pending ≠ complete 的旅程级证明）✅
+- A24 三面同裁决：wiring/单测（62 绿）+ 前端 parser/card（10 绿）+ 旅程
+  SSE≡落库一致性 + j17 真实浏览器渲染 ✅
+- A27 浏览器观察缺席不伪造：j17/旅程侧 map not_evaluated+reobserve（诚实
+  等待显示）✅
 - A27 观察缺席不伪造：frame not_observed 默认 + render unknown 语料 ✅
 - A28 ≥6 端到端独立 oracle：语料 118 案例（12 假成功 + 2 合法无地图 + 6 任务族）✅
 - A29 数据更新失效旧证据：test_late_receipt + GC-receipt-refresh-stale-observation-partial + finalizer 漂移守卫（既有）✅

@@ -151,6 +151,25 @@ def _frame_gate(map_product: Optional[Dict[str, Any]]):
     required = int(summary.get("required") or 0)
     verified = int(summary.get("verified") or 0)
     snapshot_only = int(summary.get("snapshot_only") or 0)
+    # G28 复审加固（fail-closed 一致性重查）：frames 行在场时以**行**为准
+    # 重算 required/verified/snapshot_only，与 summary 取更严一侧 —— 伪造
+    # summary（complete/全 verified/required=0）不得越过逐行事实（评审
+    # F3a/F3d 方向）。生产块由 verify_frame_product 单遍同源产出，一致时
+    # 数值不变（零漂移）。
+    frame_rows = [r for r in (fp.get("frames") or [])[:12]
+                  if isinstance(r, dict)]
+    if frame_rows:
+        rows_required = sum(1 for r in frame_rows if r.get("required"))
+        rows_verified = sum(
+            1 for r in frame_rows
+            if r.get("binding") == "bound"
+            and r.get("observation") in ("live_observed", "export_verified"))
+        rows_snapshot = sum(
+            1 for r in frame_rows
+            if r.get("observation") == "snapshot")
+        required = max(required, rows_required)
+        verified = min(verified, rows_verified)
+        snapshot_only = max(snapshot_only, rows_snapshot)
     if required <= 0:
         return None
     if verified < required:
@@ -607,7 +626,8 @@ def _eval_export_requirement(
         out.next_action = "export_product"
         return out
     if is_delivery and receipts is not None:
-        cap_out = _delivery_caps_verdict(requirement, receipts, out)
+        cap_out = _delivery_caps_verdict(requirement, receipts, out,
+                                         evidence=receipt)
         if cap_out is not None:
             return cap_out
     out.verdict = ReqState.FULFILLED
@@ -618,20 +638,40 @@ def _delivery_caps_verdict(
     requirement: GoalRequirement,
     receipts: Dict[str, Any],
     out: ReqVerdict,
+    evidence: Optional[GoalEvidence] = None,
 ) -> Optional[ReqVerdict]:
-    """交付回执语义闸（scope/身份/取消；None = 无码）。"""
-    rows = [r for r in _dict(receipts.get("families")).get("delivery", [])
-            if isinstance(r, dict)
-            and str(r.get("format") or "").strip().lower()
-            == requirement.export_format]
+    """交付回执语义闸（scope/身份/取消；None = 无码）。
+
+    ``evidence``（G28 复审加固）：已绑定的证据行 —— 行选择以证据行 detail
+    内的 ``fmt=<token>`` **终结匹配**为准（评审 P1：子串匹配被
+    ``csv-forged`` 类前缀伪造绕过 exact-format 行选择 → 语义闸静默空转；
+    现在证据行与 bundle 行身份不一致 → fail-closed artifact_unverified）。
+    """
+    rows_all = [r for r in _dict(receipts.get("families")).get("delivery", [])
+                if isinstance(r, dict)]
+    bound_fmt = ""
+    if evidence is not None:
+        for token in str(evidence.detail or "").split():
+            if token.startswith("fmt="):
+                bound_fmt = token[4:].strip().lower()
+                break
+    fmt_token = bound_fmt or requirement.export_format
+    rows = [r for r in rows_all
+            if str(r.get("format") or "").strip().lower() == fmt_token]
     if not rows:
-        return None
+        # 证据行在场但 bundle 无同身份行 —— 证据↔回执身份不可对账，
+        # fail-closed（绝不静默落回 fulfilled）。
+        out.missing.append(R_ARTIFACT_UNVERIFIED)
+        out.verdict = ReqState.PARTIAL
+        out.failed_rule = R_ARTIFACT_UNVERIFIED
+        out.next_action = "reexport"
+        out.uncertainty.append(
+            f"delivery receipt identity unmatched (fmt={fmt_token[:24]})")
+        return out
     caps: List[str] = []
     for row in rows[:2]:
         caps.extend(caps_for_receipt_row("delivery", row))
-    conflicted = conflicted_artifact_names(
-        [r for r in _dict(receipts.get("families")).get("delivery", [])
-         if isinstance(r, dict)])
+    conflicted = conflicted_artifact_names(rows_all)
     for row in rows[:2]:
         if str(row.get("filename") or "").strip() in conflicted:
             caps.append("artifact_checksum_mismatch")

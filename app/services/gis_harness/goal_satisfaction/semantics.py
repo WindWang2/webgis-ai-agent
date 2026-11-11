@@ -184,13 +184,16 @@ def caps_for_receipt_row(family: str, row: Dict[str, Any]) -> List[str]:
 
 
 def bundle_artifact_caps(bundle: Optional[Dict[str, Any]]) -> List[str]:
-    """bundle 级工件身份对账（delivery 族跨行）。"""
+    """bundle 级工件身份对账（delivery 族跨行；复审修正：行在
+    ``bundle["families"]["delivery"]`` 下，非 bundle 顶层）。"""
     if not isinstance(bundle, dict):
         return []
     try:
+        families = bundle.get("families")
+        delivery = families.get("delivery") if isinstance(families, dict) \
+            else bundle.get("delivery")
         return artifact_identity_caps(
-            [r for r in (bundle.get("delivery") or [])
-             if isinstance(r, dict)])
+            [r for r in (delivery or []) if isinstance(r, dict)])
     except Exception:  # noqa: BLE001
         return []
 

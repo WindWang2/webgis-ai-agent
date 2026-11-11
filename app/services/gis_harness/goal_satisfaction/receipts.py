@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .contracts import (
     EvidenceClass,
@@ -207,24 +207,24 @@ async def _collect_delivery(session_id: str) -> List[Dict[str, Any]]:
         from app.services.data_delivery import service as dl_service
         from app.services.data_delivery.source_resolver import DeliveryActor
 
-        def _query() -> List[str]:
+        def _query() -> Tuple[List[str], Optional[str]]:
             with SessionLocal() as db:
                 conv = db.query(Conversation).filter(
                     Conversation.id == session_id).first()
                 if conv is None or not getattr(conv, "user_id", None):
                     # 匿名会话无 actor 身份 —— 不读交付回执（授权不放宽）。
-                    return []
+                    return [], None
                 records = db.query(AnalysisTask).filter(
                     AnalysisTask.task_type == dl_service.TASK_TYPE,
                     AnalysisTask.session_id == session_id,
                 ).order_by(AnalysisTask.created_at.desc())[
                     :FAMILY_BUDGETS["delivery"]].all()
-                return [str(r.id) for r in records]
+                return ([str(r.id) for r in records],
+                        str(conv.user_id))
 
-        job_ids = await asyncio.to_thread(_query)
-        if not job_ids:
+        job_ids, conv_user = await asyncio.to_thread(_query)
+        if not job_ids or not conv_user:
             return []
-        conv_user = await asyncio.to_thread(_conv_user_id, session_id)
         actor = DeliveryActor(user_id=conv_user)
         for job_id in job_ids:
             try:
@@ -263,16 +263,6 @@ async def _collect_delivery(session_id: str) -> List[Dict[str, Any]]:
         logger.debug("[GoalReceipts] delivery collect failed session=%s",
                      session_id, exc_info=True)
     return rows
-
-
-def _conv_user_id(session_id: str) -> Optional[str]:
-    from app.core.database import SessionLocal
-    from app.models.db_model import Conversation
-
-    with SessionLocal() as db:
-        conv = db.query(Conversation).filter(
-            Conversation.id == session_id).first()
-        return str(conv.user_id) if conv is not None and conv.user_id else None
 
 
 async def _collect_raster(session_id: str) -> List[Dict[str, Any]]:
