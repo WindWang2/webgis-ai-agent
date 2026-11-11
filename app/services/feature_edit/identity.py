@@ -21,11 +21,26 @@ __all__ = [
     "index_by_wfid",
     "resolve_feature_ids",
     "wfid_for_index",
+    "wfid_for_created",
 ]
 
 
 def wfid_for_index(dataset_fingerprint: str, index: int) -> str:
     digest = hashlib.sha256(f"{dataset_fingerprint}:{index}".encode("utf-8")).hexdigest()[:16]
+    return f"wf1-{digest}"
+
+
+def wfid_for_created(plan_seed: str, op_index: int, child_index: int) -> str:
+    """G14：create/split/merge 新生要素的服务端受控身份。
+
+    派生自 (plan_seed=plan_id, op_index, child_index) —— 同一 plan 的
+    preview 与 commit 重新求值得到同一批 id（幂等重放/redo 身份稳定，
+    绝不按数组下标或时钟重铸）。plan_id 内嵌服务端 UUID，调用方（模型/
+    前端）无法预知或碰撞既有 wf1- 身份（hash 前缀与物化空间一致，但
+    输入域不同 —— 冲突概率按生日界 ≤2^32 个创建计划后 ~0.003%，且
+    plan 校验显式查重后 fail-closed）。
+    """
+    digest = hashlib.sha256(f"create:{plan_seed}:{op_index}:{child_index}".encode("utf-8")).hexdigest()[:16]
     return f"wf1-{digest}"
 
 

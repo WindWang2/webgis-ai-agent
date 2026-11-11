@@ -128,18 +128,91 @@ def apply_deltas_to_features(
 ) -> Tuple[List[GeoJSONFeature], List[str | None]]:
     """把 per-feature deltas 应用到 features（按 WFID_PROP 寻址）。
 
-    返回 (new_features, applied_wfids)。未命中的 wfid 跳过（调用方在
-    preview 阶段已保证存在；commit 阶段的偏差由指纹 CAS 兜底拒绝）。
+    G14 结构性语义（presence）：
+    - ``created``：feature_after 追加为新要素（同 wfid 已存在则跳过 ——
+      幂等重放/redo 不产生重复要素）；
+    - ``removed``：按 wfid 从集合中移除（undo 用完整快照复活）；
+    - 缺省 presence：原 update 语义（字段 + 几何替换）。
+
+    返回 (new_features, applied_wfids)。update 未命中的 wfid 跳过（调用方
+    在 preview 阶段已保证存在；commit 阶段的偏差由指纹 CAS 兜底拒绝）。
     copy-on-write：只有被命中的要素被复制。
+
+    三遍应用（同一 plan 内删除/更新不指向同一 wfid —— plan 校验拒绝）：
+    ① removed 移除；② created 按序插入（带 index 的按原位重插 —— undo 恢复
+    次序；无 index 追加）；③ modified 就地更新。
     """
-    by_wfid = {
-        cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP): (i, f)
-        for i, f in enumerate(features)
-        if isinstance(f, dict)
-    }
     out = list(features)
     applied: List[str | None] = []
+    # ① 移除
+    removed_wfids = {
+        d.get("wfid")
+        for d in deltas
+        if isinstance(d, dict) and d.get("presence") == "removed" and d.get("wfid")
+    }
+    if removed_wfids:
+        out = [
+            f
+            for f in out
+            if not (
+                isinstance(f, dict)
+                and cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP) in removed_wfids
+            )
+        ]
+        applied.extend(sorted(w for w in removed_wfids if w))
+    # ② 出生（幂等：同 wfid 已存在跳过）。带 index 的原位重插按 index 升序
+    # 执行 —— 乱序 index 序列（如 merge 的用户选择序）直接插会得到漂移的
+    # 列表序，undo 的链指纹断言随之诚实失败（R3 P1-1）；升序重放使任意
+    # delta 顺序都恢复到同一确定性次序。
+    seen_wfids: set = set()
+    created_with_index: List[tuple[int, int, dict, str]] = []  # (index, 原序, feature, wfid)
+    created_append: List[tuple[int, dict, str]] = []  # (原序, feature, wfid)
+    for order, delta in enumerate(deltas):
+        if not isinstance(delta, dict) or delta.get("presence") != "created":
+            continue
+        wfid = delta.get("wfid")
+        feature_after = delta.get("feature_after")
+        if not (isinstance(wfid, str) and isinstance(feature_after, dict)):
+            continue
+        if any(
+            isinstance(f, dict)
+            and cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP) == wfid
+            for f in out
+        ) or wfid in seen_wfids:
+            continue
+        new_feature = copy.deepcopy(feature_after)
+        props = new_feature.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            new_feature["properties"] = props
+        props[WFID_PROP] = wfid
+        index = delta.get("index")
+        # R4：collection 期只做下界检查 —— 高于「删除后幸存数」的原位 index
+        # 是良构的（删除集越靠后越常见），上界判断会误路由到 append 打乱
+        # 恢复序；插入期 min(index, len) 仍是畸形 entry 的防御。
+        if isinstance(index, int) and not isinstance(index, bool) and index >= 0:
+            created_with_index.append((index, order, new_feature, wfid))
+        else:
+            created_append.append((order, new_feature, wfid))
+        seen_wfids.add(wfid)
+    for _index, _order, new_feature, wfid in sorted(created_with_index, key=lambda t: (t[0], t[1])):
+        out.insert(min(_index, len(out)), new_feature)
+        applied.append(wfid)
+    for _order, new_feature, wfid in created_append:
+        out.append(new_feature)
+        applied.append(wfid)
+    # ③ 更新
+    by_wfid = {
+        cast(dict[str, JsonValue], f.get("properties", {})).get(WFID_PROP): (i, f)
+        for i, f in enumerate(out)
+        if isinstance(f, dict)
+    }
     for delta in deltas:
+        if not isinstance(delta, dict):
+            continue
+        presence = delta.get("presence")
+        if presence in ("removed", "created"):
+            continue
         wfid = delta.get("wfid")
         hit = by_wfid.get(wfid)
         if hit is None:
@@ -168,6 +241,7 @@ def apply_deltas_to_features(
         if delta.get("geometry_after") is not None:
             new_feature["geometry"] = copy.deepcopy(delta["geometry_after"])
         out[i] = new_feature
+        by_wfid[wfid] = (i, new_feature)
         applied.append(wfid)
     return out, applied
 
@@ -212,9 +286,34 @@ def invert_schema_ops(schema_ops: List[RenameField]) -> List[RenameField]:
 
 
 def invert_deltas(deltas: List[FeatureDelta]) -> List[FeatureDelta]:
-    """per-feature deltas 的逆：before/after 互换。"""
+    """per-feature deltas 的逆：before/after 互换。
+
+    G14 结构性语义：created ↔ removed 互换（快照原样搬移，wfid 不变 ——
+    undo/redo 复用同一身份，绝不重新生成）。快照缺失的 malformed entry
+    按 update 逆处理（防御面：entry 由本服务构造，不应出现）。
+    """
     out: List[FeatureDelta] = []
     for delta in deltas or []:
+        presence = delta.get("presence")
+        if presence == "created":
+            out.append(
+                {
+                    "wfid": delta.get("wfid"),
+                    "presence": "removed",
+                    "feature_before": copy.deepcopy(delta.get("feature_after")),
+                }
+            )
+            continue
+        if presence == "removed":
+            revived: FeatureDelta = {
+                "wfid": delta.get("wfid"),
+                "presence": "created",
+                "feature_after": copy.deepcopy(delta.get("feature_before")),
+            }
+            if isinstance(delta.get("index"), int) and not isinstance(delta.get("index"), bool):
+                revived["index"] = delta["index"]  # 原位重插 —— undo 恢复次序
+            out.append(revived)
+            continue
         inv: FeatureDelta = {"wfid": delta.get("wfid")}
         fields = delta.get("fields")
         if isinstance(fields, dict):

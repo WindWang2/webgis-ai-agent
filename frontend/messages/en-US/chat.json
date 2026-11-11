@@ -314,6 +314,11 @@
     "header": "{count} features · {ref}…",
     "colon": ": ",
     "undoConflict": "Data was modified by another change — refresh the edit history and retry",
-    "undoFailed": "Undo/redo request failed ({phase}) — retry available"
+    "undoFailed": "Undo/redo request failed ({phase}) — retry available",
+    "opCreateFeatures": "Create features",
+    "opDeleteFeatures": "Delete features",
+    "opReplaceGeometry": "Replace geometry",
+    "opSplitFeature": "Split feature",
+    "opMergeFeatures": "Merge features"
   }
 }
