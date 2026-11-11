@@ -324,6 +324,9 @@ frontend/package-lock.json
 # Runner-local real task fixture used by J2 and its backend regression.
 !/scripts/seed_journey_retry.py
 
+# G25：J17 real 档 runner-local 帧产品种子（真实 mutation 管线 fixture）。
+!/scripts/seed_journey_frames.py
+
 # Local agent workspaces
 /.workbuddy/
 /.zwork/

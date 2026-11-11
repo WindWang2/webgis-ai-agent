@@ -188,7 +188,9 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
           const map = mapRef.current?.getMap();
           if (!map) return null;
           try {
-            await waitForMapIdle(map, 5_000);
+            // 交互切换路径的捕获上限 2.5s：快速连点/Escape 不得串行长等待
+            // （捕获失败如实 null —— 快照缺席优于交互卡顿）。
+            await waitForMapIdle(map, 2_500);
             const live = map.getCanvas();
             const center = map.getCenter();
             // dataUrl 是不可变字符串 —— 直接从 live canvas 同步读取（idle 后

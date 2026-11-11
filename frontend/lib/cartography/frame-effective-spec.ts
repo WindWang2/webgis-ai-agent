@@ -149,7 +149,56 @@ function withFilteredSource(
   return out as unknown as MapSpec;
 }
 
-/** 步骤 3：time_window [start,end) 窗（后端 _in_window 同语义）。 */
+/**
+ * 契约 instant → 数据表示空间比较值（后端 normalize_boundary_value 的 JS
+ * 同源移植）：year_int 取契约时区年份整数；epoch_s/ms 取 epoch 数值；
+ * date_string 按数据精度定宽字符串（字典序=时间序）；iso_string 原样
+ * （统一 Z 偏移形状 —— 与数据同构）。解析失败抛 typed error（不猜）。
+ */
+export function normalizeBoundaryValue(
+  instant: string,
+  representation: string,
+  granularity = '',
+  tzName = 'UTC',
+): number | string {
+  const ms = Date.parse(instant);
+  if (Number.isNaN(ms)) {
+    throw new FrameEffectiveSpecError('frame_time_window_invalid', `unparseable instant: ${instant}`);
+  }
+  const date = new Date(ms);
+  if (representation === 'epoch_s') return Math.floor(ms / 1000);
+  if (representation === 'epoch_ms') return ms;
+  // 契约时区日历字段（year_int / date_string）。
+  const parts = tzName === 'UTC'
+    ? { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() }
+    : calendarPartsInZone(date, tzName);
+  if (representation === 'year_int') return parts.year;
+  if (representation === 'date_string') {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    if (granularity === 'year') return `${String(parts.year).padStart(4, '0')}`;
+    if (granularity === 'month' || granularity === 'quarter') {
+      return `${String(parts.year).padStart(4, '0')}-${pad(parts.month)}`;
+    }
+    return `${String(parts.year).padStart(4, '0')}-${pad(parts.month)}-${pad(parts.day)}`;
+  }
+  // iso_string：统一 Z 偏移形状原样（与数据同构比较）。
+  return instant;
+}
+
+function calendarPartsInZone(date: Date, tzName: string): { year: number; month: number; day: number } {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzName, year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const out: Record<string, number> = {};
+  for (const p of fmt.formatToParts(date)) {
+    if (p.type === 'year' || p.type === 'month' || p.type === 'day') {
+      out[p.type] = Number(p.value);
+    }
+  }
+  return { year: out.year, month: out.month, day: out.day };
+}
+
+/** 步骤 3：time_window [start,end) 窗（后端 apply_time_window_to_doc 同语义）。 */
 function timeWindowPredicate(
   tw: Record<string, unknown>,
 ): (value: unknown) => boolean {
@@ -158,18 +207,20 @@ function timeWindowPredicate(
   if (lo === undefined || hi === undefined) {
     throw new FrameEffectiveSpecError('frame_time_window_invalid', 'time_window requires start/end');
   }
-  const numeric = typeof lo === 'number' && !Number.isNaN(lo);
-  if (numeric) {
-    if (typeof hi !== 'number' || Number.isNaN(hi)) {
-      throw new FrameEffectiveSpecError('frame_time_window_invalid', 'time_window bounds must share type');
-    }
+  const representation = typeof tw.time_representation === 'string' ? tw.time_representation : '';
+  const granularity = typeof tw.granularity === 'string' ? tw.granularity : '';
+  const tzName = typeof tw.timezone === 'string' ? tw.timezone : 'UTC';
+  // 契约 instant（字符串）→ 数据表示空间；数值边界视为已归一。
+  const loNorm = typeof lo === 'string' ? normalizeBoundaryValue(lo, representation, granularity, tzName) : lo;
+  const hiNorm = typeof hi === 'string' ? normalizeBoundaryValue(hi, representation, granularity, tzName) : hi;
+  if (typeof loNorm === 'number' && typeof hiNorm === 'number') {
     return (value) =>
-      typeof value === 'number' && !Number.isNaN(value) && (lo as number) <= value && value < (hi as number);
+      typeof value === 'number' && !Number.isNaN(value) && loNorm <= value && value < hiNorm;
   }
-  if (typeof lo !== 'string' || typeof hi !== 'string') {
-    throw new FrameEffectiveSpecError('frame_time_window_invalid', 'time_window bounds must be numeric or string');
+  if (typeof loNorm === 'string' && typeof hiNorm === 'string') {
+    return (value) => typeof value === 'string' && loNorm <= value && value < hiNorm;
   }
-  return (value) => typeof value === 'string' && lo <= value && value < hi;
+  throw new FrameEffectiveSpecError('frame_time_window_invalid', 'time_window bounds must normalize to one comparable type');
 }
 
 /**

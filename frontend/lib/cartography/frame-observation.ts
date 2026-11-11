@@ -81,9 +81,18 @@ declare global {
   }
 }
 
+/** 模块级最新行（cartographic-observation POST 的 frames 增维数据源）。 */
+let latestRows: FrameObservationRow[] | null = null;
+
+/** 供 collectRenderObservation 并入观察体（无发布过 = null → 缺席语义）。 */
+export function latestFrameObservationRows(): FrameObservationRow[] | null {
+  return latestRows;
+}
+
 /** 页面挂点（grid 每次投影刷新时发布；e2e/评估只读）。 */
 export function publishFrameObservations(input: FrameObservationInput): FrameObservationRow[] {
   const rows = collectFrameObservationRows(input);
+  latestRows = rows;
   const payload = {
     sessionId: input.sessionId,
     rows,

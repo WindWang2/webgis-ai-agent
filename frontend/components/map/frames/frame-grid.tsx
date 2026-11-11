@@ -608,7 +608,7 @@ export function FrameProductGrid({
 
   if (!gridState.open) {
     return (
-      <div className="absolute right-3 top-16 z-30">
+      <div className="absolute bottom-4 right-3 z-30">
         <button
           type="button"
           onClick={() => openFrameGrid()}

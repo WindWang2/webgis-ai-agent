@@ -116,6 +116,35 @@ describe('resolveFrameEffectiveSpec', () => {
     expect(payload.features.map((f) => f.properties.year)).toEqual([2020, 2022]); // [2020,2024)
   });
 
+  it('time_window 契约 instant → year_int 归一（G15 J16 夹具同形：字符串界）', () => {
+    const s = spec();
+    const slot = s.frame_product!.frames[0] as { data: Record<string, unknown> };
+    delete slot.data.where;
+    slot.data.time_window = {
+      time_field: 'year', time_representation: 'year_int', granularity: 'year',
+      timezone: 'UTC', layer_id: 'layer-0',
+      start: '2022-01-01T00:00:00Z', end: '2023-01-01T00:00:00Z',
+    };
+    const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
+    expect(out.filteredFeatureCount).toBe(1); // 仅 year=2022 命中
+    const src = (out.document.sources as Record<string, Record<string, unknown>>)['src-0'];
+    const payload = (src.inlineData ?? src.data) as { features: Array<{ properties: { year: number } }> };
+    expect(payload.features[0].properties.year).toBe(2022);
+  });
+
+  it('normalizeBoundaryValue：year_int/date_string/epoch_s + 契约时区口径', async () => {
+    const { normalizeBoundaryValue } = await import('@/lib/cartography/frame-effective-spec');
+    expect(normalizeBoundaryValue('2020-01-01T00:00:00Z', 'year_int')).toBe(2020);
+    // 契约时区 Asia/Shanghai：UTC 2021-12-31T18:00 已是上海 2022-01-01。
+    expect(normalizeBoundaryValue('2021-12-31T18:00:00Z', 'year_int', '', 'Asia/Shanghai')).toBe(2022);
+    expect(normalizeBoundaryValue('2023-05-02T00:00:00Z', 'date_string', 'month')).toBe('2023-05');
+    expect(normalizeBoundaryValue('2023-05-02T00:00:00Z', 'date_string', 'year')).toBe('2023');
+    expect(normalizeBoundaryValue('2023-05-02T00:00:00Z', 'epoch_s')).toBe(
+      Math.floor(Date.parse('2023-05-02T00:00:00Z') / 1000),
+    );
+    expect(() => normalizeBoundaryValue('not-a-date', 'year_int')).toThrow(FrameEffectiveSpecError);
+  });
+
   it('绑定层缺席 / 源非内联 → typed error（不静默回退全幅）', () => {
     const s = spec();
     (s.frame_product!.frames[0] as { data: { layer_id: string } }).data.layer_id = 'layer-x';
