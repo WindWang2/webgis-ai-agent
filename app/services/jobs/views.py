@@ -54,6 +54,10 @@ class JobView(BaseModel):
     #: 批量图册 job 的页级状态（additive；仅 kind=atlas_export 且 result_summary
     #: 携带 pages 时填充 —— 有界 ≤21 条、单行 error、无载荷/无坐标）。
     page_status: Optional[list[dict]] = None
+    #: G23 数据导入 job 的成员级状态（仅 kind=data_import 且 result_summary
+    #: 携带 members 时填充 —— 有界 ≤50 条、单行 error、无载荷/无坐标/
+    #: 无拒绝行原文；成员收据的事实源在批次 staging，此处只是安全投影）。
+    member_status: Optional[list[dict]] = None
     step_count: int = 0
     created_at: Optional[str] = None
     started_at: Optional[str] = None
@@ -123,6 +127,39 @@ def _atlas_page_status(record: AnalysisTask) -> Optional[list[dict]]:
     return out or None
 
 
+def _import_member_status(record: AnalysisTask) -> Optional[list[dict]]:
+    """data_import job → 有界成员级状态投影（G23）。
+
+    只在 kind=data_import 且 ``result_summary.members`` 在场时投影（终态
+    才写入；执行中的进度经 progress/current_step 承载）。每成员只保留展示
+    字段（member_key/display_name/status/单行 error/行数/输出 ref），
+    ≤50 条。任何形状异常 → None（视图层绝不因增值字段炸）。
+    """
+    if str(record.job_kind or "") != "data_import":
+        return None
+    summary = record.result_summary
+    if not isinstance(summary, dict):
+        return None
+    members = summary.get("members")
+    if not isinstance(members, list):
+        return None
+    out: list[dict] = []
+    for raw in members[:50]:
+        if not isinstance(raw, dict):
+            continue
+        err = raw.get("error")
+        out.append({
+            "member_key": str(raw.get("member_key") or "")[:64],
+            "display_name": str(raw.get("display_name") or "")[:96],
+            "status": str(raw.get("status") or "")[:24],
+            "error": (str(err).splitlines()[0][:160] if err else None),
+            "input_rows": raw.get("input_rows"),
+            "rejected_rows": raw.get("rejected_rows"),
+            "output_ref": (str(raw.get("output_ref") or "")[:128] or None),
+        })
+    return out or None
+
+
 def job_from_record(record: AnalysisTask) -> JobView:
     """durable 行 → JobView。只读安全字段。"""
     status = coerce_status(record.status)
@@ -151,6 +188,7 @@ def job_from_record(record: AnalysisTask) -> JobView:
         error=error,
         result_ref=record.result_ref,
         page_status=_atlas_page_status(record),
+        member_status=_import_member_status(record),
         created_at=_iso(record.created_at),
         started_at=_iso(record.started_at),
         finished_at=_iso(record.completed_at),

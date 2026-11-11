@@ -236,6 +236,7 @@ async def submit_import_commit(
         }
         job_id, job_status, reused = submit_async_job(
             task_type=TASK_TYPE,
+            kind="data_import",
             display_name=f"数据导入 · {batch_id[:12]} · {len(pending)}/{len(target_keys)} 成员",
             params=params,
             idempotency_key=key,

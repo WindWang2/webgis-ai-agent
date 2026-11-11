@@ -108,6 +108,7 @@ async def submit_compute_job(
     }
     job_id, job_status, reused = submit_async_job(
         task_type=TASK_TYPE,
+        kind="field_compute",
         display_name=f"字段计算 · {plan.plan_id[:24]}",
         params=params,
         idempotency_key=key,
@@ -137,6 +138,7 @@ async def submit_compute_job(
         # store.create_sync 会因旧行不可复用而建新行）
         job_id, job_status, reused = submit_async_job(
             task_type=TASK_TYPE,
+            kind="field_compute",
             display_name=f"字段计算 · {plan.plan_id[:24]}",
             params=params,
             idempotency_key=key,

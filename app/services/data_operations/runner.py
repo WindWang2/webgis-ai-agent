@@ -34,7 +34,7 @@ from app.lib.cancellation import (
     registry as cancellation_registry,
     use_token,
 )
-from app.services.jobs.lifecycle import JobStatus, coerce_status, is_terminal
+from app.services.jobs.lifecycle import JobKind, JobStatus, coerce_status, is_terminal
 from app.services.jobs.progress import JobProgress, ProgressThrottle
 from app.services.jobs.store import DurableJobStore
 from app.services.jobs.worker_lifecycle import default_worker_id
@@ -379,6 +379,7 @@ def submit_async_job(
     display_name: str,
     params: dict[str, Any],
     idempotency_key: Optional[str],
+    kind: Optional[str] = None,
     owner_id: Optional[str] = None,
     owner_token: Optional[str] = None,
     org_id: Optional[int] = None,
@@ -392,13 +393,28 @@ def submit_async_job(
     Returns:
         (job_id, status, idempotent_reuse)
     """
+    from sqlalchemy import select
+
+    from app.models.db_model import AnalysisTask
     from app.services.jobs.context import current_origin
 
     origin = current_origin()
     with _sync_session() as db:
+        # 预查询区分「本次新建」与「幂等命中既有行」：pending 行在 create 后
+        # 无法与新建区分（create_sync 静默复用），提交语义需要这个事实。
+        preexisting = (
+            db.execute(
+                select(AnalysisTask.id).where(
+                    AnalysisTask.idempotency_key == idempotency_key
+                )
+            ).first()
+            if idempotency_key
+            else None
+        )
         job = DurableJobStore.create_sync(
             db,
             task_type=task_type,
+            kind=kind or JobKind.analysis,
             display_name=display_name,
             parameters=params,
             idempotency_key=idempotency_key,
@@ -416,10 +432,9 @@ def submit_async_job(
         )
         job_id = int(job.id)
         status = str(job.status)
-        reused = bool(idempotency_key) and (
-            job.idempotency_key != idempotency_key
-            or status != JobStatus.pending.value
-        )
+        # 真复用 = create_sync 返回的就是预查询到的那行；旧行终态释放键后
+        # 建的新行（id 不同）是新执行，不是复用。
+        reused = preexisting is not None and int(preexisting[0]) == job_id
         db.commit()
     if origin is not None:
         origin.record_job(job_id)
