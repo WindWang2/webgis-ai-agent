@@ -180,6 +180,41 @@ class TestMixedSvgCompilation:
         assert any(d["code"] == "raster_window_no_overlap" for d in comp.diagnostics)
         assert "data:image/png;base64," not in comp.svg
 
+    def test_window_failure_disclosed_not_silently_swallowed(self, tmp_path):
+        """窗口渲染失败（退化视图）→ 诚实披露，绝不走层级宽 except 静默
+        消失（review 关键：既有 per-layer except Exception: continue 会吞
+        掉栅格窗口异常 —— 本测试锁死披露语义）。"""
+        tif = _gradient_tif(tmp_path / "grad.tif")
+        spec = _spec([1], colormap="viridis")
+        # 单点矢量 → 自动范围退化为零面积 bbox → 窗口渲染 typed 失败
+        doc = {
+            "version": "1.9",
+            "sources": {
+                "rsrc": {"type": "numeric_raster",
+                         "schema_version": "raster_expression.v1",
+                         "refId": "ref:raster/test", "bounds": list(VIEW),
+                         "crs": "EPSG:4326", "dataRevision": "fp:test", "bandCount": 1},
+                "vec": {"type": "geojson", "inlineData": {"type": "FeatureCollection",
+                        "features": [{"type": "Feature", "properties": {"name": "点"},
+                                      "geometry": {"type": "Point",
+                                                   "coordinates": [12.0, 22.0]}}]}},
+            },
+            "layers": [
+                {"id": "raster-layer", "source": "rsrc", "type": "raster", "paint": {}},
+                {"id": "vec-layer", "source": "vec", "type": "circle",
+                 "paint": {"circle-radius": 4}, "label": {"field": "name"}},
+            ],
+        }
+        bindings = {"raster-layer": _binding(tif, spec, "raster-layer", "rsrc", list(VIEW))}
+        comp = compile_mapspec_to_svg_detailed(
+            doc, width=400, height=400, raster_bindings=bindings)  # 无显式 bounds
+        diags = [d for d in comp.diagnostics
+                 if d["code"] == "layer_ref_unavailable"]
+        assert any("numeric_raster_window_failed" in str(d.get("detail"))
+                   for d in diags), "窗口失败必须披露"
+        assert "data:image/png;base64," not in comp.svg
+        assert "点" in comp.svg, "矢量层不受影响"
+
 
 @pytest.mark.skipif(RSVG is None, reason="rsvg-convert 不可用（PNG 面能力探测）")
 class TestMixedPng:

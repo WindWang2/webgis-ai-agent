@@ -1541,8 +1541,24 @@ def compile_mapspec_to_svg_detailed(
                             if isinstance(raster_bindings, dict):
                                 _binding = raster_bindings.get(str(layer.get("id") or ""))
                             if isinstance(_binding, dict):
-                                elements_svg += _embed_numeric_raster_window(
-                                    layer, _binding, opacity)
+                                # 窗口渲染失败必须披露 —— 本层 try 的宽
+                                # except（既有矢量容错）会静默吞掉异常，
+                                # 数值栅格绝不能走「无诊断消失」路径。
+                                try:
+                                    elements_svg += _embed_numeric_raster_window(
+                                        layer, _binding, opacity)
+                                except Exception as _win_exc:  # noqa: BLE001
+                                    from app.schemas.raster_spec import (
+                                        RasterExpressionError as _REE,
+                                    )
+                                    _win_code = (
+                                        getattr(_win_exc, "code", "")
+                                        if isinstance(_win_exc, _REE) else "RENDER_FAILED")
+                                    _emit_diag(
+                                        "layer_ref_unavailable",
+                                        detail=f"numeric_raster_window_failed:{_win_code}",
+                                        layer_id=layer.get("id"),
+                                    )
                                 continue
                             _emit_diag(
                                 "layer_ref_unavailable",
