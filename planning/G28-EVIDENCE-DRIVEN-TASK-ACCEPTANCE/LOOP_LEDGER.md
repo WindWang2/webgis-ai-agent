@@ -10,13 +10,17 @@
 | M4 | 2026-11-12 | 846ff5d11 | W6 语料 receipt 族 118 案例（12 假成功负例 + 2 合法无地图 + P4 旗舰叙事）；corpus 测试 4 绿 | verified |
 | M5 | 2026-11-12 | (working) | W7 旅程驱动加 G28 断言（SSE 与落库块同 verdict）；vendor 构建待做 | in_progress |
 
-## 下一步可执行动作
+## 终态（2026-11-12 UTC）
 
-1. BASE 对照测试完成后：triage 28 failed/23 errors 全量套件结果（pre-existing vs introduced）。
-2. 持宿主锁（`C:/Users/wangj.KEVIN/projects/webgis-worktrees/.host-lock/hostlock.py`，`heavy` 锁名）构建 Pi vendor：`git submodule update --init vendor/pi && bash scripts/build-vendor-pi.sh`。
-3. `PI_JOURNEY_E2E=1 python -m pytest tests/integration/test_pi_stub_llm_journeys.py --no-cov -q`（持锁）→ A26 证据。
-4. 独立 reviewer（子代理 2/3… reviewer 是第 3 个身份；实现协作者名额未用）→ review → fix 循环。
-5. 更新 TEST_EVIDENCE.md → PR_BODY.md → push → PR（不合并）。
+- **PR**: https://github.com/WindWang2/webgis-ai-agent/pull/2090 （已创建，**未合并**）
+- 分支/HEAD：`zcode/g28-evidence-driven-task-acceptance-20261111T153846Z` @ `343b09613`
+- BASE：`b8f2a6ecc`（推送时 origin/master 未动，无需整合）
+- 提交链（7）：5592011ff → ce77a0628 → 12c7d5597 → 846ff5d11 → 1b1af5c44 → 787cc62ec → 343b09613
+- 独立评审：round1 APPROVED（1 P1 + 11 P2）→ fix 787cc62ec → round2 APPROVED
+  （伪造 harness 复跑全 HOLD + 零漂移数值验证）→ 残留 P2 加固 343b09613 → 复验 partial
+- 全量套件 triage：51 失败/错误与干净 BASE 逐项一致（零引入）
+- 子代理用量：3 个名额中用 2（只读调查员 1 + 独立 reviewer 1；实现协作者未启用 —— 主 Agent 直接实现）
+- 后台进程：无遗留（next dev/uvicorn/node stub 均已退出；宿主锁 exec 模式自动释放）
 
 ## 有效契约（必须保留）
 
