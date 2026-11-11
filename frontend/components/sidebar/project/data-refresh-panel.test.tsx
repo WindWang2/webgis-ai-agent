@@ -3,7 +3,7 @@
  *
  * 这是 UI 行为证据，**不替代**后端 HTTP 集成与真实浏览器 E2E：
  * API client 在此被替换成确定性返回值，主链证据见
- * tests/unit/test_project_data_refresh_routes.py 与 j13 journey。
+ * tests/unit/test_project_data_refresh_routes.py 与 j14 journey。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';

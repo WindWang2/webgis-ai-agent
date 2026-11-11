@@ -4,10 +4,12 @@ Tests subprocess initialization, request-response matching, and event queueing.
 """
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
+import unittest.mock
 
 from app.services.chat.pi_rpc_client import PiRpcClient
 
@@ -366,7 +368,11 @@ async def test_pi_bridge_abort_calls_rpc_and_fails_pending():
 
     result = await bridge.abort()
 
-    rpc.request.assert_awaited_once_with("abort")
+    # ADR-0288（W07 / vendor C14）：用户级完全停止 = clear_queue → abort
+    # （上游 Esc 语义 —— 不清队列时排队消息在 abort 后自行重启）。
+    assert rpc.request.await_args_list[0] == unittest.mock.call("clear_queue", {})
+    assert rpc.request.await_args_list[1] == unittest.mock.call("abort")
+    assert rpc.request.await_count == 2
     rpc.fail_all_pending.assert_not_called()
     rpc.fail_pending_ids.assert_called_once_with({"req-1"}, "abort requested")
     assert result == {"ok": True}
@@ -579,3 +585,96 @@ async def test_spawn_env_is_allowlisted_review_f16(monkeypatch, tmp_path):
     assert env.get("WEBGIS_BRIDGE_SECRET")
     assert env.get("WEBGIS_API_BASE")
     assert env.get("WEBGIS_NATIVE_TOOLS_PATH")
+
+
+# ── ADR-0288（W07）：有序停机窗口 ────────────────────────────────────
+
+class _EscalatingFakeProc:
+    """Fake Popen recording the stop escalation sequence. stdin closes first;
+    wait() blocks until the given escalation stage actually stops the process."""
+
+    def __init__(self, *, survive_eof: bool, survive_term: bool):
+        self.events: list[str] = []
+        self._alive = True
+        self._survive_eof = survive_eof
+        self._survive_term = survive_term
+        self.stdin = MagicMock()
+        self.stdin.closed = False
+
+    def _maybe_stdin_closed(self):
+        if self.stdin is not None and not getattr(self.stdin, "closed", True):
+            self.events.append("stdin_close")
+            self.stdin.closed = True
+
+    def wait(self, timeout=None):
+        self._maybe_stdin_closed()
+        if self._alive:
+            # EOF window: vendor orderly shutdown finishes unless it must not
+            self.events.append(f"wait_eof:{timeout}")
+            if self._survive_eof:
+                raise subprocess.TimeoutExpired(cmd="node", timeout=timeout)
+            self._alive = False
+            return 0
+        return 0
+
+    def terminate(self):
+        self.events.append("terminate")
+        if not self._survive_term:
+            self._alive = False
+
+    def kill(self):
+        self.events.append("kill")
+        self._alive = False
+
+    def poll(self):
+        return None if self._alive else 0
+
+
+@pytest.mark.parametrize(
+    "survive_eof,survive_term,expect_tail",
+    [
+        (False, False, ["wait_eof"]),                       # orderly EOF exit
+        (True, False, ["terminate", "wait_term"]),          # SIGTERM suffices
+        (True, True, ["terminate", "kill"]),                # forced SIGKILL
+    ],
+)
+async def test_stop_escalation_windows(monkeypatch, survive_eof, survive_term, expect_tail):
+    """ADR-0288 / vendor C14：stdin EOF → 有界窗 → 单次 SIGTERM → 有界窗 →
+    SIGKILL。绝不在 EOF 窗内发信号（会截断 vendor 有序清理）；每个窗口
+    分开可观测。"""
+    import subprocess as _sp
+
+    import app.services.chat.pi_rpc_client as pi_rpc_mod
+
+    monkeypatch.setattr(pi_rpc_mod, "PI_GRACEFUL_STOP_TIMEOUT", 0.05)
+    monkeypatch.setattr(pi_rpc_mod, "PI_TERM_STOP_TIMEOUT", 0.05)
+    client = PiRpcClient.__new__(PiRpcClient)  # skip __init__/atexit
+    fake = _EscalatingFakeProc(survive_eof=survive_eof, survive_term=survive_term)
+
+    # The second wait() call carries the TERM window; route it via a wrapper.
+    original_wait = fake.wait
+    call_state = {"n": 0}
+
+    def _wait(timeout=None):
+        call_state["n"] += 1
+        if call_state["n"] == 2:
+            fake.events.append(f"wait_term:{timeout}")
+            if survive_term:
+                raise _sp.TimeoutExpired(cmd="node", timeout=timeout)
+            fake._alive = False
+            return 0
+        return original_wait(timeout=timeout)
+
+    fake.wait = _wait
+    client._process = fake
+    client._reader_task = None
+    client._stderr_task = None
+    await client.stop()
+    assert fake.events[0] == "stdin_close", "EOF must be the FIRST stop action"
+    joined = ",".join(fake.events)
+    for event in expect_tail:
+        assert event in joined, f"{event} missing in {fake.events}"
+    # 绝不双发信号：terminate/kill 各至多一次
+    assert fake.events.count("terminate") <= 1
+    assert fake.events.count("kill") <= 1
+    assert client._process is None

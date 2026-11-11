@@ -195,6 +195,50 @@ def _map_product_evidence(
     return out
 
 
+
+
+def _frame_product_evidence(
+    map_product: Optional[Dict[str, Any]],
+) -> List[GoalEvidence]:
+    """G15：map_product.frame_product 终验块 → 逐画幅证据（有界 ≤12）。
+
+    只消费（不重算）：verification 块由 frame_products.verify_frame_product
+    产出（绑定/观察对账在服务层）。快照/未观察 ≠ live —— 状态如实分级。
+    """
+    block = _dict(map_product)
+    if not block:
+        return []
+    fp = block.get("frame_product")
+    if not isinstance(fp, dict):
+        return []
+    rows = fp.get("frames") if isinstance(fp.get("frames"), list) else []
+    revision = str(block.get("checked_revision") or "")
+    out: List[GoalEvidence] = []
+    for r in rows[:12]:
+        if not isinstance(r, dict):
+            continue
+        fid = str(r.get("frame_id") or "")[:64]
+        if not fid:
+            continue
+        binding = str(r.get("binding") or "")
+        observation = str(r.get("observation") or "not_observed")
+        ok = binding == "bound" and observation in ("live_observed", "export_verified")
+        status = (
+            EvidenceStatus.PRESENT if ok
+            else EvidenceStatus.FAILED if binding == "unresolvable"
+            else EvidenceStatus.STALE
+        )
+        out.append(GoalEvidence(
+            id=f"frame:{fid}"[:64],
+            kind=EvidenceKind.MAP_PRODUCT,
+            evidence_class=EvidenceClass.DETERMINISTIC,
+            status=status,
+            source="map_product:frame_product",
+            revision=revision,
+            detail=f"{binding or 'unknown'}/{observation}"[:48],
+        ))
+    return out
+
 def _export_receipt_evidence(
     chapter: Dict[str, Any],
     checked_revision: str,
@@ -240,6 +284,7 @@ def build_evidence_registry(
     # 优先级即截断序（review P2-5）：产品裁决/制图评审/导出回执/角色资格
     # 先入（关键裁决证据不得被大章节的行证据挤出 64 上界），行证据殿后。
     evidence.extend(_map_product_evidence(map_product))
+    evidence.extend(_frame_product_evidence(map_product))
     evidence.extend(_cartography_review_evidence(cartographic_review))
     evidence.extend(_export_receipt_evidence(chapter, checked_revision))
     contract = _dict(chapter.get("workflow_contract"))

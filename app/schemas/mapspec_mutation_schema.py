@@ -57,6 +57,9 @@ class PatchComponentBody(ClientMutationIdMixin):
     intent: Literal["patch_component"]
     expected_revision: int = Field(ge=0)
     component_id: str = Field(min_length=1, max_length=128)
+    # PR-C：upsert 新建组件（Map Studio 首次开启指北针/比例尺/标题…）必须
+    # 声明类型；仅 patch 已有组件时可省略。合法性由 mutate_component 校验。
+    component_type: Optional[str] = Field(None, min_length=1, max_length=64)
     enabled: Optional[bool] = None
     position: Optional[str] = None
     placement: Optional[ComponentPlacement] = None
@@ -140,6 +143,8 @@ class SetLayoutBody(ClientMutationIdMixin):
     margins: Optional[dict[str, Any]] = None
     # CartographyComponent 列表（id/type/enabled/position/priority/style/options）
     components: Optional[list[dict[str, Any]]] = None
+    # G15：spec 级 atlas 帧整表写入（MapSpecFrame 列表；None = 不触碰）
+    frames: Optional[list[dict[str, Any]]] = None
 
 
 class SetTimeBody(ClientMutationIdMixin):
@@ -164,6 +169,21 @@ class SetTemporalViewBody(ClientMutationIdMixin):
     """
 
     intent: Literal["set_temporal_view"]
+    expected_revision: int = Field(ge=0)
+    config: Optional[dict[str, Any]] = None
+    patch: Optional[dict[str, Any]] = None
+    remove: bool = False
+
+
+class SetFrameProductBody(ClientMutationIdMixin):
+    """多画幅产品层用户面写入（G15；frame_product.v1 契约体）。
+
+    config/patch/remove 语义与 SetFrameProductIntent 一一对应；用户工作台
+    画幅编辑（激活画幅/排序/标题/同步组/图例策略）走 patch +
+    expected_revision CAS。
+    """
+
+    intent: Literal["set_frame_product"]
     expected_revision: int = Field(ge=0)
     config: Optional[dict[str, Any]] = None
     patch: Optional[dict[str, Any]] = None
@@ -203,6 +223,20 @@ class PatchWorkbenchDeltaBody(ClientMutationIdMixin):
     delta: dict[str, Any]
 
 
+class UndoAgentCommitBody(ClientMutationIdMixin):
+    """PR-D：撤销/重做一段 Agent 地图提交（Ctrl+Z 撤销整笔 Agent 提交）。
+
+    ``(base_revision, agent_revision]`` 必须是连续的 Agent 提交；服务端在锁内
+    校验当前制图指纹（用户在其后有未撤销的改动 → 拒绝，不覆盖用户编辑）。
+    """
+
+    intent: Literal["undo_agent_commit"]
+    expected_revision: int = Field(ge=0)
+    base_revision: int = Field(ge=0)
+    agent_revision: int = Field(ge=1)
+    direction: Literal["undo", "redo"] = "undo"
+
+
 UserMapSpecMutationRequest = Annotated[
     Union[
         PatchLayerPresentationBody,
@@ -218,9 +252,11 @@ UserMapSpecMutationRequest = Annotated[
         SetLayoutBody,
         SetTimeBody,
         SetTemporalViewBody,
+        SetFrameProductBody,
         InitProjectBody,
         SetWorkbenchStateBody,
         PatchWorkbenchDeltaBody,
+        UndoAgentCommitBody,
     ],
     Field(discriminator="intent"),
 ]

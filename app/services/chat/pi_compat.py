@@ -17,10 +17,13 @@ Scope / discipline:
       existing fail-closed spawn behavior (FileNotFoundError → ChatEngine);
       this module only makes the state observable (logs, /health, pi_doctor).
 
-Compatibility floor (ADR-0282): the bridge protocol implementation in this
-repo targets Pi >= v1.5.0 (pi-schema argument validation, delta-only
+Compatibility floor (ADR-0282 → ADR-0288): the bridge protocol implementation
+in this repo targets Pi >= v1.5.1 (pi-schema argument validation, delta-only
 ``message_update``, ``disposition`` on prompt responses, two-phase extension
-loading). ``PI_MIN_VENDOR_TAG`` is the floor this module reports against.
+loading; v1.5.1 adds the $ref-aware tool_search corpus, nested-call
+``parentToolCallId`` events and the clear_queue/ordered-shutdown RPC semantics
+this repo now consumes). ``PI_MIN_VENDOR_TAG`` is the floor this module
+reports against.
 """
 from __future__ import annotations
 
@@ -37,7 +40,9 @@ VENDOR_PI_DIR = REPO_ROOT / "vendor" / "pi"
 
 # Bridge protocol floor. Bump ONLY with an explicit ADR + contract-test update
 # (tests/integration/test_pi_vendor_contract.py pins the on-the-wire behavior).
-PI_MIN_VENDOR_TAG = "v1.5.0"
+# v1.5.1（ADR-0288）：native tool discovery（tool_search/codemode 内置扩展）、
+# nested parentToolCallId 事件、clear_queue/有序停机。
+PI_MIN_VENDOR_TAG = "v1.5.1"
 
 # Superproject-recorded submodule pin (gitlink). Read lazily; ``None`` when the
 # deployment ships without git metadata (e.g. production image) — identity then
@@ -192,8 +197,8 @@ def log_pi_vendor_identity() -> "PiVendorIdentity | None":
     line = ident.summary_line()
     if not ident.entry_built:
         logger.warning(
-            "%s — RPC entry NOT built; Pi bridge will fall back to ChatEngine "
-            "(build with scripts/build-vendor-pi.sh)",
+            "%s — RPC entry NOT built; the Pi-only chat path will fail closed "
+            "(503) until vendor/pi is built with scripts/build-vendor-pi.sh",
             line,
         )
     elif ident.matches_expected_pin is False:
@@ -214,16 +219,15 @@ def log_pi_vendor_identity() -> "PiVendorIdentity | None":
 
 # ── 运行时三态披露（PI-06 / ADR-0286 D3）───────────────────────────────────
 
-#: 唯一词表：native（真 Pi RPC 承载 turn）/ fallback（配置了 Pi 但不可用，
-#: ChatEngine 承载）/ unavailable（未启用 Pi，无桥对象）。
-RUNTIME_MODES = ("native", "fallback", "unavailable")
+#: 唯一词表：native（真 Pi RPC 承载 turn）/ unavailable（桥不可用，fail-closed）。
+#: 不再有 fallback（ChatEngine 已不是对话回退路径）。
+RUNTIME_MODES = ("native", "unavailable")
 
 #: 有界原因码（安全摘要 —— 无内部路径/密钥/异常文本）。
 RUNTIME_MODE_REASONS = (
     "",                    # native：无原因
-    "pi_disabled",         # USE_NEW_AGENT 关闭
-    "bridge_not_initialized",  # 桥对象未创建（import/spawn 失败）
-    "vendor_entry_unbuilt",    # vendor dist 未构建（#400 静默降级根因）
+    "bridge_not_initialized",  # 桥对象未创建（import/spawn 失败或测试未拉起）
+    "vendor_entry_unbuilt",    # vendor dist 未构建
     "pi_process_down",     # 桥在场但子进程不活（crash/OOM/坏扩展）
     "probe_failed",        # 事实探测自身失败（/health 专用；真值未知）
 )
@@ -244,12 +248,11 @@ def classify_runtime_mode(
     按已构建处理（fail-open on undeterminable vendor facts —— 进程活性是
     更直接的事实；真正的 fail-closed 在 turn 终态未知词表→FAILED）。
     """
-    if not enabled:
-        return "unavailable", "pi_disabled"
-    if not bridge_present:
+    if not enabled or not bridge_present:
+        # enabled 保留形参以兼容旧调用方；产品已无关闭开关，False 与未初始化同义。
         return "unavailable", "bridge_not_initialized"
     if not alive:
         if entry_built is False:
-            return "fallback", "vendor_entry_unbuilt"
-        return "fallback", "pi_process_down"
+            return "unavailable", "vendor_entry_unbuilt"
+        return "unavailable", "pi_process_down"
     return "native", ""

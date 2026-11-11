@@ -195,30 +195,62 @@ async def test_no_echo_dispatches_normally(test_registry, async_client, register
 
 
 @pytest.mark.asyncio
-async def test_scope_enforcement_rejects_out_of_surface_bare_name(
+async def test_scope_enforcement_semantics_adr_0288(
         test_registry, async_client, monkeypatch, register_turn):
+    """ADR-0288（review-P1/N1 更新语义）：面成员硬校验的真实边界。
+
+    - **native 前门**（direct）不在 turn selected 面 → typed
+      SURFACE_SCOPE_VIOLATION 拒绝、零执行（守住 direct 声明面完整性）；
+    - **注册面 deferred 工具**面外直调 → discovery grant + 真实执行
+      （vendor `_getCallableTools` 语义：deferred 直调/沙箱嵌套天生合法）；
+    - proxy 通道不受 scope 校验（长尾 fallback 语义不变）。"""
     monkeypatch.setenv("PI_SURFACE_SCOPE_ENFORCE", "1")
     session_id, turn_id = "sess-abi-scope", "turn-abi-scope"
     token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
     await register_turn(session_id, turn_id)
     # receipt 只含 pi_abi_echo —— 注册面上的其他名字裸调应被拒
     _mint_receipt(test_registry, session_id, turn_id)
-    # 注册一个面外工具（在 registry 但不在 receipt.selected）
+    # 注册一个面外 deferred 工具（在注册超集但不在 receipt.selected）
     test_registry.register(
         "pi_abi_other", "other", lambda: {"success": True},
         parameters={"type": "object", "properties": {}},
     )
+    # native 前门（direct）：注册但不在 selected 面 → 拒绝
+    test_registry.register(
+        "webgis_map_product", "front door", lambda: {"success": True},
+        parameters={"type": "object", "properties": {}},
+    )
 
+    from app.services.chat.pi_surface_receipt import (
+        discovered_store,
+        discovered_tools,
+    )
+
+    discovered_store.clear()
+
+    # 1) native 前门面外直调 → typed 拒绝（direct 声明面完整性）
     resp = await async_client.post(
         "/pi-tools/execute",
         headers={"X-Pi-Bridge-Secret": get_bridge_secret()},
-        json=_body("call-abi-6", "pi_abi_other", {}, token),
+        json=_body("call-abi-6", "webgis_map_product", {}, token),
     )
     data = resp.json()
-    assert data["isError"] is True
-    assert data["details"]["code"] == "SURFACE_SCOPE_VIOLATION"
+    assert data["isError"] is True, data
+    assert data["details"]["code"] == "SURFACE_SCOPE_VIOLATION", data
 
-    # proxy 通道不受 scope 校验（长尾 fallback 语义不变）
+    # 2) 注册面 deferred 工具面外直调 → grant + 执行（ADR-0288 语义）
+    resp_deferred = await async_client.post(
+        "/pi-tools/execute",
+        headers={"X-Pi-Bridge-Secret": get_bridge_secret()},
+        json=_body("call-abi-6b", "pi_abi_other", {}, token),
+    )
+    data_deferred = resp_deferred.json()
+    assert data_deferred["isError"] is False, data_deferred
+    assert "pi_abi_other" in discovered_tools(session_id, turn_id), (
+        "deferred direct call must mint an observable grant"
+    )
+
+    # 3) proxy 通道不受 scope 校验（长尾 fallback 语义不变）
     resp2 = await async_client.post(
         "/pi-tools/execute",
         headers={"X-Pi-Bridge-Secret": get_bridge_secret()},

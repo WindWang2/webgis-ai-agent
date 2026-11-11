@@ -50,6 +50,8 @@ _TOOL_MODULES = [
     ("app.tools.raster_tools_cog", "register_raster_cog_tools"),
     # ("app.tools.interpolation_network", "register_interpolation_network_tools"), # Deleted in v3.4 refactor
     ("app.tools.report", "register_report_tools"),
+    # G11（ADR-0288）：证据化地图简报工具面（草稿/证据/编辑/预检/发布/导出）
+    ("app.tools.brief_tools", "register_brief_tools"),
     ("app.tools.change_detection", "register_change_detection_tools"),
     ("app.tools.monitoring_report", "register_monitoring_report_tools"),
     ("app.tools.skills", "register_skill_tools"),
@@ -82,6 +84,8 @@ _TOOL_MODULES = [
     ("app.tools.ingest_tools", "register_ingest_tools"),
     # 数据准备域：inspect→propose→prepare→bind 工具面（独立模块防并发冲突）
     ("app.tools.data_preparation_tools", "register_data_preparation_tools"),
+    # G19：类型化字段计算工作台（catalog/preview/apply/result；独立模块防冲突）
+    ("app.tools.field_compute_tools", "register_field_compute_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
     ("app.tools.flow_tools", "register_flow_tools"),
     ("app.tools.dasymetric_tools", "register_dasymetric_tools"),
@@ -91,6 +95,9 @@ _TOOL_MODULES = [
     # GOAL 03：时态视图控制工具面（bind/control/compare/unbind/status；
     # 写 MapSpec temporal 分支，独立模块防并发冲突）
     ("app.tools.temporal_view_tools", "register_temporal_view_tools"),
+    # G15：多画幅产品工具面（plan/bind/update/status/unbind；
+    # 写 MapSpec frame_product 分支，独立模块防并发冲突）
+    ("app.tools.frame_product_tools", "register_frame_product_tools"),
     ("app.tools.modelops_tools", "register_modelops_tools"),
     # Platform 11 / ADR-0198：GeoAI prompt artifact/候选/精化/语义工具面
     ("app.tools.geoai_tools", "register_geoai_tools"),
@@ -119,6 +126,8 @@ _TOOL_MODULES = [
     ("app.tools.capability_ecosystem_tools", "register_capability_ecosystem_tools"),
     # G10：项目数据版本刷新（检查→预览→候选→采纳/回退）自然语言工具面
     ("app.tools.project_data_refresh_tools", "register_project_data_refresh_tools"),
+    # G20：持久化数值栅格表达 / 真实像元检视（独立模块防并发冲突）
+    ("app.tools.raster_expression_tools", "register_raster_expression_tools"),
 ]
 
 

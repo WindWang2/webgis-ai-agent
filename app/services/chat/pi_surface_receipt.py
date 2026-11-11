@@ -37,10 +37,11 @@ SURFACE_QUALIFICATION_POLICY = "pi_surface_qualification.v1"
 #: receipt 存储上限（与 bridge 的 dispatch cache 同量级；turn 结束清理 + 容量逐出）。
 _RECEIPT_STORE_MAX = 128
 
-#: bare-name 面成员硬校验（opt-in，默认 OFF）：开启后，native bare-name 回调
-#: 若不在该 turn 的 receipt selected 集内 → typed 拒绝（proxy 通道不受限）。
-#: 默认关：setActiveTools 不可用时扩展退化为全超集激活，此时硬校验会把合法
-#: 调用误拒 —— 作为生产 pilot 的渐进开关。
+#: bare-name 面成员硬校验（ADR-0288 起默认 ON）：native bare-name 回调必须
+#: 落在 turn 的 selected ∪ discovered 集内，否则 typed 拒绝（proxy 通道不受限）。
+#: 发现（tool_search）有合法 grant 路径后，旧行为的误拒场景（setActiveTools
+#: 退化全超集激活）不再成立 —— 注册超集内的合法发现调用会被 grant 接住。
+#: kill-switch：显式 0/false/off/no 回到 G12 前的放行行为。
 PI_SURFACE_SCOPE_ENFORCE_ENV = "PI_SURFACE_SCOPE_ENFORCE"
 
 #: 封闭 drop reason codes（receipt / 披露面消费；新增需同步 ADR + 测试）。
@@ -67,11 +68,11 @@ SURFACE_DROP_CODES = frozenset({
 
 
 def surface_scope_enforce_enabled() -> bool:
-    """PI_SURFACE_SCOPE_ENFORCE（opt-in；默认 OFF）。"""
+    """PI_SURFACE_SCOPE_ENFORCE（ADR-0288 起默认 ON；0/false/off/no 回退）。"""
     import os
 
     raw = (os.getenv(PI_SURFACE_SCOPE_ENFORCE_ENV) or "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    return raw not in ("0", "false", "off", "no")
 
 
 @dataclass(frozen=True)
@@ -273,6 +274,91 @@ class _SurfaceReceiptStore:
 surface_receipt_store = _SurfaceReceiptStore()
 
 
+# ---------------------------------------------------------------------------
+# Discovery grants（ADR-0288 / W05）：turn 内 additive 的发现记录。
+#
+# 语义：receipt 的 ``selected`` 是 turn 起始声明面，turn 内不可变；上游
+# tool_search 在 turn 中途把注册超集内的 deferred 工具并入声明面（C12 merge
+# 语义）。``_discovered_store`` 记录这些**已验证的**中途发现（tool → 指纹），
+# 供 scope 校验放行与披露面观测。
+#
+# 授权纪律（红线）：发现从不扩大执行权限 —— grant 只对「spawn 注册超集内
+# （model_visible ∧ tier<3 ∧ 非 DESTRUCTIVE）+ 指纹 echo 校验通过」的调用
+# 铸造（``pi_bridge_surface_gate`` 调用 ``record_discovered_tool``），权限
+# 等价于 webgis_execute 代理通道（同一注册超集 + 同一 dispatch 闸序）。
+# 绝不是 LLM 自授权：铸造点在宿主 gate，且仅接受注册面成员。
+# ---------------------------------------------------------------------------
+
+#: 每 turn 发现 grant 上限（发现风暴有界；超出 = scope violation 事实拒绝）。
+_DISCOVERY_GRANT_MAX = 16
+
+
+class _DiscoveredStore:
+    """(session_id, turn_id) → {tool: fingerprint} 的进程级有界存储。
+
+    与 receipt store 同生命周期（turn 终态 evict_session / 容量逐出）；
+    同 key 重复 grant 幂等（首次指纹为准 —— 与 receipt 不可变纪律一致）。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._grants: Dict[Tuple[str, str], Dict[str, str]] = {}
+
+    def record(
+        self, session_id: str, turn_id: str, tool: str, fingerprint: str = ""
+    ) -> bool:
+        """登记发现 grant。返回 False = 超过每 turn 上限（拒绝）。"""
+        with self._lock:
+            key = (session_id, turn_id)
+            grants = self._grants.setdefault(key, {})
+            if tool in grants:
+                return True  # 幂等：首次指纹为准
+            if len(grants) >= _DISCOVERY_GRANT_MAX:
+                return False
+            grants[tool] = str(fingerprint or "")
+            while len(self._grants) > _RECEIPT_STORE_MAX:
+                oldest = next(iter(self._grants))
+                self._grants.pop(oldest, None)
+            return True
+
+    def contains(self, session_id: str, turn_id: str, tool: str) -> bool:
+        with self._lock:
+            return tool in self._grants.get((session_id, turn_id), {})
+
+    def fingerprint_of(self, session_id: str, turn_id: str, tool: str) -> Optional[str]:
+        """grant 时记录的指纹（echo 缺席的 grant 记空串 = 无可对照值）。"""
+        with self._lock:
+            return self._grants.get((session_id, turn_id), {}).get(tool)
+
+    def tools(self, session_id: str, turn_id: str) -> Tuple[str, ...]:
+        with self._lock:
+            return tuple(self._grants.get((session_id, turn_id), {}))
+
+    def evict_session(self, session_id: str) -> None:
+        with self._lock:
+            for key in [k for k in self._grants if k[0] == session_id]:
+                self._grants.pop(key, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._grants.clear()
+
+
+discovered_store = _DiscoveredStore()
+
+
+def record_discovered_tool(
+    session_id: str, turn_id: str, tool: str, fingerprint: str = ""
+) -> bool:
+    """铸造一个 turn 内的发现 grant（幂等、有界；见 _DiscoveredStore 纪律）。"""
+    return discovered_store.record(session_id, turn_id, tool, fingerprint)
+
+
+def discovered_tools(session_id: str, turn_id: str) -> Tuple[str, ...]:
+    """该 turn 已 grant 的发现工具（披露面 / 诊断面只读）。"""
+    return discovered_store.tools(session_id, turn_id)
+
+
 def record_turn_surface(
     specs: Sequence[PiToolSpecV1],
     *,
@@ -324,7 +410,10 @@ def verify_callback_fingerprints(
     - receipt 缺席（动态面关/弃成/前 master turn）→ 一律放行（兼容）；
     - ``toolFingerprint`` echo：resolved 工具在 receipt.selected 内且指纹
       不符 → ``SURFACE_FINGERPRINT_MISMATCH``（registry 代内漂移 / 跨 turn
-      重放）；不在 selected 内（dormant 裸调）或无 echo → 跳过。
+      重放）；不在 selected 内（dormant 裸调）时对照 **discovery grant**
+      记录的指纹（ADR-0288：grant 后的后续调用也要对拍 —— 伪造/过期 echo
+      不得因已 grant 而绕过）；grant 未记录指纹（echo 缺席的 grant）或无
+      echo → 跳过。
     - 刻意**不设**面级（surface）echo：turn 的 surface 指纹是 receipt
       私有值，调用方（扩展）无从合法获知 —— dump 超集指纹与 turn 选中面
       指纹构造性不同，接入只会产生永假阳性（review P2-2）。
@@ -334,6 +423,8 @@ def verify_callback_fingerprints(
         return None
     if tool_fingerprint:
         expected = receipt.tool_fingerprints.get(resolved_tool)
+        if expected is None:
+            expected = discovered_store.fingerprint_of(session_id, turn_id, resolved_tool) or None
         if expected is not None and expected != tool_fingerprint:
             return "SURFACE_FINGERPRINT_MISMATCH"
     return None
@@ -345,11 +436,13 @@ def enforce_callback_scope(
     turn_id: str,
     resolved_tool: str,
 ) -> Optional[str]:
-    """opt-in bare-name 面成员校验（PI_SURFACE_SCOPE_ENFORCE）。
+    """bare-name 面成员校验（PI_SURFACE_SCOPE_ENFORCE，ADR-0288 起默认 ON）。
 
     返回 ``SURFACE_SCOPE_VIOLATION`` 表示 resolved_tool 不在本 turn 的
-    selected 面（native 前门 + selected 动态面）；proxy 通道
-    （webgis_execute unwrap）不经此函数。receipt 缺席 → 放行。
+    ``selected ∪ discovered`` 集内（native 前门 + selected 动态面 + 本 turn
+    已 grant 的发现）；proxy 通道（webgis_execute unwrap）不经此函数。
+    receipt 缺席 → 放行。发现 grant 的铸造在 ``pi_bridge_surface_gate``
+    （注册超集 + 指纹校验通过才 grant）—— 本函数只消费 grant 集合。
     """
     if not surface_scope_enforce_enabled():
         return None
@@ -357,5 +450,7 @@ def enforce_callback_scope(
     if receipt is None:
         return None
     if resolved_tool in receipt.selected:
+        return None
+    if discovered_store.contains(session_id, turn_id, resolved_tool):
         return None
     return "SURFACE_SCOPE_VIOLATION"

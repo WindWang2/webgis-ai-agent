@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { COMMAND_CATALOGUE } from './catalogue';
+import { MAP_COMMAND_MANIFEST } from './manifest.generated';
 
 /**
  * #535 契约不变量：后端发射的每个 command 值都必须存在于前端命令目录。
@@ -39,6 +40,24 @@ function collectPyFiles(dir: string, acc: string[] = []): string[] {
 // 排除 "command": result.get(...) 这类非字面量发射。
 const COMMAND_EMISSION_RE =
   /(?<![A-Za-z0-9_])["']?command["']?\s*\]?\s*[=:]\s*["']([A-Za-z][A-Za-z0-9_]{0,48})["']/g;
+
+describe('前端命令目录 == 后端导出清单（app/contracts/map_commands.py）', () => {
+  it('COMMAND_CATALOGUE 键集与 MAP_COMMAND_MANIFEST 完全相等（双向）', () => {
+    const catalogue = new Set(Object.keys(COMMAND_CATALOGUE));
+    const manifest = new Set<string>(MAP_COMMAND_MANIFEST);
+    const missingInCatalogue = Array.from(manifest).filter((n) => !catalogue.has(n));
+    const notInManifest = Array.from(catalogue).filter((n) => !manifest.has(n));
+    expect(missingInCatalogue, `清单有、目录无执行体: ${missingInCatalogue.join(', ')}`).toEqual([]);
+    expect(notInManifest, `目录有、后端清单未登记（dispatcher 永不转发）: ${notInManifest.join(', ')}`).toEqual([]);
+  });
+
+  it('清单是小写、去重、排序的（与 dispatcher 小写查找一致）', () => {
+    const names = [...MAP_COMMAND_MANIFEST] as string[];
+    expect(names.every((n) => n === n.toLowerCase())).toBe(true);
+    expect(new Set(names).size).toBe(names.length);
+    expect([...names].sort()).toEqual(names);
+  });
+});
 
 describe('后端命令发射 ⊆ 前端命令目录（#535 幽灵命令不变量）', () => {
   it('app/ 里每个 "command" 字面量都在 COMMAND_CATALOGUE 中（大小写不敏感）', () => {

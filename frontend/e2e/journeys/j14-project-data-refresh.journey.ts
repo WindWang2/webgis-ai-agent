@@ -1,5 +1,5 @@
 /**
- * Journey 13 — G10 项目数据刷新：检查更新 → 预览影响 → 执行候选 → 采纳/回退.
+ * Journey 14（原 j13，重编号避免与 G11 简报旅程冲突）— G10 项目数据刷新：检查更新 → 预览影响 → 执行候选 → 采纳/回退.
  *
  * REAL-ONLY：本旅程必须经过真实认证入口（loginViaApi，E2E_USER/E2E_PASS
  * 由 nightly lane 通过 manage.py create_admin 预置），使用合法 owner 的

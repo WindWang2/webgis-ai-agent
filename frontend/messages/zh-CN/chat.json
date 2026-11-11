@@ -314,6 +314,11 @@
     "header": "{count} 个要素 · {ref}…",
     "colon": "：",
     "undoConflict": "数据已被其他修改更新，请刷新编辑历史后重试",
-    "undoFailed": "撤销/重做请求失败（{phase}），可重试"
+    "undoFailed": "撤销/重做请求失败（{phase}），可重试",
+    "opCreateFeatures": "新增要素",
+    "opDeleteFeatures": "删除要素",
+    "opReplaceGeometry": "几何替换",
+    "opSplitFeature": "分割要素",
+    "opMergeFeatures": "合并要素"
   }
 }

@@ -80,6 +80,10 @@ _TAXONOMY_TABLE: Dict[str, tuple] = {
     # representation binding 正交（与 SetTimeIntent 同判；游标不是用户
     # 表达偏好，user_pinned 的 user-wins 在 temporal service 层裁决）。
     "SetTemporalViewIntent": ("data_science", "none"),
+    # G15：多画幅产品层（frame_product.v1）—— 产品语义契约/画幅身份与
+    # representation binding 正交（与 SetTemporalViewIntent 同判；激活
+    # 画幅/同步组是组织态，不是用户表达偏好）。
+    "SetFrameProductIntent": ("data_science", "none"),
     "SetBasemapIntent": ("data_science", "none"),
     # ── unbound（组织面；undo 经 undo_rebaseline 特判见下） ─────────────
     "InitProjectIntent": ("unbound", "none"),
@@ -89,6 +93,7 @@ _TAXONOMY_TABLE: Dict[str, tuple] = {
     # Rollback/RestoreStyle：语义随 origin 动态判定——user 的 undo 触发语义
     # 重定基（undo_rebaseline），agent/system 的回滚属组织面不投影。
     "RollbackIntent": ("unbound", "undo_rebaseline"),
+    "UndoAgentCommitIntent": ("unbound", "undo_rebaseline"),
     "RestoreStyleIntent": ("unbound", "undo_rebaseline"),
 }
 

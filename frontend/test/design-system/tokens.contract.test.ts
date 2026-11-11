@@ -185,7 +185,22 @@ describe('V4 design tokens — Tailwind exposure', () => {
   it('binds every V4 colour utility to a CSS custom property', () => {
     // Hardcoding a literal here would re-introduce a value that cannot flip
     // with the theme — the exact failure mode V4 exists to remove.
+    const inFamily = (path: string) =>
+      path.startsWith('surface') || path.startsWith('edge') || path.startsWith('ink') ||
+      path.startsWith('status') || path.startsWith('map-chrome');
     const walk = (value: unknown, path: string) => {
+      // Token colours are `tokenColor()` functions (opacity-modifier support):
+      // at rest they must still resolve to the bare CSS var, and with a
+      // modifier they must still be derived from that same var.
+      if (typeof value === 'function' && inFamily(path)) {
+        const fn = value as (o: { opacityValue?: string }) => string;
+        expect(fn({}), `${path} must reference a CSS var at rest`).toMatch(/^var\(--[a-z0-9-]+\)$/);
+        expect(fn({ opacityValue: 'var(--tw-bg-opacity)' }), `${path} must stay the bare var without a modifier`).toBe(fn({}));
+        expect(fn({ opacityValue: '0.9' }), `${path} must derive alpha from its var`).toBe(
+          `color-mix(in srgb, ${fn({})} 90%, transparent)`,
+        );
+        return;
+      }
       if (typeof value === 'string') {
         if (!path.startsWith('surface') && !path.startsWith('edge') && !path.startsWith('ink') &&
             !path.startsWith('status') && !path.startsWith('map-chrome')) return;
@@ -197,6 +212,28 @@ describe('V4 design tokens — Tailwind exposure', () => {
       }
     };
     for (const [k, v] of Object.entries(colors)) walk(v, k);
+  });
+
+  it('compiles opacity modifiers on token colours (bg-surface-raised/90 used to emit nothing)', async () => {
+    const postcss = (await import('postcss')).default;
+    const tailwind = (await import('tailwindcss')).default;
+    const out = await postcss([
+      tailwind({
+        ...config,
+        content: [{ raw: '<div class="bg-surface-raised/90 text-status-warn border-edge-subtle/60 bg-surface-panel from-surface-panel to-surface-raised/80"></div>', extension: 'html' }],
+        corePlugins: { preflight: false },
+      }),
+    ]).process('@tailwind utilities;', { from: undefined });
+    const css = out.css.replace(/\s+/g, ' ');
+    expect(css).toContain('color-mix(in srgb, var(--surface-raised) 90%, transparent)');
+    expect(css).toContain('color-mix(in srgb, var(--border-subtle) 60%, transparent)');
+    expect(css).toContain('color: var(--warning)');
+    // Gradients call the colour fn with a *numeric* opacityValue (0) — that
+    // crashed the production build before the String() coercion.
+    expect(css).toContain('--tw-gradient-from: var(--surface-panel)');
+    expect(css).toContain('color-mix(in srgb, var(--surface-panel) 0%, transparent)');
+    // No modifier → the bare var (Tailwind adds an inert --tw-bg-opacity: 1).
+    expect(css).toMatch(/\.bg-surface-panel \{ (--tw-bg-opacity: 1; )?background-color: var\(--surface-panel\) \}/);
   });
 
   it('exposes the dense type scale, control metrics and radius scale', () => {

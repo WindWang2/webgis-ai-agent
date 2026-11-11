@@ -237,6 +237,32 @@ def _get_governor_adapter(registry: "ToolRegistry"):
     return None
 
 
+def _base_layer_with_explicit_paint(base: Dict[str, Any], style_applied: Any) -> Dict[str, Any]:
+    """工具显式的图层级样式（``style_applied``，如 apply_layer_style）→ 层 paint。
+
+    PR-C：样式进 MapSpec 层 paint（语义方言 color/opacity/width，与前端
+    ``layerStyleToPaint`` / ``patch_layer_style`` 同键），转换器把它作为
+    existing paint 合并（非专题层保留显式 color）。用户随后的
+    ``patch_layer_style`` 合并在其上 —— 用户编辑天然胜出，不再被逐要素
+    ``fill_color`` 压住。缺席/非法值 → 原样返回 base（行为不变）。
+    """
+    if not isinstance(style_applied, dict):
+        return base
+    paint: Dict[str, Any] = {}
+    color = style_applied.get("color")
+    if isinstance(color, str) and color:
+        paint["color"] = color
+    opacity = style_applied.get("opacity")
+    if isinstance(opacity, (int, float)) and not isinstance(opacity, bool) and 0 <= opacity <= 1:
+        paint["opacity"] = float(opacity)
+    width = style_applied.get("stroke_width", style_applied.get("strokeWidth"))
+    if isinstance(width, (int, float)) and not isinstance(width, bool) and width >= 0:
+        paint["width"] = float(width)
+    if not paint:
+        return base
+    return {**base, "paint": paint}
+
+
 class ToolDispatchService:
     """工具调度的单一拥有者。两条 agent 路径都应经由本服务。"""
 
@@ -504,6 +530,104 @@ class ToolDispatchService:
                         error_msg=(_bind.decision.code or CAPABILITY_INELIGIBLE_CODE),
                         capability_evidence=capability_evidence,
                     )
+
+            # 1.42b (G13 / WP05) 可用性执行前复核 —— 同代快照 + 活注册表
+            # 对拍的**阳性结构事实**拒绝（declared_only / provider 缺席 /
+            # 同名 schema 换代）。证据缺席 = 放行（本闸绝不成为第二故障
+            # 面）；拒绝释放 dedup 占位（同任务纠因后可重试）；alternatives
+            # 喂 LLM 重试（重新发现可继续）。kill switch
+            # GIS_AVAILABILITY_DISPATCH_RECHECK。
+            # 冷缓存重建是全量对账（秒级）—— 经 to_thread 执行，前台
+            # 事件循环永不被全量审计阻塞（正常 turn 流程中 surface 投影
+            # 已预热缓存，此处命中路径只做 O(1) 键比对）。
+            _availability_denial = None
+            with best_effort(
+                "availability-recheck",
+                "tool-dispatch-availability-recheck-best-effort",
+                ctx={"tool": tool_name},
+            ):
+                from app.services.chat.pi_availability_adapter import (
+                    preflight_dispatch_availability,
+                )
+
+                _availability_denial = await asyncio.to_thread(
+                    preflight_dispatch_availability,
+                    tool_name, registry=self._registry)
+            if _availability_denial is not None:
+                _av_d = _availability_denial
+                _av_evidence = {
+                    "tool": tool_name[:128],
+                    "action": "refused",
+                    "gate": "availability_recheck",
+                    "code": _av_d.code,
+                    "reason": _av_d.reason[:240],
+                    "tool_version_id": _av_d.tool_version_id[:128],
+                    "registry_generation": _av_d.registry_generation[:128],
+                    "alternatives": [str(a)[:64] for a in _av_d.alternatives[:4]],
+                    "retryable": True,
+                }
+                if capability_evidence is not None:
+                    capability_evidence["availability_recheck"] = _av_evidence
+                else:
+                    capability_evidence = {"availability_recheck": _av_evidence}
+                with best_effort(
+                    "availability-denial-record",
+                    "tool-dispatch-availability-denial-best-effort",
+                    ctx={"tool": tool_name},
+                ):
+                    from app.lib.runtime.chain_emitters import emit_chain
+                    from app.lib.runtime.decision_record import (
+                        DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+                        alternative_entry,
+                        decision_record,
+                        reason_code,
+                    )
+                    from app.lib.runtime.gis_trace import Stage as _Stage
+
+                    emit_chain(
+                        _Stage.TOOL_CALLS,
+                        tool=tool_name,
+                        status="denied",
+                        decision=decision_record(
+                            DECISION_KIND_CAPABILITY_DISPATCH_DENIAL,
+                            selected=tool_name,
+                            alternatives=[
+                                alternative_entry(f"tool:{str(a)}"[:96])
+                                for a in _av_d.alternatives[:4]
+                            ],
+                            reason_codes=[
+                                reason_code(
+                                    "availability_recheck",
+                                    _av_d.code,
+                                    "available|same_generation",
+                                    _av_d.hint[:96],
+                                ),
+                            ],
+                            inputs={
+                                "session_id": (session_id or "")[:64],
+                                "tool_version_id": _av_d.tool_version_id[:64],
+                                "registry_generation":
+                                    _av_d.registry_generation[:64],
+                            },
+                            evidence_refs=[f"tool:{tool_name}"],
+                            policy_version="availability_dispatch_recheck.v1",
+                        ),
+                    )
+                # 与 capability denial 同纪律：释放 dedup 占位。
+                self._release_key(executed_tools, tool_key, session_id or "")
+                return ToolDispatchResult(
+                    status="error",
+                    llm_payload=_av_d.denial_text(),
+                    slim_event={
+                        "type": "tool_error",
+                        "name": tool_name,
+                        "error": "availability_recheck_denied",
+                    },
+                    geojson_ref=None,
+                    raw_result=_av_evidence,
+                    error_msg=_av_d.code,
+                    capability_evidence=capability_evidence,
+                )
 
             # 1.43 (ADR-0217 / H10) GISAction IR 投影闸 —— 每条 legacy direct
             # 调用在执行前先确定性投影为 GISActionPlan 并编译（contract
@@ -1232,6 +1356,8 @@ class ToolDispatchService:
                     recovery_disposition=str(
                         _rec_d.get("disposition") or "")[:32] or None,
                 )
+            # 先铸/门禁地图命令，再做 SSE 投影 —— 清单外 command 不得进 slim_event。
+            error_map_actions = self._mint_map_action_ids(result)
             return ToolDispatchResult(
                 status="error",
                 llm_payload=llm_payload,
@@ -1239,7 +1365,7 @@ class ToolDispatchService:
                 geojson_ref=None,
                 raw_result=result,
                 error_msg=error_msg,
-                map_actions=self._mint_map_action_ids(result),
+                map_actions=error_map_actions,
                 capability_evidence=capability_evidence,
                 action_evidence=action_evidence,
             )
@@ -1312,6 +1438,54 @@ class ToolDispatchService:
                 )
                 result = dict(result)
                 result.setdefault("result_ref", heatmap_ref)
+            # G13 / WP07（ADR-0284 封套）：能力原语的分析产物封套
+            # {summary, data, artifact(kind=analysis_artifact), science,
+            # budget}。与 uncertainty/profile 同一「认可键 → ref」纪律：
+            # seam 铸造真实 ref:analysis-*（session store + ArtifactRegistry
+            # + 复用键），回填 artifact.ref/stored，并剥内联大表（完整
+            # zones 行 / 差异边集不进模型上下文；下一轮经 ref 读取）。
+            analysis_ref: Optional[str] = None
+            if (
+                isinstance(result.get("artifact"), dict)
+                and result["artifact"].get("kind") == "analysis_artifact"
+                # 只认可 v2 契约封套（stored 显式 False + schema_version）：
+                # 历史伪 artifact:// 形状不在此契约内，不得被静默铸成真 ref。
+                and result["artifact"].get("schema_version")
+                    == "capability-artifact/v2"
+                and result["artifact"].get("stored") is False
+            ):
+                _envelope = {
+                    "data": result.get("data"),
+                    "science": result.get("science"),
+                    "budget": result.get("budget"),
+                    "artifact": dict(result["artifact"]),
+                    "summary": result.get("summary"),
+                    "tool": tool_name,
+                }
+                analysis_ref = await self._session_data.store(
+                    session_id, _envelope, prefix="analysis"
+                )
+                result = dict(result)
+                result["data_ref"] = analysis_ref
+                _artifact = dict(result["artifact"])
+                _artifact["ref"] = analysis_ref
+                _artifact["stored"] = True
+                result["artifact"] = _artifact
+                # 剥内联大表：保留有界投影（计数/条件/分位数列表），
+                # zones 行与差异边列表只经 ref 可读。
+                _data = result.get("data")
+                if isinstance(_data, dict):
+                    result["data"] = {
+                        k: v for k, v in _data.items()
+                        if k not in ("zones", "only_a_edges", "only_b_edges",
+                                     "pairwise_jaccard")
+                    }
+                    result["data"]["inline_rows_stripped"] = True
+                    # R2 P3-5：读回指引放顶层（slim 的 summary 分支会丢掉
+                    # data 键）—— LLM 必须看得到「下一步把 ref 传回来」。
+                    result["read_back_hint"] = (
+                        f"完整结果经 data_ref 读取；如需进一步分析/筛选，"
+                        f"把对应参数设为 \"{analysis_ref}\"。")
             # H-1: a Redis outage makes store() return the unavailable-ref
             # sentinel (``ref:redis-unavailable-…``) per the session-data
             # protocol. Treating that sentinel as a real ref authored a MapSpec
@@ -1323,6 +1497,7 @@ class ToolDispatchService:
                 or is_unavailable_ref(heatmap_ref)
                 or is_unavailable_ref(uncertainty_ref)
                 or is_unavailable_ref(profile_ref)
+                or is_unavailable_ref(analysis_ref)
             ):
                 self._release_key(executed_tools, tool_key, session_id or "")
                 return ToolDispatchResult(
@@ -1385,6 +1560,15 @@ class ToolDispatchService:
                         uncertainty_ref,
                         f"{analysis_key}::uncertainty" if analysis_key else None,
                         "uncertainty",
+                    ),
+                    # G13 / WP07：分析封套产物以**后缀键**登记（kriging
+                    # uncertainty 先例）—— 主键命中 reuse 会把非 FC 封套当
+                    # geojson_ref 挂地图层；后缀键避免遮蔽主产物，读回走
+                    # data_ref（C03 路径）而非 reuse 改写。
+                    (
+                        analysis_ref,
+                        f"{analysis_key}::analysis" if analysis_key else None,
+                        "analysis",
                     ),
                 ):
                     if isinstance(minted, str) and minted.startswith("ref:"):
@@ -1694,14 +1878,17 @@ class ToolDispatchService:
             converted_layer, _, conversion_warnings = await asyncio.to_thread(
                 convert_analysis_to_mapspec_layer,
                 analysis_payload,
-                {
-                    "id": layer_id,
-                    "source": source_id,
-                    "provenance": {
-                        "tool_call_id": tool_call_id,
-                        "result_ref": result_ref,
+                _base_layer_with_explicit_paint(
+                    {
+                        "id": layer_id,
+                        "source": source_id,
+                        "provenance": {
+                            "tool_call_id": tool_call_id,
+                            "result_ref": result_ref,
+                        },
                     },
-                },
+                    result.get("style_applied"),
+                ),
             )
             # profile 已在 analysis_payload 构建前派生——payload 与
             # source_data 共用同一份（#688 收尾）。
@@ -2133,6 +2320,7 @@ class ToolDispatchService:
         """
         if not isinstance(result, dict):
             return []
+        self._gate_map_commands(result)
         minted: list = []
         commands = result.get("commands")
         if isinstance(commands, list):
@@ -2149,6 +2337,43 @@ class ToolDispatchService:
                 entry["mapspec_fingerprint"] = result.get("mapspec_fingerprint")
                 minted.append(entry)
         return minted
+
+    @staticmethod
+    def _gate_map_commands(result: Dict[str, Any]) -> list:
+        """只放行前端注册的地图命令（``app/contracts/map_commands.py`` 清单）。
+
+        ``command`` 是前端地图动作通道的保留键：前端对 ``step_result.result
+        .command`` / ``commands[]`` 逐条按 ``COMMAND_CATALOGUE`` 执行。清单外
+        的名字（例如工具把自身名字写进 ``command`` 当自标识）没有执行体，
+        下发只会制造 ``unknown_command`` 失败回执 —— 在铸 action_id 与 SSE
+        投影之前就地剔除（单命令删键；批量项过滤），并记 warning。返回被
+        剔除的名字（测试/诊断用）。
+        """
+        from app.contracts.map_commands import is_map_command
+
+        dropped: list = []
+        single = result.get("command")
+        if single and not is_map_command(single):
+            dropped.append(str(single))
+            result.pop("command", None)
+        commands = result.get("commands")
+        if isinstance(commands, list):
+            kept = []
+            for cmd in commands:
+                name = (cmd.get("command") or cmd.get("type")) if isinstance(cmd, dict) else None
+                if isinstance(cmd, dict) and is_map_command(name):
+                    kept.append(cmd)
+                else:
+                    dropped.append(str(name))
+            if len(kept) != len(commands):
+                result["commands"] = kept
+        if dropped:
+            logger.warning(
+                "[ToolDispatch] dropped unregistered map command(s) %s "
+                "(not in app/contracts/map_commands.py)",
+                ",".join(d[:48] for d in dropped[:8]),
+            )
+        return dropped
 
     @staticmethod
     def _mint_one_map_action(command_dict: Dict[str, Any]) -> Optional[dict]:

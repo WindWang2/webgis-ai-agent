@@ -775,7 +775,6 @@ async def test_chat_completions_affinity_minting_for_none_session(pool2, monkeyp
     from unittest.mock import AsyncMock
     from app.api.routes.chat import chat_completions, ChatRequest
 
-    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
     monkeypatch.setattr(
         chat_mod, "_record_frontend_cartographic_observation", AsyncMock()
     )
@@ -862,7 +861,6 @@ async def test_chat_completions_message_persistence_saves_user_and_assistant(poo
                 await db.rollback()
                 raise
 
-    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
     monkeypatch.setattr(
         chat_mod, "_record_frontend_cartographic_observation", AsyncMock()
     )

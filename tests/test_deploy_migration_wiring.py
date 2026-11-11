@@ -637,7 +637,7 @@ def test_dev_container_uses_migrations_and_nonroot_runner():
 
 def test_dev_dockerfile_copies_vendor_for_pi_bridge():
     """#618-37: backend-builder (compose api target) 必须 COPY vendor/，
-    否则 USE_NEW_AGENT 找不到 PI_RPC_ENTRY 并静默回退。runner 从该阶段拷 /app。"""
+    否则 Pi 找不到 PI_RPC_ENTRY 并无法拉起（fail-closed）。runner 从该阶段拷 /app。"""
     df = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
     # ISSUE-036：FROM 已 pin digest（python:3.12-slim@sha256:…）——按阶段名切分
     builder, _, rest = df.partition(" AS backend-builder")

@@ -15,7 +15,8 @@
       "drawLine": "Draw line",
       "drawPolygon": "Draw polygon",
       "editVertices": "Edit vertices",
-      "deleteFeature": "Delete feature"
+      "deleteFeature": "Delete feature",
+      "splitFeature": "Split feature"
     },
     "currentExecution": "Current execution",
     "graphHeading": "Intent & execution chain",

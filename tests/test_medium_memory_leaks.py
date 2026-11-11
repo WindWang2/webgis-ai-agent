@@ -344,7 +344,7 @@ async def test_lifespan_starts_and_awaits_sweep_shutdown(monkeypatch, target):
 
     monkeypatch.setattr(main_module, target, sweep)
     monkeypatch.setattr(database, "init_db", lambda: None)
-    monkeypatch.setattr(pi_bridge, "USE_NEW_AGENT", False)
+    monkeypatch.setattr(pi_bridge, "PI_AUTOSTART", False)
     monkeypatch.setenv("GIS_MANIFEST_STRICT", "0")
     # Restore globals written by startup as well as the patched seam.
     for module, attribute in ((main_module.chat, "engine"), (main_module.chat, "registry"),

@@ -115,7 +115,6 @@ async def _collect_route(
 ):
     """Drive one POST /chat/stream through the route function directly and
     return (event_blocks, bridge). last_event_id simulates the resume header."""
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
     monkeypatch.setattr(chat_route, "pi_bridge", bridge)
     resp = await chat_route.chat_stream(
         chat_route.ChatRequest(message=message, session_id=session_id, map_state=None),
@@ -395,7 +394,6 @@ async def test_resume_after_aborted_turn_replays_then_errors(monkeypatch):
     from 0 is now refused for anonymous sessions (no proof of prior contact),
     so a reconnect must always carry the last id it actually saw."""
     bridge = _AbortableBridge()
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
     monkeypatch.setattr(chat_route, "pi_bridge", bridge)
 
     resp = await chat_route.chat_stream(
@@ -515,7 +513,6 @@ def _build_app() -> FastAPI:
 async def test_resume_via_last_event_id_header(monkeypatch):
     """The SSE-spec Last-Event-ID header triggers the resume path over HTTP."""
     bridge = _BurstBridge(bursts=(4,))
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
     monkeypatch.setattr(chat_route, "pi_bridge", bridge)
 
     app = _build_app()
@@ -547,7 +544,6 @@ async def test_resume_via_last_event_id_query_param(monkeypatch):
     """The last_event_id query param is honored as an alternative to the header
     (header wins when both are present — asserted via precedence below)."""
     bridge = _BurstBridge(bursts=(4,))
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
     monkeypatch.setattr(chat_route, "pi_bridge", bridge)
 
     app = _build_app()
@@ -577,13 +573,19 @@ async def test_anonymous_sessions_receive_distinct_event_buffers(monkeypatch):
     from app.api.routes.chat import _turn_resume_registry
     from app.api.routes.chat import ChatRequest
 
-    async def fake_stream(*args, **kwargs):
-        yield 'data: {"event": "chunk"}\n\n'
+    from app.utils.sse import sse_event
 
-    mock_engine = MagicMock()
-    mock_engine.chat_stream = fake_stream
-    monkeypatch.setattr(chat_route, "get_engine", lambda: mock_engine)
-    monkeypatch.setattr(chat_route, "_ensure_pi_bridge_available", AsyncMock(return_value=False))
+    class _AnonBridge:
+        _process_died = False
+
+        def is_alive(self) -> bool:
+            return True
+
+        async def stream_prompt(self, *args, **kwargs):
+            yield sse_event("token", {"content": "ok"})
+            yield sse_event("done", {})
+
+    monkeypatch.setattr(chat_route, "pi_bridge", _AnonBridge())
 
     registered_keys = []
     orig_register = _turn_resume_registry.register
@@ -612,8 +614,6 @@ async def test_anonymous_sessions_receive_distinct_event_buffers(monkeypatch):
     assert key1 != "", "Anonymous session key must not be empty string"
     assert key2 != "", "Anonymous session key must not be empty string"
     assert key1 != key2, f"Anonymous sessions must receive distinct keys: {key1} vs {key2}"
-    assert req1.session_id == key1
-    assert req2.session_id == key2
 
     # Verify both buffers exist distinctly in the registry without collision
     buf1 = _turn_resume_registry.get(key1)

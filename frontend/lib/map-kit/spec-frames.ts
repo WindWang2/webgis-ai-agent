@@ -77,3 +77,95 @@ export function specFramesToExportFrames(
   }
   return result;
 }
+
+
+// ── G15：frame_product 感知的诚实投影 ──────────────────────────────────────
+
+interface ProductFrameLike {
+  frame_id?: string;
+  title?: string;
+  legend?: string;
+  data?: {
+    where?: { field?: string; value?: unknown; op?: string };
+    time_window?: unknown;
+    layer_id?: string;
+  };
+}
+
+interface SpecWithProduct {
+  layout?: { frames?: SpecFrameLike[] };
+  frame_product?: { enabled?: boolean; frames?: ProductFrameLike[] };
+}
+
+export interface ProductFramesResult {
+  frames: ExportFrame[];
+  /** 产品在场的证据（调用方据此选择后端 publication 产品页路径）。 */
+  productPresent: boolean;
+  /** 客户端 canvas 无法等价承载的语义（如实披露 —— 近似图不冒充原样）。 */
+  limitations: string[];
+  /** enabled=false 或无 where/extent 的画幅计数。 */
+  disabledCount: number;
+  skippedCount: number;
+}
+
+/**
+ * frame_product 画幅 → 请求级导出帧（canvas 栅格网格路径）。
+ *
+ * 真实承载：where 等值过滤（ExportFrame.where）+ 范围/标题；
+ * 诚实披露：layerOverrides / pageSize / 共享图例带 / 时间窗精确语义
+ * 不在客户端等价复刻 —— PDF/vector 需求走后端 publication
+ * （atlas.driver=product）。返回 limitations，不静默近似。
+ */
+export function productFramesToExportFrames(
+  spec: SpecWithProduct | null | undefined,
+): ProductFramesResult {
+  const out: ProductFramesResult = {
+    frames: [], productPresent: false, limitations: [],
+    disabledCount: 0, skippedCount: 0,
+  };
+  const product = spec?.frame_product;
+  if (!product || product.enabled === false) return out;
+  out.productPresent = true;
+  const registered = new Map<string, SpecFrameLike>();
+  for (const f of spec?.layout?.frames ?? []) {
+    if (f && typeof f === 'object' && typeof f.id === 'string') {
+      registered.set(f.id, f);
+    }
+  }
+  for (const slot of product.frames ?? []) {
+    if (!slot || typeof slot.frame_id !== 'string') continue;
+    const frame = registered.get(slot.frame_id);
+    if (!frame || frame.enabled === false) {
+      out.disabledCount += 1;
+      continue;
+    }
+    const extent = extentOf(frame);
+    const where = slot.data?.where;
+    const hasWhere =
+      !!where && where.op === 'eq' && typeof where.field === 'string'
+      && 'value' in (where ?? {});
+    if (!extent && !hasWhere) {
+      out.skippedCount += 1;
+      continue;
+    }
+    const ef: ExportFrame = hasWhere
+      ? {
+          where: {
+            layerId: String(slot.data?.layer_id ?? ''),
+            field: String(where!.field),
+            equal: where!.value as string | number,
+          },
+        }
+      : { extent: extent! };
+    const title = slot.title ?? frame.title ?? frame.id;
+    if (title) ef.title = String(title);
+    if (out.frames.length >= 50) break;
+    out.frames.push(ef);
+  }
+  out.limitations = [
+    'client_canvas_no_layer_overrides',
+    'client_canvas_no_shared_legend_band',
+    'client_canvas_no_time_window_exactness',
+  ];
+  return out;
+}

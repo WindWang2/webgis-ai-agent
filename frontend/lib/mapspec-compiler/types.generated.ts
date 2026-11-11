@@ -87,13 +87,14 @@ export interface MapSpecLayerLayout {
 export interface MapSpec {
   version: string;
   view?: MapSpecView;
-  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | Model3dMapSpecSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
+  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | Model3dMapSpecSource | NumericRasterMapSpecSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
   layers: MapSpecLayer[];
   layout?: MapSpecLayoutConfig;
   thresholds?: MapThresholds;
   scenario_mode?: "split_view" | "swipe_compare";
   scene?: MapSceneConfig;
   temporal?: MapSpecTemporalConfig;
+  frame_product?: FrameProductConfig;
 }
 
 export interface MapSpecView {
@@ -107,6 +108,7 @@ export type MapSpecSource =
     | GeoJSONMapSpecSource
   | VectorMapSpecSource
   | RasterMapSpecSource
+  | NumericRasterMapSpecSource
   | RasterDemMapSpecSource
   | DataFabricMapSpecSource
   | Model3dMapSpecSource;
@@ -133,6 +135,40 @@ export interface RasterMapSpecSource {
   imageRef: string;
   bounds: [number, number, number, number];
   imageSize?: [number, number];
+}
+
+export interface NumericRasterMapSpecSource {
+  type: "numeric_raster";
+  schema_version?: "raster_expression.v1";
+  refId: string;
+  bounds: [number, number, number, number];
+  crs?: string;
+  dataRevision: string;
+  dataFingerprint?: string;
+  bandCount?: number;
+}
+
+export interface RasterStretchBounds {
+  min: number;
+  max: number;
+  source?: "manual" | "bounded_sample" | "descriptor";
+  method?: string;
+  sample_count?: number;
+  approximate?: boolean;
+  per_channel?: number[][];
+}
+
+export interface RasterExpressionSpec {
+  schema_version?: "raster_expression.v1";
+  mode: "single" | "rgb";
+  bands: number[];
+  stretch: RasterStretchBounds;
+  colormap?: string;
+  opacity?: number;
+  resampling?: "nearest" | "bilinear" | "cubic";
+  classification?: "continuous" | "classified";
+  data_revision?: string;
+  style_id?: string;
 }
 
 export interface RasterDemMapSpecSource {
@@ -179,6 +215,7 @@ export interface MapSpecLayer {
   data_binding?: MapSpecLayerDataBinding;
   representation?: MapSpecLayerRepresentation;
   scale_profile?: Record<string, unknown>;
+  raster_style?: RasterExpressionSpec;
 }
 
 export interface MapSpecLayerExtrusion {
@@ -450,4 +487,53 @@ export interface TemporalCompareConfig {
 export interface TemporalPlaybackConfig {
   playing?: boolean;
   rate?: number;
+}
+
+export interface FrameProductConfig {
+  schema_version?: "frame_product.v1";
+  enabled: boolean;
+  product_kind: "time_series" | "category_compare" | "variable_compare" | "detail_frames";
+  grid: FrameProductGridConfig;
+  frames: ProductFrameSlot[];
+  shared_expression?: SharedExpressionConfig;
+  active_frame?: string;
+  quality?: string[];
+  disclosures?: string[];
+}
+
+export interface FrameProductGridConfig {
+  columns: number;
+  title?: string;
+}
+
+export interface ProductFrameSlot {
+  frame_id: string;
+  title?: string;
+  legend?: "shared" | "independent" | "shared_plus_frame";
+  sync_group?: string;
+  data?: FrameDataBinding;
+}
+
+export interface FrameDataBinding {
+  ref: string;
+  layer_id: string;
+  content_revision?: number;
+  field?: string;
+  where?: Record<string, unknown>;
+  time_window?: Record<string, unknown>;
+}
+
+export interface SharedExpressionConfig {
+  field: string;
+  semantics?: "count" | "ratio" | "index" | "other";
+  unit?: string;
+  denominator?: string;
+  method: string;
+  k: number;
+  palette: string;
+  breaks?: number[];
+  domain_status?: "complete" | "partial" | "unknown";
+  per_frame_counts?: Record<string, number>;
+  sample_size?: number;
+  eligibility?: string[];
 }

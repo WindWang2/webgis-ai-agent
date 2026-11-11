@@ -178,11 +178,36 @@ def _layer_lines(value: Any) -> List[str]:
         bits.append("可见" if row.get("visible") else "隐藏")
         if row.get("role"):
             bits.append(f"role={row['role']}")
+        if row.get("style"):
+            # PR-C：当前样式（compiler 已有界 ≤72 字符）
+            bits.append(f"style={_clip(row['style'], 72)}")
         lines.append("  * " + _xml_fence("layer", "(" + ",".join(bits) + ")"))
     omitted = max(0, len(rows) - _MAX_LIST_ITEMS)
     if omitted:
         lines.append(f"  * …(+{omitted} 图层省略，共 {len(rows)} 层)")
     return lines
+
+
+def _render_layout(value: Any) -> Optional[str]:
+    """PR-C：版面组件一行摘要 —— 例 ``title「成都人口」开, north_arrow 关``。
+
+    文本来自用户/Agent 输入，整行经 fact_line 以 <layout> 围栏转义。
+    """
+    rows = value if isinstance(value, list) else []
+    if not rows:
+        return "无装饰组件"
+    parts: List[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        piece = str(row.get("type") or "?")
+        if row.get("text"):
+            piece += f"「{_clip(row['text'], 32)}」"
+        if row.get("layer"):
+            piece += f"@{_clip(row['layer'], 32)}"
+        piece += " 开" if row.get("enabled", True) else " 关"
+        parts.append(piece)
+    return ", ".join(parts)
 
 
 def _changed_facts(delta: Any) -> FrozenSet[Tuple[str, str]]:
@@ -379,6 +404,8 @@ def render_situation_for_context(
             r.line("- 图层: 无")
     else:
         r.line(f"- 图层: {_UNKNOWN_TEXT}{_fact_status_suffix(mp.layers)}")
+    r.fact_line("map", "layout", mp.layout, "版面",
+                _render_layout, fence_tag="layout", untrusted=True)
     r.fact_line("map", "basemap", mp.basemap, "底图",
                 lambda v: _clip(v), fence_tag="base_layer", untrusted=True)
     r.fact_line("map", "observed", mp.observed, "渲染观察",

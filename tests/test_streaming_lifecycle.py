@@ -85,7 +85,6 @@ async def test_chat_stream_releases_db_connection_before_streaming(monkeypatch):
     app = _build_app()
     # monkeypatch guarantees teardown of module globals even on assertion
     # failure, so the next test sees an unmodified chat_route module.
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
     monkeypatch.setattr(chat_route, "pi_bridge", _SlowPiBridge(hold=0.3))
 
     loop = asyncio.get_event_loop()
@@ -240,15 +239,13 @@ async def test_stream_prompt_no_abort_on_normal_completion():
 
 
 @pytest.mark.asyncio
-async def test_dead_pi_bridge_falls_back_to_legacy_engine(monkeypatch):
-    """C-F15: a dead Pi subprocess must fall through to the legacy ChatEngine.
+async def test_dead_pi_bridge_fails_closed(monkeypatch):
+    """C-F15: a dead Pi subprocess must fail closed (HTTP 503).
 
-    Before the fix ``_use_pi_bridge`` ignored ``process_died`` and every chat
-    request errored permanently after a Pi crash. Now the legacy engine (always
-    initialised by lifespan) handles the turn instead.
+    There is no ChatEngine dialogue fallback. Respawn is attempted once; if
+    it fails, the turn is refused and stream_prompt is never called.
     """
     app = _build_app()
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
 
     # A "dead" Pi bridge: present but process_died=True.
     dead_bridge = MagicMock()
@@ -259,26 +256,13 @@ async def test_dead_pi_bridge_falls_back_to_legacy_engine(monkeypatch):
     dead_bridge.respawn_if_dead = AsyncMock(return_value=False)
     monkeypatch.setattr(chat_route, "pi_bridge", dead_bridge)
 
-    # Legacy engine captures the turn.
-    legacy = MagicMock()
-
-    async def _legacy_stream(*a, **kw):
-        yield sse_event("task_start", {"task_id": "t", "session_id": "s"})
-        yield sse_event("done", {"session_id": "s"})
-
-    legacy.chat_stream = _legacy_stream
-    monkeypatch.setattr(chat_route, "engine", legacy)
-
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        async with client.stream(
-            "POST", "/api/v1/chat/stream", json={"message": "hi"}
-        ) as resp:
-            assert resp.status_code == 200
-            body = await resp.aread()
-    # The legacy engine handled the turn; the dead Pi bridge was NOT called.
+        resp = await client.post("/api/v1/chat/stream", json={"message": "hi"})
+        assert resp.status_code == 503
+        assert "Pi agent unavailable" in resp.text
     assert dead_bridge.stream_prompt.call_count == 0
-    assert b"task_start" in body
+    assert dead_bridge.respawn_if_dead.call_count == 1
 
 
 # ─── D-F6: Pi-path SSE token batching (route boundary) ───────────────────────
@@ -353,7 +337,6 @@ async def _collect_route_chunks(monkeypatch, bridge) -> list[str]:
     The chunk sequence is exactly what StreamingResponse would put on the wire
     (one write per generator yield) — the seam at which batching is observable.
     """
-    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
     monkeypatch.setattr(chat_route, "pi_bridge", bridge)
     resp = await chat_route.chat_stream(
         chat_route.ChatRequest(message="hi", session_id=None, map_state=None),

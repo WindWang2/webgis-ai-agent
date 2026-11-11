@@ -100,6 +100,15 @@ def check_vendor() -> Report:
         "entry": ident.entry_kind,
         "node": ident.node_version,
     }
+    # ADR-0288（W08）：期望配置代（不可逆短指纹）—— 与 /config/llm 的
+    # expected_generation 及 worker spawn 锚定的生效代同一口径，可对账
+    # 「配置已更新但 worker 未换代」的中间态。缺席 = 解析失败（不计 FAIL）。
+    try:
+        from app.services.chat.model_config import config_generation
+
+        facts["expected_config_generation"] = config_generation() or None
+    except Exception:  # noqa: BLE001 — 观测面缺席不阻断诊断
+        facts["expected_config_generation"] = None
     if ident.matches_expected_pin is False:
         return Report(
             "vendor", WARN,
@@ -237,10 +246,23 @@ def check_surface() -> Report:
     fp_count = sum(1 for t in tools if isinstance(t, dict) and t.get("spec", {}).get("fingerprint"))
     if v3 is not None and fp_count == 0:
         return Report("surface", FAIL, "v3 dump carries no fingerprints (stale-surface gate blind)", "")
+    # ADR-0288（dump v4）：注册面（direct+deferred）与声明面（default_active）
+    # 是两个可观测集合 —— deferred 计数 = tool_search 可发现的长尾候选规模。
+    exposure_counts = {"direct": 0, "deferred": 0}
+    for t in tools:
+        if isinstance(t, dict) and t.get("exposure") in exposure_counts:
+            exposure_counts[t["exposure"]] += 1
+    if surface.get("version", 0) >= 4 and exposure_counts["deferred"] == 0:
+        return Report(
+            "surface", FAIL,
+            "v4 dump declares no deferred tools — tool_search would find nothing",
+            "check pi_surface_for_spawn exposure projection",
+        )
     return Report(
         "surface", PASS,
         f"{len(tools)} tools; native 7/7; proxy={EXECUTE_PROXY_NAME}; "
-        f"abi={'v3' if v3 else 'v2'}; fingerprints={fp_count}",
+        f"abi={'v3' if v3 else 'v2'}; fingerprints={fp_count}; "
+        f"exposure direct={exposure_counts['direct']} deferred={exposure_counts['deferred']}",
     )
 
 
@@ -459,21 +481,21 @@ CHECKS = [
 
 
 def _runtime_mode_block() -> tuple[str, str]:
-    """PI-06（ADR-0286 D3）：与运行时同词表的三态判定（doctor 视角）。
+    """PI-06（ADR-0286 D3）：与运行时同词表的判定（doctor 视角）。
 
     doctor 是进程外 CLI，无法观测后端桥进程活性 —— 以「本 checkout 能否
-    承载真 Pi」的事实代理：USE_NEW_AGENT 开且 entry 已构建 → native 候选；
-    否则 fallback/unavailable。分类逻辑与 /health 共用
+    承载真 Pi」的事实代理：PI_AUTOSTART 未关且 entry 已构建 → native 候选；
+    否则 unavailable。分类逻辑与 /health 共用
     ``pi_compat.classify_runtime_mode`` 单一定义点（词表不漂移）。
     """
     from app.services.chat.pi_compat import classify_runtime_mode, pi_vendor_identity
 
-    use_new_agent = os.getenv("USE_NEW_AGENT", "0") == "1"
+    autostart = os.getenv("PI_AUTOSTART", "true").lower() not in {"0", "false", "no"}
     ident = pi_vendor_identity()
     return classify_runtime_mode(
-        enabled=use_new_agent,
+        enabled=True,
         bridge_present=True,  # doctor 视角：宿主代码路径完整在场
-        alive=use_new_agent and ident.entry_built,
+        alive=autostart and ident.entry_built,
         entry_built=ident.entry_built,
     )
 

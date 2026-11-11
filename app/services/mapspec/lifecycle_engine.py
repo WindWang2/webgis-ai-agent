@@ -116,6 +116,7 @@ from app.services.mapspec.intents import (  # noqa: E402
     CheckpointIntent,  # noqa: F401
     DuplicateComponentIntent,  # noqa: F401
     RollbackIntent,  # noqa: F401
+    UndoAgentCommitIntent,  # noqa: F401
     InitProjectIntent,  # noqa: F401
     PatchComponentIntent,  # noqa: F401
     PatchLayerPresentationIntent,  # noqa: F401
@@ -134,6 +135,7 @@ from app.services.mapspec.intents import (  # noqa: E402
     RefreshDataRevisionIntent,  # noqa: F401 — /goal 03 corpus/parity 引用面
     SetTimeIntent,  # noqa: F401
     SetTemporalViewIntent,  # noqa: F401 — GOAL 03 时态控制层（corpus/_build_intent 消费）
+    SetFrameProductIntent,  # noqa: F401 — G15 多画幅产品层（corpus/_build_intent 消费）
     SetViewIntent,  # noqa: F401
     SetWorkbenchStateIntent,  # noqa: F401
     UpsertLayerIntent,  # noqa: F401
@@ -226,6 +228,54 @@ class MapSpecLifecycleEngine:
             e.get("code") for e in validation.get("errors", [])
             if e.get("code") in BLOCKING_VALIDATION_CODES
         }
+
+    async def _agent_undo_point_fields(
+        self,
+        session_id: str,
+        *,
+        pre_state: Dict[str, Any],
+        prior_spec: Optional[Dict[str, Any]],
+        committed_spec: Optional[Dict[str, Any]],
+        cartographic_review: Optional[Dict[str, Any]],
+        revision: int,
+        base_revision: int,
+    ) -> Optional[Dict[str, Any]]:
+        """PR-D：为一笔改变制图内容的 Agent 提交记录撤销点（fail-open）。
+
+        提交前 spec → 自动 checkpoint（presentation-only、内容去重、随保留
+        上限裁剪）；制图指纹不变（no-op 提交）不记录。任何失败只记日志 ——
+        撤销能力缺失不得阻断 Agent 的正常提交。
+        """
+        if not isinstance(prior_spec, dict) or not prior_spec:
+            return None
+        try:
+            from app.services.mapspec import agent_undo
+
+            post_fp = (
+                (cartographic_review or {}).get("final_fingerprint")
+                or agent_undo.fingerprint(committed_spec)
+            )
+            pre_fp = agent_undo.fingerprint(prior_spec)
+            if post_fp is None or pre_fp == post_fp:
+                return None
+            session_dir = self.store.get_session_dir(session_id)
+            ckpt = await create_checkpoint(prior_spec, session_dir, session_data_manager)
+            ckpt_id = ckpt.get("checkpoint_id") if isinstance(ckpt, dict) else None
+            if not ckpt_id:
+                return None
+            return agent_undo.record_point_fields(
+                pre_state,
+                revision=revision,
+                base_revision=base_revision,
+                pre_checkpoint_id=str(ckpt_id),
+                post_fingerprint=post_fp,
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open（撤销点是附加能力）
+            logger.warning(
+                "agent undo point skipped for session %s rev %s: %s",
+                session_id, revision, type(exc).__name__,
+            )
+            return None
 
     @staticmethod
     def _review_failure(mapspec: Dict[str, Any], exc: Exception) -> Dict[str, Any]:
@@ -436,6 +486,7 @@ class MapSpecLifecycleEngine:
             # 必须先于 try（异常发生在原初始化行之前时不得 UnboundLocal）。
             checkpoint_id_created: Optional[str] = None
             ckpt_ref_count = 0
+            extra_state_fields: Optional[Dict[str, Any]] = None
             # review P2-3（H02）：except 处理器同样引用 session_was_fresh /
             # old_mapspec_snapshot —— 此前二者的赋值在 guard/pre-commit 之后，
             # 守卫/复检回调抛异常时 except 内 UnboundLocalError 逸出，违背
@@ -568,6 +619,7 @@ class MapSpecLifecycleEngine:
                 restore_notes = _outcome.restore_notes
                 checkpoint_id_created = _outcome.checkpoint_id
                 ckpt_ref_count = _outcome.ckpt_ref_count
+                extra_state_fields = _outcome.extra_state_fields
                 mapspec = _outcome.mapspec
 
 
@@ -711,6 +763,23 @@ class MapSpecLifecycleEngine:
                 dedup_fields = _dedup_commit_fields(
                     pre_state, mutation_id, mutation_revision, origin
                 )
+                # PR-D：Agent 提交撤销点 + handler 附加字段，与 spec 同事务落地。
+                commit_extra: Dict[str, Any] = dict(dedup_fields or {})
+                if extra_state_fields:
+                    commit_extra.update(extra_state_fields)
+                if origin == "agent" and not is_rollback and not session_was_fresh:
+                    undo_fields = await self._agent_undo_point_fields(
+                        session_id,
+                        pre_state=pre_state,
+                        prior_spec=old_mapspec_snapshot,
+                        committed_spec=mapspec,
+                        cartographic_review=cartographic_review,
+                        revision=mutation_revision,
+                        base_revision=prior_mutation_revision,
+                    )
+                    if undo_fields:
+                        commit_extra.update(undo_fields)
+                dedup_fields = commit_extra or None
                 save_res = await self.store.save_mapspec(
                     session_id, mapspec, mutation_revision=mutation_revision,
                     layer_op=commit_layer_op,

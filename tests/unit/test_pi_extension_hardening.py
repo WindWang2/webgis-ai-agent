@@ -404,9 +404,10 @@ def test_extension_defers_default_surface_past_load(tmp_path: Path):
     data = json.loads(res.stderr.strip().splitlines()[-1])
     # 加载期零调用（旧实现在这里直接抛 not-initialized）
     assert data["loadPhaseActiveCalls"] == 0
-    # session_start → 默认投影（7 natives + execute proxy）
+    # session_start → 默认投影（7 natives + proxy + 发现入口 2，ADR-0288）
     assert data["afterSessionStartActiveCalls"] == 1
-    assert len(data["setActiveTools"][0]) == 8
+    assert len(data["setActiveTools"][0]) == 10
+    assert {"tool_search", "codemode"} <= set(data["setActiveTools"][0])
     # Each turn resets authority even after session_start initialized the runtime.
     assert data["afterFirstTurnActiveCalls"] == 2
     assert data["setActiveTools"][1] == data["setActiveTools"][0]
@@ -432,7 +433,7 @@ def test_extension_applies_default_lazily_without_session_start(tmp_path: Path):
     """
     res = _run_node_script(script)
     data = json.loads(res.stderr.strip().splitlines()[-1])
-    assert len(data) == 1 and len(data[0]) == 8
+    assert len(data) == 1 and len(data[0]) == 10  # 8 + 发现入口 2（ADR-0288）
 
 
 @requires_node
@@ -516,7 +517,8 @@ def test_before_agent_start_malformed_marker_falls_back_to_default(tmp_path: Pat
     """
     res = _run_node_script(script)
     data = json.loads(res.stderr.strip().splitlines()[-1])
-    assert len(data) == 1 and len(data[0]) == 8, (
-        "malformed marker must apply the default 8-tool projection, got "
+    assert len(data) == 1 and len(data[0]) == 10, (
+        "malformed marker must apply the default 10-tool projection "
+        "(8 + discovery entries, ADR-0288), got "
         f"{data}"
     )

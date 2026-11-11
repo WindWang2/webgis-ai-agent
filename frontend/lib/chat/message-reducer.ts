@@ -85,6 +85,8 @@ export interface NewToolCall {
   tool: string;
   arguments?: string;
   stepId?: string;
+  /** ADR-0288：嵌套调用的父 step_id（渲染为子行；顶层缺席）。 */
+  parentStepId?: string;
   startedAt: number;
 }
 
@@ -96,7 +98,7 @@ export function appendToolCall(
   prev: ChatStreamMessage[],
   args: { messageId: string; toolCall: NewToolCall },
 ): ChatStreamMessage[] {
-  const { tool, arguments: toolArgs, stepId, startedAt } = args.toolCall;
+  const { tool, arguments: toolArgs, stepId, parentStepId, startedAt } = args.toolCall;
   if (!tool) return prev;
   const idx = findIndexById(prev, args.messageId);
   if (idx === -1) return prev;
@@ -109,6 +111,7 @@ export function appendToolCall(
     status: 'running' as const,
     startedAt,
     ...(stepId ? { stepId } : {}),
+    ...(parentStepId ? { parentStepId } : {}),
   }];
   const copy = [...prev];
   copy[idx] = { ...prev[idx], toolCalls: next };

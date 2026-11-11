@@ -137,7 +137,6 @@ def _build_transport_app(n_tokens: int = 30, step_result_every: int | None = Non
     app.include_router(chat_route.router, prefix="/api/v1")
 
     # Force the Pi path with a deterministic bridge.
-    chat_route.USE_NEW_AGENT = True
     chat_route.pi_bridge = _MockPiBridge(n_tokens=n_tokens, step_result_every=step_result_every)
 
     # Anonymous caller, no owner token, no DB session held by the dependency.
@@ -335,10 +334,8 @@ WORKLOADS = {
 @pytest.fixture(autouse=True)
 def _clean_chat_globals():
     """Restore chat route module globals after each workload (mock injection)."""
-    saved_use = getattr(chat_route, "USE_NEW_AGENT", False)
     saved_bridge = chat_route.pi_bridge
     yield
-    chat_route.USE_NEW_AGENT = saved_use
     chat_route.pi_bridge = saved_bridge
 
 

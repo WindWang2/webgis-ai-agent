@@ -51,7 +51,6 @@ def patched_route(monkeypatch, session_factory):
                 raise
 
     bridge = _FakeBridge()
-    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
     monkeypatch.setattr(
         chat_mod, "_ensure_pi_bridge_available", AsyncMock(return_value=True)
     )

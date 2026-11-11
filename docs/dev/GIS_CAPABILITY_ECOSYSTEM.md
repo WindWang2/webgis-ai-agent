@@ -81,8 +81,8 @@ ToolRegistry ───────┘         │
 
 | 工具 | geometry / 数据形态 | 真实计算 | 产物 |
 |---|---|---|---|
-| `conditional_quantile_zonal_stats` | 面分区 + 单波段栅格 | `validate_data_path` 路径闸 → 读 metadata **先判界**（`width*height` + `RasterResourceGuard.check_grid`）→ `rasterio.read(1)` 整幅单波段 → `geometry_mask(invert=True)` + nodata/finite/where 条件掩码 + `numpy.quantile(method="linear")` | 逐 zone 多分位数、`valid_pixel_count`、覆盖率、`artifact://` ref、科学方法披露、预算 |
-| `network_service_coverage_consistency` | 线网 + 设施点 | networkx 建图 + `single_source_dijkstra_path_length` 按 scheme 覆盖边集 + Jaccard / 差异段 | 一致性数值、差异边、`artifact://` ref、量纲契约、预算 |
+| `conditional_quantile_zonal_stats` | 面分区 + 单波段栅格 | `validate_data_path` 路径闸 → 读 metadata **先判界**（`width*height` + `RasterResourceGuard.check_grid`）→ `rasterio.read(1)` 整幅单波段 → `geometry_mask(invert=True)` + nodata/finite/where 条件掩码 + `numpy.quantile(method="linear")` | 逐 zone 多分位数、`valid_pixel_count`、覆盖率、`ref:analysis-*`（dispatch seam 铸造/登记/复用，G13 起 v2 封套不再伪造 `artifact://` URI）、科学方法披露、预算 |
+| `network_service_coverage_consistency` | 线网 + 设施点 | networkx 建图 + `single_source_dijkstra_path_length` 按 scheme 覆盖边集 + Jaccard / 差异段 | 一致性数值、差异边、`ref:analysis-*`（同上）、量纲契约、预算 |
 
 两者都真实注册进 `ToolRegistry`（`app/tools/__init__.py:_TOOL_MODULES`），
 经 `apply_contract` 严格校验，走 `registry.dispatch`。

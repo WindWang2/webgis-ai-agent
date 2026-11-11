@@ -79,8 +79,8 @@ Number = Union[StrictInt, StrictFloat]
 #: 工件源装配）+ ``layer.scale_profile`` 开放声明（ScaleRepresentation-
 #: Profile.v1 投影，权威 = app/lib/cartography/multiscale/profile.py）。
 #: 纯 additive：缺失 = 既有 v1.6/v1.7 语义，存量 spec 行为不变）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9")
-LATEST_VERSION = "1.9"
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "2.0")
+LATEST_VERSION = "2.0"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
@@ -231,6 +231,44 @@ class RasterMapSpecSource(_SpecModel):
     imageSize: Optional[List[Number]] = None
 
 
+# ── G20 additive：数值栅格（raster_expression.v1）源子模型 ────────────────
+# 与 G15 frame / G16 label / G21 flow 字段分区不相交。本模型只承载**数据身份**
+# （ref + 修订 + 指纹 + grid 元信息），表达状态一律在 layer.raster_style。
+# 同源可被多个图层以不同样式引用，源条目不因换色而改写（数据指纹不污染）。
+# 文档版本保持 1.9：纯 additive optional + extra="allow" + canonical 保序
+# 深拷贝，旧文档 parse_mapspec 结果逐位不变，无需迁移；子契约版本独立演进。
+from app.schemas.raster_spec import (  # noqa: E402
+    RASTER_EXPRESSION_SCHEMA_VERSION as _RASTER_EXPRESSION_SCHEMA_VERSION,
+    RasterExpressionSpec as _RasterExpressionSpec,
+    RasterStretchBounds as _RasterStretchBounds,
+)
+
+RasterExpressionSpec = _RasterExpressionSpec
+RasterStretchBounds = _RasterStretchBounds
+RASTER_EXPRESSION_SCHEMA_VERSION = _RASTER_EXPRESSION_SCHEMA_VERSION
+
+
+class NumericRasterMapSpecSource(_SpecModel):
+    """数值栅格 ref 的 MapSpec 源（GeoTIFF/COG，未烘焙成 PNG）。
+
+    - ``refId``：owner-scoped session ref（不是本地路径、不是 tile URL）；
+    - ``dataRevision`` / ``dataFingerprint``：数据身份，样式改动不重算；
+    - ``bounds``：EPSG:4326 范围证据（无 CRS 时为源坐标范围，见 ``crs``）；
+    - 不含 owner token / session URL / 过期签名。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["numeric_raster"]
+    schema_version: Literal["raster_expression.v1"] = "raster_expression.v1"
+    refId: StrictStr
+    bounds: List[Number]  # [w, s, e, n]
+    crs: Optional[StrictStr] = None
+    dataRevision: StrictStr
+    dataFingerprint: Optional[StrictStr] = None
+    bandCount: Optional[StrictInt] = None
+
+
 class DataFabricMapSpecSource(_SpecModel):
     """Data Fabric lazy/materialized 协议源（ADR-0050）；键面以
     ``mapspec_source.store_data`` 实际写入为准，其余开放。"""
@@ -299,6 +337,7 @@ MapSpecSource = Union[
     GeoJSONMapSpecSource,
     VectorMapSpecSource,
     RasterMapSpecSource,
+    NumericRasterMapSpecSource,
     RasterDemMapSpecSource,
     DataFabricMapSpecSource,
     Model3dMapSpecSource,
@@ -666,6 +705,10 @@ class MapSpecLayer(_SpecModel):
     #: Profile.v1 投影（to_mapspec_layer_block）。缺失 = 层无多尺度档案，
     #: 存量 spec 行为不变）。
     scale_profile: Optional[Dict[str, Any]] = None
+    #: G20 additive：数值栅格表达（``raster_expression.v1``）。样式在**层**上，
+    #: 数据身份在 ``NumericRasterMapSpecSource`` 上 —— 同一 ref 的两个图层可
+    #: 携带不同 style_id 而互不串色。旧 PNG 图层缺席该字段，行为不变。
+    raster_style: Optional[RasterExpressionSpec] = None
 
 
 class MapThresholds(_SpecModel):
@@ -1088,6 +1131,200 @@ class MapSpecTemporalConfig(_SpecModel):
         return self
 
 
+# ── v2.0 additive：多画幅产品协议（FrameProductContract.v1，G15）────────
+#
+# 语义纪律（G15-MULTIFRAME-CARTOGRAPHY）：
+# - 一个产品、一份权威 MapSpec、多个稳定 frame_id。画幅**身份**单一事实 =
+#   ``layout.frames[].id``（既有 MapSpecFrame）；本块只持有产品语义（数据
+#   绑定/同步组/图例策略/共享表达），不复制画幅几何 —— 引用缺失由 service
+#   层校验拒绝（schema 分支间互不可见）。
+# - 画幅与页面分开建模：旧 ``layout.frames`` 的 atlas 逐帧分页语义零变化；
+#   本块的 grid 只声明**同页并置**策略，消费方显式选择，不悄悄改图册。
+# - 数据以 ref 共享（每画幅最多一份 where/time_window 有界差异），绝不复
+#   制要素载荷；content_revision 记录绑定时的数据版本（stale 信号源）。
+# - 共享表达是科学契约：shared_expression 在场时，跨画幅颜色域必须有相同
+#   字段含义/单位/分母/语义种类 —— breaks 只计算一次（真实数据并集），
+#   domain_status 如实 complete/partial/unknown。
+
+#: frame_product.v1 —— 本契约的独立版本面（与 MapSpec 文档版本解耦演进）。
+FRAME_PRODUCT_SCHEMA_VERSION = "frame_product.v1"
+
+#: 产品级画幅数上限（资源有界：常见 2/3/4/6 幅 + 详情组余量；与
+#: MAX_SPEC_FRAMES=50 的 atlas 帧帽不同口径 —— 产品是并置渲染，不是分页）。
+MAX_PRODUCT_FRAMES = 12
+
+#: 相机同步组上限（组是声明稀有物；超过即拒绝写入而非静默合并）。
+MAX_FRAME_SYNC_GROUPS = 4
+
+#: 产品种类词表（WP03 计划器输出语义；kind 决定共享表达资格的默认规则）。
+FRAME_PRODUCT_KINDS: Tuple[str, ...] = (
+    "time_series",        # 同指标跨真实时间桶并置（temporal 契约驱动）
+    "category_compare",   # 同属性不同类别值并置
+    "variable_compare",   # 同区域不同变量并置（默认不共享色带）
+    "detail_frames",      # 主图 + 局部详图（范围各异，不共享比例尺）
+)
+
+#: 图例策略词表：shared = 只渲染产品级共同图例；independent = 各画幅独立
+#: 图例；shared_plus_frame = 共同图例 + 帧独有附加图例（如详图特有图层）。
+FRAME_LEGEND_MODES: Tuple[str, ...] = ("shared", "independent", "shared_plus_frame")
+
+#: 共享表达数值语义种类 —— 共享资格判定键之一：count 与 ratio 绝不共用
+#: 色带（同为数值不是共享理由）。
+SHARED_EXPRESSION_SEMANTICS: Tuple[str, ...] = ("count", "ratio", "index", "other")
+
+#: 共享分级 domain 计算状态词表。
+SHARED_DOMAIN_STATUSES: Tuple[str, ...] = ("complete", "partial", "unknown")
+
+
+class FrameDataBinding(_SpecModel):
+    """画幅数据绑定 —— ref + 有界过滤差异（不复制数据）。
+
+    where 词表 = feature_pages where AST（eq/ne/in/gte/gt/lte/lt/between/
+    contains/startswith + and/or/not；service 层经 parse/validate 深校验，
+    schema 层保持开放 dict 以免第二套词表漂移）。time_window 形状 =
+    PublicationIR.time_window（temporal 窗口描述符）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    ref: StrictStr = Field(min_length=1, max_length=128)
+    layer_id: StrictStr = Field(min_length=1, max_length=128)
+    content_revision: Optional[StrictInt] = Field(default=None, ge=0)
+    field: Optional[StrictStr] = Field(default=None, max_length=64)
+    where: Optional[Dict[str, Any]] = None
+    time_window: Optional[Dict[str, Any]] = None
+
+
+class ProductFrameSlot(_SpecModel):
+    """产品内一个画幅的产品语义（身份 = layout.frames[].id）。
+
+    几何（extent/view/layerOverrides/pageSize/enabled/标题缺省）全部在
+    MapSpecFrame 上持有 —— 本模型绝不复刻，避免双写漂移；排序即数组序
+    （显示顺序），身份永不下标。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    frame_id: StrictStr = Field(min_length=1, max_length=64)
+    title: Optional[StrictStr] = Field(default=None, max_length=200)
+    legend: Literal[FRAME_LEGEND_MODES] = "shared"  # type: ignore[valid-type]
+    sync_group: Optional[StrictStr] = Field(default=None, min_length=1, max_length=32)
+    data: Optional[FrameDataBinding] = None
+
+
+class SharedExpressionConfig(_SpecModel):
+    """跨画幅共享表达（科学契约）：同字段含义 + 同单位 + 同分母 + 同分类。
+
+    breaks 只计算一次（跨画幅真实数据并集，service 层负责并拒绝视口样本
+    冒充）；breaks=None + domain_status="unknown" = 尚未计算（不伪装 complete）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    field: StrictStr = Field(min_length=1, max_length=64)
+    semantics: Literal[SHARED_EXPRESSION_SEMANTICS] = "other"  # type: ignore[valid-type]
+    unit: Optional[StrictStr] = Field(default=None, max_length=32)
+    denominator: Optional[StrictStr] = Field(default=None, max_length=64)
+    method: StrictStr = Field(min_length=1, max_length=32)
+    k: StrictInt = Field(ge=2, le=9)
+    palette: StrictStr = Field(min_length=1, max_length=32)
+    breaks: Optional[List[Number]] = Field(default=None, min_length=2, max_length=17)
+    domain_status: Literal[SHARED_DOMAIN_STATUSES] = "unknown"  # type: ignore[valid-type]
+    #: 计算证据（bounded）：每画幅参与分级的有限值计数 + 并集样本量。
+    per_frame_counts: Optional[Dict[StrictStr, StrictInt]] = None
+    sample_size: Optional[StrictInt] = Field(default=None, ge=0)
+    #: 资格理由（bounded 开放词表，如 union_breaks、denominator_equal、
+    #: partial_frame_missing_data —— 披露给图例与终验）。
+    eligibility: List[StrictStr] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def _validate_shared_expression(self) -> "SharedExpressionConfig":
+        if self.breaks is not None:
+            if any(b <= a for a, b in zip(self.breaks, self.breaks[1:], strict=False)):
+                raise ValueError("shared_expression.breaks must be strictly ascending")
+            if self.domain_status == "unknown":
+                raise ValueError(
+                    "breaks present requires domain_status complete|partial "
+                    "(unknown must carry no breaks)")
+            if len(self.breaks) - 1 != self.k:
+                raise ValueError("shared_expression.breaks must yield exactly k classes")
+        if self.domain_status != "unknown" and self.breaks is None:
+            raise ValueError(
+                "domain_status complete|partial requires computed breaks")
+        # 计数语义必须有分母声明才能与 ratio 区分资格（缺省 = 纯计数）。
+        if self.semantics == "ratio" and not self.denominator:
+            raise ValueError("ratio semantics requires denominator declaration")
+        return self
+
+
+class FrameProductGridConfig(_SpecModel):
+    """同页并置布局声明（画幅与页面分开建模 —— 这里只有网格意向）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    columns: StrictInt = Field(ge=1, le=3)
+    title: Optional[StrictStr] = Field(default=None, max_length=160)
+
+
+class FrameProductConfig(_SpecModel):
+    """FrameProductContract.v1 —— MapSpec 多画幅产品层（v2.0 additive）。
+
+    缺失/None = 非多画幅产品（存量 spec 行为与指纹逐位不变）。写入面 =
+    SetFrameProductIntent（frame_products service），消费面 = 前端画幅
+    工作台 / 出版产品页编译 / 逐画幅终验。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: Literal[FRAME_PRODUCT_SCHEMA_VERSION] = FRAME_PRODUCT_SCHEMA_VERSION  # type: ignore[valid-type]
+    enabled: StrictBool
+    product_kind: Literal[FRAME_PRODUCT_KINDS]  # type: ignore[valid-type]
+    grid: FrameProductGridConfig
+    frames: List[ProductFrameSlot] = Field(min_length=2, max_length=MAX_PRODUCT_FRAMES)
+    shared_expression: Optional[SharedExpressionConfig] = None
+    #: 当前激活画幅（UI 编辑焦点/Pi 情境投影；必须是产品内真实 frame_id）。
+    active_frame: Optional[StrictStr] = Field(default=None, min_length=1, max_length=64)
+    #: 数据质量旗标（bounded）：partial_binding / stale_revision /
+    #: mixed_fields / frame_missing_data …
+    quality: List[StrictStr] = Field(default_factory=list, max_length=8)
+    #: 诚实披露（bounded；如 snapshot_only_frames、product_page_exported）。
+    disclosures: List[StrictStr] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def _validate_product_invariants(self) -> "FrameProductConfig":
+        # 产品启用需 ≥2 画幅（单幅是普通地图，不是小倍数产品 —— 诚实拒绝）。
+        if self.enabled and len(self.frames) < 2:
+            raise ValueError(
+                "frame_product.enabled=True requires >=2 frames "
+                "(single-frame maps are not small multiples products)"
+            )
+        ids = [f.frame_id for f in self.frames]
+        if len(ids) != len(set(ids)):
+            raise ValueError("frame_product.frames frame_id must be unique")
+        if self.active_frame is not None and self.active_frame not in set(ids):
+            raise ValueError(f"active_frame {self.active_frame!r} not in product frames")
+        groups = {f.sync_group for f in self.frames if f.sync_group}
+        if len(groups) > MAX_FRAME_SYNC_GROUPS:
+            raise ValueError(
+                f"sync groups exceed {MAX_FRAME_SYNC_GROUPS} (got {len(groups)})")
+        # 共享表达契约：声明 shared/shared_plus_frame 图例的画幅必须都有
+        # 数据绑定且字段一致（schema 级可判的部分；跨画幅一致性与资格的
+        # 完整判定在 service 层，需要真实数据）。
+        if self.shared_expression is not None:
+            shared_field = self.shared_expression.field
+            for f in self.frames:
+                if f.legend in ("shared", "shared_plus_frame"):
+                    if f.data is None or not f.data.field:
+                        raise ValueError(
+                            f"frame {f.frame_id!r} uses shared legend but has no "
+                            "data.field binding")
+                    if f.data.field != shared_field:
+                        raise ValueError(
+                            f"frame {f.frame_id!r} binds field {f.data.field!r} "
+                            f"differs from shared_expression.field {shared_field!r}")
+        return self
+
+
 class MapSpecDocument(_SpecModel):
     """authoritative 文档 spine。schema 权威 = 本模型族。"""
 
@@ -1105,6 +1342,8 @@ class MapSpecDocument(_SpecModel):
     scene: Optional[MapSceneConfig] = None
     #: v1.8 additive（GOAL 03）：时态控制层契约；缺失 = 非时序视图。
     temporal: Optional[MapSpecTemporalConfig] = None
+    #: v2.0 additive（G15）：多画幅产品层契约；缺失 = 非多画幅产品。
+    frame_product: Optional[FrameProductConfig] = None
 
 
 #: TS 投影（W3 生成器）消费的导出面：核心文档类型 → 模型类。
@@ -1115,6 +1354,10 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("GeoJSONMapSpecSource", GeoJSONMapSpecSource),
     ("VectorMapSpecSource", VectorMapSpecSource),
     ("RasterMapSpecSource", RasterMapSpecSource),
+    # G20：数值栅格源 + 表达契约（子契约版本 raster_expression.v1）
+    ("NumericRasterMapSpecSource", NumericRasterMapSpecSource),
+    ("RasterStretchBounds", RasterStretchBounds),
+    ("RasterExpressionSpec", RasterExpressionSpec),
     ("RasterDemMapSpecSource", RasterDemMapSpecSource),
     ("DataFabricMapSpecSource", DataFabricMapSpecSource),
     ("ClusterSourceConfig", ClusterSourceConfig),
@@ -1153,6 +1396,12 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("TemporalClassification", TemporalClassification),
     ("TemporalCompareConfig", TemporalCompareConfig),
     ("TemporalPlaybackConfig", TemporalPlaybackConfig),
+    # v2.0（G15）：多画幅产品层契约类型。
+    ("FrameProductConfig", FrameProductConfig),
+    ("FrameProductGridConfig", FrameProductGridConfig),
+    ("ProductFrameSlot", ProductFrameSlot),
+    ("FrameDataBinding", FrameDataBinding),
+    ("SharedExpressionConfig", SharedExpressionConfig),
 )
 
 
@@ -1248,6 +1497,9 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # layer.scale_profile 可选；缺失 = 既有语义，存量 spec 行为不变。
     # GOAL 04 多尺度制图综合）。
     ("1.8", "1.9"): lambda doc: doc,
+    # 2.0 相对 1.9 纯 additive（顶层 frame_product 可选；缺失 = 非多画幅
+    # 产品，存量 spec 行为不变。G15 FrameProductContract.v1）。
+    ("1.9", "2.0"): lambda doc: doc,
 }
 
 

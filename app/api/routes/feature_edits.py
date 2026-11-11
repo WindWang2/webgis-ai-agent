@@ -11,9 +11,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.models.db_model import Conversation
 from app.schemas.feature_edit_schema import (
+    DatasetCreateRequest,
+    EditableCopyRequest,
     FeatureEditPreviewRequest,
     PlanDecisionRequest,
     PolicyPutRequest,
+    PromoteSketchRequest,
 )
 from app.services.auth_history_bridge import require_owned_session
 from app.services.distributed_lock import (
@@ -217,3 +220,105 @@ async def put_feature_edit_policy(
     _conv: Conversation = Depends(require_owned_session),
 ) -> Dict[str, Any]:
     return await fe_policy.set_policy(session_id, req.mode)
+
+
+# ── G14 数据集 provisioning（owner 通道；actor=user 服务端裁决） ────────────
+
+
+@router.post("/sessions/{session_id}/feature-edits/datasets")
+async def create_edit_dataset(
+    session_id: str,
+    req: DatasetCreateRequest,
+    _conv: Conversation = Depends(require_owned_session),
+) -> Dict[str, Any]:
+    from app.services.feature_edit import datasets as fe_datasets
+
+    result = await fe_datasets.create_empty_dataset(
+        session_id, name=req.name, geometry_type=req.geometry_type,
+        topology=req.topology.model_dump() if req.topology else None,
+    )
+    if not result.get("ok"):
+        status = 404 if result.get("error_code") == "DATASET_NOT_FOUND" else 400
+        raise HTTPException(status_code=status, detail={"code": result.get("error_code"), "message": result.get("error")})
+    return result
+
+
+@router.post("/sessions/{session_id}/feature-edits/datasets/promote-sketch")
+async def promote_sketch_dataset(
+    session_id: str,
+    req: PromoteSketchRequest,
+    _conv: Conversation = Depends(require_owned_session),
+) -> Dict[str, Any]:
+    from app.services.feature_edit import datasets as fe_datasets
+
+    result = await fe_datasets.promote_sketch(
+        session_id, features=req.features, name=req.name,
+        topology=req.topology.model_dump() if req.topology else None,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail={"code": result.get("error_code"), "message": result.get("error")})
+    return result
+
+
+@router.post("/sessions/{session_id}/feature-edits/datasets/{ref_id}/editable-copy")
+async def make_editable_copy(
+    session_id: str,
+    ref_id: str,
+    req: EditableCopyRequest,
+    _conv: Conversation = Depends(require_owned_session),
+) -> Dict[str, Any]:
+    from app.services.feature_edit import datasets as fe_datasets
+
+    result = await fe_datasets.create_editable_copy(session_id, ref_id, name=req.name)
+    if not result.get("ok"):
+        status = 404 if result.get("error_code") == "DATASET_NOT_FOUND" else 400
+        raise HTTPException(status_code=status, detail={"code": result.get("error_code"), "message": result.get("error")})
+    return result
+
+
+@router.get("/sessions/{session_id}/feature-edits/datasets/{ref_id}/qualification")
+async def get_edit_qualification(
+    session_id: str,
+    ref_id: str,
+    _conv: Conversation = Depends(require_owned_session),
+) -> Dict[str, Any]:
+    from app.services.feature_edit import datasets as fe_datasets
+
+    result = await fe_datasets.qualify_dataset(session_id, ref_id)
+    if result.get("reason") == "dataset_not_found":
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return result
+
+
+@router.get("/sessions/{session_id}/feature-edits/{ref_id}/lineage")
+async def get_feature_lineage(
+    session_id: str,
+    ref_id: str,
+    wfid: str | None = None,
+    limit: int = 20,
+    _conv: Conversation = Depends(require_owned_session),
+) -> Dict[str, Any]:
+    """血缘有界投影（标注/多画幅/selection/分析的公开读取面；不读 journal 私有结构）。"""
+    await _load_payload(session_id, ref_id)
+    journals = await fe_executor._load_journals(session_id)
+    journal = journals.get(ref_id) or {}
+    events: list[Dict[str, Any]] = []
+    for entry in reversed(journal.get("entries") or []):
+        for event in entry.get("lineage") or []:
+            if wfid and wfid not in (event.get("parent_wfids") or []) and wfid not in (event.get("child_wfids") or []):
+                continue
+            events.append(
+                {
+                    "seq": entry.get("seq"),
+                    "entry_kind": entry.get("kind"),
+                    "kind": event.get("kind"),
+                    "parent_wfids": event.get("parent_wfids") or [],
+                    "child_wfids": event.get("child_wfids") or [],
+                    "actor": entry.get("actor"),
+                    "content_revision_after": entry.get("content_revision_after"),
+                    "created_at": entry.get("created_at"),
+                }
+            )
+        if len(events) >= max(1, min(limit, 50)):
+            break
+    return {"ref_id": ref_id, "events": events[: max(1, min(limit, 50))], "queried_wfid": wfid}

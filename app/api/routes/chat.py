@@ -55,10 +55,6 @@ from app.models.db_model import Conversation, Message
 from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.chat_engine import ChatEngine
 # H-3（#858）：非流式路由透传 #685 诚实失败分类（经兼容层 re-export）。
-from app.services.chat.execution_engine import (
-    HonestTurnFailure,
-    SessionClearingError,
-)
 from app.services.history_service_async import AsyncHistoryService
 from app.services.explorer.orchestrator import bridge_session_explorer_progress
 from app.services.distributed_lock import (
@@ -74,7 +70,7 @@ from app.tools.registry import ToolRegistry
 from app.utils.sse import SSEBatcher, sse_event, sse_event_id_scope, sse_event_type
 from app.services.chat.error_taxonomy import classify_turn_exception
 
-from app.agent_pi_bridge import PiRpcError, USE_NEW_AGENT
+from app.agent_pi_bridge import PiRpcError
 from app.lib.runtime import context as rt_ctx
 from app.lib.runtime.evidence import record_map_action_acked_by_turn
 
@@ -707,22 +703,23 @@ def _pi_turn_bridge(session_id: Optional[str]):
     return pi_bridge
 
 
-def _use_pi_bridge() -> bool:
-    """Return True when the Pi agent path is enabled and a worker is alive.
+def _pi_unavailable() -> "HTTPException":
+    """Fail-closed when no live Pi worker can serve the turn."""
+    return HTTPException(status_code=503, detail="Pi agent unavailable")
 
-    C-F15: the Pi subprocess can die (crash, OOM, bad extension). Previously
-    ``_use_pi_bridge`` only checked ``USE_NEW_AGENT and pi_bridge is not None``
-    and ignored ``process_died``, so after a Pi crash every /chat request
-    yielded task_error forever (PiRpcError "Pi process not started") — the
-    legacy ChatEngine fallback the docstrings claimed did not exist. Now a dead
-    bridge falls through to the always-initialised legacy ChatEngine so the
-    service degrades instead of hard-failing until a restart.
+
+def _use_pi_bridge() -> bool:
+    """Return True when a Pi worker is alive.
+
+    A dead or missing bridge no longer falls through to ChatEngine; callers
+    must fail closed (HTTP 503 / SSE error). Lazy respawn lives in
+    ``_ensure_pi_bridge_available``.
 
     V5-B: under a pool this is the service-level view — alive if ANY worker is
     alive. Per-session availability (and respawn of the session's own worker)
     is ``_ensure_pi_bridge_available(session_id)``.
     """
-    if not USE_NEW_AGENT or pi_bridge is None:
+    if pi_bridge is None:
         return False
     from app.agent_pi_bridge import get_bridge_pool
 
@@ -734,14 +731,12 @@ def _use_pi_bridge() -> bool:
 
 async def _ensure_pi_bridge_available(session_id: Optional[str] = None) -> bool:
     """Return True if the session's Pi worker is active or successfully
-    respawned, False if degraded to ChatEngine.
+    respawned, False if the turn must fail closed.
 
     V5-B: the availability check and lazy respawn target the worker THIS
-    session's turn will actually run on (stable affinity), not just worker 0 —
-    otherwise a crashed worker 1 would keep its sessions on the legacy engine
-    while worker 0 users keep the Pi path.
+    session's turn will actually run on (stable affinity), not just worker 0.
     """
-    if not USE_NEW_AGENT or pi_bridge is None:
+    if pi_bridge is None:
         return False
     candidate = _pi_turn_bridge(session_id)
     if candidate is None:
@@ -756,9 +751,17 @@ async def _ensure_pi_bridge_available(session_id: Optional[str] = None) -> bool:
                 await recycle_fn()
         except Exception:  # noqa: BLE001 — 增值回收绝不阻断 turn 准入
             logger.warning("[chat] surface recycle check failed", exc_info=True)
+        # ADR-0288（W08，#2061 review-P1）：配置代漂移同样在 **每个 turn 边界**
+        # 检查 —— /config/llm 更新时若在飞 turn 而 deferred，下一 turn 必须
+        # 在这里完成换代，否则旧模型/端点/密钥无限期沿用。
+        try:
+            config_recycle_fn = getattr(candidate, "recycle_if_config_stale", None)
+            if config_recycle_fn and callable(config_recycle_fn):
+                await config_recycle_fn()
+        except Exception:  # noqa: BLE001 — 增值回收绝不阻断 turn 准入
+            logger.warning("[chat] config recycle check failed", exc_info=True)
         # review P1-1：回收可能已 stop 但 start 失败（worker 现死）——复检
-        # 活性，死了走既有 lazy respawn / ChatEngine 降级，绝不把死 worker
-        # 报成可用（否则本请求 502 而非降级）。
+        # 活性，死了走既有 lazy respawn；仍死则本 turn fail-closed（503）。
         if _bridge_alive(candidate):
             return True
     # Attempt lazy respawn if dead
@@ -1126,43 +1129,7 @@ async def chat_completions(
                 raise HTTPException(status_code=500, detail="Internal server error")
 
 
-        # Legacy path: 使用 ChatEngine
-        try:
-            result = await get_engine().chat(
-                req.message,
-                session_id=req.session_id,
-                map_state=req.map_state,
-                skill_name=req.skill_name,
-                user_id=user_id,
-                project_id=req.project_id,
-            )
-            # ADR-0069: same turn-end harvest as the Pi path — the legacy
-            # engine produces the same session review, so project memory must
-            # accrue identically (no Pi-only parity gap, cf. #788).
-            await harvest_project_memory(
-                result.get("session_id") or req.session_id, req.project_id
-            )
-            return ChatResponse(**result)
-        except HonestTurnFailure as e:
-            # H-3（#858）：诚实失败透传——provider 空补全/max_rounds/no_progress/
-            # turn_timeout 是上游语义失败而非服务器 bug。此前一律折叠 500
-            # "Internal server error"，客户端按"服务器错误"重发整条消息导致
-            # 工具副作用重复（dedup 集合是 per-turn 的）。
-            logger.warning(
-                f"Chat honest failure ({e.failure_class}): {e}"
-            )
-            raise HTTPException(
-                status_code=502,
-                detail={"failure_class": e.failure_class, "message": str(e)},
-            )
-        except SessionClearingError:
-            raise HTTPException(
-                status_code=409, detail="session is being cleared; retry later"
-            )
-        except Exception as e:
-            logger.error(f"Chat error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-
+        raise _pi_unavailable()
 
 @router.post("/stream", response_model=None)
 async def chat_stream(
@@ -1291,7 +1258,7 @@ async def chat_stream(
         # abort and disconnect unwind all stay on it (abort routes via the
         # session-keyed active-turn table when invoked from elsewhere).
         turn_bridge = _pi_turn_bridge(pi_session_id)
-        # 架构事实（#726，审计裁决）：Pi 路径（USE_NEW_AGENT=1）刻意不走
+        # 架构事实（#726，审计裁决）：Pi 路径刻意不走
         # legacy 的 classify_followup/should_plan/make_plan/ToolCatalog 规划链
         # —— Pi 以单一 webgis_execute 代理工具 + promptSnippet 自主选择工具，
         # CanonicalPlan/decision_log 仅存在于 legacy 路径。详见
@@ -1495,54 +1462,8 @@ async def chat_stream(
             headers=SSE_HEADERS,
         )
 
-    # Legacy path: 使用 ChatEngine
-    async def event_generator():
-        # ADR-0194：legacy 路径在流起始落画布动作（fail-open）。legacy 引擎
-        # 自建上下文不经 _build_situation_env_block；动作仍进会话环，下一轮
-        # Pi/情境投影可见。
-        await _ingest_request_canvas_actions(req.session_id, req)
-        buffer = TurnEventBuffer(session_key, req.message)
-        _turn_resume_registry.register(session_key, buffer)
-        with sse_event_id_scope(), rt_ctx.bind_runtime_context(
-            request_id=request_id, session_id=req.session_id, project_id=req.project_id
-        ):
-            try:
-                async for event in _recorded(
-                    get_engine().chat_stream(
-                        req.message,
-                        session_id=req.session_id,
-                        map_state=req.map_state,
-                        skill_name=req.skill_name,
-                        user_id=user_id,
-                        project_id=req.project_id,
-                    ),
-                    buffer,
-                ):
-                    yield event
-            except Exception as e:
-                logger.error(f"Stream error: {e}", exc_info=True)
-                err = sse_event("error", {
-                    "error": "Internal server error",
-                    "error_class": classify_turn_exception(e),
-                })
-                buffer.record(err, force_terminal=True)
-                yield err
-            finally:
-                if not buffer.ended:
-                    buffer.mark_ended(aborted=True)
-            # #518 post-turn bridge: 匿名（无 owner）探索任务经聊天流推送进度。
-            # done/error 之后保持连接，直到任务终态（有界，见 bridge 实现）。
-            # 位于 sse_event_id_scope 内，事件带 id（前端去重）。
-            async for event in bridge_session_explorer_progress(
-                session_key, user_id
-            ):
-                yield event
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers=SSE_HEADERS,
-    )
+    raise _pi_unavailable()
 
 
 @router.get("/sessions", response_model=SessionListResponse)

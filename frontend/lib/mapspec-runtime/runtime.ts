@@ -36,6 +36,12 @@ import {
   type RepresentationPlan,
 } from "@/lib/carto-ir/representation";
 import { devOnly } from "@/lib/utils/logger";
+// G20：compiler/runtime 共用同一瓦片 URL 构造面（会话边界 + 同源双层隔离）
+import {
+  buildNumericRasterTileUrl,
+  numericRasterSourceId,
+  resolveNumericRasterTileUrl,
+} from "@/lib/raster-authoring/tile-url";
 
 import {
   activeBandIndex,
@@ -180,11 +186,73 @@ export class MapSpecRuntime {
   private styleLoadedFallbackWarned = false;
 
   private tileMissSession: string | null = null;
+  /** G20：当前会话 id（用于替换 compiler 输出的会话占位符；绝不持久化）。 */
+  private sessionScope: string | null = null;
+  /** G20：已挂载的派生数值栅格源 → 已解析瓦片 URL（样式变化据此重建）。 */
+  private numericRasterApplied = new Map<string, string>();
 
   setSessionScope(sessionId: string | null): void {
     if (sessionId !== this.tileMissSession) {
       resetTileMiss(this.map);
       this.tileMissSession = sessionId;
+      this.sessionScope = sessionId;
+      // 切会话清空派生源账本，避免旧会话的 URL 在新会话里复用。
+      this.numericRasterApplied.clear();
+    }
+  }
+
+  /**
+   * G20：把每个数值栅格层编译成**独立**的 MapLibre raster 源。
+   *
+   * - 同源双层携带不同 style_id → 不同 URL / 不同缓存身份，改一层不串色；
+   * - style_id 变化（含撤销/重做/会话恢复）→ 先删旧源再挂新源，绝不保留
+   *   「提交成功但地图仍旧」的旧 URL 快路径；
+   * - 会话未绑定时拒绝挂载并记 lastError，不画假地图。
+   */
+  private hasNumericRasterLayers(spec: MapSpec): boolean {
+    return (spec.layers ?? []).some((layer) =>
+      spec.sources?.[layer.source]?.type === "numeric_raster"
+      && !!layer.raster_style?.style_id,
+    );
+  }
+
+  private syncNumericRasterSources(spec: MapSpec): void {
+    if (!this.hasNumericRasterLayers(spec)) {
+      // 没有数值栅格层时零操作（no-op reconcile 的 perf 计数必须保持平坦）。
+      if (this.numericRasterApplied.size > 0) {
+        for (const id of Array.from(this.numericRasterApplied.keys())) {
+          this.removeSourceSafe(id);
+        }
+        this.numericRasterApplied.clear();
+      }
+      return;
+    }
+    const wanted = new Map<string, string>();
+    for (const layer of spec.layers ?? []) {
+      const src = spec.sources?.[layer.source];
+      if (!src || src.type !== "numeric_raster" || layer.type !== "raster") continue;
+      const styleId = layer.raster_style?.style_id;
+      if (!styleId) continue;
+      const resolved = resolveNumericRasterTileUrl(
+        buildNumericRasterTileUrl(src.refId, layer.id, styleId),
+        this.sessionScope,
+      );
+      if (!resolved) {
+        this.lastError = "raster_session_unresolved";
+        continue;
+      }
+      wanted.set(numericRasterSourceId(layer.source, layer.id), resolved);
+    }
+    for (const [id, url] of Array.from(this.numericRasterApplied.entries())) {
+      if (wanted.get(id) !== url) {
+        this.removeSourceSafe(id);
+        this.numericRasterApplied.delete(id);
+      }
+    }
+    for (const [id, url] of wanted.entries()) {
+      if (this.numericRasterApplied.get(id) === url && this.map.getSource(id)) continue;
+      renderer.addRasterTileSource(this.map, id, url);
+      this.numericRasterApplied.set(id, url);
     }
   }
 
@@ -525,6 +593,9 @@ export class MapSpecRuntime {
       }
     }
 
+    // G20：在层挂载前同步派生数值栅格源（删除/替换同源旧 URL）。
+    this.syncNumericRasterSources(nextSpec);
+
     // --- layers (add + recompile re-add) ---
     for (const change of patch.layers) {
       if ((change.kind === "add" || change.kind === "recompile") && change.next) {
@@ -804,6 +875,18 @@ export class MapSpecRuntime {
       }
     }
 
+    // G20：派生源同步必须排在层 add 之前（严格保序的 debouncer 队列）。
+    // 只有真实存在数值栅格层时才入队 —— 否则会给每个 no-op reconcile
+    // 凭空加一个 render op，破坏既有 perf 计数契约。
+    if (this.hasNumericRasterLayers(nextSpec) || this.numericRasterApplied.size > 0) {
+      ops.push({
+        id: "raster:numeric:sync",
+        type: "UPDATE_GEOJSON",
+        priority: "high",
+        execute: () => this.syncNumericRasterSources(nextSpec),
+      });
+    }
+
     for (const change of patch.layers) {
       if ((change.kind === "add" || change.kind === "recompile") && change.next) {
         if (pendingRefSources.has(change.next.source)) continue;
@@ -1039,6 +1122,9 @@ export class MapSpecRuntime {
    * optimizations are preserved exactly.
    */
   private applySource(id: string, source: MapSpecSource, replaceExisting = false): void {
+    // G20：原始 numeric_raster 源不是 MapLibre 源；派生 tile 源由
+    // syncNumericRasterSources 统一挂载（每层独立 style_id）。
+    if (source.type === "numeric_raster") return;
     // AC-06 P1：记录 inline 要素数 —— 符号律兜底（paint-bridge）与密度
     // 观测都从这里取数。
     const features = (source as { inlineData?: { features?: unknown[] } }).inlineData?.features;
@@ -1207,6 +1293,12 @@ export class MapSpecRuntime {
       paint: basePaint,
       layout: { ...(layer.layout || {}), visibility: vis.visibility },
     };
+    // G20：数值栅格层引用派生 tile 源；透明度在服务端瓦片应用一次，
+    // 不叠加 MapLibre raster-opacity（避免双重衰减）。
+    if (spec?.sources?.[layer.source]?.type === "numeric_raster" && layer.raster_style?.style_id) {
+      def.source = numericRasterSourceId(layer.source, layer.id);
+      delete def.paint["raster-opacity"];
+    }
     for (const key of Object.keys(def.layout)) if (key.startsWith("label")) delete def.layout[key];
     const planGate = (() => {
       if (!planEffective) return {} as { minzoom?: number; maxzoom?: number };

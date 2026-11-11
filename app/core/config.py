@@ -306,10 +306,11 @@ class Settings(BaseSettings):
     # 不要复用 `ext keygen` 的 Ed25519 PEM——那是内容签名的非对称密钥材料）。
     EXTENSIONS_CERTIFICATION_KEY: str = ""
 
-    # 仓内 vendor/pi 是默认 agent 宿主：API 启动即拉起 bundled RPC 子进程。
-    # 测试套件在 conftest 钉 false，避免每个 TestClient 起 Node。
-    # 紧急回退 ChatEngine：USE_NEW_AGENT=false。
-    USE_NEW_AGENT: bool = True
+    # 仓内 vendor/pi 是唯一对话宿主：API 启动即拉起 bundled RPC 子进程。
+    # 不可用时 /chat fail-closed（503 / SSE error），不再回退 ChatEngine。
+    # PI_AUTOSTART 仅供自动化测试/混沌套件关闭子进程，避免每个 TestClient
+    # 拉起 Node；它不是产品引擎开关，关后聊天路径仍然 fail-closed。
+    PI_AUTOSTART: bool = True
 
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 

@@ -222,6 +222,10 @@ class SetLayoutIntent:
     # intent_lock_targets 只看 components —— 身份块/边不是锁目标。
     component_links: Optional[List[MapSpecComponentLinkPayload]] = None
     composition: Optional[CompositionIdentityPayload] = None
+    # G15：spec 级 atlas 帧整表写入（MapSpecFrame.v1.1 语义的意图写面）。
+    # None = 不触碰既有 frames；[] = 清空（frame_product 引用悬空由其
+    # handler 拒绝，这里只管帧登记本身的合法性）。
+    frames: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -232,6 +236,19 @@ class CheckpointIntent:
 @dataclass
 class RollbackIntent:
     checkpoint_id: str
+
+
+@dataclass
+class UndoAgentCommitIntent:
+    """PR-D：用户撤销/重做一段 Agent 提交（``(base_revision, agent_revision]``）。
+
+    回滚到段首撤销点的提交前 checkpoint（redo：回滚到撤销时捕获的
+    checkpoint）。冲突判定在 handler 内、锁内完成（见 agent_undo.py）。
+    """
+
+    base_revision: int
+    agent_revision: int
+    direction: str = "undo"  # "undo" | "redo"
 
 
 @dataclass
@@ -361,6 +378,24 @@ class SetTemporalViewIntent:
 
 
 @dataclass
+class SetFrameProductIntent:
+    """多画幅产品层写入（G15，FrameProductContract.v1 → mapspec["frame_product"]）。
+
+    三种互斥用法（service 层保证恰一；与 SetTemporalViewIntent 同门）：
+    - config：完整契约替换（bind —— config 已在 service 层经
+      FrameProductConfig 校验 + 跨分支一致性（frame_id → layout.frames）
+      复核；handler 复验 schema，坏文档终局拒绝）；
+    - patch：增量控制（键级合并进既有 frame_product 后整体复验 ——
+      active_frame / frames 整表 / grid / shared_expression / quality 等）；
+    - remove：解绑（删除 frame_product 分支；未绑定时 no-op 终局回执。
+      只删产品语义，绝不删除 layout.frames 画幅身份登记）。
+    """
+
+    config: Optional[Dict[str, Any]] = None
+    patch: Optional[Dict[str, Any]] = None
+    remove: bool = False
+
+@dataclass
 class RefreshDataRevisionIntent:
     """要素编辑后的数据新鲜度盖章（/goal 03）。
 
@@ -436,10 +471,12 @@ MutationIntent = Union[
     SetLayoutIntent,
     CheckpointIntent,
     RollbackIntent,
+    UndoAgentCommitIntent,
     RestoreStyleIntent,
     SetBasemapIntent,
     SetTimeIntent,
     SetTemporalViewIntent,
+    SetFrameProductIntent,
     PatchLayerStyleIntent,
     SetWorkbenchStateIntent,
     SetScenarioModeIntent,

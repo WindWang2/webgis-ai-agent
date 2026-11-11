@@ -150,6 +150,11 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
          "generate_monitoring_report"],
     ),
     _platform_binding(
+        "evidence_map_brief", "证据化地图简报（工具面绑定契约，G11/ADR-0288）",
+        ["brief_create_draft", "brief_inspect_evidence", "brief_update_block",
+         "brief_preflight", "brief_freeze_release", "brief_export"],
+    ),
+    _platform_binding(
         "dataset_profiling_quality", "数据画像与质量（工具面绑定契约）",
         ["audit_spatial_quality", "profile_dataset",
          "profile_dataset_semantics", "repair_spatial_dataset",

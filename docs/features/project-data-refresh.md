@@ -131,7 +131,7 @@
 
 ## 9. 未验证项
 
-- 真实浏览器 E2E（`frontend/e2e/journeys/j13-project-data-refresh.journey.ts`，
+- 真实浏览器 E2E（`frontend/e2e/journeys/j14-project-data-refresh.journey.ts`，
   `E2E_MODE=real`，需要 `E2E_USER/E2E_PASS` + `E2E_G10_PROJECT_ID/SESSION_ID`
   与运行中的真实后端）：本机未跑通，**标未验证**，不把组件测试提升为浏览器证据。
 - 线上 LLM provider / 付费模型可用性：用 stub LLM + 真实工具 dispatch 验证调用链，

@@ -71,7 +71,10 @@ export default async function RootLayout({
   const locale = normalizeLocale(cookieStore.get(LOCALE_COOKIE)?.value)
 
   return (
-    <html lang={locale} data-theme="light">
+    // suppressHydrationWarning：themeBootstrap 在 hydration 前改写 <html> 的
+    // class / data-theme / --agent-accent-raw（no-flash 的本意），属预期差异，
+    // 只作用于 <html> 自身属性，不屏蔽子树的 hydration 校验。
+    <html lang={locale} data-theme="light" suppressHydrationWarning>
       <head>
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>
