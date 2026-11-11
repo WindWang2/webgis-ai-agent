@@ -709,10 +709,17 @@ def compute_turn_active_tools(
                 "abstained": False,
                 "confidence": float(getattr(selection, "confidence", 1.0) or 1.0),
             })
+        # G13 / WP04：可用性投影的抑制名单 —— re-pin（分布工具等产品路径）
+        # 不得把刚被抑制的不可用工具再塞回激活面；抑制原因进披露面。
+        avail_suppressed = {
+            str(n) for n in getattr(selection, "availability_suppressed", ())}
+        if avail_suppressed and disclosure is not None:
+            disclosure["availability_suppressed"] = sorted(avail_suppressed)[:12]
         names = _pin_registered_tools(
             registry,
             list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names])),
             distribution_cartography_tools(message),
+            skip=avail_suppressed,
         )
         safe: list[str] = []
         for name in names:
@@ -747,7 +754,8 @@ def compute_turn_active_tools(
             if isinstance(item, dict)
         }
         safe = _pin_registered_tools(
-            registry, safe, distribution_cartography_tools(message), skip=qual_dropped,
+            registry, safe, distribution_cartography_tools(message),
+            skip=qual_dropped | avail_suppressed,
         )
         # ADR-0253 D2：激活面 schema 字节预算 —— 只裁动态候选，native 前门
         # 恒保留；裁剪记因（disclosure + 链发射 + metrics），绝不阻断 turn。
@@ -760,7 +768,8 @@ def compute_turn_active_tools(
         # Distribution tools are a product path, not optional retrieval.
         # Re-pin after the byte budget so a Chengdu heatmap call stays legal.
         safe = _pin_registered_tools(
-            registry, safe, distribution_cartography_tools(message), skip=qual_dropped,
+            registry, safe, distribution_cartography_tools(message),
+            skip=qual_dropped | avail_suppressed,
         )
         # ADR-0224：铸造 SurfaceReceipt（最终激活面 + 资格/预算全部逐出因；
         # 同 turn 幂等 —— 首次铸造后本 turn 内 surface 不可变）。
@@ -776,6 +785,12 @@ def compute_turn_active_tools(
                     SurfaceDrop(n, "byte_budget")
                     for n in ((budget_info or {}).get("dropped") or [])
                 ]
+                # G13 / WP04：可用性抑制也是逐出因 —— receipt 必须携带，
+                # 否则被抑制工具的「为何不在面」只有 selector 内部知道。
+                availability_drops = [
+                    SurfaceDrop(n, "availability")
+                    for n in sorted(avail_suppressed)
+                ]
                 _turn_receipt = record_turn_surface(
                     [qualification["specs_by_name"][n] for n in safe
                      if n in qualification["specs_by_name"]],
@@ -783,7 +798,8 @@ def compute_turn_active_tools(
                     turn_id=turn_id,
                     candidates=names,
                     selected=safe,
-                    drops=[*(qualification["drops"]), *budget_drops],
+                    drops=[*(qualification["drops"]), *budget_drops,
+                           *availability_drops],
                     byte_budget=int((budget_info or {}).get("budget") or 0),
                 )
                 if disclosure is not None:
