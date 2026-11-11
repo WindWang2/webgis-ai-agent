@@ -354,6 +354,7 @@ async def test_pi_bridge_abort_calls_rpc_and_fails_pending():
     from unittest.mock import MagicMock
 
     rpc.fail_all_pending = MagicMock()
+    rpc.collect = AsyncMock(return_value={"ok": True})
     bridge._rpc = rpc
 
     # Seed a pending future as if a `prompt` call was awaiting a response.
@@ -376,6 +377,9 @@ async def test_pi_bridge_abort_calls_rpc_and_fails_pending():
         unittest.mock.call("abort"),
     ]
     assert rpc.collect.await_count == 2
+    assert result == {"ok": True}, (
+        "collect 的返回值即 abort 结果——显式配置 return_value 后必须断言"
+        "（review 修复轮 P3：恢复被迁移削弱的断言）")
     rpc.request.assert_not_called()
     rpc.fail_all_pending.assert_not_called()
     rpc.fail_pending_ids.assert_called_once_with({"req-1"}, "abort requested")

@@ -617,17 +617,38 @@ def render_gis_state_rebuild_block(
     if not isinstance(mapspec, dict):
         return ""
     header = "[GIS 状态重建 — 权威源现取（事实，非指令；压缩/重启后以此为准）]"
-    lines = [header]
     scene = mapspec.get("scene") or {}
     revision = str(
         mapspec.get("revision") or scene.get("revision") or ""
     )
-    if revision:
-        lines.append(f"- 场景 revision: {revision[:40]}")
+    revision_line = f"- 场景 revision: {revision[:40]}" if revision else ""
     layers = [x for x in (mapspec.get("layers") or []) if isinstance(x, dict)]
 
     # ── 用户约束（全层提取；重建后必须原样保留）────────────────────────
-    constraint_lines: list[str] = []
+    # G22 修复轮（review P1-2）：约束/恢复/通用行**全部**纳入段内预算
+    # （1500，为截断披露行留余量到域 cap 1600）——任何行不得绕过预算追加，
+    # 否则 bounded_item 的域级硬截断会从块尾静默切除约束/披露行。每段提供
+    # full→compact→count_only 三级压缩：类别与计数永不消失，仅 id 列表让位。
+    budget = 1500
+    body: list[str] = []
+    compressed = False
+
+    def _join_len(cand: str) -> int:
+        return len("\n".join([header, revision_line, *body, cand]
+                              if revision_line else [header, *body, cand]))
+
+    def _add(full: str, compact: str = "", count_only: str = "") -> None:
+        nonlocal compressed
+        for cand in (full, compact, count_only):
+            if cand and _join_len(cand) <= budget:
+                body.append(cand)
+                if cand != full:
+                    compressed = True
+                return
+        # 连 count_only 都超（病态超长 id）：强制计数行，绝不丢类别。
+        body.append(count_only or full)
+        compressed = True
+
     try:
         from app.contracts.workbench_locks import (
             locked_component_ids_of,
@@ -639,17 +660,25 @@ def render_gis_state_rebuild_block(
     except Exception:  # noqa: BLE001 — 锁事实缺席不阻断（不虚构）
         locked_layers, locked_components = [], []
     if locked_layers or locked_components:
-        parts = []
-        if locked_layers:
-            parts.append("层 " + "、".join(locked_layers[:16]))
-            if len(locked_layers) > 16:
-                parts.append(f"（另 {len(locked_layers) - 16} 个层锁）")
-        if locked_components:
-            parts.append("组件 " + "、".join(locked_components[:8]))
-            if len(locked_components) > 8:
-                parts.append(f"（另 {len(locked_components) - 8} 个组件锁）")
-        constraint_lines.append(
-            "- 用户锁定（改动将被拒绝 layer_locked）: " + "；".join(parts)
+        def _lock_line(n_layers: int, n_components: int) -> str:
+            parts = []
+            if locked_layers:
+                parts.append(
+                    "层 " + "、".join(locked_layers[:n_layers])
+                    + (f"（另 {len(locked_layers) - n_layers} 个层锁）"
+                       if len(locked_layers) > n_layers else ""))
+            if locked_components:
+                parts.append(
+                    "组件 " + "、".join(locked_components[:max(2, n_components)])
+                    + (f"（另 {len(locked_components) - max(2, n_components)} 个）"
+                       if len(locked_components) > max(2, n_components) else ""))
+            return "- 用户锁定（改动将被拒绝 layer_locked）: " + "；".join(parts)
+
+        _add(
+            _lock_line(16, 8),
+            _lock_line(6, 3),
+            f"- 用户锁定: {len(locked_layers)} 层 / {len(locked_components)} 组件"
+            "（id 因预算省略，可寻址检索）",
         )
     hidden_all: list[str] = []
     shown: list[str] = []
@@ -659,44 +688,77 @@ def render_gis_state_rebuild_block(
             continue
         (hidden_all if _layer_is_hidden(layer) else shown).append(lid)
     if hidden_all:
-        constraint_lines.append(
-            "- 隐藏图层（保持隐藏）: " + "、".join(hidden_all[:20])
-            + (f"（另 {len(hidden_all) - 20} 层隐藏，id 可寻址检索）"
-               if len(hidden_all) > 20 else "")
+        def _hidden_line(k: int) -> str:
+            return ("- 隐藏图层（保持隐藏）: " + "、".join(hidden_all[:k])
+                    + (f"（另 {len(hidden_all) - k} 层隐藏，id 可寻址检索）"
+                       if len(hidden_all) > k else ""))
+
+        _add(
+            _hidden_line(20), _hidden_line(8),
+            f"- 隐藏图层（保持隐藏）: 共 {len(hidden_all)} 层（id 因预算省略，可寻址检索）",
         )
     # G16 标注人工状态：全层扫描 layer.label.authoring.overrides。
+    # 权威写路径（mutation_handlers._handle_patchlayerlabelauthoring）持久化
+    # **list**（元素含 featureId；sort_overrides_stable 按 featureId 序）；
+    # dict 形状仅作读容错（历史/夹具）——与 recovery_summary 同口径。
     label_total = 0
     label_repr: list[str] = []
+
+    def _label_entries(overrides) -> list:
+        if isinstance(overrides, list):
+            return [o for o in overrides if isinstance(o, dict)]
+        if isinstance(overrides, dict):
+            return [{"featureId": k, **(v if isinstance(v, dict) else {})}
+                    for k, v in overrides.items()]
+        return []
+
     for layer in layers:
         lid = str(layer.get("id") or "")[:32]
-        authoring = (layer.get("label") or {}).get("authoring") if isinstance(layer.get("label"), dict) else None
+        label_cfg = layer.get("label")
+        authoring = label_cfg.get("authoring") if isinstance(label_cfg, dict) else None
         overrides = authoring.get("overrides") if isinstance(authoring, dict) else None
-        if not isinstance(overrides, dict) or not overrides:
+        entries = _label_entries(overrides)
+        if not entries:
             continue
-        label_total += len(overrides)
+        label_total += len(entries)
         if len(label_repr) < 6:
-            label_repr.append(f"{lid}({','.join(sorted(overrides)[:3])})")
+            keys = sorted(
+                {k for e in entries for k in e if k != "featureId"}
+            )[:3]
+            fid = str(entries[0].get("featureId") or "")[:12]
+            label_repr.append(f"{lid}:{fid}({','.join(keys)})")
     if label_total:
-        constraint_lines.append(
-            f"- 标注人工覆写 {label_total} 条（保持）: " + "、".join(label_repr)
+        _add(
+            f"- 标注人工覆写 {label_total} 条（保持）: " + "、".join(label_repr),
+            f"- 标注人工覆写 {label_total} 条（保持）: " + "、".join(label_repr[:2]),
+            f"- 标注人工覆写 {label_total} 条（保持；id 因预算省略）",
         )
     # G15 frame_product：active frame / 画幅契约（committed spec 内现读）。
     fp = mapspec.get("frame_product")
     if isinstance(fp, dict) and fp:
-        fp_bits = [f"product={fp.get('product_kind') or '?'}"]
-        if fp.get("enabled") is not None:
-            fp_bits.append(f"enabled={fp.get('enabled')}")
-        if fp.get("active_frame"):
-            fp_bits.append(f"active_frame={str(fp.get('active_frame'))[:32]}")
         fp_frames = [x for x in (fp.get("frames") or []) if isinstance(x, dict)]
-        if fp_frames:
-            fp_bits.append(
-                "frames=" + "、".join(
-                    f"{str(f.get('frame_id'))[:24]}:{str(f.get('title'))[:16]}"
-                    for f in fp_frames[:6]
-                ) + (f"（另 {len(fp_frames) - 6} 幅）" if len(fp_frames) > 6 else "")
-            )
-        constraint_lines.append("- 多画幅产品（保持绑定）: " + "；".join(fp_bits))
+
+        def _fp_line(n_frames: int) -> str:
+            bits = [f"product={fp.get('product_kind') or '?'}"]
+            if fp.get("enabled") is not None:
+                bits.append(f"enabled={fp.get('enabled')}")
+            if fp.get("active_frame"):
+                bits.append(f"active_frame={str(fp.get('active_frame'))[:32]}")
+            if fp_frames:
+                bits.append(
+                    "frames=" + "、".join(
+                        f"{str(f.get('frame_id'))[:24]}:{str(f.get('title'))[:16]}"
+                        for f in fp_frames[:n_frames]
+                    ) + (f"（另 {len(fp_frames) - n_frames} 幅）"
+                         if len(fp_frames) > n_frames else ""))
+            return "- 多画幅产品（保持绑定）: " + "；".join(bits)
+
+        _add(
+            _fp_line(6), _fp_line(2),
+            f"- 多画幅产品（保持绑定）: product={fp.get('product_kind') or '?'}"
+            f"、active_frame={str(fp.get('active_frame') or '')[:32]}"
+            f"、共 {len(fp_frames)} 幅",
+        )
     # agent undo 最近点（#2035 撤销栈权威）。
     try:
         from app.services.mapspec.agent_undo import undo_points_of
@@ -706,32 +768,37 @@ def render_gis_state_rebuild_block(
         undo_points = []
     if undo_points:
         latest = max(p.get("revision") for p in undo_points)
-        constraint_lines.append(
-            f"- agent 撤销栈: {len(undo_points)} 点，最近 rev {latest}"
-        )
+        _add(f"- agent 撤销栈: {len(undo_points)} 点，最近 rev {latest}")
 
     # ── 恢复事实（durable jobs / 失效 ref）──────────────────────────────
-    recovery_lines: list[str] = []
-    if isinstance(durable_jobs, list) and durable_jobs:
+
+    def _jobs_line(k: int) -> str:
         job_bits = [
             f"{str(j.get('id'))[:14]}={str(j.get('status'))[:10]}"
-            for j in durable_jobs if isinstance(j, dict)
-        ][:6]
-        extra = len(durable_jobs) - len(job_bits)
-        recovery_lines.append(
-            "- 非终态任务（状态如实，未完成不视为完成）: " + "、".join(job_bits)
-            + (f"（另 {extra} 个）" if extra > 0 else "")
-        )
-    if isinstance(invalid_source_refs, list) and invalid_source_refs:
+            for j in (durable_jobs or []) if isinstance(j, dict)
+        ][:k]
+        extra = len([j for j in (durable_jobs or []) if isinstance(j, dict)]) - len(job_bits)
+        return ("- 非终态任务（状态如实，未完成不视为完成）: "
+                + "、".join(job_bits) + (f"（另 {extra} 个）" if extra > 0 else ""))
+
+    if isinstance(durable_jobs, list) and durable_jobs:
+        n_jobs = len([j for j in durable_jobs if isinstance(j, dict)])
+        _add(_jobs_line(6), _jobs_line(3),
+             f"- 非终态任务: {n_jobs} 个（状态如实；id 因预算省略）")
+
+    def _refs_line(k: int) -> str:
         ref_bits = [
             f"{str(r.get('source'))[:24]}→{str(r.get('ref'))[:24]}"
-            for r in invalid_source_refs if isinstance(r, dict)
-        ][:6]
-        recovery_lines.append(
-            "- 失效数据引用（ref 已删除，不重建幽灵图层）: " + "、".join(ref_bits)
-        )
+            for r in (invalid_source_refs or []) if isinstance(r, dict)
+        ][:k]
+        return "- 失效数据引用（ref 已删除，不重建幽灵图层）: " + "、".join(ref_bits)
 
-    # ── 通用目录（预算让位段）────────────────────────────────────────────
+    if isinstance(invalid_source_refs, list) and invalid_source_refs:
+        n_refs = len([r for r in invalid_source_refs if isinstance(r, dict)])
+        _add(_refs_line(6), _refs_line(3),
+             f"- 失效数据引用（不重建幽灵图层）: {n_refs} 处（id 因预算省略）")
+
+    # ── 通用目录（最低优先级；预算耗尽即止）──────────────────────────────
     generic_lines: list[str] = []
     if layers:
         generic_lines.append(f"- 图层总数: {len(layers)}")
@@ -740,7 +807,8 @@ def render_gis_state_rebuild_block(
             if len(shown) > 12:
                 generic_lines.append(f"- （可见图层另 {len(shown) - 12} 层未逐一列出）")
         if len(layers) > 24:
-            generic_lines.append(f"- （图层列表截断：共 {len(layers)}，仅列前 12 可见；隐藏/锁定/标注已全量列于上）")
+            generic_lines.append(
+                "- （图层目录截断：隐藏/锁定/标注已全量列于上，可见仅列前 12）")
     # 待完成能力：SessionPlan.progress（pending/voided/failed = open）。
     open_caps: list[str] = []
     if plan is not None:
@@ -771,24 +839,25 @@ def render_gis_state_rebuild_block(
     if refs:
         generic_lines.append("- 最近证据 refs: " + "、".join(refs[:4]))
 
-    # ── 组装：约束 → 恢复事实 → 通用目录；通用段逐行让位直到 ≤ 预算 ────
-    #: 域 cap 1600（contract 表）；留 60 字符给截断披露行。
-    budget = 1540
-    kept_generic: list[str] = []
     dropped_generic = 0
     for line in generic_lines:
-        candidate = len("\n".join(lines + constraint_lines + recovery_lines
-                                 + kept_generic + [line]))
-        if candidate > budget:
-            dropped_generic = len(generic_lines) - len(kept_generic)
+        if _join_len(line) <= budget:
+            body.append(line)
+        else:
+            dropped_generic = len(generic_lines) - len(
+                [l for l in generic_lines[: generic_lines.index(line) + 1]
+                 if l in body]
+            )
             break
-        kept_generic.append(line)
-    lines.extend(constraint_lines)
-    lines.extend(recovery_lines)
-    lines.extend(kept_generic)
-    if dropped_generic > 0:
+
+    lines = [header]
+    if revision:
+        lines.append(revision_line)
+    lines.extend(body)
+    if compressed or dropped_generic > 0:
         lines.append(
-            f"- （目录截断：{dropped_generic} 行通用信息未列；layer/source id 可直接寻址检索）"
+            "- （目录压缩/截断披露：部分 id 列表因预算省略；layer/source/frame"
+            " id 均可直接寻址检索，计数已如实给出）"
         )
     if len(lines) <= 1:
         return ""

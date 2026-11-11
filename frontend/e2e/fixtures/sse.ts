@@ -209,8 +209,15 @@ export const J17_FRAME_ONE_ID = 'fp-j17-1';
 export const J17_FRAME_TWO_ID = 'fp-j17-2';
 export const J17_HIDDEN_LAYER_ID = 'ly-roads-j17';
 export const J17_LABEL_LAYER_ID = 'ly-schools-j17';
-/** G16 手动标注覆写（冻结契约形状；journey 断言「恢复后逐字不变」）。 */
-export const J17_LABEL_OVERRIDES = { f1: { pinned: true, text: '城东小学' } } as const;
+/**
+ * G16 手动标注覆写（冻结契约形状；journey 断言「恢复后逐字不变」）。
+ * 形状 = 权威写路径持久化的 **list**（mutation_handlers：
+ * `[{featureId, …}]`，sort_overrides_stable 按 featureId 序）——
+ * review-P1 修复锚点：不发明 dict 形状。
+ */
+export const J17_LABEL_OVERRIDES = [
+  { featureId: 'f1', pinned: true, text: '城东小学' },
+] as const;
 export const J17_FRAME_TWO_TITLE_REVISED = '第二幅（修订）';
 
 export function restoreContinuitySpec(opts: {

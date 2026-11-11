@@ -512,11 +512,20 @@ class PiTurnRegistry:
 
     @staticmethod
     def _instance_id() -> str:
-        """本进程实例标识（host 维度；WEBGIS_INSTANCE_ID 显式覆盖）。"""
+        """本进程实例标识（host 维度；WEBGIS_INSTANCE_ID 显式覆盖）。
+
+        review 修复轮 P3：① ":" 一律替换为 "_"（值格式 ``instance:turn`` 以
+        首个冒号分段，实例段不得自带冒号）；② 默认 hostname 前缀假设
+        **单进程每主机**（bridge pool 为进程内并发）——同宿主多进程部署
+        （uvicorn --workers、dev+test 并跑）**必须**为每个进程显式设置
+        互不相同的 WEBGIS_INSTANCE_ID，否则后启进程的启动清扫会误删同宿主
+        其他进程的 live key（多 pod 安全 ≠ 同宿主多进程安全）。
+        """
         import os
         import socket
 
-        return os.getenv("WEBGIS_INSTANCE_ID") or socket.gethostname()
+        raw = os.getenv("WEBGIS_INSTANCE_ID") or socket.gethostname()
+        return raw.replace(":", "_")
 
     @staticmethod
     def _parse_stored_turn(value: str) -> str:

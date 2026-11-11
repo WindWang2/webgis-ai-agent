@@ -91,7 +91,7 @@ def test_rebuild_block_bounded_and_honest():
         ],
     }
     text = render_gis_state_rebuild_block(maps, None)
-    assert "图层列表截断" in text
+    assert "图层目录截断" in text
     assert "另 28 层未逐一列出" in text  # 40 visible, only 12 listed
     assert render_gis_state_rebuild_block({}, None) == ""
     assert render_gis_state_rebuild_block(None, None) == ""
@@ -127,18 +127,38 @@ def test_g22_a13_hidden_constraint_beyond_scan_cap_survives():
 
 
 def test_g22_a14_label_authoring_overrides_projected():
-    """A14：G16 标注人工状态（pin/offset/leader/text 覆写）不丢。"""
+    """A14：G16 标注人工状态（pin/offset/leader/text 覆写）不丢。
+
+    权威形状 = **list**（mutation_handlers 持久化
+    ``[{"featureId": …, …}]``，sort_overrides_stable 按 featureId 序）；
+    review-P1 修复锚点：旧断言用自发明的 dict 形状（真实数据恒空投影）。
+    """
     layer = {
         "id": "schools",
-        "label": {"authoring": {"overrides": {
-            "f1": {"pinned": True, "offset": [4, -2]},
-            "f2": {"text": "城东小学", "callout": True},
-        }}},
+        "label": {"authoring": {"overrides": [
+            {"featureId": "f1", "pinned": True, "offset": [4, -2]},
+            {"featureId": "f2", "text": "城东小学", "callout": True},
+        ]}},
     }
     text = render_gis_state_rebuild_block(
         {"revision": "r", "layers": [layer]}, None)
     assert "标注人工覆写 2 条" in text
-    assert "schools" in text
+    assert "schools:f1(" in text and "pinned" in text
+    assert "城东小学" not in text  # 代表项只投影键，不外泄改文内容？——
+    # ↑ 撤销：文本覆写值本就是用户事实，投影键即可；不额外断言。
+
+
+def test_g22_a14_dict_shape_tolerated_not_authoritative():
+    """dict 形状仅读容错（历史/夹具）；不作为权威形状断言依据。"""
+    layer = {
+        "id": "legacy",
+        "label": {"authoring": {"overrides": {
+            "f9": {"pinned": True},
+        }}},
+    }
+    text = render_gis_state_rebuild_block(
+        {"revision": "r", "layers": [layer]}, None)
+    assert "标注人工覆写 1 条" in text
 
 
 def test_g22_a15_active_frame_projected():
@@ -188,33 +208,58 @@ def test_g22_a18_restored_job_status_honest():
     assert "=completed" not in job_line and "=succeeded" not in job_line
 
 
-def test_g22_constraints_survive_budget_pressure():
-    """预算挤压：通用目录让位，用户约束（锁定/隐藏/标注/画幅）永不消失。"""
+def test_g22_constraints_survive_budget_pressure_realistic_ids():
+    """预算挤压（review-P1 修复锚点：真实 uuid 级 id + 超界约束量）：
+    段内预算覆盖**全部**行（约束/恢复/通用），任何类别不因域级 1600 硬截断
+    静默消失；压缩必须伴随披露行。"""
+    def _uid(prefix, i):
+        return f"{prefix}-{i:04d}-4f2a9b8c1d3e{ i % 97:02x}"
+
     layers = [
-        {"id": f"visible-{i}", "layout": {"visibility": "visible"},
-         "label": {"authoring": {"overrides": {f"f{i}": {"pinned": True}}}}}
-        for i in range(60)
+        {"id": _uid("layer", i), "layout": {"visibility": "visible"},
+         "label": {"authoring": {"overrides": [
+             {"featureId": f"feat-{i}", "pinned": True},
+             {"featureId": f"feat-b-{i}", "offset": [2, -1]},
+         ]}}}
+        for i in range(26)
     ]
-    layers[39]["layout"] = {"visibility": "none"}  # 第 40 层手动隐藏
+    # 22 层隐藏（含第 25+ 层——超通用扫描界）；16 个层锁；8 组件锁。
+    for layer in layers[4:26]:
+        layer["layout"] = {"visibility": "none"}
+    locked = [_uid("lock", i) for i in range(16)]
+    locked_components = [_uid("comp", i) for i in range(8)]
     maps = {
-        "revision": "r",
+        "revision": "rev-2f9c41ab",
         "layers": layers,
-        "workbench": {"lockedLayerIds": ["visible-0"], "lockedComponentIds": []},
+        "workbench": {"lockedLayerIds": locked, "lockedComponentIds": locked_components},
         "frame_product": {
-            "product_kind": "small_multiples", "active_frame": "f1",
-            "frames": [{"frame_id": "f1", "title": "唯一幅"}],
+            "product_kind": "small_multiples", "enabled": True,
+            "active_frame": _uid("frame", 1),
+            "frames": [{"frame_id": _uid("frame", i), "title": f"第{i}幅"}
+                       for i in range(12)],
         },
     }
-    text = render_gis_state_rebuild_block(maps, None)
-    assert len(text) <= 1600  # 域 cap
-    # 用户约束全在（锁定 + 第 40 层隐藏 + 标注计数 + active frame）
-    assert "visible-0" in text and "layer_locked" in text
-    assert "visible-39" in text and "保持隐藏" in text
-    assert "标注人工覆写" in text
-    assert "active_frame=f1" in text
-    # 通用目录被压缩时必须披露截断与可寻址性
-    if "目录截断" in text:
-        assert "寻址" in text
+    text = render_gis_state_rebuild_block(
+        maps, None,
+        durable_jobs=[{"id": _uid("job", i), "status": "queued"} for i in range(4)],
+        invalid_source_refs=[{"source": _uid("src", i), "ref": _uid("ref", i)}
+                             for i in range(3)])
+
+    assert len(text) <= 1600, f"块长 {len(text)} 超域 cap——硬截断风险"
+    # 每个约束/恢复**类别**必须在场（可压缩，不可消失）；断言用跨压缩级别
+    # 的类别不变量，不绑定具体压缩措辞。
+    assert "用户锁定" in text and "layer_locked" in text
+    assert "lock-0000" in text  # 锁 id 全量档（预算足够）
+    assert "隐藏图层" in text and "另 2 层隐藏" in text
+    assert "layer-0023" in text  # 第 24 个隐藏层 id 仍可寻址
+    assert "标注人工覆写 52 条" in text
+    assert "多画幅产品" in text and "active_frame=" in text and "共 12 幅" in text
+    assert "非终态任务" in text and "4" in text
+    assert "失效数据引用" in text and "3 处" in text
+    # 压缩/截断必须披露（模型必须知道有省略）；披露行是最后一行
+    # （域级硬截断没有切掉块尾）
+    assert "目录压缩/截断披露" in text
+    assert text.rstrip().endswith("计数已如实给出）")
 
 
 def test_g22_no_fabrication_of_selection_or_absent_facts():

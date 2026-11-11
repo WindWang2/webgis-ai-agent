@@ -849,6 +849,13 @@ class PiRpcClient:
             self._pending_requests.pop(request_id, None)
             future.cancel()
             raise PiRpcError(f"Pi pipe error: {e}")
+        except BaseException:
+            # F19 对齐（review 修复轮 P3）：写相位等待中被取消（executor
+            # 跳转处 CancelledError）也要回收 pending 项——旧 request() 的
+            # finally 无条件 pop；写已落地时响应方对 pop 后的 id 静默忽略，
+            # pop 幂等无害。
+            self._pending_requests.pop(request_id, None)
+            raise
         return IssuedRequest(id=request_id, command=command, future=future)
 
     async def collect(self, issued: "IssuedRequest", command: Optional[str] = None) -> Any:
