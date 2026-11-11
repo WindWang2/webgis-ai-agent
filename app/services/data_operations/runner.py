@@ -311,6 +311,17 @@ async def run_async_job(
                     db, job_id, message="cancelled by user",
                     worker_id=handle.worker_id, attempt=handle.attempt,
                 )
+                if not ok:
+                    # running→cancelled 不是合法迁移（须先经 cancelling）。取消
+                    # 未经 DB 请求（进程内取消 API/强制取消）时先落取消意图再
+                    # 确认 —— 两段迁移，语义仍是「协作取消已生效」。
+                    current = DurableJobStore._status_sync(db, job_id)
+                    if current == JobStatus.running:
+                        DurableJobStore.request_cancel_sync(db, job_id)
+                        ok = DurableJobStore.confirm_cancelled_sync(
+                            db, job_id, message="cancelled by user",
+                            worker_id=handle.worker_id, attempt=handle.attempt,
+                        )
                 final = (
                     JobStatus.cancelled
                     if ok
@@ -321,12 +332,19 @@ async def run_async_job(
             return final
         except BaseException as exc:  # noqa: BLE001 — 未预期异常如实失败
             if handle.token.cancelled:
-                # 底层库把取消翻译成自己的异常：按取消收敛，不误报 failed
+                # 底层库把取消翻译成自己的异常：按取消收敛，不误报 failed。
+                # 与 OperationCancelled 分支同款两段迁移（running 先经 cancelling）。
                 with _sync_session() as db:
-                    DurableJobStore.confirm_cancelled_sync(
+                    ok = DurableJobStore.confirm_cancelled_sync(
                         db, job_id, message="cancelled by user",
                         worker_id=handle.worker_id, attempt=handle.attempt,
                     )
+                    if not ok and DurableJobStore._status_sync(db, job_id) == JobStatus.running:
+                        DurableJobStore.request_cancel_sync(db, job_id)
+                        DurableJobStore.confirm_cancelled_sync(
+                            db, job_id, message="cancelled by user",
+                            worker_id=handle.worker_id, attempt=handle.attempt,
+                        )
                     db.commit()
                 return JobStatus.cancelled
             with _sync_session() as db:
