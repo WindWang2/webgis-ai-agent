@@ -123,7 +123,7 @@ def bounded_explanation(decision: EffectiveScalePortrayal) -> Dict[str, Any]: ..
 2. **人工 pin/锁优先**（A06）：合法 `pinned_size_ratio` / `pinned_label_top_ratio` 覆盖 LOD 输出，记入 `user_overrides`；`fixed_density` 模式必须给 `pinned_label_top_ratio`，缺失 → typed 诊断 + 退回 `disabled`。
 3. **结构 zoom 门（与显隐正交）**（A04）：复用 `representation.zoom_gate_of_layer`（前端 `visibility.ts` 的后端孪生）。半开区间 `[min, max)`；`min>=max` 病态门按 visibility.ts 语义**开门 + 披露**（不留死带、不黑图）。命中 → `gated_by_zoom`。
 4. **表达窗口 hidden**：`representation.export_adjudicate_layer(dict(layer), zoom) == "hidden"` → `hidden_by_representation`（必带 reason）。
-5. **自动 LOD**（A02/A03/A07）：`lod_for_zoom(zoom)` + `build_label_zoom_bands()`（完整 4 档）+ `terrain_maxzoom_for_zoom(zoom)` + `LOD_BANDS` 的 `decimate_budget`。**这三个此前零消费者的符号在此成为真实生产调用**。
+5. **自动 LOD**（A02/A03/A07）：`lod_for_zoom(zoom)` + `build_label_zoom_bands()`（完整 4 档）+ `terrain_maxzoom_for_zoom(zoom)` + `LOD_BANDS` 的 `decimate_budget`。**只有 build_label_zoom_bands 的 4 档经 spec 投影进入真实 runtime 消费**；terrain_maxzoom_for_zoom 与 decimate_budget 进入有界解释面披露（terrain 按任务不扩展 3D；budget 不自动改写既有 thresholds.maxFeatures 导出阈值）——不夸大生产接线范围（R2 复审修正）。
 6. **去抖分档**（A10）：`resolve_scale_tier_stable(zoom, previous_tier)` 只影响 `tier` 显示，**不改变门/策略数值**；同 zoom + 同 previous_tier 幂等。
 7. **物理比例尺**（A15/A16）：仅 `crs ∈ WEB_MERCATOR_CRS` 且能取得有效中心纬度时调用 `scale_rules.scale_denominator(zoom, latitude, dpi=target_dpi)`；否则 `None` + `scale_assumptions` 披露"该 CRS 不套 Web Mercator 固定公式"。`target_dpi` **绝不**参与 1–6 的任何裁决。
 8. **disclosures 固定包含**（缺一不可）：
