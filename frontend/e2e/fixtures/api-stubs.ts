@@ -140,7 +140,16 @@ export class JourneyWorld {
   sessionDetail = {
     session_id: 's-j1',
     title: '旅程会话',
-    messages: [] as Array<{ role: string; content: string; created_at: string }>,
+    // 会话详情消息：生产恢复路径按 {id, role, content, timestamp} 消费
+    // （use-workspace-session selectSession）；created_at 是历史夹具形状，
+    // 两者都允许（additive —— 既有 journey 的无 id 消息不受影响）。
+    messages: [] as Array<{
+      role: string;
+      content: string;
+      created_at?: string;
+      id?: string;
+      timestamp?: number;
+    }>,
   };
   mapState = {
     map_state: {
@@ -166,6 +175,12 @@ export class JourneyWorld {
   }> = [];
   situationView: Record<string, unknown> | null = null;
   turnChainView: Record<string, unknown> | null = null;
+  /**
+   * G22-P6（恢复可读性）：会话详情 GET 仅在请求方显式带 `?recovery=1` 时
+   * 附挂的恢复摘要（recovery-banner 自水合）。默认 null = 不附挂，其它
+   * journey 的会话详情响应形状不变。
+   */
+  recoverySummary: Record<string, unknown> | null = null;
 
   job(id: string): JobRecord | undefined {
     return this.jobs.find((j) => j.id === id);
@@ -393,7 +408,13 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
         user_explicit: 0, agent_receipts: 0, agent_pending: 0, executed_observed: 0,
       },
     });
-  await api(/\/api\/v1\/chat\/sessions\/[^/]+(\?|$)/, async () => world.sessionDetail);
+  await api(/\/api\/v1\/chat\/sessions\/[^/]+(\?|$)/, async (url: URL) => {
+    // G22-P6：?recovery=1 才附挂摘要（默认响应字节不变，与后端路由同语义）。
+    if (url.searchParams.get('recovery') === '1' && world.recoverySummary) {
+      return { ...world.sessionDetail, recovery: world.recoverySummary };
+    }
+    return world.sessionDetail;
+  });
   await api(/\/api\/v1\/chat\/sessions(\?|$)/, () => ({ sessions: [{ id: world.sessionDetail.session_id, title: world.sessionDetail.title, createdAt: Date.parse(NOW), messages: world.sessionDetail.messages }] }));
   await api(/\/api\/v1\/chat\/skills(\?|$)/, () => ({ skills: [] }));
 
