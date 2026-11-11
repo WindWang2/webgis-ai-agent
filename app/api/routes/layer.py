@@ -434,7 +434,9 @@ def _find_feature_by_id(fc: dict, feature_id: str) -> Optional[dict]:
             return feature
         props = feature.get("properties") or {}
         if isinstance(props, dict):
-            for key in ("id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id"):
+            # _wfid-first（G24/P0）：与 feature_pages.FEATURE_ID_KEYS / 前端
+            # FEATURE_ID_KEYS 三侧同链 —— 编辑创建的要素仅有 _wfid。
+            for key in ("_wfid", "id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id"):
                 if key in props and props[key] is not None and str(props[key]) == fid_str:
                     return feature
     return None

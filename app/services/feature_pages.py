@@ -72,8 +72,12 @@ _DERIVED_CACHE_MAX_WEIGHT = 8_000_000
 
 #: 稳定 id 解析链 —— 与 #1873 feature_edit.identity / 前端 FEATURE_ID_KEYS
 #: 三方同源（layer.py::_find_feature_by_id 同链）。
+#: G24/P0：`_wfid` 置于链首 —— 前端（layer-data/brush-select/layer-edit-bridge）
+#: 自 G14 起已是 _wfid-first；后端缺位会让「仅含 _wfid 的要素（编辑创建/
+#: 物化后）」在权威回查（/feature/{fid}、feature_id_index）404。系统保留键
+#: （feature_edit.RESERVED_FIELD_NAMES），普通数据不会携带。
 FEATURE_ID_KEYS: Tuple[str, ...] = (
-    "id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id",
+    "_wfid", "id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id",
 )
 
 _CURSOR_VERSION = 1

@@ -44,7 +44,11 @@ RESERVED_FIELD_NAMES = frozenset({WFID_PROP})
 
 # 与前后端既有 FEATURE_ID_KEYS 链同源（backend layer.py `_find_feature_by_id`
 # ≡ frontend layer-data.ts FEATURE_ID_KEYS）；物化前的目标解析走这条链。
-FEATURE_ID_KEYS: tuple = ("id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id")
+# G24/P0：`_wfid` 置于链首（与 feature_pages / 前端三侧同步）—— 编辑创建
+# 的要素仅有 _wfid，缺位会让链内解析在这些要素上失配。WFID_PROP 本身即
+# 链首键，物化前后语义连续（identity.resolve_feature_ids 的 WFID 寻址
+# 分支仍优先，行为不变）。
+FEATURE_ID_KEYS: tuple = (WFID_PROP, "id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id")
 
 # ─── 编辑词表（封闭集；schema 层拒绝未知 op） ─────────────────────────────
 ATTRIBUTE_OPS = frozenset({"set_fields", "rename_field"})

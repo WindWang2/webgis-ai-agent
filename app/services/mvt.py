@@ -228,8 +228,14 @@ def _encode_value(v: Any) -> Optional[bytes]:
     if isinstance(v, bool):
         return _field(_VAL_BOOL, _VARINT) + _varint(1 if v else 0)
     if isinstance(v, int) and not isinstance(v, bool):
-        if v < -(1 << 63) or v >= (1 << 63):
-            return _encode_value(str(v))  # preserve identifier precision safely
+        # G24/P0（A06）：MVT int_value 是 64 位，但浏览器侧（MapLibre → JS
+        # Number）varint 解码在 |v| > 2^53 时静默丢精度 —— 拾取到的 id 与
+        # 权威 id 不再相等（点选/框选把别的要素当命中）。凡超出 JS
+        # Number.MAX_SAFE_INTEGER 的整数一律以字符串下行：id 链两侧都是
+        # str() 比较（_find_feature_by_id / _chain_stable_id），字符串往返
+        # 精确；代价是这些数据集的瓦片字节变化（ETag 内容寻址，自然失效）。
+        if v < -(1 << 53) or v >= (1 << 53):
+            return _encode_value(str(v))
         # GIS-P3-1: int_value is sint64 — emit the FULL 64-bit value. The old
         # 32-bit wrap silently corrupted real-world IDs > 2^31 (OSM ids,
         # int64 keys): 2**31 → -2**31, 2**32+5 → 5. Negatives go through the
