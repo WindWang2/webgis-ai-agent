@@ -12,7 +12,7 @@
 | P5 有界内存/背压 | verified | test_scale（300k/超限/ENOSPC）；RSS 曲线 |
 | P6 任务中心与 Pi 可操作性 | verified | JobKind/JobView.member_status/import_commit_status/field_compute_status/前端（tsc 通过） |
 | P7 兼容/恢复/真实拓扑 | verified | 双 uvicorn 集成 5/5；旧格式批次兼容 test_a11/G17 回归 |
-| RV 独立评审 | in_progress | REVIEW.md（评审中；review→fix→review 循环） |
+| RV 独立评审 | round-2 复审中 | REVIEW.md（round1: request-changes，B1/M1/m1-m5/NOTE 已修复并记录；复审追加中） |
 
 ## 下一步可执行动作
 1. 等独立评审 REVIEW.md → 按 BLOCKER/MAJOR 修复 → 复跑最小回归 → 复审。
