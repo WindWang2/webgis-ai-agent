@@ -1,4 +1,5 @@
 import { exportNotificationTitle } from './export-notification';
+import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
 /**
  * C14：publication vector PDF 导出运行面（前端入口 —— 路由文档化的
  * 「backend-only 待接线」交付）。
@@ -33,7 +34,7 @@ export interface VectorPdfExportRequest {
    */
   pageProfile?: string;
   atlas?: {
-    driver: 'frames' | 'category' | 'feature';
+    driver: 'frames' | 'category' | 'feature' | 'product';
     layerId?: string;
     categoryProperty?: string;
     featuresPerPage?: number;
@@ -105,24 +106,47 @@ export function vectorPdfRequestFromSettings(settings: Record<string, unknown>):
       return profile ? { pageProfile: profile } : {};
     })(),
   };
-  if (settings['atlasEnabled'] !== true) return req;
+  // G15：frame_product 在场 → 产品页（同页并置；精确语义只有后端能承载）。
+  // 检测在 atlasEnabled 门之前（review R2-B：产品绑定时即使图册开关
+  // 关闭也走产品页 —— 否则缺省路径产出 N 张无过滤整幅页且无披露）。
   const driver = settings['atlasDriver'];
-  req.atlas = {
-    driver: driver === 'category' || driver === 'feature' ? driver : 'frames',
+  let effectiveDriver: 'frames' | 'category' | 'feature' | 'product' =
+    driver === 'category' || driver === 'feature' ? driver : 'frames';
+  try {
+    const committed = getCommittedMapSpec() as
+      | { frame_product?: { enabled?: boolean } }
+      | null;
+    // R3-P3：显式 category/feature 选择是用户明确意图 —— 不被产品静默
+    // 覆写；自动路由仅在 driver 未选或 frames（缺省）时生效。
+    const productPresent =
+      !!committed?.frame_product && committed.frame_product.enabled !== false;
+    if (productPresent && driver !== 'category' && driver !== 'feature') {
+      effectiveDriver = 'product';
+    }
+  } catch {
+    /* spec 面缺席 → 既有语义 */
+  }
+  if (effectiveDriver !== 'product' && settings['atlasEnabled'] !== true) {
+    // 既有门：非产品 + 图册开关关闭 → 不携带 atlas（语义逐字节不变）。
+    return req;
+  }
+  const atlasPolicy: AtlasRequestPolicy = {
+    driver: effectiveDriver,
     includeCover: settings['atlasIncludeCover'] !== false,
   };
+  req.atlas = atlasPolicy;
   if (typeof settings['atlasLayerId'] === 'string' && settings['atlasLayerId']) {
-    req.atlas.layerId = settings['atlasLayerId'];
+    atlasPolicy.layerId = settings['atlasLayerId'];
   }
   if (
-    req.atlas.driver === 'category' &&
+    atlasPolicy.driver === 'category' &&
     typeof settings['atlasCategoryProperty'] === 'string' &&
     settings['atlasCategoryProperty']
   ) {
-    req.atlas.categoryProperty = settings['atlasCategoryProperty'];
+    atlasPolicy.categoryProperty = settings['atlasCategoryProperty'];
   }
   if (typeof settings['atlasTitle'] === 'string' && settings['atlasTitle']) {
-    req.atlas.atlasTitle = settings['atlasTitle'];
+    atlasPolicy.atlasTitle = settings['atlasTitle'];
   }
   return req;
 }

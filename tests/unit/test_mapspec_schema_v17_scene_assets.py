@@ -60,7 +60,7 @@ def _asset_spec() -> dict:
 class TestVersionBump:
     def test_known_versions_include_17(self):
         assert "1.7" in ms.KNOWN_VERSIONS
-        assert ms.LATEST_VERSION == "1.9"
+        assert ms.LATEST_VERSION == "2.0"  # v2.0（G15 frame_product additive）推进阶梯
         assert ms._find_upgrade_path("1.6", "1.7") == [("1.6", "1.7")]
 
     def test_old_spec_canonical_bytes_unchanged(self):

@@ -94,6 +94,7 @@ export interface MapSpec {
   scenario_mode?: "split_view" | "swipe_compare";
   scene?: MapSceneConfig;
   temporal?: MapSpecTemporalConfig;
+  frame_product?: FrameProductConfig;
 }
 
 export interface MapSpecView {
@@ -450,4 +451,53 @@ export interface TemporalCompareConfig {
 export interface TemporalPlaybackConfig {
   playing?: boolean;
   rate?: number;
+}
+
+export interface FrameProductConfig {
+  schema_version?: "frame_product.v1";
+  enabled: boolean;
+  product_kind: "time_series" | "category_compare" | "variable_compare" | "detail_frames";
+  grid: FrameProductGridConfig;
+  frames: ProductFrameSlot[];
+  shared_expression?: SharedExpressionConfig;
+  active_frame?: string;
+  quality?: string[];
+  disclosures?: string[];
+}
+
+export interface FrameProductGridConfig {
+  columns: number;
+  title?: string;
+}
+
+export interface ProductFrameSlot {
+  frame_id: string;
+  title?: string;
+  legend?: "shared" | "independent" | "shared_plus_frame";
+  sync_group?: string;
+  data?: FrameDataBinding;
+}
+
+export interface FrameDataBinding {
+  ref: string;
+  layer_id: string;
+  content_revision?: number;
+  field?: string;
+  where?: Record<string, unknown>;
+  time_window?: Record<string, unknown>;
+}
+
+export interface SharedExpressionConfig {
+  field: string;
+  semantics?: "count" | "ratio" | "index" | "other";
+  unit?: string;
+  denominator?: string;
+  method: string;
+  k: number;
+  palette: string;
+  breaks?: number[];
+  domain_status?: "complete" | "partial" | "unknown";
+  per_frame_counts?: Record<string, number>;
+  sample_size?: number;
+  eligibility?: string[];
 }

@@ -566,11 +566,11 @@ async def export_map_as_vector_pdf(
         from app.lib.cartography.mapspec_schema import MapSpecSchemaError as _MSSE
 
         _a = body.atlas
-        if _a.driver not in ("frames", "category", "feature"):
+        if _a.driver not in ("frames", "category", "feature", "product"):
             raise HTTPException(
                 status_code=400,
                 detail={"code": "atlas_policy_invalid",
-                        "message": f"atlas driver 非法: {_a.driver!r}（frames|category|feature）"},
+                        "message": f"atlas driver 非法: {_a.driver!r}（frames|category|feature|product）"},
             )
         try:
             _atlas_policy = AtlasPolicy(
