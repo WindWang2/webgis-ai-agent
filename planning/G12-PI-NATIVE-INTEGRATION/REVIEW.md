@@ -36,6 +36,53 @@
 - 复审范围：上述 9 项修复的 diff + 全量回归证据。
 - 复审结论：见下方「复审记录」。
 
-## 复审记录
+## 第二轮复审（BLOCK → N1/N2/N3 已修复）
 
-（待第二轮 reviewer 返回后填写）
+- Reviewer：同一独立 subagent（`agent_d0367ff2` 恢复上下文复审）。
+- 裁决：**BLOCK — P1×2（N1/N2）+ P3×2（N3/N4）**；P1-1/P1-2/P1-3/P1-4、P2-3、
+  P2-4、P3-1 判 FIXED；P2-1/P2-2 判 PARTIAL（见下）。
+- 修复 commit：「fix(pi): 复审修复——scope 违规传播死存储与 receipt 缺席复检回归」。
+
+### N1（P1，W05 核心路径失效）— FIXED
+`stale_surface_gate` 死存储 `scope_mismatch`：grant 失败后未赋回 `mismatch` →
+函数 `return None` 放行 → `SURFACE_SCOPE_VIOLATION` 生产不可达（reviewer 实测
+native 前门面外直调通过 gate 并会执行；分支既有测试
+`test_pi_surface_abi_route.py::test_scope_enforcement_rejects_out_of_surface_bare_name`
+失败为证）。修复：grant 尝试后 `scope_mismatch is not None → mismatch =
+scope_mismatch`（typed 拒绝传播，master 同款直接传播语义恢复）。该旧测试按
+ADR-0288 真实语义重写为三断言（native 面外拒 / deferred 面外 grant+执行 /
+proxy 不受限）——`test_scope_enforcement_semantics_adr_0288` 6/6 通过。
+
+### N2（P1，兼容回归）— FIXED
+fresh-spec 复检条件 `not_selected = receipt is None or ...` 把「receipt 缺席 =
+兼容放行」扫入复检（分支既有测试 `test_no_receipt_echo_is_ignored_for_compat`
+失败为证；与模块文档矛盾）。修复：复检对象限定为本 turn **实际 grant 过的工具**
+（`discovered_store.contains(...)`），receipt 缺席恢复兼容放行。
+
+### N3（P3）— FIXED
+字段契约快照未刷新（`API_CONTRACT_FIELDS_UPDATE=1` 刷新）：含本 PR 3 个加性
+字段 + 2 个存量漂移字段（agent_runtime_* ← #2012、constraint_layout ← #2015，
+与 openapi.json 同模式）。
+
+### PARTIAL 项（如实记录，不标记完成）
+- **P2-1**（clear_queue 同会话后继窗口）：跨会话翻转已挡；同会话后继 turn 不改变
+  `_active_turn_sid`（CONC-F1 既有语义），残留窗口内 clear_queue+abort 理论上可
+  命中后继 —— 增量风险小（abort 本就命中同 worker），需 turn 转换序列化或
+  turn-scoped vendor 操作才能清零，超出本 PR 安全边际（留记）。
+- **P2-2**（J6b 声明面断言）：`declared_nearest` 为证据字段。计划资格选择器的
+  回归掩护由 J8（确定性发现旅程，硬断言）部分覆盖；J6b 选择器回归需先修存量
+  抖动根因（selector turn-2 激活不稳定）——已留记，不属本 PR 引入。
+- **N4**（P3，J7 llm_calls vacuous）：master 存量（`json.dumps({"key":...})` 带
+  空格 vs node 紧凑输出，恒 0）—— 非本 PR 引入，留记。
+
+### 测试口径修正（ reviewer 指正 ）
+第一轮「unit 240 passed」未覆盖 `tests/unit/test_pi_surface_abi_route.py`
+（该文件在分支上实际红 —— N1/N2 之证）。修正后按 reviewer 同口径实跑：
+`pytest tests/unit -k pi` → **1849 passed, 77 skipped, 1 xfailed**
+（唯一失败 `test_mapspec_store::test_validate_and_compile` 为本 worktree 缺
+`frontend/node_modules/.bin/jiti` 的环境差异；补符号链接后 19/19 通过，
+master 基线同通过）。
+
+## 第三轮复审记录
+
+（待第三轮 reviewer 返回后填写）
