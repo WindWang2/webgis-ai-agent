@@ -67,7 +67,7 @@
   resolve 1-2ms / page compile 3-7ms / PDF 102-167ms；SVG 字节随画幅线性
 - 前端：`vitest run`（新增 lib/panel/spec-frames/comparison/studio/i18n 组）
   → 166+ passed；`tsc --noEmit` → 0 错误
-- 浏览器旅程：`playwright test e2e/journeys/j14-frame-product.journey.ts`
+- 浏览器旅程：`playwright test e2e/journeys/j16-frame-product.journey.ts`
   → 1 passed（mock 档，真实 app shell：SSE 提交 → Studio 画幅面板三幅恢复 →
   改名 CAS → 激活）
 - 视觉验收（visual-judge，2×2 图版）：首轮 FAIL（空白帧/标题重叠/图例失配）

@@ -94,6 +94,21 @@ describe('changed-lane mapping (quality-e2e lane)', () => {
     }
   });
 
+  it.each([
+    { id: 'j15', file: 'journeys/j15-pi-mapspec-stub.journey.ts', modes: ['mock', 'real'] },
+    { id: 'j16', file: 'journeys/j16-frame-product.journey.ts', modes: ['mock'] },
+  ])('registers $id without expanding PR smoke', async ({ id, file, modes }) => {
+    const { JOURNEYS, smokeJourneys } = await import('../../e2e/helpers/registry');
+    expect(JOURNEYS.find((j) => j.id === id)).toMatchObject({
+      file,
+      smoke: false,
+      modes,
+    });
+    expect(smokeJourneys().some((j) => j.id === id)).toBe(false);
+    // Editing a non-smoke journey must still select the existing PR smoke gate.
+    smokeDecision([`frontend/e2e/${file}`]);
+  });
+
   it('registry indexes every journey on disk (#1644)', async () => {
     const { JOURNEYS } = await import('../../e2e/helpers/registry');
     const registered = new Set(JOURNEYS.map((j) => j.file));

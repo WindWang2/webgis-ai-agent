@@ -20,7 +20,7 @@ import { API_ORIGIN, MODE, REAL_ONLY_REASON } from '../helpers/mode';
 const PROJECT_ID = process.env.E2E_G10_PROJECT_ID ?? '';
 const SESSION_ID = process.env.E2E_G10_SESSION_ID ?? '';
 
-test.describe('journey-13 项目数据刷新', () => {
+test.describe('journey-14 项目数据刷新', () => {
   test('real：检查→预览→执行→比较→采纳→回退（真实认证 + 真实后端 + 真实 UI）', async ({ page }) => {
     test.skip(MODE !== 'real', REAL_ONLY_REASON);
     test.skip(!PROJECT_ID || !SESSION_ID,
