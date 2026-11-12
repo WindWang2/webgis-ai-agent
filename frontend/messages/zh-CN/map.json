@@ -129,7 +129,9 @@
     "noFeatures": "框选范围内没有可选要素",
     "matchedNoStableId": "框选 {count} 个要素（该层无稳定 id 字段，无法跨视图联动）",
     "matchedTruncated": "已框选 {count} 个要素（高亮前 {limit} 个）",
-    "matched": "已框选 {count} 个要素"
+    "matched": "已框选 {count} 个要素",
+    "matchedAuthoritative": "服务端核实：共选中 {count} 个要素（可查看/导出全集）",
+    "authoritativeFailed": "服务端核实暂不可用（已保留框选范围，可稍后重试）"
   },
   "legends": {
     "sizeAria": "尺寸图例",

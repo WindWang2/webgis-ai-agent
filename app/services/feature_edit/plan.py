@@ -49,6 +49,7 @@ from app.services.feature_edit.geometry_ops import (
     split_feature,
 )
 from app.services.feature_edit.identity import (
+    find_ambiguous_ids,
     has_wfids,
     materialize_wfids,
     resolve_feature_ids,
@@ -492,6 +493,21 @@ def build_plan(
         findings.append(
             finding("feature_not_found", "requested ids not resolvable in dataset", ids=missing[:8])
         )
+    # G24/P0（A07）：重复自然键防线 —— 请求 id 命中多条要素时 first-wins
+    # 解析会编辑到用户没点的对象；typed 拒绝并披露重复数（物化后的 WFID
+    # 寻址唯一，不触发）。
+    if ids:
+        ambiguous = find_ambiguous_ids(preview_fc, ids)
+        if ambiguous:
+            findings.append(
+                finding(
+                    "ambiguous_target",
+                    "requested id matches multiple features (duplicate natural key); "
+                    "edit would target an object the user did not pick",
+                    ids=list(ambiguous.keys())[:8],
+                    counts={k: v for k, v in list(ambiguous.items())[:8]},
+                )
+            )
     wfids = sorted(set(wfid_map.values()))
     # 解析序（用户显式顺序）保留给 merge 的 first 策略 —— 排序集破坏
     # "取第一个父要素" 的用户语义。
