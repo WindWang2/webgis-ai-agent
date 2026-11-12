@@ -86,6 +86,18 @@ class FakeRpc:
         finally:
             self._pending.pop(rid, None)
 
+    async def issue(self, cmd: str, data=None):
+        """G22-P1 写相位：控制面（clear_queue/abort）不再走 request()。"""
+        if cmd == "abort":
+            self.abort_rpc_count += 1
+        fut = asyncio.get_running_loop().create_future()
+        fut.set_result({})
+        from types import SimpleNamespace as _SN
+        return _SN(id=f"issue-{cmd}", command=cmd, future=fut)
+
+    async def collect(self, issued, command=None):
+        return await issued.future
+
     def pending_request_ids(self) -> set:
         return set(self._pending.keys())
 

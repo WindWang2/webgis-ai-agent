@@ -31,9 +31,21 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from app.agent_pi_bridge import PiRpcError
+
+
+class IssuedRequest(NamedTuple):
+    """G22-P1：``PiRpcClient.issue`` 的产物 —— 已写出、待收响应的请求句柄。
+
+    ``id`` 是 pending 表键；``future`` 由 ``_handle_response`` 解。调用方经
+    ``collect`` 收响应（超时/F19 清理语义与 ``request()`` 一致）。
+    """
+
+    id: str
+    command: str
+    future: "asyncio.Future[Any]"
 
 
 def _write_agent_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
@@ -784,6 +796,19 @@ class PiRpcClient:
         会卡住事件循环（所有并发协程被冻结）。现在用 run_in_executor 把
         write+flush 放到线程池，不阻塞事件循环。
         """
+        issued = await self.issue(command, data)
+        return await self.collect(issued, command)
+
+    async def issue(self, command: str, data: Optional[dict] = None) -> "IssuedRequest":
+        """G22-P1：request() 的**写相位** —— 只把命令字节写到 stdin 并登记
+        pending future，不等待响应。
+
+        供 turn 控制面（clear_queue/abort）在宿主 turn 交接门内完成「校验 +
+        写出」原子段：写出完成后才释放门，使 turn N 的控制 RPC 字节严格
+        先于 turn N+1 的 prompt 字节到达 vendor（单 stdin 流有序）。调用方
+        **必须**最终 await ``collect``（或取消 future），否则泄漏 pending 表
+        项（F19 语义由 collect 承担）。
+        """
         if self._process is None or self._process.stdin is None:
             raise PiRpcError("Pi process not started")
 
@@ -800,36 +825,47 @@ class PiRpcClient:
         future = asyncio.get_running_loop().create_future()
         self._pending_requests[request_id] = future
 
+        line = json.dumps(request) + "\n"
+        # #810: 在 executor 跳转前捕获本地句柄 —— stop() 可能在循环侧
+        # 校验之后、线程执行之前把 self._process 置 None，线程里再读
+        # self._process.stdin 会抛裸 AttributeError 而非 PiRpcError。
+        proc = self._process
+
+        def _write_and_flush():
+            stdin = proc.stdin if proc is not None else None
+            if stdin is None:
+                # stop() 并发清场 —— 分类为 PiRpcError 而非 AttributeError
+                raise BrokenPipeError("Pi process stopped concurrently")
+            # Binary Popen (production) needs bytes; a text pipe keeps str.
+            payload = line if getattr(stdin, "encoding", None) else line.encode("utf-8")
+            stdin.write(payload)
+            stdin.flush()
+
         try:
-            line = json.dumps(request) + "\n"
-            # #810: 在 executor 跳转前捕获本地句柄 —— stop() 可能在循环侧
-            # 校验之后、线程执行之前把 self._process 置 None，线程里再读
-            # self._process.stdin 会抛裸 AttributeError 而非 PiRpcError。
-            proc = self._process
-
-            def _write_and_flush():
-                stdin = proc.stdin if proc is not None else None
-                if stdin is None:
-                    # stop() 并发清场 —— 分类为 PiRpcError 而非 AttributeError
-                    raise BrokenPipeError("Pi process stopped concurrently")
-                # Binary Popen (production) needs bytes; a text pipe keeps str.
-                payload = line if getattr(stdin, "encoding", None) else line.encode("utf-8")
-                stdin.write(payload)
-                stdin.flush()
-
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, _write_and_flush)
-            result = await asyncio.wait_for(future, timeout=PI_RPC_TIMEOUT)
-            return result
-        except asyncio.TimeoutError:
-            raise PiRpcError(f"Pi request timeout: {command}")
         except (BrokenPipeError, OSError) as e:
-            raise PiRpcError(f"Pi pipe error: {e}")
-        finally:
-            # F19: pop unconditionally, not just on TimeoutError/pipe errors.
-            # A caller cancellation (CancelledError) previously leaked the
-            # registry entry — one dead future per cancelled request, and a
-            # late response for that id would resolve a future nobody awaits.
-            # Idempotent: the normal response path already popped the entry
-            # in _handle_response, so this is a no-op there.
+            # 写失败：立刻回收 pending 项（无响应会来解它）。
             self._pending_requests.pop(request_id, None)
+            future.cancel()
+            raise PiRpcError(f"Pi pipe error: {e}")
+        except BaseException:
+            # F19 对齐（review 修复轮 P3）：写相位等待中被取消（executor
+            # 跳转处 CancelledError）也要回收 pending 项——旧 request() 的
+            # finally 无条件 pop；写已落地时响应方对 pop 后的 id 静默忽略，
+            # pop 幂等无害。
+            self._pending_requests.pop(request_id, None)
+            raise
+        return IssuedRequest(id=request_id, command=command, future=future)
+
+    async def collect(self, issued: "IssuedRequest", command: Optional[str] = None) -> Any:
+        """G22-P1：request() 的**响应相位** —— 等待 ``issue`` 的响应并保持
+        ``request()`` 的异常/清理语义（超时→PiRpcError；F19 无条件弹表）。"""
+        cmd = command or issued.command
+        try:
+            return await asyncio.wait_for(issued.future, timeout=PI_RPC_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise PiRpcError(f"Pi request timeout: {cmd}")
+        finally:
+            # F19: pop unconditionally（幂等：_handle_response 成功路径已弹）。
+            self._pending_requests.pop(issued.id, None)

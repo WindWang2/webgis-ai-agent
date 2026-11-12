@@ -337,6 +337,11 @@ class SharedTurnFacts(BaseModel):
     mapspec: Optional[Dict[str, Any]] = None
     map_state: Optional[Dict[str, Any]] = None
     harness_context: Optional[Any] = None   # HarnessTurnContext (hk.ctx.v1)
+    # G22-P2（GIS 状态恢复目录）：缺席 = None（provider 不投影，不虚构）。
+    #: 本会话非终态 durable jobs 的有界投影 [{"id","status"}]（≤8）。
+    durable_jobs: Optional[List[Dict[str, Any]]] = None
+    #: mapspec source → session ref 中已删除的指针 [{"source","ref"}]（≤8）。
+    invalid_source_refs: Optional[List[Dict[str, Any]]] = None
     fetch_errors: Dict[str, str] = Field(default_factory=dict)
 
 

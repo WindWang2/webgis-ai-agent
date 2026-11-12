@@ -1180,9 +1180,35 @@ async def register_active_pi_turn(
         run_id=run_id,
         context=(session_id, turn_id),
     )
-    _active_turns[session_id] = entry
+    # G22-P1：本地登记变更与控制面 RPC 的「校验+写出」共用同一交接门
+    # （bridge._control_gate）—— 后继 turn 的登记严格晚于前一 turn 迟到
+    # abort 的写出（写出在门内完成），从而 vendor 单 stdin 流上「旧控制
+    # RPC 字节 < 新 turn prompt 字节」有序，取消绝不命中后继 turn 的 run。
+    # 门等待有界：wedged 写持有的极端场景下登记降级为无门写入（字典写
+    # 本身 GIL 原子），并告警披露。
     if bridge is not None:
-        bridge._current_turn = entry
+        gate = getattr(bridge, "_control_gate", None)
+        if gate is not None:
+            try:
+                await asyncio.wait_for(gate.acquire(), timeout=5.0)
+            except asyncio.TimeoutError:
+                gate = None
+                logger.warning(
+                    "[PiBridge] control gate busy at turn registration "
+                    "(session=%s turn=%s); registering ungated",
+                    session_id, turn_id,
+                )
+            try:
+                _active_turns[session_id] = entry
+                bridge._current_turn = entry
+            finally:
+                if gate is not None:
+                    gate.release()
+        else:
+            _active_turns[session_id] = entry
+            bridge._current_turn = entry
+    else:
+        _active_turns[session_id] = entry
     from app.services.chat.pi_turn_context import pi_turn_registry
     await pi_turn_registry.register_turn(session_id, turn_id)
 
@@ -1191,9 +1217,33 @@ async def unregister_active_pi_turn(session_id: str, turn_id: str) -> bool:
     """Unregister active turn in local memory and Redis (if owned)."""
     entry = _active_turns.get(session_id)
     if entry is not None and entry.turn_id == turn_id:
-        _active_turns.pop(session_id, None)
-        if entry.bridge is not None and entry.bridge._current_turn is entry:
-            entry.bridge._current_turn = None
+        # G22-P1：与登记同款交接门（有界；超时降级 —— pop 的身份翻转语义
+        # 使迟到 abort 的写前校验必然拒绝，无门 pop 也不破坏隔离）。
+        gate = getattr(entry.bridge, "_control_gate", None) if entry.bridge else None
+        popped = False
+        if gate is not None:
+            try:
+                await asyncio.wait_for(gate.acquire(), timeout=5.0)
+            except asyncio.TimeoutError:
+                gate = None
+                logger.warning(
+                    "[PiBridge] control gate busy at turn unregister "
+                    "(session=%s turn=%s); unregistering ungated",
+                    session_id, turn_id,
+                )
+            try:
+                if _active_turns.get(session_id) is entry:
+                    _active_turns.pop(session_id, None)
+                    popped = True
+                    if entry.bridge is not None and entry.bridge._current_turn is entry:
+                        entry.bridge._current_turn = None
+            finally:
+                if gate is not None:
+                    gate.release()
+        if not popped and _active_turns.get(session_id) is entry:
+            _active_turns.pop(session_id, None)
+            if entry.bridge is not None and entry.bridge._current_turn is entry:
+                entry.bridge._current_turn = None
     from app.services.chat.pi_turn_context import pi_turn_registry
     return await pi_turn_registry.unregister_turn(session_id, turn_id)
 
@@ -1436,6 +1486,18 @@ class PiBridge:
     # GIS session last bound to this worker's in-memory Pi AgentSession.
     # Vendor ``prompt`` ignores sessionId; a change must ``new_session`` first.
     _bound_gis_session_id: Optional[str] = None
+    # G22-P1: turn 交接门 —— 控制面 RPC（clear_queue/abort）的「身份校验 +
+    # stdin 写出」原子段与本 worker turn teardown 的「快照 + 交接」互斥。
+    # 同会话后继 turn 不改变 ``_active_turn_sid``（CONC-F1 既有语义），sid
+    # 比对挡不住「旧 turn 的迟到取消命中新 turn」（G12 review P2-1 残留）；
+    # 本门 + turn 身份（entry 对象同一性）校验补齐该窗口。class-level 默认
+    # 供 ``__new__`` 测试路径读 None。
+    _control_gate: Optional[asyncio.Lock] = None
+    # G22-P1: 本 worker 在飞控制 RPC 的响应 future 集合（写相位已完成）。
+    # teardown 在交接前有界等待其响应清空（_drain_control_rpcs：vendor 并发
+    # 分发下，abort 响应落定 = vendor 侧处理完成）；done-callback
+    # 自动丢弃，集合天然有界（并发 abort 数量级）。
+    _inflight_control: Optional[set] = None
 
     def __init__(
         self,
@@ -1462,6 +1524,9 @@ class PiBridge:
         self._respawn_lock = asyncio.Lock()
         self._active_turn_sid: Optional[str] = None
         self._current_turn: Optional[_ActiveTurnEntry] = None
+        # G22-P1：见类属性注释（turn 交接门 + 在飞控制 RPC 台账）。
+        self._control_gate = asyncio.Lock()
+        self._inflight_control: set = set()
         # #1108: explicit lock ownership. ``_lock_lease`` names the turn that
         # currently owns ``_lock``; release is owner-checked and idempotent so
         # one turn can never release another turn's acquisition (INV-P2) and
@@ -1531,6 +1596,41 @@ class PiBridge:
             lease.writer.release()
         self._lock_lease = None
         self._lock.release()
+
+
+    async def _drain_control_rpcs(self, *, timeout_s: float = 5.0) -> None:
+        """G22-P1（review 修复轮 P2）：turn 交接前有界排空在飞控制 RPC 响应。
+
+        vendor rpc 模式对 stdin 行是**并发分发**（prompt 分支 fire-and-forget、
+        abort 分支 ``await session.abort()``）——交接门只保证**字节序**；
+        abort **响应**落定 = vendor 侧 abort 处理完成。teardown 在 unregister
+        （后继 turn 准入的前提）前有界等待这些响应，把「后继 run 在旧 abort
+        效果落地前启动」的 vendor 内竞态窗口压到响应超时残余（超时放行 +
+        告警，绝不阻断交接；残余记录于 ADR D1）。
+        """
+        inflight = self._inflight_control
+        if not inflight:
+            return
+        pending = [f for f in list(inflight) if not f.done()]
+        if not pending:
+            return
+        try:
+            _done, still = await asyncio.wait(pending, timeout=timeout_s)
+            if still:
+                for f in still:
+                    # 移出追踪集：teardown 常有内外两层 finally 各调一次
+                    # drain——滞留 future 若留在集合里会把有界时间翻倍。
+                    # 移出后响应仍会解 future（collect 自带超时），只是后续
+                    # drain 不再等待它。
+                    inflight.discard(f)
+                logger.warning(
+                    "[PiBridge] %d control RPC response(s) still pending at "
+                    "turn teardown (bounded %.1fs elapsed); handing off — "
+                    "vendor-side residual race documented in ADR D1",
+                    len(still), timeout_s,
+                )
+        except Exception as exc:  # noqa: BLE001 — 排空绝不阻断交接
+            logger.debug("[PiBridge] control drain failed: %s", exc)
 
     async def _safe_unregister_active_pi_turn(self, session_id: str, turn_id: str, *, lease: Optional[_TurnLease] = None) -> None:
         """Best-effort active-turn unregister, hardened against cancellation.
@@ -2021,91 +2121,117 @@ class PiBridge:
         # futures belong to the NEW turn; sid equality alone would kill it.
         # V5-B: resolve token from session table or instance turn state.
         if _entry is not None:
+            target_entry = _entry
             abort_token = _entry.token
         elif self._current_turn is not None and (
             session_id is None or self._current_turn.session_id == session_id
         ):
+            target_entry = self._current_turn
             abort_token = self._current_turn.token
         else:
+            target_entry = None
             abort_token = None
         abort_pending_ids = self._rpc.pending_request_ids()
+
+        # G22-P1（清偿 G12 review P2-1 残留）：turn 身份交接门。
+        # clear_queue/abort 是 worker 级全局操作（vendor 无 turn-scoped 命
+        # 令），而同会话后继 turn 不改 ``_active_turn_sid`` —— 仅比对 sid 的
+        # 前置守卫挡不住「旧 turn 的迟到取消命中同会话下一 turn」。本门把
+        # 「目标身份校验 + stdin 写出」做成原子段：
+        #   * 门内以**目标 entry 对象同一性**复核（session 表或 _current_turn
+        #     仍解析到同一 entry；None→None = 无在飞 turn 的 legacy 清场），
+        #     翻转（后继 turn 已交接）→ 整体跳过 RPC 写，绝不清错队列/误杀。
+        #   * 写出（issue）完成才释放门；teardown 的交接快照
+        #     同样取门；teardown 另以 _drain_control_rpcs 有界等待响应，
+        #     因此 turn N 的控制 RPC 字节
+        #     严格先于 turn N+1 的 prompt 字节到达 vendor（单 stdin 有序）。
         # ADR-0288（W07 / vendor C14）：用户级完全停止 = 先清 steer/follow-up
-        # 队列再 abort（上游 Esc 语义）—— 否则排队消息在 abort 后的下一
-        # agent run 里自行重启，产品语义的「停止任务」落空。system/policy
-        # 停止（会话删除/看门狗）同样不应让队列复活；steer 通道本身不受
-        # 影响。clear_queue 失败绝不阻断 abort（尽力而为，同会话守卫已过）。
-        #
-        # review-P2：clear_queue 是**全局**操作（清的是当前在飞 turn 的队列），
-        # 与 abort 一样有 TOCTOU 面 —— 发出前**再校验** snapshot 的 turn 仍是
-        # 在飞者，若已翻转（同会话后继/跨会话新 turn）则跳过 clear+abort，
-        # 绝不清错队列或误杀新 turn。
-        active_before_clear = self._active_turn_sid
-        if (
-            session_id is not None
-            and active_before_clear is not None
-            and active_before_clear != session_id
-        ):
+        # 队列再 abort（上游 Esc 语义）；clear_queue 失败绝不阻断 abort。
+        def _resolve_current_entry() -> Optional["_ActiveTurnEntry"]:
+            if session_id is not None:
+                return get_active_turn_entry(session_id)
+            return self._current_turn
+
+        clear_issued = None
+        abort_issued = None
+        inflight = self._inflight_control
+        if inflight is None:  # __new__ 测试路径防御
+            inflight = set()
+            self._inflight_control = inflight
+        if self._control_gate is None:
+            self._control_gate = asyncio.Lock()
+        # G22 修复轮（review P3）：门获取有界 —— wedged 控制写持门时，
+        # 后续 abort **整体跳过**（fail-safe：发不出就绝不发，宁可不取消
+        # 也不冒险命中后继 turn），而不是无限挂起。
+        try:
+            await asyncio.wait_for(self._control_gate.acquire(), timeout=5.0)
+        except asyncio.TimeoutError:
             logger.warning(
-                "[PiBridge] abort(session_id=%s) skipped before clear_queue: "
-                "active turn flipped to %s; not clearing another turn's queue",
-                session_id, active_before_clear,
+                "[PiBridge] abort(session_id=%s) skipped: control gate busy "
+                ">5s (wedged control write?); fail-safe skip — never risk "
+                "hitting a successor turn",
+                session_id,
             )
             return {}
         try:
-            await self._rpc.request("clear_queue", {})
-        except Exception as exc:  # noqa: BLE001 — 清队尽力而为
-            logger.debug(
-                "[PiBridge] clear_queue before abort failed (session=%s): %s",
-                session_id, exc,
-            )
-        result = await self._rpc.request("abort")
-        # P1 (TOCTOU) / R2-5: the active sid above was read lock-free BEFORE
-        # the abort RPC was awaited. In that gap the matching turn can end and
-        # a DIFFERENT session's turn start (notably when a shielded
-        # abort-on-disconnect outlives its turn's finally). In that case the
-        # abort RPC itself has already flown — nothing can un-send it — but we
-        # must NOT also ignite the NEW turn's token or fail its pending
-        # futures, so skip both global effects and log the flip.
-        active_after = self._active_turn_sid
-        if (
-            session_id is not None
-            and active_after is not None
-            and active_after != session_id
-        ):
+            if _resolve_current_entry() is not target_entry:
+                logger.info(
+                    "[PiBridge] abort(session_id=%s) skipped: target turn was "
+                    "handed off before the control RPCs were written; not "
+                    "clearing/aborting a successor turn's run or queue",
+                    session_id,
+                )
+                return {}
+            try:
+                clear_issued = await self._rpc.issue("clear_queue", {})
+                inflight.add(clear_issued.future)
+                clear_issued.future.add_done_callback(inflight.discard)
+            except Exception as exc:  # noqa: BLE001 — 清队尽力而为
+                logger.debug(
+                    "[PiBridge] clear_queue issue failed (session=%s): %s",
+                    session_id, exc,
+                )
+            abort_issued = await self._rpc.issue("abort")
+            inflight.add(abort_issued.future)
+            abort_issued.future.add_done_callback(inflight.discard)
+        finally:
+            self._control_gate.release()
+        # 写相位已全部完成（门已释放）；以下只收响应 —— 慢响应不得拖住
+        # teardown 的交接门（teardown 有界等待这些 future，见
+        # 见 _drain_control_rpcs 与 _control_gate 注释）。
+        if clear_issued is not None:
+            try:
+                await self._rpc.collect(clear_issued)
+            except Exception as exc:  # noqa: BLE001 — 清队尽力而为
+                logger.debug(
+                    "[PiBridge] clear_queue response failed (session=%s): %s",
+                    session_id, exc,
+                )
+        result = await self._rpc.collect(abort_issued)
+        # P1 (TOCTOU) / R2-5 / G22-P1：写后身份对账。若目标 turn 在响应等待
+        # 期间被交接（后继 turn 已注册），RPC 字节已飞出（无法撤回）且严格
+        # 先于后继 turn 的 prompt 字节（门序保证）；此处只做**快照作用域**
+        # 的本地效果 —— 点燃快照 token（F24；旧 turn 的 token，取消无害且
+        # 正确）、记录 abort 来源（F03；按目标 turn id）、失败快照 pending
+        # ids（CONC-F1；后继 turn 的新请求不在快照内）—— 均不可能伤及
+        # 后继 turn，因此翻转时不再整体早退（旧实现的早退会丢失 F03 诚实
+        # 终态记录），仅告警披露。
+        if _resolve_current_entry() is not target_entry:
             logger.warning(
-                "[PiBridge] abort(session_id=%s) TOCTOU: the active turn "
-                "flipped %s -> %s while the abort RPC was in flight; skipping "
-                "token-cancel/fail_all_pending so the new turn is not killed",
-                session_id, active, active_after,
+                "[PiBridge] abort(session_id=%s): target turn was handed off "
+                "while the abort RPC response was pending; applying "
+                "snapshot-scoped effects only (token/source/pending-ids)",
+                session_id,
             )
-            return result or {}
-        # F24: ignite the SNAPSHOT turn's cancellation token so checkpoint()-
-        # cooperative tool dispatches (HTTP callback path) stop promptly too,
-        # not just the Pi subprocess. CONC-F1: cancel only the token the abort
-        # was AIMED at — if a same-session successor turn replaced it, the
-        # current token belongs to the new turn and must not be ignited
-        # (cancelling the stale snapshot token is correct and harmless: its
-        # turn is already gone).
         if abort_token is not None:
             abort_token.cancel("abort requested")
         # F03: remember WHO ordered this stop so the settle seam records the
         # honest terminal (user → cancelled / system|policy → aborted) even
         # though the vendor will answer the abort with a clean agent_settled.
-        # review P3-4：fallback 与上方 token 解析同款会话守卫 —— 决不给
-        # 别的会话的 turn 记结算来源（否则会把外来 turn 的终态翻转）。
-        _abort_turn_id = getattr(_entry, "turn_id", "")
-        if not _abort_turn_id and self._current_turn is not None and (
-            session_id is None or self._current_turn.session_id == session_id
-        ):
-            _abort_turn_id = self._current_turn.turn_id
-        record_turn_abort_source(_abort_turn_id, source)
-        current_token = self._current_turn.token if self._current_turn else None
-        if current_token is not abort_token and current_token is not None:
-            logger.warning(
-                "[PiBridge] abort TOCTOU: active turn token was replaced while "
-                "the abort RPC was in flight; cancelled only the stale snapshot "
-                "token and failed only the snapshot futures"
-            )
+        # G22-P1：无目标 turn（legacy 清场路径）时不记录 —— 空 turn id 无
+        # 结算窗口可归属，只会污染来源台账。
+        if target_entry is not None:
+            record_turn_abort_source(target_entry.turn_id, source)
         # Cancel pending futures from the SNAPSHOT only (CONC-F1): failing
         # everything would kill a successor turn's freshly registered prompt.
         self._rpc.fail_pending_ids(abort_pending_ids, "abort requested")
@@ -2621,6 +2747,7 @@ class PiBridge:
                     # CancelledError during Redis I/O can no longer skip the
                     # release. The outer finally's backstop release is a no-op then.
                     self._release_turn_lease(lease)
+                    await self._drain_control_rpcs()
                     await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                     rt_ev.mark_ended()
                     _turn_summary = emit_turn_summary(rt_ev)
@@ -2661,6 +2788,7 @@ class PiBridge:
             if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                 self._current_turn = None
             self._release_turn_lease(lease)
+            await self._drain_control_rpcs()
             await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
             TURN_EVIDENCE.remove(turn_id)
             _cleanup_turn_state(turn_sid)
@@ -3316,6 +3444,7 @@ class PiBridge:
                     # CancelledError during Redis I/O can no longer skip the
                     # release and hang every session on the singleton bridge.
                     self._release_turn_lease(lease)
+                    await self._drain_control_rpcs()
                     await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                     # Runtime observability: settle turn outcome from the SAME
                     # status the seam recorded（F03：诊断面与权威终态不再各有
@@ -3419,6 +3548,7 @@ class PiBridge:
                 # is turn-id-checked (no-op for a successor's entry) and
                 # idempotent on the normal path where the inner finally
                 # already unregistered.
+                await self._drain_control_rpcs()
                 await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                 TURN_EVIDENCE.remove(turn_id)
                 _cleanup_turn_state(turn_sid)

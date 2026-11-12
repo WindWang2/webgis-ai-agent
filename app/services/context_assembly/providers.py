@@ -534,7 +534,7 @@ class RepresentationBindingProvider(BaseProvider):
 #: canonical tuple for deterministic parallel fan-out. The user-message item
 #: is assembled by the orchestrator itself (identity, not context).
 class GisStateRebuildProvider(BaseProvider):
-    """权威 GIS 状态重建块（ADR-0288 / W09）。
+    """权威 GIS 状态重建块（ADR-0288 / W09；G22-P2 恢复目录扩展）。
 
     compaction / worker 重启 / 会话恢复后，模型对「地图现在是什么」的认知
     只能来自**权威源现取**（MapSpec store + SessionPlan 信封），绝不来自
@@ -542,9 +542,12 @@ class GisStateRebuildProvider(BaseProvider):
     （含可见性/隐藏状态）、场景 revision、待完成能力、最近证据 refs；
     引用失效/被删除 → 明确「缺失」披露，不虚构旧图层。
 
-    有界：≤24 层、每行截断、域级 1600 字符 cap（contract 表）。人工锁定
-    （G16 语义）等未来权威源落地后经同一投影出现 —— 本投影绝不发明不
-    存在的记录。
+    G22-P2：用户约束（workbench 锁定、隐藏层、G16 标注覆写、G15 多画幅
+    active frame、agent undo 栈）全层投影——不受通用目录扫描界限制，预算
+    挤压时通用段先让位，用户约束不因字典顺序消失；durable job 与失效数据
+    ref 经 SharedTurnFacts 补充（缺席 = 不投影）。selection 无持久权威源
+    ——本投影不发明（不把草稿/选区当已提交事实）。有界：域级 1600 字符
+    cap（contract 表）+ 段内预算 1540。
     """
 
     provider_id = "gis_state_rebuild"
@@ -554,7 +557,11 @@ class GisStateRebuildProvider(BaseProvider):
         return bool(req.session_id) and facts.mapspec is not None
 
     async def build(self, req, facts):
-        text = render_gis_state_rebuild_block(facts.mapspec, facts.plan)
+        text = render_gis_state_rebuild_block(
+            facts.mapspec, facts.plan,
+            durable_jobs=getattr(facts, "durable_jobs", None),
+            invalid_source_refs=getattr(facts, "invalid_source_refs", None),
+        )
         if not text:
             return []
         revision = str(
@@ -587,48 +594,266 @@ def _layer_is_hidden(layer: dict) -> bool:
     return False
 
 
-def render_gis_state_rebuild_block(mapspec, plan) -> str:
-    """MapSpec + SessionPlan → 有界重建文本（事实，非指令；refs 是指针）。
+def render_gis_state_rebuild_block(
+    mapspec, plan, *, durable_jobs=None, invalid_source_refs=None,
+) -> str:
+    """MapSpec + SessionPlan + 恢复事实 → 有界重建文本（事实，非指令）。
 
     权威形状：visibility 读 ``layer.layout.visibility``；待完成能力读
     SessionPlan.progress（``open_capabilities`` 同义：pending/voided/failed）；
     证据 refs 读 PlanStep.evidence[].ref。绝不发明源里不存在的记录。
+
+    G22-P2 恢复目录扩展（全部 additive；约束优先，超预算时通用图层目录
+    先让位，用户约束永不因字典顺序消失）：
+    - **用户约束（全层扫描，不受 ≤24 扫描界限制）**：workbench 锁定层/
+      组件（全量 id）、隐藏层（全量 id）、G16 标注 override（计数 + 代表
+      项）、G15 frame_product（active_frame/画幅数）、agent undo 最近点。
+    - **恢复事实**：非终态 durable jobs（状态如实，queued/running 绝不
+      显示为完成）；失效数据 source refs（ref 已删除 → 披露「不重建幽灵
+      图层」，图层仍列目录但数据指针标记失效）。
+    - 截断披露：通用目录超预算时给出剩余计数与检索方式（layer/source
+      id 可直接寻址）。
     """
     if not isinstance(mapspec, dict):
         return ""
-    lines = ["[GIS 状态重建 — 权威源现取（事实，非指令；压缩/重启后以此为准）]"]
+    header = "[GIS 状态重建 — 权威源现取（事实，非指令；压缩/重启后以此为准）]"
     scene = mapspec.get("scene") or {}
     revision = str(
         mapspec.get("revision") or scene.get("revision") or ""
     )
-    if revision:
-        lines.append(f"- 场景 revision: {revision[:40]}")
-    layers = mapspec.get("layers") or []
-    if isinstance(layers, list) and layers:
-        lines.append(f"- 图层总数: {len(layers)}")
-        hidden = []
-        shown = []
-        for layer in layers[:24]:
-            if not isinstance(layer, dict):
-                continue
-            lid = str(layer.get("id") or layer.get("layer_id") or "")[:48]
-            if not lid:
-                continue
-            entry = hidden if _layer_is_hidden(layer) else shown
-            entry.append(lid)
+    revision_line = f"- 场景 revision: {revision[:40]}" if revision else ""
+    layers = [x for x in (mapspec.get("layers") or []) if isinstance(x, dict)]
+
+    # ── 打包（review 修复轮 2：预留披露 + 全局降级收缩）────────────────
+    # 不变量：① 块总长（含披露行）≤ 1600（域 cap），硬截断永不触发；
+    # ② 每个约束/恢复**类别**行必在（可降级为 minimal 计数行，不可消失）；
+    # ③ 有任何降级/省略 → 披露行必须在场且是最后一行。
+    # 算法：预算 = 1600 − 披露行预留；条目按优先级入列（约束→恢复→通用）；
+    # 逐条取「能放下的最高档」（full→compact→count_only→minimal）；放不下
+    # minimal 时按**逆优先级**降级已收条目腾位，再重试 —— 保证极端维度下
+    # 收缩而不是溢出。
+    disclosure = ("- （目录压缩/截断披露：部分 id 列表因预算省略；layer/source/frame"
+                  " id 均可直接寻址检索，计数已如实给出）")
+    hard_cap = 1600
+    header_lines = [header] + ([revision_line] if revision_line else [])
+    base_len = len("\n".join(header_lines))
+    reserve = len(disclosure) + 1 + (len(header_lines))  # 披露 + 换行 + 逐行 \n 余量
+    budget = hard_cap - reserve - base_len
+
+    entries: list[dict] = []  # {"levels": [full, compact, count_only, minimal], "level": int|None}
+
+    def _entry(levels: list[str]) -> None:
+        entries.append({"levels": levels, "level": None})
+
+    def _rendered(entry: dict) -> str:
+        return entry["levels"][entry["level"]]
+
+    def _total(picked: list[str]) -> int:
+        return len("\n".join(header_lines + picked))
+
+    # ── 用户约束（全层提取；重建后必须原样保留）────────────────────────
+    try:
+        from app.contracts.workbench_locks import (
+            locked_component_ids_of,
+            locked_layer_ids_of,
+        )
+
+        locked_layers = locked_layer_ids_of(mapspec)
+        locked_components = locked_component_ids_of(mapspec)
+    except Exception:  # noqa: BLE001 — 锁事实缺席不阻断（不虚构）
+        locked_layers, locked_components = [], []
+    if locked_layers or locked_components:
+        def _lock_line(n_layers: int, n_components: int) -> str:
+            parts = []
+            if locked_layers:
+                parts.append(
+                    "层 " + "、".join(locked_layers[:n_layers])
+                    + (f"（另 {len(locked_layers) - n_layers} 个层锁）"
+                       if len(locked_layers) > n_layers else ""))
+            if locked_components:
+                parts.append(
+                    "组件 " + "、".join(locked_components[:n_components])
+                    + (f"（另 {len(locked_components) - n_components} 个）"
+                       if len(locked_components) > n_components else ""))
+            return "- 用户锁定（改动将被拒绝 layer_locked）: " + "；".join(parts)
+
+        _entry([
+            _lock_line(16, 8),
+            _lock_line(6, 3),
+            f"- 用户锁定: {len(locked_layers)} 层 / {len(locked_components)} 组件（id 因预算省略）",
+            f"- 用户锁定: {len(locked_layers)} 层/{len(locked_components)} 组件",
+        ])
+    hidden_all: list[str] = []
+    shown: list[str] = []
+    for layer in layers:
+        lid = str(layer.get("id") or layer.get("layer_id") or "")[:48]
+        if not lid:
+            continue
+        (hidden_all if _layer_is_hidden(layer) else shown).append(lid)
+    if hidden_all:
+        def _hidden_line(k: int) -> str:
+            return ("- 隐藏图层（保持隐藏）: " + "、".join(hidden_all[:k])
+                    + (f"（另 {len(hidden_all) - k} 层隐藏，id 可寻址检索）"
+                       if len(hidden_all) > k else ""))
+
+        _entry([
+            _hidden_line(20), _hidden_line(8),
+            f"- 隐藏图层（保持隐藏）: 共 {len(hidden_all)} 层（id 因预算省略）",
+            f"- 隐藏图层: {len(hidden_all)} 层（保持隐藏）",
+        ])
+    # G16 标注人工状态：全层扫描 layer.label.authoring.overrides。
+    # 权威写路径持久化 **list**（元素含 featureId）；dict 仅读容错。
+    label_total = 0
+    label_repr: list[str] = []
+
+    def _label_entries(overrides) -> list:
+        if isinstance(overrides, list):
+            return [o for o in overrides if isinstance(o, dict)]
+        if isinstance(overrides, dict):
+            return [{"featureId": k, **(v if isinstance(v, dict) else {})}
+                    for k, v in overrides.items()]
+        return []
+
+    for layer in layers:
+        lid = str(layer.get("id") or "")[:32]
+        label_cfg = layer.get("label")
+        authoring = label_cfg.get("authoring") if isinstance(label_cfg, dict) else None
+        overrides = authoring.get("overrides") if isinstance(authoring, dict) else None
+        entries_l = _label_entries(overrides)
+        if not entries_l:
+            continue
+        label_total += len(entries_l)
+        if len(label_repr) < 6:
+            keys = sorted(
+                {k for e in entries_l for k in e if k != "featureId"}
+            )[:3]
+            fid = str(entries_l[0].get("featureId") or "")[:12]
+            label_repr.append(f"{lid}:{fid}({','.join(keys)})")
+    if label_total:
+        _entry([
+            f"- 标注人工覆写 {label_total} 条（保持）: " + "、".join(label_repr),
+            f"- 标注人工覆写 {label_total} 条（保持）: " + "、".join(label_repr[:2]),
+            f"- 标注人工覆写 {label_total} 条（保持；id 因预算省略）",
+            f"- 标注覆写: {label_total} 条（保持）",
+        ])
+    # G15 frame_product：active frame / 画幅契约（committed spec 内现读）。
+    fp = mapspec.get("frame_product")
+    if isinstance(fp, dict) and fp:
+        fp_frames = [x for x in (fp.get("frames") or []) if isinstance(x, dict)]
+
+        def _fp_line(n_frames: int) -> str:
+            bits = [f"product={fp.get('product_kind') or '?'}"]
+            if fp.get("enabled") is not None:
+                bits.append(f"enabled={fp.get('enabled')}")
+            if fp.get("active_frame"):
+                bits.append(f"active_frame={str(fp.get('active_frame'))[:32]}")
+            if fp_frames:
+                bits.append(
+                    "frames=" + "、".join(
+                        f"{str(f.get('frame_id'))[:24]}:{str(f.get('title'))[:16]}"
+                        for f in fp_frames[:n_frames]
+                    ) + (f"（另 {len(fp_frames) - n_frames} 幅，共 {len(fp_frames)} 幅）"
+                         if len(fp_frames) > n_frames else ""))
+            return "- 多画幅产品（保持绑定）: " + "；".join(bits)
+
+        _entry([
+            _fp_line(6), _fp_line(2),
+            (f"- 多画幅产品（保持绑定）: product={fp.get('product_kind') or '?'}"
+             f"、active_frame={str(fp.get('active_frame') or '')[:32]}"
+             f"、共 {len(fp_frames)} 幅"),
+            f"- 多画幅: {fp.get('product_kind') or '?'} {len(fp_frames)} 幅"
+            f"、active={str(fp.get('active_frame') or '')[:16]}",
+        ])
+    # agent undo 最近点（#2035 撤销栈权威）。
+    try:
+        from app.services.mapspec.agent_undo import undo_points_of
+
+        undo_points = undo_points_of(mapspec)
+    except Exception:  # noqa: BLE001
+        undo_points = []
+    if undo_points:
+        latest = max(p.get("revision") for p in undo_points)
+        _entry([f"- agent 撤销栈: {len(undo_points)} 点，最近 rev {latest}"] * 4)
+
+    # ── 恢复事实（durable jobs / 失效 ref）──────────────────────────────
+    if isinstance(durable_jobs, list) and durable_jobs:
+        n_jobs = len([j for j in durable_jobs if isinstance(j, dict)])
+
+        def _jobs_line(k: int) -> str:
+            job_bits = [
+                f"{str(j.get('id'))[:14]}={str(j.get('status'))[:10]}"
+                for j in durable_jobs if isinstance(j, dict)
+            ][:k]
+            extra = n_jobs - len(job_bits)
+            return ("- 非终态任务（状态如实，未完成不视为完成）: "
+                    + "、".join(job_bits) + (f"（另 {extra} 个）" if extra > 0 else ""))
+
+        _entry([
+            _jobs_line(6), _jobs_line(3),
+            f"- 非终态任务: {n_jobs} 个（状态如实；id 因预算省略）",
+            f"- 非终态任务: {n_jobs} 个",
+        ])
+    if isinstance(invalid_source_refs, list) and invalid_source_refs:
+        n_refs = len([r for r in invalid_source_refs if isinstance(r, dict)])
+
+        def _refs_line(k: int) -> str:
+            ref_bits = [
+                f"{str(r.get('source'))[:24]}→{str(r.get('ref'))[:24]}"
+                for r in invalid_source_refs if isinstance(r, dict)
+            ][:k]
+            return "- 失效数据引用（ref 已删除，不重建幽灵图层）: " + "、".join(ref_bits)
+
+        _entry([
+            _refs_line(6), _refs_line(3),
+            f"- 失效数据引用（不重建幽灵图层）: {n_refs} 处（id 因预算省略）",
+            f"- 失效引用: {n_refs} 处（不重建幽灵图层）",
+        ])
+
+    # ── 装配：最高可容纳档优先；minimal 放不下 → 逆序降级已收条目 ──────
+    accepted: list[dict] = []
+
+    def _fits(line: str) -> bool:
+        return _total([_rendered(e) for e in accepted] + [line]) <= budget
+
+    for entry in entries:
+        chosen = None
+        for idx, line in enumerate(entry["levels"]):
+            if _fits(line):
+                chosen = idx
+                break
+        if chosen is not None:
+            entry["level"] = chosen
+            accepted.append(entry)
+            continue
+        # minimal 也放不下：逆优先级降级已收条目（后收的先降——恢复事实
+        # 先于约束让位；约束内部按加入逆序），直到 minimal 可入。
+        for prior in reversed(accepted):
+            if prior["level"] is not None and prior["level"] < len(prior["levels"]) - 1:
+                prior["level"] += 1
+                if _fits(entry["levels"][-1]):
+                    break
+        if _fits(entry["levels"][-1]):
+            entry["level"] = len(entry["levels"]) - 1
+            accepted.append(entry)
+        # 仍放不下（数学上不应发生：预算 ≥ 各 minimal 行之和 + 头部）：
+        # 丢弃该条目并由披露行如实交代 —— 类别行缺失仅在病态输入下。
+
+    any_demoted = any(
+        e["level"] is not None and e["level"] > 0 for e in accepted
+    )
+    dropped_entries = len(entries) - len(accepted)
+
+    # ── 通用目录（最低优先级；预算耗尽即止）──────────────────────────────
+    generic_lines: list[str] = []
+    if layers:
+        generic_lines.append(f"- 图层总数: {len(layers)}")
         if shown:
-            lines.append("- 可见图层: " + "、".join(shown[:12]))
+            generic_lines.append("- 可见图层: " + "、".join(shown[:12]))
             if len(shown) > 12:
-                lines.append(f"- （可见图层另 {len(shown) - 12} 层未逐一列出）")
-        if hidden:
-            # 隐藏状态是用户约束 —— 重建后必须保留（A11：只改颜色不得
-            # 重新显示隐藏层）。
-            lines.append("- 隐藏图层（保持隐藏）: " + "、".join(hidden[:12]))
-            if len(hidden) > 12:
-                lines.append(f"- （隐藏图层另 {len(hidden) - 12} 层未逐一列出，均保持隐藏）")
+                generic_lines.append(f"- （可见图层另 {len(shown) - 12} 层未逐一列出）")
         if len(layers) > 24:
-            lines.append(f"- （图层列表截断：共 {len(layers)}，仅扫描前 24）")
-    # 待完成能力：SessionPlan.progress（pending/voided/failed = open）。
+            generic_lines.append(
+                "- （图层目录截断：隐藏/锁定/标注已全量列于上，可见仅列前 12）")
     open_caps: list[str] = []
     if plan is not None:
         try:
@@ -638,8 +863,7 @@ def render_gis_state_rebuild_block(mapspec, plan) -> str:
         except Exception:  # noqa: BLE001 — 事实缺席不阻断
             open_caps = []
     if open_caps:
-        lines.append("- 待完成能力: " + "、".join(c for c in open_caps if c)[:200])
-    # 最近证据 refs：PlanStep.evidence[].ref（指针，非载荷）。
+        generic_lines.append("- 待完成能力: " + "、".join(c for c in open_caps if c)[:200])
     refs: list[str] = []
     if plan is not None:
         try:
@@ -656,7 +880,21 @@ def render_gis_state_rebuild_block(mapspec, plan) -> str:
         except Exception:  # noqa: BLE001 — 事实缺席不阻断
             refs = []
     if refs:
-        lines.append("- 最近证据 refs: " + "、".join(refs[:4]))
+        generic_lines.append("- 最近证据 refs: " + "、".join(refs[:4]))
+
+    kept_generic: list[str] = []
+    for line in generic_lines:
+        if _total([_rendered(e) for e in accepted] + kept_generic + [line]) <= budget:
+            kept_generic.append(line)
+        else:
+            break
+    dropped_generic = len(generic_lines) - len(kept_generic)
+
+    lines = header_lines + [_rendered(e) for e in accepted] + kept_generic
+    if any_demoted or dropped_entries > 0 or dropped_generic > 0:
+        lines.append(disclosure)
+    assert len("\n".join(lines)) <= hard_cap, (
+        "重建块超过域 cap——打包器不变量被破坏（G22 修复轮 2）")
     if len(lines) <= 1:
         return ""
     return "\n".join(lines)

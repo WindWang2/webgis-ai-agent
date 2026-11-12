@@ -92,6 +92,76 @@ async def fetch_shared_facts(req: TurnContextRequest) -> SharedTurnFacts:
     facts.map_state = state if isinstance(state, dict) else {}
     facts.mapspec = mapspec if isinstance(mapspec, dict) else None
 
+    # G22-P2（GIS 状态恢复目录）：durable jobs + 失效 source refs —— 与
+    # plan 读取并行；失败 → fetch_errors（provider 视为缺席，不虚构）。
+    async def _durable_jobs():
+        if not req.session_id:
+            return None
+        try:
+            from sqlalchemy import select
+
+            from app.core.database import AsyncSessionLocal
+            from app.models.db_model import AnalysisTask
+            from app.services.jobs.lifecycle import ACTIVE_STATUSES
+
+            async with AsyncSessionLocal() as db:
+                stmt = (
+                    select(AnalysisTask)
+                    .where(
+                        AnalysisTask.session_id == req.session_id,
+                        AnalysisTask.status.in_(
+                            [s.value for s in ACTIVE_STATUSES]),
+                    )
+                    .order_by(AnalysisTask.created_at.desc())
+                    .limit(8)
+                )
+                rows = list((await db.execute(stmt)).scalars().all())
+                return [
+                    {"id": str(row.id)[:16], "status": str(row.status)}
+                    for row in rows
+                ]
+        except Exception as exc:  # noqa: BLE001
+            facts.fetch_errors["durable_jobs"] = type(exc).__name__
+            return None
+
+    def _source_ref_invalid(mapspec_dict):
+        """mapspec source → session ref 指针存在性核对（仅 ref 型指针）。
+
+        url 型指针不走 session ref 生命周期，不在此判定（消费方按自身
+        超时/SSRF 语义披露）。失败 = None（不虚构失效，也不虚构有效）。
+        """
+        sources = (mapspec_dict or {}).get("sources")
+        if not isinstance(sources, dict) or not sources or not req.session_id:
+            return None
+        try:
+            from app.services.session_data import session_data_manager
+
+            invalid: list = []
+            for source_id, source in sources.items():
+                if not isinstance(source, dict):
+                    continue
+                ref = source.get("refId") or source.get("ref_id") or ""
+                if not ref or not isinstance(ref, str):
+                    continue
+                if not session_data_manager.has(req.session_id, ref):
+                    invalid.append(
+                        {"source": str(source_id)[:32], "ref": ref[:32]}
+                    )
+                if len(invalid) >= 8:
+                    break
+            return invalid
+        except Exception as exc:  # noqa: BLE001
+            facts.fetch_errors["invalid_source_refs"] = type(exc).__name__
+            return None
+
+    jobs, invalid_refs = await asyncio.gather(
+        _durable_jobs(),
+        asyncio.get_running_loop().run_in_executor(
+            None, _source_ref_invalid, facts.mapspec),
+    )
+    facts.durable_jobs = jobs
+    facts.invalid_source_refs = invalid_refs
+
     if req.session_id:
         try:
             from app.services.session_plan import (

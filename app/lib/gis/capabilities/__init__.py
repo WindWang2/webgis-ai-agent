@@ -23,6 +23,7 @@ from app.lib.gis.capabilities.statistics import CAPABILITIES as _statistics
 from app.lib.gis.capabilities.frame_product import CAPABILITIES as _frame_product
 from app.lib.gis.capabilities.temporal import CAPABILITIES as _temporal
 from app.lib.gis.capabilities.terrain import CAPABILITIES as _terrain
+from app.lib.gis.capabilities.workbench_lifecycle import CAPABILITIES as _workbench_lifecycle
 
 
 def iter_capability_packs() -> Iterable[List[CapabilityDescriptor]]:
@@ -30,5 +31,5 @@ def iter_capability_packs() -> Iterable[List[CapabilityDescriptor]]:
         _data_access, _geometry, _aggregation, _density, _statistics,
         _interpolation, _network, _terrain, _raster, _temporal, _decision,
         _platform, _sampling, _ecology, _modelops, _rs_cube, _scene3d,
-        _multiscale, _frame_product,
+        _multiscale, _frame_product, _workbench_lifecycle,
     )

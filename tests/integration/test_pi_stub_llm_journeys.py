@@ -760,7 +760,12 @@ def main() -> int:
         try:
             ids6 = [ln[4:].strip() for ln in body6b.splitlines() if ln.startswith("id: ")]
             last_id = ids6[-1] if ids6 else ""
-            rec_before = rec.read_text().count(json.dumps({"key": J6_MSG}, ensure_ascii=False))
+            # G22-N4：json.dumps 默认带空格（{"key": "…"}）而 stub 记录的是
+            # node 紧凑输出（{"key":"…"}）→ 计数恒 0、断言 vacuous。对齐
+            # separators 后计数真实；rec_before >= 1 由 pytest 侧反 vacuous
+            # 锁钉死（J6_MSG 已发过至少一次真实请求）。
+            _needle = '"key":' + json.dumps(J6_MSG, ensure_ascii=False)
+            rec_before = rec.read_text().count(_needle)
             payload = {"message": J6_MSG, "session_id": RUN + "-cd"}
             req = urllib.request.Request(
                 "http://127.0.0.1:{}/api/v1/chat/stream".format(api_port),
@@ -775,10 +780,11 @@ def main() -> int:
                 body7 = resp7.read().decode("utf-8", "replace")
             (WORK / "sse_resume.log").write_text(body7, encoding="utf-8")
             ev7 = _parse_sse(body7)
-            rec_after = rec.read_text().count(json.dumps({"key": J6_MSG}, ensure_ascii=False))
+            rec_after = rec.read_text().count(_needle)
             verdict["journeys"]["J7"] = {
                 "names": [e["event"] for e in ev7],
                 "llm_calls": rec_after - rec_before,
+                "llm_calls_observed_before": rec_before,
                 "error_event": any(e["event"] == "error" for e in ev7),
                 "replayed_sid_consistent": all(
                     (not _sid(e)) or _sid(e) == RUN + "-cd" for e in ev7),
@@ -951,8 +957,11 @@ async def test_a5_journeys_on_real_pi_bridge():
     assert j["J6b"]["names"][-1] == "done"
     assert not j["J6b"]["foreign_sid"], j["J6b"]["foreign_sid"]
 
-    # J7（PI-09）：resume 只重放 —— 零 LLM 调用、会话归属一致
+    # J7（PI-09）：resume 只重放 —— 零 LLM 调用、会话归属一致。
+    # G22-N4 反 vacuous 锁：计数器必须真的看得见 stub 调用（J6_MSG 在
+    # resume 前至少被真实请求过一次），否则「零调用」断言无意义。
     assert "J7" in j, verdict.get("fail")
+    assert j["J7"]["llm_calls_observed_before"] >= 1, j["J7"]
     assert j["J7"]["llm_calls"] == 0, j["J7"]
     assert j["J7"]["replayed_sid_consistent"] is True, j["J7"]
     assert not j["J7"]["error_event"], j["J7"]

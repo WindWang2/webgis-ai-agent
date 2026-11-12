@@ -1,7 +1,10 @@
 # Pi 上游兼容矩阵（PI_UPSTREAM_COMPAT_MATRIX）
 
-> G01-PI-NATIVE-RUNTIME / PI-10；G12 更新（ADR-0288）。当前 pin：**v1.5.1**
-> （gitlink `dd30101c`，上游 `earendil-works/pi`，原 `badlogic/pi-mono`）。
+> G01-PI-NATIVE-RUNTIME / PI-10；G12 更新（ADR-0288）；G22 升级 v1.5.2。
+> 当前 pin：**v1.5.2**（gitlink `b4afdddf`，上游 `earendil-works/pi`，原
+> `badlogic/pi-mono`）。协议 floor 仍 **v1.5.1**（`PI_MIN_VENDOR_TAG`——floor
+> 是「已消费协议的最低下限」声明，v1.5.2 未引入任何新消费协议，故不跟
+> pin 联动）。
 > 纪律：**不擅自升级**——升级需先更新本矩阵 + contract tests，走 feature-gated
 > adapter（ADR-0282 语义）。
 
@@ -64,12 +67,31 @@
   RPC/扩展/发现/嵌套/停机面与 v1.5.1 **零 diff**（仅 anthropic 版本串、
   missing-cwd fork UX、失败导入清理、docs/lockfile）。无本任务所需能力且无
   浸泡 → 不升；后续升 v1.5.2 = pin-only 变更（重新跑本节清单即可）。
+- **v1.5.2 正式裁决（G22，2026-11-11 升级）**：按 §3 清单全量实跑后升级。
+  四栏：
+  - 已消费协议（C1–C16）：**零漂移**——`rpc-commands.md`/`json.md`/
+    `rpc-extension-ui.md` 与 v1.5.1 逐字节一致（本机 diff 核实）；变更
+    全部落在 interactive-mode（missing-cwd 的 Continue/Fork/Cancel）、
+    `/import` 失败副本清理（`agent-session-runtime.ts`）、Anthropic OAuth
+    版本串、docs/examples/lockfile。`--mode rpc` 消费面（含 missing-cwd
+    非 interactive 分支）行为原样。
+  - 新增可用能力：无本仓消费（fork-into-cwd 是 interactive UX）。
+  - 破坏性变化：无触及本仓消费面。
+  - 项目采纳：**升级 pin v1.5.1 → v1.5.2**（tag `b4afdddf`），pin-only
+    变更。证据：pi_doctor 六域 PASS（428 tools/native 7/7/事件词表全量）、
+    `test_pi_vendor_contract.py` + `test_pi_schema_coercion_golden.py`
+    13 passed、`PI_JOURNEY_E2E=1` 旅程（见 TEST_EVIDENCE.md）；构建产物
+    经 `build-vendor-pi.sh --reinstall`（root lockfile `npm ci`）来自目标
+    SHA（doctor vendor 域 pin 核验）。
 - **回退**：gitlink 回 v1.5.0 + 重跑 build-vendor（幂等）**并**回退
   `pi_compat.PI_MIN_VENDOR_TAG` 至 v1.5.0（floor 是协议下限声明，回退 pin 不
   回退 floor 会让 v1.5.0 被 doctor 判 FAIL）；G12 新行为用 env kill-switch
   关闭（`PI_NATIVE_DISCOVERY=0`、`PI_SURFACE_SCOPE_ENFORCE=0`、
   `PI_GRACEFUL_STOP_TIMEOUT_S` 按需），即可恢复 v1.5.0 行为。config 代际换代
   无独立开关（fail-open 无锚不触发），rebuild 域无 mapspec 即 skip。
+  v1.5.2 → v1.5.1 回退 = gitlink 回 `dd30101c` + `build-vendor-pi.sh
+  --reinstall` + doctor/契约复跑（floor 不动，v1.5.1 仍满足下限；G22-P7
+  已演练，见 TEST_EVIDENCE.md）。
 
 ## 5. 版本历史
 
@@ -77,4 +99,5 @@
 |---|---|---|
 | v0.81.1+1 | PR #1973 前 | 旧基线 |
 | v1.5.0 | PR #1973（ADR-0282） | 两段加载/prompt disposition/pi-schema 校验等契约面以此为准 |
-| **v1.5.1**（当前） | G12（ADR-0288） | 原生工具发现/嵌套调用/有序停机契约面（C11–C16）以此为准 |
+| v1.5.1 | G12（ADR-0288） | 原生工具发现/嵌套调用/有序停机契约面（C11–C16）以此为准；floor 下限 |
+| **v1.5.2**（当前） | G22（2026-11-11） | pin-only 升级；消费面零漂移（§4 正式裁决）；interactive missing-cwd UX/导入清理不触及 rpc 面 |

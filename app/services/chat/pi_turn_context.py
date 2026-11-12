@@ -496,12 +496,43 @@ def _qualification_drop_disclosure(disclosure: dict) -> str:
 
 
 class PiTurnRegistry:
-    """Encapsulated coordinator for active Pi turn registration (local + Redis)."""
+    """Encapsulated coordinator for active Pi turn registration (local + Redis).
+
+    G22-P3：Redis 值携带实例前缀 ``<instance_id>:<turn_id>``（旧格式裸
+    ``turn_id`` 兼容读取）—— 崩溃/重启后遗留的陈旧 key 由 ``sweep_own_keys``
+    在启动时按**本实例前缀**清扫（多 pod 不误杀他实例的 live key；他实例
+    值仍按 turn 段参与跨 pod ``is_active`` 判定）。
+    """
 
     def __init__(self) -> None:
         self._local_context: Optional[dict[str, str]] = {}
         self._client = None
         self._last_check_s = 0.0
+        self._swept = False
+
+    @staticmethod
+    def _instance_id() -> str:
+        """本进程实例标识（host 维度；WEBGIS_INSTANCE_ID 显式覆盖）。
+
+        review 修复轮 P3：① ":" 一律替换为 "_"（值格式 ``instance:turn`` 以
+        首个冒号分段，实例段不得自带冒号）；② 默认 hostname 前缀假设
+        **单进程每主机**（bridge pool 为进程内并发）——同宿主多进程部署
+        （uvicorn --workers、dev+test 并跑）**必须**为每个进程显式设置
+        互不相同的 WEBGIS_INSTANCE_ID，否则后启进程的启动清扫会误删同宿主
+        其他进程的 live key（多 pod 安全 ≠ 同宿主多进程安全）。
+        """
+        import os
+        import socket
+
+        raw = os.getenv("WEBGIS_INSTANCE_ID") or socket.gethostname()
+        return raw.replace(":", "_")
+
+    @staticmethod
+    def _parse_stored_turn(value: str) -> str:
+        """Redis 值 → turn_id（``instance:turn`` 新格式 / 裸 turn 旧格式）。"""
+        if ":" in value:
+            return value.split(":", 1)[1]
+        return value
 
     def _get_redis_client(self):
         import os
@@ -527,6 +558,37 @@ class PiTurnRegistry:
             self._client = None
         return self._client
 
+    async def sweep_own_keys(self, *, force: bool = False) -> int:
+        """启动对账：删除 Redis 中**本实例前缀**的 active_turn key（每进程
+        一次；TTL 15min 只是有界兜底，清扫把「新实例误信死者 key」窗口从
+        ≤15min 压到启动即清）。绝不动他实例前缀/旧格式 key。返回删除数。
+        """
+        if self._swept and not force:
+            return 0
+        self._swept = True
+        client = self._get_redis_client()
+        if client is None:
+            return 0
+        prefix = f"{self._instance_id()}:"
+        pattern = "webgis:pi:active_turn:*"
+        deleted = 0
+        try:
+            async for key in client.scan_iter(match=pattern, count=100):
+                val = await client.get(key)
+                if val is None:
+                    continue
+                stored = val.decode("utf-8") if isinstance(val, bytes) else str(val)
+                if stored.startswith(prefix):
+                    await client.delete(key)
+                    deleted += 1
+                if deleted >= 1000:  # 有界：清扫不得无限制占用启动路径
+                    break
+        except Exception as e:
+            logger.warning("PiTurnRegistry: sweep_own_keys failed: %s", e)
+        if deleted:
+            logger.info("PiTurnRegistry: swept %d stale own active_turn keys", deleted)
+        return deleted
+
     async def register_turn(self, session_id: str, turn_id: str) -> None:
         if not isinstance(self._local_context, dict):
             self._local_context = {}
@@ -536,7 +598,7 @@ class PiTurnRegistry:
             try:
                 await client.set(
                     f"webgis:pi:active_turn:{session_id}",
-                    turn_id,
+                    f"{self._instance_id()}:{turn_id}",
                     ex=TURN_CONTEXT_MAX_AGE_SECONDS,
                 )
             except Exception as e:
@@ -552,11 +614,18 @@ class PiTurnRegistry:
         client = self._get_redis_client()
         if client is not None:
             try:
+                # 兼容双格式：值等于新格式（instance:turn）或旧格式（裸 turn）
+                # 才删除 —— owner-checked，不误删他 turn 的登记。
                 script = (
-                    b"if redis.call('get', KEYS[1]) == ARGV[1] then "
+                    b"local v = redis.call('get', KEYS[1]) "
+                    b"if v == ARGV[1] or v == ARGV[2] then "
                     b"return redis.call('del', KEYS[1]) else return 0 end"
                 )
-                await client.eval(script, 1, f"webgis:pi:active_turn:{session_id}", turn_id)
+                await client.eval(
+                    script, 1,
+                    f"webgis:pi:active_turn:{session_id}",
+                    f"{self._instance_id()}:{turn_id}", turn_id,
+                )
             except Exception as e:
                 logger.warning("PiTurnRegistry: Redis unregister failed for %s: %s", session_id, e)
                 return False
@@ -575,7 +644,7 @@ class PiTurnRegistry:
                 val = await client.get(f"webgis:pi:active_turn:{session_id}")
                 if val is not None:
                     stored = val.decode("utf-8") if isinstance(val, bytes) else str(val)
-                    return stored == turn_id
+                    return self._parse_stored_turn(stored) == turn_id
             except Exception as e:
                 logger.warning("PiTurnRegistry: Redis check failed for %s: %s", session_id, e)
         return False
