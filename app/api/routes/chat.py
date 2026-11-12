@@ -954,6 +954,22 @@ async def chat_completions(
     # V5-B: mint affinity session ID before availability check so non-streaming
     # turns without session_id distribute evenly across workers in the pool.
     _affinity_sid = req.session_id or str(uuid.uuid4())
+    # G30（R2 nit-1）：非流式 turn 与流式同款 skill_name 语义 —— 解析为显式
+    # 选择或按 turn 清除（否则流式设置的选择会跨非流式 turn 粘滞）。
+    try:
+        from app.services.gis_harness.hotpath_convergence.session_ctx import (
+            set_explicit_skill,
+        )
+        if req.skill_name:
+            from app.services.gis_harness.skill_jobs.selection import (
+                resolve_user_skill_selection,
+            )
+            set_explicit_skill(_affinity_sid,
+                               resolve_user_skill_selection(req.skill_name))
+        else:
+            set_explicit_skill(_affinity_sid, {})
+    except Exception:  # noqa: BLE001 — 选择面绝不阻断对话
+        logger.debug("[chat-completions] skill selection ctx failed", exc_info=True)
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id or _affinity_sid, project_id=req.project_id):
         if await _ensure_pi_bridge_available(_affinity_sid):
             turn_bridge = _pi_turn_bridge(_affinity_sid)

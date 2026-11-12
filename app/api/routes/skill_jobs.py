@@ -396,7 +396,8 @@ async def preset_prepare_ep(
     if preset_raw is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     preset = get_preset(preset_id, org_id=_org_of(user))
-    assert preset is not None  # raw 命中则视图必在
+    if preset is None:  # raw 与视图两次读之间被并发删除（R2 nit-2）
+        raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     params = dict(preset_raw.get("params") or {})
     params.update(req.params_override)
     # 参数来源标注：预设继承的参数 = preset；覆盖值 = user

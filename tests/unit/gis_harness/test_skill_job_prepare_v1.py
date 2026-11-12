@@ -240,6 +240,17 @@ async def test_prepare_typed_rejections(registry):
     await expect("PAYLOAD_TOO_LARGE",
                  session_id="t4", skill_id="validate_spatial_data",
                  params={}, bindings=[{"role": "subject", "inline": huge}])
+    # R2 nit-3：要素数超限同样诚实 PAYLOAD_TOO_LARGE（非形状错误）
+    from unittest.mock import patch as _patch
+    from app.services.gis_harness.skill_jobs import prepare as _prep_mod
+    many = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": {"type": "Point",
+                                         "coordinates": [104.0, 30.6]},
+         "properties": {}} for _ in range(3)]}
+    with _patch.object(_prep_mod, "_MAX_BINDING_FEATURES", 2):
+        await expect("PAYLOAD_TOO_LARGE",
+                     session_id="t4", skill_id="validate_spatial_data",
+                     params={}, bindings=[{"role": "subject", "inline": many}])
     # 绑定角色越权（契约外角色）
     await expect("BINDING_UNKNOWN_ROLE",
                  session_id="t4", skill_id="validate_spatial_data",

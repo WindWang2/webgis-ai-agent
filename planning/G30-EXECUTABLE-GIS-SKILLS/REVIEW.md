@@ -15,5 +15,11 @@
 
 ## Round 2（修复后复审）
 
-- 复审对象：commit `fecd2b7a9`
-- 状态：已提交复审（重点：P1-2 路由逻辑、P1-3 YAML 语义）；结论以复审回执为准，定稿时回填。
+- 复审对象：commit `fecd2b7a9`（reviewer 对 P1-1/P1-4/pop 语义另做了**直接服务调用级功能复验**，非仅测试）
+- 结论：**APPROVE**（"All five P1s are genuinely fixed with regression coverage… no new defects were introduced"）
+- 残余 nits（非阻塞，披露）：
+  1. `/chat/completions` 非流式 skill_name 静默忽略（选择粘滞）→ **已修**（nit 清偿 commit：非流式 turn 同款解析/清除）
+  2. `assert preset is not None` 在 -O 下剥离 → **已修**（显式 404 分支）
+  3. >200k 要素溢出无测试 → **已补**（patch 上限的 PAYLOAD_TOO_LARGE 测试）
+  4. 文案/前端配色化妆品项 → **已修**（ref 溢出文案一致化；repeated 中性色）；PREPARED_SESSION_MISMATCH 词表保留披露（调用方有意折叠为不泄露归属的 410）
+  5. 巨型 JSON body 的解析期内存是平台面现状（全仓无 body-size 中间件）——披露不扩大范围

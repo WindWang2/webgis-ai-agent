@@ -326,7 +326,12 @@ async def prepare_skill_job(
                     detail={"role": role, "ref": ref})
             facts, err = extract_binding_facts(data)
             if err:
-                raise SkillJobErrorCode(err, f"角色 {role} 绑定数据不是可用的 FeatureCollection")
+                _msg = ("角色 {r} 绑定数据超资源预算（要素数 {n} > {m}）——请分片或用更小的数据"
+                        .format(r=role, n=len(data.get("features") or []),
+                                m=_MAX_BINDING_FEATURES)
+                        if err == "PAYLOAD_TOO_LARGE"
+                        else f"角色 {role} 绑定数据不是可用的 FeatureCollection")
+                raise SkillJobErrorCode(err, _msg)
             resolved_bindings.append(PreparedBinding(
                 role=role, ref=resolved, inline=False, facts=facts))
         else:

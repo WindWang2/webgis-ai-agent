@@ -646,8 +646,11 @@ export function SkillWorkbench() {
                           <span className="rounded bg-muted px-1">{String(st.tool)}</span>{' '}
                           <span
                             className={
-                              st.status === 'ok' ? 'text-emerald-500' : 'text-red-400'
-                            }
+                              st.status === 'failed'
+                                ? 'text-red-400'
+                                : st.status === 'ok'
+                                  ? 'text-emerald-500'
+                                  : 'text-blue-400' /* repeated=幂等复用等中间语义 */}
                           >
                             {String(st.status)}
                           </span>

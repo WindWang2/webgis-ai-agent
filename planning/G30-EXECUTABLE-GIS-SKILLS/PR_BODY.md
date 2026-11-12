@@ -24,7 +24,7 @@
 
 ## 独立评审（review → fix → rereview）
 
-独立 reviewer（未参与实现）R1：**APPROVE-WITH-FIXES**——5×P1（跨 org 预设更新 IDOR、运行单读 IDOR、choropleth rate 语义谎言、预设重用截断、内联 DoS）+7×P2，全部修复于 `fecd2b7a9` 并附回归测试；R2 复审结论见 `planning/G30-EXECUTABLE-GIS-SKILLS/REVIEW.md`。
+独立 reviewer（未参与实现）R1：**APPROVE-WITH-FIXES**——5×P1（跨 org 预设更新 IDOR、运行单读 IDOR、choropleth rate 语义谎言、预设重用截断、内联 DoS）+7×P2，全部修复于 `fecd2b7a9` 并附回归测试；R2 复审：**APPROVE**（关键修复另经服务调用级功能复验，非仅测试；残余 nits 已清偿/披露，详见 `planning/G30-EXECUTABLE-GIS-SKILLS/REVIEW.md`）。
 
 ## 实际验证
 
