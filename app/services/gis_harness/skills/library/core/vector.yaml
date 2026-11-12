@@ -8,7 +8,7 @@ skills:
     description: 主体点要素的空间分布表达与概览：检视数据、判读分布尺度、按目标与资格选择点图/密度/聚合表达，产出主图与统计图表。
     domain: vector_analysis
     pack: core
-    version: 1.0.0
+    version: 1.1.0
     intent_patterns: [分布, 分布情况, 哪里多, 哪里少, 在哪儿, 点位, 散点, distribution, where are, spread]
     ontology_tasks: [distribution.point_distribution]
     task_types: [distribution_overview, simple_view, concentration_analysis]
@@ -21,6 +21,10 @@ skills:
     optional_situation:
       requires_boundary: true
     capability_requirements:
+      - capability_id: dataset_profiling_quality
+        purpose: 点数据质检（inspect_points 步骤：重复/空几何/CRS 检查）
+        criticality: required
+        hard_gate: true
       - capability_id: poi_query
         purpose: 主体点数据获取（本地 POI/要素查询）
         criticality: optional
@@ -207,6 +211,47 @@ skills:
         notes: 点分布主图 + 分区上下文；不预设热力图。
     guidance: 表达形态由数据资格决定：点图/密度/聚合都是候选，禁止「任何分布都上热力图」。
     source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+    # ── G30 可执行薄配置（schema v2）────────────────────────────────
+    # 执行面固定走「用户显式绑定的点集合」：poi_query 可选能力不进入执行映射
+    # —— 不重复抓取无关 POI；表达形态由用户参数显式选择（默认 point_map，
+    # 决策点 choose_view 的缺省分支；改密度/聚合表达=换参数重新准备）。
+    parameters:
+      - name: layer_title
+        label: 图层标题
+        type: string
+        required: true
+        max_length: 80
+        description: 主图图层标题（图例/来源披露用）。
+      - name: expression
+        label: 表达形态
+        type: enum
+        required: false
+        default: point_map
+        enum_values: [point_map]
+        description: 执行面当前支持点位表达（point_map）；密度/聚合表达按 when_to_use 走规划路径。
+    role_bindings:
+      - role: subject
+        required: true
+        geometry_kinds: [point]
+        min_features: 8
+    execution:
+      result_kind: map
+      steps:
+        - step_id: inspect_points
+          tool: audit_spatial_quality
+          argument_map:
+            geojson: "role:subject"
+          produces_evidence: [point_qc_report]
+        - step_id: express_points
+          tool: webgis_layer_upsert
+          argument_map:
+            source_data: "role:subject"
+            layer:
+              id: skill-point-distribution-analysis
+              source: skill-point-distribution-analysis-src
+              type: circle
+              label: "param:layer_title"
+          produces_evidence: [map_expression, product_completeness]
 
   - id: administrative_aggregation
     name: 行政区聚合统计

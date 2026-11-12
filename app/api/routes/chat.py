@@ -1399,21 +1399,40 @@ async def chat_stream(
                         })
                         buffer.record(session_event)
                         yield session_event
-                    # audit #818: say so explicitly instead of silently dropping
-                    # the field. Pi 兼容审查修正：project_id 实际经
-                    # _build_cartography_turn_context 注入 [CARTOGRAPHY_MEMORY]
-                    # 生效 —— 通知只对真正被忽略的 skill_name 披露。
+                    # G30（audit #818 后续）：skill_name 现在真实生效 —— 解析
+                    # 为唯一技能/歧义/未命中三分支，显式选择进 session ctx
+                    # （计划缝尊重选择；eligibility 仍由 policy 裁决），执行经
+                    # gis_skill_job_* 工具。project_id 仍经
+                    # _build_cartography_turn_context 注入（不变）。
                     if req.skill_name:
-                        notice = sse_event("content", {
-                            "content": (
-                                f"（提示：当前 Pi 引擎通道暂不支持技能上下文字段，"
-                                f"本次请求将忽略 skill_name={req.skill_name}；"
-                                "技能工具仍可经 webgis_execute 调用。）"
-                            ),
-                            "session_id": pi_session_id,
-                        })
-                        buffer.record(notice)
-                        yield notice
+                        from app.services.gis_harness.skill_jobs.selection import (
+                            resolve_user_skill_selection,
+                            selection_notice_text,
+                        )
+                        try:
+                            _sel = resolve_user_skill_selection(req.skill_name)
+                        except Exception:  # noqa: BLE001 — 解析失败不阻断 turn
+                            logger.warning(
+                                "[pi-chat] skill_name resolve failed: %s",
+                                req.skill_name, exc_info=True)
+                            _sel = {"status": "not_found",
+                                    "requested_name": req.skill_name}
+                        try:
+                            from app.services.gis_harness.hotpath_convergence.session_ctx import (
+                                set_explicit_skill,
+                            )
+                            set_explicit_skill(pi_session_id, _sel)
+                        except Exception:  # noqa: BLE001 — ctx 写失败不阻断
+                            logger.debug("[pi-chat] explicit skill ctx set failed",
+                                         exc_info=True)
+                        _notice_text = selection_notice_text(_sel)
+                        if _notice_text:
+                            notice = sse_event("content", {
+                                "content": _notice_text,
+                                "session_id": pi_session_id,
+                            })
+                            buffer.record(notice)
+                            yield notice
                     # #398: record OUTSIDE the route batcher so the buffer
                     # holds the COALESCED chunks (up to 32 token events each)
                     # instead of every single token event — a token-heavy turn

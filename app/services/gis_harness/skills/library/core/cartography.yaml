@@ -125,7 +125,7 @@ skills:
     description: 分区填色图设计：面状地理 + 数值变量的资格前提、分级与归一化义务、图例完整性。
     domain: cartography
     pack: core
-    version: 1.0.0
+    version: 1.1.0
     intent_patterns: [分级统计图, 填色图, choropleth, shaded map]
     ontology_tasks: [distribution.regional_aggregation, cartographic.statistical_map]
     task_types: [administrative_statistic]
@@ -233,6 +233,66 @@ skills:
         notes: 率语义 + 分母在场。
     guidance: choropleth 的第一问题是「上色的是什么量」。
     source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+    # ── G30 可执行薄配置（schema v2）────────────────────────────────
+    # measure 角色承载「上色的量」：count/rate 语义必须由用户显式声明
+    # （measure_semantics 参数），分母缺失的 rate 在 prepare 期 typed 拒绝
+    # —— 禁止把总量悄悄改名成率。
+    parameters:
+      - name: field
+        label: 上色字段
+        type: field_ref
+        required: true
+        role: subject
+        expects: numeric
+        description: 区域面数据上参与分级的数值字段（真实字段身份，非显示名）。
+      - name: measure_semantics
+        label: 度量语义
+        type: enum
+        required: true
+        enum_values: [count, rate, density, percentage]
+        description: 上色量的统计语义；rate/density 需要分母在场（denominator_field）。
+      - name: denominator_field
+        label: 分母字段
+        type: field_ref
+        required: false
+        role: subject
+        expects: numeric
+        required_if_param: measure_semantics
+        required_if_in: [rate, density]
+        description: measure_semantics=rate/density 时的分母字段；缺失即 prepare 拒绝（无分母不得成率）。
+      - name: method
+        label: 分级方法
+        type: string
+        required: false
+        max_length: 32
+        description: 显式分级方法（如 quantile/natural_breaks）；缺省由 symbology 裁决。
+      - name: unit
+        label: 图例单位
+        type: string
+        required: false
+        max_length: 24
+        description: 图例单位标注；缺省按字段语义派生。
+    role_bindings:
+      - role: subject
+        required: true
+        geometry_kinds: [polygon]
+      - role: boundary
+        required: false
+        geometry_kinds: [polygon]
+      - role: measure
+        required: false
+        description: 度量数据角色可缺席（字段已在 subject 属性中时）。
+    execution:
+      result_kind: map
+      steps:
+        - step_id: classify_and_symbolize
+          tool: create_thematic_map
+          argument_map:
+            geojson: "role:subject"
+            field: "param:field"
+            method: "param:method"
+            unit: "param:unit"
+          produces_evidence: [choropleth_eligibility, classification_record, product_completeness]
 
   - id: density_map_design
     name: 密度图设计
