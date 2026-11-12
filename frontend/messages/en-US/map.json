@@ -129,7 +129,9 @@
     "noFeatures": "No selectable features in the brushed area",
     "matchedNoStableId": "Brushed {count} features (no stable id field on this layer — cross-view linking unavailable)",
     "matchedTruncated": "Brushed {count} features (highlighting first {limit})",
-    "matched": "Brushed {count} features"
+    "matched": "Brushed {count} features",
+    "matchedAuthoritative": "Server verified: {count} features selected (full set viewable/exportable)",
+    "authoritativeFailed": "Server verification unavailable (brushed range kept; retry later)"
   },
   "legends": {
     "sizeAria": "Size legend",

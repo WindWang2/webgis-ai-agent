@@ -423,16 +423,24 @@ def _extract_fc(data) -> Optional[dict]:
 
 
 def _find_feature_by_id(fc: dict, feature_id: str) -> Optional[dict]:
-    """Lookup one feature by id property; checks feature.id and common properties keys."""
+    """Lookup one feature by id property; checks feature.id and common properties keys.
+
+    G24/P0：``properties._wfid`` 先于顶层 id（与 _chain_stable_id /
+    前端 featureIdFromProperties 同序 —— G14 物化后 WFID 是权威寻址键）。
+    """
     fid_str = str(feature_id)
     for feature in fc.get("features", []):
         if not isinstance(feature, dict):
             continue
+        props = feature.get("properties") or {}
+        if isinstance(props, dict):
+            wfid = props.get("_wfid")
+            if wfid is not None and str(wfid) == fid_str:
+                return feature
         # direct feature.id
         fid = feature.get("id")
         if fid is not None and str(fid) == fid_str:
             return feature
-        props = feature.get("properties") or {}
         if isinstance(props, dict):
             for key in ("id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id"):
                 if key in props and props[key] is not None and str(props[key]) == fid_str:

@@ -111,13 +111,38 @@ def _unmark_active(key: str) -> None:
 
 
 def request_cancel(session_id: str, plan_id: str) -> bool:
-    """登记协作取消请求；仅对**正在执行**的计划生效（返回 False 表示无活跃执行）。"""
+    """登记协作取消请求；仅对**正在执行**的计划生效（返回 False 表示无活跃执行）。
+
+    G23：本进程无活跃执行时，桥接到该计划的活跃 durable job（若有）——
+    任意 API 副本发出的取消都能到达执行进程（DB 持久事实 + 看门狗轮询
+    点燃执行进程的 token）。本进程有活跃执行时两者都做（进程内即时 +
+    job 行如实反映 cancelling）。
+    """
     key = _cancel_key(session_id, plan_id)
     _prune_cancel_requests()
-    if _ACTIVE_EXEC.get(key, 0) <= 0:
-        return False
-    _CANCEL_REQUESTS[key] = time.monotonic()
-    return True
+    local_active = _ACTIVE_EXEC.get(key, 0) > 0
+    if local_active:
+        _CANCEL_REQUESTS[key] = time.monotonic()
+    durable_cancelled = False
+    try:
+        from app.services.data_operations.compute_jobs import find_active_compute_job
+        from app.services.jobs.store import DurableJobStore
+        from app.services.data_operations.runner import _sync_session
+
+        active = find_active_compute_job(session_id, plan_id)
+        if active is not None:
+            with _sync_session() as db:
+                changed, _current = DurableJobStore.request_cancel_sync(
+                    db, active["job_id"]
+                )
+                db.commit()
+            durable_cancelled = changed
+    except Exception:  # noqa: BLE001 — durable 桥失败不吞掉本地取消
+        logger.warning(
+            "[field_compute] durable cancel bridge failed plan=%s",
+            plan_id, exc_info=True,
+        )
+    return local_active or durable_cancelled
 
 
 def _check_cancel(key: str = "") -> None:
@@ -414,12 +439,19 @@ async def preview(plan_id: str, session_id: str, *, generation: int = 0
 
 
 async def execute(plan_id: str, session_id: str, *, project_id: str = "",
-                  owner: str = "", expected_fingerprint: str = ""
+                  owner: str = "", expected_fingerprint: str = "",
+                  actor: Optional[Dict[str, Any]] = None
                   ) -> ComputeReceipt:
     """有界批执行 → 原子派生登记（取消/失败不发布半成品）。
 
     ``owner`` 是**提示性元数据**：数据隔离由 session 归属与 ref 命名空间保证，
     不把它当权限门禁（跨 UI / Pi 入口复用同一 plan 不得被误拒）。
+
+    G23：执行活性/取消/进度接入 durable job（analysis_tasks）。收据短路
+    （同指纹+同内容已有 completed 收据）不建 job 行、行为与 BASE 一致；
+    真正执行时以 (session, plan, fingerprint) 幂等键建 job —— 同键活跃
+    job（另一副本在执行）等待收敛后取收据，等价于 BASE 的进程内
+    fingerprint 锁，但跨副本成立。
     """
     plan = await store.get_plan(session_id, plan_id)
     if plan is None:
@@ -436,14 +468,105 @@ async def execute(plan_id: str, session_id: str, *, project_id: str = "",
     # 调用不会摘掉仍在排队/执行的登记，执行全部结束后才摘除并清理取消键。
     _mark_active(cancel_key)
     try:
-        async with _exec_lock(session_id, plan.compute_fingerprint):
-            return await _execute_locked(plan, session_id,
-                                         project_id=project_id,
-                                         cancel_key=cancel_key)
+        from app.services.data_operations import compute_jobs as durable_compute
+
+        dj_actor = durable_compute.ComputeJobActor(
+            user_id=(actor or {}).get("user_id"),
+            owner_token=(actor or {}).get("owner_token"),
+            org_id=(actor or {}).get("org_id"),
+        )
+        result = await durable_compute.submit_compute_job(
+            plan=plan, session_id=session_id, project_id=project_id,
+            owner=owner, actor=dj_actor, background=False,
+            execute_locked=_execute_durable_entry,
+            payload_loader=_payload,
+            receipt_finder=store.find_receipt,
+        )
+        receipt = result.get("receipt")
+        if receipt is not None:
+            if result.get("idempotent_reuse"):
+                # 取消意图优先于幂等短路（BASE 语义保持）：排队/等待期间
+                # 用户已取消时，不因「成果已存在」判成功。
+                try:
+                    _check_cancel(cancel_key)
+                except OperationCancelled as exc:
+                    plan.state = "cancelled"
+                    await store.save_plan(plan)
+                    raise ExecError("CANCELLED", str(exc)[:200]) from exc
+                return await _maybe_upgrade_project(
+                    receipt, session_id, project_id, plan)
+            return receipt
+        # 内联路径未成功：按 job 终态转译 typed 错误（BASE 对取消/失败本来
+        # 就以 ExecError 上抛；job 行是同一事实的 durable 视图）
+        status = str(result.get("status") or "")
+        if status == "cancelled":
+            raise ExecError("CANCELLED", "执行已被取消（收据未发布）")
+        if status in ("running", "pending", "queued"):
+            raise ExecError(
+                "JOB_INCOMPLETE",
+                f"执行仍在进行（job {result.get('job_id')} 由另一提交/副本认领）；"
+                "请稍后重提或查询任务中心，同键会收敛到既有结果",
+            )
+        raise ExecError(
+            "JOB_INCOMPLETE",
+            f"执行未成功（job {result.get('job_id')} 终态 {status}）；"
+            "计划保持可重提",
+        )
     finally:
         _unmark_active(cancel_key)
         if not is_executing(session_id, plan.plan_id):
             _CANCEL_REQUESTS.pop(cancel_key, None)
+
+
+async def execute_background(plan_id: str, session_id: str, *, project_id: str = "",
+                             owner: str = "", expected_fingerprint: str = "",
+                             actor: Optional[Dict[str, Any]] = None
+                             ) -> Dict[str, Any]:
+    """后台执行：返回 durable job 句柄（不阻塞调用方等待结果）。
+
+    供 Pi 工具等不能长时间占用调用的入口使用；状态/收据经任务中心
+    ``/api/v1/tasks/jobs/{id}`` 与 ``field_compute_result`` 查询。
+    校验与 execute() 完全一致；重复提交同键幂等复用。
+    """
+    plan = await store.get_plan(session_id, plan_id)
+    if plan is None:
+        raise ExecError("PLAN_NOT_FOUND", plan_id)
+    if plan.state == "rejected":
+        raise ExecError("PLAN_REJECTED", f"计划状态 {plan.state}")
+    if expected_fingerprint and expected_fingerprint != plan.compute_fingerprint:
+        raise ExecError("STALE_PLAN", "确认参数与已预览参数不一致（generation 失效）")
+
+    from app.services.data_operations import compute_jobs as durable_compute
+
+    dj_actor = durable_compute.ComputeJobActor(
+        user_id=(actor or {}).get("user_id"),
+        owner_token=(actor or {}).get("owner_token"),
+        org_id=(actor or {}).get("org_id"),
+    )
+    return await durable_compute.submit_compute_job(
+        plan=plan, session_id=session_id, project_id=project_id,
+        owner=owner, actor=dj_actor, background=True,
+        execute_locked=_execute_durable_entry,
+        payload_loader=_payload,
+        receipt_finder=store.find_receipt,
+    )
+
+
+async def _execute_durable_entry(plan: ComputePlan, session_id: str, *,
+                                 project_id: str = "", owner: str = "",
+                                 progress=None) -> ComputeReceipt:
+    """durable runner 的执行入口：fingerprint 锁内跑 _execute_locked。
+
+    同 fingerprint 并发执行（不同 plan_id、同参数）仍串行 —— 与 BASE 的
+    进程内锁语义一致；跨副本互斥由 durable job 认领保证。
+    """
+    async with _exec_lock(session_id, plan.compute_fingerprint):
+        return await _execute_locked(
+            plan, session_id,
+            project_id=project_id,
+            cancel_key=_cancel_key(session_id, plan.plan_id),
+            progress=progress,
+        )
 
 
 async def _maybe_upgrade_project(existing: ComputeReceipt, session_id: str,
@@ -475,7 +598,8 @@ async def _maybe_upgrade_project(existing: ComputeReceipt, session_id: str,
 
 
 async def _execute_locked(plan: ComputePlan, session_id: str,
-                          *, project_id: str, cancel_key: str = ""
+                          *, project_id: str, cancel_key: str = "",
+                          progress=None
                           ) -> ComputeReceipt:
     cancel_key = cancel_key or _cancel_key(session_id, plan.plan_id)
     try:
@@ -524,6 +648,12 @@ async def _execute_locked(plan: ComputePlan, session_id: str,
                     acc.samples.extend(st.samples)
                 precision = precision or batch.precision_policy
                 geometry_evidence = batch.geometry_evidence
+                # G23：批级进度（已计算行 / 总行；总量已知才报总数）
+                if progress is not None:
+                    try:
+                        progress(computed_rows, len(rows_wg))
+                    except Exception:  # noqa: BLE001 — 进度绝不阻断计算
+                        progress = None
         except OperationCancelled as exc:
             plan.state = "cancelled"
             await store.save_plan(plan)

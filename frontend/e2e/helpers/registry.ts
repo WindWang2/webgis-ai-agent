@@ -155,6 +155,14 @@ export const JOURNEYS: JourneyEntry[] = [
     owner: 'g15-multiframe-cartography',
   },
   {
+    id: 'j17',
+    file: 'journeys/j17-goal-satisfaction.journey.ts',
+    title: '任务完成语义卡：task_complete.goal_satisfaction 逐需求渲染',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'g28-evidence-task-acceptance',
+  },
+  {
     id: 'j18',
     file: 'journeys/j18-frame-interactive.journey.ts',
     title: '多画幅交互运行时：真实地图网格→激活CAS→键盘→预算→刷新恢复',

@@ -111,6 +111,10 @@ class CommitAcceptedResponse(BaseModel):
     status: str = "committing"
     members: List[str] = Field(default_factory=list)
     poll: str = ""
+    # G23：durable job 关联（任务中心查询/取消入口；None = 幂等短路无新 job）
+    job_id: Optional[str] = None
+    idempotent_reuse: bool = False
+    message: str = ""
 
 
 class ReceiptsResponse(BaseModel):
@@ -147,6 +151,10 @@ class BatchDetailResponse(BaseModel):
 class CancelResponse(BaseModel):
     batch_id: str
     status: str = "cancelled"
+    # G23：durable job 取消关联与完成后取消语义披露
+    job_id: Optional[str] = None
+    cancel_requested: Optional[bool] = None
+    message: str = ""
 
 
 class DeleteResponse(BaseModel):

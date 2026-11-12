@@ -1776,6 +1776,33 @@
       "title": "Batch Id",
       "type": "string"
      },
+     "cancel_requested": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cancel Requested"
+     },
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Job Id"
+     },
+     "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+     },
      "status": {
       "default": "cancelled",
       "title": "Status",
@@ -3195,12 +3222,33 @@
       "title": "Batch Id",
       "type": "string"
      },
+     "idempotent_reuse": {
+      "default": false,
+      "title": "Idempotent Reuse",
+      "type": "boolean"
+     },
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Job Id"
+     },
      "members": {
       "items": {
        "type": "string"
       },
       "title": "Members",
       "type": "array"
+     },
+     "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
      },
      "poll": {
       "default": "",
@@ -6582,6 +6630,11 @@
    },
    "FieldComputeExecuteRequest": {
     "properties": {
+     "background": {
+      "default": false,
+      "title": "Background",
+      "type": "boolean"
+     },
      "expected_fingerprint": {
       "default": "",
       "description": "已看到预览的 confirmation.params_fingerprint",
@@ -8272,6 +8325,21 @@
       "description": "agent | analysis | workflow | explorer",
       "title": "Kind",
       "type": "string"
+     },
+     "member_status": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Member Status"
      },
      "message": {
       "anyOf": [
@@ -40287,6 +40355,501 @@
     "summary": "Get Raster Tile",
     "tags": [
      "图层管理",
+     "图层数据"
+    ]
+   }
+  },
+  "/api/v1/layers/data/{ref_id}/selection": {
+   "post": {
+    "description": "创建服务端选择集句柄：scope（bbox|where|ids）+ revision 快照 → 不透明 handle。\n\n返回 count/count_exact（诚实：超精确计数上限时 count=None, count_exact=False）。",
+    "operationId": "create_selection_handle_api_v1_layers_data__ref_id__selection_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "revision guard（客户端持有的 content_revision）",
+      "in": "query",
+      "name": "v",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "revision guard（客户端持有的 content_revision）",
+       "title": "V"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": true,
+        "title": "Scope",
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Selection Handle",
+    "tags": [
+     "图层数据",
+     "图层数据"
+    ]
+   }
+  },
+  "/api/v1/layers/data/{ref_id}/selection/{handle}": {
+   "delete": {
+    "description": "显式释放（幂等；不存在的 handle 也 200 —— 释放不是读）。",
+    "operationId": "release_selection_handle_api_v1_layers_data__ref_id__selection__handle__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "handle",
+      "required": true,
+      "schema": {
+       "title": "Handle",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Release Selection Handle",
+    "tags": [
+     "图层数据",
+     "图层数据"
+    ]
+   },
+   "get": {
+    "description": "handle 元数据：count/completeness/revision/scope 摘要（不含要素）。",
+    "operationId": "get_selection_handle_api_v1_layers_data__ref_id__selection__handle__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "handle",
+      "required": true,
+      "schema": {
+       "title": "Handle",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Selection Handle",
+    "tags": [
+     "图层数据",
+     "图层数据"
+    ]
+   }
+  },
+  "/api/v1/layers/data/{ref_id}/selection/{handle}/features": {
+   "get": {
+    "description": "handle 全集的稳定序分页 —— 属性表/导出/Agent 的权威枚举通道。",
+    "operationId": "get_selection_features_page_api_v1_layers_data__ref_id__selection__handle__features_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "handle",
+      "required": true,
+      "schema": {
+       "title": "Handle",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "页大小（要素数）",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 200,
+       "description": "页大小（要素数）",
+       "maximum": 1000,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "不透明分页游标",
+      "in": "query",
+      "name": "cursor",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 512,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "不透明分页游标",
+       "title": "Cursor"
+      }
+     },
+     {
+      "description": "properties 投影 CSV",
+      "in": "query",
+      "name": "fields",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 1024,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "properties 投影 CSV",
+       "title": "Fields"
+      }
+     },
+     {
+      "description": "单字段排序（ids/AM 拆分 scope 不支持）",
+      "in": "query",
+      "name": "order",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 129,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "单字段排序（ids/AM 拆分 scope 不支持）",
+       "title": "Order"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Selection Features Page",
+    "tags": [
+     "图层数据",
+     "图层数据"
+    ]
+   }
+  },
+  "/api/v1/layers/data/{ref_id}/selection/{handle}/materialize": {
+   "post": {
+    "description": "handle → 会话数据 ref（FC 子集）—— 只认 selection_ref 的消费者（field_compute）\n的可靠物化通道；超预算 typed 拒绝，绝不静默截断。",
+    "operationId": "materialize_selection_handle_api_v1_layers_data__ref_id__selection__handle__materialize_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "handle",
+      "required": true,
+      "schema": {
+       "title": "Handle",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Materialize Selection Handle",
+    "tags": [
+     "图层数据",
      "图层数据"
     ]
    }

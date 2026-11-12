@@ -48,6 +48,8 @@ class FieldComputeExecuteRequest(BaseModel):
         default="", description="已看到预览的 confirmation.params_fingerprint")
     project_id: str = ""
     owner: str = ""
+    # G23：True = 后台 durable job（立即返回句柄）；False = 同步收据（BASE）
+    background: bool = False
 
 
 class FieldComputePlanOut(BaseModel):

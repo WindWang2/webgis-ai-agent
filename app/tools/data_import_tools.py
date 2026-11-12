@@ -32,6 +32,31 @@ def _fail(code: str, message: str) -> Dict[str, Any]:
     return {"success": False, "code": code, "message": message, "data": None}
 
 
+async def _commit_receipts_payload(service, batch_id: str, sid: str, *, job_id: str | None = None) -> Dict[str, Any]:
+    """提交后的紧凑收据载荷（含 job 句柄；进行中如实标注）。"""
+    out = await service.get_receipts(batch_id, sid)
+    receipts = out.get("receipts", {})
+    completed = [r for r in receipts.values() if r.get("status") == "completed"]
+    status = out.get("status")
+    payload = {
+        "success": True,
+        "batch_id": batch_id,
+        "status": status,
+        "completed": len(completed),
+        "total": len(receipts),
+        "produced_refs": [r["output_ref"] for r in completed if r.get("output_ref")],
+        "receipts": receipts,
+    }
+    if job_id:
+        payload["job_id"] = job_id
+        if status in ("committing",):
+            payload["guidance"] = (
+                "提交仍在进行（持久任务）；请用 import_commit_status 查询，"
+                "完成且产物可读后才继续制图。"
+            )
+    return payload
+
+
 class ImportPlanConfigureArgs(BaseModel):
     """import_plan_configure 参数合同（显式模型：registry 不再从签名推导 Dict）。"""
 
@@ -232,10 +257,14 @@ def register_data_import_tools(registry: ToolRegistry) -> None:
             "提交批次成员为正式会话数据：空间结果经摄入管线产出 ref:upload-*（含质量"
             "画像），纯表产出 ref:table-*。逐成员幂等（同计划重试复用既有产物）；部分"
             "成功以批次收据披露。需产品确认条件（如 CRS 未确认的成员会被拒绝）。"
+            "提交是持久任务（durable job）：小批次在 wait_max_s 内完成则直接返回收据，"
+            "大批次超时后返回 job 句柄，用 import_commit_status 轮询，完成且产物可读"
+            "才继续制图。"
         ),
         param_descriptions={
             "batch_id": "批次 ID",
             "member_keys": "可选；缺省提交全部勾选成员",
+            "wait_max_s": "同步等待上限秒数（默认 20；超过即返回 job 句柄）",
             "session_id": "可选；以当前运行时会话为准",
         },
         side_effect="artifact_creation",
@@ -250,34 +279,126 @@ def register_data_import_tools(registry: ToolRegistry) -> None:
         output_semantic_type="ref",
         result_size_policy="ref_offload",
         failure_modes=["invalid_args", "target_not_found", "plan_stale",
-                       "crs_unconfirmed", "partial_failure"],
+                       "crs_unconfirmed", "partial_failure", "timeout"],
     )
     async def import_batch_commit(
         batch_id: str,
         member_keys: Optional[list] = None,
+        wait_max_s: int = 20,
         session_id: Optional[str] = None,
     ) -> dict:
         sid = _resolve_session_id(session_id)
         if not sid:
             return _fail("NO_SESSION", "无可验证会话")
+        import asyncio as _asyncio
+
+        from app.services.data_import.service import DataImportError as _DIE
+
+        service = get_data_import_service()
         try:
-            out = await get_data_import_service().start_commit(
-                batch_id, sid, member_keys, background=False
+            # 后台提交（durable job 持久化）+ 有界等待：不长时间占用工具调用
+            out = await service.start_commit(
+                batch_id, sid, member_keys, background=True
             )
         except DataImportError as e:
             if e.code == "NOT_FOUND":
                 raise KeyError(f"导入批次不存在: {batch_id}")
             return _fail(e.code, e.detail)
-        receipts = out.get("receipts", {})
-        completed = [r for r in receipts.values() if r.get("status") == "completed"]
+        job_id = out.get("job_id")
+        if out.get("idempotent_reuse") or not job_id:
+            # 幂等短路/复用：收据面已就绪，直接取批次收据
+            try:
+                return await _commit_receipts_payload(service, batch_id, sid)
+            except DataImportError as e:
+                return _fail(e.code, e.detail)
+
+        task = service._commit_tasks.get(batch_id)
+        wait_s = min(max(int(wait_max_s), 0), 60)  # 运行时上界：不长时间占用调用
+        deadline = _asyncio.get_event_loop().time() + wait_s
+        while task is not None and not task.done() and _asyncio.get_event_loop().time() < deadline:
+            await _asyncio.sleep(0.25)
+            task = service._commit_tasks.get(batch_id)
+        try:
+            return await _commit_receipts_payload(service, batch_id, sid, job_id=job_id)
+        except _DIE as e:
+            return _fail(e.code, e.detail)
+
+    @tool(
+        registry,
+        tier=2,
+        domains=["dataset"],
+        name="import_commit_status",
+        capabilities=["workspace_state_inspection"],
+        description=(
+            "查询导入提交的持久任务状态：job 终态（pending/queued/running/cancelling/"
+            "completed/failed/cancelled/stale）、批次状态、成员收据。只有 job 完成"
+            "且产物可读时返回 produced_refs —— Agent 必须据此决定是否继续制图。"
+        ),
+        param_descriptions={
+            "batch_id": "批次 ID",
+            "session_id": "可选；以当前运行时会话为准",
+        },
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=["导入", "任务", "状态", "job"],
+        output_semantic_type="text",
+        result_size_policy="bounded",
+        failure_modes=["empty_result", "not_found"],
+    )
+    async def import_commit_status(
+        batch_id: str, session_id: Optional[str] = None
+    ) -> dict:
+        sid = _resolve_session_id(session_id)
+        if not sid:
+            return _fail("NO_SESSION", "无可验证会话")
+        try:
+            state = await get_data_import_service().get_batch(batch_id, sid)
+        except DataImportError as e:
+            if e.code in ("NOT_FOUND", "EXPIRED"):
+                raise KeyError(f"导入批次不存在: {batch_id}")
+            return _fail(e.code, e.detail)
+        job_view = None
+        if state.active_job_id:
+            from app.services.jobs.lifecycle import coerce_status as _coerce
+            from app.services.data_operations.runner import _sync_session
+            from app.models.db_model import AnalysisTask
+
+            with _sync_session() as db:
+                row = db.get(AnalysisTask, int(state.active_job_id))
+                if row is not None:
+                    job_view = {
+                        "job_id": str(row.id),
+                        "status": _coerce(row.status).value,
+                        "progress": row.progress,
+                        "message": (row.progress_message or "")[:200],
+                        "retryable": row.status in ("failed", "stale"),
+                    }
+                db.commit()
+        completed = {
+            k: r for k, r in state.receipts.items() if r.status == "completed"
+        }
         return {
             "success": True,
             "batch_id": batch_id,
-            "status": out.get("status"),
+            "batch_status": state.status.value,
+            "job": job_view,
             "completed": len(completed),
-            "total": len(receipts),
-            "produced_refs": [r["output_ref"] for r in completed if r.get("output_ref")],
-            "receipts": receipts,
+            "failed": sum(1 for r in state.receipts.values() if r.status == "failed"),
+            "total_members": len(state.members),
+            # 只有完成且 ref 存在才提供（可读性由收据层在提交时验证）
+            "produced_refs": [r.output_ref for r in completed.values() if r.output_ref],
+            "members": [
+                {
+                    "member_key": m.member_key,
+                    "status": m.status.value,
+                    "display_name": m.display_name,
+                }
+                for m in state.members[:20]
+            ],
         }
 
     @tool(

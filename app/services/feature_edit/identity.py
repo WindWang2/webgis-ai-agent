@@ -94,6 +94,41 @@ def index_by_wfid(fc: GeoJSONFeatureCollection) -> Dict[str, int]:
             out[str(props[WFID_PROP])] = index
     return out
 
+def find_ambiguous_ids(fc: GeoJSONFeatureCollection, requested: List[str]) -> Dict[str, int]:
+    """G24/P0：requested id → 命中要素数（>1 的才是歧义；wfids 不歧义）。
+
+    重复自然键（OBJECTID/osm_id 等同值多条）在 first-wins 解析下会编辑到
+    用户没点的对象 —— 调用方对歧义 id 出 typed finding（ambiguous_target），
+    绝不静默选首个。WFID 寻址（唯一）不视为歧义。
+    """
+    # 与回查同语义：请求 id 可经**任一**链键（顶层 id / properties 任一
+    # FEATURE_ID_KEYS / _wfid）命中要素 —— 歧义 = 该值可命中 >1 条要素。
+    value_feature_counts: Dict[str, int] = {}
+    wfid_values: set = set()
+    for feature in fc.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        values: set = set()
+        top = feature.get("id")
+        if isinstance(top, (str, int)) and not isinstance(top, bool):
+            values.add(str(top))
+        props = feature.get("properties")
+        if isinstance(props, dict):
+            for key in FEATURE_ID_KEYS:
+                v = props.get(key)
+                if isinstance(v, (str, int)) and not isinstance(v, bool):
+                    values.add(str(v))
+            wfid = props.get(WFID_PROP)
+            if isinstance(wfid, str):
+                wfid_values.add(str(wfid))
+        for value in values:
+            value_feature_counts[value] = value_feature_counts.get(value, 0) + 1
+    return {
+        str(r): value_feature_counts[str(r)]
+        for r in requested
+        if str(r) not in wfid_values and value_feature_counts.get(str(r), 0) > 1
+    }
+
 
 def resolve_feature_id(feature: GeoJSONFeature) -> Optional[str]:
     """单要素 → 既有稳定 id（FEATURE_ID_KEYS 链；顶层 feature.id 优先）。

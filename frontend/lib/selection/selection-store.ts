@@ -79,6 +79,16 @@ export interface SelectionContext {
   predicate?: SelectionPredicate;
   /** 谓词命中总数（发布侧已知的廉价计数；仅诊断/披露，不作渲染依据）。 */
   matched_count?: number;
+  /**
+   * G24/P3：服务端权威选择集句柄（框选/条件选择超 ids 上限时由服务端
+   * 承载全集：scope+revision+计数）。在场时 selected_ids 只是「首批样本」，
+   * 消费侧需要全集必须走 handle 分页/物化 —— 不得把 50 个 id 当全部。
+   * handle 是寻址不是权限（服务端每次消费重新鉴权）；数据刷新即失效。
+   */
+  handle?: string;
+  /** handle 的权威命中总数（count_exact=false 时为诚实未知语义）。 */
+  handle_count?: number;
+  handle_count_exact?: boolean;
   bbox?: [number, number, number, number];
   /** 有界标量属性（map→chart 方向的类别推导输入；无几何）。 */
   properties?: Record<string, string | number | boolean | null>;
@@ -254,6 +264,9 @@ export function publishSelection(
     id_field?: string;
     predicate?: SelectionPredicate;
     matched_count?: number;
+    handle?: string;
+    handle_count?: number;
+    handle_count_exact?: boolean;
     bbox?: [number, number, number, number];
     properties?: Record<string, unknown>;
   },
@@ -287,10 +300,18 @@ export function publishSelection(
     matched_count: Number.isFinite(payload.matched_count)
       ? Math.max(0, Math.floor(payload.matched_count as number))
       : undefined,
+    // G24/P3：句柄有界透传（不进事件环属性集 —— ring 只存 context 引用）
+    handle: payload.handle ? String(payload.handle).slice(0, 128) : undefined, // 与 IR 契约 MAX_STR_VALUE_CHARS 对齐（服务端句柄 32 字符，留格式余量）
+    handle_count: Number.isFinite(payload.handle_count)
+      ? Math.max(0, Math.floor(payload.handle_count as number))
+      : undefined,
+    handle_count_exact: payload.handle_count_exact === true ? true : undefined,
     bbox: payload.bbox,
     properties: boundedProperties(payload.properties),
     revision: ++revision,
   };
+  // 替换选择时释放旧句柄（句柄增强重发 —— 同 handle 不释放）
+  if (current?.handle && current.handle !== context.handle) releaseHandleOf(current);
   current = context;
   recordEvent(kind, context);
   emit();
@@ -299,9 +320,32 @@ export function publishSelection(
 export function clearSelection(): void {
   if (current === null) return;
   const source = current.source;
+  releaseHandleOf(current);
   current = null;
   recordEvent('clear_selection', { source, kind: 'clear_selection', layer_id: '', selected_ids: [], selected_categories: [], revision: ++revision });
   emit();
+}
+
+/* ─── G24/P3：句柄生命周期挂钩 ───────────────────────────────────────────────
+ * selection-store 是无依赖纯模块（不 import API 层）—— 释放由宿主注册：
+ * map-panel 启动时 registerSelectionHandleReleaser(fn)；清空/会话切换时
+ * fire-and-forget 释放（失败静默：服务端 TTL/revision 兜底，不阻塞 UI）。 */
+
+type HandleReleaser = (handle: string, refId: string | undefined, layerId: string) => void;
+let handleReleaser: HandleReleaser | null = null;
+
+export function registerSelectionHandleReleaser(fn: HandleReleaser | null): void {
+  handleReleaser = fn;
+}
+
+function releaseHandleOf(context: SelectionContext | null): void {
+  if (!context?.handle || !handleReleaser) return;
+  try {
+    const ref = context.artifact_ref?.startsWith('ref:') ? context.artifact_ref : undefined;
+    handleReleaser(context.handle, ref, context.layer_id);
+  } catch {
+    /* 释放失败静默（服务端 TTL 兜底） */
+  }
 }
 
 /** 测试/诊断用有界事件环快照（不驱动行为）。 */
@@ -311,6 +355,7 @@ export function selectionEvents(): SelectionEvent[] {
 
 /** 会话切换：选择属于当前会话的交互态（epoch bump 使迟到异步发布失效）。 */
 export function resetSelectionStore(): void {
+  releaseHandleOf(current);
   current = null;
   eventRing.length = 0;
   epoch += 1;
