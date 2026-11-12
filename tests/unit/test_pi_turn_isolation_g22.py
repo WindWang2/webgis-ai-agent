@@ -320,3 +320,72 @@ async def test_legacy_abort_without_session_scopes_to_current_turn():
     }
     await rpc.finish_turn()
     await asyncio.wait_for(task, timeout=5.0)
+
+
+# ── 修复轮 2 补测：drain / abort 门 fail-safe（review 二轮遗留）─────────
+
+
+@pytest.mark.asyncio
+async def test_teardown_drains_inflight_control_responses_before_unregister():
+    """teardown 在 unregister 前有界等待在飞控制 RPC 的**响应**——vendor
+    并发分发下 abort 响应落定 = vendor 侧处理完成（_drain_control_rpcs）。
+    """
+    rpc = ProbeRpcClient("s-drain", manual_turn=True)
+    bridge = PiBridge(rpc=rpc)
+
+    task = asyncio.create_task(_run_turn(bridge, rpc, "t"))
+    await asyncio.wait_for(rpc.in_flight.wait(), timeout=5.0)
+
+    # 挂起 abort 的响应（写出已完成、响应永不回）→ 塞进在飞台账
+    hang = asyncio.get_running_loop().create_future()
+    bridge._inflight_control.add(hang)
+
+    async def _abort():
+        await bridge.abort("s-drain", source="user")
+
+    abort_task = asyncio.create_task(_abort())
+    await asyncio.sleep(0.05)  # abort 写相位完成（探针立即解 future）
+
+    # teardown 触发（token 已被 abort 点燃）——drain 必须等待挂起响应；
+    # 有界 = 5s 超时放行（测试给 12s 余量），且等待真实发生（≥4s）。
+    import time as _time
+
+    t_teardown = _time.monotonic()
+    await rpc.finish_turn()
+    await asyncio.wait_for(task, timeout=12.0)
+    waited = _time.monotonic() - t_teardown
+    assert waited >= 4.0, f"drain 未真实等待（{waited:.1f}s）"
+    assert waited <= 10.0, f"drain 超时有界失效（{waited:.1f}s）"
+
+    # 完成挂起 future 后台账清空
+    if not hang.done():
+        hang.set_result({})
+    for _ in range(50):
+        if not bridge._inflight_control:
+            break
+        await asyncio.sleep(0.05)
+    assert not bridge._inflight_control
+    await asyncio.wait_for(abort_task, timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_abort_gate_wedged_skips_failsafe():
+    """门被 wedged 持有 >5s 时 abort **整体跳过**（fail-safe：发不出就
+    绝不发，宁可不取消也不冒险命中后继 turn），不无限挂起。"""
+    import time
+
+    rpc = ProbeRpcClient("s-wedge")
+    bridge = PiBridge(rpc=rpc)
+    assert bridge._control_gate is not None
+    await bridge._control_gate.acquire()  # 模拟 wedged 控制写持门
+
+    t0 = time.monotonic()
+    result = await bridge.abort("s-wedge", source="user")
+    elapsed = time.monotonic() - t0
+
+    assert result == {}
+    assert elapsed < 10.0, "abort 不得在 wedged 门上无限挂起"
+    assert rpc.control_writes == [], "fail-safe 跳过——零控制写出"
+    assert bridge_mod._TURN_ABORT_SOURCES == {}
+
+    bridge._control_gate.release()

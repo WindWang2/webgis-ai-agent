@@ -1616,12 +1616,18 @@ class PiBridge:
             return
         try:
             _done, still = await asyncio.wait(pending, timeout=timeout_s)
-            for f in still:
+            if still:
+                for f in still:
+                    # 移出追踪集：teardown 常有内外两层 finally 各调一次
+                    # drain——滞留 future 若留在集合里会把有界时间翻倍。
+                    # 移出后响应仍会解 future（collect 自带超时），只是后续
+                    # drain 不再等待它。
+                    inflight.discard(f)
                 logger.warning(
-                    "[PiBridge] control RPC response still pending at turn "
-                    "teardown (bounded %.1fs elapsed); handing off — "
+                    "[PiBridge] %d control RPC response(s) still pending at "
+                    "turn teardown (bounded %.1fs elapsed); handing off — "
                     "vendor-side residual race documented in ADR D1",
-                    timeout_s,
+                    len(still), timeout_s,
                 )
         except Exception as exc:  # noqa: BLE001 — 排空绝不阻断交接
             logger.debug("[PiBridge] control drain failed: %s", exc)

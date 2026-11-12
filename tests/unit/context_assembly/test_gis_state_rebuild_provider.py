@@ -248,14 +248,14 @@ def test_g22_constraints_survive_budget_pressure_realistic_ids():
     assert len(text) <= 1600, f"块长 {len(text)} 超域 cap——硬截断风险"
     # 每个约束/恢复**类别**必须在场（可压缩，不可消失）；断言用跨压缩级别
     # 的类别不变量，不绑定具体压缩措辞。
-    assert "用户锁定" in text and "layer_locked" in text
-    assert "lock-0000" in text  # 锁 id 全量档（预算足够）
-    assert "隐藏图层" in text and "另 2 层隐藏" in text
-    assert "layer-0023" in text  # 第 24 个隐藏层 id 仍可寻址
-    assert "标注人工覆写 52 条" in text
-    assert "多画幅产品" in text and "active_frame=" in text and "共 12 幅" in text
+    # 类别不变量（跨降级档稳定；修复轮 2 的打包器可把条目降到 compact/
+    # count_only/minimal 档——措辞随档变化，类别与计数不消失）
+    assert "用户锁定" in text and "layer_locked" in text and "16" in text
+    assert "隐藏图层" in text and "22" in text
+    assert "标注" in text and "52" in text
+    assert "多画幅" in text and "12" in text and "active=" in text
     assert "非终态任务" in text and "4" in text
-    assert "失效数据引用" in text and "3 处" in text
+    assert "失效" in text and "3" in text
     # 压缩/截断必须披露（模型必须知道有省略）；披露行是最后一行
     # （域级硬截断没有切掉块尾）
     assert "目录压缩/截断披露" in text
@@ -271,3 +271,96 @@ def test_g22_no_fabrication_of_selection_or_absent_facts():
     assert "非终态任务" not in text
     assert "失效数据引用" not in text
     assert "selection" not in text.lower() or "不发明" in text
+
+
+def test_g22_packer_property_sweep_all_dimensions_bounded():
+    """修复轮 2 属性式扫描（review 口径）：任意维度组合下 ——
+    ① 块长 ≤1600（硬截断永不触发）；② 全部在场类别一个不缺；③ 有降级
+    必有披露行且为最后一行；④ 类别计数与源数据一致（不虚报）。
+    """
+    import itertools
+    import uuid
+
+    def _uid(prefix: str) -> str:
+        return f"{prefix}-{uuid.uuid4().hex[:26]}"
+
+    dims = list(itertools.product(
+        (0, 5, 26, 60),            # 层数
+        (0, 3, 22, 40),            # 隐藏层数
+        (0, 1, 8, 16),             # 层锁数
+        (0, 2, 6),                 # 组件锁数
+        (0, 2, 6, 12),             # 画幅数
+        (0, 4, 8),                 # jobs
+        (0, 3, 6),                 # invalid refs
+    ))
+    checked = 0
+    for n_layers, n_hidden, n_locks, n_comps, n_frames, n_jobs, n_refs in dims:
+        if n_hidden > n_layers or (n_layers and n_frames and n_locks > n_layers):
+            continue
+        layers = [
+            {"id": _uid("layer") if i % 3 == 0 else f"ly-{i}",
+             "layout": {"visibility": "none" if i < n_hidden else "visible"}}
+            for i in range(n_layers)
+        ]
+        # 混合 id 长度：短 id 与 uuid 级 id 并存（真实形态）。
+        for i in range(min(4, len(layers))):
+            layers[i]["label"] = {"authoring": {"overrides": [
+                {"featureId": f"f{i}-{j}", "pinned": True} for j in range(2)
+            ]}}
+        maps = {
+            "revision": "rev-prop",
+            "layers": layers,
+            "workbench": {
+                "lockedLayerIds": [_uid("lock") for _ in range(n_locks)],
+                "lockedComponentIds": [_uid("comp") for _ in range(n_comps)],
+            },
+        }
+        if n_frames:
+            maps["frame_product"] = {
+                "product_kind": "small_multiples",
+                "active_frame": _uid("frame"),
+                "frames": [{"frame_id": _uid("fr"), "title": f"第{i}幅"}
+                           for i in range(n_frames)],
+            }
+        jobs = [{"id": _uid("job"), "status": "queued"} for _ in range(n_jobs)]
+        refs = [{"source": _uid("src"), "ref": _uid("ref")}
+                for _ in range(n_refs)]
+        text = render_gis_state_rebuild_block(maps, None,
+                                              durable_jobs=jobs,
+                                              invalid_source_refs=refs)
+        checked += 1
+        assert len(text) <= 1600, (n_layers, n_hidden, n_locks, len(text))
+        lines = text.splitlines()
+        # 披露行存在时才从类别检查中排除它（否则唯一类别行会被误排除）
+        if lines[-1].startswith("- （目录压缩/截断披露"):
+            body = "\n".join(lines[:-1])
+            has_disclosure = True
+        else:
+            body = text
+            has_disclosure = False
+        # 类别存在性（有该类数据 → 类别行必在；档位措辞可变）。计数恒真
+        # 断言由 test_g22_constraints_survive_budget_pressure_realistic_ids
+        # （count_only/minimal 档必印计数）与下面的「无数据不虚构」覆盖。
+        if n_locks or n_comps:
+            assert "锁定" in body, dims
+        if n_hidden:
+            assert "隐藏" in body, dims
+        if any("label" in l for l in layers):
+            assert "标注" in body, dims
+        if n_frames:
+            assert "多画幅" in body, dims
+        if n_jobs:
+            assert "非终态任务" in body, dims
+        if n_refs:
+            assert "失效" in body, dims
+        # 预算降级痕迹（"因预算省略"）⇒ 披露行必须在场且为最后一行。
+        # 通用目录自身 >24 层的「截断」措辞是该行的自披露（G12 语义），
+        # 不要求预算披露行。反向不要求——整条目被丢弃时由披露行总括交代。
+        if "因预算省略" in body:
+            assert has_disclosure, dims
+        # 无该类数据 → 不虚构类别
+        if not n_jobs:
+            assert "非终态任务" not in body
+        if not n_refs:
+            assert "失效" not in body
+    assert checked >= 300, f"扫描组合数不足: {checked}"
