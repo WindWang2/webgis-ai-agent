@@ -9,6 +9,7 @@ import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { ClarificationCard } from '@/components/chat/clarification-card';
+import { GoalSatisfactionCard } from '@/components/chat/goal-satisfaction-card';
 import { EditProposalCard } from '@/components/chat/edit-proposal-card';
 import type { ClarificationCardState } from '@/lib/types/clarification';
 import { PlanCard } from '@/components/chat/plan-card';
@@ -114,6 +115,8 @@ interface ChatMessage {
   resultId?: string;
   /** 方向 3：requirement IR blocking 澄清卡片状态。 */
   clarification?: ClarificationCardState;
+  /** G28：任务完成语义卡（task_complete.goal_satisfaction）。 */
+  goalSatisfaction?: import('@/lib/types/goal-satisfaction').GoalSatisfactionView;
   /** /goal 03：要素编辑提案卡状态。 */
   featureEditProposal?: import('@/lib/types/feature-edit').FeatureEditProposalState;
 }
@@ -332,6 +335,11 @@ const t = useT();
                   )
                 }
                 onRefresh={onClarificationRefresh}
+              />
+            )}
+            {msg.goalSatisfaction && (
+              <GoalSatisfactionCard
+                view={msg.goalSatisfaction as import('@/lib/types/goal-satisfaction').GoalSatisfactionView}
               />
             )}
             {msg.featureEditProposal && (

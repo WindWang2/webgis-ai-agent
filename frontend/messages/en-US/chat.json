@@ -106,6 +106,12 @@
     "error": "Submission failed, please retry.",
     "continue": "Clarification submitted — please continue."
   },
+  "goal": {
+    "title": "Task completion status",
+    "subtitle": "Suggested next step: {signal}",
+    "missing": "Missing: {codes}",
+    "nextAction": "Next: {action}"
+  },
   "sessionPlan": {
     "status": {
       "pending": "Pending",
