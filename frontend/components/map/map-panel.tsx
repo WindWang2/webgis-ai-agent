@@ -163,6 +163,8 @@ import {
 } from "@/lib/interaction/bus"
 import type { Scene3dPickHit } from "@/lib/map-kit/scene3d"
 import { ComparisonView } from "@/components/map/comparison"
+import { FrameProductGrid } from "@/components/map/frames/frame-grid"
+import { mapInstanceRegistry } from "@/components/map/frames/frame-instance-registry"
 import { TemporalTimeController } from "@/components/map/temporal-time-controller"
 import { applyTemporalToSpec } from "@/lib/temporal-map/filter"
 import type { MapSpecTemporalConfig } from "@/lib/mapspec-compiler/types"
@@ -413,6 +415,15 @@ export function MapPanel({
   }, [])
 
   const mapRef = useRef<MapRef>(null)
+  // G25：主图活实例登记句柄（onLoad 注册 / mapKey 重建与卸载时释放 ——
+  // 画幅网格预算仲裁把主图计入总数，A09）。
+  const mainInstanceHandleRef = useRef<{ release: () => void } | null>(null)
+  useEffect(() => {
+    return () => {
+      mainInstanceHandleRef.current?.release()
+      mainInstanceHandleRef.current = null
+    }
+  }, [])
   const processLayers = useHudStore((s: HudState) => s.processLayers)
   const cartographyTitle = useHudStore((s: HudState) => s.cartographyTitle)
   const focusLayerId = useHudStore((s: HudState) => s.focusLayerId)
@@ -1854,6 +1865,8 @@ export function MapPanel({
           onLoad={() => {
             setMapReady(true);
             useHudStore.getState().setMapLoaded(true);
+            // G25：主图登记活实例预算（A09 —— 画幅网格调度把主图计入总数）。
+            mainInstanceHandleRef.current = mapInstanceRegistry.register("main", "main");
           }}
           onError={handleMapError}
           style={{ position: "absolute", inset: 0 }}
@@ -1968,6 +1981,17 @@ export function MapPanel({
         sessionTokenRef={sessionTokenRef}
         activeFilters={activeFilters}
         selectionFilters={selectionFilters}
+      />
+
+      {/* G25 多画幅真实交互运行时网格（兄弟覆盖层 —— 与 ComparisonView 同款
+          挂载法；主图零布局改动，主图已计入活实例预算）。 */}
+      <FrameProductGrid
+        primaryMapRef={mapRef}
+        mapStyle={currentMapStyle}
+        transformRequest={transformRequest}
+        sessionId={sessionId}
+        ownerToken={ownerToken}
+        sessionTokenRef={sessionTokenRef}
       />
 
       {/* Live cartography overlays — driven by layer.legend_spec */}

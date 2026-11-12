@@ -69,6 +69,7 @@ import {
   resolveSyncPair,
   SWIPE_KEYBOARD_STEP,
 } from './comparison-sync';
+import { mapInstanceRegistry } from '@/components/map/frames/frame-instance-registry';
 import { devOnly } from '@/lib/utils/logger';
 
 /** 与 map-panel 的 DEFAULT_VIEW_STATE 同值（覆盖层挂载先落默认相机，onLoad 立即对齐主图）。 */
@@ -258,6 +259,13 @@ export function ComparisonView({
     runtimeRef.current = null;
     setSecondaryReady(false);
   }, [active]);
+  // G25：副图登记活实例预算（占用关闭时释放 —— 画幅网格把对比副图计入
+  // 总数，A09；关闭/卸载即出预算）。
+  useEffect(() => {
+    if (!active || !secondaryReady) return;
+    const handle = mapInstanceRegistry.register('comparison', 'comparison');
+    return () => handle.release();
+  }, [active, secondaryReady]);
   useEffect(() => {
     return () => {
       runtimeRef.current?.dispose();

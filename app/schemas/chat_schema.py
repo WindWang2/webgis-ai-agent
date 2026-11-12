@@ -295,6 +295,51 @@ class CartographicRuntimeObservationRequest(BaseModel):
     # scene3d/status.ts 同源；非法载荷 → None 按证据缺席（诚实降级，
     # 绝不 422 整个观察）。
     scene3d_assets: Optional[list[dict[str, Any]]] = None
+    # G25 逐画幅真实观察（增维不换通道 —— 与 scene3d_assets 同款纪律）：
+    # 浏览器多画幅运行时按 frame_id 上报每帧模式/落定 revision/快照指纹。
+    # 词表 = OBSERVATION_MODES 去掉 export_verified（浏览器绝不冒充导出
+    # 验证）；非法载荷 → None 按证据缺席（不 422 整个观察）。
+    frames: Optional[list[dict[str, Any]]] = None
+
+    @field_validator("frames", mode="before")
+    @classmethod
+    def _normalize_observation_frames(cls, value: Any) -> Any:
+        # 与 canvas/scene3d_assets 同款：非 list/超界/词表外 mode/非法形状
+        # → None（证据缺席）；合法条目只保留封闭投影（多余键不透传）。
+        # 整批 ≤16（MAX_PLAN_FRAMES=12 之上留余量，取**最新** 16 条）。
+        if not isinstance(value, list):
+            return None
+        allowed_modes = {
+            "live_observed", "snapshot", "not_observed", "stale_observation",
+        }
+        out: list[dict[str, Any]] = []
+        for entry in value[-16:]:
+            if not isinstance(entry, dict):
+                continue
+            frame_id = entry.get("frame_id")
+            mode = entry.get("mode")
+            if not isinstance(frame_id, str) or not frame_id:
+                continue
+            if not isinstance(mode, str) or mode not in allowed_modes:
+                continue
+            item: dict[str, Any] = {
+                "frame_id": frame_id[:64],
+                "mode": mode,
+            }
+            revision = entry.get("mapspec_revision")
+            if isinstance(revision, int) and not isinstance(revision, bool) and revision >= 0:
+                item["mapspec_revision"] = revision
+            content_revision = entry.get("content_revision")
+            if isinstance(content_revision, int) and not isinstance(content_revision, bool):
+                item["content_revision"] = content_revision
+            fingerprint = entry.get("fingerprint")
+            if isinstance(fingerprint, str) and fingerprint:
+                item["fingerprint"] = fingerprint[:96]
+            source_error = entry.get("source_error")
+            if isinstance(source_error, str) and source_error:
+                item["source_error"] = source_error[:160]
+            out.append(item)
+        return out or None
 
     @field_validator("canvas", mode="before")
     @classmethod

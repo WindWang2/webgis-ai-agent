@@ -165,5 +165,8 @@
       "RENDER_FAILED": "栅格渲染失败",
       "default": "栅格表达操作失败"
     }
+  },
+  "layerStyle": {
+    "frameOverrideFailed": "画幅编辑（{scope}）提交失败，已保持原值"
   }
 }
