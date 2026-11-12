@@ -32,6 +32,11 @@ def _fail(err: ThematicAuthoringError) -> HTTPException:
     return HTTPException(status_code=http_status(err), detail=error_payload(err))
 
 
+async def _owned(session_id: str, owner_token: Optional[str], conv: Conversation) -> Optional[str]:
+    """会话归属由 require_owned_session 守卫；这里取 ref 读取用的 token。"""
+    return owner_token or getattr(conv, "owner_token", None)
+
+
 # ─── 请求体 ────────────────────────────────────────────────────────────────
 
 class PreviewBody(BaseModel):
@@ -50,10 +55,13 @@ async def inspect(
     session_id: str,
     layer_id: str,
     field: Optional[str] = Query(None, max_length=128),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        return await inspect_layer(session_id, layer_id, field=field)
+        return await inspect_layer(
+            session_id, layer_id, field=field,
+            owner_token=await _owned(session_id, owner_token, conv))
     except ThematicAuthoringError as err:
         raise _fail(err) from err
 
@@ -65,11 +73,14 @@ async def preview(
     session_id: str,
     layer_id: str,
     body: PreviewBody,
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     conv: Conversation = Depends(require_owned_session),
 ):
     try:
         plan = parse_plan({**body.plan, "layer_id": layer_id})
-        return await preview_expression(session_id, layer_id, plan)
+        return await preview_expression(
+            session_id, layer_id, plan,
+            owner_token=await _owned(session_id, owner_token, conv))
     except ThematicAuthoringError as err:
         raise _fail(err) from err
 
@@ -81,6 +92,7 @@ async def commit(
     session_id: str,
     layer_id: str,
     body: CommitBody,
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     conv: Conversation = Depends(require_owned_session),
 ):
     try:
@@ -90,6 +102,7 @@ async def commit(
             expected_revision=body.expected_revision,
             origin="user", actor="thematic_authoring_panel",
             mutation_id=f"thematic:{body.client_mutation_id}" if body.client_mutation_id else None,
+            owner_token=await _owned(session_id, owner_token, conv),
         )
     except ThematicAuthoringError as err:
         raise _fail(err) from err

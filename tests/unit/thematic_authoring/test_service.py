@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import math
 
 import pytest
 
@@ -14,7 +13,6 @@ from app.services.thematic_authoring import (
     inspect_layer,
     preview_expression,
 )
-from app.services.thematic_authoring.builder import size_for_value
 from app.services.thematic_authoring.contract import parse_plan
 from app.services.thematic_authoring.errors import ThematicAuthoringError
 from app.services.thematic_authoring.service import (

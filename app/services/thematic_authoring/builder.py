@@ -7,12 +7,10 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field as dc_field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 from app.lib.cartography.thematic_spec import (
     CATEGORICAL,
-    DIVERGENT,
-    GRADUATED,
     build_categorical_spec,
     build_continuous_spec,
     build_divergent_spec,

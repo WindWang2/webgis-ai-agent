@@ -7,7 +7,7 @@ legend_spec 一次投影 paint 与 legend；本 oracle 独立重算该投影并�
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 def assert_expression_consistent(layer: Dict[str, Any]) -> List[str]:

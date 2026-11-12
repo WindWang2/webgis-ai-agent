@@ -134,7 +134,8 @@ def register_thematic_authoring_tools(registry: ToolRegistry) -> None:
         if not session_id:
             return {"success": False, "code": "SOURCE_UNAVAILABLE",
                     "message": "Missing session_id context"}
-        result = await _guard(inspect_layer(session_id, layer_id, field=field))
+        result = await _guard(inspect_layer(
+            session_id, layer_id, field=field, trusted_dispatch=True))
         if not result.get("layer_id") and not result.get("success"):
             return result
         current = result.get("current") or {}
@@ -207,7 +208,8 @@ def register_thematic_authoring_tools(registry: ToolRegistry) -> None:
             payload = error_payload(exc)
             payload["success"] = False
             return payload
-        result = await _guard(preview_expression(session_id, layer_id, parsed))
+        result = await _guard(preview_expression(
+            session_id, layer_id, parsed, trusted_dispatch=True))
         if result.get("success") is False:
             return result
         return _bounded_receipt(result)
@@ -258,6 +260,7 @@ def register_thematic_authoring_tools(registry: ToolRegistry) -> None:
             session_id, layer_id, parsed,
             expected_revision=expected_revision,
             origin="agent", actor="pi:thematic_style_apply",
+            trusted_dispatch=True,
         ))
         if result.get("success") is False:
             return result

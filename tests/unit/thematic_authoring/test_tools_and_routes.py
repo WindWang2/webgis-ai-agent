@@ -70,7 +70,7 @@ async def test_inspect_tool_bounded_receipt(session_id, store_root, seeded):
 @pytest.mark.asyncio
 async def test_apply_tool_commits_and_equivalent_to_ui_service(session_id, store_root, seeded):
     """验收 20：UI 与 Pi 同参数 → 等价分类与同源回执。"""
-    from app.services.thematic_authoring import commit_expression, preview_expression
+    from app.services.thematic_authoring import preview_expression
     from app.services.thematic_authoring.contract import parse_plan
 
     plan = {"layer_id": "result-seed", "mode": "graduated_manual",

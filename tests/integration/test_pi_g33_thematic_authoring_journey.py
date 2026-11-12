@@ -22,7 +22,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -84,8 +83,10 @@ os.environ.setdefault("GIS_MANIFEST_STRICT", "0")
 
 STUB_JS = r"""
 import http from 'node:http';
+// 每请求重读脚本文件（G26 为一次性读；本旅程 seed 在 server 就绪后进行、
+// 修订号动态写入 turn 脚本——重读让脚本更新即时生效，语义与 G26 一致）。
+const fsMod = await import('node:fs');
 const scriptPath = process.env.JOURNEY_SCRIPT;
-const turnScripts = JSON.parse(await import('node:fs').then((fs) => fs.readFileSync(scriptPath, 'utf8')));
 const counters = {};
 const srv = http.createServer((req, res) => {
   let body = ''; req.on('data', (c) => (body += c));
@@ -101,6 +102,7 @@ const srv = http.createServer((req, res) => {
       lastUser = c; break;
     }
     const base = (lastUser || '').split('\n')[0].trim();
+    const turnScripts = JSON.parse(fsMod.readFileSync(scriptPath, 'utf8'));
     const steps = turnScripts[base];
     let step = null;
     if (steps) {
@@ -231,11 +233,14 @@ async def _read_layer_async(session_id: str):
 
 
 def main() -> int:
-    # ── 先 seed + 写真实 turn 脚本，再启动 stub（stub 在模块加载时一次性
-    #    读脚本——G26 同款契约；占位文件会让全部旅程退化为 "ok" 文本）。──
-    session_id = RUN + "-s1"
-    rev_seed = asyncio.run(_seed_session(session_id))
-    turn_scripts = {
+    # ── G26 顺序：stub → LLM env → uvicorn → server 就绪 → seed → 写脚本。
+    #    （seed 必须在 server 就绪后：早期 asyncio.run 会把单例绑到已关闭
+    #    的 loop，Pi 子进程 spawn 因此失败——实测教训。）stub 每请求重读
+    #    脚本，修订号动态写入即时生效。──
+    def _build_turn_scripts(rev_seed: int) -> dict:
+        return {
+        # warmup：拉起 Pi bridge / 扩展 / 模型配置映射（G29 旅程同款）
+        "warmup": [{"text": "warmup-ok"}],
         "查看这个专题层": [
             {"tool": "tool_search", "args": {"query": "专题 分级 断点 图例 表达"}},
             {"tool": "webgis_thematic_style_inspect",
@@ -243,6 +248,8 @@ def main() -> int:
             {"text": "当前分级已查看。"},
         ],
         "改成 0 10 20 50 四段": [
+            # deferred 工具面：apply 先经 tool_search 激活（G26 J8 同模式）
+            {"tool": "tool_search", "args": {"query": "专题 表达 提交 断点 分级 修改"}},
             {"tool": "webgis_thematic_style_apply", "args": {
                 "layer_id": LAYER_ID,
                 "plan": {"mode": "graduated_manual",
@@ -258,6 +265,8 @@ def main() -> int:
             {"text": "图例已核对。"},
         ],
         "恢复自动分级": [
+            # deferred 面每轮重新激活（实测不跨 turn 持续）
+            {"tool": "tool_search", "args": {"query": "专题 表达 提交 恢复 自动"}},
             {"tool": "webgis_thematic_style_apply", "args": {
                 "layer_id": LAYER_ID,
                 "plan": {"mode": "revert_auto"},
@@ -269,8 +278,8 @@ def main() -> int:
 
     stub_js = WORK / "journey_stub.mjs"
     stub_js.write_text(STUB_JS, encoding="utf-8")
-    (WORK / "journey_script.json").write_text(
-        json.dumps(turn_scripts), encoding="utf-8")
+    # 占位脚本（seed 后写入真实脚本——stub 每请求重读）
+    (WORK / "journey_script.json").write_text("{}", encoding="utf-8")
 
     with open(WORK / "stub_err.log", "w") as fh:
         stub = subprocess.Popen(
@@ -343,9 +352,21 @@ def main() -> int:
         return body
 
     try:
+        session_id = RUN + "-s1"
+        rev_seed = asyncio.run(_seed_session(session_id))
         verdict["seeded_revision"] = rev_seed
+        (WORK / "journey_script.json").write_text(
+            json.dumps(_build_turn_scripts(rev_seed)), encoding="utf-8")
+
+        # warmup（Pi bridge 首次 spawn 可能 transport 抖动——一次重试预算）
+        warm = chat("warmup")
+        if "task_error" in warm:
+            warm = chat("warmup")
+        verdict["journeys"]["warmup_ok"] = "task_complete" in warm
 
         body1 = chat("查看这个专题层")
+        if "task_error" in body1:
+            body1 = chat("查看这个专题层")
         (WORK / "sse1.log").write_text(body1, encoding="utf-8")
         verdict["journeys"]["inspect_receipt"] = (
             "webgis_thematic_style_inspect" in body1)

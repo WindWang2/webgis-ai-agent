@@ -143,11 +143,20 @@ def _shared_expression_scope(mapspec: Dict[str, Any], ctx: LayerContext) -> Opti
     return None
 
 
-async def _hydrate_features(ctx: LayerContext) -> Tuple[List[Any], Optional[str], int, Optional[str]]:
+async def _hydrate_features(
+    ctx: LayerContext, *,
+    owner_token: Optional[str] = None,
+    trusted_dispatch: bool = False,
+) -> Tuple[List[Any], Optional[str], int, Optional[str]]:
     """源 → (features, ref_id, live_content_revision, degraded_reason)。
 
     统计总体 = 提交源全量（ref 水合或 inline 载荷）；无全源（如纯瓦片 URL）
     → degraded，如实返回（绝不用可见瓦片/视窗冒充全域）。
+
+    鉴权双通道（G20 raster_authoring 同款）：HTTP 路由带 owner_token
+    （require_owned_session + X-Session-Token）；Pi 工具走 trusted_dispatch
+    的服务端内部读（session_id 由 ToolRegistry 从已授权上下文注入——模型
+    不能指定别的 session；per-session 隔离不变）。
     """
     entry = ctx.source_entry
     if entry.get("type") == "geojson":
@@ -157,16 +166,29 @@ async def _hydrate_features(ctx: LayerContext) -> Tuple[List[Any], Optional[str]
 
             resolved = await session_data_manager.resolve_alias(ctx.session_id, ref_id)
             descriptor = await session_data_manager.get_ref_descriptor(ctx.session_id, resolved)
-            res = await session_data_manager.get_ref_data_shared(ctx.session_id, resolved)
-            if not getattr(res, "success", False):
-                raise ThematicAuthoringError(
-                    "SOURCE_UNAVAILABLE",
-                    f"源 ref 不可用：{getattr(res, 'error', 'unknown')}",
-                    status_code=409)
-            data = getattr(res, "data", None)
-            fc = data.get("geojson") if isinstance(data, dict) else None
-            if not isinstance(fc, dict):
-                fc = data if isinstance(data, dict) and data.get("type") == "FeatureCollection" else None
+            if trusted_dispatch:
+                raw = await session_data_manager.get(ctx.session_id, resolved)
+                if isinstance(raw, str):
+                    import json as _json
+                    try:
+                        raw = _json.loads(raw)
+                    except ValueError:
+                        raw = None
+                fc = raw.get("geojson") if isinstance(raw, dict) else None
+                if not isinstance(fc, dict):
+                    fc = raw if isinstance(raw, dict) and raw.get("type") == "FeatureCollection" else None
+            else:
+                res = await session_data_manager.get_ref_data_shared(
+                    ctx.session_id, resolved, owner_token=owner_token)
+                if not getattr(res, "success", False):
+                    raise ThematicAuthoringError(
+                        "SOURCE_UNAVAILABLE",
+                        f"源 ref 不可用：{getattr(res, 'error', 'unknown')}",
+                        status_code=409)
+                data = getattr(res, "data", None)
+                fc = data.get("geojson") if isinstance(data, dict) else None
+                if not isinstance(fc, dict):
+                    fc = data if isinstance(data, dict) and data.get("type") == "FeatureCollection" else None
             if fc is None:
                 raise ThematicAuthoringError(
                     "SOURCE_NOT_FEATURECOLLECTION", "源 ref 不是 FeatureCollection", status_code=409)
@@ -249,12 +271,14 @@ def _check_source_anchor(plan: ThematicAuthoringPlan, ref_id: Optional[str], liv
 
 async def inspect_layer(
     session_id: str, layer_id: str, *, field: Optional[str] = None,
+    owner_token: Optional[str] = None, trusted_dispatch: bool = False,
 ) -> Dict[str, Any]:
     """作者检查：当前表达 + 同版本分布 + 字段清单 + 能力披露。"""
     ctx = await resolve_layer(session_id, layer_id)
     current_spec = ctx.layer.get("legend_spec")
     target_field = field or thematic_field(current_spec)
-    features, ref_id, live_rev, degraded = await _hydrate_features(ctx)
+    features, ref_id, live_rev, degraded = await _hydrate_features(
+        ctx, owner_token=owner_token, trusted_dispatch=trusted_dispatch)
     distribution: Dict[str, Any]
     if degraded or not target_field:
         distribution = {
@@ -265,13 +289,11 @@ async def inspect_layer(
             "disclosure": "无全量源（或未指定字段）——统计不可用；"
                           "绝不从可见瓦片/视窗推断全域分布（MVT 可见 ≠ 统计总体）",
         }
-        scan = None
     else:
         if ref_id is not None:
             distribution = stats_mod.cached_distribution(ref_id, live_rev, target_field, features)
         else:
             distribution = stats_mod.field_distribution(stats_mod.scan_field(features, target_field))
-        scan = stats_mod.scan_field(features, target_field)
 
     authoring = ctx.layer.get(AUTHORING_KEY) if isinstance(ctx.layer.get(AUTHORING_KEY), dict) else None
     shared = _shared_expression_scope(ctx.mapspec, ctx)
@@ -306,7 +328,8 @@ async def inspect_layer(
 
 
 async def preview_expression(
-    session_id: str, layer_id: str, plan: ThematicAuthoringPlan,
+    session_id: str, layer_id: str, plan: ThematicAuthoringPlan, *,
+    owner_token: Optional[str] = None, trusted_dispatch: bool = False,
 ) -> Dict[str, Any]:
     """预览：构建候选（与 commit 同一确定性构建器），零 mutation。"""
     ctx = await resolve_layer(session_id, layer_id)
@@ -323,7 +346,8 @@ async def preview_expression(
     if not target_field:
         raise ThematicAuthoringError(
             "MISSING_FIELD", "无法确定目标字段", field="field")
-    features, ref_id, live_rev, degraded = await _hydrate_features(ctx)
+    features, ref_id, live_rev, degraded = await _hydrate_features(
+        ctx, owner_token=owner_token, trusted_dispatch=trusted_dispatch)
     if degraded:
         raise ThematicAuthoringError(
             "STATS_UNAVAILABLE",
@@ -379,7 +403,8 @@ def _receipt(
 async def commit_expression(
     session_id: str, layer_id: str, plan: ThematicAuthoringPlan, *,
     expected_revision: int, origin: str = "user", actor: str = "thematic_authoring",
-    mutation_id: Optional[str] = None,
+    mutation_id: Optional[str] = None, owner_token: Optional[str] = None,
+    trusted_dispatch: bool = False,
 ) -> Dict[str, Any]:
     """单笔提交：同 id 整层 upsert（一次 CAS / 一个 checkpoint）。"""
     from app.services.gis_world_state.mutation import apply_gis_mutation
@@ -397,7 +422,8 @@ async def commit_expression(
     target_field = plan.field or current_field
     if not target_field:
         raise ThematicAuthoringError("MISSING_FIELD", "无法确定目标字段", field="field")
-    features, ref_id, live_rev, degraded = await _hydrate_features(ctx)
+    features, ref_id, live_rev, degraded = await _hydrate_features(
+        ctx, owner_token=owner_token, trusted_dispatch=trusted_dispatch)
     if degraded:
         raise ThematicAuthoringError(
             "STATS_UNAVAILABLE",

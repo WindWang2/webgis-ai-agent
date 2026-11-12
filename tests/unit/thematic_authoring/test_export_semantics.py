@@ -39,7 +39,7 @@ async def test_svg_boundary_values_same_class_same_color(session_id, store_root)
         "breaks": [0, 10, 20, 50], "palette": "Blues",
         "nodata": {"color": "#cccccc", "label": "无数据"},
     })
-    r = await commit_expression(
+    await commit_expression(
         session_id, "result-exp", plan,
         expected_revision=await current_revision(session_id),
         origin="user", actor="test")
@@ -132,7 +132,6 @@ async def test_svg_size_and_width_channels(session_id, store_root):
 
     for v, expect_scale in ((100, 4.0), (400, 5.7271), (1600, 10.0)):
         got = _resolve_paint_value(sm, {"pop": v}, fallback=None)
-        import math as _m
         assert abs(got - expect_scale) < 1e-3, f"r({v})={got} ≠ {expect_scale}"
         # 与同一尺寸函数（图例样本源）一致
         assert abs(got - size_for_value(v, plan.size_channel)) < 1e-9

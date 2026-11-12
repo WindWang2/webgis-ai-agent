@@ -152,7 +152,7 @@ async def test_categorical_commit_keeps_source_values_display_rename(session_id,
         {"key": "x", "color": "#111111", "label": "甲"},
     ])
     rev0 = await current_revision(session_id)
-    r = await commit_expression(
+    await commit_expression(
         session_id, "result-cat2", plan, expected_revision=rev0,
         origin="user", actor="test")
     layer = await read_layer(session_id, "result-cat2")
@@ -162,7 +162,6 @@ async def test_categorical_commit_keeps_source_values_display_rename(session_id,
     # 源值未变：match cases 仍按源键匹配
     assert layer["paint"]["color"]["cases"] == [["y", "#222222"], ["x", "#111111"]]
     # 数据未被改写
-    src = layer["source"]
     from app.services.session_data import session_data_manager
     resolved = await session_data_manager.resolve_alias(session_id, ref)
     res = await session_data_manager.get_ref_data_shared(session_id, resolved)
@@ -214,7 +213,8 @@ async def test_size_channel_area_proportional_exact(session_id, store_root):
     sm = r["size_paint"]["radius"]
     assert sm["output_transform"] == "sqrt"
     # 面积线性于数值：等值差 → 等面积差（精确断言）
-    a = lambda v: size_for_value(v, plan.size_channel) ** 2
+    def a(v):
+        return size_for_value(v, plan.size_channel) ** 2
     assert math.isclose(a(100) + (a(1600) - a(100)) * 0.25, a(475), rel_tol=1e-9)
     assert math.isclose(a(100) + (a(1600) - a(100)) * 0.5, a(850), rel_tol=1e-9)
     # 图例样本同一函数（min/mid/max）
@@ -223,12 +223,12 @@ async def test_size_channel_area_proportional_exact(session_id, store_root):
     assert math.isclose(samples["max"]["size"], 10.0)
 
     rev0 = await current_revision(session_id)
-    r2 = await commit_expression(
+    await commit_expression(
         session_id, "result-pts", plan, expected_revision=rev0, origin="user", actor="test")
     layer = await read_layer(session_id, "result-pts")
     assert layer["paint"]["radius"] == sm
     # 提交后再次无 size_channel 计划 → 移除本域写入的键（不碰其它符号键）
-    r3 = await commit_expression(
+    await commit_expression(
         session_id, "result-pts",
         _plan(mode="graduated_auto", method="equal_interval", k=3),
         expected_revision=await current_revision(session_id), origin="user", actor="test")
@@ -268,7 +268,7 @@ async def test_revert_auto_clears_authoring_scope(session_id, store_root, seeded
         expected_revision=rev0, origin="user", actor="test")
     manual = await read_layer(session_id, "result-seed")
     assert manual["legend_spec"]["method"] == "manual"
-    r = await commit_expression(
+    await commit_expression(
         session_id, "result-seed",
         _plan(mode="revert_auto"),
         expected_revision=await current_revision(session_id),
@@ -336,8 +336,6 @@ async def test_shared_expression_member_rejected(session_id, store_root, seeded)
     spec.setdefault("frame_product", {})["shared_expressions"] = [{
         "layer_ids": ["result-seed"], "breaks": [0, 50], "palette": "Viridis",
     }]
-    from app.services.gis_world_state.mutation import apply_gis_mutation
-    from app.services.mapspec.intents import UpsertLayerIntent
     # frame_product 不经 intent 面——直接写 store（测试搭建共享场景）
     await mapspec_store.save_mapspec(session_id, spec) if hasattr(mapspec_store, "save_mapspec") else None
 

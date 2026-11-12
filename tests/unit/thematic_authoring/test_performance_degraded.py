@@ -14,7 +14,6 @@ from app.services.thematic_authoring import stats as stats_mod
 from app.services.thematic_authoring.errors import ThematicAuthoringError
 from app.services.thematic_authoring import inspect_layer, preview_expression
 from app.services.thematic_authoring.contract import parse_plan
-from tests.unit.thematic_authoring.helpers import make_fc, seed_thematic_layer
 
 
 def _big_features(n: int, field: str = "v"):
