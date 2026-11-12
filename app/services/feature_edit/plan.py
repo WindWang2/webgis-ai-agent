@@ -114,6 +114,23 @@ def _validate_op_shapes(ops: List[Any]) -> List[EditFinding]:
         if kind not in EDIT_OPS:
             findings.append(finding("invalid_op", "unknown edit op", op=str(kind)[:32]))
             continue
+        # G32：op 级可选目标限定（wfids）—— 形状 fail-closed；仅 plan 级
+        # 目标 op 有意义（create/split/merge 自带目标，带了即拒绝防歧义）。
+        op_wfids = op.get("wfids")
+        if op_wfids is not None:
+            if kind in ("create_features", "split_feature", "merge_features", "rename_field"):
+                findings.append(
+                    finding("invalid_op", f"{kind} does not accept op-level wfids (targets are op-intrinsic)")
+                )
+            elif not (
+                isinstance(op_wfids, list)
+                and op_wfids
+                and all(isinstance(w, str) and w for w in op_wfids)
+                and len(op_wfids) <= MAX_PLAN_TARGETS
+            ):
+                findings.append(
+                    finding("invalid_op", "op-level wfids must be a non-empty list of feature ids")
+                )
         if kind == "set_fields" and not isinstance(op.get("fields"), dict):
             findings.append(finding("invalid_op", "set_fields requires fields map"))
         elif kind == "rename_field" and not (
@@ -217,11 +234,19 @@ def derive_changes(
         if not isinstance(op, dict) or op.get("op") not in EDIT_OPS:
             continue
         kind = op.get("op")
+        # G32：op 级目标限定 —— 带 wfids 的 plan 级 op 只作用于
+        # plan 解析目标 ∩ op.wfids（无 wfids 时行为与历史完全一致）。
+        op_wfids = op.get("wfids")
+        op_target_set = (
+            target_set & {str(w) for w in op_wfids}
+            if isinstance(op_wfids, list) and op_wfids
+            else target_set
+        )
         if kind == "set_fields":
             op_findings = validate_set_fields(op.get("fields") or {}, field_profiles)
             findings.extend(op_findings)
             if not op_findings:
-                deltas.extend(build_attr_deltas(working, target_set, op.get("fields") or {}))
+                deltas.extend(build_attr_deltas(working, op_target_set, op.get("fields") or {}))
             op_summaries.append({"op": kind, "fields": sorted((op.get("fields") or {}).keys())})
         elif kind == "rename_field":
             rename_findings = validate_rename_field(op.get("from"), op.get("to"), field_profiles)
@@ -231,13 +256,13 @@ def derive_changes(
             op_summaries.append({"op": kind, "from": op.get("from"), "to": op.get("to")})
         elif kind == "repair_geometry":
             geom_deltas, geom_findings = repair_geometry(
-                working, target_set, op.get("fixes") or ["make_valid"]
+                working, op_target_set, op.get("fixes") or ["make_valid"]
             )
             findings.extend(geom_findings)
             deltas.extend(geom_deltas)
             op_summaries.append({"op": kind, "fixes": op.get("fixes") or ["make_valid"]})
         elif kind == "move_by":
-            geom_deltas, geom_findings = move_by(working, target_set, op.get("dx_m"), op.get("dy_m"))
+            geom_deltas, geom_findings = move_by(working, op_target_set, op.get("dx_m"), op.get("dy_m"))
             findings.extend(geom_findings)
             deltas.extend(geom_deltas)
             op_summaries.append({"op": kind, "dx_m": op.get("dx_m"), "dy_m": op.get("dy_m")})
@@ -250,7 +275,7 @@ def derive_changes(
                 findings.append(finding("dataset_not_editable", "snap target ref unavailable", target_ref=str(target_ref)[:64]))
             else:
                 geom_deltas, geom_findings, summary = snap_to_ref(
-                    working, target_set, _extract_fc(target_payloads[target_ref]), op.get("tolerance_m")
+                    working, op_target_set, _extract_fc(target_payloads[target_ref]), op.get("tolerance_m")
                 )
                 findings.extend(geom_findings)
                 deltas.extend(geom_deltas)
@@ -324,8 +349,8 @@ def derive_changes(
             findings.extend(create_findings)
             op_summaries.append({"op": kind, "count": len(created)})
         elif kind == "delete_features":
-            snapshot = _delete_deltas(working, target_set)
-            missing = sorted(target_set - {d.get("wfid") for d in snapshot})[:8]
+            snapshot = _delete_deltas(working, op_target_set)
+            missing = sorted(op_target_set - {d.get("wfid") for d in snapshot})[:8]
             if missing:
                 findings.append(finding("feature_not_found", "delete targets missing in current payload", wfid=missing))
             elif len(snapshot) > MAX_DELETED_PER_PLAN:
@@ -336,7 +361,7 @@ def derive_changes(
                 deltas.extend(snapshot)
             op_summaries.append({"op": kind, "count": len(snapshot)})
         elif kind == "replace_geometry":
-            geom_deltas, geom_findings = replace_geometry(working, target_set, op.get("geometry"))
+            geom_deltas, geom_findings = replace_geometry(working, op_target_set, op.get("geometry"))
             findings.extend(geom_findings)
             deltas.extend(geom_deltas)
             op_summaries.append({"op": kind, "targets": len(geom_deltas)})
@@ -429,12 +454,16 @@ def build_plan(
     dataset_fingerprint: str,
     content_revision: int,
     target_payloads: Optional[Dict[str, Any]] = None,
+    plan_seed: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], List[EditFinding]]:
     """构造 EditPlan（纯读路径）。
 
     payload：session ref 的原始载荷（信封或裸 FC，本函数内部归一）。
     selection：IR 投影的 selection 视图（含 dataset_ref/feature_id）。
     target_payloads：snap 目标 ref 的预取载荷。
+    plan_seed（G32）：可选服务端种子 —— create/split/merge 新生身份由
+    plan_id 决定性派生；持久提案（feature_proposals）传入其持久 op_seed
+    使候选与提交重求值得到同一批 wfid。空值回退内部 fep- uuid。
     返回 (plan_dict, findings)；findings 非空时 plan.committable=False。
     """
     fc = _extract_fc(payload)
@@ -449,11 +478,13 @@ def build_plan(
     findings: List[EditFinding] = list(_validate_op_shapes(ops))
     # plan_id 先于求值生成：create/split/merge 新生身份由 plan_id 决定性派生，
     # preview 与 commit 重求值必须得到同一批 wfid（幂等重放/redo 身份稳定）。
-    plan_id = f"fep-{uuid.uuid4().hex[:12]}"
+    plan_id = plan_seed if plan_seed else f"fep-{uuid.uuid4().hex[:12]}"
 
     # ── 目标解析：显式 ids 优先，否则 selection（含 selected_ids 扩展） ──
     # G14：create-only plan 不需要既有目标（空数据集首个要素的合法路径）；
     # split op 自带目标 wfid，并入解析集合。
+    # G32：plan 级 op 携带的 op 级 wfids 限定（自然 id 或 WFID）同样并入
+    # 解析集合 —— 一个 plan 表达多要素异构修改（要素A改X、要素B改Y）。
     op_kinds = [op.get("op") for op in ops if isinstance(op, dict)]
     create_only = bool(op_kinds) and all(k == "create_features" for k in op_kinds)
     split_wfids = [
@@ -461,6 +492,13 @@ def build_plan(
         for op in ops
         if isinstance(op, dict) and op.get("op") == "split_feature" and isinstance(op.get("wfid"), str)
     ]
+    op_level_ids: List[str] = []
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        raw = op.get("wfids")
+        if isinstance(raw, list):
+            op_level_ids.extend(str(w) for w in raw if isinstance(w, str) and w)
     materialize = needs_materialization(fc)
     preview_fc = fc
     if materialize:
@@ -474,6 +512,7 @@ def build_plan(
     elif requested_ids:
         ids = [str(x) for x in requested_ids][:MAX_PLAN_TARGETS]
         ids.extend(split_wfids)
+        ids.extend(op_level_ids)
         ids = list(dict.fromkeys(ids))[:MAX_PLAN_TARGETS]
     elif selection and isinstance(selection.get("feature_id"), str):
         ids = [str(selection["feature_id"])]
@@ -481,9 +520,10 @@ def build_plan(
         if isinstance(extra, list):
             ids.extend(str(x) for x in extra if isinstance(x, str))
         ids.extend(split_wfids)
+        ids.extend(op_level_ids)
         ids = list(dict.fromkeys(ids))[:MAX_PLAN_TARGETS]
-    elif split_wfids:
-        ids = list(dict.fromkeys(split_wfids))[:MAX_PLAN_TARGETS]
+    elif split_wfids or op_level_ids:
+        ids = list(dict.fromkeys(split_wfids + op_level_ids))[:MAX_PLAN_TARGETS]
     else:
         return {}, [finding("invalid_target", "no explicit ids and no live selection")]
 
@@ -517,8 +557,27 @@ def build_plan(
     from app.services.feature_edit.contracts import GEOMETRY_OPS as _GEO_OPS, MAX_GEOMETRY_TARGETS
 
     geometry_bound_kinds = set(_GEO_OPS) | {"replace_geometry", "split_feature", "merge_features"}
-    has_geometry = any(op.get("op") in geometry_bound_kinds for op in ops if isinstance(op, dict))
-    if has_geometry and len(wfids) > MAX_GEOMETRY_TARGETS:
+    # G32：几何上限按「几何 op 实际触及的目标并集」计 —— op 级 wfids 限定
+    # 的 plan 不因 plan 全体目标多而误伤；反之无限定的几何 plan 仍是全体
+    # 目标 ≤10（journal undo 保真预算不变）。
+    geometry_touched: set = set()
+    for op in ops:
+        if not isinstance(op, dict) or op.get("op") not in geometry_bound_kinds:
+            continue
+        if op.get("op") == "split_feature":
+            resolved = wfid_map.get(str(op.get("wfid") or ""))
+            if resolved:
+                geometry_touched.add(resolved)
+            continue
+        raw = op.get("wfids") if isinstance(op.get("wfids"), list) else None
+        if raw:
+            for w in raw:
+                resolved = wfid_map.get(str(w))
+                if resolved:
+                    geometry_touched.add(resolved)
+        else:
+            geometry_touched.update(wfids)
+    if geometry_touched and len(geometry_touched) > MAX_GEOMETRY_TARGETS:
         findings.append(
             finding(
                 "target_limit_exceeded",
@@ -527,8 +586,15 @@ def build_plan(
             )
         )
 
+    # G32：op 级 wfids 归一化到 wfid 空间（自然 id → 稳定身份）—— plan 持久
+    # 归一化后的 ops，preview 与 commit 的 derive 在同一目标空间上交集。
+    from app.services.feature_proposals.candidate import normalize_op_wfids as _norm_wfids
+
+    derive_ops = _norm_wfids(
+        [op for op in ops if isinstance(op, dict)][:MAX_OPS_PER_PLAN], preview_fc,
+    )
     deltas, schema_ops, derive_findings, op_summaries, lineage_events = derive_changes(
-        preview_fc, ops if isinstance(ops, list) else [], ordered_wfids or wfids, target_payloads or {},
+        preview_fc, derive_ops, ordered_wfids or wfids, target_payloads or {},
         plan_seed=plan_id,
         geometry_type=_declared_geometry_type(payload),
     )
@@ -572,7 +638,7 @@ def build_plan(
     plan: Dict[str, Any] = {
         "plan_id": plan_id,
         "ref_id": ref_id,
-        "ops": [op for op in ops if isinstance(op, dict)][:MAX_OPS_PER_PLAN],
+        "ops": derive_ops,
         "target_wfids": wfids[:MAX_PLAN_TARGETS],
         "target_wfids_ordered": ordered_wfids[:MAX_PLAN_TARGETS],
         "target_ids": ids[:MAX_PLAN_TARGETS],
