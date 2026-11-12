@@ -153,9 +153,16 @@ export function compileStyleMethod(
       for (const [stopVal, outputVal] of stops) {
         flattenedStops.push(stopVal, outputVal);
       }
-      const interpExpr = asExpression([
+      const baseExpr = asExpression([
         "interpolate", interpolationExpr, fieldExpr, ...flattenedStops,
       ]);
+      // G33：输出变换（"sqrt"）—— 比例圆符号「面积∝数值」：stops 携带
+      // r²（面积线性于数值），输出取 √ 得半径。数值输出恒非负，sqrt 无
+      // 错误分支；与导出端 _resolve_paint_value 同口径。
+      const interpExpr: unknown =
+        m.output_transform === "sqrt"
+          ? asExpression(["sqrt", baseExpr])
+          : baseExpr;
       // H02 §B：nodata guard —— 与 live withNoDataGuard 同形状
       // （["case", ["==", ["get", field], null], nodata, thematic]）。
       if (m.field !== "zoom" && typeof m.nodata === "string" && m.nodata) {

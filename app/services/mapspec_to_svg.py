@@ -411,7 +411,22 @@ def _resolve_paint_value(
         if prop_val is not None and isinstance(cases, list):
             for pair in cases:
                 if isinstance(pair, (list, tuple)) and len(pair) >= 2:
-                    if str(prop_val) == str(pair[0]) or prop_val == pair[0]:
+                    # G33：与 MapLibre match 同为**类型敏感**比较——case 是
+                    # 数值时只匹配数值属性（bool 除外），case 是字符串时只
+                    # 匹配字符串属性。此前 ``str()==str()`` 使数值 1 命中文
+                    # 本 "1"（live 端从不命中）——类型化 case 落地后双端对齐。
+                    case = pair[0]
+                    if isinstance(case, bool):
+                        if isinstance(prop_val, bool) and prop_val == case:
+                            return pair[1]
+                    elif isinstance(case, (int, float)):
+                        if (
+                            isinstance(prop_val, (int, float))
+                            and not isinstance(prop_val, bool)
+                            and float(prop_val) == float(case)
+                        ):
+                            return pair[1]
+                    elif str(prop_val) == str(case):
                         return pair[1]
         return val.get("default", fallback)
 
@@ -448,28 +463,39 @@ def _resolve_paint_value(
         if not isinstance(stops, list) or not stops:
             return val.get("default", fallback)
         if not _math.isfinite(prop_val):
-            return stops[0][1] if (len(stops[0]) >= 2) else fallback
+            raw_result = stops[0][1] if (len(stops[0]) >= 2) else fallback
+        else:
+            first_stop = stops[0]
+            last_stop = stops[-1]
+            x_min = _safe_float(first_stop[0], default=float("-inf"))
+            x_max = _safe_float(last_stop[0], default=float("inf"))
 
-        first_stop = stops[0]
-        last_stop = stops[-1]
-        x_min = _safe_float(first_stop[0], default=float("-inf"))
-        x_max = _safe_float(last_stop[0], default=float("inf"))
-
-        if prop_val <= x_min:
-            return first_stop[1]
-        if prop_val >= x_max:
-            return last_stop[1]
-
-        for i in range(len(stops) - 1):
-            s0, s1 = stops[i], stops[i + 1]
-            x0 = _safe_float(s0[0], default=float("nan"))
-            x1 = _safe_float(s1[0], default=float("nan"))
-            if _math.isfinite(x0) and _math.isfinite(x1) and x0 <= prop_val <= x1:
-                if x1 == x0:
-                    return s0[1]
-                t = (prop_val - x0) / (x1 - x0)
-                return interpolate_value(s0[1], s1[1], t)
-        return last_stop[1]
+            if prop_val <= x_min:
+                raw_result = first_stop[1]
+            elif prop_val >= x_max:
+                raw_result = last_stop[1]
+            else:
+                raw_result = last_stop[1]
+                for i in range(len(stops) - 1):
+                    s0, s1 = stops[i], stops[i + 1]
+                    x0 = _safe_float(s0[0], default=float("nan"))
+                    x1 = _safe_float(s1[0], default=float("nan"))
+                    if _math.isfinite(x0) and _math.isfinite(x1) and x0 <= prop_val <= x1:
+                        if x1 == x0:
+                            raw_result = s0[1]
+                        else:
+                            t = (prop_val - x0) / (x1 - x0)
+                            raw_result = interpolate_value(s0[1], s1[1], t)
+                        break
+        # G33：输出变换（"sqrt"）—— 比例圆符号「面积∝数值」：stops 携带
+        # r²（面积线性于数值），输出取 √ 得半径。与 live compileStyleMethod
+        # 同口径（数值输出恒非负）。
+        if val.get("output_transform") == "sqrt":
+            num = _safe_float(raw_result, default=float("nan"))
+            if _math.isfinite(num) and num >= 0:
+                return _math.sqrt(num)
+            return fallback
+        return raw_result
 
     return val.get("value", fallback)
 
