@@ -1433,6 +1433,17 @@ async def chat_stream(
                             })
                             buffer.record(notice)
                             yield notice
+                    else:
+                        # review P2-8：本 turn 未带 skill_name —— 清除上一轮的
+                        # 显式选择（选择按 turn 生效，不跨 turn 粘滞）。
+                        try:
+                            from app.services.gis_harness.hotpath_convergence.session_ctx import (
+                                set_explicit_skill,
+                            )
+                            set_explicit_skill(pi_session_id, {})
+                        except Exception:  # noqa: BLE001
+                            logger.debug("[pi-chat] explicit skill clear failed",
+                                         exc_info=True)
                     # #398: record OUTSIDE the route batcher so the buffer
                     # holds the COALESCED chunks (up to 32 token events each)
                     # instead of every single token event — a token-heavy turn

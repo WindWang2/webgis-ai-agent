@@ -50,8 +50,15 @@ def upgrade() -> None:
     op.create_index(
         "idx_skill_preset_org_project", "skill_job_presets",
         ["org_id", "project_id"])
+    # review P2-10：与模型 index=True 对齐（create_all 与 alembic 产物一致）
+    op.create_index(
+        "ix_skill_job_presets_org_id", "skill_job_presets", ["org_id"])
+    op.create_index(
+        "ix_skill_job_presets_project_id", "skill_job_presets", ["project_id"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_skill_job_presets_project_id", table_name="skill_job_presets")
+    op.drop_index("ix_skill_job_presets_org_id", table_name="skill_job_presets")
     op.drop_index("idx_skill_preset_org_project", table_name="skill_job_presets")
     op.drop_table("skill_job_presets")

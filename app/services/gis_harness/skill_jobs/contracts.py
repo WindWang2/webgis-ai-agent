@@ -55,6 +55,8 @@ SKILL_JOB_ERROR_CODES = (
     "TOOL_CAPABILITY_MISMATCH",    # 工具不归属声明能力
     # ── 会话面 ──
     "SESSION_REQUIRED",            # 无会话上下文无法解析 ref
+    # ── 资源面 ──
+    "PAYLOAD_TOO_LARGE",           # 内联绑定数据超字节预算（用 ref 而非内联）
 )
 
 

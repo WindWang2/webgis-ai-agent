@@ -54,6 +54,9 @@ class PrepareResult:
 _FIELD_SAMPLE_MAX = 200
 #: 绑定数据要素上限（防御：超大内联数据在 prepare 拒绝而不是拖垮进程）。
 _MAX_BINDING_FEATURES = 200_000
+#: 内联绑定字节预算（review P1-5：单一巨型要素/超长属性串不受要素数约束；
+#: 大数据请走会话 ref —— ref 通道有自己的体积治理与 spill 机制）。
+_MAX_INLINE_BINDING_BYTES = 8 * 1024 * 1024
 
 
 def _digest_payload(data: Any) -> str:
@@ -65,7 +68,7 @@ def _digest_payload(data: Any) -> str:
 def extract_binding_facts(data: Any) -> Tuple[BindingFacts, Optional[str]]:
     """从 FeatureCollection 抽取有界事实；返回 (facts, error)。
 
-    只陈述不推断：几何类别取主导类别（混合几何如实标 mixed → mismatch）；
+    只陈述不推断：几何类别取主导类别（混合几何如实标 mismatch）；
     字段类型由有界值采样判 numeric/categorical/unknown。
     """
     if not isinstance(data, dict) or data.get("type") != "FeatureCollection" \
@@ -73,7 +76,8 @@ def extract_binding_facts(data: Any) -> Tuple[BindingFacts, Optional[str]]:
         return BindingFacts(), "DATA_NOT_GEOJSON"
     features = data["features"]
     if len(features) > _MAX_BINDING_FEATURES:
-        return BindingFacts(), "DATA_NOT_GEOJSON"  # 超限按不可绑定拒绝（typed 拒绝在调用方标注）
+        # review P1-5：要素超限是资源事实，不是形状错误 —— 诚实typed码。
+        return BindingFacts(), "PAYLOAD_TOO_LARGE"
     kind_counts: Dict[str, int] = {}
     fields: List[str] = []
     field_seen = set()
@@ -326,9 +330,22 @@ async def prepare_skill_job(
             resolved_bindings.append(PreparedBinding(
                 role=role, ref=resolved, inline=False, facts=facts))
         else:
+            import json as _json
+            try:
+                _inline_bytes = len(_json.dumps(
+                    inline, ensure_ascii=False, default=str))
+            except (TypeError, ValueError):
+                _inline_bytes = _MAX_INLINE_BINDING_BYTES + 1
+            if _inline_bytes > _MAX_INLINE_BINDING_BYTES:
+                raise SkillJobErrorCode(
+                    "PAYLOAD_TOO_LARGE",
+                    f"角色 {role} 内联数据超字节预算"
+                    f"（{_inline_bytes} > {_MAX_INLINE_BINDING_BYTES}）；"
+                    "大数据请先入会话存储，用 ref 绑定")
             facts, err = extract_binding_facts(inline)
             if err:
-                raise SkillJobErrorCode(err, f"角色 {role} 内联数据不是可用的 FeatureCollection")
+                raise SkillJobErrorCode(
+                    err, f"角色 {role} 内联数据不是可用的 FeatureCollection")
             resolved_bindings.append(PreparedBinding(
                 role=role, ref="", inline=True, facts=facts))
             inline_payloads[role] = inline

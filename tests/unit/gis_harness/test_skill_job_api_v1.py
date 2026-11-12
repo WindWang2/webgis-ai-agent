@@ -8,7 +8,7 @@ SkillJobErrorCode 映射单测覆盖）。
 from __future__ import annotations
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.routes import skill_jobs as sj_routes
@@ -60,9 +60,15 @@ def _points(n: int = 12):
 class _FakeConversation:
     pass
 
+#: fake 归属表：模拟真实 verify_session_owner（非归属 → 404 不泄露存在性）
+_FAKE_OWNED_SESSIONS = {"sess-api-1": {"user-a"}}
+
 
 async def _fake_verify(db, session_id, user_id=None, owner_token=None):
-    return _FakeConversation()
+    owners = _FAKE_OWNED_SESSIONS.get(session_id, set())
+    if user_id and user_id in owners:
+        return _FakeConversation()
+    raise HTTPException(status_code=404, detail="Session not found")
 
 
 @pytest.fixture()
@@ -169,7 +175,6 @@ def test_prepare_start_run_and_idempotent_reuse(registry, owned_session_id):
 def test_preset_save_and_reuse_with_new_data(registry, owned_session_id):
     """场景 #17/#18：预设重用 = 显式新绑定重新 prepare（参数来源=preset）。"""
     import asyncio
-    import time
 
     from app.services.session_data import session_data_manager
 
@@ -225,3 +230,89 @@ def test_preset_save_and_reuse_with_new_data(registry, owned_session_id):
         })
     assert r5.status_code == 404
     assert r5.json()["detail"]["code"] == "REF_NOT_FOUND"
+
+
+def test_run_read_requires_session_ownership(registry, owned_session_id):
+    """review P1-2：裸 job id 单读不再放行（枚举整数 id 不得成为旁路）。"""
+    import asyncio
+    import time
+
+    from app.services.session_data import session_data_manager
+
+    loop = asyncio.new_event_loop()
+    ref = loop.run_until_complete(
+        session_data_manager.store(owned_session_id, _points(), prefix="geojson"))
+    loop.close()
+    client = _app(_USER)
+    prepared = client.post("/api/v1/skill-jobs/prepare", json={
+        "session_id": owned_session_id, "skill_id": "validate_spatial_data",
+        "params": {}, "bindings": [{"role": "subject", "ref": ref}],
+    }).json()
+    run = client.post("/api/v1/skill-jobs/start", json={
+        "prepared_id": prepared["prepared_id"], "session_id": owned_session_id,
+        "wait_timeout_s": 60,
+    }).json()
+    job_id = run["job_id"]
+    for _ in range(100):
+        got = client.get(
+            f"/api/v1/skill-jobs/runs/{job_id}?session_id={owned_session_id}").json()
+        if got.get("status") in ("completed", "failed", "cancelled"):
+            break
+        time.sleep(0.2)
+    assert got["status"] == "completed"
+    # 本人裸读（行内 session 归属验证通过）→ 200：自己的运行当然可读
+    own_bare = client.get(f"/api/v1/skill-jobs/runs/{job_id}")
+    assert own_bare.status_code == 200
+    # 他人裸读（user-b 无 sess-api-1 归属）→ 404：裸 id 枚举不得旁路
+    client_b = _app(_USER_B)
+    cross = client_b.get(f"/api/v1/skill-jobs/runs/{job_id}")
+    assert cross.status_code == 404
+    # 指向他人不拥有的会话参数 → 404
+    other = client.get(
+        f"/api/v1/skill-jobs/runs/{job_id}?session_id=sess-not-owned")
+    assert other.status_code == 404
+
+
+def test_preset_update_cross_org_rejected(registry):
+    """review P1-1：跨 org 更新预设按 not found 拒绝（且不回显行）。"""
+    client_a = _app(_USER)
+    preset = client_a.post("/api/v1/skill-jobs/presets", json={
+        "name": "org-a 预设", "skill_id": "validate_spatial_data",
+        "params": {}, "bindings_template": {},
+    }).json()
+    client_b = _app(_USER_B)
+    res = client_b.put(f"/api/v1/skill-jobs/presets/{preset['id']}", json={
+        "name": "hijacked", "skill_id": "validate_spatial_data",
+        "params": {}, "bindings_template": {},
+    })
+    assert res.status_code == 422
+    # 原行未被篡改
+    intact = client_a.get(f"/api/v1/skill-jobs/presets/{preset['id']}").json()
+    assert intact["name"] == "org-a 预设"
+
+
+def test_preset_reuse_keeps_long_param_values(registry, owned_session_id):
+    """review P1-4：预设重用读取原始参数（>64 字符不截断）。"""
+    import asyncio
+
+    from app.services.session_data import session_data_manager
+
+    loop = asyncio.new_event_loop()
+    ref = loop.run_until_complete(
+        session_data_manager.store(owned_session_id, _points(), prefix="geojson"))
+    loop.close()
+    client = _app(_USER)
+    long_title = "学" * 70  # spec 上限 80；旧视图截到 64
+    preset = client.post("/api/v1/skill-jobs/presets", json={
+        "name": "长标题预设", "skill_id": "point_distribution_analysis",
+        "params": {"layer_title": long_title},
+        "bindings_template": {"subject": {"last_ref": ref, "mode": "ref"}},
+    }).json()
+    res = client.post(
+        f"/api/v1/skill-jobs/presets/{preset['id']}/prepare", json={
+            "session_id": owned_session_id,
+            "bindings": [{"role": "subject", "ref": ref}],
+        })
+    assert res.status_code == 200, res.text
+    sources = {p["name"]: p for p in res.json()["param_sources"]}
+    assert sources["layer_title"]["value"] == long_title

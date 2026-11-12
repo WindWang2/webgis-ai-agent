@@ -249,17 +249,18 @@ skills:
         label: 度量语义
         type: enum
         required: true
-        enum_values: [count, rate, density, percentage]
-        description: 上色量的统计语义；rate/density 需要分母在场（denominator_field）。
+        enum_values: [count, percentage]
+        description: 执行面上色的统计语义（数据中已有的量）。rate/density 需要
+          归一化计算，当前执行面不实现（不得把分子总量着成率）——需要时经对话
+          规划路径执行完整方法（其分母义务由规划/评价面裁决）。
       - name: denominator_field
         label: 分母字段
         type: field_ref
         required: false
         role: subject
         expects: numeric
-        required_if_param: measure_semantics
-        required_if_in: [rate, density]
-        description: measure_semantics=rate/density 时的分母字段；缺失即 prepare 拒绝（无分母不得成率）。
+        description: （保留声明面）规划路径 rate/density 语义的分母字段；执行面
+          枚举已限制为 count/percentage，本参数不参与执行映射。
       - name: method
         label: 分级方法
         type: string

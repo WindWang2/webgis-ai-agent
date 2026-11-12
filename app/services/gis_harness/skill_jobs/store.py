@@ -54,15 +54,23 @@ class PreparedStore:
             self._items.move_to_end(prepared_id)
             return (prepared, inline)
 
-    def pop(self, prepared_id: str) -> Optional[Tuple[PreparedSkillCall, Dict[str, Any]]]:
-        """取出并移除（start 消费语义：一次准备一次启动消费）。"""
+    def pop(self, prepared_id: str, *, session_id: str = "") -> Optional[Tuple[PreparedSkillCall, Dict[str, Any]]]:
+        """取出并移除（start 消费语义：一次准备一次启动消费）。
+
+        review P2-6：会话不匹配**不消费**（错会话的启动不得烧掉他人/
+        本会话稍后要用的执行意图）；过期/不存在/越权同样返回 None。
+        """
         with self._lock:
-            entry = self._items.pop(prepared_id, None)
+            entry = self._items.get(prepared_id)
             if entry is None:
                 return None
             prepared, inline, expires = entry
             if time.time() > expires:
+                del self._items[prepared_id]
                 return None
+            if session_id and prepared.session_id != session_id:
+                return None  # 不删除：归属不符不是消费
+            del self._items[prepared_id]
             return (prepared, inline)
 
     def clear(self) -> None:

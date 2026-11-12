@@ -160,19 +160,15 @@ def register_skill_job_tools(registry: ToolRegistry):
         ctx = current_runtime_context()
         if not sid and ctx is not None:
             sid = str(getattr(ctx, "session_id", "") or "")
-        entry = prepared_store.pop(prepared_id)
+        entry = prepared_store.pop(prepared_id, session_id=sid) if sid \
+            else prepared_store.pop(prepared_id)
         if entry is None:
+            # 会话不符与过期同形回执（不泄露 prepared 归属；不消费他人意图）
             return {
                 "success": False, "code": "PREPARED_EXPIRED",
-                "message": "prepared_id 不存在/已过期/已被消费 —— 重新调用 prepare",
+                "message": "prepared_id 不存在/已过期/已被消费/归属另一会话 —— 重新调用 prepare",
             }
         prepared, inline_payloads = entry
-        if sid and prepared.session_id != sid:
-            return {
-                "success": False, "code": "PREPARED_SESSION_MISMATCH",
-                "message": "prepared call 归属另一会话",
-                "detail": {"prepared_session": prepared.session_id[:24]},
-            }
         owner = SkillJobOwner(
             session_id=prepared.session_id,
             turn_id=str(getattr(ctx, "turn_id", "") or "") if ctx else "",
@@ -230,6 +226,12 @@ def register_skill_job_tools(registry: ToolRegistry):
                 return {"success": False, "code": "BAD_JOB_ID",
                         "message": "job_id 必须是数字"}
             if view is None:
+                return {"success": False, "code": "JOB_NOT_FOUND",
+                        "message": f"job {job_id} 不存在"}
+            # review P1-2：单读归属验证 —— 行内会话必须与当前回调会话一致
+            #（裸 id 枚举不得成为跨会话旁路）。
+            row_session = str(view.get("session_id") or "")
+            if not row_session or (sid and row_session != sid):
                 return {"success": False, "code": "JOB_NOT_FOUND",
                         "message": f"job {job_id} 不存在"}
             return {"success": True, "run": view}

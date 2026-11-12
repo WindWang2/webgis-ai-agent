@@ -188,16 +188,13 @@ async def start(
     )
     from app.services.gis_harness.skill_jobs.store import prepared_store
 
-    entry = prepared_store.pop(req.prepared_id)
+    # 会话不符不消费（归属错误不烧掉执行意图；与过期同形 410 不泄露归属）
+    entry = prepared_store.pop(req.prepared_id, session_id=req.session_id)
     if entry is None:
         raise HTTPException(410, detail={
             "code": "PREPARED_EXPIRED",
-            "message": "prepared_id 不存在/已过期/已被消费 —— 重新 prepare"})
+            "message": "prepared_id 不存在/已过期/已被消费/归属另一会话 —— 重新 prepare"})
     prepared, inline_payloads = entry
-    if prepared.session_id != req.session_id:
-        raise HTTPException(410, detail={
-            "code": "PREPARED_SESSION_MISMATCH",
-            "message": "prepared call 归属另一会话"})
     owner = SkillJobOwner(
         session_id=req.session_id,
         user_id=str(user.get("id") or ""),
@@ -240,16 +237,23 @@ async def get_run(
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """单运行视图（含步骤/产物 refs/证据覆盖）。session_id 给出时做归属核对。"""
+    """单运行视图（含步骤/产物 refs/证据覆盖）。
+
+    review P1-2：单读必须归属验证 —— 无 session_id 的裸 id 读不再放行
+    （与任务中心 get_for_owner 同规则：枚举整数 id 不得成为旁路）。
+    """
     from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
 
     view = await get_skill_job_view(job_id)
     if view is None:
         raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
-    if session_id:
-        await _authorize_session(db, session_id, user, owner_token)
-        if view.get("session_id") and view["session_id"] != session_id:
-            raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    row_session = str(view.get("session_id") or "")
+    if not row_session:
+        # 无会话归属的行（防御：技能作业恒有 session）按不可见处理
+        raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    if session_id and session_id != row_session:
+        raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    await _authorize_session(db, row_session, user, owner_token)
     return view
 
 
@@ -262,12 +266,12 @@ async def cancel_run(
     db: AsyncSession = Depends(get_async_db),
 ):
     """取消（既有 durable 两阶段取消；已提交合法结果不虚假回滚）。"""
-    await _authorize_session(db, session_id, user, owner_token)
     from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
 
     view = await get_skill_job_view(job_id)
     if view is None or view.get("session_id") != session_id:
         raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    await _authorize_session(db, session_id, user, owner_token)
     if not view.get("cancellable"):
         return {"job_id": str(job_id), "status": view.get("status"),
                 "cancelled": False,
@@ -279,6 +283,15 @@ async def cancel_run(
     with SessionLocal() as sdb:
         requested, _status = DurableJobStore.request_cancel_sync(sdb, job_id)
         sdb.commit()
+    # review P2-11：与任务中心同款 —— DB 取消事实 + 进程内取消令牌双发，
+    # 在飞执行体立即在步间检查点收敛（不等看门狗轮询）。
+    if requested:
+        try:
+            from app.lib.cancellation import registry as cancellation_registry
+
+            cancellation_registry.cancel(job_id, "cancelled by user")
+        except Exception:  # noqa: BLE001 — 令牌缺席=跨副本取消，看门狗兜底
+            pass
     return {"job_id": str(job_id), "cancel_requested": bool(requested)}
 
 
@@ -374,17 +387,20 @@ async def preset_prepare_ep(
     REF_NOT_FOUND，要求重新绑定（不泄露他人数据）。
     """
     await _authorize_session(db, req.session_id, user, owner_token)
-    from app.services.gis_harness.skill_jobs.presets import get_preset
+    from app.services.gis_harness.skill_jobs.presets import get_preset, get_preset_raw
     from app.services.gis_harness.skill_jobs.prepare import prepare_skill_job
     from app.services.gis_harness.skill_jobs.store import prepared_store
 
-    preset = get_preset(preset_id, org_id=_org_of(user))
-    if preset is None:
+    # review P1-4：重用路径读原始行 —— 有界视图会截断 >64 字符参数。
+    preset_raw = get_preset_raw(preset_id, org_id=_org_of(user))
+    if preset_raw is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
-    params = dict(preset.get("params") or {})
+    preset = get_preset(preset_id, org_id=_org_of(user))
+    assert preset is not None  # raw 命中则视图必在
+    params = dict(preset_raw.get("params") or {})
     params.update(req.params_override)
     # 参数来源标注：预设继承的参数 = preset；覆盖值 = user
-    param_sources = {k: "preset" for k in (preset.get("params") or {}).keys()}
+    param_sources = {k: "preset" for k in (preset_raw.get("params") or {}).keys()}
     param_sources.update({k: "user" for k in req.params_override.keys()})
     try:
         result = await prepare_skill_job(

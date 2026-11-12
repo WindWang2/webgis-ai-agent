@@ -177,8 +177,13 @@ export function listSkillJobRuns(sessionId: string): Promise<{ runs: SkillJobRun
   return request<{ runs: SkillJobRun[] }>(`/api/v1/skill-jobs/runs?session_id=${encodeURIComponent(sessionId)}`);
 }
 
-export function getSkillJobRun(jobId: string | number): Promise<SkillJobRun> {
-  return request<SkillJobRun>(`/api/v1/skill-jobs/runs/${jobId}`);
+export function getSkillJobRun(
+  jobId: string | number,
+  sessionId: string,
+): Promise<SkillJobRun> {
+  // 单读必须携带会话归属（后端按行内 session 验证 owner；review P1-2）
+  return request<SkillJobRun>(
+    `/api/v1/skill-jobs/runs/${jobId}?session_id=${encodeURIComponent(sessionId)}`);
 }
 
 export function cancelSkillJobRun(jobId: string | number, sessionId: string): Promise<{ cancel_requested: boolean }> {

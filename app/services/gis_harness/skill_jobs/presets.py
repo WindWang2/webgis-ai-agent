@@ -67,6 +67,14 @@ def save_preset(
     from app.models.db_model import SkillJobPreset
     from app.services.gis_harness.skills.loader import get_skill_library
 
+    import json as _json
+
+    _payload_bytes = len(_json.dumps(
+        {"p": payload.params, "b": payload.bindings_template},
+        ensure_ascii=False, default=str))
+    if _payload_bytes > 16 * 1024:
+        raise ValueError("预设载荷超限（≤16KB）：预设是配置引用，不承载大对象")
+
     lib = get_skill_library()
     skill = lib.get(payload.skill_id)
     if skill is None:
@@ -79,7 +87,9 @@ def save_preset(
     with SessionLocal() as db:
         if preset_id:
             row = db.get(SkillJobPreset, preset_id)
-            if row is None:
+            # review P1-1：更新路径与 get/delete 同规则校验 org（跨 org 一律
+            # not found，不泄露存在性）。
+            if row is None or row.org_id != org_id:
                 raise ValueError("preset not found")
             row.name = payload.name
             row.description = payload.description
@@ -128,6 +138,24 @@ def list_presets(
     with SessionLocal() as db:
         rows = db.execute(stmt).scalars().all()
         return [_row_to_view(r) for r in rows]
+
+
+def get_preset_raw(preset_id: str, *, org_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    """原始（未截断）预设数据 —— 仅供重用/prepare 路径（review P1-4：
+    _row_to_view 的有界投影截断长参数，不能作为重用真相）。"""
+    from app.core.database import SessionLocal
+    from app.models.db_model import SkillJobPreset
+
+    with SessionLocal() as db:
+        row = db.get(SkillJobPreset, preset_id)
+        if row is None or row.org_id != org_id:
+            return None
+        return {
+            "params": dict(row.params) if isinstance(row.params, dict) else {},
+            "bindings_template": (
+                dict(row.bindings_template)
+                if isinstance(row.bindings_template, dict) else {}),
+        }
 
 
 def get_preset(preset_id: str, *, org_id: Optional[int]) -> Optional[Dict[str, Any]]:

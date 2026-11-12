@@ -232,7 +232,9 @@ async def _execute_steps(
         service = _get_shared_dispatch_service()
         dispatch_result = await service.dispatch(
             tc, prepared.session_id, executed)
-        success = getattr(dispatch_result, "status", "") == "ok"
+        dispatch_status = str(getattr(dispatch_result, "status", "") or "")
+        # review P2-9：dedup 命中（repeated）是幂等成功语义，不是步骤失败。
+        success = dispatch_status in ("ok", "repeated")
         raw = getattr(dispatch_result, "raw_result", None)
         llm_payload = getattr(dispatch_result, "llm_payload", None)
         geojson_ref = getattr(dispatch_result, "geojson_ref", None) or ""
@@ -253,7 +255,7 @@ async def _execute_steps(
         step_record: Dict[str, Any] = {
             "step_id": step.step_id,
             "tool": step.tool,
-            "status": "ok" if success else "failed",
+            "status": dispatch_status if success else "failed",
             "required": step.required,
         }
         if geojson_ref:
@@ -359,8 +361,9 @@ async def start_skill_job(
     有活跃 Pi turn 时返回 busy（不自等待、不另起执行权威）。
     """
     _verify_asset(prepared)
-    role_data = await _resolve_role_data(prepared, inline_payloads)
 
+    # review P2-7：busy 检查先于数据解析 —— busy 拒绝不应产生任何副作用
+    # （否则 inline 绑定会先铸造孤儿 ref）。
     if session_busy_check:
         try:
             from app.agent_pi_bridge import get_active_turn_entry
@@ -375,6 +378,8 @@ async def start_skill_job(
             raise
         except Exception:  # noqa: BLE001 — 活跃判定失败不阻断（按空闲处理）
             logger.debug("[skill-job] active-turn check unavailable", exc_info=True)
+
+    role_data = await _resolve_role_data(prepared, inline_payloads)
 
     from app.services.data_operations.runner import (
         run_async_job,

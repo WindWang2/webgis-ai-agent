@@ -110,7 +110,7 @@ export function SkillWorkbench() {
     (jobId: string) => {
       stopPolling();
       pollRef.current = setInterval(() => {
-        getSkillJobRun(jobId)
+        getSkillJobRun(jobId, sessionId)
           .then((r) => {
             setRun(r);
             if (!r.active) {

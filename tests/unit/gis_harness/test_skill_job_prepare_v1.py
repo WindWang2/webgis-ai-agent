@@ -139,21 +139,27 @@ async def test_prepare_choropleth_semantics_gates(registry):
         params={"field": "pop", "measure_semantics": "count"},
         bindings=[{"role": "subject", "ref": pref}])
     assert r.prepared.steps[0].tool == "create_thematic_map"
-    # rate 缺分母：typed 拒绝（场景 #4）
+    # 场景 #4 + review P1-3：rate 上色被拒 —— 执行面未实现归一化，
+    # 无分母不得成率、有分母也不得把分子着成率（诚实枚举限制）。
     with pytest.raises(SkillJobErrorCode) as ei:
         await prepare_skill_job(
             session_id="t3", skill_id="choropleth_map_design",
             params={"field": "pop", "measure_semantics": "rate"},
             bindings=[{"role": "subject", "ref": pref}])
-    assert ei.value.code == "PARAM_CONFLICT"
-    # rate 带分母：OK
+    assert ei.value.code == "PARAM_ENUM_INVALID"
+    with pytest.raises(SkillJobErrorCode) as ei2:
+        await prepare_skill_job(
+            session_id="t3", skill_id="choropleth_map_design",
+            params={"field": "pop", "measure_semantics": "rate",
+                    "denominator_field": "area_km2"},
+            bindings=[{"role": "subject", "ref": pref}])
+    assert ei2.value.code == "PARAM_ENUM_INVALID"
+    # percentage（数据中已有的比率）可执行
     r2 = await prepare_skill_job(
         session_id="t3", skill_id="choropleth_map_design",
-        params={"field": "pop", "measure_semantics": "rate",
-                "denominator_field": "area_km2"},
+        params={"field": "pop", "measure_semantics": "percentage"},
         bindings=[{"role": "subject", "ref": pref}])
-    assert any(pp.name == "denominator_field" and pp.source == "user"
-               for pp in r2.prepared.params)
+    assert r2.prepared.steps[0].tool == "create_thematic_map"
 
 
 @pytest.mark.asyncio
@@ -221,6 +227,19 @@ async def test_prepare_typed_rejections(registry):
     await expect("SKILL_NOT_FOUND",
                  session_id="t4", skill_id="no_such_skill",
                  params={}, bindings=[])
+    # review P1-3：rate/density 不在执行面枚举（归一化未实现，不伪装）
+    await expect("PARAM_ENUM_INVALID",
+                 session_id="t4", skill_id="choropleth_map_design",
+                 params={"field": "pop", "measure_semantics": "rate"},
+                 bindings=[{"role": "subject", "ref": pref}])
+    # review P1-5：内联数据字节预算（单要素巨串不受要素数约束）
+    huge = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": {"type": "Point",
+                                         "coordinates": [104.0, 30.6]},
+         "properties": {"blob": "x" * (9 * 1024 * 1024)}}]}
+    await expect("PAYLOAD_TOO_LARGE",
+                 session_id="t4", skill_id="validate_spatial_data",
+                 params={}, bindings=[{"role": "subject", "inline": huge}])
     # 绑定角色越权（契约外角色）
     await expect("BINDING_UNKNOWN_ROLE",
                  session_id="t4", skill_id="validate_spatial_data",
