@@ -155,8 +155,8 @@ export const JOURNEYS: JourneyEntry[] = [
     owner: 'g15-multiframe-cartography',
   },
   {
-    id: 'j17',
-    file: 'journeys/j17-restore-continuity.journey.ts',
+    id: 'j22',
+    file: 'journeys/j22-restore-continuity.journey.ts',
     title: '恢复连续性：刷新恢复保留约束→只改第二幅标题（隐藏层/手动标注不动）',
     smoke: false,
     modes: ['mock'],

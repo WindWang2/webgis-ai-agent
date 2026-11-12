@@ -129,7 +129,7 @@ async function restoreViaHistoryDrawer(page: Page): Promise<void> {
   await row.click();
 }
 
-test.describe('journey-17 恢复后继续编辑（只改第二幅标题）', () => {
+test.describe('journey-22 恢复后继续编辑（只改第二幅标题）', () => {
   test('mock：刷新恢复保留约束 → 改标题 revision+1 → 隐藏层/标注逐字不动', async ({ page }) => {
     test.skip(MODE !== 'mock', 'mock-mode variant');
 
@@ -145,7 +145,7 @@ test.describe('journey-17 恢复后继续编辑（只改第二幅标题）', () 
       title: '恢复连续性旅程',
       messages: [
         {
-          id: 'm-j17-1',
+          id: 'm-j22-1',
           role: 'user',
           content: '把城东小学点位铺到地图上，路网保持隐藏，做成两幅对比产品',
           timestamp: Date.parse('2026-01-01T08:30:00Z'),
