@@ -34,7 +34,10 @@ export interface GeoAnalysisResult {
 // from. The optional fields below (method/labels/nodata/title) are additive and
 // produced by the canonical builders; legacy payloads omit them cleanly.
 
-export type LegendCategoryEntry = { key: string; color: string; label: string };
+export type LegendCategoryEntry = { key: string; color: string; label: string;
+  /** G33（加性）：源值原始类型（number|bool 的 match case 类型化——数值字段
+   *  的字符串键在 MapLibre 严格类型 match 下从不命中）。 */
+  key_type?: 'number' | 'string' | 'bool'; };
 export type NoDataRule = { color: string; label: string };
 
 export type GraduatedLegendSpec = {
@@ -69,6 +72,9 @@ export type CategoricalLegendSpec = {
   palette?: string;
   nodata?: NoDataRule;
   title?: string;
+  /** G33（加性）：显式 other 桶（未列出值的颜色与图例文本；缺省沿用
+   *  既有「末类颜色」合同，行为不变）。 */
+  default?: { color: string; label?: string };
 };
 
 export type DivergentLegendSpec = {

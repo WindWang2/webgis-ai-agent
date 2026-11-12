@@ -176,3 +176,30 @@ def test_cache_hit_and_invalidation():
     info = stats_mod.cache_stats()
     assert info["entries"] >= 2
     assert info["bytes"] > 0
+
+
+# ─── 双端孪生对账（T-F1 Python 侧；fixture 与 vitest 共享） ────────────────
+
+
+def test_twin_fixture_parity():
+    """TS assignClass/sizeForValue 与 Python 逐点一致（同一 fixture 双端断言）。"""
+    import json
+    from pathlib import Path
+
+    from app.services.thematic_authoring.builder import size_for_value
+
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[3]
+         / "frontend/lib/thematic-authoring/twins.fixture.json").read_text())
+    for case in fixture["class_cases"]:
+        assert stats_mod.assign_class(case["value"], case["breaks"]) == case["expected"], case
+
+    class _CH:
+        pass
+
+    for case in fixture["size_cases"]:
+        ch = _CH()
+        for k, v in case["channel"].items():
+            setattr(ch, k, v)
+        got = size_for_value(case["value"], ch)
+        assert got is not None and abs(got - case["expected"]) < 1e-9, case

@@ -163,6 +163,7 @@ export function compileStyleMethod(
         m.output_transform === "sqrt"
           ? asExpression(["sqrt", baseExpr])
           : baseExpr;
+      // G33 输出变换分支的返回类型与既有分支一致（MapLibrePaintValue）。
       // H02 §B：nodata guard —— 与 live withNoDataGuard 同形状
       // （["case", ["==", ["get", field], null], nodata, thematic]）。
       if (m.field !== "zoom" && typeof m.nodata === "string" && m.nodata) {
@@ -170,7 +171,7 @@ export function compileStyleMethod(
           "case", ["==", ["get", m.field], null], m.nodata, interpExpr,
         ]);
       }
-      return interpExpr;
+      return interpExpr as MapLibrePaintValue;
     }
 
     case "step": {
