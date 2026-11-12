@@ -163,11 +163,22 @@ async def execute_plan(
     _user: dict = Depends(get_current_user_optional_with_version),
 ) -> FieldComputeReceiptResponse:
     await _require_session(session_id, _user, owner_token)
+    actor = {"user_id": _user.get("user_id"), "owner_token": owner_token,
+             "org_id": _user.get("org_id")}
     try:
+        if req.background:
+            # G23：后台 durable job —— 立即返回句柄（任务中心/状态工具查询）
+            out = await service.execute_background(
+                plan_id, session_id, project_id=req.project_id,
+                owner=_injected_owner(_user),
+                expected_fingerprint=req.expected_fingerprint, actor=actor)
+            if "receipt" in out:  # 幂等短路：收据即答
+                return {"receipt": out["receipt"].to_bounded_dict()}
+            return out
         receipt = await service.execute(
             plan_id, session_id, project_id=req.project_id,
             owner=_injected_owner(_user),
-            expected_fingerprint=req.expected_fingerprint)
+            expected_fingerprint=req.expected_fingerprint, actor=actor)
     except (CompileError, ExecError) as exc:
         _raise_typed(exc)
     return {"receipt": receipt.to_bounded_dict()}

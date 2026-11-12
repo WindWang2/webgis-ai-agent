@@ -165,5 +165,8 @@
       "RENDER_FAILED": "Raster rendering failed",
       "default": "Raster expression operation failed"
     }
+  },
+  "layerStyle": {
+    "frameOverrideFailed": "Frame edit ({scope}) failed; value kept"
   }
 }

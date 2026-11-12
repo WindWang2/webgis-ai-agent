@@ -253,7 +253,9 @@
     "atlasPdf": "Download PDF",
     "atlasManifest": "Provenance",
     "atlasDownloadPdf": "Download atlas PDF: {name}",
-    "atlasDownloadManifest": "Download reproducible provenance manifest: {name}"
+    "atlasDownloadManifest": "Download reproducible provenance manifest: {name}",
+    "importMembers": "Import members (per-member status)",
+    "importRejected": "{p0} rows rejected"
   },
   "studio": {
     "decoration": {

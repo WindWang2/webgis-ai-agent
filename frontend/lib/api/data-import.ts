@@ -271,7 +271,13 @@ export async function commitImportBatch(
   sessionId: string,
   body: { member_keys?: string[] | null; expected_plan_version?: number | null } = {},
   opts?: { signal?: AbortSignal; ownerToken?: string | null }
-): Promise<{ batch_id: string; status: string; members: string[]; poll: string }> {
+): Promise<{
+  batch_id: string; status: string; members: string[]; poll: string;
+  /** G23：durable job 句柄（任务中心查询/取消入口；幂等短路时为 null） */
+  job_id?: string | null;
+  idempotent_reuse?: boolean;
+  message?: string;
+}> {
   return apiFetch(`/api/v1/data-import/batches/${batchId}/commit${q(sessionId)}`, {
     method: 'POST',
     body: body as unknown as Record<string, unknown>,

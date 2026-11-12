@@ -331,6 +331,19 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "publication_layout_truncated", "warning",
             "出版版面容量限制，{detail}",
         ),
+        # —— G26 数值栅格出版窗口嵌入（同一冻结表达；地理对齐/有界）——
+        RenderDiagnosticSpec(
+            "raster_window_embedded", "info",
+            "数值栅格层按冻结表达以地理对齐窗口嵌入导出件（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "raster_window_no_overlap", "warning",
+            "数值栅格层与画幅范围无交集，透明省略（未读取边缘像元）（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "raster_window_degraded", "warning",
+            "数值栅格层窗口渲染存在有界近似（{detail}）",
+        ),
     )
 }
 
@@ -567,6 +580,10 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     ),
     "raster_layer_unavailable_vector_pdf": ("app.services.publication_export",),
     "pdf_font_fallback": ("app.services.publication_export",),
+    # G26：数值栅格出版窗口嵌入（发射点 = SVG 编译器 raster 分支）
+    "raster_window_embedded": ("app.services.mapspec_to_svg",),
+    "raster_window_no_overlap": ("app.services.mapspec_to_svg",),
+    "raster_window_degraded": ("app.services.mapspec_to_svg",),
     # G04（#1999）：画布打印档求解回执的发射器（exporter 应用 zones 并上报）
     "constraint_layout_evaluated": ("frontend/lib/map-kit/exporter.ts",),
     # vector_pdf_unavailable 的发射器是导出路由（503 结构化错误回退提示）

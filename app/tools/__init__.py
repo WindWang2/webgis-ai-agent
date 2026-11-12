@@ -92,6 +92,8 @@ _TOOL_MODULES = [
     ("app.tools.data_import_tools", "register_data_import_tools"),
     # G19：类型化字段计算工作台（catalog/preview/apply/result；独立模块防冲突）
     ("app.tools.field_compute_tools", "register_field_compute_tools"),
+    # G24：权威拾取/选择集检查工具面（pick_detail/selection_inspect；独立模块防冲突）
+    ("app.tools.selection_tools", "register_selection_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
     ("app.tools.flow_tools", "register_flow_tools"),
     ("app.tools.dasymetric_tools", "register_dasymetric_tools"),
@@ -134,6 +136,8 @@ _TOOL_MODULES = [
     ("app.tools.project_data_refresh_tools", "register_project_data_refresh_tools"),
     # G20：持久化数值栅格表达 / 真实像元检视（独立模块防并发冲突）
     ("app.tools.raster_expression_tools", "register_raster_expression_tools"),
+    # G26：矢量+数值栅格混合地图统一出版导出（独立模块防并发冲突）
+    ("app.tools.mixed_map_export_tools", "register_mixed_map_export_tools"),
 ]
 
 

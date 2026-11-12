@@ -129,7 +129,9 @@
     "noFeatures": "框选范围内没有可选要素",
     "matchedNoStableId": "框选 {count} 个要素（该层无稳定 id 字段，无法跨视图联动）",
     "matchedTruncated": "已框选 {count} 个要素（高亮前 {limit} 个）",
-    "matched": "已框选 {count} 个要素"
+    "matched": "已框选 {count} 个要素",
+    "matchedAuthoritative": "服务端核实：共选中 {count} 个要素（可查看/导出全集）",
+    "authoritativeFailed": "服务端核实暂不可用（已保留框选范围，可稍后重试）"
   },
   "legends": {
     "sizeAria": "尺寸图例",
@@ -544,5 +546,39 @@
     "noSelection": "先选择一个标签（点击标签或其要素）",
     "conflict": "该固定标签与其他标签/障碍冲突",
     "keyboardHint": "方向键微调 · Shift+方向键加大步距 · Enter 提交 · Esc 取消"
+  },
+  "frameGrid": {
+    "open": "打开多画幅视图",
+    "chip": "多画幅 ({count})",
+    "defaultTitle": "多画幅产品",
+    "scopeFrameOnly": "编辑范围：仅本幅 ({frameId})",
+    "scopeFrameOnlyEmpty": "编辑范围：仅本幅",
+    "liveBudget": "活地图 {live}/{budget}",
+    "syncPan": "同步组平移联动",
+    "syncPanShort": "同组平移",
+    "syncZoom": "同步组缩放联动",
+    "syncZoomShort": "同组缩放",
+    "linkMain": "主图联动",
+    "unlinkMain": "断开主图联动",
+    "linkMainAction": "连接主图联动",
+    "close": "关闭多画幅视图（Escape）",
+    "warmup": "快照预热中（剩余 {count} 幅）—— 其余画幅显示注明版本的快照",
+    "budgetBlocked": "活地图预算被占用（对比视图等）—— 画幅显示快照，关闭占用方后可激活交互",
+    "stateUnmounted": "未挂载（未观察）",
+    "stateLoading": "加载中",
+    "stateLive": "实时",
+    "stateSnapshot": "快照（非实时）",
+    "stateStale": "已过期",
+    "stateError": "错误",
+    "activateHint": "点击激活查看实时地图",
+    "activate": "激活画幅 {frameId}",
+    "liveBadge": "LIVE",
+    "revisionBadge": "spec r{spec}{data}",
+    "dataRevision": " · data r{rev}",
+    "groupBadge": "组 {group}",
+    "snapshotAlt": "画幅 {title} 快照",
+    "viewportLoading": "交互视窗加载中…",
+    "noProduct": "当前会话无多画幅产品",
+    "revisionNone": "—"
   }
 }

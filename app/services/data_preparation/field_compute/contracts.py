@@ -92,6 +92,9 @@ EXEC_ERROR_CODES = frozenset({
     "INPUT_REF_MISSING", "PAYLOAD_UNSUPPORTED", "ROW_LIMIT_EXCEEDED",
     "STORE_FAILED", "WRITE_FAILED", "CANCELLED", "ABORTED_BY_ROW_ERROR",
     "PERSISTENCE_FAILED", "OWNER_MISMATCH",
+    # G23：执行收敛在 durable job 上但收据不可回读（如另一副本认领后取消/
+    # 失败）—— 详情见 job 终态与 error 摘要，计划保持可重提。
+    "JOB_INCOMPLETE",
 })
 
 

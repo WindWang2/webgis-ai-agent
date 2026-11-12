@@ -155,6 +155,22 @@ export const JOURNEYS: JourneyEntry[] = [
     owner: 'g15-multiframe-cartography',
   },
   {
+    id: 'j17',
+    file: 'journeys/j17-goal-satisfaction.journey.ts',
+    title: '任务完成语义卡：task_complete.goal_satisfaction 逐需求渲染',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'g28-evidence-task-acceptance',
+  },
+  {
+    id: 'j18',
+    file: 'journeys/j18-frame-interactive.journey.ts',
+    title: '多画幅交互运行时：真实地图网格→激活CAS→键盘→预算→刷新恢复',
+    smoke: false,
+    modes: ['mock', 'real'],
+    owner: 'g25-interactive-frame-runtime',
+  },
+  {
     id: 'j22',
     file: 'journeys/j22-restore-continuity.journey.ts',
     title: '恢复连续性：刷新恢复保留约束→只改第二幅标题（隐藏层/手动标注不动）',

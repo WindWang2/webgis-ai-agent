@@ -80,6 +80,8 @@ _VENDORED_CJK_FONT = "app/lib/cartography/fonts/NotoSansSC-Regular-subset.ttf"
 #: 多帧累积 SVG 字节预算（R2-M5：解析 DOM 前的内存上界锚点）。
 _MAX_TOTAL_SVG_BYTES = 32 * 1024 * 1024
 _MAX_PAGE_SVG_BYTES = 8 * 1024 * 1024
+#: G26：单张嵌入栅格 base64 预算（fetcher 放行上限；2048 边 PNG 足量）。
+_MAX_EMBEDDED_IMAGE_B64_BYTES = 24 * 1024 * 1024
 #: 系统字体栈（fontconfig 探测 + CSS 双保险；无内嵌字体资产）。
 CSS_FONT_STACK = (
     '"Noto Sans CJK SC", "Noto Sans CJK", "Source Han Sans SC", '
@@ -128,6 +130,9 @@ class PageCompileOutcome:
     frame_diagnostics: List[Any] = _dc_field(default_factory=list)
     rendered_component_types: List[str] = _dc_field(default_factory=list)
     omitted_components: List[Dict[str, Any]] = _dc_field(default_factory=list)
+    #: G26：本页数值栅格嵌入回执（compiler raster_placements 透传；PDF
+    #: HTML 面（<img> 层叠）与 manifest 消费。无嵌入页恒空 —— 旧形状不变）。
+    raster_placements: List[Dict[str, Any]] = _dc_field(default_factory=list)
 
 
 class PageCompileFailure(Exception):
@@ -140,6 +145,92 @@ class PageCompileFailure(Exception):
         super().__init__(f"{code}: {detail}")
 
 
+# ── G26：栅格嵌入页的 PDF 面组合 ─────────────────────────────────────────
+#
+# WeasyPrint 70 的内嵌 SVG 渲染器丢弃含 <image> 的 SVG 子树（E0.1 实证；
+# G15 产品页 docstring 同观察）。因此 PDF 面按栅格 z 序切分 SVG：矢量片段
+# 各自成层，栅格改为 HTML <img>（data URI 经 _deny_url_fetcher 受控放行，
+# E0.2 实证产生真实 PDF 图像对象 + 文本层保持可提取）。SVG 面（单文件导出
+# /浏览器/rsvg）不变 —— 嵌入 <image> 本身对标准渲染器合法。
+
+_G26_IMAGE_RE = None  # lazy compile
+
+
+def _g26_image_re():
+    global _G26_IMAGE_RE
+    if _G26_IMAGE_RE is None:
+        import re
+
+        _G26_IMAGE_RE = re.compile(
+            r'<image\b[^>]*\bdata-g26-raster="[^"]*"[^>]*/?>')
+    return _G26_IMAGE_RE
+
+
+def _strip_raster_images(svg: str) -> str:
+    """SVG → 去掉 G26 嵌入 <image>（预算核算/HTML 层叠的矢量骨架）。"""
+    return _g26_image_re().sub("", svg)
+
+
+def _layered_page_html(svg: str, placements: List[Dict[str, Any]],
+                       page_w_mm: float, page_h_mm: float) -> Optional[str]:
+    """页 SVG 含栅格嵌入时 → 分层 HTML 体；否则 None（调用面走整页 SVG）。
+
+    结构：``<div position:relative>{svg-seg}<img>{svg-seg}…</div>`` —— 每段
+    矢量片段重开同 viewBox 的绝对定位 SVG（元素为扁平标记，段内平衡），
+    <img> 按画布 mm 换算绝对定位，z 序 = SVG 内出现序（= MapSpec 层序）。
+    """
+    if not placements or not any(p.get("embedded") for p in placements):
+        return None
+    matches = list(_g26_image_re().finditer(svg))
+    if not matches:
+        return None
+    import re as _re
+
+    vb = _re.search(r'viewBox="([^"]+)"', svg)
+    if not vb:
+        return None
+    try:
+        vb_w = float(vb.group(1).split()[2])
+        vb_h = float(vb.group(1).split()[3])
+    except (IndexError, ValueError):
+        return None
+    if vb_w <= 0 or vb_h <= 0:
+        return None
+    mm_per_px_w = page_w_mm / vb_w
+    mm_per_px_h = page_h_mm / vb_h
+
+    svg_open = (
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="{vb.group(1)}" style="position:absolute;left:0;top:0;'
+        f'width:{page_w_mm:.3f}mm;height:{page_h_mm:.3f}mm">')
+    parts: List[str] = [
+        f'<div style="position:relative;width:{page_w_mm:.3f}mm;'
+        f'height:{page_h_mm:.3f}mm;overflow:hidden">']
+    pos = 0
+    for m in matches:
+        segment = svg[pos:m.start()]
+        img_tag = m.group(0)
+        pos = m.end()
+        parts.append(f"{svg_open}{segment}</svg>")
+        # <img> 层：从 <image> 属性取 data URI 与几何（同一事实源）。
+        href = _re.search(r'href="(data:image/png;base64,[^"]+)"', img_tag)
+        x = float(_re.search(r'\bx="([0-9.eE+-]+)"', img_tag).group(1))
+        y = float(_re.search(r'\by="([0-9.eE+-]+)"', img_tag).group(1))
+        w = float(_re.search(r'\bwidth="([0-9.eE+-]+)"', img_tag).group(1))
+        h = float(_re.search(r'\bheight="([0-9.eE+-]+)"', img_tag).group(1))
+        opacity = _re.search(r'\bopacity="([0-9.eE+-]+)"', img_tag)
+        op_attr = f';opacity:{opacity.group(1)}' if opacity else ""
+        if href:
+            parts.append(
+                f'<img src="{href.group(1)}" style="position:absolute;'
+                f'left:{x * mm_per_px_w:.3f}mm;top:{y * mm_per_px_h:.3f}mm;'
+                f'width:{w * mm_per_px_w:.3f}mm;height:{h * mm_per_px_h:.3f}mm'
+                f'{op_attr}">')
+    parts.append(f'{svg_open}{svg[pos:]}</svg>')
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def compile_publication_page(
     doc: Dict[str, Any],
     page: PageLayoutIR,
@@ -149,6 +240,7 @@ def compile_publication_page(
     target_dpi: int,
     max_labels: int,
     svg_budget_remaining: int,
+    raster_bindings: Any = None,
 ) -> PageCompileOutcome:
     """单页 → :class:`PageCompileOutcome`；失败抛 :class:`PageCompileFailure`。
 
@@ -173,6 +265,7 @@ def compile_publication_page(
         return _compile_product_page(
             doc, page, pub_ir, target_dpi=target_dpi, max_labels=max_labels,
             svg_budget_remaining=svg_budget_remaining,
+            raster_bindings=raster_bindings,
         )
     # 页文档解析：帧引用 / 过滤页 / 单帧整幅（原循环体逐字）
     if page.frame_index is not None:
@@ -201,6 +294,7 @@ def compile_publication_page(
             max_labels=max_labels,
             max_features=min(_effective_max_features(frame_doc), EXPORT_MAX_FEATURES),
             timeout_ms=min(resolve_spec_timeout_ms(frame_doc), 30000.0),
+            raster_bindings=raster_bindings,
         )
     except Exception as ex:  # noqa: BLE001 — 同步链既有 skip 政策的同一事实源
         raise PageCompileFailure(
@@ -208,11 +302,36 @@ def compile_publication_page(
             f"page {page.page_id}: {type(ex).__name__}",
             exc=ex,
         ) from ex
-    svg_bytes = len(comp.svg.encode("utf-8"))
+    # G26：页含栅格嵌入时，SVG 预算按**剥离 data URI 的矢量部分**核算
+    # （PDF 面走 <img> 层叠，不携带 base64 进 SVG；嵌入图另有独立预算），
+    # 否则单张合法嵌入即触发 8MB 页预算误拒。（getattr：atlas executor 等
+    # 调用面以 SimpleNamespace 桩替 compile 结果 —— 新字段缺席按空处理。）
+    _page_placements: List[Dict[str, Any]] = list(
+        getattr(comp, "raster_placements", None) or[])
+    # review P2-2：嵌入在场但分层体无法构建（防御路径）→ typed 页失败，
+    # 绝不退回整页 SVG（WeasyPrint 会静默丢 <image> 却留下 embedded 回执）。
+    _layered_body: Optional[str] = None
+    if _page_placements:
+        _layered_body = _layered_page_html(comp.svg, _page_placements,
+                                           page_w, page_h)
+        if _layered_body is None and any(
+                p.get("embedded") for p in _page_placements):
+            raise PageCompileFailure(
+                "atlas_page_limit_truncated",
+                f"layered raster page body could not be built at page {page.page_id}",
+            )
+    _stripped = _strip_raster_images(comp.svg) if _page_placements else comp.svg
+    svg_bytes = len(_stripped.encode("utf-8"))
     if svg_bytes > min(svg_budget_remaining, _MAX_PAGE_SVG_BYTES):
         raise PageCompileFailure(
             "atlas_page_limit_truncated",
             f"svg budget {_MAX_TOTAL_SVG_BYTES} bytes at page {page.page_id}",
+        )
+    _raster_bytes = len(comp.svg.encode("utf-8")) - svg_bytes
+    if _page_placements and _raster_bytes > _MAX_EMBEDDED_IMAGE_B64_BYTES:
+        raise PageCompileFailure(
+            "atlas_page_limit_truncated",
+            f"embedded raster budget at page {page.page_id}",
         )
     from app.lib.cartography.render_diagnostics import RenderDiagnostic
 
@@ -228,10 +347,12 @@ def compile_publication_page(
     return PageCompileOutcome(
         svg=comp.svg, width_mm=page_w, height_mm=page_h, page=page,
         svg_bytes=svg_bytes,
+        html_body=_layered_body,
         frame_diagnostics=frame_items,
         rendered_component_types=[str(t) for t in (comp.rendered_component_types or [])],
         omitted_components=[dict(o) for o in (comp.omitted_components or [])
                             if isinstance(o, dict)],
+        raster_placements=[dict(p) for p in _page_placements],
     )
 
 
@@ -334,6 +455,8 @@ class PublicationPdfResult:
     # and do not rewrite the compiled document.
     constraint_layout: ConstraintLayoutReport = _dc_field(
         default_factory=lambda: {"constraint_layout": "not_evaluated"})
+    # G26：数值栅格嵌入回执（per page × per layer；manifest/审计消费）。
+    raster_layers: List[Dict[str, Any]] = _dc_field(default_factory=list)
 
 
 def _probe_cjk_font() -> bool:
@@ -567,6 +690,7 @@ def _compile_product_page(
     target_dpi: int,
     max_labels: int,
     svg_budget_remaining: int,
+    raster_bindings: Any = None,
 ) -> PageCompileOutcome:
     """G15 产品页编译：逐槽有效文档 → 槽 SVG → 单页组合。
 
@@ -595,6 +719,7 @@ def _compile_product_page(
     shared_legend_spec: Optional[Dict[str, Any]] = None
     _slot_svgs: List[str] = []
     _slot_viewboxes: List[str] = []
+    _slot_placements: List[List[Dict[str, Any]]] = []
     for i, slot in enumerate(page.frame_slots or []):
         try:
             res = resolve_frame_document(doc, slot.frame_id)
@@ -620,6 +745,7 @@ def _compile_product_page(
                 max_features=min(_effective_max_features(res.document),
                                  EXPORT_MAX_FEATURES),
                 timeout_ms=min(resolve_spec_timeout_ms(res.document), 30000.0),
+                raster_bindings=raster_bindings,
             )
         except Exception as ex:  # noqa: BLE001 — 槽失败 = 页失败（typed 证据）
             raise PageCompileFailure(
@@ -635,6 +761,8 @@ def _compile_product_page(
                     shared_legend_spec = dict(layer["legend_spec"])
                     break
         _slot_svgs.append(comp.svg)
+        _slot_placements.append(
+            [dict(p) for p in (getattr(comp, "raster_placements", None) or [])])
         inner, slot_vb = _slot_inner(comp.svg)
         _slot_viewboxes.append(slot_vb)
         inner = _namespace_slot_svg(inner, f"fp{i}-")
@@ -745,7 +873,17 @@ def _compile_product_page(
             f'{_esc_html(str(slot.title or slot.frame_id))}</div>')
         # 槽位 svg：编译器原 viewBox（内容坐标系）+ 槽尺寸（preserve
         # aspect 默认 meet，与单帧页渲染同一几何口径）；div overflow
-        # 即裁剪（clip 语义）。
+        # 即裁剪（clip 语义）。G26：槽含栅格嵌入时走分层体（WeasyPrint
+        # 内嵌 SVG <image> 限制；<img> 层叠保持层序）。
+        _slot_layered = _layered_page_html(
+            _namespace_slot_svg(_slot_svgs[i], f"fp{i}-"),
+            _slot_placements[i] if i < len(_slot_placements) else [], sw, sh)
+        if _slot_layered is not None:
+            slot_html.append(
+                f'<div style="position:absolute;left:{left:.2f}mm;'
+                f'top:{top:.2f}mm;width:{sw:.2f}mm;height:{sh:.2f}mm;'
+                f'overflow:hidden">{_slot_layered}</div>')
+            continue
         vb_attr = _slot_viewboxes[i] or f"0 0 {slot_w} {slot_h}"
         slot_html.append(
             f'<div style="position:absolute;left:{left:.2f}mm;'
@@ -770,6 +908,7 @@ def _compile_product_page(
         svg_bytes=byte_count, frame_diagnostics=frame_diagnostics,
         rendered_component_types=sorted(rendered_types),
         html_body=html_body,
+        raster_placements=[p for pl in _slot_placements for p in pl],
     )
 
 
@@ -1011,6 +1150,33 @@ def render_pdf_exclusive(render_fn: Callable[[], _RenderResult]) -> _RenderResul
 
 
 
+def render_publication_pdf(
+    payload: Dict[str, Any], *, title: str = "", max_frames: int = MAX_SPEC_FRAMES,
+    max_labels: int = MAX_LABELS_PER_EXPORT, target_dpi: int = 300,
+    atlas: Optional[AtlasPolicy] = None,
+    page_profile: Optional[str] = None,
+    raster_bindings: Any = None,
+) -> PublicationPdfResult:
+    """Render a publication and observe successful and failed export duration.
+
+    ``page_profile`` is optional. Absent means the constraint solver is not
+    evaluated and the compiled document is the caller's document.
+    ``raster_bindings``（G26）：layer_id → 冻结绑定（见
+    ``raster_authoring.publication_bindings``）；在场时数值栅格层以地理对齐
+    窗口嵌入（SVG 面 <image> / PDF 面 <img> 层叠），缺席时既有披露语义。
+    """
+    import time
+    from app.core.sre_metrics import observe_export_duration
+
+    started = time.monotonic()
+    try:
+        return _render_publication_pdf(payload, title=title, max_frames=max_frames,
+            max_labels=max_labels, target_dpi=target_dpi, atlas=atlas,
+            page_profile=page_profile, raster_bindings=raster_bindings)
+    finally:
+        observe_export_duration(time.monotonic() - started)
+
+
 async def hydrate_ref_sources(payload: Dict[str, Any], session_id: str) -> Dict[str, Any]:
     """R1-M5：内联 ``ref:`` 载体矢量源（会话数据面），使导出渲染与 live
     同一份数据。**async 本体**（R2-A：async 路由直接 await，不再经 run_sync
@@ -1107,29 +1273,6 @@ def clamp_target_dpi(value: Any) -> int:
     return max(DPI_MIN, min(DPI_MAX, dpi))
 
 
-def render_publication_pdf(
-    payload: Dict[str, Any], *, title: str = "", max_frames: int = MAX_SPEC_FRAMES,
-    max_labels: int = MAX_LABELS_PER_EXPORT, target_dpi: int = 300,
-    atlas: Optional[AtlasPolicy] = None,
-    page_profile: Optional[str] = None,
-) -> PublicationPdfResult:
-    """Render a publication and observe successful and failed export duration.
-
-    ``page_profile`` is optional. Absent means the constraint solver is not
-    evaluated and the compiled document is the caller's document.
-    """
-    import time
-    from app.core.sre_metrics import observe_export_duration
-
-    started = time.monotonic()
-    try:
-        return _render_publication_pdf(payload, title=title, max_frames=max_frames,
-            max_labels=max_labels, target_dpi=target_dpi, atlas=atlas,
-            page_profile=page_profile)
-    finally:
-        observe_export_duration(time.monotonic() - started)
-
-
 def _render_publication_pdf(
     payload: Dict[str, Any],
     *,
@@ -1139,6 +1282,7 @@ def _render_publication_pdf(
     target_dpi: int = 300,
     atlas: Optional[AtlasPolicy] = None,
     page_profile: Optional[str] = None,
+    raster_bindings: Any = None,
 ) -> PublicationPdfResult:
     """publication PDF 主入口（同步；CPU/IO 由调用方置于工作线程）。
 
@@ -1175,13 +1319,24 @@ def _render_publication_pdf(
             + " — provide sessionId for hydration or inline the data",
         )
 
-    # 栅格/瓦片源披露（deny-all fetcher → 省略；R1-M9：detail 指名源键）
+    # 栅格/瓦片源披露（deny-all fetcher → 省略；R1-M9：detail 指名源键）。
+    # G26：numeric_raster 源的层若有冻结绑定（嵌入在场）则**不**披露省略；
+    # 无绑定才披露 —— 成功嵌入的层绝不进 omitted 语义。
     sink = DiagnosticSink()
     _sources = doc.get("sources")
+    _bound_layer_sources: set = set()
+    if isinstance(raster_bindings, dict):
+        for _lid, _b in raster_bindings.items():
+            if isinstance(_b, dict):
+                _bound_layer_sources.add(str(_b.get("source_id") or ""))
     _src_keys: List[str] = []
     for key, src in (_sources.items() if isinstance(_sources, dict) else []):
         stype = src.get("type") if isinstance(src, dict) else None
-        if stype in ("raster", "data_fabric", "wms", "wmts", "pmtiles"):
+        if stype == "numeric_raster":
+            if str(key) in _bound_layer_sources:
+                continue
+            _src_keys.append(str(key))
+        elif stype in ("raster", "data_fabric", "wms", "wmts", "pmtiles"):
             _src_keys.append(str(key))
     for key in _src_keys:
         sink.add(diagnostic("raster_layer_unavailable_vector_pdf", detail=key))
@@ -1225,6 +1380,7 @@ def _render_publication_pdf(
     coverage_omitted: List[Dict[str, Any]] = []
     _omitted_seen: set = set()
     atlas_pages_summary: List[Dict[str, Any]] = []
+    raster_layers_summary: List[Dict[str, Any]] = []
 
     for page in pub_ir.pages:
         # C15：逐页编译统一走接缝（compile_publication_page）—— 同步链与
@@ -1237,6 +1393,7 @@ def _render_publication_pdf(
                 target_dpi=target_dpi,
                 max_labels=max_labels,
                 svg_budget_remaining=_MAX_TOTAL_SVG_BYTES - _accumulated,
+                raster_bindings=raster_bindings,
             )
         except PageCompileFailure as pcf:  # 单帧失败不中断 atlas（frame skip 政策）
             logger.warning("publication pdf: page %s compile failed: %s",
@@ -1244,7 +1401,15 @@ def _render_publication_pdf(
             skipped += 1
             sink.add(diagnostic(pcf.code, detail=pcf.detail))
             continue
-        _accumulated += len(outcome.svg.encode("utf-8"))
+        # G26：预算按剥离 data URI 的矢量部分累积（嵌入图独立预算）。
+        _accumulated += len(
+            (_strip_raster_images(outcome.svg)
+             if outcome.raster_placements else outcome.svg).encode("utf-8"))
+        for _rp in outcome.raster_placements:
+            if len(raster_layers_summary) < 24:
+                entry = dict(_rp)
+                entry["page_id"] = str(page.page_id)[:64]
+                raster_layers_summary.append(entry)
         page_specs.append((
             f"p{page.page_number - 1}",
             # G15：产品页优先 HTML 体（WeasyPrint SVG 内嵌限制，见
@@ -1304,15 +1469,33 @@ def _render_publication_pdf(
         atlas=bool(pub_ir.atlas),
         atlas_pages=atlas_pages_summary,
         constraint_layout=layout_report,
+        raster_layers=raster_layers_summary,
     )
 
 
 def _deny_url_fetcher(url: str, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover - 防御断言
-    if url.startswith("data:font/ttf;base64,"):
-        import base64
+    import base64
 
+    def _response(body: bytes, content_type: str):
+        # WeasyPrint 70 要求自定义 fetcher 返回 URLFetcherResponse；返回
+        # dict 会被 assert 吞成 warning → 资源静默缺失（vendored CJK 字体
+        # 内嵌在此修复前实际从未生效）。
+        from weasyprint.urls import URLFetcherResponse
+
+        return URLFetcherResponse(
+            url, body=body, headers={"Content-Type": content_type}, status=200)
+
+    if url.startswith("data:font/ttf;base64,"):
         payload = url.partition(",")[2]
         if len(payload) > 8 * 1024 * 1024:
             raise ValueError("embedded publication font exceeds byte budget")
-        return {"string": base64.b64decode(payload, validate=True), "mime_type": "font/ttf"}
+        return _response(base64.b64decode(payload, validate=True), "font/ttf")
+    if url.startswith("data:image/png;base64,"):
+        # G26：仅放行本 pipeline 生成的嵌入 PNG（冻结窗口渲染的 data URI
+        # 只出现在服务端自组 HTML/SVG —— 用户输入永不直接成为 URL）；长度
+        # 上限 = 单张嵌入预算（E0.2 验证 WeasyPrint 真实解码为图像对象）。
+        payload = url.partition(",")[2]
+        if len(payload) > _MAX_EMBEDDED_IMAGE_B64_BYTES:
+            raise ValueError("embedded publication raster exceeds byte budget")
+        return _response(base64.b64decode(payload, validate=True), "image/png")
     raise ValueError(f"external resource fetch denied in publication pdf: {url!r}")

@@ -1918,6 +1918,10 @@ async def push_cartographic_runtime_observation(
                 # 纯 3D 会话的应用证据从观察面持久化（此前被 DTO 静默丢弃）。
                 **({"scene3d_assets": req.scene3d_assets}
                    if req.scene3d_assets is not None else {}),
+                # G25：逐画幅真实观察在场（DTO 已归一为 ≤16 条封闭词表）
+                # 才落键 —— 缺席/非法按证据缺席（诚实降级）。
+                **({"frames": req.frames}
+                   if req.frames is not None else {}),
                 "map_idle": bool(req.map_idle) if req.map_idle is not None else None,
                 "observed_at": req.observed_at,
             }

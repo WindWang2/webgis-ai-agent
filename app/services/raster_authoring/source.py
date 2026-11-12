@@ -392,7 +392,16 @@ async def resolve_source(
     if cached and time.monotonic() <= cached[1]:
         return cached[0]
 
-    descriptor, truncated = await asyncio.to_thread(_inspect_bounded, safe_path)
+    try:
+        descriptor, truncated = await asyncio.to_thread(_inspect_bounded, safe_path)
+    except RasterExpressionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 文件删除/损坏/驱动失败 → typed
+        raise RasterExpressionError(
+            "SOURCE_UNAVAILABLE",
+            "raster file could not be opened by the bounded descriptor read",
+            field="ref_id", status_code=404,
+        ) from exc
     if descriptor.band_count <= 0:
         raise RasterExpressionError(
             "SOURCE_NOT_NUMERIC_RASTER",

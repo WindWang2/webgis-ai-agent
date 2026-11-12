@@ -77,6 +77,50 @@ export function pruneSelectionIds(retiredIds: string[]): void {
 }
 
 /**
+ * G24/P5（A19）：split/merge 的血缘式 selection 更新 —— 退役 id 移除、
+ * 新生 id **仅在同层且确实发生退役时**并入（split 子嗣/merge 归并替代父
+ * 对象；纯 create 的新要素不自动加入选择 —— 用户没有选它们）。血缘来源
+ * 是 G14 服务端回执（created/retired wfids），绝不按数组位置猜。
+ */
+export function applyLineageToSelection(
+  retiredIds: string[],
+  createdIds: string[],
+  refId?: string,
+): void {
+  try {
+    const sel = getSelection();
+    if (!sel || !sel.selected_ids?.length) return pruneSelectionIds(retiredIds);
+    const sameRef = !refId || !sel.artifact_ref || sel.artifact_ref === refId;
+    const removed = new Set(retiredIds);
+    const hadRetired = sel.selected_ids.some((id) => removed.has(id));
+    if (!hadRetired) {
+      // 选择集不含退役对象（该编辑与当前选择无关）→ 仅清退役（幂等）
+      return pruneSelectionIds(retiredIds);
+    }
+    const kept = sel.selected_ids.filter((id) => !removed.has(id));
+    const merged = [...kept, ...createdIds].slice(0, 50);
+    if (!merged.length) {
+      clearSelection();
+      return;
+    }
+    if (!sameRef) {
+      // 血缘属于别的 ref：不跨数据集并集，仅按原语义清退役
+      return pruneSelectionIds(retiredIds);
+    }
+    publishSelection('select', {
+      source: sel.source,
+      layer_id: sel.layer_id,
+      artifact_ref: sel.artifact_ref,
+      feature_id: merged[0],
+      selected_ids: merged,
+      id_field: sel.id_field,
+    });
+  } catch {
+    /* selection 维护失败不阻断编辑主链路 */
+  }
+}
+
+/**
  * 手动编辑提交（preview → owner approve → 回执驱动收敛）。
  * 同步返回判别结果；刷新/撤销注册/selection 清理在成功路径内完成。
  */
@@ -129,7 +173,8 @@ export async function submitEditOps(
   if (typeof rev === 'number') {
     refreshDatasetLayer(sessionId, refId, rev, { ownerToken, signal: opts.signal });
   }
-  pruneSelectionIds(retiredWfids);
+  // A19：split/merge 血缘更新选择（退役移除 + 同层新生并入；纯 create 不并入）
+  applyLineageToSelection(retiredWfids, createdWfids, refId);
   if (opts.registerUndo !== false) {
     featureEditCommand({
       label: tNow(opts.labelKey ?? 'map.edit.defaultLabel'),

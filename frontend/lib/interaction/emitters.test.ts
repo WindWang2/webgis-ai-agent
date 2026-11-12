@@ -188,3 +188,31 @@ describe('emitTemporalWindowSettled', () => {
     expect(captured[0].mutation_outcome).toBe('failed');
   });
 });
+
+
+describe('emitFeatureSelected selection_handle（G24/P3，R2-5 补测）', () => {
+  it('selectionHandle → selection_handle 透传；缺省不携带；>128 裁剪', () => {
+    captured.length = 0;
+    emitFeatureSelected({
+      layerId: 'ref:g24-1',
+      featureId: 'wf1-a',
+      selectedIds: ['wf1-a', 'wf1-b'],
+      matchedCount: 300,
+      selectionHandle: 'h-32-chars-aaaaaaaaaaaaaaaaaaaaaa',
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0].payload.selection_handle).toBe('h-32-chars-aaaaaaaaaaaaaaaaaaaaaa');
+
+    captured.length = 0;
+    emitFeatureSelected({ layerId: 'ref:g24-1', featureId: 'wf1-a' });
+    expect(captured[0].payload.selection_handle).toBeUndefined();
+
+    captured.length = 0;
+    emitFeatureSelected({
+      layerId: 'ref:g24-1',
+      selectedIds: ['x', 'y'],
+      selectionHandle: 'x'.repeat(200),
+    });
+    expect((captured[0].payload.selection_handle as string).length).toBe(128);
+  });
+});

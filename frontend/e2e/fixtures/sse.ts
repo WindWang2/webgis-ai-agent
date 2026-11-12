@@ -159,6 +159,52 @@ export function completingTurn(opts: { sessionId?: string; taskId?: string } = {
   return analysisTurn(opts);
 }
 
+/**
+ * G28 journey-17 夹具：task_complete 携带 goal_satisfaction 持久化投影
+ * （bounded_payload 形状 —— verdict/requirements 逐需求行/缺失码/建议动作）。
+ * 旅程断言 GoalSatisfactionCard 消费同一裁决：「已算出未显示」（map
+ * not_evaluated + reobserve）与「统计 fulfilled」同屏可分。
+ */
+export function goalSatisfactionTurn(
+  opts: { sessionId?: string; taskId?: string } = {},
+): string {
+  const sessionId = opts.sessionId ?? 's-j17';
+  const taskId = opts.taskId ?? 't-j17';
+  return [
+    sse('session', { session_id: sessionId }),
+    sse('task_start', { task_id: taskId, session_id: sessionId }),
+    sse('token', { content: '统计完成，地图等待显示。' }),
+    sse('task_complete', {
+      task_id: taskId,
+      summary: '统计完成',
+      goal_satisfaction: {
+        verdict: 'partial',
+        signal: 'continue',
+        counts: { fulfilled: 1, not_evaluated: 1 },
+        missing_summary: ['map:render_unknown'],
+        summary_line: '[GIS Goal] goal=partial signal=continue',
+        requirements: [
+          {
+            id: 'statistics',
+            kind: 'statistics',
+            verdict: 'fulfilled',
+            missing: [],
+            next_action: '',
+          },
+          {
+            id: 'map',
+            kind: 'map',
+            verdict: 'not_evaluated',
+            missing: ['render:unknown'],
+            next_action: 'reobserve',
+          },
+        ],
+      },
+    }),
+    'data: [DONE]\n\n',
+  ].join('');
+}
+
 /** Failed turn (validation error with a correction hint) for the retry journey. */
 export function failingTurn(opts: { sessionId?: string; taskId?: string } = {}): string {
   const sessionId = opts.sessionId ?? 's-j2f';

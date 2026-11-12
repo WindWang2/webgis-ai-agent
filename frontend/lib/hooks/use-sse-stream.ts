@@ -15,6 +15,8 @@ import { reportLayerFetchFailure, syncSpecLayersToStore } from '@/lib/session/ma
 import { commitMapSpecDocument, getMapSpecSessionCursor, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { ingestRenderWork } from '@/lib/render-protocol/render-work';
 import { nextTurn, noteAgentDisplayed } from '@/lib/chat/turn-focus';
+import { attachGoalSatisfaction } from '@/lib/chat/message-reducer';
+import { parseGoalSatisfaction } from '@/lib/types/goal-satisfaction';
 import { flushInteractionBus } from '@/lib/interaction/bus';
 import { subscribeTurnEpoch } from '@/lib/map/turn-epoch';
 import { getSelection } from '@/lib/selection/selection-store';
@@ -989,6 +991,16 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         finalizeToolCalls('failed', '未收到执行结果');
         if (thinkingId) {
           setMessages((prev) => clearThinkingFlag(prev, { messageId: thinkingId }));
+        }
+        // G28（A24）：task_complete.goal_satisfaction → GoalSatisfactionCard。
+        // 与 SSE/最终文本消费同一持久化裁决（bounded_payload 投影）；载荷
+        // 缺席/解析非法 → 不挂载（零漂移）。跨会话已被 INV-2 顶部守卫拦截。
+        const goal = parseGoalSatisfaction(data);
+        if (goal && thinkingId) {
+          setMessages((prev) => attachGoalSatisfaction(prev, {
+            messageId: thinkingId,
+            goal,
+          }));
         }
       } else if (event.event === 'tool_result') {
         // Legacy engine emits tool_result after step_result; Pi path may omit

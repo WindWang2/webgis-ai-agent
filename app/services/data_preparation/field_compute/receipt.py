@@ -227,6 +227,22 @@ async def find_receipt(session_id: str, compute_fingerprint: str,
     return None
 
 
+async def list_receipts(
+    session_id: str, *, published_only: bool = True, limit: int = 8,
+) -> List[ComputeReceipt]:
+    """G28（goal_satisfaction 证据面）只读枚举：ring 内收据，按写入序
+    （旧→新）。只读；坏行跳过；store 缺席 → 空表（诚实缺席）。"""
+    try:
+        records = await asyncio.to_thread(
+            _load_sync, _storage_path(session_id, _RECEIPTS_FILE),
+            ComputeReceipt)
+    except Exception:  # noqa: BLE001
+        return []
+    if published_only:
+        records = [r for r in records if r.published]
+    return list(records[-max(1, min(int(limit), 64)):])
+
+
 async def probe_publish(session_id: str) -> bool:
     """探测 ring 与稳定键两个写入面都可落盘（草稿闸门的一部分）。
 
@@ -297,5 +313,5 @@ def _append_receipt_sync(session_id: str, receipt: ComputeReceipt) -> None:
 
 __all__ = [
     "save_plan", "get_plan", "list_plans", "find_receipt", "append_receipt",
-    "probe_publish", "drop_published", "stable_key",
+    "probe_publish", "drop_published", "stable_key", "list_receipts",
 ]

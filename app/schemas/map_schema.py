@@ -86,6 +86,39 @@ class VectorPdfRequest(BaseModel):
     # 内联后提交（前端 exporter 内存中已持有数据）；未内联 → 400 typed 拒绝。
 
 
+class MixedMapExportRequest(BaseModel):
+    """POST /export/mixed 请求体（G26：矢量+数值栅格混合地图统一导出）。
+
+    从**会话权威 MapSpec** 冻结修订导出（不是调用方载荷）——栅格 ref 的
+    owner 校验在服务端解析层执行；`expected_revision` 可选 CAS 基线。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "session_id": "sess-123",
+                    "format": "pdf",
+                    "expected_revision": 7,
+                    "partial_policy": "blocking",
+                    "target_dpi": 300,
+                }
+            ]
+        }
+    )
+
+    session_id: str = Field(min_length=1, max_length=128)
+    format: str = Field(pattern="^(png|svg|pdf)$")
+    expected_revision: Optional[int] = Field(default=None, ge=0)
+    """CAS 基线（可选）：冻结时修订不符 → 409（不混两个修订）。"""
+    partial_policy: str = Field(default="blocking", pattern="^(blocking|allow_partial)$")
+    """blocking（默认）：会遗漏图层时 typed 拒绝；allow_partial：显式选择并
+    携带完整 omitted_layers 清单（请求「完整地图」不能带遗漏还报 complete）。"""
+    target_dpi: Optional[int] = None
+    """PDF 渲染 DPI（72-600 钳制；生效值随 manifest 披露；缺省 300）。"""
+    title: Optional[str] = Field(default=None, max_length=200)
+
+
 class GeoJSONExportRequest(BaseModel):
     """POST /export/geojson 请求体。"""
 

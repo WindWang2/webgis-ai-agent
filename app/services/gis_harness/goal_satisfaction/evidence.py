@@ -247,7 +247,8 @@ def _export_receipt_evidence(
     [{format, revision?, created_at?}]，additive；缺席 = 无回执 = absent）。
 
     revision 在场且 ≠ 当前 checked_revision → stale（旧代回执不得背书
-    当前导出需求 —— G6 反作弊锚）。
+    当前导出需求 —— G6 反作弊锚）。detail 前缀 ``map_export:`` 标记来源
+    路径（G28 A16：地图出版回执不得背书数据交付需求）。
     """
     out: List[GoalEvidence] = []
     for i, rcpt in enumerate(_rows(chapter.get("export_receipts"))[:8]):
@@ -265,7 +266,7 @@ def _export_receipt_evidence(
             status=status,
             source="chapter:export_receipts",
             revision=receipt_rev[:64],
-            detail=f"format={fmt}",
+            detail=f"map_export: format={fmt}",
         ))
     return out
 
@@ -274,8 +275,14 @@ def build_evidence_registry(
     chapter: Optional[Dict[str, Any]],
     map_product: Optional[Dict[str, Any]] = None,
     cartographic_review: Optional[Dict[str, Any]] = None,
+    receipts: Optional[Dict[str, Any]] = None,
 ) -> List[GoalEvidence]:
-    """章节 + 产品块 + 制图评审 → 有界证据清单（纯函数；同输入同清单）。"""
+    """章节 + 产品块 + 制图评审 + 权威回执 → 有界证据清单（纯函数）。
+
+    ``receipts``（G28 P1 加性，默认 None = 旧调用零漂移）：
+    ``collect_capability_receipts`` 产出的有界 bundle —— 证据行由
+    ``receipts.receipt_evidence_rows`` 只读投影（owner/scope 过滤在内）。
+    """
     if not isinstance(chapter, dict) or not chapter:
         return []
     block = _dict(map_product)
@@ -287,6 +294,16 @@ def build_evidence_registry(
     evidence.extend(_frame_product_evidence(map_product))
     evidence.extend(_cartography_review_evidence(cartographic_review))
     evidence.extend(_export_receipt_evidence(chapter, checked_revision))
+    # G28 P1：新能力权威回执（G14/G17/G18/G19/G20/G10）—— 生产收集器
+    # 只读投影；bundle 缺席/关闭 = 旧形状（零漂移）。
+    if receipts is not None:
+        from .receipts import receipt_evidence_rows
+
+        evidence.extend(receipt_evidence_rows(
+            receipts,
+            session_id=str(chapter.get("session_id")
+                           or block.get("session_id") or ""),
+        ))
     contract = _dict(chapter.get("workflow_contract"))
     for role in _rows(contract.get("roles"))[:8]:
         role_name = str(role.get("role") or "")[:32]

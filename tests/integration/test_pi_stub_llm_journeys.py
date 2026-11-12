@@ -85,6 +85,8 @@ from pathlib import Path
 REPO_ROOT = Path(sys.argv[1])
 WORK = Path(tempfile.mkdtemp(prefix="pi-journey-"))
 sys.path.insert(0, str(REPO_ROOT))
+# G28 诊断面：完整 verdict 落盘（pytest 断言 repr 截断，读文件拿全量）。
+VERDICT_OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 
 # 会话库跨 driver 运行持久（sqlite）—— 每次运行用唯一会话名，避免历史
 # owner_token 归属把本轮首条消息判成 404（warmup/J* 同理）。
@@ -199,6 +201,14 @@ TURN_SCRIPTS = {
         {"text": "成都小学分布图已准备。"},
     ],
     "换个颜色": [{"text": "已将图层配色调整为暖色系（本次未重新计算数据）。"}],
+    # G28（A26）：数据选择→已有工具→产品组装→终验→验收 → 用户解释 ——
+    # 产品组装（primary_ref 缺省 = 计划行 bound_ref 接管）触发 finalizer
+    # 终态落块（无浏览器 render 观察时诚实 needs_repair/partial —— 观察
+    # 缺席不伪造，A27）。
+    "把刚才查询的学校做成专题图": [
+        {"tool": "webgis_map_product", "args": {"query": "成都小学分布专题图"}},
+        {"text": "专题图产品已组装完成，等待渲染确认。"},
+    ],
     "北京市小学": [{"text": "北京市小学分布需要新的数据查询，本会话与成都会话相互独立。"}],
     "北京小学分布（将被取消）": [
         {"tool": "webgis_map_intent", "args": {"query": "北京小学分布"}, "delay_s": 8},
@@ -283,6 +293,88 @@ def _parse_sse(text: str) -> list:
     return events
 
 
+def _seed_synthetic_poi_zip(poi_dir) -> None:
+    """S1 合成 fixture：城区学校点 zip（列契约 = local_poi ingest 契约）。
+
+    全部行显式标注合成（name 合成测试学校N / adname 合成区A..D）；坐标为
+    成都附近的 GCJ-02 测试值（ingest 走真实 GCJ→WGS 转换）。仅存在于
+    WORK 临时目录，不进仓库、不冒充真实成都市现势数据。
+    """
+    import zipfile
+
+    poi_dir.mkdir(parents=True, exist_ok=True)
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "pois"
+    header = [
+        "id", "name", "type", "typecode", "adcode", "adname",
+        "cityname", "pname", "address", "tel", "location",
+    ]
+    ws.append(header)
+    districts = [
+        ("510101", "合成区A"), ("510102", "合成区B"),
+        ("510103", "合成区C"), ("510104", "合成区D"),
+    ]
+    n = 0
+    for d_idx, (adcode, adname) in enumerate(districts):
+        for k in range(12):
+            n += 1
+            lng = 104.00 + 0.02 * d_idx + 0.001 * (k % 12)
+            lat = 30.55 + 0.01 * (k % 12)
+            ws.append([
+                f"syn-{n:03d}", f"合成测试学校{adname}{k + 1:02d}",
+                "学校;小学", "141501", adcode, adname,
+                "成都市", "四川省", f"合成路{n}号", "",
+                f"{lng:.6f},{lat:.6f}",
+            ])
+    xlsx_path = poi_dir / "synthetic_schools.xlsx"
+    wb.save(str(xlsx_path))
+    with zipfile.ZipFile(poi_dir / "gd_510000_poi.zip", "w") as zf:
+        zf.write(str(xlsx_path), "synthetic_schools.xlsx")
+
+
+def _seed_synthetic_admin_shp(geo_root) -> None:
+    """S1 合成行政区 fixture（city/district 两级 shp，ChinaAdminDivisonSHP
+    布局）—— 「合成区A..D」（adcode 510101..510104）+ 成都市（510100）。
+    几何为成都附近的合成矩形；仅测试用，不冒充真实现势边界。"""
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    root = geo_root / "ChinaAdminDivisonSHP"
+    city_rows = [{
+        "ct_name": "成都市", "ct_adcode": "510100",
+        "geometry": box(103.9, 30.4, 104.3, 30.8),
+    }]
+    district_rows = []
+    for i, adname in enumerate(("合成区A", "合成区B", "合成区C", "合成区D")):
+        x0 = 103.95 + 0.08 * i
+        district_rows.append({
+            "dt_name": adname, "dt_adcode": f"5101{chr(ord('1') + i)}",
+            "geometry": box(x0, 30.5, x0 + 0.07, 30.7),
+        })
+    city_dir = root / "3. City"
+    dist_dir = root / "4. District"
+    city_dir.mkdir(parents=True, exist_ok=True)
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    gpd.GeoDataFrame(city_rows, crs="EPSG:4326").to_file(
+        str(city_dir / "city.shp"), encoding="utf-8")
+    gpd.GeoDataFrame(district_rows, crs="EPSG:4326").to_file(
+        str(dist_dir / "district.shp"), encoding="utf-8")
+
+
+def _emit_verdict(verdict: dict, code: int) -> int:
+    if VERDICT_OUT is not None:
+        try:
+            VERDICT_OUT.write_text(
+                json.dumps(verdict, ensure_ascii=False), encoding="utf-8")
+        except Exception:  # noqa: BLE001 — 诊断面失败不改变退出码
+            pass
+    print("VERDICT " + json.dumps(verdict, ensure_ascii=False))
+    return code
+
+
 def main() -> int:
     stub_js = WORK / "journey_stub.mjs"
     stub_js.write_text(STUB_JS, encoding="utf-8")
@@ -350,6 +442,12 @@ def main() -> int:
 
     api_port = _free_port()
     os.environ["WEBGIS_API_BASE"] = "http://127.0.0.1:{}".format(api_port)
+    # ── G28/S1：本地合成 POI fixture（明确标注合成，不经外部 gd_*_poi.zip
+    #    数据依赖 —— journey 自包含）。env 须先于 app import（settings 读入）。
+    _geo_root = WORK / "local_geodata"
+    os.environ["LOCAL_GEODATA_DIR"] = str(_geo_root)
+    _seed_synthetic_poi_zip(_geo_root / "POI")
+    _seed_synthetic_admin_shp(_geo_root)
 
     import uvicorn
 
@@ -367,6 +465,15 @@ def main() -> int:
         time.sleep(0.5)
     ready = server.started and _port_open(api_port) and try_get_chat_engine() is not None
     verdict = {"journeys": {}, "fail": []}
+
+    # G28/S1：从合成 zip 走真实 ingest（GCJ→WGS + GPKG 落盘）—— 不伪造
+    # 数据来源；失败 → verdict 记录（旅程随后诚实缺数据，不假装绿）。
+    try:
+        from app.services.local_poi import ingest_gd_poi
+
+        verdict["synthetic_poi_ingest"] = ingest_gd_poi(force=True)
+    except Exception as exc:  # noqa: BLE001 — 播种失败入 verdict（诚实）
+        verdict["synthetic_poi_ingest"] = {"error": str(exc)[:200]}
 
     def _post_stream_raw(message, session_id, timeout_s=120.0, owner_token=None):
         payload = {"message": message, "session_id": session_id}
@@ -419,16 +526,14 @@ def main() -> int:
         if not ready:
             verdict["fail"].append(
                 "app never became chat-ready under stub LLM (environment)")
-            print("VERDICT " + json.dumps(verdict, ensure_ascii=False))
-            return 1
+            return _emit_verdict(verdict, 1)
 
         # ── J1: 成都小学分布 ──
         try:
             ev = _post_stream("成都小学分布", RUN + "-cd")
         except Exception as exc:  # noqa: BLE001 — 单旅程失败入 verdict
             verdict["fail"].append("J1 request error: " + str(exc)[:200])
-            print("VERDICT " + json.dumps(verdict, ensure_ascii=False))
-            return 1
+            return _emit_verdict(verdict, 1)
         verdict["journeys"]["J1"] = {
             "names": [e["event"] for e in ev],
             "map_intent_ok": any(
@@ -445,6 +550,112 @@ def main() -> int:
             "owner_token_returned": bool(_owner_token_of(ev)),
         }
 
+        # ── G28（A26/A24）：任务验收闭环 —— task_complete SSE 携带持久化
+        #    goal_satisfaction 投影（逐需求行），且与落库块同 verdict
+        #    （裁决来自 finalizer 的确定性评估，stub LLM 文本不推翻）。
+        j1_completes = [e["data"] for e in ev if e["event"] == "task_complete"]
+        gs_payload = None
+        if j1_completes and isinstance(
+                j1_completes[0].get("goal_satisfaction"), dict):
+            gs_payload = j1_completes[0]["goal_satisfaction"]
+        persisted_gs = None
+        try:
+            from app.services.session_plan import load_session_plan
+
+            _plan_obj = asyncio.run(load_session_plan(RUN + "-cd"))
+            if _plan_obj is not None and isinstance(_plan_obj.gis_chapter, dict):
+                _j1_block = _plan_obj.gis_chapter.get("map_product")
+                if isinstance(_j1_block, dict):
+                    persisted_gs = _j1_block.get("goal_satisfaction")
+        except Exception as exc:  # noqa: BLE001 — 读失败入 verdict（诚实）
+            verdict["fail"].append(
+                "J1 persisted goal read: " + str(exc)[:120])
+        verdict["journeys"]["J1"]["goal_satisfaction"] = gs_payload
+        verdict["journeys"]["J1"]["persisted_goal_satisfaction"] = persisted_gs
+        # 诊断面（G28）：终验时机/披露通路（map_finalization 事件 + 原始
+        # task_complete 载荷键 + 原始流日志），定位 SSE 投影缺席归属。
+        verdict["journeys"]["J1"]["map_finalization_seen"] = any(
+            e["event"] == "map_finalization" for e in ev)
+        verdict["journeys"]["J1"]["task_complete_keys"] = sorted(
+            (j1_completes[0] or {}).keys()) if j1_completes else []
+        try:
+            _j1_sse_log = WORK / ("sse_" + RUN + "-cd" + ".log")
+            if _j1_sse_log.exists():
+                _j1_sse_body = _j1_sse_log.read_text(
+                    encoding="utf-8", errors="replace")
+                verdict["journeys"]["J1"]["sse_log_has_goal"] = (
+                    '"goal_satisfaction"' in _j1_sse_body)
+                verdict["journeys"]["J1"]["sse_log_has_map_finalization"] = (
+                    '"map_finalization"' in _j1_sse_body)
+        except Exception:  # noqa: BLE001 — 诊断面失败不阻断
+            pass
+
+        # ── J-G28：产品组装 → finalizer 终态 → goal 持久化/SSE 投影 ──
+        cd_owner_g28 = _owner_token_of(ev)
+        try:
+            ev_g28 = _post_stream(
+                "把刚才查询的学校做成专题图", RUN + "-cd",
+                owner_token=cd_owner_g28)
+        except Exception as exc:  # noqa: BLE001 — 单旅程失败入 verdict
+            verdict["fail"].append("J-G28 request error: " + str(exc)[:200])
+            ev_g28 = []
+        g28_completes = [e["data"] for e in ev_g28
+                         if e["event"] == "task_complete"]
+        g28_gs = None
+        if g28_completes and isinstance(
+                g28_completes[0].get("goal_satisfaction"), dict):
+            g28_gs = g28_completes[0]["goal_satisfaction"]
+        g28_persisted = None
+        try:
+            _plan_g28 = asyncio.run(load_session_plan(RUN + "-cd"))
+            if _plan_g28 is not None and isinstance(_plan_g28.gis_chapter, dict):
+                _g28_block = _plan_g28.gis_chapter.get("map_product")
+                if isinstance(_g28_block, dict):
+                    g28_persisted = _g28_block.get("goal_satisfaction")
+        except Exception as exc:  # noqa: BLE001 — 读失败入 verdict（诚实）
+            verdict["fail"].append(
+                "J-G28 persisted goal read: " + str(exc)[:120])
+        g28_diag: Dict[str, Any] = {}
+        try:
+            _plan_diag = asyncio.run(load_session_plan(RUN + "-cd"))
+            ch = _plan_diag.gis_chapter if _plan_diag is not None else {}
+            if isinstance(ch, dict):
+                g28_diag["rows"] = [
+                    {"cap": str(r.get("capability"))[:40],
+                     "status": str(r.get("status"))[:12],
+                     "bound": str(r.get("bound_ref"))[:24]}
+                    for r in (ch.get("analysis_steps") or [])[:12]
+                    if isinstance(r, dict)]
+                g28_diag["map_layers"] = [
+                    {"role": str(r.get("role"))[:12],
+                     "layer_id": str(r.get("layer_id"))[:24],
+                     "bound": str(r.get("bound_ref"))[:24]}
+                    for r in (ch.get("map_layers") or [])[:6]
+                    if isinstance(r, dict)]
+                g28_diag["has_workflow_contract"] = bool(
+                    ch.get("workflow_contract"))
+            from app.services.session_data import session_data_manager
+
+            _ms = asyncio.run(session_data_manager.get_map_state(RUN + "-cd"))
+            g28_diag["map_state_keys"] = sorted(
+                k for k in (_ms or {}).keys())[:12] if isinstance(_ms, dict) else []
+            if isinstance(_ms, dict):
+                g28_diag["has_stored_map_product"] = "map_product" in _ms
+        except Exception as exc:  # noqa: BLE001 — 诊断面失败不阻断
+            g28_diag["error"] = str(exc)[:200]
+        verdict["journeys"]["JG28"] = {
+            "names": [e["event"] for e in ev_g28],
+            "map_finalization_seen": any(
+                e["event"] == "map_finalization" for e in ev_g28),
+            "step_errors": [
+                {"tool": e["data"].get("tool"),
+                 "error": str(e["data"].get("error"))[:300]}
+                for e in ev_g28 if e["event"] == "step_error"],
+            "goal_satisfaction": g28_gs,
+            "persisted_goal_satisfaction": g28_persisted,
+            "diag": g28_diag,
+        }
+
         # ── J2: 换色（不重算）──
         calls_before = rec.read_text().count('"key":"换个颜色"')
         cd_owner = _owner_token_of(ev)
@@ -452,8 +663,7 @@ def main() -> int:
             ev2 = _post_stream("换个颜色", RUN + "-cd", owner_token=cd_owner)
         except Exception as exc:  # noqa: BLE001
             verdict["fail"].append("J2 request error: " + str(exc)[:200])
-            print("VERDICT " + json.dumps(verdict, ensure_ascii=False))
-            return 1
+            return _emit_verdict(verdict, 1)
         calls_after = rec.read_text().count('"key":"换个颜色"')
         verdict["journeys"]["J2"] = {
             "names": [e["event"] for e in ev2],
@@ -629,8 +839,7 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             stub.kill()
 
-    print("VERDICT " + json.dumps(verdict, ensure_ascii=False))
-    return 0
+    return _emit_verdict(verdict, 0)
 
 
 if __name__ == "__main__":
@@ -642,12 +851,27 @@ def _run_driver() -> dict:
     with tempfile.TemporaryDirectory(prefix="pi-journey-runner-") as td:
         driver_path = Path(td) / "journey_driver.py"
         driver_path.write_text(_DRIVER_SOURCE, encoding="utf-8")
+        verdict_path = Path(td) / "verdict.json"
+        # GIS_MANIFEST_STRICT=0：driver 子进程本地逃生 —— master 既有漂移
+        # （G10 #2022 工具族声明 capability 未入 CapabilityRegistry，启动
+        # fail-fast），与本旅程断言无关；不改产品默认（主进程仍 strict）。
         env = {k: v for k, v in os.environ.items()
                if k not in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL")}
+        env.setdefault("GIS_MANIFEST_STRICT", "0")
         res = subprocess.run(
-            [sys.executable, str(driver_path), str(REPO_ROOT)],
+            [sys.executable, str(driver_path), str(REPO_ROOT), str(verdict_path)],
             capture_output=True, text=True, timeout=560, env=env, cwd=str(REPO_ROOT),
         )
+        try:
+            _vd = verdict_path.read_text(encoding="utf-8") if verdict_path.exists() else ""
+        except Exception:  # noqa: BLE001 — 诊断面失败不影响裁决
+            _vd = ""
+        try:
+            (REPO_ROOT / "logs").mkdir(exist_ok=True)
+            (REPO_ROOT / "logs" / "g28-journey-verdict.json").write_text(
+                _vd, encoding="utf-8")
+        except Exception:  # noqa: BLE001 — 诊断面失败不影响裁决
+            pass
     for line in reversed(res.stdout.splitlines()):
         if line.startswith("VERDICT "):
             return json.loads(line[len("VERDICT "):])
@@ -671,6 +895,38 @@ async def test_a5_journeys_on_real_pi_bridge():
     assert "task_complete" in j["J1"]["names"]
     assert j["J1"]["names"][-1] == "done"
     assert not j["J1"]["foreign_sid"], j["J1"]["foreign_sid"]
+
+    # G28（A26/A24）：J1 只到 intent+数据查询（产品未组装 → 终验 pending
+    # 诚实不落块）—— goal 断言的硬面在 JG28（产品组装旅程）；J1 若有
+    # goal 投影则必须与落库块同裁决（一致性软面）。
+    print("G28J1 " + json.dumps(j["J1"], ensure_ascii=False))
+    gs = j["J1"].get("goal_satisfaction")
+    persisted_gs = j["J1"].get("persisted_goal_satisfaction")
+    if isinstance(gs, dict) and gs.get("verdict"):
+        assert isinstance(persisted_gs, dict)             and persisted_gs.get("verdict") == gs.get("verdict"),             {"sse": gs, "persisted": persisted_gs}
+
+    # G28（A26/A03/A19 旅程面）：产品组装旅程 —— 真实工具链全通（合成
+    # 标注 fixture + 真实 dispatch + 真实 MapSpec 突变），但沙箱无浏览器
+    # render 观察、次要计划行 pending → 终验诚实 pending：不得伪造
+    # task_complete 的完成态（queued/pending ≠ complete）。
+    jg28 = j["JG28"]
+    assert "task_complete" in jg28["names"], jg28
+    assert not jg28["step_errors"], jg28["step_errors"]
+    assert jg28["names"][-1] == "done", jg28["names"]
+    # 反假完成：终验未到终态 → task_complete 不携带 map_product/goal
+    # 投影、块不落（诚实缺席，绝不假 pass）。
+    g28_tc = jg28.get("task_complete_keys") or []
+    assert "map_product" not in g28_tc, jg28
+    assert jg28.get("goal_satisfaction") is None, jg28
+    assert jg28.get("persisted_goal_satisfaction") is None, jg28
+    # 若后续环境具备 render 观察使终验到终态（map_finalization_seen=True），
+    # goal 投影必须在场且 SSE 与落库块同裁决（硬面）—— 本沙箱该分支诚实
+    # 未达（review 10ii：原软分支不可达，改为以观察面为条件）。
+    if jg28.get("map_finalization_seen"):
+        g28_gs2 = jg28.get("goal_satisfaction")
+        assert isinstance(g28_gs2, dict) and g28_gs2.get("verdict"), jg28
+        assert isinstance(jg28.get("persisted_goal_satisfaction"), dict), jg28
+        assert jg28["persisted_goal_satisfaction"].get("verdict") ==             g28_gs2.get("verdict"), jg28
 
     # J2：换色恰一次 LLM 调用（无数据重算）
     assert j["J2"]["llm_calls"] == 1, j["J2"]
