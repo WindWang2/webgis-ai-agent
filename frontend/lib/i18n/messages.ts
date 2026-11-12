@@ -25,6 +25,7 @@ import zhCommands from '@/messages/zh-CN/commands.json'
 import zhCopilot from '@/messages/zh-CN/copilot.json'
 import zhCockpit from '@/messages/zh-CN/cockpit.json'
 import zhReview from '@/messages/zh-CN/review.json'
+import zhFeatureProposals from '@/messages/zh-CN/featureProposals.json'
 import zhConsole from '@/messages/zh-CN/console.json'
 import zhExplorer from '@/messages/zh-CN/explorer.json'
 import zhWorkbench from '@/messages/zh-CN/workbench.json'
@@ -60,6 +61,7 @@ import enCommands from '@/messages/en-US/commands.json'
 import enCopilot from '@/messages/en-US/copilot.json'
 import enCockpit from '@/messages/en-US/cockpit.json'
 import enReview from '@/messages/en-US/review.json'
+import enFeatureProposals from '@/messages/en-US/featureProposals.json'
 import enConsole from '@/messages/en-US/console.json'
 import enExplorer from '@/messages/en-US/explorer.json'
 import enWorkbench from '@/messages/en-US/workbench.json'
@@ -98,6 +100,7 @@ export interface AppMessages {
   copilot: typeof zhCopilot
   cockpit: typeof zhCockpit
   review: typeof zhReview
+  featureProposals: typeof zhFeatureProposals
   console: typeof zhConsole
   explorer: typeof zhExplorer
   workbench: typeof zhWorkbench
@@ -142,6 +145,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     copilot: zhCopilot,
     cockpit: zhCockpit,
     review: zhReview,
+    featureProposals: zhFeatureProposals,
     console: zhConsole,
     explorer: zhExplorer,
     workbench: zhWorkbench,
@@ -180,6 +184,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     copilot: enCopilot as unknown as AppMessages['copilot'],
     cockpit: enCockpit as unknown as AppMessages['cockpit'],
     review: enReview as unknown as AppMessages['review'],
+    featureProposals: enFeatureProposals as unknown as AppMessages['featureProposals'],
     console: enConsole as unknown as AppMessages['console'],
     explorer: enExplorer as unknown as AppMessages['explorer'],
     workbench: enWorkbench as unknown as AppMessages['workbench'],
