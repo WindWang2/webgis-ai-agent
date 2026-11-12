@@ -18,6 +18,8 @@ import { useT } from '@/lib/i18n/useT';
 import { t as tNow } from '@/lib/i18n/t';
 // G20：栅格专属工作台（局部挂载，不改全局布局/主题）
 import { RasterAuthoringPanel } from '@/components/hud/raster-authoring-panel';
+// G27：按尺度表达（可解释控制 + 局部覆盖，仅在有 committed spec 层时挂载）
+import { ScalePortrayalPanel } from '@/components/hud/scale-portrayal-panel';
 
 /** 渲染模式 id → 消息键（spec 层型语义见 specPaintPatchFrom）。 */
 const MODE_LABELS: Record<string, string> = {
@@ -244,6 +246,10 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* G27：按尺度表达（可解释控制 + 局部覆盖），仅在 spec 层在场时挂载 */}
+        {specBacked && specLayerKey && (
+          <ScalePortrayalPanel layerId={specLayerKey} />
+        )}
         {/* Name */}
         <div>
           <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">{t('style.name')}</span>

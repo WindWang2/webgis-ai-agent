@@ -24,6 +24,8 @@ _TOOL_MODULES = [
     ("app.tools.interaction_scope_tools", "register_interaction_scope_tools"),
     # GOAL 04：多尺度表达档案 —— inspect/preview/apply（scale_profile.v1）
     ("app.tools.scale_profile_tools", "register_scale_profile_tools"),
+    # G27：多尺度表达策略生产接线 —— inspect + 局部 CAS apply
+    ("app.tools.scale_portrayal_tools", "register_scale_portrayal_tools"),
     # F12（ADR-0260）：Map Plan Compiler —— MapPlanIR → 最小 MapSpec mutations
     ("app.tools.map_plan_tools", "register_map_plan_tools"),
     # H10（ADR-0217）：GISAction IR —— typed 执行计划 dry-run/收敛指标面

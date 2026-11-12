@@ -1364,6 +1364,31 @@ def _render_publication_pdf(
             detail=f"{warning.get('code')}: {warning.get('detail')}"[:200],
         ))
 
+    # ── G27（P5）：出版等价视窗 —— 仅当 spec 显式声明 layout.scale_viewport
+    # 时解析（旧项目零变化）。实际 frame extent / CRS / 逻辑 viewport /
+    # target_dpi 经 plan_scale_contexts 传入；DPI 只影响采样与物理尺寸，
+    # 不参与任何可见层/表达裁决（A15/A16/A21）。解释面不阻断导出。
+    _g27_layout = doc.get("layout") if isinstance(doc.get("layout"), dict) else {}
+    _g27_viewport = _g27_layout.get("scale_viewport")
+    if isinstance(_g27_viewport, dict):
+        try:
+            from app.lib.cartography.publication_ir import plan_scale_contexts
+
+            _g27_contexts = plan_scale_contexts(
+                pub_ir, doc,
+                crs=str(_g27_viewport.get("crs") or "EPSG:3857")[:32],
+                target_dpi=float(target_dpi),
+                logical_viewport_px=_g27_viewport.get("logical_viewport_px"),
+            )
+            sink.add(diagnostic(
+                "g27_scale_context",
+                detail=";".join(
+                    f"{c.page_id}:{c.scale_denominator}" for c in _g27_contexts
+                )[:200],
+            ))
+        except Exception as g27_exc:  # noqa: BLE001 - 解释面不阻断导出
+            logger.warning("publication pdf: scale context skipped: %s", g27_exc)
+
     # 帧查找表 = enabled+封顶后的同一序列（page.frame_index 的对齐口径；
     # category/feature 驱动不使用帧下标）。
     if _atlas_effective is not None and _atlas_effective.driver != "frames":
