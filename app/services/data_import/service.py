@@ -7,6 +7,11 @@
 - 预览与提交（同解释器；逐成员幂等）
 - 取消（in-flight 成员协作取消；晚到结果不覆盖终态）
 - 恢复（重启后 committing 成员复位为 planned —— 无收据即未完成）
+
+G23（持久任务运行基础）：提交的**在飞证据**从进程内存（`_committing_ids`）
+迁至 durable job 行（analysis_tasks，ADR-0052）。进程内 dict 仅保留为本
+进程 runner 的生命周期辅助；跨进程查询/取消/恢复判据一律以 DB 活跃 job
+为准（G18 数据交付同款范式，见 app/services/data_operations/import_jobs.py）。
 """
 from __future__ import annotations
 
@@ -60,6 +65,25 @@ def _interpretation_model(kind: str, payload: Dict[str, Any]):
         return TableInterpretation.model_validate(payload)
     except Exception as e:  # noqa: BLE001 — pydantic 校验错误 → typed
         raise DataImportError("BAD_INTERPRETATION", str(e)[:200])
+
+
+def _job_active_by_id(job_id: int) -> Optional[Dict[str, Any]]:
+    """按 job id 查活跃性（短同步事务；终态/不存在返回 None）。"""
+    from app.services.data_operations.runner import _sync_session
+    from app.services.jobs.lifecycle import is_terminal
+
+    with _sync_session() as db:
+        from app.models.db_model import AnalysisTask
+
+        row = db.get(AnalysisTask, int(job_id))
+        if row is None:
+            db.commit()
+            return None
+        status = str(row.status)
+        db.commit()
+    if is_terminal(status):
+        return None
+    return {"job_id": int(job_id), "status": status}
 
 
 class DataImportService:
@@ -144,45 +168,104 @@ class DataImportService:
                 None, staging.expire_batch, batch_id
             )
             raise DataImportError("EXPIRED", "staging 已过期；请重新上传", status=410)
-        # 进程重启/崩溃恢复：本实例没有该批次在飞的提交任务时，残留
-        # COMMITTING 不可能是活的 —— 无收据成员复位 planned（无收据即未完成，
-        # 场景 17：晚到结果不得显示成功）。
-        if (
-            state.status == BatchStatus.COMMITTING
-            and batch_id not in self._committing_ids
-        ):
-            task = self._commit_tasks.get(batch_id)
-            if task is None or task.done():
+        # 进程重启/崩溃恢复（G23 durable 化）：
+        # 「COMMITTING 是否残留」的判据是 **durable job 活跃性**，不再是本进程
+        # 内存（_committing_ids 只见本副本）。存在活跃 job（pending/queued/
+        # running/cancelling，可能在另一 API 副本上推进）→ 保持状态不动；
+        # 没有活跃 job → 无收据成员复位 planned（无收据即未完成，场景 17：
+        # 晚到结果不得显示成功）。旧格式批次（active_job_id=None 且无 job 行）
+        # 走同一归一化 —— 与 G17 行为兼容。
+        if state.status == BatchStatus.COMMITTING:
+            # 写盘前 rev 复核（评审 B1/B1-R，两段）：
+            # ① 探测前重读 —— 挡住「读快照 → 探测」期间 runner 已落盘的情况；
+            # ② 探测后、任何写盘前再复核一次 —— 探测见到终态 ⇒ runner 的
+            #    最终写盘（严格先于其 DB 终态提交）必已发生 ⇒ 重读必见更高
+            #    rev ⇒ 放弃覆写。A11 崩溃对账/清扫恢复场景无并发写者、rev
+            #    稳定 ⇒ 复核通过、归一化照常 —— 该复核恰好区分这两类场景。
+            latest = await asyncio.to_thread(staging.load_state, batch_id)
+            if latest is None:
+                return state  # staging 恰被删除：交由上层 NOT_FOUND 语义
+            if latest.rev != state.rev:
+                return latest  # 期间有人写盘（多为 runner 落账）——不覆写
+            active = self._active_commit_job(latest)
+            if active is not None:
+                # 另一副本（或本副本 runner 与内存登记之间的窗口）在推进：
+                # 绝不复位。顺带把 job_id 补记进状态（老文件/竞态兜底）——
+                # 补记写盘前同样复核 rev（探测期间的收据写不得被覆盖）。
+                if latest.active_job_id != active["job_id"]:
+                    pre_write = await asyncio.to_thread(staging.load_state, batch_id)
+                    if pre_write is None or pre_write.rev != latest.rev:
+                        return pre_write if pre_write is not None else latest
+                    pre_write.active_job_id = active["job_id"]
+                    await asyncio.to_thread(staging.save_state, pre_write)
+                    return pre_write
+                return latest
+            if batch_id in self._committing_ids:
+                # 无 durable job（DB 不可达窗口）但本进程确有在飞 runner：
+                # 不复位 —— 宁可保守等待 stale 清扫，也不误杀本进程活任务。
+                return latest
+            # ② 探测后复核（B1-R 主洞）：见上
+            post_probe = await asyncio.to_thread(staging.load_state, batch_id)
+            if post_probe is None:
+                return latest
+            if post_probe.rev != latest.rev:
+                return post_probe
+            state = post_probe
+            for m in state.members:
+                if m.status == MemberStatus.COMMITTING:
+                    m.status = (
+                        MemberStatus.COMPLETED
+                        if m.member_key in state.receipts
+                        and state.receipts[m.member_key].status == "completed"
+                        else MemberStatus.PLANNED
+                        if m.member_key in state.plan_hashes
+                        else MemberStatus.DISCOVERED
+                    )
+            planned_keys = set(state.plan_hashes)
+            completed_keys = {
+                k for k, r in state.receipts.items() if r.status == "completed"
+            }
+            if state.cancel_requested:
+                # 取消意图跨重启保留（复审 P3）：复活为 cancelled 而非
+                # configured/partial（无虚假成功，意图也不丢）。
+                state.status = BatchStatus.CANCELLED
                 for m in state.members:
                     if m.status == MemberStatus.COMMITTING:
-                        m.status = (
-                            MemberStatus.COMPLETED
-                            if m.member_key in state.receipts
-                            and state.receipts[m.member_key].status == "completed"
-                            else MemberStatus.PLANNED
-                            if m.member_key in state.plan_hashes
-                            else MemberStatus.DISCOVERED
-                        )
-                planned_keys = set(state.plan_hashes)
-                completed_keys = {
-                    k for k, r in state.receipts.items() if r.status == "completed"
-                }
-                if state.cancel_requested:
-                    # 取消意图跨重启保留（复审 P3）：复活为 cancelled 而非
-                    # configured/partial（无虚假成功，意图也不丢）。
-                    state.status = BatchStatus.CANCELLED
-                    for m in state.members:
-                        if m.status == MemberStatus.COMMITTING:
-                            m.status = MemberStatus.CANCELLED
-                elif planned_keys and planned_keys <= completed_keys:
-                    state.status = BatchStatus.COMPLETED
-                elif completed_keys:
-                    state.status = BatchStatus.PARTIAL
-                else:
-                    state.status = BatchStatus.CONFIGURED
-                state.committing_since = None
-                staging.save_state(state)
+                        m.status = MemberStatus.CANCELLED
+            elif planned_keys and planned_keys <= completed_keys:
+                state.status = BatchStatus.COMPLETED
+            elif completed_keys:
+                state.status = BatchStatus.PARTIAL
+            else:
+                state.status = BatchStatus.CONFIGURED
+            state.committing_since = None
+            state.active_job_id = None
+            await asyncio.to_thread(staging.save_state, state)
         return state
+
+    def _active_commit_job(self, state: ImportBatchState) -> Optional[Dict[str, Any]]:
+        """查该批次的活跃 durable job（短同步事务）。
+
+        优先按 active_job_id 精确查；为空或已终态时按 (task_type, session,
+        batch_id) 扫描兜底 —— 覆盖状态文件丢失 job_id、跨副本提交等窗口。
+        DB 异常按「无活跃 job」处理会误复位，故按「可能有」处理（保守侧）：
+        由 stale 清扫（心跳超时）最终收敛。
+        """
+        from app.services.data_operations.import_jobs import find_active_import_job
+
+        try:
+            if state.active_job_id is not None:
+                hit = _job_active_by_id(state.active_job_id)
+                if hit is not None:
+                    return hit
+            return find_active_import_job(state.session_id, state.batch_id)
+        except Exception:  # noqa: BLE001 — DB 不可达：保守认为在飞（不误杀）
+            logger.warning(
+                "active-job probe failed for batch %s; assuming active",
+                state.batch_id,
+                exc_info=True,
+            )
+            return {"job_id": state.active_job_id or 0, "status": "unknown"}
 
     async def get_batch(self, batch_id: str, session_id: Optional[str]) -> ImportBatchState:
         return await self._load_owned(batch_id, session_id)
@@ -192,16 +275,32 @@ class DataImportService:
         return [staging.batch_summary(s) for s in states]
 
     async def delete_batch(self, batch_id: str, session_id: Optional[str]) -> bool:
-        await self._load_owned(batch_id, session_id)  # 归属/过期校验（统一 NOT_FOUND）
+        state = await self._load_owned(batch_id, session_id)  # 归属/过期校验（统一 NOT_FOUND）
         task = self._commit_tasks.get(batch_id)
         if task is not None and not task.done():
             raise DataImportError("COMMIT_IN_PROGRESS", "提交进行中，请先取消", status=409)
+        # G23：durable 在飞检查 —— 活跃 job 可能在另一副本推进，本地 task
+        # 表看不见（A03 同源风险）；rmtree 掉 staging 会让执行副本读不到源。
+        if state.status == BatchStatus.COMMITTING:
+            active = self._active_commit_job(state)
+            if active is not None:
+                raise DataImportError(
+                    "COMMIT_IN_PROGRESS",
+                    f"提交进行中（job {active['job_id']}），请先取消", status=409,
+                )
         # 删除持锁（评审 P2-9b）：与 start_commit 检查-写入互斥，防竞态逃逸
         # 成未检索任务
         async with self._lock(batch_id):
             task = self._commit_tasks.get(batch_id)
             if task is not None and not task.done():
                 raise DataImportError("COMMIT_IN_PROGRESS", "提交进行中，请先取消", status=409)
+            if state.status == BatchStatus.COMMITTING:
+                active = self._active_commit_job(state)
+                if active is not None:
+                    raise DataImportError(
+                        "COMMIT_IN_PROGRESS",
+                        f"提交进行中（job {active['job_id']}），请先取消", status=409,
+                    )
             ok = await asyncio.to_thread(staging.delete_batch, batch_id)
         self._cancel_events.pop(batch_id, None)
         self._commit_tasks.pop(batch_id, None)
@@ -341,6 +440,12 @@ class DataImportService:
         return out
 
     # ── 提交 ──────────────────────────────────────────────────────────────
+    def _conflict(self, batch_id: str) -> DataImportError:
+        return DataImportError(
+            "COMMIT_IN_PROGRESS", f"批次 {batch_id} 提交进行中（durable job 在飞）",
+            status=409,
+        )
+
     async def start_commit(
         self,
         batch_id: str,
@@ -349,79 +454,44 @@ class DataImportService:
         expected_plan_version: Optional[int] = None,
         *,
         background: bool = True,
+        actor: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """启动提交。background=True 返回 202 语义（UI 轮询）；False 同步完成
-        （Pi 工具路径，小 fixture 即时收据）。"""
-        async with self._lock(batch_id):
-            state = await self._load_owned(batch_id, session_id)
-            if state.status == BatchStatus.COMMITTING:
-                existing = self._commit_tasks.get(batch_id)
-                if existing is not None and not existing.done():
-                    raise DataImportError("COMMIT_IN_PROGRESS", status=409)
-            if expected_plan_version is not None and state.plan_version != expected_plan_version:
-                raise DataImportError(
-                    "PLAN_VERSION_CONFLICT",
-                    f"期望 {expected_plan_version} 实际 {state.plan_version}",
-                    status=409,
-                )
-            targets = [m for m in state.members if m.selected or (member_keys and m.member_key in set(member_keys))]
-            if member_keys is not None:
-                known = {m.member_key for m in state.members}
-                missing = [k for k in member_keys if k not in known]
-                if missing:
-                    raise DataImportError("UNKNOWN_MEMBER", ",".join(missing[:5]), status=404)
-            targets = [m for m in targets if m.unsupported_reason is None]
-            if not targets:
-                raise DataImportError("NO_SELECTED_MEMBERS", "未选择任何可导入成员")
-            unplanned = [m.member_key for m in targets if m.member_key not in state.plan_hashes]
-            if unplanned:
-                raise DataImportError(
-                    "PLAN_REQUIRED", f"成员缺少解释计划: {', '.join(unplanned[:5])}"
-                )
-            # 重启恢复：任何残留 committing 状态复位（无收据即未完成）
-            for m in state.members:
-                if m.status == MemberStatus.COMMITTING:
-                    m.status = MemberStatus.PLANNED
-            state.status = BatchStatus.COMMITTING
-            state.cancel_requested = False
-            state.committing_since = utc_now_iso()
-            state.last_commit_started_at = state.committing_since
-            for m in targets:
-                m.status = MemberStatus.COMMITTING
-            self._committing_ids.add(batch_id)
-            await asyncio.to_thread(staging.save_state, state)
+        """启动提交（G23 durable 化）。
 
-        cancel_event = asyncio.Event()
-        self._cancel_events[batch_id] = cancel_event
-        target_keys = [m.member_key for m in targets]
-
-        if not background:
-            return await self._run_commit(batch_id, session_id, target_keys, cancel_event)
-
-        existing = self._commit_tasks.get(batch_id)
-        if existing is not None and not existing.done():
-            raise DataImportError("COMMIT_IN_PROGRESS", status=409)
-        self._commit_tasks[batch_id] = asyncio.create_task(
-            self._run_commit(batch_id, session_id, target_keys, cancel_event)
+        background=True 返回 202 语义（UI 轮询批次/任务中心）；False 同步
+        等待完成（小 fixture 即时收据）。两条路径内部都走 durable job ——
+        同一 job、同一收据、同一取消语义。重复提交（同 owner、同计划版本、
+        同成员计划指纹）幂等复用既有 job。
+        """
+        from app.services.data_operations.import_jobs import (
+            JobActor,
+            submit_import_commit,
         )
-        return {
-            "batch_id": batch_id,
-            "status": "committing",
-            "members": target_keys,
-            "poll": f"/api/v1/data-import/batches/{batch_id}",
-        }
 
-    async def _run_commit(
+        job_actor: JobActor = actor or JobActor()
+        return await submit_import_commit(
+            self, batch_id, session_id, member_keys, expected_plan_version,
+            actor=job_actor, background=background,
+        )
+
+    async def _run_commit_members(
         self,
         batch_id: str,
         session_id: Optional[str],
         member_keys: List[str],
         cancel_event: asyncio.Event,
+        handle: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """逐成员串行提交（默认并发 1；取消在成员间与行循环检查点生效）。"""
+        """逐成员串行提交（默认并发 1；取消在成员间与行循环检查点生效）。
+
+        G23：``handle``（durable job 句柄）在场时，每个成员发布前做强制
+        取消复核（ensure_not_cancelled），每成员完成即写 job 进度；返回
+        有界批次结果摘要（job result_summary）。
+        """
         cancelled = False
         try:
-            for key in member_keys:
+            total = len(member_keys)
+            for idx, key in enumerate(member_keys):
                 if cancel_event.is_set():
                     cancelled = True
                     break
@@ -472,6 +542,10 @@ class DataImportService:
                         if interp_payload
                         else None
                     )
+                # 不可逆副作用（摄入/store/收据发布）前的 durable 取消复核：
+                # 跨副本取消经 DB 轮询点燃本进程 token/event（A07）。
+                if handle is not None:
+                    await handle.ensure_not_cancelled()
                 try:
                     receipt = await commit_member(
                         state, member, source, interp, plan_hash, cancel_event=cancel_event
@@ -506,7 +580,26 @@ class DataImportService:
                         )
                     fresh.receipts[key] = receipt
                     fresh.diagnostics.update(state.diagnostics)
-                    await asyncio.to_thread(staging.save_state, fresh)
+                    try:
+                        await asyncio.to_thread(staging.save_state, fresh)
+                    except OSError as exc:
+                        # A19：收据落盘失败 —— 成员按失败披露（typed），不虚称成功
+                        logger.exception("receipt persist failed for %s", key)
+                        if fm is not None:
+                            fm.status = MemberStatus.FAILED
+                        fresh.receipts[key] = CommitReceipt(
+                            member_key=key, plan_hash=plan_hash, status="failed",
+                            error_code="STAGING_WRITE_FAILED",
+                            error_message=f"收据写入失败: {exc}"[:200],
+                        )
+                # job 进度：已处理成员数 / 总数（真值，不伪造百分比）
+                if handle is not None:
+                    await handle.progress(
+                        phase="commit",
+                        message=f"{key}: {status_out}",
+                        current_step=idx + 1,
+                        total_steps=total,
+                    )
             # 批次终态
             async with self._lock(batch_id):
                 fresh = await self._load_owned(batch_id, session_id)
@@ -526,12 +619,15 @@ class DataImportService:
                         fresh.status = BatchStatus.FAILED
                 fresh.committing_since = None
                 await asyncio.to_thread(staging.save_state, fresh)
-                summary = staging.batch_summary(fresh)
-                summary["receipts"] = {
-                    k: fresh.receipts[k].model_dump()
-                    for k in member_keys if k in fresh.receipts
-                }
-                return summary
+            from app.services.data_operations.import_jobs import batch_outcome_summary
+
+            summary = batch_outcome_summary(fresh, member_keys)
+            # 取消语义（A07/A08）：批次终态已如实落盘（cancelled/partial），
+            # 再让 job 走取消终态 —— run_async_job 把 OperationCancelled
+            # 收敛为 cancelled，绝不允许迟到完成改写。
+            if cancelled and cancel_event.is_set() and handle is not None:
+                handle.checkpoint()  # raises OperationCancelled
+            return summary
         finally:
             self._commit_tasks.pop(batch_id, None)
             self._cancel_events.pop(batch_id, None)
@@ -539,13 +635,67 @@ class DataImportService:
 
     # ── 取消 / 收据 ───────────────────────────────────────────────────────
     async def cancel_batch(self, batch_id: str, session_id: Optional[str]) -> Dict[str, Any]:
+        """取消提交（G23 durable 化）：任何 API 副本发出都生效。
+
+        语义矩阵（任务书 P4 / A07-A09）：
+        * 活跃 job 在飞 → DB 落 ``cancel_requested_at``（持久事实）+ 本进程
+          event/token 即时联动（本副本时）；执行副本的看门狗 ≤ 轮询周期感知，
+          在下一成员边界/行检查点收敛，迟到完成不改写终态。
+        * job 已 completed → 完成后取消：状态保持 completed（终态不可迁），
+          如实返回 ``already_completed``（产物 retained 披露见收据）。
+        * 无 job（旧格式批次/已归一化）→ 沿用 G17 文件路径语义。
+        """
         state = await self._load_owned(batch_id, session_id)
+        active = self._active_commit_job(state) if state.status == BatchStatus.COMMITTING else None
+        if active is not None and state.active_job_id:
+            from app.core.database import async_db_session
+            from app.services.jobs.store import DurableJobStore
+
+            job_id = int(state.active_job_id)
+            async with async_db_session() as db:
+                changed, current = await DurableJobStore.request_cancel(db, job_id)
+                await db.commit()
+            if current.value == "completed":
+                return {
+                    "batch_id": batch_id,
+                    "status": "completed",
+                    "cancel_requested": False,
+                    "message": "提交已完成，取消不生效（终态不可变；产物见收据）",
+                }
+            # 取消意图同时落批次文件（本进程无 runner 时仍是跨重启证据）
+            async with self._lock(batch_id):
+                fresh = await self._load_owned(batch_id, session_id)
+                fresh.cancel_requested = True
+                await asyncio.to_thread(staging.save_state, fresh)
+            # 本副本有 runner：即时联动 + 有界等待确认
+            event = self._cancel_events.get(batch_id)
+            if event is not None:
+                event.set()
+            task = self._commit_tasks.get(batch_id)
+            final_status = "cancelling"
+            if task is not None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=30)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+            # 回报真实终态（本副本 runner 已确认时为 cancelled；跨副本执行
+            # 时诚实停留在 cancelling —— 状态以任务中心/批次详情为准）
+            fresh = await self._load_owned(batch_id, session_id)
+            if fresh.status != BatchStatus.COMMITTING:
+                final_status = fresh.status.value
+            return {
+                "batch_id": batch_id,
+                "job_id": str(job_id),
+                "status": final_status,
+                "cancel_requested": changed,
+            }
+        # ── 无活跃 durable job：G17 兼容路径 ──
         event = self._cancel_events.get(batch_id)
         if event is None:
             if state.status != BatchStatus.COMMITTING:
                 raise DataImportError("NOT_COMMITTING", f"当前状态 {state.status.value}", status=409)
-            # 无在飞任务（锁窗口期/重启后）：落取消意图，_run_commit 终态写
-            # 之前会读到 cancel_requested 并服从（评审 P2-9 竞态修复）。
+            # 无在飞任务（锁窗口期/重启后）：落取消意图，终态写之前会读到
+            # cancel_requested 并服从（评审 P2-9 竞态修复）。
             async with self._lock(batch_id):
                 fresh = await self._load_owned(batch_id, session_id)
                 fresh.cancel_requested = True

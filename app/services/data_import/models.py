@@ -233,6 +233,10 @@ class ImportBatchState(BaseModel):
     committing_since: Optional[str] = None
     last_commit_started_at: Optional[str] = None
     cancel_requested: bool = False            # 取消意图（评审 P2-9：锁窗口期也生效）
+    #: G23：本次提交对应的 durable job（analysis_tasks.id）。活跃 job 是
+    #: 「另一副本可能正在推进」的跨进程在飞证据；None = 旧格式批次（G23 之前）
+    #: 或从未提交。恢复判据见 service._load_owned。
+    active_job_id: Optional[int] = None
 
 
 def canonical_interpretation(payload: Dict[str, Any]) -> Dict[str, Any]:

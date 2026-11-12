@@ -51,6 +51,9 @@ class JobKind(str, Enum):
     workflow = "workflow"    # WorkflowRun
     explorer = "explorer"    # Explorer chain
     atlas_export = "atlas_export"  # 批量图册发布 job（Celery；页级 checkpoint/重试）
+    # G23（持久数据操作）：DB 列是 String(20) 无 CHECK —— 新 kind 纯加性。
+    data_import = "data_import"        # 导入批次提交（进程内 durable runner）
+    field_compute = "field_compute"    # 字段计算执行（进程内 durable runner）
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。

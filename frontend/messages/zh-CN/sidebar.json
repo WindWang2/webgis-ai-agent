@@ -253,7 +253,9 @@
     "atlasPdf": "下载 PDF",
     "atlasManifest": "来源清单",
     "atlasDownloadPdf": "下载图册 PDF：{name}",
-    "atlasDownloadManifest": "下载可复现来源清单：{name}"
+    "atlasDownloadManifest": "下载可复现来源清单：{name}",
+    "importMembers": "导入成员（逐成员状态）",
+    "importRejected": "拒绝 {p0} 行"
   },
   "studio": {
     "decoration": {

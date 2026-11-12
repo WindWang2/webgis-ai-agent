@@ -1776,6 +1776,33 @@
       "title": "Batch Id",
       "type": "string"
      },
+     "cancel_requested": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cancel Requested"
+     },
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Job Id"
+     },
+     "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+     },
      "status": {
       "default": "cancelled",
       "title": "Status",
@@ -3195,12 +3222,33 @@
       "title": "Batch Id",
       "type": "string"
      },
+     "idempotent_reuse": {
+      "default": false,
+      "title": "Idempotent Reuse",
+      "type": "boolean"
+     },
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Job Id"
+     },
      "members": {
       "items": {
        "type": "string"
       },
       "title": "Members",
       "type": "array"
+     },
+     "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
      },
      "poll": {
       "default": "",
@@ -6582,6 +6630,11 @@
    },
    "FieldComputeExecuteRequest": {
     "properties": {
+     "background": {
+      "default": false,
+      "title": "Background",
+      "type": "boolean"
+     },
      "expected_fingerprint": {
       "default": "",
       "description": "已看到预览的 confirmation.params_fingerprint",
@@ -8272,6 +8325,21 @@
       "description": "agent | analysis | workflow | explorer",
       "title": "Kind",
       "type": "string"
+     },
+     "member_status": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Member Status"
      },
      "message": {
       "anyOf": [
