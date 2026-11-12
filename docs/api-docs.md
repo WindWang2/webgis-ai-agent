@@ -629,6 +629,21 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/editable-copy` | Make Editable Copy | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/qualification` | Get Edit Qualification | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/lineage` | Get Feature Lineage | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | Create Feature Change Proposal (G32) | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | List Feature Change Proposals | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Get Feature Proposal Detail | object |
+| `PATCH` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Update Feature Proposal (revision CAS) | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/diff` | Feature Proposal Three-way Diff | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/conflicts` | Feature Proposal Conflict Report | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/resolutions` | Submit Conflict Resolutions | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/rebase` | Rebase Feature Proposal | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/decisions` | Decide Feature Proposal | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/merge` | Merge Feature Proposal | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery` | Feature Proposal Recovery View | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery/resolve` | Resolve Feature Proposal Recovery | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/comments` | Comment Feature Proposal | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/audit` | Export Feature Proposal Audit | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/withdraw` | Withdraw Feature Proposal | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/map-operations` | List Map Operations | MapOperationListResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}` | Get Map Operation | MapOperationReceiptResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}/commit` | Commit Pending Map Operation | MapOperationReceiptResponse |

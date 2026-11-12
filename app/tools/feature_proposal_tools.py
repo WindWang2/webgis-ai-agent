@@ -28,7 +28,11 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         registry,
         name="vector_change_proposal_create",
         description=(
-            "Draft a persistent feature-change proposal on an editable vector dataset ref. "
+            "起草/保存一条持久要素变更提案（feature change proposal）：在可编辑矢量数据集上"
+            "把一组有界修改保存为待审候选；当前数据不被修改，由所有者在提案面板审阅批准后"
+            "经真实提交合并。ops 词表与 vector_feature_edit_preview 一致，每个 op 可带 "
+            "wfids 限定目标要素；rename_field 不可入提案。Draft a persistent "
+            "feature-change proposal on an editable vector dataset ref. "
             "The proposal freezes the current revision as its base evidence; the live data is "
             "NOT modified. The owner reviews field/geometry diffs and conflicts later in the "
             "proposal UI and approves explicitly. Ops vocabulary matches vector_feature_edit_preview "
@@ -54,12 +58,12 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         },
     )
     async def vector_change_proposal_create(
-        session_id: Optional[str],
         ref_id: str,
         ops: List[Dict[str, Any]],
         feature_ids: Optional[List[str]] = None,
         title: Optional[str] = None,
         submit: bool = True,
+        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not session_id:
             return {"success": False, "code": "MISSING_SESSION",
@@ -109,6 +113,8 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         registry,
         name="vector_change_proposal_list",
         description=(
+            "列出/查询会话的持久要素变更提案（feature proposals）：可选状态过滤，或按 "
+            "proposal_id 取详情。返回紧凑摘要（状态/修订/摘要/base 证据/op 种类/批准绑定）。"
             "List persisted feature-change proposals for the session (optionally by status), "
             "or fetch one proposal's detail by proposal_id. Returns compact summaries: "
             "status, revision, digest, base evidence, op kinds, approval binding state."
@@ -126,9 +132,9 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         },
     )
     async def vector_change_proposal_list(
-        session_id: Optional[str],
         status: Optional[str] = None,
         proposal_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not session_id:
             return {"success": False, "code": "MISSING_SESSION",
@@ -159,7 +165,9 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         registry,
         name="vector_change_proposal_diff",
         description=(
-            "Inspect a persisted feature-change proposal: candidate deltas (paged) and the "
+            "检查要素变更提案（proposal diff）：候选差异分页 + 与当前数据的三方冲突报告"
+            "（字段/几何冲突、已满足、独立修改计数）；几何以摘要呈现。Inspect a persisted "
+            "feature-change proposal: candidate deltas (paged) and the "
             "three-way conflict report against the CURRENT data (field/geometry conflicts, "
             "satisfied changes, independent current changes). Geometry is summarized as "
             "digests; use the REST diff endpoint for full geometry when needed."
@@ -177,9 +185,9 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         },
     )
     async def vector_change_proposal_diff(
-        session_id: Optional[str],
         proposal_id: str,
         page: int = 1,
+        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not session_id:
             return {"success": False, "code": "MISSING_SESSION",
@@ -221,7 +229,9 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         registry,
         name="vector_change_proposal_rebase_preview",
         description=(
-            "Preview a rebase of a proposal onto the current data revision: what remains "
+            "预览要素变更提案的 rebase（重定基底）：剩余冲突与所需裁决；只读预览 —— 应用"
+            "rebase 是所有者 REST 动作（会使旧批准失效）。Preview a rebase of a proposal "
+            "onto the current data revision: what remains "
             "conflicting, which resolutions are still needed. This is a read-only preview — "
             "applying the rebase (and everything that changes candidate content) is an owner "
             "REST action because it invalidates prior approvals."
@@ -238,8 +248,8 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         },
     )
     async def vector_change_proposal_rebase_preview(
-        session_id: Optional[str],
         proposal_id: str,
+        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not session_id:
             return {"success": False, "code": "MISSING_SESSION",

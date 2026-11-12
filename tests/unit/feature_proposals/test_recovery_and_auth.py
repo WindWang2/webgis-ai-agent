@@ -346,3 +346,41 @@ async def test_p27_withdraw_releases_shared_snapshot_safely(client, _isolated, t
     resp = await client.get(f"/api/v1/chat/sessions/{s}/feature-proposals/{pid2}/diff")
     assert resp.status_code == 200
     assert resp.json()["candidate_delta_count"] >= 1
+
+
+# ── P17b：两个独立 store 实例（等价双服务进程）并发 CAS ───────────────────
+
+
+async def test_p17b_two_store_instances_cas_and_restart(client, _isolated, tmp_path):
+    """两个 ProposalStore 实例（同一持久文件、不同锁表 —— 等价两个服务
+    进程）：一个写，另一个立即可见；旧 revision CAS 跨实例拒绝。"""
+    from app.services.feature_proposals.store import ProposalStore
+
+    s = sid()
+    ref = await _seed(s)
+    pid = await _create_submitted(client, s, ref, [
+        {"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": 10}},
+    ])
+    # 实例 B（「另一服务进程」）读同一文件。
+    store_b = ProposalStore(base_dir=tmp_path)
+    rec_b = await store_b.get_proposal(s, pid)
+    assert rec_b is not None and rec_b.revision == 1
+
+    # 实例 A 更新（revision 1→2）。
+    import app.services.feature_proposals.service as fpsvc
+
+    updated = await fpsvc.update_proposal(
+        s, pid, expected_revision=1,
+        ops=[{"op": "set_fields", "wfids": ["s1"], "fields": {"capacity": 11}}],
+        actor_kind="user", actor_id="u1",
+    )
+    assert updated.revision == 2
+
+    # 实例 B 持旧 revision 的写 → CAS 拒绝（跨实例文件真相一致）。
+    with pytest.raises(Exception) as exc_info:
+        await store_b.mutate_proposal(s, pid, lambda p: p, expected_revision=1)
+    assert "revision" in str(exc_info.value).lower() or exc_info.value.code == "proposal_revision_conflict"
+
+    # 实例 B 重读看到 revision 2（「重启」后真相一致）。
+    rec_b2 = await store_b.get_proposal(s, pid)
+    assert rec_b2.revision == 2
