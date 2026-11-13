@@ -41,13 +41,13 @@ describe('submitAtlasJob', () => {
         label: 'Atlas job submit API error',
       }),
     );
-    const body = JSON.parse(apiFetch.apiFetch.mock.calls[0][1].body);
-    expect(body).toMatchObject({
+    const body = apiFetch.apiFetch.mock.calls[0][1].body;
+    expect(body).toEqual(expect.objectContaining({
       session_id: 'sess-1',
       atlas: { driver: 'category', categoryProperty: 'district', includeCover: true },
       classification_scope: 'shared',
       target_dpi: 300,
-    });
+    }));
     expect(resp.plan?.page_count).toBe(13);
     expect(resp.idempotent_reuse).toBe(false);
   });

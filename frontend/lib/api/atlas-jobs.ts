@@ -76,7 +76,7 @@ export async function submitAtlasJob(
 ): Promise<AtlasJobSubmitResponse> {
   return apiFetch<AtlasJobSubmitResponse>('/api/v1/atlas/jobs', {
     method: 'POST',
-    body: JSON.stringify(req),
+    body: req,
     ownerToken: options.ownerToken ?? undefined,
     signal: options.signal,
     label: 'Atlas job submit API error',
