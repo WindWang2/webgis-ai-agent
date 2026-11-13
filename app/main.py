@@ -61,6 +61,7 @@ from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 from app.api.routes import data_quality as data_quality_routes
 from app.api.routes import data_preparation as data_preparation_routes  # noqa: E402
 from app.api.routes import data_import as data_import_routes  # noqa: E402  # G17 staged 导入工作台
+from app.api.routes import topology_workbench as topology_workbench_routes  # noqa: E402  # G31 跨图层拓扑工作台
 from app.api.routes import field_compute as field_compute_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
@@ -1165,6 +1166,7 @@ app.include_router(composition_template_assets_routes.router, prefix="/api/v1", 
 app.include_router(data_fabric.router, prefix="/api/v1", tags=["Data Fabric / 数据织网"])
 app.include_router(data_delivery_routes.router, prefix="/api/v1", tags=["Data Delivery / 数据交付"])  # G18
 app.include_router(selection_handles_routes.router, prefix="/api/v1", tags=["图层数据"])  # G24 权威选择集句柄
+app.include_router(topology_workbench_routes.router, prefix="/api/v1", tags=["跨图层拓扑工作台 G31"])
 app.include_router(lakehouse_routes.router, prefix="/api/v1", tags=["Lakehouse / 空间数据湖仓"])
 app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["Lakehouse / 数据集版本（V8）"])
 app.include_router(extensions_marketplace_routes.router, prefix="/api/v1", tags=["Extension Marketplace / 扩展市场（只读）"])
