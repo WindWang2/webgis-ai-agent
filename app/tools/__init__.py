@@ -86,6 +86,8 @@ _TOOL_MODULES = [
     # GOAL-02：OGC 开放服务与远程资产工具面（发现/coverage 读/COG 物化/瓦片上图）
     ("app.tools.ogc_service_tools", "register_ogc_service_tools"),
     ("app.tools.data_discovery", "register_data_discovery_tools"),
+    # G29：运行中用户决策工具面（原生 ctx.ui 闭环；独立模块防并发冲突）
+    ("app.tools.user_decision_tools", "register_user_decision_tools"),
     ("app.tools.workspace_tools", "register_workspace_tools"),
     ("app.tools.ingest_tools", "register_ingest_tools"),
     # 数据准备域：inspect→propose→prepare→bind 工具面（独立模块防并发冲突）

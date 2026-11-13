@@ -68,6 +68,10 @@ export type SSEEventType =
   | 'error'
   | 'explorer_progress'
   | 'plan_ready'
+  | 'pi_interaction'
+  | 'pi_interaction_update'
+  | 'pi_ui'
+  | 'pi_turn_message'
   | 'plan_step_done'
   | 'plan_finalized'
   // #1048: SessionPlan live deltas（双 host；与 plan_* 是两个计划概念，ADR-0076）
@@ -368,4 +372,92 @@ export async function executeToolDirect(
     body: { tool, arguments: arguments_ },
     label: "Tool execute error",
   });
+}
+
+// ── G29：运行中原生交互（REST 面） ─────────────────────────────────────
+
+export interface RuntimeInteractionAnswerResult {
+  result: 'accepted' | 'already_answered' | 'duplicate';
+  state?: string;
+  interaction?: Record<string, unknown>;
+}
+
+/**
+ * 提交运行中交互回答（value/confirmed/cancelled；幂等 —— 后端至多一次消费）。
+ * 白名单/类型校验在后端；越权/迟到以 ApiError.status + code 呈现。
+ */
+export async function submitRuntimeInteractionAnswer(
+  sessionId: string,
+  interactionId: string,
+  answer: { value?: string; confirmed?: boolean; cancelled?: boolean },
+  ownerToken?: string | null
+): Promise<RuntimeInteractionAnswerResult> {
+  return apiFetch<RuntimeInteractionAnswerResult>(
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/runtime-interactions/${encodeURIComponent(interactionId)}/answer`,
+    {
+      method: 'POST',
+      body: answer,
+      ownerToken,
+      label: "API Error",
+    }
+  );
+}
+
+export interface RuntimeInteractionsView {
+  boot_id: string;
+  pending: Record<string, unknown>[];
+  recent: Record<string, unknown>[];
+  fire?: Record<string, unknown>;
+  metrics?: Record<string, number>;
+}
+
+/** 水合：pending + 近期终态 + fire 投影（重连/刷新恢复）。 */
+export async function fetchRuntimeInteractions(
+  sessionId: string,
+  ownerToken?: string | null
+): Promise<RuntimeInteractionsView> {
+  return apiFetch<RuntimeInteractionsView>(
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/runtime-interactions`,
+    { ownerToken, label: "API Error" }
+  );
+}
+
+export interface TurnSteerResult {
+  accepted: boolean;
+  disposition?: unknown;
+  error?: string | null;
+}
+
+/**
+ * 运行中追加指令（mode=adjust → steer / queue → follow_up）。
+ * 返回真实 vendor disposition（接纳 ≠ 已消费；队列状态经 GET 观察）。
+ */
+export async function sendTurnMessage(
+  sessionId: string,
+  turnId: string,
+  message: string,
+  mode: 'adjust' | 'queue',
+  ownerToken?: string | null
+): Promise<TurnSteerResult> {
+  return apiFetch<TurnSteerResult>(
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/messages`,
+    {
+      method: 'POST',
+      body: { message, mode },
+      ownerToken,
+      label: "API Error",
+    }
+  );
+}
+
+/** 队列可见性：vendor get_state 投影 + 本会话追加指令台账。 */
+export async function fetchTurnQueue(
+  sessionId: string,
+  turnId: string,
+  ownerToken?: string | null
+): Promise<{ vendor_state: Record<string, unknown>; messages: Record<string, unknown>[] }> {
+  return apiFetch(
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/queue`,
+    { ownerToken, label: "API Error" }
+  );
 }
