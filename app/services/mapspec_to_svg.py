@@ -103,6 +103,9 @@ from app.lib.cartography.svg_marginalia import (
     render_legend_box as _render_legend_box,
 )
 from app.lib.cartography.svg_marginalia import (
+    render_legend_box_authored as _render_legend_box_authored,
+)
+from app.lib.cartography.svg_marginalia import (
     render_north_arrow as _render_north_arrow,
 )
 from app.lib.cartography.svg_marginalia import (
@@ -187,6 +190,7 @@ from app.services.mapspec_svg_payloads import (
 from app.services.mapspec_svg_chrome_layout import (
     _constraint_chrome_xy,
     _render_title_chrome,
+    render_authored_text_block as _render_authored_text_block,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,6 +227,10 @@ class SvgCompilation:
     #: G26：数值栅格层的地理对齐嵌入回执（每层一条；PDF HTML 面分层层叠
     #: 与导出 manifest 消费。无栅格嵌入时恒空 —— 旧调用面形状不变）。
     raster_placements: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    #: G34 additive：纸面作者计划的**有界绘制回执**（mm 几何 / lines /
+    #: legend 完整性 / 比例尺 / 有效 extent / 字体状态）。不含整页 SVG、
+    #: 字体 bytes 或栅格数组；无 print_layout 时恒为空 dict。
+    print_layout_receipt: Dict[str, Any] = dataclass_field(default_factory=dict)
 
 
 def _resolve_export_thresholds(
@@ -536,12 +544,110 @@ def _temporal_note(mapspec: Dict[str, Any]) -> str:
     )
 
 
+def _render_authored_chrome(
+    mapspec: Dict[str, Any],
+    draw_plan: Dict[str, Any],
+    geo_bounds: List[float],
+    canvas_w: float,
+    canvas_h: float,
+    project: Any,
+) -> Tuple[str, Dict[str, Any]]:
+    """G34 opt-in：把作者计划的毫米框/字体/文本行/图例排版真正画进 SVG。
+
+    这是 WP11 的最终绘制消费面：``print_layout=None`` 时本函数完全不会被
+    调用，legacy 导出逐字节不变。所有几何单位 = viewBox user unit。
+    """
+    parts: List[str] = []
+    rendered: List[str] = []
+    omitted: List[Dict[str, str]] = []
+    diags: List[Tuple[str, str, str]] = []
+    rect = draw_plan.get("map_rect") or {}
+    scale = draw_plan.get("scale") or {}
+    dpi = float(draw_plan.get("dpi") or 300.0)
+    from app.services.print_layout_authoring.units import mm_to_canvas_units
+
+    # 纸面地图槽：真实边框 + 独立 oracle 属性（不是 CSS truncate，不隐藏内容）
+    parts.append(
+        f'<g class="chrome-print-map-slot" '
+        f'data-g34-map-x-mm="{_fmt_num(float(rect.get("x", 0)) / max(draw_plan.get("units_per_mm") or 1.0, 1e-9))}" '
+        f'data-g34-map-y-mm="{_fmt_num(float(rect.get("y", 0)) / max(draw_plan.get("units_per_mm") or 1.0, 1e-9))}" '
+        f'data-g34-map-width-mm="{_fmt_num(float(rect.get("width", 0)) / max(draw_plan.get("units_per_mm") or 1.0, 1e-9))}" '
+        f'data-g34-map-height-mm="{_fmt_num(float(rect.get("height", 0)) / max(draw_plan.get("units_per_mm") or 1.0, 1e-9))}" '
+        f'data-g34-effective-extent="{" ".join(str(v) for v in (scale.get("effective_extent") or []))}" '
+        f'data-g34-fit="{draw_plan.get("map_fit") or ""}" '
+        f'data-g34-scale-mpp="{_fmt_num(float(scale.get("meters_per_unit") or 0.0))}">'
+        f'<rect x="{_fmt_num(float(rect.get("x", 0)))}" y="{_fmt_num(float(rect.get("y", 0)))}" '
+        f'width="{_fmt_num(float(rect.get("width", 0)))}" height="{_fmt_num(float(rect.get("height", 0)))}" '
+        f'fill="none" stroke="#94a3b8" stroke-width="1" /></g>'
+    )
+
+    text_kinds = {"title", "subtitle", "text_block", "page_number", "toc",
+                  "attribution", "disclosure"}
+    for draw in draw_plan.get("components") or []:
+        kind = str(draw.get("kind") or "")
+        cid = str(draw.get("id") or "")
+        if not draw.get("visible", True):
+            omitted.append({"component_id": cid, "type": kind, "code": "component_hidden"})
+            continue
+        fragment = ""
+        if kind in text_kinds:
+            fragment = _render_authored_text_block(draw)
+            if not fragment and (draw.get("text") or {}).get("status") == "blocked":
+                omitted.append({"component_id": cid, "type": kind,
+                                "code": "text_overflow_blocked"})
+                diags.append(("text_overflow_blocked", "policy=block", cid))
+        elif kind == "legend":
+            fragment = _render_legend_box_authored(draw, draw_plan)
+            lp = draw.get("legend") or {}
+            if not lp.get("complete"):
+                omitted.append({"component_id": cid, "type": kind,
+                                "code": lp.get("code") or "legend_incomplete"})
+                diags.append((lp.get("code") or "legend_incomplete",
+                              f"{lp.get('entries_rendered')}/{lp.get('entries_total')}", cid))
+        elif kind == "scale_bar":
+            box = draw.get("box") or {}
+            eff = list(scale.get("effective_extent") or geo_bounds)
+            fragment = _render_scale_bar(
+                float(box.get("x") or 0.0),
+                float(box.get("y") or 0.0) + float(box.get("height") or 0.0) * 0.6,
+                eff, float(rect.get("width") or canvas_w),
+                target_px=mm_to_canvas_units(30.0, dpi),
+            )
+        elif kind == "north_arrow":
+            box = draw.get("box") or {}
+            fragment = _render_north_arrow(
+                float(box.get("x") or 0.0) + float(box.get("width") or 0.0) / 2.0,
+                float(box.get("y") or 0.0) + float(box.get("height") or 0.0) / 2.0,
+                bearing=_view_bearing(mapspec),
+            )
+        elif kind == "graticule":
+            fragment = _render_graticule(geo_bounds, project, lines=6)
+        elif kind == "map_border":
+            box = draw.get("box") or rect
+            fragment = (
+                f'<rect x="{_fmt_num(float(box.get("x") or 0.0))}" '
+                f'y="{_fmt_num(float(box.get("y") or 0.0))}" '
+                f'width="{_fmt_num(float(box.get("width") or 0.0))}" '
+                f'height="{_fmt_num(float(box.get("height") or 0.0))}" '
+                f'fill="none" stroke="#0f172a" stroke-width="1" />'
+            )
+        if fragment:
+            parts.append(fragment)
+            if kind not in rendered:
+                rendered.append(kind)
+    return "".join(parts), {
+        "rendered": rendered, "omitted": omitted, "diagnostics": diags,
+        "print_layout": draw_plan.get("version"),
+    }
+
+
 def _render_chrome_groups(
     mapspec: Dict[str, Any],
     geo_bounds: List[float],
     canvas_w: float,
     canvas_h: float,
     project: Any,
+    draw_plan: Any = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """W7：canonical scene 组件 → publication 整饰 SVG 组（include_chrome）。
 
@@ -557,6 +663,11 @@ def _render_chrome_groups(
     rendered = 实际画出的组件族；omitted = enabled 但未进成品（ref 不可用 /
     kind 不支持 / 配置无效 / 矩阵未置位）—— 结构化降级，绝不静默丢失。
     """
+    if draw_plan is not None:
+        # G34 opt-in：作者计划走真实绘制消费面；legacy 路径完全不进入这里。
+        return _render_authored_chrome(
+            mapspec, draw_plan, geo_bounds, canvas_w, canvas_h, project)
+
     resolved = _resolve_components(mapspec)
     enabled = [c for c in resolved if c.enabled]
     parts: List[str] = []
@@ -1077,11 +1188,21 @@ def compile_mapspec_to_svg_detailed(
     bounds: Any = None,
     max_labels: Any = None,
     raster_bindings: Any = None,
+    print_layout: Any = None,
+    paper_mm: Any = None,
+    page_id: str = "",
+    atlas_page: Any = None,
 ) -> SvgCompilation:
     """G26：``raster_bindings``（layer_id → 冻结绑定 dict）在场时，数值
     栅格层按冻结表达以地理对齐 data-URI 窗口嵌入（图层顺序保持）；缺席
     时 numeric_raster 源诚实披露 ``layer_ref_unavailable``（不再静默丢层）。
-    其余参数语义不变。"""
+    其余参数语义不变。
+
+    G34 additive：``print_layout`` 在场时，作者的毫米组件框 / 字体 / 文本行
+    / 图例排版 / 地图槽 fit 进入**真实绘制面**（``_render_authored_chrome``
+    与 ``project()``）；``paper_mm`` / ``page_id`` / ``atlas_page`` 只用于
+    页级覆写与回执。四者全缺席时原签名与原输出逐字节不变。
+    """
     cap, timeout_ms_val = _resolve_export_thresholds(
         mapspec, max_features, timeout_ms)
     # W6/MINOR-8：标签预算解析——显式入参 > spec labels.maxLabels > 默认；
@@ -1234,6 +1355,29 @@ def compile_mapspec_to_svg_detailed(
 
         geo_bounds = [min_x, min_y, max_x, max_y]
 
+        # ── G34 opt-in：作者计划 → 真实绘制计划（仅此处建立一次）──────
+        _g34_draw: Optional[Dict[str, Any]] = None
+        _g34_map: Optional[Dict[str, Any]] = None
+        if isinstance(print_layout, dict) and print_layout:
+            from app.lib.cartography.print_layout_schema import parse_print_layout
+            from app.services.print_layout_authoring.compile import (
+                build_draw_plan, build_map_projection, serializable_receipt,
+            )
+
+            _raw_plan = print_layout
+            _parsed = parse_print_layout(_raw_plan, strict=True)
+            _g34_draw = build_draw_plan(
+                mapspec, _parsed.model_dump(mode="json", exclude_none=True),
+                target_dpi=target_dpi_val, geo_bounds=geo_bounds,
+                page_id=page_id, paper_mm=paper_mm, atlas_page=atlas_page,
+            )
+            _g34_map = build_map_projection(
+                geo_bounds, _g34_draw["map_rect"], _g34_draw["map_fit"])
+            _g34_draw["_receipt"] = serializable_receipt(_g34_draw)
+            for _d in _g34_draw.get("diagnostics") or []:
+                _emit_diag(str(_d.get("code") or "print_layout_diagnostic"),
+                           detail=str(_d.get("component_id") or ""))
+
         range_x = (max_x - min_x) if (_math.isfinite(max_x - min_x) and (max_x - min_x) > 0) else 1.0
         range_y = (max_y - min_y) if (_math.isfinite(max_y - min_y) and (max_y - min_y) > 0) else 1.0
 
@@ -1250,6 +1394,17 @@ def compile_mapspec_to_svg_detailed(
                     lat = float(coord[1]) if _math.isfinite(float(coord[1])) else 0.0
             except (ValueError, TypeError, OverflowError):
                 lon, lat = 0.0, 0.0
+
+            if _g34_map is not None:
+                # G34：地图槽等比映射（经度与墨卡托 Y 共用同一 scale，
+                # contain/crop 都不做非等比拉伸；有效范围由回执披露）。
+                px = _g34_map["x"](lon)
+                py = _g34_map["y"](lat)
+                if not _math.isfinite(px):
+                    px = 0.0
+                if not _math.isfinite(py):
+                    py = 0.0
+                return _fmt_num(px), _fmt_num(py)
 
             w_span = scaled_width - scaled_padding * 2
             h_span = scaled_height - scaled_padding * 2
@@ -1298,13 +1453,24 @@ def compile_mapspec_to_svg_detailed(
         # lon、proj_y 线性 merc-y，对画布像素网格为 EPSG:3857 仿射；窗口
         # 渲染器据此重投影，放置矩形与矢量要素逐像素同口径）。
         def _canvas_x(lon: float) -> float:
+            if _g34_map is not None:
+                return _g34_map["x"](lon)
             return scaled_padding + ((lon - min_x) / range_x) * (
                 scaled_width - scaled_padding * 2)
 
         def _canvas_y(lat: float) -> float:
+            if _g34_map is not None:
+                return _g34_map["y"](lat)
             norm_y = (_merc_y(lat) - merc_min_y) / range_merc_y
             return scaled_height - scaled_padding - norm_y * (
                 scaled_height - scaled_padding * 2)
+
+        # G34：栅格窗口的画布钳制边界 = 地图槽矩形；legacy = 整幅画布。
+        _g34_clip = (_g34_draw or {}).get("map_rect") if _g34_draw else None
+        _clip_x0 = float(_g34_clip["x"]) if _g34_clip else 0.0
+        _clip_y0 = float(_g34_clip["y"]) if _g34_clip else 0.0
+        _clip_x1 = (_clip_x0 + float(_g34_clip["width"])) if _g34_clip else float(scaled_width)
+        _clip_y1 = (_clip_y0 + float(_g34_clip["height"])) if _g34_clip else float(scaled_height)
 
         def _embed_numeric_raster_window(layer: Dict[str, Any],
                                          binding: Dict[str, Any],
@@ -1349,10 +1515,10 @@ def compile_mapspec_to_svg_detailed(
                 return ""
             # 放置矩形 = 实际覆盖范围经同一投影闭包（clamp 到画布）。
             aw, as_, ae, an = res.bounds_wsen
-            x0 = max(_canvas_x(aw), 0.0)
-            x1 = min(_canvas_x(ae), float(scaled_width))
-            y0 = max(_canvas_y(an), 0.0)
-            y1 = min(_canvas_y(as_), float(scaled_height))
+            x0 = max(_canvas_x(aw), _clip_x0)
+            x1 = min(_canvas_x(ae), _clip_x1)
+            y0 = max(_canvas_y(an), _clip_y0)
+            y1 = min(_canvas_y(as_), _clip_y1)
             if (x1 - x0) < 0.5 or (y1 - y0) < 0.5:
                 _emit_diag(
                     "raster_window_no_overlap",
@@ -2469,7 +2635,8 @@ def compile_mapspec_to_svg_detailed(
         a11y_title_elems = ""
         if include_chrome:
             chrome_group, chrome_coverage = _render_chrome_groups(
-                mapspec, geo_bounds, scaled_width, scaled_height, project)
+                mapspec, geo_bounds, scaled_width, scaled_height, project,
+                draw_plan=_g34_draw)
             # F14 D3：组件级降级回执进诊断流（词表校验 + 全局封顶同既有路径）
             for _code, _detail, _cid in chrome_coverage.get("diagnostics") or []:
                 _emit_diag(_code, _detail, None, _cid)
@@ -2488,10 +2655,25 @@ def compile_mapspec_to_svg_detailed(
 
         if bounds_truncated and not any(item.get("code") == "features_truncated" for item in diagnostics):
             _emit_diag("features_truncated", detail=str(cap))
+
+        # G34：地理图形裁剪到纸面地图槽（contain 留白 / crop 明确裁切，
+        # 绝不越出纸面组件区域；clip 不改变 project 的等比语义）。
+        _g34_defs = ""
+        _g34_clip_attr = ""
+        if _g34_draw is not None:
+            _clip = _g34_draw["map_rect"]
+            _clip_id = "g34-map-clip"
+            _g34_defs = (
+                f'<defs><clipPath id="{_clip_id}"><rect '
+                f'x="{_fmt_num(float(_clip["x"]))}" y="{_fmt_num(float(_clip["y"]))}" '
+                f'width="{_fmt_num(float(_clip["width"]))}" '
+                f'height="{_fmt_num(float(_clip["height"]))}" /></clipPath></defs>'
+            )
+            _g34_clip_attr = f' clip-path="url(#{_clip_id})"'
         return SvgCompilation(
-            svg=f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}
+            svg=f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}{_g34_defs}
   <rect width="100%" height="100%" fill="#ffffff" />
-  <g class="mapspec-vector-layers">
+  <g class="mapspec-vector-layers"{_g34_clip_attr}>
     {elements_svg}
   </g>
 {labels_group}{chrome_group}</svg>""",
@@ -2502,9 +2684,14 @@ def compile_mapspec_to_svg_detailed(
             rendered_component_types=chrome_coverage.get("rendered") or [],
             omitted_components=chrome_coverage.get("omitted") or [],
             raster_placements=raster_placements,
+            print_layout_receipt=(_g34_draw or {}).get("_receipt") or {},
         )
 
-    except Exception:
+    except Exception as _compile_exc:
+        if isinstance(print_layout, dict) and print_layout:
+            # 作者计划编译失败必须诚实披露，不得伪装成一张空白成功图。
+            _emit_diag("print_layout_compile_failed",
+                       detail=f"{type(_compile_exc).__name__}: {str(_compile_exc)[:160]}")
         w_fallback = min(width, 16384) if isinstance(width, (int, float)) and width > 0 else 1200
         h_fallback = min(height, 16384) if isinstance(height, (int, float)) and height > 0 else 800
         return SvgCompilation(
@@ -2517,6 +2704,9 @@ def compile_mapspec_to_svg_detailed(
             feature_count=feature_count,
             truncated_features=truncated_features,
             timed_out=timed_out,
+            print_layout_receipt=(
+                {"status": "compile_failed", "page_id": page_id}
+                if isinstance(print_layout, dict) and print_layout else {}),
         )
 
     finally:

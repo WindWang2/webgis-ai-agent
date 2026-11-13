@@ -1,0 +1,171 @@
+[build-vendor-pi] submodule HEAD: b4afdddf44e059c67ccf5097e5317d913521b470
+[build-vendor-pi] node_modules present — skipping install (use --reinstall to force)
+[build-vendor-pi] npm run build (tui→ai→…→coding-agent chain)
+
+> pi-monorepo@0.0.3 build
+> cd packages/telemetry && npm run build && cd ../schema && npm run build && cd ../chord && npm run build && cd ../tui && npm run build && cd ../codemode && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build && cd ../durable && npm run build && cd ../env && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build
+
+
+> @earendil-works/pi-telemetry@1.5.2 build
+> tsc -p tsconfig.build.json
+
+
+> @earendil-works/pi-schema@1.5.2 build
+> tsc -p tsconfig.build.json
+
+
+> @earendil-works/chord@1.5.2 build
+> tsc -p tsconfig.build.json
+
+
+> @earendil-works/pi-tui@1.5.2 build
+> tsc -p tsconfig.build.json
+
+
+> @earendil-works/pi-codemode@1.5.2 build
+> tsc -p tsconfig.build.json
+
+
+> @earendil-works/pi-mcp@1.5.2 build
+> tsc -p tsconfig.build.json
+
+
+> @earendil-works/pi-ai@1.5.2 build
+> npm run generate-models && npm run build:offline
+
+
+> @earendil-works/pi-ai@1.5.2 generate-models
+> node catalog/generate.ts --strict
+
+Fetching models.dev catalog...
+Fetching models.dev decision models...
+Fetching NVIDIA NIM models...
+Fetching OpenRouter models...
+Fetching Vercel AI Gateway models...
+Fetching Radius models...
+Generated provider catalogs and src/models.generated.ts
+Generated JSON model values under src/providers/data/
+
+Model Statistics:
+  Total tool-capable models: 1662
+  Reasoning-capable models: 1421
+  amazon-bedrock: 202 chat models, 0 image models, 0 classifier models
+  ant-ling: 3 chat models, 0 image models, 0 classifier models
+  anthropic: 18 chat models, 0 image models, 0 classifier models
+  azure: 45 chat models, 0 image models, 0 classifier models
+  baseten: 15 chat models, 0 image models, 0 classifier models
+  cerebras: 2 chat models, 0 image models, 0 classifier models
+  cloudflare-ai-gateway: 60 chat models, 0 image models, 0 classifier models
+  cloudflare-workers-ai: 19 chat models, 0 image models, 5 classifier models
+  deepseek: 2 chat models, 0 image models, 0 classifier models
+  fireworks: 27 chat models, 0 image models, 0 classifier models
+  github-copilot: 29 chat models, 0 image models, 1 classifier models
+  google-vertex: 16 chat models, 0 image models, 0 classifier models
+  google: 25 chat models, 0 image models, 0 classifier models
+  groq: 7 chat models, 0 image models, 0 classifier models
+  huggingface: 78 chat models, 0 image models, 0 classifier models
+  kimi-coding: 6 chat models, 0 image models, 0 classifier models
+  meta: 7 chat models, 0 image models, 0 classifier models
+  minimax-cn: 4 chat models, 0 image models, 0 classifier models
+  minimax: 4 chat models, 0 image models, 0 classifier models
+  mistral: 34 chat models, 0 image models, 0 classifier models
+  moonshotai-cn: 6 chat models, 0 image models, 0 classifier models
+  moonshotai: 6 chat models, 0 image models, 0 classifier models
+  nvidia: 19 chat models, 0 image models, 0 classifier models
+  openai-codex: 8 chat models, 0 image models, 0 classifier models
+  openai: 44 chat models, 0 image models, 1 classifier models
+  opencode-go: 32 chat models, 0 image models, 0 classifier models
+  opencode: 87 chat models, 0 image models, 2 classifier models
+  openrouter: 410 chat models, 69 image models, 39 classifier models
+  qwen-token-plan-cn: 21 chat models, 0 image models, 0 classifier models
+  qwen-token-plan-individual: 10 chat models, 0 image models, 0 classifier models
+  qwen-token-plan-individual-cn: 10 chat models, 0 image models, 0 classifier models
+  qwen-token-plan: 21 chat models, 0 image models, 0 classifier models
+  radius: 36 chat models, 0 image models, 0 classifier models
+  together: 16 chat models, 0 image models, 0 classifier models
+  typesafe: 0 chat models, 0 image models, 1 classifier models
+  vercel-ai-gateway: 309 chat models, 0 image models, 21 classifier models
+  xai: 4 chat models, 0 image models, 0 classifier models
+  xiaomi-token-plan-ams: 2 chat models, 0 image models, 0 classifier models
+  xiaomi-token-plan-cn: 2 chat models, 0 image models, 0 classifier models
+  xiaomi-token-plan-sgp: 2 chat models, 0 image models, 0 classifier models
+  xiaomi: 3 chat models, 0 image models, 0 classifier models
+  zai-coding-cn: 4 chat models, 0 image models, 0 classifier models
+  zai: 7 chat models, 0 image models, 0 classifier models
+
+> @earendil-works/pi-ai@1.5.2 build:offline
+> npm run check:model-data && tsc -p tsconfig.build.json && node ../../scripts/package-files.mjs clean dist/providers/data && node ../../scripts/package-files.mjs copy src/providers/data dist/providers
+
+
+> @earendil-works/pi-ai@1.5.2 check:model-data
+> node scripts/check-model-data.ts
+
+Generated model data is valid.
+
+> @earendil-works/pi-durable@1.5.2 build
+> tsc -p tsconfig.build.json
+
+
+> @earendil-works/pi-env@1.5.2 build
+> tsc -p tsconfig.build.json
+
+
+> @earendil-works/pi-agent-core@1.5.2 build
+> tsc -p tsconfig.build.json
+
+
+> @earendil-works/pi-coding-agent@1.5.2 build
+> npm run build:unbundled && node ../../scripts/build-coding-agent-bundle.mjs
+
+
+> @earendil-works/pi-coding-agent@1.5.2 build:unbundled
+> tsc -p tsconfig.build.json && node ../../scripts/package-files.mjs executable dist/cli.js dist/rpc-entry.js && npm run copy-assets
+
+
+> @earendil-works/pi-coding-agent@1.5.2 copy-assets
+> node ../../scripts/package-files.mjs copy "src/modes/interactive/theme/*.json" dist/modes/interactive/theme && node ../../scripts/package-files.mjs copy "src/modes/interactive/assets/*.png" dist/modes/interactive/assets && node ../../scripts/package-files.mjs copy src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html && node ../../scripts/package-files.mjs copy "src/core/export-html/vendor/*.js" dist/core/export-html/vendor
+
+node:fs:3090
+  binding.copyFile(
+          ^
+
+Error: EPERM: operation not permitted, copyfile 'src/modes/interactive/theme/dark.json' -> 'dist/modes/interactive/theme/dark.json'
+    at Object.copyFileSync (node:fs:3090:11)
+    at wrappedCopyFileSync (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-brokered-fs-shim.cjs:921:12)
+    at copyFile (node:internal/fs/cp/cp-sync:101:3)
+    at onFile (node:internal/fs/cp/cp-sync:83:25)
+    at getStats (node:internal/fs/cp/cp-sync:72:12)
+    at cpSyncFn (node:internal/fs/cp/cp-sync:58:10)
+    at Object.cpSync (node:fs:3132:3)
+    at wrappedCpSync (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-brokered-fs-shim.cjs:959:12)
+    at file:///home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/scripts/package-files.mjs:21:34
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25) {
+  errno: -1,
+  code: 'EPERM',
+  syscall: 'copyfile',
+  path: 'src/modes/interactive/theme/dark.json',
+  dest: 'dist/modes/interactive/theme/dark.json'
+}
+
+Node.js v22.22.2
+npm error Lifecycle script `copy-assets` failed with error:
+npm error code 1
+npm error path /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/packages/coding-agent
+npm error workspace @earendil-works/pi-coding-agent@1.5.2
+npm error location /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/packages/coding-agent
+npm error command failed
+npm error command sh -c node ../../scripts/package-files.mjs copy "src/modes/interactive/theme/*.json" dist/modes/interactive/theme && node ../../scripts/package-files.mjs copy "src/modes/interactive/assets/*.png" dist/modes/interactive/assets && node ../../scripts/package-files.mjs copy src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html && node ../../scripts/package-files.mjs copy "src/core/export-html/vendor/*.js" dist/core/export-html/vendor
+npm error Lifecycle script `build:unbundled` failed with error:
+npm error code 1
+npm error path /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/packages/coding-agent
+npm error workspace @earendil-works/pi-coding-agent@1.5.2
+npm error location /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/packages/coding-agent
+npm error command failed
+npm error command sh -c tsc -p tsconfig.build.json && node ../../scripts/package-files.mjs executable dist/cli.js dist/rpc-entry.js && npm run copy-assets
+npm error Lifecycle script `build` failed with error:
+npm error code 1
+npm error path /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/packages/coding-agent
+npm error workspace @earendil-works/pi-coding-agent@1.5.2
+npm error location /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/packages/coding-agent
+npm error command failed
+npm error command sh -c npm run build:unbundled && node ../../scripts/build-coding-agent-bundle.mjs

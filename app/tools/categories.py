@@ -118,10 +118,21 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.what_if_simulate": "analysis",
     # ADR-0192：时空动态仿真推演（物理机制驱动的多时相分析）
     "app.tools.simulation_tools": "analysis",
+    # G34：纸面版式与图册编排（作者决定写 MapSpec.layout.print_layout）
+    "app.tools.print_layout_tools": "map_mutation",
 }
 
 # 工具名覆盖（模块默认之外的精确归类）
 _NAME_OVERRIDES: Dict[str, str] = {
+    # G34：只读能力/检视/页清单/预览/提议 → inspection；应用 → map_mutation；
+    # 导出 → export（分类只是元数据投影，不改变注册与 dispatch）。
+    "webgis_print_layout_capabilities": "inspection",
+    "webgis_print_layout_inspect": "inspection",
+    "webgis_print_layout_pages": "inspection",
+    "webgis_print_layout_propose": "inspection",
+    "webgis_print_layout_preview": "inspection",
+    "webgis_print_layout_apply": "map_mutation",
+    "webgis_print_layout_export": "export",
     # G3D04 scene_orchestration_tools：module 默认 inspection，3 个名字覆盖细分
     "apply_scene_representation": "map_mutation",
     "fly_camera": "map_mutation",

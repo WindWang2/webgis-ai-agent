@@ -396,6 +396,7 @@ export interface MapSpecLayoutConfig {
   labels?: MapLabelConfig;
   component_links?: ComponentLinkSpec[];
   composition?: Record<string, unknown>;
+  print_layout?: Record<string, unknown>;
 }
 
 export interface MapThresholds {

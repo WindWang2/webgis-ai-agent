@@ -226,6 +226,9 @@ class SetLayoutIntent:
     # None = 不触碰既有 frames；[] = 清空（frame_product 引用悬空由其
     # handler 拒绝，这里只管帧登记本身的合法性）。
     frames: Optional[List[Dict[str, Any]]] = None
+    # G34 additive：纸面作者计划整笔写入（None = 不触碰既有计划）。
+    # 与 components/frames 同一 intent、同一 CAS、同一撤销栈；不建第二 store。
+    print_layout: Optional[Dict[str, Any]] = None
 
 
 @dataclass

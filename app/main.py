@@ -1124,6 +1124,9 @@ app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 # G20：持久化数值栅格表达工作台（独立 router，layer.py 零修改）
 from app.api.routes import raster_authoring as raster_authoring_routes  # noqa: E402
 app.include_router(raster_authoring_routes.router, prefix="/api/v1", tags=["栅格表达工作台"])
+# G34：专业纸面版式与图册编排工作台（独立 router；UI 与 Pi 共用 service）
+from app.api.routes import print_layout as print_layout_routes  # noqa: E402
+app.include_router(print_layout_routes.router, prefix="/api/v1", tags=["纸面版式工作台"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
