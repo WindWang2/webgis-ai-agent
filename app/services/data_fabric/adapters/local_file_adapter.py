@@ -110,8 +110,10 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
 
     def _sqlite_connect(self) -> sqlite3.Connection:
         path = self._require_existing()
+        # as_uri() 百分号编码 ? # %，避免它们被当成 URI 查询/片段改掉 mode=ro。
+        uri_path = path if path.is_absolute() else path.resolve()
         try:
-            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            conn = sqlite3.connect(uri_path.as_uri() + "?mode=ro", uri=True)
         except sqlite3.Error as e:
             raise SourceUnreachableError(f"cannot open sqlite {path}: {e}") from e
         return conn
@@ -168,8 +170,8 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
                 query_capabilities=self.capabilities(),
                 metadata={"path": str(path), "adapter": "ads.local_file"},
             )
-        table = self._sqlite_table(dataset_id, path)
         with closing(self._sqlite_connect()) as conn:
+            table = self._sqlite_table(dataset_id, path, conn)
             cols = conn.execute(
                 "PRAGMA table_info(" + _quote_ident(table) + ")"  # nosec B608 — identifier quoted & from discovered list
             ).fetchall()
@@ -226,17 +228,37 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
             )
         if query_spec.bbox:
             raise InvalidQueryError("local sqlite tables do not support bbox predicates")
-        table = self._sqlite_table(dataset_id, path)
         columns = list(query_spec.fields or query_spec.columns or [])
         col_sql = ", ".join(_quote_ident(c) for c in columns) if columns else "*"
         with closing(self._sqlite_connect()) as conn:
-            rows = conn.execute(
-                "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT ? OFFSET ?",  # nosec B608 — identifiers quoted & from discovered list; values bound
-                (limit, offset),
-            ).fetchall()
-            cols = [d[0] for d in conn.execute(
-                "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT 0"  # nosec B608 — ditto
-            ).description]
+            table = self._sqlite_table(dataset_id, path, conn)
+            if columns:
+                # SQLite 双引号在缺列时会退化成字符串字面量（DQS），必须先对照 schema。
+                known_cols = {
+                    row[1]
+                    for row in conn.execute(
+                        "PRAGMA table_info(" + _quote_ident(table) + ")"  # nosec B608
+                    ).fetchall()
+                }
+                missing = [c for c in columns if c not in known_cols]
+                if missing:
+                    raise InvalidQueryError(
+                        f"unknown sqlite column(s): {missing}",
+                        details={"columns": missing},
+                    )
+            try:
+                rows = conn.execute(
+                    "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT ? OFFSET ?",  # nosec B608 — identifiers quoted & from discovered list; values bound
+                    (limit, offset),
+                ).fetchall()
+                cols = [d[0] for d in conn.execute(
+                    "SELECT " + col_sql + " FROM " + _quote_ident(table) + " LIMIT 0"  # nosec B608 — ditto
+                ).description]
+            except sqlite3.OperationalError as e:
+                raise InvalidQueryError(
+                    f"sqlite query failed: {e}",
+                    details={"table": table},
+                ) from e
         features = [{"type": "Feature", "geometry": None, "properties": dict(zip(cols, row))} for row in rows]
         return QueryResult(
             dataset_id=dataset_id,
@@ -258,8 +280,21 @@ class LocalFileAdapter(GeospatialDataSourceAdapter):
         )
 
     # -- helpers -------------------------------------------------------------------
-    def _sqlite_table(self, dataset_id: str, path: Path) -> str:
-        known = {d["id"]: d["name"] for d in self.list_datasets()}
+    def _sqlite_table(self, dataset_id: str, path: Path, conn: Optional[sqlite3.Connection] = None) -> str:
+        own = conn is None
+        if own:
+            conn = self._sqlite_connect()
+        try:
+            tables = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                ).fetchall()
+            ]
+        finally:
+            if own:
+                conn.close()
+        known = {f"{path.stem}:{t}": t for t in tables}
         if dataset_id in known:
             return str(known[dataset_id])
         raise InvalidQueryError(

@@ -378,13 +378,17 @@ class DataFabricSecurity:
             # 下划线形 api_key/apikey，裸 {"api-key": …} 会原样外泄）。
             "api-key",
             "passwd", "pwd", "private_key", "client_secret", "session_token",
+            "cookie",
         }
+        header_subtrees = {"headers", "http_headers"}
 
         def _redact(value: Any) -> Any:
             if isinstance(value, dict):
                 out: Dict[str, Any] = {}
                 for k, v in value.items():
-                    if any(s in k.lower() for s in sensitive_keys):
+                    key_l = str(k).lower()
+                    # headers 子树整体敏感：Cookie/Set-Cookie/自定义认证头无法穷举键名。
+                    if key_l in header_subtrees or any(s in key_l for s in sensitive_keys):
                         out[k] = "********"
                     else:
                         out[k] = _redact(v)
@@ -794,4 +798,15 @@ def ensure_same_origin_url(candidate: str, base_url: str) -> str:
         raise SourceBadResponseError(
             "next-link cursor port differs from the registered source"
         )
+    # 同源还不够：cursor 可伪造 POST 到源主机任意路径。注册 endpoint 有路径时，
+    # next-link 必须落在该路径前缀下（根路径无法再收紧）。
+    base_path = b.path or "/"
+    if base_path not in ("", "/"):
+        prefix = base_path.rstrip("/")
+        cand_path = c.path or "/"
+        if cand_path != prefix and not cand_path.startswith(prefix + "/"):
+            raise SourceBadResponseError(
+                "next-link cursor path is outside the registered endpoint path",
+                details={"origin": f"{c_origin[0]}://{c_origin[1]}"},
+            )
     return str(candidate)

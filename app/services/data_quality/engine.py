@@ -305,8 +305,8 @@ def run_quality_evaluate(
 ) -> Dict[str, Any]:
     """大数据集评估执行体：session ref 载荷 → 评估 → 落库 → job 回写。
 
-    - **恢复语义**：入口先查同 (session, ref, ruleset) 的 completed 报告，
-      命中则复用（幂等，worker 重试不重复评估）；
+    - **恢复语义**：同 (session, ref, ruleset, 载荷指纹) 的 completed 报告
+      才复用（幂等，worker 重试不重复评估；载荷被覆盖则重评）；
     - 载荷不可读 → 落 failed 报告行（status=failed）+ job 置失败；
     - job 回写经 DurableJobStore（progress/result_ref），但 store 异常
       不吞评估结果 —— 报告已落库，job 状态由 stale 清扫兜底。
@@ -343,28 +343,6 @@ def run_quality_evaluate(
         if job_id:
             _mark_job_failed(job_id, "payload unreadable: session not owned")
         return {"status": "failed", "report_id": report_id}
-
-    with SessionLocal() as db:
-        existing = db.execute(
-            select(QualityReport)
-            .where(
-                QualityReport.session_id == (str(session_id)[:255] if session_id else None),
-                QualityReport.target_ref == str(ref)[:255],
-                QualityReport.ruleset_digest == ruleset,
-                QualityReport.status == "completed",
-            )
-            .order_by(QualityReport.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        if existing is not None:
-            dq_metrics.observe_reuse()
-            if job_id:
-                _mark_job_completed(job_id, existing.id, existing.overall_status)
-            return {
-                "status": "completed", "reused": True,
-                "report_id": existing.id,
-                "overall_status": existing.overall_status,
-            }
 
     from app.core.async_runner import run_sync
 
@@ -422,6 +400,35 @@ def run_quality_evaluate(
         payload = payload_raw
     else:
         payload = {"geojson": payload_raw}
+    # 复用必须比对载荷指纹：同一 ref 可被 overwrite，alias 也可改指向。
+    # 指纹不一致则重评，避免把旧数据的质量报告交还给新载荷。
+    try:
+        identity = _payload_fingerprint(payload)
+    except Exception:  # noqa: BLE001 - 指纹失败 = 不可复用（宁可重评）
+        identity = ""
+    if identity:
+        with SessionLocal() as db:
+            existing = db.execute(
+                select(QualityReport)
+                .where(
+                    QualityReport.session_id == (str(session_id)[:255] if session_id else None),
+                    QualityReport.target_ref == str(ref)[:255],
+                    QualityReport.ruleset_digest == ruleset,
+                    QualityReport.dataset_identity == identity[:128],
+                    QualityReport.status == "completed",
+                )
+                .order_by(QualityReport.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if existing is not None:
+                dq_metrics.observe_reuse()
+                if job_id:
+                    _mark_job_completed(job_id, existing.id, existing.overall_status)
+                return {
+                    "status": "completed", "reused": True,
+                    "report_id": existing.id,
+                    "overall_status": existing.overall_status,
+                }
     try:
         report = evaluate_payload(payload, rule_defs, max_scan=max_scan)
     except Exception as exc:  # noqa: BLE001 — 评估器自身异常也落 failed 报告

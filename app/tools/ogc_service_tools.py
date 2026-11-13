@@ -286,7 +286,7 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
                 bands=bands,
                 bbox=bbox,
                 overview_level=overview_level,
-                max_output_bytes=int(max_output_bytes),
+                max_output_bytes=max_output_bytes,
             )
         except CogMaterializationError as e:
             return {

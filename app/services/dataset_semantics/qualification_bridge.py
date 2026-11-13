@@ -135,6 +135,7 @@ async def session_role_binding(
         bound_refs=bound_refs,
         expected_fingerprints=expected,
         name_hints=name_hints,
+        truncated_refs=int(getattr(records, "truncated_refs", 0) or 0),
     )
 
 

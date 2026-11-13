@@ -279,9 +279,9 @@ def preview_remote_cog(href: str) -> Dict[str, Any]:
         raise
     except Exception as e:  # noqa: BLE001
         raise CogMaterializationError(
-            f"remote raster open failed: {e}",
+            "remote raster open failed",
             reason_code=RC_NOT_A_RASTER,
-            details={"href": redact_signed_url(href)},
+            details={"href": redact_signed_url(href), "error_type": type(e).__name__},
         ) from e
 
 
@@ -301,11 +301,20 @@ async def materialize_remote_cog_asset(
 ) -> Dict[str, Any]:
     """远程 COG → 窗口读（预算/重试/取消）→ 本地 COG ref。
 
+    ``max_output_bytes`` 钳到 ``DEFAULT_MAX_OUTPUT_BYTES``。调用方（含 LLM 工具）
+    不能把预算抬过全局红线。
+
     ``bbox``：EPSG:4326（agent 面）；内部 transform_bounds 到栅格 CRS。
     ``overview_level``：0=全分辨率；N=全分辨率窗口读后按 2^N nearest
     抽样（**不**读取服务端 overview 层 —— wire 成本仍按全窗发生，预算门
     同口径估算；标注 decimated=True）。
     """
+    try:
+        requested_bytes = int(max_output_bytes)
+    except (TypeError, ValueError):
+        requested_bytes = DEFAULT_MAX_OUTPUT_BYTES
+    max_output_bytes = max(1, min(requested_bytes, DEFAULT_MAX_OUTPUT_BYTES))
+
     from app.lib.geo_raster.remote import RemoteReadBudgetExceeded
     from rasterio.windows import from_bounds
 
@@ -483,9 +492,9 @@ async def materialize_remote_cog_asset(
                     reason_code=RC_CANCELLED,
                 ) from e
             raise CogMaterializationError(
-                f"remote window read failed: {e}",
+                "remote window read failed",
                 reason_code=RC_UNREACHABLE,
-                details={"href": redact_signed_url(href)},
+                details={"href": redact_signed_url(href), "error_type": type(e).__name__},
             ) from e
 
         from app.lib.geo_raster.cog import write_cog
@@ -527,9 +536,15 @@ def _params_fingerprint(
     bbox: Optional[Sequence[float]],
     overview_level: int,
 ) -> str:
-    """(href+params) 规范指纹 —— 同参重试幂等键（内容身份另由 sha256 担当）。"""
+    """(href+params) 规范指纹 —— 同参重试幂等键（内容身份另由 sha256 担当）。
+
+    签名 query 轮换不得改变幂等键：去掉签名 query 后再指纹。
+    """
+    fp_href = redact_signed_url(href)
+    if "?<redacted>" in fp_href:
+        fp_href = fp_href.split("?", 1)[0]
     payload = {
-        "href": href,
+        "href": fp_href,
         "bands": list(bands) if bands else None,
         "bbox": list(bbox) if bbox else None,
         "overview_level": int(overview_level),

@@ -114,6 +114,7 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         if "headers" in self.options:
             self.session.headers.update(self.options["headers"])
         self._caps_cache: Optional[Tuple[float, Any]] = None  # (monotonic, tree)
+        self._dft_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
 
     # ── 基础契约 ───────────────────────────────────────────────────────
 
@@ -286,7 +287,13 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         )
 
     def _describe_feature_type_fields(self, dataset_id: str) -> List[Dict[str, Any]]:
-        """DescribeFeatureType (W3C XSD) → 字段名/类型（defusedxml 解析）。"""
+        """DescribeFeatureType (W3C XSD) → 字段名/类型（defusedxml 解析）。
+
+        按 dataset_id 缓存 60s。query 每次 describe 否则都会多一次 DFT HTTP。
+        """
+        cached = self._dft_cache.get(dataset_id)
+        if cached is not None and (time.monotonic() - cached[0]) < 60:
+            return cached[1]
         params = {
             "SERVICE": "WFS",
             "REQUEST": "DescribeFeatureType",
@@ -315,7 +322,9 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                 etype = elem.get("type") or "unknown"
                 if name and name != local_name:
                     typed.append({"name": name, "type": str(etype).split(":")[-1]})
-        return typed or fields
+        fields = typed or fields
+        self._dft_cache[dataset_id] = (time.monotonic(), fields)
+        return fields
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
         bounded_limit = max(1, min(limit, MAX_PREVIEW_LIMIT))

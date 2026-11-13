@@ -318,7 +318,10 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             # Endpoint configured but neither a real local file nor http URL.
             return False
         except Exception as e:
-            logger.debug(f"GeoParquet probe failed for {self.endpoint}: {e}")
+            logger.debug(
+                "GeoParquet probe failed for %s: %s",
+                DataFabricSecurity.redact_url(self.endpoint), type(e).__name__,
+            )
             return False
 
     def capabilities(self) -> List[str]:
@@ -407,11 +410,11 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             metadata={"error_type": error_type, "error": message, "is_demo": False},
         )
 
-    def _describe_pyarrow(self, dataset_id: str, src: Any) -> DatasetDescriptor:
+    def _describe_pyarrow(self, dataset_id: str, src: Any, pf: Any = None) -> DatasetDescriptor:
         """Footer-only 元数据（不扫描数据页）。"""
         import pyarrow.parquet as pq
 
-        pf = pq.ParquetFile(src)
+        pf = pf or pq.ParquetFile(src)
         num_rows = pf.metadata.num_rows
         schema_fields = {field.name: str(field.type) for field in pf.schema_arrow}
         fields = [{"name": field.name, "type": str(field.type)} for field in pf.schema_arrow]
@@ -533,7 +536,25 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         if not self.endpoint:
             return self._query_demo(dataset_id, v2, started)
 
-        descriptor = self.describe(dataset_id)
+        src, closer = self._open_source()
+        try:
+            import pyarrow.parquet as pq
+
+            pf = pq.ParquetFile(src)
+            descriptor = self._describe_pyarrow(dataset_id, src, pf=pf)
+        except ImportError:
+            if closer is not None:
+                closer.close()
+            descriptor = self.describe(dataset_id)
+            pf = None
+            src, closer = None, None
+        except DataFabricError:
+            if closer is not None:
+                try:
+                    closer.close()
+                except Exception:
+                    pass
+            raise
         from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 
         fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
@@ -546,6 +567,12 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         )
 
         if v2.output.mode == ResultMode.DESCRIPTOR:
+            if closer is not None:
+                try:
+                    closer.close()
+                except Exception:
+                    pass
+                closer = None
             evidence = build_evidence(
                 plan, started_at=started, result_count=0, dataset_version=None,
             )
@@ -570,11 +597,13 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
 
             on_batch = batch_checkpoint_hook(cancel_token)
 
-        src, closer = self._open_source()  # typed 错误（安全/可达性）
+        if pf is None:
+            src, closer = self._open_source()  # typed 错误（安全/可达性）
         try:
             try:
-                import pyarrow.parquet as pq  # noqa: F401
-                pf = pq.ParquetFile(src)
+                if pf is None:
+                    import pyarrow.parquet as pq
+                    pf = pq.ParquetFile(src)
                 return self._execute_pyarrow(
                     dataset_id, v2, plan, pf, started, fp, descriptor, on_batch=on_batch)
             except ImportError:
@@ -1484,12 +1513,12 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 adapter="geoparquet",
                 message="GeoParquet source verified",
                 latency_ms=latency,
-                details={"endpoint": self.endpoint or "synthetic_fixture_mode"},
+                details={"endpoint": DataFabricSecurity.redact_url(self.endpoint) or "synthetic_fixture_mode"},
             )
         return DataFabricHealth(
             status="unreachable",
             adapter="geoparquet",
-            message=f"GeoParquet source inaccessible at {self.endpoint}",
+            message="GeoParquet source inaccessible",
             latency_ms=latency,
-            details={"endpoint": self.endpoint},
+            details={"endpoint": DataFabricSecurity.redact_url(self.endpoint)},
         )

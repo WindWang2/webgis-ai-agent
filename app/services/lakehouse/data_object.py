@@ -344,18 +344,21 @@ def publish_data_object(
     from pathlib import Path as _Path
 
     streamed = getattr(store, "put_blob_from_path", None)
-    for rel_path, digest, _size in entries:
-        src = source_files[rel_path]
-        if isinstance(src, bytes):
-            store.put_blob(digest, src, "binary")
-        elif streamed is not None:
-            streamed(digest, _Path(src), "binary")
-        else:
-            store.put_blob(digest, Path(src).read_bytes(), "binary")
+    from app.services.lakehouse.lakehouse_gc import gc_mutation_lock
 
-    blob = canonical_dumps(manifest).encode("utf-8")
-    manifest_id = _digest_bytes(blob)
-    result = store.put_blob(manifest_id, blob, "json")
+    with gc_mutation_lock():
+        for rel_path, digest, _size in entries:
+            src = source_files[rel_path]
+            if isinstance(src, bytes):
+                store.put_blob(digest, src, "binary")
+            elif streamed is not None:
+                streamed(digest, _Path(src), "binary")
+            else:
+                store.put_blob(digest, Path(src).read_bytes(), "binary")
+
+        blob = canonical_dumps(manifest).encode("utf-8")
+        manifest_id = _digest_bytes(blob)
+        result = store.put_blob(manifest_id, blob, "json")
     return DataObjectIdentity(
         data_object_id=manifest_id,
         manifest_location=result.location,

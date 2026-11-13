@@ -41,6 +41,9 @@ RC_UNREACHABLE = "unreachable"
 #: 默认预算（M8 可收紧）：像元帽 = 全网格 nx*ny*bands 上限；字节帽 = 单响应。
 DEFAULT_MAX_CELLS = 4_000_000
 DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024 * 1024
+#: COVJSON 要整包 json.loads。128MiB 文本的 Python 对象峰值可达数 GB，
+#: 单独收紧（GeoTIFF 仍用调用方字节帽）。
+_COVJSON_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 _COVJSON_FORMAT = "application/prs.coverage+json"
 _GEOTIFF_FORMATS = (
@@ -262,9 +265,12 @@ async def read_coverage_subset(
         from app.services.data_fabric.errors import SourceBadResponseError
 
         try:
+            cap = max_response_bytes
+            if chosen_format == _COVJSON_FORMAT:
+                cap = min(int(max_response_bytes), _COVJSON_MAX_RESPONSE_BYTES)
             return bounded_get(
                 adapter.session, coverage_url, params=params,
-                timeout=60, max_bytes=max_response_bytes,
+                timeout=60, max_bytes=cap,
             )
         except SourceBadResponseError as e:
             # 分流（R1 P1-1）：字节帽族（details 携带 cap 事实）→ oversize；
@@ -274,7 +280,7 @@ async def read_coverage_subset(
                 raise CoverageReadError(
                     f"coverage response exceeds byte cap: {e}",
                     reason_code=RC_OVERSIZE_RESPONSE,
-                    details={"dataset_id": dataset_id, "cap": max_response_bytes},
+                    details={"dataset_id": dataset_id, "cap": cap},
                 ) from e
             raise CoverageReadError(
                 f"coverage fetch failed: {e}",
@@ -528,6 +534,8 @@ def _parse_covjson(
     lon_order = lon_vals if lon_vals[1] > lon_vals[0] else lon_vals[::-1]
     if lon_vals[1] < lon_vals[0]:
         stacked = stacked[:, :, ::-1]
+    _require_equal_spacing(lon_order, "lon")
+    _require_equal_spacing(lat_order, "lat")
     xres = (lon_order[-1] - lon_order[0]) / (lon_order.size - 1)
     # north-up：lat_order 降序（顶在前），步长自然为负。
     yres = (lat_order[-1] - lat_order[0]) / (lat_order.size - 1)
@@ -542,6 +550,26 @@ def _parse_covjson(
         stacked, transform, crs, nodata, selected, axes_used,
         bands_missing,
     )
+
+
+def _require_equal_spacing(vals: np.ndarray, axis: str) -> None:
+    """首尾线性推算只对等距轴成立。不规则格网（高斯纬圈等）拒绝，不静默错位。"""
+    if vals.size < 3:
+        return
+    steps = np.diff(vals.astype("float64"))
+    if not np.isfinite(steps).all():
+        raise CoverageReadError(
+            f"COVJSON {axis} axis spacing is not finite",
+            reason_code=RC_CAPABILITY_NOT_DECLARED,
+        )
+    step = float(steps[0])
+    tol = max(1e-9, abs(step) * 1e-6)
+    if float(np.max(np.abs(steps - step))) > tol:
+        raise CoverageReadError(
+            f"COVJSON {axis} axis is not equally spaced; refusing a linear transform",
+            reason_code=RC_CAPABILITY_NOT_DECLARED,
+            details={"axis": axis, "count": int(vals.size)},
+        )
 
 
 def _axis_kind_axis(key: str, axis_items: List[Tuple[str, Any]]) -> Optional[str]:

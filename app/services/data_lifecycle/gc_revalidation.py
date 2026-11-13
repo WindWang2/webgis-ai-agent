@@ -42,7 +42,11 @@ def candidate_still_cold(
         paths = [path, path.with_suffix(".meta")] if kind == "artifact_cache" else [path]
         for current_path in paths:
             try:
-                observations.append(datetime.fromtimestamp(current_path.stat().st_mtime, timezone.utc))
+                st = current_path.stat()
+                # 读取不更新 mtime。atime（relatime 下约每日一次）能把仍被读的
+                # 旧文件留在非 cold。noatime 时 atime==mtime，行为不变。
+                observed = max(st.st_mtime, getattr(st, "st_atime", st.st_mtime))
+                observations.append(datetime.fromtimestamp(observed, timezone.utc))
             except FileNotFoundError:
                 continue
             except OSError:

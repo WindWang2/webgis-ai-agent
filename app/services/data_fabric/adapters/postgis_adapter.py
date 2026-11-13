@@ -39,6 +39,7 @@ from app.services.data_fabric.errors import (
     DataFabricError,
     InvalidQueryError,
     QueryUnsupportedError,
+    SourceUnreachableError,
 )
 from app.services.data_fabric.query.capabilities import default_capabilities
 from app.services.data_fabric.query.compilers import (
@@ -353,7 +354,11 @@ def _get_or_create_postgis_pool(
             return pool
         failed_at = _POOL_FAILURES.get(key)
         if failed_at is not None and now - failed_at < _POOL_RETRY_BACKOFF_S:
-            return None
+            # 退避窗口内直接失败。返回 None 会让每个请求再走一次 connect_timeout=5。
+            raise SourceUnreachableError(
+                "PostGIS connection pool is in retry backoff",
+                details={"retry_in_s": round(_POOL_RETRY_BACKOFF_S - (now - failed_at), 3)},
+            )
         try:
             from psycopg2.pool import ThreadedConnectionPool
 
@@ -1584,6 +1589,12 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         limit: int = 10_000,
     ) -> List[Dict[str, Any]]:
         """同源 server-side 点面 join（GROUP BY 在数据库执行，只传聚合结果）。"""
+        op_sql = {"within": "ST_Within", "intersects": "ST_Intersects"}.get(join_op)
+        if op_sql is None:
+            raise InvalidQueryError(
+                f"unsupported spatial join op {join_op!r}",
+                details={"supported": ["intersects", "within"]},
+            )
         with self._connection_context() as conn:
             self._apply_statement_timeout(conn, 60.0)
             pm = self._load_table_meta(dataset_points, conn)
@@ -1594,7 +1605,6 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             if not pm.srid or not gm.srid:
                 raise InvalidQueryError("server spatial join requires known CRS on both datasets")
             p_gcol, g_gcol = quote_ident(pm.geom_col), quote_ident(gm.geom_col)
-            op_sql = {"within": "ST_Within", "intersects": "ST_Intersects"}[join_op]
             g_srid = gm.srid or 4326
             p_geom = (
                 f"ST_Transform({p_gcol}, {g_srid})" if (pm.srid and pm.srid != g_srid) else p_gcol

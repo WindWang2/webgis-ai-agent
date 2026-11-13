@@ -3,7 +3,7 @@ OGC API - Features Data Source Adapter
 """
 import time
 import logging
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
@@ -120,10 +120,13 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             return False
         try:
             target_url = self.url.rstrip("/") + "/collections"
-            resp = self.session.get(target_url, timeout=5)
-            return resp.status_code in (200, 206)
+            safe_json_get(self.session, target_url, timeout=5, max_bytes=1 << 20)
+            return True
         except Exception as e:
-            logger.debug(f"OGC API probe failed for {self.url}: {e}")
+            logger.debug(
+                "OGC API probe failed for %s: %s",
+                DataFabricSecurity.redact_url(self.url), type(e).__name__,
+            )
             return False
 
     def capabilities(self) -> List[str]:
@@ -159,7 +162,10 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                 })
             return datasets
         except Exception as e:
-            logger.warning(f"OGC API list_datasets failed for {self.url}: {e}")
+            logger.warning(
+                "OGC API list_datasets failed for %s: %s",
+                DataFabricSecurity.redact_url(self.url), type(e).__name__,
+            )
             return []
 
     def describe(self, dataset_id: str) -> DatasetDescriptor:
@@ -184,9 +190,8 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             fields = []
             try:
                 q_url = f"{col_url}/queryables"
-                q_resp = self.session.get(q_url, timeout=5)
-                if q_resp.status_code == 200:
-                    q_data = q_resp.json()
+                q_data = safe_json_get(self.session, q_url, timeout=5, max_bytes=1 << 20)
+                if isinstance(q_data, dict):
                     props = q_data.get("properties", {})
                     for field_name, field_def in props.items():
                         fields.append({
@@ -234,7 +239,7 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
         """Fetch bounded sample GeoJSON preview from OGC API items."""
         bounded_limit = max(1, min(limit, MAX_PREVIEW_LIMIT))
         if not self.url:
-            return {"schema": {}, "properties": {}, "features": [], "bbox": [-180.0, -90.0, 180.0, 90.0]}
+            return {"schema": {"error": "unconfigured"}, "properties": {}, "features": [], "bbox": None}
 
         items_url = f"{self.url.rstrip('/')}/collections/{_quote_collection_id(dataset_id)}/items"
         params = {"limit": bounded_limit}
@@ -250,15 +255,15 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                 "schema": {"collection": dataset_id, "fields": fields},
                 "properties": sample_props,
                 "features": features,
-                "bbox": geojson.get("bbox") or [-180.0, -90.0, 180.0, 90.0],
+                "bbox": geojson.get("bbox") if isinstance(geojson.get("bbox"), list) else None,
             }
         except Exception as e:
-            logger.warning(f"OGC API preview error for '{dataset_id}': {e}")
+            logger.warning("OGC API preview error for '%s': %s", dataset_id, type(e).__name__)
             return {
-                "schema": {"collection": dataset_id, "error": str(e)},
+                "schema": {"collection": dataset_id, "error": type(e).__name__},
                 "properties": {},
                 "features": [],
-                "bbox": [-180.0, -90.0, 180.0, 90.0],
+                "bbox": None,
             }
 
     def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
@@ -321,13 +326,18 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                     decoded = decode_cursor(v2.page.cursor)
                 except DataFabricError:
                     decoded = None
-                if isinstance(decoded, list) and decoded and isinstance(decoded[0], str) \
-                        and decoded[0].startswith("http"):
+                if isinstance(decoded, list) and decoded and isinstance(decoded[0], str):
+                    # 相对 href 在编码前已 urljoin；旧游标仍在这里补一次。
+                    href = decoded[0]
+                    if not href.startswith("http"):
+                        href = urljoin(items_url, href)
+                    if not href.startswith("http"):
+                        raise InvalidQueryError("malformed OGC cursor (expected links.next token)")
                     # R3-M2：cursor 可能被伪造为任意 URL（凭证外带/代理滥用），
-                    # 必须与注册源同源。
+                    # 必须与注册源同源且落在 endpoint 路径前缀下。
                     from app.services.data_fabric.security import ensure_same_origin_url
 
-                    items_url = ensure_same_origin_url(decoded[0], self.url)
+                    items_url = ensure_same_origin_url(href, self.url)
                     params = {"limit": v2.page.limit}
                     plan = plan.model_copy(update={"pagination_note": "links.next token"})
                 else:
@@ -440,15 +450,17 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
         if isinstance(geojson, dict):
             for link in geojson.get("links", []) or []:
                 if isinstance(link, dict) and link.get("rel") == "next" and link.get("href"):
-                    next_url = str(link["href"])
+                    next_url = urljoin(items_url, str(link["href"]))
                     break
 
         returned = len(features)
         # F1（round2）：>=limit 回落用本地过滤**前**的远端窗口（远端页是否
         # 满）；matched 上界分支保持原样（matched 在场时本就是保守上界）。
+        # OR：numberMatched 不得清掉满页信号；比较用过滤前的 remote_window，
+        # 本地余项把 returned 缩小后不得误报 has_more（ISSUE-D04）。
         truncated = remote_window >= v2.page.limit
         if matched is not None and isinstance(v2.page, OffsetPage):
-            truncated = matched > (v2.page.offset + returned)
+            truncated = truncated or matched > (v2.page.offset + remote_window)
         next_cursor = encode_cursor([next_url]) if (truncated and next_url) else None
 
         # m1（审计 round1）：拆分活跃（存在本地余项，含守卫的整本地方案）时
@@ -503,9 +515,10 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                                     details={"conformsTo": conforms[:5]}, latency_ms=latency)
         except Exception as e:
             latency = round((time.time() - start_time) * 1000, 2)
+            safe_url = DataFabricSecurity.redact_url(self.url)
             return DataFabricHealth(
                 status="unreachable",
-                message=f"OGC API health check failed: {e}",
-                details={"hint": f"Unable to reach {self.url}. Verify host status and firewall rules."},
+                message="OGC API health check failed",
+                details={"hint": f"Unable to reach {safe_url}. Verify host status and firewall rules."},
                 latency_ms=latency,
             )

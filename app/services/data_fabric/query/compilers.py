@@ -160,9 +160,8 @@ def _sql_node(node: Any) -> SQLFragment:
     if op == "between":
         return f"{col} BETWEEN %s AND %s", [node.low, node.high]
     if op == "like":
-        # %/_ 由调用者作为模式语义提供；转义服务器端通配符不是默认（GIS 前缀
-        # 匹配是常见意图）。pattern 本身经参数绑定，无注入面。
-        return f"{col} LIKE %s", [node.pattern]
+        # 与本地求值 / FES 同一转义约定：反斜杠转义 % _ \。pattern 参数绑定。
+        return f"{col} LIKE %s ESCAPE '\\'", [node.pattern]
     if op == "is_null":
         return f"{col} IS {'NOT ' if node.negated else ''}NULL", []
     raise PredicateError(f"cannot compile op {op!r} to SQL")
@@ -432,7 +431,7 @@ def compile_predicate_fes(
         return compile_predicate_fes(and_node, ns=ns)
     if op == "like":
         return (
-            f'<ogc:PropertyIsLike xmlns:ogc="{ns}" wildCard="%" singleChar="_" escapeChar="!">'
+            f'<ogc:PropertyIsLike xmlns:ogc="{ns}" wildCard="%" singleChar="_" escapeChar="\\">'
             f"<ogc:PropertyName>{_fes_value(node.field)}</ogc:PropertyName>"
             f"<ogc:Literal>{_fes_value(node.pattern)}</ogc:Literal></ogc:PropertyIsLike>"
         )

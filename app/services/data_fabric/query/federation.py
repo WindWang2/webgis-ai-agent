@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -239,6 +240,9 @@ def spatial_join_local(
 
     返回 join 行：``{point_properties..., "__right__": right_properties}``。
 
+    多边形重叠时每个点只保留**输入序最早**的命中（确定性；不随 STRtree
+    内部顺序变化）。不是一对多展开。
+
     ``carry_left_geometry``（V3 链式联邦专用，缺省 False）：True 时输出行
     额外携带 ``__left_geometry__``（左点原始几何），供链上后续空间跳重建
     左要素再入 STRtree。缺省 False 时两源路径输出逐字节不变。
@@ -270,9 +274,9 @@ def spatial_join_local(
             continue
         if budget is not None:
             budget.add_feature(pt)
-        hit: Optional[Dict[str, Any]] = None
+        hit_idx: Optional[int] = None
         for cand_idx in index.candidates(g):
-            pg, props = shp_polys[cand_idx]
+            pg, _props = shp_polys[cand_idx]
             try:
                 ok = (
                     pg.contains(g) or pg.equals(g)
@@ -281,10 +285,10 @@ def spatial_join_local(
                 )
             except Exception:
                 continue
-            if ok:
-                hit = props
-                break
-        if hit is not None:
+            if ok and (hit_idx is None or cand_idx < hit_idx):
+                hit_idx = cand_idx
+        if hit_idx is not None:
+            hit = shp_polys[hit_idx][1]
             # R4-C2：输出行计入预算（join 扇出可能远超输入行数）
             out_row = dict(pt.get("properties") or {})
             out_row["__right__"] = hit.get("properties") or {}
@@ -365,8 +369,11 @@ def build_attribute_index(
 def _hashable_key(v: Any) -> Any:
     if isinstance(v, (list, dict)):
         return str(v)
-    if isinstance(v, float) and v == int(v):
-        return int(v)  # 1 与 1.0 join 语义一致
+    if isinstance(v, float):
+        if not math.isfinite(v):
+            return v  # inf/nan 可哈希；int() 会抛 OverflowError/ValueError
+        if v == int(v):
+            return int(v)  # 1 与 1.0 join 语义一致
     return v
 
 
@@ -400,15 +407,28 @@ class _AggregateState:
     与 V6 物理执行器共用 —— 语义单一真相，流式喂行，O(组数) 内存）。"""
 
     def __init__(self, aggs, group_by):
+        from app.services.data_fabric.query.accumulators import group_count_cap
+
         self.aggs = list(aggs)
         self.group_by = list(group_by)
         self.groups: Dict[Tuple, AggregateGroup] = {}
+        self._group_cap = group_count_cap()
 
     def update(self, row: Dict[str, Any]) -> None:
+        from app.services.data_fabric.query.accumulators import (
+            DISTINCT_COUNT_CAP,
+            AggregateGroupCapExceeded,
+        )
+
         right = row.get("__right__") or {}
         key = tuple(right.get(g) for g in self.group_by)
         acc = self.groups.get(key)
         if acc is None:
+            if len(self.groups) >= self._group_cap:
+                raise AggregateGroupCapExceeded(
+                    f"group cardinality exceeded cap ({self._group_cap})",
+                    details={"cap": self._group_cap},
+                )
             # 每个 agg 一个累加器槽：count / sum / sumsq / min / max / distinct-set
             acc = {"n": 0, "cells": {}}
             for a in self.aggs:
@@ -416,9 +436,12 @@ class _AggregateState:
                 acc["cells"][name] = {
                     "count": 0,
                     "sum": 0.0,
-                    "sumsq": 0.0,
+                    "mean": 0.0,
+                    "m2": 0.0,
                     "min": None,
                     "max": None,
+                    "smin": None,
+                    "smax": None,
                     "distinct": set(),
                 }
             self.groups[key] = acc
@@ -442,16 +465,20 @@ class _AggregateState:
             if v is None:
                 continue
             cell["count"] += 1
-            cell["distinct"].add(str(v))
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if len(cell["distinct"]) < DISTINCT_COUNT_CAP:
+                cell["distinct"].add(str(v))
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                text = str(v)
+                cell["smin"] = text if cell["smin"] is None else min(cell["smin"], text)
+                cell["smax"] = text if cell["smax"] is None else max(cell["smax"], text)
+            else:
                 fv = float(v)
                 cell["sum"] += fv
-                cell["sumsq"] += fv * fv
+                delta = fv - cell["mean"]
+                cell["mean"] += delta / cell["count"]
+                cell["m2"] += delta * (fv - cell["mean"])
                 cell["min"] = fv if cell["min"] is None else min(cell["min"], fv)
                 cell["max"] = fv if cell["max"] is None else max(cell["max"], fv)
-            else:
-                cell["min"] = v if cell["min"] is None else min(cell["min"], v, key=str)
-                cell["max"] = v if cell["max"] is None else max(cell["max"], v, key=str)
 
     def finalize(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -475,17 +502,15 @@ class _AggregateState:
                         (cell["sum"] / cell["count"]) if cell["count"] else None
                     )
                 elif a.func == "min":
-                    result[name] = cell["min"]
+                    result[name] = cell["min"] if cell["min"] is not None else cell["smin"]
                 elif a.func == "max":
-                    result[name] = cell["max"]
+                    result[name] = cell["max"] if cell["max"] is not None else cell["smax"]
                 elif a.func == "stddev":
                     n = cell["count"]
                     if n < 2:
                         result[name] = None
                     else:
-                        mean = cell["sum"] / n
-                        var = max(0.0, (cell["sumsq"] - n * mean * mean) / (n - 1))
-                        result[name] = _math.sqrt(var)
+                        result[name] = _math.sqrt(max(0.0, cell["m2"] / (n - 1)))
             out.append(result)
         return out
 
@@ -2168,7 +2193,9 @@ def _execute_v6_with_governance(executor, req, engine_breaker, cache_ctx, cache)
             cache_key, _execute_and_build
         )
         if shared:
-            result_dict = dict(result_dict)
+            import copy as _copy
+
+            result_dict = _copy.deepcopy(result_dict)
             result_dict["result_cache"] = {
                 "hit": True,
                 "age_s": 0.0,
