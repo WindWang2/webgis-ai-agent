@@ -572,6 +572,27 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/raster-authoring/tiles/{ref_id}/{z}/{x}/{y}.png` | Styled Tile | object |
 | `POST` | `/api/v1/raster-authoring/export` | Export Map | object |
 
+### 专题表达工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | object |
+| `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
+| `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/commit` | Commit | object |
+
+### 纸面版式工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/print-layout/capabilities` | Capabilities | object |
+| `GET` | `/api/v1/print-layout/inspect` | Inspect | object |
+| `GET` | `/api/v1/print-layout/pages` | Pages | object |
+| `POST` | `/api/v1/print-layout/propose` | Propose | object |
+| `POST` | `/api/v1/print-layout/apply` | Apply | object |
+| `POST` | `/api/v1/print-layout/preview` | Preview | object |
+| `POST` | `/api/v1/print-layout/export` | Export | object |
+| `POST` | `/api/v1/print-layout/templates` | Templates | object |
+
 ### 报告生成
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -631,13 +652,13 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/editable-copy` | Make Editable Copy | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/datasets/{ref_id}/qualification` | Get Edit Qualification | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-edits/{ref_id}/lineage` | Get Feature Lineage | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | Create Feature Change Proposal (G32) | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | List Feature Change Proposals | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Get Feature Proposal Detail | object |
-| `PATCH` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Update Feature Proposal (revision CAS) | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/diff` | Feature Proposal Three-way Diff | object |
-| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/conflicts` | Feature Proposal Conflict Report | object |
-| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/resolutions` | Submit Conflict Resolutions | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | Create Feature Proposal | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals` | List Feature Proposals | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Get Feature Proposal | object |
+| `PATCH` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}` | Update Feature Proposal | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/diff` | Get Feature Proposal Diff | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/conflicts` | Get Feature Proposal Conflicts | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/resolutions` | Submit Feature Proposal Resolutions | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/rebase` | Rebase Feature Proposal | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/decisions` | Decide Feature Proposal | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/merge` | Merge Feature Proposal | object |
@@ -657,6 +678,11 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-snapshots` | Upload Visual Snapshot | VisualScreenshotUploadResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/workflow-resume-anchor` | Create Workflow Resume Anchor | ResumeAnchorResponse |
 | `POST` | `/api/v1/chat/workflow-resume/{anchor_id}` | Resume Workflow From Anchor | WorkflowResumeResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/runtime-interactions` | Get Runtime Interactions | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/runtime-interactions/{interaction_id}/answer` | Answer Runtime Interaction | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/runtime-interactions/{interaction_id}/cancel` | Cancel Runtime Interaction | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/turns/{turn_id}/messages` | Send Turn Message | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/turns/{turn_id}/queue` | Get Turn Queue | object |
 
 ### 审查会签
 
@@ -705,6 +731,24 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/tasks` | List Tasks | TaskListResponse |
 | `GET` | `/api/v1/tasks/status/{task_id}` | Get Celery Task Status | CeleryTaskStatusResponse |
 | `DELETE` | `/api/v1/tasks/status/{task_id}` | Revoke Celery Task | CeleryTaskRevokeResponse |
+
+### 技能作业
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/skill-jobs/catalog` | Get Catalog | object |
+| `GET` | `/api/v1/skill-jobs/skills/{skill_id}` | Get Skill Detail | object |
+| `POST` | `/api/v1/skill-jobs/prepare` | Prepare | object |
+| `POST` | `/api/v1/skill-jobs/start` | Start | object |
+| `GET` | `/api/v1/skill-jobs/runs` | List Runs | object |
+| `GET` | `/api/v1/skill-jobs/runs/{job_id}` | Get Run | object |
+| `POST` | `/api/v1/skill-jobs/runs/{job_id}/cancel` | Cancel Run | object |
+| `GET` | `/api/v1/skill-jobs/presets` | List Presets Ep | object |
+| `POST` | `/api/v1/skill-jobs/presets` | Create Preset Ep | object |
+| `GET` | `/api/v1/skill-jobs/presets/{preset_id}` | Get Preset Ep | object |
+| `PUT` | `/api/v1/skill-jobs/presets/{preset_id}` | Update Preset Ep | object |
+| `DELETE` | `/api/v1/skill-jobs/presets/{preset_id}` | Delete Preset Ep | object |
+| `POST` | `/api/v1/skill-jobs/presets/{preset_id}/prepare` | Preset Prepare Ep | object |
 
 ### 地图制图
 
@@ -1214,6 +1258,7 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | 方法 | 路径 | 说明 | 响应模型 |
 |---|---|---|---|
 | `POST` | `/pi-tools/execute` | Execute Tool | PiToolResponse |
+| `POST` | `/pi-tools/interaction-resolve` | Resolve Interaction | object |
 
 ### Spatial Events
 
@@ -1322,6 +1367,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：530（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：575（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

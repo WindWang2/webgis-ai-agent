@@ -382,6 +382,54 @@
     "title": "ApiResponse",
     "type": "object"
    },
+   "ApplyBody": {
+    "properties": {
+     "client_mutation_id": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Client Mutation Id",
+      "type": "string"
+     },
+     "dpi": {
+      "default": 300,
+      "maximum": 600.0,
+      "minimum": 72.0,
+      "title": "Dpi",
+      "type": "integer"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "initialize": {
+      "default": false,
+      "title": "Initialize",
+      "type": "boolean"
+     },
+     "operations": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "maxItems": 32,
+      "title": "Operations",
+      "type": "array"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "expected_revision"
+    ],
+    "title": "ApplyBody",
+    "type": "object"
+   },
    "ArtifactCloneResponse": {
     "description": "Clone-as-pointer：新行指向同一 content_location（零字节复制）。",
     "properties": {
@@ -3231,6 +3279,22 @@
     "title": "ClusterWorkersResponse",
     "type": "object"
    },
+   "CommentRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "body": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Body",
+      "type": "string"
+     }
+    },
+    "required": [
+     "body"
+    ],
+    "title": "CommentRequest",
+    "type": "object"
+   },
    "CommitAcceptedResponse": {
     "properties": {
      "batch_id": {
@@ -3280,52 +3344,6 @@
      "batch_id"
     ],
     "title": "CommitAcceptedResponse",
-    "type": "object"
-   },
-   "CommitBody": {
-    "properties": {
-     "client_mutation_id": {
-      "anyOf": [
-       {
-        "maxLength": 128,
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Client Mutation Id"
-     },
-     "expected_revision": {
-      "minimum": 0.0,
-      "title": "Expected Revision",
-      "type": "integer"
-     },
-     "expression": {
-      "additionalProperties": true,
-      "title": "Expression",
-      "type": "object"
-     },
-     "layer_id": {
-      "maxLength": 200,
-      "minLength": 1,
-      "title": "Layer Id",
-      "type": "string"
-     },
-     "ref_id": {
-      "maxLength": 128,
-      "minLength": 1,
-      "title": "Ref Id",
-      "type": "string"
-     }
-    },
-    "required": [
-     "ref_id",
-     "expression",
-     "layer_id",
-     "expected_revision"
-    ],
-    "title": "CommitBody",
     "type": "object"
    },
    "CommitRequest": {
@@ -5580,6 +5598,22 @@
        }
       ],
       "title": "Wfid"
+     },
+     "wfids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 200,
+        "minItems": 1,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Wfids"
      }
     },
     "required": [
@@ -6308,30 +6342,6 @@
      "status"
     ],
     "title": "ExploreStatusResponse",
-    "type": "object"
-   },
-   "ExportBody": {
-    "properties": {
-     "expected_revision": {
-      "anyOf": [
-       {
-        "minimum": 0.0,
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Expected Revision"
-     },
-     "format": {
-      "default": "png",
-      "pattern": "^(png|svg|pdf)$",
-      "title": "Format",
-      "type": "string"
-     }
-    },
-    "title": "ExportBody",
     "type": "object"
    },
    "ExportDiagnosticsResponse": {
@@ -7784,6 +7794,39 @@
     "title": "InstantiateRequest",
     "type": "object"
    },
+   "InteractionAnswerRequest": {
+    "properties": {
+     "cancelled": {
+      "default": false,
+      "title": "Cancelled",
+      "type": "boolean"
+     },
+     "confirmed": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Confirmed"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value"
+     }
+    },
+    "title": "InteractionAnswerRequest",
+    "type": "object"
+   },
    "InteractionEventAck": {
     "additionalProperties": false,
     "description": "单条事件的摄入裁决（ack 信封，客户端据此同步水印/去重）。",
@@ -8159,6 +8202,53 @@
      "projection"
     ],
     "title": "InteractionProjectionResponse",
+    "type": "object"
+   },
+   "InteractionResolveRequest": {
+    "properties": {
+     "answerKind": {
+      "pattern": "^(value|confirmed|no_answer|cancelled|timeout)$",
+      "title": "Answerkind",
+      "type": "string"
+     },
+     "display": {
+      "default": "",
+      "maxLength": 8000,
+      "title": "Display",
+      "type": "string"
+     },
+     "envelopeId": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Envelopeid",
+      "type": "string"
+     },
+     "nativeId": {
+      "default": "",
+      "maxLength": 80,
+      "title": "Nativeid",
+      "type": "string"
+     },
+     "toolCallId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Toolcallid",
+      "type": "string"
+     },
+     "turnToken": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Turntoken",
+      "type": "string"
+     }
+    },
+    "required": [
+     "toolCallId",
+     "turnToken",
+     "envelopeId",
+     "answerKind"
+    ],
+    "title": "InteractionResolveRequest",
     "type": "object"
    },
    "JobCancelResponse": {
@@ -12539,6 +12629,115 @@
     "title": "PolicyUpsertRequest",
     "type": "object"
    },
+   "PrepareRequest": {
+    "properties": {
+     "bindings": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Bindings",
+      "type": "array"
+     },
+     "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+     },
+     "session_id": {
+      "maxLength": 255,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "skill_id": {
+      "maxLength": 80,
+      "title": "Skill Id",
+      "type": "string"
+     },
+     "skill_version": {
+      "default": "",
+      "maxLength": 16,
+      "title": "Skill Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "skill_id"
+    ],
+    "title": "PrepareRequest",
+    "type": "object"
+   },
+   "PresetPrepareRequest": {
+    "description": "预设重用：显式新 bindings（refs 重新授权）+ 可覆盖参数。",
+    "properties": {
+     "bindings": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Bindings",
+      "type": "array"
+     },
+     "params_override": {
+      "additionalProperties": true,
+      "title": "Params Override",
+      "type": "object"
+     },
+     "session_id": {
+      "maxLength": 255,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "PresetPrepareRequest",
+    "type": "object"
+   },
+   "PresetRequest": {
+    "properties": {
+     "bindings_template": {
+      "additionalProperties": true,
+      "title": "Bindings Template",
+      "type": "object"
+     },
+     "description": {
+      "default": "",
+      "maxLength": 400,
+      "title": "Description",
+      "type": "string"
+     },
+     "name": {
+      "maxLength": 120,
+      "title": "Name",
+      "type": "string"
+     },
+     "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+     },
+     "skill_id": {
+      "maxLength": 80,
+      "title": "Skill Id",
+      "type": "string"
+     },
+     "skill_version": {
+      "default": "",
+      "maxLength": 16,
+      "title": "Skill Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "skill_id"
+    ],
+    "title": "PresetRequest",
+    "type": "object"
+   },
    "PreviewRefreshRequest": {
     "additionalProperties": false,
     "properties": {
@@ -13294,6 +13493,270 @@
     "title": "PromptSegmentBody",
     "type": "object"
    },
+   "ProposalCreateRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "feature_ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 200,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Feature Ids"
+     },
+     "ops": {
+      "items": {
+       "$ref": "#/components/schemas/ProposalOpModel"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Ops",
+      "type": "array"
+     },
+     "ref_id": {
+      "title": "Ref Id",
+      "type": "string"
+     },
+     "submit": {
+      "default": false,
+      "title": "Submit",
+      "type": "boolean"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     }
+    },
+    "required": [
+     "ref_id",
+     "ops"
+    ],
+    "title": "ProposalCreateRequest",
+    "type": "object"
+   },
+   "ProposalDecisionRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "submit",
+       "approve",
+       "request_changes",
+       "reject",
+       "withdraw"
+      ],
+      "title": "Action",
+      "type": "string"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "maxLength": 500,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "title": "ProposalDecisionRequest",
+    "type": "object"
+   },
+   "ProposalOpModel": {
+    "additionalProperties": false,
+    "description": "提案 op —— 与 G14 EditOpModel 同词表（rename_field 被提案域拒绝）。",
+    "properties": {
+     "dx_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dx M"
+     },
+     "dy_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dy M"
+     },
+     "features": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Features"
+     },
+     "field_policy": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Field Policy"
+     },
+     "fields": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fields"
+     },
+     "fixes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fixes"
+     },
+     "geometry": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Geometry"
+     },
+     "line": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Line"
+     },
+     "op": {
+      "enum": [
+       "set_fields",
+       "repair_geometry",
+       "move_by",
+       "snap_to_ref",
+       "create_features",
+       "delete_features",
+       "replace_geometry",
+       "split_feature",
+       "merge_features"
+      ],
+      "title": "Op",
+      "type": "string"
+     },
+     "ref_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref Id"
+     },
+     "tolerance_m": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tolerance M"
+     },
+     "wfid": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Wfid"
+     },
+     "wfids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 200,
+        "minItems": 1,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Wfids"
+     }
+    },
+    "required": [
+     "op"
+    ],
+    "title": "ProposalOpModel",
+    "type": "object"
+   },
    "ProposalProjectionResponse": {
     "additionalProperties": true,
     "description": "GET proposal 详情投影（proposal + 锚态 + 冲突 + 策略 verdict）。",
@@ -13337,6 +13800,77 @@
     "title": "ProposalProjectionResponse",
     "type": "object"
    },
+   "ProposalResolution": {
+    "additionalProperties": false,
+    "description": "一项冲突的显式裁决（产生新 proposal revision；旧批准失效）。\n\ndecided_by/decided_at 可选：REST 面由服务端从 auth 上下文填充（R1-P1-3\n—— 客户端只提交 {conflict_id, action, ...}，裁决者身份不由客户端声明）。",
+    "properties": {
+     "action": {
+      "enum": [
+       "keep_current",
+       "take_proposed",
+       "use_new_value"
+      ],
+      "title": "Action",
+      "type": "string"
+     },
+     "conflict_id": {
+      "title": "Conflict Id",
+      "type": "string"
+     },
+     "decided_at": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decided At"
+     },
+     "decided_by": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decided By"
+     },
+     "new_fields": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "New Fields"
+     },
+     "new_geometry": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "New Geometry"
+     }
+    },
+    "required": [
+     "conflict_id",
+     "action"
+    ],
+    "title": "ProposalResolution",
+    "type": "object"
+   },
    "ProposalStatus": {
     "enum": [
      "preview",
@@ -13349,6 +13883,102 @@
     ],
     "title": "ProposalStatus",
     "type": "string"
+   },
+   "ProposalUpdateRequest": {
+    "additionalProperties": false,
+    "description": "候选内容更新（ops/resolutions 变更 → revision+1，旧批准失效）。",
+    "properties": {
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "feature_ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 200,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Feature Ids"
+     },
+     "ops": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ProposalOpModel"
+        },
+        "maxItems": 8,
+        "minItems": 1,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ops"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "ProposalUpdateRequest",
+    "type": "object"
+   },
+   "ProposeBody": {
+    "properties": {
+     "dpi": {
+      "default": 300,
+      "maximum": 600.0,
+      "minimum": 72.0,
+      "title": "Dpi",
+      "type": "integer"
+     },
+     "initialize": {
+      "default": false,
+      "title": "Initialize",
+      "type": "boolean"
+     },
+     "operations": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "maxItems": 32,
+      "title": "Operations",
+      "type": "array"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "ProposeBody",
+    "type": "object"
    },
    "QualificationReason": {
     "additionalProperties": false,
@@ -13695,6 +14325,26 @@
      "ready"
     ],
     "title": "ReadyResponse",
+    "type": "object"
+   },
+   "RebaseRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "apply": {
+      "default": false,
+      "title": "Apply",
+      "type": "boolean"
+     },
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "RebaseRequest",
     "type": "object"
    },
    "RebindComponentBody": {
@@ -14886,6 +15536,31 @@
      "ref"
     ],
     "title": "ReportSubmitRequest",
+    "type": "object"
+   },
+   "ResolutionSubmitRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "resolutions": {
+      "items": {
+       "$ref": "#/components/schemas/ProposalResolution"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Resolutions",
+      "type": "array"
+     }
+    },
+    "required": [
+     "expected_revision",
+     "resolutions"
+    ],
+    "title": "ResolutionSubmitRequest",
     "type": "object"
    },
    "ResumeAnchorResponse": {
@@ -16970,6 +17645,18 @@
        }
       ],
       "title": "Margins"
+     },
+     "print_layout": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Print Layout"
      }
     },
     "required": [
@@ -18159,6 +18846,32 @@
     "title": "StartExploreResponse",
     "type": "object"
    },
+   "StartRequest": {
+    "properties": {
+     "prepared_id": {
+      "maxLength": 64,
+      "title": "Prepared Id",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 255,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "wait_timeout_s": {
+      "default": 0,
+      "description": "有界等待秒数（0=后台运行+轮询；>0 时同步等待至完成/超时）",
+      "title": "Wait Timeout S",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "prepared_id",
+     "session_id"
+    ],
+    "title": "StartRequest",
+    "type": "object"
+   },
    "StatusResponse": {
     "additionalProperties": false,
     "properties": {
@@ -18643,6 +19356,97 @@
      "status"
     ],
     "title": "TaskStepResponse",
+    "type": "object"
+   },
+   "TemplateBody": {
+    "properties": {
+     "action": {
+      "pattern": "^(save|apply|scope|reset)$",
+      "title": "Action",
+      "type": "string"
+     },
+     "components": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Components"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "initialize": {
+      "default": false,
+      "title": "Initialize",
+      "type": "boolean"
+     },
+     "name": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Name",
+      "type": "string"
+     },
+     "page_id": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Page Id",
+      "type": "string"
+     },
+     "paper_profile": {
+      "default": "a4_landscape",
+      "maxLength": 32,
+      "title": "Paper Profile",
+      "type": "string"
+     },
+     "placeholders": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Placeholders"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "template_id": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Template Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "action"
+    ],
+    "title": "TemplateBody",
     "type": "object"
    },
    "TemplateDeleteResponse": {
@@ -19170,6 +19974,27 @@
      "rules"
     ],
     "title": "TopologyDeclaration",
+    "type": "object"
+   },
+   "TurnMessageRequest": {
+    "properties": {
+     "message": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+     },
+     "mode": {
+      "pattern": "^(adjust|queue)$",
+      "title": "Mode",
+      "type": "string"
+     }
+    },
+    "required": [
+     "message",
+     "mode"
+    ],
+    "title": "TurnMessageRequest",
     "type": "object"
    },
    "UndoAgentCommitBody": {
@@ -21627,6 +22452,189 @@
      }
     },
     "title": "ShareRequest",
+    "type": "object"
+   },
+   "app__api__routes__print_layout__ExportBody": {
+    "properties": {
+     "dpi": {
+      "default": 300,
+      "maximum": 600.0,
+      "minimum": 72.0,
+      "title": "Dpi",
+      "type": "integer"
+     },
+     "format": {
+      "default": "pdf",
+      "pattern": "^(pdf|svg|png)$",
+      "title": "Format",
+      "type": "string"
+     },
+     "page_id": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Page Id",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "ExportBody",
+    "type": "object"
+   },
+   "app__api__routes__print_layout__PreviewBody": {
+    "properties": {
+     "dpi": {
+      "default": 300,
+      "maximum": 600.0,
+      "minimum": 72.0,
+      "title": "Dpi",
+      "type": "integer"
+     },
+     "include_svg": {
+      "default": true,
+      "title": "Include Svg",
+      "type": "boolean"
+     },
+     "page_id": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Page Id",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "PreviewBody",
+    "type": "object"
+   },
+   "app__api__routes__raster_authoring__CommitBody": {
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "expression": {
+      "additionalProperties": true,
+      "title": "Expression",
+      "type": "object"
+     },
+     "layer_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Layer Id",
+      "type": "string"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "expression",
+     "layer_id",
+     "expected_revision"
+    ],
+    "title": "CommitBody",
+    "type": "object"
+   },
+   "app__api__routes__raster_authoring__ExportBody": {
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "format": {
+      "default": "png",
+      "pattern": "^(png|svg|pdf)$",
+      "title": "Format",
+      "type": "string"
+     }
+    },
+    "title": "ExportBody",
+    "type": "object"
+   },
+   "app__api__routes__thematic_authoring__CommitBody": {
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     }
+    },
+    "required": [
+     "plan",
+     "expected_revision"
+    ],
+    "title": "CommitBody",
+    "type": "object"
+   },
+   "app__api__routes__thematic_authoring__PreviewBody": {
+    "properties": {
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "PreviewBody",
     "type": "object"
    },
    "app__schemas__chat_schema__SkillsListResponse": {
@@ -26134,6 +27142,1181 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals": {
+   "get": {
+    "operationId": "list_feature_proposals_api_v1_chat_sessions__session_id__feature_proposals_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "status",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Feature Proposals",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   },
+   "post": {
+    "operationId": "create_feature_proposal_api_v1_chat_sessions__session_id__feature_proposals_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ProposalCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Feature Proposal",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}": {
+   "get": {
+    "operationId": "get_feature_proposal_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Feature Proposal",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   },
+   "patch": {
+    "operationId": "update_feature_proposal_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__patch",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ProposalUpdateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Update Feature Proposal",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/audit": {
+   "get": {
+    "operationId": "export_feature_proposal_audit_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__audit_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Export Feature Proposal Audit",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/comments": {
+   "post": {
+    "operationId": "comment_feature_proposal_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__comments_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CommentRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Comment Feature Proposal",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/conflicts": {
+   "get": {
+    "operationId": "get_feature_proposal_conflicts_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__conflicts_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Feature Proposal Conflicts",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/decisions": {
+   "post": {
+    "operationId": "decide_feature_proposal_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__decisions_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ProposalDecisionRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Decide Feature Proposal",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/diff": {
+   "get": {
+    "operationId": "get_feature_proposal_diff_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__diff_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "page",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "minimum": 1,
+       "title": "Page",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "page_size",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Page Size",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Feature Proposal Diff",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/merge": {
+   "post": {
+    "operationId": "merge_feature_proposal_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__merge_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Merge Feature Proposal",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/rebase": {
+   "post": {
+    "operationId": "rebase_feature_proposal_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__rebase_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RebaseRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Rebase Feature Proposal",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery": {
+   "get": {
+    "operationId": "feature_proposal_recovery_view_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__recovery_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Feature Proposal Recovery View",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery/resolve": {
+   "post": {
+    "operationId": "resolve_feature_proposal_recovery_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__recovery_resolve_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Resolve Feature Proposal Recovery",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/resolutions": {
+   "post": {
+    "operationId": "submit_feature_proposal_resolutions_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__resolutions_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ResolutionSubmitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Submit Feature Proposal Resolutions",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/withdraw": {
+   "post": {
+    "operationId": "withdraw_feature_proposal_api_v1_chat_sessions__session_id__feature_proposals__proposal_id__withdraw_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "proposal_id",
+      "required": true,
+      "schema": {
+       "title": "Proposal Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ProposalDecisionRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Withdraw Feature Proposal",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/interaction-events": {
    "post": {
     "description": "接收浏览器 outbox 批量交互事件（fire-and-forget 遥测语义）。\n\n与 map-action-ack 同纪律：锁降级/丢失 → 503（客户端幂等重试安全，\n状态未写）；锁竞争 → 503 背压。存储降级不 500 —— ack 信封内以\n``persist_degraded`` 披露。",
@@ -27900,6 +30083,235 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/runtime-interactions": {
+   "get": {
+    "description": "pending + 近期终态 + 只读投影（重连/刷新水合；WP10）。",
+    "operationId": "get_runtime_interactions_api_v1_chat_sessions__session_id__runtime_interactions_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Runtime Interactions Api V1 Chat Sessions  Session Id  Runtime Interactions Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Runtime Interactions",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/runtime-interactions/{interaction_id}/answer": {
+   "post": {
+    "description": "提交回答（owner 校验 → 白名单校验 → 单向 stdin 写出 → 状态翻转）。",
+    "operationId": "answer_runtime_interaction_api_v1_chat_sessions__session_id__runtime_interactions__interaction_id__answer_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "interaction_id",
+      "required": true,
+      "schema": {
+       "title": "Interaction Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InteractionAnswerRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Answer Runtime Interaction Api V1 Chat Sessions  Session Id  Runtime Interactions  Interaction Id  Answer Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Answer Runtime Interaction",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/runtime-interactions/{interaction_id}/cancel": {
+   "post": {
+    "description": "用户取消当前问题（合法 cancelled:true；等待结束，无副作用续行）。",
+    "operationId": "cancel_runtime_interaction_api_v1_chat_sessions__session_id__runtime_interactions__interaction_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "interaction_id",
+      "required": true,
+      "schema": {
+       "title": "Interaction Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Cancel Runtime Interaction Api V1 Chat Sessions  Session Id  Runtime Interactions  Interaction Id  Cancel Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Runtime Interaction",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/scale-portrayal": {
    "get": {
     "description": "只读有效策略（与 UI / Agent 同一解析面）；session 归属验权。",
@@ -28295,6 +30707,168 @@
      }
     ],
     "summary": "Get Turn Chain",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/turns/{turn_id}/messages": {
+   "post": {
+    "description": "运行中追加指令：adjust → steer（下一可响应位置调整）/ queue → follow_up。\n\nG22 control gate 内完成「turn 身份校验 + stdin 写出」原子段（与 abort\n同款）；写出后收响应，真实 disposition 如实返回并投递 SSE。接纳回执\n只证明队列状态 —— 实际消费经队列可见性观察（get_state + 台账）。",
+    "operationId": "send_turn_message_api_v1_chat_sessions__session_id__turns__turn_id__messages_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "turn_id",
+      "required": true,
+      "schema": {
+       "title": "Turn Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/TurnMessageRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Send Turn Message Api V1 Chat Sessions  Session Id  Turns  Turn Id  Messages Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Send Turn Message",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/turns/{turn_id}/queue": {
+   "get": {
+    "description": "队列可见性：vendor get_state 投影（pendingMessageCount 等）+ 台账。",
+    "operationId": "get_turn_queue_api_v1_chat_sessions__session_id__turns__turn_id__queue_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "turn_id",
+      "required": true,
+      "schema": {
+       "title": "Turn Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Turn Queue Api V1 Chat Sessions  Session Id  Turns  Turn Id  Queue Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Turn Queue",
     "tags": [
      "AI对话",
      "AI对话"
@@ -43077,6 +45651,585 @@
     ]
    }
   },
+  "/api/v1/print-layout/apply": {
+   "post": {
+    "operationId": "apply_api_v1_print_layout_apply_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ApplyBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Apply",
+    "tags": [
+     "纸面版式工作台",
+     "纸面版式工作台"
+    ]
+   }
+  },
+  "/api/v1/print-layout/capabilities": {
+   "get": {
+    "operationId": "capabilities_api_v1_print_layout_capabilities_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Capabilities",
+    "tags": [
+     "纸面版式工作台",
+     "纸面版式工作台"
+    ]
+   }
+  },
+  "/api/v1/print-layout/export": {
+   "post": {
+    "operationId": "export_api_v1_print_layout_export_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__print_layout__ExportBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Export",
+    "tags": [
+     "纸面版式工作台",
+     "纸面版式工作台"
+    ]
+   }
+  },
+  "/api/v1/print-layout/inspect": {
+   "get": {
+    "operationId": "inspect_api_v1_print_layout_inspect_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "sync_planner",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Sync Planner",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect",
+    "tags": [
+     "纸面版式工作台",
+     "纸面版式工作台"
+    ]
+   }
+  },
+  "/api/v1/print-layout/pages": {
+   "get": {
+    "operationId": "pages_api_v1_print_layout_pages_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "driver",
+      "required": false,
+      "schema": {
+       "default": "frames",
+       "pattern": "^(frames|category|feature|time|product)$",
+       "title": "Driver",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "page_budget",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 20,
+       "minimum": 1,
+       "title": "Page Budget",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Pages",
+    "tags": [
+     "纸面版式工作台",
+     "纸面版式工作台"
+    ]
+   }
+  },
+  "/api/v1/print-layout/preview": {
+   "post": {
+    "operationId": "preview_api_v1_print_layout_preview_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__print_layout__PreviewBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview",
+    "tags": [
+     "纸面版式工作台",
+     "纸面版式工作台"
+    ]
+   }
+  },
+  "/api/v1/print-layout/propose": {
+   "post": {
+    "operationId": "propose_api_v1_print_layout_propose_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ProposeBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Propose",
+    "tags": [
+     "纸面版式工作台",
+     "纸面版式工作台"
+    ]
+   }
+  },
+  "/api/v1/print-layout/templates": {
+   "post": {
+    "operationId": "templates_api_v1_print_layout_templates_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/TemplateBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Templates",
+    "tags": [
+     "纸面版式工作台",
+     "纸面版式工作台"
+    ]
+   }
+  },
   "/api/v1/projects": {
    "get": {
     "description": "Paginated list of projects, slim summary payload.\n\nBackward-compatible: the response wraps items in a Page envelope with\ntotal/limit/offset/has_more. Clients that only read ``items`` continue\nto work — the page is the only shape returned.",
@@ -47905,7 +51058,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/ExportBody"
+        "$ref": "#/components/schemas/app__api__routes__raster_authoring__ExportBody"
        }
       }
      },
@@ -47977,7 +51130,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/CommitBody"
+        "$ref": "#/components/schemas/app__api__routes__raster_authoring__CommitBody"
        }
       }
      },
@@ -49059,6 +52212,761 @@
     "tags": [
      "栅格图层",
      "raster"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/catalog": {
+   "get": {
+    "description": "分类型目录：GIS 技能（版本/摘要/runnability）+ md 指南 + 扩展 candidate。",
+    "operationId": "get_catalog_api_v1_skill_jobs_catalog_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "domain",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 40,
+       "title": "Domain",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Catalog",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/prepare": {
+   "post": {
+    "description": "零业务副作用 prepared call（typed 拒绝带 code）。",
+    "operationId": "prepare_api_v1_skill_jobs_prepare_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PrepareRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Prepare",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/presets": {
+   "get": {
+    "operationId": "list_presets_ep_api_v1_skill_jobs_presets_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 255,
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Presets Ep",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   },
+   "post": {
+    "operationId": "create_preset_ep_api_v1_skill_jobs_presets_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PresetRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Preset Ep",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/presets/{preset_id}": {
+   "delete": {
+    "operationId": "delete_preset_ep_api_v1_skill_jobs_presets__preset_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "preset_id",
+      "required": true,
+      "schema": {
+       "title": "Preset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Preset Ep",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   },
+   "get": {
+    "operationId": "get_preset_ep_api_v1_skill_jobs_presets__preset_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "preset_id",
+      "required": true,
+      "schema": {
+       "title": "Preset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Preset Ep",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   },
+   "put": {
+    "operationId": "update_preset_ep_api_v1_skill_jobs_presets__preset_id__put",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "preset_id",
+      "required": true,
+      "schema": {
+       "title": "Preset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PresetRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Update Preset Ep",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/presets/{preset_id}/prepare": {
+   "post": {
+    "description": "预设重用 = 显式新绑定 + 参数覆盖 → 重新 prepare（不携带任何授权）。\n\n预设里的旧 ref 只作「沿用哪些输入」的提示；ref 过期/不可见 →\nREF_NOT_FOUND，要求重新绑定（不泄露他人数据）。",
+    "operationId": "preset_prepare_ep_api_v1_skill_jobs_presets__preset_id__prepare_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "preset_id",
+      "required": true,
+      "schema": {
+       "title": "Preset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PresetPrepareRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preset Prepare Ep",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/runs": {
+   "get": {
+    "description": "会话的技能作业运行列表（刷新回看权威：durable job 行）。",
+    "operationId": "list_runs_api_v1_skill_jobs_runs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "maxLength": 255,
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 50,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Runs",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/runs/{job_id}": {
+   "get": {
+    "description": "单运行视图（含步骤/产物 refs/证据覆盖）。\n\nreview P1-2：单读必须归属验证 —— 无 session_id 的裸 id 读不再放行\n（与任务中心 get_for_owner 同规则：枚举整数 id 不得成为旁路）。",
+    "operationId": "get_run_api_v1_skill_jobs_runs__job_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 255,
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Run",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/runs/{job_id}/cancel": {
+   "post": {
+    "description": "取消（既有 durable 两阶段取消；已提交合法结果不虚假回滚）。",
+    "operationId": "cancel_run_api_v1_skill_jobs_runs__job_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "maxLength": 255,
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Run",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/skills/{skill_id}": {
+   "get": {
+    "description": "单技能详情（完整参数 schema + 绑定需求 + 过程步骤摘要；有界）。",
+    "operationId": "get_skill_detail_api_v1_skill_jobs_skills__skill_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "skill_id",
+      "required": true,
+      "schema": {
+       "title": "Skill Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Skill Detail",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
+    ]
+   }
+  },
+  "/api/v1/skill-jobs/start": {
+   "post": {
+    "description": "启动运行（幂等；活跃 agent turn → 409 SESSION_BUSY）。",
+    "operationId": "start_api_v1_skill_jobs_start_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StartRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Start",
+    "tags": [
+     "技能作业",
+     "skill-jobs"
     ]
    }
   },
@@ -51294,6 +55202,256 @@
     "tags": [
      "地图制图模板 V9（版本化）",
      "地图制图模板 V9（版本化）"
+    ]
+   }
+  },
+  "/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/commit": {
+   "post": {
+    "operationId": "commit_api_v1_thematic_authoring_sessions__session_id__layers__layer_id__commit_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__thematic_authoring__CommitBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Commit",
+    "tags": [
+     "专题表达工作台",
+     "专题表达工作台"
+    ]
+   }
+  },
+  "/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/inspect": {
+   "get": {
+    "operationId": "inspect_api_v1_thematic_authoring_sessions__session_id__layers__layer_id__inspect_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "field",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Field"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect",
+    "tags": [
+     "专题表达工作台",
+     "专题表达工作台"
+    ]
+   }
+  },
+  "/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/preview": {
+   "post": {
+    "operationId": "preview_api_v1_thematic_authoring_sessions__session_id__layers__layer_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__thematic_authoring__PreviewBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview",
+    "tags": [
+     "专题表达工作台",
+     "专题表达工作台"
     ]
    }
   },
@@ -57873,6 +62031,51 @@
      }
     },
     "summary": "Execute Tool",
+    "tags": [
+     "PI工具",
+     "pi-tools"
+    ]
+   }
+  },
+  "/pi-tools/interaction-resolve": {
+   "post": {
+    "description": "扩展把 ctx.ui 结果交回服务端（bridge secret + turn token 校验同 execute）。",
+    "operationId": "resolve_interaction_pi_tools_interaction_resolve_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InteractionResolveRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Resolve Interaction Pi Tools Interaction Resolve Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Resolve Interaction",
     "tags": [
      "PI工具",
      "pi-tools"
