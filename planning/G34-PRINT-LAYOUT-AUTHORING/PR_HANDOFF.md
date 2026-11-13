@@ -1,6 +1,6 @@
 # G34 PR HANDOFF — 最终交付台账
 
-状态：**待 push + 建 PR**（SHA/URL 在建 PR 后回填真实值，禁止虚构）。
+状态：**已推送并创建 PR**。
 
 | 项 | 值 |
 |---|---|
@@ -8,10 +8,11 @@
 | branch | `zcode/g34-print-layout-authoring-20261112T213200Z` |
 | worktree | `/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z` |
 | base SHA | `ca7b3ec273f2b43336852951e2292a416b2238e6`（PR 前重新 fetch 核对） |
-| head SHA | 待填（commit 后） |
-| PR URL | 待填 |
+| head SHA | `ae5aea1d2aad374de00cd9638efae05c59696828` |
+| PR URL | https://github.com/WindWang2/webgis-ai-agent/pull/2096 |
 | 是否 Draft | 否（核心验收已本地通过；未跑项在正文如实标注） |
 | 线上 CI | 不等待、不宣称已绿 |
+| 漂移核对 | PR 前 fetch：`origin/master` 仍为 `ca7b3ec27`，与 base 一致，无漂移 |
 
 ## 交付内容
 
@@ -73,4 +74,4 @@ additive：`layout.print_layout` 缺席时所有既有导出路径与字节不�
 - [x] 字体/文字/图例完整性可由产物验证
 - [x] 所选字段穿过 模型 → IR → 绘制器 的调用图已给出
 - [x] 独立评审无阻塞（Round 2 = SHIP-WITH-FIXES，P0 全关，新增 P1 已修）
-- [ ] 已推送并创建 PR（下一步）
+- [x] 已推送并创建 PR（#2096）
