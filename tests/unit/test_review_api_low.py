@@ -77,7 +77,7 @@ async def test_debug_is_the_only_error_detail_switch_and_legacy_strips_unseriali
 async def test_workflow_existence_is_404_and_existing_engine_conflict_is_409(monkeypatch):
     from app.api.routes import project
     from app.schemas.project_schema import WorkflowRunRequest
-    monkeypatch.setattr(project, "_get_project_with_auth_offloaded", AsyncMock(return_value=object()))
+    monkeypatch.setattr(project, "_get_project_for_write_offloaded", AsyncMock(return_value=object()))
     monkeypatch.setattr(project, "get_tool_registry", lambda: object())
     engine = AsyncMock(side_effect=ValueError("execution state conflict"))
     monkeypatch.setattr(project, "_run_workflow_engine", engine)
@@ -97,7 +97,7 @@ async def test_workflow_existence_is_404_and_existing_engine_conflict_is_409(mon
 async def test_map_product_rerun_errors_do_not_expose_internal_exception(monkeypatch, operation):
     from app.api.routes import project
     from app.schemas.project_schema import MapProductRestoreRequest
-    monkeypatch.setattr(project.ProjectService, "get_project_with_auth", lambda **kwargs: object())
+    monkeypatch.setattr(project.ProjectService, "get_project_for_write", lambda **kwargs: object())
     monkeypatch.setattr(project.MapProductService, "get_version", lambda *args: SimpleNamespace(version_no=1, workflow_run_id="run"))
     monkeypatch.setattr(project, "get_tool_registry", lambda: object())
     monkeypatch.setattr(project, "_run_workflow_engine", AsyncMock(side_effect=RuntimeError("postgres://private-password@internal")))
