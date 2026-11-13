@@ -22,7 +22,7 @@
 | L11 | R2 复审（同一独立 reviewer，静态冷读 7752 行） | 见 REVIEW.md | 2×P0 + 5×P1 全部清偿、无新 P0/P1；列 U1–U8 与 6 条必须动作 | U1 子集勾选保留、U2 GIF 折叠真实触发用例、U3 运行时磁盘配额 + GIF ×3、U4 oracle 命名、U5 死常量、U6 文档口径、U7 终态字段、U8 证据清单 | ✅ |
 | L12 | R2 后复跑 | 全套 | 61 后端 + 1 Pi 旅程 + 120 既有回归 + 35 前端 + tsc 0 error + ruff/diff-check 全绿 | — | ✅ |
 | L13 | 合流最新 master | `git fetch origin master` → `ba0c84b84`（+36 提交，G29–G34/#2094–#2099 已合并，open PR=0，六 PR reviews/inline 均空）；普通 `git merge` | 两处同锚冲突双侧保留（G30 skill_job / G34 print_layout_tools / G35 项共存），无残留标记 | 合流后 61 后端 + 1 Pi 旅程 + 120 既有回归 + tsc/ruff/diff-check 全绿；前端 34/35，1 例 G29 `steer` 基线失败已在干净 origin/master 最小复现 | ✅ |
-| L14 | push / 创建 PR | 见 PR_HANDOFF.md | — | 待执行 | ⏳ |
+| L14 | push / 创建 PR | `git push -u origin zcode/g35-...` + `gh pr create --body-file PR_BODY.md` | PR #2100 `https://github.com/WindWang2/webgis-ai-agent/pull/2100`（OPEN、非 draft、base=master、45 files、head `859b8fe0d`） | open PR 复核为 0；未强推、未等线上 CI | ✅ |
 
 ## 当前 head / base
 

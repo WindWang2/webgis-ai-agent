@@ -6,9 +6,11 @@
 - worktree：`/home/kevin/projects/webgis/webgis-worktrees/g35-temporal-media-delivery-20261112T134717Z`
 - base（创建时）：`ca7b3ec273f2b43336852951e2292a416b2238e6`
 - base（提交前最新 master，已普通合并）：`ba0c84b840768bba50bd7b18d91c1da7e59360c9`
-- head：`853712f872d78038c052e06b66b3d0fcc59cc3c7`（含 merge commit；合流后文档修订
-  将追加新提交，最终 head 以 push 时为准）
-- PR URL：待 push 后填写
+- head：`859b8fe0d09123d30735a92d141108341e49c349`
+  （`b4d649ffd` 实现 → `853712f87` 合流最新 master → `859b8fe0d` 账本定稿；
+  回填 PR URL 会再追加一个普通提交，最终 head 见 `git rev-parse HEAD`）
+- PR：**https://github.com/WindWang2/webgis-ai-agent/pull/2100**
+  （state=OPEN、isDraft=false、base=master、45 files）
 - 合流：两处同锚接线冲突双侧保留；合流后 61 后端 / 1 Pi 旅程 / 120 既有回归 /
   tsc 0 error / ruff / diff-check 全绿；前端 34/35（1 例 G29 `steer` 基线失败，
   已在干净 origin/master 最小复现，见 TEST_MATRIX.md）
@@ -56,3 +58,24 @@ tsc/ruff/diff-check 全绿；Pi 旅程改用生产 `tool_search` deferred 发现
 - 宿主未提供可查询的 Goal usage budget 配置；「≥320,000,000 tokens 可用预算」未配置/未核验。
 - 未在网络 clone Pi 子模块（HTTP/2 CANCEL），改用本地对象 + 同 pin 已构建 bundle 离线初始化；
   未改 gitlink / 构建锁定 / 部署契约。
+- 合流主干带来的 1 例前端基线失败（G29 `steer` 幽灵命令）未修：已在干净
+  `origin/master` 最小复现，属既存问题、超出本任务所有权边界。
+
+## 最终交付摘要
+
+- **PR**：https://github.com/WindWang2/webgis-ai-agent/pull/2100（OPEN、非 draft、base=master）
+- **branch / worktree**：`zcode/g35-temporal-media-delivery-20261112T134717Z` /
+  `/home/kevin/projects/webgis/webgis-worktrees/g35-temporal-media-delivery-20261112T134717Z`
+- **base / head**：`ba0c84b840768bba50bd7b18d91c1da7e59360c9`（合流后的最新 master）/
+  `git rev-parse HEAD`（含回填 PR URL 的普通新增提交）
+- **可操作功能**：时间轴「时序动画媒体交付」按钮 → 面板选真实观测/顺序/时间显示/
+  尺寸/停留/格式 → 预览冻结计划 → 提交后台任务 → 轮询/取消/重开恢复 → 下载
+  APNG（或 GIF）+ PNG/SVG/manifest 证据包；Pi 侧 6 个标准工具（生产 `tool_search`
+  发现）走同一 service。
+- **测试证据**：61 后端单测、1 条固定 pin 真实 Pi 子进程全链旅程（签名 URL 下载后
+  独立解码 3 帧、manifest 缺期 3 / 总时长 3000ms）、120 例既有回归、
+  前端 34/35、tsc 0 error、ruff / `git diff --check` 通过。逐项命令见 `TEST_MATRIX.md`。
+- **独立评审结论**：R1 发现 2×P0 + 5×P1 + 7×P2 + 9×P3；R2 由同一 reviewer
+  确认 P0/P1 全部清偿、无新阻断，另列 U1–U8 并全部闭环；R3 合流后复核确认
+  双侧接线完整、master 接口无漂移、无新 P0/P1，「可 push + 创建 PR」。
+  **最终：无阻断项。** 详见 `REVIEW.md`。
