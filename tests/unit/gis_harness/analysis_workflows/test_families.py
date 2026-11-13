@@ -137,6 +137,17 @@ def test_statistical_zones_declares_grid_identity_precondition():
     assert "point_support_required" in preconds
 
 
+def test_network_proximity_aggregates_meters_not_travel_seconds():
+    """#2005：区均网络距离用 total_distance_m（米），不用行程秒 total_cost。"""
+    from app.services.gis_harness.analysis_workflows.families import build_contract
+
+    contract = build_contract("network_proximity", workflow_id="awf.np.meters")
+    step = next(item for item in contract.steps if item.step_id == "accessibility_summary")
+    assert step.step_params["numerator_field"] == "total_distance_m"
+    assert step.unit_contract == {"numerator_field": "m"}
+    assert "total_cost" not in step.step_params.values()
+
+
 def test_unit_override_syncs_unit_contract():
     """P2-2 清偿钉扎：单位覆盖必须联动 unit_contract（声明与计算不脱节）。"""
     contract = families.build_contract(

@@ -284,6 +284,72 @@ def wrap_error_dict_for_llm(tool_name: str, result: dict) -> str:
     return construct_self_healing_message(tool_name, message, error_type)
 
 
+_ZONE_LABEL_KEYS = (
+    "name", "NAME", "district", "adname", "cityname", "zone_name", "label", "名称",
+)
+_ZONE_VALUE_KEYS = (
+    "rate", "numerator", "denominator", "point_count", "count", "value", "mean", "sum",
+)
+_ZONE_ROW_CAP = 16
+
+
+def _zone_value_projection(result: dict) -> Optional[dict]:
+    """Numeric per-zone rows from a summary result's FeatureCollection.
+
+    ``summary`` keeps only the zone count. The rates live on ``data`` features,
+    which the summary branch otherwise drops even when the payload is short.
+    Geometry is not copied.
+    """
+    summary = result.get("summary")
+    zonal = isinstance(summary, dict) and (
+        "zones" in summary or "rate_kind" in summary
+    )
+    data = result.get("data")
+    if not isinstance(data, dict) or data.get("type") != "FeatureCollection":
+        return None
+    features = data.get("features")
+    if not isinstance(features, list) or not features:
+        return None
+    if not zonal:
+        sample = features[0] if isinstance(features[0], dict) else None
+        props = sample.get("properties") if isinstance(sample, dict) else None
+        if not isinstance(props, dict) or "rate" not in props:
+            return None
+    rows: list[dict] = []
+    for feature in features:
+        if len(rows) >= _ZONE_ROW_CAP:
+            break
+        if not isinstance(feature, dict):
+            continue
+        props = feature.get("properties")
+        props = props if isinstance(props, dict) else {}
+        row: dict = {}
+        for key in _ZONE_LABEL_KEYS:
+            value = props.get(key)
+            if isinstance(value, str) and value.strip():
+                row["name"] = value.strip()[:64]
+                break
+        if "name" not in row and feature.get("id") not in (None, ""):
+            row["name"] = str(feature.get("id"))[:64]
+        for key in _ZONE_VALUE_KEYS:
+            if key not in props:
+                continue
+            value = props.get(key)
+            if isinstance(value, bool):
+                continue
+            if value is None or isinstance(value, (int, float)):
+                row[key] = value
+        if any(key in row for key in _ZONE_VALUE_KEYS):
+            rows.append(row)
+    if not rows:
+        return None
+    projected: dict = {"rows": rows}
+    omitted = len(features) - len(rows)
+    if omitted > 0:
+        projected["omitted"] = omitted
+    return projected
+
+
 def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional[str]) -> str:
     required = scope_disclosure_metadata(result)
     if isinstance(result, dict) and "summary" in result:
@@ -292,6 +358,11 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
             slim["warnings"] = result["warnings"]
         if session_geojson_ref:
             slim["ref_id"] = session_geojson_ref
+        zone_values = _zone_value_projection(result)
+        if zone_values is not None:
+            slim["zone_values"] = zone_values["rows"]
+            if zone_values.get("omitted"):
+                slim["zone_values_omitted"] = zone_values["omitted"]
         for k in _PRESERVED_META_KEYS:
             v = result.get(k)
             if v is not None and k not in slim:

@@ -281,6 +281,18 @@ describe('drawChromeNorthArrow — 旋转符号 parity', () => {
     const rotate = calls.find((c) => c.op === 'rotate');
     expect(rotate?.args[0]).toBeCloseTo((-30 * Math.PI) / 180, 6);
   });
+
+  it('字母 N 画在旋转坐标系里，不留在屏幕正上方', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeNorthArrow({ ctx, ...DRAW_BASE }, { kind: 'north_arrow', anchor: 'top-right' }, 90, { marginX: 40 });
+    const rotateAt = calls.findIndex((c) => c.op === 'rotate');
+    const letter = calls.findIndex((c) => c.op === 'fillText' && c.args[0] === 'N');
+    expect(rotateAt).toBeGreaterThanOrEqual(0);
+    expect(letter).toBeGreaterThan(rotateAt);
+    const n = calls[letter];
+    expect(n.args[1]).toBe(0);
+    expect(n.args[2]).toBeLessThan(0);
+  });
 });
 
 describe('drawChromeScaleBar — bottom-right 槽位', () => {
