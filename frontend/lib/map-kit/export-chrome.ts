@@ -1238,11 +1238,14 @@ export function drawChromeNorthArrow(
   ctx.arc(0, 0, d.scalePx(4), 0, 2 * Math.PI);
   ctx.fillStyle = '#1e293b';
   ctx.fill();
-  ctx.restore();
 
+  // N stays on the arrow's north tip. Drawing it after restore pins the
+  // letter to screen-up while the arrow follows bearing (live rotates the
+  // whole control, including the N).
   ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.95)' : '#1e293b';
   ctx.font = `bold ${d.scalePx(13)}px ${d.style.fontFamily}`;
-  _text(d, 'N', origin.x, origin.y - r - d.scalePx(6), 'center');
+  _text(d, 'N', 0, -r - d.scalePx(6), 'center');
+  ctx.restore();
 }
 
 /** 比例尺（anchor 槽位；nice-number 算法与 legacy 同源）。 */

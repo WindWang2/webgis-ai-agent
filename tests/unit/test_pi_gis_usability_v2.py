@@ -122,6 +122,35 @@ def test_projected_crs_is_not_compared_as_lonlat():
     assert verdict["evidence"] == "none"
 
 
+def test_compatible_name_does_not_hide_a_disjoint_extent():
+    labeled = scope_geography_verdict(
+        "北京市",
+        descriptor={"city": "北京市", "crs": "EPSG:4326", "bbox": CHENGDU},
+        scope_bbox=BEIJING,
+    )
+    assert labeled["verdict"] == "mismatched"
+    assert labeled["evidence"] == "bbox"
+    contained = scope_geography_verdict(
+        "北京市",
+        descriptor={"city": "北京市", "crs": "EPSG:4326", "bbox": [116.3, 39.9, 116.5, 40.0]},
+        scope_bbox=BEIJING,
+    )
+    assert contained["verdict"] == "matched"
+    assert contained["evidence"] == "name"
+
+    def lookup(name: str):
+        assert name == "北京市"
+        return BEIJING
+
+    via_product = product_scope_geography(
+        "北京市",
+        descriptor={"city": "北京市", "crs": "EPSG:4326", "bbox": CHENGDU},
+        scope_bbox_lookup=lookup,
+    )
+    assert via_product["verdict"] == "mismatched"
+    assert via_product["evidence"] == "bbox"
+
+
 def test_admin_lookup_runs_only_without_place_tokens():
     calls = []
 

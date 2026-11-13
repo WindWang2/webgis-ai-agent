@@ -14,10 +14,10 @@
 
 ## 总览
 
-- capability 词表：174 条（图内 174 节点）
-- 图节点 1080 / 边 3291 / graph fingerprint `7db03756d1256905`
-- provider 面：algorithm 253，component 23，model 10，provider(adapters) 17，template 8，tool 397，workflow(recipes) 166
-- 域分布：`cartography` 6，`general` 77，`network` 14，`platform` 17，`raster` 57，`statistics` 1，`temporal` 2
+- capability 词表：194 条（图内 194 节点）
+- 图节点 1165 / 边 3363 / graph fingerprint `92c90223ef1481ae`
+- provider 面：algorithm 256，component 23，model 0，provider(adapters) 18，template 8，tool 477，workflow(recipes) 166
+- 域分布：`cartography` 6，`general` 94，`network` 14，`platform` 20，`raster` 57，`statistics` 1，`temporal` 2
 
 ## Capability 词表
 
@@ -35,6 +35,8 @@
 | `block_kriging` | general | analysis | native | — | yes | — | — |
 | `cartography_scale_apply` | cartography | presentation | native | — | no | — | — |
 | `cartography_scale_inspect` | cartography | presentation | native | — | yes | — | — |
+| `cartography_scale_portrayal_apply` | platform | platform | planned | — | yes | — | — |
+| `cartography_scale_portrayal_inspect` | platform | platform | planned | — | yes | — | — |
 | `cartography_scale_preview` | cartography | presentation | native | — | yes | — | — |
 | `category_breakdown` | general | statistics | native | — | yes | — | — |
 | `change_detection` | general | analysis | native | — | yes | — | — |
@@ -49,13 +51,22 @@
 | `data_preparation` | general | data_access | native | — | no | — | — |
 | `data_source_pipeline` | platform | platform | planned | — | yes | — | — |
 | `dataset_ingest` | general | data_access | native | — | yes | — | — |
+| `dataset_ingestion` | general | platform | planned | — | yes | — | — |
+| `dataset_preparation` | general | platform | planned | — | yes | — | — |
 | `dataset_profiling_quality` | platform | platform | planned | — | yes | — | — |
 | `density_surface` | general | density | native | — | no | grid_binning | — |
 | `directional_distribution_analysis` | platform | platform | planned | — | yes | — | — |
 | `emerging_hotspot_analysis` | general | statistics | native | — | yes | — | — |
 | `endmember_extraction` | raster | raster | native | — | yes | — | — |
+| `evidence_map_brief` | platform | platform | planned | — | yes | — | — |
 | `external_route_planning` | network | network | native | — | no | — | — |
 | `federated_dataset_query` | general | data_access | native | — | yes | — | — |
+| `field_compute` | general | platform | planned | — | yes | — | — |
+| `frame_product_bind` | general | platform | planned | — | yes | — | — |
+| `frame_product_plan` | general | platform | planned | — | yes | — | — |
+| `frame_product_status` | general | platform | planned | — | yes | — | — |
+| `frame_product_unbind` | general | platform | planned | — | yes | — | — |
+| `frame_product_update` | general | platform | planned | — | yes | — | — |
 | `general_g` | general | statistics | native | — | yes | — | — |
 | `geocoding` | platform | platform | planned | — | no | — | — |
 | `geographical_detector` | general | statistics | native | — | yes | — | — |
@@ -92,6 +103,7 @@
 | `mantel_test` | general | density | native | — | yes | — | — |
 | `map_annotation_measurement` | platform | platform | planned | — | yes | — | — |
 | `map_export_publishing` | platform | platform | planned | — | yes | — | — |
+| `map_label_authoring` | general | platform | planned | — | yes | — | — |
 | `map_viewport_control` | platform | platform | planned | — | yes | — | — |
 | `mcda_evaluation` | general | analysis | native | — | yes | — | — |
 | `meta_tool_surface` | platform | platform | planned | — | no | — | — |
@@ -116,6 +128,7 @@
 | `poi_query` | general | data_access | native | — | yes | — | — |
 | `point_pattern_analysis` | general | density | native | — | yes | — | — |
 | `point_profile` | general | statistics | native | — | yes | — | — |
+| `project_source_version_inventory` | general | platform | planned | — | yes | — | — |
 | `proximity_buffer` | general | analysis | native | — | yes | — | — |
 | `radiometric_normalization` | raster | raster | native | — | yes | — | — |
 | `raster_change_detection` | raster | raster | native | — | yes | — | — |
@@ -126,6 +139,13 @@
 | `raster_source` | raster | raster | native | — | yes | — | — |
 | `rate_aggregation` | general | analysis | native | — | yes | — | — |
 | `rate_smoothing` | general | statistics | native | — | yes | — | — |
+| `refresh_atomic_adoption` | general | platform | planned | — | yes | — | — |
+| `refresh_candidate_discard` | general | platform | planned | — | yes | — | — |
+| `refresh_candidate_execution` | general | platform | planned | — | yes | — | — |
+| `refresh_impact_explanation` | general | platform | planned | — | yes | — | — |
+| `refresh_impact_preview` | general | platform | planned | — | yes | — | — |
+| `refresh_status_query` | general | platform | planned | — | yes | — | — |
+| `refresh_version_rollback` | general | platform | planned | — | yes | — | — |
 | `regression_kriging` | general | analysis | native | — | yes | — | — |
 | `report_charting` | platform | platform | planned | — | yes | — | — |
 | `route_optimization` | network | network | native | — | yes | — | — |
@@ -202,9 +222,9 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 66 | 1 | 100 | 6 | 0 |
+| 75 | 1 | 173 | 10 | 0 |
 
-### orphan_capability（66）
+### orphan_capability（75）
 
 - capability accessibility has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability areal_interpolation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -237,6 +257,15 @@
 - capability local_join_count has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mantel_test has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability mnf_transform has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_change_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_embedding has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_image_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_instance_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_object_detection has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_promptable_segmentation has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_super_resolution has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_temporal_classification has no algorithm/tool provider and is not referenced by any workflow/template/fallback
+- capability model_temporal_forecast has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability nearest_neighbor_functions has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability network_centrality has no algorithm/tool provider and is not referenced by any workflow/template/fallback
 - capability pair_correlation_function has no algorithm/tool provider and is not referenced by any workflow/template/fallback
@@ -275,7 +304,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（100）
+### unreachable_tool（173）
 
 - tool add_tile_service_layer is not exposed by any algorithm and has no capability/deprecation link
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
@@ -284,15 +313,27 @@
 - tool catalog_discover is not exposed by any algorithm and has no capability/deprecation link
 - tool catalog_lookup is not exposed by any algorithm and has no capability/deprecation link
 - tool compile_workflow_semantics is not exposed by any algorithm and has no capability/deprecation link
+- tool delivery_capabilities is not exposed by any algorithm and has no capability/deprecation link
 - tool describe_artifact is not exposed by any algorithm and has no capability/deprecation link
 - tool detect_vegetation_change is not exposed by any algorithm and has no capability/deprecation link
 - tool export_atlas is not exposed by any algorithm and has no capability/deprecation link
 - tool fetch_sentinel is not exposed by any algorithm and has no capability/deprecation link
+- tool field_compute_apply is not exposed by any algorithm and has no capability/deprecation link
+- tool field_compute_catalog is not exposed by any algorithm and has no capability/deprecation link
+- tool field_compute_preview is not exposed by any algorithm and has no capability/deprecation link
+- tool field_compute_result is not exposed by any algorithm and has no capability/deprecation link
+- tool field_compute_status is not exposed by any algorithm and has no capability/deprecation link
 - tool find_artifacts_by_role is not exposed by any algorithm and has no capability/deprecation link
+- tool frame_product_bind is not exposed by any algorithm and has no capability/deprecation link
+- tool frame_product_plan is not exposed by any algorithm and has no capability/deprecation link
+- tool frame_product_status is not exposed by any algorithm and has no capability/deprecation link
+- tool frame_product_unbind is not exposed by any algorithm and has no capability/deprecation link
+- tool frame_product_update is not exposed by any algorithm and has no capability/deprecation link
 - tool geoai_embed is not exposed by any algorithm and has no capability/deprecation link
 - tool geoai_prompt_artifact_inspect is not exposed by any algorithm and has no capability/deprecation link
 - tool geoai_semantic_zero_shot is not exposed by any algorithm and has no capability/deprecation link
 - tool get_child_districts is not exposed by any algorithm and has no capability/deprecation link
+- tool get_data_delivery is not exposed by any algorithm and has no capability/deprecation link
 - tool get_district is not exposed by any algorithm and has no capability/deprecation link
 - tool get_lineage is not exposed by any algorithm and has no capability/deprecation link
 - tool get_local_child_districts is not exposed by any algorithm and has no capability/deprecation link
@@ -304,11 +345,20 @@
 - tool gis_method_qualify is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_method_rank is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_skill_detail is not exposed by any algorithm and has no capability/deprecation link
+- tool gis_skill_job_prepare is not exposed by any algorithm and has no capability/deprecation link
+- tool gis_skill_job_start is not exposed by any algorithm and has no capability/deprecation link
+- tool gis_skill_job_status is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_skill_policy is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_skill_replay_check is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_skill_search is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_task_classify is not exposed by any algorithm and has no capability/deprecation link
 - tool gis_template_plan is not exposed by any algorithm and has no capability/deprecation link
+- tool import_batch_commit is not exposed by any algorithm and has no capability/deprecation link
+- tool import_batch_inspect is not exposed by any algorithm and has no capability/deprecation link
+- tool import_batch_preview is not exposed by any algorithm and has no capability/deprecation link
+- tool import_batch_receipt is not exposed by any algorithm and has no capability/deprecation link
+- tool import_commit_status is not exposed by any algorithm and has no capability/deprecation link
+- tool import_plan_configure is not exposed by any algorithm and has no capability/deprecation link
 - tool input_tips is not exposed by any algorithm and has no capability/deprecation link
 - tool inspect_data_service is not exposed by any algorithm and has no capability/deprecation link
 - tool inventory_layers is not exposed by any algorithm and has no capability/deprecation link
@@ -328,7 +378,9 @@
 - tool modelops_model_history is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_publish_layers is not exposed by any algorithm and has no capability/deprecation link
 - tool modelops_record_metrics is not exposed by any algorithm and has no capability/deprecation link
+- tool nearest_facility is not exposed by any algorithm and has no capability/deprecation link
 - tool plan_map_scene is not exposed by any algorithm and has no capability/deprecation link
+- tool preview_data_delivery is not exposed by any algorithm and has no capability/deprecation link
 - tool query_federated_data is not exposed by any algorithm and has no capability/deprecation link
 - tool query_osm_boundary is not exposed by any algorithm and has no capability/deprecation link
 - tool read_coverage_subset is not exposed by any algorithm and has no capability/deprecation link
@@ -341,54 +393,112 @@
 - tool search_spatial_catalog is not exposed by any algorithm and has no capability/deprecation link
 - tool set_map_scene is not exposed by any algorithm and has no capability/deprecation link
 - tool set_scene_assets is not exposed by any algorithm and has no capability/deprecation link
+- tool submit_data_delivery is not exposed by any algorithm and has no capability/deprecation link
 - tool temporal_view_bind is not exposed by any algorithm and has no capability/deprecation link
 - tool temporal_view_compare is not exposed by any algorithm and has no capability/deprecation link
 - tool temporal_view_control is not exposed by any algorithm and has no capability/deprecation link
 - tool temporal_view_status is not exposed by any algorithm and has no capability/deprecation link
 - tool temporal_view_unbind is not exposed by any algorithm and has no capability/deprecation link
+- tool topology_check_run is not exposed by any algorithm and has no capability/deprecation link
+- tool topology_check_status is not exposed by any algorithm and has no capability/deprecation link
+- tool topology_finding_detail is not exposed by any algorithm and has no capability/deprecation link
+- tool topology_findings_list is not exposed by any algorithm and has no capability/deprecation link
+- tool topology_repair_preview is not exposed by any algorithm and has no capability/deprecation link
+- tool topology_ruleset_configure is not exposed by any algorithm and has no capability/deprecation link
 - tool update_layer_appearance is not exposed by any algorithm and has no capability/deprecation link
 - tool validate_execution_plan is not exposed by any algorithm and has no capability/deprecation link
+- tool vector_change_proposal_create is not exposed by any algorithm and has no capability/deprecation link
+- tool vector_change_proposal_diff is not exposed by any algorithm and has no capability/deprecation link
+- tool vector_change_proposal_list is not exposed by any algorithm and has no capability/deprecation link
+- tool vector_change_proposal_rebase_preview is not exposed by any algorithm and has no capability/deprecation link
+- tool vector_dataset_provision is not exposed by any algorithm and has no capability/deprecation link
 - tool vector_feature_edit_commit is not exposed by any algorithm and has no capability/deprecation link
 - tool vector_feature_edit_history is not exposed by any algorithm and has no capability/deprecation link
 - tool vector_feature_edit_preview is not exposed by any algorithm and has no capability/deprecation link
+- tool vector_feature_lineage is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_action_plan is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_adopt_project_data_refresh is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_analysis_workflow_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_analysis_workflow_recompute is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_analysis_workflow_run is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_analysis_workflow_status is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_apply_composition is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_apply_scale_portrayal is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_check_project_source_updates is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_checkpoint is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_compile_map_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_component_catalog is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_discard_project_data_refresh is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_discover_components is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_execute_project_data_refresh is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_explain_stale_map_product is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_inspect_scale_portrayal is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_label_author is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_label_inspect is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_layer_remove is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_layer_upsert is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_layout_set is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_list_composition_template_assets is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_combine is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_design_select is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_map_export is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_intent is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_operation is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_map_product is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_pick_detail is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_plan_component_replace is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_preview_project_data_refresh is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_print_layout_apply is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_print_layout_capabilities is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_print_layout_export is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_print_layout_inspect is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_print_layout_pages is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_print_layout_preview is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_print_layout_propose is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_product_edit is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_project_refresh_status is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_raster_expression_apply is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_raster_expression_describe is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_raster_expression_export is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_raster_expression_probe is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_requirement_compile is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_rollback is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_rollback_project_data_refresh is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_save_composition_template is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_selection_inspect is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_selection_scope is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_state_get is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_temporal_media_cancel is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_temporal_media_capabilities is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_temporal_media_plan is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_temporal_media_result is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_temporal_media_status is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_temporal_media_submit is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_thematic_style_apply is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_thematic_style_inspect is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_thematic_style_preview is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_user_decision is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_world_state is not exposed by any algorithm and has no capability/deprecation link
-### artifact_no_consumer（6）
+### artifact_no_consumer（10）
 
+- artifact type artifact is produced but never accepted/bound by any node
 - artifact type change_set is produced but never accepted/bound by any node
 - artifact type data is produced but never accepted/bound by any node
 - artifact type hotspot_result is produced but never accepted/bound by any node
+- artifact type job is produced but never accepted/bound by any node
+- artifact type manifest is produced but never accepted/bound by any node
 - artifact type od_matrix is produced but never accepted/bound by any node
+- artifact type plan_ref is produced but never accepted/bound by any node
 - artifact type proximity_zone is produced but never accepted/bound by any node
 - artifact type service_area is produced but never accepted/bound by any node
-### 其他 warning（4）
+### 其他 warning（17）
 
+- **dangling_endpoint**: tool:conditional_quantile_zonal_stats -produces-> artifact_type:artifact: endpoint artifact_type:artifact not a node
+- **dangling_endpoint**: tool:field_compute_apply -produces-> artifact_type:data: endpoint artifact_type:data not a node
+- **dangling_endpoint**: tool:import_batch_commit -produces-> artifact_type:data: endpoint artifact_type:data not a node
 - **dangling_endpoint**: tool:materialize_dataset -produces-> artifact_type:data: endpoint artifact_type:data not a node
 - **dangling_endpoint**: tool:materialize_remote_raster_asset -produces-> artifact_type:data: endpoint artifact_type:data not a node
+- **dangling_endpoint**: tool:network_service_coverage_consistency -produces-> artifact_type:artifact: endpoint artifact_type:artifact not a node
 - **dangling_endpoint**: tool:prepare_dataset -produces-> artifact_type:data: endpoint artifact_type:data not a node
 - **dangling_endpoint**: tool:read_coverage_subset -produces-> artifact_type:data: endpoint artifact_type:data not a node
 

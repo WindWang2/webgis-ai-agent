@@ -270,9 +270,10 @@ def scope_geography_verdict(
 ) -> ScopeGeographyVerdict:
     """matched / mismatched / unverified. Missing evidence is not a mismatch.
 
-    Name tokens win. Bbox comparison runs only when no city token exists.
-    Disjoint lon/lat boxes reject. Containment matches. Partial overlap stays
-    unverified so a national dataset is not invented as a city match.
+    A conflicting city name rejects. A compatible name does not hide a
+    disjoint lon/lat box (a 北京 label over a 成都 extent is still the other
+    city). Containment matches. Partial overlap stays unverified so a
+    national dataset is not invented as a city match.
     """
     scope = _norm(scope_name)
     if not scope:
@@ -285,7 +286,23 @@ def scope_geography_verdict(
     if reason:
         return {"verdict": "mismatched", "reason": reason, "evidence": "name"}
     tokens = collect_place_tokens(descriptor, features)
-    if any(_city_level(text, key) for key, text in tokens):
+    name_matched = any(_city_level(text, key) for key, text in tokens)
+    crs_class = _crs_class(descriptor)
+    if crs_class != "projected":
+        ref = _finite_bbox(ref_bbox) or _descriptor_bbox(descriptor)
+        if ref is None and crs_class == "geographic":
+            ref = feature_sample_bbox(features)
+        scope_box = _finite_bbox(scope_bbox)
+        if ref is not None and scope_box is not None and _disjoint(ref, scope_box):
+            return {
+                "verdict": "mismatched",
+                "reason": (
+                    f"scope_bbox_disjoint:{scope}!="
+                    f"{ref[0]:.4f},{ref[1]:.4f},{ref[2]:.4f},{ref[3]:.4f}"
+                ),
+                "evidence": "bbox",
+            }
+    if name_matched:
         return {"verdict": "matched", "reason": "", "evidence": "name"}
     crs_class = _crs_class(descriptor)
     if crs_class == "projected":
@@ -329,6 +346,31 @@ def unverified_scope_warning(scope_name: str) -> str:
     )
 
 
+def layer_source_ref(spec: Mapping[str, Any], layer_id: str) -> Optional[str]:
+    """GeoJSON ref bound to a MapSpec layer, if the source names one."""
+    layers = spec.get("layers") if isinstance(spec, Mapping) else None
+    if not isinstance(layers, list):
+        return None
+    layer = next(
+        (item for item in layers if isinstance(item, dict) and item.get("id") == layer_id),
+        None,
+    )
+    if not isinstance(layer, dict):
+        return None
+    sources = spec.get("sources") if isinstance(spec.get("sources"), dict) else {}
+    source = sources.get(layer.get("source"))
+    if not isinstance(source, dict):
+        return None
+    for carrier in (source, source.get("data") if isinstance(source.get("data"), dict) else {}):
+        if not isinstance(carrier, dict):
+            continue
+        for key in ("ref_id", "ref"):
+            ref = carrier.get(key)
+            if isinstance(ref, str) and ref.startswith("ref:"):
+                return ref
+    return None
+
+
 def product_scope_geography(
     scope_name: str,
     *,
@@ -336,15 +378,21 @@ def product_scope_geography(
     features: Optional[Iterable[Any]] = None,
     scope_bbox_lookup: Optional[Any] = None,
 ) -> ScopeGeographyVerdict:
-    """Product-path verdict. Admin bbox is resolved only when names are absent."""
-    tokens = collect_place_tokens(descriptor, features)
+    """Product-path verdict.
+
+    Admin bbox is resolved unless a place name already contradicts the scope.
+    A compatible label still receives the extent check, so a 北京 name cannot
+    hide a 成都 box.
+    """
+    name_conflict = scope_ref_mismatch(
+        scope_name, descriptor=descriptor, features=features,
+    )
     scope_bbox = None
-    if scope_name and not any(_city_level(text, key) for key, text in tokens):
-        if scope_bbox_lookup is not None:
-            try:
-                scope_bbox = scope_bbox_lookup(scope_name)
-            except Exception:
-                scope_bbox = None
+    if scope_name and not name_conflict and scope_bbox_lookup is not None:
+        try:
+            scope_bbox = scope_bbox_lookup(scope_name)
+        except Exception:
+            scope_bbox = None
     return scope_geography_verdict(
         scope_name,
         descriptor=descriptor,
