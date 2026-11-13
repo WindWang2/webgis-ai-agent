@@ -21,14 +21,18 @@
 | L10 | R1 修复（逐项） | `freeze/render/encode/verify/store/service/planning/tools/前端/测试` | 60 后端 + 1 Pi 旅程 + 120 既有回归 + 34 前端 + tsc/ruff 全绿 | P0-2 先试改共享 surface，实测破坏 4 个既有契约 → **完整回退**，改走生产 `tool_search` deferred 发现路径且零改写 dump | ✅ |
 | L11 | R2 复审（同一独立 reviewer，静态冷读 7752 行） | 见 REVIEW.md | 2×P0 + 5×P1 全部清偿、无新 P0/P1；列 U1–U8 与 6 条必须动作 | U1 子集勾选保留、U2 GIF 折叠真实触发用例、U3 运行时磁盘配额 + GIF ×3、U4 oracle 命名、U5 死常量、U6 文档口径、U7 终态字段、U8 证据清单 | ✅ |
 | L12 | R2 后复跑 | 全套 | 61 后端 + 1 Pi 旅程 + 120 既有回归 + 35 前端 + tsc 0 error + ruff/diff-check 全绿 | — | ✅ |
-| L13 | 合流最新 master / commit / push / PR | 见 PR_HANDOFF.md | — | 待执行 | ⏳ |
+| L13 | 合流最新 master | `git fetch origin master` → `ba0c84b84`（+36 提交，G29–G34/#2094–#2099 已合并，open PR=0，六 PR reviews/inline 均空）；普通 `git merge` | 两处同锚冲突双侧保留（G30 skill_job / G34 print_layout_tools / G35 项共存），无残留标记 | 合流后 61 后端 + 1 Pi 旅程 + 120 既有回归 + tsc/ruff/diff-check 全绿；前端 34/35，1 例 G29 `steer` 基线失败已在干净 origin/master 最小复现 | ✅ |
+| L14 | push / 创建 PR | 见 PR_HANDOFF.md | — | 待执行 | ⏳ |
 
 ## 当前 head / base
 
 - base（创建时）`ca7b3ec273f2b43336852951e2292a416b2238e6`
+- base（提交前最新 master，已普通合并）`ba0c84b840768bba50bd7b18d91c1da7e59360c9`
+- head（合流提交）`853712f872d78038c052e06b66b3d0fcc59cc3c7`，文档定稿后会追加提交
 - feature branch `zcode/g35-temporal-media-delivery-20261112T134717Z`
 - worktree `/home/kevin/projects/webgis/webgis-worktrees/g35-temporal-media-delivery-20261112T134717Z`
-- 合流前将重新 `git fetch origin master` 并复核新 PR/review。
+- 已于 L13 重新 `git fetch origin master`、复核 open PR / 新 PR reviews + inline、处理
+  同锚冲突并跑合流后回归；PR 前不再等待线上 CI。
 
 ## 未完成 / 明确边界（不宣称完成）
 

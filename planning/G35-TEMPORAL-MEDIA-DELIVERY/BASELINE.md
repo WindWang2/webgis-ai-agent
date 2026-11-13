@@ -11,8 +11,10 @@ TASK_SLUG = `g35-temporal-media-delivery`
 | `gh repo view --json nameWithOwner,defaultBranchRef` | `WindWang2/webgis-ai-agent` / `master` |
 | 主工作区 HEAD（只读，不清空） | `816705218a5aa6202bf15d745cb31cddb3437f44`（`origin/master` 的祖先） |
 | 主工作区未提交 | `M vendor/pi` + 若干未跟踪 `.claude/skills/*`（一律保留） |
-| `git fetch origin master` 后 base SHA | `ca7b3ec273f2b43336852951e2292a416b2238e6` |
-| open PR（分页至 200） | **0**（查询成功，非失败） |
+| 创建时 `git fetch origin master` 后 base SHA | `ca7b3ec273f2b43336852951e2292a416b2238e6` |
+| 提交前再次 fetch 的最新 base SHA（已普通合并） | `ba0c84b840768bba50bd7b18d91c1da7e59360c9`（+36 提交；#2094–#2099 = G29–G34 已合并） |
+| open PR（创建时与合流时两次分页查询） | **0 / 0**（查询成功，非失败） |
+| #2094–#2099 reviews / inline / conversation | 全部 **0**（查询成功）；独立评审仍在各任务本地 `planning/Gx/REVIEW.md` |
 | 最近 closed PR | 读取 60 条，#2087–#2093 为 G22–G28；#2033–#2036/#2084–#2086 为集成修复 |
 | GitHub reviews / inline review comments | 对上述 25 个相关 PR 逐条查询：**全部为 0**（查询成功） |
 | conversation comments | 仅 #2079、#2021 有独立 review 轨迹记录；其余 0 |

@@ -97,6 +97,31 @@ cd frontend && vitest run lib/api/temporal-media.test.ts \
 R2 是独立 reviewer 的**静态冷读**（未运行测试）；上述 61 / 1 / 120 / 35 / tsc / ruff
 是作者在 R2 的 U1–U7 修复后真实复跑的输出，不是 R2 现场复跑。
 
+## 合流最新 master 后的复跑（2026-11-13）
+
+创建时 base `ca7b3ec27` → 提交前 `git fetch origin master` 得最新 base
+`ba0c84b84`（G29–G34 / #2094–#2099 共 36 个提交已合并，open PR=0，
+六个新 PR 的 reviews/inline/conversation 均为空）。普通 `git merge origin/master`：
+两处同锚接线冲突（`app/services/jobs/lifecycle.py` 的 `JobKind`、
+`app/tools/__init__.py` 的 `_TOOL_MODULES`）双侧保留（G30 `skill_job`、
+G34 `print_layout_tools` 与 G35 项共存），无冲突标记残留。
+
+| 合流后套件 | 结果 |
+|---|---|
+| 后端 G35 单测 | **61 passed** |
+| 固定 pin Pi 全链旅程（heavy 锁） | **1 passed**，`verdict.fail=[]` |
+| 既有 Pi surface / 导出鉴权回归（10 文件） | **120 passed** |
+| 前端 vitest（5 文件） | **34 passed / 35**（1 例基线失败，见下） |
+| `tsc --noEmit` / `ruff check` / `git diff --check` | 0 error / 全通过 / CLEAN |
+| 编译器接口回查 | `compile_mapspec_to_svg_detailed` 仍接受 `bounds` / `include_chrome` / `raster_bindings`（master 只加可选 `print_layout` 等参数）；`pi_native_surface.default_active == NATIVE_TOOL_NAMES` 不变；`index.mjs` 的 `tool_search` 发现入口仍在 |
+
+**1 例合流基线失败（非本 PR 引入）**：`lib/map-commands/catalogue-contract.test.ts`
+报幽灵命令 `steer`，来源为 master 的 G29 `app/api/routes/pi_interactions.py:252`。
+本 PR 未改 `frontend/lib/map-commands/` 或任何 G29 文件；已在**同条件干净
+`origin/master` 临时 worktree** 最小复现相同断言失败
+（`expected [ 'steer' ] to deeply equal []`）。按「不放宽断言、不改他人文件」
+保持原样并如实披露，临时 worktree 已清理。
+
 ## Pi 旅程裁决（固定 pin，真实子进程）
 
 ```

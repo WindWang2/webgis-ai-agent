@@ -69,9 +69,27 @@ AGENTS.md / 技能 / 审批配置。Docker 运行阶段补 `librsvg2-bin fontcon
 | `pytest tests/unit/temporal_media -q --no-cov`（单进程） | **61 passed** |
 | `PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_g35_temporal_media_journey.py`（公共 heavy 锁） | **1 passed**，`verdict.fail=[]` |
 | 既有 Pi surface / 导出鉴权回归（10 个文件） | **120 passed** |
-| `vitest run … --maxWorkers=1`（面板/API/时间轴/i18n/命令目录） | **35 passed** |
+| `vitest run … --maxWorkers=1`（面板/API/时间轴/i18n/命令目录） | **35 passed**（合流前；合流后见下） |
 | `tsc --noEmit` | **0 error** |
 | `ruff check`（新增后端文件）/ `compileall` / `git diff --check` | 全通过 |
+
+**合流后复跑**：本分支创建时 base = `ca7b3ec27`；提交前 `git fetch origin master`
+发现主干已前进到 **`ba0c84b84`**（G29–G34 六个 PR #2094–#2099 已合并，36 个提交，
+open PR = 0，六个 PR 的 GitHub reviews / inline / conversation 均为空）。已用普通
+`git merge origin/master` 合流，两处同锚接线冲突（`jobs/lifecycle.py` 的 `JobKind`、
+`tools/__init__.py` 的 `_TOOL_MODULES`）**双侧保留**：G30 `skill_job`、G34
+`print_layout_tools` 与 G35 `temporal_media`/`temporal_media_tools` 共存。合流后
+再次真实执行：后端 61、Pi 旅程 1、既有回归 120、前端 **34 passed / 35**
+（1 例基线失败见下）、tsc 0 error、ruff/diff-check 全通过。同一独立 reviewer
+另做合流后静态复核：双侧接线完整、master 侧 `bounds`/`default_active`/
+`tool_search`/`session_id` 接口无漂移、无新 P0/P1，结论「可 push + 创建 PR」。
+
+**1 例基线失败，与本 PR 无关**：合流后前端 `lib/map-commands/catalogue-contract.test.ts`
+的「后端命令发射 ⊆ 前端命令目录」报幽灵命令 `steer`。`steer` 来自 master 的 G29
+`app/api/routes/pi_interactions.py:252`；本 PR 未改任何 `frontend/lib/map-commands/`
+或 G29 文件。已在**同条件干净 `origin/master` 临时 worktree** 上最小复现同一断言失败
+（`expected [ 'steer' ] to deeply equal []`），确认为合入主干既有的基线问题，
+按任务约束不放宽该断言、不修改他人文件，如实列为未解决外部项。
 
 Pi 全链旅程（固定 pin `b4afdddf…` = v1.5.2，真实子进程 + 生产扩展 + 生产 surface dump 零改写
 + `/pi-tools/execute` + `ToolDispatchService` + 本域服务）：
@@ -102,9 +120,12 @@ held 窗口注记、独立时间 oracle、编码墙钟与磁盘预算、工具�
 
 ### 最新 master / 相关 PR 兼容
 
-创建与提交前均复核 `origin/master`、open PR 与相关 PR reviews/inline comments；
-执行时 open PR 为 0，#2087–#2093 的 GitHub reviews/inline 均为空（独立评审记录在本地
-`planning/G2x…/REVIEW.md`）。本 PR 与 G29–G34 并行边界按任务表遵守，不依赖其新代码。
+创建时 base = `ca7b3ec27`；提交前 `git fetch origin master` 得到最新 base
+**`ba0c84b84`**，已普通合并（无 force-push）。创建与合流时 open PR 均为 0；
+#2087–#2093、#2094–#2099 的 GitHub reviews / inline / conversation comments 均为空
+（独立评审记录在各任务本地 `planning/Gx/REVIEW.md`）。G29–G34 已合入主干，本 PR
+按并行边界只做加性接线并双侧保留同锚冲突，不依赖其未合并代码；合流后已重跑
+受影响回归（Pi surface / 导出鉴权 120 例 + 固定 pin Pi 全链旅程）。
 
 ### 迁移 / 回退
 
@@ -115,6 +136,8 @@ held 窗口注记、独立时间 oracle、编码墙钟与磁盘预算、工具�
 ### 未测项与外部阻塞（如实）
 
 - 未与真实浏览器同链联跑 Pi 子进程；未跑 Playwright journey；未等待线上 CI。
+- 合流主干带来的 1 例前端基线失败（G29 `steer` 幽灵命令）未在本次修复：已在干净
+  `origin/master` 最小复现，属既存问题、超出本任务所有权边界；不放宽断言、不改他人文件。
 - MP4/WebM 未开放（codec 存在但 runner 镜像未声明 ffmpeg）。
 - 时变栅格/cube、外部底图、model3d、MVT 全图动画：typed 阻断或显式 partial 披露。
 - **签名下载的实际授权是签名 URL**：沿用既有 export 路由，`.owner` 侧车在

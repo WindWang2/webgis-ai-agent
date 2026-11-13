@@ -4,8 +4,14 @@
 
 - branch：`zcode/g35-temporal-media-delivery-20261112T134717Z`
 - worktree：`/home/kevin/projects/webgis/webgis-worktrees/g35-temporal-media-delivery-20261112T134717Z`
-- base（创建时）：`ca7b3ec273f2b43336852951e2292a416b2238e6`（`master`）
-- head / PR URL：待 push 后填写
+- base（创建时）：`ca7b3ec273f2b43336852951e2292a416b2238e6`
+- base（提交前最新 master，已普通合并）：`ba0c84b840768bba50bd7b18d91c1da7e59360c9`
+- head：`853712f872d78038c052e06b66b3d0fcc59cc3c7`（含 merge commit；合流后文档修订
+  将追加新提交，最终 head 以 push 时为准）
+- PR URL：待 push 后填写
+- 合流：两处同锚接线冲突双侧保留；合流后 61 后端 / 1 Pi 旅程 / 120 既有回归 /
+  tsc 0 error / ruff / diff-check 全绿；前端 34/35（1 例 G29 `steer` 基线失败，
+  已在干净 origin/master 最小复现，见 TEST_MATRIX.md）
 - PR 正文文件：`planning/G35-TEMPORAL-MEDIA-DELIVERY/PR_BODY.md`
 
 ## 功能说明（可操作）

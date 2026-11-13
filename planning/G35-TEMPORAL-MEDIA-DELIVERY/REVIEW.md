@@ -123,3 +123,27 @@ pending 不升级、并行边界与 ChatEngine 已下线。
 **最终评审结论：无阻断项（P0/P1 及影响关键验收的 P2 均已闭环）。**
 U7 中的低危防御性问题与「未与真实浏览器同链联跑 Pi」「未等线上 CI」属
 PR_BODY 已列明的外部分层限制，不是遗留 P0/P1。
+
+## R3 合流后复核（同一独立 reviewer，静态冷读 8100 行合流 diff）
+
+提交前 `git fetch origin master` 得最新 base `ba0c84b84`（+36 提交，G29–G34 /
+#2094–#2099 已合并，open PR=0）。普通 merge 后 reviewer 复核 5 点：
+
+1. 两处同锚冲突**双侧保留**：`lifecycle.py:58` G30 `skill_job` + `:59` G35
+   `temporal_media`；`tools/__init__.py:155` G34 `print_layout_tools` + `:157`
+   G35 `temporal_media_tools`，四名各仅一次，全树无残留冲突标记。
+2. G35 接线全在：`main.py:71,1230`、`routes/map.py:78-80`、两个 locale 的
+   `temporal.media`/`temporalMedia` 键、`temporal-time-controller.tsx:37,292-303`、
+   两个 Dockerfile 的 `librsvg2-bin`。
+3. master 侧接口**无漂移**：`compile_mapspec_to_svg_detailed:1205-1221` 仍收
+   `bounds/include_chrome/raster_bindings`；`pi_native_surface.py:559`
+   `default_active=list(NATIVE_TOOL_NAMES)`；`index.mjs:206-207,433-436`
+   `tool_search` 仍入 alwaysActive；`registry.py:1429-1430,1691-1692`
+   `session_id` 注入仍在。六个文件均不在 G35 diff（未改）。
+4. 文档与 git/代码一致；`steer` 基线失败如实写「未修复、非本 PR 引入」，
+   未把分层未测写成同链通过。小瑕疵 1 处（PR_BODY 表格把合流后 34/35 混入
+   合流前验证表）已修正。
+5. **R3 结论：合流后无新 P0/P1、无接口漂移、无关键验收回归，可 push + 创建 PR。**
+
+R3 为只读静态复核（未跑测试）；合流后的 61 后端 / 1 Pi 旅程 / 120 既有回归 /
+前端 34-of-35 / tsc / ruff / diff-check 由作者真实复跑，见 TEST_MATRIX.md。

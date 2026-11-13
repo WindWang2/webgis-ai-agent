@@ -31,6 +31,34 @@
 | 25 | G29 RPC 运行中交互 / G30 技能作业 / G31 DQ / G32 变更提案 / G33 专题 / G34 版式 | owned-by-other | 并行边界明确；本任务不修改其主所有权文件 |
 | 26 | R1 审计 issue 清偿 | owned-by-other | 45 条 open issue 为质量门（如 #2071 宿主内存上界、#2044 上传归属）；本任务遵守但不以清偿为目标 |
 
+## 提交前对最新主干的重新排重（2026-11-13）
+
+`git fetch origin master` 后最新 base = `ba0c84b840768bba50bd7b18d91c1da7e59360c9`
+（比创建时前进 36 个提交；#2094–#2099 = G29/G30/G31/G32/G33/G34 已合并，open PR=0，
+六个新 PR 的 reviews / inline / conversation 均为空）。重新检查上表 1–26 项：
+
+- **无重复实现**：六个新 PR 的 changed files 中没有任何 `temporal_media*`、
+  APNG/GIF 时序媒体生产者或 `webgis_temporal_media_*` 工具；本方向 1–21 项仍为
+  本 PR 独有增量，22/23 项仍 blocked（runner 镜像未装 ffmpeg；MVT/时变栅格无完整绑定）。
+- **共享入口漂移（已在合流中处理）**：`app/main.py`（新增六方路由）、
+  `app/tools/__init__.py`（新增 G30/G31/G32/G33/G34 工具模块）、
+  `app/services/jobs/lifecycle.py`（新增 G30 `skill_job`）、
+  `frontend/messages/{zh-CN,en-US}/map.json`（新增各方向 i18n 块）均为加性接线；
+  两处同锚冲突双侧保留，G35 的 `JobKind.temporal_media`、
+  `register_temporal_media_tools`、`temporal_media_routes.include_router`、
+  `temporalMedia`/`temporal.media` 键全部保留。
+- **依赖的 master 接口仍兼容**：`compile_mapspec_to_svg_detailed` 仍接受
+  `bounds/include_chrome/raster_bindings`（master 只增加可选 print-layout 参数）；
+  `pi_native_surface.default_active == NATIVE_TOOL_NAMES` 未变；
+  `index.mjs` 的 `tool_search` deferred 发现入口仍在（master 增加
+  `NATIVE_DISCOVERY_ENABLED` 开关，默认路径未变）；`ToolRegistry` 的 `session_id`
+  注入仍在。合流后固定 pin Pi 全链旅程与 120 例既有回归真实复跑通过。
+- **新增 owned-by-other 项**：G29–G34 已合入主干，不再是「并行在途」，改为
+  「已合并基线，本 PR 只消费不重做」；G09/G21 仍不重新占用。
+- **编号查重**：最新主干未出现 `temporal_media.v1`、`temporal_media_manifest.v1`、
+  `JobKind.temporal_media`、`/api/v1/temporal-media`、`J-G35` 或
+  `test_pi_g35_temporal_media_journey` 同名项；无新 ADR/alembic revision 冲突。
+
 ## 冲突记录
 
 - 历史 architecture 文档仍提及 ChatEngine fallback；`#2036` 已下线，`app/services/chat/` 为 Pi-only。本任务维持 Pi-only：bridge 不可用时 typed `PI_BRIDGE_UNAVAILABLE`/503，不恢复任何兜底。
