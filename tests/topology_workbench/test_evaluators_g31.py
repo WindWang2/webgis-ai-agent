@@ -166,15 +166,24 @@ def test_t05_shared_edge_no_false_positive():
 
 
 def test_t05_boundary_touch_policy_flagged_when_declared():
-    """显式声明 boundary_touch=true 时共边违规（政策可声明，但默认宽容）。"""
+    """boundary_touch 双政策语义：false（默认）共边宽容；true 共边违规（接触长度度量）。"""
     east = PARCEL_E_RECT
-    # 东地块平移使其与西地块共享整条 x 边
-    rule = {**OL_RULE, "params": {"overlap_area_threshold_m2": 1.0, "boundary_touch": True}}
     features = [feat("w", PARCEL_W), feat("e", east)]
-    out = run_rule(rule, checked=snap("checked", features, "polygon"))
-    # 共享边：面积重叠为零 —— boundary_touch 声明下按分量面积阈值判定，
-    # 零面积分量不产生面积违规（政策语义文档化：面积阈值 >0 时贴边仍不报）
-    assert all(f.metric["value"] > 0 for f in out.findings)
+
+    # 默认（false）：共边零面积 → 不报
+    out_default = run_rule(OL_RULE, checked=snap("checked", features, "polygon"))
+    assert out_default.outcome == "no_violations"
+    assert out_default.findings == []
+
+    # 声明（true）：共边 → 违规，度量 = 接触长度（≈1000 m，±1%），无阈值
+    rule = {**OL_RULE, "params": {"overlap_area_threshold_m2": 1.0, "boundary_touch": True}}
+    out_declared = run_rule(rule, checked=snap("checked", features, "polygon"))
+    assert out_declared.outcome == "violations_found"
+    (f,) = out_declared.findings
+    assert f.metric["method"] == "boundary_contact_length_declared"
+    assert f.metric["unit"] == "m"
+    assert f.metric["threshold"] is None
+    assert f.metric["value"] == pytest.approx(1000, rel=0.01)  # 共享整条 1000m 边
 
 
 # ─── T06 跨层包含 ─────────────────────────────────────────────────────

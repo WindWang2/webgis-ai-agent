@@ -88,6 +88,21 @@ def _map_error(exc: WorkbenchError) -> HTTPException:
     })
 
 
+
+async def _verify_session_stamp(session_id: Optional[str], user: dict) -> None:
+    """REST 请求体 session_id 的所有权校验（P1-1：外来会话一律 404）。
+
+    资源行上落一个未验证的 session_id 会让该会话的属主获得资源所有权
+    （service._owned 的会话属主兜底）—— 必须在落库前证明当前用户拥有
+    该会话（与 feature_edits 的 require_owned_session 同语义）。
+    """
+    if not session_id:
+        return
+    from app.services.topology_workbench.service import _verify_session_access
+
+    await _verify_session_access(session_id, user, None)
+
+
 # ─── 请求模型 ─────────────────────────────────────────────────────────
 
 
@@ -156,9 +171,10 @@ def rules_catalog(_user: dict = Depends(get_current_user_optional)) -> dict:
 
 
 @router.post("/rulesets")
-def create_ruleset_route(
+async def create_ruleset_route(
     body: RulesetCreate, user: dict = Depends(get_current_user)
 ) -> dict:
+    await _verify_session_stamp(body.session_id, user)
     try:
         return {"success": True, "ruleset": create_ruleset(
             name=body.name,
@@ -222,6 +238,7 @@ def update_ruleset_route(
 async def submit_run_route(
     body: RunSubmit, user: dict = Depends(get_current_user)
 ) -> dict:
+    await _verify_session_stamp(body.session_id, user)
     try:
         result = await submit_run(
             ruleset_id=body.ruleset_id,
@@ -309,11 +326,11 @@ def get_finding_route(
 
 
 @router.get("/findings/{finding_id}/witness")
-def get_finding_witness_route(
+async def get_finding_witness_route(
     finding_id: str, user: dict = Depends(get_current_user)
 ) -> dict:
     try:
-        return {"success": True, **get_finding_witness(
+        return {"success": True, **await get_finding_witness(
             finding_id, actor_user_id=_uid(user), is_admin=_is_admin(user),
         )}
     except WorkbenchError as exc:
@@ -382,6 +399,9 @@ async def repair_preview_route(
     finding_id: str, body: RepairPreview,
     user: dict = Depends(get_current_user),
 ) -> dict:
+    # P2-2：G14 预览会向该会话的 plan store 写入 —— session_id 必须归当前
+    # 用户（与 feature_edits 的 require_owned_session 同纪律）。
+    await _verify_session_stamp(body.session_id, user)
     try:
         result = await build_g14_preview(
             finding_id, session_id=body.session_id, kind=body.kind,

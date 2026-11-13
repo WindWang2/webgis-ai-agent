@@ -48,6 +48,7 @@ NEEDS_OWNERSHIP_CHOICE = {"fill_gap", "resolve_overlap"}
 
 def build_repair_candidates(
     finding_id: str, *, actor_user_id: Optional[str], is_admin: bool = False,
+    anchor_session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """finding → 候选修复列表（有界；含前置版本与量变预估；纯建议不写数据）。"""
     from app.core.database import SessionLocal
@@ -57,7 +58,8 @@ def build_repair_candidates(
         finding = db.get(TopologyFinding, finding_id)
         if finding is None:
             raise WorkbenchError("finding_not_found", "问题不存在", status=404)
-        run = _get_owned_run(db, finding.run_id, actor_user_id, is_admin)
+        run = _get_owned_run(db, finding.run_id, actor_user_id, is_admin,
+                             anchor_session_id)
         metric = finding.metric or {}
         locators = finding.locators or []
         bindings = _bounded_bindings(run)

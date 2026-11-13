@@ -331,6 +331,8 @@ def eval_polygons_no_overlap(
     polys = [p.geometry for p in valid]
     if len(polys) < 2:
         out.outcome = "no_violations"
+        out.counts.setdefault("candidate_pairs", 0)
+        out.counts.setdefault("findings_emitted", 0)
         return out
 
     tree = STRtree(polys)
@@ -356,29 +358,45 @@ def eval_polygons_no_overlap(
             elif itype not in ("Polygon", "MultiPolygon", "GeometryCollection"):
                 continue
             for part in _iter_pieces(inter):
-                if part[0].geom_type not in ("Polygon", "MultiPolygon"):
-                    if not boundary_touch:
-                        continue
-                area = measure.area_m2(part[0])
-                if area <= threshold:
-                    continue
+                is_area = part[0].geom_type in ("Polygon", "MultiPolygon")
+                if not is_area and not boundary_touch:
+                    continue  # 零面积接触默认宽容（面积阈值只管面积分量）
                 if not budget.room_for_finding():
                     break
-                msg = (
-                    f"面重叠：{valid[i].identity['value']} × {valid[jj].identity['value']}"
-                    f"（分量面积 {area:.2f} m² > 阈值 {threshold:.2f} m²）"
-                )
+                if is_area:
+                    area = measure.area_m2(part[0])
+                    if area <= threshold:
+                        continue
+                    msg = (
+                        f"面重叠：{valid[i].identity['value']} × {valid[jj].identity['value']}"
+                        f"（分量面积 {area:.2f} m² > 阈值 {threshold:.2f} m²）"
+                    )
+                    metric = {
+                        "value": round(area, 3), "threshold": threshold,
+                        "unit": SquareM, "comparison": ">",
+                        "method": "intersection_component_area",
+                    }
+                else:
+                    # boundary_touch=true：共边/共点按声明确认为违规 ——
+                    # 度量 = 接触长度（点接触为 0.0），无阈值（政策型发现）
+                    contact_len = measure.length_m(part[0])
+                    msg = (
+                        f"边界接触（政策违规）：{valid[i].identity['value']} × "
+                        f"{valid[jj].identity['value']}"
+                        f"（接触长度 {contact_len:.2f} m，规则声明 boundary_touch 违规）"
+                    )
+                    metric = {
+                        "value": round(contact_len, 3), "threshold": None,
+                        "unit": Meter, "comparison": "declared",
+                        "method": "boundary_contact_length_declared",
+                        "policy": "boundary_touch",
+                    }
                 out.findings.append(EvalFinding(
                     rule_id=rule["rule_id"], rule_type=rule["rule_type"],
                     severity=rule["severity"], message=msg[:500],
                     witness_geom=measure.to_display(part[0]),
                     witness_digest=part[1],
-                    metric={
-                        "value": round(area, 3), "threshold": threshold,
-                        "unit": SquareM, "comparison": ">",
-                        "method": "intersection_component_area",
-                        **measure.crs_disclosure(),
-                    },
+                    metric={**metric, **measure.crs_disclosure()},
                     locators=[_locator(checked, valid[i].index), _locator(checked, valid[jj].index)],
                     geometry_type=_wkb_type(part[0]),
                 ))
@@ -435,6 +453,8 @@ def eval_area_coverage(
 
     if gap.is_empty:
         out.outcome = "no_violations"
+        out.counts.setdefault("candidate_pairs", 0)
+        out.counts.setdefault("findings_emitted", 0)
         return out
 
     if gap.geom_type not in ("Polygon", "MultiPolygon", "GeometryCollection"):
@@ -590,6 +610,8 @@ def eval_cross_layer_no_overlap(
     if not a_items or not b_items:
         out.outcome = "no_violations"
         out.notes.append("一侧集合为空 —— 无跨层重叠可判定（空集通过披露）")
+        out.counts.setdefault("candidate_pairs", 0)
+        out.counts.setdefault("findings_emitted", 0)
         return out
 
     b_tree = STRtree([p.geometry for p in b_items])

@@ -337,11 +337,12 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         witness: Dict[str, Any] = {}
         stale = False
         try:
-            wit = get_finding_witness(
+            wit = await get_finding_witness(
                 finding_id, actor_user_id=user_id, anchor_session_id=ctx_session)
             witness = {
-                "geometry": wit["witness"].get("geometry"),
+                "geometry": _bounded_witness_geometry(wit["witness"].get("geometry")),
                 "witness_digest": wit.get("witness_digest"),
+                "full_geometry_via": f"REST /findings/{finding_id}/witness",
             }
             stale = bool(wit.get("stale"))
         except WorkbenchError as exc:
@@ -413,7 +414,9 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
             build_repair_candidates,
         )
         try:
-            candidates = build_repair_candidates(finding_id, actor_user_id=user_id)
+            candidates = build_repair_candidates(
+                finding_id, actor_user_id=user_id,
+                anchor_session_id=ctx_session)
         except WorkbenchError as exc:
             return _fail(exc.code, exc.message)
         if not candidates.get("candidates"):
@@ -466,6 +469,46 @@ async def _rebind_inline_payloads(
             binding = {**binding, "ref": new_ref, "session_id": session_id}
         out[role] = binding
     return out
+
+
+def _bounded_witness_geometry(geom: Any, max_coords: int = 64) -> Any:
+    """witness 几何的有界投影：坐标数超限时降为 bbox 摘要（LLM 上下文纪律）。
+
+    完整几何经 REST witness 端点取证（工具回执绝不内联大几何）。"""
+    if not isinstance(geom, dict):
+        return geom
+
+    def _count(obj: Any) -> int:
+        if isinstance(obj, (list, tuple)):
+            if len(obj) == 2 and all(isinstance(v, (int, float)) for v in obj):
+                return 1
+            return sum(_count(o) for o in obj)
+        return 0
+
+    if _count(geom.get("coordinates")) <= max_coords:
+        return geom
+
+    xs: list = []
+    ys: list = []
+
+    def _walk(obj: Any) -> None:
+        if isinstance(obj, (int, float)):
+            return
+        if isinstance(obj, (list, tuple)):
+            if len(obj) == 2 and all(isinstance(v, (int, float)) for v in obj):
+                xs.append(float(obj[0]))
+                ys.append(float(obj[1]))
+            else:
+                for o in obj:
+                    _walk(o)
+
+    _walk(geom.get("coordinates"))
+    return {
+        "type": geom.get("type"),
+        "bbox": [min(xs), min(ys), max(xs), max(ys)] if xs else None,
+        "truncated": True,
+        "note": "坐标超工具回执上限 —— 完整几何经 REST witness 端点读取",
+    }
 
 
 def _correction_hint(code: str) -> str:

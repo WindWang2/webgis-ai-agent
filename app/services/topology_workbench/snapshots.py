@@ -128,7 +128,10 @@ async def resolve_session_ref(
     descriptor = await session_data_manager.get_ref_descriptor(session_id, ref) or {}
     features, crs_decl = _fc_features(payload)
     revision = descriptor.get("content_revision")
-    fingerprint = payload_fingerprint(features)
+    # canonical 指纹在全载荷上 json 序列化 —— 卸载线程（P2-6）
+    import asyncio as _aio
+
+    fingerprint = await _aio.to_thread(payload_fingerprint, features)
     label = str(descriptor.get("alias") or descriptor.get("title") or ref)
     return (
         features,
@@ -394,12 +397,14 @@ async def resolve_role_snapshot(
         features, revision, crs, fingerprint, label = await resolve_session_ref(
             session_id=str(sid), ref=binding["ref"]
         )
-        # G24 句柄绑定的 revision 前进（handle stale）→ 消费已失败（typed）；
-        # 这里在证据里保留 handle 绑定时的 revision 供审计。
+        # 重活卸载线程（事件循环纪律）：canonical 指纹 + scope 全集扫描
+        # 都在全载荷上 —— 10k 级要素在 async 路由内联会阻塞循环。
+        import asyncio as _aio
+
         total_input = len(features)
         scope_semantics = None
         if scope is not None:
-            features, disclosure = apply_scope(features, scope)
+            features, disclosure = await _aio.to_thread(apply_scope, features, scope)
             scope_semantics = disclosure.get("semantics")
         if len(features) > cap:
             raise SnapshotError(

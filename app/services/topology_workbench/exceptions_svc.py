@@ -101,6 +101,20 @@ def accept_exception(
         return _exception_view(exc, finding_status=finding.status)
 
 
+
+def _ruleset_owned(db, ruleset, actor_user_id: Optional[str]) -> bool:
+    """例外面的规则集归属：created_by 或会话属主兜底（与 service._owned 对齐）。"""
+    if ruleset.created_by == actor_user_id:
+        return True
+    if ruleset.session_id:
+        from app.models.db_model import Conversation
+
+        conv = db.get(Conversation, str(ruleset.session_id)[:255])
+        if conv is not None and str(conv.user_id or "") == str(actor_user_id):
+            return True
+    return False
+
+
 def revoke_exception(
     exception_id: str, *, actor_user_id: Optional[str], is_admin: bool = False
 ) -> Dict[str, Any]:
@@ -117,8 +131,8 @@ def revoke_exception(
         if exc is None:
             raise WorkbenchError("finding_not_found", "例外不存在", status=404)
         ruleset = db.get(TopologyRuleset, exc.ruleset_id)
-        if ruleset is None or (actor_user_id and not is_admin
-                               and ruleset.created_by != actor_user_id):
+        if ruleset is None or (actor_user_id and not is_admin and not _ruleset_owned(
+                db, ruleset, actor_user_id)):
             raise WorkbenchError("not_owned", "例外不存在或无权访问", status=404)
         if exc.status == "revoked":
             return _exception_view(exc)
@@ -152,10 +166,22 @@ def list_exceptions(
         if ruleset_id:
             stmt = stmt.where(TopologyException.ruleset_id == ruleset_id)
         if actor_user_id and not is_admin:
+            # 归属 = created_by 或（agent 会话内创建时）会话属主兜底
+            from sqlalchemy import or_
+            from app.models.db_model import Conversation
+
+            owned_session_ids = [
+                row[0] for row in db.execute(
+                    select(Conversation.id).where(Conversation.user_id == actor_user_id)
+                ).all()
+            ]
+            cond = TopologyRuleset.created_by == actor_user_id
+            if owned_session_ids:
+                cond = or_(cond, TopologyRuleset.session_id.in_(owned_session_ids))
             stmt = stmt.join(
                 TopologyRuleset,
                 TopologyException.ruleset_id == TopologyRuleset.id,
-            ).where(TopologyRuleset.created_by == actor_user_id)
+            ).where(cond)
         rows = db.execute(stmt.limit(limit).offset(offset)).scalars().all()
         return [_exception_view(r) for r in rows]
 

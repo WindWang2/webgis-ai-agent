@@ -65,14 +65,16 @@ class RunExecutionError(Exception):
 
 
 def compute_input_digest(
-    ruleset_digest: str, role_fingerprints: Dict[str, str], scopes: Dict[str, Any]
+    ruleset_digest: str, role_fingerprints: Dict[str, str], scopes: Dict[str, Any],
+    computation_crs: Optional[str] = None,
 ) -> str:
-    """复用键：全部源内容指纹 + 规则 digest + scope + 方法版本。"""
+    """复用键：全部源内容指纹 + 规则 digest + scope + 计算 CRS + 方法版本。"""
     material = json.dumps(
         {
             "roles": {r: role_fingerprints[r] for r in sorted(role_fingerprints)},
             "scopes": {r: scopes.get(r) for r in sorted(scopes)},
             "ruleset_digest": ruleset_digest,
+            "computation_crs": computation_crs,
             "method_version": METHOD_VERSION,
         },
         ensure_ascii=False, sort_keys=True, separators=(",", ":"),

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.services.topology_workbench.contracts import (
     ERROR_CODES,
@@ -35,6 +35,21 @@ from app.services.topology_workbench.snapshots import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+
+async def _verify_session_access(
+    session_id: str, user: Any, owner_token: Optional[str]
+) -> None:
+    """会话所有权校验协程（data_quality 路由同款；供 REST 落 session 前调用）。"""
+    from app.core.async_runner import thread_async_session
+    from app.services.auth_history_bridge import verify_session_owner
+
+    user_id = user.get("user_id") if isinstance(user, dict) else None
+    async with thread_async_session() as adb:
+        await verify_session_owner(
+            adb, session_id, user_id=user_id, owner_token=owner_token
+        )
 
 
 class WorkbenchError(Exception):
@@ -403,8 +418,10 @@ def list_findings(
             stmt = stmt.where(TopologyFinding.status == status)
             count_stmt = count_stmt.where(TopologyFinding.status == status)
         total = int(db.execute(count_stmt).scalar_one())
-        # 稳定排序（身份与分页换序无关，T16）
-        stmt = stmt.order_by(TopologyFinding.severity.desc(), TopologyFinding.finding_key)
+        # 稳定排序（身份与分页换序无关，T16）；severity 按业务序 error>warn>info
+        _sev_rank = case((TopologyFinding.severity == "error", 2),
+                         (TopologyFinding.severity == "warn", 1), else_=0)
+        stmt = stmt.order_by(_sev_rank.desc(), TopologyFinding.finding_key)
         rows = db.execute(stmt.limit(limit).offset(offset)).scalars().all()
         # 状态计数（独立于筛选的运行级计数）
         counts = _finding_status_counts(db, run_id)
@@ -426,7 +443,7 @@ def get_finding(
         return _finding_view(row, detail=True)
 
 
-def get_finding_witness(
+async def get_finding_witness(
     finding_id: str, *, actor_user_id: Optional[str], is_admin: bool = False,
     anchor_session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -471,7 +488,7 @@ def get_finding_witness(
             "source_unresolvable", f"witness 证据不可解析: {exc}", status=410,
         ) from exc
     # locator stale 判定（T15）：源 revision 前进 / snapshot_index 身份过期
-    stale = _locator_staleness(run, row)
+    stale = await _locator_staleness(run, row)
     return {
         "finding_id": finding_id,
         "witness": witness,
@@ -481,16 +498,15 @@ def get_finding_witness(
     }
 
 
-def _locator_staleness(run: Any, finding: Any) -> Dict[str, Any]:
+async def _locator_staleness(run: Any, finding: Any) -> Dict[str, Any]:
     """定位失效判定（T15）：locator 的 revision 与源的**当前** revision 比对。
 
     运行绑定证据是提交期快照（不可变）—— 与之比较永远不触发；真正的失效
     是源在运行后前进。session_ref：get_ref_descriptor 的当前 content_revision
     （O(1)）；project_artifact：产物最新修订号。读失败按保守不标 stale
-    （witness 本身已可读，权限在更外层把关）。
+    （witness 本身已可读，权限在更外层把关）。全程 async —— REST 与工具
+    两条路径都真实取数（修复前工具路径在运行循环内静默返回 False）。
     """
-    import asyncio
-
     session_id = run.session_id
     for loc in (finding.locators or []):
         kind = loc.get("kind")
@@ -502,17 +518,9 @@ def _locator_staleness(run: Any, finding: Any) -> Dict[str, Any]:
             if kind == "session_ref" and session_id and ref.startswith("ref:"):
                 from app.services.session_data import session_data_manager
 
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-                if loop is not None:
-                    # 已在事件循环内（工具路径经 to_thread 时无循环；直接路径罕见）
-                    current = None
-                else:
-                    current = asyncio.run(
-                        session_data_manager.get_ref_descriptor(session_id, ref)
-                    ).get("content_revision")
+                current = (
+                    await session_data_manager.get_ref_descriptor(session_id, ref)
+                ).get("content_revision")
             elif kind == "project_artifact" and ref:
                 from sqlalchemy import select as sa_select
 

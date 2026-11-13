@@ -400,7 +400,8 @@ def test_t19_foreign_user_404(client: TestClient):
         "bindings": {"coverage": {"kind": "session_ref", "ref": "ref:any", "session_id": "twb-sess"}},
         "session_id": "twb-sess"})
     assert r.status_code in (400, 404)
-    assert _err_code(r) in ("source_unauthorized", "not_owned")
+    # 404 形态（verify_session_owner 的统一不泄露语义）或 typed 码均可
+    assert _err_code(r).lower() in ("source_unauthorized", "not_owned", "not_found", "")
 
 
 # ═══ T20：例外失效 ════════════════════════════════════════════════
@@ -556,3 +557,20 @@ def test_export_readback_verified(client: TestClient):
     ej = r.json()
     assert ej["readback_verified"] is True
     assert ej["feature_count"] >= 1
+
+def test_p1_foreign_session_stamp_rejected(client: TestClient):
+    """P1-1 回归：用户 B 以 A 的会话 id 创建规则集/提交运行 → 404（不落未验证 stamp）。"""
+    H_B = _auth("twb-other")
+    r = client.post(f"{PREFIX}/rulesets", headers=H_B, json={
+        "name": "forge", "session_id": "twb-sess",
+        "rules": [{"rule_id": "cov", "rule_type": "area_coverage", "severity": "error",
+                    "params": {}}]})
+    assert r.status_code == 404  # 会话 stamp 所有权校验（外来会话 404 不泄露）
+    # 即便绕过（无 stamp 创建 + 运行提交带外来 session_id）也被拒
+    ruleset_id = _create_ruleset(client, "p1-clean", [
+        {"rule_id": "cov", "rule_type": "area_coverage", "severity": "error", "params": {}}])
+    r = client.post(f"{PREFIX}/runs", headers=H_B, json={
+        "ruleset_id": ruleset_id,
+        "bindings": {"aoi": {"kind": "bbox", "bbox": [116.0, 39.0, 117.0, 40.0]}},
+        "session_id": "twb-sess"})
+    assert r.status_code in (400, 404)
