@@ -28,6 +28,11 @@ export interface InterpolateStyleMethod {
   /** H02（任务书 §B）：legend_spec.nodata 的无数据色 —— null/missing
    *  特征值分派到此色而非最低类；全部下降点同语义。 */
   nodata?: string;
+  /** G33：输出变换 —— "sqrt" 对插值结果取平方根。比例圆符号的「面积∝
+   *  数值」精确映射：stops 携带 r²（面积），插值线性于数值（等值差→等
+   *  面积差），输出 √面积=半径。双端（live compileStyleMethod / 导出
+   *  _resolve_paint_value）同口径。 */
+  output_transform?: "sqrt";
 }
 
 export interface StepStyleMethod {

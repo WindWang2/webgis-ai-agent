@@ -2225,6 +2225,21 @@
       "title": "Components",
       "type": "array"
      },
+     "frames": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Frames"
+     },
      "layers": {
       "items": {
        "additionalProperties": true,
@@ -5953,6 +5968,21 @@
     ],
     "title": "EvidenceLevel",
     "type": "string"
+   },
+   "ExceptionAccept": {
+    "properties": {
+     "reason": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "reason"
+    ],
+    "title": "ExceptionAccept",
+    "type": "object"
    },
    "ExecutePlanRequest": {
     "properties": {
@@ -10568,6 +10598,78 @@
     "title": "MemberConfig",
     "type": "object"
    },
+   "MixedMapExportRequest": {
+    "description": "POST /export/mixed 请求体（G26：矢量+数值栅格混合地图统一导出）。\n\n从**会话权威 MapSpec** 冻结修订导出（不是调用方载荷）——栅格 ref 的\nowner 校验在服务端解析层执行；`expected_revision` 可选 CAS 基线。",
+    "examples": [
+     {
+      "expected_revision": 7,
+      "format": "pdf",
+      "partial_policy": "blocking",
+      "session_id": "sess-123",
+      "target_dpi": 300
+     }
+    ],
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "format": {
+      "pattern": "^(png|svg|pdf)$",
+      "title": "Format",
+      "type": "string"
+     },
+     "partial_policy": {
+      "default": "blocking",
+      "pattern": "^(blocking|allow_partial)$",
+      "title": "Partial Policy",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "target_dpi": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Target Dpi"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     }
+    },
+    "required": [
+     "session_id",
+     "format"
+    ],
+    "title": "MixedMapExportRequest",
+    "type": "object"
+   },
    "MutationApplyResponse": {
     "description": "POST /chat/sessions/{session_id}/mapspec/mutations 响应。\n\n字段按 handler 实际返回逐项镜像（前端游标推进消费 ``mapspec`` +\n``mutation_revision``，见 frontend/lib/mapspec/user-mutation.ts）。\n#1239 初版模型 {session_id, revision} 与实测形状不符，以实测为准重写。",
     "examples": [
@@ -13921,6 +14023,24 @@
     "title": "ReceiptsResponse",
     "type": "object"
    },
+   "RecheckRequest": {
+    "properties": {
+     "repair_receipt": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Repair Receipt"
+     }
+    },
+    "title": "RecheckRequest",
+    "type": "object"
+   },
    "RecomputePlanResponse": {
     "additionalProperties": true,
     "description": "GET /instances/{instance_id}/recompute-plan 响应。",
@@ -14615,6 +14735,36 @@
     "title": "ReorderLayersBody",
     "type": "object"
    },
+   "RepairPreview": {
+    "properties": {
+     "kind": {
+      "title": "Kind",
+      "type": "string"
+     },
+     "ownership_choice": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ownership Choice"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind",
+     "session_id"
+    ],
+    "title": "RepairPreview",
+    "type": "object"
+   },
    "RepairResponse": {
     "additionalProperties": true,
     "description": "POST /projects/{project_id}/repair 响应（修复证据面，几何不回传）。",
@@ -14938,6 +15088,111 @@
     "title": "RevokeRequest",
     "type": "object"
    },
+   "RoleBinding": {
+    "properties": {
+     "artifact_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Artifact Id"
+     },
+     "bbox": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox"
+     },
+     "kind": {
+      "title": "Kind",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "ref": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref"
+     },
+     "revision_no": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revision No"
+     },
+     "scope": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scope"
+     },
+     "selection_handle": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Selection Handle"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "RoleBinding",
+    "type": "object"
+   },
    "RoleCandidateOut": {
     "properties": {
      "confidence": {
@@ -14980,6 +15235,120 @@
      "owner_token"
     ],
     "title": "RotateOwnerTokenResponse",
+    "type": "object"
+   },
+   "RuleIn": {
+    "properties": {
+     "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+     },
+     "enabled": {
+      "default": true,
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+     },
+     "rule_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Rule Id",
+      "type": "string"
+     },
+     "rule_type": {
+      "title": "Rule Type",
+      "type": "string"
+     },
+     "severity": {
+      "default": "warn",
+      "title": "Severity",
+      "type": "string"
+     }
+    },
+    "required": [
+     "rule_id",
+     "rule_type"
+    ],
+    "title": "RuleIn",
+    "type": "object"
+   },
+   "RulesetCreate": {
+    "properties": {
+     "name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "rules": {
+      "items": {
+       "$ref": "#/components/schemas/RuleIn"
+      },
+      "title": "Rules",
+      "type": "array"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     }
+    },
+    "required": [
+     "name",
+     "rules"
+    ],
+    "title": "RulesetCreate",
+    "type": "object"
+   },
+   "RulesetUpdate": {
+    "properties": {
+     "name": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "rules": {
+      "items": {
+       "$ref": "#/components/schemas/RuleIn"
+      },
+      "title": "Rules",
+      "type": "array"
+     }
+    },
+    "required": [
+     "rules"
+    ],
+    "title": "RulesetUpdate",
     "type": "object"
    },
    "RunCancelResponse": {
@@ -15108,6 +15477,49 @@
      }
     },
     "title": "RunResumeRequest",
+    "type": "object"
+   },
+   "RunSubmit": {
+    "properties": {
+     "bindings": {
+      "additionalProperties": {
+       "$ref": "#/components/schemas/RoleBinding"
+      },
+      "title": "Bindings",
+      "type": "object"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "ruleset_id": {
+      "title": "Ruleset Id",
+      "type": "string"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     }
+    },
+    "required": [
+     "ruleset_id",
+     "bindings"
+    ],
+    "title": "RunSubmit",
     "type": "object"
    },
    "RunSummaryResponse": {
@@ -15594,6 +16006,77 @@
      }
     },
     "title": "SampleFeatureOut",
+    "type": "object"
+   },
+   "ScalePortrayalApplyBody": {
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "layer": {
+      "maxLength": 128,
+      "title": "Layer",
+      "type": "string"
+     },
+     "mode": {
+      "default": "preview",
+      "enum": [
+       "preview",
+       "commit"
+      ],
+      "title": "Mode",
+      "type": "string"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "maxLength": 160,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     },
+     "operation_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Operation Id"
+     },
+     "policy": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Policy"
+     }
+    },
+    "required": [
+     "layer"
+    ],
+    "title": "ScalePortrayalApplyBody",
     "type": "object"
    },
    "SearchRequest": {
@@ -27417,6 +27900,199 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/scale-portrayal": {
+   "get": {
+    "description": "只读有效策略（与 UI / Agent 同一解析面）；session 归属验权。",
+    "operationId": "get_scale_portrayal_api_v1_chat_sessions__session_id__scale_portrayal_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "layer",
+      "required": true,
+      "schema": {
+       "maxLength": 128,
+       "title": "Layer",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "observed_zoom",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maximum": 24,
+         "minimum": 0,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Observed Zoom"
+      }
+     },
+     {
+      "in": "query",
+      "name": "crs",
+      "required": false,
+      "schema": {
+       "default": "EPSG:3857",
+       "maxLength": 32,
+       "title": "Crs",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "target_dpi",
+      "required": false,
+      "schema": {
+       "default": 96.0,
+       "maximum": 600,
+       "minimum": 1,
+       "title": "Target Dpi",
+       "type": "number"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Scale Portrayal Api V1 Chat Sessions  Session Id  Scale Portrayal Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Scale Portrayal",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   },
+   "post": {
+    "description": "局部受控写：preview 零突变 / commit 走既有 CAS 与 undo 栈。",
+    "operationId": "apply_scale_portrayal_route_api_v1_chat_sessions__session_id__scale_portrayal_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ScalePortrayalApplyBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Apply Scale Portrayal Route Api V1 Chat Sessions  Session Id  Scale Portrayal Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Apply Scale Portrayal Route",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/situation": {
    "get": {
     "description": "GISSituation JSON 投影（只读派生）+ 一致性检查 + 选择史 + scope。",
@@ -34331,6 +35007,70 @@
      }
     ],
     "summary": "Export Geojson",
+    "tags": [
+     "地图管理",
+     "地图制图"
+    ]
+   }
+  },
+  "/api/v1/export/mixed": {
+   "post": {
+    "description": "G26：会话权威 MapSpec → 矢量+数值栅格混合地图（PNG/SVG/PDF 统一编译）。\n\n- 冻结一个 MapSpec 修订（``expected_revision`` CAS 可选）；栅格 ref 的\n  owner 校验在解析层执行（trusted owner token 路径与会话隔离同 G20）。\n- ``partial_policy=blocking``（默认）：导出会遗漏图层 → 409 typed 拒绝\n  （完整地图承诺不放宽）；``allow_partial``：manifest 携带完整遗漏清单。\n- PDF：既有 publication 链（WeasyPrint 互斥 + 图像对象 + 可提取文本）；\n  SVG：自包含 data URI；PNG：服务端 rsvg 能力探测（缺席 503 typed）。\n- 产物 + manifest sidecar + lineage 复用既有 export 目录/所有权/签名下载。",
+    "operationId": "export_map_as_mixed_api_v1_export_mixed_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MixedMapExportRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Export Map As Mixed",
     "tags": [
      "地图管理",
      "地图制图"
@@ -50554,6 +51294,1141 @@
     "tags": [
      "地图制图模板 V9（版本化）",
      "地图制图模板 V9（版本化）"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/exceptions": {
+   "get": {
+    "operationId": "list_exceptions_route_api_v1_topology_workbench_exceptions_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "ruleset_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Ruleset Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Exceptions Route Api V1 Topology Workbench Exceptions Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Exceptions Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/exceptions/{exception_id}": {
+   "delete": {
+    "operationId": "revoke_exception_route_api_v1_topology_workbench_exceptions__exception_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "exception_id",
+      "required": true,
+      "schema": {
+       "title": "Exception Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Revoke Exception Route Api V1 Topology Workbench Exceptions  Exception Id  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Revoke Exception Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/findings/{finding_id}": {
+   "get": {
+    "operationId": "get_finding_route_api_v1_topology_workbench_findings__finding_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Finding Route Api V1 Topology Workbench Findings  Finding Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Finding Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/findings/{finding_id}/exception": {
+   "post": {
+    "description": "接受例外 —— 用户决定面（Agent 工具不提供此操作）。",
+    "operationId": "accept_exception_route_api_v1_topology_workbench_findings__finding_id__exception_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExceptionAccept"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Accept Exception Route Api V1 Topology Workbench Findings  Finding Id  Exception Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Accept Exception Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/findings/{finding_id}/repair": {
+   "post": {
+    "operationId": "repair_candidates_route_api_v1_topology_workbench_findings__finding_id__repair_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Repair Candidates Route Api V1 Topology Workbench Findings  Finding Id  Repair Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Repair Candidates Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/findings/{finding_id}/repair/preview": {
+   "post": {
+    "operationId": "repair_preview_route_api_v1_topology_workbench_findings__finding_id__repair_preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RepairPreview"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Repair Preview Route Api V1 Topology Workbench Findings  Finding Id  Repair Preview Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Repair Preview Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/findings/{finding_id}/witness": {
+   "get": {
+    "operationId": "get_finding_witness_route_api_v1_topology_workbench_findings__finding_id__witness_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Finding Witness Route Api V1 Topology Workbench Findings  Finding Id  Witness Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Finding Witness Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/rules/catalog": {
+   "get": {
+    "operationId": "rules_catalog_api_v1_topology_workbench_rules_catalog_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Rules Catalog Api V1 Topology Workbench Rules Catalog Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Rules Catalog",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/rulesets": {
+   "get": {
+    "operationId": "list_rulesets_route_api_v1_topology_workbench_rulesets_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maximum": 200,
+         "minimum": 1,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Limit"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Project Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Session Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Page_Dict_str__Any__"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Rulesets Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   },
+   "post": {
+    "operationId": "create_ruleset_route_api_v1_topology_workbench_rulesets_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RulesetCreate"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Ruleset Route Api V1 Topology Workbench Rulesets Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Ruleset Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/rulesets/{ruleset_id}": {
+   "get": {
+    "operationId": "get_ruleset_route_api_v1_topology_workbench_rulesets__ruleset_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ruleset_id",
+      "required": true,
+      "schema": {
+       "title": "Ruleset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Ruleset Route Api V1 Topology Workbench Rulesets  Ruleset Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Ruleset Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   },
+   "put": {
+    "operationId": "update_ruleset_route_api_v1_topology_workbench_rulesets__ruleset_id__put",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "ruleset_id",
+      "required": true,
+      "schema": {
+       "title": "Ruleset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RulesetUpdate"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Update Ruleset Route Api V1 Topology Workbench Rulesets  Ruleset Id  Put",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Update Ruleset Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/runs": {
+   "get": {
+    "operationId": "list_runs_route_api_v1_topology_workbench_runs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maximum": 200,
+         "minimum": 1,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Limit"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "ruleset_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Ruleset Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Project Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Session Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Page_Dict_str__Any__"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Runs Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   },
+   "post": {
+    "operationId": "submit_run_route_api_v1_topology_workbench_runs_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RunSubmit"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Submit Run Route Api V1 Topology Workbench Runs Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Submit Run Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/runs/{run_id}": {
+   "get": {
+    "operationId": "get_run_route_api_v1_topology_workbench_runs__run_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Run Route Api V1 Topology Workbench Runs  Run Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Run Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/runs/{run_id}/export": {
+   "post": {
+    "operationId": "export_route_api_v1_topology_workbench_runs__run_id__export_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Export Route Api V1 Topology Workbench Runs  Run Id  Export Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Export Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/runs/{run_id}/findings": {
+   "get": {
+    "operationId": "list_findings_route_api_v1_topology_workbench_runs__run_id__findings_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maximum": 200,
+         "minimum": 1,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Limit"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "rule_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Rule Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "severity",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Severity"
+      }
+     },
+     {
+      "in": "query",
+      "name": "status",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Findings Route Api V1 Topology Workbench Runs  Run Id  Findings Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Findings Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
+    ]
+   }
+  },
+  "/api/v1/topology-workbench/runs/{run_id}/recheck": {
+   "post": {
+    "operationId": "recheck_route_api_v1_topology_workbench_runs__run_id__recheck_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RecheckRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Recheck Route Api V1 Topology Workbench Runs  Run Id  Recheck Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Recheck Route",
+    "tags": [
+     "跨图层拓扑工作台 G31",
+     "跨图层拓扑工作台 G31"
     ]
    }
   },

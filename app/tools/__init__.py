@@ -47,6 +47,8 @@ _TOOL_MODULES = [
     ("app.tools.sampling_tools", "register_sampling_tools"),
     # /goal 03：持久数据要素编辑工具面（preview/commit/history）
     ("app.tools.feature_edit_tools", "register_feature_edit_tools"),
+    # G31：跨图层拓扑工作台工具面（ruleset/run/findings/repair preview）
+    ("app.tools.topology_workbench_tools", "register_topology_workbench_tools"),
     # Science V6：生态分析工具面（Goal 07 新域，独立模块防并发冲突）
     ("app.tools.ecology_tools", "register_ecology_tools"),
     ("app.tools.point_pattern_tools", "register_point_pattern_tools"),
@@ -74,6 +76,8 @@ _TOOL_MODULES = [
     ("app.services.gis_harness.knowledge_tools", "register_knowledge_tools"),
     # ADR-0182：GIS Skill Library 只读工具面（search/detail/replay_check）
     ("app.tools.skill_library_tools", "register_skill_library_tools"),
+    # G30：技能作业执行面（prepare/start/status；与知识咨询面同注册模式）。
+    ("app.tools.skill_job_tools", "register_skill_job_tools"),
     ("app.tools.project_tools", "register_project_tools"),
     ("app.tools.network_tools", "register_network_tools"),
     ("app.tools.temporal_tools", "register_temporal_tools"),
@@ -138,6 +142,8 @@ _TOOL_MODULES = [
     ("app.tools.project_data_refresh_tools", "register_project_data_refresh_tools"),
     # G20：持久化数值栅格表达 / 真实像元检视（独立模块防并发冲突）
     ("app.tools.raster_expression_tools", "register_raster_expression_tools"),
+    # G33：矢量专题表达作者工作台（独立模块防并发冲突）
+    ("app.tools.thematic_authoring_tools", "register_thematic_authoring_tools"),
     # G26：矢量+数值栅格混合地图统一出版导出（独立模块防并发冲突）
     ("app.tools.mixed_map_export_tools", "register_mixed_map_export_tools"),
     # G34：专业纸面版式与图册编排工作台（Pi 与 UI 共用 print_layout_authoring.service）

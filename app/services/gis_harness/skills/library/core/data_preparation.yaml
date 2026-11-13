@@ -7,7 +7,7 @@ skills:
     description: 数据入场质检作业：几何有效性、重复、CRS、字段完整性与画像产出；问题分级与修复建议。
     domain: data_preparation
     pack: core
-    version: 1.0.0
+    version: 1.1.0
     intent_patterns: [检查数据, 数据质量, 数据有问题, 有没有问题, 质检, validate, data quality, check data]
     ontology_tasks: []
     task_types: [simple_view]
@@ -117,6 +117,30 @@ skills:
         notes: 画像 + 分级结论。
     guidance: 先画像后结论；分级结论（pass/repair/block）必须显式。
     source_doc: docs/adr/0182-gis-skill-procedure-library-v1.md
+    # ── G30 可执行薄配置（schema v2）────────────────────────────────
+    parameters:
+      - name: crs
+        label: 坐标参考系统
+        type: string
+        required: false
+        max_length: 64
+        description: 覆盖数据声明 CRS（如 EPSG:4326）；缺省让质检引擎按数据声明/RFC7946 判定。
+    role_bindings:
+      - role: subject
+        required: true
+        geometry_kinds: [point, line, polygon, raster, table]
+    execution:
+      result_kind: report
+      # 一次 audit 调用同时覆盖画像/几何检查/分级结论三类证据（工具按五维
+      # 审计输出 issue 分级）；geometry_checks 与 severity_verdict 是同一
+      # 调用产物上的义务性核对步骤（绑定不执行，evidence 由本步产物满足）。
+      steps:
+        - step_id: profile_dataset
+          tool: audit_spatial_quality
+          argument_map:
+            geojson: "role:subject"
+            crs: "param:crs"
+          produces_evidence: [dataset_profile_report, geometry_check_report, quality_verdict]
 
   - id: prepare_vector_for_mapping
     name: 矢量制图数据准备

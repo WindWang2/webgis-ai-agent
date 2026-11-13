@@ -54,6 +54,8 @@ class JobKind(str, Enum):
     # G23（持久数据操作）：DB 列是 String(20) 无 CHECK —— 新 kind 纯加性。
     data_import = "data_import"        # 导入批次提交（进程内 durable runner）
     field_compute = "field_compute"    # 字段计算执行（进程内 durable runner）
+    # G30（可执行技能作业）：技能作业运行（prepare→start 的 durable 执行体）
+    skill_job = "skill_job"
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。
