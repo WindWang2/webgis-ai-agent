@@ -283,6 +283,8 @@ async def upload_skill(
     """
     if settings.is_production() or not settings.ALLOW_RUNTIME_SKILL_UPLOAD:
         raise HTTPException(status_code=403, detail="运行时技能上传已关闭；请通过审核后的镜像发布技能")
+    if _user.get("org_id") not in (None, ""):
+        raise HTTPException(status_code=403, detail="org admins cannot upload process-executed skills")
     skills_dir = "app/skills"
     if not os.path.exists(skills_dir):
         os.makedirs(skills_dir)

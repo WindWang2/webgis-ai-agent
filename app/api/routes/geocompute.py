@@ -736,7 +736,13 @@ async def cluster_reset_run(
     同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。
 
     require_admin：这是全局控制面动作（与 metrics 同一信任域）。
+    组织管理员不能复位其他租户的 run。
     """
+    if user.get("org_id") not in (None, ""):
+        raise HTTPException(
+            status_code=403,
+            detail="org admins cannot reset cluster runs",
+        )
     from app.services.geocompute.cluster.store import ClusterRunStore
 
     def _reset():
