@@ -377,3 +377,36 @@ def test_iter_pieces_dedupes_and_flattens():
     pieces = _iter_pieces(mp)
     assert len(pieces) == 2
     assert len({d for _, d in pieces}) == 2
+
+def test_review2_sliver_storm_below_threshold_not_partial():
+    """复审 NEW-1 回归：6000 个低于阈值(10 m²)的 1 m² 碎屑重叠 ——
+    0 findings 且 computation=full / no_violations（阈值先行，预算不被
+    过滤掉的碎屑消耗）。"""
+    n = 6000
+    cells = [feat(f"s{i}", {
+        "type": "Polygon",
+        "coordinates": [[
+            [116.40 + dlon(10 + i * 2), 39.90 + dlat(10)],
+            [116.40 + dlon(10 + i * 2 + 1), 39.90 + dlat(10)],
+            [116.40 + dlon(10 + i * 2 + 1), 39.90 + dlat(11)],
+            [116.40 + dlon(10 + i * 2), 39.90 + dlat(11)],
+            [116.40 + dlon(10 + i * 2), 39.90 + dlat(10)],
+        ]]},
+    ) for i in range(n)]
+    big = feat("base", {
+        "type": "Polygon",
+        "coordinates": [[
+            [116.40 + dlon(9), 39.90 + dlat(9)],
+            [116.40 + dlon(10 + n * 2), 39.90 + dlat(9)],
+            [116.40 + dlon(10 + n * 2), 39.90 + dlat(12)],
+            [116.40 + dlon(9), 39.90 + dlat(12)],
+            [116.40 + dlon(9), 39.90 + dlat(9)],
+        ]],
+    })
+    rule = {"rule_id": "sliver", "rule_type": "polygons_no_overlap",
+            "severity": "error", "params": {"overlap_area_threshold_m2": 10.0}}
+    out = run_rule(rule, checked=snap("checked", [big] + cells, "polygon"))
+    assert out.findings == []
+    assert out.computation == "full"  # 预算未被动用（碎屑被阈值滤除）
+    assert out.outcome == "no_violations"
+    assert out.counts["candidate_pairs"] >= n  # 候选确实检查过（非空跑）

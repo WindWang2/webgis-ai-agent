@@ -272,7 +272,7 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         limit: int = 20,
         offset: int = 0,
     ) -> Dict[str, Any]:
-        user_id, _org, _sess = _caller()
+        user_id, _org, ctx_session = _caller()
         limit = max(1, min(int(limit or 20), _MAX_FINDINGS_PAGE))
         offset = max(0, int(offset or 0))
         from app.services.topology_workbench.service import WorkbenchError, list_findings
@@ -280,6 +280,7 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
             items, total, counts = list_findings(
                 run_id, rule_id=rule_id, severity=severity, status=status,
                 actor_user_id=user_id, limit=limit, offset=offset,
+                anchor_session_id=ctx_session,
             )
         except WorkbenchError as exc:
             return _fail(exc.code, exc.message)

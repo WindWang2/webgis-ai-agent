@@ -361,12 +361,16 @@ def eval_polygons_no_overlap(
                 is_area = part[0].geom_type in ("Polygon", "MultiPolygon")
                 if not is_area and not boundary_touch:
                     continue  # 零面积接触默认宽容（面积阈值只管面积分量）
-                if not budget.room_for_finding():
-                    break
                 if is_area:
+                    # 阈值先行：低于阈值的碎屑不消耗 finding 预算（与
+                    # area_coverage/cross_layer 分支同序 —— 否则清洁数据
+                    # 会被碎屑风暴虚假打partial）
                     area = measure.area_m2(part[0])
                     if area <= threshold:
                         continue
+                if not budget.room_for_finding():
+                    break
+                if is_area:
                     msg = (
                         f"面重叠：{valid[i].identity['value']} × {valid[jj].identity['value']}"
                         f"（分量面积 {area:.2f} m² > 阈值 {threshold:.2f} m²）"

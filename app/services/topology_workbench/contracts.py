@@ -149,7 +149,8 @@ RULE_WALL_CLOCK_S = 120.0              # 单规则 wall-clock 预算（超出→
 #: 复用键必须覆盖的完整输入身份（缓存复用纪律，任务书 §六）：
 #: 全部源内容指纹 + 规则 digest + scope + 计算 CRS + 方法版本。
 METHOD_VERSION = "g31-eval-v1"
-RUN_REUSE_KEY_FIELDS = ("input_digest", "ruleset_digest", "computation_crs", "method_version")
+#: 复用键成分（computation_crs 为源内容纯函数，由内容指纹内蕴，不单列）
+RUN_REUSE_KEY_FIELDS = ("input_digest", "ruleset_digest", "method_version")
 
 #: 数值护栏：容差/阈值的量级边界（提交期校验，防呆但不猜业务）。
 MAX_LINEAR_TOLERANCE_M = 500.0

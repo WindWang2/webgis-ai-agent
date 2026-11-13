@@ -574,3 +574,46 @@ def test_p1_foreign_session_stamp_rejected(client: TestClient):
         "bindings": {"aoi": {"kind": "bbox", "bbox": [116.0, 39.0, 117.0, 40.0]}},
         "session_id": "twb-sess"})
     assert r.status_code in (400, 404)
+
+def test_review2_session_only_tool_journey(client: TestClient):
+    """复审 P2-4 回归：无用户身份、仅会话锚定的 agent 旅程 ——
+    configure → check_run → findings_list 全链不 not_owned。"""
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    init_tools(registry)
+    from app.services.provenance.context import (
+        ToolExecutionContext, set_tool_execution_context,
+    )
+    # 会话-only 上下文（bridge 验证 turn 后的形态：无 user_id）
+    set_tool_execution_context(ToolExecutionContext(session_id="twb-sess"))
+
+    aoi_ref = _store("p4aoi", aoi_source())
+    parcels_ref = _store("p4parcels", parcels_with_hole())
+    rs = asyncio.get_event_loop().run_until_complete(registry.dispatch(
+        "topology_ruleset_configure", {
+            "name": "session-only-journey",
+            "rules": [{"rule_id": "cov", "rule_type": "area_coverage",
+                        "severity": "error",
+                        "params": {"gap_area_threshold_m2": 5.0}}],
+        }))
+    assert rs.get("success"), rs
+    run = asyncio.get_event_loop().run_until_complete(registry.dispatch(
+        "topology_check_run", {
+            "ruleset_id": rs["ruleset_id"],
+            "bindings": {
+                "coverage": {"kind": "session_ref", "ref": parcels_ref,
+                              "session_id": "twb-sess"},
+                "aoi": {"kind": "session_ref", "ref": aoi_ref,
+                         "session_id": "twb-sess"},
+            },
+        }))
+    assert run.get("success"), run
+    fl = asyncio.get_event_loop().run_until_complete(registry.dispatch(
+        "topology_findings_list", {"run_id": run["run_id"], "limit": 5}))
+    assert fl.get("success"), fl  # 复审前：not_owned（锚定未接线）
+    assert fl["total"] >= 1
+    detail = asyncio.get_event_loop().run_until_complete(registry.dispatch(
+        "topology_finding_detail", {"finding_id": fl["findings"][0]["finding_id"]}))
+    assert detail.get("success"), detail
