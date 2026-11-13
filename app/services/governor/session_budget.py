@@ -195,21 +195,38 @@ class SessionBudgetLedger:
                     ledger.export_live += 1
                 ledger.reservations[reservation.reservation_id] = reservation
                 ledger.last_activity = time.monotonic()
-            self._evict_idle_sessions_locked()
+            self._evict_idle_ledgers_locked()
 
     #: 会话账本的有界性（review P2：close_session 无生产调用方 → 惰性驱逐）
     _MAX_SESSION_LEDGERS = 512
     _EVICT_TO = 256
 
-    def _evict_idle_sessions_locked(self) -> None:
-        sessions = self._ledgers["session"]
-        if len(sessions) <= self._MAX_SESSION_LEDGERS:
+    _MAX_TRANSIENT_LEDGERS = 2048
+    _EVICT_TRANSIENT_TO = 1024
+
+    def _evict_idle_bucket_locked(self, bucket: Dict[str, "_ScopeLedger"],
+                                  limit: int, keep: int) -> None:
+        if len(bucket) <= limit:
             return
         evictable = sorted(
-            (sid for sid, led in sessions.items() if not led.reservations),
-            key=lambda sid: sessions[sid].last_activity)
-        for sid in evictable[:len(sessions) - self._EVICT_TO]:
-            sessions.pop(sid, None)
+            (sid for sid, led in bucket.items() if not led.reservations),
+            key=lambda sid: bucket[sid].last_activity)
+        for sid in evictable[:len(bucket) - keep]:
+            bucket.pop(sid, None)
+
+    def _evict_idle_sessions_locked(self) -> None:
+        self._evict_idle_bucket_locked(
+            self._ledgers["session"], self._MAX_SESSION_LEDGERS, self._EVICT_TO)
+
+    def _evict_idle_ledgers_locked(self) -> None:
+        """session 与 turn/goal 都要逐出。turn/goal 只建不删会按轮次泄漏。"""
+        self._evict_idle_sessions_locked()
+        for scope in ("turn", "goal"):
+            self._evict_idle_bucket_locked(
+                self._ledgers[scope],
+                self._MAX_TRANSIENT_LEDGERS,
+                self._EVICT_TRANSIENT_TO,
+            )
 
     def release(self, reservation: ResourceReservation,
                 actual: Optional[Dict[Dimension, float]] = None) -> None:
@@ -253,6 +270,7 @@ class SessionBudgetLedger:
                 ledger.cumulative[Dimension.CONTEXT_TOKENS] = (
                     ledger.cumulative.get(Dimension.CONTEXT_TOKENS, 0.0) + tokens)
                 ledger.last_activity = time.monotonic()
+            self._evict_idle_ledgers_locked()
 
     # ── 观测 ─────────────────────────────────────────────────────────
 
