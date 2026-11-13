@@ -52,6 +52,7 @@ from app.api.routes import portfolio as portfolio_routes  # noqa: E402
 from app.api.routes import geoai as geoai_routes  # noqa: E402  # ADR-0198（Platform 11）
 from app.api.routes import cockpit as cockpit_routes  # noqa: E402  # Agent Ops Cockpit (read-only projections)
 from app.api.routes import turn_journal as turn_journal_routes  # noqa: E402  # H04 ADR-0268 durable turn journal diagnostics
+from app.api.routes import pi_interactions as pi_interactions_routes  # noqa: E402  # G29 Pi 原生运行中交互
 from app.api.routes import ws_collab
 from app.api.routes import review_proposals
 from app.api.routes import visual_repairs
@@ -1203,6 +1204,8 @@ from app.api.routes import brief as brief_routes  # noqa: E402
 
 app.include_router(brief_routes.router, prefix="/api/v1", tags=["MapBrief"])
 app.include_router(pi_tools.router, tags=["PI工具"])
+app.include_router(pi_interactions_routes.router, prefix="/api/v1", tags=["AI对话"])  # G29 运行中交互用户面
+app.include_router(pi_interactions_routes.pi_router, tags=["PI工具"])  # G29 扩展回调面（bridge secret）
 # Spatial Event Control Plane + Mission Portfolio（只读投影；additive）。
 app.include_router(spatial_events_routes.router, prefix="/api/v1", tags=["Spatial Events"])
 app.include_router(turn_journal_routes.router, prefix="/api/v1", tags=["Harness Turn Journal"])  # H04 ADR-0268（只读诊断）

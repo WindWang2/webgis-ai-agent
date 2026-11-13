@@ -95,6 +95,15 @@ export interface ContextPanelProps {
   ) => void;
   /** 方向 3：stale/恢复期重取 pending envelope。 */
   onClarificationRefresh?: () => void;
+  /** G29：运行中交互提交（REST 直达原生协议）。 */
+  onRuntimeInteractionSubmit?: (
+    state: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState,
+    answer: { value?: string; confirmed?: boolean; cancelled?: boolean },
+  ) => void;
+  /** G29：运行中追加指令（steer/follow_up）。 */
+  onTurnMessage?: (text: string, mode: 'adjust' | 'queue') => void;
+  /** G29：在飞 turn（追加指令入口可见性）。 */
+  turnActive?: boolean;
   agentRuntime?: AgentRuntime | null;
   /** #1048：SessionPlan 流式实时状态（useSessionPlan.view）→ ChatTab → 面板。 */
   sessionPlan?: SessionPlanViewState;
@@ -156,6 +165,9 @@ export function ContextPanel({
   ownerToken,
   onPlanAction,
   onClarificationSubmit,
+  onRuntimeInteractionSubmit,
+  onTurnMessage,
+  turnActive,
   onFeatureEditDecision,
   onClarificationRefresh,
   agentRuntime,
@@ -401,6 +413,9 @@ export function ContextPanel({
                 onCancel={onCancel}
                 onPlanAction={onPlanAction}
                 onClarificationSubmit={onClarificationSubmit}
+                onRuntimeInteractionSubmit={onRuntimeInteractionSubmit}
+                onTurnMessage={onTurnMessage}
+                turnActive={turnActive}
                 onFeatureEditDecision={onFeatureEditDecision}
                 onClarificationRefresh={onClarificationRefresh}
                 sessionId={sessionId}

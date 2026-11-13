@@ -80,6 +80,11 @@ CHAT_EVENT_TYPES: frozenset[str] = frozenset({
     "session_plan_superseded",  # 同上
     "session_plan_step",        # 同上（ADR-0180 kernel step 投影）
     "workflow_graph",           # 执行图有界投影，复用 session_plan 通道（ADR-0184 E8）
+    # ── G29：Pi 原生运行中交互（非终态；经 pi_event_mapper 纯翻译投递）──
+    "pi_interaction",         # 原生 dialog 请求卡片（extension_ui_request 投影）
+    "pi_interaction_update",  # 卡片状态更新（answered/cancelled/timed_out/invalidated/resolved）
+    "pi_ui",                  # fire-and-forget 只读投影（notify/status/widget/title/editor 建议）
+    "pi_turn_message",        # 运行中追加指令的真实 disposition（steer/follow_up 接纳回执）
 })
 
 # 终态词表：单一来源是 app.utils.sse（SSEBatcher 的 immediate-flush 判定

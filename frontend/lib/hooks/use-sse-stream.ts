@@ -1,5 +1,6 @@
 'use client';
 import { resolveFeatureId as resolveCanonicalFeatureId } from '@/lib/layers/feature-id';
+import { t as msg } from '@/lib/i18n/t';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { StepResultPayload } from '@/lib/api/chat';
@@ -44,7 +45,7 @@ import {
   appendToolCall,
   applyTokenSnapshot,
   attachChart,
-  attachClarification,
+  attachClarification, upsertRuntimeInteraction, setRuntimeInteractionStatus,
   attachLayerChip,
   attachPlanProposal,
   attachFeatureEditProposal,
@@ -64,6 +65,9 @@ import {
 } from '@/lib/chat/message-reducer';
 import {
   clarificationDecision,
+  runtimeInteractionCard,
+  runtimeInteractionUpdate,
+  runtimeUiFire,
   errorEventDecision,
   mapFinalizationDecision,
   planReadyDecision,
@@ -73,6 +77,9 @@ import {
 import {
   getPendingClarification,
   submitClarificationAnswer,
+  submitRuntimeInteractionAnswer,
+  sendTurnMessage,
+  fetchRuntimeInteractions,
 } from '@/lib/api/chat';
 import { decideFeatureEditPlan, redoFeatureEdit, undoFeatureEdit } from '@/lib/api/feature-edit';
 import { featureEditCommand } from '@/lib/workbench/undo';
@@ -367,6 +374,9 @@ export function useSSEStream(options: UseSSEStreamOptions) {
   }, [setMessages]);
 
   const [agentRuntime, setAgentRuntime] = useState<AgentRuntime | null>(null);
+  // G29：当前在飞 turn 的 id（task_start 载荷；done/终态清除）—— 追加指令
+  // （steer/follow_up）的目标。
+  const activeTurnIdRef = useRef<string | null>(null);
 
   const thinkingMsgIdRef = useRef<string>('');
   // FE-P3-3 / #608：终态迁移与兜底 —— 变换经纯 reducer，写入单一 store。
@@ -667,6 +677,8 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             : undefined,
         );
         if (runtime) setAgentRuntime(runtime);
+        const turnId = (data as Record<string, unknown> | null)?.turn_id;
+        if (typeof turnId === 'string' && turnId) activeTurnIdRef.current = turnId;
       }
 
       if (data?.owner_token && typeof data.owner_token === 'string') {
@@ -988,6 +1000,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       } else if (event.event === 'done' || event.event === 'task_complete') {
         // #518: isThinking 必须在终态事件到达时翻转（连接仍可保持打开推送
         // explorer 进度）。#608: 残留 running 行兜底终结，spinner 不永转。
+        activeTurnIdRef.current = null; // G29：turn 终态 → 追加指令目标失效
         finalizeToolCalls('failed', '未收到执行结果');
         if (thinkingId) {
           setMessages((prev) => clearThinkingFlag(prev, { messageId: thinkingId }));
@@ -1043,6 +1056,87 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             clarification,
           }));
         }
+      } else if (event.event === 'pi_interaction') {
+        // G29：原生运行中交互卡片挂到本轮助手消息（当前 run 阻塞等待）。
+        // 跨会话守卫与 clarification 同款；载荷校验在 runtimeInteractionCard。
+        const payloadSid =
+          typeof (data as Record<string, unknown> | null)?.session_id === 'string'
+            ? ((data as Record<string, unknown>).session_id as string)
+            : '';
+        if (payloadSid && payloadSid !== sessionIdRef.current) return;
+        const card = runtimeInteractionCard(data);
+        if (card && thinkingId) {
+          setMessages((prev) => upsertRuntimeInteraction(prev, {
+            messageId: thinkingId,
+            card,
+          }));
+        }
+      } else if (event.event === 'pi_interaction_update') {
+        // G29：卡片状态更新（回答已接纳/续接观察/取消/过期/失效）。可能
+        // 迟到于消息切换 —— 全列扫描按 interactionId 命中。跨会话守卫与
+        // pi_interaction 同款（review P3-9：不对称是脆弱面）。
+        const updateSid =
+          typeof (data as Record<string, unknown> | null)?.session_id === 'string'
+            ? ((data as Record<string, unknown>).session_id as string)
+            : '';
+        if (updateSid && updateSid !== sessionIdRef.current) return;
+        const update = runtimeInteractionUpdate(data);
+        if (update) {
+          const statusMap: Record<string, import('@/lib/types/runtime-interaction').RuntimeInteractionStatus> = {
+            answer_written: 'answered',
+            resolved: 'resolved',
+            cancelled: 'cancelled',
+            timed_out: 'timed_out',
+            invalidated: 'invalidated',
+          };
+          const next = statusMap[update.state];
+          if (next) {
+            setMessages((prev) => setRuntimeInteractionStatus(prev, {
+              interactionId: update.interactionId,
+              status: next,
+              answerDisplay: update.answerDisplay,
+              answerKind: update.answerKind,
+              resolveEvidence: update.evidence,
+            }));
+          }
+        }
+      } else if (event.event === 'pi_ui') {
+        // G29：fire-and-forget 只读投影 —— notify 以有界 content 行披露，
+        // 不要求回答、不渲染 HTML；status/widget/title/建议仅记录状态。
+        const fire = runtimeUiFire(data);
+        if (fire?.kind === 'notify' && fire.message) {
+          const tag = fire.notifyType === 'error' ? '⚠' : fire.notifyType === 'warning' ? '⚠' : 'ℹ';
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `pi-ui-notify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              role: 'assistant',
+              content: `${tag} ${fire.message}`,
+              timestamp: Date.now(),
+            } as import('@/lib/chat/message-reducer').ChatStreamMessage,
+          ]);
+        }
+      } else if (event.event === 'pi_turn_message') {
+        // G29：运行中追加指令的真实 disposition（接纳 ≠ 已消费）。跨会话
+        // 守卫同款（review P3-9）；文案走 i18n（review P3-7）。
+        const payload = (data ?? {}) as Record<string, unknown>;
+        const steerSid = typeof payload.session_id === 'string' ? payload.session_id : '';
+        if (steerSid && steerSid !== sessionIdRef.current) return;
+        const modeLabel = payload.mode === 'queue'
+          ? msg('chat.interaction.steerQueued')
+          : msg('chat.interaction.steerSent');
+        const disposition = payload.disposition
+          ? ` (${typeof payload.disposition === 'string' ? payload.disposition : JSON.stringify(payload.disposition).slice(0, 80)})`
+          : '';
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `pi-steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            role: 'assistant',
+            content: `${modeLabel}${disposition}`,
+            timestamp: Date.now(),
+          } as import('@/lib/chat/message-reducer').ChatStreamMessage,
+        ]);
       }
     },
     [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent, refreshDatasetLayer, rotateLayerFetches]
@@ -1179,6 +1273,122 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     },
     [setMessages, refreshPendingClarification, sessionIdRef, sessionTokenRef],
   );
+
+  // G29：运行中交互提交（REST 直达原生协议 —— 当前 run 自动续行，无续行消息）。
+  const handleRuntimeInteractionSubmit = useCallback(
+    (
+      state: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState,
+      answer: { value?: string; confirmed?: boolean; cancelled?: boolean },
+    ) => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      setMessages((prev) =>
+        setRuntimeInteractionStatus(prev, {
+          interactionId: state.interactionId, status: 'submitting',
+        }),
+      );
+      submitRuntimeInteractionAnswer(
+        sid, state.interactionId, answer, sessionTokenRef.current || undefined,
+      )
+        .then((result) => {
+          if (sessionIdRef.current !== sid) return;
+          // accepted → answer_written（等待任务继续；后续 pi_interaction_update
+          // 会把 resolved/终态推来）。already_answered/duplicate → 用服务端状态。
+          const state2 = result.state === 'answer_written' ? 'answered' : result.state;
+          const mapped = (['resolved', 'cancelled', 'timed_out', 'invalidated'] as const).includes(
+            state2 as never,
+          )
+            ? (state2 as import('@/lib/types/runtime-interaction').RuntimeInteractionStatus)
+            : 'answered';
+          const display =
+            answer.cancelled ? undefined
+            : answer.value ?? (answer.confirmed === true
+              ? msg('chat.interaction.confirmYes')
+              : answer.confirmed === false ? msg('chat.interaction.confirmNo') : undefined);
+          setMessages((prev) =>
+            setRuntimeInteractionStatus(prev, {
+              interactionId: state.interactionId,
+              status: mapped,
+              answerDisplay: display,
+            }),
+          );
+        })
+        .catch((err: unknown) => {
+          if (sessionIdRef.current !== sid) return;
+          const code = err instanceof ApiError
+            ? String((err.body as { error?: unknown } | null)?.error ?? err.status)
+            : '';
+          setMessages((prev) =>
+            setRuntimeInteractionStatus(prev, {
+              interactionId: state.interactionId,
+              status: 'error',
+              errorCode: code,
+            }),
+          );
+        });
+    },
+    [setMessages, sessionIdRef, sessionTokenRef],
+  );
+
+  // G29：运行中追加指令（adjust=steer / queue=follow_up）。与澄清续行不同：
+  // 当前 run 不中断；disposition 由 pi_turn_message 事件披露。
+  const handleTurnMessage = useCallback(
+    async (text: string, mode: 'adjust' | 'queue'): Promise<boolean> => {
+      const sid = sessionIdRef.current;
+      const tid = activeTurnIdRef.current;
+      if (!sid || !tid) return false;
+      try {
+        const result = await sendTurnMessage(
+          sid, tid, text, mode, sessionTokenRef.current || undefined,
+        );
+        return result.accepted === true;
+      } catch {
+        return false;
+      }
+    },
+    [sessionIdRef, sessionTokenRef],
+  );
+
+  // G29（WP10）：刷新/重连水合 —— GET pending 运行中交互，把仍可作答的
+  // 卡片挂到一条稳定的助手消息上（页面刷新后活请求仍可回答；进程重启后
+  // 服务端如实返回空/终态 —— 绝不伪造跨代际可作答）。
+  useEffect(() => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    let cancelled = false;
+    fetchRuntimeInteractions(sid, sessionTokenRef.current || undefined)
+      .then((view) => {
+        if (cancelled || sessionIdRef.current !== sid) return;
+        const cards = (view.pending ?? [])
+          .map((p) => runtimeInteractionCard(p))
+          .filter((c): c is NonNullable<typeof c> => c !== null);
+        if (cards.length === 0) return;
+        setMessages((prev) => {
+          const hydrateId = `${sid}-runtime-interactions`;
+          const existing = prev.find((m) => m.id === hydrateId);
+          const baseMessage = existing ?? {
+            id: hydrateId,
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+          } as import('@/lib/chat/message-reducer').ChatStreamMessage;
+          const merged = {
+            ...baseMessage,
+            runtimeInteractions: cards,
+          };
+          return existing
+            ? prev.map((m) => (m.id === hydrateId ? merged : m))
+            : [...prev, merged];
+        });
+      })
+      .catch(() => {
+        /* 水合失败静默 —— SSE 流/ring 仍是主通道 */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, setMessages]);
 
   // #468: the ref carries handleSend's success signal (true = the turn
   // completed; false/rejection = failed) so plan approval can roll back.
@@ -1418,6 +1628,8 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     handleSend,
     handlePlanAction,
     handleClarificationSubmit,
+    handleRuntimeInteractionSubmit,
+    handleTurnMessage,
     handleFeatureEditDecision,
     refreshPendingClarification,
     bridge,
