@@ -178,8 +178,17 @@ def format_layer_schema(schema: dict, viewport_bounds: list[float] | None = None
     fields = schema.get("fields") or {}
     if fields:
         # 限制最多 8 个字段，避免上下文爆
+        from app.services.chat.context.formatters import (
+            TAG_UNTRUSTED_FEATURE_PROPERTY,
+            _xml_fence,
+        )
+
         items = list(fields.items())[:8]
-        field_str = ", ".join(f"{k}:{t}" for k, t in items)
+        field_str = ", ".join(
+            f"{_xml_fence(TAG_UNTRUSTED_FEATURE_PROPERTY, k, max_len=64)}:"
+            f"{_xml_fence(TAG_UNTRUSTED_FEATURE_PROPERTY, t, max_len=32)}"
+            for k, t in items
+        )
         if len(fields) > 8:
             field_str += f", ...(+{len(fields) - 8})"
         parts.append(f"fields=[{field_str}]")

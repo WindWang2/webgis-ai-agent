@@ -147,6 +147,8 @@ class SessionPlan(BaseModel):
     #: ADR-0208: envelope-monotonic event sequence for the canonical journal
     #: (idempotency keys / replay order). Additive — old payloads default 0.
     event_seq: int = 0
+    #: Causal event ids retained after the decision ring evicts them.
+    causal_seen_ids: list[str] = Field(default_factory=list, max_length=128)
     recovery: PlanRecoveryMetadata = Field(default_factory=PlanRecoveryMetadata)
     #: GOAL 05（ADR-0281）：最近一次工具失败的统一恢复裁决（bounded
     #: diagnostic+decision，TDS 单 seam 产出后随失败分支落账；additive

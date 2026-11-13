@@ -405,6 +405,9 @@ MAX_STEPS = 48
 #: model_validate on an old pod → envelope silently rebuilt empty). ADR-0208
 #: keeps the bound; replay depth trades against fleet-safety.
 MAX_DECISIONS = 24
+#: Causal idempotency keys outlive the decision ring. The ring is 24 rows;
+#: a duplicate callback after eviction must still be a no-op.
+MAX_CAUSAL_SEEN = 128
 MAX_EVIDENCE_PER_STEP = 4
 MAX_CHECKPOINT_SLOTS = 3
 MAX_PHASE_HISTORY = 16

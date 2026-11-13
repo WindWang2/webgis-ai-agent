@@ -729,13 +729,70 @@ class ChatExecutionEngine:
                     self._session_locks.pop(sid, None)
                     self._session_lock_last_used.pop(sid, None)
 
+    def _history_gens(self) -> dict:
+        gens = getattr(self, "_session_hist_gen", None)
+        if not isinstance(gens, dict):
+            gens = {}
+            self._session_hist_gen = gens
+        return gens
+
+    async def _history_generation(self, session_id: str, *, bump: bool = False) -> Optional[int]:
+        """Shared counter so another replica's writes invalidate this cache."""
+        client = getattr(self, "_hist_redis", None)
+        if client is None:
+            now = time.monotonic()
+            checked = getattr(self, "_hist_redis_checked", None)
+            if checked is not None and now - checked < 60.0:
+                return None
+            self._hist_redis_checked = now
+            try:
+                import os
+
+                from app.core.config import settings as _settings
+
+                redis_url = os.getenv("REDIS_URL") or getattr(_settings, "REDIS_URL", None)
+                use_redis = os.getenv("USE_REDIS", "").lower() in ("true", "1", "yes") or bool(
+                    getattr(_settings, "USE_REDIS", False)
+                )
+                if not redis_url or not use_redis:
+                    self._hist_redis = False
+                    return None
+                import redis.asyncio as aioredis
+
+                client = aioredis.from_url(
+                    redis_url, decode_responses=True,
+                    socket_timeout=0.5, socket_connect_timeout=0.5,
+                )
+                self._hist_redis = client
+            except Exception:  # noqa: BLE001
+                self._hist_redis = False
+                return None
+        if client is False:
+            return None
+        key = f"webgis:chat:hist_gen:{session_id}"
+        try:
+            if bump:
+                val = int(await client.incr(key))
+                await client.expire(key, 86400)
+                return val
+            raw = await client.get(key)
+            return 0 if raw is None else int(raw)
+        except Exception:  # noqa: BLE001
+            return None
+
     async def _get_or_create_session(
         self,
         session_id: str,
         user_id: Optional[str] = None,
     ) -> list[dict]:
         if session_id in self._sessions:
-            return self._sessions[session_id]
+            gen = await self._history_generation(session_id)
+            known = self._history_gens().get(session_id)
+            if gen is None or known is None or gen == known:
+                if gen is not None:
+                    self._history_gens().setdefault(session_id, gen)
+                return self._sessions[session_id]
+            self._sessions.pop(session_id, None)
 
         self._evict_idle_locks()
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
@@ -762,6 +819,9 @@ class ChatExecutionEngine:
                 # 但不写进缓存 —— 否则 DB 恢复后该会话仍永远顶着空历史。
                 return [{"role": "system", "content": self._build_system_prompt()}]
             self._sessions[session_id] = loaded
+            gen = await self._history_generation(session_id)
+            if gen is not None:
+                self._history_gens()[session_id] = gen
             return loaded
 
     def _apply_skill(self, messages: list[dict], skill_name: Optional[str]) -> None:
@@ -955,6 +1015,9 @@ class ChatExecutionEngine:
                 tool_result = _clamp_tool_payload(tool_result) + "...[truncated]"
             async with async_db_session() as db:
                 await AsyncHistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id, reasoning_content)
+            gen = await self._history_generation(session_id, bump=True)
+            if gen is not None:
+                self._history_gens()[session_id] = gen
         except Exception as e:
             logger.error(f"Failed to save message asynchronously: {e}")
 

@@ -720,8 +720,10 @@ class SwarmOrchestrator:
                 )
             if receipt.status != SwarmReceiptStatus.FAILED:
                 return receipt
-            if task.side_effect == "destructive":
-                return receipt  # ADR-0184 D6：破坏性 at-most-once，禁自动重驱
+            if task.side_effect != "pure":
+                # ADR-0184 D6：只有 pure/read 可自动重驱。write/mutation
+                # （derived_external / destructive）超时取消不等于回滚。
+                return receipt
             if attempt >= max_attempts:
                 return receipt
             if receipt.error_code not in (

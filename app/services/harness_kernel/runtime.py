@@ -40,6 +40,7 @@ from typing import Any, List, Optional
 from app.services.harness_kernel import metrics as hk_metrics
 from app.utils.best_effort import best_effort
 from app.services.harness_kernel.models import (
+    MAX_CAUSAL_SEEN,
     MAX_CHECKPOINT_SLOTS,
     MAX_DECISIONS,
     MAX_PHASE_HISTORY,
@@ -277,9 +278,11 @@ def _event(
     plan.event_seq = seq
     if causal_id:
         # Deterministic idempotency key: a duplicate callback / lock-retry
-        # replay produces the same key and appends nothing.
+        # replay produces the same key and appends nothing. The decision
+        # ring is bounded, so also consult the separate seen-id list.
         event_id = f"{kind}:{turn_id}:{causal_id}"
-        if any(d.event_id == event_id for d in plan.decisions):
+        seen = list(getattr(plan, "causal_seen_ids", None) or [])
+        if event_id in seen or any(d.event_id == event_id for d in plan.decisions):
             plan.event_seq = seq - 1
             return False
     else:
@@ -302,6 +305,11 @@ def _event(
         ),
         MAX_DECISIONS,
     )
+    if causal_id:
+        seen = list(getattr(plan, "causal_seen_ids", None) or [])
+        if event_id not in seen:
+            seen.append(event_id)
+        plan.causal_seen_ids = seen[-MAX_CAUSAL_SEEN:]
     _ledger_record(
         plan, kind, host=str(host), turn_id=turn_id, note=note,
         detail=detail, at_epoch=at, causal_id=causal_id,
@@ -1292,9 +1300,9 @@ class GISSessionRuntime:
         """
         if not self.session_id:
             return False
-        async with _session_scope(self.session_id, None):
+        async with _session_scope(self.session_id, None) as lock:
             plan = await load_session_plan(self.session_id, store=self._store)
-            if plan is None:
+            if plan is None or (lock is not None and lock.lost):
                 return False
             chapter = plan.gis_chapter if isinstance(plan.gis_chapter, dict) else None
             if chapter is None:
@@ -1353,6 +1361,8 @@ class GISSessionRuntime:
             if appended:
                 hk_metrics.record(
                     "clarification_updated", host=host, status=str(status)[:16])
+            if lock is not None and lock.lost:
+                return False
             await _save_if_fresh(plan, store=self._store, host=host)
             return True
 

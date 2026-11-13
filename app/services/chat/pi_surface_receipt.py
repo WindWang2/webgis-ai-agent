@@ -223,6 +223,7 @@ class _SurfaceReceiptStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._receipts: Dict[Tuple[str, str], SurfaceReceipt] = {}
+        self._evicted: Dict[Tuple[str, str], None] = {}
 
     def record(self, receipt: SurfaceReceipt) -> SurfaceReceipt:
         """登记 receipt；返回**实际生效**的 receipt（同 turn 重投影 → 存量）。
@@ -246,10 +247,18 @@ class _SurfaceReceiptStore:
                     )
                 return existing
             self._receipts[key] = receipt
+            self._evicted.pop(key, None)
             while len(self._receipts) > _RECEIPT_STORE_MAX:
                 oldest = next(iter(self._receipts))
                 self._receipts.pop(oldest, None)
+                self._evicted[oldest] = None
+                while len(self._evicted) > _RECEIPT_STORE_MAX * 4:
+                    self._evicted.pop(next(iter(self._evicted)), None)
             return receipt
+
+    def was_evicted(self, session_id: str, turn_id: str) -> bool:
+        with self._lock:
+            return (session_id, turn_id) in self._evicted
 
     def lookup(
         self, session_id: str, turn_id: str
@@ -269,6 +278,7 @@ class _SurfaceReceiptStore:
     def clear(self) -> None:
         with self._lock:
             self._receipts.clear()
+            self._evicted.clear()
 
 
 surface_receipt_store = _SurfaceReceiptStore()
@@ -420,6 +430,8 @@ def verify_callback_fingerprints(
     """
     receipt = surface_receipt_store.lookup(session_id, turn_id)
     if receipt is None:
+        if surface_receipt_store.was_evicted(session_id, turn_id):
+            return "SURFACE_RECEIPT_EVICTED"
         return None
     if tool_fingerprint:
         expected = receipt.tool_fingerprints.get(resolved_tool)
@@ -448,6 +460,8 @@ def enforce_callback_scope(
         return None
     receipt = surface_receipt_store.lookup(session_id, turn_id)
     if receipt is None:
+        if surface_receipt_store.was_evicted(session_id, turn_id):
+            return "SURFACE_RECEIPT_EVICTED"
         return None
     if resolved_tool in receipt.selected:
         return None

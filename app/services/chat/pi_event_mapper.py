@@ -43,7 +43,11 @@ def _extract_error_text(result: Any) -> str:
     if isinstance(result, dict):
         content = result.get("content", [])
         if isinstance(content, list) and content:
-            raw = content[0].get("text", str(result))
+            first = content[0]
+            if isinstance(first, dict):
+                raw = first.get("text", str(result))
+            else:
+                raw = str(first)
         else:
             raw = result.get("message", str(result))
     else:

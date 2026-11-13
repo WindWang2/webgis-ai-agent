@@ -808,7 +808,17 @@ def render_affordance_context_block(ring: Any) -> str:
                 parts.append(f"{len(points)} 顶点")
         layer_refs = entry.get("layer_refs")
         if isinstance(layer_refs, list) and layer_refs:
-            parts.append(f"图层: {'、'.join(str(x) for x in layer_refs[:4])}")
+            from app.services.chat.context.formatters import (
+                TAG_UNTRUSTED_LAYER_NAME,
+                TAG_UNTRUSTED_USER_ACTION,
+                _xml_fence,
+            )
+
+            shown = [
+                _xml_fence(TAG_UNTRUSTED_LAYER_NAME, x, max_len=64)
+                for x in layer_refs[:4]
+            ]
+            parts.append(f"图层: {'、'.join(shown)}")
         meta = entry.get("meta")
         if isinstance(meta, dict):
             measure = meta.get("measure_value")
@@ -821,10 +831,23 @@ def render_affordance_context_block(ring: Any) -> str:
                     )
             reply = meta.get("widget_reply")
             if isinstance(reply, dict):
-                parts.append(
-                    f"widget={reply.get('widget_id')} ({reply.get('kind')}) "
-                    f"→ {json.dumps(reply.get('value'), ensure_ascii=False, default=str)[:120]}"
+                from app.services.chat.context.formatters import (
+                    TAG_UNTRUSTED_USER_ACTION,
+                    _xml_fence,
                 )
+
+                widget_id = _xml_fence(
+                    TAG_UNTRUSTED_USER_ACTION, reply.get("widget_id"), max_len=64,
+                )
+                kind = _xml_fence(
+                    TAG_UNTRUSTED_USER_ACTION, reply.get("kind"), max_len=32,
+                )
+                value = _xml_fence(
+                    TAG_UNTRUSTED_USER_ACTION,
+                    json.dumps(reply.get("value"), ensure_ascii=False, default=str),
+                    max_len=120,
+                )
+                parts.append(f"widget={widget_id} ({kind}) → {value}")
         lines.append("，".join(p for p in parts if p))
     block = "\n".join(lines)
     if len(block) > _MAX_CONTEXT_BLOCK_CHARS:

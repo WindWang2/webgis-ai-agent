@@ -131,13 +131,30 @@ async def cancel_agent_task_and_turn(
         cancelled = tracker.cancel(task_id)
     try:
         for job_id in background_job_ids:
-            await DurableJobStore.request_cancel(db, job_id)
-            cancellation_registry.cancel(str(job_id), registry_cancel_reason)
+            try:
+                if db is not None and hasattr(db, "begin_nested"):
+                    async with db.begin_nested():
+                        await DurableJobStore.request_cancel(db, job_id)
+                else:
+                    await DurableJobStore.request_cancel(db, job_id)
+                cancellation_registry.cancel(str(job_id), registry_cancel_reason)
+            except Exception:  # noqa: BLE001 — one job must not roll back the rest
+                logger.warning(
+                    "[session_cancellation] request_cancel failed task=%s job=%s",
+                    task_id, job_id, exc_info=True,
+                )
         # review M-C2：先落库（持久事实）再桥接 abort —— 5s abort 窗口内
         # 的崩溃绝不丢取消请求（旧编排的顺序，回归点）。db 为 None（管理
         # 路径/测试替身）时跳过提交，取消仍走 tracker+abort。
+        # 单个 job 失败不跳过 commit：前面已成功的取消必须留下。
         if db is not None and hasattr(db, "commit"):
-            await db.commit()
+            try:
+                await db.commit()
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "[session_cancellation] cancel commit failed task=%s",
+                    task_id, exc_info=True,
+                )
     finally:
         # review M-Adv6：abort 在 finally —— per-job DB 写失败绝不再饿死
         # 桥接取消（#1066 的原始失败面）。

@@ -13,13 +13,15 @@
 ADR-0213 增量（R5/R6）：
 - **actual 回填**：complete 时回填廉价实际用量（wall + O(1) 计数/长度字段）
   并记入有界 ``CalibrationStore``（只观测，绝不回写运行时先验）；
-- **重试入账**：短窗内同 (session, tool) 重复派发按 attempt>1 计，经
+- **重试入账**：短窗内同 (session, tool, 参数指纹) 重复派发按 attempt>1 计，经
   governor RetryBudget 咨询 + 实扣（R6 统一预算；窗口有界；预算拒绝是
   诚实 reject payload，不伪装成功）。
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import threading
@@ -43,8 +45,29 @@ logger = logging.getLogger(__name__)
 # ── R6：短窗失败感知（同 (session, tool) 重复派发 → attempt>1 入预算）────
 _RETRY_WINDOW_S = 120.0
 _MAX_TRACKED = 2048
-_TRACKED: Dict[Tuple[str, str], List[float]] = {}
+_TRACKED: Dict[Tuple[str, str, str], List[float]] = {}
 _TRACKED_LOCK = threading.Lock()
+
+
+def _args_fingerprint(tool_args: Optional[Dict[str, Any]]) -> str:
+    """Stable short fingerprint so a new argument set is not a retry."""
+    try:
+        blob = json.dumps(
+            tool_args or {}, sort_keys=True, default=str, separators=(",", ":"),
+        )
+    except Exception:  # noqa: BLE001 — unserializable args are their own bucket
+        blob = repr(type(tool_args))
+    return hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _track_key(
+    session_id: str, tool_name: str, tool_args: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, str, str]:
+    return (
+        (session_id or "")[:64],
+        (tool_name or "")[:128],
+        _args_fingerprint(tool_args),
+    )
 
 #: 结果里 O(1) 可读的特征计数键（actual 回填；绝不序列化大 payload）
 _COUNT_KEYS = ("feature_count", "featureCount", "count", "total",
@@ -75,12 +98,14 @@ async def _project_render_input(session_id: str):
         return None
 
 
-def _recent_attempt(session_id: str, tool_name: str) -> int:
-    """短窗内存在未清失败 → 返回本次 attempt（>1）；否则 1。
+def _recent_attempt(
+    session_id: str, tool_name: str, tool_args: Optional[Dict[str, Any]] = None,
+) -> int:
+    """短窗内同一 (session, tool, 参数指纹) 存在未清失败 → attempt>1。
 
-    有界：表超限先清过期窗口，再按最旧时间驱逐（常数内存）。
+    换参数是新调用，不占重试预算。有界：表超限先清过期窗口，再按最旧时间驱逐。
     """
-    key = ((session_id or "")[:64], (tool_name or "")[:128])
+    key = _track_key(session_id, tool_name, tool_args)
     now = time.monotonic()
     with _TRACKED_LOCK:
         entry = _TRACKED.get(key)
@@ -89,9 +114,12 @@ def _recent_attempt(session_id: str, tool_name: str) -> int:
         return int(entry[0]) + 1
 
 
-def _note_outcome(session_id: str, tool_name: str, status: str) -> None:
+def _note_outcome(
+    session_id: str, tool_name: str, status: str,
+    tool_args: Optional[Dict[str, Any]] = None,
+) -> None:
     """执行结果回写失败计数（成功/取消清零；失败 +1 并续窗）。"""
-    key = ((session_id or "")[:64], (tool_name or "")[:128])
+    key = _track_key(session_id, tool_name, tool_args)
     now = time.monotonic()
     with _TRACKED_LOCK:
         if status in ("completed", "cancelled"):
@@ -308,7 +336,7 @@ class GovernorDispatchAdapter:
 
         started = time.monotonic()
         # R6：短窗内重复派发按重试计（governor RetryBudget 咨询 + 实扣）
-        attempt = _recent_attempt(session_id, tool_name)
+        attempt = _recent_attempt(session_id, tool_name, tool_args)
         # F13/ADR-0261 D2：render 族工具喂当前地图渲染面投影（细化估工；
         # fail-open —— 投影缺席回退档位先验）。
         render_input = None
@@ -393,7 +421,7 @@ class GovernorDispatchAdapter:
                     usage, demand.estimate)
             except Exception:  # noqa: BLE001
                 logger.exception("[resource-governor] calibration record failed")
-            _note_outcome(session_id, tool_name, status)
+            _note_outcome(session_id, tool_name, status, tool_args)
         return result
 
     # ── 内部 ─────────────────────────────────────────────────────────

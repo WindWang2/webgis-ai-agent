@@ -164,11 +164,12 @@ def _pi_parameters(function_schema: dict[str, Any]) -> dict[str, Any]:
     properties = dict(params.get("properties") or {})
     properties.pop("session_id", None)
     required = [key for key in (params.get("required") or []) if key != "session_id"]
+    extra = params.get("additionalProperties", False)
     out: dict[str, Any] = {
         "type": "object",
         "properties": properties,
         "required": required,
-        "additionalProperties": False,
+        "additionalProperties": extra if extra is True or isinstance(extra, dict) else False,
     }
     if "$defs" in params:
         out["$defs"] = params["$defs"]
@@ -711,6 +712,36 @@ def _pin_registered_tools(
     return pinned
 
 
+def _eligible_pinned_tools(
+    registry: Any,
+    names: Sequence[str],
+    *,
+    situation: Optional[Mapping[str, Any]] = None,
+) -> list[str]:
+    """Abstain re-pin still has to pass visibility and situation qualification."""
+    visible: list[str] = []
+    for name in names:
+        try:
+            desc = registry.descriptor(name)
+        except Exception:  # noqa: BLE001 — 未注册就不激活
+            continue
+        if not getattr(desc, "model_visible", True):
+            continue
+        if int(desc.tier) >= 3 or int(getattr(desc, "effective_security_tier", 0) or 0) >= 3:
+            continue
+        visible.append(name)
+    try:
+        qualification = _apply_surface_qualification(
+            registry, visible, situation=situation,
+        )
+    except Exception:  # noqa: BLE001 — 资格投影失败不放行未校验的附加钉
+        logger.debug("[PiNativeSurface] abstain qualification failed", exc_info=True)
+        qualification = None
+    if qualification is None:
+        return visible
+    return list(qualification["selected"])
+
+
 def compute_turn_active_tools(
     message: str,
     *,
@@ -746,34 +777,36 @@ def compute_turn_active_tools(
 
         registry = get_tool_registry()
 
+        # V4 Wave 4 生产装配（ADR-0104 决策 5）：会话 artifact 语义类型 +
+        # 近期工具结果 + 续跑工具三路上下文证据。ToolSelectionContext 是
+        # frozen，必须在构造时传入（事后赋值会 FrozenInstanceError 被吞掉）。
+        artifact_types: tuple = ()
+        outcomes: tuple = ()
+        continuation: tuple = ()
+        try:
+            artifact_types = tuple(_session_artifact_types_snapshot())
+        except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
+            artifact_types = ()
+        try:
+            from app.services.chat.tool_surface_v3 import recent_failure_hints
+
+            outcomes = tuple(recent_failure_hints() or ())
+        except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
+            outcomes = ()
+        try:
+            continuation = tuple(_continuation_tools_snapshot(active_capabilities))
+        except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
+            continuation = ()
         ctx = ToolSelectionContext(
             user_message=message or "",
             active_capabilities=tuple(active_capabilities),
             workflow_stage=workflow_stage or "",
             k_max=max(k_max, len(NATIVE_TOOL_NAMES)),
             role=role,
+            session_artifact_types=artifact_types,
+            recent_tool_outcomes=outcomes,
+            continuation_tools=continuation,
         )
-        # V4 Wave 4 生产装配（ADR-0104 决策 5）：会话 artifact 语义类型 +
-        # 近期工具结果 + 续跑工具三路上下文证据（缺席 = 空贡献 = V3 行为
-        # 不变；所有来源只读、有界、任何失败静默降级）。
-        try:
-            ctx.session_artifact_types = tuple(
-                _session_artifact_types_snapshot()
-            )  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
-            pass
-        try:
-            from app.services.chat.tool_surface_v3 import recent_failure_hints
-
-            ctx.recent_tool_outcomes = recent_failure_hints()  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
-            pass
-        try:
-            ctx.continuation_tools = tuple(
-                _continuation_tools_snapshot(active_capabilities)
-            )  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
-            pass
         selection = DynamicToolSurface(registry).select(ctx)
         # V6（ADR-0119 D2）低置信度弃权：检索无法确证动态面与 query 的
         # 匹配时**不注入**低置信度工具面（拒绝派发语义）—— native 前门
@@ -809,8 +842,12 @@ def compute_turn_active_tools(
                     "confidence": float(selection.confidence),
                     "reason": str(selection.abstain_reason)[:96],
                 })
-            pinned = _pin_registered_tools(
-                registry, NATIVE_TOOL_NAMES, distribution_cartography_tools(message),
+            pinned = _eligible_pinned_tools(
+                registry,
+                _pin_registered_tools(
+                    registry, NATIVE_TOOL_NAMES, distribution_cartography_tools(message),
+                ),
+                situation=situation,
             )
             _record_abstained_receipt(registry, session_id, turn_id, extra=pinned)
             return pinned
