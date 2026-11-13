@@ -59,6 +59,8 @@
   "actionMerge": "合并到数据",
   "actionRebase": "重定基底",
   "actionWithdraw": "撤回",
+  "actionResolveRecovery": "执行恢复判定",
+  "noticeRecoveryResolved": "恢复判据已执行（证据门通过）",
   "actionRefresh": "刷新",
   "recoveryTitle": "合并结果待判定",
   "recoveryBody": "合并过程中断且无法自动证明结果。请对照受影响要素与候选内容核对后处理；系统已禁用盲目重试。",

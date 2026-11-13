@@ -69,6 +69,7 @@ async def build_conflict_report(
     base_mat, _ = materialize_preview(base_fc, proposal.base.fingerprint)
     ordered, _missing, _mat = resolve_candidate_targets(
         base_payload, proposal.ops, dataset_fingerprint=proposal.base.fingerprint,
+        requested_ids=proposal.feature_ids,
     )
     dep_payloads = dep_payloads or {}
     report = classify_conflicts(
@@ -230,7 +231,7 @@ async def merge_proposal(
 def _proposal_target_ids(proposal: FeatureProposalRecord) -> List[str]:
     """提交时的 requested_ids：op 级 wfids + split wfid + merge 父集
     （按候选求值序，保 merge first 策略的用户语义）。"""
-    ids: List[str] = []
+    ids: List[str] = list(proposal.feature_ids or [])  # plan 级目标（merge 父集）
     for op in proposal.ops:
         if not isinstance(op, dict):
             continue

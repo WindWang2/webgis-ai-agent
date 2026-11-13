@@ -30,6 +30,7 @@ import {
   rebaseFeatureProposal,
   submitFeatureProposalResolutions,
   withdrawFeatureProposal,
+  resolveRecovery,
 } from '@/lib/api/feature-proposals';
 import type {
   ProposalConflict,
@@ -40,6 +41,9 @@ import type {
 import { ApiError } from '@/lib/api/transport';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { useT } from '@/lib/i18n/useT';
+
+/** 只支持 keep_current 的冲突类型（与 rebase.apply_resolutions_to_ops 同步）。 */
+const KEEP_ONLY_KINDS = new Set(['target_deleted', 'parent_retired', 'dependency_changed']);
 
 const STATUS_ORDER: ProposalSummary['status'][] = [
   'recovery_required', 'merging', 'approved', 'changes_requested',
@@ -247,12 +251,21 @@ export function FeatureProposalDrawer({ open, onClose }: { open: boolean; onClos
               </div>
             </section>
 
-            {detail.status === 'recovery_required' && (
+            {(detail.status === 'recovery_required' || detail.status === 'merging') && (
               <section className="rounded-xs border border-status-error/40 bg-status-error/10 px-2 py-1.5 text-micro" data-testid="feature-proposal-recovery">
                 <div className="flex items-center gap-1 font-medium text-status-error">
                   <ShieldAlert size={14} aria-hidden /> {t('recoveryTitle')}
                 </div>
                 <p className="mt-1">{t('recoveryBody')}</p>
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="mt-1.5 rounded-xs border border-edge-subtle px-2 py-1 hover:bg-surface-hover disabled:opacity-50"
+                  onClick={() => { void act(() => resolveRecovery(detail.proposal_id), t('noticeRecoveryResolved')); }}
+                  data-testid="feature-proposal-resolve-recovery"
+                >
+                  {t('actionResolveRecovery')}
+                </button>
               </section>
             )}
 
@@ -292,7 +305,10 @@ export function FeatureProposalDrawer({ open, onClose }: { open: boolean; onClos
                         <fieldset className="mt-1.5">
                           <legend className="text-micro text-text-subtle">{t('resolutionLegend')}</legend>
                           <div className="mt-0.5 flex flex-wrap gap-2 text-micro">
-                            {(['keep_current', 'take_proposed'] as const).map((action) => (
+                            {(KEEP_ONLY_KINDS.has(c.kind)
+                              ? (['keep_current'] as const)
+                              : (['keep_current', 'take_proposed'] as const)
+                            ).map((action) => (
                               <label key={action} className="inline-flex items-center gap-1">
                                 <input
                                   type="radio"
@@ -313,6 +329,9 @@ export function FeatureProposalDrawer({ open, onClose }: { open: boolean; onClos
                   type="button"
                   className="mt-2 rounded-xs border border-edge-subtle px-2 py-1 text-micro hover:bg-surface-hover disabled:opacity-50"
                   disabled={busy || Object.keys(resolutions).length !== unresolved.filter(
+                    (c) => !['schema_incompatible', 'identity_unprovable', 'id_ambiguous'].includes(c.kind),
+                  ).length}
+                  data-pending={unresolved.filter(
                     (c) => !['schema_incompatible', 'identity_unprovable', 'id_ambiguous'].includes(c.kind),
                   ).length}
                   onClick={submitResolutions}
@@ -355,7 +374,11 @@ export function FeatureProposalDrawer({ open, onClose }: { open: boolean; onClos
                   type="button"
                   className="mt-1 text-micro underline"
                   onClick={() => {
-                    if (state.selectedId) void getFeatureProposalDiff(state.selectedId, diff.page + 1).then(setDiff);
+                    if (state.selectedId) {
+                      void getFeatureProposalDiff(state.selectedId, diff.page + 1).then((next) => {
+                        setDiff({ ...next, candidate_deltas: [...diff.candidate_deltas, ...next.candidate_deltas] });
+                      });
+                    }
                   }}
                 >
                   {t('loadMoreDeltas')}

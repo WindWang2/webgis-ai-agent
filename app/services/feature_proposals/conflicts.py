@@ -89,14 +89,15 @@ class OpFootprint:
 
 
 def _op_targets(op: Dict[str, Any], plan_targets: List[str]) -> List[str]:
+    """op 的目标集：op 级 wfids（解析后 wfid 空间）∩ plan 目标；结构 op
+    自带目标；缺省 = plan 全体目标。"""
     raw = op.get("wfids")
     if isinstance(raw, list) and raw:
         allowed = set(plan_targets)
-        return [str(w) for w in raw if str(w) in allowed or True]
+        filtered = [str(w) for w in raw if str(w) in allowed]
+        return filtered or [str(w) for w in raw]  # 不在 plan 集 → 保留原值让求值期诚实拒绝
     if op.get("op") == "split_feature" and isinstance(op.get("wfid"), str):
         return [op["wfid"]]
-    if op.get("op") == "merge_features":
-        return list(plan_targets)
     return list(plan_targets)
 
 

@@ -588,7 +588,7 @@ def build_plan(
 
     # G32：op 级 wfids 归一化到 wfid 空间（自然 id → 稳定身份）—— plan 持久
     # 归一化后的 ops，preview 与 commit 的 derive 在同一目标空间上交集。
-    from app.services.feature_proposals.candidate import normalize_op_wfids as _norm_wfids
+    from app.services.feature_edit.identity import normalize_op_wfids as _norm_wfids
 
     derive_ops = _norm_wfids(
         [op for op in ops if isinstance(op, dict)][:MAX_OPS_PER_PLAN], preview_fc,

@@ -49,18 +49,25 @@ def apply_resolutions_to_ops(
     applied: List[Dict[str, Any]] = []
     rejected: List[Dict[str, Any]] = []
 
-    def _remove_field_from_ops(wfid: str, field: str) -> None:
+    def _remove_field_from_ops(wfid: str, field: str) -> bool:
+        """移除 (wfid, field) 写。plan 级 op（无 wfids）无法逐要素剥离 →
+        返回 False（调用方拒绝该裁决，防误伤全体目标；R1-P2-9）。"""
         nonlocal new_ops
+        touched = False
         for op in new_ops:
             if op.get("op") != "set_fields":
                 continue
             targets = op.get("wfids")
-            if isinstance(targets, list) and wfid not in targets:
+            if targets is None:
+                continue  # plan 级 —— 不碰（语义是全体目标）
+            if wfid not in targets:
                 continue
             fields = op.get("fields") or {}
             if field in fields:
                 fields.pop(field, None)
+                touched = True
         new_ops = [op for op in new_ops if not (op.get("op") == "set_fields" and not (op.get("fields") or {}))]
+        return touched
 
     def _remove_geometry_effect(wfid: str) -> None:
         """移除对该 wfid 的几何修改（几何 op 的 op 级 wfids 去掉该目标；
@@ -134,7 +141,15 @@ def apply_resolutions_to_ops(
 
         if kind == "field_value_conflict":
             if action == "keep_current":
-                _remove_field_from_ops(wfid, str(field))
+                if not _remove_field_from_ops(wfid, str(field)):
+                    rejected.append({
+                        "conflict_id": cid,
+                        "reason": (
+                            "the proposed write comes from a plan-level op (no wfids) — "
+                            "restrict the op to specific features before resolving per-feature"
+                        ),
+                    })
+                    continue
                 applied.append({"conflict_id": cid, "action": action,
                                 "effect": f"dropped proposed write on {wfid}.{field}"})
             elif action == "take_proposed":
@@ -185,8 +200,30 @@ def apply_resolutions_to_ops(
         elif kind in ("delete_update_conflict",):
             if action == "keep_current":
                 _remove_retire(wfid)
-                applied.append({"conflict_id": cid, "action": action,
-                                "effect": f"kept current modification; dropped delete of {wfid}"})
+                # R1-P1-4：退休集合不只来自 delete op —— split/merge 父也退役
+                # 该要素；keep_current 必须同时移除结构 op，否则裁决成为静默
+                # 空操作（merge 仍退役父并销毁用户保留的修改）。
+                structural_removed = False
+                pruned: List[Dict[str, Any]] = []
+                for op in new_ops:
+                    if op.get("op") == "split_feature" and op.get("wfid") == wfid:
+                        structural_removed = True
+                        continue
+                    if op.get("op") == "merge_features":
+                        # merge 父集来自 plan 级目标，无法部分剥离 —— 父涉及
+                        # 本冲突（conflicts 里该 wfid 的 delete_update 由 merge
+                        # 足迹产生）时整 op 移除。
+                        # merge 父集 = plan 级目标，无法部分剥离；该 wfid 的
+                        # retire 在 delete 剥离后只能来自 merge —— 整 op 移除。
+                        if any(o.get("op") == "merge_features" for o in new_ops):
+                            structural_removed = True
+                            continue
+                    pruned.append(op)
+                new_ops = pruned
+                effect = f"kept current modification; dropped delete of {wfid}"
+                if structural_removed:
+                    effect += "; retired the structural (split/merge) op on this parent"
+                applied.append({"conflict_id": cid, "action": action, "effect": effect})
             elif action == "take_proposed":
                 applied.append({"conflict_id": cid, "action": action,
                                 "effect": f"kept proposed delete of {wfid} (current modification will be overwritten by the explicit decision)"})
@@ -267,14 +304,15 @@ def _set_field_value(ops: List[Dict[str, Any]], wfid: str, field: str, value: An
 def _replace_geometry_in_ops(
     ops: List[Dict[str, Any]], wfid: str, geometry: Dict[str, Any],
 ) -> bool:
-    """把对 wfid 的几何写替换为给定几何（replace_geometry 优先）。"""
+    """把对 wfid 的几何写替换为给定几何。plan 级 replace_geometry（无
+    wfids，作用于全体目标）不可改写 → 返回 False 拒绝（R1-P2-9）。"""
     for op in ops:
         if op.get("op") == "replace_geometry":
             targets = op.get("wfids")
-            if targets is None or wfid in (targets or []):
+            if targets is None:
+                continue  # plan 级 —— 不碰
+            if wfid in targets:
                 op["geometry"] = geometry
-                if isinstance(targets, list) and wfid not in targets:
-                    targets.append(wfid)
                 return True
     ops.append({"op": "replace_geometry", "wfids": [wfid], "geometry": geometry})
     return True

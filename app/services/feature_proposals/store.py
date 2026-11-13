@@ -113,11 +113,11 @@ class ProposalStore:
             ch for ch in raw if ch not in ('\\', '/', ':', '*', '?', '"', '<', '>', '|', '\x00')
         )
         if not safe or safe in (".", ".."):
-            raise ProposalStoreError(f"invalid session id: {session_id!r}")
+            raise ProposalStoreError("invalid_session_id", f"invalid session id: {session_id!r}")
         d = (self.base_dir / safe / "feature_proposals").resolve()
         base_resolved = self.base_dir.resolve()
         if base_resolved not in d.parents:
-            raise ProposalStoreError(f"invalid session id: {session_id!r}")
+            raise ProposalStoreError("invalid_session_id", f"invalid session id: {session_id!r}")
         return d
 
     def _store_path(self, session_id: str) -> Path:
@@ -145,16 +145,24 @@ class ProposalStore:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (ValueError, OSError) as exc:
-            raise ProposalStoreCorrupt(f"proposal store corrupt for {session_id}: {exc}") from exc
+            raise ProposalStoreCorrupt(
+                "store_corrupt", f"proposal store corrupt for {session_id}: {exc}",
+            ) from exc
         if not isinstance(raw, dict) or raw.get("version") != _STORE_VERSION:
-            raise ProposalStoreCorrupt(f"proposal store version mismatch for {session_id}")
+            raise ProposalStoreCorrupt(
+                "store_version_mismatch", f"proposal store version mismatch for {session_id}",
+            )
         items = raw.get("proposals")
         if not isinstance(items, list):
-            raise ProposalStoreCorrupt(f"proposal store proposals missing for {session_id}")
+            raise ProposalStoreCorrupt(
+                "store_corrupt", f"proposal store proposals missing for {session_id}",
+            )
         try:
             proposals = [FeatureProposalRecord.model_validate(item) for item in items]
         except ValidationError as exc:
-            raise ProposalStoreCorrupt(f"proposal store schema invalid for {session_id}: {exc}") from exc
+            raise ProposalStoreCorrupt(
+                "store_schema_invalid", f"proposal store schema invalid for {session_id}: {exc}",
+            ) from exc
         raw_leases = raw.get(_LEASES_KEY)
         leases = (
             {str(k): str(v) for k, v in raw_leases.items()}
@@ -212,10 +220,11 @@ class ProposalStore:
             async with self._lock_for(session_id):
                 current, leases = await asyncio.to_thread(self._load_payload_sync, session_id)
                 if any(p.proposal_id == proposal.proposal_id for p in current):
-                    raise ProposalStoreError("proposal id already exists")
+                    raise ProposalStoreError("duplicate_proposal_id", "proposal id already exists")
                 if len(current) >= MAX_PROPOSALS_PER_SESSION:
                     raise ProposalStoreFull(
-                        f"session {session_id} already holds {MAX_PROPOSALS_PER_SESSION} proposals"
+                        "session_proposal_limit",
+                        f"session {session_id} already holds {MAX_PROPOSALS_PER_SESSION} proposals",
                     )
                 current.append(proposal)
                 await asyncio.to_thread(self._save_all_sync, session_id, current, leases)
@@ -259,7 +268,7 @@ class ProposalStore:
                 if updated is None:
                     return target
                 if not isinstance(updated, FeatureProposalRecord):
-                    raise ProposalStoreError("mutate fn must return FeatureProposalRecord")
+                    raise ProposalStoreError("mutate_contract", "mutate fn must return FeatureProposalRecord")
                 merged = [
                     updated if p.proposal_id == proposal_id else p for p in proposals
                 ]

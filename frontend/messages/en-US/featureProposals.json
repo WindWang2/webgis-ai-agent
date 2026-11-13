@@ -59,6 +59,8 @@
   "actionMerge": "Merge into data",
   "actionRebase": "Rebase",
   "actionWithdraw": "Withdraw",
+  "actionResolveRecovery": "Run recovery resolve",
+  "noticeRecoveryResolved": "Recovery resolved (evidence gate passed)",
   "actionRefresh": "Refresh",
   "recoveryTitle": "Merge outcome pending",
   "recoveryBody": "The merge was interrupted and the outcome could not be proven automatically. Compare the affected features against the candidate; blind retry is disabled.",

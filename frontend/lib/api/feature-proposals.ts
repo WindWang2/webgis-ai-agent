@@ -242,6 +242,15 @@ export async function getRecoveryView(proposalId: string): Promise<Record<string
   );
 }
 
+export async function resolveRecovery(proposalId: string): Promise<Record<string, unknown>> {
+  const s = session();
+  if (s == null) throw new Error('feature-proposals: no session');
+  return apiFetch<Record<string, unknown>>(
+    `${base(s.sessionId)}/${encodeURIComponent(proposalId)}/recovery/resolve`,
+    opts(s.ownerToken, { method: 'POST' }),
+  );
+}
+
 export async function createFeatureProposal(input: {
   ref_id: string;
   title?: string;

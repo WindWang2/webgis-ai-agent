@@ -34,26 +34,11 @@ def _natural_id_of(feature: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def natural_to_wfid_index(mat_fc: Any) -> Dict[str, str]:
-    """物化形态：自然键 + WFID → wfid（first-wins 同 resolve_feature_ids 语义）。
-
-    G24 把 `_wfid` 置 FEATURE_ID_KEYS 链首后，identity.resolve_feature_ids
-    对物化数据的自然键不再命中；提案域需要自然键 ↔ 稳定身份的双向锚定
-    （P14），这里显式重建该索引（物化不删除自然键，只是寻址优先级变化）。
-    """
-    out: Dict[str, str] = {}
-    for feature in (mat_fc.get("features") or []) if isinstance(mat_fc, dict) else []:
-        if not isinstance(feature, dict):
-            continue
-        props = feature.get("properties")
-        wfid = props.get("_wfid") if isinstance(props, dict) else None
-        if not isinstance(wfid, str):
-            continue
-        out.setdefault(wfid, wfid)
-        natural = _natural_id_of(feature)
-        if natural is not None:
-            out.setdefault(natural, wfid)
-    return out
+# G14 层共享的身份工具（R1-P3-5 分层：feature_edit 不依赖 feature_proposals）。
+from app.services.feature_edit.identity import (  # noqa: F401,E402
+    natural_to_wfid_index,
+    normalize_op_wfids,
+)
 
 
 def resolve_ids_on_payload(
@@ -134,39 +119,6 @@ def resolve_candidate_targets(
         )
     ordered = list(dict.fromkeys(wfid_map[i] for i in ids if i in wfid_map))
     return ordered, findings, mat_fc
-
-
-def normalize_op_wfids(
-    ops: List[Dict[str, Any]],
-    mat_fc: Any,
-) -> List[Dict[str, Any]]:
-    """op 级 wfids 自然 id → 解析后的稳定 wfid（deep copy，不改入参）。
-
-    derive_changes 的 target 交集在 **wfid 空间** 上做；调用方（build_plan /
-    evaluate_candidate）在求值前统一归一化 —— 解析失败的 id 原样保留，
-    由 feature_not_found 形状校验诚实拒绝。mat_fc 应为物化（预演）形态。
-    """
-    import copy as _copy
-
-    raw_ids: List[str] = []
-    for op in ops:
-        if isinstance(op, dict):
-            if isinstance(op.get("wfids"), list):
-                raw_ids.extend(str(w) for w in op["wfids"] if isinstance(w, str))
-            if isinstance(op.get("wfid"), str):
-                raw_ids.append(op["wfid"])  # split_feature 的单值目标
-    if not raw_ids:
-        return ops
-    wfid_map = natural_to_wfid_index(mat_fc)
-    normalized = _copy.deepcopy(ops)
-    for op in normalized:
-        if not isinstance(op, dict):
-            continue
-        if isinstance(op.get("wfids"), list):
-            op["wfids"] = [wfid_map.get(str(w), str(w)) for w in op["wfids"]]
-        if isinstance(op.get("wfid"), str):
-            op["wfid"] = wfid_map.get(str(op["wfid"]), op["wfid"])
-    return normalized
 
 
 def materialize_preview(fc: Any, dataset_fingerprint: str) -> Tuple[Any, bool]:

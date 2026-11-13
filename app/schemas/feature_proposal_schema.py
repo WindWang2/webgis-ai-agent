@@ -35,7 +35,11 @@ class BaseEvidence(BaseModel):
 
 
 class ProposalResolution(BaseModel):
-    """一项冲突的显式裁决（产生新 proposal revision；旧批准失效）。"""
+    """一项冲突的显式裁决（产生新 proposal revision；旧批准失效）。
+
+    decided_by/decided_at 可选：REST 面由服务端从 auth 上下文填充（R1-P1-3
+    —— 客户端只提交 {conflict_id, action, ...}，裁决者身份不由客户端声明）。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -44,8 +48,8 @@ class ProposalResolution(BaseModel):
     # use_new_value 时必填；字段裁决是 {field: value}，几何裁决是 GeoJSON geometry。
     new_fields: Optional[Dict[str, Any]] = None
     new_geometry: Optional[Dict[str, Any]] = None
-    decided_by: str                        # actor id（服务端裁决）
-    decided_at: float
+    decided_by: Optional[str] = None
+    decided_at: Optional[float] = None
 
 
 class ProposalDecision(BaseModel):
@@ -109,6 +113,9 @@ class FeatureProposalRecord(BaseModel):
     status: str
     # ── 候选内容（revision N 的真相；内容变更 = revision+1 + 新 digest）──
     ops: List[Dict[str, Any]] = Field(min_length=1, max_length=MAX_OPS_PER_PROPOSAL)
+    # plan 级目标（merge 父集 / 共享目标）：创建/更新时归一化到 wfid 空间后
+    # 持久（R1-P1-5 —— feature_ids 此前被接受但静默丢弃，merge 提案不可创建）。
+    feature_ids: Optional[List[str]] = Field(default=None, max_length=200)
     op_seed: str                            # 服务端生成并持久（child _wfid 跨重载稳定）
     candidate_digest: str                   # sha256(ops + resolutions + base 证据摘要)
     base: BaseEvidence

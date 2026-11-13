@@ -60,6 +60,20 @@ def _now() -> float:
     return time.time()
 
 
+def _append_decision(rec: FeatureProposalRecord, decision: ProposalDecision) -> None:
+    """decisions 有界追加（R1-P0-1：pydantic max_length 只在加载时校验 ——
+    无界 append 会让下一次存储读取抛 ValidationError → 整会话 500）。"""
+    from app.services.feature_proposals.contracts import MAX_DECISIONS_PER_PROPOSAL
+
+    if len(rec.decisions) >= MAX_DECISIONS_PER_PROPOSAL:
+        raise FeatureProposalBlocked(
+            "decision_history_full",
+            f"proposal already holds {MAX_DECISIONS_PER_PROPOSAL} decisions — "
+            "withdraw it and create a fresh proposal",
+        )
+    rec.decisions.append(decision)
+
+
 def _new_proposal_id() -> str:
     return f"fpr-{uuid.uuid4().hex[:12]}"
 
@@ -145,21 +159,66 @@ async def create_proposal(
     revision_now = int(descriptor.get("content_revision") or 0)
     fingerprint = compute_payload_fingerprint(payload)
     fc = extract_payload_fc(payload)
-    # op 级 wfids 归一化到稳定身份空间：物化后 _wfid 置于 FEATURE_ID_KEYS 链首
-    # （G24），自然 id 不再寻址 —— 创建时（在 base 快照同一形态上）归一化并
-    # 持久 wfid 形态，diff/rebase/merge 全程一致（P14 防线：不按数组位置迁移）。
+    # op 级 wfids 与 plan 级 feature_ids 一并归一化到稳定身份空间：物化后
+    # `_wfid` 置于 FEATURE_ID_KEYS 链首（G24），自然 id 不再寻址 —— 创建时
+    # （在 base 快照同一形态上）归一化并持久 wfid 形态，diff/rebase/merge
+    # 全程一致（P14 防线：不按数组位置迁移）。feature_ids 是 merge 父集/
+    # 共享目标的 plan 级载体（R1-P1-5：此前被静默丢弃 → merge 提案不可创建）。
+    normalized_feature_ids: Optional[List[str]] = None
     if fc is not None:
         from app.services.feature_proposals.candidate import normalize_op_wfids
 
-        _resolved, resolve_missing, mat_fc = resolve_candidate_targets(
+        ordered, resolve_missing, mat_fc = resolve_candidate_targets(
             payload, ops, dataset_fingerprint=fingerprint,
+            requested_ids=feature_ids,
         )
         if resolve_missing:
             raise FeatureProposalBlocked(
                 "feature_not_found", "op targets not resolvable on the current data",
                 {"missing": resolve_missing[:4]},
             )
+        # 目标预算（R1-P2-8）：解析后的目标并集 ≤ MAX_PROPOSAL_TARGETS ——
+        # 否则 diff 分类与 merge 时 G14 plan 截断（200）会静默分叉。
+        from app.services.feature_proposals.contracts import MAX_PROPOSAL_TARGETS
+
+        if len(ordered) > MAX_PROPOSAL_TARGETS:
+            raise FeatureProposalBlocked(
+                "target_limit_exceeded",
+                f"proposal targets exceed the budget ({len(ordered)} > {MAX_PROPOSAL_TARGETS})",
+                {"limit": MAX_PROPOSAL_TARGETS},
+            )
         ops = normalize_op_wfids(ops, mat_fc)
+        # feature_ids 归一化：requested→wfid 映射（保持 ordered 顺序语义）。
+        if feature_ids:
+            from app.services.feature_proposals.candidate import resolve_ids_on_payload
+
+            fmap, _ = resolve_ids_on_payload(payload, [str(i) for i in feature_ids], fingerprint)
+            normalized_feature_ids = list(dict.fromkeys(
+                fmap.get(str(i), str(i)) for i in feature_ids
+            ))
+        # 落地检测（R1-P1-5）：候选在 base 形态上必须可求值 —— 死提案（如
+        # merge 父集不足）在创建时拒绝，而不是产出不可批准的 blocked 候选。
+        dep_payloads: Dict[str, Any] = {}
+        for op in ops:
+            if op.get("op") == "snap_to_ref" and isinstance(op.get("ref_id"), str):
+                from app.services.session_data import session_data_manager
+
+                dep = await session_data_manager.get(session_id, op["ref_id"])
+                if dep is not None:
+                    dep_payloads[op["ref_id"]] = dep
+        from app.services.feature_proposals.candidate import evaluate_candidate
+        from app.services.feature_edit.datasets import extract_geometry_type_declaration
+
+        _deltas, eval_findings, _lineage = evaluate_candidate(
+            mat_fc, ops, ordered, op_seed="fpr-precheck",
+            target_payloads=dep_payloads,
+            geometry_type=extract_geometry_type_declaration(payload),
+        )
+        if eval_findings:
+            raise FeatureProposalBlocked(
+                "invalid_ops", "proposal ops do not evaluate on the current data",
+                {"findings": eval_findings[:6]},
+            )
     materialized = fc is not None and has_wfids(fc)
     base = capture_base_snapshot(
         session_id, ref_id, payload,
@@ -185,6 +244,7 @@ async def create_proposal(
         revision=1,
         status=SUBMITTED if submit else DRAFT,
         ops=ops,
+        feature_ids=normalized_feature_ids,
         op_seed=op_seed,
         candidate_digest=digest,
         base=base,
@@ -324,6 +384,7 @@ async def get_diff(
     base_mat, _ = materialize_preview(base_fc, p.base.fingerprint)
     ordered, _missing, _mat = resolve_candidate_targets(
         base_payload, p.ops, dataset_fingerprint=p.base.fingerprint,
+        requested_ids=p.feature_ids,
     )
     from app.services.feature_proposals.candidate import evaluate_candidate
 
@@ -426,10 +487,52 @@ async def update_proposal(
     findings = validate_proposal_ops(new_ops)
     if findings:
         raise FeatureProposalBlocked("invalid_ops", "proposal ops rejected", {"findings": findings})
+    # 归一化到 base 身份空间（ops 可能带自然 id；base 是稳定的身份锚）。
+    base_payload = load_base_snapshot(p0.base)
+    new_feature_ids: Optional[List[str]] = p0.feature_ids
+    if extract_payload_fc(base_payload) is not None:
+        from app.services.feature_proposals.candidate import normalize_op_wfids
+
+        ids_for_resolve = feature_ids if feature_ids is not None else p0.feature_ids
+        ordered, resolve_missing, mat_fc = resolve_candidate_targets(
+            base_payload, new_ops, dataset_fingerprint=p0.base.fingerprint,
+            requested_ids=ids_for_resolve,
+        )
+        if resolve_missing:
+            raise FeatureProposalBlocked(
+                "feature_not_found", "op targets not resolvable on the proposal base",
+                {"missing": resolve_missing[:4]},
+            )
+        from app.services.feature_proposals.contracts import MAX_PROPOSAL_TARGETS
+
+        if len(ordered) > MAX_PROPOSAL_TARGETS:
+            raise FeatureProposalBlocked(
+                "target_limit_exceeded", "proposal targets exceed the budget",
+                {"limit": MAX_PROPOSAL_TARGETS},
+            )
+        new_ops = normalize_op_wfids(new_ops, mat_fc)
+        if feature_ids is not None:
+            from app.services.feature_proposals.candidate import resolve_ids_on_payload
+
+            fmap, _ = resolve_ids_on_payload(
+                base_payload, [str(i) for i in feature_ids], p0.base.fingerprint,
+            )
+            new_feature_ids = list(dict.fromkeys(
+                fmap.get(str(i), str(i)) for i in feature_ids
+            )) or None
 
     def _mutate(p: FeatureProposalRecord) -> FeatureProposalRecord:
+        # R1-P2-7：锁内复核状态（TOCTOU —— 并发 withdraw/reject 不得被覆盖）。
+        if p.status not in (DRAFT, SUBMITTED, CHANGES_REQUESTED, APPROVED):
+            raise FeatureProposalConflict(
+                "state_conflict",
+                f"cannot update a proposal in status {p.status} (changed concurrently)",
+                {"current": p.status},
+            )
         if ops is not None:
             p.ops = new_ops
+        if feature_ids is not None:
+            p.feature_ids = new_feature_ids
         if title is not None:
             p.title = title.strip() or p.title
         p.revision += 1
@@ -447,7 +550,7 @@ async def update_proposal(
             or p.approval.approved_revision != p.revision
         ):
             p.approval = None
-        p.decisions.append(ProposalDecision(
+        _append_decision(p, ProposalDecision(
             action="rebase" if ops is None else "submit",
             actor_kind=actor_kind, actor_id=actor_id, at=_now(),
             approved_revision=p.revision,
@@ -473,6 +576,11 @@ async def submit_resolutions(
         raise FeatureProposalBlocked(
             "state_invalid", f"resolutions require status submitted/changes_requested, got {p.status}"
         )
+    if len(p.resolutions) + len(resolutions) > 64:
+        raise FeatureProposalBlocked(
+            "resolution_history_full",
+            "resolution history is full — withdraw and create a fresh proposal",
+        )
     report = await _current_report(session_id, p)
     new_ops, applied, rejected = apply_resolutions_to_ops(
         p.ops, resolutions, report.get("conflicts") or [], base_payload=load_base_snapshot(p.base),
@@ -488,13 +596,38 @@ async def submit_resolutions(
             "resolution_emptied",
             "all proposed changes were dropped — withdraw the proposal instead",
         )
+    # R1-P0-1：裁决可能追加 op（use_new_value 的 _set_field_value）—— 重新
+    # 校验 ops 上限（pydantic 只在加载时校验，无界 append 会破坏存储）。
+    post_findings = validate_proposal_ops(new_ops)
+    if post_findings:
+        raise FeatureProposalBlocked(
+            "resolution_rejected",
+            "resolutions would produce an invalid op set (too many ops) — "
+            "reduce the proposal first",
+            {"findings": post_findings[:4]},
+        )
+    # 裁决者身份由服务端上下文填充（R1-P1-3：客户端不声明 decided_by）。
+    stamped: List[Dict[str, Any]] = []
+    for r in resolutions:
+        item = dict(r)
+        if not item.get("decided_by"):
+            item["decided_by"] = actor_id
+        if not item.get("decided_at"):
+            item["decided_at"] = _now()
+        stamped.append(item)
     new_resolutions = p.resolutions + [
-        ProposalResolution.model_validate(r) for r in resolutions
+        ProposalResolution.model_validate(r) for r in stamped
     ]
 
     def _mutate(rec: FeatureProposalRecord) -> FeatureProposalRecord:
+        if rec.status not in (SUBMITTED, CHANGES_REQUESTED):
+            raise FeatureProposalConflict(
+                "state_conflict",
+                f"cannot resolve a proposal in status {rec.status} (changed concurrently)",
+                {"current": rec.status},
+            )
         rec.ops = new_ops
-        rec.resolutions = new_resolutions[-64:]
+        rec.resolutions = new_resolutions
         rec.revision += 1
         rec.candidate_digest = candidate_digest(
             rec.ops, [r.model_dump() for r in rec.resolutions],
@@ -503,7 +636,7 @@ async def submit_resolutions(
         )
         rec.updated_at = _now()
         rec.approval = None  # 内容变了 → 重新批准
-        rec.decisions.append(ProposalDecision(
+        _append_decision(rec, ProposalDecision(
             action="resolve", actor_kind=actor_kind, actor_id=actor_id, at=_now(),
             approved_revision=rec.revision,
             detail={"applied": applied[:16]},
@@ -671,11 +804,12 @@ async def decide(
         from app.services.session_data import session_data_manager
 
         current_payload = await session_data_manager.get(session_id, p.ref_id)
+        cur_descriptor = await session_data_manager.get_ref_descriptor(session_id, p.ref_id) or {}
         detail = {
             "current_fingerprint_at_approval": (
                 compute_payload_fingerprint(current_payload) if current_payload is not None else None
             ),
-            "current_revision_at_approval": p.base.content_revision,
+            "current_revision_at_approval": int(cur_descriptor.get("content_revision") or 0),
             "ops_count": len(p.ops),
         }
         approval_payload = ProposalDecision(
@@ -685,13 +819,20 @@ async def decide(
         )
 
     def _mutate(rec: FeatureProposalRecord) -> FeatureProposalRecord:
+        # R1-P2-7：锁内复核迁移（并发 withdraw/reject 不得被覆盖出非法终态复活）。
+        if not can_transition(rec.status, target_status):
+            raise FeatureProposalConflict(
+                "state_conflict",
+                f"cannot {action} a proposal in status {rec.status} (changed concurrently)",
+                {"current": rec.status, "target": target_status},
+            )
         rec.status = target_status
         rec.updated_at = _now()
         decision = approval_payload or ProposalDecision(
             action=action.replace("request_changes", "request_changes"),
             actor_kind=actor_kind, actor_id=actor_id, at=_now(), note=note,
         )
-        rec.decisions.append(decision)
+        _append_decision(rec, decision)
         if action == "approve":
             rec.approval = decision
         if action == "withdraw":
@@ -727,6 +868,14 @@ async def merge(
             "resolve-recovery (evidence-gated) before any retry",
             {"proposal_id": proposal_id},
         )
+    if p.status == MERGING:
+        # R1-P0-2：进程在 merging 窗口内硬崩溃（kill -9/断电）后没有进程内
+        # 异常处理可走 —— 这里把 merging 路由到恢复判据（executed → 完成为
+        # merged；not_executed → 回 approved；unprovable → recovery_required），
+        # 提案不再永久卡死，且绝不盲目重执行。
+        return await _settle_failed_merge(
+            session_id, proposal_id, p, actor_kind, actor_id,
+        )
     if not can_transition(p.status, MERGING):
         raise FeatureProposalConflict(
             "state_conflict",
@@ -736,11 +885,18 @@ async def merge(
 
     # 第一步：approved → merging（租约同写；attempt 记录）。
     def _to_merging(rec: FeatureProposalRecord) -> FeatureProposalRecord:
+        # R1-P2-7：锁内复核（并发 withdraw/reject 不得被 merging 覆盖复活）。
+        if not can_transition(rec.status, MERGING):
+            raise FeatureProposalConflict(
+                "state_conflict",
+                f"merge requires approved status, got {rec.status} (changed concurrently)",
+                {"current": rec.status},
+            )
         rec.status = MERGING
         rec.merge_attempts += 1
         rec.merge = bridge_merge_outcome(rec, status="unknown")
         rec.updated_at = _now()
-        rec.decisions.append(ProposalDecision(
+        _append_decision(rec, ProposalDecision(
             action="merge_start", actor_kind=actor_kind, actor_id=actor_id, at=_now(),
             approved_revision=rec.revision, approved_digest=rec.candidate_digest,
         ))
@@ -836,7 +992,7 @@ async def _finalize_merged(
             rec.merge.finished_at = _now()
             rec.merge.receipt = receipt
             rec.merge.recovery_state = "replayable"
-        rec.decisions.append(ProposalDecision(
+        _append_decision(rec, ProposalDecision(
             action="merge_done", actor_kind=actor_kind, actor_id=actor_id, at=_now(),
             approved_revision=rec.revision, approved_digest=rec.candidate_digest,
             detail={"entry_seq": receipt.get("entry_seq"),
@@ -856,9 +1012,11 @@ async def _finalize_merged(
 async def recovery_view(session_id: str, proposal_id: str) -> Dict[str, Any]:
     """recovery_required 的只读证据视图（受影响对象/原候选/当前版本/缺失证据）。"""
     p = await _get_or_404(session_id, proposal_id)
-    if p.status != RECOVERY_REQUIRED:
+    # merging 同样可看（R1-P0-2：硬崩溃后 merging 是 recovery 的前置态）。
+    if p.status not in (RECOVERY_REQUIRED, MERGING):
         raise FeatureProposalBlocked(
-            "state_invalid", f"recovery view requires recovery_required, got {p.status}"
+            "state_invalid",
+            f"recovery view requires recovery_required/merging, got {p.status}",
         )
     verdict, receipt = await bridge.assess_recovery(p, session_id=session_id)
     return {
@@ -895,9 +1053,10 @@ async def resolve_recovery(
     - unprovable → 拒绝（继续阻断；人工核对后另行新建提案）。
     """
     p = await _get_or_404(session_id, proposal_id)
-    if p.status != RECOVERY_REQUIRED:
+    if p.status not in (RECOVERY_REQUIRED, MERGING):
         raise FeatureProposalBlocked(
-            "state_invalid", f"resolve-recovery requires recovery_required, got {p.status}"
+            "state_invalid",
+            f"resolve-recovery requires recovery_required/merging, got {p.status}",
         )
     verdict, receipt_hit = await bridge.assess_recovery(p, session_id=session_id)
     if verdict == "executed" and receipt_hit is not None:
@@ -908,7 +1067,7 @@ async def resolve_recovery(
         def _back(rec: FeatureProposalRecord) -> FeatureProposalRecord:
             rec.status = APPROVED
             rec.updated_at = _now()
-            rec.decisions.append(ProposalDecision(
+            _append_decision(rec, ProposalDecision(
                 action="recover", actor_kind=actor_kind, actor_id=actor_id, at=_now(),
                 detail={"verdict": "not_executed"},
             ))
@@ -929,7 +1088,15 @@ async def add_comment(
     session_id: str, proposal_id: str, *,
     body: str, author_kind: str, author_id: str,
 ) -> Dict[str, Any]:
+    from app.services.feature_proposals.contracts import MAX_COMMENTS_PER_PROPOSAL
+
     def _mutate(rec: FeatureProposalRecord) -> FeatureProposalRecord:
+        # R1-P0-1：comments 上限在变更内强制（pydantic 只在加载时校验）。
+        if len(rec.comments) >= MAX_COMMENTS_PER_PROPOSAL:
+            raise FeatureProposalBlocked(
+                "comment_limit_reached",
+                f"proposal already holds {MAX_COMMENTS_PER_PROPOSAL} comments",
+            )
         rec.comments.append(ProposalComment(
             comment_id=_new_comment_id(), author_kind=author_kind, author_id=author_id,
             body=body, at=_now(), revision=rec.revision,
@@ -989,18 +1156,27 @@ async def withdraw(
         session_id, proposal_id, action="withdraw", note=note,
         actor_kind=actor_kind, actor_id=actor_id,
     )
-    # 快照引用释放：标记 released；物理 blob 是 CAS（内容寻址），仅当没有
-    # 其他活跃提案引用同一 key 时才可删（共享 blob 不得因一项提案回收，P27）。
+    # 快照引用释放：先在锁内标记 released（同一原子写），再查共享 ——
+    # list_snapshot_keys 跳过已 released 提案，因此本提案自身的 key 不再
+    # 出现在 live 集（R1-P2-6：此前自引用导致唯一引用的 blob 永不删除）。
+    # 物理 blob 是 CAS（内容寻址），仅当没有其他活跃提案引用同一 key 时
+    # 才删（共享 blob 不得因一项提案回收，P27）。
     p = await _get_or_404(session_id, proposal_id)
     if p.status == WITHDRAWN and not p.snapshot_released:
-        live_keys = await proposal_store.list_snapshot_keys(session_id)
-        key = p.base.snapshot_key
-        still_referenced = any(k == key for k in live_keys)
         def _release(rec: FeatureProposalRecord) -> FeatureProposalRecord:
+            if rec.status != WITHDRAWN:
+                raise FeatureProposalConflict(
+                    "state_conflict",
+                    f"cannot release a proposal in status {rec.status}",
+                    {"current": rec.status},
+                )
             rec.snapshot_released = True
             rec.updated_at = _now()
             return rec
         await proposal_store.mutate_proposal(session_id, proposal_id, _release)
+        live_keys = await proposal_store.list_snapshot_keys(session_id)
+        key = p.base.snapshot_key
+        still_referenced = key in live_keys
         deleted = False
         if not still_referenced:
             from app.services.feature_proposals.snapshot import _blob_store
