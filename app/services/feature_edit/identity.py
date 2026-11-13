@@ -11,7 +11,7 @@ from __future__ import annotations
 from app.contracts.geojson import GeoJSONFeatureCollection, GeoJSONFeature
 
 import hashlib
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from app.services.feature_edit.contracts import FEATURE_ID_KEYS, WFID_PROP
 
@@ -178,3 +178,68 @@ def resolve_feature_ids(fc: GeoJSONFeatureCollection, requested: List[str]) -> D
         if found_index is not None and found_index in wfid_by_index:
             out[str(rid)] = wfid_by_index[found_index]
     return out
+
+
+def natural_to_wfid_index(fc: GeoJSONFeatureCollection) -> Dict[str, str]:
+    """物化 fc 的自然键 + WFID → wfid 索引（first-wins）。
+
+    G24 把 `_wfid` 置 FEATURE_ID_KEYS 链首后 resolve_feature_ids 对物化
+    数据的自然键不再命中；op 级目标限定（G32）需要自然键 ↔ 稳定身份的
+    双向锚定 —— 物化不删除自然键，只是寻址优先级变化。
+    """
+    out: Dict[str, str] = {}
+    for feature in fc.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        props = feature.get("properties")
+        wfid = props.get(WFID_PROP) if isinstance(props, dict) else None
+        if not isinstance(wfid, str):
+            continue
+        out.setdefault(wfid, wfid)
+        # 自然键链显式跳过 _wfid（R2-1）：resolve_feature_id 命中链首的
+        # WFID 后短路，物化后仅存 properties 级自然键（OBJECTID 等）的
+        # 要素将不被索引 —— 这里沿 FEATURE_ID_KEYS 逐键提取（顶层 id 优先）。
+        top = feature.get("id")
+        natural = str(top) if isinstance(top, (str, int)) and not isinstance(top, bool) else None
+        if natural is None and isinstance(props, dict):
+            for key in FEATURE_ID_KEYS:
+                if key == WFID_PROP:
+                    continue
+                value = props.get(key)
+                if isinstance(value, (str, int)) and not isinstance(value, bool):
+                    natural = str(value)
+                    break
+        if natural is not None and natural != wfid:
+            out.setdefault(natural, wfid)
+    return out
+
+
+def normalize_op_wfids(
+    ops: List[Dict[str, Any]], mat_fc: GeoJSONFeatureCollection,
+) -> List[Dict[str, Any]]:
+    """op 级 wfids 自然 id → 稳定 wfid（deep copy，不改入参；G32）。
+
+    求值的 target 交集在 wfid 空间上做；解析失败的 id 原样保留（由
+    feature_not_found 形状校验诚实拒绝）。mat_fc 应为物化（预演）形态。
+    """
+    import copy as _copy
+
+    raw_ids: List[str] = []
+    for op in ops:
+        if isinstance(op, dict):
+            if isinstance(op.get("wfids"), list):
+                raw_ids.extend(str(w) for w in op["wfids"] if isinstance(w, str))
+            if isinstance(op.get("wfid"), str):
+                raw_ids.append(op["wfid"])  # split_feature 单值目标
+    if not raw_ids:
+        return ops
+    wfid_map = natural_to_wfid_index(mat_fc)
+    normalized = _copy.deepcopy(ops)
+    for op in normalized:
+        if not isinstance(op, dict):
+            continue
+        if isinstance(op.get("wfids"), list):
+            op["wfids"] = [wfid_map.get(str(w), str(w)) for w in op["wfids"]]
+        if isinstance(op.get("wfid"), str):
+            op["wfid"] = wfid_map.get(str(op["wfid"]), op["wfid"])
+    return normalized

@@ -1139,6 +1139,9 @@ app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"]
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
 app.include_router(situation_views_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0285 situation/turn-chain 只读视图
 app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对话"])  # /goal 03 feature editing
+# G32：持久要素变更提案与冲突审阅（agent 起草 / owner 审阅批准 / 真实提交桥）。
+from app.api.routes import feature_proposals as feature_proposals_routes  # noqa: E402
+app.include_router(feature_proposals_routes.router, prefix="/api/v1", tags=["AI对话"])
 # ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
 app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["AI对话"])
