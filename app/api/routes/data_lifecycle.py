@@ -206,7 +206,10 @@ def run_assess(
     # 全局枚举并拿到他人 object_id/文件路径）。
     owner_scopes = _owner_scope_values(user)
     with SessionLocal() as db:
-        summary = assess(db, persist=body.persist, owner_scopes=owner_scopes)
+        summary = assess(
+            db, persist=body.persist, owner_scopes=owner_scopes,
+            org_id=user.get("org_id"),
+        )
     return {"success": True, "summary": summary}
 
 
@@ -221,7 +224,14 @@ def list_policies(_user: dict = Depends(get_current_user)) -> dict:
 
     with SessionLocal() as db:
         ensure_defaults(db)
+        org = _user.get("org_id")
         rows = db.query(LifecyclePolicy).order_by(LifecyclePolicy.name).all()
+        selected: Dict[str, Any] = {}
+        for row in rows:
+            if row.org_id is None:
+                selected.setdefault(row.name, row)
+            elif org not in (None, "") and row.org_id == org:
+                selected[row.name] = row
         return {
             "success": True,
             "policies": [
@@ -234,7 +244,7 @@ def list_policies(_user: dict = Depends(get_current_user)) -> dict:
                     "enabled": p.enabled,
                     "params": p.params,
                 }
-                for p in rows
+                for p in (selected[name] for name in sorted(selected))
             ],
         }
 
@@ -262,10 +272,13 @@ def upsert_policy(
             status_code=400,
             detail=f"kind '{body.kind}' 在 V9 只支持 observe（真实删除走 lakehouse 自有 GC 保护面）",
         )
+    org = _admin.get("org_id")
+    if org in (None, ""):
+        raise HTTPException(status_code=403, detail="org_context_required")
     with SessionLocal() as db:
-        row = db.query(LifecyclePolicy).filter_by(name=name).one_or_none()
+        row = db.query(LifecyclePolicy).filter_by(name=name, org_id=org).one_or_none()
         if row is None:
-            row = LifecyclePolicy(name=name[:64], kind=body.kind)
+            row = LifecyclePolicy(name=name[:64], kind=body.kind, org_id=org)
             db.add(row)
         row.kind = body.kind
         row.action = body.action

@@ -76,9 +76,16 @@ def _visible_template_or_404(db: Any, template_id: str, user: Any) -> Cartograph
 
 
 def _can_write(tmpl: Any, user: Any) -> bool:
-    """写谓词：admin 或模板 creator（匿名永不通过）。"""
-    user_id, _org_id, role = _actor_ctx(user)
-    if role == "admin":
+    """写谓词：同组织 admin，或模板 creator。内置模板只读；admin 不跨租户。"""
+    user_id, org_id, role = _actor_ctx(user)
+    if getattr(tmpl, "is_builtin", False):
+        return False
+    if (
+        role == "admin"
+        and org_id is not None
+        and tmpl.org_id is not None
+        and tmpl.org_id == org_id
+    ):
         return True
     return user_id is not None and str(tmpl.creator_id) == str(user_id)
 

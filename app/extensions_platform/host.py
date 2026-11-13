@@ -1063,6 +1063,7 @@ class ExtensionHost:
             max_cpu_seconds=execution.max_cpu_seconds,
             broker_handler=self._make_broker_handler(record.extension_id),
             isolation_backend=self._policy.isolation_backend,
+            max_output_bytes=execution.max_output_bytes,
             stream_window=min(
                 self._policy.stream_window,
                 getattr(execution, "stream_window", self._policy.stream_window),
@@ -1159,7 +1160,22 @@ class ExtensionHost:
                 kwargs.update(tier=1, domains=[], side_effect="unclassified",
                               required_permission="model_provider")
                 description = provider.description
-            proxy = self._make_worker_proxy(record, worker, projected, execution.call_timeout_s)
+            if self._tool_registry.has(projected):
+                worker.shutdown()
+                return self._fail_worker_activation(
+                    record,
+                    warnings + ledger.rollback(),
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
+                        f"tool {projected!r} already registered "
+                        "(core tools can never be shadowed)",
+                        extension_id=record.extension_id,
+                    ),
+                )
+            proxy = self._make_worker_proxy(
+                record, worker, projected, execution.call_timeout_s,
+                execution.max_output_bytes,
+            )
             try:
                 self._tool_registry.register(projected, description, proxy, **kwargs)
             except Exception as exc:  # noqa: BLE001 - 归一为投影失败
@@ -1173,7 +1189,14 @@ class ExtensionHost:
                         extension_id=record.extension_id,
                     ),
                 )
-            ledger.record("tool", projected, lambda n=projected: self._tool_registry.unregister(n))
+
+            def _undo_projected_tool(n: str = projected, owned: Any = proxy) -> bool:
+                # 只撤自己的投影。同名位置上若已是别的实现（核心工具），停用不得删掉它。
+                if self._tool_registry.get(n) is not owned:
+                    return True
+                return self._tool_registry.unregister(n)
+
+            ledger.record("tool", projected, _undo_projected_tool)
             logger.info("extension %s projected worker tool %s", record.extension_id, projected)
         # V3（ADR-0119）：worker 化声明节投影（经同一台账，失败逆序回滚）。
         try:
@@ -1483,14 +1506,18 @@ class ExtensionHost:
         return audit.snapshot()
 
     def _make_worker_proxy(
-        self, record: ExtensionRecord, worker: Any, projected: str, call_timeout_s: float
+        self, record: ExtensionRecord, worker: Any, projected: str, call_timeout_s: float,
+        max_output_bytes: int | None = None,
     ) -> Any:
         """生成宿主侧工具代理：转发到 worker，崩溃/超时触发隔离语义。"""
         host = self
 
         def _worker_proxy(**kwargs: Any) -> Any:
             try:
-                return worker.call(projected, kwargs, timeout=call_timeout_s)
+                return worker.call(
+                    projected, kwargs, timeout=call_timeout_s,
+                    max_output_bytes=max_output_bytes,
+                )
             except ExtensionPlatformError as exc:
                 if exc.diagnostic.code in (
                     DiagnosticCode.WORKER_CRASHED,

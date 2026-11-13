@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import collections
 import os
 import queue
+import re
 import subprocess
 import tempfile
 import sys
@@ -27,16 +29,67 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ..diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
+from ..manifest import MAX_WORKER_OUTPUT_BYTES
 from .stderr_capture import StderrCapture
 from .protocol import (
+    FRAME_MAX_BYTES,
     WORKER_PROTOCOL_VERSION,
     ProtocolError,
     decode_frame,
     error_payload,
     iter_frames_bounded,
     make_handshake,
+    read_frame_limit,
     write_frame,
 )
+
+# 空闲时允许入队的控制帧。result / stream_* / broker_request 在非 in_flight
+# 时是协议违规（否则解码后的帧会在两次调用之间堆在宿主里）。
+_CONTROL_FRAME_TYPES = frozenset({"handshake_ok", "handshake_failed", "bye", "error"})
+_DATA_FRAME_TYPES = frozenset({
+    "result", "stream_frame", "stream_start", "stream_end", "broker_request",
+})
+_IDLE_CONTROL_MAX_BYTES = 1024 * 1024
+_TYPE_RE = re.compile(br'"type"\s*:\s*"([A-Za-z0-9_]+)"')
+
+
+def _peek_frame_type(line: bytes) -> Optional[str]:
+    match = _TYPE_RE.search(line[:4096])
+    if match is None:
+        return None
+    return match.group(1).decode("ascii", "ignore")
+
+
+def _line_is_idle_violation(line: bytes) -> bool:
+    """未在调用中：超大帧或已知数据帧不解码、不入队。"""
+    if len(line) > _IDLE_CONTROL_MAX_BYTES:
+        return True
+    kind = _peek_frame_type(line)
+    return kind in _DATA_FRAME_TYPES
+
+
+class _FrameByteBudget:
+    """队列里原始帧字节的累计上界。单读者 reserve，消费者 release_one。"""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = max(1, int(limit))
+        self.used = 0
+        self._sizes: collections.deque[int] = collections.deque()
+        self._lock = threading.Lock()
+
+    def try_reserve(self, n: int) -> bool:
+        with self._lock:
+            if self.used + n > self.limit:
+                return False
+            self.used += n
+            self._sizes.append(n)
+            return True
+
+    def release_one(self) -> None:
+        with self._lock:
+            if not self._sizes:
+                return
+            self.used = max(0, self.used - self._sizes.popleft())
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -101,6 +154,7 @@ class WorkerProcess:
         broker_handler: Optional[BrokerHandler] = None,
         isolation_backend: str = "process",
         stream_window: int = 16,
+        max_output_bytes: Optional[int] = None,
     ) -> None:
         self._pack_dir = Path(pack_dir)
         self._extension_id = extension_id
@@ -117,14 +171,14 @@ class WorkerProcess:
         # V3（ADR-0119）：isolation backend（process=V2；bubblewrap=netns）。
         self._isolation_backend = isolation_backend
         self._stream_window = max(1, int(stream_window))
+        self._max_output_bytes = None if max_output_bytes is None else int(max_output_bytes)
+        self._max_frame_bytes = read_frame_limit(self._max_output_bytes)
         self._proc: Optional[subprocess.Popen] = None
-        # Round-2 M-6：**有界**帧队列（64 帧 ≈ 信用窗口的 4 倍余量）。
-        # 恶意/被击穿 worker 无视信用洪泛时，reader 线程在满队列上阻塞 →
-        # 管道背压 → worker 写入阻塞：宿主内存上界 = 64 × max_frame_bytes，
-        # 而非无界 OOM 面。守序 worker 不受影响（消费节奏 >> 生产节奏）。
-        # #1709：上界还对**单行**成立——reader 按字节累计上限拆帧
-        # （见 _reader_loop / iter_frames_bounded），不依赖对端逐帧换行。
-        self._frames: "queue.Queue[Any]" = queue.Queue(maxsize=64)
+        # 帧队列按原始字节计预算（约 2 × max_output_bytes），不再按帧数。
+        # 空闲时的数据帧直接判协议违规并 kill，避免解码对象在队列里增长。
+        # #1709：单行仍由 iter_frames_bounded 按 max_frame_bytes 截断。
+        self._frame_budget = _FrameByteBudget(self._byte_budget_limit())
+        self._frames: "queue.Queue[Any]" = queue.Queue()
         self._reader: Optional[threading.Thread] = None
         self._stderr_capture: Optional[StderrCapture] = None
         self._lock = threading.RLock()
@@ -140,6 +194,27 @@ class WorkerProcess:
         self.protocol_version: str = WORKER_PROTOCOL_VERSION
         self.effective_isolation: str = isolation_backend
 
+    def _byte_budget_limit(self) -> int:
+        output = self._max_output_bytes
+        if output is None:
+            output = MAX_WORKER_OUTPUT_BYTES
+        # 至少装得下一帧握手；数据帧累计仍是 2 × 输出预算量级，而不是 64 × 68MiB。
+        return max(2 * int(output), _IDLE_CONTROL_MAX_BYTES)
+
+    def _release_frame_budget(self) -> None:
+        budget = getattr(self, "_frame_budget", None)
+        if budget is not None:
+            budget.release_one()
+
+    def _reject_reader_frame(self, frames: Any, proc: Any, message: str) -> None:
+        try:
+            frames.put({"type": "__protocol_error__", "message": message}, timeout=0.25)
+        except queue.Full:
+            pass
+        with self._lock:
+            if self._proc is proc:
+                self.kill()
+
     # ── 启动 / 握手 ──────────────────────────────────────────────────
     def start(self) -> None:
         with self._lock:
@@ -147,7 +222,8 @@ class WorkerProcess:
                 return
             if self._proc is not None:
                 self._release()
-            self._frames = queue.Queue(maxsize=64)
+            self._frame_budget = _FrameByteBudget(self._byte_budget_limit())
+            self._frames = queue.Queue()
             # CP-02：``-P``（3.11+）阻止把 cwd（系统临时目录，全局可写）前置进
             # sys.path——否则 /tmp/app/... 可劫持 worker 的 ``app`` 导入。
             safe_path = ["-P"] if sys.version_info >= (3, 11) else []
@@ -205,7 +281,9 @@ class WorkerProcess:
             self.pid = self._proc.pid
             self._stderr_capture = StderrCapture(self._proc.stderr) if self._proc.stderr is not None else None
             self._reader = threading.Thread(
-                target=self._reader_loop, args=(self._proc.stdout, self._frames, self._proc), daemon=True
+                target=self._reader_loop,
+                args=(self._proc.stdout, self._frames, self._proc, self._frame_budget),
+                daemon=True,
             )
             self._reader.start()
             deadline = time.monotonic() + self._startup_timeout_s
@@ -276,10 +354,15 @@ class WorkerProcess:
         }
         return env
 
-    def _reader_loop(self, stdout: Any, frames: Any = None, proc: Any = None) -> None:
+    def _reader_loop(
+        self, stdout: Any, frames: Any = None, proc: Any = None, budget: Any = None,
+    ) -> None:
         # Capture this generation: a retired reader must never touch its successor.
         frames = self._frames if frames is None else frames
         proc = self._proc if proc is None else proc
+        if budget is None:
+            budget = getattr(self, "_frame_budget", None)
+        max_bytes = getattr(self, "_max_frame_bytes", None) or FRAME_MAX_BYTES
 
         def deliver(frame: dict[str, Any]) -> bool:
             while True:
@@ -291,11 +374,29 @@ class WorkerProcess:
                         return False
 
         try:
-            for line in iter_frames_bounded(stdout):
+            for line in iter_frames_bounded(stdout, max_bytes=max_bytes):
+                raw_len = len(line)
+                in_flight = bool(getattr(self, "in_flight", False))
+                if not in_flight and _line_is_idle_violation(line):
+                    self._reject_reader_frame(frames, proc, "idle non-control frame")
+                    return
+                if budget is not None and not budget.try_reserve(raw_len):
+                    self._reject_reader_frame(frames, proc, "worker frame byte budget exceeded")
+                    return
                 try:
                     frame = decode_frame(line)
                 except ProtocolError:
+                    if budget is not None:
+                        budget.release_one()
                     frame = {"type": "__protocol_error__", "message": "undecodable frame"}
+                    if not deliver(frame):
+                        return
+                    continue
+                if not in_flight and frame.get("type") not in _CONTROL_FRAME_TYPES:
+                    if budget is not None:
+                        budget.release_one()
+                    self._reject_reader_frame(frames, proc, "idle non-control frame")
+                    return
                 if not deliver(frame):
                     return
         except ProtocolError as exc:
@@ -321,6 +422,7 @@ class WorkerProcess:
                 if self._proc is not None and self._proc.poll() is not None:
                     raise self._crashed("worker exited before responding")
                 continue
+            self._release_frame_budget()
             if frame.get("type") == "__eof__":
                 raise self._crashed("worker closed the RPC channel (EOF)")
             if frame.get("type") == "__protocol_error__":
@@ -610,6 +712,7 @@ class WorkerProcess:
                 if self._proc is not None and self._proc.poll() is not None:
                     raise self._crashed("worker exited mid-stream")
                 continue
+            self._release_frame_budget()
             if frame.get("type") == "__eof__":
                 raise self._crashed("worker closed the RPC channel mid-stream (EOF)")
             if frame.get("type") == "__protocol_error__":

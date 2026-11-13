@@ -54,12 +54,20 @@ def roots(tmp_path, monkeypatch):
 
 
 def _enable_cog_policy_admin():
+    from app.models.db_model import Organization
+    with SessionLocal() as db:
+        if db.get(Organization, 7) is None:
+            db.add(Organization(id=7, name="lc", slug="lc-org-7"))
+            db.flush()
+        admin = db.get(User, "lc-admin")
+        admin.org_id = 7
+        db.commit()
     res = client.put("/api/v1/data-lifecycle/policies/default.cog_output", json={
         "kind": "cog_output", "action": "stage_delete", "enabled": True,
         "staging_hours": 0,
         "tier_thresholds": {"warm_after_s": 3600, "cold_after_s": 7200},
     }, headers=_token("admin", "lc-admin"))
-    assert res.status_code == 200
+    assert res.status_code == 200, res.text
     return res.json()
 
 
@@ -110,6 +118,41 @@ def test_assess_requires_auth():
                           headers=_token("admin", "lc-admin"))
     assert allowed.status_code == 200
     assert set(allowed.json()["summary"]["kinds"].keys()) >= {"cog_output"}
+
+
+def test_org_admin_policy_does_not_rewrite_global_or_other_orgs():
+    from app.models.db_model import Organization
+    from app.services.data_lifecycle.policy import ensure_defaults, policy_for_kind
+
+    with SessionLocal() as db:
+        if db.get(Organization, 7) is None:
+            db.add(Organization(id=7, name="A", slug="lc-a"))
+        if db.get(Organization, 8) is None:
+            db.add(Organization(id=8, name="B", slug="lc-b"))
+        db.get(User, "lc-admin").org_id = 7
+        db.merge(User(id="lc-admin-bare", username="lc-admin-bare",
+                      email="lc-admin-bare@example.com", password_hash="x",
+                      role="admin", is_active=True))
+        ensure_defaults(db)
+        db.commit()
+    bare = client.put("/api/v1/data-lifecycle/policies/default.cog_output", json={
+        "kind": "cog_output", "action": "delete", "enabled": True, "staging_hours": 0,
+    }, headers=_token("admin", "lc-admin-bare"))
+    assert bare.status_code == 403
+    updated = client.put("/api/v1/data-lifecycle/policies/default.cog_output", json={
+        "kind": "cog_output", "action": "stage_delete", "enabled": True, "staging_hours": 0,
+    }, headers=_token("admin", "lc-admin"))
+    assert updated.status_code == 200, updated.text
+    with SessionLocal() as db:
+        global_row = db.query(LifecyclePolicy).filter_by(
+            name="default.cog_output", org_id=None).one()
+        assert global_row.action == "observe" and global_row.enabled is False
+        org_row = db.query(LifecyclePolicy).filter_by(
+            name="default.cog_output", org_id=7).one()
+        assert org_row.action == "stage_delete" and org_row.enabled is True
+        assert policy_for_kind(db, "cog_output", org_id=8).action == "observe"
+        assert policy_for_kind(db, "cog_output", org_id=7).action == "stage_delete"
+        assert policy_for_kind(db, "cog_output", None).enabled is False
 
 
 def test_policy_upsert_requires_admin():

@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from app.core.auth import (
     get_current_user,
@@ -47,6 +47,47 @@ _MAX_INLINE_BYTES_ESTIMATE = 8 * 1024 * 1024
 
 def _is_admin(user: dict) -> bool:
     return isinstance(user, dict) and user.get("role") == "admin"
+
+
+def _same_org(left: Any, right: Any) -> bool:
+    if left in (None, "") or right in (None, ""):
+        return False
+    return str(left) == str(right)
+
+
+def _quality_report_clause(user: dict) -> Any:
+    """Admin 只看见本组织的报告。没有 org 的 admin 不是平台超管。"""
+    from app.models.data_quality import QualityReport
+    from app.models.db_model import User
+
+    uid = user.get("user_id") if isinstance(user, dict) else None
+    org = user.get("org_id") if isinstance(user, dict) else None
+    own = QualityReport.created_by == uid
+    if not _is_admin(user) or org in (None, ""):
+        return own
+    creator_org = select(User.org_id).where(User.id == QualityReport.created_by).scalar_subquery()
+    return or_(
+        own,
+        QualityReport.org_id == org,
+        and_(QualityReport.org_id.is_(None), creator_org == org),
+    )
+
+
+def _quality_row_visible(db: Any, row: Any, user: dict) -> bool:
+    if not isinstance(user, dict):
+        return False
+    uid = user.get("user_id")
+    org = user.get("org_id")
+    if not _is_admin(user) or org in (None, ""):
+        return row.created_by == uid
+    if row.created_by == uid or _same_org(row.org_id, org):
+        return True
+    if row.org_id is not None or not row.created_by:
+        return False
+    from app.models.db_model import User
+
+    owner = db.get(User, row.created_by)
+    return owner is not None and _same_org(owner.org_id, org)
 
 
 def _is_authenticated(user: Any) -> bool:
@@ -213,6 +254,7 @@ def evaluate_quality(
                 session_id=body.session_id or None,
                 created_by=(user.get("user_id") if isinstance(user, dict) else None),
                 target_ref=body.target_ref,
+                org_id=org_id,
             )
             report_id = row.id
     return {"success": True, "report_id": report_id, "report": report}
@@ -234,6 +276,19 @@ def submit_quality_report(
 
     from app.services.data_quality.jobs import data_quality_evaluate_task
     from app.services.jobs.submit import submit_durable_job
+
+    if body.project_id:
+        from app.core.database import SessionLocal
+        from app.services.project_service import ProjectService
+
+        user_id = user.get("user_id") if isinstance(user, dict) else None
+        org_id = user.get("org_id") if isinstance(user, dict) else None
+        with SessionLocal() as db:
+            project = ProjectService.get_project_with_auth(
+                db=db, project_id=body.project_id, user_id=user_id, org_id=org_id,
+            )
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
 
     if body.session_id:
         # Worker ``session_data_manager.get`` has no HTTP owner_token; refuse
@@ -280,10 +335,9 @@ def list_quality_reports(
         if session_id:
             stmt = stmt.where(QualityReport.session_id == session_id)
             count_stmt = count_stmt.where(QualityReport.session_id == session_id)
-        if not _is_admin(user):
-            uid = user.get("user_id") if isinstance(user, dict) else None
-            stmt = stmt.where(QualityReport.created_by == uid)
-            count_stmt = count_stmt.where(QualityReport.created_by == uid)
+        visibility = _quality_report_clause(user)
+        stmt = stmt.where(visibility)
+        count_stmt = count_stmt.where(visibility)
         total = int(db.execute(count_stmt).scalar_one())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
         items = [
@@ -322,10 +376,8 @@ def get_quality_report(
         row = db.get(QualityReport, report_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Report not found")
-        if not _is_admin(user):
-            uid = user.get("user_id") if isinstance(user, dict) else None
-            if row.created_by != uid:
-                raise HTTPException(status_code=404, detail="Report not found")
+        if not _quality_row_visible(db, row, user):
+            raise HTTPException(status_code=404, detail="Report not found")
         results = db.execute(
             select(QualityRuleResult)
             .where(QualityRuleResult.report_id == report_id)
