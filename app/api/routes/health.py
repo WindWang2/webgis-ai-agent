@@ -171,8 +171,8 @@ def health_check() -> HealthResponse:
         # workers can be down (sessions on them degrade to ChatEngine) while
         # the badge still says "pi". Disclose the per-worker split so the
         # badge can be reconciled against reality.
-        pi_workers_alive=_pi_workers_alive(),
-        pi_vendor=_pi_vendor_summary(),
+        pi_workers_alive=None,
+        pi_vendor=None,
         # PI-06（ADR-0286 D3）：三态 + 有界原因码（降级不冒充）。
         agent_runtime_mode=_mode,
         agent_runtime_reason=_mode_reason,

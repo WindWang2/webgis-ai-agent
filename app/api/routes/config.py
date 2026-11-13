@@ -75,6 +75,11 @@ async def update_llm_config(
     _user: dict = Depends(require_admin),
 ):
     """更新 LLM 配置（admin only）"""
+    if _user.get("org_id") not in (None, ""):
+        raise HTTPException(
+            status_code=403,
+            detail="org admins cannot change the process-global LLM config",
+        )
     if settings.is_production():
         raise HTTPException(status_code=403, detail="生产配置请通过部署环境统一更新，避免多实例配置不一致")
     # SEC-04: 启动时的 _validate_no_ssrf 只在进程启动跑一次；运行时改 base_url

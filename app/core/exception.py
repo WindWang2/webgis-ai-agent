@@ -13,7 +13,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.core.config import settings
-from app.core.errors import classify_exception, localized_user_message
+from app.core.errors import PlatformError, classify_exception, localized_user_message
 
 logger = logging.getLogger(__name__)
 
@@ -177,8 +177,12 @@ async def global_exception_handler(
 
     )
     
-    # 确定HTTP状态码：HTTPException使用其自带的状态码
-    status_code = classify_exception(exc).http_status
+    # 未处理的普通异常一律 500。ValueError/PermissionError 不再伪装成
+    # 客户端错误，否则服务端 bug 会从 5xx 告警里消失。
+    if isinstance(exc, PlatformError):
+        status_code = classify_exception(exc).http_status
+    else:
+        status_code = 500
 
     return JSONResponse(
         status_code=status_code,

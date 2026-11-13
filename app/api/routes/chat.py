@@ -2486,6 +2486,11 @@ async def execute_tool_direct(
     args = req.arguments
     if not tool_name:
         raise HTTPException(status_code=400, detail="missing tool name")
+    if not req.session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="session_id is required so the tool runs inside a tenant session",
+        )
 
     # tier 校验：catalog 把工具分为 1/2/3 层，3 = rare / heavy / destructive
     registry = get_registry()
