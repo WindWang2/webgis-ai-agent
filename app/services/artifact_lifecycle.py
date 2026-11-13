@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import re
@@ -218,6 +219,7 @@ def _promotion_blob_protection(
     snapshot_locations: set = frozenset(),
     snapshot_shas: set = frozenset(),
     protection_scan_truncated: bool = False,
+    lakehouse_shas: set = frozenset(),
 ) -> Optional[str]:
     """共享保护判定（plan 与 execute 都调用）：返回保护原因；None = 可删。
 
@@ -241,6 +243,8 @@ def _promotion_blob_protection(
     """
     if key in pinned_shas:
         return "pinned"
+    if key in lakehouse_shas:
+        return "lakehouse catalog, dataset registry, or content blob"
     if refcounts_by_location.get(location, 0) > 0:
         return "referenced by artifact_revisions"
     if refcounts_by_sha.get(key, 0) > 0:
@@ -252,6 +256,38 @@ def _promotion_blob_protection(
     if mtime > now - grace_hours * 3600.0:
         return "grace period"
     return None
+
+
+def _lakehouse_protected_blob_keys(store) -> set:
+    """晋升库和 Lakehouse 共用 blob 根。保护 catalog/registry 根，以及这些
+    manifest 点名的 content blob。只保护根 id 会在宽限期后删掉内容。
+    """
+    from app.services.lakehouse.lakehouse_gc import _protected_references
+
+    roots = {
+        str(key) for key in _protected_references()
+        if isinstance(key, str) and len(key) == 64
+    }
+    protected = set(roots)
+    for key in roots:
+        raw = store.get_blob(key)
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, UnicodeDecodeError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        for blob in parsed.get("content_blobs") or []:
+            sha = ""
+            if isinstance(blob, dict):
+                sha = str(blob.get("sha256") or "")
+            elif isinstance(blob, str):
+                sha = blob
+            if len(sha) == 64:
+                protected.add(sha)
+    return protected
 
 
 def _promotion_gc_snapshot(db, locations):
@@ -274,6 +310,8 @@ def _promotion_gc_snapshot(db, locations):
         workspace_snapshot_protected_pointers,
     )
 
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
     ref_by_loc = referencing_counts(db, locations)
     sha_rows = db.execute(
         select(
@@ -284,6 +322,15 @@ def _promotion_gc_snapshot(db, locations):
     snap_locations, snap_shas, snap_truncated = (
         workspace_snapshot_protected_pointers()
     )
+    try:
+        lakehouse_shas = _lakehouse_protected_blob_keys(get_filesystem_blob_store())
+    except Exception:
+        logger.exception(
+            "[artifact-lifecycle] lakehouse protection scan failed; "
+            "skipping promotion blob deletes this cycle"
+        )
+        lakehouse_shas = set()
+        snap_truncated = True
     return {
         "refcounts_by_location": ref_by_loc,
         "refcounts_by_sha": ref_by_sha,
@@ -292,6 +339,7 @@ def _promotion_gc_snapshot(db, locations):
         "snapshot_locations": snap_locations,
         "snapshot_shas": snap_shas,
         "protection_scan_truncated": snap_truncated,
+        "lakehouse_shas": lakehouse_shas,
     }
 
 

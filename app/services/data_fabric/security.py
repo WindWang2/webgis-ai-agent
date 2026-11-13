@@ -100,6 +100,35 @@ def _is_blocked_ip(ip_str: str) -> bool:
     return not ip.is_global or ip.is_multicast or any(ip in net for net in BLOCKED_NETWORKS)
 
 
+def _is_metadata_ip(ip_str: str) -> bool:
+    """云元数据地址。allow_private 可以放行普通内网，但不能放行这些地址。"""
+    try:
+        ip = ipaddress.ip_address(ip_str.split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    return ip in BLOCKED_IPS_EXPLICIT
+
+
+def _assert_not_metadata(hostname: str) -> None:
+    lowered = hostname.lower().strip("[]")
+    if lowered in {"metadata.google.internal", "metadata"} or lowered.endswith(
+        ".metadata.google.internal"
+    ):
+        raise DataFabricSecurityError(
+            f"SSRF Protection: metadata host '{hostname}' is blocked"
+        )
+    literal = DataFabricSecurity._try_parse_ip(hostname)
+    candidates = [literal] if literal else DataFabricSecurity._resolve_all(hostname)
+    for ip_str in candidates:
+        if ip_str and _is_metadata_ip(ip_str):
+            raise DataFabricSecurityError(
+                f"SSRF Protection: metadata address '{ip_str}' is blocked"
+            )
+
+
 class DataFabricSecurity:
     @staticmethod
     def validate_url(url: str, allow_private: bool = False) -> str:
@@ -132,6 +161,8 @@ class DataFabricSecurity:
             raise DataFabricSecurityError("URL missing valid hostname")
 
         hostname_lower = hostname.lower().strip("[]")
+        if allow_private:
+            _assert_not_metadata(hostname)
 
         # ADR-0202：部署层出网策略先行（probe 面拒绝 = 数据面原生 typed
         # SecurityBlockedError，reliability 层按 permanent 不重试）。
@@ -365,7 +396,8 @@ class _SafeConnectionMixin:
             infos = socket.getaddrinfo(original_host, self.port, 0, socket.SOCK_STREAM)
         except socket.gaierror as exc:
             raise DataFabricSecurityError(f"Unable to resolve hostname '{original_host}'") from exc
-        if not infos or any(_is_blocked_ip(info[4][0].split("%", 1)[0]) for info in infos):
+        blocked = getattr(self, "_ip_blocked", _is_blocked_ip)
+        if not infos or any(blocked(info[4][0].split("%", 1)[0]) for info in infos):
             raise DataFabricSecurityError(f"SSRF Protection: blocked DNS result for '{original_host}'")
         last_error = None
         for info in infos:
@@ -393,9 +425,8 @@ async def safe_fsspec_http_client(*, allow_private: bool = False, **kwargs: Any)
     class SafeResolver(aiohttp.resolver.DefaultResolver):
         async def resolve(self, host: str, port: int = 0, family: int = socket.AF_INET) -> list[dict[str, Any]]:
             addresses = await super().resolve(host, port, family)
-            if not addresses or (
-                not allow_private and any(_is_blocked_ip(item["host"]) for item in addresses)
-            ):
+            blocked = _is_metadata_ip if allow_private else _is_blocked_ip
+            if not addresses or any(blocked(item["host"]) for item in addresses):
                 raise DataFabricSecurityError("SSRF Protection: blocked HTTP DNS result")
             return addresses
 
@@ -403,15 +434,15 @@ async def safe_fsspec_http_client(*, allow_private: bool = False, **kwargs: Any)
     return aiohttp.ClientSession(**kwargs)
 
 
-def _safe_pool_classes() -> dict[str, type]:
+def _safe_pool_classes(ip_blocked=_is_blocked_ip) -> dict[str, type]:
     from urllib3.connection import HTTPConnection, HTTPSConnection
     from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 
     class SafeHTTPConnection(_SafeConnectionMixin, HTTPConnection):
-        pass
+        _ip_blocked = staticmethod(ip_blocked)
 
     class SafeHTTPSConnection(_SafeConnectionMixin, HTTPSConnection):
-        pass
+        _ip_blocked = staticmethod(ip_blocked)
 
     class SafeHTTPPool(HTTPConnectionPool):
         ConnectionCls = SafeHTTPConnection
@@ -433,15 +464,16 @@ class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
         self._allow_private = allow_private
         super().__init__(*args, **kwargs)
 
+    def _ip_predicate(self):
+        return _is_metadata_ip if self._allow_private else _is_blocked_ip
+
     def init_poolmanager(self, *args: Any, **kwargs: Any) -> None:
         super().init_poolmanager(*args, **kwargs)
-        if not self._allow_private:
-            self.poolmanager.pool_classes_by_scheme = _safe_pool_classes()
+        self.poolmanager.pool_classes_by_scheme = _safe_pool_classes(self._ip_predicate())
 
     def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:
         manager = super().proxy_manager_for(proxy, **proxy_kwargs)
-        if not self._allow_private:
-            manager.pool_classes_by_scheme = _safe_pool_classes()
+        manager.pool_classes_by_scheme = _safe_pool_classes(self._ip_predicate())
         return manager
 
     def send(self, request, **kwargs):  # type: ignore[override]

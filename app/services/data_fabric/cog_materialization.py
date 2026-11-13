@@ -182,10 +182,17 @@ async def discover_stac_cog_assets(
 # ── preview / validate：头读 + 结构 advisory（不搬像元） ──────────────────
 
 def _remote_vsi_href(href: str) -> str:
-    """http(s) → /vsicurl 形（GDAL 显式远端语义；本地路径原样）。"""
-    if href.startswith(("http://", "https://")):
-        return f"/vsicurl/{href}"
-    return href
+    """http(s) → /vsicurl。本地路径、file://、/vsizip/ 一律拒绝。
+
+    ``validate_remote_href`` 对没有远程目标的 URI 按设计原样放行，所以
+    远程物化入口不能依赖它来挡住本机栅格。
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse((href or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("remote raster href must use http or https")
+    return f"/vsicurl/{href}"
 
 
 def preview_remote_cog(href: str) -> Dict[str, Any]:
