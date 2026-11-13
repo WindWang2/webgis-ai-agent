@@ -95,8 +95,11 @@ ENV RAG_EMBEDDING_OFFLINE=true
 # Install tini and GDAL/GEOS/PROJ runtime libraries. Node 26 comes from the
 # node-runtime stage (NOT Debian's nodejs 18 package — PLT-03); libstdc++6 is
 # the shared lib the official Node binary links against.
+# G35：离屏数字帧栅格化（rsvg-convert）+ 时间注记 CJK 字体。
+# 能力探测缺席时服务返回 typed 503，不假装帧已渲染。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini libgdal32 libgeos-c1v5 libproj25 libstdc++6 \
+    librsvg2-bin fontconfig fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # PLT-03: official Node 26 binary (FROM node:26-bookworm-slim above).

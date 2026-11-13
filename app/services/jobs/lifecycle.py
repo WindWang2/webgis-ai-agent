@@ -54,6 +54,7 @@ class JobKind(str, Enum):
     # G23（持久数据操作）：DB 列是 String(20) 无 CHECK —— 新 kind 纯加性。
     data_import = "data_import"        # 导入批次提交（进程内 durable runner）
     field_compute = "field_compute"    # 字段计算执行（进程内 durable runner）
+    temporal_media = "temporal_media"  # G35 时序地图动画媒体（Celery；逐帧 checkpoint/取消）
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。

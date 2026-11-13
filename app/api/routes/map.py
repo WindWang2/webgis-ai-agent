@@ -74,6 +74,10 @@ _MEDIA_TYPES = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".pdf": "application/pdf",
+    # G35：时序动画核心格式 APNG / 兼容 GIF / 逐帧证据 ZIP。
+    ".apng": "image/apng",
+    ".gif": "image/gif",
+    ".zip": "application/zip",
 }
 
 # 审计 P0：导出文件所有权追踪（防止 IDOR — 任意认证用户通过猜文件名下载他人导出）
