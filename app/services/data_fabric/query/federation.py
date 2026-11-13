@@ -648,7 +648,14 @@ class FederatedExecutor:
                 if g is not None and not g.is_empty
             ]
             spatial_index = _LocalSpatialIndex(shp_polys)
-        while len(joined) < req.limit:
+        # req.limit 只限制输出行。aggregate_join 必须扫完整连接，扫描帽是预算
+        # 而不是输出页大小；触顶且源未耗尽则拒绝，不返回偏小聚合。
+        aggregating = plan.kind == "aggregate_join" and bool(req.aggregates)
+        scan_cap = (
+            min(req.budget.max_rows, MAX_JOIN_CANDIDATES) if aggregating else req.limit
+        )
+        source_exhausted = False
+        while len(joined) < scan_cap:
             if time.monotonic() > deadline:
                 raise QueryBudgetExceededError(
                     f"federated join exceeded {req.budget.deadline_s}s deadline",
@@ -656,7 +663,7 @@ class FederatedExecutor:
                         "hint": "reduce scope (bbox/filters) or aggregate on sources"
                     },
                 )
-            fetch_size = min(JOIN_PAGE_SIZE, req.limit - len(joined) + 1)
+            fetch_size = min(JOIN_PAGE_SIZE, scan_cap - len(joined) + 1)
             page = (
                 self._source_query(
                     left_adapter,
@@ -686,8 +693,9 @@ class FederatedExecutor:
                     },
                 )
             if not page:
+                source_exhausted = True
                 break
-            remaining = req.limit - len(joined)
+            remaining = scan_cap - len(joined)
             if (plan.kind == "spatial_join") or (
                 plan.kind == "aggregate_join" and req.spatial_op
             ):
@@ -723,16 +731,33 @@ class FederatedExecutor:
                     budget=budget,
                     max_output=remaining + 1,
                 )
+            if aggregating and len(batch) > remaining:
+                raise QueryBudgetExceededError(
+                    f"aggregate join exceeds {scan_cap} joined rows; narrow the source filter",
+                    details={
+                        "hint": "filter sources harder, or aggregate before joining",
+                        "scan_cap": scan_cap,
+                    },
+                )
             joined.extend(batch)
             if len(page) < fetch_size:
+                source_exhausted = True
                 break  # 真实末页（按本次 fetch_size 判定，R2-C3）
             offset += len(page)
 
-        if plan.kind == "aggregate_join" and req.aggregates:
+        if aggregating:
+            if not source_exhausted and len(joined) >= scan_cap:
+                raise QueryBudgetExceededError(
+                    f"aggregate join exceeds {scan_cap} joined rows; narrow the source filter",
+                    details={
+                        "hint": "filter sources harder, or aggregate before joining",
+                        "scan_cap": scan_cap,
+                    },
+                )
             rows = aggregate_join_rows(joined, req.aggregates, req.group_by_right or [])
             return self._result(
                 plan,
-                rows,
+                rows[: req.limit],
                 started,
                 strategy=plan.strategy,
                 rows_fetched=rows_fetched,

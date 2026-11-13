@@ -444,7 +444,12 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                 bbox_xml = compile_bbox_fes(v2.spatial.bbox)
                 filter_xml = f'<ogc:And xmlns:ogc="http://www.opengis.net/ogc">{filter_xml}{bbox_xml}</ogc:And>'
                 params.pop("BBOX", None)
-            post_xml = self._build_get_feature_xml(dataset_id, limit, offset if offset_pushed else 0, filter_xml, v2.select)
+            # WFS 1.0 has no startIndex. local_slice over-fetches offset+limit
+            # on the KVP path; the POST body must use the same window or
+            # features[offset:offset+limit] is empty once offset >= limit.
+            post_limit = (offset + limit) if local_slice else limit
+            post_offset = offset if offset_pushed else 0
+            post_xml = self._build_get_feature_xml(dataset_id, post_limit, post_offset, filter_xml, v2.select)
 
         try:
             if post_xml is not None:

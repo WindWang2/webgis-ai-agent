@@ -173,6 +173,19 @@ def _wkb_to_geojson(raw: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def iter_planned_batches(
+    pf: Any, *, batch_size: int, columns: Optional[List[str]], row_groups: List[int],
+):
+    """Yield batches for a prune plan.
+
+    An empty ``row_groups`` means every group was pruned. ``row_groups or None``
+    would turn that into a full-file read.
+    """
+    if row_groups == []:
+        return iter(())
+    return pf.iter_batches(batch_size=batch_size, columns=columns, row_groups=row_groups)
+
+
 class GeoParquetAdapter(GeospatialDataSourceAdapter):
     """
     GeoParquet Data Fabric Adapter (V2):
@@ -703,7 +716,9 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             else offset + window + 1
         )
 
-        batches = pf.iter_batches(batch_size=BATCH_SIZE, columns=columns_arg, row_groups=row_groups or None)
+        batches = iter_planned_batches(
+            pf, batch_size=BATCH_SIZE, columns=columns_arg, row_groups=row_groups,
+        )
         for batch in batches:
             for row in batch.to_pylist():
                 props, geometry = self._split_row(row, primary_geom)
@@ -911,7 +926,9 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             else offset + window + 1
         )
 
-        batches = pf.iter_batches(batch_size=BATCH_SIZE, columns=columns_arg, row_groups=row_groups or None)
+        batches = iter_planned_batches(
+            pf, batch_size=BATCH_SIZE, columns=columns_arg, row_groups=row_groups,
+        )
         for idx, batch in enumerate(batches, start=1):
             if on_batch is not None:
                 on_batch(idx)  # 批边界取消/deadline 协作点
@@ -1001,8 +1018,9 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
 
         def _filtered_batches():
             for idx, batch in enumerate(
-                pf.iter_batches(batch_size=BATCH_SIZE, columns=columns_arg,
-                                row_groups=row_groups or None),
+                iter_planned_batches(
+                    pf, batch_size=BATCH_SIZE, columns=columns_arg, row_groups=row_groups,
+                ),
                 start=1,
             ):
                 if on_batch is not None:
@@ -1083,7 +1101,9 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             query_bbox = self._require_bbox(v2)
             primary_geom = (self._read_geo_meta(pf).get("primary_column") or "geometry")
             schema_names = list(pf.schema_arrow.names)
-            for batch in pf.iter_batches(batch_size=BATCH_SIZE, columns=columns_arg, row_groups=row_groups or None):
+            for batch in iter_planned_batches(
+                pf, batch_size=BATCH_SIZE, columns=columns_arg, row_groups=row_groups,
+            ):
                 for row in batch.to_pylist():
                     props, geometry = self._split_row(row, primary_geom if primary_geom in schema_names else None)
                     if not self._row_passes(v2, props, geometry, query_bbox):
@@ -1165,8 +1185,8 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 columns = list(needed)
                 if has_geom and primary_geom not in columns:
                     columns.append(primary_geom)
-            for batch in pf.iter_batches(
-                batch_size=BATCH_SIZE, columns=columns, row_groups=row_groups or None
+            for batch in iter_planned_batches(
+                pf, batch_size=BATCH_SIZE, columns=columns, row_groups=row_groups,
             ):
                 yield batch
         except (VectorCarrierUnavailable, DataFabricError):

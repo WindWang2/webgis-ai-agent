@@ -42,6 +42,9 @@ logger = logging.getLogger(__name__)
 _MAX_RESULT_ROWS = 64
 #: 同步路径默认扫描上限（大数据集应走 durable job 路径）。
 _DEFAULT_MAX_SCAN = 20000
+#: 整次评估与单规则时间预算。超时规则标 skipped（reason=budget），不无限跑。
+_DEFAULT_EVAL_DEADLINE_S = 120.0
+_DEFAULT_RULE_BUDGET_S = 30.0
 
 _OVERALL_RANK = {"fail": 2, "warn": 1, "pass": 0}
 
@@ -85,26 +88,45 @@ def _applies_to_kind(spec: RuleSpec, kind: str) -> bool:
     return kind in ("vector", "table")
 
 
+def _skipped_budget(spec: RuleSpec) -> Dict[str, Any]:
+    return {
+        "rule_id": spec.rule_id, "rule_type": spec.rule_type,
+        "severity": spec.severity, "status": "skipped",
+        "message": "reason=budget", "affected_count": 0,
+        "metric": {"reason": "budget"}, "autofixable": False, "fix_operations": [],
+        "duration_ms": 0,
+    }
+
+
 def evaluate_payload(
     payload: Dict[str, Any],
     rule_defs: Optional[List[Any]] = None,
     *,
     max_scan: int = _DEFAULT_MAX_SCAN,
+    deadline_s: float = _DEFAULT_EVAL_DEADLINE_S,
+    rule_budget_s: float = _DEFAULT_RULE_BUDGET_S,
 ) -> Dict[str, Any]:
     """纯内存评估 → 有界报告 dict（不落库；持久化见 :func:`persist_report`）。
 
     ``rule_defs`` 缺席 = 内置默认规则集；dict/YAML 节点经 parse_rule_defs。
+    整次 ``deadline_s`` 与每规则 ``rule_budget_s`` 到期后，剩余/当前规则标
+    ``skipped``（``reason=budget``），不再继续空转。
     """
     specs: List[RuleSpec] = (
         parse_rule_defs(rule_defs) if rule_defs else list(DEFAULT_RULES)
     )
     kind, features, raster_stats, crs = _extract_inputs(payload)
     started = time.perf_counter()
+    eval_deadline = time.monotonic() + max(0.0, float(deadline_s))
+    force_budget = float(deadline_s) <= 0.0
     results: List[Dict[str, Any]] = []
     diagnostics: List[str] = []
 
     for spec in specs:
         if not spec.enabled:
+            continue
+        if force_budget or time.monotonic() >= eval_deadline:
+            results.append(_skipped_budget(spec))
             continue
         if not _applies_to_kind(spec, kind):
             results.append({
@@ -119,9 +141,11 @@ def evaluate_payload(
         if fn is None:  # 词表与注册表漂移防御（import 期另有 assert 兜底）
             diagnostics.append(f"no_impl:{spec.rule_type}")
             continue
+        rule_deadline = min(eval_deadline, time.monotonic() + max(0.0, float(rule_budget_s)))
         ctx = RuleEvalContext(
             kind=kind, features=features, raster_stats=raster_stats,
             crs=crs, params=dict(spec.params), max_scan=max_scan,
+            deadline_monotonic=rule_deadline,
         )
         t0 = time.perf_counter()
         try:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -72,6 +73,12 @@ class RuleEvalContext:
     crs: str = ""
     params: Dict[str, Any] = field(default_factory=dict)
     max_scan: int = 20000
+    #: monotonic deadline；None = 本规则不设时间预算。
+    deadline_monotonic: Optional[float] = None
+
+
+def _budget_exceeded(ctx: RuleEvalContext) -> bool:
+    return ctx.deadline_monotonic is not None and time.monotonic() >= ctx.deadline_monotonic
 
 
 def _num(v: Any) -> bool:
@@ -82,7 +89,7 @@ def _finite(v: Any) -> bool:
     return _num(v) and math.isfinite(float(v))
 
 
-# ── 几何工具（纯 Python；shapely 仅拓扑邻接使用） ────────────────────
+# ── 几何工具（有效性走 shapely；纯 Python 只作缺席回退） ─────────────
 
 
 def _iter_positions(geometry: Dict[str, Any]) -> List[Tuple[float, float]]:
@@ -278,6 +285,29 @@ def rule_crs_validity(ctx: RuleEvalContext) -> RuleOutcome:
     return RuleOutcome("pass", "crs present", 0, metric)
 
 
+def _shapely_polygon_issue(geometry: Dict[str, Any]) -> Optional[str]:
+    """Closed polygon → ``self_intersected`` / ``degenerate`` / None.
+
+    shapely closes open rings, so callers must reject unclosed rings first.
+    Import failure returns ``"fallback"`` so the O(n²) checker stays a last resort.
+    """
+    try:
+        from shapely.geometry import shape as shapely_shape
+        from shapely.validation import explain_validity
+    except Exception:  # noqa: BLE001 — shapely 是硬依赖；缺席才回退
+        return "fallback"
+    try:
+        geom = shapely_shape(geometry)
+    except Exception:  # noqa: BLE001 — 构造失败即无效
+        return "degenerate"
+    if geom.is_valid and float(geom.area) > 0.0:
+        return None
+    reason = "" if geom.is_valid else str(explain_validity(geom) or "")
+    if "self-intersection" in reason.lower():
+        return "self_intersected"
+    return "degenerate"
+
+
 def rule_geometry_validity(ctx: RuleEvalContext) -> RuleOutcome:
     total = 0
     invalid = 0
@@ -287,6 +317,12 @@ def rule_geometry_validity(ctx: RuleEvalContext) -> RuleOutcome:
     rings_checked = 0
     rings_skipped = 0
     for f in ctx.features[: ctx.max_scan]:
+        if _budget_exceeded(ctx):
+            return RuleOutcome(
+                status="skipped",
+                message="reason=budget",
+                metric={"reason": "budget", "scanned": total},
+            )
         geometry = f.get("geometry") if isinstance(f, dict) else None
         total += 1
         if not isinstance(geometry, dict) or geometry.get("coordinates") in (None, []):
@@ -304,24 +340,40 @@ def rule_geometry_validity(ctx: RuleEvalContext) -> RuleOutcome:
                 continue
             invalid += 1
             continue
-        for ring in _iter_rings(geometry):
+        rings = _iter_rings(geometry)
+        unclosed_feature = False
+        for ring in rings:
             rings_checked += 1
             if len(ring) < 4 or not _ring_is_closed(ring):
                 unclosed += 1
                 invalid += 1
+                unclosed_feature = True
                 continue
-            # 自交先判（蝶形环的鞋带面积恰为 0，先查面积会把自交误归退化）
-            si = _ring_self_intersects(ring)
-            if si is None:
-                rings_skipped += 1
-                continue
-            if si:
-                self_intersected += 1
-                invalid += 1
-                continue
-            if _ring_distinct_points(ring) < 3 or _ring_area(ring) == 0.0:
-                degenerate += 1
-                invalid += 1
+        if unclosed_feature or not rings:
+            continue
+        issue = _shapely_polygon_issue(geometry)
+        if issue == "fallback":
+            # shapely 不可用：保留有顶点帽的纯 Python 检测（大环诚实跳过）。
+            for ring in rings:
+                si = _ring_self_intersects(ring)
+                if si is None:
+                    rings_skipped += 1
+                    continue
+                if si:
+                    self_intersected += 1
+                    invalid += 1
+                    break
+                if _ring_distinct_points(ring) < 3 or _ring_area(ring) == 0.0:
+                    degenerate += 1
+                    invalid += 1
+                    break
+            continue
+        if issue == "self_intersected":
+            self_intersected += 1
+            invalid += 1
+        elif issue == "degenerate":
+            degenerate += 1
+            invalid += 1
     if total == 0:
         return RuleOutcome(status="skipped", message="no_features")
     ratio = invalid / total

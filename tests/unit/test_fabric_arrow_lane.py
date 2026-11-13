@@ -112,10 +112,10 @@ def test_arrow_lane_preserves_predicate_fields_before_projection(parquet_source)
     pages = list(iter_scan_pages_arrow(
         _adapter(parquet_source), "ds_arrow",
         where=predicate_from_dict({"op": "eq", "field": "zone", "value": "A"}),
-        fields=["idx"], bbox=None, fetch_limit=1,
+        fields=["idx"], bbox=None, fetch_limit=10,
         budget=_Budget(), token=_Token(), page_size=2000,
     ))
-    assert [row["properties"] for page in pages for row in page] == [{"idx": 0}]
+    assert [row["properties"] for page in pages for row in page] == [{"idx": 0}, {"idx": 2}]
 
 
 def test_arrow_lane_budget_guard_via_iter_scan_pages(parquet_source):
