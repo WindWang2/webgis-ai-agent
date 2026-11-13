@@ -202,3 +202,19 @@ def test_twin_fixture_parity():
             setattr(ch, k, v)
         got = size_for_value(case["value"], ch)
         assert got is not None and abs(got - case["expected"]) < 1e-9, case
+
+
+def test_ambiguous_keys_capture_up_to_64():
+    """复审 P3-1 锚：混合类型键捕获面到 64（历史 cap=5 的回归）。"""
+    rows = []
+    for i in range(70):
+        rows.append({"code": i if i % 2 == 0 else str(i)})  # 数值 i 与文本 str(i) 同文本键
+    # 直接构造：键 "k0".."k69" 各出现 number 与 string 两态
+    feats = []
+    for i in range(70):
+        props_n = {"code": i}
+        props_s = {"code": str(i)}
+        feats.append({"properties": props_n})
+        feats.append({"properties": props_s})
+    scan = stats_mod.scan_field(feats, "code")
+    assert len(scan.ambiguous_keys) == 64  # cap 64（此前 5）

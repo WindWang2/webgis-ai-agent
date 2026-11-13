@@ -333,14 +333,16 @@ async def test_shared_expression_member_rejected(session_id, store_root, seeded)
     （P1-1 复审回归：形状 = frame_product.enabled + shared_expression（单数，
     SharedExpressionConfig 无 layer_ids）+ frames[].data.layer_id 成员归属。）"""
     # 测试搭建：直接以真实契约形状写 frame_product（生产写面 =
-    # SetFrameProductIntent，其 layout.frames 一致性属 G15 自身测试域）
+    # SetFrameProductIntent，其 layout.frames 一致性属 G15 自身测试域）。
+    # 复审 P3（新发现2）：fixture 先经权威 schema 校验，防形状漂移。
+    from app.lib.cartography.mapspec_schema import FrameProductConfig
     from app.services.mapspec_store import mapspec_store
 
     contract = {
-        "schema_version": 1,
+        "schema_version": "frame_product.v1",
         "enabled": True,
-        "product_kind": "small_multiples",
-        "grid": {"cols": 2, "rows": 1},
+        "product_kind": "category_compare",
+        "grid": {"columns": 2},
         "frames": [
             {"frame_id": "f1", "legend": "shared",
              "data": {"ref": "ref:x", "layer_id": "result-seed", "field": "pop"}},
@@ -349,10 +351,11 @@ async def test_shared_expression_member_rejected(session_id, store_root, seeded)
         ],
         "shared_expression": {
             "field": "pop", "semantics": "other", "method": "quantiles",
-            "k": 4, "palette": "Viridis", "breaks": [0, 20, 60, 88],
+            "k": 3, "palette": "Viridis", "breaks": [0, 20, 60, 88],
             "domain_status": "complete", "eligibility": ["union_breaks"],
         },
     }
+    FrameProductConfig.model_validate(contract)  # 权威形状校验（防漂移）
     spec = await mapspec_store.get_mapspec(session_id) or {}
     spec["frame_product"] = contract
     await mapspec_store.save_mapspec(session_id, spec)
@@ -527,3 +530,16 @@ async def test_size_channel_layer_type_mismatch_rejected(session_id, store_root)
                       "max_value": 9, "min_size": 2, "max_size": 8,
                       "scaling": "linear"}))
     assert ei.value.code == "SIZE_CHANNEL_LAYER_TYPE_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_override_length_and_palette_provenance_disclosures(session_id, store_root, seeded):
+    """复审 P3-4/P3-6 锚：覆盖长度偏差与全量覆盖后的 palette 溯源披露。"""
+    # graduated_auto + class_colors 5 项（实际 3 类）→ 长度偏差披露
+    r = await preview_expression(
+        session_id, "result-seed",
+        _plan(mode="graduated_auto", method="equal_interval", k=3,
+              class_colors=["#111111", "#222222", "#333333", "#444444", "#555555"]))
+    joined = " ".join(r["disclosures"])
+    assert "class_colors 提供 5 项，实际类数 3" in joined
+    assert "palette_id 仍记录初始色带" in joined and "溯源" in joined

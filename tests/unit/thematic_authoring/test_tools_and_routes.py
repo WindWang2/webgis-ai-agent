@@ -170,3 +170,31 @@ async def test_route_unknown_layer_404_and_non_thematic_409(session_id, store_ro
     r = await client.get(url + "/inspect")
     assert r.status_code == 404
     assert r.json()["detail"]["code"] == "UNKNOWN_LAYER"
+
+
+@pytest.mark.asyncio
+async def test_apply_tool_replay_dedup_and_cas_semantics(session_id, store_root, seeded):
+    """复审 P3-3 锚：同 plan × 同修订 重放幂等（mutation_id 去重）；不同
+    plan × 同旧修订 → superseded（不误吞）。"""
+    from app.tools.registry import ToolRegistry
+    from app.tools.thematic_authoring_tools import register_thematic_authoring_tools
+
+    plan = {"mode": "graduated_manual", "breaks": [0, 10, 50], "palette": "Blues"}
+    rev0 = await current_revision(session_id)
+    registry = ToolRegistry()
+    register_thematic_authoring_tools(registry)
+    fn = registry._tools["webgis_thematic_style_apply"]
+    first = await fn(layer_id="result-seed", plan=plan, expected_revision=rev0,
+                     session_id=session_id)
+    assert first["success"] is True and first["committed"] is True
+    # 同 plan × 同（旧）修订重放 → mutation_id 命中，幂等返回已提交世代
+    replay = await fn(layer_id="result-seed", plan=plan, expected_revision=rev0,
+                      session_id=session_id)
+    assert replay["success"] is True
+    assert replay["revision"] == first["revision"]
+    # 不同 plan × 同旧修订 → 真实 CAS 冲突（不被去重误吞）
+    other = await fn(layer_id="result-seed",
+                     plan={"mode": "graduated_manual", "breaks": [0, 20, 60],
+                           "palette": "Reds"},
+                     expected_revision=rev0, session_id=session_id)
+    assert other["success"] is False and other["code"] == "CAS_SUPERSEDED"

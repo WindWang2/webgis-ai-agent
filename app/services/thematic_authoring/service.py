@@ -541,7 +541,6 @@ async def commit_expression(
     updated_layer = dict(ctx.layer)
     paint = dict(ctx.layer.get("paint") or {})
     paint["color"] = candidate.paint_color
-    prev_authoring = ctx.layer.get(AUTHORING_KEY) if isinstance(ctx.layer.get(AUTHORING_KEY), dict) else {}
     prev_size_keys = [k for k in (prev_authoring.get("size_channel_keys") or []) if k in paint]
     if candidate.size_paint is not None:
         # P1-2（评审）：换通道（radius→width 等）时先移除本域曾写入的旧通道
@@ -562,7 +561,10 @@ async def commit_expression(
     updated_layer["legend_spec"] = candidate.legend_spec
     if isinstance(ctx.layer.get("data_binding"), dict):
         binding = dict(ctx.layer["data_binding"])
-        binding["field"] = target_field
+        # 复审 P3（新发现1）：快照恢复路径 binding.field 跟随**恢复的 spec**
+        # 的字段（作者可能换过字段——用 target_field 会造成层内两处字段
+        # 声明分歧）；常规路径沿用 target_field。
+        binding["field"] = (thematic_field(candidate.legend_spec) or target_field)
         updated_layer["data_binding"] = binding
     if plan.title is not None:
         updated_layer["title"] = plan.title
@@ -618,7 +620,7 @@ async def commit_expression(
             status_code=422,
             correction_hint=str(result.correction_hint or ""),
         )
-    return _receipt(
+    receipt = _receipt(
         ctx, plan, candidate, committed=True,
         ref_id=ref_id, live_rev=live_rev,
         distribution=dist, target_field=target_field,
@@ -626,3 +628,18 @@ async def commit_expression(
         mapspec_fingerprint=result.mapspec_fingerprint,
         can_undo=True, mutations=1,
     )
+    if getattr(result, "duplicate", False):
+        # 复审 P3（新发现3）：mutation_id 幂等命中（超时重放）——回执描述
+        # **库内已提交**的表达，不描述按当前数据现算、从未落库的候选。
+        stored = None
+        if isinstance(result.mapspec, dict):
+            for lay in result.mapspec.get("layers") or []:
+                if isinstance(lay, dict) and lay.get("id") == layer_id:
+                    stored = lay
+                    break
+        if stored is not None and isinstance(stored.get("legend_spec"), dict):
+            receipt["candidate_fingerprint"] = expression_fingerprint(stored["legend_spec"])
+            receipt["deduplicated"] = True
+            receipt["disclosures"] = list(receipt.get("disclosures") or []) + [
+                "mutation_id 幂等命中——回执描述已提交的表达（重放未产生新修订）"]
+    return receipt
