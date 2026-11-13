@@ -18,13 +18,14 @@
 - 信任决定生死：BLOCKED → quarantined，永不 import；
 - 依赖：required 缺失或成环 → failed（typed）；optional 缺失 → degraded。
 
-线程模型：host 方法不做内部加锁——激活只发生在启动 lifespan（单线程）
-或 CLI（单进程）。多线程并发激活不在 V1 契约内（文档明示）。
+线程模型：生命周期入口持 ``RLock``。lifespan tick 和线程池里的
+分发/API 会同时改 ``_records``。
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
@@ -201,6 +202,7 @@ class ExtensionHost:
         # V3：吊销惰性复查的信任根 mtime 基线（None = 首查强制执行）。
         self._revocation_mtime: Any = None
         self._refresh_mtime: Any = None
+        self._lifecycle = threading.RLock()
 
     # ── 构造 ─────────────────────────────────────────────────────────
     @classmethod
@@ -230,10 +232,15 @@ class ExtensionHost:
 
     # ── discover / validate ──────────────────────────────────────────
     def discover(self) -> list[ExtensionDiagnostic]:
+        with self._lifecycle:
+            return self._discover_locked()
+
+    def _discover_locked(self) -> list[ExtensionDiagnostic]:
         # V3（Round-2 M-1）：discover 前重读 trust store（文件加载实例），
         # 运行中的服务器对发布后的吊销/rotation 即时生效，而非只在
         # refresh_revocations 的周期面。
         source = getattr(self._policy.trust_store, "source_path", None)
+        reload_error: Optional[ExtensionPlatformError] = None
         if source is not None:
             from .trust_store import TrustStore
 
@@ -244,9 +251,21 @@ class ExtensionHost:
                     self._policy, "trust_store", TrustStore.load(Path(source))
                 )
             except ExtensionPlatformError as exc:
+                # 继续用已加载的信任根（发现不能因一次读失败整体中止），
+                # 但失败必须进入诊断，不能只留在日志里。
                 logger.warning("trust store reload failed at discover: %s", exc)
+                reload_error = exc
         result: DiscoveryResult = discover_extensions(list(self._policy.roots))
         diagnostics: list[ExtensionDiagnostic] = list(result.diagnostics)
+        if reload_error is not None:
+            diagnostics.append(
+                reload_error.diagnostic
+                if getattr(reload_error, "diagnostic", None) is not None
+                else ExtensionDiagnostic.warning(
+                    DiagnosticCode.TRUST_STORE_UNREADABLE,
+                    f"trust store reload failed at discover: {reload_error}",
+                )
+            )
         for failure in result.failures:
             diagnostics.extend(failure.diagnostics)
         for discovered in result.extensions:
@@ -632,6 +651,10 @@ class ExtensionHost:
 
     # ── activate ─────────────────────────────────────────────────────
     def activate(self, extension_id: str, *, override_gate: bool = False) -> list[ExtensionDiagnostic]:
+        with self._lifecycle:
+            return self._activate_locked(extension_id, override_gate=override_gate)
+
+    def _activate_locked(self, extension_id: str, *, override_gate: bool = False) -> list[ExtensionDiagnostic]:
         try:
             return self._activate_impl(extension_id, override_gate=override_gate)
         finally:
@@ -691,7 +714,14 @@ class ExtensionHost:
             self.validate_extension(extension_id)
             if record.state is ExtensionState.INCOMPATIBLE:
                 return list(record.diagnostics)
-        assert record.state is ExtensionState.COMPATIBLE, record.state
+        if record.state is not ExtensionState.COMPATIBLE:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.EXTENSION_DISABLED,
+                    f"extension {extension_id!r} is {record.state}, not compatible",
+                    extension_id=extension_id,
+                )
+            ]
 
         # V3：版本钉（运维配置；activate/upgrade/install/rollback 统一消费）。
         pin_error = self._version_pin_error(record.extension_id, record.manifest.version)
@@ -1618,6 +1648,17 @@ class ExtensionHost:
         drain: bool = False,
         drain_timeout_s: float = 10.0,
     ) -> list[ExtensionDiagnostic]:
+        with self._lifecycle:
+            return self._deactivate_locked(
+                extension_id, drain=drain, drain_timeout_s=drain_timeout_s,
+            )
+
+    def _deactivate_locked(
+        self,
+        extension_id: str,
+        drain: bool = False,
+        drain_timeout_s: float = 10.0,
+    ) -> list[ExtensionDiagnostic]:
         """停用；``drain=True`` 先有界等待 in-flight 调用清零（升级前置）。
 
         - worker 模式：in-flight 中直接停用仍被拒绝（V2 语义）；drain=
@@ -1974,6 +2015,10 @@ class ExtensionHost:
         self._notify_projection_change(extension_id, "deactivate")
 
     def refresh_revocations(self) -> list[str]:
+        with self._lifecycle:
+            return self._refresh_revocations_locked()
+
+    def _refresh_revocations_locked(self) -> list[str]:
         """惰性吊销复查：trust store 内已吊销的**激活**扩展 → 停用+隔离。
 
         由宿主周期面（health tick / install / refresh 信号 mtime 变化）

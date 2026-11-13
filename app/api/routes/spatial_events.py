@@ -15,7 +15,6 @@ import hmac
 import logging
 import threading
 import time
-import weakref
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional
@@ -194,7 +193,14 @@ def upsert_watch(
         )
     except Exception as e:  # noqa: BLE001 — 契约校验错误 → 400
         raise HTTPException(status_code=400, detail=str(e)[:300]) from e
-    _svc().ledger.upsert_watch(watch)
+    from app.services.spatial_events.contracts import LedgerWatchConflict
+
+    try:
+        _svc().ledger.upsert_watch(watch)
+    except LedgerWatchConflict:
+        # 跨 org 占用同一 watch_id。不回显 "another org"（存在性细节），
+        # 409 只表示该 id 不可用，避免未处理 500。
+        raise HTTPException(status_code=409, detail="watch_id_conflict") from None
     return {"watch_id": watch.watch_id, "org_id": org, "stored": True}
 
 
@@ -321,11 +327,9 @@ class WebhookBody(BaseModel):
 # #1711（loop-affinity，同 #1681 族）：模块级 asyncio.Lock 在首次「有竞争」的
 # await 时绑定所在事件循环；同一 ASGI app 若被第二个事件循环驱动，竞争路径直接
 # RuntimeError: ... is bound to a different event loop → webhook 500。改为
-# per-loop 惰性创建（app/core/network.py #933 同款 WeakKeyDictionary 模式）：
-# 单 loop 部署语义不变，条目随 loop GC 自动回收，不长内存。
-_rl_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
-    weakref.WeakKeyDictionary()
-)
+# per-loop 惰性创建。锁挂在 loop 自己身上：WeakKeyDictionary 的值如果
+# 强引用 loop（asyncio.Lock._loop），条目永远回收不掉。
+_RL_LOCK_ATTR = "_webgis_spatial_webhook_rl_lock"
 _rl_locks_guard = threading.Lock()
 _rl_buckets: Dict[str, Deque[float]] = defaultdict(lambda: deque(maxlen=30))
 _WEBHOOK_WINDOW_S = 60.0
@@ -335,11 +339,14 @@ _WEBHOOK_MAX_PER_WINDOW = 30
 def _rl_lock() -> asyncio.Lock:
     """当前事件循环的 webhook 限流锁（per-loop；#1711 loop-affinity 修复）。"""
     loop = asyncio.get_running_loop()
+    lock = getattr(loop, _RL_LOCK_ATTR, None)
+    if lock is not None:
+        return lock
     with _rl_locks_guard:
-        lock = _rl_locks.get(loop)
+        lock = getattr(loop, _RL_LOCK_ATTR, None)
         if lock is None:
             lock = asyncio.Lock()
-            _rl_locks[loop] = lock
+            setattr(loop, _RL_LOCK_ATTR, lock)
         return lock
 
 
@@ -391,7 +398,9 @@ async def webhook(
     expected = hmac.new(
         secret.encode("utf-8"), raw, hashlib.sha256
     ).hexdigest()
-    if not (provided and hmac.compare_digest(provided, expected)):
+    from app.core.signing import hmac_equals
+
+    if not (provided and hmac_equals(provided, expected)):
         raise HTTPException(status_code=401, detail="invalid_signature")
     if not await _rate_limit(body.org_id):
         raise HTTPException(status_code=429, detail="webhook_rate_limited")
@@ -450,6 +459,15 @@ async def replay(
         raise HTTPException(status_code=503, detail="spatial_event_runtime_disabled")
     if body.to_id < body.from_id:
         raise HTTPException(status_code=400, detail="to_id_must_be_gte_from_id")
+    # force 会重放本 org 全部 watch 动作 / mission 副作用。与全局 /drain
+    # 一样只对 org admin 开放（admin 是组织角色，不是平台超管）。
+    if body.force:
+        role = user.get("role")
+        user_obj = user.get("user")
+        if user_obj is not None and getattr(user_obj, "role", None):
+            role = user_obj.role
+        if role != "admin":
+            raise HTTPException(status_code=403, detail="admin_required")
     return await _svc().replay(
         org_id=_org(user),
         from_id=body.from_id,

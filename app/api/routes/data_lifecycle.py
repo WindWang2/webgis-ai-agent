@@ -96,6 +96,17 @@ def _is_admin(user: dict) -> bool:
     return isinstance(user, dict) and user.get("role") == "admin"
 
 
+def _chunked_in(column, values: List[str]):
+    """Keep each SQL IN list bounded. Callers OR the chunks together."""
+    from sqlalchemy import or_
+
+    if not values:
+        return column.in_(["__no_owner_scope__"])
+    size = 200
+    parts = [column.in_(values[i:i + size]) for i in range(0, len(values), size)]
+    return parts[0] if len(parts) == 1 else or_(*parts)
+
+
 def _owner_scope_values(user: dict) -> List[str]:
     """Identity strings that may appear on LifecycleObject.owner_scope."""
     values: List[str] = []
@@ -113,11 +124,14 @@ def _owner_scope_values(user: dict) -> List[str]:
 
     with SessionLocal() as db:
         if org not in (None, "") and _is_admin(user):
-            session_ids = db.execute(select(Conversation.id).join(User, User.id == Conversation.user_id).where(User.org_id == org)).scalars()
+            session_ids = db.execute(select(Conversation.id).join(User, User.id == Conversation.user_id).where(User.org_id == org).limit(2000)).scalars()
         else:
-            session_ids = db.execute(select(Conversation.id).where(Conversation.user_id == str(uid or ""))).scalars()
-        values.extend(f"session:{sid}" for sid in session_ids)
-        values.extend(f"project:{pid}" for pid in db.execute(select(Project.id).where(Project.owner_id == str(uid or ""))).scalars())
+            session_ids = db.execute(select(Conversation.id).where(Conversation.user_id == str(uid or "")).limit(2000)).scalars()
+        values.extend(f"session:{sid}" for sid in list(session_ids)[:2000])
+        project_ids = db.execute(
+            select(Project.id).where(Project.owner_id == str(uid or "")).limit(2000)
+        ).scalars()
+        values.extend(f"project:{pid}" for pid in project_ids)
     return values
 
 
@@ -172,8 +186,9 @@ def list_lifecycle_objects(
             stmt = stmt.where(LifecycleObject.tier == tier)
             count_stmt = count_stmt.where(LifecycleObject.tier == tier)
         scopes = _owner_scope_values(user)
-        stmt = stmt.where(LifecycleObject.owner_scope.in_(scopes))
-        count_stmt = count_stmt.where(LifecycleObject.owner_scope.in_(scopes))
+        scope_clause = _chunked_in(LifecycleObject.owner_scope, scopes)
+        stmt = stmt.where(scope_clause)
+        count_stmt = count_stmt.where(scope_clause)
         total = int(db.execute(count_stmt).scalar_one())
         rows = db.execute(stmt.limit(limit_n).offset(offset_n)).scalars().all()
         items = [

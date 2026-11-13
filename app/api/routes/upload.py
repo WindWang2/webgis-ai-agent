@@ -634,7 +634,9 @@ async def _run_raster_ingest_lane(
     if receipt_dump is not None:
         # Publish a short-lived, ref-bound capability; never embed the owner credential.
         from app.core.signing import signed_terrain_query
-        auth_qs = signed_terrain_query(session_id, str(result.get("ref_id") or ""))
+        auth_qs = signed_terrain_query(
+            session_id, str(result.get("ref_id") or ""), owner_token=owner_token,
+        )
         out["terrain"] = {
             "qualification": receipt_dump.get("qualification"),
             "reasons": [
