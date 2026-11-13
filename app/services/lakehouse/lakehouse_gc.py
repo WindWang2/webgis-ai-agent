@@ -292,6 +292,10 @@ def plan_gc(
         protected_blobs = _live_blob_protection(
             manifests, set(manifests) - set(candidates), store,
         )
+        protected_blobs |= {
+            digest for digest in db_protected
+            if isinstance(digest, str) and len(digest) == 64
+        }
         for mid in candidates:
             for digest in manifests[mid].get("blobs", []):
                 if len(digest) == 64 and digest not in protected_blobs:
@@ -369,6 +373,10 @@ def execute_gc(
             continue
         live_refs.update(d for d in meta.get("blobs", []) if len(d) == 64)
         live_refs.update(meta.get("children", []))
+    live_refs |= {
+        str(digest) for digest in _protected_references()
+        if isinstance(digest, str) and len(digest) == 64
+    }
     final_blob_plan = []
     for digest in plan.get("deletable_blobs", []):
         if not isinstance(digest, str) or len(digest) != 64:

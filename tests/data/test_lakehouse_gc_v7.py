@@ -106,6 +106,21 @@ def _register_revision(content_sha256):
         s.commit()
 
 
+def test_db_root_blob_survives_orphan_manifest(gc_env):
+    """#2055：修订行直接引用的内容 blob 不能因为只出现在孤儿 manifest 里就被删。"""
+    import hashlib
+
+    from app.services.lakehouse.lakehouse_gc import plan_gc
+
+    payload = b"revision-rooted-blob"
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest_id = _publish(tag=payload)
+    _register_revision(digest)
+    plan = plan_gc(grace_hours=0.0, ttl_floor=0.0)
+    assert manifest_id in plan["candidates"]
+    assert digest not in plan["deletable_blobs"]
+
+
 def test_plan_candidates_and_union_blob_protection(gc_env):
     from app.services.lakehouse.lakehouse_gc import plan_gc
 
