@@ -13,7 +13,7 @@
  * - 会话卸载：停播 + 落定游标提交（settle）+ 清理 live 态。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Pause, Pin, PinOff, Play } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Film, Pause, Pin, PinOff, Play } from 'lucide-react';
 import { useSyncExternalStore } from 'react';
 import { useT } from '@/lib/i18n/useT';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
@@ -34,6 +34,7 @@ import {
   setActiveController,
   subscribeLiveTemporal,
 } from '@/lib/temporal-map/live-frame';
+import { TemporalMediaPanel } from '@/components/map/temporal-media-panel';
 
 const SPEEDS = [0.25, 0.5, 1, 2, 4, 8] as const;
 
@@ -55,6 +56,8 @@ function specTemporalIdentity(spec: unknown): string {
 export function TemporalTimeController() {
   const t = useT('map');
   const reducedMotion = usePrefersReducedMotion();
+  // G35：媒体面板是独立薄入口；打开/关闭不动 live 游标、不解除 user_pinned。
+  const [mediaOpen, setMediaOpen] = useState(false);
 
   // committed temporal（spec 身份选择器：游标/播放/pin 变化才重渲染）。
   const temporalKey = useSyncExternalStore(
@@ -191,6 +194,7 @@ export function TemporalTimeController() {
   const currentLabel = displayed?.label ?? frames[view.cursorIndex]?.label ?? '';
 
   return (
+    <>
     <div
       className="pointer-events-auto absolute bottom-3 left-1/2 z-30 -translate-x-1/2
                  rounded-lg border border-border bg-background/95 p-2 shadow-lg
@@ -285,6 +289,18 @@ export function TemporalTimeController() {
           {t('temporal.missing', { defaultValue: '含缺期' })}
         </span>
       ) : null}
+      <button
+        type="button"
+        onClick={() => setMediaOpen((open) => !open)}
+        aria-label={t('temporal.media', { defaultValue: '时序动画媒体交付' })}
+        title={t('temporal.mediaHint', { defaultValue: '把当前时序图做成可下载动画与逐帧证据包' })}
+        className="rounded p-1 hover:bg-accent"
+        data-testid="temporal-media-open"
+      >
+        <Film size={16} />
+      </button>
     </div>
+    {mediaOpen ? <TemporalMediaPanel onClose={() => setMediaOpen(false)} /> : null}
+    </>
   );
 }

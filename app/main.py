@@ -68,6 +68,7 @@ from app.api.routes import field_compute as field_compute_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
 from app.api.routes import composition_template_assets as composition_template_assets_routes
+from app.api.routes import temporal_media as temporal_media_routes  # noqa: E402  # G35
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -1224,3 +1225,7 @@ app.include_router(build_v2_router(), tags=["API v2"])
 if not os.path.exists(settings.DATA_DIR):
     os.makedirs(settings.DATA_DIR, exist_ok=True)
 app.include_router(static_routes.router, prefix="/api/v1", tags=["静态文件"])
+
+# G35：时序地图动画媒体交付（能力/计划/提交/查询/取消/成果）。
+app.include_router(temporal_media_routes.router, prefix="/api/v1",
+                   tags=["时序媒体交付 (G35)"])

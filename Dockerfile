@@ -112,8 +112,11 @@ ENV PYTHONPATH=/app
 # node 单二进制来自上方 node-runtime 阶段（与 Dockerfile.prod 的 PLT-03
 # 方案一致）；npm/corepack 同样不入镜像。
 # libstdc++6：官方 node 二进制链接的共享库（与 Dockerfile.prod 一致）。
+# G35：离屏数字帧栅格化（rsvg-convert）+ 时间注记 CJK 字体。
+# 能力探测缺席时服务返回 typed 503，不假装帧已渲染。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal32 libgeos-c1v5 libproj25 libstdc++6 \
+    librsvg2-bin fontconfig fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # PLT-03（#1750）：官方 Node 单二进制（FROM node:26-bookworm-slim above）。

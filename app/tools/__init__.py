@@ -153,6 +153,8 @@ _TOOL_MODULES = [
     ("app.tools.mixed_map_export_tools", "register_mixed_map_export_tools"),
     # G34：专业纸面版式与图册编排工作台（Pi 与 UI 共用 print_layout_authoring.service）
     ("app.tools.print_layout_tools", "register_print_layout_tools"),
+    # G35：时序地图动画媒体交付（能力/计划/提交/查询/取消/成果；独立模块防并发冲突）
+    ("app.tools.temporal_media_tools", "register_temporal_media_tools"),
 ]
 
 
