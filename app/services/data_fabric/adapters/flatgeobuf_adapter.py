@@ -578,12 +578,15 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
             rows = [{"count": int(info.get("features") or 0)}]
             rows_scanned = 0
         else:
+            # +1 sentinel: a prefix of max_rows is not a complete aggregate.
+            scan_cap = int(v2.execution.max_rows)
+            read_n = scan_cap + 1
             if pyogrio is not None:
                 gdf = pyogrio.read_dataframe(
                     path,
                     bbox=tuple(query_bbox) if query_bbox else None,
                     columns=needed or None,
-                    max_features=v2.execution.max_rows,
+                    max_features=read_n,
                     read_geometry=False,
                 )
                 prop_rows = gdf.to_dict(orient="records")
@@ -594,15 +597,20 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                     gdf = gpd.read_file(
                         path,
                         bbox=tuple(query_bbox) if query_bbox else None,
-                        rows=v2.execution.max_rows,
+                        rows=read_n,
                     )
                 except TypeError:
                     gdf = gpd.read_file(
                         path, bbox=tuple(query_bbox) if query_bbox else None,
-                    ).iloc[: v2.execution.max_rows]
+                    ).iloc[:read_n]
                 if needed:
                     gdf = gdf[[c for c in needed if c in gdf.columns]]
                 prop_rows = gdf.to_dict(orient="records")
+            if len(prop_rows) > scan_cap:
+                raise QueryBudgetExceededError(
+                    f"FlatGeobuf statistics scan exceeds max_rows ({scan_cap}); narrow the query",
+                    details={"scanned": scan_cap, "truncated": True},
+                )
             rows_scanned = len(prop_rows)
             if v2.filter is not None:
                 prop_rows = [r for r in prop_rows if evaluate_predicate(v2.filter, r)]

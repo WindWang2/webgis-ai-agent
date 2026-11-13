@@ -20,7 +20,7 @@
   provenance/回执；密钥不落盘。
 
 reason code 封闭：``budget_exceeded`` / ``ssrf_blocked`` / ``unreachable`` /
-``not_a_raster`` / ``cancelled``。
+``not_a_raster`` / ``cancelled`` / ``aoi_outside``。
 """
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ RC_SSRF_BLOCKED = "ssrf_blocked"
 RC_UNREACHABLE = "unreachable"
 RC_NOT_A_RASTER = "not_a_raster"
 RC_CANCELLED = "cancelled"
+RC_AOI_OUTSIDE = "aoi_outside"
 
 #: 默认物化预算（窗口读输出 + 单请求会话上限；低于 geo_raster 全局红线）。
 DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024 * 1024
@@ -89,6 +90,36 @@ def redact_signed_url(url: str) -> str:
 
 
 from app.services.data_fabric.errors import DataFabricError
+
+
+def clip_raster_window(window: Any, width: int, height: int) -> tuple:
+    """Intersect ``window`` with the raster. A disjoint AOI is an error.
+
+    Clamping ``col_off`` into range without shrinking width reads an edge
+    strip (or shifts a partial window) that is not the requested AOI.
+    """
+    from rasterio.errors import WindowError
+    from rasterio.windows import Window
+
+    try:
+        clipped = window.intersection(Window(0, 0, width, height))
+    except WindowError as exc:
+        raise CogMaterializationError(
+            "AOI does not intersect the raster extent",
+            reason_code=RC_AOI_OUTSIDE,
+            details={"full_raster": [int(width), int(height)]},
+        ) from exc
+    col = int(clipped.col_off)
+    row = int(clipped.row_off)
+    w = int(clipped.width)
+    h = int(clipped.height)
+    if w < 1 or h < 1:
+        raise CogMaterializationError(
+            "AOI does not intersect the raster extent",
+            reason_code=RC_AOI_OUTSIDE,
+            details={"full_raster": [int(width), int(height)]},
+        )
+    return col, row, w, h
 
 
 class CogMaterializationError(DataFabricError):
@@ -322,10 +353,7 @@ async def materialize_remote_cog_asset(
                     b4326 = transform_bounds("EPSG:4326", ds.crs, *bbox, densify_pts=21)
                     window = from_bounds(*b4326, transform=ds.transform)
                     window = window.round_lengths(op="floor").round_offsets(op="floor")
-                    w = max(1, min(ds.width, int(window.width)))
-                    h = max(1, min(ds.height, int(window.height)))
-                    col = max(0, min(ds.width - w, int(window.col_off)))
-                    row = max(0, min(ds.height - h, int(window.row_off)))
+                    col, row, w, h = clip_raster_window(window, ds.width, ds.height)
                 else:
                     col, row, w, h = 0, 0, ds.width, ds.height
 
@@ -511,9 +539,11 @@ __all__ = [
     "extract_cog_assets",
     "materialize_remote_cog_asset",
     "preview_remote_cog",
+    "RC_AOI_OUTSIDE",
     "RC_BUDGET_EXCEEDED",
     "RC_CANCELLED",
     "RC_NOT_A_RASTER",
     "RC_SSRF_BLOCKED",
     "RC_UNREACHABLE",
+    "clip_raster_window",
 ]
