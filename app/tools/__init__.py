@@ -76,6 +76,8 @@ _TOOL_MODULES = [
     ("app.services.gis_harness.knowledge_tools", "register_knowledge_tools"),
     # ADR-0182：GIS Skill Library 只读工具面（search/detail/replay_check）
     ("app.tools.skill_library_tools", "register_skill_library_tools"),
+    # G30：技能作业执行面（prepare/start/status；与知识咨询面同注册模式）。
+    ("app.tools.skill_job_tools", "register_skill_job_tools"),
     ("app.tools.project_tools", "register_project_tools"),
     ("app.tools.network_tools", "register_network_tools"),
     ("app.tools.temporal_tools", "register_temporal_tools"),

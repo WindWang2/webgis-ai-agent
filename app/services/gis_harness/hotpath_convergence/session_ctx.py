@@ -26,6 +26,10 @@ class HotpathTurnContext:
     mission_id: str = ""
     claim_store: Any = None
     last_pi_card: Dict[str, Any] = field(default_factory=dict)
+    # G30：用户显式技能选择（chat.skill_name 解析结果；有界 dict：
+    # skill_id/version/digest/requested_name/match_type）。计划缝据此
+    # 覆盖意图匹配的歧义，eligibility/硬门仍由 policy 裁决。
+    explicit_skill: Dict[str, Any] = field(default_factory=dict)
 
 
 def _ctx_key(session_id: str, tenant_id: str = "") -> str:
@@ -79,6 +83,31 @@ def set_skill_bundle(
         ctx.skill_bundle = bundle
         if guidance is not None:
             ctx.skill_guidance = dict(guidance)
+
+
+def set_explicit_skill(
+    session_id: str,
+    selection: Dict[str, Any],
+    *,
+    tenant_id: str = "",
+) -> None:
+    """G30：记录用户显式技能选择（chat.skill_name 解析结果）。
+
+    selection 有界（≤8 键、值 ≤128 字符 —— 写入方保证）；空 dict = 清除。
+    """
+    ctx = get_turn_context(session_id, tenant_id=tenant_id)
+    with _LOCK:
+        ctx.explicit_skill = dict(selection or {})
+
+
+def peek_explicit_skill(
+    session_id: str, tenant_id: str = "",
+) -> Optional[Dict[str, Any]]:
+    entry = peek_turn_context(session_id, tenant_id)
+    if entry is None:
+        return None
+    with _LOCK:
+        return dict(entry.explicit_skill) if entry.explicit_skill else None
 
 
 def set_mission_id(session_id: str, mission_id: str, *, tenant_id: str = "") -> None:
