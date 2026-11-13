@@ -275,6 +275,9 @@ async def test_run_workflow_engine_off_loop(monkeypatch):
         def get_project_with_auth(**kwargs):
             return {"id": "proj_1"}
 
+        def get_project_for_write(**kwargs):
+            return {"id": "proj_1"}
+
     monkeypatch.setattr(route_mod, "ProjectService", _FakeProjectService)
     monkeypatch.setattr("app.services.workflow_revision_queries.workflow_belongs_to_project", lambda *args: True)
 

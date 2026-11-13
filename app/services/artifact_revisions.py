@@ -394,12 +394,12 @@ def pin_artifact(
 
     pinned=True → head.pinned_at = UTC now（该修订引用的 blob 从此绝不参与
     GC，无论引用计数）；pinned=False → 清空。鉴权走既有
-    ``ProjectService.get_project_with_auth``（IDOR 防护同项目路由）。
+    ``ProjectService.get_project_for_write``（写路径：owner 或同 org editor/admin）。
     Returns result dict or None（项目/artifact/head 缺失或无权）。
     """
     from app.services.project_service import ProjectService
 
-    project = ProjectService.get_project_with_auth(
+    project = ProjectService.get_project_for_write(
         db=db, project_id=project_id, user_id=user_id, org_id=org_id
     )
     if not project:
@@ -440,7 +440,7 @@ def clone_artifact(
     from app.models.project import Artifact
     from app.services.project_service import ProjectService
 
-    project = ProjectService.get_project_with_auth(
+    project = ProjectService.get_project_for_write(
         db=db, project_id=project_id, user_id=user_id, org_id=org_id
     )
     if not project:

@@ -259,6 +259,10 @@ class _SlowResult:
         time.sleep(2.0)
         return None
 
+    def first(self):
+        time.sleep(2.0)
+        return None
+
 
 class _StubRow:
     """Minimal DataSourceModel stand-in for the probe path (tenant guard reads

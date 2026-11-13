@@ -130,7 +130,15 @@ def asset_scope_clause(user_id: Optional[str], org_id: Any,
     from sqlalchemy import false as sa_false
 
     if role == "admin":
-        return None
+        # admin 是组织角色，不是平台超管。只看本组织，加上调用者自己创建的资产。
+        admin_clauses = []
+        if user_id is not None:
+            admin_clauses.append(CompositionTemplateAsset.creator_id == user_id)
+        if org_id is not None:
+            admin_clauses.append(CompositionTemplateAsset.org_id == org_id)
+        if not admin_clauses:
+            return sa_false()
+        return or_(*admin_clauses)
     if user_id is None:
         return sa_false()
     clauses = [CompositionTemplateAsset.creator_id == user_id]
@@ -149,7 +157,10 @@ def asset_visible(asset: CompositionTemplateAsset, user_id: Optional[str],
                   org_id: Any, role: Optional[str] = None,
                   project_ids: Optional[List[str]] = None) -> bool:
     if role == "admin":
-        return True
+        if (user_id is not None and asset.creator_id is not None
+                and str(asset.creator_id) == str(user_id)):
+            return True
+        return org_id is not None and asset.org_id == org_id
     if user_id is None:
         return False
     if asset.creator_id is not None and str(asset.creator_id) == str(user_id):
@@ -164,10 +175,13 @@ def asset_visible(asset: CompositionTemplateAsset, user_id: Optional[str],
 
 
 def can_write_asset(asset: CompositionTemplateAsset, user_id: Optional[str],
-                    role: Optional[str] = None) -> bool:
-    """写谓词：admin 或 creator（org/project 可见≠可写——共享是只读语义）。"""
+                    role: Optional[str] = None, org_id: Any = None) -> bool:
+    """写谓词：本组织 admin 或 creator（org/project 可见≠可写）。"""
     if role == "admin":
-        return True
+        if org_id is not None and asset.org_id == org_id:
+            return True
+        return (user_id is not None and asset.creator_id is not None
+                and str(asset.creator_id) == str(user_id))
     return user_id is not None and asset.creator_id is not None \
         and str(asset.creator_id) == str(user_id)
 
@@ -189,7 +203,7 @@ def _require_writable(db: Any, asset_id: str, user_id: Optional[str],
     project_ids = _caller_project_ids(db, user_id, org_id)
     asset = _get_asset_or_404(db, asset_id, user_id, org_id, role,
                               project_ids)
-    if not can_write_asset(asset, user_id, role):
+    if not can_write_asset(asset, user_id, role, org_id=org_id):
         raise CompositionAssetForbiddenError(asset_id[:64])
     return asset
 
