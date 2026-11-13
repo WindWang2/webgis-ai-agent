@@ -434,6 +434,7 @@ class WorkspaceSnapshotService:
         owner_id: str = "",
         retention_cap: Optional[int] = None,
         exclude_refs: Optional[set] = None,
+        mapspec: Optional[Dict[str, Any]] = None,
     ) -> Optional[WorkspaceSnapshot]:
         """捕捉「此刻工作空间」→ 磁盘快照（+ 可选载荷物化）。
 
@@ -453,7 +454,10 @@ class WorkspaceSnapshotService:
             from app.services.mapspec_store import mapspec_store
 
             records = await list_artifacts(session_id)
-            mapspec = await mapspec_store.get_mapspec(session_id)
+            # Caller-supplied mapspec is the session-lock consistent cut.
+            # Re-reading here would observe a later mutation than the freeze.
+            if mapspec is None:
+                mapspec = await mapspec_store.get_mapspec(session_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("[WorkspaceSnapshot] save failed session=%s: %s", session_id, e)
             return None

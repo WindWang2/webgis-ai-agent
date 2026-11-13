@@ -267,8 +267,14 @@ class SessionBudgetLedger:
                 if not sid:
                     continue
                 ledger = self._ledgers[scope].setdefault(sid, _ScopeLedger())
-                ledger.cumulative[Dimension.CONTEXT_TOKENS] = (
-                    ledger.cumulative.get(Dimension.CONTEXT_TOKENS, 0.0) + tokens)
+                # The caller reports the whole assembled prompt, including
+                # history. Summing that across turns counts the same history
+                # many times and trips the session cap. Keep the latest size.
+                if scope == "session":
+                    ledger.cumulative[Dimension.CONTEXT_TOKENS] = float(tokens)
+                else:
+                    ledger.cumulative[Dimension.CONTEXT_TOKENS] = (
+                        ledger.cumulative.get(Dimension.CONTEXT_TOKENS, 0.0) + tokens)
                 ledger.last_activity = time.monotonic()
             self._evict_idle_ledgers_locked()
 

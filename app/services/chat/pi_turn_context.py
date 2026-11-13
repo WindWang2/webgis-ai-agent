@@ -21,7 +21,23 @@ logger = logging.getLogger(__name__)
 
 
 TURN_CONTEXT_MARKER = "WEBGIS_TURN_CONTEXT"
-TURN_CONTEXT_MAX_AGE_SECONDS = 15 * 60
+def _turn_context_max_age_seconds() -> int:
+    """Token lifetime must cover the configured turn budget, not a fixed 900s."""
+    import os
+
+    ages = [15 * 60]
+    for key, default in (
+        ("PI_TURN_TOTAL_TIMEOUT", "300"),
+        ("TURN_TOTAL_TIMEOUT_S", "900"),
+    ):
+        try:
+            ages.append(int(float(os.getenv(key, default))))
+        except (TypeError, ValueError):
+            continue
+    return max(ages) + 60
+
+
+TURN_CONTEXT_MAX_AGE_SECONDS = _turn_context_max_age_seconds()
 
 #: per-turn 动态工具面激活名单 marker（ADR-0103；扩展在 before_agent_start
 #: 扫描并 pi.setActiveTools —— 名单是投影决策，不是第二注册中心）。
@@ -507,7 +523,7 @@ class PiTurnRegistry:
     def __init__(self) -> None:
         self._local_context: Optional[dict[str, str]] = {}
         self._client = None
-        self._last_check_s = 0.0
+        self._last_check_s: Optional[float] = None
         self._swept = False
 
     @staticmethod
@@ -537,7 +553,9 @@ class PiTurnRegistry:
     def _get_redis_client(self):
         import os
         now = time.monotonic()
-        if self._client is not None or (now - self._last_check_s) < 60.0:
+        if self._client is not None or (
+            self._last_check_s is not None and (now - self._last_check_s) < 60.0
+        ):
             return self._client
         self._last_check_s = now
         from app.core.config import settings as _settings
@@ -631,23 +649,27 @@ class PiTurnRegistry:
                 return False
         return True
 
-    async def is_active(self, session_id: str, turn_id: str) -> bool:
+    def _local_matches(self, session_id: str, turn_id: str) -> bool:
         if isinstance(self._local_context, dict):
-            if self._local_context.get(session_id) == turn_id:
-                return True
-        elif isinstance(self._local_context, tuple):
-            if self._local_context == (session_id, turn_id):
-                return True
+            return self._local_context.get(session_id) == turn_id
+        if isinstance(self._local_context, tuple):
+            return self._local_context == (session_id, turn_id)
+        return False
+
+    async def is_active(self, session_id: str, turn_id: str) -> bool:
+        # Redis is authoritative when it answers. A local hit must not
+        # accept a callback whose turn was superseded on another replica.
         client = self._get_redis_client()
         if client is not None:
             try:
                 val = await client.get(f"webgis:pi:active_turn:{session_id}")
-                if val is not None:
-                    stored = val.decode("utf-8") if isinstance(val, bytes) else str(val)
-                    return self._parse_stored_turn(stored) == turn_id
+                if val is None:
+                    return False
+                stored = val.decode("utf-8") if isinstance(val, bytes) else str(val)
+                return self._parse_stored_turn(stored) == turn_id
             except Exception as e:
                 logger.warning("PiTurnRegistry: Redis check failed for %s: %s", session_id, e)
-        return False
+        return self._local_matches(session_id, turn_id)
 
 
 pi_turn_registry = PiTurnRegistry()

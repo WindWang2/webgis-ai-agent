@@ -226,6 +226,9 @@ class PlanStep(BaseModel):
     tool: str = ""
     tool_binding: List[str] = Field(default_factory=list)
     status: StepStatus = "pending"
+    #: Set when the step's work continues after the turn ends. end_turn
+    #: must not mark that step failed just because it is still running.
+    continues_after_turn: bool = False
     depends_on: List[str] = Field(default_factory=list)
     evidence: List[StepEvidence] = Field(default_factory=list)
     attempts: int = 0
@@ -405,6 +408,9 @@ MAX_STEPS = 48
 #: model_validate on an old pod → envelope silently rebuilt empty). ADR-0208
 #: keeps the bound; replay depth trades against fleet-safety.
 MAX_DECISIONS = 24
+#: Causal idempotency keys outlive the decision ring. The ring is 24 rows;
+#: a duplicate callback after eviction must still be a no-op.
+MAX_CAUSAL_SEEN = 128
 MAX_EVIDENCE_PER_STEP = 4
 MAX_CHECKPOINT_SLOTS = 3
 MAX_PHASE_HISTORY = 16

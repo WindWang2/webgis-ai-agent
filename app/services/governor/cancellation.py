@@ -30,6 +30,10 @@ class CancellationRecord:
     reason: CancelReason
     cancelled_at: float = field(default_factory=time.monotonic)
     released_reservation_ids: List[str] = field(default_factory=list)
+    #: Turns that were in flight when the session was cancelled. A later
+    #: turn id is not this cancellation. Empty means "no turn captured"
+    #: (session-level until close_session or an explicit clear).
+    turn_ids: List[str] = field(default_factory=list)
 
 
 class CancellationCoordinator:
@@ -44,9 +48,22 @@ class CancellationCoordinator:
 
     # ── 查询 ─────────────────────────────────────────────────────────
 
-    def is_cancelled(self, session_id: str) -> bool:
+    def is_cancelled(self, session_id: str, turn_id: str = "") -> bool:
+        """True when this session (and, if given, this turn) is cancelled.
+
+        A non-empty ``turn_id`` outside the turns captured at cancel time
+        clears the flag: close_session has no production caller, so a new
+        turn must not stay rejected forever. An empty turn id stays
+        session-scoped (pending work that cannot name its turn).
+        """
         with self._lock:
-            return session_id in self._cancelled
+            rec = self._cancelled.get(session_id)
+            if rec is None:
+                return False
+            if turn_id and rec.turn_ids and turn_id not in rec.turn_ids:
+                self._cancelled.pop(session_id, None)
+                return False
+            return True
 
     def record_of(self, session_id: str) -> Optional[CancellationRecord]:
         with self._lock:
@@ -55,12 +72,14 @@ class CancellationCoordinator:
                 session_id=rec.session_id, reason=rec.reason,
                 cancelled_at=rec.cancelled_at,
                 released_reservation_ids=list(rec.released_reservation_ids),
+                turn_ids=list(rec.turn_ids),
             ) if rec else None)
 
     # ── 取消 ─────────────────────────────────────────────────────────
 
     def cancel(self, session_id: str, reason: CancelReason, *,
                release_reservations: Optional[Callable[[str], List[str]]] = None,
+               turn_ids: Optional[List[str]] = None,
                ) -> CancellationRecord:
         """取消一个会话的所有 governor 视角执行。
 
@@ -86,6 +105,7 @@ class CancellationCoordinator:
         rec = CancellationRecord(
             session_id=session_id, reason=reason,
             released_reservation_ids=released,
+            turn_ids=[t for t in dict.fromkeys(turn_ids or []) if t][:32],
         )
         with self._lock:
             existing = self._cancelled.get(session_id)

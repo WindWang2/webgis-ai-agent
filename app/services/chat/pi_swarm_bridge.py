@@ -177,7 +177,7 @@ class SwarmBridge:
                         tstate = task_map.get(tid) if isinstance(task_map, dict) else None
                         if isinstance(tstate, dict):
                             task_status = str(tstate.get("status") or agg_status)
-                            produced = list(tstate.get("produced_refs") or [])[:12] or refs[:12]
+                            produced = list(tstate.get("produced_refs") or [])[:12]
                             assignment_id = str(tstate.get("assignment_id") or status.run_id)
                             error_code = str(tstate.get("error_code") or "")
                             summary = str(tstate.get("summary") or "")
@@ -189,7 +189,7 @@ class SwarmBridge:
                                 or getattr(tstate, "status", None)
                                 or agg_status
                             )
-                            produced = list(getattr(tstate, "produced_refs", None) or [])[:12] or refs[:12]
+                            produced = list(getattr(tstate, "produced_refs", None) or [])[:12]
                             assignment_id = str(getattr(tstate, "assignment_id", "") or status.run_id)
                             error_code = str(getattr(tstate, "error_code", "") or "")
                             summary = str(getattr(tstate, "summary", "") or "")
@@ -197,7 +197,7 @@ class SwarmBridge:
                             side = getattr(tstate, "side_effect", d.get("side_effect", "pure"))
                         else:
                             task_status = agg_status
-                            produced = refs[:12]
+                            produced = []
                             assignment_id = str(status.run_id)
                             error_code = ""
                             summary = ""

@@ -175,6 +175,11 @@ async def fetch_shared_facts(req: TurnContextRequest) -> SharedTurnFacts:
             facts.fetch_errors["plan"] = type(exc).__name__
         if facts.plan is not None:
             facts.source_session_id = str(getattr(facts.plan, "session_id", "") or "")
+        if not facts.source_session_id and req.session_id:
+            # Plan load failed (or the envelope has no session id). Derived
+            # items keyed on source_session_id would otherwise be scope-gated
+            # out of the prompt with an empty scope id.
+            facts.source_session_id = req.session_id
             try:
                 from app.services.harness_kernel.context import build_turn_context
 

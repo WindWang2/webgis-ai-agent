@@ -287,6 +287,7 @@ async def save_runtime_snapshot(
             owner_id=user_id or "",
             max_materialize_bytes=shared_budget,
             exclude_refs=sensitive_refs,
+            mapspec=mapspec,
         )
         if ws is not None:
             workspace_snapshot_id = ws.snapshot_id

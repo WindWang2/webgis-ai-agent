@@ -95,9 +95,14 @@ def compress_schema(
                 enum = pval.get("enum")
                 if isinstance(enum, list) and len(enum) > _ENUM_MAX_ITEMS:
                     shrunk, omitted = _shrink_enum(enum)
-                    pval["enum"] = shrunk
+                    # Keeping a truncated `enum` forbids the omitted legal values.
+                    pval.pop("enum", None)
                     if omitted:
-                        note = f"(enum truncated; {omitted} more valid values exist server-side)"
+                        examples = ", ".join(str(v) for v in shrunk[:_ENUM_MAX_ITEMS])
+                        note = (
+                            f"(examples: {examples}; {omitted} more valid values "
+                            "exist server-side)"
+                        )
                         existing = pval.get("description")
                         pval["description"] = (
                             f"{existing} {note}" if isinstance(existing, str) else note
@@ -105,8 +110,8 @@ def compress_schema(
                 # pydantic 序列化噪音
                 for noise in ("additionalProperties",):
                     pval.pop(noise, None)
-                # review R1 minor：$defs 仅在无残留 $ref 时可剥，否则跳过该级
-                if "$defs" in pval and "$ref" not in pval:
+                # $defs 仅在子树没有 $ref 时可剥，否则会留下悬空引用。
+                if "$defs" in pval and "$ref" not in json.dumps(pval, default=str):
                     pval.pop("$defs", None)
                 if "allOf" in pval and len(pval) == 1 and isinstance(pval["allOf"], list):
                     # pydantic v2 $ref-free 单元素 allOf 常见于 Any/约束透传

@@ -511,7 +511,13 @@ class FairSlotScheduler:
                 continue
             if self._can_take(waiter.session_id, waiter.resource_class):
                 self._waiters.remove(waiter)
-                waiter.fut.set_result(None)
+                # 槽位在唤醒时就交给等待者。否则唤醒后、占用前的取消/超时
+                # 不会再 pump，队尾卡住；新的 acquire 也会抢走空队列上的槽。
+                lease = self._take_slot(
+                    waiter.session_id, waiter.resource_class,
+                    waiter.generation, waiter.delegation_id,
+                )
+                waiter.fut.set_result(lease)
                 return
 
     async def acquire(
@@ -542,23 +548,35 @@ class FairSlotScheduler:
             waiter = _Waiter(fut, sid, rclass, generation, did)
             self._waiters.append(waiter)
             self._wait_total += 1
+            handed: Optional[DelegationLease] = None
             try:
                 self._pump()  # 新等待者可能立即可就绪（跳过不可就绪队头）
                 if deadline_ts is not None:
-                    await asyncio.wait_for(fut, deadline_ts - loop.time())
+                    handed = await asyncio.wait_for(fut, deadline_ts - loop.time())
                 else:
-                    await fut
+                    handed = await fut
             except asyncio.TimeoutError:
                 raise
             finally:
-                # 已完成的 fut 不在队列（pump 时已弹出）；超时/取消路径移除
-                if not fut.done():
-                    fut.cancel()
-                with contextlib.suppress(ValueError):
-                    self._waiters.remove(waiter)
-            # 被唤醒者已由 pump 验证容量 —— 直接占用（防竞态仍防御判空）。
-            if self._can_take(sid, rclass):
-                return self._take_slot(sid, rclass, generation, did)
+                if handed is None:
+                    # 超时/取消：若 pump 已把租约放进 fut，归还并再泵一次。
+                    leased = None
+                    if fut.done() and not fut.cancelled():
+                        try:
+                            leased = fut.result()
+                        except Exception:  # noqa: BLE001
+                            leased = None
+                    if not fut.done():
+                        fut.cancel()
+                    with contextlib.suppress(ValueError):
+                        self._waiters.remove(waiter)
+                    if isinstance(leased, DelegationLease):
+                        self._release_slot(leased)
+                    else:
+                        self._pump()
+            if isinstance(handed, DelegationLease):
+                return handed
+            raise DelegationContractError("delegation wakeup did not grant a lease")
 
     def release(self, lease: DelegationLease) -> None:
         self._release_slot(lease)
@@ -883,11 +901,19 @@ class DelegationGateway:
             ledger.offer(did, outcome, generation=generation)
             return outcome
         runner_task = asyncio.ensure_future(runner.run(lease))
+        slot_released = False
+
+        def _release_slot_once(_fut: Any = None) -> None:
+            nonlocal slot_released
+            if slot_released:
+                return
+            slot_released = True
+            self._scheduler.release(lease)
 
         async def _reap() -> None:
-            """有界收割被取消的 runner：吞取消并挂起的 runner 不拖住 gateway。"""
+            """有界等待取消传播。槽位只在 runner 真正结束时归还。"""
             with contextlib.suppress(BaseException):
-                await asyncio.wait_for(runner_task, 2.0)
+                await asyncio.wait_for(asyncio.shield(runner_task), 2.0)
 
         try:
             if deadline_ts is not None:
@@ -934,7 +960,10 @@ class DelegationGateway:
                 ledger.offer(did, outcome, generation=generation)
                 return outcome  # finally 仍会归还槽位
         finally:
-            self._scheduler.release(lease)
+            if runner_task.done():
+                _release_slot_once()
+            else:
+                runner_task.add_done_callback(_release_slot_once)
         outcome = verify_outcome(request, outcome)
         ledger.offer(did, outcome, generation=generation)
         return outcome

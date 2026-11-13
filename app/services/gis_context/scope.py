@@ -97,19 +97,18 @@ class ScopeRef(BaseModel):
     ) -> bool:
         """Injection gate: a record may render only inside its own scope.
 
-        Empty owner fields are wildcard-by-absence (unknown owner cannot be
-        cross-checked) — records that must not leak should carry explicit
-        owner ids.
+        Missing owner ids fail closed. A project-scoped record with no
+        project_id, or an org-scoped record with no org_id, does not render.
         """
         if self.sensitivity is SensitivityClass.SESSION_LOCAL:
             return bool(self.scope_id) and self.scope_id == session_id
         if self.sensitivity is SensitivityClass.PROJECT_SCOPED:
-            if not self.project_id:
-                return True
+            if not self.project_id or not project_id:
+                return False
             return self.project_id == project_id
         if self.sensitivity is SensitivityClass.ORG_SCOPED:
-            if not self.org_id:
-                return True
+            if not self.org_id or not org_id:
+                return False
             return self.org_id == org_id
         return False
 

@@ -49,6 +49,8 @@ _BM25_B = 0.75
 #: 每 org 索引条目上限（LRU 逐出）。store 预算下单 org 一次同步的最坏
 #: 载入 ≈ 680 行（session 80 + project 400 + user 200），上限须有余量。
 MAX_ENTRIES_PER_ORG = 1024
+#: Process-wide org buckets. Per-org entries are capped; the org map was not.
+MAX_ORGS = 256
 
 #: 检索 top-k 硬上限。
 HARD_LIMIT_CAP = 32
@@ -318,7 +320,7 @@ class AssociativeIndex:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._orgs: Dict[str, _OrgIndex] = {}
+        self._orgs: "OrderedDict[str, _OrgIndex]" = OrderedDict()
 
     # ── 写入面 ────────────────────────────────────────────────────────
 
@@ -326,7 +328,14 @@ class AssociativeIndex:
         if not entry or not entry.org_id or not entry.memory_id:
             return
         with self._lock:
-            org = self._orgs.setdefault(entry.org_id, _OrgIndex())
+            org = self._orgs.get(entry.org_id)
+            if org is None:
+                org = _OrgIndex()
+                self._orgs[entry.org_id] = org
+            else:
+                self._orgs.move_to_end(entry.org_id)
+            while len(self._orgs) > MAX_ORGS:
+                self._orgs.popitem(last=False)
             entry.last_access = time.time()
             org.upsert(entry)
 
@@ -359,6 +368,8 @@ class AssociativeIndex:
             return None
         with self._lock:
             org = self._orgs.get(org_id)
+            if org is not None:
+                self._orgs.move_to_end(org_id)
             if org and memory_id in org.entries:
                 org.entries.move_to_end(memory_id)
                 return org.entries[memory_id]
@@ -397,6 +408,8 @@ class AssociativeIndex:
         now_ts = _epoch(now) if now is not None else time.time()
         with self._lock:
             org = self._orgs.get(org_id)
+            if org is not None:
+                self._orgs.move_to_end(org_id)
             if org is None or not org.entries:
                 return []
             query_tokens = tokenize(query_text)
