@@ -100,7 +100,7 @@ class DatasetVersionNotFound(DatasetRegistryError):
 
 
 class DatasetRefConflict(DatasetRegistryError):
-    """并发 branch 移动撞号 / tag 已存在。"""
+    """并发 branch 移动撞号 / tag 已存在 / 非快进提交。"""
 
     code = "DATASET_REF_CONFLICT"
 
@@ -732,6 +732,26 @@ def _resolve_commit_parent(
     return head.version_id if head is not None else None
 
 
+def _require_fast_forward(
+    *, branch: str, parent: Optional[str], head_version_id: Optional[str],
+    version_id: str,
+) -> None:
+    """Refuse a commit that would move the branch off a non-parent head.
+
+    ``parent`` is the optimistic expected head. Moving anyway is a reset:
+    commits that followed ``parent`` drop out of the branch history.
+    Idempotent replay (this version is already the head) is not a move.
+    """
+    if head_version_id == version_id:
+        return
+    if head_version_id != parent:
+        raise DatasetRefConflict(
+            f"non-fast-forward commit on branch {branch}: "
+            f"parent {(parent or '-')[:12]} is not branch head "
+            f"{(head_version_id or '-')[:12]}"
+        )
+
+
 def _resolved_content(
     data_object_id: str,
     *,
@@ -814,6 +834,15 @@ def commit_version(
         provenance=provenance,
     )
     version_id = _canonical_sha(record)
+    # Reject before publish/insert so a stale parent does not leave a
+    # commit row the caller might commit after catching the conflict.
+    observed = branch_head(db, dataset_row.id, branch)
+    _require_fast_forward(
+        branch=branch,
+        parent=parent,
+        head_version_id=observed.version_id if observed is not None else None,
+        version_id=version_id,
+    )
     existing = get_version_row(db, dataset_row.id, version_id)
     if existing is None:
         lock_org_transaction(db, str(dataset_row.org_id))
@@ -849,10 +878,19 @@ def commit_version(
         _hook("after_version_record")
 
     expect = branch_head(db, dataset_row.id, branch)
-    if expect is not None and expect.version_id == version_id:
+    head_version_id = expect.version_id if expect is not None else None
+    if expect is not None and head_version_id == version_id:
         generation = int(expect.generation)
         moved = False
     else:
+        # Re-check against the CAS snapshot: head may have moved since
+        # parent resolution (concurrent commit).
+        _require_fast_forward(
+            branch=branch,
+            parent=parent,
+            head_version_id=head_version_id,
+            version_id=version_id,
+        )
         generation = _move_branch_ref(
             db, dataset_row, branch=branch, version_id=version_id, expect=expect,
         )

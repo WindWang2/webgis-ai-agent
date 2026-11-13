@@ -53,6 +53,10 @@ MAX_QUERY_LIMIT = 10_000
 _FALLBACK_MAX_RECORD_COUNT = 2_000
 
 _LAYER_ID_RE = re.compile(r"^[0-9]+$|^_?[A-Za-z0-9_]{1,60}$")
+# Query-string credentials. requests exception text includes the full URL.
+_TOKEN_QUERY_RE = re.compile(
+    r"(?i)([?&](?:token|access_token)=)[^&#\s\"']+"
+)
 
 
 def _arcgis_out_sr(v2) -> int:
@@ -61,6 +65,14 @@ def _arcgis_out_sr(v2) -> int:
 
     requested = parse_epsg(v2.output.crs) if v2 is not None else None
     return requested if requested else 4326
+
+
+def _redact_arcgis_secret(text: str, token: Optional[str] = None) -> str:
+    """Strip token query params and the raw token before logs or error text."""
+    redacted = _TOKEN_QUERY_RE.sub(r"\1REDACTED", text or "")
+    if token:
+        redacted = redacted.replace(token, "REDACTED")
+    return redacted
 
 
 def _safe_layer_id(dataset_id: str) -> str:
@@ -88,8 +100,9 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
             self.session.headers.update(self.options["headers"])
         token = self.options.get("token")
         if isinstance(token, str) and token:
-            # 仅放入请求参数；绝不回显到 describe/结果 metadata
+            # Header, not the query string: HTTP/connection errors embed the URL.
             self._token = token
+            self.session.headers["X-Esri-Authorization"] = f"Bearer {token}"
         else:
             self._token = None
         self._layer_meta_cache: Dict[str, Dict[str, Any]] = {}
@@ -104,7 +117,10 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
                                  timeout=5, max_bytes=2 * 1024 * 1024)
             return isinstance(data, dict) and "currentVersion" in data
         except Exception as e:
-            logger.debug("ArcGIS probe failed: %s", e)
+            logger.debug(
+                "ArcGIS probe failed: %s",
+                _redact_arcgis_secret(str(e), self._token),
+            )
             return False
 
     def capabilities(self) -> List[str]:
@@ -151,7 +167,10 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
                     })
             return out
         except Exception as e:
-            logger.warning("ArcGIS list_datasets error: %s", e)
+            logger.warning(
+                "ArcGIS list_datasets error: %s",
+                _redact_arcgis_secret(str(e), self._token),
+            )
             return []
 
     def _layer_meta(self, dataset_id: str) -> Dict[str, Any]:
@@ -181,7 +200,10 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         except DataFabricError:
             raise
         except Exception as e:
-            raise SourceUnreachableError_arcgis(e) from e
+            err = SourceUnreachableError_arcgis(e, token=self._token)
+            if str(err) != f"ArcGIS layer metadata fetch failed: {e}":
+                raise err from None
+            raise err from e
 
         fields = [
             {"name": f.get("name"), "type": f.get("type"), "alias": f.get("alias")}
@@ -258,8 +280,12 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         except DataFabricError:
             raise
         except Exception as e:
-            logger.warning("ArcGIS query error for '%s': %s", dataset_id, e)
-            raise SourceBadResponseError(f"ArcGIS query error: {e}") from e
+            text = _redact_arcgis_secret(str(e), self._token)
+            logger.warning("ArcGIS query error for '%s': %s", dataset_id, text)
+            err = SourceBadResponseError(f"ArcGIS query error: {text}")
+            if text != str(e):
+                raise err from None
+            raise err from e
 
     @staticmethod
     def _minimal_descriptor(dataset_id: str, describe_error: str) -> DatasetDescriptor:
@@ -451,7 +477,11 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         except DataFabricError:
             raise
         except Exception as e:
-            raise SourceBadResponseError(f"ArcGIS query request failed: {e}") from e
+            text = _redact_arcgis_secret(str(e), self._token)
+            err = SourceBadResponseError(f"ArcGIS query request failed: {text}")
+            if text != str(e):
+                raise err from None
+            raise err from e
 
         if isinstance(data, dict) and "error" in data:
             err = data["error"]
@@ -528,8 +558,6 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
             "f": "geojson",
             "outSR": str(_arcgis_out_sr(v2)),
         }
-        if self._token:
-            params["token"] = self._token
         return params
 
     def health(self) -> DataFabricHealth:
@@ -557,7 +585,8 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
             )
 
 
-def SourceUnreachableError_arcgis(e: Exception):
+def SourceUnreachableError_arcgis(e: Exception, token: Optional[str] = None):
     from app.services.data_fabric.errors import SourceUnreachableError
 
-    return SourceUnreachableError(f"ArcGIS layer metadata fetch failed: {e}")
+    text = _redact_arcgis_secret(str(e), token)
+    return SourceUnreachableError(f"ArcGIS layer metadata fetch failed: {text}")

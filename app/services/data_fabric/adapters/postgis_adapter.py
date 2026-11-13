@@ -138,12 +138,17 @@ from app.services.data_fabric.query.normalize import parse_legacy_where  # noqa:
 
 # ── 连接池（修复 V1：创建失败不再永久 memoize None；线程安全）──────────────
 
-_POSTGIS_POOLS: Dict[str, Any] = {}
+_POSTGIS_POOLS: "OrderedDict[str, Any]" = OrderedDict()
+_POOL_LAST_USED: Dict[str, float] = {}
 _POOLS_LOCK = threading.Lock()
 # 失败退避：同一 key 在窗口内不重试创建（避免每次查询都尝试建池）。
 _POOL_RETRY_BACKOFF_S = 30.0
 _POOL_FAILURES: Dict[str, float] = {}
 _POOL_FAILURES_MAX = 256  # #1399: bound failure memo (evict oldest by timestamp)
+# Each pool holds minconn=1. Cap the process map so distinct sources cannot
+# grow remote connections without bound; idle pools are closed on the next touch.
+_POSTGIS_POOL_MAX = 64
+_POOL_IDLE_TTL_S = 1800.0
 
 # R4-C1/M1（ADR-0094 §10 性能）：表元数据缓存必须**进程级共享**——REST 路径
 # 每个 query/materialize/tile 请求都会 build_adapter 新建 adapter 实例，
@@ -219,6 +224,49 @@ def _bound_pool_failures() -> None:
         _POOL_FAILURES.pop(key, None)
 
 
+def _close_pool_locked(key: str) -> bool:
+    """Pop and close one pool. Caller holds ``_POOLS_LOCK``."""
+    pool = _POSTGIS_POOLS.pop(key, None)
+    _POOL_LAST_USED.pop(key, None)
+    _POOL_FAILURES.pop(key, None)
+    if pool is None:
+        return False
+    try:
+        pool.closeall()
+    except Exception:  # noqa: BLE001
+        logger.debug("[PostGISAdapter] pool closeall failed key=%s", key, exc_info=True)
+    return True
+
+
+def _touch_pool_locked(key: str) -> None:
+    _POOL_LAST_USED[key] = time.monotonic()
+    if key in _POSTGIS_POOLS:
+        _POSTGIS_POOLS.move_to_end(key)
+
+
+def _evict_oldest_pool_locked() -> None:
+    if _POOL_LAST_USED:
+        key = min(_POOL_LAST_USED.items(), key=lambda kv: kv[1])[0]
+    elif _POSTGIS_POOLS:
+        key = next(iter(_POSTGIS_POOLS))
+    else:
+        return
+    _close_pool_locked(key)
+
+
+def _sweep_pools_locked(now: float) -> None:
+    """Close idle pools, then enforce the LRU cap. Caller holds the lock."""
+    if _POOL_IDLE_TTL_S > 0:
+        stale = [
+            key for key, seen in _POOL_LAST_USED.items()
+            if now - seen > _POOL_IDLE_TTL_S
+        ]
+        for key in stale:
+            _close_pool_locked(key)
+    while len(_POSTGIS_POOLS) > _POSTGIS_POOL_MAX:
+        _evict_oldest_pool_locked()
+
+
 def dispose_postgis_pool(
     host: str,
     port: int,
@@ -231,15 +279,26 @@ def dispose_postgis_pool(
     """Dispose a pooled engine for a connection profile (profile delete/evict)."""
     key = _pool_key(host, port, dbname, user, password=password, options=options)
     with _POOLS_LOCK:
-        pool = _POSTGIS_POOLS.pop(key, None)
-        _POOL_FAILURES.pop(key, None)
-    if pool is None:
+        return _close_pool_locked(key)
+
+
+def dispose_postgis_pool_for_profile(profile: Any) -> bool:
+    """Close the process pool for a PostGIS profile. Other source types no-op.
+
+    Host defaults match ``PostGISAdapter.__init__`` so the pool key is the
+    one ``_get_connection`` created.
+    """
+    if str(getattr(profile, "source_type", "") or "").lower() != "postgis":
         return False
-    try:
-        pool.closeall()
-    except Exception:  # noqa: BLE001
-        logger.debug("[PostGISAdapter] pool closeall failed key=%s", key, exc_info=True)
-    return True
+    options = getattr(profile, "options", None) or {}
+    return dispose_postgis_pool(
+        getattr(profile, "host", None) or "localhost",
+        int(getattr(profile, "port", None) or 5432),
+        getattr(profile, "database", None) or "postgres",
+        getattr(profile, "username", None) or "postgres",
+        password=getattr(profile, "password", None) or "",
+        options=options if isinstance(options, dict) else {},
+    )
 
 
 def reset_postgis_pools() -> None:
@@ -247,12 +306,31 @@ def reset_postgis_pools() -> None:
     with _POOLS_LOCK:
         pools = list(_POSTGIS_POOLS.items())
         _POSTGIS_POOLS.clear()
+        _POOL_LAST_USED.clear()
         _POOL_FAILURES.clear()
     for key, pool in pools:
         try:
             pool.closeall()
         except Exception:  # noqa: BLE001
             logger.debug("[PostGISAdapter] pool closeall failed key=%s", key, exc_info=True)
+
+
+def _pinned_libpq_target(host: str, *, allow_private: bool) -> Tuple[str, str]:
+    """``(host, hostaddr)`` for libpq after a single SSRF-checked lookup.
+
+    ``hostaddr`` is what the TCP connection uses. ``host`` stays the caller
+    hostname (repeated once per address) so TLS SNI and verify-full still see
+    the name. libpq does not resolve ``host`` when ``hostaddr`` is set.
+    """
+    from app.services.data_fabric.security import DataFabricSecurity
+
+    addrs = DataFabricSecurity.validated_hostaddrs(host, allow_private=allow_private)
+    tls_host = host.strip()
+    if tls_host.startswith("[") and tls_host.endswith("]"):
+        tls_host = tls_host[1:-1]
+    if len(addrs) == 1:
+        return tls_host, addrs[0]
+    return ",".join([tls_host] * len(addrs)), ",".join(addrs)
 
 
 def _get_or_create_postgis_pool(
@@ -263,36 +341,48 @@ def _get_or_create_postgis_pool(
     password: str,
     *,
     options: Optional[Dict[str, Any]] = None,
+    allow_private: bool = False,
 ) -> Any:
     key = _pool_key(host, port, dbname, user, password=password, options=options)
-    pool = _POSTGIS_POOLS.get(key)
-    if pool is not None:
-        return pool
     with _POOLS_LOCK:
+        now = time.monotonic()
+        _sweep_pools_locked(now)
         pool = _POSTGIS_POOLS.get(key)
         if pool is not None:
+            _touch_pool_locked(key)
             return pool
         failed_at = _POOL_FAILURES.get(key)
-        now = time.monotonic()
         if failed_at is not None and now - failed_at < _POOL_RETRY_BACKOFF_S:
             return None
         try:
             from psycopg2.pool import ThreadedConnectionPool
 
+            conn_host, hostaddr = _pinned_libpq_target(
+                host, allow_private=allow_private,
+            )
             new_pool = ThreadedConnectionPool(
                 minconn=1,
                 maxconn=10,
-                host=host,
+                host=conn_host,
+                hostaddr=hostaddr,
                 port=port,
                 dbname=dbname,
                 user=user,
                 password=password,
                 connect_timeout=5,
             )
+            while len(_POSTGIS_POOLS) >= _POSTGIS_POOL_MAX:
+                _evict_oldest_pool_locked()
             _POSTGIS_POOLS[key] = new_pool
             _POOL_FAILURES.pop(key, None)
+            _touch_pool_locked(key)
             return new_pool
         except Exception as e:
+            from app.services.data_fabric.security import DataFabricSecurityError
+
+            # A blocked address must not fall through to an unpinned connect.
+            if isinstance(e, DataFabricSecurityError):
+                raise
             logger.debug("[PostGISAdapter] pool creation failed (will retry in %ss): %s",
                          _POOL_RETRY_BACKOFF_S, e)
             _POOL_FAILURES[key] = now
@@ -377,9 +467,11 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
     # ── 连接管理 ───────────────────────────────────────────────────────
 
     def _get_connection(self):
+        allow_private = bool(getattr(self.profile, "allow_private", False))
         pool = _get_or_create_postgis_pool(
             self.host, self.port or 5432, self.database, self.username, self.password,
             options=self.options,
+            allow_private=allow_private,
         )
         if pool:
             try:
@@ -391,11 +483,17 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 from app.services.data_fabric.errors import SourceUnreachableError
 
                 raise SourceUnreachableError("PostGIS connection pool unavailable") from pe
+        # Pool was not created. Pin again so this fallback cannot resolve a
+        # different address than the one that passed the SSRF check.
+        conn_host, hostaddr = _pinned_libpq_target(
+            self.host, allow_private=allow_private,
+        )
         try:
             import psycopg2
 
             return psycopg2.connect(
-                host=self.host,
+                host=conn_host,
+                hostaddr=hostaddr,
                 port=self.port,
                 dbname=self.database,
                 user=self.username,
@@ -408,7 +506,8 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
 
                 # kwargs 形式（修复 V1 conninfo f-string 的密码注入/解析破坏）。
                 return psycopg.connect(
-                    host=self.host,
+                    host=conn_host,
+                    hostaddr=hostaddr,
                     port=self.port or 5432,
                     dbname=self.database,
                     user=self.username,

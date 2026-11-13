@@ -331,6 +331,8 @@ class DataFabricConnectionManager:
         profile = self._profiles.pop(key, None)
         self._adapters.pop(key, None)
         self._last_access.pop(key, None)
+        if profile is not None:
+            _dispose_managed_postgis_pool(profile)
         return profile.id if profile is not None else None
 
     def _maintain_locked(self) -> List[str]:
@@ -482,13 +484,30 @@ class DataFabricConnectionManager:
 
     def clear(self):
         with self._lock:
+            profiles = list(self._profiles.values())
             profile_ids = {pid for (_o, pid) in self._adapters}
             self._profiles.clear()
             self._adapters.clear()
             self._last_access.clear()
+        for profile in profiles:
+            _dispose_managed_postgis_pool(profile)
         # 级联清理：仅回收本管理器自己连接过的 profile 的目录足迹（#1715）。
         for pid in profile_ids:
             spatial_catalog_service.unregister_by_profile(pid)
+
+
+def _dispose_managed_postgis_pool(profile: Any) -> None:
+    """Best-effort close of the process PostGIS pool for a legacy profile."""
+    try:
+        if str(getattr(profile, "source_type", "") or "").lower() != "postgis":
+            return
+        from app.services.data_fabric.adapters.postgis_adapter import (
+            dispose_postgis_pool_for_profile,
+        )
+
+        dispose_postgis_pool_for_profile(profile)
+    except Exception:  # noqa: BLE001 - disconnect must not fail on pool close
+        logger.debug("[DataFabricConnectionManager] postgis pool dispose failed", exc_info=True)
 
 
 # Global singleton instance
