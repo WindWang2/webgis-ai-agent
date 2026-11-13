@@ -3,6 +3,7 @@
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
 import type { PendingPresentation } from '@/lib/mapspec/live-spec';
 import { resetRefSourceCache } from '@/lib/mapspec/ref-source-resolver';
+import { resetLayerPresentationRevisions } from '@/lib/collab/presentation-revision';
 
 let sessionId: string | undefined;
 let revision = 0;
@@ -104,6 +105,7 @@ export function setMapSpecSessionCursor(
   // （重挂注册表不清会让新会话的 style 切换复活旧会话的命令层）。
   // 同 id 重设（重连/重水合）不清 —— 账本仍描述当前地图的真实挂载。
   if (sessionId !== nextId) {
+    resetLayerPresentationRevisions();
     void import('../map-kit/custom-overlay-registry')
       .then((m) => m.clearCustomOverlayRegistry())
       .catch(() => { /* best-effort */ });

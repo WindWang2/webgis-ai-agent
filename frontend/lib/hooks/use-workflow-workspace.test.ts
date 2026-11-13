@@ -130,6 +130,38 @@ describe('useWorkflowWorkspace — request discipline', () => {
     });
     expect(api.fetchArtifactLineage).toHaveBeenCalledTimes(1);
   });
+
+  it('clears a lineage stuck on loading when a newer request aborts it', async () => {
+    api.fetchArtifactLineage.mockImplementationOnce(
+      (_id: string, opts?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          });
+        }),
+    );
+    api.fetchArtifactLineage.mockResolvedValue({ artifact_id: 'a2', parents: [{ id: 'p' }], consumers: [] });
+    const { result } = renderHook(() => useWorkflowWorkspace());
+    await waitFor(() => expect(result.current.workflows).toHaveLength(1));
+    await act(async () => {
+      result.current.openWorkflow('wf1');
+    });
+    await act(async () => {
+      result.current.openRun('r1');
+    });
+    await waitFor(() => expect(result.current.runDetail?.id).toBe('r1'));
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.loadLineage('a1');
+    });
+    expect(result.current.lineageByArtifact.a1).toBe('loading');
+    await act(async () => {
+      await result.current.loadLineage('a2');
+      await first;
+    });
+    expect(result.current.lineageByArtifact.a1).not.toBe('loading');
+    expect(result.current.lineageByArtifact.a2).not.toBe('loading');
+  });
 });
 
 describe('useWorkflowWorkspace — recoverability truth', () => {

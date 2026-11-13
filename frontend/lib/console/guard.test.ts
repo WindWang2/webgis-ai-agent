@@ -35,6 +35,13 @@ describe('危险语句守卫', () => {
     expect(guardFilterText('a = 1;').ok).toBe(true); // 尾分号合法
   });
 
+  it('字符串字面量里的分号和动词不拦截', () => {
+    expect(guardFilterText("name = 'a;b'").ok).toBe(true);
+    expect(guardFilterText("note = 'big drop zone'").ok).toBe(true);
+    expect(guardFilterText('label = "delete me"').ok).toBe(true);
+    expect(guardFilterText("name = 'a;b'; drop table t").ok).toBe(false);
+  });
+
   it('stripSqlComments 剥三种注释形态', () => {
     expect(stripSqlComments('a -- comment\nb')).toBe('a  \nb');
     expect(stripSqlComments('a /* x */ b')).toBe('a   b');

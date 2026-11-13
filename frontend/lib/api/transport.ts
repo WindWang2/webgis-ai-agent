@@ -299,6 +299,18 @@ async function parseBody<T>(response: Response): Promise<T> {
   return undefined as T;
 }
 
+/**
+ * One-shot 401 recovery shared by JSON, blob, and stream calls.
+ * Returns true when the caller should resend. When there is no refresh
+ * token and the access token is already expired, signs out locally (F-06).
+ */
+async function recoverFrom401(skipAuth: boolean | undefined): Promise<boolean> {
+  if (skipAuth) return false;
+  if (getRefreshToken() !== null) return refreshAuthToken();
+  if (isAccessTokenExpired(getAccessToken())) clearAuth();
+  return false;
+}
+
 function isRetryable(err: unknown, method: string): boolean {
   if (!isIdempotentMethod(method)) return false;
   if (err instanceof ApiTimeoutError) return true;
@@ -323,25 +335,8 @@ export async function apiFetch<T = unknown>(
   try {
     return await apiFetchAttempt<T>(path, options);
   } catch (err) {
-    if (
-      !options.skipAuth &&
-      err instanceof ApiError &&
-      err.status === 401 &&
-      getRefreshToken() !== null
-    ) {
-      const refreshed = await refreshAuthToken();
-      if (refreshed) return apiFetchAttempt<T>(path, options);
-    } else if (
-      !options.skipAuth &&
-      err instanceof ApiError &&
-      err.status === 401 &&
-      getRefreshToken() === null &&
-      isAccessTokenExpired(getAccessToken())
-    ) {
-      // F-06: no refresh token (reload / new tab — it is memory-only) and the
-      // access token is past `exp`: the session is unrecoverable. Sign out
-      // locally so the UI stops presenting a dead "signed in" state.
-      clearAuth();
+    if (err instanceof ApiError && err.status === 401 && await recoverFrom401(options.skipAuth)) {
+      return apiFetchAttempt<T>(path, options);
     }
     throw err;
   }
@@ -401,14 +396,8 @@ export async function apiFetchBlob(
   try {
     return await attempt();
   } catch (err) {
-    if (
-      !options.skipAuth &&
-      err instanceof ApiError &&
-      err.status === 401 &&
-      getRefreshToken() !== null
-    ) {
-      const refreshed = await refreshAuthToken();
-      if (refreshed) return attempt();
+    if (err instanceof ApiError && err.status === 401 && await recoverFrom401(options.skipAuth)) {
+      return attempt();
     }
     throw err;
   }
@@ -449,17 +438,10 @@ export async function openStream(
   try {
     return await attempt();
   } catch (err) {
-    // FE-P3-4: apiFetch recovers ONCE from a 401 via the refresh token; the
-    // stream path (chat/explorer SSE) rethrew instead — an expired access
-    // token killed the turn with a synthetic error instead of refreshing.
-    if (
-      !options.skipAuth &&
-      err instanceof ApiError &&
-      err.status === 401 &&
-      getRefreshToken() !== null
-    ) {
-      const refreshed = await refreshAuthToken();
-      if (refreshed) return attempt();
+    // FE-P3-4: same one-shot 401 recovery as apiFetch, including F-06 sign-out
+    // when the access token is expired and there is no refresh token.
+    if (err instanceof ApiError && err.status === 401 && await recoverFrom401(options.skipAuth)) {
+      return attempt();
     }
     throw err;
   }

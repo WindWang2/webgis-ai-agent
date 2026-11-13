@@ -62,7 +62,7 @@ export function useModelopsRuns(): ModelOpsSessionRun[] {
         }
         const err = call.error;
         runs.push({
-          callId: typeof call.id === 'string' ? call.id : `${msg.id}-${runs.length}`,
+          callId: typeof call.id === 'string' ? `${msg.id}:${call.id}` : `${msg.id}-${runs.length}`,
           tool: call.tool,
           status: call.status === 'completed' || call.status === 'failed' ? call.status : 'running',
           runId: typeof result?.run_id === 'string' ? result.run_id : null,

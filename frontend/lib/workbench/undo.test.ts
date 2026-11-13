@@ -10,6 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useToastStore } from '@/components/ui/toast';
 import { resetLiveState } from '@/lib/mapspec/session-cursor';
 
 const commitPresentationSpy = vi.fn().mockResolvedValue(undefined);
@@ -83,6 +84,22 @@ describe('undo/redo 命令模型（W4）', () => {
     // undo 发起的是 before（visible:true），redo 是 after（visible:false）
     expect(commitPresentationSpy.mock.calls.map((c) => (c[0] as { visible?: boolean }).visible))
       .toEqual([true, false]);
+  });
+
+  it('presentation replay failure restores the command and toasts', async () => {
+    await import('@/lib/mapspec/user-mutation');
+    commitPresentationSpy.mockReset();
+    commitPresentationSpy.mockRejectedValueOnce(new Error('conflict'));
+    useToastStore.setState({ toasts: [] });
+    presentationCommand('隐藏 L', 'L', 'user', { visible: true }, { visible: false });
+    undo();
+    expect(canUndo()).toBe(false);
+    expect(canRedo()).toBe(true);
+    await vi.waitFor(() => {
+      expect(canUndo()).toBe(true);
+      expect(canRedo()).toBe(false);
+    });
+    expect(useToastStore.getState().toasts.some((toast) => toast.message.includes('无法撤销'))).toBe(true);
   });
 
   it('U2: 有界历史与 redo 分支清空', () => {

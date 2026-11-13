@@ -15,7 +15,7 @@
 
 import { API_BASE } from './config';
 import { apiFetch } from './transport';
-import { getAccessToken } from '../auth/tokenStore';
+import { getAccessToken, getRefreshToken, refreshAuthToken } from '../auth/tokenStore';
 import { fastGet, invalidateCache } from './get-fast-path';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 
@@ -54,6 +54,34 @@ export interface UploadListResponse {
 
 const UPLOAD_LABEL = 'Upload API error';
 
+/** FastAPI 422 `detail` is an array of `{msg}` objects — don't stringify as [object Object]. */
+export function formatUploadErrorDetail(detail: unknown, status: number): string {
+  const fallback = `上传失败: ${status}`;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail.map((item) => {
+      if (typeof item === 'string' && item.trim()) return item;
+      if (item && typeof item === 'object' && typeof (item as { msg?: unknown }).msg === 'string') {
+        const msg = (item as { msg: string }).msg.trim();
+        return msg;
+      }
+      try {
+        return JSON.stringify(item);
+      } catch {
+        return '';
+      }
+    }).filter((part) => part.length > 0);
+    if (parts.length) return parts.join('; ');
+  } else if (detail && typeof detail === 'object') {
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      /* fall through */
+    }
+  }
+  return fallback;
+}
+
 /**
  * 上传文件
  */
@@ -78,20 +106,25 @@ export async function uploadFile(
   const externalSignal = opts?.signal;
 
   return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API_BASE}/api/v1/upload`);
-    xhr.setRequestHeader("X-Request-ID", requestId);
-    // #610: 后端 upload 强制 get_current_user（Bearer）—— XHR 通道此前只带
-    // owner_token，登录用户上传恒 401。与 transport 的 buildRequest 一致注入
-    // Bearer；匿名会话无 access token 时不加。
-    const accessToken = getAccessToken();
-    if (accessToken) {
-      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
-    }
-    if (opts?.ownerToken) {
-      xhr.setRequestHeader("X-Session-Token", opts.ownerToken);
-    }
-    xhr.timeout = timeoutMs;
+    let retried401 = false;
+
+    const openXhr = (): XMLHttpRequest => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${API_BASE}/api/v1/upload`);
+      xhr.setRequestHeader("X-Request-ID", requestId);
+      // #610: 后端 upload 强制 get_current_user（Bearer）。过期后 401 刷新一次再重发。
+      const accessToken = getAccessToken();
+      if (accessToken) {
+        xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+      }
+      if (opts?.ownerToken) {
+        xhr.setRequestHeader("X-Session-Token", opts.ownerToken);
+      }
+      xhr.timeout = timeoutMs;
+      return xhr;
+    };
+
+    let xhr = openXhr();
 
     const onAbort = () => xhr.abort();
     const cleanup = () => externalSignal?.removeEventListener('abort', onAbort);
@@ -116,7 +149,54 @@ export async function uploadFile(
       }
     };
 
+    const rejectHttp = (status: number, responseText: string) => {
+      try {
+        const err = JSON.parse(responseText) as { detail?: unknown };
+        reject(new Error(formatUploadErrorDetail(err.detail, status)));
+      } catch {
+        reject(new Error(`上传失败: ${status}`));
+      }
+    };
+
     xhr.onload = () => {
+      if (xhr.status === 401 && !retried401 && getAccessToken() && getRefreshToken()) {
+        retried401 = true;
+        void refreshAuthToken().then((ok) => {
+          if (!ok) {
+            cleanup();
+            rejectHttp(xhr.status, xhr.responseText);
+            return;
+          }
+          if (externalSignal?.aborted) {
+            cleanup();
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+            return;
+          }
+          const previous = xhr;
+          const retry = openXhr();
+          xhr = retry;
+          retry.onabort = previous.onabort;
+          retry.onerror = previous.onerror;
+          retry.ontimeout = previous.ontimeout;
+          retry.upload.onprogress = previous.upload.onprogress;
+          retry.onload = () => {
+            cleanup();
+            if (retry.status >= 200 && retry.status < 300) {
+              try {
+                const parsed = JSON.parse(retry.responseText);
+                invalidateCache('/api/v1/uploads');
+                resolve(parsed);
+              } catch {
+                reject(new Error("解析响应失败"));
+              }
+              return;
+            }
+            rejectHttp(retry.status, retry.responseText);
+          };
+          retry.send(formData);
+        });
+        return;
+      }
       cleanup();
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
@@ -127,12 +207,7 @@ export async function uploadFile(
           reject(new Error("解析响应失败"));
         }
       } else {
-        try {
-          const err = JSON.parse(xhr.responseText);
-          reject(new Error(err.detail || `上传失败: ${xhr.status}`));
-        } catch {
-          reject(new Error(`上传失败: ${xhr.status}`));
-        }
+        rejectHttp(xhr.status, xhr.responseText);
       }
     };
 

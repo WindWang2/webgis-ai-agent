@@ -621,5 +621,7 @@
     "viewportLoading": "Loading interactive viewport…",
     "noProduct": "No frame product in this session",
     "revisionNone": "—"
-  }
+  },
+  "layerDataFailed": "Layer “{label}” failed to load and may appear empty. Retry or refresh the session.",
+  "unknownLayer": "Unknown layer"
 }

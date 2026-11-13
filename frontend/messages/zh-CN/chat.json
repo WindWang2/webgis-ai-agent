@@ -349,5 +349,10 @@
     "opReplaceGeometry": "几何替换",
     "opSplitFeature": "分割要素",
     "opMergeFeatures": "合并要素"
-  }
+  },
+  "turnCancelled": "⏹️ [已取消]",
+  "turnFailed": "⚠️ {detail}",
+  "turnFailedDefault": "请求失败，请重试。",
+  "turnComplete": "完成。",
+  "sessionRestored": "已恢复历史会话「{title}」——共 {count} 条记录。可继续提问。"
 }

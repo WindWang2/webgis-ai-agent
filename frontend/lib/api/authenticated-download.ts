@@ -46,7 +46,11 @@ export function filenameFromUrl(url: string): string {
   const path = toApiPath(cleaned);
   const segments = path.split('/').filter(Boolean);
   const last = segments[segments.length - 1] ?? 'download';
-  return decodeURIComponent(last);
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
 }
 
 /**

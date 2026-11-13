@@ -87,4 +87,35 @@ describe('uploadFile auth headers', () => {
     expect(xhr.headers['X-Session-Token']).toBe('owner-anon');
     expect(xhr.headers['X-Request-ID']).toBeTruthy();
   });
+
+  it('422 detail arrays surface msg text', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+    const promise = uploadFile(makeFile());
+    const xhr = FakeXHR.instances[0];
+    xhr.status = 422;
+    xhr.responseText = JSON.stringify({
+      detail: [{ loc: ['body', 'files'], msg: 'field required', type: 'missing' }],
+    });
+    xhr.onload?.();
+    await expect(promise).rejects.toThrow('field required');
+  });
+
+  it('retries once after 401 when refresh succeeds', async () => {
+    setAuth({ accessToken: 'old', refreshToken: 'ref' }, null);
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: 'fresh', refresh_token: 'ref-2' }),
+    })));
+    const promise = uploadFile(makeFile());
+    const first = FakeXHR.instances[0];
+    first.status = 401;
+    first.responseText = JSON.stringify({ detail: 'unauthorized' });
+    first.onload?.();
+    await vi.waitFor(() => expect(FakeXHR.instances.length).toBe(2));
+    expect(FakeXHR.instances[1].headers.Authorization).toBe('Bearer fresh');
+    await driveSuccess(FakeXHR.instances[1]);
+    await expect(promise).resolves.toMatchObject({ id: 1 });
+  });
 });

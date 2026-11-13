@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { apiFetch, apiFetchBlob, ApiError } from './transport';
+import { apiFetch, apiFetchBlob, openStream, ApiError } from './transport';
 import { setAuth, clearAuth, getAccessToken } from '../auth/tokenStore';
 import { installInMemoryLocalStorage } from '../../test/in-memory-local-storage';
 
@@ -217,6 +217,19 @@ describe('F-06: unrecoverable 401 signs out locally', () => {
     setAuth({ accessToken: jwtWithExp(Math.floor(Date.now() / 1000) - 5), refreshToken: null }, { id: 'u1', username: 'u' });
     mockFetch.mockResolvedValueOnce(errResponse(401, { detail: 'expired' }));
     await expect(apiFetch('/api/v1/projects')).rejects.toBeInstanceOf(ApiError);
+    expect(getAccessToken()).toBeNull();
+  });
+
+  it('blob and stream 401 with an expired access token and no refresh token clear auth', async () => {
+    const expired = jwtWithExp(Math.floor(Date.now() / 1000) - 5);
+    setAuth({ accessToken: expired, refreshToken: null }, { id: 'u1', username: 'u' });
+    mockFetch.mockResolvedValueOnce(errResponse(401, { detail: 'expired' }));
+    await expect(apiFetchBlob('/api/v1/export/download/x.png')).rejects.toBeInstanceOf(ApiError);
+    expect(getAccessToken()).toBeNull();
+
+    setAuth({ accessToken: expired, refreshToken: null }, { id: 'u1', username: 'u' });
+    mockFetch.mockResolvedValueOnce(errResponse(401, { detail: 'expired' }));
+    await expect(openStream('/api/v1/chat/stream')).rejects.toBeInstanceOf(ApiError);
     expect(getAccessToken()).toBeNull();
   });
 

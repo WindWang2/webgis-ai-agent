@@ -22,7 +22,13 @@
  * 发送失败绝不阻塞地图/对话交互。
  */
 import { API_BASE } from '@/lib/api/config';
-import { getAccessToken } from '@/lib/auth/tokenStore';
+import {
+  clearAuth,
+  getAccessToken,
+  getRefreshToken,
+  isAccessTokenExpired,
+  refreshAuthToken,
+} from '@/lib/auth/tokenStore';
 import { devOnly } from '@/lib/utils/logger';
 import {
   KIND_COALESCE_POLICY,
@@ -59,7 +65,7 @@ export interface InteractionOutbox {
   enqueue: (event: InteractionEventV1) => void;
   /** 立即冲刷（会话切换 / 卸载）。 */
   flush: () => void;
-  /** pagehide best-effort 冲刷（keepalive；超出单请求预算的部分放弃）。 */
+  /** pagehide best-effort 冲刷（keepalive；按 session+token 分块发完）。 */
   flushKeepalive: () => void;
   /** 丢弃队列并取消计时器（进程内不再发）。 */
   dispose: () => void;
@@ -359,6 +365,18 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
         ...(keepalive ? { keepalive: true } : {}),
       },
     ).then(async (response) => {
+      if (response.status === 401) {
+        finish();
+        if (getAccessToken() && getRefreshToken() !== null && await refreshAuthToken()) {
+          settleBatch(items, { transient: true, permanent: false }, gen);
+          return;
+        }
+        if (getRefreshToken() === null && isAccessTokenExpired(getAccessToken())) {
+          clearAuth();
+        }
+        settleBatch(items, classifyDelivery({ status: response.status }), gen);
+        return;
+      }
       let body: InteractionIngestResponse | undefined;
       try {
         body = (await response.json()) as InteractionIngestResponse;
@@ -432,18 +450,24 @@ export function createInteractionOutbox(options: InteractionOutboxOptions): Inte
   };
 
   const flushKeepalive = (): void => {
-    // pagehide best-effort：keepalive 单请求 ≤64KB —— 批 ≤50 事件（≈15KB）
-    // 安全；超出的部分放弃（遥测语义，诚实损失）。
-    const bySession = new Map<string, QueuedEvent[]>();
+    // pagehide best-effort：keepalive 单请求 ≤64KB —— 每批 ≤50 事件。
+    // 按 (session, token) 分组后分块发完，不丢尾部事件、不串凭据。
+    const groups = new Map<string, QueuedEvent[]>();
     for (const item of queue) {
       if (!item.sessionId) continue;
-      const list = bySession.get(item.sessionId) ?? [];
-      if (list.length < MAX_EVENTS_PER_BATCH) list.push(item);
-      bySession.set(item.sessionId, list);
+      const key = `${item.sessionId}::${item.token ?? ''}`;
+      const list = groups.get(key) ?? [];
+      list.push(item);
+      groups.set(key, list);
     }
     queue = [];
-    for (const [sessionId, items] of bySession) {
-      postBatch(sessionId, items[0]?.token ?? null, items, true);
+    for (const items of groups.values()) {
+      const sessionId = items[0]?.sessionId;
+      if (!sessionId) continue;
+      for (let i = 0; i < items.length; i += MAX_EVENTS_PER_BATCH) {
+        const chunk = items.slice(i, i + MAX_EVENTS_PER_BATCH);
+        postBatch(sessionId, chunk[0]?.token ?? null, chunk, true);
+      }
     }
   };
 

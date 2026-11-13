@@ -1,6 +1,7 @@
 'use client';
 
 import type { QuerySpec } from '@/lib/api/data-fabric';
+import { getAuthUser, subscribeAuth } from '@/lib/auth/tokenStore';
 
 /**
  * 查询控制台：样例库 + 查询历史（本地持久化，ADR-0147）。
@@ -101,10 +102,18 @@ const HISTORY_KEY = 'geoagent-query-console-history-v1';
 const SAMPLES_KEY = 'geoagent-query-console-samples-v1';
 const HISTORY_MAX = 30;
 
-function readList<T>(key: string): T[] {
+function userScope(): string {
+  return getAuthUser()?.id ?? 'anonymous';
+}
+
+function scopedKey(base: string): string {
+  return `${base}:${userScope()}`;
+}
+
+function readList<T>(base: string): T[] {
   if (typeof localStorage === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(key);
+    const raw = localStorage.getItem(scopedKey(base));
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as T[]) : [];
@@ -113,13 +122,41 @@ function readList<T>(key: string): T[] {
   }
 }
 
-function writeList<T>(key: string, items: T[]): void {
+function writeList<T>(base: string, items: T[]): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(key, JSON.stringify(items));
+    localStorage.setItem(scopedKey(base), JSON.stringify(items));
   } catch {
     /* 配额满/隐私模式：降级为会话内态 */
   }
+}
+
+function removeUserConsoleStorage(userId: string): void {
+  try {
+    localStorage.removeItem(`${HISTORY_KEY}:${userId}`);
+    localStorage.removeItem(`${SAMPLES_KEY}:${userId}`);
+    localStorage.removeItem(HISTORY_KEY);
+    localStorage.removeItem(SAMPLES_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+if (typeof window !== 'undefined') {
+  let prevUserId = getAuthUser()?.id ?? null;
+  subscribeAuth(() => {
+    const nextUserId = getAuthUser()?.id ?? null;
+    if (prevUserId && prevUserId !== nextUserId) removeUserConsoleStorage(prevUserId);
+    if (!nextUserId) {
+      try {
+        localStorage.removeItem(HISTORY_KEY);
+        localStorage.removeItem(SAMPLES_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+    prevUserId = nextUserId;
+  });
 }
 
 export function loadHistory(): QueryHistoryEntry[] {
@@ -133,7 +170,7 @@ export function appendHistory(entry: QueryHistoryEntry): QueryHistoryEntry[] {
 }
 
 export function clearHistory(): void {
-  if (typeof localStorage !== 'undefined') localStorage.removeItem(HISTORY_KEY);
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(scopedKey(HISTORY_KEY));
 }
 
 export function loadSamples(): SampleEntry[] {

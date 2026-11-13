@@ -167,7 +167,7 @@ describe('QueryConsole', () => {
     await screen.findByTestId('console-disclosure');
     await waitFor(() =>
       expect(localStorage.setItem).toHaveBeenCalledWith(
-        'geoagent-query-console-history-v1',
+        expect.stringMatching(/^geoagent-query-console-history-v1:/),
         expect.stringContaining('a = 1'),
       ),
     );

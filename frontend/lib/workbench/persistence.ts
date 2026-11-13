@@ -33,6 +33,7 @@ import {
 } from './collab';
 import { collabSetConflict } from '@/lib/collab/store';
 import { devOnly } from '@/lib/utils/logger';
+import { t } from '@/lib/i18n/t';
 
 const PERSIST_DEBOUNCE_MS = 800;
 
@@ -197,7 +198,7 @@ async function commitNow(): Promise<void> {
       try {
         const { useToastStore } = await import('@/components/ui/toast');
         useToastStore.getState().addToast(
-          '工作台组织状态过大，已暂停自动保存（分组/锁定等刷新后可能丢失）——请减少分组数量或图层入组规模',
+          t('workbench.persistOversize'),
           'warning',
         );
       } catch { /* toast 不可用不得影响状态收敛 */ }
@@ -310,7 +311,7 @@ function handleCommitResult(
       }
       if (rebaseCandidate != null) {
         void collabSetConflictAsync(
-          '组织状态与他人修改冲突，已同步服务器最新状态；你刚才的调整未自动应用，请重试。',
+          t('workbench.persistConflict'),
         );
       }
     } else {

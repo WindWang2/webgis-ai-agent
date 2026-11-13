@@ -6,6 +6,7 @@
  */
 
 import { ApiError } from '@/lib/api/transport';
+import { t } from '@/lib/i18n/t';
 import type {
   LineageGraph,
   Page,
@@ -14,18 +15,18 @@ import type {
   WorkflowRunStatus,
 } from '@/lib/api/project';
 
-const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
-  pending: '等待中',
-  running: '运行中',
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已取消',
+const RUN_STATUS_KEY: Record<WorkflowRunStatus, string> = {
+  pending: 'workbench.recovery.statusPending',
+  running: 'workbench.recovery.statusRunning',
+  completed: 'workbench.recovery.statusCompleted',
+  failed: 'workbench.recovery.statusFailed',
+  cancelled: 'workbench.recovery.statusCancelled',
 };
 
 export function formatCrs(crs: string | null | undefined): string {
-  if (typeof crs !== 'string') return '未知';
+  if (typeof crs !== 'string') return t('workbench.recovery.crsUnknown');
   const trimmed = crs.trim();
-  return trimmed ? trimmed : '未知';
+  return trimmed ? trimmed : t('workbench.recovery.crsUnknown');
 }
 
 export function isPartialRun(
@@ -49,7 +50,8 @@ export function shouldOfferResume(
 }
 
 export function runStatusLabel(status: string): string {
-  return RUN_STATUS_LABEL[status as WorkflowRunStatus] ?? status;
+  const key = RUN_STATUS_KEY[status as WorkflowRunStatus];
+  return key ? t(key) : status;
 }
 
 export type OutcomeToastVariant = 'success' | 'info' | 'warning' | 'error';
@@ -66,8 +68,14 @@ export function formatOutcomeMessage(
   action: 'replay' | 'resume' | 'run',
   run: Pick<WorkflowRunDetail, 'status'>,
 ): string {
-  const verb = action === 'replay' ? '回放' : action === 'resume' ? '续跑' : '运行';
-  return `${verb}结束，后端状态：${runStatusLabel(run.status)}`;
+  const verb = t(
+    action === 'replay'
+      ? 'workbench.recovery.verbReplay'
+      : action === 'resume'
+        ? 'workbench.recovery.verbResume'
+        : 'workbench.recovery.verbRun',
+  );
+  return t('workbench.recovery.outcome', { verb, status: runStatusLabel(run.status) });
 }
 
 export function runFingerprintsEqual(cmp: Pick<RunComparison, 'run_fingerprint'>): boolean {
@@ -95,16 +103,19 @@ export function summarizeCompare(cmp: RunComparison): CompareRow[] {
   if (revChanged) {
     rows.push({
       key: 'revision',
-      label: '工作流修订 / 图指纹',
+      label: t('workbench.recovery.cmpRevision'),
       changed: true,
-      detail: `修订 ${cmp.revision?.run_a_revision ?? '—'} → ${cmp.revision?.run_b_revision ?? '—'}`,
+      detail: t('workbench.recovery.cmpRevisionDetail', {
+        a: cmp.revision?.run_a_revision ?? '—',
+        b: cmp.revision?.run_b_revision ?? '—',
+      }),
     });
   }
   const inputKeys = dictDiffKeys(cmp.inputs_changed);
   if (inputKeys.length) {
     rows.push({
       key: 'inputs',
-      label: '输入参数',
+      label: t('workbench.recovery.cmpInputs'),
       changed: true,
       detail: inputKeys.join(', '),
     });
@@ -113,7 +124,7 @@ export function summarizeCompare(cmp: RunComparison): CompareRow[] {
   if (dsKeys.length) {
     rows.push({
       key: 'datasets',
-      label: '数据集版本',
+      label: t('workbench.recovery.cmpDatasets'),
       changed: true,
       detail: dsKeys.join(', '),
     });
@@ -122,7 +133,7 @@ export function summarizeCompare(cmp: RunComparison): CompareRow[] {
   if (toolKeys.length) {
     rows.push({
       key: 'tools',
-      label: '工具版本',
+      label: t('workbench.recovery.cmpTools'),
       changed: true,
       detail: toolKeys.join(', '),
     });
@@ -131,7 +142,7 @@ export function summarizeCompare(cmp: RunComparison): CompareRow[] {
   if (paramKeys.length) {
     rows.push({
       key: 'params',
-      label: '步骤参数',
+      label: t('workbench.recovery.cmpParams'),
       changed: true,
       detail: paramKeys.join(', '),
     });
@@ -143,7 +154,7 @@ export function summarizeCompare(cmp: RunComparison): CompareRow[] {
   if (artChanged) {
     rows.push({
       key: 'artifacts',
-      label: '产物',
+      label: t('workbench.recovery.cmpArtifacts'),
       changed: true,
       detail: `${arts.run_a_artifact_count ?? 0} → ${arts.run_b_artifact_count ?? 0}`,
     });
@@ -151,16 +162,16 @@ export function summarizeCompare(cmp: RunComparison): CompareRow[] {
   if (cmp.run_fingerprint && cmp.run_fingerprint.same !== true) {
     rows.push({
       key: 'fingerprint',
-      label: '运行指纹',
+      label: t('workbench.recovery.cmpFingerprint'),
       changed: true,
-      detail: '后端判定两次运行指纹不相同',
+      detail: t('workbench.recovery.cmpFingerprintDetail'),
     });
   }
   const warnings = cmp.warnings_changed ?? {};
   if (warnings.run_a_error || warnings.run_b_error) {
     rows.push({
       key: 'warnings',
-      label: '警告 / 错误',
+      label: t('workbench.recovery.cmpWarnings'),
       changed: true,
       detail: `${String(warnings.run_a_error ?? '—')} → ${String(warnings.run_b_error ?? '—')}`,
     });
@@ -169,9 +180,9 @@ export function summarizeCompare(cmp: RunComparison): CompareRow[] {
   if (metrics.run_a_perf || metrics.run_b_perf) {
     rows.push({
       key: 'metrics',
-      label: '运行指标',
+      label: t('workbench.recovery.cmpMetrics'),
       changed: true,
-      detail: '见后端 metrics_changed',
+      detail: t('workbench.recovery.cmpMetricsDetail'),
     });
   }
   return rows;
@@ -275,14 +286,18 @@ export function shortId(id: string | null | undefined, len = 8): string {
   return id.length <= len ? id : id.slice(0, len);
 }
 
-export const REPLAY_MODE_COPY = {
-  exact: {
-    label: '精确回放',
-    description:
-      '使用该次运行冻结的修订、图快照与输入绑定。数据集指纹会按当前数据重新采集；是否复现需对比运行指纹，不能从这次结束状态推断。',
-  },
-  latest: {
-    label: '最新修订回放',
-    description: '使用工作流当前修订，沿用该次运行的输入绑定。图结构可能已与原运行不同。',
-  },
-} as const;
+export function replayModeCopy(): {
+  exact: { label: string; description: string };
+  latest: { label: string; description: string };
+} {
+  return {
+    exact: {
+      label: t('workbench.recovery.replayExact'),
+      description: t('workbench.recovery.replayExactDetail'),
+    },
+    latest: {
+      label: t('workbench.recovery.replayLatest'),
+      description: t('workbench.recovery.replayLatestDetail'),
+    },
+  };
+}

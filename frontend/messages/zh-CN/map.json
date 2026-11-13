@@ -621,5 +621,7 @@
     "viewportLoading": "交互视窗加载中…",
     "noProduct": "当前会话无多画幅产品",
     "revisionNone": "—"
-  }
+  },
+  "layerDataFailed": "图层「{label}」数据加载失败，地图上可能显示为空。请稍后重试或刷新会话",
+  "unknownLayer": "未知图层"
 }

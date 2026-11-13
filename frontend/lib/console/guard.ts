@@ -66,14 +66,46 @@ export interface GuardVerdict {
   verbs: string[];
 }
 
+/** Quoted literals are not statements — mask them before verb / semicolon checks. */
+function maskQuotedLiterals(text: string): string {
+  let out = '';
+  let quote = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) {
+        if (text[i + 1] === quote) {
+          out += '  ';
+          i += 1;
+        } else {
+          quote = '';
+          out += ' ';
+        }
+      } else if (ch === '\\' && i + 1 < text.length) {
+        out += '  ';
+        i += 1;
+      } else {
+        out += ' ';
+      }
+    } else if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+      out += ' ';
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
 /**
  * 校验 where / filter_expr 文本。
  * 规则：
  *  1) 写类动词 → 拦截（只读端点）；
  *  2) 多语句（顶层 `;` 后仍有实质内容）→ 拦截（单表达式契约）。
+ * 引号内的文本先换成占位空白，字面量里的分号和动词不拦截。
  */
 export function guardFilterText(text: string): GuardVerdict {
-  const bare = stripSqlComments(text ?? '');
+  const bare = maskQuotedLiterals(stripSqlComments(text ?? ''));
   const verbs: string[] = [];
   for (const verb of BLOCKED_VERBS) {
     const re = new RegExp(`(^|[^\\w"'])(${verb})(?=[\\s(']|$)`, 'i');

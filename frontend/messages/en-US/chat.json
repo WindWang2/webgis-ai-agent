@@ -349,5 +349,10 @@
     "opReplaceGeometry": "Replace geometry",
     "opSplitFeature": "Split feature",
     "opMergeFeatures": "Merge features"
-  }
+  },
+  "turnCancelled": "⏹️ [Cancelled]",
+  "turnFailed": "⚠️ {detail}",
+  "turnFailedDefault": "Request failed. Please retry.",
+  "turnComplete": "Done.",
+  "sessionRestored": "Restored session “{title}” — {count} messages. You can continue."
 }
