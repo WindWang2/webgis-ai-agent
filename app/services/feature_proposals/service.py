@@ -155,6 +155,22 @@ async def create_proposal(
     findings = validate_proposal_ops(ops)
     if findings:
         raise FeatureProposalBlocked("invalid_ops", "proposal ops rejected", {"findings": findings})
+    # R2-2：merge 提案收敛 —— merge 的父集 = plan 级 feature_ids（G14 语义：
+    # plan targets 即 merge 父）。与其他 op 混排会把无关 op 目标静默吸并为
+    # 父，因此 merge_features 必须是唯一 op 且显式 feature_ids ≥2（对其他
+    # 要素的编辑放独立提案）。
+    if any(op.get("op") == "merge_features" for op in ops):
+        if len(ops) > 1:
+            raise FeatureProposalBlocked(
+                "invalid_op",
+                "merge_features must be the sole op of a proposal — put edits to other "
+                "features in a separate proposal (merge parents are the plan-level feature_ids)",
+            )
+        if not feature_ids or len(feature_ids) < 2:
+            raise FeatureProposalBlocked(
+                "invalid_op",
+                "merge_features proposals require feature_ids (>=2 merge parents)",
+            )
     payload, descriptor = await _load_payload_checked(session_id, ref_id)
     revision_now = int(descriptor.get("content_revision") or 0)
     fingerprint = compute_payload_fingerprint(payload)
@@ -487,6 +503,13 @@ async def update_proposal(
     findings = validate_proposal_ops(new_ops)
     if findings:
         raise FeatureProposalBlocked("invalid_ops", "proposal ops rejected", {"findings": findings})
+    if any(op.get("op") == "merge_features" for op in new_ops):
+        merged_ids = feature_ids if feature_ids is not None else p0.feature_ids
+        if len(new_ops) > 1 or not merged_ids or len(merged_ids) < 2:
+            raise FeatureProposalBlocked(
+                "invalid_op",
+                "merge_features must be the sole op with explicit feature_ids (>=2 parents)",
+            )
     # 归一化到 base 身份空间（ops 可能带自然 id；base 是稳定的身份锚）。
     base_payload = load_base_snapshot(p0.base)
     new_feature_ids: Optional[List[str]] = p0.feature_ids
@@ -610,10 +633,8 @@ async def submit_resolutions(
     stamped: List[Dict[str, Any]] = []
     for r in resolutions:
         item = dict(r)
-        if not item.get("decided_by"):
-            item["decided_by"] = actor_id
-        if not item.get("decided_at"):
-            item["decided_at"] = _now()
+        item["decided_by"] = actor_id   # R2-5：审计归属服务端无条件覆盖
+        item["decided_at"] = _now()
         stamped.append(item)
     new_resolutions = p.resolutions + [
         ProposalResolution.model_validate(r) for r in stamped

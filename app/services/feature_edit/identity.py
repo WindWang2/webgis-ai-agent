@@ -196,7 +196,19 @@ def natural_to_wfid_index(fc: GeoJSONFeatureCollection) -> Dict[str, str]:
         if not isinstance(wfid, str):
             continue
         out.setdefault(wfid, wfid)
-        natural = resolve_feature_id(feature)
+        # 自然键链显式跳过 _wfid（R2-1）：resolve_feature_id 命中链首的
+        # WFID 后短路，物化后仅存 properties 级自然键（OBJECTID 等）的
+        # 要素将不被索引 —— 这里沿 FEATURE_ID_KEYS 逐键提取（顶层 id 优先）。
+        top = feature.get("id")
+        natural = str(top) if isinstance(top, (str, int)) and not isinstance(top, bool) else None
+        if natural is None and isinstance(props, dict):
+            for key in FEATURE_ID_KEYS:
+                if key == WFID_PROP:
+                    continue
+                value = props.get(key)
+                if isinstance(value, (str, int)) and not isinstance(value, bool):
+                    natural = str(value)
+                    break
         if natural is not None and natural != wfid:
             out.setdefault(natural, wfid)
     return out

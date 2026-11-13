@@ -382,3 +382,49 @@ async def test_rp2_9_plan_level_op_field_resolution_rejected(client, _isolated):
     # ops 原样保留(plan 级写对全体目标仍生效 —— 用户需先收窄 op)。
     updated = await _isolated.get_proposal(s, pid)
     assert updated.ops == rec.ops
+
+
+# ── R2-1:物化后仅 properties 级自然键的要素仍可按自然键起草 ───────────────
+
+
+async def test_r2_1_properties_level_natural_key_indexed_after_materialize(client, _isolated):
+    from app.services.feature_edit.identity import materialize_wfids, natural_to_wfid_index
+
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.0, 39.0]},
+             "properties": {"OBJECTID": 101, "capacity": 1}},
+        ],
+    }
+    mat, _ = materialize_wfids(fc, "fp-r21")
+    idx = natural_to_wfid_index(mat)
+    wfid = mat["features"][0]["properties"]["_wfid"]
+    assert idx.get("101") == wfid  # properties 级自然键 → wfid(R2-1 回归钉)
+    assert idx.get(wfid) == wfid
+
+
+# ── R2-2:merge 提案收敛(不与其他 op 混排;父集=feature_ids)──────────────
+
+
+async def test_r2_2_merge_mixing_rejected_and_parents_explicit(client, _isolated):
+    s = sid()
+    ref = await _seed(s, SQUARES)
+    # 混排(merge + 对 q2 的编辑)→ 拒绝(此前 q2 被静默吸并为父)。
+    resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals", json={
+        "ref_id": ref, "submit": True,
+        "ops": [
+            {"op": "merge_features", "field_policy": {"mode": "first"}},
+            {"op": "set_fields", "wfids": ["q2"], "fields": {"area": 5}},
+        ],
+        "feature_ids": ["q0", "q1"],
+    })
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "invalid_op"
+    # 缺 feature_ids → 拒绝。
+    resp = await client.post(f"/api/v1/chat/sessions/{s}/feature-proposals", json={
+        "ref_id": ref, "submit": True,
+        "ops": [{"op": "merge_features", "field_policy": {"mode": "first"}}],
+    })
+    assert resp.status_code == 400
+    # 合法形态(唯一 op + 显式父集)仍通 —— 由 test_rp1_5 覆盖。

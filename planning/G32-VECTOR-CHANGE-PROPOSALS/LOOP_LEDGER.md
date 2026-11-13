@@ -29,6 +29,8 @@
 - P21(MapSpec stamp 延迟)依赖 G14 既有 stamp_status 披露,未单独注入测试。
 - G09/G21 历史分配未占用,与本域无关。
 
+- R8: 独立 review request-changes(2×P0+3×P1+4×P2+10×P3,全部实证)→ 全部修复+10 项回归(commit 4)→ 复审 **approve**(reviewer 探针复核全部真实修复;新报 2×P2+6×P3)→ R2-1/R2-2/R2-5 同批清偿+2 项回归(commit 5)。最终:单元+G14 168 passed、Pi 全链 4 passed、前端 4 passed、ruff/eslint/tsc 全绿。
+
 ## 下一步
 
-独立 review(未参与实现的 subagent)→ 修复阻断项 → 复审 → fetch 最新 master 合流检查 → push → PR。
+push → 创建 PR(base ca7b3ec27;与 #2094/#2095 仅加性注册接缝,无冲突)。
