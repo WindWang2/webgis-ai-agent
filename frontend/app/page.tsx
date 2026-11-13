@@ -19,7 +19,7 @@ import { useChatStore } from '@/lib/store/useChatStore';
 import { deleteSession } from '@/lib/api/chat';
 import { describeApiError } from '@/lib/api/transport';
 import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
-import { mapInsetLeft, mapChromeLeft, effectivePanelWidth } from '@/lib/utils/workspace-inset';
+import { mapInsetLeftStyle, mapChromeLeft, effectivePanelWidth } from '@/lib/utils/workspace-inset';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
 import { useRegisterCommands } from '@/lib/commands/registry';
@@ -426,7 +426,7 @@ export default function Home() {
             top: 0,
             bottom: 0,
             right: 0,
-            left: mapInsetLeft(insetOpen, effectivePanelWidth(sidebarWidth, panelExpanded)),
+            left: mapInsetLeftStyle(insetOpen, effectivePanelWidth(sidebarWidth, panelExpanded)),
             transition: 'left 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
           }}
         >

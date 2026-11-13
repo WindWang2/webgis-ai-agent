@@ -4,6 +4,7 @@ import {
   PANEL_GAP,
   MAP_INSET_MAX_VIEWPORT_RATIO,
   mapInsetLeft,
+  mapInsetLeftStyle,
   mapChromeLeft,
   effectivePanelWidth,
   PANEL_WIDE_MAX,
@@ -80,5 +81,13 @@ describe('workspace-inset — narrow viewport clamp (#999)', () => {
   it('收起时恒为 0（窄视口也一样）', () => {
     setViewportWidth(375);
     expect(mapInsetLeft(false, 420)).toBe(0);
+  });
+});
+
+
+describe('SSR-safe CSS inset', () => {
+  it('keeps a viewport clamp in CSS instead of reading window while rendering', () => {
+    expect(mapInsetLeftStyle(true, 330)).toBe('min(390px, 50vw)');
+    expect(mapInsetLeftStyle(false, 330)).toBe('0px');
   });
 });

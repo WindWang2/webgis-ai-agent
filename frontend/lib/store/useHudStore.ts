@@ -28,7 +28,7 @@ import { createLayersSlice } from './slices/layersSlice';
 import { createResultsSlice } from './slices/resultsSlice';
 import { createSettingsSlice } from './slices/settingsSlice';
 import { createTaskSlice } from './slices/taskSlice';
-import { createUiSlice } from './slices/uiSlice';
+import { createUiSlice, defaultLeftPanelOpen } from './slices/uiSlice';
 import { createDockSlice } from './slices/dockSlice';
 import { createWorkbenchSlice } from './slices/workbenchSlice';
 import { createToolSlice } from './slices/toolSlice';
@@ -162,3 +162,15 @@ export const useHudStore = create<HudState>()(
     },
   ),
 );
+
+/** Apply viewport defaults only after hydration; saved layout wins over defaults. */
+export async function rehydrateHudStore(): Promise<void> {
+  if (useHudStore.persist.hasHydrated()) return;
+  disableHudPersistWrites();
+  useHudStore.setState({ leftPanelOpen: defaultLeftPanelOpen() });
+  try {
+    await useHudStore.persist.rehydrate();
+  } finally {
+    enableHudPersistWrites();
+  }
+}
