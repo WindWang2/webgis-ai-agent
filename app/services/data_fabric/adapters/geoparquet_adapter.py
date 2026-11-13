@@ -305,7 +305,10 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             # Endpoint configured but neither a real local file nor http URL.
             return False
         except Exception as e:
-            logger.debug(f"GeoParquet probe failed for {self.endpoint}: {e}")
+            logger.debug(
+                "GeoParquet probe failed for %s: %s",
+                DataFabricSecurity.redact_url(self.endpoint), type(e).__name__,
+            )
             return False
 
     def capabilities(self) -> List[str]:
@@ -1464,12 +1467,12 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 adapter="geoparquet",
                 message="GeoParquet source verified",
                 latency_ms=latency,
-                details={"endpoint": self.endpoint or "synthetic_fixture_mode"},
+                details={"endpoint": DataFabricSecurity.redact_url(self.endpoint) or "synthetic_fixture_mode"},
             )
         return DataFabricHealth(
             status="unreachable",
             adapter="geoparquet",
-            message=f"GeoParquet source inaccessible at {self.endpoint}",
+            message="GeoParquet source inaccessible",
             latency_ms=latency,
-            details={"endpoint": self.endpoint},
+            details={"endpoint": DataFabricSecurity.redact_url(self.endpoint)},
         )

@@ -46,9 +46,16 @@ def canonical_variants(v: Any) -> List[bytes]:
     if isinstance(v, int):
         return [b"i:" + str(v).encode("ascii")]
     if isinstance(v, float):
+        if not math.isfinite(v):
+            return [b"f:" + repr(v).encode("ascii")]
         if v == int(v):
             return [b"i:" + str(int(v)).encode("ascii"), b"f:" + repr(v).encode("ascii")]
-        return [b"f:" + repr(v).encode("ascii")]
+        # 非整数 float 与 Decimal('1.5') 在 V5 字典相等下会命中（1.5 == Decimal('1.5')）。
+        # 追加 o: 变体，避免 Bloom 假阴性。
+        return [
+            b"f:" + repr(v).encode("ascii"),
+            b"o:" + str(v).encode("utf-8"),
+        ]
     if isinstance(v, str):
         return [b"s:" + v.encode("utf-8", "surrogatepass")]
     if isinstance(v, (list, dict)):

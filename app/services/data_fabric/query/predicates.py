@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from datetime import date, datetime
 from typing import Annotated, Any, Dict, List, Literal, Optional, Sequence, Union
@@ -269,6 +270,10 @@ _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-
 def _check_iso(v: str) -> str:
     if not isinstance(v, str) or not _ISO_RE.match(v):
         raise PredicateError(f"invalid ISO-8601 datetime: {v!r}")
+    try:
+        datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PredicateError(f"invalid ISO-8601 datetime: {v!r}") from exc
     return v
 
 
@@ -348,7 +353,13 @@ def temporal_from_dict(data: Any) -> TemporalPredicate:
 
 
 def _canonical_value(v: Any) -> Any:
-    if isinstance(v, float) and v == int(v) and abs(v) < 1e15:
+    # isfinite 必须先于 int()：inf/nan 的 int() 抛 OverflowError/ValueError。
+    if (
+        isinstance(v, float)
+        and math.isfinite(v)
+        and abs(v) < 1e15
+        and v == int(v)
+    ):
         # 1 与 1.0 canonical 化为同一形式，保证 fingerprint 稳定。
         return int(v)
     return v
@@ -446,14 +457,32 @@ def _to_number(v: Any) -> Optional[float]:
 
 
 def _like_to_regex(pattern: str) -> "re.Pattern[str]":
+    """SQL LIKE → regex. Escape char is backslash, same as PostGIS ``ESCAPE '\\'``
+    and FES ``escapeChar="\\"`` (``\\%`` / ``\\_`` / ``\\\\`` are literals).
+    """
     out = ["^"]
-    for ch in pattern:
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\":
+            if i + 1 >= len(pattern):
+                out.append(re.escape("\\"))
+                break
+            nxt = pattern[i + 1]
+            if nxt in ("%", "_", "\\"):
+                out.append(re.escape(nxt))
+                i += 2
+                continue
+            out.append(re.escape("\\"))
+            i += 1
+            continue
         if ch == "%":
             out.append(".*")
         elif ch == "_":
             out.append(".")
         else:
             out.append(re.escape(ch))
+        i += 1
     out.append("$")
     return re.compile("".join(out), re.DOTALL)
 
@@ -555,7 +584,10 @@ def evaluate_temporal(node: Any, properties: Dict[str, Any]) -> bool:
         except ValueError:
             return False
     def _pt(s: str) -> datetime:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        try:
+            return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise PredicateError(f"invalid ISO-8601 datetime: {s!r}") from exc
     if node.op == "before":
         return tv < _pt(node.value)
     if node.op == "after":

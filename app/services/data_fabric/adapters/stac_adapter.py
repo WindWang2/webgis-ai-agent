@@ -167,6 +167,26 @@ SYNTHETIC_STAC_FIXTURES: Dict[str, Dict[str, Any]] = {
 }
 
 
+def _catalog_child_id(href: str) -> str:
+    """静态 catalog 的 child href → 集合 id。
+
+    ``./s2/collection.json`` 不能取最后一段（全是 collection.json）。
+    JSON 文件名时用父目录名；否则用最后一段。
+    """
+    from urllib.parse import unquote, urlparse
+
+    path = unquote(urlparse(href).path if "://" in href else href)
+    parts = [p for p in path.split("/") if p and p not in (".", "..")]
+    if not parts:
+        return href.strip() or "collection"
+    last = parts[-1]
+    if last.lower().endswith(".json") and len(parts) >= 2:
+        return parts[-2]
+    if last.lower().endswith(".json"):
+        return last[:-5] or last
+    return last
+
+
 class STACAdapter(GeospatialDataSourceAdapter):
     """
     STAC Data Fabric Adapter (V2):
@@ -180,6 +200,9 @@ class STACAdapter(GeospatialDataSourceAdapter):
         self.allow_private = getattr(self.profile, "allow_private", False)
         # SSRF-safe session: every request (incl. redirects) is revalidated.
         self.session = make_safe_session(allow_private=self.allow_private)
+        headers = (self.profile.options or {}).get("headers")
+        if isinstance(headers, dict):
+            self.session.headers.update(headers)
         self._conformance_cache: Optional[tuple] = None
 
     def _filter_extension_declared(self) -> bool:
@@ -241,7 +264,10 @@ class STACAdapter(GeospatialDataSourceAdapter):
                 "stac_version" in data or "collections" in data or "links" in data
             )
         except Exception as e:
-            logger.debug(f"STAC probe failed for {self.endpoint}: {e}")
+            logger.debug(
+                "STAC probe failed for %s: %s",
+                DataFabricSecurity.redact_url(self.endpoint), type(e).__name__,
+            )
             return False
 
     def capabilities(self) -> List[str]:
@@ -297,7 +323,8 @@ class STACAdapter(GeospatialDataSourceAdapter):
             if isinstance(root_json, dict):
                 links = root_json.get("links", [])
                 child_ids = [
-                    link["href"].split("/")[-1] for link in links if link.get("rel") in ("child", "collection")
+                    _catalog_child_id(str(link.get("href") or ""))
+                    for link in links if link.get("rel") in ("child", "collection") and link.get("href")
                 ]
                 if child_ids:
                     return [
@@ -308,12 +335,15 @@ class STACAdapter(GeospatialDataSourceAdapter):
             # Real endpoint configured but discovery yielded nothing
             # truthful — empty list, NO synthetic fallback (#430).
             logger.warning(
-                f"STAC list_datasets for '{self.endpoint}' returned no collections; "
-                f"registering an empty catalog"
+                "STAC list_datasets for '%s' returned no collections; registering an empty catalog",
+                DataFabricSecurity.redact_url(self.endpoint),
             )
             return []
         except Exception as e:
-            logger.warning(f"STAC list_datasets failed for '{self.endpoint}': {e}")
+            logger.warning(
+                "STAC list_datasets failed for '%s': %s",
+                DataFabricSecurity.redact_url(self.endpoint), type(e).__name__,
+            )
             return []
 
     def _list_synthetic_collections(self) -> List[Dict[str, Any]]:
@@ -378,7 +408,10 @@ class STACAdapter(GeospatialDataSourceAdapter):
                 logger.warning(f"STAC describe for '{dataset_id}' failed: {error_message}")
                 c = None
             if c is not None:
-                bbox = c.get("extent", {}).get("spatial", {}).get("bbox", [[-180.0, -90.0, 180.0, 90.0]])[0]
+                extent = c.get("extent") if isinstance(c.get("extent"), dict) else {}
+                spatial = extent.get("spatial") if isinstance(extent.get("spatial"), dict) else {}
+                boxes = spatial.get("bbox")
+                bbox = boxes[0] if isinstance(boxes, list) and boxes and isinstance(boxes[0], (list, tuple)) else None
                 summaries = c.get("summaries", {})
                 fields = [{"name": k, "type": "property"} for k in summaries.keys()]
                 # Feature count: only what the source actually reports
@@ -897,12 +930,13 @@ class STACAdapter(GeospatialDataSourceAdapter):
                 adapter="stac",
                 message="STAC catalog/endpoint responsive",
                 latency_ms=latency,
-                details={"endpoint": self.endpoint or "synthetic_fixture_mode"},
+                details={"endpoint": DataFabricSecurity.redact_url(self.endpoint) or "synthetic_fixture_mode"},
             )
+        safe_endpoint = DataFabricSecurity.redact_url(self.endpoint)
         return DataFabricHealth(
             status="unreachable",
             adapter="stac",
-            message=f"Unable to reach STAC endpoint: {self.endpoint}",
+            message="Unable to reach STAC endpoint",
             latency_ms=latency,
-            details={"endpoint": self.endpoint},
+            details={"endpoint": safe_endpoint},
         )

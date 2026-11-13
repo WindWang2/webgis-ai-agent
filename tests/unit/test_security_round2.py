@@ -90,7 +90,7 @@ async def test_gov_adapter_fetch_allows_public_url(monkeypatch):
         ("type = 'commercial'", '"type" = %s', "commercial"),
         ("age >= 30", '"age" >= %s', 30),
         ("score > 4.5", '"score" > %s', 4.5),
-        ("name LIKE 'shop%'", '"name" LIKE %s', "shop%"),
+        ("name LIKE 'shop%'", '"name" LIKE %s ESCAPE \'\\\'', "shop%"),
         ("active = true", '"active" = %s', True),
         ("deleted = null", '"deleted" IS NULL', []),  # V2: NULL 字面量语义修正为 IS NULL（无参数）
         ("city != 'Beijing'", '"city" != %s', "Beijing"),
@@ -115,7 +115,7 @@ def test_parse_safe_where_accepts_like_wildcards(expr):
     """Reviewer fix: LIKE patterns containing %s/%S are legitimate wildcards,
     not placeholder injection (values are always bound parameters)."""
     sql, params = _parse_safe_where(expr)
-    assert sql == '"name" LIKE %s'
+    assert sql == '"name" LIKE %s ESCAPE \'\\\''
     assert params == [expr.split("'")[1]]
 
 
@@ -146,7 +146,7 @@ def test_parse_safe_where_binds_literal_percent_s():
     always parameters, so this is safe, not injection. It must parse (reviewer
     fix: previously rejected via the %S token check)."""
     sql, params = _parse_safe_where("name LIKE %s")
-    assert sql == '"name" LIKE %s'
+    assert sql == '"name" LIKE %s ESCAPE \'\\\''
     assert params == ["%s"]
 
 

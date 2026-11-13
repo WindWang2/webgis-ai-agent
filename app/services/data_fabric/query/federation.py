@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -239,6 +240,9 @@ def spatial_join_local(
 
     返回 join 行：``{point_properties..., "__right__": right_properties}``。
 
+    多边形重叠时每个点只保留**输入序最早**的命中（确定性；不随 STRtree
+    内部顺序变化）。不是一对多展开。
+
     ``carry_left_geometry``（V3 链式联邦专用，缺省 False）：True 时输出行
     额外携带 ``__left_geometry__``（左点原始几何），供链上后续空间跳重建
     左要素再入 STRtree。缺省 False 时两源路径输出逐字节不变。
@@ -270,9 +274,9 @@ def spatial_join_local(
             continue
         if budget is not None:
             budget.add_feature(pt)
-        hit: Optional[Dict[str, Any]] = None
+        hit_idx: Optional[int] = None
         for cand_idx in index.candidates(g):
-            pg, props = shp_polys[cand_idx]
+            pg, _props = shp_polys[cand_idx]
             try:
                 ok = (
                     pg.contains(g) or pg.equals(g)
@@ -281,10 +285,10 @@ def spatial_join_local(
                 )
             except Exception:
                 continue
-            if ok:
-                hit = props
-                break
-        if hit is not None:
+            if ok and (hit_idx is None or cand_idx < hit_idx):
+                hit_idx = cand_idx
+        if hit_idx is not None:
+            hit = shp_polys[hit_idx][1]
             # R4-C2：输出行计入预算（join 扇出可能远超输入行数）
             out_row = dict(pt.get("properties") or {})
             out_row["__right__"] = hit.get("properties") or {}
@@ -365,8 +369,11 @@ def build_attribute_index(
 def _hashable_key(v: Any) -> Any:
     if isinstance(v, (list, dict)):
         return str(v)
-    if isinstance(v, float) and v == int(v):
-        return int(v)  # 1 与 1.0 join 语义一致
+    if isinstance(v, float):
+        if not math.isfinite(v):
+            return v  # inf/nan 可哈希；int() 会抛 OverflowError/ValueError
+        if v == int(v):
+            return int(v)  # 1 与 1.0 join 语义一致
     return v
 
 
@@ -2143,7 +2150,9 @@ def _execute_v6_with_governance(executor, req, engine_breaker, cache_ctx, cache)
             cache_key, _execute_and_build
         )
         if shared:
-            result_dict = dict(result_dict)
+            import copy as _copy
+
+            result_dict = _copy.deepcopy(result_dict)
             result_dict["result_cache"] = {
                 "hit": True,
                 "age_s": 0.0,

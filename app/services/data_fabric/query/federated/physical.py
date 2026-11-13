@@ -90,11 +90,21 @@ def iter_scan_pages(
         iter_scan_pages_arrow,
     )
 
-    if adapter_supports_arrow_lane(adapter) and not output_crs:
+    # V6 执行器把 where 编成 canonical dict 或原始 str。Arrow lane 的
+    # evaluate_predicate 只要 AST：dict 先还原；str 无法本地求值，回 dict lane。
+    arrow_where = where
+    use_arrow = adapter_supports_arrow_lane(adapter) and not output_crs
+    if use_arrow and isinstance(where, str):
+        use_arrow = False
+    elif use_arrow and isinstance(where, dict):
+        from app.services.data_fabric.query.predicates import predicate_from_dict
+
+        arrow_where = predicate_from_dict(where)
+    if use_arrow:
         fetched_arrow = 0
         for page in iter_scan_pages_arrow(
             adapter, dataset_id,
-            where=where, fields=fields, bbox=bbox,
+            where=arrow_where, fields=fields, bbox=bbox,
             fetch_limit=fetch_limit, budget=budget, token=token,
             page_size=page_size,
         ):

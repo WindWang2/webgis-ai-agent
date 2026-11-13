@@ -350,11 +350,33 @@ def rule_geometry_validity(ctx: RuleEvalContext) -> RuleOutcome:
     return outcome
 
 
+def _identity_key(v: Any) -> str:
+    """主键/外键比较键：类型不同不相等，且不截断（截断会把不同长键判成重复）。"""
+    if isinstance(v, bool):
+        return "b:" + ("1" if v else "0")
+    if isinstance(v, int):
+        return "i:" + str(v)
+    if isinstance(v, float):
+        return "f:" + repr(v)
+    if isinstance(v, str):
+        return "s:" + v
+    return "o:" + repr(v)
+
+
 def rule_envelope_sanity(ctx: RuleEvalContext) -> RuleOutcome:
     inverted = 0
     out_of_range = 0
     non_finite = 0
     scanned = 0
+    geographic = True
+    if ctx.crs:
+        from pyproj import CRS
+        from pyproj.exceptions import CRSError
+
+        try:
+            geographic = CRS.from_user_input(ctx.crs).is_geographic
+        except (ValueError, TypeError, CRSError):
+            geographic = False  # invalid CRS is reported by the separate CRS rule
     for f in ctx.features[: ctx.max_scan]:
         geometry = f.get("geometry") if isinstance(f, dict) else None
         if not isinstance(geometry, dict):
@@ -377,12 +399,6 @@ def rule_envelope_sanity(ctx: RuleEvalContext) -> RuleOutcome:
         if any(math.isnan(x) or math.isnan(y) for x, y in positions):
             non_finite += 1
             continue
-        from pyproj import CRS
-
-        try:
-            geographic = not ctx.crs or CRS.from_user_input(ctx.crs).is_geographic
-        except (ValueError, TypeError):
-            geographic = False  # invalid CRS is reported by the separate CRS rule
         if geographic:
             lon_lo, lon_hi = (float(v) for v in ctx.params.get("lon_range", (-180.5, 180.5)))
             lat_lo, lat_hi = (float(v) for v in ctx.params.get("lat_range", (-90.5, 90.5)))
@@ -455,7 +471,7 @@ def rule_primary_key_uniqueness(ctx: RuleEvalContext) -> RuleOutcome:
         if v is None:
             missing += 1
             continue
-        key = str(v)[:128]
+        key = _identity_key(v)
         seen[key] = seen.get(key, 0) + 1
     if scanned == 0:
         return RuleOutcome(status="skipped", message="no_features")
@@ -463,7 +479,7 @@ def rule_primary_key_uniqueness(ctx: RuleEvalContext) -> RuleOutcome:
     dup_rows = sum(c for c in dups.values())
     metric = {"field": field_name, "duplicate_keys": len(dups),
               "duplicate_rows": dup_rows, "missing": missing,
-              "sample_keys": sorted(dups)[:8]}
+              "sample_keys": [k[:128] for k in sorted(dups)[:8]]}
     if dups:
         return RuleOutcome("fail", f"主键 '{field_name}' 重复 {len(dups)} 组（{dup_rows} 行）",
                            dup_rows, metric)
@@ -475,7 +491,7 @@ def rule_fk_referential(ctx: RuleEvalContext) -> RuleOutcome:
     valid = ctx.params.get("valid_values")
     if not field_name or not isinstance(valid, (list, tuple)) or not valid:
         return RuleOutcome(status="skipped", message="field/valid_values not configured")
-    valid_set = {str(v)[:128] for v in list(valid)[:10000]}
+    valid_set = {_identity_key(v) for v in list(valid)[:10000]}
     orphans: List[str] = []
     orphan_rows = 0
     scanned = 0
@@ -487,7 +503,7 @@ def rule_fk_referential(ctx: RuleEvalContext) -> RuleOutcome:
         v = props.get(field_name)
         if v is None:
             continue
-        if str(v)[:128] not in valid_set:
+        if _identity_key(v) not in valid_set:
             orphan_rows += 1
             if len(orphans) < 8:
                 orphans.append(str(v)[:64])

@@ -175,6 +175,12 @@ class RoleBindingReport:
         }
 
 
+class _EvidenceList(list):
+    """collect_session_evidence 的返回列表（兼容 list；带截断计数）。"""
+
+    truncated_refs: int = 0
+
+
 # ── 会话证据收集（纯读；零数据扫描）────────────────────────────────────
 
 async def collect_session_evidence(
@@ -210,7 +216,10 @@ async def collect_session_evidence(
     # 确定性：排序后取前 N（list_refs 的 dict 迭代序跨后端不保证稳定）。
     available = {str(r) for r in aliases}
     preferred = [str(ref) for ref in (preferred_refs or []) if str(ref) in available]
+    # 显式 preferred（bound_refs）排在字典序之前，避免同会话 ref 被截断后
+    # 显式绑定被误判 not_authorized。
     ref_ids = list(dict.fromkeys(preferred + sorted(available)))[:max(0, int(max_refs))]
+    truncated = max(0, len(available) - len(ref_ids))
 
     store = get_dataset_semantic_store()
     records: List[RefSemanticRecord] = []
@@ -246,7 +255,9 @@ async def collect_session_evidence(
             rec.read_status = "missing"
             rec.reason_code = "DESCRIPTOR_MISSING"
         records.append(rec)
-    return records
+    out = _EvidenceList(records)
+    out.truncated_refs = truncated
+    return out
 
 
 # ── 证据匹配（确定性评分；词表复用不另造）───────────────────────────────

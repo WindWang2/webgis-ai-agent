@@ -265,15 +265,13 @@ class MaterializationService:
         # 的输入侧，不建第二 store）
         if evidence:
             geojson_payload["properties"]["query_evidence"] = evidence
+        # 资源守卫（Section 22 / #425）：入库前拒绝超限（服务器忽略 limit 时
+        # 不得 OOM 进程）。指纹计算前只做这一次。
         enforce_result_bounds(query_result.features)
         fingerprint = await asyncio.to_thread(
             dataset_fingerprint_service.calculate_data_fingerprint,
             query_result.features,
         )
-
-        # 资源守卫（Section 22 / #425）：入库前拒绝超限（服务器忽略 limit 时
-        # 不得 OOM 进程）。
-        enforce_result_bounds(query_result.features)
 
         try:
             ref_id = await session_data_manager.store(session_id, geojson_payload, prefix="data-fabric")
