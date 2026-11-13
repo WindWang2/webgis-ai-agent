@@ -147,7 +147,8 @@ MAX_VERTICES_PER_GEOMETRY = 100_000    # 单几何顶点上限（超出→该要
 MAX_WITNESS_BLOB_BYTES = 8 * 1024 * 1024   # 单运行 witness 集合字节上限
 RULE_WALL_CLOCK_S = 120.0              # 单规则 wall-clock 预算（超出→partial）
 #: 复用键必须覆盖的完整输入身份（缓存复用纪律，任务书 §六）：
-#: 全部源内容指纹 + 规则 digest + scope + 计算 CRS + 方法版本。
+#: 全部源内容指纹 + 规则 digest + scope + 方法版本（computation_crs 是
+#: 源联合范围的纯函数，由内容指纹内蕴，不单列 —— 见 runner.compute_input_digest）。
 METHOD_VERSION = "g31-eval-v1"
 #: 复用键成分（computation_crs 为源内容纯函数，由内容指纹内蕴，不单列）
 RUN_REUSE_KEY_FIELDS = ("input_digest", "ruleset_digest", "method_version")

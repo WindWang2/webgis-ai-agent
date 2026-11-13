@@ -52,5 +52,11 @@
 - [x] 全回归复跑：topology 46 + feature_edit/selection/quality 173 + data 1212 + 前端 29（4 文件）+ tsc 72=base
 - [x] commit fe2291941（43 文件）
 - [x] PR_BODY.md / TEST_EVIDENCE.md / TEST_MATRIX.md / INTERFACES.md 落盘
-- [ ] 独立 review → 修复 → 复审（REVIEW.md 追加）
-- [ ] push → PR
+## Round 6（2026-11-13）—— 独立评审闭环与出口
+
+- [x] Round 1 评审：无 P0；P1×2（越权会话 stamp / boundary_touch 静默无效）+ P2×6 → 77485cb77 清偿
+- [x] Round 2 复审：8/10 确认；抓到 P2-4 声称与事实不符（no-op 替换）+ NEW-1
+      预算序回归 → d412e84b9 清偿（真接线 + 阈值先行 + digest 口径撤漂移）
+- [x] Round 3 终审：**APPROVE**（探针含负例对照；预算触顶路径单独复证）
+- [x] REVIEW.md / PR_HANDOFF.md / TEST_EVIDENCE 终稿落盘；注释修正
+- [x] push → PR（见 PR_HANDOFF.md）
