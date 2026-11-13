@@ -65,22 +65,39 @@ def _apply_visual_overrides(
     spec: Dict[str, Any],
     plan: ThematicAuthoringPlan,
     n_classes: int,
-) -> None:
-    """类级覆盖（labels/class_colors/invert）就地应用到已构建 spec。"""
+) -> List[str]:
+    """类级覆盖（labels/class_colors/invert）就地应用到已构建 spec；
+    返回披露（覆盖长度偏差 / 全量覆盖后的 palette 溯源说明）。"""
+    out: List[str] = []
     if plan.invert_palette and isinstance(spec.get("palette_colors"), list):
         spec["palette_colors"] = list(reversed(spec["palette_colors"]))
     if plan.class_colors:
         colors = spec.get("palette_colors")
         if isinstance(colors, list):
+            overridden = 0
             for i, c in enumerate(plan.class_colors):
                 if i < len(colors):
                     colors[i] = c
+                    overridden += 1
+            # P3-4/P3-6（评审）：覆盖长度与实际类数的偏差、以及全量覆盖后
+            # palette 溯源语义——显式披露，不静默截断。
+            if len(plan.class_colors) > len(colors):
+                out.append(
+                    f"class_colors 提供 {len(plan.class_colors)} 项，实际类数 "
+                    f"{len(colors)}——超出部分不适用（未截断数据，仅样式）")
+            if overridden and overridden == len(colors):
+                out.append(
+                    f"全部 {overridden} 类颜色被人工覆盖（palette_id 仍记录初始色带 "
+                    f"{spec.get('palette_id') or spec.get('palette')!r} 溯源）")
     if plan.labels:
         labels = spec.get("labels")
         if isinstance(labels, list):
             for i, lab in enumerate(plan.labels):
                 if i < len(labels):
                     labels[i] = lab
+            if len(plan.labels) > len(labels):
+                out.append(
+                    f"labels 提供 {len(plan.labels)} 项，实际类数 {len(labels)}——超出部分不适用")
         else:
             spec["labels"] = list(plan.labels)[:n_classes]
     if plan.nodata is not None:
@@ -90,6 +107,7 @@ def _apply_visual_overrides(
         spec["unit"] = plan.unit
     if plan.title is not None:
         spec["title"] = plan.title
+    return out
 
 
 def _require_field(scan: FieldScan, plan: ThematicAuthoringPlan, current_field: Optional[str]) -> None:
@@ -246,7 +264,8 @@ def build_candidate(
         if candidate is None:
             raise ThematicAuthoringError("CLASSIFICATION_FAILED", "分级构建失败", field=field)
         if mode in ("graduated_auto",):
-            _apply_visual_overrides(candidate, plan, len(candidate.get("breaks", [])) - 1)
+            disclosures.extend(_apply_visual_overrides(
+                candidate, plan, len(candidate.get("breaks", [])) - 1))
         breaks = candidate.get("breaks", [])
         actual_k = len(breaks) - 1
         if requested_k is not None and actual_k != requested_k:

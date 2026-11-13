@@ -256,11 +256,14 @@ def register_thematic_authoring_tools(registry: ToolRegistry) -> None:
             payload = error_payload(exc)
             payload["success"] = False
             return payload
+        # P3-3（评审）：确定性 mutation_id = 计划指纹 × 目标修订 —— 同一
+        # apply 超时重放由引擎幂等面去重（lifecycle mutation_id 幂等）。
         result = await _guard(commit_expression(
             session_id, layer_id, parsed,
             expected_revision=expected_revision,
             origin="agent", actor="pi:thematic_style_apply",
             trusted_dispatch=True,
+            mutation_id=f"thematic:{parsed.plan_digest()}:r{int(expected_revision)}",
         ))
         if result.get("success") is False:
             return result

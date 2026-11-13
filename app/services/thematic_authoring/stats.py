@@ -87,7 +87,7 @@ class FieldScan:
     invalid: Dict[str, int]          # 数值口径分型无效计数
     category_counts: Counter         # 规范化字符串键 → 计数（str/bool/数值）
     key_kinds: Dict[str, str]        # 文本键 → 主导原始类型（类型化 match 用）
-    ambiguous_keys: List[str]        # 同一文本键来自混合类型的键（≤5，作者须消除歧义）
+    ambiguous_keys: List[str]        # 同一文本键来自混合类型的键（≤64，作者须消除歧义）
     distinct_capped: bool            # distinct 计数是否越过扫描帽
 
     @property
@@ -144,7 +144,9 @@ def scan_field(features: Iterable[Any], field: str) -> FieldScan:
                         distinct_capped = True
                 elif kind not in key_kind_sets[key]:
                     key_kind_sets[key].add(kind)
-                    if key not in ambiguous and len(ambiguous) < 5:
+                    # 评审 P3-1：cap 5 → 64（作者拒绝面覆盖到实际类表规模；
+                    # 仍受 MAX_DISTINCT_SCAN 扫描帽约束，回执有界）。
+                    if key not in ambiguous and len(ambiguous) < 64:
                         ambiguous.append(key)
 
     approximated = len(raw_values) > MAX_SCAN_VALUES

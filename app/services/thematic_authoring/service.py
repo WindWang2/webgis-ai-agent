@@ -126,21 +126,99 @@ async def resolve_layer(session_id: str, layer_id: str) -> LayerContext:
     )
 
 
-def _shared_expression_scope(mapspec: Dict[str, Any], ctx: LayerContext) -> Optional[Dict[str, Any]]:
-    """G15 frame_product / temporal.compare 的共享分级作用域识别（只读）。"""
-    frame = mapspec.get("frame_product")
-    if not isinstance(frame, dict):
+def _candidate_for(
+    plan: ThematicAuthoringPlan,
+    layer: Dict[str, Any],
+    scan: "stats_mod.FieldScan",
+    current_spec: Optional[Dict[str, Any]],
+    current_field: Optional[str],
+    *,
+    with_restore_state: bool = False,
+):
+    """preview/commit 共用的候选构建：revert_auto 优先恢复上一笔作者决定
+    前的完整表达快照（categorical 固定科学类别也能真正恢复），否则走自动
+    重建。两入口同候选（确定性）。"""
+    if plan.mode == "revert_auto":
+        prev_spec = prev_authoring_snapshot(layer)
+        if prev_spec is not None:
+            from app.lib.cartography.thematic_spec import spec_to_paint as _stp
+
+            paint_color, _w = _stp(prev_spec)
+            if paint_color is not None:
+                candidate = CandidateExpression(
+                    legend_spec=dict(prev_spec),
+                    paint_color=paint_color,
+                    size_paint=None,
+                    disclosures=["已恢复上一笔作者决定前的表达快照（单步；更多历史用 undo）"],
+                )
+                return (candidate, prev_spec) if with_restore_state else candidate
+            raise ThematicAuthoringError(
+                "REVERT_SNAPSHOT_INVALID",
+                "上一笔作者决定前的表达快照无法投影（数据合同漂移）——"
+                "请改用 undo 或重新构建表达",
+                status_code=409)
+    if plan.mode == "revert_auto" and current_spec is not None             and current_spec.get("type") == "categorical":
+        # 无快照可恢复的类别层（从未作者编辑/快照已被上一笔 revert 消费）：
+        # 类别表达没有通用「自动」重建器（LISA 等固定科学类别）——保持当前
+        # 类别表并如实披露，不拒绝、不虚构。
+        from app.lib.cartography.thematic_spec import spec_to_paint as _stp2
+
+        keep_paint, _w2 = _stp2(current_spec)
+        if keep_paint is not None:
+            candidate = CandidateExpression(
+                legend_spec=dict(current_spec),
+                paint_color=keep_paint,
+                size_paint=None,
+                class_table=[],
+                disclosures=["无可恢复的先前快照——保持当前类别表（固定科学类别无通用自动重建；更多历史用 undo）"],
+            )
+            return (candidate, None) if with_restore_state else candidate
+    candidate = build_candidate(
+        plan, scan, current_spec=current_spec, current_field=current_field)
+    return (candidate, None) if with_restore_state else candidate
+
+
+def prev_authoring_snapshot(layer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """层上作者证据块里的先前表达快照（无证据/形状不符 → None）。"""
+    ev = layer.get(AUTHORING_KEY)
+    if not isinstance(ev, dict):
         return None
-    shared = frame.get("shared_expressions") or frame.get("shared_expression")
-    if isinstance(shared, list):
-        for group in shared:
-            if isinstance(group, dict) and ctx.layer.get("id") in (group.get("layer_ids") or []):
-                return {"kind": "frame_product", "group": group}
-    elif isinstance(shared, dict):
-        for name, group in shared.items():
-            if isinstance(group, dict) and ctx.layer.get("id") in (group.get("layer_ids") or []):
-                return {"kind": "frame_product", "group": group, "name": name}
-    return None
+    snap = ev.get("previous_legend_spec")
+    return snap if isinstance(snap, dict) and snap.get("type") else None
+
+
+def _shared_expression_scope(mapspec: Dict[str, Any], ctx: LayerContext) -> Optional[Dict[str, Any]]:
+    """G15 frame_product 共享分级作用域识别（只读；按 FrameProductContract.v1
+    真实形状：``frame_product.shared_expression``（单数，SharedExpressionConfig，
+    无 layer_ids）+ 成员归属 = ``frames[].data.layer_id``，legend 为
+    shared/shared_plus_frame 的画幅才消费共享口径）。"""
+    frame = mapspec.get("frame_product")
+    if not isinstance(frame, dict) or not frame.get("enabled"):
+        return None
+    shared = frame.get("shared_expression")
+    if not isinstance(shared, dict):
+        return None
+    layer_id = ctx.layer.get("id")
+    member_frames = []
+    for slot in frame.get("frames") or []:
+        if not isinstance(slot, dict):
+            continue
+        data = slot.get("data")
+        if not isinstance(data, dict) or data.get("layer_id") != layer_id:
+            continue
+        if slot.get("legend") in ("shared", "shared_plus_frame"):
+            member_frames.append(slot.get("frame_id"))
+    if not member_frames:
+        return None
+    return {
+        "kind": "frame_product",
+        "field": shared.get("field"),
+        "method": shared.get("method"),
+        "k": shared.get("k"),
+        "palette": shared.get("palette"),
+        "member_frame_ids": member_frames[:8],
+        "domain_status": shared.get("domain_status"),
+    }
 
 
 async def _hydrate_features(
@@ -251,6 +329,24 @@ def _field_candidates(ctx: LayerContext, features: Optional[List[Any]] = None) -
     return fields
 
 
+def _check_size_channel_layer_type(layer: Dict[str, Any], plan: ThematicAuthoringPlan) -> None:
+    """P3-5（评审）：通道与层型匹配——radius↔circle、width↔line；
+    不匹配在入口拒绝（live 端无声无效的键不落到权威 spec）。"""
+    ch = plan.size_channel
+    if ch is None:
+        return
+    ltype = layer.get("type")
+    ok = (ch.channel == "radius" and ltype == "circle") or \
+         (ch.channel == "width" and ltype == "line")
+    if not ok:
+        raise ThematicAuthoringError(
+            "SIZE_CHANNEL_LAYER_TYPE_MISMATCH",
+            f"通道 {ch.channel!r} 不适用于 {ltype!r} 层（radius→circle、width→line）",
+            field="size_channel",
+            correction_hint="为该层型选择匹配的符号通道。",
+        )
+
+
 def _check_source_anchor(plan: ThematicAuthoringPlan, ref_id: Optional[str], live_revision: int) -> None:
     anchor = plan.source_anchor
     if anchor is None:
@@ -354,10 +450,10 @@ async def preview_expression(
             f"无全量源（{degraded}）——不能在不了解分布的情况下编辑该层表达；"
             "本域拒绝从可见瓦片推断全域",
             status_code=409)
+    _check_size_channel_layer_type(ctx.layer, plan)
     _check_source_anchor(plan, ref_id, live_rev)
     scan = stats_mod.scan_field(features, target_field)
-    candidate = build_candidate(
-        plan, scan, current_spec=current_spec, current_field=current_field)
+    candidate = _candidate_for(plan, ctx.layer, scan, current_spec, current_field)
     dist = (
         stats_mod.cached_distribution(ref_id, live_rev, target_field, features)
         if ref_id is not None
@@ -422,6 +518,7 @@ async def commit_expression(
     target_field = plan.field or current_field
     if not target_field:
         raise ThematicAuthoringError("MISSING_FIELD", "无法确定目标字段", field="field")
+    prev_authoring = ctx.layer.get(AUTHORING_KEY) if isinstance(ctx.layer.get(AUTHORING_KEY), dict) else {}
     features, ref_id, live_rev, degraded = await _hydrate_features(
         ctx, owner_token=owner_token, trusted_dispatch=trusted_dispatch)
     if degraded:
@@ -429,10 +526,11 @@ async def commit_expression(
             "STATS_UNAVAILABLE",
             f"无全量源（{degraded}）——提交前必须可核验分布与版本",
             status_code=409)
+    _check_size_channel_layer_type(ctx.layer, plan)
     _check_source_anchor(plan, ref_id, live_rev)
     scan = stats_mod.scan_field(features, target_field)
-    candidate = build_candidate(
-        plan, scan, current_spec=current_spec, current_field=current_field)
+    candidate, restored = _candidate_for(
+        plan, ctx.layer, scan, current_spec, current_field, with_restore_state=True)
     dist = (
         stats_mod.cached_distribution(ref_id, live_rev, target_field, features)
         if ref_id is not None
@@ -446,6 +544,11 @@ async def commit_expression(
     prev_authoring = ctx.layer.get(AUTHORING_KEY) if isinstance(ctx.layer.get(AUTHORING_KEY), dict) else {}
     prev_size_keys = [k for k in (prev_authoring.get("size_channel_keys") or []) if k in paint]
     if candidate.size_paint is not None:
+        # P1-2（评审）：换通道（radius→width 等）时先移除本域曾写入的旧通道
+        # 键，避免幽灵 paint 键永久残留（连 revert 都清不掉）。
+        for k in prev_size_keys:
+            if k not in candidate.size_paint:
+                paint.pop(k, None)
         for k, v in candidate.size_paint.items():
             paint[k] = v
         size_keys = list(candidate.size_paint.keys())
@@ -469,6 +572,7 @@ async def commit_expression(
             "mode": "revert_auto",
             "decided_by": origin,
             "reverted": True,
+            "restored_from_snapshot": restored is not None,
             "applied_at": datetime.now(timezone.utc).isoformat(),
             "source_anchor": {"ref_id": ref_id, "content_revision": live_rev},
             "stats_basis": dist.get("basis"),
@@ -486,6 +590,9 @@ async def commit_expression(
             "source_anchor": {"ref_id": ref_id, "content_revision": live_rev},
             "stats_basis": dist.get("basis"),
             "previous_fingerprint": expression_fingerprint(current_spec),
+            # P2-1（评审）：完整先前表达快照（有界）——revert_auto 优先恢复
+            # 它，使 categorical 层（LISA 等固定科学类别）也能真正「恢复」。
+            "previous_legend_spec": current_spec,
             "size_channel_keys": size_keys,
             "requested_k": candidate.requested_k,
             "actual_k": candidate.actual_k,

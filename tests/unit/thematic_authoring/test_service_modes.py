@@ -329,23 +329,54 @@ async def test_text_dominant_layer_rejects_numeric_graduated(session_id, store_r
 
 @pytest.mark.asyncio
 async def test_shared_expression_member_rejected(session_id, store_root, seeded):
-    # 手工把层挂进 frame_product 共享组（形状对齐 G15）
+    """验收 17：真实 FrameProductContract.v1 形状的共享组成员——单成员编辑被拒。
+    （P1-1 复审回归：形状 = frame_product.enabled + shared_expression（单数，
+    SharedExpressionConfig 无 layer_ids）+ frames[].data.layer_id 成员归属。）"""
+    # 测试搭建：直接以真实契约形状写 frame_product（生产写面 =
+    # SetFrameProductIntent，其 layout.frames 一致性属 G15 自身测试域）
     from app.services.mapspec_store import mapspec_store
 
+    contract = {
+        "schema_version": 1,
+        "enabled": True,
+        "product_kind": "small_multiples",
+        "grid": {"cols": 2, "rows": 1},
+        "frames": [
+            {"frame_id": "f1", "legend": "shared",
+             "data": {"ref": "ref:x", "layer_id": "result-seed", "field": "pop"}},
+            {"frame_id": "f2", "legend": "shared",
+             "data": {"ref": "ref:y", "layer_id": "result-other", "field": "pop"}},
+        ],
+        "shared_expression": {
+            "field": "pop", "semantics": "other", "method": "quantiles",
+            "k": 4, "palette": "Viridis", "breaks": [0, 20, 60, 88],
+            "domain_status": "complete", "eligibility": ["union_breaks"],
+        },
+    }
     spec = await mapspec_store.get_mapspec(session_id) or {}
-    spec.setdefault("frame_product", {})["shared_expressions"] = [{
-        "layer_ids": ["result-seed"], "breaks": [0, 50], "palette": "Viridis",
-    }]
-    # frame_product 不经 intent 面——直接写 store（测试搭建共享场景）
-    await mapspec_store.save_mapspec(session_id, spec) if hasattr(mapspec_store, "save_mapspec") else None
+    spec["frame_product"] = contract
+    await mapspec_store.save_mapspec(session_id, spec)
 
     receipt = await inspect_layer(session_id, "result-seed")
-    if receipt.get("shared_expression_scope"):
-        with pytest.raises(ThematicAuthoringError) as ei:
-            await preview_expression(
-                session_id, "result-seed",
-                _plan(mode="graduated_manual", breaks=[0, 10, 50]))
-        assert ei.value.code == "SHARED_EXPRESSION_MEMBER"
+    scope = receipt.get("shared_expression_scope")
+    assert scope is not None, "真实 G15 形状必须被识别（P1-1 回归）"
+    assert scope["kind"] == "frame_product"
+    assert scope["member_frame_ids"] == ["f1"]
+    assert receipt["notes"], "inspect 必须披露共享口径提示"
+
+    with pytest.raises(ThematicAuthoringError) as ei:
+        await preview_expression(
+            session_id, "result-seed",
+            _plan(mode="graduated_manual", breaks=[0, 10, 50]))
+    assert ei.value.code == "SHARED_EXPRESSION_MEMBER"
+
+    with pytest.raises(ThematicAuthoringError) as ei2:
+        await commit_expression(
+            session_id, "result-seed",
+            _plan(mode="graduated_manual", breaks=[0, 10, 50]),
+            expected_revision=await current_revision(session_id),
+            origin="user", actor="test")
+    assert ei2.value.code == "SHARED_EXPRESSION_MEMBER"
 
 
 # ─── 重复值 quantile 退化（验收 5 在服务面的证据） ─────────────────────────
@@ -362,3 +393,137 @@ async def test_quantile_duplicates_actual_k_disclosed(session_id, store_root):
     assert r["requested_k"] == 5
     assert r["actual_k"] < 5
     assert any("真实类数" in d or "请求 5 类" in d for d in r["disclosures"])
+
+
+# ─── 评审 P1 回归：幽灵 size 键 / categorical 快照恢复 ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_size_channel_switch_cleans_ghost_keys(session_id, store_root):
+    """P1-2 回归：radius→width 换通道不留幽灵键；revert_auto 清干净。"""
+    rows = [{"pop": v} for v in (100, 400, 900, 1600)]
+    fc = make_fc(rows, geom="Point")
+    await seed_thematic_layer(
+        session_id, fc, layer_id="result-ghost", field="pop", layer_type="circle")
+    base = {
+        "mode": "graduated_auto", "method": "equal_interval", "k": 3,
+        "size_channel": {
+            "channel": "radius", "field": "pop", "min_value": 100, "max_value": 1600,
+            "min_size": 4.0, "max_size": 10.0, "scaling": "area_sqrt"},
+    }
+    await commit_expression(
+        session_id, "result-ghost", parse_plan({"layer_id": "result-ghost", **base}),
+        expected_revision=await current_revision(session_id), origin="user", actor="t")
+    layer1 = await read_layer(session_id, "result-ghost")
+    assert "radius" in layer1["paint"]
+
+    # 换通道 width（line 层才合法——本层是 circle，改用 line 层做另一半）
+    lines = make_fc([{"flow": v} for v in (1, 5, 20, 80)], geom="LineString")
+    await seed_thematic_layer(
+        session_id, lines, layer_id="result-ghost-l", field="flow", layer_type="line")
+    plan_w = {
+        "mode": "graduated_auto", "method": "equal_interval", "k": 3,
+        "size_channel": {
+            "channel": "width", "field": "flow", "min_value": 1, "max_value": 80,
+            "min_size": 0.5, "max_size": 6.0, "scaling": "linear"},
+    }
+    await commit_expression(
+        session_id, "result-ghost-l", parse_plan({"layer_id": "result-ghost-l", **plan_w}),
+        expected_revision=await current_revision(session_id), origin="user", actor="t")
+    layerl = await read_layer(session_id, "result-ghost-l")
+    assert "width" in layerl["paint"] and "radius" not in layerl["paint"]
+
+    # 同层再换回 width→width？关键是同层换通道：ghost 层先 radius，再
+    # 试图换 width（类型不匹配会被拒）——同层换通道在合法层型内做：
+    rows2 = [{"pop": v} for v in (100, 400, 900, 1600)]
+    fc2 = make_fc(rows2, geom="LineString")
+    await seed_thematic_layer(
+        session_id, fc2, layer_id="result-ghost-l2", field="pop", layer_type="line")
+    # 先 width 后（无 size）→ 清除；先 width 再 radius 非法。用 width→无
+    # 与 无→width→无 两向验证清除面足够；同层 radius→width 的 ghost 用
+    # circle 层上的 radius →（类型校验挡 width）→ 换层型不变无法直接构造，
+    # 因此直接对 ghost 层做「radius → 无 size」清除：
+    await commit_expression(
+        session_id, "result-ghost",
+        parse_plan({"layer_id": "result-ghost", "mode": "graduated_auto",
+                    "method": "equal_interval", "k": 3}),
+        expected_revision=await current_revision(session_id), origin="user", actor="t")
+    layer2 = await read_layer(session_id, "result-ghost")
+    assert "radius" not in layer2["paint"], "无 size 提交必须清除本域写入的键"
+
+    # revert_auto 同样清干净（含证据块 size_channel_keys）
+    await commit_expression(
+        session_id, "result-ghost-l",
+        parse_plan({"layer_id": "result-ghost-l", "mode": "revert_auto"}),
+        expected_revision=await current_revision(session_id), origin="user", actor="t")
+    layer3 = await read_layer(session_id, "result-ghost-l")
+    assert "width" not in layer3["paint"]
+    assert layer3["thematic_authoring"]["size_channel_keys"] == []
+
+
+@pytest.mark.asyncio
+async def test_revert_auto_restores_categorical_snapshot(session_id, store_root):
+    """P2-1 回归：categorical 层（如 LISA 固定科学类别）编辑后恢复自动 =
+    恢复上一笔作者决定前的完整类别表，而非 NO_NUMERIC_DATA 拒绝。"""
+    rows = [{"cls": c} for c in ("HH", "LL", "HH", "LH")]
+    fc = make_fc(rows)
+    from app.services.gis_world_state.mutation import apply_gis_mutation
+    from app.services.mapspec.intents import UpsertLayerIntent
+    from app.lib.cartography.thematic_spec import build_categorical_spec, spec_to_paint
+    from tests.unit.thematic_authoring.helpers import register_geojson_ref
+
+    ref = await register_geojson_ref(session_id, fc)
+    original = build_categorical_spec("cls", [
+        {"key": "HH", "color": "#ff0000", "label": "高高"},
+        {"key": "LL", "color": "#0000ff", "label": "低低"},
+        {"key": "LH", "color": "#00ff00", "label": "低高"},
+    ])
+    paint, _ = spec_to_paint(original)
+    await apply_gis_mutation(
+        session_id,
+        UpsertLayerIntent(layer={  # type: ignore[arg-type]
+            "id": "result-lisa2", "type": "fill", "source": "result-lisa2-source",
+            "paint": {"color": paint}, "legend_spec": original,
+        }, source_data={"ref_id": ref}),
+        origin="agent", actor="test:seed")
+
+    # 作者编辑（改名 + 换色）
+    edited = await commit_expression(
+        session_id, "result-lisa2",
+        _plan(mode="categorical", categories=[
+            {"key": "HH", "color": "#123456", "label": "改过"},
+            {"key": "LL", "color": "#0000ff", "label": "低低"},
+            {"key": "LH", "color": "#00ff00", "label": "低高"},
+        ]),
+        expected_revision=await current_revision(session_id), origin="user", actor="t")
+    assert edited["committed"]
+
+    # 恢复自动 → 快照恢复原类别表（不再是 NO_NUMERIC_DATA）
+    await commit_expression(
+        session_id, "result-lisa2", _plan(mode="revert_auto"),
+        expected_revision=await current_revision(session_id), origin="user", actor="t")
+    layer = await read_layer(session_id, "result-lisa2")
+    assert layer["legend_spec"]["categories"] == original["categories"]
+    assert layer["paint"]["color"] == paint
+    ev = layer["thematic_authoring"]
+    assert ev["reverted"] is True and ev["restored_from_snapshot"] is True
+    # 预览与提交同候选（确定性）
+    fresh = await preview_expression(session_id, "result-lisa2", _plan(mode="revert_auto"))
+    assert fresh["legend_spec"]["categories"] == original["categories"]
+
+
+@pytest.mark.asyncio
+async def test_size_channel_layer_type_mismatch_rejected(session_id, store_root):
+    """P3-5 回归：radius 上 line 层 / width 上 circle 层在入口拒绝。"""
+    lines = make_fc([{"flow": v} for v in (1, 3, 5, 7, 9)], geom="LineString")
+    await seed_thematic_layer(
+        session_id, lines, layer_id="result-mism", field="flow", layer_type="line")
+    with pytest.raises(ThematicAuthoringError) as ei:
+        await preview_expression(
+            session_id, "result-mism",
+            _plan(mode="graduated_auto", method="equal_interval", k=3,
+                  size_channel={
+                      "channel": "radius", "field": "flow", "min_value": 0,
+                      "max_value": 9, "min_size": 2, "max_size": 8,
+                      "scaling": "linear"}))
+    assert ei.value.code == "SIZE_CHANNEL_LAYER_TYPE_MISMATCH"

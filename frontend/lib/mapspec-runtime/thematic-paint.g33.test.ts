@@ -50,3 +50,23 @@ describe('G33 categorical key_type / default mirror', () => {
     expect(expr[expr.length - 1]).toBe('#222222');
   });
 });
+
+describe('G33 categorical key_type: bool parity with backend vocabulary', () => {
+  it('emits typed boolean cases for key_type "bool" (backend emits "bool", not "boolean")', () => {
+    const expr = legendSpecToColorExpression({
+      type: 'categorical',
+      field: 'flag',
+      categories: [
+        { key: 'True', color: '#ff0000', key_type: 'bool' },
+        { key: 'False', color: '#0000ff', key_type: 'bool' },
+      ],
+    }) as unknown[];
+    expect(expr[0]).toBe('match');
+    expect(expr).toContain(true);
+    expect(expr).toContain(false);
+    const iTrue = expr.indexOf(true);
+    const iFalse = expr.indexOf(false);
+    expect(expr[iTrue + 1]).toBe('#ff0000');
+    expect(expr[iFalse + 1]).toBe('#0000ff');
+  });
+});

@@ -227,8 +227,9 @@ function categoricalToMatch(spec: any): unknown | null {
       // 比较——数值字段的字符串键从不命中）。与后端 spec_to_paint 同口径。
       if (cat.key_type === "number" && !mixed) {
         const num = Number(cat.key);
-        if (Number.isFinite(num)) key = Number.isInteger(num) ? num : num;
-      } else if (cat.key_type === "boolean" && !mixed) {
+        if (Number.isFinite(num)) key = num;
+      } else if (cat.key_type === "bool" && !mixed) {
+        // 后端合同词表是 "bool"（stats.key_kind_of）——不是 "boolean"。
         key = String(cat.key).toLowerCase() === "true";
       }
       if (seen.has(String(key))) continue;
