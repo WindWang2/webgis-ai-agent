@@ -277,8 +277,11 @@ async def unified_http_exception_handler(
     else:
         message = _STATUS_DEFAULT_MESSAGE.get(exc.status_code, PRODUCTION_ERROR_MESSAGE)
         data = None
+    headers = getattr(exc, "headers", None) or None
     if wants_legacy_envelope(request):
-        return JSONResponse(status_code=exc.status_code, content={"detail": detail})
+        return JSONResponse(
+            status_code=exc.status_code, content={"detail": detail}, headers=headers,
+        )
     envelope = unified_error_envelope(
         exc.status_code,
         message,
@@ -286,7 +289,7 @@ async def unified_http_exception_handler(
         exc=exc,
     )
     envelope["data"] = data
-    return JSONResponse(status_code=exc.status_code, content=envelope)
+    return JSONResponse(status_code=exc.status_code, content=envelope, headers=headers)
 
 
 async def unified_validation_exception_handler(

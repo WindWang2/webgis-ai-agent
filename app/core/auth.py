@@ -391,9 +391,10 @@ def _check_legacy_token(payload: dict, token: str) -> None:
 # 语义（与 authenticate_ws_token 对齐）：
 # - 行存在：ver 不符 → 401；停用 → 403；role 以 DB 实时值为准（org_id 仍取
 #   claim —— 租户语义不在本修复内变更；org 迁移场景由 ver bump 收敛）。
-# - 行不存在：沿用 claim（所有权守卫仍 fail-closed；with_version 依赖 401）。
-# - DB 不可用：沿用 claim（降级为签名校验，记 warning）—— 本层不因 DB 抖动
-#   让整站 401；需要强一致的路径继续用 ``get_current_user_with_version``。
+# - 行不存在：拒绝认证（401）。所有权守卫与 with_version 依赖同为 401。
+# - DB 不可用：拒绝认证（503，见 ``_live_identity``）。不再「沿用 claim」——
+#   签过名的 token 在无法复核 token_version / 停用时也不能放行。
+#   ``get_current_user_with_version`` 是同一 fail-closed 语义的强一致路径。
 _LIVE_STATE_TTL_S = 2.0
 _LIVE_STATE_MAX = 4096
 _live_state_cache: dict[str, tuple[float, Optional[tuple]]] = {}

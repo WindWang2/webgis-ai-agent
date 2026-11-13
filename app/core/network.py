@@ -118,9 +118,16 @@ async def create_client_session(**kwargs) -> aiohttp.ClientSession:
 # module-level asyncio.Lock / aiohttp.ClientSession binds to the loop that
 # created it; reusing it on a different loop raises
 # "Timeout context manager should be used inside a task" /
-# "Future attached to a different loop".  We keep one session+lock per loop.
-_sessions: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
-_locks: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+# "Future attached to a different loop".
+#
+# The session and lock are attributes of the loop, not WeakKeyDictionary
+# values. ClientSession._loop and asyncio.Lock._loop strongly reference the
+# loop, so a weak-key entry whose value points back at the key is never
+# collected. A cycle stored on the loop itself is collectable by cyclic GC
+# once external references drop. WeakSet only remembers loops for shutdown.
+_SESSION_ATTR = "_webgis_shared_http_session"
+_LOCK_ATTR = "_webgis_shared_http_lock"
+_known_loops: weakref.WeakSet = weakref.WeakSet()
 _registry_lock = threading.Lock()
 
 # Legacy aliases kept for backward compatibility (tests may import them).
@@ -129,13 +136,29 @@ _shared_session: aiohttp.ClientSession | None = None
 _shared_session_loop: asyncio.AbstractEventLoop | None = None
 
 
+def _loop_session(loop: asyncio.AbstractEventLoop) -> aiohttp.ClientSession | None:
+    return getattr(loop, _SESSION_ATTR, None)
+
+
+def _set_loop_session(loop: asyncio.AbstractEventLoop, session: aiohttp.ClientSession | None) -> None:
+    if session is None:
+        try:
+            delattr(loop, _SESSION_ATTR)
+        except AttributeError:
+            pass
+        return
+    setattr(loop, _SESSION_ATTR, session)
+    _known_loops.add(loop)
+
+
 def _get_loop_lock(loop: asyncio.AbstractEventLoop) -> asyncio.Lock:
     """Return the asyncio.Lock for *loop*, creating it atomically."""
     with _registry_lock:
-        lock = _locks.get(loop)
+        lock = getattr(loop, _LOCK_ATTR, None)
         if lock is None:
             lock = asyncio.Lock()
-            _locks[loop] = lock
+            setattr(loop, _LOCK_ATTR, lock)
+            _known_loops.add(loop)
         return lock
 
 
@@ -188,7 +211,7 @@ class _PerLoopLockProxy:
         except RuntimeError:
             return False
         with _registry_lock:
-            lock = _locks.get(loop)
+            lock = getattr(loop, _LOCK_ATTR, None)
         return lock.locked() if lock is not None else False
 
 
@@ -210,7 +233,7 @@ def _shared_session_usable() -> bool:
     except RuntimeError:
         return False
     with _registry_lock:
-        sess = _sessions.get(loop)
+        sess = _loop_session(loop)
     if sess is None or sess.closed:
         return False
     return not loop.is_closed()
@@ -231,14 +254,14 @@ async def get_shared_client() -> aiohttp.ClientSession:
         # Re-check under lock (double-checked) — another coroutine on the same
         # loop may have created the session while we waited for the lock.
         with _registry_lock:
-            sess = _sessions.get(loop)
+            sess = _loop_session(loop)
             if sess is not None and not sess.closed and not loop.is_closed():
                 _shared_session = sess
                 _shared_session_loop = loop
                 return sess
             # Stale entry (closed session) — drop it; a new one will be created.
             if sess is not None and sess.closed:
-                _sessions.pop(loop, None)
+                _set_loop_session(loop, None)
 
         conn = aiohttp.TCPConnector(ttl_dns_cache=300, limit=20, limit_per_host=10)
         session_kwargs: dict[str, Any] = {}
@@ -252,7 +275,7 @@ async def get_shared_client() -> aiohttp.ClientSession:
             **session_kwargs,
         )
         with _registry_lock:
-            _sessions[loop] = new_sess
+            _set_loop_session(loop, new_sess)
             _shared_session = new_sess
             _shared_session_loop = loop
         return new_sess
@@ -269,11 +292,16 @@ async def close_shared_client() -> None:
         # open by scheduling closes on their own loops if possible; otherwise
         # just drop references — weak dict will GC them.
         with _registry_lock:
-            items = list(_sessions.items())
-            _sessions.clear()
-            _locks.clear()
+            loops = list(_known_loops)
             _shared_session = None
             _shared_session_loop = None
+        items = [(sess_loop, _loop_session(sess_loop)) for sess_loop in loops]
+        for sess_loop, _sess in items:
+            _set_loop_session(sess_loop, None)
+            try:
+                delattr(sess_loop, _LOCK_ATTR)
+            except AttributeError:
+                pass
         for sess_loop, sess in items:
             if sess is None or sess.closed:
                 continue
@@ -297,7 +325,8 @@ async def close_shared_client() -> None:
     lock = _get_loop_lock(loop)
     async with lock:
         with _registry_lock:
-            sess = _sessions.pop(loop, None)
+            sess = _loop_session(loop)
+            _set_loop_session(loop, None)
             # Update legacy aliases if they pointed at this loop's session.
             if _shared_session_loop is loop:
                 _shared_session = None
@@ -306,5 +335,7 @@ async def close_shared_client() -> None:
             if not loop.is_closed():
                 await sess.close()
         # Clean up the lock entry for this loop (no longer needed).
-        with _registry_lock:
-            _locks.pop(loop, None)
+        try:
+            delattr(loop, _LOCK_ATTR)
+        except AttributeError:
+            pass

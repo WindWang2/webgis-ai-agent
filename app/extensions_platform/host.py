@@ -234,6 +234,7 @@ class ExtensionHost:
         # 运行中的服务器对发布后的吊销/rotation 即时生效，而非只在
         # refresh_revocations 的周期面。
         source = getattr(self._policy.trust_store, "source_path", None)
+        reload_error: Optional[ExtensionPlatformError] = None
         if source is not None:
             from .trust_store import TrustStore
 
@@ -244,9 +245,21 @@ class ExtensionHost:
                     self._policy, "trust_store", TrustStore.load(Path(source))
                 )
             except ExtensionPlatformError as exc:
+                # 继续用已加载的信任根（发现不能因一次读失败整体中止），
+                # 但失败必须进入诊断，不能只留在日志里。
                 logger.warning("trust store reload failed at discover: %s", exc)
+                reload_error = exc
         result: DiscoveryResult = discover_extensions(list(self._policy.roots))
         diagnostics: list[ExtensionDiagnostic] = list(result.diagnostics)
+        if reload_error is not None:
+            diagnostics.append(
+                reload_error.diagnostic
+                if getattr(reload_error, "diagnostic", None) is not None
+                else ExtensionDiagnostic.warning(
+                    DiagnosticCode.TRUST_STORE_UNREADABLE,
+                    f"trust store reload failed at discover: {reload_error}",
+                )
+            )
         for failure in result.failures:
             diagnostics.extend(failure.diagnostics)
         for discovered in result.extensions:

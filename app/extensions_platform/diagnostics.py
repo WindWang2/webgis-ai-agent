@@ -97,6 +97,8 @@ class DiagnosticCode(str, Enum):
     CERTIFICATION_REQUIRED = "certification_required"
     CERTIFICATION_STALE = "certification_stale"
     CERTIFICATION_INVALID = "certification_invalid"
+    # trust store 重读失败（fail closed：不得用陈旧内存视图覆盖磁盘）。
+    TRUST_STORE_UNREADABLE = "trust_store_unreadable"
 
 
 @dataclass(frozen=True)

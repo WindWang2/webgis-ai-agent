@@ -159,14 +159,18 @@ def _start_extension_revocation_tick(ext_host: Any) -> Optional[asyncio.Task]:
     async def _tick() -> None:
         while True:
             try:
-                quarantined = ext_host.refresh_revocations()
+                # 快路径通常只 stat mtime；mtime 变化后的重读/验签/指纹
+                # 是同步重 I/O，必须离开事件循环。
+                quarantined = await asyncio.to_thread(ext_host.refresh_revocations)
                 if quarantined:
                     logger.warning(
                         "[lifespan] extensions quarantined by revocation: %s",
                         quarantined,
                     )
-                if install_root and ext_host.refresh_signal_changed(install_root):
-                    ext_host.discover()
+                if install_root and await asyncio.to_thread(
+                    ext_host.refresh_signal_changed, install_root
+                ):
+                    await asyncio.to_thread(ext_host.discover)
                     logger.info("[lifespan] extensions refreshed by signal")
             except Exception as exc:  # noqa: BLE001 - tick 失败绝不拖垮宿主
                 logger.warning("[lifespan] extension revocation tick failed: %s", exc)

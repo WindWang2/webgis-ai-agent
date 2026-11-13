@@ -1046,11 +1046,24 @@ async def _require_owned_session_qtoken(
         from sqlalchemy import select
         from app.core.signing import terrain_capability_path, verify_signature
         ref = str(request.path_params.get("ref_id") or "")
-        if ref and verify_signature(terrain_capability_path(session_id, ref), exp, sig):
-            result = await db.execute(select(Conversation).where(Conversation.id == session_id))
-            conv = result.scalar_one_or_none()
-            if conv is not None:
-                return conv
+        result = await db.execute(select(Conversation).where(Conversation.id == session_id))
+        conv = result.scalar_one_or_none()
+        # 签名绑定当前 owner_token 摘要：rotate 后旧 URL 立即失效。
+        # 无 owner_token 的认证会话仍用未绑定路径（rotate 对它们不适用）。
+        if (
+            ref
+            and conv is not None
+            and verify_signature(
+                terrain_capability_path(session_id, ref, owner_token=conv.owner_token),
+                exp,
+                sig,
+            )
+        ):
+            try:
+                request.state.terrain_capability_exp = int(exp)
+            except (TypeError, ValueError):
+                request.state.terrain_capability_exp = None
+            return conv
         # A persistent MapLibre source can outlive its short signed URL. An
         # expired capability grants nothing, but does not invalidate a caller's
         # independently supplied live user/session credential.
@@ -1130,6 +1143,7 @@ async def get_terrain_tile(
 
 @router.get("/layers/data/{ref_id}/terrain-tiles.json", tags=["图层数据"])
 async def get_terrain_tilejson(
+    request: Request,
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
     # A8（评审）：与 terrain-tiles 瓦片路由的 token Query 边界对齐（超长串
@@ -1207,8 +1221,14 @@ async def get_terrain_tilejson(
         maxzoom = native_zoom_for_gsd(gsd_m, tuple(bounds))
 
     from app.core.signing import signed_terrain_query
+    # 用签名 capability 进来的请求不能把 exp 续到原 URL 之后，否则泄露的
+    # tiles URL 可以每 10 分钟自我续期。活的用户/owner_token 认证不受此限。
+    cap_exp = getattr(getattr(request, "state", None), "terrain_capability_exp", None)
     tiles_url = (f"/api/v1/layers/data/{ref_id}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
-                 + signed_terrain_query(session_id, ref_id))
+                 + signed_terrain_query(
+                     session_id, ref_id,
+                     owner_token=_conv.owner_token, max_exp=cap_exp,
+                 ))
 
     synthetic = bool(receipt_data.get("synthetic")) if isinstance(receipt_data, dict) else False
     attribution = "User-provided elevation data (session-owned)"
@@ -1387,7 +1407,9 @@ async def list_terrain_sources(
             )
         # Publish a short-lived, ref-bound capability; never embed the owner credential.
         from app.core.signing import signed_terrain_query
-        _auth_qs = signed_terrain_query(session_id, ref_id)
+        _auth_qs = signed_terrain_query(
+            session_id, ref_id, owner_token=_conv.owner_token,
+        )
         session_entries.append(SessionTerrainSourceEntry(
             ref_id=ref_id,
             name=str(payload.get("name") or ref_id),

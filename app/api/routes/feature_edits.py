@@ -112,8 +112,21 @@ async def decide_feature_edit_plan(
     if plan.get("status") != "pending" or not plan.get("committable"):
         raise HTTPException(status_code=409, detail={"code": "plan_state_invalid", "status": plan.get("status")})
     if req.action == "reject":
-        await fe_executor._mark_plan_status(session_id, plan_id, "rejected")
-        return {"status": "rejected"}
+        observed = await fe_executor.transition_plan_status(
+            session_id, plan_id, allowed=("pending",), status="rejected",
+        )
+        if observed == "rejected":
+            return {"status": "rejected"}
+        if observed == "applied":
+            current = await fe_executor.get_plan(session_id, plan_id) or {}
+            return {
+                "status": "applied",
+                "receipt": current.get("receipt") or {"entry_seq": current.get("entry_seq")},
+            }
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "plan_state_invalid", "status": observed},
+        )
 
     # approve：owner 鉴权已过（require_owned_session）→ 执行（executor 内
     # CAS/幂等/入账/盖章/广播一体）。

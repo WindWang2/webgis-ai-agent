@@ -679,7 +679,7 @@ def _promote_run_artifacts_sync(
     any ``db.*`` call inside an async def body, including nested sync helpers.
     """
     with SessionLocal() as db:
-        project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+        project = ProjectService.get_project_for_write(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
         if not project:
             return {"__http_error__": (404, "Project not found")}
         run = db.execute(

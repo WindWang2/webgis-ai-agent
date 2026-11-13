@@ -214,6 +214,14 @@ async def commit_plan(
     key = f"{idempotency_key}:{plan_id}" if idempotency_key else f"plan:{plan_id}"
 
     async with _edit_lock(session_id):
+        fresh_plans = await load_plans(session_id)
+        fresh_plan = fresh_plans.get(plan_id) if isinstance(fresh_plans, dict) else None
+        fresh_status = fresh_plan.get("status") if isinstance(fresh_plan, dict) else None
+        if fresh_status in {"rejected", "applied", "expired", "conflicted"}:
+            raise FeatureEditConflict(
+                "plan_state_invalid",
+                {"plan_id": plan_id, "status": fresh_status},
+            )
         payload, descriptor = await _load_ref(session_id, ref_id)
         journals = await _load_journals(session_id)
         journal = journals.get(ref_id) or new_journal()
@@ -398,6 +406,11 @@ async def commit_plan(
                 session_id, ref_id, revision_after,
             )
         _pending_receipt_entry = entry
+        # 还在编辑锁内就把 plan 标成 applied，避免并发 reject 在销账前覆盖。
+        await _mark_plan_status_unlocked(
+            session_id, plan_id, "applied",
+            extra={"entry_seq": entry.get("seq"), "applied_at": time.time()},
+        )
 
     # ── 销账（锁内完成主体；receipt 在盖章后回写 plan，供幂等重放回放） ──
     entry = _pending_receipt_entry
@@ -638,6 +651,27 @@ async def _mark_plan_status(
     # 的进程锁段），asyncio.Lock 不可重入 —— 内部路径改调未锁变体。
     async with _process_lock(session_id):
         await _mark_plan_status_unlocked(session_id, plan_id, status, extra)
+
+
+async def transition_plan_status(
+    session_id: str,
+    plan_id: str,
+    *,
+    allowed: tuple[str, ...],
+    status: str,
+) -> Optional[str]:
+    """锁内 CAS：只有当前状态属于 ``allowed`` 才改写。返回观察到的状态。"""
+    async with _process_lock(session_id):
+        plans = await load_plans(session_id)
+        plan = plans.get(plan_id)
+        if not isinstance(plan, dict):
+            return None
+        current = str(plan.get("status") or "")
+        if current not in allowed:
+            return current
+        plans[plan_id] = {**plan, "status": status}
+        await session_data_manager.set_map_state_fields(session_id, {PLANS_STATE_KEY: plans})
+        return status
 
 
 async def _mark_plan_status_unlocked(

@@ -13,7 +13,6 @@
 """
 from __future__ import annotations
 
-import hmac
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -38,10 +37,12 @@ async def verify_bridge_secret(
 ) -> None:
     """FastAPI 依赖：校验请求方持有共享密钥。
 
-    用 hmac.compare_digest 防时序侧信道。
+    用常量时间比较防时序侧信道（非 ASCII 头 fail-closed 为 401，不 500）。
     """
     secret = get_bridge_secret()
-    if not x_pi_bridge_secret or not hmac.compare_digest(x_pi_bridge_secret, secret):
+    from app.core.signing import hmac_equals
+
+    if not x_pi_bridge_secret or not hmac_equals(x_pi_bridge_secret, secret):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing bridge secret",

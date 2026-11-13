@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+
 from app.services.data_preparation.field_proposal import FieldProposal
 from app.services.data_preparation.spatial_receipt import SpatialInspectionReceipt
 from app.services.data_preparation.plan import PreparationPlan
@@ -254,7 +256,8 @@ async def preview_plan(
         if payload is None:
             raise HTTPException(status_code=404, detail="input ref missing")
         try:
-            result = dry_run(payload, plan)
+            # ≤2000 行 pandas/geo 运算，不能占着事件循环。
+            result = await asyncio.to_thread(dry_run, payload, plan)
         except ExecError as exc:
             raise HTTPException(status_code=_EXEC_STATUS.get(exc.code, 400),
                                 detail=f"{exc.code}: {exc.detail}") from exc

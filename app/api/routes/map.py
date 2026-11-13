@@ -514,8 +514,22 @@ def _render_pdf_to_file(
         scale_text=scale_text,
     )
     pdf_path = os.path.join(_exports_dir_write(), filename)
-    with open(pdf_path, "wb") as f:
-        f.write(pdf_bytes)
+    # 先写临时文件再 replace：渲染中断不会把半个 PDF 留在下载路径上。
+    with tempfile.NamedTemporaryFile(
+        dir=_exports_dir_write(), delete=False, suffix=".pdf",
+    ) as tmp:
+        tmp.write(pdf_bytes)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp_path = tmp.name
+    try:
+        os.replace(tmp_path, pdf_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 @router.post(

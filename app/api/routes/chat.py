@@ -910,6 +910,27 @@ async def _guard_body_project(db: AsyncSession, project_id: Optional[str], user:
         raise HTTPException(status_code=404, detail="Project not found")
 
 
+async def _may_write_project_memory(project_id: Optional[str], user: dict) -> bool:
+    """项目记忆是写。读权限（viewer / legacy 公开行）只能聊天，不能落记忆。"""
+    if not project_id:
+        return False
+    from app.core.auth import actor_ids
+    from app.services.project_service import ProjectService
+
+    user_id, org_id = actor_ids(user)
+    try:
+        async with async_db_session() as db:
+            project = await db.run_sync(
+                lambda session: ProjectService.get_project_for_write(
+                    session, project_id, user_id=user_id, org_id=org_id,
+                )
+            )
+    except Exception:  # noqa: BLE001 — 写门失败则不写，不阻断回合
+        logger.warning("[chat] project write check failed for %s", project_id, exc_info=True)
+        return False
+    return project is not None
+
+
 def _pi_stream_capability(
     conversation,
     created: bool,
@@ -1095,39 +1116,44 @@ async def chat_completions(
                 # ADR-0069: harvest project memory AFTER this turn's verdict
                 # exists — memory lags evidence by one step and can never
                 # short-circuit review. Best-effort; never fails the turn.
-                await harvest_project_memory(pi_session_id, req.project_id)
+                # 读权限不写项目记忆（viewer / legacy 公开项目）。
+                _mem_ok = await _may_write_project_memory(req.project_id, _user)
+                if _mem_ok:
+                    await harvest_project_memory(pi_session_id, req.project_id)
                 # 方向 9（ADR-0255）：GIS 空间记忆收割（同位点，绝不抛）。
-                try:
-                    from app.services.gis_memory.harvest import (
-                        harvest_spatial_memory,
-                    )
+                if _mem_ok:
+                    try:
+                        from app.services.gis_memory.harvest import (
+                            harvest_spatial_memory,
+                        )
 
-                    await harvest_spatial_memory(
-                        pi_session_id,
-                        req.project_id,
-                        org_id=memory_org,
-                        user_id=user_id,
-                    )
-                except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
-                    logger.warning("[pi-chat-nonstream] gis memory harvest failed: %s", e)
+                        await harvest_spatial_memory(
+                            pi_session_id,
+                            req.project_id,
+                            org_id=memory_org,
+                            user_id=user_id,
+                        )
+                    except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
+                        logger.warning("[pi-chat-nonstream] gis memory harvest failed: %s", e)
                 # ADR-0190：会话 Settle 整合（显式偏好固化 + 高频记忆晋升
                 # 长效作用域），harvest 之后同纪律执行，绝不阻断 turn。
-                try:
-                    from app.services.gis_memory.memory_consolidator import (
-                        consolidate_after_harvest,
-                    )
+                if _mem_ok:
+                    try:
+                        from app.services.gis_memory.memory_consolidator import (
+                            consolidate_after_harvest,
+                        )
 
-                    await consolidate_after_harvest(
-                        pi_session_id,
-                        req.project_id,
-                        org_id=memory_org,
-                        user_id=user_id,
-                    )
-                except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
-                    logger.warning(
-                        "[pi-chat-nonstream] gis memory consolidation failed: %s",
-                        e,
-                    )
+                        await consolidate_after_harvest(
+                            pi_session_id,
+                            req.project_id,
+                            org_id=memory_org,
+                            user_id=user_id,
+                        )
+                    except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
+                        logger.warning(
+                            "[pi-chat-nonstream] gis memory consolidation failed: %s",
+                            e,
+                        )
                 return ChatResponse(
                     session_id=pi_session_id,
                     content=final_content,
@@ -1368,39 +1394,44 @@ async def chat_stream(
                 # ADR-0069: harvest project memory at turn end, after the
                 # verdict exists. Best-effort like the transcript/title writes
                 # above — memory is additive context, never a turn blocker.
-                await harvest_project_memory(pi_session_id, req.project_id)
+                # 读权限不写项目记忆（viewer / legacy 公开项目）。
+                _mem_ok = await _may_write_project_memory(req.project_id, _user)
+                if _mem_ok:
+                    await harvest_project_memory(pi_session_id, req.project_id)
                 # 方向 9（ADR-0255）：GIS 空间记忆收割（pending 候选排空 +
                 # MapSpec 剖面 + GC），同位点同纪律，绝不抛。
-                try:
-                    from app.services.gis_memory.harvest import (
-                        harvest_spatial_memory,
-                    )
+                if _mem_ok:
+                    try:
+                        from app.services.gis_memory.harvest import (
+                            harvest_spatial_memory,
+                        )
 
-                    await harvest_spatial_memory(
-                        pi_session_id,
-                        req.project_id,
-                        org_id=memory_org,
-                        user_id=user_id,
-                    )
-                except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
-                    logger.warning("[pi-chat] gis memory harvest failed: %s", e)
+                        await harvest_spatial_memory(
+                            pi_session_id,
+                            req.project_id,
+                            org_id=memory_org,
+                            user_id=user_id,
+                        )
+                    except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
+                        logger.warning("[pi-chat] gis memory harvest failed: %s", e)
                 # ADR-0190：会话 Settle 整合（显式偏好固化 + 高频记忆晋升
                 # 长效作用域），harvest 之后同纪律执行，绝不阻断 turn。
-                try:
-                    from app.services.gis_memory.memory_consolidator import (
-                        consolidate_after_harvest,
-                    )
+                if _mem_ok:
+                    try:
+                        from app.services.gis_memory.memory_consolidator import (
+                            consolidate_after_harvest,
+                        )
 
-                    await consolidate_after_harvest(
-                        pi_session_id,
-                        req.project_id,
-                        org_id=memory_org,
-                        user_id=user_id,
-                    )
-                except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
-                    logger.warning(
-                        "[pi-chat] gis memory consolidation failed: %s", e
-                    )
+                        await consolidate_after_harvest(
+                            pi_session_id,
+                            req.project_id,
+                            org_id=memory_org,
+                            user_id=user_id,
+                        )
+                    except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
+                        logger.warning(
+                            "[pi-chat] gis memory consolidation failed: %s", e
+                        )
 
             # One id scope per turn: ids stay monotonic across batched token
             # events and structural events, in emission order (see sse.py).
