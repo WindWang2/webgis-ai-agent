@@ -226,6 +226,9 @@ class PlanStep(BaseModel):
     tool: str = ""
     tool_binding: List[str] = Field(default_factory=list)
     status: StepStatus = "pending"
+    #: Set when the step's work continues after the turn ends. end_turn
+    #: must not mark that step failed just because it is still running.
+    continues_after_turn: bool = False
     depends_on: List[str] = Field(default_factory=list)
     evidence: List[StepEvidence] = Field(default_factory=list)
     attempts: int = 0

@@ -766,7 +766,7 @@ class GISSessionRuntime:
             }.get(status)
             if settle_to:
                 for s in plan.steps:
-                    if s.status == "running":
+                    if s.status == "running" and not s.continues_after_turn:
                         s.status = settle_to  # type: ignore[assignment]
                         s.updated_at = now
                         events.append(_step_event(plan, s))

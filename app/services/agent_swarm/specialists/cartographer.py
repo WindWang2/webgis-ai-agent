@@ -180,12 +180,19 @@ def _build_source_profile(
         "featureCount": survey["feature_count"],
         "geometryTypes": survey["geometry_types"] or ["Unknown"],
         "fields": {field: fields_entry},
-        "crs": "EPSG:4326",
-        "crs_status": "explicit",
+        "crs": survey.get("crs") if isinstance(survey.get("crs"), str) and survey.get("crs") else "EPSG:4326",
+        "crs_status": "explicit" if isinstance(survey.get("crs"), str) and survey.get("crs") else "assumed",
     }
     if survey["bbox"]:
         profile["bbox"] = survey["bbox"]
     return profile
+
+
+def _zoom_for_bbox(bbox: List[float]) -> int:
+    import math
+
+    span = max(abs(float(bbox[2]) - float(bbox[0])), abs(float(bbox[3]) - float(bbox[1])), 1e-6)
+    return max(2, min(16, int(round(9 - math.log2(span)))))
 
 
 class CartographerAgent(BaseSpecialistAgent):
@@ -426,10 +433,17 @@ class CartographerAgent(BaseSpecialistAgent):
         center = [(bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0]
         paint, paint_warnings = spec_to_paint(legend_spec)
         warnings.extend(paint_warnings[:2])
+        geometry = str((survey.get("geometry_types") or ["Unknown"])[0]).lower()
+        if "line" in geometry:
+            layer_type = "line"
+        elif "point" in geometry:
+            layer_type = "circle"
+        else:
+            layer_type = "fill"
         layer: Dict[str, Any] = {
             "id": "thematic-main",
             "source": source_id,
-            "type": "fill",
+            "type": layer_type,
             "visible": True,
         }
         layer["paint"] = (
@@ -460,7 +474,7 @@ class CartographerAgent(BaseSpecialistAgent):
                 _delivery_geojson = geojson
         mapspec: Dict[str, Any] = {
             "version": "1.2",
-            "view": {"center": center, "zoom": 10},
+            "view": {"center": center, "zoom": _zoom_for_bbox(bbox) if survey.get("bbox") else 10},
             "sources": {
                 source_id: {
                     "type": "geojson",
