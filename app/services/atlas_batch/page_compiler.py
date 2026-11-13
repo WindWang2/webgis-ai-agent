@@ -89,6 +89,10 @@ def compile_atlas_page(
     )
     if page.cover:
         return outcome
+    if getattr(page, "print_layout", None):
+        # G34：页码/页标题由作者计划的受控绑定组件承载（最终启用页序），
+        # 不再叠加 legacy 页头，避免两个标题/两套字体口径。
+        return outcome
     injected = inject_page_header(
         outcome.svg,
         page_number=page.page_number,

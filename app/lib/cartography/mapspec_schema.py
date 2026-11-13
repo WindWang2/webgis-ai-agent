@@ -991,6 +991,12 @@ class MapSpecLayoutConfig(_SpecModel):
     #: cartographic_fingerprint 投影 → 模板/组件版本变化可被 plan/product
     #: 指纹捕获。缺省/None = 未应用契约（存量 spec 指纹逐位不变）。
     composition: Optional[Dict[str, Any]] = None
+    #: G34 additive（``print_layout.v1``）：纸面版式作者计划。开放 dict 形态
+    #: 由 ``app.lib.cartography.print_layout_schema.validate_print_layout``
+    #: 在写入面严格校验（关闭词表 / 未知版本拒绝 / 有界）；TS 镜像在
+    #: ``frontend/lib/print-layout/contracts.ts``，由 golden parity 锁定。
+    #: 缺席 = 未启用纸面作者（既有绘制路径与字节完全不变）。
+    print_layout: Optional[Dict[str, Any]] = None
 
 
 # ── v1.8 additive：时序视图协议（TemporalViewContract.v1）────────────────

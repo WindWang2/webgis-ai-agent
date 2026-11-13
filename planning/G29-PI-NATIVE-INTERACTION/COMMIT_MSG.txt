@@ -1,0 +1,29 @@
+feat(pi): G29 原生运行中交互与用户指令工作台
+
+同一次运行中的 Pi GIS 任务内向用户提出受信问题并消费回答：
+
+- 协议层（pi_ui_protocol）：extension_ui_request 类型化解析/界校验；
+  extension_ui_response 三态互斥构造。
+- RPC 客户端：reader 新增 UI 请求分支 → sink；send_ui_response 单向写出
+  （不登记 pending future）；stdin 行级写锁（issue/回答不撕裂 JSON 行）。
+- 交互服务（pi_runtime_interaction）：归属 G22 已验证 turn 的状态机
+  pending→answer_written→resolved|cancelled|timed_out|invalidated；至多一次
+  翻转（双标签页幂等）；白名单校验；原生超时/宿主期限/turn 失效；fire-and-forget
+  有界投影；SSE pi_interaction(_update)/pi_ui 合成事件（入 ring 可重放）。
+- 受信封套（pi_interaction_envelope + 扩展对称实现）：HMAC(bridge_secret,
+  sha256(递归 canonical JSON)) 签名；per-turn 上限；选项表精确反解（不宽松
+  匹配）；vendor confirm 超时默认与用户「否」按宿主可得证据分类。
+- 路由（pi_interactions）：用户面全部 require_owned_session（answer/cancel/
+  水合/steer/follow_up/queue，steer 在 G22 control gate 内身份复核+写出）；
+  扩展回调面 bridge secret+签名 turnToken+活跃 turn（interaction-resolve）。
+- 生产工具：webgis_user_decision（前门激活）；webgis_layer_upsert 裸名分支
+  ——目录精确名解析：唯一命中直接绑定、同名≥2 发起原生 select（选项含
+  as_of 版本日期/范围）、URL/path 形态零漂移。
+- bridge：等待用户计入可信等待（stall 豁免+总预算展宽，帽 900s）；deferred
+  单向写冲刷；真实业务事件→续接观察；teardown→交互失效（旧卡不可作答）。
+- 前端：runtime-interaction-card（四方法/IME 安全/键盘/终态禁用）+ SSE 分支
+  + 提交/steer handler + 刷新水合 + adjust/queue 入口 + i18n(zh/en)。
+
+验证：固定 pin v1.5.2 真实旅程 1 passed（J29A 同名选择→MapSpec 只含被选
+ref；J29B 标题/来源核对采用；J29C steer/follow_up 真实 disposition；J29D
+取消不绑定；越权 404）；单元 28；前端 vitest 56 + tsc 0；既有回归绿。

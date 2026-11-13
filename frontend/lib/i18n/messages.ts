@@ -42,6 +42,7 @@ import zhCompositionAssets from '@/messages/zh-CN/compositionAssets.json'
 import zhDataPreparation from '@/messages/zh-CN/dataPreparation.json'
 import zhDataImport from '@/messages/zh-CN/dataImport.json'
 import zhFieldCompute from '@/messages/zh-CN/fieldCompute.json'
+import zhTopology from '@/messages/zh-CN/topology.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import enCommon from '@/messages/en-US/common.json'
@@ -78,6 +79,7 @@ import enCompositionAssets from '@/messages/en-US/compositionAssets.json'
 import enDataPreparation from '@/messages/en-US/dataPreparation.json'
 import enDataImport from '@/messages/en-US/dataImport.json'
 import enFieldCompute from '@/messages/en-US/fieldCompute.json'
+import enTopology from '@/messages/en-US/topology.json'
 import enMarket from '@/messages/en-US/market.json'
 import enDataDelivery from '@/messages/en-US/dataDelivery.json'
 import type { AppLocale } from './config'
@@ -119,6 +121,7 @@ export interface AppMessages {
   dataDelivery: typeof zhDataDelivery
   dataImport: typeof zhDataImport
   fieldCompute: typeof zhFieldCompute
+  topology: typeof zhTopology
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -139,6 +142,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataDelivery: zhDataDelivery,
     dataImport: zhDataImport,
     fieldCompute: zhFieldCompute,
+    topology: zhTopology,
     story: zhStory,
     geoai: zhGeoai,
     commands: zhCommands,
@@ -178,6 +182,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
     dataImport: enDataImport as unknown as AppMessages['dataImport'],
     fieldCompute: enFieldCompute as unknown as AppMessages['fieldCompute'],
+    topology: enTopology as unknown as AppMessages['topology'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],
     commands: enCommands as unknown as AppMessages['commands'],

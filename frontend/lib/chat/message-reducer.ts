@@ -32,6 +32,8 @@ export interface ChatStreamMessage {
   resultId?: string;
   /** 方向 3：requirement IR blocking 澄清卡片（SSE clarification 事件挂载）。 */
   clarification?: ClarificationCardState;
+  /** G29：Pi 原生运行中交互卡片（SSE pi_interaction 事件挂载；当前 run 阻塞中）。 */
+  runtimeInteractions?: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState[];
   /** G28：任务完成语义卡（task_complete.goal_satisfaction 挂载）。 */
   goalSatisfaction?: import('@/lib/types/goal-satisfaction').GoalSatisfactionView;
   /** /goal 03：要素编辑提案卡状态（EditProposalCard 渲染）。 */
@@ -252,6 +254,55 @@ export function attachGoalSatisfaction(
   const copy = [...prev];
   copy[idx] = { ...prev[idx], goalSatisfaction: args.goal };
   return copy;
+}
+
+/** G29：挂载/更新运行中交互卡（同消息可并存多条 —— 按 interactionId 去重）。 */
+export function upsertRuntimeInteraction(
+  prev: ChatStreamMessage[],
+  args: { messageId: string; card: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState },
+): ChatStreamMessage[] {
+  const idx = findIndexById(prev, args.messageId);
+  if (idx === -1) return prev;
+  const existing = prev[idx].runtimeInteractions ?? [];
+  const at = existing.findIndex((c) => c.interactionId === args.card.interactionId);
+  const next = at === -1
+    ? [...existing, args.card]
+    : existing.map((c, i) => (i === at ? { ...c, ...args.card } : c));
+  const copy = [...prev];
+  copy[idx] = { ...prev[idx], runtimeInteractions: next };
+  return copy;
+}
+
+/** G29：交互卡状态迁移（submitting/answered/终态/error）。 */
+export function setRuntimeInteractionStatus(
+  prev: ChatStreamMessage[],
+  args: {
+    interactionId: string;
+    status: import('@/lib/types/runtime-interaction').RuntimeInteractionStatus;
+    errorCode?: string;
+    answerDisplay?: string;
+    answerKind?: string;
+    resolveEvidence?: string;
+  },
+): ChatStreamMessage[] {
+  return prev.map((m) => {
+    if (!m.runtimeInteractions?.some((c) => c.interactionId === args.interactionId)) return m;
+    return {
+      ...m,
+      runtimeInteractions: m.runtimeInteractions.map((c) =>
+        c.interactionId === args.interactionId
+          ? {
+              ...c,
+              status: args.status,
+              ...(args.errorCode ? { errorCode: args.errorCode } : {}),
+              ...(args.answerDisplay ? { answerDisplay: args.answerDisplay } : {}),
+              ...(args.answerKind ? { answerKind: args.answerKind } : {}),
+              ...(args.resolveEvidence ? { resolveEvidence: args.resolveEvidence } : {}),
+            }
+          : c,
+      ),
+    };
+  });
 }
 
 /** 卡片状态迁移（提交中/已提交/过期/出错）与提交回显。 */

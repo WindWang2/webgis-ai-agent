@@ -152,6 +152,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "C14 图册"
       },
@@ -289,6 +290,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "A"
       },
@@ -426,6 +428,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "B"
       },
@@ -563,6 +566,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "C"
       }

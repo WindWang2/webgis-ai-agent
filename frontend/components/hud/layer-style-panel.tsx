@@ -20,6 +20,8 @@ import { t as tNow } from '@/lib/i18n/t';
 import { RasterAuthoringPanel } from '@/components/hud/raster-authoring-panel';
 // G27：按尺度表达（可解释控制 + 局部覆盖，仅在有 committed spec 层时挂载）
 import { ScalePortrayalPanel } from '@/components/hud/scale-portrayal-panel';
+// G33：矢量专题表达作者工作台（局部挂载；对齐 G20 栅格工作台先例）
+import { ThematicAuthoringPanel } from '@/components/hud/thematic-authoring-panel';
 
 /** 渲染模式 id → 消息键（spec 层型语义见 specPaintPatchFrom）。 */
 const MODE_LABELS: Record<string, string> = {
@@ -35,6 +37,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const updateLayer = useHudStore((s) => s.updateLayer);
   const setEditingLayerId = useHudStore((s) => s.setEditingLayerId);
   const [showRasterAuthoring, setShowRasterAuthoring] = useState(false);
+  const [showThematicAuthoring, setShowThematicAuthoring] = useState(false);
 
   const layer = layers.find((l) => l.id === editingLayerId);
   // audit #840: committed MapSpec 存在时，HUD 层样式不进入 paint
@@ -87,6 +90,25 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
       committedStyle: hit.raster_style as never,
       committedLegend: (hit.legend_spec ?? null) as never,
     };
+  })();
+
+  // G33：矢量专题层（fill/circle/line + 专题 legend_spec）挂作者工作台；
+  // 非专题层不挂（先由 create_thematic_map 建立表达再编辑）。
+  const thematicVectorLayer = (() => {
+    const doc = committedSpec as {
+      layers?: Array<Record<string, unknown>>;
+    } | null;
+    const hit = doc?.layers?.find(
+      (l) => l?.id === specLayerKey
+        || (typeof l?.id === 'string' && l.id.startsWith(`${specLayerKey}__`)),
+    );
+    if (!hit || typeof hit.source !== 'string') return null;
+    const spec = hit.legend_spec as Record<string, unknown> | null;
+    const thematicType = ['graduated', 'categorical', 'continuous', 'divergent']
+      .includes(String(spec?.type)) && typeof spec?.field === 'string' && spec.field;
+    if (!thematicType) return null;
+    if (!['fill', 'circle', 'line'].includes(String(hit.type))) return null;
+    return { layerId: String(hit.id) };
   })();
 
   const specPaintPatchFrom = (patch: Partial<LayerStyle>): Record<string, unknown> => {
@@ -249,6 +271,22 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         {/* G27：按尺度表达（可解释控制 + 局部覆盖），仅在 spec 层在场时挂载 */}
         {specBacked && specLayerKey && (
           <ScalePortrayalPanel layerId={specLayerKey} />
+        )}
+        {/* G33：专题表达作者工作台（字段分布/断点/类表/比例符号 → 单笔提交） */}
+        {thematicVectorLayer && (
+          <div>
+            <button
+              type="button"
+              aria-expanded={showThematicAuthoring}
+              onClick={() => setShowThematicAuthoring((v) => !v)}
+              className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+            >
+              {t('thematicAuthoring.title')}
+            </button>
+            {showThematicAuthoring && (
+              <ThematicAuthoringPanel layerId={thematicVectorLayer.layerId} />
+            )}
+          </div>
         )}
         {/* Name */}
         <div>

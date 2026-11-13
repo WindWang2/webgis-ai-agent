@@ -15,11 +15,172 @@
  * app/extensions_platform/ 无关 —— 本目录只承载 Pi coding-agent 的扩展入口
  * 产物（本文件），由 app/main.py 启动时经 extension_paths 传入 vendor/pi 加载。
  */
+import { createHash, createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const WEBGIS_API_BASE = process.env.WEBGIS_API_BASE ?? "http://localhost:8000";
 const BRIDGE_SECRET = process.env.WEBGIS_BRIDGE_SECRET ?? "";
 const TURN_CONTEXT_SUFFIX_RE = /(?:^|\n\n)\[WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\]\n\n\(Internal routing context; do not quote or modify this marker\.\)\s*$/;
+
+// ── G29：运行中交互封套（受信发起 → ctx.ui → 受权消费） ──────────────────
+// 服务端 mint_envelope 用 HMAC(bridge_secret, canonical_json) 签名；这里
+// 对称校验后才弹 ctx.ui —— 普通工具文本/数据字段伪造不出可签名的封套。
+
+function canonicalJson(value) {
+  // 与 Python json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+  // 对齐：对象键**递归**排序（顶层排序不够 —— 嵌套 dict 的键序两側不同源）。
+  if (Array.isArray(value)) {
+    return "[" + value.map((item) => canonicalJson(item)).join(",") + "]";
+  }
+  if (value !== null && typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    return "{" + keys
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`)
+      .join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
+function envelopeDigest(envelope) {
+  // 与服务端 pi_interaction_envelope._envelope_digest 对齐：
+  // sha256(canonical JSON) 的 hex —— 外层 HMAC 在 verifyEnvelope 里做。
+  const payload = Object.keys(envelope).filter((k) => k !== "sig")
+    .reduce((acc, k) => { acc[k] = envelope[k]; return acc; }, {});
+  return createHash("sha256").update(canonicalJson(payload)).digest("hex");
+}
+
+export function verifyEnvelope(envelope) {
+  if (!envelope || typeof envelope !== "object") return false;
+  if (envelope.v !== 1) return false;
+  if (!["select", "confirm", "input", "editor"].includes(envelope.kind)) return false;
+  const sig = envelope.sig;
+  if (typeof sig !== "string" || !sig) return false;
+  const expected = createHmac("sha256", BRIDGE_SECRET)
+    .update(envelopeDigest(envelope))
+    .digest("hex");
+  if (sig.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < sig.length; i += 1) diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+  if (diff !== 0) return false;
+  if (typeof envelope.exp !== "number" || Date.now() / 1000 > envelope.exp) return false;
+  return true;
+}
+
+/**
+ * 用真实 ctx.ui 发起决策对话。返回 {answerKind, display}：
+ *  - value + display：select/input/editor 的用户文本
+ *  - confirmed + "true"/"false"
+ *  - no_answer：undefined（超时/abort 默认 —— 语义由服务端按宿主记录分类）
+ */
+export async function askUserDecision(ctx, envelope, signal) {
+  const ui = ctx?.ui;
+  if (!ui || typeof ui.select !== "function") {
+    return { answerKind: "no_answer", display: "" };
+  }
+  const opts = {};
+  if (typeof envelope.timeout_ms === "number") opts.timeout = envelope.timeout_ms;
+  if (signal) opts.signal = signal;
+  try {
+    if (envelope.kind === "select") {
+      const value = await ui.select(String(envelope.title), envelope.options || [], opts);
+      return value === undefined || value === null
+        ? { answerKind: "no_answer", display: "" }
+        : { answerKind: "value", display: String(value) };
+    }
+    if (envelope.kind === "confirm") {
+      const confirmed = await ui.confirm(String(envelope.title), String(envelope.message || ""), opts);
+      return { answerKind: "confirmed", display: confirmed ? "true" : "false" };
+    }
+    if (envelope.kind === "input") {
+      const value = await ui.input(String(envelope.title), String(envelope.placeholder || ""), opts);
+      return value === undefined || value === null
+        ? { answerKind: "no_answer", display: "" }
+        : { answerKind: "value", display: String(value) };
+    }
+    // editor：上游无原生 timeout 字段 —— 宿主策略期限经 cancelled:true 收口。
+    const value = await ui.editor(String(envelope.title), String(envelope.prefill || ""));
+    return value === undefined || value === null
+      ? { answerKind: "no_answer", display: "" }
+      : { answerKind: "value", display: String(value) };
+  } catch (err) {
+    return { answerKind: "no_answer", display: "" };
+  }
+}
+
+async function postInteractionResolve(payload, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${WEBGIS_API_BASE}/pi-tools/interaction-resolve`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Pi-Bridge-Secret": BRIDGE_SECRET,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const result = await response.json();
+    return result;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * 工具结果携带受信交互封套时的完整闭环：
+ * verify → ctx.ui（真实原生调用）→ /pi-tools/interaction-resolve（服务端
+ * 按选项表反解 + 分类）→ 工具结果 = 服务端受权消费的 content。
+ */
+export async function runInteractionToolResult(
+  toolCallId, toolName, baseResult, ctx, turnToken, options = {},
+) {
+  const envelope = baseResult?.details?.webgis_interaction_request;
+  if (!envelope || typeof envelope !== "object") return baseResult;
+  if (!verifyEnvelope(envelope)) {
+    return {
+      content: [{ type: "text", text: "WebGIS 决策请求签名校验失败，已拒绝（不会向用户展示未受信问题）。" }],
+      details: { error: "envelope_signature_invalid", toolName },
+      isError: true,
+    };
+  }
+  const { answerKind, display } = await askUserDecision(ctx, envelope, options?.signal);
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+  try {
+    const resolved = await postInteractionResolve({
+      toolCallId,
+      turnToken,
+      envelopeId: envelope.envelope_id,
+      nativeId: "",
+      answerKind,
+      display: String(display || "").slice(0, 8000),
+    }, timeoutMs);
+    if (resolved && typeof resolved.content === "string") {
+      return {
+        content: [{ type: "text", text: resolved.content }],
+        details: {
+          interaction_resolved: true,
+          code: resolved.code,
+          domain: resolved.domain,
+          envelope_id: envelope.envelope_id,
+        },
+        isError: false,
+      };
+    }
+    return {
+      content: [{ type: "text", text: "决策消费失败：交互回答未被服务端接受。" }],
+      details: { error: "interaction_resolve_failed", code: resolved?.code, toolName },
+      isError: true,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: "text", text: `决策消费回调失败：${message}` }],
+      details: { error: "interaction_resolve_error", toolName },
+      isError: true,
+    };
+  }
+}
 
 const FALLBACK_NATIVE = [
   "webgis_map_intent",
@@ -29,6 +190,9 @@ const FALLBACK_NATIVE = [
   "query_local_poi",
   "get_local_admin_boundary",
   "list_available_tools",
+  // G29：运行中用户决策是前门能力（用户要求核对/同名二义时模型必须能问），
+  // 不依赖 per-turn 投影器激活。
+  "webgis_user_decision",
 ];
 
 const EXECUTE_PROXY_NAME = "webgis_execute";
@@ -321,9 +485,14 @@ export default function webgisToolsExtension(pi) {
       promptSnippet: tool.promptSnippet,
       parameters: tool.parameters || { type: "object", properties: {} },
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-        return postToBridge(toolCallId, tool.name, params || {}, currentTurnToken(ctx), {
+        const turnToken = currentTurnToken(ctx);
+        const base = await postToBridge(toolCallId, tool.name, params || {}, turnToken, {
           signal: _signal,
           toolFingerprint,
+        });
+        // G29：结果带受信决策封套 → 真实 ctx.ui 闭环（服务端反解消费）。
+        return runInteractionToolResult(toolCallId, tool.name, base, ctx, turnToken, {
+          signal: _signal,
         });
       },
     };
@@ -389,13 +558,18 @@ export default function webgisToolsExtension(pi) {
       // a dumped (registered) tool is client-side rejected above, and only
       // dumped tools carry fingerprints; proxy long-tail targets are outside
       // the fingerprint map, so the echo would always be undefined.
-      return postToBridge(
+      const turnToken = currentTurnToken(ctx);
+      const base = await postToBridge(
         toolCallId,
         "webgis_execute",
         { toolName, arguments: args },
-        currentTurnToken(ctx),
+        turnToken,
         { signal: _signal },
       );
+      // G29：长尾代理工具同样可能返回受信决策封套。
+      return runInteractionToolResult(toolCallId, "webgis_execute", base, ctx, turnToken, {
+        signal: _signal,
+      });
     },
   });
 

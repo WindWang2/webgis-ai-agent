@@ -202,6 +202,13 @@ class PiRpcClient:
         self._pending_requests: dict[str, asyncio.Future] = {}
         self._event_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_EVENT_QUEUE_SIZE)
         self._request_counter = 0
+        # G29（WP02）：extension_ui_request sink。stdout 读到原生 UI 请求时
+        # 回调（sync，绝不能阻塞读循环）。None = 无人消费（丢弃并告警）。
+        self._ui_request_sink = None
+        # G29（WP02）：stdin 单行写锁。issue()（RPC 命令）与 send_ui_response()
+        # （原生 UI 单向回答）都经 executor 写 stdin；无锁时两段 write+flush
+        # 可交错撕裂 JSON 行。answer 与 steer/abort 并发是 G29 的常态路径。
+        self._stdin_write_lock = asyncio.Lock()
         # PI-03（ADR-0286 D4）：本次 spawn 的 dump registry_generation（空 =
         # v2 dump / 未锚定 —— bridge 的代漂移检测 fail-open 不回收）。
         self.spawn_surface_generation: str = ""
@@ -258,6 +265,15 @@ class PiRpcClient:
     def events(self) -> asyncio.Queue:
         """The raw AgentSessionEvent queue (consumed by the SSE mapper)."""
         return self._event_queue
+
+    def set_ui_request_sink(self, sink) -> None:
+        """G29（WP02）：注册 extension_ui_request 消费者（交互服务）。
+
+        sink(obj: dict) -> None —— 同步回调，在读循环内执行：只允许字典登记
+        与队列投递，任何 I/O/await 由消费方自己的任务承担。坏行/未知方法由
+        协议层（pi_ui_protocol）抛 UiProtocolError，读循环捕获记日志继续。
+        """
+        self._ui_request_sink = sink
 
     def is_alive(self) -> bool:
         """Check if the Pi child process is running and healthy.
@@ -671,8 +687,27 @@ class PiRpcClient:
                     continue
                 try:
                     obj = json.loads(line)
+                    # G29（WP02）：原生 extension_ui_request（有 type + id，落在
+                    # 旧两分支之外被静默丢弃）→ 交给交互 sink；无人注册时告警
+                    # 丢弃（dialog 请求由 vendor timeout/abort 兜底，不悬挂）。
+                    if obj.get("type") == "extension_ui_request":
+                        sink = self._ui_request_sink
+                        if sink is None:
+                            logger.warning(
+                                "[PiRpcClient] extension_ui_request dropped (no sink; "
+                                "method=%s id=%s)",
+                                obj.get("method"), obj.get("id"),
+                            )
+                        else:
+                            try:
+                                sink(obj)
+                            except Exception:  # noqa: BLE001 — sink 故障不毒化读循环
+                                logger.exception(
+                                    "[PiRpcClient] ui request sink failed (id=%s)",
+                                    obj.get("id"),
+                                )
                     # Request response: has "type": "response" and "id"
-                    if obj.get("type") == "response" and obj.get("id"):
+                    elif obj.get("type") == "response" and obj.get("id"):
                         await self._handle_response(obj)
                     # AgentSessionEvent: has "type" but no "id"
                     elif "type" in obj and "id" not in obj:
@@ -831,19 +866,14 @@ class PiRpcClient:
         # self._process.stdin 会抛裸 AttributeError 而非 PiRpcError。
         proc = self._process
 
-        def _write_and_flush():
-            stdin = proc.stdin if proc is not None else None
-            if stdin is None:
-                # stop() 并发清场 —— 分类为 PiRpcError 而非 AttributeError
-                raise BrokenPipeError("Pi process stopped concurrently")
-            # Binary Popen (production) needs bytes; a text pipe keeps str.
-            payload = line if getattr(stdin, "encoding", None) else line.encode("utf-8")
-            stdin.write(payload)
-            stdin.flush()
+        async def _write_line_locked() -> None:
+            # G29（WP02）：与 send_ui_response 共用 _stdin_write_lock，保证
+            # 单行 write+flush 原子（并发 steer/abort/回答不撕裂 JSON 行）。
+            async with self._stdin_write_lock:
+                await self._write_stdin_line(proc, line)
 
         try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _write_and_flush)
+            await _write_line_locked()
         except (BrokenPipeError, OSError) as e:
             # 写失败：立刻回收 pending 项（无响应会来解它）。
             self._pending_requests.pop(request_id, None)
@@ -869,3 +899,44 @@ class PiRpcClient:
         finally:
             # F19: pop unconditionally（幂等：_handle_response 成功路径已弹）。
             self._pending_requests.pop(issued.id, None)
+
+    @staticmethod
+    async def _write_stdin_line(proc: Optional[subprocess.Popen], line: str) -> None:
+        """单行写出（executor 内执行 write+flush，#1438 纪律：不冻事件循环）。
+
+        G29（WP02）：issue() 与 send_ui_response() 的共享写原语 —— 调用方必须
+        持有 ``_stdin_write_lock`` 保证整行原子。本地 ``proc`` 句柄由调用方在
+        锁外捕获（stop() 并发清场分类为 BrokenPipeError）。
+        """
+
+        def _write_and_flush():
+            stdin = proc.stdin if proc is not None else None
+            if stdin is None:
+                # stop() 并发清场 —— 分类为 PiRpcError 而非 AttributeError
+                raise BrokenPipeError("Pi process stopped concurrently")
+            # Binary Popen (production) needs bytes; a text pipe keeps str.
+            payload = line if getattr(stdin, "encoding", None) else line.encode("utf-8")
+            stdin.write(payload)
+            stdin.flush()
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _write_and_flush)
+
+    async def send_ui_response(self, response: dict) -> None:
+        """G29（WP02）：单向写出 ``extension_ui_response``（原生 UI 子协议）。
+
+        与 :meth:`issue` 的关键差异：**不登记 pending future、不等待回执** ——
+        vendor 对 extension_ui_response 没有任何 RPC receipt（rpc-mode.ts
+        ``handleInputLine`` 命中 pending 即 resolve 并 return）。调用方据此把
+        状态记为「已写出」，续接观察来自扩展 resolve 回调或后续业务事件，
+        绝不在这里伪造「上游已确认」。
+        """
+        if self._process is None or self._process.stdin is None:
+            raise PiRpcError("Pi process not started")
+        line = json.dumps(response) + "\n"
+        proc = self._process
+        async with self._stdin_write_lock:
+            try:
+                await self._write_stdin_line(proc, line)
+            except (BrokenPipeError, OSError) as e:
+                raise PiRpcError(f"Pi pipe error (ui response): {e}")

@@ -156,7 +156,8 @@
     "densityLow": "Low",
     "densityMid": "Medium",
     "densityHigh": "High",
-    "densityVeryHigh": "Very high"
+    "densityVeryHigh": "Very high",
+    "other": "Other"
   },
   "sketch": {
     "editVertices": "Edit sketch vertices",

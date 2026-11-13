@@ -437,7 +437,7 @@ def _slim_pi_details_payload(result: Any) -> Any:
             encoded = _json.dumps(details_payload, ensure_ascii=False)
             if len(encoded.encode("utf-8")) > 65536:
                 # Keep only essential keys
-                keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id", "design_candidates")}
+                keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id", "design_candidates", "webgis_interaction_request")}
                 # Scope uncertainty must survive the details overflow path,
                 # just as it survives the model content formatter.
                 from app.services.llm_result_formatter import scope_disclosure_metadata
@@ -511,8 +511,12 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             _turn_binding = None
     else:
         _turn_binding = None
+    # G29（WP05）：绑定 toolCallId（工具体内 mint_envelope 读取，铸封套用）。
+    from app.services.chat.pi_interaction_envelope import bind_tool_call_id
+
     try:
-        return await _dispatch_tool_bound(request, registry, tool_name, arguments, session_id)
+        with bind_tool_call_id(request.toolCallId):
+            return await _dispatch_tool_bound(request, registry, tool_name, arguments, session_id)
     finally:
         if _turn_binding is not None:
             try:
@@ -1527,6 +1531,19 @@ class PiBridge:
         # G22-P1：见类属性注释（turn 交接门 + 在飞控制 RPC 台账）。
         self._control_gate = asyncio.Lock()
         self._inflight_control: set = set()
+        # G29（WP03）：原生 extension_ui_request 的交互 sink —— 归属取本
+        # worker 的 _current_turn（已验证身份），绝不从请求文字猜测。注入
+        # rpc 与 bridge 引用；服务自身无 I/O（登记 + 队列投递）。
+        try:
+            from app.services.chat.pi_runtime_interaction import (
+                get_interaction_service,
+            )
+
+            self._rpc.set_ui_request_sink(
+                get_interaction_service().make_sink(self._rpc, self)
+            )
+        except Exception:  # noqa: BLE001 — 测试注入的 mock rpc 可能无该入口
+            logger.debug("[PiBridge] ui request sink attach skipped", exc_info=True)
         # #1108: explicit lock ownership. ``_lock_lease`` names the turn that
         # currently owns ``_lock``; release is owner-checked and idempotent so
         # one turn can never release another turn's acquisition (INV-P2) and
@@ -1536,6 +1553,11 @@ class PiBridge:
         self._respawn_backoff_s: float = 1.0
         self._consecutive_respawn_failures: int = 0
         self._bound_gis_session_id = None
+
+    @property
+    def rpc(self) -> "PiRpcClient":
+        """G29：受控的 RPC 客户端访问（交互回答 / steer 经由，不绕过门禁）。"""
+        return self._rpc
 
     async def _isolate_vendor_session(self, turn_sid: str) -> None:
         """Reset the vendored AgentSession when the GIS session changes.
@@ -2526,6 +2548,20 @@ class PiBridge:
                     process_died_event = getattr(self._rpc, "process_died_event", None)
                     if not isinstance(process_died_event, asyncio.Event):
                         process_died_event = asyncio.Event()
+                    # G29（WP07）：非流式 drain 同款等待用户记账（见 stream_prompt）。
+                    _ns_wait_accredited = 0.0
+                    _ns_isvc = None
+                    _ns_max_wait = 900.0
+                    try:
+                        from app.services.chat.pi_runtime_interaction import (
+                            PI_INTERACTION_MAX_WAIT_S as _ns_max_wait_env,
+                            get_interaction_service as _ns_get_isvc,
+                        )
+
+                        _ns_isvc = _ns_get_isvc()
+                        _ns_max_wait = _ns_max_wait_env
+                    except Exception:  # noqa: BLE001 — 记账面失败 = 不豁免
+                        _ns_isvc = None
                     while True:
                         # #786: keep draining while events keep arriving. A single
                         # expired wait is NOT a turn failure — declare a stall only
@@ -2533,8 +2569,21 @@ class PiBridge:
                         # budget (PI_EVENT_STREAM_TIMEOUT) or the bounded total-turn
                         # deadline, mirroring stream_prompt's silence accumulation.
                         now = time.monotonic()
+                        if _ns_isvc is not None:
+                            await _ns_isvc.flush_deferred_writes()
+                            if _ns_isvc.waiting_for_user(turn_id):
+                                _ns_wait_accredited = min(
+                                    _ns_wait_accredited + PI_EVENT_DRAIN_TIMEOUT,
+                                    _ns_max_wait,
+                                )
+                                _ns_isvc.expire_due(turn_sid or "")
+                                last_event_at = now  # 等待用户不算静默
                         remaining_stall = PI_EVENT_STREAM_TIMEOUT - (now - last_event_at)
-                        remaining_total = PI_TURN_TOTAL_TIMEOUT - (now - drain_started)
+                        remaining_total = (
+                            PI_TURN_TOTAL_TIMEOUT
+                            - (now - drain_started)
+                            + _ns_wait_accredited
+                        )
                         wait_budget = min(
                             PI_EVENT_DRAIN_TIMEOUT, remaining_stall, remaining_total
                         )
@@ -2562,6 +2611,15 @@ class PiBridge:
                                 # 首个真实 Pi 事件（first_event/TTFT-proxy）。
                                 rt_ev.mark_first_event()
                                 event_type = event.get("type")
+                                # G29（WP03）：真实业务事件到达 → 交互续接观察。
+                                if _ns_isvc is not None and event_type not in (
+                                    "extension_ui_request",
+                                    "extension_ui_update",
+                                    "extension_ui_fire",
+                                ):
+                                    _ns_isvc.observe_turn_activity(
+                                        turn_id, f"event:{event_type}",
+                                    )
                                 # PI-01（ADR-0286）：tool_execution_start/end 驱动
                                 # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
                                 _phase.observe_tool_event(event_type)
@@ -2583,14 +2641,15 @@ class PiBridge:
                                         final_text = text
                             else:
                                 # 超时且两任务都未完成 —— 连续静默/总预算检查
+                                _elapsed_ns = time.monotonic() - drain_started - _ns_wait_accredited
                                 if (
                                     time.monotonic() - last_event_at >= PI_EVENT_STREAM_TIMEOUT
-                                    or time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
+                                    or _elapsed_ns >= PI_TURN_TOTAL_TIMEOUT
                                 ):
                                     timed_out = True
                                     timeout_reason = (
                                         "total"
-                                        if time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
+                                        if _elapsed_ns >= PI_TURN_TOTAL_TIMEOUT
                                         else "stall"
                                     )
                                     break
@@ -2694,6 +2753,18 @@ class PiBridge:
                         except Exception as e:  # noqa: BLE001
                             logger.warning("[PiBridge] abort-on-failed-turn (turn=%s): %s", turn_sid, e)
                     _cleanup_turn_state(turn_sid)
+                    # G29（WP10）：非流式 turn teardown 同款交互失效（见 stream_prompt）。
+                    try:
+                        from app.services.chat.pi_runtime_interaction import (
+                            get_interaction_service as _gis_ns,
+                        )
+
+                        _gis_ns().invalidate_turn(turn_sid, turn_id, "turn-teardown")
+                    except Exception:  # noqa: BLE001 — 失效面绝不阻断 teardown
+                        logger.debug(
+                            "[PiBridge] interaction invalidate at non-stream teardown failed",
+                            exc_info=True,
+                        )
                     # Clear the active-turn markers before releasing the lock.
                     self._active_turn_sid = None
                     # F03（ADR-0259-f03 D1）：单结算 seam —— abort 来源消费、
@@ -3113,6 +3184,21 @@ class PiBridge:
                     # 停止去重（正常 turn 的工具步数远低于该界）。
                     _seen_tool_end_ids: set = set()
                     _tool_end_dedup_overflow = False
+                    # G29（WP07）：等待用户的可信等待记账 —— ctx.ui dialog 挂起时
+                    # vendor 不发任何事件，连续静默不得误判 stall；整 turn 预算
+                    # 按记账额度展宽（总量仍有 PI_INTERACTION_MAX_WAIT_S 帽，
+                    # 由交互服务的 deadline 承担）。
+                    _wait_accredited_s = 0.0
+                    _interaction_service = None
+                    try:
+                        from app.services.chat.pi_runtime_interaction import (
+                            PI_INTERACTION_MAX_WAIT_S as _MAX_USER_WAIT_S,
+                            get_interaction_service as _get_isvc,
+                        )
+
+                        _interaction_service = _get_isvc()
+                    except Exception:  # noqa: BLE001 — 记账面失败 = 不豁免（保守）
+                        _MAX_USER_WAIT_S = 900.0
                     get_task = asyncio.ensure_future(self._rpc.events.get())
                     died_task = asyncio.ensure_future(process_died_event.wait())
                     pending = {get_task, died_task}
@@ -3122,11 +3208,30 @@ class PiBridge:
                                 pending, timeout=PI_HEARTBEAT_INTERVAL,
                                 return_when=asyncio.FIRST_COMPLETED,
                             )
+                            _waiting_user = (
+                                _interaction_service is not None
+                                and _interaction_service.waiting_for_user(turn_id)
+                            )
+                            if _interaction_service is not None:
+                                # G29：冲刷 sink 排队的单向写出（上限拒收等）。
+                                await _interaction_service.flush_deferred_writes()
+                            if _waiting_user:
+                                # 等待用户（或答案已写出待续接）：可信等待，
+                                # 不累计 stall；总预算按心跳粒度记账展宽。
+                                _wait_accredited_s = min(
+                                    _wait_accredited_s + PI_HEARTBEAT_INTERVAL,
+                                    _MAX_USER_WAIT_S,
+                                )
+                                # 惰性过期处理（原生 timeout 到点标记 timed_out）。
+                                _interaction_service.expire_due(turn_sid)
                             # #982: the total-budget check runs EVERY iteration, not
                             # only in the silence branch — a steady drip of events
                             # (each resetting silence_seconds) must not exempt a turn
                             # from the whole-turn deadline.
-                            if time.monotonic() - turn_started >= PI_TURN_TOTAL_TIMEOUT:
+                            if (
+                                time.monotonic() - turn_started - _wait_accredited_s
+                                >= PI_TURN_TOTAL_TIMEOUT
+                            ):
                                 timed_out = True
                                 timeout_reason = "total"
                                 break
@@ -3140,6 +3245,18 @@ class PiBridge:
                                 event = get_task.result()
                                 silence_seconds = 0.0
                                 rt_ev.mark_first_event()
+                                # G29（WP03）：真实业务事件到达 = 当前任务在继续
+                                # —— answer_written 的交互按证据标 resolved。
+                                if _interaction_service is not None:
+                                    _evt_type = str(event.get("type") or "")
+                                    if _evt_type not in (
+                                        "extension_ui_request",
+                                        "extension_ui_update",
+                                        "extension_ui_fire",
+                                    ):
+                                        _interaction_service.observe_turn_activity(
+                                            turn_id, f"event:{_evt_type}",
+                                        )
                                 # PI-01（ADR-0286）：tool_execution_start/end 驱动
                                 # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
                                 _phase.observe_tool_event(str(event.get("type") or ""))
@@ -3299,6 +3416,12 @@ class PiBridge:
                             else:
                                 # Neither an event nor a death within one heartbeat
                                 # interval -> accumulate silence, keepalive.
+                                if _waiting_user:
+                                    # G29（WP07）：等待用户是可观察宿主状态，不是
+                                    # 工具停滞 —— 心跳继续，stall 不累计（等待总量
+                                    # 由交互 deadline 与 _wait_accredited_s 帽约束）。
+                                    yield ": keepalive\n\n"
+                                    continue
                                 silence_seconds += PI_HEARTBEAT_INTERVAL
                                 if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
                                     # True stall: no Pi event for the whole stall budget.
@@ -3403,6 +3526,27 @@ class PiBridge:
                     # the next turn. (On a normal agent_settled the queue is already
                     # empty; this is a no-op there.)
                     await self._drain_remaining_turn_events()
+                    # G29（WP10）：turn teardown —— 该 turn 仍 pending/待观察的
+                    # 交互一律失效（旧卡片终止，绝不把旧回答注入后继 turn）。
+                    try:
+                        from app.services.chat.pi_runtime_interaction import (
+                            get_interaction_service as _gis,
+                        )
+
+                        _invalidated = _gis().invalidate_turn(
+                            turn_sid, turn_id, "turn-teardown",
+                        )
+                        if _invalidated:
+                            logger.info(
+                                "[PiBridge] invalidated %d pending interaction(s) "
+                                "at turn teardown (turn=%s)",
+                                _invalidated, turn_id,
+                            )
+                    except Exception:  # noqa: BLE001 — 失效面绝不阻断 teardown
+                        logger.debug(
+                            "[PiBridge] interaction invalidate at teardown failed",
+                            exc_info=True,
+                        )
                     # NB: _drain_remaining_turn_events contains no suspension
                     # points (get_nowait loop only), so a re-delivered
                     # cancellation cannot interrupt it mid-cleanup (#1108).

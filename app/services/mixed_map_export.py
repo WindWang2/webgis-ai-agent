@@ -413,12 +413,24 @@ def _map_pdf_error(exc: Exception) -> Exception:
 
 def _compile_single_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
                         width: int = 1200, height: int = 800,
-                        bounds: Any = None) -> Any:
+                        bounds: Any = None, target_dpi: int = 150) -> Any:
     from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 
+    # G34：SVG/PNG 与 PDF 必须消费**同一份作者决定**（PDF 面由
+    # publication_ir.plan_publication_pages 从 layout.print_layout 透传）。
+    _layout = doc.get("layout") if isinstance(doc, dict) else None
+    _plan = (_layout or {}).get("print_layout") if isinstance(_layout, dict) else None
+    _extra: Dict[str, Any] = {}
+    if isinstance(_plan, dict) and _plan:
+        paper = _plan.get("paper") or {}
+        pw = float(paper.get("width_mm") or 297.0)
+        ph = float(paper.get("height_mm") or 210.0)
+        width, height = int(pw * 4), int(ph * 4)
+        _extra = {"print_layout": _plan, "paper_mm": (pw, ph), "page_id": "main"}
     return compile_mapspec_to_svg_detailed(
-        doc, target_dpi=150, width=width, height=height, padding=24,
+        doc, target_dpi=target_dpi, width=width, height=height, padding=24,
         include_chrome=True, bounds=bounds, raster_bindings=bindings or None,
+        **_extra,
     )
 
 
@@ -443,6 +455,7 @@ def _export_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
         "embedded": "base64 PNG data URI (offline, no session URL)",
     }
     manifest["diagnostics"] = [d for d in (comp.diagnostics or [])][:40]
+    manifest["print_layout"] = dict(getattr(comp, "print_layout_receipt", None) or {})
     manifest["checksum"] = _checksum(svg.encode("utf-8"))
     if recheck is not None and bindings:
         recheck(manifest["raster_layers"], manifest["diagnostics"])

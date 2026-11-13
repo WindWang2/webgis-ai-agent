@@ -1478,6 +1478,11 @@ class ToolRegistry:
                 # 会把列表里的 ref: 元素解成整个 FeatureCollection 载荷。
                 if name == "finalize_display":
                     skip_keys.add("show_refs")
+                # G30 技能作业：bindings 是「角色 → ref 身份」声明（prepare 服务
+                # 自行解析 ref 并抽取绑定事实/内容 digest —— 透明解引用会把
+                # ref 展开成整份 FeatureCollection，破坏身份与幂等键语义）。
+                if name == "gis_skill_job_prepare":
+                    skip_keys.add("bindings")
                 # Pi 兼容（V4）：capture_ref_of 注入面 —— 记录源参数的原始
                 # ref 游标（解引用后注入声明字段，工具由此知道数据来源）。
                 capture_fields = self._declared_cursor_capture_fields(model)
