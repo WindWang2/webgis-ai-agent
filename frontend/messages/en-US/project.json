@@ -322,5 +322,6 @@
   "g10NeedAuth": "Sign in to check project data updates",
   "g10NeedSession": "A session context (session_id) is required",
   "g10LoadFailed": "Project data refresh request failed",
-  "deliverData": "Deliver data"
+  "deliverData": "Deliver data",
+  "topologyTab": "Topology"
 }

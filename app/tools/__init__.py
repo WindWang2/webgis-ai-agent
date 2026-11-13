@@ -47,6 +47,8 @@ _TOOL_MODULES = [
     ("app.tools.sampling_tools", "register_sampling_tools"),
     # /goal 03：持久数据要素编辑工具面（preview/commit/history）
     ("app.tools.feature_edit_tools", "register_feature_edit_tools"),
+    # G31：跨图层拓扑工作台工具面（ruleset/run/findings/repair preview）
+    ("app.tools.topology_workbench_tools", "register_topology_workbench_tools"),
     # Science V6：生态分析工具面（Goal 07 新域，独立模块防并发冲突）
     ("app.tools.ecology_tools", "register_ecology_tools"),
     ("app.tools.point_pattern_tools", "register_point_pattern_tools"),

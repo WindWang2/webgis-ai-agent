@@ -1,0 +1,125 @@
+{
+  "title": "拓扑工作台",
+  "subtitle": "跨图层拓扑约束：声明 → 检查 → 定位 → 例外 → 修复 → 复验",
+  "refresh": "刷新",
+  "noAuth": "拓扑工作台需要登录（规则集/运行按创建者归属）。",
+  "rulesets": {
+    "section": "规则集",
+    "empty": "还没有规则集。创建一个来声明跨图层约束（如“地块应覆盖管理区，排除湖面”）。",
+    "create": "创建规则集",
+    "name": "名称",
+    "namePlaceholder": "如：地块拓扑约束",
+    "addRule": "添加规则",
+    "removeRule": "移除",
+    "ruleType": "规则类型",
+    "ruleId": "规则 ID",
+    "severity": "严重级",
+    "params": "参数",
+    "tip": "参数语义：tolerance_m 是线性米；*_threshold_m2 是面积平方米 —— 不可互换。",
+    "version": "v{version}",
+    "rules": "{count} 条规则"
+  },
+  "ruleTypes": {
+    "polygons_no_overlap": "同源面禁重叠",
+    "area_coverage": "AOI 覆盖（可排除）",
+    "objects_covered_by_target": "对象须被目标面覆盖",
+    "cross_layer_no_overlap": "跨层禁重叠",
+    "line_endpoints_connected": "线端点连接"
+  },
+  "runs": {
+    "section": "运行",
+    "start": "启动检查",
+    "empty": "该规则集还没有运行记录。",
+    "selectRuleset": "选择规则集",
+    "bindingRole": "角色绑定",
+    "bindings": "源绑定（角色 → 数据）",
+    "bindingHint": "coverage/aoi/target/connectors 必须全量绑定；checked 类可带范围。会话 ref 形如 ref:…",
+    "status": {
+      "pending": "排队中",
+      "running": "运行中",
+      "completed": "已完成",
+      "failed": "失败",
+      "cancelled": "已取消"
+    },
+    "findingsTotal": "{count} 条问题",
+    "openCount": "{count} 条待处理",
+    "computationCrs": "计算 CRS：{crs}",
+    "allUnknown": "注意：全部规则为 blocked/unknown —— 不能按“全部通过”解读。",
+    "budgetTruncated": "注意：部分规则触达预算上限（partial），计数为部分结果。",
+    "failed": "运行失败：{message}",
+    "recheck": "复验",
+    "rechecking": "复验中…",
+    "recheckDone": "复验完成：{resolved} 条已消除 / {persisted} 条仍在 / 新运行 {total} 条问题",
+    "recheckOf": "复验自 {runId}"
+  },
+  "ruleResult": {
+    "applicable": "适用",
+    "blocked": "阻断",
+    "full": "完整",
+    "partial": "部分",
+    "violations_found": "发现违规",
+    "no_violations": "无违规",
+    "unknown": "未知",
+    "examined": "参与 {count}"
+  },
+  "findings": {
+    "section": "问题队列",
+    "empty": "该运行没有问题（或筛选无结果）。",
+    "filterSeverity": "严重级",
+    "filterStatus": "状态",
+    "all": "全部",
+    "prev": "上一页",
+    "next": "下一页",
+    "page": "{offset}–{end} / 共 {total} 条",
+    "countNote": "总数是全量计数（非当前页）。",
+    "status": {
+      "open": "待处理",
+      "accepted_exception": "已接受例外",
+      "resolved": "已复验消除",
+      "dismissed": "已忽略"
+    },
+    "severity": {
+      "info": "信息",
+      "warn": "警告",
+      "error": "错误"
+    },
+    "locate": "定位",
+    "detail": "详情",
+    "metric": "实测 {value} {unit}（阈值 {threshold}，{method}）",
+    "witness": "问题几何（witness）",
+    "witnessUnavailable": "witness 证据不可读：{reason}",
+    "stale": "定位过期：源已变化（{reason}）—— 请重新运行检查。",
+    "locators": "相关对象",
+    "locatorRole": "{role} · {value}"
+  },
+  "exception": {
+    "accept": "接受为例外",
+    "reasonLabel": "例外理由（必填，将随锚点存档）",
+    "reasonPlaceholder": "如：湖面为规划保留水域，覆盖缺口合法",
+    "confirm": "确认接受",
+    "cancel": "取消",
+    "accepted": "已记录例外（只改处理状态，检测事实不变）。",
+    "revoke": "撤销例外",
+    "revoked": "例外已撤销，问题回到待处理。",
+    "note": "例外是用户决定；接受后源或规则变化会使例外失效（需重新验证）。"
+  },
+  "repair": {
+    "section": "修复",
+    "candidates": "候选修复",
+    "noCandidates": "该问题没有确定性修复 —— 请在编辑器人工修正后复验。",
+    "ownership": "该修复涉及业务归属选择（缺口填给谁/重叠归谁）—— 系统不自动判定。",
+    "previewUnavailable": "该候选暂不可自动预览（{reason}）。",
+    "preview": "生成 G14 预览",
+    "committable": "预览可提交：请到地图编辑提案卡确认后生效（CAS/撤销链继承 G14）。",
+    "notCommittable": "预览未通过校验（见下方 findings）—— 按提示修正后重试。",
+    "note": "修复建议 ≠ 已修复：提交需经确认；修复后请复验确认证据确实消失。"
+  },
+  "errors": {
+    "load": "加载失败：{message}",
+    "scopeNotAllowed": "该角色要求全量绑定（局部选择会产生虚假缺口）—— 请绑定完整数据源。",
+    "sourceChanged": "源在提交后被修改 —— 请重新启动检查。",
+    "budget": "超出预算上限 —— 请缩小检查范围。",
+    "region": "分析范围不支持（跨反经线/极区/过大）—— 请缩小范围。",
+    "generic": "操作失败：{message}"
+  }
+}
