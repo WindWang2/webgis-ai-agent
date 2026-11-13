@@ -110,7 +110,11 @@ def test_stream_credit_window_bounds_host_memory_structurally():
     assert handshake["stream_window"] == 16
     max_output_bytes = 262144
     assert 16 * max_output_bytes == 4 * 1024 * 1024  # ≤ 4MiB/流（守序）
-    # 敌意面：帧队列有界（源码断言 + 上界推演）。
-    src_text = inspect.getsource(WorkerProcess.__init__)
-    assert "queue.Queue(maxsize=64)" in src_text
-    assert 64 * FRAME_MAX_BYTES < 5 * 1024 * 1024 * 1024  # < 5GiB 最坏上界
+    # 敌意面：队列按原始字节预算（2 × 输出上界），不再按 64 帧 × 最大帧。
+    src_text = inspect.getsource(WorkerProcess)
+    assert "queue.Queue(maxsize=64)" not in src_text
+    assert "2 * int(output)" in src_text
+    from app.extensions_platform.worker.protocol import read_frame_limit
+
+    assert read_frame_limit(max_output_bytes) <= FRAME_MAX_BYTES
+    assert 2 * max_output_bytes < 1024 * 1024  # 本例预算远小于旧的 64×68MiB

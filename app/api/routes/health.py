@@ -23,12 +23,8 @@ _LLM_CACHE_TTL = 30.0
 _llm_last_check = 0.0
 _llm_last_result = False
 
-# ADR-0282：Pi vendor 身份事实在进程生命周期内不变（除事后补构建）——
-# /health 是无鉴权、限流豁免的热路径，pi_vendor_identity 会 fork 数个
-# git/node 子进程（review P1），故按 _check_llm 同款 TTL 缓存。
-_PI_VENDOR_CACHE_TTL = 30.0
-_pi_vendor_last_check = 0.0
-_pi_vendor_last_result: Optional[str] = None
+# ADR-0282：/health 无鉴权。entry 是否已构建只看文件系统；
+# 不得在请求路径上调用 pi_vendor_identity（那会 fork git/node）。
 
 
 def _check_db():
@@ -118,7 +114,7 @@ def _pi_mode_facts() -> dict:
     alive = False
     probe_ok = True
     try:
-        from app.services.chat.pi_compat import pi_vendor_identity
+        from app.services.chat.pi_compat import pi_runtime_entry
 
         from app.api.routes.chat import pi_bridge, _use_pi_bridge
 
@@ -126,7 +122,7 @@ def _pi_mode_facts() -> dict:
         bridge_present = pi_bridge is not None
         if bridge_present:
             alive = bool(_use_pi_bridge())
-        entry_built: bool | None = pi_vendor_identity().entry_built
+        entry_built, _entry_kind = pi_runtime_entry()
     except Exception:
         logger.warning("pi mode facts probe failed", exc_info=True)
         entry_built = None
@@ -195,27 +191,16 @@ def _pi_workers_alive() -> Optional[str]:
 
 
 def _pi_vendor_summary() -> Optional[str]:
-    """ADR-0282: which vendored Pi the bridge would run, e.g. "v1.5.0 (bundle)".
-
-    None = no built entry (agent_runtime would honestly report unavailable via
-    the fail-closed badge anyway) or probe failure — never fabricate."""
-    global _pi_vendor_last_check, _pi_vendor_last_result
-    now = time.monotonic()
-    if now - _pi_vendor_last_check < _PI_VENDOR_CACHE_TTL:
-        return _pi_vendor_last_result
+    """Anonymous /health: entry kind only. Never fork git or node."""
     try:
-        from app.services.chat.pi_compat import pi_vendor_identity
+        from app.services.chat.pi_compat import pi_runtime_entry
 
-        ident = pi_vendor_identity()
-        result = (
-            f"{ident.describe or ident.head_commit or 'unknown'} ({ident.entry_kind})"
-            if ident.entry_built else None
-        )
+        built, kind = pi_runtime_entry()
+        if not built or not kind:
+            return None
+        return f"built ({kind})"
     except Exception:
-        result = None
-    _pi_vendor_last_check = now
-    _pi_vendor_last_result = result
-    return result
+        return None
 
 
 @router.get("/health/live", response_model=LivenessResponse)

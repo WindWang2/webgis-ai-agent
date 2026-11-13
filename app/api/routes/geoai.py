@@ -136,6 +136,22 @@ async def _bind_owner_scope(
     return normalize_scope(project_id=pid)
 
 
+def _upload_dir_under_data_root(data_root: Path, filename: Any) -> Optional[Path]:
+    """UploadRecord.filename 是文件路径。根目录取其父目录，且必须落在 DATA_DIR/uploads 之下。"""
+    raw = str(filename or "").strip()
+    if not raw:
+        return None
+    parent = Path(raw).expanduser().resolve().parent
+    uploads_root = (Path(data_root) / "uploads").resolve()
+    try:
+        relative = parent.relative_to(uploads_root)
+    except ValueError:
+        return None
+    if not relative.parts:
+        return None
+    return parent
+
+
 async def _roots_for_scope(
     db: AsyncSession, scope: Dict[str, str], *, source_uris: tuple[str, ...] = (),
 ) -> List[Path]:
@@ -176,10 +192,9 @@ async def _roots_for_scope(
         except (OSError, ValueError, TypeError):
             continue
 
-    def _upload_root(upload_pk: Any, filename: Any) -> Path:
-        parts = str(filename or "").replace("\\", "/").split("/")
-        upload_key = parts[0] if parts and parts[0] else str(upload_pk)
-        return data_root / "uploads" / upload_key
+    def _upload_root(upload_pk: Any, filename: Any) -> Optional[Path]:
+        del upload_pk
+        return _upload_dir_under_data_root(data_root, filename)
 
     session_id = scope.get("session_id")
     project_id = scope.get("project_id")
@@ -201,7 +216,9 @@ async def _roots_for_scope(
             )
         )
         for upload_pk, filename in result.all():
-            roots.append(_upload_root(upload_pk, filename))
+            root = _upload_root(upload_pk, filename)
+            if root is not None:
+                roots.append(root)
         return roots
 
     if project_id:
@@ -228,7 +245,9 @@ async def _roots_for_scope(
                 )
             )
             for upload_pk, filename in result.all():
-                roots.append(_upload_root(upload_pk, filename))
+                root = _upload_root(upload_pk, filename)
+                if root is not None:
+                    roots.append(root)
         return roots
 
     return scoped_registry_roots

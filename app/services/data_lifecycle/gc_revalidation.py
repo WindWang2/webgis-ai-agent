@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.models.data_lifecycle import LifecycleObject, LifecyclePolicy
+from app.models.data_lifecycle import LifecycleObject
 from app.models.db_model import GeoComputeWorkerCache
 from app.services.data_lifecycle.policy import classify_tier
 
@@ -16,10 +16,13 @@ def _utc(value: object) -> datetime | None:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
-def candidate_still_cold(db: Session, entry: Mapping[str, object], path: Path | None) -> tuple[bool, str]:
+def candidate_still_cold(
+    db: Session, entry: Mapping[str, object], path: Path | None, org_id: int | None = None,
+) -> tuple[bool, str]:
+    from app.services.data_lifecycle.policy import policy_for_kind
+
     kind, object_id = str(entry.get("kind") or ""), str(entry.get("object_id") or "")
-    policy = db.query(LifecyclePolicy).filter_by(kind=kind).order_by(
-        LifecyclePolicy.enabled.desc(), LifecyclePolicy.created_at.desc()).first()
+    policy = policy_for_kind(db, kind, org_id)
     if policy is None or not policy.enabled or policy.action not in ("stage_delete", "delete"):
         return False, "policy_changed"
     row = db.query(LifecycleObject).filter_by(kind=kind, object_id=object_id).one_or_none()

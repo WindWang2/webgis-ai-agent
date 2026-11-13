@@ -869,6 +869,10 @@ class ToolRegistry:
         """扩展平台投影（ADR-0243）：注册前碰撞检查用；只读。"""
         return name in self._tools
 
+    def get(self, name: str) -> Optional[Callable]:
+        """已注册实现；不存在返回 None。停用回滚用它确认仍是本扩展的投影。"""
+        return self._tools.get(name)
+
     def tool_names(self) -> list[str]:
         """扩展平台投影（ADR-0243）：引用存在性检查用；确定性排序。"""
         return sorted(self._tools.keys())

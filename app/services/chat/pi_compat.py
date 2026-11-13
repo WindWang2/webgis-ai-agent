@@ -165,6 +165,18 @@ def _entry_facts() -> tuple[str | None, str | None]:
     return None, None
 
 
+def pi_runtime_entry() -> tuple[bool | None, str | None]:
+    """Stat-only vendor entry. ``(entry_built, entry_kind)``; no git/node spawn.
+
+    ``entry_built is None`` only when the filesystem probe itself fails.
+    """
+    try:
+        _path, kind = _entry_facts()
+    except OSError:
+        return None, None
+    return kind is not None, kind
+
+
 def pi_vendor_identity() -> PiVendorIdentity:
     """Collect the runtime identity (cheap, no network, no spawn)."""
     head, head_src = _head_commit()

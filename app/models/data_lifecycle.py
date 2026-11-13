@@ -100,9 +100,9 @@ class LifecyclePolicy(Base):
     __tablename__ = "lifecycle_policies"
 
     id = Column(String(36), primary_key=True, default=_uuid_hex)
-    org_id = Column(Integer, nullable=True)  # B 线占位列
-    #: 唯一策略名（如 "default" / "cog-strict"）；同 (kind) 命名即适用
-    name = Column(String(64), nullable=False, unique=True)
+    org_id = Column(Integer, nullable=True)  # NULL = 全局默认；组织策略不改全局行
+    #: 策略名在组织内唯一（全局默认 org_id IS NULL）。
+    name = Column(String(64), nullable=False)
     kind = Column(String(32), nullable=False)
     action = Column(String(16), nullable=False, default="observe")
     #: tier 阈值（秒）：{"warm_after_s": 86400, "cold_after_s": 604800}
@@ -115,6 +115,7 @@ class LifecyclePolicy(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_lifecycle_policy_org_name"),
         CheckConstraint(
             "kind IN ('lakehouse_dataset','fabric_materialization',"
             "'artifact_cache','cog_output','worker_cache')",

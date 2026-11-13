@@ -22,6 +22,19 @@ async def client(app):
 
 
 @pytest.mark.asyncio
+async def test_health_does_not_spawn_git_or_node(client, monkeypatch):
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("health spawned a subprocess")
+
+    monkeypatch.setattr("subprocess.run", _boom)
+    import app.services.chat.pi_compat as pi_compat
+
+    monkeypatch.setattr(pi_compat.subprocess, "run", _boom)
+    resp = await client.get("/api/v1/health")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_health_check(client):
     resp = await client.get("/api/v1/health")
     assert resp.status_code == 200

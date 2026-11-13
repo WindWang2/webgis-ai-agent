@@ -20,6 +20,39 @@ from app.services.project_context_types import ProjectContextSummary, ProjectFin
 logger = logging.getLogger(__name__)
 
 
+def _upload_record_id(source_ref: Optional[str]) -> Optional[int]:
+    """UploadRecord 主键是可枚举整数。非整数 ref 不是这条 IDOR 面。"""
+    text = str(source_ref or "").strip()
+    if not text.isdigit():
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _caller_may_attach_upload(db: Session, upload_id: int, user_id: Optional[str]) -> bool:
+    """上传必须属于调用者的会话，或与会话主人同一组织。匿名会话 fail closed。"""
+    from app.models.db_model import Conversation, User
+    from app.models.upload import UploadRecord
+
+    if not user_id or user_id == "anonymous":
+        return False
+    row = db.get(UploadRecord, upload_id)
+    if row is None or not row.session_id:
+        return False
+    conv = db.get(Conversation, row.session_id)
+    if conv is None or not conv.user_id:
+        return False
+    if str(conv.user_id) == str(user_id):
+        return True
+    caller = db.get(User, str(user_id))
+    owner = db.get(User, str(conv.user_id))
+    if caller is None or owner is None or caller.org_id is None or owner.org_id is None:
+        return False
+    return caller.org_id == owner.org_id
+
+
 def _caller_may_access_project(project: Project, user_id: Optional[str], org_id: Optional[int]) -> bool:
     """Tenant / owner gate shared by lookup, fingerprint, and context summary.
 
@@ -390,6 +423,9 @@ class ProjectService:
     ) -> Optional[ProjectDataset]:
         project = ProjectService.get_project_for_write(db, project_id, user_id, org_id)
         if not project:
+            return None
+        upload_id = _upload_record_id(attach_data.source_ref) if attach_data.source_type == "upload" else None
+        if upload_id is not None and not _caller_may_attach_upload(db, upload_id, user_id):
             return None
 
         dataset_id = f"ds_{uuid.uuid4().hex[:16]}"

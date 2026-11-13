@@ -281,7 +281,7 @@ class TestBoundedStdoutReader:
         # 被测代码路径（_reader_loop → iter_frames_bounded → kill）不变。
         monkeypatch.setattr(
             wc, "iter_frames_bounded",
-            lambda stdout: wp.iter_frames_bounded(stdout, max_bytes=1024),
+            lambda stdout, max_bytes=None: wp.iter_frames_bounded(stdout, max_bytes=1024),
         )
         # 真子进程：killpg 语义可观测（进程组被 SIGKILL）。
         proc = subprocess.Popen(
@@ -315,3 +315,110 @@ class TestBoundedStdoutReader:
             assert not worker.alive
         finally:
             worker.kill()
+
+    def test_idle_data_frames_do_not_queue_and_kill_worker(self, tmp_path):
+        """#2071：空闲时连续数据帧不得解码进宿主队列，并应杀掉 worker。"""
+        import json
+        import queue
+        import subprocess
+        import sys
+
+        from app.extensions_platform.worker import client as wc
+
+        payload = {"type": "result", "id": "idle", "ok": True, "value": [0] * 4000}
+        line = (json.dumps(payload) + "\n").encode()
+        blob = line * 6
+
+        class _Burst:
+            def __init__(self) -> None:
+                self._buf = blob
+                self._i = 0
+
+            def read1(self, size: int) -> bytes:
+                if self._i >= len(self._buf):
+                    return b""
+                chunk = self._buf[self._i:self._i + size]
+                self._i += len(chunk)
+                return chunk
+
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        worker = wc.WorkerProcess(
+            pack_dir=tmp_path,
+            extension_id=EXTENSION_ID,
+            namespace="acme",
+            name="pack",
+            fingerprint="x" * 64,
+            grants=[],
+            settings={},
+            startup_timeout_s=1.0,
+            call_timeout_s=1.0,
+            max_output_bytes=4096,
+        )
+        worker._proc = proc
+        worker.pid = proc.pid
+        worker.in_flight = False
+        try:
+            worker._reader_loop(_Burst())
+            drained = []
+            while True:
+                try:
+                    drained.append(worker._frames.get_nowait())
+                except queue.Empty:
+                    break
+            assert any(f.get("type") == "__protocol_error__" for f in drained)
+            assert all(f.get("type") != "result" for f in drained)
+            assert all("value" not in f for f in drained)
+            assert worker._frame_budget.used == 0
+            assert proc.poll() is not None
+        finally:
+            worker.kill()
+
+
+def test_worker_proxy_passes_max_output_bytes(tmp_path):
+    host, _registry = _make_host(tmp_path)
+    captured: dict = {}
+
+    class _Worker:
+        def call(self, tool, args, timeout=None, max_output_bytes=None):
+            captured["tool"] = tool
+            captured["max_output_bytes"] = max_output_bytes
+            return {"ok": True}
+
+    proxy = host._make_worker_proxy(None, _Worker(), "acme_noop", 3.0, 4096)
+    assert proxy(x=1) == {"ok": True}
+    assert captured == {"tool": "acme_noop", "max_output_bytes": 4096}
+
+
+class TestWorkerToolCollision:
+    def test_projection_fails_closed_on_existing_tool(self, tmp_path):
+        def core():
+            return {"core": True}
+
+        _make_pack(tmp_path, HEALTHY_MAIN, tools=[{"name": "noop", "description": "n"}])
+        host, registry = _make_host(tmp_path)
+        registry.register("acme_noop", "core tool", core)
+        diags = host.activate(EXTENSION_ID)
+        assert any(d.code is DiagnosticCode.REGISTRY_PROJECTION_COLLISION for d in diags)
+        assert registry.get("acme_noop") is core
+        host.deactivate(EXTENSION_ID)
+        assert registry.get("acme_noop") is core
+
+    def test_deactivate_does_not_unregister_tool_it_does_not_own(self, tmp_path):
+        def sentinel():
+            return {"sentinel": True}
+
+        _make_pack(tmp_path, WORKER_MAIN)
+        host, registry = _make_host(tmp_path)
+        assert not has_errors(host.activate(EXTENSION_ID))
+        proxy = registry.get("acme_double")
+        assert proxy is not None
+        registry.register("acme_double", "replaced core", sentinel)
+        host.deactivate(EXTENSION_ID)
+        assert registry.get("acme_double") is sentinel
+        assert registry.get("acme_double") is not proxy

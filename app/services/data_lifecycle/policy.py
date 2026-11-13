@@ -90,8 +90,9 @@ def ensure_defaults(db: Any) -> int:
     created = 0
     for spec in default_policies():
         exists = db.query(LifecyclePolicy).filter(
-            LifecyclePolicy.name == spec["name"]
-        ).one_or_none()
+            LifecyclePolicy.name == spec["name"],
+            LifecyclePolicy.org_id.is_(None),
+        ).first()
         if exists is not None:
             continue
         db.add(LifecyclePolicy(
@@ -108,14 +109,39 @@ def ensure_defaults(db: Any) -> int:
     return created
 
 
-def _policy_map(db: Any) -> Dict[str, Any]:
+def _pick_policy(rows: List[Any]) -> Any:
+    chosen = None
+    for row in rows:
+        if chosen is None or (row.enabled and not chosen.enabled):
+            chosen = row
+    return chosen
+
+
+def _policy_map(db: Any, org_id: Optional[int] = None) -> Dict[str, Any]:
+    """按 kind 解析策略。组织行覆盖全局默认，且不会看到其它组织的行。"""
     from app.models.data_lifecycle import LifecyclePolicy
 
-    # enabled 策略后写覆盖同 kind 的默认（确定序：enabled asc → created asc）
-    rows = db.query(LifecyclePolicy).order_by(
-        LifecyclePolicy.enabled.asc(), LifecyclePolicy.created_at.asc()
-    ).all()
-    return {p.kind: p for p in rows}
+    rows = db.query(LifecyclePolicy).all()
+    global_rows: Dict[str, List[Any]] = {}
+    org_rows: Dict[str, List[Any]] = {}
+    for row in rows:
+        if row.org_id is None:
+            global_rows.setdefault(row.kind, []).append(row)
+        elif org_id is not None and row.org_id == org_id:
+            org_rows.setdefault(row.kind, []).append(row)
+    chosen = {kind: _pick_policy(bucket) for kind, bucket in global_rows.items()}
+    for kind, bucket in org_rows.items():
+        chosen[kind] = _pick_policy(bucket)
+    return chosen
+
+
+def policy_for_kind(db: Any, kind: str, org_id: Optional[int] = None) -> Any:
+    return _policy_map(db, org_id=org_id).get(kind)
+
+
+def policies_for_kinds(db: Any, kinds: List[str], org_id: Optional[int] = None) -> List[Any]:
+    mapping = _policy_map(db, org_id=org_id)
+    return [mapping[kind] for kind in kinds if kind in mapping]
 
 
 def _tier_of(policy: Any, obj: Any) -> str:
@@ -135,6 +161,7 @@ def assess(
     persist: bool = True,
     now: Optional[datetime] = None,
     owner_scopes: Optional[List[str]] = None,
+    org_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """全景评估：枚举五机制 → upsert 登记表 → 分级 → 动作判定（只读安全）。
 
@@ -150,7 +177,7 @@ def assess(
     if now is not None and now.tzinfo is not None:
         now = now.astimezone(timezone.utc).replace(tzinfo=None)
     ensure_defaults(db)
-    policies = _policy_map(db)
+    policies = _policy_map(db, org_id=org_id)
     reports = enumerate_all(db)
     now = now or _utcnow()
 
