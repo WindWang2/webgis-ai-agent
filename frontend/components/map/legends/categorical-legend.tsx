@@ -26,6 +26,17 @@ export function CategoricalLegend({ spec }: Props) {
             </span>
           </div>
         ))}
+        {spec.default && (
+          <div className="flex items-center gap-2 opacity-80" data-testid="cat-other-swatch">
+            <div
+              className="h-icon-sm w-icon-sm shrink-0 rounded-xs ring-1 ring-dashed ring-inset ring-map-chrome-border"
+              style={{ backgroundColor: spec.default.color }}
+            />
+            <span className="truncate text-meta text-map-chrome-ink italic">
+              {spec.default.label || t('map.legends.other')}
+            </span>
+          </div>
+        )}
       </div>
     </LegendCard>
   );
