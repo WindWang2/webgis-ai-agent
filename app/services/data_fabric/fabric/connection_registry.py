@@ -695,6 +695,10 @@ class ConnectionRegistry:
         if entry is None:
             return False
         record, _adapter = entry
+        # Drop the process-wide PostGIS pool before the secret is released.
+        # The pool key includes the password digest; after secret eviction it
+        # can no longer be computed, and the remote connection would leak.
+        self._release_postgis_pool(record)
         if release_secret and record.secret_ref:
             # V8（review P2）：content-dedupe 使多个 record 可共享同一
             # secret_ref —— 仅当无其他条目引用时才逐出，避免驱逐 A 连坐 B
@@ -719,6 +723,24 @@ class ConnectionRegistry:
                 key=lambda kv: (kv[1][0].last_access_at, kv[0]),
             )[0]
             self._evict_locked(victim)
+
+    def _release_postgis_pool(self, record: ConnectionRecord) -> None:
+        if str(record.source_type or "").lower() != "postgis":
+            return
+        try:
+            from app.schemas.data_fabric_schema import ConnectionProfile
+            from app.services.data_fabric.adapters.postgis_adapter import (
+                dispose_postgis_pool_for_profile,
+            )
+
+            profile = ConnectionProfile(**self.rehydrate_profile(record))
+            dispose_postgis_pool_for_profile(profile)
+        except Exception:  # noqa: BLE001 - eviction must not fail closed on pool close
+            logger.debug(
+                "[ConnectionRegistry] postgis pool dispose failed for %s",
+                record.profile_id,
+                exc_info=True,
+            )
 
 
 def _setting(name: str, default):

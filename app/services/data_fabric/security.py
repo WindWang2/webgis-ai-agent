@@ -225,6 +225,55 @@ class DataFabricSecurity:
         return url
 
     @staticmethod
+    def validated_hostaddrs(host: str, allow_private: bool = False) -> list[str]:
+        """Return the IPs from one lookup that passed the same gate as ``validate_url``.
+
+        PostGIS must pass these as libpq ``hostaddr`` and keep the original
+        hostname in ``host``. A second lookup would reopen the DNS-rebinding
+        window this pre-flight check cannot close by itself.
+        """
+        if not host or not isinstance(host, str):
+            raise DataFabricSecurityError("SSRF Protection: missing database host")
+        bare = host.strip()
+        if bare.startswith("[") and bare.endswith("]"):
+            bare = bare[1:-1]
+        if not bare:
+            raise DataFabricSecurityError("SSRF Protection: missing database host")
+        hostname_lower = bare.lower()
+        if not allow_private and (
+            hostname_lower in BLOCKED_HOSTNAMES
+            or hostname_lower.endswith(".local")
+            or hostname_lower.endswith(".internal")
+        ):
+            raise DataFabricSecurityError(
+                f"SSRF Protection: Access to hostname '{bare}' is blocked"
+            )
+        literal = DataFabricSecurity._try_parse_ip(bare)
+        if literal is not None:
+            if not allow_private and _is_blocked_ip(literal):
+                raise DataFabricSecurityError(
+                    f"SSRF Protection: Access to private IP '{bare}' is blocked"
+                )
+            return [literal]
+        resolved = DataFabricSecurity._resolve_all(bare)
+        if not resolved:
+            raise DataFabricSecurityError(
+                f"SSRF Protection: unable to resolve hostname '{bare}'"
+            )
+        deduped: list[str] = []
+        for ip_str in resolved:
+            if ip_str not in deduped:
+                deduped.append(ip_str)
+        if not allow_private:
+            for ip_str in deduped:
+                if _is_blocked_ip(ip_str):
+                    raise DataFabricSecurityError(
+                        f"SSRF Protection: hostname '{bare}' resolves to "
+                        f"blocked private IP '{ip_str}'"
+                    )
+        return deduped
+
+    @staticmethod
     def _try_parse_ip(host: str) -> Optional[str]:
         try:
             ipaddress.ip_address(host)
