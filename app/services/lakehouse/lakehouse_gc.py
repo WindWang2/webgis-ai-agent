@@ -21,9 +21,17 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from typing import Any, Dict, List, Mapping, Optional, Set
 
 logger = logging.getLogger(__name__)
+
+_GC_LOCK = threading.Lock()
+
+
+def gc_mutation_lock() -> threading.Lock:
+    """Serializes publish and GC so a new manifest cannot appear mid-delete."""
+    return _GC_LOCK
 
 #: 扫描/批处理有界 cap。
 #: raw 对象枚举上限（≫ blob 数 —— 截断即 typed abort，绝不部分视图，
@@ -320,6 +328,13 @@ def plan_gc(
 
 
 def execute_gc(
+    plan: Mapping[str, Any], *, max_deletions: int = MAX_BATCH_DELETIONS,
+) -> Dict[str, Any]:
+    with _GC_LOCK:
+        return _execute_gc_locked(plan, max_deletions=max_deletions)
+
+
+def _execute_gc_locked(
     plan: Mapping[str, Any], *, max_deletions: int = MAX_BATCH_DELETIONS,
 ) -> Dict[str, Any]:
     """执行计划（重验优先 —— R0-12）：

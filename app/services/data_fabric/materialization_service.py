@@ -467,7 +467,6 @@ class MaterializationService:
             "status": "success",
             "success": True,
             "ref": ref,
-            "path": str(path),
             "title": title,
             "format": "geoparquet",
             "feature_count": int(table.num_rows),

@@ -407,15 +407,28 @@ class _AggregateState:
     与 V6 物理执行器共用 —— 语义单一真相，流式喂行，O(组数) 内存）。"""
 
     def __init__(self, aggs, group_by):
+        from app.services.data_fabric.query.accumulators import group_count_cap
+
         self.aggs = list(aggs)
         self.group_by = list(group_by)
         self.groups: Dict[Tuple, AggregateGroup] = {}
+        self._group_cap = group_count_cap()
 
     def update(self, row: Dict[str, Any]) -> None:
+        from app.services.data_fabric.query.accumulators import (
+            DISTINCT_COUNT_CAP,
+            AggregateGroupCapExceeded,
+        )
+
         right = row.get("__right__") or {}
         key = tuple(right.get(g) for g in self.group_by)
         acc = self.groups.get(key)
         if acc is None:
+            if len(self.groups) >= self._group_cap:
+                raise AggregateGroupCapExceeded(
+                    f"group cardinality exceeded cap ({self._group_cap})",
+                    details={"cap": self._group_cap},
+                )
             # 每个 agg 一个累加器槽：count / sum / sumsq / min / max / distinct-set
             acc = {"n": 0, "cells": {}}
             for a in self.aggs:
@@ -423,9 +436,12 @@ class _AggregateState:
                 acc["cells"][name] = {
                     "count": 0,
                     "sum": 0.0,
-                    "sumsq": 0.0,
+                    "mean": 0.0,
+                    "m2": 0.0,
                     "min": None,
                     "max": None,
+                    "smin": None,
+                    "smax": None,
                     "distinct": set(),
                 }
             self.groups[key] = acc
@@ -449,16 +465,20 @@ class _AggregateState:
             if v is None:
                 continue
             cell["count"] += 1
-            cell["distinct"].add(str(v))
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if len(cell["distinct"]) < DISTINCT_COUNT_CAP:
+                cell["distinct"].add(str(v))
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                text = str(v)
+                cell["smin"] = text if cell["smin"] is None else min(cell["smin"], text)
+                cell["smax"] = text if cell["smax"] is None else max(cell["smax"], text)
+            else:
                 fv = float(v)
                 cell["sum"] += fv
-                cell["sumsq"] += fv * fv
+                delta = fv - cell["mean"]
+                cell["mean"] += delta / cell["count"]
+                cell["m2"] += delta * (fv - cell["mean"])
                 cell["min"] = fv if cell["min"] is None else min(cell["min"], fv)
                 cell["max"] = fv if cell["max"] is None else max(cell["max"], fv)
-            else:
-                cell["min"] = v if cell["min"] is None else min(cell["min"], v, key=str)
-                cell["max"] = v if cell["max"] is None else max(cell["max"], v, key=str)
 
     def finalize(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -482,17 +502,15 @@ class _AggregateState:
                         (cell["sum"] / cell["count"]) if cell["count"] else None
                     )
                 elif a.func == "min":
-                    result[name] = cell["min"]
+                    result[name] = cell["min"] if cell["min"] is not None else cell["smin"]
                 elif a.func == "max":
-                    result[name] = cell["max"]
+                    result[name] = cell["max"] if cell["max"] is not None else cell["smax"]
                 elif a.func == "stddev":
                     n = cell["count"]
                     if n < 2:
                         result[name] = None
                     else:
-                        mean = cell["sum"] / n
-                        var = max(0.0, (cell["sumsq"] - n * mean * mean) / (n - 1))
-                        result[name] = _math.sqrt(var)
+                        result[name] = _math.sqrt(max(0.0, cell["m2"] / (n - 1)))
             out.append(result)
         return out
 

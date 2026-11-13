@@ -14,12 +14,62 @@ FlatGeobuf Data Source Adapter — V2 (ADR-0094 Wave F)
 """
 import json
 from contextlib import contextmanager
-from tempfile import TemporaryDirectory
 from typing import Iterator
 import logging
 import os
+import tempfile
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+_FGB_CACHE_LOCK = threading.Lock()
+_FGB_CACHE: dict[str, tuple[str, str]] = {}
+_FGB_CACHE_MAX = 4
+
+
+def _cached_remote_flatgeobuf(session, url: str) -> str:
+    """Download a remote FlatGeobuf once per URL and validator token."""
+    validator = ""
+    try:
+        head = session.head(url, timeout=(5, 15), allow_redirects=True)
+        if getattr(head, "ok", False):
+            validator = (
+                head.headers.get("ETag")
+                or head.headers.get("Last-Modified")
+                or ""
+            )
+    except Exception:  # noqa: BLE001 — missing validator just skips the hit
+        validator = ""
+    with _FGB_CACHE_LOCK:
+        hit = _FGB_CACHE.get(url)
+        if hit and hit[0] == validator and validator and os.path.isfile(hit[1]):
+            return hit[1]
+    cap = min(_local_file_max_bytes_from_settings(), 64 * 1024 * 1024)
+    directory = os.path.join(tempfile.gettempdir(), "webgis-fgb-cache")
+    os.makedirs(directory, exist_ok=True)
+    local = os.path.join(directory, f"{hash(url) & 0xFFFFFFFF:08x}.fgb")
+    response = session.get(url, stream=True, timeout=(5, 30))
+    try:
+        response.raise_for_status()
+        count = 0
+        partial = local + ".partial"
+        with open(partial, "wb") as target:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                count += len(chunk)
+                if count > cap:
+                    raise QueryBudgetExceededError(
+                        "remote FlatGeobuf exceeds download byte budget"
+                    )
+                target.write(chunk)
+        os.replace(partial, local)
+    finally:
+        response.close()
+    with _FGB_CACHE_LOCK:
+        if len(_FGB_CACHE) >= _FGB_CACHE_MAX:
+            _FGB_CACHE.pop(next(iter(_FGB_CACHE)), None)
+        _FGB_CACHE[url] = (validator or str(os.path.getmtime(local)), local)
+    return local
+
 
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.adapters.postgis_adapter import (
@@ -166,24 +216,9 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         if not path.startswith(("http://", "https://")):
             yield path
             return
-        # GDAL has its own redirect and DNS behavior. Only hand it a bounded
-        # local copy obtained through the guarded requests transport.
-        cap = min(_local_file_max_bytes_from_settings(), 64 * 1024 * 1024)
-        with TemporaryDirectory(prefix="webgis-fgb-") as directory:
-            local = os.path.join(directory, "source.fgb")
-            response = self.session.get(path, stream=True, timeout=(5, 30))
-            try:
-                response.raise_for_status()
-                count = 0
-                with open(local, "wb") as target:
-                    for chunk in response.iter_content(chunk_size=64 * 1024):
-                        count += len(chunk)
-                        if count > cap:
-                            raise QueryBudgetExceededError("remote FlatGeobuf exceeds download byte budget")
-                        target.write(chunk)
-            finally:
-                response.close()
-            yield local
+        # One guarded local copy per (url, validator). describe/query/probe
+        # reuse it instead of downloading the whole file again.
+        yield _cached_remote_flatgeobuf(self.session, path)
 
     def probe(self) -> bool:
         """Probe FlatGeobuf file accessibility and magic signature.
