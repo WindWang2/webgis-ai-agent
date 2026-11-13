@@ -133,6 +133,10 @@ class PageCompileOutcome:
     #: G26：本页数值栅格嵌入回执（compiler raster_placements 透传；PDF
     #: HTML 面（<img> 层叠）与 manifest 消费。无嵌入页恒空 —— 旧形状不变）。
     raster_placements: List[Dict[str, Any]] = _dc_field(default_factory=list)
+    #: G34 additive：纸面作者绘制回执（mm 几何 / lines / legend / 比例尺 /
+    #: 有效 extent）。由 compile_mapspec_to_svg_detailed 产出并透传到结果，
+    #: 供 UI / Pi / 产物 oracle 消费；无作者计划时恒为空 dict。
+    print_layout_receipt: Dict[str, Any] = _dc_field(default_factory=dict)
 
 
 class PageCompileFailure(Exception):
@@ -267,6 +271,20 @@ def compile_publication_page(
             svg_budget_remaining=svg_budget_remaining,
             raster_bindings=raster_bindings,
         )
+    # G34：作者计划从 PageLayoutIR 真实下传到 SVG 编译器（不是只填 IR）。
+    _g34_plan = getattr(page, "print_layout", None) or {}
+    _g34_kwargs: Dict[str, Any] = {}
+    if _g34_plan:
+        _g34_kwargs = {
+            "print_layout": _g34_plan,
+            "paper_mm": (page_w, page_h),
+            "page_id": str(page.page_id),
+            "atlas_page": {
+                "title": str(page.title or ""),
+                "page_number": int(page.page_number),
+                "page_count": int(page.page_count),
+            },
+        }
     # 页文档解析：帧引用 / 过滤页 / 单帧整幅（原循环体逐字）
     if page.frame_index is not None:
         frame = frames_lookup[page.frame_index] if page.frame_index < len(frames_lookup) else None
@@ -295,6 +313,7 @@ def compile_publication_page(
             max_features=min(_effective_max_features(frame_doc), EXPORT_MAX_FEATURES),
             timeout_ms=min(resolve_spec_timeout_ms(frame_doc), 30000.0),
             raster_bindings=raster_bindings,
+            **_g34_kwargs,
         )
     except Exception as ex:  # noqa: BLE001 — 同步链既有 skip 政策的同一事实源
         raise PageCompileFailure(
@@ -353,6 +372,7 @@ def compile_publication_page(
         omitted_components=[dict(o) for o in (comp.omitted_components or [])
                             if isinstance(o, dict)],
         raster_placements=[dict(p) for p in _page_placements],
+        print_layout_receipt=dict(getattr(comp, "print_layout_receipt", None) or {}),
     )
 
 
@@ -361,6 +381,7 @@ def assemble_pages_pdf(
     *,
     title: str,
     sink: DiagnosticSink,
+    print_layout_active: bool = False,
 ) -> bytes:
     """页面 SVG 列表 → PDF bytes（命名 @page + WeasyPrint 互斥 + CJK 内嵌）。
 
@@ -373,11 +394,20 @@ def assemble_pages_pdf(
             f".page-{name} {{ page: {name}; }}"
             for (name, _svg, w_mm, h_mm) in page_specs
         ]
-        font_face = _cjk_font_face_css()
+        font_face = _font_face_for_page(print_layout_active)
         font_stack = f"'Noto Sans SC Embedded', {CSS_FONT_STACK}" if font_face else CSS_FONT_STACK
-        svg_text_rule = (
-            f"svg, svg text {{ font-family: {font_stack}; }}\n" if font_face else ""
-        )
+        # G34：作者选择的字体写在 SVG ``font-family`` presentation attribute
+        # 上。全局 ``svg, svg text`` 规则会以更高 CSS 优先级静默覆盖它
+        # （验收场景 6）。**只在 G34 opt-in 时**改为只给未声明 font-family
+        # 的文本兜底；无作者计划的旧输出逐字保持 review P2-4 的规则。
+        if font_face and print_layout_active:
+            svg_text_rule = (
+                f"svg:not([font-family]), svg text:not([font-family]) "
+                f"{{ font-family: {font_stack}; }}\n")
+        else:
+            svg_text_rule = (
+                f"svg, svg text {{ font-family: {font_stack}; }}\n"
+                if font_face else "")
         html_doc = (
             '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
             f"{font_face}\n"
@@ -399,8 +429,10 @@ def assemble_pages_pdf(
             sink.add(diagnostic("pdf_cjk_font_embedded"))
     else:
         _name, svg0, w0, h0 = page_specs[0]
-        html_doc = _svg_to_page_html(svg0, w0, h0, title=title)
-        if _cjk_font_face_css():
+        html_doc = _svg_to_page_html(
+            svg0, w0, h0, title=title,
+            print_layout_active=print_layout_active)
+        if _font_face_for_page(print_layout_active):
             sink.add(diagnostic("pdf_cjk_font_embedded"))
 
     from weasyprint import HTML
@@ -546,6 +578,47 @@ def _cjk_font_face_css() -> str:
                 css = ""
         _FONT_FACE_CACHE = css
         return css
+
+
+_G34_FONT_FACE_CACHE: Optional[str] = None
+_G34_FONT_FACE_LOCK = threading.Lock()
+
+
+def _g34_font_face_css() -> str:
+    """G34：作者选择 ``noto-sans-sc-embedded`` 时**必须**真实嵌入字体。
+
+    G26 的 ``_cjk_font_face_css`` 只在「系统无 CJK 字体」时嵌入；本宿主有
+    Noto CJK，故它返回空串，作者的 ``font-family="Noto Sans SC Embedded"``
+    会静默退化成系统 sans-serif（验收场景 6 的真实风险）。G34 opt-in 时
+    无条件嵌入同一份 vendored 子集；旧路径完全不调用，字节不变。
+    """
+    global _G34_FONT_FACE_CACHE
+    with _G34_FONT_FACE_LOCK:
+        if _G34_FONT_FACE_CACHE is not None:
+            return _G34_FONT_FACE_CACHE
+        css = ""
+        try:
+            import base64
+            from pathlib import Path
+
+            font_path = Path(__file__).resolve().parent.parent / (
+                "lib/cartography/fonts/NotoSansSC-Regular-subset.ttf")
+            b64 = base64.b64encode(font_path.read_bytes()).decode("ascii")
+            css = (
+                "@font-face { font-family: 'Noto Sans SC Embedded'; "
+                f"src: url(data:font/ttf;base64,{b64}); "
+                "font-weight: normal; font-style: normal; }\n"
+            )
+        except Exception:  # noqa: BLE001 — 显式回退，由诊断披露
+            css = ""
+        _G34_FONT_FACE_CACHE = css
+        return css
+
+
+def _font_face_for_page(print_layout_active: bool) -> str:
+    if print_layout_active:
+        return _cjk_font_face_css() or _g34_font_face_css()
+    return _cjk_font_face_css()
 
 
 def _effective_max_features(frame_doc: Dict[str, Any]) -> int:
@@ -830,11 +903,27 @@ def _compile_product_page(
             + "</g>"
         )
 
+    # G34：多画幅产品页的纸面整饰 overlay（复用 G15 frame 身份与槽 runtime，
+    # 只把作者决定叠加到外层页面；不新建 live runtime / 不改画幅数据）。
+    _g34_overlay = {"svg": "", "html": ""}
+    _g34_plan = getattr(page, "print_layout", None) or {}
+    if _g34_plan:
+        from app.services.print_layout_authoring.html import authored_product_overlay
+
+        _g34_overlay = authored_product_overlay(
+            doc, _g34_plan, page_id=str(page.page_id),
+            page_title=str(page.title or ""),
+            page_number=int(page.page_number), page_count=int(page.page_count),
+            paper_mm=(page_w, page_h),
+            geo_bounds=list(page.bounds or [0.0, 0.0, 1.0, 1.0]),
+        )
+        # overlay 失败不改变既有画幅产物，仅由 frame_diagnostics 记录（下方）。
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{w_px}" height="{h_px}" '
         f'viewBox="0 0 {w_px} {h_px}">'
         f'<rect width="{w_px}" height="{h_px}" fill="#ffffff"/>'
-        + header + "".join(slot_parts) + legend_band + "</svg>"
+        + header + "".join(slot_parts) + legend_band
+        + str(_g34_overlay.get("svg") or "") + "</svg>"
     )
     byte_count = len(svg.encode("utf-8"))
     if byte_count > min(svg_budget_remaining, _MAX_PAGE_SVG_BYTES):
@@ -901,6 +990,17 @@ def _compile_product_page(
             f'top:{band_top:.2f}mm">'
             + _shared_legend_band_html(doc, page, shared_legend_spec)
             + "</div>")
+    # G34：同一作者计划投影到 G15 的 HTML 组合面（PDF 真实排版，非截图）。
+    if _g34_overlay.get("html"):
+        html_parts.append(str(_g34_overlay["html"]))
+    if _g34_overlay.get("error"):
+        from app.lib.cartography.render_diagnostics import RenderDiagnostic
+
+        frame_diagnostics.append(RenderDiagnostic(
+            code="print_layout_overlay_failed", severity="warning",
+            message="paper authoring overlay failed; frame product kept",
+            detail=str(_g34_overlay["error"]),
+        ))
     html_parts.append("</div>")
     html_body = "".join(html_parts)
     return PageCompileOutcome(
@@ -1113,17 +1213,25 @@ def _structural_fingerprint(doc: Dict[str, Any]) -> str:
     return "pubspec-sha256:" + digest_of(projection)[:40]
 
 
-def _svg_to_page_html(svg: str, page_w_mm: float, page_h_mm: float, title: str = "") -> str:
+def _svg_to_page_html(svg: str, page_w_mm: float, page_h_mm: float,
+                      title: str = "", *, print_layout_active: bool = False) -> str:
     """单帧页文档。R1-B1 修复：SVG **原样嵌入**（此前误加 html.escape，
     SVG 源码被当正文文本排版 —— 矢量地图根本没有进入 PDF）。"""
     body = svg
     title_tag = f"<title>{_html.escape(title)}</title>" if title else ""
     # F14：CJK 内嵌字体置前（@font-face 命中时 CSS 栈里的回退项不再触发）
-    font_face = _cjk_font_face_css()
+    font_face = _font_face_for_page(print_layout_active)
     font_stack = f"'Noto Sans SC Embedded', {CSS_FONT_STACK}" if font_face else CSS_FONT_STACK
     # review P2-4：svg text 覆盖规则只在内嵌字体时输出 —— 否则会无声改变
     # 所有 publication PDF 的文本字体解析面（presentation attribute 让位）。
-    svg_text_rule = f"svg, svg text {{ font-family: {font_stack}; }}\n" if font_face else ""
+    # G34 opt-in：作者字体写在 presentation attribute 上，改为只兜底未声明
+    # font-family 的文本；旧路径逐字保持不变。
+    if font_face and print_layout_active:
+        svg_text_rule = (
+            f"svg:not([font-family]), svg text:not([font-family]) "
+            f"{{ font-family: {font_stack}; }}\n")
+    else:
+        svg_text_rule = f"svg, svg text {{ font-family: {font_stack}; }}\n" if font_face else ""
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">{title_tag}
 <style>
@@ -1472,7 +1580,14 @@ def _render_publication_pdf(
 
     # C15：组装统一走接缝（assemble_pages_pdf：命名 @page + WeasyPrint 互斥
     # + CJK 内嵌诊断），与 atlas batch executor 同一事实源；输出字节不变。
-    pdf_bytes = assemble_pages_pdf(page_specs, title=title, sink=sink)
+    # G34 opt-in：作者计划在场时强制内嵌所选字体，避免被系统字体栈静默覆盖。
+    _payload_layout = payload.get("layout") if isinstance(payload, dict) else None
+    _g34_active = bool(isinstance(_payload_layout, dict)
+                       and isinstance(_payload_layout.get("print_layout"), dict)
+                       and _payload_layout.get("print_layout"))
+    pdf_bytes = assemble_pages_pdf(
+        page_specs, title=title, sink=sink,
+        print_layout_active=_g34_active)
 
     page_count = count_pdf_pages(pdf_bytes, fallback=rendered)
 

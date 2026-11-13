@@ -7,12 +7,17 @@
  * （toolSlice.editTarget）；激活后 draw/delete/vertex 工具语义切换到真实
  * 图层事务（FeatureLayerEditor 消费），split 工具在本组内。空 typed 图层
  * 创建走同一入口（provision REST）。
+ *
+ * G32：另含「要素变更提案队列」入口（FeatureProposalDrawer）— 即时编辑
+ * 保持不变；跨会话待审候选在此排队审阅。
  */
 import React, { useCallback, useMemo, useState } from 'react';
+import { ClipboardList } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { createEditDataset } from '@/lib/api/feature-edit';
 import { getSessionIdentity } from '@/lib/store/session-identity';
 import { refreshDatasetLayer } from '@/lib/edit/refresh-dataset-layer';
+import { FeatureProposalDrawer } from '@/components/workbench/feature-proposal-drawer';
 import { useT } from '@/lib/i18n/useT';
 
 interface RefLayerRow {
@@ -30,6 +35,7 @@ export function FeatureEditToolGroup() {
   const setActiveMapTool = useHudStore((s) => s.setActiveMapTool);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [proposalsOpen, setProposalsOpen] = useState(false);
 
   const refLayers = useMemo(
     () => (layers ?? []).filter((l) => typeof l._refId === 'string' && l._refId),
@@ -120,7 +126,19 @@ export function FeatureEditToolGroup() {
       >
         +
       </button>
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={proposalsOpen}
+        className="rounded-xs border border-edge-subtle px-1.5 py-1 hover:bg-surface-hover"
+        title={t('featureProposals.openQueueTitle')}
+        onClick={() => setProposalsOpen(true)}
+        data-testid="feature-proposal-open-queue"
+      >
+        <ClipboardList size={14} aria-hidden />
+      </button>
       {error && <span className="text-micro text-status-error">{error}</span>}
+      <FeatureProposalDrawer open={proposalsOpen} onClose={() => setProposalsOpen(false)} />
     </div>
   );
 }

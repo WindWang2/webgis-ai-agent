@@ -61,6 +61,119 @@ def _descriptor_profile(descriptor: Dict[str, Any]) -> Dict[str, Any]:
   }
 
 
+# ── G29（WP06-A）：裸名数据源的目录解析与同名歧义决策 ────────────────────
+
+_URL_PATH_HINTS = ("http://", "https://", "://", "file://")
+_FILE_EXT_HINTS = (
+    ".geojson", ".json", ".csv", ".gpkg", ".shp", ".zip", ".tif", ".tiff",
+    ".png", ".jpg", ".parquet", ".topojson", ".kml", ".gpx",
+)
+
+
+def _looks_like_url_or_path(name: str) -> bool:
+  """URL/文件路径形态（保持既有直通语义，不进目录解析）。"""
+  lowered = name.lower()
+  return (
+      any(h in lowered for h in _URL_PATH_HINTS)
+      or lowered.startswith(("/", "\\\\", "C:\\"))
+      or lowered.endswith(_FILE_EXT_HINTS)
+  )
+
+
+async def _bare_name_catalog_candidates(
+    session_id: str, name: str
+) -> List[Dict[str, Any]]:
+  """按**精确显示名**解析会话数据目录（session 范围、可绑定 ref）。
+
+  返回候选列表（display/ref/extent/date/feature_count）。目录查询失败时
+  返回空列表（退回既有 URL/path 行为，绝不因目录故障阻断图层操作）。
+  """
+  try:
+    from app.services.data_catalog.catalog import CatalogFilter, get_data_catalog
+
+    result = await get_data_catalog().search(
+        session_id=session_id, filter_=CatalogFilter(keyword=name), limit=30,
+        owner=session_id,
+    )
+  except Exception:  # noqa: BLE001 — 目录是增值解析面，失败退回原语义
+    logger.debug("[webgis_layer_upsert] catalog name lookup failed", exc_info=True)
+    return []
+  candidates: List[Dict[str, Any]] = []
+  for entry in result.entries:
+    if (entry.name or "") != name:
+      continue  # 精确同名（关键词命中但异名的不是歧义对象）
+    if entry.scope != "session" or not entry.entry_id:
+      continue  # 只绑定会话 ref（upload/fabric 引用不经 layer_upsert 直取）
+    updated = ""
+    for tag in (getattr(entry, "tags", None) or []):
+      # 版本标签（如 as_of=2024-05-01）：同名的不同数据版本以业务日期区分，
+      # 注册时间只是兜底（G29 §5：范围/日期等必要信息区分候选）。
+      tag_text = str(tag)
+      if tag_text.startswith("as_of=") and len(tag_text) >= 11:
+        updated = tag_text[len("as_of="):][:10]
+        break
+    if not updated:
+      if getattr(entry, "updated_at", None):
+        updated = str(entry.updated_at)[:10]
+      elif getattr(entry, "created_at", None):
+        updated = str(entry.created_at)[:10]
+    extent = entry.extent if isinstance(entry.extent, list) and len(entry.extent) == 4 else None
+    display = name
+    extra = []
+    if updated:
+      extra.append(f"版本日期 {updated}")
+    if extent:
+      extra.append(f"范围 [{extent[0]:.2f},{extent[1]:.2f},{extent[2]:.2f},{extent[3]:.2f}]")
+    if entry.feature_count:
+      extra.append(f"{entry.feature_count} 要素")
+    if extra:
+      display = f"{name}（{'；'.join(extra)}）"
+    candidates.append({
+        "display": display[:160],
+        "value": entry.entry_id,
+        "extent": extent,
+        "date": updated,
+        "feature_count": entry.feature_count,
+    })
+  return candidates
+
+
+async def _resolve_bare_name_source(
+    session_id: str, name: str
+) -> Optional[Dict[str, Any]]:
+  """裸名 source 的目录解析结果。
+
+  返回 None（无候选 → 既有 URL/path 语义不变）/ {"ref": ...}（唯一命中 →
+  直接绑定，输出披露）/ {"envelope_result": ...}（同名 ≥2 → 运行中决策
+  封套；用户选择后模型以返回 ref 续做图层绑定）。
+  """
+  if not name or _looks_like_url_or_path(name):
+    return None
+  candidates = await _bare_name_catalog_candidates(session_id, name)
+  if not candidates:
+    return None
+  if len(candidates) == 1:
+    return {"ref": candidates[0]["value"]}
+  # 同名 ≥2：铸造受信决策封套（全量候选过 mint —— >8 由 mint 上限拒绝，
+  # 引导缩小范围；不静默截断，见 review P2-2）。
+  from app.services.chat.pi_interaction_envelope import (
+      envelope_result,
+      mint_envelope,
+  )
+
+  token, error = mint_envelope(
+      tool_name="webgis_layer_upsert",
+      kind="select",
+      title=f"检测到 {len(candidates)} 个同名数据源「{name}」，请选择要使用的一个",
+      options=[{"display": c["display"], "value": c["value"]} for c in candidates],
+      timeout_ms=10 * 60 * 1000,
+      business={"target": "dataset_choice", "dataset_name": name[:80]},
+  )
+  if error:
+    return {"error": error, "candidate_count": len(candidates)}
+  return {"envelope_result": envelope_result(token)}
+
+
 def fingerprint_metadata(value: Any, prefix: str) -> str:
   payload = json.dumps(
       value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -444,6 +557,37 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     source_descriptor: Optional[Dict[str, Any]] = None
     if isinstance(source_data, str):
       resolved_alias = await session_data_manager.resolve_alias(session_id, source_data)
+      # G29（WP06-A）：裸名（非 ref、非别名、非 URL/path）先过会话数据目录
+      # —— 唯一命中直接绑定；同名 ≥2 发起运行中用户决策（封套经扩展以原生
+      # ctx.ui 呈现，选择结果回到本任务后续工具调用）。无命中保持既有
+      # URL/path 语义（零漂移）。
+      if (
+          not source_data.startswith("ref:")
+          and resolved_alias == source_data
+      ):
+        bare = await _resolve_bare_name_source(session_id, source_data)
+        if bare is not None:
+          if "envelope_result" in bare:
+            out = {
+                "success": True,
+                "summary": (
+                    f"数据源「{source_data}」存在多个同名版本，已向用户发起选择；"
+                    "用户选择后结果会回到本任务，请用返回的引用继续图层绑定。"
+                ),
+            }
+            out.update(bare["envelope_result"])
+            return out
+          if "error" in bare:
+            return {
+                "success": False,
+                "code": bare["error"],
+                "message": (
+                    f"同名数据源候选超过可询问上限（{bare.get('candidate_count')} 个）。"
+                    "请改用 list_datasets 查看后以精确 ref 指定。"
+                ),
+            }
+          resolved_alias = bare["ref"]
+          # 唯一命中披露：模型应知道 ref 是按名解析的结果（非用户显式 ref）。
       # URL/path sources are valid MapSpec inputs.  Only an explicit ref or a
       # session-known alias is dereferenced; arbitrary strings must not become
       # fabricated session cursors.

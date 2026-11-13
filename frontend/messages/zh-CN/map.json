@@ -156,7 +156,8 @@
     "densityLow": "低",
     "densityMid": "中",
     "densityHigh": "高",
-    "densityVeryHigh": "极高"
+    "densityVeryHigh": "极高",
+    "other": "其他"
   },
   "sketch": {
     "editVertices": "编辑草图顶点",

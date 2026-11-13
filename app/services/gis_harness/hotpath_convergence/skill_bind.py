@@ -49,6 +49,7 @@ def bind_skill_guidance_at_plan_seam(
     ontology_matches: Optional[List[str]] = None,
     record_evidence: bool = True,
     library=None,
+    explicit_skill_id: str = "",
 ) -> Tuple[Dict[str, Any], Optional[Any]]:
     """Resolve SkillPolicy once and attach guidance to plan inputs.
 
@@ -68,6 +69,10 @@ def bind_skill_guidance_at_plan_seam(
     facts = _facts_from_intent(
         intent, situation=situation, ontology_matches=ontology_matches,
     )
+    # G30：显式选择（chat.skill_name 解析后经 session ctx 传入）——
+    # 覆盖意图匹配的歧义；eligibility/硬门在 policy 内照常裁决。
+    if explicit_skill_id:
+        facts.explicit_skill_id = str(explicit_skill_id)[:80]
     bundle = resolve_skill_guidance(
         facts,
         library=library,

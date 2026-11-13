@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { devOnly } from '@/lib/utils/logger';
 import { useT } from '@/lib/i18n/useT';
 import { FrameProductPanel } from '@/components/workbench/frame-product-panel';
+import { PrintLayoutPanel } from '@/components/workbench/print-layout-panel';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
 import {
   commitStudioText,
@@ -154,6 +155,8 @@ function StudioSection({
 export function MapStudioTab() {
   const t = useT();
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('layout');
+  // G34：纸面工作台只作为薄入口 + 独立模态面板，不占用 SubTab / export mode。
+  const [printLayoutOpen, setPrintLayoutOpen] = useState(false);
   const exportSettings = useHudStore((s) => s.exportSettings);
   const updateExportSettings = useHudStore((s) => s.updateExportSettings);
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
@@ -314,6 +317,18 @@ export function MapStudioTab() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* G34：纸面版式工作台薄入口。主体是独立面板（不新增 SubTab，
+          避免改变 isExportMode 语义；主地图交互与纸面编辑焦点分离）。 */}
+      {printLayoutOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
+             role="dialog" aria-modal="true"
+             aria-label={t('workbench.printLayout.title')}
+             data-testid="print-layout-modal">
+          <div className="flex h-[92vh] w-[94vw] flex-col overflow-hidden rounded-lg border border-edge-subtle bg-surface-overlay shadow-2xl">
+            <PrintLayoutPanel onClose={() => setPrintLayoutOpen(false)} />
+          </div>
+        </div>
+      )}
       {/* Segmented subtab switcher（制图排版 / 导出历史）—— PanelHeader 已提供面板标题 */}
       <div className="shrink-0 border-b border-edge-subtle bg-surface-overlay p-3 pb-2.5">
         <div
@@ -431,6 +446,14 @@ export function MapStudioTab() {
             aria-labelledby="map-studio-tab-layout"
             className="p-3 space-y-2"
           >
+            <button
+              type="button"
+              className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink hover:bg-surface-raised"
+              data-testid="open-print-layout-workbench"
+              onClick={() => setPrintLayoutOpen(true)}
+            >
+              {t('workbench.printLayout.openWorkbench')}
+            </button>
             {/* 文档：图名 / 作者 / 数据来源 */}
             <StudioSection title={t('sidebar.studio.docTitle')} summary={docSummary} defaultOpen>
               <div className="space-y-3">

@@ -2,6 +2,7 @@
 PostgreSQL + PostGIS 数据库模型
 B011 Fix: 使用统一的 Base 单例，避免重复定义冲突
 """
+import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Boolean, BigInteger, ForeignKey, Index, UniqueConstraint, JSON, CheckConstraint
@@ -741,6 +742,37 @@ class RefreshTokenFamily(Base):
 # - workflow_node_reuse 是缓存索引（fail-open），不是第二 artifact registry
 #   —— 载荷事实源仍是 session ref / ArtifactRegistry / DataObject。
 # ═══════════════════════════════════════════════════════════════════════
+
+
+class SkillJobPreset(Base):
+    """G30 技能作业参数预设 —— 可复用配置引用（不是第二方法市场）。
+
+    预设只保存：所选技能 id+版本+digest、参数值、数据绑定的**角色模板**
+    （上次的 ref 仅作重绑定提示）。不复制原始私有数据、凭据、一次性下载
+    地址；重用 = 重新绑定授权 refs + 重新 prepare + 重新资格校验（无任何
+    缓存授权）。可见性随 org/project 归属（列表按请求者 org 过滤）。
+    """
+    __tablename__ = "skill_job_presets"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
+    creator_id = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    project_id = Column(String(255), nullable=True, default="", index=True)
+    session_id = Column(String(255), nullable=True, default="")
+    name = Column(String(120), nullable=False)
+    description = Column(String(400), nullable=True, default="")
+    skill_id = Column(String(80), nullable=False)
+    skill_version = Column(String(16), nullable=False)
+    skill_digest = Column(String(64), nullable=False, default="")
+    params = Column(JSON, nullable=False, default=dict)
+    bindings_template = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_skill_preset_org_project", "org_id", "project_id"),
+    )
 
 
 class WorkflowPackageRow(Base):

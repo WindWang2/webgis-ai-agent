@@ -35,6 +35,7 @@ from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes, feature_edits as feature_edits_routes
 from app.api.routes import atlas_jobs as atlas_jobs_routes  # noqa: E402  # 批量图册发布
+from app.api.routes import skill_jobs as skill_job_routes  # noqa: E402  # G30 技能作业工作台
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
 from app.api.routes import map_operations as map_operations_routes  # noqa: E402  # ADR-0278
 from app.api.routes import display_confirmation as display_confirmation_routes  # noqa: E402  # ADR-0278
@@ -51,6 +52,7 @@ from app.api.routes import portfolio as portfolio_routes  # noqa: E402
 from app.api.routes import geoai as geoai_routes  # noqa: E402  # ADR-0198（Platform 11）
 from app.api.routes import cockpit as cockpit_routes  # noqa: E402  # Agent Ops Cockpit (read-only projections)
 from app.api.routes import turn_journal as turn_journal_routes  # noqa: E402  # H04 ADR-0268 durable turn journal diagnostics
+from app.api.routes import pi_interactions as pi_interactions_routes  # noqa: E402  # G29 Pi 原生运行中交互
 from app.api.routes import ws_collab
 from app.api.routes import review_proposals
 from app.api.routes import visual_repairs
@@ -61,6 +63,7 @@ from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 from app.api.routes import data_quality as data_quality_routes
 from app.api.routes import data_preparation as data_preparation_routes  # noqa: E402
 from app.api.routes import data_import as data_import_routes  # noqa: E402  # G17 staged 导入工作台
+from app.api.routes import topology_workbench as topology_workbench_routes  # noqa: E402  # G31 跨图层拓扑工作台
 from app.api.routes import field_compute as field_compute_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
@@ -1125,12 +1128,21 @@ app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 # G20：持久化数值栅格表达工作台（独立 router，layer.py 零修改）
 from app.api.routes import raster_authoring as raster_authoring_routes  # noqa: E402
 app.include_router(raster_authoring_routes.router, prefix="/api/v1", tags=["栅格表达工作台"])
+# G33：矢量专题表达作者工作台（独立 router；对齐 raster_authoring 先例）
+from app.api.routes import thematic_authoring as thematic_authoring_routes  # noqa: E402
+app.include_router(thematic_authoring_routes.router, prefix="/api/v1", tags=["专题表达工作台"])
+# G34：专业纸面版式与图册编排工作台（独立 router；UI 与 Pi 共用 service）
+from app.api.routes import print_layout as print_layout_routes  # noqa: E402
+app.include_router(print_layout_routes.router, prefix="/api/v1", tags=["纸面版式工作台"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
 app.include_router(situation_views_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0285 situation/turn-chain 只读视图
 app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对话"])  # /goal 03 feature editing
+# G32：持久要素变更提案与冲突审阅（agent 起草 / owner 审阅批准 / 真实提交桥）。
+from app.api.routes import feature_proposals as feature_proposals_routes  # noqa: E402
+app.include_router(feature_proposals_routes.router, prefix="/api/v1", tags=["AI对话"])
 # ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
 app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["AI对话"])
@@ -1144,6 +1156,8 @@ app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
 # ADR-0052: 统一任务中心必须先注册 —— task.router 的 GET /tasks/{task_id}
 # 会把字面量 "jobs" 当成 task_id 匹配掉。
 app.include_router(jobs_routes.router, prefix="/api/v1", tags=["任务管理"])
+# G30：可执行技能作业工作台（目录/prepare/start/运行回看/预设）。
+app.include_router(skill_job_routes.router, prefix="/api/v1", tags=["技能作业"])
 app.include_router(atlas_jobs_routes.router, prefix="/api/v1", tags=["地图制图"])
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
@@ -1166,6 +1180,7 @@ app.include_router(composition_template_assets_routes.router, prefix="/api/v1", 
 app.include_router(data_fabric.router, prefix="/api/v1", tags=["Data Fabric / 数据织网"])
 app.include_router(data_delivery_routes.router, prefix="/api/v1", tags=["Data Delivery / 数据交付"])  # G18
 app.include_router(selection_handles_routes.router, prefix="/api/v1", tags=["图层数据"])  # G24 权威选择集句柄
+app.include_router(topology_workbench_routes.router, prefix="/api/v1", tags=["跨图层拓扑工作台 G31"])
 app.include_router(lakehouse_routes.router, prefix="/api/v1", tags=["Lakehouse / 空间数据湖仓"])
 app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["Lakehouse / 数据集版本（V8）"])
 app.include_router(extensions_marketplace_routes.router, prefix="/api/v1", tags=["Extension Marketplace / 扩展市场（只读）"])
@@ -1193,6 +1208,8 @@ from app.api.routes import brief as brief_routes  # noqa: E402
 
 app.include_router(brief_routes.router, prefix="/api/v1", tags=["MapBrief"])
 app.include_router(pi_tools.router, tags=["PI工具"])
+app.include_router(pi_interactions_routes.router, prefix="/api/v1", tags=["AI对话"])  # G29 运行中交互用户面
+app.include_router(pi_interactions_routes.pi_router, tags=["PI工具"])  # G29 扩展回调面（bridge secret）
 # Spatial Event Control Plane + Mission Portfolio（只读投影；additive）。
 app.include_router(spatial_events_routes.router, prefix="/api/v1", tags=["Spatial Events"])
 app.include_router(turn_journal_routes.router, prefix="/api/v1", tags=["Harness Turn Journal"])  # H04 ADR-0268（只读诊断）

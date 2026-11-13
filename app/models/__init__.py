@@ -78,6 +78,12 @@ from app.models.data_quality import (  # noqa: F401 — 模型注册 + 再导出
     QualityReport,
     QualityRuleResult,
 )
+from app.models.topology_workbench import (  # noqa: F401 — 模型注册 + 再导出（G31）
+    TopologyRuleset,
+    TopologyRun,
+    TopologyFinding,
+    TopologyException,
+)
 from app.models.data_lifecycle import (  # noqa: F401 — 模型注册 + 再导出（V9）
     LifecycleObject,
     LifecyclePolicy,
@@ -112,6 +118,10 @@ __all__ = [
     "AdsCostBudget",
     "QualityReport",
     "QualityRuleResult",
+    "TopologyRuleset",
+    "TopologyRun",
+    "TopologyFinding",
+    "TopologyException",
     "LifecycleObject",
     "LifecyclePolicy",
     "GcPlan",

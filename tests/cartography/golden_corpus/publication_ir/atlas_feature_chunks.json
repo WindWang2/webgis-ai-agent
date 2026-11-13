@@ -139,6 +139,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "1-2"
       },
@@ -276,6 +277,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "3-4"
       }

@@ -1,0 +1,63 @@
+[build-vendor-pi] submodule HEAD: b4afdddf44e059c67ccf5097e5317d913521b470
+[build-vendor-pi] npm ci (root lockfile present; reproducible)
+npm warn deprecated prebuild-install@7.1.3: No longer maintained. Please contact the author of the relevant native addon; alternatives are available.
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+npm warn cleanup Failed to remove some directories [
+npm warn cleanup   [
+npm warn cleanup     '/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/node_modules/cpu-features',
+npm warn cleanup     Error: [safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":117,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/node_modules/cpu-features"],"targetCount":1}
+npm warn cleanup         at checkBulkDeleteGuard (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-safe-delete-shim.cjs:239:19)
+npm warn cleanup         at tryTrash (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-safe-delete-shim.cjs:591:5)
+npm warn cleanup         at tryRm (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-safe-delete-shim.cjs:785:5)
+npm warn cleanup         at wrappedPromisesRm (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-safe-delete-shim.cjs:829:15)
+npm warn cleanup         at _rm (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:1352:25)
+npm warn cleanup         at [removeTrash] (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:1355:21)
+npm warn cleanup         at [reifyPackages] (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:349:29)
+npm warn cleanup         at async Arborist.reify (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:149:5)
+npm warn cleanup         at async CI.exec (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/lib/commands/ci.js:100:5)
+npm warn cleanup         at async Npm.exec (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/lib/npm.js:207:9)
+npm warn cleanup   ],
+npm warn cleanup   [
+npm warn cleanup     '/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/node_modules/nan',
+npm warn cleanup     Error: [safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":62,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/node_modules/nan"],"targetCount":1}
+npm warn cleanup         at checkBulkDeleteGuard (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-safe-delete-shim.cjs:239:19)
+npm warn cleanup         at tryTrash (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-safe-delete-shim.cjs:591:5)
+npm warn cleanup         at tryRm (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-safe-delete-shim.cjs:785:5)
+npm warn cleanup         at wrappedPromisesRm (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-safe-delete-shim.cjs:829:15)
+npm warn cleanup         at _rm (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:1352:25)
+npm warn cleanup         at [removeTrash] (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:1355:21)
+npm warn cleanup         at [reifyPackages] (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:349:29)
+npm warn cleanup         at async Arborist.reify (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:149:5)
+npm warn cleanup         at async CI.exec (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/lib/commands/ci.js:100:5)
+npm warn cleanup         at async Npm.exec (/opt/WorkBuddy/resources/runtime/node/lib/node_modules/npm/lib/npm.js:207:9)
+npm warn cleanup   ]
+npm warn cleanup ]
+
+> pi-monorepo@0.0.3 prepare
+> husky
+
+node:fs:3090
+  binding.copyFile(
+          ^
+
+Error: EPERM: operation not permitted, copyfile '/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/node_modules/husky/husky' -> '.husky/_/h'
+    at Object.copyFileSync (node:fs:3090:11)
+    at Object.wrappedCopyFileSync [as copyFileSync] (/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/node-brokered-fs-shim.cjs:921:12)
+    at default (file:///home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/node_modules/husky/index.js:21:4)
+    at file:///home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/node_modules/husky/bin.js:26:16
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:665:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5) {
+  errno: -1,
+  code: 'EPERM',
+  syscall: 'copyfile',
+  path: '/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi/node_modules/husky/husky',
+  dest: '.husky/_/h'
+}
+
+Node.js v22.22.2
+npm error code 1
+npm error path /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/vendor/pi
+npm error command failed
+npm error command sh -c husky
+npm error A complete log of this run can be found in: /home/kevin/.npm/_logs/2026-11-12T16_22_00_125Z-debug-0.log

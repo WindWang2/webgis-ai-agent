@@ -1052,6 +1052,60 @@ async def _handle_setlayout(ctx: MutationContext) -> HandlerOut:
                     ),
                 )
         layout["frames"] = validated
+    if intent.print_layout is not None:
+        # ── G34：纸面作者计划整笔写入（关闭词表 / 版本 / 锁 / 有界）────
+        from app.lib.cartography.print_layout_schema import validate_print_layout
+
+        candidate = intent.print_layout
+        verdict = validate_print_layout(candidate)
+        if not verdict.ok:
+            codes = ",".join(i.code for i in verdict.issues if i.severity == "error")
+            return MapSpecResult(
+                is_error=True,
+                origin=origin,
+                error_msg=f"layout.print_layout rejected: {codes}",
+                correction_hint=(
+                    "Re-read the committed print_layout.v1 plan, apply bounded "
+                    "operations through the authoring service, then retry with "
+                    "the full plan. Unknown versions are refused."
+                ),
+            )
+        # 已锁组件不得被绕过 service 直接改写（双向 __ 族语义同 workbench）。
+        from app.contracts.workbench_locks import (
+            _lock_matches, locked_component_ids_of,
+        )
+
+        locks = locked_component_ids_of(loaded)
+        _loaded_layout = loaded.get("layout") if isinstance(loaded, dict) else None
+        prev_plan = _loaded_layout.get("print_layout") \
+            if isinstance(_loaded_layout, dict) else None
+        prev_by_id = {
+            str(c.get("id")): c
+            for c in ((prev_plan or {}).get("components") or [])
+            if isinstance(c, dict)
+        }
+        for c in candidate.get("components") or []:
+            if not isinstance(c, dict):
+                continue
+            cid = str(c.get("id") or "")
+            if not any(_lock_matches(l, cid) for l in locks):
+                continue
+            prev = prev_by_id.get(cid)
+            if prev is None:
+                continue
+            if (prev.get("frame") != c.get("frame")
+                    or prev.get("typography") != c.get("typography")
+                    or prev.get("text") != c.get("text")):
+                return MapSpecResult(
+                    is_error=True,
+                    origin=origin,
+                    error_msg=f"print_layout locked component changed: {cid}",
+                    correction_hint=(
+                        "Unlock the component in the workbench first, or use "
+                        "skip_locked in the authoring proposal."
+                    ),
+                )
+        layout["print_layout"] = candidate
     mapspec["layout"] = layout
     return MutationPlan(mapspec=mapspec)
 

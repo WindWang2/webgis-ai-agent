@@ -27,6 +27,10 @@ class EditOpModel(BaseModel):
     wfid: Optional[str] = None                        # split_feature：目标稳定身份
     line: Optional[Dict[str, Any]] = None             # split_feature：分割线几何
     field_policy: Optional[Dict[str, Any]] = None     # merge_features：{mode, overrides}
+    # G32：op 级目标限定 —— 带 wfids 的 plan 级 op 只作用于这些要素（自然 id
+    # 或 WFID 均可）；一个 plan 表达多要素异构修改。create/split/merge 自带
+    # 目标，不接受该键（shape 校验拒绝）。
+    wfids: Optional[List[str]] = Field(default=None, min_length=1, max_length=200)
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
