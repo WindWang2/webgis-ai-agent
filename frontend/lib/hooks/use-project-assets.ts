@@ -56,6 +56,7 @@ import {
 } from '@/lib/api/project-assets';
 import { fetchArtifactLineage, type LineageGraph } from '@/lib/api/project';
 import { isAbortError, parseApiErrorDetail } from '@/lib/workflow/recovery';
+import { t } from '@/lib/i18n/t';
 
 interface FetchOpts {
   signal?: AbortSignal;
@@ -64,10 +65,8 @@ interface FetchOpts {
 
 /** Client-side dependency hint shown before a detach — the backend does none. */
 export function datasetDependencyWarning(dataset: Pick<ProjectDataset, 'source_type'>): string {
-  if (dataset.source_type === 'layer') {
-    return '该数据集来自图层挂载：解绑不影响图层本体，但引用它的工作流与血缘记录将失去输入来源。';
-  }
-  return '后端为软删除（保留行以维持血缘可解析），不做引用检查——正在使用它的工作流可能失败。';
+  if (dataset.source_type === 'layer') return t('project.errDatasetFromLayer');
+  return t('project.errDatasetSoftDelete');
 }
 
 // ── datasets ────────────────────────────────────────────────────────────────
@@ -140,7 +139,7 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
         applyPage(page, false);
       } catch (err: unknown) {
         if (ac.signal.aborted || isAbortError(err) || g !== gen.current) return;
-        setError(parseApiErrorDetail(err, '加载数据集失败'));
+        setError(parseApiErrorDetail(err, t('project.errLoadDatasets')));
       } finally {
         if (g === gen.current && mounted.current) setLoading(false);
       }
@@ -161,7 +160,7 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
       applyPage(page, true);
     } catch (err: unknown) {
       if (isAbortError(err) || g !== gen.current) return;
-      setError(parseApiErrorDetail(err, '加载更多数据集失败'));
+      setError(parseApiErrorDetail(err, t('project.errLoadMoreDatasets')));
     }
   }, [projectId, hasMore, datasets.length, applyPage]);
 
@@ -180,7 +179,7 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
         setTotal((t) => t + 1);
         return attached;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '挂载数据集失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errAttachDataset')));
         return null;
       } finally {
         if (mounted.current) setBusyId('');
@@ -200,7 +199,7 @@ export function useProjectDatasets(projectId: string): UseProjectDatasetsResult 
         setTotal((t) => Math.max(0, t - 1));
         return true;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '解绑数据集失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errDetachDataset')));
         return false;
       } finally {
         if (mounted.current) setBusyId('');
@@ -281,6 +280,7 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
 
   const gen = useRef(0);
   const lineageAbort = useRef<AbortController | null>(null);
+  const lineageProject = useRef(projectId);
   // #1746-3：reload 的在途请求控制器同样入 ref —— 否则卸载/切项目时无法
   // 中止（违背本模块「unmount aborts everything」契约；对照下方 lineageAbort）。
   const reloadAbort = useRef<AbortController | null>(null);
@@ -291,7 +291,17 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
       // 新一次 reload 取代旧一次：先中止在途请求（含 !projectId 的清空路径，
       // 切项目时空 id 的提前 return 不得留下上一个项目的在途请求）。
       reloadAbort.current?.abort();
+      lineageAbort.current?.abort();
+      if (lineageProject.current !== projectId) {
+        lineageProject.current = projectId;
+        setLineage({});
+        setPinnedLocal({});
+        setPinReceipts({});
+        setCloneResult(null);
+      }
       if (!projectId) {
+        gen.current += 1;
+        setLoading(false);
         setArtifacts([]);
         setTotal(0);
         setHasMore(false);
@@ -315,7 +325,7 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
         setHasMore(page.has_more);
       } catch (err: unknown) {
         if (ac.signal.aborted || isAbortError(err) || g !== gen.current) return;
-        setError(parseApiErrorDetail(err, '加载产物失败'));
+        setError(parseApiErrorDetail(err, t('project.errLoadArtifacts')));
       } finally {
         if (g === gen.current && mounted.current) setLoading(false);
       }
@@ -341,7 +351,7 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
       setHasMore(page.has_more);
     } catch (err: unknown) {
       if (isAbortError(err) || g !== gen.current) return;
-      setError(parseApiErrorDetail(err, '加载更多产物失败'));
+      setError(parseApiErrorDetail(err, t('project.errLoadMoreArtifacts')));
     }
   }, [projectId, hasMore, artifacts.length]);
 
@@ -356,7 +366,7 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
         setPinnedLocal((prev) => ({ ...prev, [artifactId]: true }));
         return true;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '固定产物失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errPinArtifact')));
         return false;
       } finally {
         if (mounted.current) setBusyId('');
@@ -376,7 +386,7 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
         setPinnedLocal((prev) => ({ ...prev, [artifactId]: false }));
         return true;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '取消固定失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errUnpinArtifact')));
         return false;
       } finally {
         if (mounted.current) setBusyId('');
@@ -390,17 +400,20 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
       if (busyId) return null;
       setBusyId(artifactId);
       try {
-        const result = await cloneArtifact(artifactId);
-        if (mounted.current) setCloneResult(result);
+        const result = await cloneArtifact(artifactId, projectId);
+        if (mounted.current) {
+          setCloneResult(result);
+          void reload({ forceRefresh: true });
+        }
         return result;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '克隆产物失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errCloneArtifact')));
         return null;
       } finally {
         if (mounted.current) setBusyId('');
       }
     },
-    [busyId],
+    [busyId, projectId, reload],
   );
 
   const loadLineage = useCallback(
@@ -412,14 +425,29 @@ export function useProjectArtifacts(projectId: string): UseProjectArtifactsResul
       const ac = new AbortController();
       lineageAbort.current = ac;
       const g = gen.current;
+      const dropLoading = () => {
+        setLineage((prev) => {
+          if (prev[artifactId] !== 'loading') return prev;
+          const next = { ...prev };
+          delete next[artifactId];
+          return next;
+        });
+      };
       setLineage((prev) => ({ ...prev, [artifactId]: 'loading' }));
       try {
         const graph = await fetchArtifactLineage(artifactId, { signal: ac.signal });
-        if (!mounted.current || g !== gen.current) return;
+        if (!mounted.current || g !== gen.current || ac.signal.aborted) {
+          if (mounted.current) dropLoading();
+          return;
+        }
         const empty = (graph.parents?.length ?? 0) === 0 && (graph.consumers?.length ?? 0) === 0;
         setLineage((prev) => ({ ...prev, [artifactId]: empty ? 'empty' : graph }));
       } catch (err: unknown) {
-        if (ac.signal.aborted || isAbortError(err) || g !== gen.current) return;
+        if (!mounted.current) return;
+        if (ac.signal.aborted || isAbortError(err) || g !== gen.current) {
+          dropLoading();
+          return;
+        }
         setLineage((prev) => ({ ...prev, [artifactId]: 'error' }));
       }
     },
@@ -558,12 +586,23 @@ export function useProjectSnapshots(
   const gen = useRef(0);
   const abort = useRef<AbortController | null>(null);
   const mounted = useRef(true);
+  const seenProject = useRef<string | null>(null);
   const sessionReady = Boolean(sessionId);
 
   const reload = useCallback(
     async (opts?: FetchOpts) => {
+      const switched = seenProject.current !== projectId;
+      seenProject.current = projectId;
+      if (switched) {
+        setVerifications({});
+        setDiff(null);
+      }
       if (!projectId) {
+        abort.current?.abort();
+        gen.current += 1;
+        setLoading(false);
         setList(null);
+        setError(null);
         return;
       }
       abort.current?.abort();
@@ -582,7 +621,7 @@ export function useProjectSnapshots(
         setList(result);
       } catch (err: unknown) {
         if (ac.signal.aborted || isAbortError(err) || g !== gen.current) return;
-        setError(parseApiErrorDetail(err, '加载快照失败'));
+        setError(parseApiErrorDetail(err, t('project.errLoadSnapshots')));
       } finally {
         if (g === gen.current && mounted.current) setLoading(false);
       }
@@ -599,7 +638,7 @@ export function useProjectSnapshots(
         if (mounted.current) void reload({ forceRefresh: true });
         return saved;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '保存快照失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errSaveSnapshot')));
         return null;
       } finally {
         if (mounted.current) setBusyId('');
@@ -618,7 +657,7 @@ export function useProjectSnapshots(
         if (mounted.current) setVerifications((prev) => ({ ...prev, [snapshotId]: report }));
         return report;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '核查快照失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errInspectSnapshot')));
         return null;
       }
     },
@@ -639,7 +678,7 @@ export function useProjectSnapshots(
         }
         return result;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '恢复快照失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errRestoreSnapshot')));
         return null;
       } finally {
         if (mounted.current) setBusyId('');
@@ -661,7 +700,7 @@ export function useProjectSnapshots(
         if (mounted.current) void reload({ forceRefresh: true });
         return true;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '克隆快照失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errCloneSnapshot')));
         return false;
       } finally {
         if (mounted.current) setBusyId('');
@@ -688,7 +727,7 @@ export function useProjectSnapshots(
         );
         return true;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '删除快照失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errDeleteSnapshot')));
         return false;
       } finally {
         if (mounted.current) setBusyId('');
@@ -713,7 +752,7 @@ export function useProjectSnapshots(
         setDiff(result);
         return result;
       } catch (err: unknown) {
-        if (mounted.current) setError(parseApiErrorDetail(err, '快照对比失败'));
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errDiffSnapshots')));
         return null;
       } finally {
         if (mounted.current) setDiffLoading(false);
@@ -807,7 +846,7 @@ export function useProjectQuality(projectId: string): UseProjectQualityResult {
       } catch (err: unknown) {
         if (ac.signal.aborted || isAbortError(err)) return null;
         if (mounted.current) {
-          setError(parseApiErrorDetail(err, '质量审计失败'));
+          setError(parseApiErrorDetail(err, t('project.errAuditQuality')));
           setPhase(reportRef.current ? 'reported' : 'idle');
         }
         return null;
@@ -835,7 +874,7 @@ export function useProjectQuality(projectId: string): UseProjectQualityResult {
       } catch (err: unknown) {
         if (ac.signal.aborted || isAbortError(err)) return null;
         if (mounted.current) {
-          setError(parseApiErrorDetail(err, '质量修复失败'));
+          setError(parseApiErrorDetail(err, t('project.errRepairQuality')));
           setPhase(reportRef.current ? 'reported' : 'idle');
         }
         return null;
@@ -903,30 +942,32 @@ export function useDataGc(projectId: string): UseDataGcResult {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const gen = useRef(0);
+  const usageGen = useRef(0);
+  const planGen = useRef(0);
   const executeAbort = useRef<AbortController | null>(null);
-  const abort = useRef<AbortController | null>(null);
+  const usageAbort = useRef<AbortController | null>(null);
+  const planAbort = useRef<AbortController | null>(null);
   const executeLock = useRef(false);
   const mounted = useRef(true);
 
   const loadUsage = useCallback(
     async (opts?: FetchOpts) => {
       if (!projectId) return;
-      abort.current?.abort();
+      usageAbort.current?.abort();
       const ac = new AbortController();
-      abort.current = ac;
-      const g = ++gen.current;
+      usageAbort.current = ac;
+      const g = ++usageGen.current;
       setUsageLoading(true);
       setError(null);
       try {
         const result = await fetchDataUsage(projectId, { forceRefresh: opts?.forceRefresh, signal: ac.signal });
-        if (g !== gen.current || !mounted.current) return;
+        if (g !== usageGen.current || !mounted.current) return;
         setUsage(result);
       } catch (err: unknown) {
-        if (ac.signal.aborted || isAbortError(err) || g !== gen.current) return;
-        if (mounted.current) setError(parseApiErrorDetail(err, '加载用量失败'));
+        if (ac.signal.aborted || isAbortError(err) || g !== usageGen.current) return;
+        if (mounted.current) setError(parseApiErrorDetail(err, t('project.errLoadUsage')));
       } finally {
-        if (g === gen.current && mounted.current) setUsageLoading(false);
+        if (g === usageGen.current && mounted.current) setUsageLoading(false);
       }
     },
     [projectId],
@@ -934,22 +975,23 @@ export function useDataGc(projectId: string): UseDataGcResult {
 
   const runPlan = useCallback(async () => {
     if (!projectId) return null;
-    abort.current?.abort();
+    planAbort.current?.abort();
     const ac = new AbortController();
-    abort.current = ac;
+    planAbort.current = ac;
+    const g = ++planGen.current;
     setPlanLoading(true);
     setError(null);
     try {
       const result = await planDataGc(projectId, { signal: ac.signal });
-      if (!mounted.current) return null;
+      if (!mounted.current || g !== planGen.current) return null;
       setPlan(result);
       return result;
     } catch (err: unknown) {
-      if (ac.signal.aborted || isAbortError(err)) return null;
-      if (mounted.current) setError(parseApiErrorDetail(err, '生成回收计划失败'));
+      if (ac.signal.aborted || isAbortError(err) || g !== planGen.current) return null;
+      if (mounted.current) setError(parseApiErrorDetail(err, t('project.errPlanGc')));
       return null;
     } finally {
-      if (mounted.current) setPlanLoading(false);
+      if (mounted.current && g === planGen.current) setPlanLoading(false);
     }
   }, [projectId]);
 
@@ -971,7 +1013,7 @@ export function useDataGc(projectId: string): UseDataGcResult {
       if (ac.signal.aborted || isAbortError(err)) return null;
       if (mounted.current) {
         setPlan(null);
-        setError(parseApiErrorDetail(err, '执行数据回收失败'));
+        setError(parseApiErrorDetail(err, t('project.errExecuteGc')));
       }
       return null;
     } finally {
@@ -981,8 +1023,10 @@ export function useDataGc(projectId: string): UseDataGcResult {
   }, [projectId, executing, loadUsage, plan]);
 
   useEffect(() => {
-    gen.current += 1;
-    abort.current?.abort();
+    usageGen.current += 1;
+    planGen.current += 1;
+    usageAbort.current?.abort();
+    planAbort.current?.abort();
     executeAbort.current?.abort();
     setPlan(null);
     setUsage(null);
@@ -995,7 +1039,8 @@ export function useDataGc(projectId: string): UseDataGcResult {
   useEffect(
     () => () => {
       mounted.current = false;
-      abort.current?.abort();
+      usageAbort.current?.abort();
+      planAbort.current?.abort();
       executeAbort.current?.abort();
     },
     [],

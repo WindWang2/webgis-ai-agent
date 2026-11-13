@@ -161,6 +161,24 @@ describe('ensureLayerData seam (#667)', () => {
     expect(r3.status).toBe('already-hydrated');
   });
 
+  it('aborting the first hydration caller does not cancel a later joiner', async () => {
+    const layer = makeMVTLayer();
+    useHudStore.getState().addLayer(layer as any);
+    let resolveFc!: (v: unknown) => void;
+    apiFetchMock.mockReturnValueOnce(new Promise((res) => { resolveFc = res; }));
+    const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} }] };
+    const first = new AbortController();
+    const second = new AbortController();
+    const p1 = ensureLayerData(layer.id, 'filter', { signal: first.signal });
+    const p2 = ensureLayerData(layer.id, 'attribute-table', { signal: second.signal });
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    first.abort();
+    await expect(p1).resolves.toEqual({ status: 'cancelled' });
+    resolveFc(fc);
+    await expect(p2).resolves.toMatchObject({ status: 'hydrated' });
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+  });
+
   // ─── Track B（M3/M6）：位置 id 单要素回填 ─────────────────────────────
 
   it('selection-detail numeric id: chain 404 → positional retry succeeds', async () => {

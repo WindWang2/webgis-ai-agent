@@ -179,7 +179,7 @@ import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
 import { nextViewportSeq, viewportSeqTracker } from "@/lib/utils/viewport-seq"
-import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
+import { buildTileTransformRequest, recoverFirstPartyTileAuth } from "@/lib/map-kit/tile-auth"
 import {
   getSelection,
   getSelectionEpoch,
@@ -380,6 +380,18 @@ export function MapPanel({
     const msg = errorObj?.message || (typeof errorObj === 'string' ? errorObj : '')
     const status = errorObj?.status
     const type = errorObj?.type || e?.type
+
+    if (status === 401) {
+      recoverFirstPartyTileAuth(status, () => {
+        const map = mapRef.current?.getMap?.()
+        if (!map?.getStyle) return
+        const sources = map.getStyle()?.sources ?? {}
+        for (const id of Object.keys(sources)) {
+          const src = map.getSource?.(id) as { reload?: () => void } | undefined
+          try { src?.reload?.() } catch { /* source already removed */ }
+        }
+      })
+    }
 
     // Non-fatal network / tile / sprite / glyph errors should NOT trigger full WebGL fallback UI
     const isTileOrNetwork =

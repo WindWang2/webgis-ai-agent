@@ -85,6 +85,23 @@ describe('useModelopsRuns', () => {
     expect(result.current[1]?.error).toBe('CUDA OOM');
   });
 
+  it('callId 带消息 id，两轮 tc-1 不冲突', () => {
+    useChatStore.setState({
+      messages: [
+        msg({
+          id: 'm-a',
+          toolCalls: [{ id: 'tc-1', tool: 'modelops_run_inference', status: 'completed', result: { run_id: 'r1' } }],
+        }),
+        msg({
+          id: 'm-b',
+          toolCalls: [{ id: 'tc-1', tool: 'modelops_run_inference', status: 'running' }],
+        }),
+      ],
+    });
+    const { result } = renderHook(() => useModelopsRuns());
+    expect(result.current.map((run) => run.callId)).toEqual(['m-a:tc-1', 'm-b:tc-1']);
+  });
+
   it('无消息时为空数组（诚实空态）', () => {
     const { result } = renderHook(() => useModelopsRuns());
     expect(result.current).toHaveLength(0);

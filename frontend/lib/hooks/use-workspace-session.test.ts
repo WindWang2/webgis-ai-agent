@@ -94,6 +94,18 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     vi.unstubAllGlobals();
   });
 
+  it('encodes session ids in restore URLs', async () => {
+    fetchMock.mockResolvedValue(jsonOk({ sessions: [], messages: [], title: 't' }));
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('a/b?c', vi.fn());
+    });
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => url.includes('/chat/sessions/a%2Fb%3Fc'))).toBe(true);
+    expect(urls.some((url) => url.includes('/chat/sessions/a%2Fb%3Fc/map-state'))).toBe(true);
+    expect(urls.some((url) => url.includes('/chat/sessions/a/b'))).toBe(false);
+  });
+
   it('non-OK restore surfaces a typed ApiError and resets messages to empty', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonOk({ sessions: [] })) // mount: refreshSessions

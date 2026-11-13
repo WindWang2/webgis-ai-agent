@@ -166,41 +166,66 @@ export async function ensureLayerData(
 
   // All three full-hydration reasons fetch the same FC — share one in-flight
   // key, scoped by session so a switch cannot reuse A's promise into B.
+  // The shared request is not bound to any one caller's signal: the first
+  // abort (filter unmount) must not cancel a later joiner (attribute table).
   const cacheKey = `${sid ?? ''}::${layerId}`;
-  if (pendingHydrations.has(cacheKey)) {
-    return pendingHydrations.get(cacheKey)!;
-  }
-  const promise = (async (): Promise<EnsureLayerResult> => {
-    const ref = layer._refId!;
-    // extreme-scale v2：统一数据面调度器（单飞/预算/ETag 条件再验证）。
-    // 分析水合是用户显式触发（filter/export/属性表）→ interactive 优先级。
-    const res = await requestRefFC({
-      sessionId: sid ?? '',
-      refId: ref,
-      // F13：数据身份 revision 进缓存键（#1112 同 ref 覆盖不串数据）。
-      dataRevision: layer._descriptor?.content_revision,
-      ownerToken: token,
-      urgency: 'interactive',
-      reasonCode: `ensure-layer:${reason}`,
-      signal: opts?.signal,
+  let shared = pendingHydrations.get(cacheKey);
+  if (!shared) {
+    shared = (async (): Promise<EnsureLayerResult> => {
+      const ref = layer._refId!;
+      // extreme-scale v2：统一数据面调度器（单飞/预算/ETag 条件再验证）。
+      // 分析水合是用户显式触发（filter/export/属性表）→ interactive 优先级。
+      const res = await requestRefFC({
+        sessionId: sid ?? '',
+        refId: ref,
+        // F13：数据身份 revision 进缓存键（#1112 同 ref 覆盖不串数据）。
+        dataRevision: layer._descriptor?.content_revision,
+        ownerToken: token,
+        urgency: 'interactive',
+        reasonCode: `ensure-layer:${reason}`,
+      });
+      if (res.status === 'cancelled') {
+        return { status: 'cancelled' };
+      }
+      if (resolveSessionId(layer) !== sid) {
+        return { status: 'cancelled' };
+      }
+      if (res.status === 'failed' || !res.fc) {
+        throw res.error instanceof Error ? res.error : new Error(`layer data unavailable: ${res.status}`);
+      }
+      const geojson = res.fc;
+      useHudStore.getState().updateLayer(layerId, { source: geojson as any });
+      return { status: 'hydrated', source: geojson };
+    })().finally(() => {
+      pendingHydrations.delete(cacheKey);
     });
-    if (opts?.signal?.aborted || res.status === 'cancelled') {
-      return { status: 'cancelled' };
-    }
-    if (resolveSessionId(layer) !== sid) {
-      return { status: 'cancelled' };
-    }
-    if (res.status === 'failed' || !res.fc) {
-      throw res.error instanceof Error ? res.error : new Error(`layer data unavailable: ${res.status}`);
-    }
-    const geojson = res.fc;
-    useHudStore.getState().updateLayer(layerId, { source: geojson as any });
-    return { status: 'hydrated', source: geojson };
-  })().finally(() => {
-    pendingHydrations.delete(cacheKey);
+    pendingHydrations.set(cacheKey, shared);
+  }
+  return raceCallerSignal(shared, opts?.signal);
+}
+
+/** This caller observes abort; the shared hydration keeps running for others. */
+function raceCallerSignal(
+  shared: Promise<EnsureLayerResult>,
+  signal: AbortSignal | undefined,
+): Promise<EnsureLayerResult> {
+  if (!signal) return shared;
+  if (signal.aborted) return Promise.resolve({ status: 'cancelled' });
+  return new Promise((resolve, reject) => {
+    const onAbort = () => resolve({ status: 'cancelled' });
+    signal.addEventListener('abort', onAbort, { once: true });
+    shared.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(signal.aborted ? { status: 'cancelled' } : value);
+      },
+      (err: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        if (signal.aborted) resolve({ status: 'cancelled' });
+        else reject(err);
+      },
+    );
   });
-  pendingHydrations.set(cacheKey, promise);
-  return promise;
 }
 
 // #667 exporter helper: hydrate MVT layers on demand (shared for both vector-export sites).

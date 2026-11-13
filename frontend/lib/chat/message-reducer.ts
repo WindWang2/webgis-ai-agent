@@ -14,6 +14,7 @@
  * - 终态不回退：toolCalls 行一旦终态，后续同 id 事件不得改回 running。
  */
 import type { ToolCallEntry, PlanProposalPayload } from '@/lib/store/hud-types';
+import { t } from '@/lib/i18n/t';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { ClarificationCardState, ClarificationStatus } from '@/lib/types/clarification';
 
@@ -501,7 +502,9 @@ export function appendTurnNotice(
   prev: ChatStreamMessage[],
   args: { messageId: string; kind: 'cancelled' | 'error'; detail?: string },
 ): ChatStreamMessage[] {
-  const marker = args.kind === 'cancelled' ? '⏹️ [已取消]' : `⚠️ ${args.detail ?? '请求失败，请重试。'}`;
+  const marker = args.kind === 'cancelled'
+    ? t('chat.turnCancelled')
+    : t('chat.turnFailed', { detail: args.detail ?? t('chat.turnFailedDefault') });
   return prev.map((m) => {
     if (m.id !== args.messageId) return m;
     const existing = m.content && !m.isThinking ? m.content : '';
@@ -533,7 +536,7 @@ export function settleThinkingMessage(
 ): ChatStreamMessage[] {
   return prev.map((m) =>
     m.id === args.messageId && m.isThinking
-      ? { ...m, isThinking: false, content: m.content || args.fallbackText || '完成。' }
+      ? { ...m, isThinking: false, content: m.content || args.fallbackText || t('chat.turnComplete') }
       : m,
   );
 }

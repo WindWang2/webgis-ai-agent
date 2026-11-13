@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { sidebarWidthLimit } from '@/lib/store/slices/uiSlice';
 import { useT } from '@/lib/i18n/useT';
 import type { AiStatus } from '@/lib/store/hud-types';
 import type { AgentRuntime } from '@/lib/agent-runtime';
@@ -114,12 +115,13 @@ export interface ContextPanelProps {
   layoutMode?: LayoutMode;
 }
 
-const PANEL_MIN = 280;
-const PANEL_MAX = 420;
 const PANEL_DEFAULT = 320;
 const PANEL_STEP = 16;
 
-const clampWidth = (w: number) => Math.min(PANEL_MAX, Math.max(PANEL_MIN, Math.round(w)));
+const clampWidth = (w: number) => {
+  const { min, max } = sidebarWidthLimit();
+  return Math.min(max, Math.max(min, Math.round(w)));
+};
 
 /** 一次拖拽的全部可变状态：只在 ref 里演进，pointermove 不触碰 React/store。 */
 interface DragState {
@@ -653,8 +655,8 @@ export function ContextPanel({
         aria-orientation="vertical"
         aria-label={t('panel.resizeAria')}
         aria-valuenow={sidebarWidth}
-        aria-valuemin={PANEL_MIN}
-        aria-valuemax={PANEL_MAX}
+        aria-valuemin={sidebarWidthLimit().min}
+        aria-valuemax={sidebarWidthLimit().max}
         title={t('panel.resizeTitle')}
         tabIndex={0}
         onPointerDown={onHandlePointerDown}

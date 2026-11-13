@@ -195,6 +195,12 @@ export function getSelectionIdFilter(
 }
 
 export function getSelectionIdFilterExpression(layerId: string): unknown[] | null {
+  // 框选超过 id 上限时 predicate.kind==='bbox' 才是选择范围。id 样本不是
+  // 全集；把它编译成图层 filter 会藏掉框内其余要素。MapLibre `within` 对
+  // Polygon/MultiPolygon 恒 false，不能替代 —— 超限时不生成 id 过滤。
+  if (current?.layer_id === layerId && current.predicate?.kind === 'bbox') {
+    return null;
+  }
   const projection = getSelectionIdFilter(layerId);
   if (!projection) return null;
   // '$id' = MapLibre 顶层 feature.id（不在 properties 里，必须用 ['id'] 表达式）。

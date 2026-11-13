@@ -90,7 +90,7 @@ export function useLakehouseHistory() {
       const exists = prev.some((f) => f.id === rec.id);
       const next = exists
         ? prev.filter((f) => f.id !== rec.id)
-        : [...prev, rec].slice(0, MAX_FAVORITES);
+        : [rec, ...prev].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_FAVORITES);
       writeJson(LAKEHOUSE_FAVORITES_KEY, next);
       return next;
     });

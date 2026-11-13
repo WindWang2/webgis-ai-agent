@@ -23,7 +23,8 @@ import {
   type WorkbenchDelta,
 } from './delta';
 import { devOnly } from '@/lib/utils/logger';
-import { currentLocale } from '@/lib/i18n/t';
+import { currentLocale, t } from '@/lib/i18n/t';
+import { useToastStore } from '@/components/ui/toast';
 
 export const UNDO_MAX_HISTORY = 50;
 
@@ -102,7 +103,11 @@ export function recordCommand(cmd: Omit<WorkbenchCommand, 'id' | 'ts' | 'session
   journal({
     type: cmd.kind,
     label: cmd.label,
-    detail: cmd.layerIds?.length ? `图层: ${cmd.layerIds.slice(0, 3).join(', ')}${cmd.layerIds.length > 3 ? ' …' : ''}` : undefined,
+    detail: cmd.layerIds?.length
+      ? t('workbench.journalLayers', {
+        names: `${cmd.layerIds.slice(0, 3).join(', ')}${cmd.layerIds.length > 3 ? ' …' : ''}`,
+      })
+      : undefined,
     actor: cmd.actor,
     reversible: true,
   });
@@ -183,7 +188,7 @@ export function undo(): boolean {
     redoStack.push(cmd);
     journal({
       type: 'undo',
-      label: `撤销：${cmd.label}`,
+      label: t('workbench.journalUndo', { label: cmd.label }),
       actor: 'user',
       reversible: true,
     });
@@ -201,7 +206,7 @@ export function redo(): boolean {
     undoStack.push(cmd);
     journal({
       type: 'redo',
-      label: `重做：${cmd.label}`,
+      label: t('workbench.journalRedo', { label: cmd.label }),
       actor: 'user',
       reversible: true,
     });
@@ -337,13 +342,14 @@ export function presentationCommand(
   before: { visible?: boolean; opacity?: number },
   after: { visible?: boolean; opacity?: number },
 ): void {
-  recordCommand({
+  let cmdId = '';
+  cmdId = recordCommand({
     label,
     kind: 'toggle',
     actor,
     layerIds: [layerId],
-    undo: () => void commitPresentation(layerId, before),
-    redo: () => void commitPresentation(layerId, after),
+    undo: () => void commitPresentation(layerId, before, 'undo', () => cmdId),
+    redo: () => void commitPresentation(layerId, after, 'redo', () => cmdId),
   });
 }
 
@@ -360,30 +366,55 @@ export function styleCommand(
   before: Record<string, number>,
   after: Record<string, number>,
 ): void {
-  recordCommand({
+  let cmdId = '';
+  cmdId = recordCommand({
     label,
     kind: 'toggle',
     actor,
     layerIds: [layerId],
-    undo: () => void commitStyle(layerId, before),
-    redo: () => void commitStyle(layerId, after),
+    undo: () => void commitStyle(layerId, before, 'undo', () => cmdId),
+    redo: () => void commitStyle(layerId, after, 'redo', () => cmdId),
   });
 }
 
-function commitStyle(layerId: string, paint: Record<string, number>): void {
+function toastReplayFailure(phase: 'undo' | 'redo'): void {
+  try {
+    useToastStore.getState().addToast(
+      phase === 'undo' ? t('workbench.replayFailedUndo') : t('workbench.replayFailedRedo'),
+      'warning',
+    );
+  } catch {
+    /* toast 不可用不影响状态 */
+  }
+}
+
+function commitStyle(
+  layerId: string,
+  paint: Record<string, number>,
+  phase: 'undo' | 'redo',
+  cmdId: () => string,
+): void {
   loadUserMutation()
     .then(({ commitLayerStyleAndCommit }) => commitLayerStyleAndCommit(layerId, paint))
     .catch((err) => {
+      restoreAfterFailedReplay(cmdId(), phase);
       devOnly.warn('[undo] style replay failed:', err);
+      toastReplayFailure(phase);
     });
 }
 
-function commitPresentation(layerId: string, patch: { visible?: boolean; opacity?: number }): void {
+function commitPresentation(
+  layerId: string,
+  patch: { visible?: boolean; opacity?: number },
+  phase: 'undo' | 'redo',
+  cmdId: () => string,
+): void {
   loadUserMutation()
     .then(({ commitLayerPresentation }) => commitLayerPresentation({ layerId, ...patch }))
     .catch((err) => {
-      // 反向提交失败保持现状（CAS 真相在服务端）；journal 已留痕。
+      restoreAfterFailedReplay(cmdId(), phase);
       devOnly.warn('[undo] presentation replay failed:', err);
+      toastReplayFailure(phase);
     });
 }
 

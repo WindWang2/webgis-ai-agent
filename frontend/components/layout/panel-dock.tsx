@@ -19,6 +19,8 @@ import {
   BOTTOM_DOCK_DEFAULT_HEIGHT,
   RIGHT_DOCK_DEFAULT_WIDTH,
   STATIC_DOCK_PANELS,
+  bottomDockHeightLimit,
+  rightDockWidthLimit,
   type DockArea,
 } from '@/lib/store/slices/dockSlice';
 import { AttributeTablePanel } from '@/components/table/attribute-table-panel';
@@ -39,10 +41,6 @@ import { AgentRunPanel } from '@/components/agent/agent-run-panel';
  *   成员（重新展开即恢复布局）、Escape 折叠。
  */
 
-const RIGHT_DOCK_MIN_WIDTH = 260;
-const RIGHT_DOCK_MAX_WIDTH = 560;
-const BOTTOM_DOCK_MIN_HEIGHT = 160;
-const BOTTOM_DOCK_MAX_HEIGHT = 560;
 const RESIZE_STEP = 24;
 
 function useRendererContext(): RendererContext {
@@ -122,12 +120,13 @@ function DockResizeHandle({
   const hostRef = useRef<HTMLElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const t = useT('layout');
-  const min = area === 'right' ? RIGHT_DOCK_MIN_WIDTH : BOTTOM_DOCK_MIN_HEIGHT;
-  const max = area === 'right' ? RIGHT_DOCK_MAX_WIDTH : BOTTOM_DOCK_MAX_HEIGHT;
-  const clampSize = useCallback(
-    (v: number) => Math.min(max, Math.max(min, Math.round(v))),
-    [min, max],
-  );
+  const limits = area === 'right' ? rightDockWidthLimit() : bottomDockHeightLimit();
+  const min = limits.min;
+  const max = limits.max;
+  const clampSize = useCallback((v: number) => {
+    const lim = area === 'right' ? rightDockWidthLimit() : bottomDockHeightLimit();
+    return Math.min(lim.max, Math.max(lim.min, Math.round(v)));
+  }, [area]);
 
   const applyDraft = useCallback((size: number) => {
     // 右区拖左缘：草稿写 width；下区拖顶缘：草稿写 height。

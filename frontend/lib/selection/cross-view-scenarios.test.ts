@@ -61,8 +61,8 @@ describe('Scenario B — map brush stays bounded', () => {
     expect(sel?.selected_ids.length).toBe(50);
     expect(sel?.matched_count).toBe(9000);
     expect(sel?.predicate?.kind).toBe('bbox');
-    // id 过滤投影可用（50 ids），谓词是超限部分的描述符。
-    expect(getSelectionIdFilterExpression('poi-layer')).toBeDefined();
+    // 超限框选不得把 50 个样本 id 编译成地图过滤（其余命中会被藏掉）。
+    expect(getSelectionIdFilterExpression('poi-layer')).toBeNull();
   });
 
   it('table row click publishes stable ids (table→map)', () => {

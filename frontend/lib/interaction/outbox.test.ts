@@ -5,11 +5,21 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  clearAuth,
+  refreshAuthToken,
+  setAuth,
+} from '@/lib/auth/tokenStore';
+import {
   createInteractionOutbox,
   getClientInstanceId,
   nextClientSeq,
   type InteractionOutboxOptions,
 } from './outbox';
+
+vi.mock('@/lib/auth/tokenStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth/tokenStore')>();
+  return { ...actual, refreshAuthToken: vi.fn() };
+});
 import type { InteractionEventV1, InteractionIngestResponse } from './contract';
 
 /* ── 测试基建：可控时钟 / fetch mock / 内存 storage ─────────────────── */
@@ -26,7 +36,7 @@ class FakeStorage {
 
 interface Harness {
   outbox: ReturnType<typeof createInteractionOutbox>;
-  fetchCalls: Array<{ url: string; body: { events: InteractionEventV1[] }; keepalive: boolean }>;
+  fetchCalls: Array<{ url: string; body: { events: InteractionEventV1[] }; keepalive: boolean; sessionToken: string | null }>;
   respondWith: (factory: (body: { events: InteractionEventV1[] }) => Response) => void;
   advance: (ms: number) => Promise<void>;
   storage: FakeStorage;
@@ -39,10 +49,12 @@ function createHarness(overrides: Partial<InteractionOutboxOptions> = {}): Harne
   let responder: ((body: { events: InteractionEventV1[] }) => Response) | null = null;
   const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? '{}')) as { events: InteractionEventV1[] };
+    const headerBag = new Headers(init?.headers);
     fetchCalls.push({
       url: String(url),
       body,
       keepalive: init?.keepalive === true,
+      sessionToken: headerBag.get('X-Session-Token'),
     });
     if (responder) return responder(body);
     return new Response(JSON.stringify({ accepted: body.events.length, duplicates: 0, stale: 0, rejected: 0, acks: [] }), { status: 200 });
@@ -156,6 +168,24 @@ describe('interaction outbox · 重试与丢弃', () => {
     expect(h.fetchCalls.length).toBe(3);
     await h.advance(5000);
     expect(h.fetchCalls.length).toBe(3); // 3 次尝试耗尽
+  });
+
+  it('401 refreshes once then retries; 403 stays permanent', async () => {
+    vi.mocked(refreshAuthToken).mockResolvedValueOnce(true);
+    setAuth({ accessToken: 'old-access', refreshToken: 'ref-1' }, null);
+    const h = createHarness({ debounceMs: 50, retryBaseMs: 100, retryMaxMs: 100 });
+    let status = 401;
+    h.respondWith(() => new Response(status === 401 ? 'expired' : JSON.stringify({
+      accepted: 1, duplicates: 0, stale: 0, rejected: 0, acks: [],
+    }), { status }));
+    h.outbox.enqueue(event(1));
+    await h.advance(50);
+    expect(h.fetchCalls.length).toBe(1);
+    expect(refreshAuthToken).toHaveBeenCalledTimes(1);
+    status = 200;
+    await h.advance(200);
+    expect(h.fetchCalls.length).toBe(2);
+    clearAuth();
   });
 
   it('401/403 永久丢弃不重试', async () => {
@@ -306,9 +336,25 @@ describe('interaction outbox · keepalive 卸载冲刷', () => {
     for (let i = 1; i <= 80; i += 1) h.outbox.enqueue(event(i));
     h.outbox.flushKeepalive();
     await flushMicrotasks();
-    expect(h.fetchCalls.length).toBe(1); // 单批 ≤50，超出部分放弃
-    expect(h.fetchCalls[0].keepalive).toBe(true);
-    expect(h.fetchCalls[0].body.events).toHaveLength(50);
+    expect(h.fetchCalls.length).toBe(2);
+    expect(h.fetchCalls.every((c) => c.keepalive)).toBe(true);
+    expect(h.fetchCalls.map((c) => c.body.events.length)).toEqual([50, 30]);
+  });
+
+  it('按 session token 分组，不同凭据不混发', async () => {
+    let token = 'tok-a';
+    const h = createHarness({
+      getOwnerToken: () => token,
+      debounceMs: 60_000,
+    });
+    for (let i = 1; i <= 2; i += 1) h.outbox.enqueue(event(i));
+    token = 'tok-b';
+    for (let i = 3; i <= 4; i += 1) h.outbox.enqueue(event(i));
+    h.outbox.flushKeepalive();
+    await flushMicrotasks();
+    expect(h.fetchCalls).toHaveLength(2);
+    expect(h.fetchCalls.map((c) => c.sessionToken).sort()).toEqual(['tok-a', 'tok-b']);
+    expect(h.fetchCalls.every((c) => c.body.events.length === 2)).toBe(true);
   });
 });
 

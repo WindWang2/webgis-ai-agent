@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MapRef } from 'react-map-gl/maplibre';
 import { resolveParentLayerId } from '@/lib/map-kit/interactive-ids';
+import { t } from '@/lib/i18n/t';
 import type { Layer } from '@/lib/types/layer';
 
 export interface HoverInfo {
@@ -64,7 +65,7 @@ export function useHoverTooltip({
     const props = (top.properties || {}) as Record<string, unknown>
     setHoverInfo({
       point: [evt.lngLat.lng, evt.lngLat.lat],
-      layerName: layerInfo?.name ?? parentId ?? sublayerId ?? '未知图层',
+      layerName: layerInfo?.name ?? parentId ?? sublayerId ?? t('map.unknownLayer'),
       props: Object.fromEntries(Object.entries(props).slice(0, 3)),
     })
     // 依赖里的 ref 对象身份恒定（useRef 产物），回调身份因此保持稳定——

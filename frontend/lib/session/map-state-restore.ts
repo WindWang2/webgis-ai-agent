@@ -24,6 +24,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { hydrateWorkbenchFromSpec } from '@/lib/workbench/persistence';
 import { useToastStore } from '@/components/ui/toast';
 import { devOnly } from '@/lib/utils/logger';
+import { t } from '@/lib/i18n/t';
 import { commitMapSpecDocument } from '@/lib/mapspec/session-cursor';
 import { ingestRenderWork } from '@/lib/render-protocol/render-work';
 
@@ -36,7 +37,7 @@ export function reportLayerFetchFailure(context: string, layerLabel: string, err
   if (isAbortError(err)) return;
   devOnly.error(context, err);
   useToastStore.getState().addToast(
-    `图层「${layerLabel}」数据加载失败，地图上可能显示为空。请稍后重试或刷新会话`,
+    t('map.layerDataFailed', { label: layerLabel }),
     'error',
   );
 }

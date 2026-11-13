@@ -106,7 +106,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     setStoreSessions(
       sessions.map((s) => ({
         id: s.id,
-        title: s.title || '未命名',
+        title: s.title || t('layout.topbar.unnamed'),
         // #1670：时间戳随应用语言格式化（同 #1628 的 currentLocale 模式），
         // 不硬编码 'zh-CN' —— 英文 UI 下也应是用户 locale 的日期时间。
         time: new Date(s.createdAt).toLocaleString(currentLocale(), { hour12: false }) || '',
@@ -245,7 +245,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         // 类型化 ApiError（携带 FastAPI detail），并短路后续的 map-state / 图层
         // / 分析资产恢复——失败会话的状态不会写入 UI。
         const data = await apiFetch<{ messages?: any[]; title?: string }>(
-          `/api/v1/chat/sessions/${sid}`,
+          `/api/v1/chat/sessions/${encodeURIComponent(sid)}`,
           { signal, ownerToken: token }
         );
         if (signal.aborted) return;
@@ -263,7 +263,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
           restored.push({
             id: `session-switch-${Date.now()}`,
             role: 'assistant' as const,
-            content: `已恢复历史会话「${data.title || '未命名'}」——共 ${data.messages?.length ?? 0} 条记录。可继续提问。`,
+            content: t('chat.sessionRestored', {
+              title: data.title || t('layout.topbar.unnamed'),
+              count: data.messages?.length ?? 0,
+            }),
             timestamp: new Date(),
           });
         }
@@ -292,7 +295,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         // setSessionId 已在函数开头同步调用（审计 F38），这里不再重复
 
         const stateData = await apiFetch<{ map_state?: any }>(
-          `/api/v1/chat/sessions/${sid}/map-state`,
+          `/api/v1/chat/sessions/${encodeURIComponent(sid)}/map-state`,
           { signal, ownerToken: token, label: 'Map state error' }
         );
         if (signal.aborted) return;

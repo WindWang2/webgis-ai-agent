@@ -5,7 +5,7 @@ import { ConfirmAction } from '@/components/shared/confirm-action';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import type { ReplayMode, WorkflowRunDetail } from '@/lib/api/project';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
-import { REPLAY_MODE_COPY, shouldOfferResume } from '@/lib/workflow/recovery';
+import { replayModeCopy, shouldOfferResume } from '@/lib/workflow/recovery';
 import { useT } from '@/lib/i18n/useT';
 
 export interface RecoveryActionsProps {
@@ -37,8 +37,8 @@ const t = useT();
       )}
       <fieldset className="space-y-1.5" disabled={busy}>
         <legend className="sr-only">{t('sidebar.wf.replayMode')}</legend>
-        {(Object.keys(REPLAY_MODE_COPY) as ReplayMode[]).map((key) => {
-          const copy = REPLAY_MODE_COPY[key];
+        {(Object.keys(replayModeCopy()) as ReplayMode[]).map((key) => {
+          const copy = replayModeCopy()[key];
           const id = `replay-mode-${key}`;
           return (
             <label
@@ -65,8 +65,8 @@ const t = useT();
       </fieldset>
       <div className="flex flex-wrap gap-2">
         <ConfirmAction
-          label={REPLAY_MODE_COPY[mode].label}
-          confirmLabel={t('sidebar.wf.confirmReplay', { mode: REPLAY_MODE_COPY[mode].label })}
+          label={replayModeCopy()[mode].label}
+          confirmLabel={t('sidebar.wf.confirmReplay', { mode: replayModeCopy()[mode].label })}
           onConfirm={() => onReplay(mode)}
           disabled={busy || writeLocked || !run}
           title={writeLocked ? t('sidebar.wf.loginRequiredBrief') : undefined}

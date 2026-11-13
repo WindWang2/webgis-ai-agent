@@ -1,4 +1,5 @@
 import { t as tNow } from '@/lib/i18n/t';
+import { noteLayerPresentationRevision } from '@/lib/collab/presentation-revision';
 import { ApiError, apiFetch } from '@/lib/api/transport';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { presentationFromMapSpec, syncSpecLayersToStore } from '@/lib/session/map-state-restore';
@@ -299,6 +300,10 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
+        noteLayerPresentationRevision(specLayerId, data.mutation_revision);
+        if (patch.layerId !== specLayerId) {
+          noteLayerPresentationRevision(patch.layerId, data.mutation_revision);
+        }
       }
       // ADR-0227：mutation 落定 → 交互事件（committed 带权威 revision）。
       if (patch.visible !== undefined) emitPresentationEvent('visible', 'committed', data.mutation_revision);
@@ -327,6 +332,10 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof superseded.mutation_revision === 'number') {
         setMapSpecRevision(superseded.mutation_revision);
+        noteLayerPresentationRevision(specLayerId, superseded.mutation_revision);
+        if (patch.layerId !== specLayerId) {
+          noteLayerPresentationRevision(patch.layerId, superseded.mutation_revision);
+        }
       }
       // superseded：服务端真相对目标层有裁决权（#692 回滚语义）——
       // 目标 pending 先清再回灌（与成功路径同序）；文档缺席时 apply 内部

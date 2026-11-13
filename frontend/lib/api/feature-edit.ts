@@ -14,7 +14,8 @@ import type {
   FeatureEditUndoResult,
 } from '@/lib/types/feature-edit';
 
-const BASE = (sessionId: string) => `/api/v1/chat/sessions/${sessionId}/feature-edits`;
+const BASE = (sessionId: string) =>
+  `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/feature-edits`;
 
 /** G14：预览（不改数据；返回有界 diff + plan_id）。 */
 export function previewFeatureEdit(

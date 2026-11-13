@@ -73,6 +73,8 @@
     "roleAssistant": "回答",
     "openSession": "打开历史会话",
     "currentLayer": "当前工作区图层",
-    "locatedLayer": "已在图层面板定位：{name}"
+    "locatedLayer": "已在图层面板定位：{name}",
+    "currentWorkspace": "当前工作区",
+    "artifactLocated": "{ref}（位于第 {index} 条消息）"
   }
 }
