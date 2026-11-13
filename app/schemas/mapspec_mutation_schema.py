@@ -159,6 +159,9 @@ class SetLayoutBody(ClientMutationIdMixin):
     components: Optional[list[dict[str, Any]]] = None
     # G15：spec 级 atlas 帧整表写入（MapSpecFrame 列表；None = 不触碰）
     frames: Optional[list[dict[str, Any]]] = None
+    # G34：纸面作者计划整笔写入（print_layout.v1；None = 不触碰）。
+    # 关闭词表/未知版本/越界由 print_layout_schema 在 handler 严格复验。
+    print_layout: Optional[dict[str, Any]] = None
 
 
 class SetTimeBody(ClientMutationIdMixin):

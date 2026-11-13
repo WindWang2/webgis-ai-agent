@@ -146,6 +146,8 @@ _TOOL_MODULES = [
     ("app.tools.thematic_authoring_tools", "register_thematic_authoring_tools"),
     # G26：矢量+数值栅格混合地图统一出版导出（独立模块防并发冲突）
     ("app.tools.mixed_map_export_tools", "register_mixed_map_export_tools"),
+    # G34：专业纸面版式与图册编排工作台（Pi 与 UI 共用 print_layout_authoring.service）
+    ("app.tools.print_layout_tools", "register_print_layout_tools"),
 ]
 
 

@@ -169,6 +169,14 @@ class PageLayoutIR(_Bounded):
     非 atlas 帧路径超出 20 帧 时超界页为空 dict（C2 规划场景帽 20）——
     导出渲染循环不消费本字段（渲染面走 MapSpec 编译链），空缺不影响成品。
     """
+    print_layout: Dict[str, Any] = Field(default_factory=dict)
+    """G34 纸面作者计划（``print_layout.v1``；从 MapSpec
+    ``layout.print_layout`` 透传）。与 ``component_ir`` 不同，**本字段被
+    ``publication_export.compile_publication_page`` 真实消费**并下传到
+    ``compile_mapspec_to_svg_detailed(print_layout=...)`` →
+    ``_render_authored_chrome`` / ``project()`` → 真实 SVG/PDF/PNG 几何。
+    空 dict = 未启用作者计划（旧路径逐字节不变）。
+    """
 
 
 class PublicationIR(_Bounded):
@@ -507,6 +515,8 @@ def plan_publication_pages(
 
     # C14 review P2：页 id 确定性去重（重复帧 id / 截断类别键碰撞 / 与保留
     # 封面 id 冲突 → 后缀 -2、-3…），杜绝 component_ir 按 page_id 映射串页。
+    # 去重必须**先于** G34 页级覆写/纸张查找：否则重复 id 的第二页会拿到
+    # 第一页的覆写（改名发生在查找之后）。
     _reserve_cover = bool(atlas and policy.include_cover)
     _used: set = {"cover"} if _reserve_cover else set()
     for sp in page_specs:
@@ -517,6 +527,43 @@ def plan_publication_pages(
             n += 1
         _used.add(pid)
         sp["page_id"] = pid
+
+    # ── G34：纸面作者计划透传 + 纸张毫米尺寸裁决 ──────────────────────
+    # 只有 layout.print_layout 在场时介入；旧文档零行为变化。
+    _g34_layout = document.get("layout") if isinstance(document, dict) else None
+    _g34_raw = (_g34_layout or {}).get("print_layout") \
+        if isinstance(_g34_layout, dict) else None
+    _g34_plan: Dict[str, Any] = _g34_raw if isinstance(_g34_raw, dict) else {}
+    if _g34_plan:
+        from app.lib.cartography.print_layout_schema import validate_print_layout
+
+        _g34_verdict = validate_print_layout(_g34_plan)
+        if not _g34_verdict.ok:
+            raise MapSpecSchemaError(
+                "print_layout_invalid",
+                ",".join(i.code for i in _g34_verdict.issues if i.severity == "error"))
+        _g34_paper = _g34_plan.get("paper") or {}
+        _g34_w = float(_g34_paper.get("width_mm") or 297.0)
+        _g34_h = float(_g34_paper.get("height_mm") or 210.0)
+        _g34_profile = str(_g34_paper.get("profile") or "")[:32]
+        _g34_pages = {
+            str(p.get("page_id")): p
+            for p in ((_g34_plan.get("atlas") or {}).get("pages") or [])
+            if isinstance(p, dict)
+        }
+        for sp in page_specs:
+            _pp = _g34_pages.get(str(sp["page_id"])) or {}
+            _w, _h, _prof = _g34_w, _g34_h, _g34_profile
+            _pprof = _pp.get("paper_profile")
+            if isinstance(_pprof, str) and _pprof and _pprof != "custom":
+                _sizes = PAGE_PROFILES.get(_pprof)
+                if _sizes:
+                    _w, _h, _prof = float(_sizes[0]), float(_sizes[1]), _pprof[:32]
+            sp["paper"] = PagePaper(
+                width_mm=_w, height_mm=_h, profile=_prof,
+                orientation="portrait" if _h > _w else "landscape",
+            )
+            sp["print_layout"] = _g34_plan
 
     cover_spec: Optional[Dict[str, Any]] = None
     if _reserve_cover:
@@ -569,6 +616,7 @@ def plan_publication_pages(
             time_window=sp.get("time_window"),
             component_ir=sp.get("component_ir")
             or ir_by_page.get(str(sp["page_id"]), {}),
+            print_layout=sp.get("print_layout") or {},
         ))
 
     return PublicationIR(

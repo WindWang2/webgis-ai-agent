@@ -216,6 +216,139 @@ def render_legend_box(x: float, y: float, legend: Dict[str, Any], *,
     return f'<g class="chrome-legend">{"".join(parts)}</g>'
 
 
+# ── G34：作者图例框（受控分栏 / 续排 / 比例符号；零 slice）─────────────────
+
+def render_legend_box_authored(
+    draw: Dict[str, Any],
+    plan: Dict[str, Any],
+) -> str:
+    """纸面作者图例 → 真实 SVG（WP06 的最终绘制消费面）。
+
+    与 ``render_legend_box`` 的关键差别：
+
+    * **零 slice**：``entries_rendered == entries_total``；容量不足由
+      ``expand`` / ``continue`` / ``block`` 三种策略处理，绝不丢尾项。
+    * 受控列数 / 列间距 / 色块与符号样本尺寸 / 行距 / 标题换行 / 图层分组 /
+      稳定顺序全部来自作者计划。
+    * 比例圆样本共享同一比例尺度（``radius_mm`` 由全表最大值一次算出），
+      不因分栏分别缩放；``data-g34-*`` 提供独立产物 oracle。
+    * 所有几何单位 = SVG viewBox user unit（由 mm→unit 单一 corpus 换算）。
+
+    仅当 G34 draw_plan 在场时调用；``render_legend_box`` 保持旧语义与字节。
+    """
+    lp = draw.get("legend")
+    if not isinstance(lp, dict) or lp.get("status") == "blocked":
+        return ""
+    entries: List[Dict[str, str]] = list(lp.get("entries") or [])
+    boxes: List[Dict[str, Any]] = list(lp.get("boxes") or [])
+    if not boxes:
+        return ""
+    comp = draw.get("box") or {}
+    x0 = float(comp.get("x") or 0.0)
+    y0 = float(comp.get("y") or 0.0)
+    frame_w = float(comp.get("width") or 0.0)
+    family = str(draw.get("font_family") or "sans-serif")
+    size = float(draw.get("font_size_units") or 10.0)
+    line_units = float(draw.get("line_units") or size * 1.35)
+    color = str(draw.get("color") or "#1e293b")
+    col_w = float(boxes[0].get("column_width_units") or frame_w)
+    col_gap = float(boxes[0].get("column_gap_units") or 0.0)
+    row_units = float(boxes[0].get("row_units") or line_units)
+    header_units = float(boxes[0].get("header_units") or line_units)
+    swatch = float(boxes[0].get("swatch_units") or size)
+    columns = max(1, int(lp.get("columns") or 1))
+    rows_per_column = max(1, int(lp.get("rows_per_column") or len(entries)))
+    notes = list(lp.get("notes") or [])
+    title_lines = list(lp.get("title_lines") or ["图例"])
+    proportional = list(lp.get("proportional") or [])
+    total = int(lp.get("entries_total") or len(entries))
+    rendered = int(lp.get("entries_rendered") or 0)
+    parts: List[str] = [
+        f'<g class="chrome-print-legend" '
+        f'data-g34-id="{escape_svg_text(str(draw.get("id") or ""))}" '
+        f'data-g34-entries-total="{total}" '
+        f'data-g34-entries-rendered="{rendered}" '
+        f'data-g34-columns="{columns}" '
+        f'data-g34-status="{escape_svg_text(str(lp.get("status") or ""))}" '
+        f'data-g34-nodata="{"true" if lp.get("has_nodata") else "false"}" '
+        f'data-g34-out-of-range="{"true" if lp.get("has_out_of_range") else "false"}">'
+    ]
+    cursor_y = y0
+    for box in boxes:
+        start = int(box.get("entry_start") or 0)
+        count = int(box.get("entry_count") or 0)
+        height = float(box.get("height_units") or line_units)
+        parts.append(
+            f'<rect x="{_fmt(x0)}" y="{_fmt(cursor_y)}" width="{_fmt(frame_w)}" '
+            f'height="{_fmt(height)}" fill="rgba(255,255,255,0.9)" '
+            f'stroke="#cbd5e1" stroke-width="1" rx="4" '
+            f'data-g34-box="{int(box.get("box_index") or 0)}" />'
+        )
+        ty = cursor_y + size
+        for i, tl in enumerate(title_lines):
+            parts.append(
+                f'<text x="{_fmt(x0 + size * 0.5)}" y="{_fmt(ty + i * line_units)}" '
+                f'font-family="{escape_svg_text(family)}" font-size="{_fmt(size)}" '
+                f'font-weight="bold" fill="{escape_svg_text(color)}">'
+                f'{escape_svg_text(tl)}</text>'
+            )
+        header = header_units
+        if lp.get("unit"):
+            parts.append(
+                f'<text x="{_fmt(x0 + size * 0.5)}" y="{_fmt(cursor_y + header)}" '
+                f'font-family="{escape_svg_text(family)}" font-size="{_fmt(size * 0.8)}" '
+                f'fill="#64748b">{escape_svg_text("单位：" + str(lp["unit"]))}</text>'
+            )
+        first_row_y = cursor_y + header + row_units * 0.75
+        box_entries = entries[start:start + count]
+        for idx, e in enumerate(box_entries):
+            col = idx // rows_per_column
+            row = idx % rows_per_column
+            if col >= columns:
+                # 列溢出：不丢条目，追加到下一行同列（稳定顺序，零 slice）。
+                col = columns - 1
+                row += (idx // rows_per_column - columns + 1) * rows_per_column
+            ex = x0 + size * 0.5 + col * (col_w + col_gap)
+            ey = first_row_y + row * row_units
+            ecolor = str(e.get("color") or "#888888")
+            parts.append(
+                f'<rect x="{_fmt(ex)}" y="{_fmt(ey - swatch * 0.8)}" '
+                f'width="{_fmt(swatch)}" height="{_fmt(swatch * 0.8)}" '
+                f'fill="{escape_svg_text(ecolor)}" rx="1" '
+                f'data-g34-entry="{start + idx}" />'
+            )
+            parts.append(
+                f'<text x="{_fmt(ex + swatch * 1.6)}" y="{_fmt(ey)}" '
+                f'font-family="{escape_svg_text(family)}" font-size="{_fmt(size * 0.92)}" '
+                f'fill="{escape_svg_text(color)}">{escape_svg_text(str(e.get("label") or ""))}</text>'
+            )
+        for j, note in enumerate(notes):
+            parts.append(
+                f'<text x="{_fmt(x0 + size * 0.5)}" '
+                f'y="{_fmt(cursor_y + height - (len(notes) - j) * line_units * 0.8)}" '
+                f'font-family="{escape_svg_text(family)}" font-size="{_fmt(size * 0.75)}" '
+                f'fill="#94a3b8">{escape_svg_text(str(note)[:80])}</text>'
+            )
+        cursor_y += height + line_units * 0.5
+    # 比例圆样本：共享尺度，一次绘制（不因列布局分别缩放）。
+    if proportional:
+        sy = cursor_y + size
+        for i, s in enumerate(proportional):
+            cx = x0 + size + float(s.get("radius_units") or 0.0) + i * (
+                float(boxes[0].get("symbol_units") or swatch) * 4.0)
+            parts.append(
+                f'<circle cx="{_fmt(cx)}" cy="{_fmt(sy + float(s.get("radius_units") or 0.0))}" '
+                f'r="{_fmt(float(s.get("radius_units") or 0.0))}" '
+                f'fill="none" stroke="{escape_svg_text(str(s.get("color") or "#334155"))}" '
+                f'stroke-width="1" data-g34-symbol-value="{_fmt(float(s.get("value") or 0.0))}" '
+                # oracle 回读需要足够精度：半径 0.3mm 用 2 位会把 √10 比例
+                # 四舍五入成 3.17（真值 3.1623）。几何坐标仍用 _fmt 口径。
+                f'data-g34-radius-mm="{float(s.get("radius_mm") or 0.0):.6f}" />'
+            )
+    parts.append("</g>")
+    return "".join(parts)
+
+
 # ── 标题块 ───────────────────────────────────────────────────────────────
 
 def render_title_block(x: float, y: float, title: str, subtitle: str = "") -> str:
