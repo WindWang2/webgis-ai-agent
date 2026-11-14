@@ -59,5 +59,3 @@ class ExecuteIn(BaseModel):
     expected_revision: Optional[int] = None
     background: bool = False
     project_id: str = ""
-
-
