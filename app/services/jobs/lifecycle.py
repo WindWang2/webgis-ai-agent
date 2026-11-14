@@ -57,6 +57,7 @@ class JobKind(str, Enum):
     # G30（可执行技能作业）：技能作业运行（prepare→start 的 durable 执行体）
     skill_job = "skill_job"
     temporal_media = "temporal_media"  # G35 时序地图动画媒体（Celery；逐帧 checkpoint/取消）
+    data_join = "data_join"            # G38 数据关联执行（进程内 durable runner）
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。

@@ -84,6 +84,10 @@ from app.models.topology_workbench import (  # noqa: F401 — 模型注册 + 再
     TopologyFinding,
     TopologyException,
 )
+from app.models.data_join_authoring import (  # noqa: F401 — 模型注册 + 再导出（G38）
+    DataJoinPlan,
+    DataJoinRun,
+)
 from app.models.data_lifecycle import (  # noqa: F401 — 模型注册 + 再导出（V9）
     LifecycleObject,
     LifecyclePolicy,
