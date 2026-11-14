@@ -68,6 +68,15 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "layer_coordinates_invalid", "warning",
             "图层包含超出经纬度合法范围的坐标，已跳过无效几何",
         ),
+        # —— G40：符号资产绑定链（缺资产/预算 —— 不画不伪装）——
+        RenderDiagnosticSpec(
+            "symbol_asset_unavailable", "warning",
+            "图层符号资产不可用（scope 外/版本退役/摘要不符），该层资产图元未绘制",
+        ),
+        RenderDiagnosticSpec(
+            "symbol_asset_def_budget", "warning",
+            "符号资产 defs 超出导出预算上限，超出部分未绘制",
+        ),
         # —— label engine V5（长文本不再静默溢出）——
         # review-r1：移除 label_suppressed_too_long —— 词表内唯一无发射器的
         # 死码（孪生编译器只截断不省略，fit_label_text 无"放不下"路径；
@@ -422,6 +431,15 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "label_pinned_conflict": ("app.services.mapspec_to_svg",),
     "label_obstacles_budget": ("app.services.mapspec_to_svg",),
     "layer_coordinates_invalid": ("app.services.mapspec_to_svg",),
+    # G40：符号资产绑定链（Python 导出 + TS 孪生双发射点）。
+    "symbol_asset_unavailable": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    "symbol_asset_def_budget": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
     "chart_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
     "table_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
     "chart_kind_unsupported_export": ("frontend/lib/map-kit/export-chrome.ts",),

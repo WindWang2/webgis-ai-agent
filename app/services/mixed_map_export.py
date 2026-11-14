@@ -229,6 +229,7 @@ async def export_mixed_map(
     target_dpi: int = 300,
     partial_policy: str = "blocking",
     title: str = "",
+    asset_identity: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """冻结 → 绑定 → 统一编译 → {bytes, media_type, extension, manifest}。
 
@@ -261,6 +262,11 @@ async def export_mixed_map(
     )
     bindings: Dict[str, Dict[str, Any]] = bound["bindings"]
     unbound: List[Dict[str, Any]] = bound["unbound"]
+
+    # G40：符号资产冻结解析（S27 —— 导出期锁 content_digest pin；失败
+    # 条目不阻断导出，编译面发 symbol_asset_unavailable 披露）。
+    symbol_assets, symbol_failures = await asyncio.to_thread(
+        _resolve_symbol_assets_sync, doc, asset_identity)
     unsupported = _unsupported_layer_report(doc, bindings)
     has_raster_layers = any(
         isinstance(layer, dict) and isinstance(layer.get("raster_style"), dict)
@@ -327,38 +333,51 @@ async def export_mixed_map(
         "target_dpi": int(target_dpi) if fmt == "pdf" else None,
         "renderer": {},
     }
+    # G40：资产版本清单进 manifest（S27 冻结证明；失败条目如实列出）。
+    if symbol_assets or symbol_failures:
+        manifest["symbol_assets"] = {
+            "resolved": sorted(symbol_assets.keys()),
+            "unresolved": symbol_failures[:16],
+        }
 
     if fmt == "pdf":
         artifact = await asyncio.to_thread(
             _export_pdf, compile_doc, bindings, target_dpi, title, manifest,
-            has_raster_layers, _recheck_omissions)
+            has_raster_layers, _recheck_omissions, symbol_assets)
     elif fmt == "svg":
         artifact = await asyncio.to_thread(
             _export_svg, compile_doc, bindings, manifest, has_raster_layers,
-            synthetic_extent, _recheck_omissions)
+            synthetic_extent, _recheck_omissions, symbol_assets)
     else:
         artifact = await asyncio.to_thread(
             _export_png, compile_doc, bindings, manifest, has_raster_layers,
-            synthetic_extent, _recheck_omissions)
+            synthetic_extent, _recheck_omissions, symbol_assets)
     return artifact
 
 
-def _pdf_options_payload(bindings: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """绑定 → worker 子进程 options（JSON 可序列化）。"""
-    return {"raster_bindings": bindings}
+def _pdf_options_payload(bindings: Dict[str, Dict[str, Any]],
+                         symbol_assets: Any = None) -> Dict[str, Any]:
+    """绑定（与资产规范形）→ worker 子进程 options（JSON 可序列化）。"""
+    out: Dict[str, Any] = {"raster_bindings": bindings}
+    if isinstance(symbol_assets, dict) and symbol_assets:
+        out["symbol_assets"] = symbol_assets
+    return out
 
 
 def _export_pdf(doc: Dict[str, Any], bindings: Dict[str, Any],
                 target_dpi: int, title: str, manifest: Dict[str, Any],
                 has_raster_layers: bool,
-                recheck: Any = None) -> Dict[str, Any]:
+                recheck: Any = None, symbol_assets: Any = None) -> Dict[str, Any]:
     from app.services.publication_render_worker import render_publication_bounded
 
     try:
         result = render_publication_bounded(
             doc, title=title or "WebGIS AI Agent 混合专题地图",
             target_dpi=target_dpi,
-            **_pdf_options_payload(bindings) if bindings else {},
+            **(_pdf_options_payload(bindings, symbol_assets)
+               if bindings else (
+                   {"symbol_assets": symbol_assets}
+                   if isinstance(symbol_assets, dict) and symbol_assets else {})),
         )
     except Exception as exc:
         raise _map_pdf_error(exc) from exc
@@ -411,9 +430,43 @@ def _map_pdf_error(exc: Exception) -> Exception:
                                status_code=500)
 
 
+def _resolve_symbol_assets_sync(
+    doc: Dict[str, Any], asset_identity: Optional[Dict[str, Any]] = None,
+) -> tuple:
+    """G40：冻结文档 → ({digest: 规范形}, failures)（同步 DB 面）。
+
+    身份：显式 asset_identity（HTTP 路由的登录用户）优先；缺席回落
+    ToolExecutionContext（Pi 工具面；composition_assets.tool_caller_identity
+    同款纪律）—— 都缺席 = 匿名（builtin-only）。
+    """
+    from app.core.database import SessionLocal
+    from app.services.cartographic_assets.catalog import (
+        collect_symbol_asset_documents,
+    )
+
+    user_id = (asset_identity or {}).get("user_id")
+    org_id = (asset_identity or {}).get("org_id")
+    role = (asset_identity or {}).get("role")
+    if user_id is None and org_id is None:
+        try:
+            from app.services.templates.composition_assets import (
+                tool_caller_identity,
+            )
+            user_id, org_id = tool_caller_identity()
+        except Exception:  # noqa: BLE001 - 上下文缺席 → 匿名
+            pass
+    db = SessionLocal()
+    try:
+        return collect_symbol_asset_documents(
+            db, doc, user_id=user_id, org_id=org_id, role=role)
+    finally:
+        db.close()
+
+
 def _compile_single_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
                         width: int = 1200, height: int = 800,
-                        bounds: Any = None, target_dpi: int = 150) -> Any:
+                        bounds: Any = None, target_dpi: int = 150,
+                        symbol_assets: Any = None) -> Any:
     from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 
     # G34：SVG/PNG 与 PDF 必须消费**同一份作者决定**（PDF 面由
@@ -427,6 +480,8 @@ def _compile_single_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
         ph = float(paper.get("height_mm") or 210.0)
         width, height = int(pw * 4), int(ph * 4)
         _extra = {"print_layout": _plan, "paper_mm": (pw, ph), "page_id": "main"}
+    if isinstance(symbol_assets, dict) and symbol_assets:
+        _extra["symbol_assets"] = symbol_assets
     return compile_mapspec_to_svg_detailed(
         doc, target_dpi=target_dpi, width=width, height=height, padding=24,
         include_chrome=True, bounds=bounds, raster_bindings=bindings or None,
@@ -437,7 +492,7 @@ def _compile_single_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
 def _export_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
                 manifest: Dict[str, Any], has_raster_layers: bool,
                 synthetic_extent: Any = None,
-                recheck: Any = None) -> Dict[str, Any]:
+                recheck: Any = None, symbol_assets: Any = None) -> Dict[str, Any]:
     if not has_raster_layers:
         raise MixedMapExportError(
             "EXPORT_UNSUPPORTED",
@@ -446,7 +501,8 @@ def _export_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
         )
     # review P1-4：编译器不读 layout.frames extent —— 合成范围必须显式
     # 作为 bounds 传入（否则纯栅格导出退化为 -180..180 世界视图）。
-    comp = _compile_single_svg(doc, bindings, bounds=synthetic_extent)
+    comp = _compile_single_svg(doc, bindings, bounds=synthetic_extent,
+                               symbol_assets=symbol_assets)
     svg = comp.svg
     manifest["raster_layers"] = [dict(p) for p in (comp.raster_placements or [])]
     manifest["renderer"] = {
@@ -468,7 +524,7 @@ def _export_svg(doc: Dict[str, Any], bindings: Dict[str, Any],
 def _export_png(doc: Dict[str, Any], bindings: Dict[str, Any],
                 manifest: Dict[str, Any], has_raster_layers: bool,
                 synthetic_extent: Any = None,
-                recheck: Any = None) -> Dict[str, Any]:
+                recheck: Any = None, symbol_assets: Any = None) -> Dict[str, Any]:
     import subprocess
     import tempfile
     from pathlib import Path
@@ -488,12 +544,17 @@ def _export_png(doc: Dict[str, Any], bindings: Dict[str, Any],
             status_code=503,
         )
     comp = _compile_single_svg(doc, bindings, width=1600, height=1100,
-                               bounds=synthetic_extent)
+                               bounds=synthetic_extent,
+                               symbol_assets=symbol_assets)
     with tempfile.TemporaryDirectory(prefix="g26-png-") as tmp:
         out = Path(tmp) / "out.png"
+        # G40：librsvg CLI 缩放与内在尺寸不一致时丢 pattern 内容（实证
+        # 回归）—— 含纹理时改写根 width/height 后按内在尺寸渲染。
+        from app.lib.cartography.symbol_asset_svg import prepare_svg_for_rasterize
+        _svg_for_raster = prepare_svg_for_rasterize(comp.svg, 1600, 1100)
         proc = subprocess.run(
             [rsvg, "-w", "1600", "-h", "1100", "-o", str(out), "--keep-aspect-ratio", "-"],
-            input=comp.svg.encode("utf-8"), capture_output=True, timeout=120)
+            input=_svg_for_raster.encode("utf-8"), capture_output=True, timeout=120)
         if proc.returncode != 0 or not out.is_file():
             raise MixedMapExportError(
                 "RENDER_FAILED",

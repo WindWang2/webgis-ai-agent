@@ -1135,6 +1135,8 @@ app.include_router(raster_authoring_routes.router, prefix="/api/v1", tags=["栅�
 # G33：矢量专题表达作者工作台（独立 router；对齐 raster_authoring 先例）
 from app.api.routes import thematic_authoring as thematic_authoring_routes  # noqa: E402
 app.include_router(thematic_authoring_routes.router, prefix="/api/v1", tags=["专题表达工作台"])
+from app.api.routes import cartographic_assets as cartographic_assets_routes  # noqa: E402
+app.include_router(cartographic_assets_routes.router, prefix="/api/v1", tags=["制图符号资产工作台（G40）"])
 # G34：专业纸面版式与图册编排工作台（独立 router；UI 与 Pi 共用 service）
 from app.api.routes import print_layout as print_layout_routes  # noqa: E402
 app.include_router(print_layout_routes.router, prefix="/api/v1", tags=["纸面版式工作台"])

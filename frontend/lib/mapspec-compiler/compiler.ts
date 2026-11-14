@@ -69,6 +69,14 @@ import {
 // #1747：heatmap 表达窗子层的安全 paint 与 live runtime 单一实现
 // （此前只发 heatmap-radius，原生 heatmap-color 色带在导出里掉落）。
 import { heatmapOnlyPaint } from "./heatmap-paint";
+import {
+  normalizePointParams,
+  normalizeTextureParams,
+  pointImageId,
+  patternImageId,
+  type SymbolAssetBinding,
+} from "@/lib/cartographic-assets/contracts";
+import { categoryIconExpression } from "@/lib/cartographic-assets/live-project";
 
 /**
  * AC-06：headless 编译器可识别的源类型白名单。白名单外的类型此前静默降级
@@ -409,6 +417,94 @@ function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
   };
 }
 
+// ─── G40：符号资产静态投影（无 IO —— 只算 image 引用与层补丁） ─────────
+
+function g4_detail(s: string): string {
+  return s.slice(0, 160);
+}
+
+interface G40StaticProjection {
+  typeOverride?: "symbol";
+  layout: Record<string, unknown>;
+  paint: Record<string, unknown>;
+  removePaintKeys: string[];
+  imageId?: string;
+  mainFilterExtra?: unknown;
+  sublayers?: Array<{ suffix: string; filter: unknown; imageId: string }>;
+  disclosures: string[];
+  failure?: { code: string; message: string };
+}
+
+export function projectBindingStatic(
+  binding: Record<string, any>, _layerId: string,
+): G40StaticProjection {
+  if (binding.declutter !== undefined && binding.declutter !== false) {
+    return {
+      layout: {}, paint: {}, removePaintKeys: [], disclosures: [],
+      failure: {
+        code: "UNSUPPORTED_DECLUTTER",
+        message: "declutter 组合未实现（默认 icon-allow-overlap=true 如实重叠）",
+      },
+    };
+  }
+  const disclosures: string[] = [];
+  if (binding.kind === "point_symbol") {
+    const params = normalizePointParams(binding.params ?? {});
+    const mainId = pointImageId(binding.content_digest, params as unknown as Record<string, unknown>);
+    const cb = binding.category_binding;
+    return {
+      typeOverride: "symbol",
+      layout: {
+        "icon-image": cb ? categoryIconExpression(cb, binding as unknown as SymbolAssetBinding) : mainId,
+        "icon-anchor": params.anchor,
+        "icon-rotate": params.rotation_deg,
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+        "icon-rotation-alignment": "viewport",
+      },
+      paint: params.opacity < 1 ? { "icon-opacity": params.opacity } : {},
+      removePaintKeys: ["circle-color", "circle-radius", "circle-opacity",
+                        "circle-stroke-color", "circle-stroke-width"],
+      imageId: mainId,
+      disclosures,
+    };
+  }
+  // area_texture
+  const params = normalizeTextureParams(binding.params ?? {});
+  const mainId = patternImageId(binding.content_digest, params as unknown as Record<string, unknown>);
+  const cb = binding.category_binding;
+  const sublayers: Array<{ suffix: string; filter: unknown; imageId: string }> = [];
+  let mainPatternId = mainId;
+  let mainFilterExtra: unknown;
+  if (cb && Array.isArray(cb.map) && cb.map.length > 0) {
+    const rules = cb.map.slice(0, 16);
+    if (cb.map.length > 16) {
+      disclosures.push(`类别纹理规则 ${cb.map.length} 条超子层帽 16，超出部分不编译（披露）`);
+    }
+    for (const rule of rules) {
+      const rid = patternImageId(rule.content_digest, (rule.params ?? {}) as Record<string, unknown>);
+      sublayers.push({
+        suffix: `__texcat_${String(rule.key).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+        filter: ["==", ["get", cb.field], rule.key],
+        imageId: rid,
+      });
+    }
+    mainFilterExtra = ["!", ["in", ["get", cb.field], ["literal", cb.map.map((r: any) => r.key)]]];
+    if (cb.other_mode === "fallback_asset" && cb.other_content_digest) {
+      mainPatternId = patternImageId(cb.other_content_digest, (cb.other_params ?? {}) as Record<string, unknown>);
+    }
+  }
+  return {
+    layout: {},
+    paint: { "fill-pattern": mainPatternId },
+    removePaintKeys: ["fill-color", "fill-translate", "fill-translate-anchor"],
+    imageId: mainId,
+    mainFilterExtra,
+    sublayers,
+    disclosures,
+  };
+}
+
 export function compileMapSpec(
   spec: MapSpec,
   profile?: SpatialMetaProfile
@@ -616,6 +712,7 @@ export function compileMapSpec(
   }
 
   const compiledLayers: CompiledLayer[] = [];
+  const symbolAssetRefs: Array<{ layerId: string; imageId: string; kind: string }> = [];
   const legends: LegendDef[] = [];
   let labelLayerCount = 0;
   // review P2-3：layout 透传存活的 text-field 也需要 style 级 glyphs。
@@ -640,7 +737,7 @@ export function compileMapSpec(
     const planMainMode = planEffective
       ? (rawWindowsOf(repPlan!)[0] ?? repPlan!.windows[0]).mode
       : null;
-    const layerType = planEffective && planMainMode === "visual_heatmap" && layer.type === "circle"
+    let layerType = planEffective && planMainMode === "visual_heatmap" && layer.type === "circle"
       ? "heatmap"
       : layer.type === "circle" && presentation?.mode === "heatmap" ? "heatmap" : layer.type;
     // C11 v1.5：显隐/zoom 单一裁决面（与 live 路径 addLayerSafe 同源）。
@@ -676,6 +773,54 @@ export function compileMapSpec(
     // encoder's layer name in mvt.py).
     if (srcDef?.type === "vector") {
       maplibreLayer["source-layer"] = layer.sourceLayer ?? "data";
+    }
+    // G40：符号资产绑定投影（与 live MapSpecRuntime 同一合同：点符号 →
+    // symbol/icon-*；面纹理 → fill-pattern；碰撞合同 icon-allow-overlap）。
+    // 静态编译不解析资产内容 —— 输出 image 引用 + 收集到
+    // compiledStyle.symbolAssets 清单（消费方负责注册；与后端 SVG 编译
+    // 的 symbol_assets 注入面对齐）。
+    const g40Binding = (layer as any).symbol_asset;
+    let g40PaintExtra: Record<string, unknown> = {};
+    let g40LayoutExtra: Record<string, unknown> = {};
+    let g40PaintRemove: string[] = [];
+    let g40MainFilterExtra: unknown;
+    const g40SublayerDefs: any[] = [];
+    if (g40Binding && typeof g40Binding === "object") {
+      const g40 = projectBindingStatic(g40Binding as Record<string, any>, layer.id);
+      if (g40.failure) {
+        recordSymbolLawEvidence("symbol-asset-unavailable", {
+          reason: g40.failure.code,
+          detail: g4_detail(g40.failure.message),
+        }, layer.id);
+        continue;
+      }
+      if (g40.typeOverride) {
+        maplibreLayer.type = g40.typeOverride;
+        layerType = g40.typeOverride;
+      }
+      g40LayoutExtra = g40.layout;
+      g40PaintExtra = g40.paint;
+      g40PaintRemove = g40.removePaintKeys;
+      g40MainFilterExtra = g40.mainFilterExtra;
+      for (const sub of g40.sublayers ?? []) {
+        g40SublayerDefs.push({
+          id: `${layer.id}${sub.suffix}`,
+          type: "fill",
+          source: layer.source,
+          filter: sub.filter,
+          paint: { "fill-pattern": sub.imageId },
+          layout: maplibreLayer.layout,
+        });
+        symbolAssetRefs.push({ layerId: layer.id, imageId: sub.imageId, kind: "area_texture" });
+      }
+      if (g40.imageId) {
+        symbolAssetRefs.push({
+          layerId: layer.id, imageId: g40.imageId, kind: g40Binding.kind,
+        });
+      }
+      for (const note of g40.disclosures) {
+        recordSymbolLawEvidence("symbol-asset-disclosure", { detail: g4_detail(note) }, layer.id);
+      }
     }
 
     // C11 v1.5 结构门 ∩ v1.6 表达窗门（合成的空窗 = 层在该表达下不
@@ -1207,7 +1352,25 @@ export function compileMapSpec(
       }
     }
 
+    // G40：绑定 paint/layout/filter 补丁（在全部既有 paint 分支后应用 ——
+    // 资产表达优先于 canonical circle/fill 键，键删除防幽灵残留）。
+    if (g40Binding && typeof g40Binding === "object") {
+      for (const key of g40PaintRemove) delete maplibreLayer.paint[key];
+      Object.assign(maplibreLayer.paint, g40PaintExtra);
+      Object.assign(maplibreLayer.layout, g40LayoutExtra);
+      if (g40MainFilterExtra !== undefined) {
+        maplibreLayer.filter = (maplibreLayer.filter
+          ? ["all", maplibreLayer.filter, g40MainFilterExtra]
+          : g40MainFilterExtra) as typeof maplibreLayer.filter;
+      }
+    }
     compiledLayers.push(maplibreLayer);
+    for (const sub of g40SublayerDefs) {
+      const subAny = sub as any;
+      if (maplibreLayer.minzoom !== undefined) subAny.minzoom = maplibreLayer.minzoom;
+      if (maplibreLayer.maxzoom !== undefined) subAny.maxzoom = maplibreLayer.maxzoom;
+      compiledLayers.push(sub);
+    }
 
     const legend = extractLegendForLayer(layer);
     if (legend) {
@@ -1324,6 +1487,9 @@ export function compileMapSpec(
     html,
     legend: legends,
     report,
+    ...(symbolAssetRefs.length
+      ? { symbolAssets: symbolAssetRefs }
+      : {}),
   };
 }
 

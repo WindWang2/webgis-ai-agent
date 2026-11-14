@@ -22,6 +22,7 @@ import { RasterAuthoringPanel } from '@/components/hud/raster-authoring-panel';
 import { ScalePortrayalPanel } from '@/components/hud/scale-portrayal-panel';
 // G33：矢量专题表达作者工作台（局部挂载；对齐 G20 栅格工作台先例）
 import { ThematicAuthoringPanel } from '@/components/hud/thematic-authoring-panel';
+import SymbolAssetPanel from '@/components/hud/symbol-asset-panel';
 
 /** 渲染模式 id → 消息键（spec 层型语义见 specPaintPatchFrom）。 */
 const MODE_LABELS: Record<string, string> = {
@@ -109,6 +110,13 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
     if (!thematicType) return null;
     if (!['fill', 'circle', 'line'].includes(String(hit.type))) return null;
     return { layerId: String(hit.id) };
+  })();
+
+  // G40：点（circle）/面（fill）矢量层挂符号资产面板（点符号/面纹理绑定）。
+  const symbolAssetLayer = (() => {
+    if (!specBacked || !specLayerKey) return null;
+    const lt = String(layer?.type ?? '');
+    return (lt === 'circle' || lt === 'fill') ? { layerId: specLayerKey } : null;
   })();
 
   const specPaintPatchFrom = (patch: Partial<LayerStyle>): Record<string, unknown> => {
@@ -287,6 +295,10 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
               <ThematicAuthoringPanel layerId={thematicVectorLayer.layerId} />
             )}
           </div>
+        )}
+        {/* G40：制图符号资产（点符号/面纹理 → 预览 → 单笔 CAS 绑定） */}
+        {symbolAssetLayer && (
+          <SymbolAssetPanel layerId={symbolAssetLayer.layerId} />
         )}
         {/* Name */}
         <div>

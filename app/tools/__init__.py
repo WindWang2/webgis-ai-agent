@@ -155,6 +155,8 @@ _TOOL_MODULES = [
     ("app.tools.print_layout_tools", "register_print_layout_tools"),
     # G35：时序地图动画媒体交付（能力/计划/提交/查询/取消/成果；独立模块防并发冲突）
     ("app.tools.temporal_media_tools", "register_temporal_media_tools"),
+    # G40：制图符号资产工作台（目录/导入/绑定预览/应用/解绑；独立模块防并发冲突）
+    ("app.tools.cartographic_asset_tools", "register_cartographic_asset_tools"),
 ]
 
 

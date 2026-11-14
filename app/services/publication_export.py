@@ -245,6 +245,7 @@ def compile_publication_page(
     max_labels: int,
     svg_budget_remaining: int,
     raster_bindings: Any = None,
+    symbol_assets: Any = None,
 ) -> PageCompileOutcome:
     """单页 → :class:`PageCompileOutcome`；失败抛 :class:`PageCompileFailure`。
 
@@ -270,6 +271,7 @@ def compile_publication_page(
             doc, page, pub_ir, target_dpi=target_dpi, max_labels=max_labels,
             svg_budget_remaining=svg_budget_remaining,
             raster_bindings=raster_bindings,
+            symbol_assets=symbol_assets,
         )
     # G34：作者计划从 PageLayoutIR 真实下传到 SVG 编译器（不是只填 IR）。
     _g34_plan = getattr(page, "print_layout", None) or {}
@@ -313,6 +315,7 @@ def compile_publication_page(
             max_features=min(_effective_max_features(frame_doc), EXPORT_MAX_FEATURES),
             timeout_ms=min(resolve_spec_timeout_ms(frame_doc), 30000.0),
             raster_bindings=raster_bindings,
+            symbol_assets=symbol_assets,
             **_g34_kwargs,
         )
     except Exception as ex:  # noqa: BLE001 — 同步链既有 skip 政策的同一事实源
@@ -764,6 +767,7 @@ def _compile_product_page(
     max_labels: int,
     svg_budget_remaining: int,
     raster_bindings: Any = None,
+    symbol_assets: Any = None,
 ) -> PageCompileOutcome:
     """G15 产品页编译：逐槽有效文档 → 槽 SVG → 单页组合。
 
@@ -819,6 +823,7 @@ def _compile_product_page(
                                  EXPORT_MAX_FEATURES),
                 timeout_ms=min(resolve_spec_timeout_ms(res.document), 30000.0),
                 raster_bindings=raster_bindings,
+            symbol_assets=symbol_assets,
             )
         except Exception as ex:  # noqa: BLE001 — 槽失败 = 页失败（typed 证据）
             raise PageCompileFailure(
@@ -1264,6 +1269,7 @@ def render_publication_pdf(
     atlas: Optional[AtlasPolicy] = None,
     page_profile: Optional[str] = None,
     raster_bindings: Any = None,
+    symbol_assets: Any = None,
 ) -> PublicationPdfResult:
     """Render a publication and observe successful and failed export duration.
 
@@ -1280,7 +1286,8 @@ def render_publication_pdf(
     try:
         return _render_publication_pdf(payload, title=title, max_frames=max_frames,
             max_labels=max_labels, target_dpi=target_dpi, atlas=atlas,
-            page_profile=page_profile, raster_bindings=raster_bindings)
+            page_profile=page_profile, raster_bindings=raster_bindings,
+            symbol_assets=symbol_assets)
     finally:
         observe_export_duration(time.monotonic() - started)
 
@@ -1391,6 +1398,7 @@ def _render_publication_pdf(
     atlas: Optional[AtlasPolicy] = None,
     page_profile: Optional[str] = None,
     raster_bindings: Any = None,
+    symbol_assets: Any = None,
 ) -> PublicationPdfResult:
     """publication PDF 主入口（同步；CPU/IO 由调用方置于工作线程）。
 
@@ -1527,6 +1535,7 @@ def _render_publication_pdf(
                 max_labels=max_labels,
                 svg_budget_remaining=_MAX_TOTAL_SVG_BYTES - _accumulated,
                 raster_bindings=raster_bindings,
+            symbol_assets=symbol_assets,
             )
         except PageCompileFailure as pcf:  # 单帧失败不中断 atlas（frame skip 政策）
             logger.warning("publication pdf: page %s compile failed: %s",

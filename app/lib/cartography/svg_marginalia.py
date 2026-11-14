@@ -311,12 +311,29 @@ def render_legend_box_authored(
             ex = x0 + size * 0.5 + col * (col_w + col_gap)
             ey = first_row_y + row * row_units
             ecolor = str(e.get("color") or "#888888")
-            parts.append(
-                f'<rect x="{_fmt(ex)}" y="{_fmt(ey - swatch * 0.8)}" '
-                f'width="{_fmt(swatch)}" height="{_fmt(swatch * 0.8)}" '
-                f'fill="{escape_svg_text(ecolor)}" rx="1" '
-                f'data-g34-entry="{start + idx}" />'
-            )
+            _sw = e.get("swatch") if isinstance(e.get("swatch"), dict) else None
+            _sw_svg = str(_sw.get("swatch_svg") or "") if _sw else ""
+            if _sw_svg:
+                # G40：同语义资产 swatch（规范形 + 实例参数；缩放进
+                # swatch 盒（0.8 纵横比同 rect 基线），描边框便于浅色
+                # 纹理辨识）。swatch_svg 本地盒 24×19.2。
+                _sw_scale = swatch / 24.0 if swatch > 0 else 1.0
+                parts.append(
+                    f'<g transform="translate({_fmt(ex)} {_fmt(ey - swatch * 0.8)}) '
+                    f'scale({_fmt(_sw_scale)})" '
+                    f'data-g34-entry="{start + idx}" data-g40-swatch="1">'
+                    f'{_sw_svg}'
+                    f'<rect x="0" y="0" width="{_fmt(24.0)}" '
+                    f'height="{_fmt(19.2)}" fill="none" '
+                    f'stroke="#cbd5e1" stroke-width="{_fmt(0.6 / max(_sw_scale, 0.01))}" rx="1" /></g>'
+                )
+            else:
+                parts.append(
+                    f'<rect x="{_fmt(ex)}" y="{_fmt(ey - swatch * 0.8)}" '
+                    f'width="{_fmt(swatch)}" height="{_fmt(swatch * 0.8)}" '
+                    f'fill="{escape_svg_text(ecolor)}" rx="1" '
+                    f'data-g34-entry="{start + idx}" />'
+                )
             parts.append(
                 f'<text x="{_fmt(ex + swatch * 1.6)}" y="{_fmt(ey)}" '
                 f'font-family="{escape_svg_text(family)}" font-size="{_fmt(size * 0.92)}" '

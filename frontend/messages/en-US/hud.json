@@ -235,5 +235,27 @@
   },
   "layerStyle": {
     "frameOverrideFailed": "Frame edit ({scope}) failed; value kept"
+  },
+  "symbolAssets": {
+    "title": "Symbol assets",
+    "selectAsset": "Select asset…",
+    "sizePx": "Size (px)",
+    "rotation": "Rotation (°)",
+    "anchor": "Anchor",
+    "spacing": "Spacing (px)",
+    "angle": "Angle (°)",
+    "strokeW": "Stroke (px)",
+    "fgColor": "Foreground",
+    "bgColor": "Background",
+    "bgTransparent": "Transparent background",
+    "preview": "Preview",
+    "apply": "Apply",
+    "unbind": "Unbind",
+    "applied": "Applied (revision {revision})",
+    "unbound": "Unbound; previous style restored",
+    "current": "Current binding: {id} @r{rev}",
+    "previewReady": "Preview ready (not committed)",
+    "swatchAria": "Asset swatch preview",
+    "ineligible": "Layer type ({type}) does not support symbol assets yet"
   }
 }

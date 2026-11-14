@@ -2018,6 +2018,8 @@ export function MapPanel({
             legendSpec: l.legend_spec!,
             onFilterChange: legendFilterHandlers[l.id],
             flashing: focusLayerId === l.id,
+            symbolAsset: (l as { symbol_asset?: Record<string, unknown> })
+              .symbol_asset ?? null,
           }))}
         />
       )}

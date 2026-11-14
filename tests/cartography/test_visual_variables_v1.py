@@ -62,10 +62,14 @@ class TestChannelFitMatrix:
         assert fit.reason  # 关键拒绝格有制图学理由
 
     def test_runtime_unsupported_channels_not_allocatable(self):
-        # 任务书口径：texture 若 runtime 支持；现状不支持 → grammar 永不分配
-        assert CHANNEL_RUNTIME_STATUS["texture"] == "unsupported"
+        # G40（2026-11）：texture 由 unsupported 升 partial —— 受控资产绑定
+        # 通道已在 live+SVG/PNG/PDF 实证（planning/G40）；自由纹理/CVD 语义
+        # 未成契约，grammar 分配门只认 supported —— partial 仍不可分配。
+        assert CHANNEL_RUNTIME_STATUS["texture"] == "partial"
         assert not allocatable("texture")
         assert not allocatable("orientation")  # partial → 不可分配
+        assert CHANNEL_RUNTIME_STATUS["shape"] == "partial"  # 图标枚举面（G40 资产）
+        assert not allocatable("shape")
         assert allocatable("hue") and allocatable("opacity")
 
     def test_nominal_prefers_hue_shape_rejects_ordered_channels(self):

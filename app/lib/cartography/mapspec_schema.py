@@ -718,6 +718,61 @@ class MapSpecLayerRepresentation(_SpecModel):
     windows: List[MapSpecRepresentationWindow] = Field(default_factory=list)
 
 
+class MapSpecLayerSymbolAssetCategoryRule(_SpecModel):
+    """类别 → 资产映射的单条规则（typed key；S02：不字符串化合并）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: Union[StrictStr, StrictInt, StrictFloat, StrictBool]
+    asset_id: StrictStr
+    revision: int = Field(ge=1)
+    content_digest: StrictStr = Field(max_length=96)
+    params: Optional[Dict[str, Any]] = None
+
+
+class MapSpecLayerSymbolAssetCategoryBinding(_SpecModel):
+    """类别 → 资产映射（可选；缺省/未知类别的处置显式声明）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: StrictStr
+    #: 类别键的 typed 声明（与数据 dtype 对齐；number/string/bool 不混）
+    key_type: Literal["number", "string", "bool"] = "string"
+    map: List[MapSpecLayerSymbolAssetCategoryRule] = Field(
+        default_factory=list, max_length=64)
+    #: 未匹配类别的显式规则：fallback_asset（other_asset 引用）或
+    #: keep_current（保留统一绑定资产/不替换）。缺省 = keep_current。
+    other_mode: Literal["fallback_asset", "keep_current"] = "keep_current"
+    other_asset: Optional[StrictStr] = None
+
+
+class MapSpecLayerSymbolAsset(_SpecModel):
+    """G40 —— 图层制图符号资产绑定块（``symbol_asset.v1``，additive）。
+
+    身份 = asset_id + revision + content_digest（钉版本；资产名只是显示名）。
+    绑定不携带二进制/URL；渲染端经授权 resolver 解析规范形
+    （app/lib/cartography/symbol_asset.py）。参数 typed 有界（normalize_*）；
+    未知字段拒绝（extra=forbid）；旧文档无此键行为不变。
+
+    点符号：层表达投影为 MapLibre symbol（icon-*，viewport 对齐旋转）；
+    面纹理：fill-pattern（背景色合同在实例参数 bg_color）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    asset_id: StrictStr = Field(max_length=80)
+    revision: int = Field(ge=1)
+    content_digest: StrictStr = Field(max_length=96)
+    kind: Literal["point_symbol", "area_texture"]
+    params: Optional[Dict[str, Any]] = None
+    category_binding: Optional[MapSpecLayerSymbolAssetCategoryBinding] = None
+    #: 应用溯源（origin/actor/applied_at；审计面，不参与渲染）
+    applied_by: Optional[Dict[str, Any]] = None
+    #: 解绑恢复快照（本域应用前的 paint/layout 键有界快照；undo/unbind 用）
+    prev_paint_snapshot: Optional[Dict[str, Any]] = None
+
+
 class MapSpecLayer(_SpecModel):
     """图层。paint/layout/filter 是 MapLibre 开放面（Dict[Any]）；
     ``legend_spec`` 是工具层写入的专题图例标记（开放 dict，推导见
@@ -774,6 +829,10 @@ class MapSpecLayer(_SpecModel):
     #: 数据身份在 ``NumericRasterMapSpecSource`` 上 —— 同一 ref 的两个图层可
     #: 携带不同 style_id 而互不串色。旧 PNG 图层缺席该字段，行为不变。
     raster_style: Optional[RasterExpressionSpec] = None
+    #: G40 additive：制图符号资产绑定（点符号/面纹理；钉版本 + typed 参数）。
+    #: 缺席 = 层表达走既有 paint 路径，行为不变（schema 只承载，权威形状 =
+    #: app/lib/cartography/symbol_asset.py 的规范形 + 归一化器）。
+    symbol_asset: Optional[MapSpecLayerSymbolAsset] = None
 
 
 class MapThresholds(_SpecModel):
@@ -1460,6 +1519,10 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("MapSpecLayerVisibility", MapSpecLayerVisibility),
     ("MapSpecLayerBivariate", MapSpecLayerBivariate),
     ("MapSpecLayerDataBinding", MapSpecLayerDataBinding),
+    # G40：制图符号资产绑定契约类型（symbol_asset.v1）。
+    ("MapSpecLayerSymbolAssetCategoryRule", MapSpecLayerSymbolAssetCategoryRule),
+    ("MapSpecLayerSymbolAssetCategoryBinding", MapSpecLayerSymbolAssetCategoryBinding),
+    ("MapSpecLayerSymbolAsset", MapSpecLayerSymbolAsset),
     ("MapSpecRepresentationWindow", MapSpecRepresentationWindow),
     ("MapSpecLayerRepresentation", MapSpecLayerRepresentation),
     ("MapSpecLayerLabel", MapSpecLayerLabel),

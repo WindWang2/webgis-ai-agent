@@ -221,6 +221,7 @@ export interface MapSpecLayer {
   representation?: MapSpecLayerRepresentation;
   scale_profile?: Record<string, unknown>;
   raster_style?: RasterExpressionSpec;
+  symbol_asset?: MapSpecLayerSymbolAsset;
 }
 
 export interface MapSpecLayerExtrusion {
@@ -255,6 +256,34 @@ export interface MapSpecLayerDataBinding {
   field: string;
   field_type?: "number" | "string" | "boolean" | "date";
   class_field?: string;
+}
+
+export interface MapSpecLayerSymbolAssetCategoryRule {
+  key: boolean | number | string;
+  asset_id: string;
+  revision: number;
+  content_digest: string;
+  params?: Record<string, unknown>;
+}
+
+export interface MapSpecLayerSymbolAssetCategoryBinding {
+  field: string;
+  key_type?: "number" | "string" | "bool";
+  map?: MapSpecLayerSymbolAssetCategoryRule[];
+  other_mode?: "fallback_asset" | "keep_current";
+  other_asset?: string;
+}
+
+export interface MapSpecLayerSymbolAsset {
+  schema_version?: 1;
+  asset_id: string;
+  revision: number;
+  content_digest: string;
+  kind: "point_symbol" | "area_texture";
+  params?: Record<string, unknown>;
+  category_binding?: MapSpecLayerSymbolAssetCategoryBinding;
+  applied_by?: Record<string, unknown>;
+  prev_paint_snapshot?: Record<string, unknown>;
 }
 
 export interface MapSpecRepresentationWindow {

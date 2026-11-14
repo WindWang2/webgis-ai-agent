@@ -12,9 +12,11 @@ import { devOnly } from "@/lib/utils/logger";
 interface Props {
   spec: LegendSpec | null | undefined;
   onFilterChange?: (visibleBreaks: number[][]) => void;
+  /** G40：同层符号资产绑定（类别/统一 swatch 同语义消费；缺席不变） */
+  symbolAsset?: Record<string, unknown> | null;
 }
 
-export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilterChange }: Props) {
+export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilterChange, symbolAsset }: Props) {
   if (!spec) return null;
   switch (spec.type) {
     case 'graduated':
@@ -22,7 +24,7 @@ export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilte
     case 'continuous':
       return <ContinuousLegend spec={spec} />;
     case 'categorical':
-      return <CategoricalLegend spec={spec} />;
+      return <CategoricalLegend spec={spec} symbolAsset={symbolAsset} />;
     case 'divergent':
       return <DivergentLegend spec={spec} />;
     case 'bivariate':

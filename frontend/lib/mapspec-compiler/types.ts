@@ -58,6 +58,12 @@ export interface LegendDef {
   items: LegendItem[];
 }
 
+export interface SymbolAssetRef {
+  layerId: string;
+  imageId: string;
+  kind: string;
+}
+
 export interface MapSpecCompileResult {
   /** 官方 StyleSpecification 的编译视图（C11：此前 `any` —— 编译产物形状
    * 漂移只能在 MapLibre addLayer 运行时暴露）。 */
@@ -65,4 +71,7 @@ export interface MapSpecCompileResult {
   html: string;
   legend: LegendDef[];
   report: CompileReport;
+  /** G40：绑定资产图像引用清单（icon-image/fill-pattern 引用的注册名；
+   * 静态消费方据此注册图像内容 —— 不进 style.json 本体）。 */
+  symbolAssets?: SymbolAssetRef[];
 }

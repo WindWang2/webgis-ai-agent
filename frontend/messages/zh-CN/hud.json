@@ -235,5 +235,27 @@
   },
   "layerStyle": {
     "frameOverrideFailed": "画幅编辑（{scope}）提交失败，已保持原值"
+  },
+  "symbolAssets": {
+    "title": "符号资产",
+    "selectAsset": "选择资产…",
+    "sizePx": "尺寸 (px)",
+    "rotation": "旋转 (°)",
+    "anchor": "锚点",
+    "spacing": "间距 (px)",
+    "angle": "角度 (°)",
+    "strokeW": "线宽 (px)",
+    "fgColor": "前景色",
+    "bgColor": "背景色",
+    "bgTransparent": "透明背景",
+    "preview": "预览",
+    "apply": "应用",
+    "unbind": "解除绑定",
+    "applied": "已应用（修订 {revision}）",
+    "unbound": "已解除绑定并恢复原样式",
+    "current": "当前绑定：{id} @r{rev}",
+    "previewReady": "预览就绪（未提交）",
+    "swatchAria": "资产样式预览",
+    "ineligible": "该层型（{type}）暂不支持符号资产绑定"
   }
 }

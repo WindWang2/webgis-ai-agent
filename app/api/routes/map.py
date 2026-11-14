@@ -780,6 +780,11 @@ async def export_map_as_mixed(
             target_dpi=body.target_dpi if body.target_dpi is not None else 300,
             partial_policy=body.partial_policy,
             title=body.title or "",
+            asset_identity={
+                "user_id": _user.get("user_id") or None,
+                "org_id": _user.get("org_id"),
+                "role": _user.get("role"),
+            } if isinstance(_user, dict) else None,
         )
     except MixedMapExportError as exc:
         raise HTTPException(
