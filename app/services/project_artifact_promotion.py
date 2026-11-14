@@ -82,6 +82,27 @@ def _quota_checked_store(db, project_id, incoming, artifact_id, data):
             return decision, None
         return decision, stored
 
+
+def _quota_checked_json(db, project_id, incoming, artifact_id, content_key, blob):
+    """Check quota and write the JSON blob under the same project lock."""
+    from app.services.data_lifecycle.quota import check_quota
+
+    with _quota_lock(str(project_id or "")):
+        decision = check_quota(
+            db, project_id, incoming, artifact_id=artifact_id,
+        )
+        if not decision.allowed:
+            return decision, None
+        try:
+            location = materialize_blob(content_key, blob)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "[artifact_promotion] json materialization failed for %s",
+                artifact_id, exc_info=True,
+            )
+            return decision, None
+        return decision, location
+
 #: Content-addressed store root (relative paths resolve under DATA_DIR).
 _DEFAULT_STORE_DIRNAME = "project_artifacts"
 
@@ -559,9 +580,9 @@ async def promote_run_artifacts(
                 if content_key and get_filesystem_blob_store().exists(content_key)
                 else len(blob.encode("utf-8"))
             )
-            # round-1 review PERF MAJOR-1: sync DB 聚合 → worker 线程（同上）。
-            decision = await asyncio.to_thread(
-                check_quota, db, project_id, incoming, artifact_id=art.id
+            decision, location = await asyncio.to_thread(
+                _quota_checked_json, db, project_id, incoming, art.id,
+                content_key, blob,
             )
             if not decision.allowed:
                 quota_meta = decision.to_exception().to_metadata()
@@ -575,7 +596,6 @@ async def promote_run_artifacts(
                 entry["quota"] = quota_meta
                 report.append(entry)
                 continue
-            location = await asyncio.to_thread(materialize_blob, content_key, blob)
         summary = await asyncio.to_thread(_schema_summary, payload)
         if location and payload_digest:
             meta["content_status"] = "promoted"
