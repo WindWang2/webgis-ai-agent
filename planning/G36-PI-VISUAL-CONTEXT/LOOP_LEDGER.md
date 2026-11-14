@@ -38,9 +38,21 @@
   修复回归 5 例新增；全量复测通过（core 33/wiring 9/旅程 20 断言/回归 113）。
 - 复审：已交原 reviewer（进行中）。
 
-### R5（push + PR）
-- master 无漂移（origin/master 仍 = 127669273）。
-- 待：复审结论 → push → gh pr create
+### R5（push + PR，完成）
+- 复审终判：No blocking findings. Mergeable.（P1×4 独立复现验证）
+- master 无漂移（origin/master 仍 = 127669273）；兄弟 PR #2117（G37）
+  共享文件为加性接缝，PR 正文已标注。
+- push：zcode/g36-pi-visual-context-20261114T151654Z @ d191a817
+- **PR：https://github.com/WindWang2/webgis-ai-agent/pull/2118**
+  （+5641/−22，48 files，base=master@127669273）
+
+## 终态
+- 交付：三类视觉证据 → 当前 Pi 原生 ImageContent（prompt/steer/follow_up）
+  + 读图工具原生图像结果 + V33 撤权换代 + 持久化恢复 + 前端入口。
+- 验证：L1 33 / L2 9 / L3 真实 Pi 旅程 20 断言 / 回归 113 / 前端
+  tsc+vitest 78 + lint 全清 / pi_doctor 6 域。
+- 诚实未测：L4 浏览器 E2E（无 Playwright 栈）、生产 Docker 隔离包、
+  真实视觉模型识图质量。
 
 ## 决策追加
 - D5: 旅程 driver 用 USE_REDIS=0（进程内锁/内存会话态）——单进程语义等价，
