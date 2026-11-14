@@ -177,7 +177,7 @@ class VisualEvidenceRecord:
         """登记期不变量；违反即拒绝（不落半条记录）。"""
         if self.source_type not in SOURCE_TYPES:
             raise EvidenceRejected("unsupported_source_type")
-        if self.source_type in INTAKE_SOURCE_TYPES and self.source_type in MAP_SOURCE_TYPES:
+        if self.source_type in MAP_SOURCE_TYPES:
             # 地图类必须带 revision + viewport 身份（reference 不允许伪造）
             if self.mapspec_revision is None or self.mapspec_revision < 0:
                 raise EvidenceRejected(

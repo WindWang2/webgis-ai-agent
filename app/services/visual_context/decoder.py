@@ -176,16 +176,26 @@ def derive_model_image(
     has_alpha = bool(img.mode in ("RGBA", "LA", "PA") or
                      (img.mode == "P" and "transparency" in (img.info or {})))
     if has_alpha:
-        # 保留透明语义（参考图可能带透明底）；PNG 无损通道。
+        # 保留透明语义（参考图可能带透明底）；PNG 无损通道优先。
         out = img.convert("RGBA")
         buf = io.BytesIO()
         out.save(buf, format="PNG", optimize=True)
         data = buf.getvalue()
         if len(data) <= MAX_DERIVED_BYTES:
             return data, "image/png", out.size[0], out.size[1]
+        # review P2#11：PNG 超预算 → 白底摊平走 JPEG 阶梯（地图画布常为
+        # RGBA；摊平有损但可读性优先，观察面已如实标注 transparent_regions）。
+        flat = Image.new("RGB", out.size, (255, 255, 255))
+        flat.paste(out, mask=out.getchannel("A"))
+        for q in _JPEG_QUALITY_STEPS:
+            buf = io.BytesIO()
+            flat.save(buf, format="JPEG", quality=q, optimize=True)
+            data = buf.getvalue()
+            if len(data) <= MAX_DERIVED_BYTES:
+                return data, "image/jpeg", flat.size[0], flat.size[1]
         raise EvidenceRejected(
             "derived_oversized",
-            "透明图片派生体积超限，请裁剪或压缩后重试。",
+            "透明图片派生体积超限（已尝试摊平压缩），请缩小范围后重试。",
         )
     out = img.convert("RGB")
     for q in _JPEG_QUALITY_STEPS:

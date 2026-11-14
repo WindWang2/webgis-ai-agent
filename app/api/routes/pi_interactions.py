@@ -282,11 +282,15 @@ async def send_turn_message(
             )
         # G36（ADR-0291，V31）：运行中附图经同一 bridge 解析（能力门/
         # 归属/预算/台账与 prompt 路径同一裁决），原生 steer/follow_up
-        # images 参数送达。拒绝逐附件回执披露，不静默丢图。
+        # images 参数送达。拒绝逐附件回执披露，不静默丢图。在飞 turn 持
+        # turn 锁消费事件流 —— 此处**禁止中途换代**（发现失效历史只阻断
+        # 图片；换代由下一 turn 边界的预检执行），避免与活流竞争
+        # new_session/事件排空。
         payload: dict = {"message": req.message}
         if req.attachments:
             _img = await bridge._resolve_turn_images(
-                session_id, [a.model_dump() for a in req.attachments])
+                session_id, [a.model_dump() for a in req.attachments],
+                allow_regeneration=False)
             if _img["images"]:
                 payload["images"] = _img["images"]
             _attach_receipts = _img["receipts"]

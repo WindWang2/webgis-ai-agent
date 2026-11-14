@@ -501,7 +501,7 @@ async def test_sent_ledger_finds_revoked(vc_session):
     receipt = AttachmentReceipt(
         evidence_id=saved.evidence_id, source_type="map_viewport",
         status="sent", derived_sha256=saved.derived_sha256)
-    ledger.record(vc_session, [receipt], {})
+    ledger.record(vc_session, [receipt])
     assert await ledger.find_revoked(vc_session) == []
     # 撤销 → 下一 turn 复验发现失效 sha。
     await vc_store.revoke_evidence(vc_session, saved.evidence_id)
@@ -534,3 +534,131 @@ def test_extract_result_images_narrow():
     # 单结果 ≤1 图。
     two = [good, dict(good)]
     assert len(_extract_result_images({"result_images": two})) == 1
+
+
+# ── review 修复回归（P1#2/#3/#4、P2#10/#13）────────────────────────────
+
+def test_slim_event_result_excludes_result_images():
+    """P1#3：SSE step_result 绝不携带 base64。"""
+    from app.services.llm_result_formatter import slim_event_result
+
+    result = {
+        "status": "ok",
+        "summary": "证据已读",
+        "result_images": [{"type": "image", "data": "x" * 100, "mimeType": "image/png"}],
+    }
+    slim = slim_event_result(result)
+    assert "result_images" not in slim
+    assert slim["summary"] == "证据已读"
+
+
+async def test_cas_retry_does_not_double_release(vc_session, monkeypatch):
+    """P1#4：WATCH 重试重跑 mutate 时释放清单不重复（共享 blob 计数不双减）。"""
+    import app.services.session_state_atomic as atomic_mod
+    from app.services.session_state_atomic import atomic_update_state as real_atomic
+
+    # 同字节双证据（同会话共享 blob：refcount=2）。
+    data, _, w, h = _derived_pair(seed=81)
+    sha = _sha(data)
+    r1 = _map_record(vc_session, derived_sha256=sha, derived_size=len(data),
+                     width=w, height=h, mapspec_revision=1)
+    r2 = _map_record(vc_session, derived_sha256=sha, derived_size=len(data),
+                     width=w, height=h, mapspec_revision=2)
+    e1 = await _register(vc_session, r1, data)
+    e2 = await _register(vc_session, r2, data)
+
+    async def failing_once(store, session_id, keys, update):
+        # 跑一次 update 但不提交（模拟 WATCH 冲突的第一次尝试 —— 旧实现
+        # 在闭包累积 released 会重复两次）→ 重跑 → 提交。
+        snapshot = await store.get_map_state(session_id)
+        update(snapshot)
+        return await real_atomic(store, session_id, keys, update)
+
+    monkeypatch.setattr(atomic_mod, "atomic_update_state", failing_once)
+    await vc_store.revoke_evidence(vc_session, e1.evidence_id)
+    # 双证据共享 blob：撤一个后另一个仍可解析（计数 2→1 而非 2→0）。
+    got = await vc_store.resolve_evidence(
+        vc_session, e2.evidence_id, max_bytes=8 * 1024 * 1024)
+    assert got is not None and got[1] == data
+
+
+async def test_precheck_runs_without_attachments(vc_session):
+    """P1#2：无附件 turn 也执行 V33 预检（撤销后纯文本触发换代）。"""
+    from app.services.visual_context.resolver import (
+        AttachmentReceipt,
+        get_sent_image_ledger,
+    )
+
+    saved, _ = await _seed_attachment(vc_session, seed=91)
+    ledger = get_sent_image_ledger()  # bridge 使用进程级单例
+    ledger.bump(vc_session)  # 隔离：清掉其他测试可能留下的代际状态
+    ledger.record(vc_session, [AttachmentReceipt(
+        evidence_id=saved.evidence_id, status="sent",
+        derived_sha256=saved.derived_sha256)])
+    await vc_store.revoke_evidence(vc_session, saved.evidence_id)
+
+    class _Rpc:
+        new_sessions = 0
+
+        async def request(self, command, data=None):
+            if command == "new_session":
+                self.new_sessions += 1
+                return {"cancelled": False}
+            return {}
+
+    from app.agent_pi_bridge import PiBridge
+
+    bridge = PiBridge.__new__(PiBridge)
+
+    async def _drain():
+        return None
+
+    bridge._drain_stale_events = _drain
+    rpc = _Rpc()
+    bridge._rpc = rpc
+    bridge._vision_gate = None
+    outcome = await bridge._resolve_turn_images(vc_session, None)
+    assert outcome["images"] == []
+    assert outcome["receipts"] == []
+    assert rpc.new_sessions == 1  # 纯文本 turn 同样换代
+
+
+async def test_find_revoked_unavailable_index_returns_none(vc_session, monkeypatch):
+    """P2#10：索引瞬态不可用 → None（阻断图片），不是全部已撤（不换代）。"""
+    from app.services.visual_context import store as store_mod
+    from app.services.visual_context.resolver import SentImageLedger
+
+    async def boom(_sid):
+        raise RuntimeError("storage down")
+
+    from app.services.visual_context.resolver import AttachmentReceipt
+
+    saved, _ = await _seed_attachment(vc_session, seed=93)
+    ledger = SentImageLedger()
+    ledger.record(vc_session, [AttachmentReceipt(
+        evidence_id=saved.evidence_id, status="sent",
+        derived_sha256=saved.derived_sha256)])
+    monkeypatch.setattr(store_mod, "load_evidence_index_strict", boom)
+    assert await ledger.find_revoked(vc_session) is None
+
+
+async def test_bound_records_never_truncated_by_cap(vc_session, monkeypatch):
+    """P2#13：总量帽只作用于 draft；bound/revoked 永不驱逐。"""
+    from app.services.visual_context.store import MAX_DRAFTS_PER_SESSION
+
+    data, _, w, h = _derived_pair(seed=92)
+    rec = _map_record(vc_session, derived_sha256=_sha(data),
+                      derived_size=len(data), width=w, height=h)
+    bound = await _register(vc_session, rec, data)
+    await vc_store.bind_evidence_to_message(vc_session, [bound.evidence_id], 7)
+    # 大量 draft 登记（超 12 上限若干倍；均在 512 内）。
+    for i in range(24):
+        d2, _, w2, h2 = _derived_pair(seed=120 + i)
+        r2 = _map_record(vc_session, derived_sha256=_sha(d2),
+                         derived_size=len(d2), width=w2, height=h2)
+        await _register(vc_session, r2, d2)
+    records = await vc_store.load_evidence_index(vc_session)
+    assert any(r.evidence_id == bound.evidence_id and r.state == "bound"
+               for r in records)
+    drafts = [r for r in records if r.state == "draft"]
+    assert len(drafts) <= MAX_DRAFTS_PER_SESSION

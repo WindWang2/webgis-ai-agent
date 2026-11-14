@@ -286,12 +286,14 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
           }}
           onConfirm={async (cropCss) => {
             // CSS px → 原图设备 px（V03 坐标链：modal 显示尺寸 → 原始画布）。
-            const crop: RegionRect = {
-              x: Math.max(0, Math.round(cropCss.x * regionCapture.capture.deviceWidth)),
-              y: Math.max(0, Math.round(cropCss.y * regionCapture.capture.deviceHeight)),
-              w: Math.max(1, Math.round(cropCss.w * regionCapture.capture.deviceWidth)),
-              h: Math.max(1, Math.round(cropCss.h * regionCapture.capture.deviceHeight)),
-            };
+            // review P3#16：取整后钳制到画布内（右/下边缘双重取整可越界）。
+            const W = regionCapture.capture.deviceWidth;
+            const H = regionCapture.capture.deviceHeight;
+            const x1 = Math.min(W - 1, Math.max(0, Math.round(cropCss.x * W)));
+            const y1 = Math.min(H - 1, Math.max(0, Math.round(cropCss.y * H)));
+            const x2 = Math.min(W, Math.max(x1 + 1, Math.round((cropCss.x + cropCss.w) * W)));
+            const y2 = Math.min(H, Math.max(y1 + 1, Math.round((cropCss.y + cropCss.h) * H)));
+            const crop: RegionRect = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
             const cap = regionCapture;
             URL.revokeObjectURL(cap.url);
             setRegionCapture(null);

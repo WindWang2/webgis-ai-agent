@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 #: 派生图预算（与 decoder.MAX_DERIVED_* 单一语义源；这里只投影给 Pi 目录）.
 RESIZE_MAX_SIDE = 1568
-RESIZE_MAX_BYTES = 1536 * 1024        # base64 编码后上限（vendor 语义）
+RESIZE_MAX_BYTES = 2048 * 1024        # vendor 语义 = base64 **编码后**上限
+                                      # （派生字节 1.5MiB × 4/3 ≈ 2MiB）
 JPEG_QUALITY = 82
 
 _ALLOWED_REASONS = (

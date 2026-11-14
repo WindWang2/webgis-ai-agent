@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Dict
+from typing import Any, Dict, Optional
 
 from app.services.gis_harness.visual_observation.blob_lock import blob_ref_lock
 
@@ -173,3 +173,67 @@ def read_evidence_bytes(sha256: str, session_id: str, max_bytes: int) -> bytes |
         logger.warning("[VisualContextRefs] evidence resolve failed sha=%s",
                        sha[:12], exc_info=True)
         return None
+
+
+def sweep_orphan_evidence_blobs(
+    max_age_s: int = DEFAULT_SWEEP_MAX_AGE_S,
+    *,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """清扫无引用且超龄的 vevimg/vevr（G36 blob lifecycle 生产接线）。
+
+    与 ``blob_refs.sweep_orphan_screenshots`` 同款语义（review P2#12）：
+    release 失败/异常终止窗口泄漏的证据字节由此兜底回收；只对
+    FilesystemBlobStore 有意义（对象存储适配器实现同名维护任务）。
+    """
+    import os
+    import time as _time
+
+    store = _blob_store()
+    root = getattr(store, "root", None)
+    if root is None:
+        return {"swept": 0, "scanned": 0, "reason": "non_filesystem_backend"}
+    ts = float(now if now is not None else _time.time())
+    swept = scanned = kept_refed = kept_young = 0
+    try:
+        shards = os.listdir(root)
+    except OSError:
+        return {"swept": 0, "scanned": 0, "reason": "root_unreadable"}
+    for shard in shards:
+        shard_dir = root / str(shard)
+        if not shard_dir.is_dir():
+            continue
+        try:
+            names = os.listdir(shard_dir)
+        except OSError:
+            continue
+        for name in names:
+            if not name.startswith(_IMG_PREFIX) or not name.endswith(".bin"):
+                continue
+            sha = name[len(_IMG_PREFIX):-len(".bin")]
+            scanned += 1
+            path = shard_dir / name
+            try:
+                age = ts - path.stat().st_mtime
+            except OSError:
+                continue
+            with blob_ref_lock(store, sha):
+                refs = _load_refs(sha)
+                if refs:
+                    kept_refed += 1
+                    continue
+                if age < max_age_s:
+                    kept_young += 1
+                    continue
+                try:
+                    store.delete_blob(ref_key_for(sha))
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    store.delete_blob(img_key_for(sha))
+                    swept += 1
+                except Exception:  # noqa: BLE001 — 单条失败继续
+                    logger.debug("[VisualContextRefs] sweep delete failed sha=%s",
+                                 sha[:12], exc_info=True)
+    return {"swept": swept, "scanned": scanned,
+            "kept_refed": kept_refed, "kept_young": kept_young}

@@ -182,7 +182,7 @@ def register_visual_context_tools(registry: ToolRegistry) -> None:
             return result
         # 原生图片内容：仅当当前模型确证支持视觉输入（与 prompt 附件同一
         # 能力门；能力未确证 → 文字摘要照常返回，不假装送图）。
-        allowed = await _model_vision_allowed()
+        allowed = await _model_vision_allowed(session_id)
         if allowed is not True:
             result["status"] = "model_not_vision"
             result["summary"] = summary + (
@@ -196,18 +196,24 @@ def register_visual_context_tools(registry: ToolRegistry) -> None:
         return result
 
 
-async def _model_vision_allowed() -> bool:
+async def _model_vision_allowed(session_id: str = "") -> bool:
     """当前 Pi worker 的模型是否确证支持图片输入（三重门，V10/V11）。
 
-    复用 prompt 附件路径的裁决面；无法核对（bridge 未起/无锚点）→ False。
+    按会话亲和路由到实际执行 turn 的 worker（多 worker 池下不同 worker
+    可能处于不同 spawn 代）；复用 prompt 附件路径的裁决面。无法核对
+    （bridge 未起/无锚点）→ False（fail-closed，元数据摘要照常返回）。
     """
     try:
-        from app.agent_pi_bridge import get_bridge_pool, pi_bridge
+        from app.agent_pi_bridge import get_bridge_pool
 
         pool = get_bridge_pool()
-        bridge = (pool.bridge_for_session("") if pool is not None and pool.size > 1
-                  else pi_bridge)
-        rpc = getattr(bridge, "_rpc", None)
+        if pool is None:
+            return False
+        # 池存在（工具 dispatch 随活 turn 运行）；按真实 session 路由，
+        # 单 worker 池等价 worker 0。
+        bridge = (pool.bridge_for_session(session_id) if session_id
+                  else pool.bridges[0])
+        rpc = bridge.rpc  # G29 受控访问面（不私有 reach-in）
         model_id = str(getattr(rpc, "spawn_model_id", "") or "")
         from app.services.visual_context.profile import (
             descriptor_vision_confirmed,

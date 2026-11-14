@@ -43,7 +43,13 @@ _REGISTRATION_WINDOW_KEY = "_visual_context_registrations"
 
 
 async def _update_index(session_id: str, mutate) -> Optional[List[VisualEvidenceRecord]]:
-    """CAS 原子更新索引；mutate(records) → (new_records, result)。"""
+    """CAS 原子更新索引；mutate(records) → (new_records, result)。
+
+    review P1#4：``atomic_update_state`` 在 Redis WATCH 冲突时**重跑** update
+    —— mutate 必须纯（无闭包累积副作用），且结果取**最后一次**（已提交）
+    尝试，不能取首次（stale）。mutate 的 result 里携带本次尝试的副作用
+    清单（每次尝试重建），提交方只用最终一份。
+    """
     from app.services.session_data import session_data_manager
     from app.services.session_state_atomic import atomic_update_state
 
@@ -54,6 +60,8 @@ async def _update_index(session_id: str, mutate) -> Optional[List[VisualEvidence
         records = [r for item in raw
                    if (r := VisualEvidenceRecord.from_dict(item)) is not None]
         new_records, result = mutate(records)
+        # 覆盖式记录：重试时旧尝试的结果整体作废（防 stale/重复副作用）。
+        result_holder.clear()
         result_holder.append((new_records, result))
         return {INDEX_KEY: [r.to_dict() for r in new_records]}
 
@@ -65,22 +73,32 @@ async def _update_index(session_id: str, mutate) -> Optional[List[VisualEvidence
 
 
 async def load_evidence_index(session_id: str) -> List[VisualEvidenceRecord]:
-    """读索引（畸形条目诚实跳过；异常 → 空索引）。"""
+    """读索引（畸形条目诚实跳过；**读取异常同样 → 空列表**，UI/解析面用）。
+
+    review P2#10：V33 台账复验必须区分「索引确为空」与「存储瞬态不可用」
+    ——后者把全部已送 sha 误判为已撤会毁灭性换代。复验路径改用
+    ``load_evidence_index_strict``（异常上抛 → 只阻断图片，不换代）。
+    """
+    try:
+        return await load_evidence_index_strict(session_id)
+    except Exception:  # noqa: BLE001 — 解析面：索引缺席 = 无证据（诚实缺席）
+        return []
+
+
+async def load_evidence_index_strict(session_id: str) -> List[VisualEvidenceRecord]:
+    """读索引（异常上抛；复验/审计路径用 —— 区分空与不可用）。"""
     from app.services.session_data import session_data_manager
 
-    try:
-        raw = await session_data_manager.get_map_state(session_id)
-        items = (raw or {}).get(INDEX_KEY)
-        if not isinstance(items, list):
-            return []
-        out = []
-        for item in items[:256]:
-            r = VisualEvidenceRecord.from_dict(item)
-            if r is not None:
-                out.append(r)
-        return out
-    except Exception:  # noqa: BLE001 — 索引缺席 = 无证据
+    raw = await session_data_manager.get_map_state(session_id)
+    items = (raw or {}).get(INDEX_KEY)
+    if not isinstance(items, list):
         return []
+    out = []
+    for item in items[:256]:
+        r = VisualEvidenceRecord.from_dict(item)
+        if r is not None:
+            out.append(r)
+    return out
 
 
 async def list_evidence(session_id: str) -> List[VisualEvidenceRecord]:
@@ -147,12 +165,20 @@ async def register_evidence(
         refs.store_evidence_ref, record.derived_sha256, session_id, derived_bytes)
     if not stored:
         raise EvidenceRejected("reference_commit_unavailable")
-
-    evicted: List[VisualEvidenceRecord] = []
+    # review P2#12：draft TTL 的会话内惰性执行（无全局会话枚举的最小实现
+    # —— 每次登记顺带回收本会话超龄 draft；全局 blob 级兜底在周期 sweep）。
+    try:
+        await purge_expired_drafts(session_id)
+    except Exception:  # noqa: BLE001 — 清理绝不阻断登记
+        logger.debug("[VisualContextStore] lazy draft purge failed sid=%s",
+                     session_id[:24], exc_info=True)
 
     def mutate(records: List[VisualEvidenceRecord]):
-        nonlocal evicted
-        # draft FIFO：超上限淘汰最旧 draft（bound/revoked 不动）。
+        # review P1#4：CAS 重试会重跑本函数 —— 副作用（淘汰清单）随 result
+        # 返回（每次尝试重建，提交方只用最终一份），不在闭包累积。
+        evicted: List[VisualEvidenceRecord] = []
+        # draft FIFO：超上限淘汰最旧 draft（bound/revoked 不动，P2#13：
+        # 总量帽只作用于 draft —— bound/revoked 永不被截断驱逐）。
         drafts = [r for r in records if r.state == STATE_DRAFT]
         overflow = len(drafts) + 1 - MAX_DRAFTS_PER_SESSION
         if overflow > 0:
@@ -162,10 +188,9 @@ async def register_evidence(
             records = [r for r in records if r.evidence_id not in drop_ids]
         # 同 evidence_id 幂等：重登记 = 拒绝（identity 不可覆盖）。
         if any(r.evidence_id == record.evidence_id for r in records):
-            return records, ("duplicate_id", None)
+            return records, ("duplicate_id", (None, []))
         records = records + [record]
-        records = records[-512:]
-        return records, ("ok", record)
+        return records, ("ok", (record, evicted))
 
     try:
         result = await _update_index(session_id, mutate)
@@ -177,11 +202,12 @@ async def register_evidence(
         await asyncio.to_thread(refs.release_evidence_ref,
                                 record.derived_sha256, session_id)
         raise EvidenceRejected("index_commit_unavailable")
-    status, saved = result
+    status, payload = result
     if status == "duplicate_id":
         await asyncio.to_thread(refs.release_evidence_ref,
                                 record.derived_sha256, session_id)
         raise EvidenceRejected("duplicate_evidence_id")
+    saved, evicted = payload
     # 淘汰 draft 的引用释放（失败留给 sweep；不影响新登记）。
     for old in evicted:
         await asyncio.to_thread(refs.release_evidence_ref,
@@ -218,25 +244,27 @@ async def get_evidence_record(
 
 
 async def revoke_evidence(session_id: str, evidence_id: str) -> Optional[VisualEvidenceRecord]:
-    """撤销（draft/bound 均可）：tombstone + 引用释放（V17 共享安全）。"""
-    released: List[str] = []
+    """撤销（draft/bound 均可）：tombstone + 引用释放（V17 共享安全）。
+
+    review P1#4：释放清单随 mutate result（每次 CAS 尝试重建）——重试不会
+    双减共享 blob 的引用计数。
+    """
 
     def mutate(records: List[VisualEvidenceRecord]):
         target = next((r for r in records if r.evidence_id == evidence_id), None)
         if target is None:
-            return records, ("not_found", None)
+            return records, ("not_found", (None, []))
         if target.state == STATE_REVOKED:
-            return records, ("already", target)
+            return records, ("already", (target, []))
         target.state = STATE_REVOKED
-        released.append(target.derived_sha256)
-        return records, ("ok", target)
+        return records, ("ok", (target, [target.derived_sha256]))
 
     result = await _update_index(session_id, mutate)
     if result is None:
         raise EvidenceRejected("index_commit_unavailable")
+    status, (rec, released) = result
     for sha in released:
         await asyncio.to_thread(refs.release_evidence_ref, sha, session_id)
-    status, rec = result
     return rec if status in ("ok", "already") else None
 
 
@@ -265,12 +293,12 @@ async def bind_evidence_to_message(
 
 
 async def purge_expired_drafts(session_id: str) -> int:
-    """过期 draft 回收（24h；TTL 由清理路径调用）。"""
+    """过期 draft 回收（24h；由周期清理任务调用，见 wire_periodic_sweep）。"""
     now = time.time()
-    expired: List[str] = []
 
     def mutate(records: List[VisualEvidenceRecord]):
-        nonlocal expired
+        # review P1#4：释放清单随 result（CAS 重试安全）。
+        expired: List[str] = []
         keep = []
         for r in records:
             if r.state == STATE_DRAFT and now - r.created_at > DRAFT_TTL_S:
@@ -278,11 +306,12 @@ async def purge_expired_drafts(session_id: str) -> int:
                 # draft 无消息引用：整条移除（无 tombstone 必要 —— 从未发送）。
                 continue
             keep.append(r)
-        return keep, ("ok", len(expired))
+        return keep, ("ok", expired)
 
     result = await _update_index(session_id, mutate)
     if result is None:
         return 0
+    _status, expired = result
     for sha in expired:
         await asyncio.to_thread(refs.release_evidence_ref, sha, session_id)
     return len(expired)

@@ -68,8 +68,11 @@ export const useVisualAttachStore = create<VisualAttachState>((set, get) => ({
     set({ drafts: get().drafts.filter((d) => d.evidenceId !== evidenceId) });
   },
   consumeDrafts: () => {
-    const drafts = get().drafts.filter((d) => !d.uploading && !d.error);
-    if (drafts.length) set({ drafts: [] });
-    return drafts;
+    // review P3#17：只消费就绪草稿 —— 上传中/失败项保留在 store（上传完成
+    // 后仍是本会话可用的 draft 证据，不成为孤儿）。
+    const all = get().drafts;
+    const ready = all.filter((d) => !d.uploading && !d.error);
+    if (ready.length) set({ drafts: all.filter((d) => d.uploading || d.error) });
+    return ready;
   },
 }));

@@ -171,8 +171,7 @@ class SentImageLedger:
         self._by_session.pop(session_id, None)
         return gen
 
-    def record(self, session_id: str, receipts: Sequence[AttachmentReceipt],
-               evidence_records: Dict[str, Any]) -> None:
+    def record(self, session_id: str, receipts: Sequence[AttachmentReceipt]) -> None:
         """送模后记账（sha → 所属 evidence；复验以 evidence 状态为准）。"""
         gen = self.generation(session_id)
         bucket = self._by_session.setdefault(session_id, {}).setdefault(gen, {})
@@ -187,17 +186,26 @@ class SentImageLedger:
             for sha in list(bucket.keys())[: len(bucket) - 128]:
                 bucket.pop(sha, None)
 
-    async def find_revoked(self, session_id: str) -> List[str]:
+    async def find_revoked(self, session_id: str) -> Optional[List[str]]:
         """当前 vendor generation 里已失效（撤销/消失）的已送 sha 列表。
 
         复验口径：evidence 记录仍在本会话索引、state != revoked、blob 引用
         仍在（读得到）。任一不成立 = 该 sha 的历史 pixels 不再获准。
+
+        review P2#10：索引**瞬态不可用**（存储异常）≠ 全部已撤 —— 返回
+        None（调用方按「复验失败」只阻断图片，绝不换代毁记忆）。
         """
         gen = self.generation(session_id)
         bucket = (self._by_session.get(session_id) or {}).get(gen) or {}
         if not bucket:
             return []
-        records = {r.evidence_id: r for r in await load_evidence_index(session_id)}
+        from app.services.visual_context.store import load_evidence_index_strict
+
+        try:
+            records_list = await load_evidence_index_strict(session_id)
+        except Exception:  # noqa: BLE001 — 不可用 ≠ 已撤（fail-closed 只阻图）
+            return None
+        records = {r.evidence_id: r for r in records_list}
         revoked: List[str] = []
         for sha, meta in bucket.items():
             rec = records.get(str(meta.get("evidence_id") or ""))

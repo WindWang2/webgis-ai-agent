@@ -809,6 +809,12 @@ async def _periodic_visual_blob_sweep(interval_seconds: float | None = None) -> 
             report = await asyncio.to_thread(sweep_orphan_screenshots)
             if report.get("swept"):
                 logger.info("[lifespan] visual blob sweep: %s", report)
+            # G36（ADR-0291）：同周期兜底回收视觉证据孤儿 blob（vevimg-/vevr-）。
+            from app.services.visual_context.refs import sweep_orphan_evidence_blobs
+
+            ev_report = await asyncio.to_thread(sweep_orphan_evidence_blobs)
+            if ev_report.get("swept"):
+                logger.info("[lifespan] visual evidence blob sweep: %s", ev_report)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001

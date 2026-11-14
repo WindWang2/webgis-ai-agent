@@ -1366,16 +1366,68 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       const sid = sessionIdRef.current;
       const tid = activeTurnIdRef.current;
       if (!sid || !tid) return false;
+      // G36（ADR-0291，V31）：运行中附图 —— 草稿随 steer/follow_up 原生
+      // images 通道送达（服务端同一 bridge 裁决面）；无草稿 = 旧行为。
+      const drafts = useVisualAttachStore.getState().sessionId === sid
+        ? useVisualAttachStore.getState().consumeDrafts()
+        : [];
       try {
         const result = await sendTurnMessage(
           sid, tid, text, mode, sessionTokenRef.current || undefined,
+          drafts.length
+            ? drafts.map((d) => ({ evidence_id: d.evidenceId }))
+            : null,
         );
-        return result.accepted === true;
+        // review P2#8：回执披露进转录（含拒绝原因），accepted !== true 同样
+        // 回滚草稿（附件已保存、指令未送达 —— 用户可重试）。
+        const resultRec = result as unknown as Record<string, unknown>;
+        const receipts = Array.isArray(resultRec.attachments)
+          ? (resultRec.attachments as Array<
+              { evidence_id?: string; status?: string; reason?: string }
+            >)
+          : [];
+        if (receipts.length) {
+          const lines = receipts.map((r) => {
+            const okPart = r.status === 'sent'
+              ? msg('sidebar.chat.visualAttach.receiptSent')
+              : `${msg('sidebar.chat.visualAttach.receiptRefused')}${r.reason ? ` (${r.reason})` : ''}`;
+            return `${r.evidence_id ?? ''} ${okPart}`;
+          }).join(' / ');
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `pi-attach-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              role: 'assistant',
+              content: `📎 ${lines}`,
+              timestamp: Date.now(),
+            } as import('@/lib/chat/message-reducer').ChatStreamMessage,
+          ]);
+        }
+        const accepted = result.accepted === true;
+        if (!accepted && drafts.length
+            && useVisualAttachStore.getState().sessionId === sid) {
+          const still = useVisualAttachStore.getState().drafts;
+          for (const d of drafts) {
+            if (!still.some((x) => x.evidenceId === d.evidenceId)) {
+              useVisualAttachStore.getState().addDraft(d);
+            }
+          }
+        }
+        return accepted;
       } catch {
+        // 发送失败：草稿回滚（证据仍为服务端 draft 态）。
+        if (drafts.length && useVisualAttachStore.getState().sessionId === sid) {
+          const still = useVisualAttachStore.getState().drafts;
+          for (const d of drafts) {
+            if (!still.some((x) => x.evidenceId === d.evidenceId)) {
+              useVisualAttachStore.getState().addDraft(d);
+            }
+          }
+        }
         return false;
       }
     },
-    [sessionIdRef, sessionTokenRef],
+    [sessionIdRef, sessionTokenRef, setMessages],
   );
 
   // G29（WP10）：刷新/重连水合 —— GET pending 运行中交互，把仍可作答的

@@ -711,6 +711,8 @@ def _pi_unavailable() -> "HTTPException":
 async def _attachment_persist_meta(
     session_id: str,
     attachments: Optional[list],
+    *,
+    receipts: Optional[list] = None,
 ) -> list[dict]:
     """G36：附件的持久化元数据（V20 刷新恢复用；ref + 身份摘要）。
 
@@ -729,6 +731,10 @@ async def _attachment_persist_meta(
             rec = records.get(evidence_id)
             if rec is None:
                 continue
+            receipt = next(
+                (r for r in (receipts or [])
+                 if isinstance(r, dict) and r.get("evidence_id") == rec.evidence_id),
+                None)
             out.append({
                 "evidence_id": rec.evidence_id,
                 "source_type": rec.source_type,
@@ -740,6 +746,11 @@ async def _attachment_persist_meta(
                 "viewport_hash": rec.viewport_hash,
                 "label": rec.label,
                 "state": rec.state,
+                # 送模回执（sent/refused + reason）；缺席 = 本 turn 未裁决
+                # （恢复态不冒充 sent）。
+                **({"status": receipt.get("status"),
+                    "reason": str(receipt.get("reason") or "")[:80]}
+                   if receipt else {}),
             })
         return out
     except Exception:  # noqa: BLE001 — 元数据面绝不阻断转录
@@ -1105,6 +1116,10 @@ async def chat_completions(
                     context_project_id=req.project_id or "",
                     context_user_id=user_id or "",
                     context_query_text=req.message or "",
+                    # G36（ADR-0291）：非流式同款图片解析（不静默丢附件）。
+                    attachments=(
+                        [a.model_dump() for a in req.attachments]
+                        if req.attachments else None),
                 )
                 pi_session_id = result.get("sessionId") or _affinity_sid or ""
                 final_content = result.get("content", "")
@@ -1136,7 +1151,29 @@ async def chat_completions(
                             pi_session_id,
                             user_id=user_id,
                         )
-                        await svc.save_message(pi_session_id, "user", req.message)
+                        # G36（ADR-0291，review P2#6）：非流式同款附件持久化
+                        # （回执来自 prompt() 返回值；绑定只针对实际送出项）。
+                        _attach_meta = await _attachment_persist_meta(
+                            pi_session_id, req.attachments,
+                            receipts=result.get("attachment_receipts") or [])
+                        _user_msg_id = await svc.save_message(
+                            pi_session_id, "user", req.message,
+                            attachments=_attach_meta or None)
+                        if _attach_meta and _user_msg_id is not None:
+                            try:
+                                from app.services.visual_context.store import (
+                                    bind_evidence_to_message,
+                                )
+
+                                await bind_evidence_to_message(
+                                    pi_session_id,
+                                    [a["evidence_id"] for a in _attach_meta
+                                     if a.get("status") == "sent"],
+                                    _user_msg_id,
+                                )
+                            except Exception:  # noqa: BLE001 — 绑定失败不阻断
+                                logger.debug("[pi-chat] evidence bind failed sid=%s",
+                                             pi_session_id, exc_info=True)
                         if final_content:
                             await svc.save_message(pi_session_id, "assistant", final_content)
                 except Exception as e:
@@ -1407,9 +1444,12 @@ async def chat_stream(
                     async with async_db_session() as db:
                         svc = AsyncHistoryService(db)
                         # G36（ADR-0291）：附件元数据随用户消息持久化（ref +
-                        # 身份摘要，不存字节）；保存后把证据 draft→bound。
+                        # 身份摘要 + 真实送模回执 status/reason —— 刷新恢复
+                        # 不把 refused 显示成 sent，review P2#9）；保存后把
+                        # **实际送出**的证据 draft→bound。
                         _attach_meta = await _attachment_persist_meta(
-                            pi_session_id, req.attachments)
+                            pi_session_id, req.attachments,
+                            receipts=result.get("attachment_receipts") or [])
                         _user_msg_id = await svc.save_message(
                             pi_session_id, "user", req.message,
                             attachments=_attach_meta or None)
@@ -1419,9 +1459,12 @@ async def chat_stream(
                                     bind_evidence_to_message,
                                 )
 
+                                # 只绑定实际送出的附件（refused 留在 draft 态
+                                # —— 由 TTL/上限回收，不占 bound 保留名额）。
                                 await bind_evidence_to_message(
                                     pi_session_id,
-                                    [a["evidence_id"] for a in _attach_meta],
+                                    [a["evidence_id"] for a in _attach_meta
+                                     if a.get("status") == "sent"],
                                     _user_msg_id,
                                 )
                             except Exception:  # noqa: BLE001 — 绑定失败不阻断转录

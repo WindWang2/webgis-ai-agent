@@ -269,7 +269,11 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
                 label: typeof a.label === 'string' ? a.label : undefined,
                 mapspec_revision: a.mapspec_revision ?? null,
                 viewport_hash: typeof a.viewport_hash === 'string' ? a.viewport_hash : undefined,
-                status: 'sent' as const,
+                // P2#9：恢复持久化的真实送模状态（无回执 = 未裁决，不冒充 sent）。
+                status: a.status === 'sent' || a.status === 'refused'
+                  ? a.status
+                  : undefined,
+                reason: typeof a.reason === 'string' ? a.reason : undefined,
               })) }
             : {}),
         }));
