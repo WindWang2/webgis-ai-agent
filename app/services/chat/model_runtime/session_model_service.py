@@ -194,9 +194,12 @@ async def budget_admission(
 ) -> Dict[str, Any]:
     """下一 turn 的确定性预算 admission（prompt 字节发出前调用）。
 
-    返回 {admitted, cap, cumulative, projected, remaining, reason_code,
-    reason_detail}。cap=None → 无预算控制（如实 admitted，面上披露
-    unlimited）。
+    投影口径（review P2 修复）：``projected_tokens`` 是**本 turn 增量**
+    （绑定消息估算 + 输出预算）；会话历史上下文以**上一 turn 的真实
+    input tokens**（账本实数，含当时全部历史）为代理计入 —— 不猜窗口、
+    不用累计冒充上下文。返回 {admitted, cap, cumulative, projected,
+    history_context, remaining, reason_code, reason_detail}。cap=None →
+    无预算控制（如实 admitted，面上披露 unlimited）。
     """
     from sqlalchemy import func, select
 
@@ -214,11 +217,23 @@ async def budget_admission(
         )
     ).scalar_one()
     cumulative = int(cumulative or 0)
+    # 上一 turn 的真实 input（含当时历史）≈ 本 turn 的历史上下文规模；
+    # 无历史（新会话）= 0。
+    last_input = (
+        await db.execute(
+            select(ChatTurnRuntime.tokens_input)
+            .where(ChatTurnRuntime.session_id == session_id)
+            .order_by(ChatTurnRuntime.created_at.desc(), ChatTurnRuntime.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    history_context = int(last_input or 0)
 
     out: Dict[str, Any] = {
         "cap": cap,
         "cumulative": cumulative,
         "projected": int(projected_tokens),
+        "history_context": history_context,
         "remaining": None,
         "admitted": True,
         "reason_code": "",
@@ -228,12 +243,14 @@ async def budget_admission(
         return out
     remaining = max(0, int(cap) - cumulative)
     out["remaining"] = remaining
-    if cumulative + int(projected_tokens) > int(cap):
+    total_projected = history_context + int(projected_tokens)
+    if cumulative + total_projected > int(cap):
         out["admitted"] = False
         out["reason_code"] = REASON_BUDGET_EXCEEDED
         out["reason_detail"] = (
             f"session token budget exceeded: cumulative {cumulative} + "
-            f"projected {int(projected_tokens)} > cap {int(cap)}; start a new "
+            f"projected {total_projected} (history {history_context} + turn "
+            f"{int(projected_tokens)}) > cap {int(cap)}; start a new "
             "session, raise your session cap (within the admin limit), or "
             "select a cheaper model"
         )
@@ -320,8 +337,8 @@ async def apply_session_model(
     budget = await budget_admission(db, session_id, projected_tokens=projected)
     result.budget = {
         k: budget[k] for k in
-        ("cap", "cumulative", "projected", "remaining", "admitted",
-         "reason_code", "reason_detail")
+        ("cap", "cumulative", "projected", "history_context", "remaining",
+         "admitted", "reason_code", "reason_detail")
     }
     if not budget["admitted"]:
         result.status = "budget_rejected"

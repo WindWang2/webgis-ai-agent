@@ -171,8 +171,12 @@ export function SessionModelSelector({
   if (!sessionId || !view) return null;
 
   const pref = view.preference;
-  const effective =
-    liveStatus?.effective?.model ?? view.last_turn?.effective_model ?? null;
+  // review-P3：live 失败读回（ok=false，如回读不匹配）不显示 effective 徽标
+  // —— 那是 vendor 报告的「错误模型」，不是生效事实；服务端回执仍展示
+  // requested → effective 原文与状态。
+  const liveEffective =
+    liveStatus && liveStatus.ok !== false ? liveStatus.effective?.model : null;
+  const effective = liveEffective ?? view.last_turn?.effective_model ?? null;
   const requestedNow =
     liveStatus?.requested?.model ?? view.last_turn?.requested_model ?? null;
   const inherit = pref.mode !== 'explicit';
@@ -319,7 +323,7 @@ export function SessionModelSelector({
               <div>
                 responseModel: {view.last_turn.response_model || t('chat.model.notReported')}
                 {' · '}
-                {view.last_turn.status}
+                {t(`chat.model.status.${view.last_turn.status}`)}
               </div>
             </div>
           )}

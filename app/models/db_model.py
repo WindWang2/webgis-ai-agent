@@ -1049,7 +1049,7 @@ class ChatTurnRuntime(Base):
     __tablename__ = "chat_turn_runtime"
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
-    session_id = Column(String(255), nullable=False, index=True)
+    session_id = Column(String(255), nullable=False)
     turn_id = Column(String(64), nullable=False, unique=True)
     run_id = Column(String(64), nullable=True)
     runtime_epoch = Column(String(64), nullable=False, default="")
@@ -1081,6 +1081,7 @@ class ChatTurnRuntime(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
+        # 与迁移 g3701 同名索引（create_all/alembic 两侧一致）
         Index("idx_ctr_session_created", "session_id", "created_at"),
         CheckConstraint(
             "status IN ('pending', 'applied', 'inherit_default', 'degraded_inherit', "
@@ -1101,8 +1102,8 @@ class ChatUsageRecord(Base):
     __tablename__ = "chat_usage_records"
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
-    session_id = Column(String(255), nullable=False, index=True)
-    turn_id = Column(String(64), nullable=False, index=True)
+    session_id = Column(String(255), nullable=False)
+    turn_id = Column(String(64), nullable=False)
     call_seq = Column(Integer, nullable=False)
     kind = Column(String(16), nullable=False)
     provider = Column(String(64), nullable=True)
@@ -1116,6 +1117,9 @@ class ChatUsageRecord(Base):
 
     __table_args__ = (
         UniqueConstraint("turn_id", "call_seq", name="uq_cur_turn_seq"),
+        # 与迁移 g3701 同名索引（create_all/alembic 两侧一致）
+        Index("idx_cur_session", "session_id"),
+        Index("idx_cur_turn", "turn_id"),
         CheckConstraint(
             "kind IN ('assistant', 'tool_result', 'other')", name="ck_cur_kind"
         ),

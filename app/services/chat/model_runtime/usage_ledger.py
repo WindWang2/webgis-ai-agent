@@ -105,6 +105,7 @@ class MessageUsageFact:
     cost_total_micro_usd: Optional[int]
     cost_from_provider: Optional[bool]
     stop_reason: Optional[str]
+    message_ts: Optional[int] = None  # vendor message.timestamp（同 turn 内重复投递去重键）
 
 
 def extract_usage_fact(event: dict) -> Optional[MessageUsageFact]:
@@ -164,6 +165,11 @@ def extract_usage_fact(event: dict) -> Optional[MessageUsageFact]:
             message.get("stopReason")
             if isinstance(message.get("stopReason"), str) else None
         ),
+        message_ts=(
+            int(message["timestamp"])
+            if isinstance(message.get("timestamp"), (int, float))
+            else None
+        ),
     )
 
 
@@ -204,11 +210,19 @@ class TurnUsageCollector:
         self.facts: List[MessageUsageFact] = []
         self.write_failures = 0
         self.expected_records = 0
+        # review-P3：同 turn 内同一 message 的重复投递去重（vendor 每条消息
+        # 带唯一 timestamp；缺席时不去重 —— DB 唯一约束兜底跨 persist 场景）。
+        self._seen_message_ts: set = set()
 
     def observe(self, event: dict) -> Optional[MessageUsageFact]:
         fact = extract_usage_fact(event)
         if fact is None:
             return None
+        if fact.message_ts is not None:
+            key = (fact.kind, fact.message_ts)
+            if key in self._seen_message_ts:
+                return None  # 重复投递：同一消息只记一次
+            self._seen_message_ts.add(key)
         self.facts.append(fact)
         self.expected_records += 1
         return fact
@@ -351,10 +365,22 @@ async def persist_turn_records(
                     continue
                 record_micro = fact.cost_total_micro_usd
                 record_from_provider = fact.cost_from_provider
-                if record_micro is None or record_from_provider is not True:
+                usage_payload = dict(fact.usage)
+                if record_micro is not None and record_from_provider is True:
+                    usage_payload["cost_source"] = "provider"
+                else:
                     est = estimate_cost_micro_usd(fact)
                     if record_micro is None and est is not None:
                         record_micro, record_from_provider = est, False
+                    if record_micro is not None:
+                        # review-P3：estimated 随行盖价格来源版本戳（可审计
+                        # —— 价格表换版后旧行可对账）。
+                        usage_payload["cost_source"] = "estimated"
+                        usage_payload["price_table"] = (
+                            "pi-model-catalog"
+                            if fact.cost_total_micro_usd is not None
+                            else PRICE_TABLE_VERSION
+                        )
                 # response_model 只在 assistant 消息上回填 turn 汇总（物理
                 # 响应身份；toolResult 无此概念）。
                 db.add(ChatUsageRecord(
@@ -365,7 +391,7 @@ async def persist_turn_records(
                     provider=fact.provider,
                     model=fact.model,
                     response_model=fact.response_model,
-                    usage_json=dict(fact.usage),
+                    usage_json=usage_payload,
                     cost_total=record_micro,
                     cost_from_provider=record_from_provider,
                     stop_reason=fact.stop_reason,
@@ -429,7 +455,16 @@ async def session_usage_summary(db, session_id: str, limit_turns: int = 20) -> D
         )
     ).scalars().all()
 
-    cost_sources = {r.cost_source for r in recent_rows}
+    # review-P3：来源标签对**全部** turn 聚合（SQL 分组），不再用最近 N 行
+    # 采样 —— 部分未知的总额不会被采样窗口误标成单一来源。
+    cost_source_rows = (
+        await db.execute(
+            select(ChatTurnRuntime.cost_source, func.count(ChatTurnRuntime.id))
+            .where(ChatTurnRuntime.session_id == session_id)
+            .group_by(ChatTurnRuntime.cost_source)
+        )
+    ).all()
+    cost_sources = {row[0] for row in cost_source_rows}
     return {
         "session_id": session_id,
         "totals": {

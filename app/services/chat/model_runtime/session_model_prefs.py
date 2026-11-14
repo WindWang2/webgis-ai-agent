@@ -111,7 +111,10 @@ async def set_pref(
 
     if current.revision == 0:
         # 首写：INSERT ... ON CONFLICT 语义（并发首写二选一，另一人以
-        # IntegrityError 失败 → 调用方转 RevisionConflict）。
+        # IntegrityError 失败 → RevisionConflict）。其余 DB 异常原样上抛
+        # —— review-P3：连接故障不得伪装成 CAS 冲突诱导无意义重试。
+        from sqlalchemy.exc import IntegrityError
+
         stmt = insert(ChatSessionModelPref).values(
             conversation_id=conversation_id,
             mode=mode,
@@ -122,7 +125,7 @@ async def set_pref(
         )
         try:
             await db.execute(stmt)
-        except Exception:
+        except IntegrityError:
             await db.rollback()
             raise RevisionConflict("concurrent first write lost the race")
         await db.commit()

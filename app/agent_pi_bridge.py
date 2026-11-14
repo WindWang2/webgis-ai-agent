@@ -1622,6 +1622,7 @@ class PiBridge:
             ModelApplicationResult,
             apply_session_model,
         )
+        from sqlalchemy.exc import SQLAlchemyError
 
         rpc_epoch = getattr(self._rpc, "spawn_epoch", 0)
         state = self._vendor_model_state
@@ -1639,10 +1640,14 @@ class PiBridge:
                     session_id=turn_sid, turn_id=turn_id,
                     bound_message=bound_message, force_apply=force,
                 )
-        except Exception as exc:  # noqa: BLE001 — 基础设施降级（见 docstring）
+        except SQLAlchemyError as exc:
+            # review-P2 修复：**仅** DB 基础设施故障才降级（preference/
+            # admission 读不到 → worker 默认 = 管理员基础模型，绝非静默选
+            # 用别的模型；receipt 无法持久 → 面 incomplete）。其余异常一律
+            # 上抛走既有诚实失败路径，绝不吞成降级。
             logger.warning(
-                "[PiBridge] session model application degraded (session=%s "
-                "turn=%s): %s",
+                "[PiBridge] session model application degraded (db unavailable; "
+                "session=%s turn=%s): %s",
                 turn_sid, turn_id, exc,
             )
             result = ModelApplicationResult(

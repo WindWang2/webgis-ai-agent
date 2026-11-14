@@ -194,10 +194,17 @@ async def put_session_model(
 
         if thinking not in THINKING_LEVELS:
             raise HTTPException(status_code=400, detail="invalid thinking level")
-        # 当前端点契约不支持 effort 控制 —— 接受存储但明确告知不可控（M14）。
-        item = session_catalog.find_item(req.model_id or "")
-        if item is not None and item.tool_calling is False:
-            raise HTTPException(status_code=409, detail="model does not support tool calling")
+        # review-P3 修复：当前端点契约（compat.supportsReasoningEffort=false）
+        # 不支持档位控制 —— 存储「请求档位」只会让消费者误以为会生效。明确
+        # 拒绝，待端点确证支持后再放开（M14）。
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "thinking level control is not supported by the current "
+                "endpoint contract; reasoning output may occur but a specific "
+                "level cannot be requested"
+            ),
+        )
 
     try:
         pref = await set_pref(
@@ -228,9 +235,10 @@ async def put_session_model(
             "session_token_cap": pref.session_token_cap,
             "revision": pref.revision,
         },
-        # 本端点不应用 Pi —— 生效发生在下一 turn 边界（active turn 不打断）
+        # 本端点不应用 Pi —— 生效发生在下一 turn 边界（active turn 不打断，
+        # 其结束即应用点）
         "effective_when": (
-            "next_turn" if _active_turn_pending(session_id) else "next_turn"
+            "active_turn_end" if _active_turn_pending(session_id) else "next_turn"
         ),
         "pending_next_turn": _active_turn_pending(session_id),
         "thinking_controllable": False,

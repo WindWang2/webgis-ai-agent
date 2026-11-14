@@ -301,6 +301,34 @@ def test_collector_two_identical_calls_count_twice():
     assert c.totals["input"] == 20 and c.expected_records == 2
 
 
+def test_collector_dedups_redelivered_message_by_timestamp():
+    """review-P3：同 turn 内同一消息（同 timestamp）重复投递只记一次。"""
+    c = TurnUsageCollector("s", "t")
+    ev = _message_end_event(usage={"input": 10, "output": 5})
+    ev["message"]["timestamp"] = 1731600000123
+    assert c.observe(ev) is not None
+    assert c.observe(dict(ev)) is None  # 原样重放 → 去重
+    other = _message_end_event(usage={"input": 3, "output": 1})
+    other["message"]["timestamp"] = 1731600000456
+    assert c.observe(other) is not None  # 不同消息不受影响
+    assert c.expected_records == 2 and c.totals["input"] == 13
+
+
+async def test_put_preference_rejects_thinking_until_supported(monkeypatch):
+    """review-P3：端点契约不支持档位控制 → 明确 409（不存储「不会生效的请求」）。"""
+    from fastapi import HTTPException
+    from app.api.routes.session_model_views import ModelPreferenceUpdate, put_session_model
+
+    _catalog_env(monkeypatch, base="m-base")
+    req = ModelPreferenceUpdate(
+        mode="inherit", thinking_level="high", expected_revision=0,
+    )
+    conv = SimpleNamespace(id="conv-t")
+    with pytest.raises(HTTPException) as exc_info:
+        await put_session_model("conv-t", req, _conv=conv, db=MagicMock())
+    assert exc_info.value.status_code == 409
+
+
 def test_cost_source_unknown_when_no_price(monkeypatch):
     monkeypatch.delenv("SESSION_MODEL_PRICE_TABLE_JSON", raising=False)
     reset_price_table_cache()
@@ -448,17 +476,37 @@ async def test_budget_admission_rejects_before_prompt(db_factory, monkeypatch):
         "app.core.config.settings.SESSION_MODEL_TOKEN_CAP_DEFAULT", 1000, raising=False
     )
     async with db_factory() as db:
+        # 上一 turn：input 300（历史上下文代理），total 500
         db.add(ChatTurnRuntime(
             session_id="sess-b", turn_id="t-prior", status="applied",
-            requested_model="m", tokens_total=900,
+            requested_model="m", tokens_total=500, tokens_input=300,
         ))
         await db.commit()
-        verdict = await budget_admission(db, "sess-b", projected_tokens=200)
+        # 投影 = 历史 300 + 本 turn 250 = 550；累计 500 + 550 > cap 1000
+        verdict = await budget_admission(db, "sess-b", projected_tokens=250)
         assert not verdict["admitted"]
         assert verdict["reason_code"] == "session_token_budget_exceeded"
-        assert verdict["cumulative"] == 900 and verdict["projected"] == 200
-        verdict_ok = await budget_admission(db, "sess-b", projected_tokens=50)
-        assert verdict_ok["admitted"] and verdict_ok["remaining"] == 100
+        assert verdict["cumulative"] == 500 and verdict["projected"] == 250
+        assert verdict["history_context"] == 300
+        verdict_ok = await budget_admission(db, "sess-b", projected_tokens=100)
+        assert verdict_ok["admitted"] and verdict_ok["remaining"] == 500
+
+
+async def test_budget_admission_history_uses_last_turn_input(db_factory, monkeypatch):
+    """review-P2：投影必须计入历史上下文（上一 turn 真实 input 为代理）。"""
+    monkeypatch.setattr(
+        "app.core.config.settings.SESSION_MODEL_TOKEN_CAP_DEFAULT", 1800, raising=False
+    )
+    async with db_factory() as db:
+        db.add(ChatTurnRuntime(
+            session_id="sess-h", turn_id="t1", status="applied",
+            requested_model="m", tokens_total=1000, tokens_input=800,
+        ))
+        await db.commit()
+        # 本 turn 增量只有 50，但历史 800 计入：1000 + 800 + 50 = 1850 > 1800
+        verdict = await budget_admission(db, "sess-h", projected_tokens=50)
+        assert not verdict["admitted"]
+        assert verdict["history_context"] == 800
 
 
 async def test_budget_admission_no_cap_admits_and_discloses(db_factory, monkeypatch):

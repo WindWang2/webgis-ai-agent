@@ -837,8 +837,7 @@ class PiRpcClient:
         """Snapshot of currently pending request ids (abort-scoping)."""
         return set(self._pending_requests.keys())
 
-    @staticmethod
-    def _readline_bounded(proc: Optional[subprocess.Popen]) -> Optional[bytes]:
+    def _readline_bounded(self, proc: Optional[subprocess.Popen] = None) -> Optional[bytes]:
         """Read one line from Pi stdout, capped at MAX_STDOUT_LINE_BYTES.
 
         Returns the line (bytes, including newline) on success, b"" on EOF,
@@ -851,10 +850,12 @@ class PiRpcClient:
         minimal legacy pipe adapters retain the bounded read(1) compatibility
         path. Neither buffers an entire unbounded malformed line.
 
-        G37（世代钉扎）：读**调用方传入的进程对象**（reader 自己的代际），
-        不再经 self._process —— respawn 换代后旧 reader 不得偷读新进程的
-        stdout（会抢走新 reader 的事件流）。
+        G37（世代钉扎）：reader 显式传入**自己代际的进程对象**；缺省（旧
+        测试/兼容调用形态）回落 self._process —— respawn 换代后旧 reader
+        不得偷读新进程的 stdout（会抢走新 reader 的事件流）。
         """
+        if proc is None:
+            proc = self._process
         stdout = proc.stdout if proc is not None else None
         if stdout is None:
             return b""
