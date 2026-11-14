@@ -28,9 +28,19 @@
 | 12 | P3 | 工作树散置未跟踪文件（j18/browser test） | ✅ 有意新增文件，随修复 commit 一并入库 |
 | 13 | P3 | ORM index=True 与迁移命名索引漂移 | ✅ 已修：ORM 改为 `__table_args__` 内与迁移同名索引（idx_ctr_session_created / idx_cur_session / idx_cur_turn） |
 
-## R2：复审
+## R2：复审（reviewer：同 R1 独立子代理；对象 = 7096c0e54（3 commits）vs base）
 
-（修复 commit 后由原 reviewer 复核 —— 见下节）
+**结论：APPROVE-WITH-NOTES** —— 13 项 R1 发现全部确认解决或按 note 接受，无新 P1/P2；浏览器车道（gating/teardown/断言）复核为正确。5 个残留 P3：
+
+| # | 残留 | 处置 |
+|---|---|---|
+| R2-1 | history_context 取最近行无过滤 —— budget_rejected/failed 回执 tokens_input=0，会把历史误判为 0（单 turn 超支窗口） | ✅ 已修：查询加 `tokens_input > 0`；新单测（零输入行跳跃）钉死 |
+| R2-2 | timestamp 去重依赖 vendor ts 在场/唯一（同毫秒同 kind 理论误去重） | 📝 note（模型调用间隔 ≫1ms；无 ts 时 DB 约束兜底） |
+| R2-3 | usage_json 形状条件化（cost_source/price_table 仅在已知时在场）—— 未来读者不得假设键在场 | 📝 note（当前无消费者；写入侧文档化） |
+| R2-4 | j18 预算腿用 inherit 重写 preference（未验证显式选择存活）+ 文案耦合（响亮失败，非静默绿） | ✅ 已修：预算 PUT 改为保留 explicit g37-b 并断言响应偏好仍为 g37-b；文案耦合保留（失败即红，是正确失败模式） |
+| R2-5 | _wait_http 接受 <500（4xx 误判就绪） | ✅ 已修：<400（HTTPError 分支同步收紧） |
+
+修复后复验：42 单测通过（含 3 个新钉死测试）；前端 tsc 通过。
 
 ## 评审过程注记
 

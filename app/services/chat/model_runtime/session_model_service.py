@@ -218,11 +218,16 @@ async def budget_admission(
     ).scalar_one()
     cumulative = int(cumulative or 0)
     # 上一 turn 的真实 input（含当时历史）≈ 本 turn 的历史上下文规模；
-    # 无历史（新会话）= 0。
+    # 无历史（新会话）= 0。R2-P3#1 修复：跳过零输入行（budget_rejected/
+    # failed 等回执行 tokens_input=0）—— 否则一次拒绝后的下一次 admission
+    # 会把历史误判为 0，重开一 turn 超支窗口。
     last_input = (
         await db.execute(
             select(ChatTurnRuntime.tokens_input)
-            .where(ChatTurnRuntime.session_id == session_id)
+            .where(
+                ChatTurnRuntime.session_id == session_id,
+                ChatTurnRuntime.tokens_input > 0,
+            )
             .order_by(ChatTurnRuntime.created_at.desc(), ChatTurnRuntime.id.desc())
             .limit(1)
         )

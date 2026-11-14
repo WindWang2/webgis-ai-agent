@@ -509,6 +509,27 @@ async def test_budget_admission_history_uses_last_turn_input(db_factory, monkeyp
         assert verdict["history_context"] == 800
 
 
+async def test_budget_admission_history_skips_zero_input_rows(db_factory, monkeypatch):
+    """R2-P3#1：budget_rejected/failed 回执 tokens_input=0 —— 历史代理必须
+    跳过零输入行（否则拒绝后的下一次 admission 会把历史误判为 0）。"""
+    monkeypatch.setattr(
+        "app.core.config.settings.SESSION_MODEL_TOKEN_CAP_DEFAULT", 0, raising=False
+    )
+    async with db_factory() as db:
+        db.add(ChatTurnRuntime(
+            session_id="sess-z", turn_id="t1", status="applied",
+            requested_model="m", tokens_total=900, tokens_input=700,
+        ))
+        # 更晚的零输入行（预算拒绝回执）
+        db.add(ChatTurnRuntime(
+            session_id="sess-z", turn_id="t2", status="budget_rejected",
+            requested_model="m", tokens_total=0, tokens_input=0,
+        ))
+        await db.commit()
+        verdict = await budget_admission(db, "sess-z", projected_tokens=10)
+        assert verdict["history_context"] == 700  # 取 t1 的真实 input，非 t2 的 0
+
+
 async def test_budget_admission_no_cap_admits_and_discloses(db_factory, monkeypatch):
     monkeypatch.setattr(
         "app.core.config.settings.SESSION_MODEL_TOKEN_CAP_DEFAULT", 0, raising=False

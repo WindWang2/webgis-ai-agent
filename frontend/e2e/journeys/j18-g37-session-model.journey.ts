@@ -99,10 +99,19 @@ test.describe('journey-18 G37 会话模型运行配置', () => {
       new URL(`/api/v1/chat/sessions/${sid}/model`, API_ORIGIN).href,
       {
         headers: authHeaders,
-        data: { mode: 'inherit', session_token_cap: 50, expected_revision: modelView.preference.revision },
+        // R2-P3#4：收紧上限的同时**保留**显式选择（mode:'explicit'）——
+        // 顺带验证 preference 更换写入不丢既有显式选择。
+        data: {
+          mode: 'explicit',
+          model_id: 'g37-b',
+          session_token_cap: 50,
+          expected_revision: modelView.preference.revision,
+        },
       },
     );
     expect(putRes.ok()).toBeTruthy();
+    const putBody = (await putRes.json()) as { preference: { model_id?: string | null } };
+    expect(putBody.preference.model_id).toBe('g37-b');
 
     const stream3 = streamResponse(page);
     await sendChat(page, 'g37-browser-budget-turn');

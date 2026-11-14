@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -70,8 +71,14 @@ def _wait_http(url: str, timeout_s: float) -> bool:
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
-                if resp.status < 500:
+                # R2-P3#5：2xx/3xx 才算就绪（4xx 多半是路由/装配错误，
+                # 不应被当作 ready）。
+                if resp.status < 400:
                     return True
+        except urllib.error.HTTPError as exc:
+            if exc.code < 400:
+                return True
+            time.sleep(0.5)
         except Exception:  # noqa: BLE001
             time.sleep(0.5)
     return False

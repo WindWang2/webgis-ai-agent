@@ -20,6 +20,14 @@
 - 旅程：J0 M01/M20（显式 g37-b + webgis_map_intent 真实工具 + 2 条 usage 记录 + responseModel）、J1 M02/M03/M05（三会话交错 + 回切）、J2 M30（预算拒绝 prompt 零发送）、J3 M06（kill 子进程 respawn 偏好重应用 + 累计不归零）、J4 M23（Last-Event-ID 重放不重发不重计）。
 - 运行：见 TEST_MATRIX.md（进行中）。
 
+### L3（2026-11-15 凌晨）—— 评审修复 + 浏览器全链 + 事故与恢复
+
+- R1 全部处置（见 REVIEW.md）；P1 签名修复后 tests/unit/test_pi_rpc_client + test_review_core_low_boundaries 118 用例通过。
+- 浏览器全链打通：Turbopack 拒绝共享符号链接 node_modules（hermetic root）→ `next dev --webpack`；CORS_ORIGINS 默认仅 :3000 → 分端口装配显式放行随机前端端口；j18 real 档通过（浏览器→后端→真实 Pi→dispatch→UI + 预算拒绝）。
+- 既有失败取证更新：`test_api_auth_required::test_mutating_routes_use_auth_enforcing_depends` 在干净 base（detached worktree 1276692737 实跑）同样失败（data_import/pi_interactions/temporal_media 路由缺失，非本任务路由）；连同 test_pi_bridge_lock×2、test_pi_rpc_client_810::stop_reap 共 5 个 base 既有失败，均与本任务无关。
+- **事故与恢复**：base 取证时误用空 `git stash` + `git stash pop`，弹出了**共享 stash 列表中外部分支**（codex/all-issues-deep-review, 11-06）的储藏，冲突标记污染工作树（128 UU）+ 投入 58 个外部分发文件。恢复：`git reset --hard HEAD`（本分支自己的 tip，无未提交损失）→ 清除外部副本（其中误删 3 个已跟踪 .claude 文件，`git checkout -- .claude` 即刻恢复）→ 工作树与 3 提交完好。教训：多任务共享 stash 列表，禁止在 worktree 里使用裸 stash；base 取证一律用临时 detached worktree。
+- 环境注记：检测到并行任务（/tmp/g38-base-check 出现）——共享 venv/锁/stash 纪律更严。
+
 ## 下一步
 
 - 旅程通过 → 交独立 reviewer（子代理槽位 2）全量 diff 评审 → 修复 → 复审。
