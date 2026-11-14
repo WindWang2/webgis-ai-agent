@@ -25,6 +25,12 @@ export function mapInsetLeft(leftPanelOpen: boolean, sidebarWidth: number): numb
   return Math.min(inset, window.innerWidth * MAP_INSET_MAX_VIEWPORT_RATIO);
 }
 
+/** CSS clamp keeps SSR/client attributes identical and responds to viewport resizing. */
+export function mapInsetLeftStyle(leftPanelOpen: boolean, sidebarWidth: number): string {
+  if (!leftPanelOpen) return '0px';
+  return `min(${RAIL_W + sidebarWidth + PANEL_GAP}px, ${MAP_INSET_MAX_VIEWPORT_RATIO * 100}vw)`;
+}
+
 /** 地图内部左锚定 chrome（专题图例列、情境条、视觉修复入口）的避让（px）：
  * 面板推挤地图时容器已避开 rail+面板，只需呼吸间距；否则容器从 0 起、
  * 需避开竖排 rail。mobile 档 rail 在底部（railVisible=false），只留间距。 */
