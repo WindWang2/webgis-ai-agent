@@ -117,6 +117,11 @@ def test_g37_browser_session_model_journey(tmp_path):
         "SESSION_MODEL_TOKEN_CAP_MAX": "5000000",
         "WEBGIS_API_BASE": f"http://127.0.0.1:{api_port}",
         "API_PORT": str(api_port),
+        # 分端口 real 档装配：浏览器（前端 origin，随机端口）直连后端 ——
+        # CORS allow-list 必须显式放行该 origin（默认仅 :3000）。
+        "CORS_ORIGINS": json.dumps([
+            f"http://127.0.0.1:{web_port}", f"http://localhost:{web_port}",
+        ]),
     }
     # 建库 + 管理员（旅程经真实 /auth/login）
     subprocess.run(
@@ -175,8 +180,11 @@ def test_g37_browser_session_model_journey(tmp_path):
             cwd=FRONTEND, env=pw_env,
             capture_output=True, text=True, timeout=600,
         )
+        (work / "playwright.log").write_text(
+            proc.stdout + "\n---- stderr ----\n" + proc.stderr, encoding="utf-8")
         assert proc.returncode == 0, (
-            f"playwright journey failed rc={proc.returncode}\n"
+            f"playwright journey failed rc={proc.returncode}; "
+            f"full log: {work / 'playwright.log'}\n"
             f"stdout tail:\n{proc.stdout[-3000:]}\nstderr tail:\n{proc.stderr[-2000:]}"
         )
         assert "1 passed" in proc.stdout, proc.stdout[-2000:]
