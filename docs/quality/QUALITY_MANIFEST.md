@@ -3,15 +3,15 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`78e4b6f5cf74147c…`
+- 内容指纹：`f69f128da8b6dcd0…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 477 | 460 | 40 |
+| tools | 485 | 468 | 40 |
 | algorithms | 256 | 195 | 1 |
-| capabilities | 194 | 128 | 0 |
+| capabilities | 195 | 129 | 1 |
 | artifact_types | 23 | 23 | 0 |
 | recipes | 166 | 166（conformance 由 workflow 闸保护） | 0 |
 
@@ -25,12 +25,13 @@
 | memory_class | 100% | 95% | PASS（缺 0） |
 | capabilities | 96% | 95% | PASS（缺 19） |
 
-**gate: PASS**（`total=477`）
+**gate: PASS**（`total=485`）
 
 ## 行为化覆盖与 findings 棘轮（Quality V2）
 
-- 工具行为证据：dispatch **258** / mention 202 / none 17（dispatch 覆盖率 54%）
+- 工具行为证据：dispatch **258** / mention 210 / none 17（dispatch 覆盖率 53%）
 - findings 棘轮：**FAIL**（dispatch 下限 163，当前 258；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
+  - 违规：`CAPABILITY_NO_PRODUCER` 当前 1 > 基线 0
   - 违规：`TOOL_DESCRIPTOR_INCOMPLETE` 当前 23 > 基线 0
   - 违规：`TOOL_UNTESTED` 当前 17 > 基线 8
 
@@ -88,9 +89,9 @@
 - `webgis_temporal_media_status`（low）— missing descriptor fields: capabilities
 - `webgis_temporal_media_submit`（low）— missing descriptor fields: capabilities
 
-### CAPABILITY_NO_PRODUCER（0）
+### CAPABILITY_NO_PRODUCER（1）
 
-（无）
+- `data_join_authoring`（high）— native capability without algorithm/tool producer
 
 ### CAPABILITY_NO_CONFORMANCE（0）
 

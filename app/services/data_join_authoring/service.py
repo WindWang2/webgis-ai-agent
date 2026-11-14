@@ -674,6 +674,8 @@ async def _execute_body(
                     run.finished_at = datetime.now(timezone.utc)
                 db.commit()
 
+    from app.lib.cancellation import OperationCancelled
+
     _mark("running")
     started = time.monotonic()
     try:
@@ -695,12 +697,13 @@ async def _execute_body(
         await handle.progress(phase="sources_loaded", message=(
             f"左 {left.row_count()} 行 / 右 {right.row_count()} 行已冻结"))
 
-        # 2) 内核执行（取消协作 = handle.checkpoint）
+        # 2) 内核执行（线程池执行 —— 长关联不阻塞事件循环/看门狗；
+        #    取消协作 = handle.checkpoint 在批粒度抛 OperationCancelled）
         executor = JoinExecutor(plan, should_cancel=handle.checkpoint)
         if plan.mode == "attribute":
-            out_rows = executor.run_attribute(left, right)
+            out_rows = await asyncio.to_thread(executor.run_attribute, left, right)
         else:
-            out_rows = executor.run_spatial(left, right)
+            out_rows = await asyncio.to_thread(executor.run_spatial, left, right)
         stats = executor.stats
         await handle.progress(phase="joined", message=(
             f"匹配 {stats.matched_pairs} 对 / 输出 {stats.output_rows} 行"))
@@ -785,6 +788,12 @@ async def _execute_body(
             "output_rows": n_rows,
             "output_ref": receipt["output_ref"],
         }
+    except OperationCancelled:
+        # 协作取消：清 staging、run 行落 cancelled；job 终态由 runner 的
+        # 两段取消迁移落定（绝不留公开半成品）
+        outputs.discard_staging(run_id)
+        _mark("cancelled")
+        raise
     except DataJoinError as exc:
         outputs.discard_staging(run_id)
         _mark("failed", error_code=exc.code)

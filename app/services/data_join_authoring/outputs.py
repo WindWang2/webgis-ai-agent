@@ -100,6 +100,11 @@ def assemble_feature_collection(
     }
     if crs:
         fc["crs"] = crs
+        # G18/材料化证据通道（properties.schema_info.crs）：交付链拒绝无 CRS
+        # 标注的 GeoJSON 默认 4326 —— 输出自带权威 CRS（源自左源快照，
+        # 收据 working_crs/transform_note 同源），在此如实标注。
+        props = fc.setdefault("properties", {})
+        props.setdefault("schema_info", {})["crs"] = crs
     return fc
 
 

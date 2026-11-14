@@ -1487,6 +1487,13 @@ class ToolRegistry:
                 # ref 展开成整份 FeatureCollection，破坏身份与幂等键语义）。
                 if name == "gis_skill_job_prepare":
                     skip_keys.add("bindings")
+                # G38 数据关联：source/plan 内嵌的 ref 是「源锚身份」声明
+                # （service 经 G18 resolver 解析+鉴权，指纹入幂等键）——
+                # 透明解引用会把 ref 展开成整份 FeatureCollection/rows，
+                # 破坏源身份与计划 digest 语义。
+                if name in ("webgis_data_join_describe",
+                            "webgis_data_join_plan_upsert"):
+                    skip_keys.update({"source", "plan"})
                 # Pi 兼容（V4）：capture_ref_of 注入面 —— 记录源参数的原始
                 # ref 游标（解引用后注入声明字段，工具由此知道数据来源）。
                 capture_fields = self._declared_cursor_capture_fields(model)

@@ -48,6 +48,18 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         ),
 
         CapabilityDescriptor(
+            id="data_join_authoring", name="数据关联与空间富集", category="data_access",
+            description="两源关联作者面：属性键/空间点面关联计划（键变换、"
+                        "基数与空值政策、字段映射、聚合），全量键/基数/未匹配"
+                        "诊断，durable 执行产出完整派生表/富集图层（GeoJSON/行集"
+                        "+ DataObject 收据）。",
+            output_artifact_types=["stats_table"],
+            preferred_execution="local_first",
+            deterministic=True,
+            purpose_template="{subject} 数据关联",
+            version="1.0",
+        ),
+        CapabilityDescriptor(
             id="federated_dataset_query", name="联邦数据集查询", category="data_access",
             description="N 源（2..4）有界左深链式联邦查询：属性/空间连接与"
                         "聚合逐跳串联，成本排序、最小投影、半连接约减、"

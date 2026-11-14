@@ -5247,6 +5247,20 @@
     "title": "DeprecateRequest",
     "type": "object"
    },
+   "DescribeBody": {
+    "properties": {
+     "source": {
+      "additionalProperties": true,
+      "title": "Source",
+      "type": "object"
+     }
+    },
+    "required": [
+     "source"
+    ],
+    "title": "DescribeBody",
+    "type": "object"
+   },
    "DiscardPlanResponse": {
     "properties": {
      "plan_id": {
@@ -6016,6 +6030,25 @@
      "reason"
     ],
     "title": "ExceptionAccept",
+    "type": "object"
+   },
+   "ExecuteBody": {
+    "properties": {
+     "background": {
+      "default": true,
+      "title": "Background",
+      "type": "boolean"
+     },
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "ExecuteBody",
     "type": "object"
    },
    "ExecutePlanRequest": {
@@ -12404,6 +12437,20 @@
      "content"
     ],
     "title": "PiToolResponse",
+    "type": "object"
+   },
+   "PlanBody": {
+    "properties": {
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "PlanBody",
     "type": "object"
    },
    "PlanConfirmRequest": {
@@ -20424,6 +20471,26 @@
     "title": "UnitConversionEvidence",
     "type": "object"
    },
+   "UpdatePlanBody": {
+    "properties": {
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     }
+    },
+    "required": [
+     "plan",
+     "expected_revision"
+    ],
+    "title": "UpdatePlanBody",
+    "type": "object"
+   },
    "UploadDeleteResponse": {
     "description": "DELETE /uploads/{upload_id} 返回。",
     "examples": [
@@ -22788,6 +22855,27 @@
      }
     },
     "title": "ShareRequest",
+    "type": "object"
+   },
+   "app__api__routes__data_join_authoring__PreviewBody": {
+    "properties": {
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "sample_rows": {
+      "default": 50,
+      "maximum": 50.0,
+      "minimum": 1.0,
+      "title": "Sample Rows",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "PreviewBody",
     "type": "object"
    },
    "app__api__routes__print_layout__ExportBody": {
@@ -35699,6 +35787,1085 @@
     ]
    }
   },
+  "/api/v1/data-join-authoring/sessions/{session_id}/plans": {
+   "get": {
+    "operationId": "list_plans_api_v1_data_join_authoring_sessions__session_id__plans_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_archived",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Include Archived",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Plans",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   },
+   "post": {
+    "operationId": "create_plan_api_v1_data_join_authoring_sessions__session_id__plans_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Plan",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}": {
+   "delete": {
+    "operationId": "archive_plan_api_v1_data_join_authoring_sessions__session_id__plans__plan_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "expected_revision",
+      "required": true,
+      "schema": {
+       "minimum": 1,
+       "title": "Expected Revision",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Archive Plan",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   },
+   "get": {
+    "operationId": "get_plan_api_v1_data_join_authoring_sessions__session_id__plans__plan_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Plan",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   },
+   "patch": {
+    "operationId": "update_plan_api_v1_data_join_authoring_sessions__session_id__plans__plan_id__patch",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UpdatePlanBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Update Plan",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/execute": {
+   "post": {
+    "operationId": "execute_plan_api_v1_data_join_authoring_sessions__session_id__plans__plan_id__execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExecuteBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute Plan",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/preview": {
+   "post": {
+    "operationId": "preview_plan_api_v1_data_join_authoring_sessions__session_id__plans__plan_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__data_join_authoring__PreviewBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview Plan",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/recover": {
+   "post": {
+    "description": "孤儿收据收敛（J21；也可由服务启动钩子触发）。",
+    "operationId": "recover_api_v1_data_join_authoring_sessions__session_id__recover_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Recover",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/runs": {
+   "get": {
+    "operationId": "list_runs_api_v1_data_join_authoring_sessions__session_id__runs_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "plan_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 64,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Plan Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Runs",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}": {
+   "get": {
+    "operationId": "inspect_run_api_v1_data_join_authoring_sessions__session_id__runs__run_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect Run",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/cancel": {
+   "post": {
+    "operationId": "cancel_run_api_v1_data_join_authoring_sessions__session_id__runs__run_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Run",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/render-ref": {
+   "post": {
+    "description": "上图渲染投影（≤10k 行；超过 → typed render_ref_over_budget）。",
+    "operationId": "render_ref_api_v1_data_join_authoring_sessions__session_id__runs__run_id__render_ref_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Render Ref",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/results": {
+   "get": {
+    "operationId": "run_results_api_v1_data_join_authoring_sessions__session_id__runs__run_id__results_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "cursor",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Cursor",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Run Results",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
+  "/api/v1/data-join-authoring/sessions/{session_id}/sources/describe": {
+   "post": {
+    "operationId": "describe_source_api_v1_data_join_authoring_sessions__session_id__sources_describe_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DescribeBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Describe Source",
+    "tags": [
+     "数据关联工作台 G38",
+     "数据关联工作台 G38"
+    ]
+   }
+  },
   "/api/v1/data-lifecycle/assess": {
    "post": {
     "operationId": "run_assess_api_v1_data_lifecycle_assess_post",
@@ -39611,7 +40778,7 @@
   },
   "/api/v1/geocompute/cluster/ledger/limits": {
    "post": {
-    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。",
+    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。组织管理员不能改 ``global``。",
     "operationId": "cluster_set_ledger_limits_api_v1_geocompute_cluster_ledger_limits_post",
     "requestBody": {
      "content": {
@@ -39660,7 +40827,7 @@
   },
   "/api/v1/geocompute/cluster/metrics": {
    "get": {
-    "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。",
+    "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。\n组织管理员看不到这份全局视图。",
     "operationId": "cluster_metrics_api_v1_geocompute_cluster_metrics_get",
     "responses": {
      "200": {
@@ -39689,7 +40856,7 @@
   },
   "/api/v1/geocompute/cluster/runs/stuck": {
    "get": {
-    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。",
+    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。组织管理员看不到其他租户的 run。",
     "operationId": "cluster_stuck_runs_api_v1_geocompute_cluster_runs_stuck_get",
     "responses": {
      "200": {
@@ -39718,7 +40885,7 @@
   },
   "/api/v1/geocompute/cluster/runs/{run_id}/reset": {
    "post": {
-    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。",
+    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。\n组织管理员不能复位其他租户的 run。",
     "operationId": "cluster_reset_run_api_v1_geocompute_cluster_runs__run_id__reset_post",
     "parameters": [
      {
@@ -39785,7 +40952,7 @@
   },
   "/api/v1/geocompute/cluster/workers": {
    "get": {
-    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。",
+    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。组织管理员看不到这份全局拓扑。",
     "operationId": "cluster_workers_api_v1_geocompute_cluster_workers_get",
     "responses": {
      "200": {
@@ -42603,7 +43770,7 @@
   },
   "/api/v1/lakehouse/gc/plan": {
    "post": {
-    "description": "GC dry-run 计划（只读；plan token + 确定性候选清单）。\n\n**admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，\n会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、\nplan 响应也会枚举全局孤儿 id（跨租户泄漏）。",
+    "description": "GC dry-run 计划（只读；plan token + 确定性候选清单）。\n\n组织管理员不能扫全局对象库。没有 org 的管理员才是这个控制面。\n**admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，\n会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、\nplan 响应也会枚举全局孤儿 id（跨租户泄漏）。",
     "operationId": "plan_lakehouse_gc_api_v1_lakehouse_gc_plan_post",
     "parameters": [
      {
@@ -58753,7 +59920,7 @@
   },
   "/api/v2/geocompute/cluster/ledger/limits": {
    "post": {
-    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。",
+    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。组织管理员不能改 ``global``。",
     "operationId": "v2_geocompute_cluster_set_ledger_limits_api_v2_geocompute_cluster_ledger_limits",
     "requestBody": {
      "content": {
@@ -58803,7 +59970,7 @@
   },
   "/api/v2/geocompute/cluster/metrics": {
    "get": {
-    "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。",
+    "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。\n组织管理员看不到这份全局视图。",
     "operationId": "v2_geocompute_cluster_metrics_api_v2_geocompute_cluster_metrics",
     "responses": {
      "200": {
@@ -58833,7 +60000,7 @@
   },
   "/api/v2/geocompute/cluster/runs/stuck": {
    "get": {
-    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。",
+    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。组织管理员看不到其他租户的 run。",
     "operationId": "v2_geocompute_cluster_stuck_runs_api_v2_geocompute_cluster_runs_stuck",
     "responses": {
      "200": {
@@ -58863,7 +60030,7 @@
   },
   "/api/v2/geocompute/cluster/runs/{run_id}/reset": {
    "post": {
-    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。",
+    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。\n组织管理员不能复位其他租户的 run。",
     "operationId": "v2_geocompute_cluster_reset_run_api_v2_geocompute_cluster_runs_run_id_reset",
     "parameters": [
      {
@@ -58931,7 +60098,7 @@
   },
   "/api/v2/geocompute/cluster/workers": {
    "get": {
-    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。",
+    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。组织管理员看不到这份全局拓扑。",
     "operationId": "v2_geocompute_cluster_workers_api_v2_geocompute_cluster_workers",
     "responses": {
      "200": {
@@ -61182,7 +62349,7 @@
   },
   "/api/v2/lakehouse/gc/plan": {
    "post": {
-    "description": "GC dry-run 计划（只读；plan token + 确定性候选清单）。\n\n**admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，\n会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、\nplan 响应也会枚举全局孤儿 id（跨租户泄漏）。",
+    "description": "GC dry-run 计划（只读；plan token + 确定性候选清单）。\n\n组织管理员不能扫全局对象库。没有 org 的管理员才是这个控制面。\n**admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，\n会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、\nplan 响应也会枚举全局孤儿 id（跨租户泄漏）。",
     "operationId": "v2_lakehouse_plan_lakehouse_gc_api_v2_lakehouse_gc_plan",
     "parameters": [
      {
