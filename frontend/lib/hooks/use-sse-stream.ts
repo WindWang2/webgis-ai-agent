@@ -7,6 +7,7 @@ import type { StepResultPayload } from '@/lib/api/chat';
 import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useChatStore, type ChatMessage } from '@/lib/store/useChatStore';
+import { useVisualAttachStore } from '@/lib/visual-context/attach-store';
 import { markRefSourceFailed } from '@/lib/mapspec/ref-source-resolver';
 import { requestRefFC } from '@/lib/data-plane/ref-service';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
@@ -1137,6 +1138,34 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             timestamp: Date.now(),
           } as import('@/lib/chat/message-reducer').ChatStreamMessage,
         ]);
+      } else if (event.event === 'attachment_receipt') {
+        // G36（ADR-0291）：逐附件送模回执 —— 回填最后一条带附件的用户消息
+        // （sent/refused + reason；跨会话守卫同款）。
+        const payload = (data ?? {}) as Record<string, unknown>;
+        const receiptSid = typeof payload.session_id === 'string' ? payload.session_id : '';
+        if (receiptSid && receiptSid !== sessionIdRef.current) return;
+        const attachment = payload.attachment as Record<string, unknown> | undefined;
+        if (!attachment || typeof attachment.evidence_id !== 'string') return;
+        const evidenceId = attachment.evidence_id;
+        const status = attachment.status === 'sent' ? 'sent' : 'refused';
+        const reason = typeof attachment.reason === 'string' ? attachment.reason.slice(0, 80) : undefined;
+        setMessages((prev) => {
+          for (let i = prev.length - 1; i >= 0; i--) {
+            const m = prev[i];
+            const atts = m.attachments;
+            if (m.role === 'user' && Array.isArray(atts)
+                && atts.some((a) => a.evidence_id === evidenceId)) {
+              const next = [...prev];
+              next[i] = {
+                ...m,
+                attachments: atts.map((a) =>
+                  a.evidence_id === evidenceId ? { ...a, status, reason } : a),
+              };
+              return next;
+            }
+          }
+          return prev;
+        });
       }
     },
     [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent, refreshDatasetLayer, rotateLayerFetches]
@@ -1481,11 +1510,30 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         focus_layer_id: focusLayerId ?? null,
       };
 
+      // G36（ADR-0291）：消费视觉附图草稿（ref-only；evidence bytes 已在
+      // intake 上传）。乐观消息携带附件 chips；发送失败时草稿回滚（证据
+      // 仍是服务端 draft 态，未绑定消息 —— 「附件已保存、turn 未开始」）。
+      const attachDrafts = useVisualAttachStore.getState().sessionId === sessionIdRef.current
+        ? useVisualAttachStore.getState().consumeDrafts()
+        : [];
+      const userMsgId = msgIdGen.current.next();
       setMessages((prev) => appendMessage(prev, {
-        id: msgIdGen.current.next(),
+        id: userMsgId,
         role: 'user',
         content: userMsg,
         timestamp: new Date(),
+        ...(attachDrafts.length
+          ? {
+              attachments: attachDrafts.map((d) => ({
+                evidence_id: d.evidenceId,
+                source_type: d.sourceType,
+                label: d.label,
+                thumbUrl: d.thumbUrl,
+                mapspec_revision: d.mapspecRevision ?? null,
+                status: 'pending',
+              })),
+            }
+          : {}),
       }));
 
       const thinkingMsgId = msgIdGen.current.next();
@@ -1507,7 +1555,13 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         // stuck. It is still set before the first await, so a same-tick second
         // send (which can only run once we yield at bridge.send) sees it.
         sendingRef.current = true;
-        await bridge.send(userMsg, mapState);
+        await bridge.send(
+          userMsg,
+          mapState,
+          attachDrafts.length
+            ? attachDrafts.map((d) => ({ evidence_id: d.evidenceId }))
+            : null,
+        );
 
         // Flush any tokens still pending in the current frame so the final
         // streamed text is applied before the thinking→done transition.
@@ -1518,13 +1572,25 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         // bridge resolves even when the stream died — the store's terminal
         // aiStatus (synced by useMapBridge before the send promise settles)
         // is the truthful signal.
-        return useHudStore.getState().aiStatus !== 'error';
+        const ok = useHudStore.getState().aiStatus !== 'error';
+        // G36：turn 未成功起步（发送失败/未开始）→ 草稿回滚（服务端证据仍
+        // 是 draft 态）；turn 已开始则证据随回执转 bound，不回滚。
+        if (!ok && attachDrafts.length
+            && useVisualAttachStore.getState().sessionId === sessionIdRef.current) {
+          const stillPending = useVisualAttachStore.getState().drafts;
+          for (const d of attachDrafts) {
+            if (!stillPending.some((x) => x.evidenceId === d.evidenceId)) {
+              useVisualAttachStore.getState().addDraft(d);
+            }
+          }
+        }
+        return ok;
       } finally {
         // A superseded stream must not unlock the next send.
         if (sendGeneration === sendGenerationRef.current) sendingRef.current = false;
       }
     },
-    [bridge, getMapSnapshot, userLocation, setMessages]
+    [bridge, getMapSnapshot, userLocation, setMessages, sessionIdRef]
   );
 
 

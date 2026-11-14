@@ -708,6 +708,45 @@ def _pi_unavailable() -> "HTTPException":
     return HTTPException(status_code=503, detail="Pi agent unavailable")
 
 
+async def _attachment_persist_meta(
+    session_id: str,
+    attachments: Optional[list],
+) -> list[dict]:
+    """G36：附件的持久化元数据（V20 刷新恢复用；ref + 身份摘要）。
+
+    只取本会话证据索引里在场的条目（归属复核）；畸形/外来 ref 诚实跳过
+    （送模回执已另行披露拒绝原因）。元数据有界（无字节）。
+    """
+    if not attachments:
+        return []
+    try:
+        from app.services.visual_context.store import load_evidence_index
+
+        records = {r.evidence_id: r for r in await load_evidence_index(session_id)}
+        out: list[dict] = []
+        for ref in list(attachments)[:4]:
+            evidence_id = str(getattr(ref, "evidence_id", "") or "")
+            rec = records.get(evidence_id)
+            if rec is None:
+                continue
+            out.append({
+                "evidence_id": rec.evidence_id,
+                "source_type": rec.source_type,
+                "mime": rec.mime,
+                "derived_sha256": rec.derived_sha256,
+                "width": rec.width,
+                "height": rec.height,
+                "mapspec_revision": rec.mapspec_revision,
+                "viewport_hash": rec.viewport_hash,
+                "label": rec.label,
+                "state": rec.state,
+            })
+        return out
+    except Exception:  # noqa: BLE001 — 元数据面绝不阻断转录
+        logger.debug("[pi-chat] attachment meta build failed", exc_info=True)
+        return []
+
+
 def _use_pi_bridge() -> bool:
     """Return True when a Pi worker is alive.
 
@@ -1367,7 +1406,28 @@ async def chat_stream(
                 try:
                     async with async_db_session() as db:
                         svc = AsyncHistoryService(db)
-                        await svc.save_message(pi_session_id, "user", req.message)
+                        # G36（ADR-0291）：附件元数据随用户消息持久化（ref +
+                        # 身份摘要，不存字节）；保存后把证据 draft→bound。
+                        _attach_meta = await _attachment_persist_meta(
+                            pi_session_id, req.attachments)
+                        _user_msg_id = await svc.save_message(
+                            pi_session_id, "user", req.message,
+                            attachments=_attach_meta or None)
+                        if _attach_meta and _user_msg_id is not None:
+                            try:
+                                from app.services.visual_context.store import (
+                                    bind_evidence_to_message,
+                                )
+
+                                await bind_evidence_to_message(
+                                    pi_session_id,
+                                    [a["evidence_id"] for a in _attach_meta],
+                                    _user_msg_id,
+                                )
+                            except Exception:  # noqa: BLE001 — 绑定失败不阻断转录
+                                logger.debug(
+                                    "[pi-chat] evidence bind failed sid=%s",
+                                    pi_session_id, exc_info=True)
                 except Exception as e:  # noqa: BLE001 — transcript must not break the stream
                     logger.warning("[pi-chat] user message persistence failed for %s: %s", pi_session_id, e)
                 if not result.get("completed"):
@@ -1508,6 +1568,9 @@ async def chat_stream(
                                 context_project_id=req.project_id or "",
                                 context_user_id=user_id or "",
                                 context_query_text=req.message or "",
+                                attachments=(
+                                    [a.model_dump() for a in req.attachments]
+                                    if req.attachments else None),
                             ),
                         ),
                         buffer,
@@ -1638,6 +1701,11 @@ async def get_session_detail(
                 "role": m.role,
                 "content": m.content,
                 "timestamp": m.created_at.timestamp() * 1000,
+                # G36（ADR-0291）：附件元数据（有界；仅 user 消息携带）。
+                "attachments": (
+                    [a for a in (m.attachments or [])][:4]
+                    if m.attachments else None
+                ),
             }
             for m in page
         ],

@@ -1,0 +1,293 @@
+"""视觉证据注册表（G36 / ADR-0291）。
+
+索引存放于 ``session_data``（与 critic 截图索引同机制、**不同 key**：
+``_visual_context_evidence``）；字节经 ``refs`` 引用计数入 blob store。
+
+生命周期：
+- ``draft``：已上传未发送。每会话 ≤ ``MAX_DRAFTS_PER_SESSION``（FIFO 淘汰
+  最旧 draft，释放其 blob 引用）；超 24h 的 draft 由清理路径回收。
+- ``bound``：随消息发送（``bind_evidence_to_message``）——保留策略与消息
+  行一致，不被 critic FIFO 或 draft 上限淘汰（V19）。
+- ``revoked``：显式撤销 tombstone —— 记录保留（可审计），解析恒拒绝，
+  blob 引用即时释放（V28/V33）。
+
+并发：索引经 ``atomic_update_state``（CAS 重试）更新；blob I/O 在工作
+线程。回滚语义：blob 引用先登记，索引提交失败 → 释放引用（不留悬空
+字节计数）。
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from typing import Dict, List, Optional, Sequence, Tuple
+
+from app.services.visual_context.evidence import (
+    EvidenceRejected,
+    STATE_BOUND,
+    STATE_DRAFT,
+    STATE_REVOKED,
+    VisualEvidenceRecord,
+    viewport_identity_hash,
+)
+from app.services.visual_context import refs
+
+logger = logging.getLogger(__name__)
+
+INDEX_KEY = "_visual_context_evidence"
+MAX_DRAFTS_PER_SESSION = 12
+DRAFT_TTL_S = 24 * 3600
+#: 单会话证据登记预算（1 小时滚动窗；防刷图）。
+MAX_REGISTRATIONS_PER_HOUR = 60
+_REGISTRATION_WINDOW_KEY = "_visual_context_registrations"
+
+
+async def _update_index(session_id: str, mutate) -> Optional[List[VisualEvidenceRecord]]:
+    """CAS 原子更新索引；mutate(records) → (new_records, result)。"""
+    from app.services.session_data import session_data_manager
+    from app.services.session_state_atomic import atomic_update_state
+
+    result_holder: List[Tuple] = []
+
+    def update(snapshot):
+        raw = snapshot.get(INDEX_KEY) or []
+        records = [r for item in raw
+                   if (r := VisualEvidenceRecord.from_dict(item)) is not None]
+        new_records, result = mutate(records)
+        result_holder.append((new_records, result))
+        return {INDEX_KEY: [r.to_dict() for r in new_records]}
+
+    committed = await atomic_update_state(session_data_manager, session_id, [INDEX_KEY], update)
+    if committed is None:
+        return None
+    _new_records, result = result_holder[0] if result_holder else ([], None)
+    return result
+
+
+async def load_evidence_index(session_id: str) -> List[VisualEvidenceRecord]:
+    """读索引（畸形条目诚实跳过；异常 → 空索引）。"""
+    from app.services.session_data import session_data_manager
+
+    try:
+        raw = await session_data_manager.get_map_state(session_id)
+        items = (raw or {}).get(INDEX_KEY)
+        if not isinstance(items, list):
+            return []
+        out = []
+        for item in items[:256]:
+            r = VisualEvidenceRecord.from_dict(item)
+            if r is not None:
+                out.append(r)
+        return out
+    except Exception:  # noqa: BLE001 — 索引缺席 = 无证据
+        return []
+
+
+async def list_evidence(session_id: str) -> List[VisualEvidenceRecord]:
+    """UI 列表（全部状态，含 tombstone —— 前端显示「已移除」）。"""
+    return await load_evidence_index(session_id)
+
+
+class _BudgetExceeded(Exception):
+    pass
+
+
+async def _admit_registration(session_id: str) -> None:
+    """登记预算（滚动 1 小时；超限拒绝，不无限刷图）。"""
+    now = time.time()
+    from app.services.session_data import session_data_manager
+    from app.services.session_state_atomic import atomic_update_state
+
+    def update(snapshot):
+        raw = snapshot.get(_REGISTRATION_WINDOW_KEY) or []
+        stamps = [float(t) for t in raw if isinstance(t, (int, float))][-MAX_REGISTRATIONS_PER_HOUR:]
+        stamps = [t for t in stamps if now - t < 3600.0]
+        if len(stamps) >= MAX_REGISTRATIONS_PER_HOUR:
+            raise _BudgetExceeded()
+        return {_REGISTRATION_WINDOW_KEY: stamps + [now]}
+
+    try:
+        committed = await atomic_update_state(session_data_manager, session_id,
+                                              [_REGISTRATION_WINDOW_KEY], update)
+    except _BudgetExceeded:
+        raise EvidenceRejected(
+            "registration_budget_exceeded",
+            "图片登记过于频繁，请稍后再试。") from None
+    if committed is None:
+        raise EvidenceRejected("registration_commit_unavailable")
+
+
+async def register_evidence(
+    session_id: str,
+    derived_bytes: bytes,
+    record: VisualEvidenceRecord,
+) -> VisualEvidenceRecord:
+    """入库：blob 引用 → 索引登记（draft FIFO 上限）→ 回滚护栏。
+
+    返回已固化 ``evidence_id`` 的记录；并发登记/回滚见模块 docstring。
+    """
+    from app.services.durable_blob_store import sha256_of_bytes
+
+    if not session_id:
+        raise EvidenceRejected("session_required")
+    if not derived_bytes:
+        raise EvidenceRejected("empty_input")
+    record.session_id = session_id
+    record.validate_invariants()
+    await _admit_registration(session_id)
+
+    if record.derived_sha256 and record.derived_sha256 != sha256_of_bytes(derived_bytes):
+        raise EvidenceRejected("derived_sha_mismatch", "派生字节与声明 sha 不符。")
+    if not record.derived_sha256:
+        record.derived_sha256 = sha256_of_bytes(derived_bytes)
+    if record.derived_size != len(derived_bytes):
+        record.derived_size = len(derived_bytes)
+
+    stored = await asyncio.to_thread(
+        refs.store_evidence_ref, record.derived_sha256, session_id, derived_bytes)
+    if not stored:
+        raise EvidenceRejected("reference_commit_unavailable")
+
+    evicted: List[VisualEvidenceRecord] = []
+
+    def mutate(records: List[VisualEvidenceRecord]):
+        nonlocal evicted
+        # draft FIFO：超上限淘汰最旧 draft（bound/revoked 不动）。
+        drafts = [r for r in records if r.state == STATE_DRAFT]
+        overflow = len(drafts) + 1 - MAX_DRAFTS_PER_SESSION
+        if overflow > 0:
+            drafts_sorted = sorted(drafts, key=lambda r: r.created_at)
+            drop_ids = {r.evidence_id for r in drafts_sorted[:overflow]}
+            evicted = [r for r in drafts_sorted[:overflow]]
+            records = [r for r in records if r.evidence_id not in drop_ids]
+        # 同 evidence_id 幂等：重登记 = 拒绝（identity 不可覆盖）。
+        if any(r.evidence_id == record.evidence_id for r in records):
+            return records, ("duplicate_id", None)
+        records = records + [record]
+        records = records[-512:]
+        return records, ("ok", record)
+
+    try:
+        result = await _update_index(session_id, mutate)
+    except BaseException:
+        await asyncio.to_thread(refs.release_evidence_ref,
+                                record.derived_sha256, session_id)
+        raise
+    if result is None:
+        await asyncio.to_thread(refs.release_evidence_ref,
+                                record.derived_sha256, session_id)
+        raise EvidenceRejected("index_commit_unavailable")
+    status, saved = result
+    if status == "duplicate_id":
+        await asyncio.to_thread(refs.release_evidence_ref,
+                                record.derived_sha256, session_id)
+        raise EvidenceRejected("duplicate_evidence_id")
+    # 淘汰 draft 的引用释放（失败留给 sweep；不影响新登记）。
+    for old in evicted:
+        await asyncio.to_thread(refs.release_evidence_ref,
+                                old.derived_sha256, session_id)
+    return saved or record
+
+
+async def resolve_evidence(
+    session_id: str,
+    evidence_id: str,
+    *,
+    max_bytes: int,
+) -> Optional[Tuple[VisualEvidenceRecord, bytes]]:
+    """受权解析：会话索引在场 + 非 revoked + blob 授权读取 + sha 校验。"""
+    if not evidence_id or not session_id:
+        return None
+    records = await load_evidence_index(session_id)
+    rec = next((r for r in records if r.evidence_id == evidence_id), None)
+    if rec is None or rec.state == STATE_REVOKED:
+        return None
+    data = await asyncio.to_thread(
+        refs.read_evidence_bytes, rec.derived_sha256, session_id, max_bytes)
+    if data is None:
+        return None
+    return rec, data
+
+
+async def get_evidence_record(
+    session_id: str, evidence_id: str,
+) -> Optional[VisualEvidenceRecord]:
+    """只读元数据（不取字节；UI/工具状态用）。"""
+    records = await load_evidence_index(session_id)
+    return next((r for r in records if r.evidence_id == evidence_id), None)
+
+
+async def revoke_evidence(session_id: str, evidence_id: str) -> Optional[VisualEvidenceRecord]:
+    """撤销（draft/bound 均可）：tombstone + 引用释放（V17 共享安全）。"""
+    released: List[str] = []
+
+    def mutate(records: List[VisualEvidenceRecord]):
+        target = next((r for r in records if r.evidence_id == evidence_id), None)
+        if target is None:
+            return records, ("not_found", None)
+        if target.state == STATE_REVOKED:
+            return records, ("already", target)
+        target.state = STATE_REVOKED
+        released.append(target.derived_sha256)
+        return records, ("ok", target)
+
+    result = await _update_index(session_id, mutate)
+    if result is None:
+        raise EvidenceRejected("index_commit_unavailable")
+    for sha in released:
+        await asyncio.to_thread(refs.release_evidence_ref, sha, session_id)
+    status, rec = result
+    return rec if status in ("ok", "already") else None
+
+
+async def bind_evidence_to_message(
+    session_id: str,
+    evidence_ids: Sequence[str],
+    message_id: int,
+) -> int:
+    """发送时绑定：draft → bound（幂等；返回成功绑定数）。"""
+    wanted = [e for e in evidence_ids if e]
+
+    def mutate(records: List[VisualEvidenceRecord]):
+        bound = 0
+        for r in records:
+            if r.evidence_id in wanted and r.state == STATE_DRAFT:
+                r.state = STATE_BOUND
+                r.bound_message_id = int(message_id)
+                bound += 1
+        return records, ("ok", bound)
+
+    result = await _update_index(session_id, mutate)
+    if result is None:
+        return 0
+    _status, bound = result
+    return int(bound or 0)
+
+
+async def purge_expired_drafts(session_id: str) -> int:
+    """过期 draft 回收（24h；TTL 由清理路径调用）。"""
+    now = time.time()
+    expired: List[str] = []
+
+    def mutate(records: List[VisualEvidenceRecord]):
+        nonlocal expired
+        keep = []
+        for r in records:
+            if r.state == STATE_DRAFT and now - r.created_at > DRAFT_TTL_S:
+                expired.append(r.derived_sha256)
+                # draft 无消息引用：整条移除（无 tombstone 必要 —— 从未发送）。
+                continue
+            keep.append(r)
+        return keep, ("ok", len(expired))
+
+    result = await _update_index(session_id, mutate)
+    if result is None:
+        return 0
+    for sha in expired:
+        await asyncio.to_thread(refs.release_evidence_ref, sha, session_id)
+    return len(expired)
+
+
+def viewport_hash_of(viewport: Optional[Dict]) -> str:
+    """evidence.py 的身份指纹便捷入口（intake 路由用）。"""
+    return viewport_identity_hash(viewport)

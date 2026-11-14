@@ -215,6 +215,11 @@ class PiRpcClient:
         # ADR-0288（W08，#2061）：本次 spawn 的 LLM 配置代际（空 = 解析失败 /
         # 未锚定 —— 配置换代回收 fail-open 不触发）。
         self.spawn_config_generation: str = ""
+        # G36（ADR-0291）：本次 spawn 锚定的模型 id 与其目录是否声明 image
+        # input（视觉能力投影锚点；描述符此后换代 → 送图前拒绝，V11）。
+        self.spawn_model_id: str = ""
+        self.spawn_declared_image_input: bool = False
+        self.spawn_epoch: int = 0
         self._surface_dump_path: Optional[Path] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
@@ -324,6 +329,9 @@ class PiRpcClient:
         # （reader finally 里与 flag 一起 set 的 event，这里与 flag 一起 clear）。
         self._process_died = False
         self._process_died_event.clear()
+        # G36（ADR-0291）：spawn 代计数（vision gate 的 get_state 缓存锚点；
+        # 每次 respawn 自增，目录核对按新代重做）。
+        self.spawn_epoch += 1
 
         # #1438：spawn 的全部阻塞步骤（目录/配置文件写盘、native surface
         # dump、subprocess.Popen 的 fork）整体 offload 到 worker 线程 ——
@@ -442,6 +450,18 @@ class PiRpcClient:
             self.spawn_config_generation = ""
 
         if llm_base and llm_model:
+            # G36（ADR-0291）：视觉能力投影 —— 管理员描述符确证 vision=True
+            # 时给模型条目加性补 input/inputLimits（Pi 目录省略 input 默认
+            # text-only）。spawn 锚点记录声明结果：此后描述符换代 → 与锚点
+            # 不一致 → 送图前拒绝（V11），文本不受影响。
+            from app.services.visual_context.profile import (
+                model_catalog_entry,
+                model_entry_declares_image,
+            )
+
+            _model_entry = model_catalog_entry(llm_model, llm_model, True)
+            self.spawn_model_id = llm_model
+            self.spawn_declared_image_input = model_entry_declares_image(_model_entry)
             _write_agent_text(PI_AGENT_DIR / "models.json",
                 json.dumps(
                     {
@@ -454,9 +474,7 @@ class PiRpcClient:
                                     "supportsDeveloperRole": False,
                                     "supportsReasoningEffort": False,
                                 },
-                                "models": [
-                                    {"id": llm_model, "name": llm_model, "reasoning": True}
-                                ],
+                                "models": [_model_entry],
                             }
                         }
                     },

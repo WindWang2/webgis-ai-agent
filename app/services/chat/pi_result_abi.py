@@ -283,14 +283,24 @@ def abi_tool_response(
     与 bridge 原 4 个返回点逐点等价：``is_error=None`` → isError 按
     ``result.status == "error"`` 派生。``PiToolResponse`` 延迟导入
     （bridge 模块级导入本模块，防环）。
+
+    G36（ADR-0291）：``result.result_images``（dispatch 窄提取、有界）
+    非空 → content 追加原生 ImageContent（vendor ToolResultMessage 支持
+    (TextContent | ImageContent)[]）。text 摘要与 details 64KB 瘦身照旧。
     """
     from app.agent_pi_bridge import PiToolResponse
 
     if is_error is None:
         is_error = str(getattr(result, "status", "") or "") == "error"
+    content: list = [{"type": "text", "text": text}]
+    result_images = list(getattr(result, "result_images", None) or [])[:1]
+    for img in result_images:
+        if isinstance(img, dict) and img.get("type") == "image":
+            content.append({"type": "image", "data": img.get("data", ""),
+                            "mimeType": img.get("mimeType", "image/png")})
     return PiToolResponse(
         toolCallId=tool_call_id,
-        content=[{"type": "text", "text": text}],
+        content=content,
         details=attach_result_abi(
             details, result, cancelled=cancelled, extra_warnings=extra_warnings
         ),

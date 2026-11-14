@@ -72,6 +72,8 @@ export type SSEEventType =
   | 'pi_interaction_update'
   | 'pi_ui'
   | 'pi_turn_message'
+  // G36（ADR-0291）：附件逐条送模回执（sent/refused + reason）
+  | 'attachment_receipt'
   | 'plan_step_done'
   | 'plan_finalized'
   // #1048: SessionPlan live deltas（双 host；与 plan_* 是两个计划概念，ADR-0076）
@@ -185,7 +187,10 @@ export async function* streamChat(
   projectId?: string | null,
   /** ADR-0194「画布即 Prompt」：随 turn 捎带的画布动作信封（服务端与
    * 即时端点 /canvas-actions 内容寻重防双计）。null/undefined = 不携带。 */
-  canvasActions?: object | null
+  canvasActions?: object | null,
+  /** G36（ADR-0291）：随 turn 捎带的受权视觉证据 refs（ref-only；bytes
+   * 已经由 visual-context intake 上传）。空/undefined = 不携带。 */
+  attachments?: Array<{ evidence_id: string; purpose?: string }> | null
 ): AsyncGenerator<SSEEvent> {
   const response = await openStream('/api/v1/chat/stream', {
     method: "POST",
@@ -196,6 +201,9 @@ export async function* streamChat(
       skill_name: skillName,
       ...(projectId ? { project_id: projectId } : {}),
       ...(canvasActions ? { canvas_actions: canvasActions } : {}),
+      ...(attachments && attachments.length
+        ? { attachments: attachments.slice(0, 4) }
+        : {}),
     },
     signal,
     ownerToken,
@@ -437,13 +445,21 @@ export async function sendTurnMessage(
   turnId: string,
   message: string,
   mode: 'adjust' | 'queue',
-  ownerToken?: string | null
+  ownerToken?: string | null,
+  /** G36（ADR-0291）：运行中附图（原生 steer/follow_up images 通道）。 */
+  attachments?: Array<{ evidence_id: string }> | null
 ): Promise<TurnSteerResult> {
   return apiFetch<TurnSteerResult>(
     `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/messages`,
     {
       method: 'POST',
-      body: { message, mode },
+      body: {
+        message,
+        mode,
+        ...(attachments && attachments.length
+          ? { attachments: attachments.slice(0, 4) }
+          : {}),
+      },
       ownerToken,
       label: "API Error",
     }
