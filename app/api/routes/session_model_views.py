@@ -89,7 +89,6 @@ async def get_session_model(
     pref = target["pref"]
     receipt = await _latest_receipt(db, session_id)
 
-    requested_thinking = pref.thinking_level
     return {
         "session_id": session_id,
         "catalog_generation": session_catalog.catalog_generation(),

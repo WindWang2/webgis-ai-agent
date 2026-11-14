@@ -14,14 +14,14 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models.db_model import Base, ChatTurnRuntime, ChatUsageRecord, Conversation
+from app.models.db_model import Base, ChatTurnRuntime, ChatUsageRecord
 from app.services.chat.model_runtime import session_catalog
 from app.services.chat.model_runtime.session_model_prefs import (
     RevisionConflict,

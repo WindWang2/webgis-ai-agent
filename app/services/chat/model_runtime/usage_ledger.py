@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -303,7 +303,6 @@ async def persist_turn_records(
     from datetime import datetime, timezone
 
     from sqlalchemy import select
-    from sqlalchemy.exc import IntegrityError
 
     from app.core.database import async_db_session
     from app.models.db_model import ChatTurnRuntime, ChatUsageRecord
@@ -422,7 +421,7 @@ async def session_usage_summary(db, session_id: str, limit_turns: int = 20) -> D
     """
     from sqlalchemy import func, select
 
-    from app.models.db_model import ChatTurnRuntime, ChatUsageRecord
+    from app.models.db_model import ChatTurnRuntime
 
     totals_row = (
         await db.execute(

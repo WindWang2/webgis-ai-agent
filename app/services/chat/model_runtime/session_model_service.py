@@ -317,7 +317,6 @@ async def apply_session_model(
     pref = target["pref"]
     result.preference_revision = pref.revision if pref.revision else None
     result.mode = "explicit" if pref.is_explicit else "inherit"
-    catalog = target["catalog"]
     if not target["ok"]:
         result.reason_code = target["reason_code"]
         result.reason_detail = target["reason_detail"]
