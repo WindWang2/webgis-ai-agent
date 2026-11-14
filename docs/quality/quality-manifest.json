@@ -6457,11 +6457,13 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
     "tests/unit/data_join_authoring/conftest.py",
     "tests/unit/data_join_authoring/fixtures.py",
     "tests/unit/data_join_authoring/test_executor_attribute.py",
     "tests/unit/data_join_authoring/test_executor_spatial.py",
     "tests/unit/data_join_authoring/test_keys_and_plan.py",
+    "tests/unit/data_join_authoring/test_perf_and_cancel.py",
     "tests/unit/data_join_authoring/test_service_flows.py",
     "tests/unit/data_join_authoring/test_tools_and_routes.py"
    ]
@@ -9584,7 +9586,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "f69f128da8b6dcd021624607c17b8bf31f7e28d76ba68a3266c3cd5d211b727b",
+ "fingerprint": "6893c0b9fc88f5f10521e7b9f139f4f4f021ca746522862f11667cc9ccdc14c7",
  "gate": {
   "fields": {
    "capabilities": {
@@ -11804,6 +11806,7 @@
     "tests/perf/test_geocompute_v7_perf.py",
     "tests/test_runtime_chaos_plan_mode.py",
     "tests/test_spatial_reasoning_honesty_437.py",
+    "tests/unit/data_join_authoring/test_perf_and_cancel.py",
     "tests/unit/data_join_authoring/test_service_flows.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_audit3_batch4_fixes.py",
@@ -21743,6 +21746,7 @@
     "schema"
    ],
    "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
     "tests/unit/data_join_authoring/test_tools_and_routes.py"
    ],
    "tier": 2
@@ -21769,6 +21773,7 @@
     "durable job"
    ],
    "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
     "tests/unit/data_join_authoring/test_tools_and_routes.py"
    ],
    "tier": 2
@@ -21818,6 +21823,7 @@
     "draft"
    ],
    "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
     "tests/unit/data_join_authoring/test_tools_and_routes.py"
    ],
    "tier": 2
@@ -21844,6 +21850,7 @@
     "未匹配"
    ],
    "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
     "tests/unit/data_join_authoring/test_tools_and_routes.py"
    ],
    "tier": 2
@@ -21869,6 +21876,7 @@
     "分页"
    ],
    "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
     "tests/unit/data_join_authoring/test_tools_and_routes.py"
    ],
    "tier": 2
