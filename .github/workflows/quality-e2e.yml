@@ -189,6 +189,13 @@ jobs:
           cache: pip
       - name: Install backend deps
         run: pip install -c requirements.lock -r requirements-dev.txt httpx psycopg2-binary
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+      - name: Build vendored Pi (SSE chaos uses the real dialogue runtime)
+        run: |
+          git submodule update --init vendor/pi
+          bash scripts/build-vendor-pi.sh
       - name: Bring up chaos compose stack
         run: |
           docker compose -f tests/integration/chaos/docker-compose.chaos.yml up -d
