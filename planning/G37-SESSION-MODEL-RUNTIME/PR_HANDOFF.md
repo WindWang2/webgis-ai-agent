@@ -2,11 +2,11 @@
 
 ## 交付物
 
-- **PR**：（创建后回填 URL）
+- **PR**：https://github.com/WindWang2/webgis-ai-agent/pull/2117
 - **branch**：`zcode/g37-session-model-runtime-20261114T151704Z`
 - **worktree**：`/home/kevin/projects/webgis/webgis-worktrees/g37-session-model-runtime-20261114T151704Z`
 - **base SHA**：`1276692737a8cf58d0604fb40ae0e70fc61779a2`（origin/master，提交前后两次复核无漂移、open PR=0）
-- **head SHA**：`7096c0e54`（3 commits：feat → review-fix → browser-lane）
+- **head SHA**：`0b06c8ae6`（5 commits：feat → review-fix → browser-lane → R2-fix → lint）
 
 ## 用户可操作的功能说明
 
@@ -23,7 +23,7 @@
 
 ## 独立评审
 
-R1 APPROVE-WITH-NOTES（1×P1/2×P2/10×P3）→ 全部处置（见 REVIEW.md 对照表）→ R2 复审结论：（回填）。
+R1 APPROVE-WITH-NOTES（1×P1/2×P2/10×P3）→ 全部处置（见 REVIEW.md 对照表）→ R2 复审结论：APPROVE-WITH-NOTES（13 项全部解决，无新 P1/P2；5 个残留 P3 中 3 个已修、2 个按 note 接受，见 REVIEW.md R2 节）。
 
 ## 预算披露
 
