@@ -803,6 +803,42 @@ class GISSessionRuntime:
 
     # ── step evidence (K3) ────────────────────────────────────────────────
 
+    async def note_background_continuation(
+        self,
+        *,
+        tool_name: str,
+        turn_id: str = "",
+        host: PlanHost = "pi",
+    ) -> None:
+        """A tool started durable jobs that outlive this turn.
+
+        Steps it marked running stay running. ``end_turn`` must not record
+        them as failed while that work is still going.
+        """
+        if not self.session_id:
+            return
+        plan = await load_session_plan(self.session_id, store=self._store)
+        if plan is None or not plan.steps:
+            return
+        hits = capabilities_hit_by_tool(plan, tool_name)
+        if not hits:
+            return
+        async with session_lock_registry.lock(
+            self.session_id, fail_on_degraded=True
+        ) as lock:
+            plan = await load_session_plan(self.session_id, store=self._store)
+            if plan is None or (lock is not None and lock.lost):
+                return
+            changed = False
+            now = _now()
+            for step in plan.steps:
+                if step.capability in hits and step.status == "running":
+                    step.continues_after_turn = True
+                    step.updated_at = now
+                    changed = True
+            if changed and lock is not None and not lock.lost:
+                await _save_if_fresh(plan, store=self._store, host=host)
+
     async def begin_step(
         self,
         *,

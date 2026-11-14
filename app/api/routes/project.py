@@ -4,6 +4,7 @@ Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpo
 import asyncio
 from app.core.async_runner import run_sync
 import logging
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -943,37 +944,34 @@ async def restore_map_product_version(
     input-drift disclosure) — never a silent in-place resurrection.
     """
     user_id, org_id = actor_ids(user)
-    # #1215（audit3 D-4）：async handler 内的同步 SQLAlchemy 调用一律经
-    # to_thread 卸载（CORE-02 同型残留 —— 内联调用会阻塞事件循环，冻结
-    # 并发 SSE/WS 流）。
-    project = await asyncio.to_thread(
-        ProjectService.get_project_for_write, db=db, project_id=project_id,
-        user_id=user_id, org_id=org_id)
+    # 写校验和版本读取都在工作线程里用新的 Session。请求级 Session 不跨线程。
+    project = await _get_project_for_write_offloaded(
+        project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if req.mode == "style_only":
         # SEC-08：会话所有权校验（review C1）—— restore 是对活会话的
         # MapSpec 突变，绝不允许指向他人会话。
         await _verify_session_access(req.session_id, user, owner_token)
-        # #1741：版本存在性显式校验（数据驱动 404）——与下方 full 分支的
-        # get_version 预查同形；服务层余下 ValueError 是恢复前置冲突
-        # （无快照 / 突变被拒）。
-        version_row = await asyncio.to_thread(
-            MapProductService.get_version, db, project_id, version_no)
-        if version_row is None:
-            raise HTTPException(
-                status_code=404, detail=f"map product version not found: {version_no}")
         try:
             return await MapProductService.restore_style_to_session(
-                db, project_id, version_no,
+                None, project_id, version_no,
                 session_id=req.session_id,
                 actor=str(user.get("user_id") or "user"),
             )
         except ValueError as e:
             raise _engine_conflict(e)
-    # full restore = rerun the bound run from scratch (fresh artifacts).
-    row = await asyncio.to_thread(
-        MapProductService.get_version, db, project_id, version_no)
+
+    def _load_full_version():
+        with SessionLocal() as owned:
+            loaded = MapProductService.get_version(owned, project_id, version_no)
+            if loaded is None:
+                return None
+            return SimpleNamespace(
+                workflow_run_id=loaded.workflow_run_id,
+            )
+
+    row = await asyncio.to_thread(_load_full_version)
     if row is None:
         raise HTTPException(status_code=404, detail="Map product version not found")
     if not row.workflow_run_id:
@@ -1005,28 +1003,32 @@ async def restore_map_product_version(
     # #1215：record/maybe_auto_record_version 同步 DB 写经 to_thread。
     if str(run.status) != "completed":
         raise HTTPException(status_code=409, detail="Workflow replay did not complete; no restored version recorded")
-    if str(run.status) != "completed":
-        raise HTTPException(status_code=409, detail="Workflow replay did not complete; no new version recorded")
-    new_row = await asyncio.to_thread(
-        MapProductService.maybe_auto_record_version,
-        db, run, label=f"restore-full from V{version_no}")
-    if new_row is not None:
-        new_row.lineage_kind = "restore"
-        new_row.parent_version_no = version_no
-        await asyncio.to_thread(db.commit)
-    else:
-        new_row = await asyncio.to_thread(
-            MapProductService.record_version,
-            db, project_id,
-            # WorkflowRun.id 是 legacy Column[str] 声明（运行时即 str）——
-            # cast 桥接类型，运行时零开销。
-            workflow_run_id=cast("str", run.id),
-            label=f"restore-full from V{version_no}",
-            actor=str(user.get("user_id") or "user"),
-            parent_version_no=version_no,
-            lineage_kind="restore",
-        )
-    return {"restored_version_no": new_row.version_no, "source_version_no": version_no,
+
+    def _record_full():
+        with SessionLocal() as owned:
+            fresh = owned.get(WorkflowRun, run.id)
+            created = None
+            if fresh is not None:
+                created = MapProductService.maybe_auto_record_version(
+                    owned, fresh, label=f"restore-full from V{version_no}")
+            if created is not None:
+                created.lineage_kind = "restore"
+                created.parent_version_no = version_no
+                owned.commit()
+                owned.refresh(created)
+            else:
+                created = MapProductService.record_version(
+                    owned, project_id,
+                    workflow_run_id=cast("str", run.id),
+                    label=f"restore-full from V{version_no}",
+                    actor=str(user.get("user_id") or "user"),
+                    parent_version_no=version_no,
+                    lineage_kind="restore",
+                )
+            return created.version_no
+
+    restored_version_no = await asyncio.to_thread(_record_full)
+    return {"restored_version_no": restored_version_no, "source_version_no": version_no,
             "mode": "full", "run_id": run.id}
 
 
@@ -1298,7 +1300,7 @@ def repair_spatial_dataset(
         db.rollback()
         logger.warning("[repair route] lineage persistence failed: %s", exc)
         lineage_status = "error"
-        lineage_error = str(exc)[:200]
+        lineage_error = "lineage persistence failed"
 
     # Fetch-on-Demand: trim the repaired geometry out of the inline response.
     from app.tools._utils import trim_features

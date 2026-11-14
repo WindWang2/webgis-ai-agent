@@ -805,6 +805,20 @@ async def _dispatch_tool_bound(
                         result.background_job_ids = list(_job_origin.created_job_ids)
                     except Exception:  # noqa: BLE001 — 披露是增值，不阻断
                         pass
+                    if session_id:
+                        try:
+                            from app.services.harness_kernel import get_runtime
+
+                            await get_runtime(session_id).note_background_continuation(
+                                tool_name=tool_name,
+                                turn_id=turn_id or "",
+                                host="pi",
+                            )
+                        except Exception:  # noqa: BLE001 — 标记失败不阻断工具结果
+                            logger.debug(
+                                "[PiBridge] background continuation mark failed session=%s tool=%s",
+                                session_id, tool_name, exc_info=True,
+                            )
         except OperationCancelled:
             # audit #821: 协作取消 ≠ 工具故障（ADR-0052 / legacy tool_pipeline 同义）
             # —— 记 cancelled 证据并返回结构化取消响应，而不是落入 catch-all
