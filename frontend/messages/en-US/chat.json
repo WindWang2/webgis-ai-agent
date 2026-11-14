@@ -354,5 +354,40 @@
   "turnFailed": "⚠️ {detail}",
   "turnFailedDefault": "Request failed. Please retry.",
   "turnComplete": "Done.",
-  "sessionRestored": "Restored session “{title}” — {count} messages. You can continue."
+  "sessionRestored": "Restored session “{title}” — {count} messages. You can continue.",
+  "model": {
+    "label": "Model",
+    "inherit": "Inherit default",
+    "effective": "effective",
+    "effectiveTitle": "Latest turn's get_state readback truth",
+    "pendingNext": "applies next turn",
+    "busy": "running",
+    "pendingTitle": "A turn is in flight; the selection applies at the next turn boundary",
+    "tokensTotal": "{total} tokens total",
+    "incomplete": "ledger incomplete",
+    "refresh": "Refresh model status",
+    "conflict": "Session model preference was updated in another tab; refreshed — pick again.",
+    "updateFailed": "Failed to update model preference.",
+    "reasonCredential": "unavailable: server credential missing",
+    "reasonInvalid": "unavailable: invalid catalog id",
+    "unavailable": "unavailable",
+    "thinking": "Thinking",
+    "thinkingNotControllable": "Effort control not supported by this endpoint (reasoning on, effort param not sent)",
+    "thinkingNotControllableTitle": "compat.supportsReasoningEffort=false: the model emits reasoning but a specific level cannot be requested; never claimed applied",
+    "lastTurn": "Last turn",
+    "unknown": "unknown",
+    "notReported": "not reported by provider",
+    "usage": "Usage (host ledger)",
+    "cost": "Cost",
+    "costUnknown": "no price configured (not free)",
+    "coverageNote": "Covers: Pi main model calls and tool nested usage; title/planner auxiliaries and compaction excluded.",
+    "status": {
+      "applied": "applied",
+      "inherit_default": "inherit default",
+      "degraded_inherit": "degraded inherit (unverified)",
+      "failed": "failed",
+      "budget_rejected": "budget rejected",
+      "pending": "pending"
+    }
+  }
 }

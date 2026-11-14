@@ -354,5 +354,40 @@
   "turnFailed": "⚠️ {detail}",
   "turnFailedDefault": "请求失败，请重试。",
   "turnComplete": "完成。",
-  "sessionRestored": "已恢复历史会话「{title}」——共 {count} 条记录。可继续提问。"
+  "sessionRestored": "已恢复历史会话「{title}」——共 {count} 条记录。可继续提问。",
+  "model": {
+    "label": "模型",
+    "inherit": "默认继承",
+    "effective": "生效",
+    "effectiveTitle": "最近 turn 的 get_state 回读真值",
+    "pendingNext": "下一轮生效",
+    "busy": "运行中",
+    "pendingTitle": "当前 turn 仍在运行；模型选择在下一 turn 边界应用",
+    "tokensTotal": "累计 {total} tokens",
+    "incomplete": "账本不完整",
+    "refresh": "刷新模型状态",
+    "conflict": "会话模型偏好已被其他标签页更新，已刷新，请重选。",
+    "updateFailed": "模型偏好更新失败。",
+    "reasonCredential": "不可用：服务器凭证未配置",
+    "reasonInvalid": "不可用：目录项 id 非法",
+    "unavailable": "不可用",
+    "thinking": "思考档",
+    "thinkingNotControllable": "当前端点不支持档位控制（reasoning 生效但 effort 参数不发送）",
+    "thinkingNotControllableTitle": "compat.supportsReasoningEffort=false：模型可输出推理内容，但无法请求特定档位；不宣称档位已生效",
+    "lastTurn": "最近回合",
+    "unknown": "未知",
+    "notReported": "供应商未上报",
+    "usage": "用量（宿主账本）",
+    "cost": "费用",
+    "costUnknown": "未配置价格（不当作免费）",
+    "coverageNote": "覆盖：Pi 主模型与工具嵌套调用；标题/规划等辅助调用与压缩不在其中。",
+    "status": {
+      "applied": "已应用",
+      "inherit_default": "继承默认",
+      "degraded_inherit": "降级继承（未验证）",
+      "failed": "失败",
+      "budget_rejected": "预算拒绝",
+      "pending": "待定"
+    }
+  }
 }

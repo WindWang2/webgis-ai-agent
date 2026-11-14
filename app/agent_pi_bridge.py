@@ -1567,6 +1567,11 @@ class PiBridge:
         self._respawn_backoff_s: float = 1.0
         self._consecutive_respawn_failures: int = 0
         self._bound_gis_session_id = None
+        # G37（WP05）：当前 vendor 会话上已应用并经 get_state 回读验证的
+        # 模型状态 (bound_session_id, provider, model_id, spawn_epoch)。
+        # new_session / respawn / 换会话后置 None —— Pi 会话模型回到
+        # settings 默认，必须重应用重回读（M05/M06），绝不跨会话继承。
+        self._vendor_model_state: Optional[tuple[str, str, str, int]] = None
 
     @property
     def rpc(self) -> "PiRpcClient":
@@ -1590,6 +1595,112 @@ class PiBridge:
             await self._rpc.request("new_session", {})
             await self._drain_stale_events()
         self._bound_gis_session_id = turn_sid
+        # G37：new_session 后 vendor 模型回到 settings 默认 —— 已应用状态
+        # 作废，下一 turn 必须重应用并回读验证。
+        self._vendor_model_state = None
+
+    async def _apply_session_model_for_turn(
+        self,
+        turn_sid: str,
+        turn_id: str,
+        run_id: str,
+        bound_message: str,
+    ):
+        """G37（WP05/WP07/WP10）：turn 期模型应用 + 预算 admission。
+
+        在 ``_isolate_vendor_session`` 之后、``prompt`` 字节发出之前调用。
+        成功 → 更新 worker 级已应用跟踪并返回 ``ModelApplicationResult``；
+        失败（目录撤销/能力门/预算/set_model/回读不匹配）→ 返回失败结果，
+        调用方必须拒绝发出 prompt（不假成功、不静默换模型）。
+
+        基础设施降级（DB 不可达）：无法验证 preference/admission → 以
+        ``degraded_inherit`` 状态继续（worker 默认 = 管理员基础模型，绝非
+        静默选用别的模型），receipt/账本无法持久（面显示 incomplete）。
+        增值面失败绝不阻断既有 mock/测试路径的 turn。
+        """
+        from app.services.chat.model_runtime.session_model_service import (
+            ModelApplicationResult,
+            apply_session_model,
+        )
+
+        rpc_epoch = getattr(self._rpc, "spawn_epoch", 0)
+        state = self._vendor_model_state
+        force = (
+            state is None
+            or state[0] != turn_sid
+            or state[3] != rpc_epoch
+        )
+        try:
+            from app.core.database import async_db_session
+
+            async with async_db_session() as db:
+                result = await apply_session_model(
+                    self._rpc, db,
+                    session_id=turn_sid, turn_id=turn_id,
+                    bound_message=bound_message, force_apply=force,
+                )
+        except Exception as exc:  # noqa: BLE001 — 基础设施降级（见 docstring）
+            logger.warning(
+                "[PiBridge] session model application degraded (session=%s "
+                "turn=%s): %s",
+                turn_sid, turn_id, exc,
+            )
+            result = ModelApplicationResult(
+                ok=True, status="degraded_inherit",
+                reason_detail=(
+                    "session preference store unavailable; running on the "
+                    "worker default model (administered base model)"
+                ),
+                mode="inherit",
+            )
+            return result
+
+        if result.ok:
+            self._vendor_model_state = (
+                turn_sid,
+                result.effective_provider or "",
+                result.effective_model or "",
+                rpc_epoch,
+            )
+        return result
+
+    def _persist_turn_runtime_receipt(
+        self,
+        result,
+        *,
+        collector,
+    ) -> None:
+        """G37（WP07/WP08）：回执 + usage 落盘（fire-and-forget，绝不阻塞流）。
+
+        幂等（turn_id upsert + (turn_id, call_seq) 冲突跳过）；失败时
+        collector.write_failures 置位 → 汇总 complete=False → 面 incomplete。
+        """
+        try:
+            from app.services.chat.model_runtime.usage_ledger import (
+                spawn_persist_task,
+            )
+
+            spawn_persist_task(
+                collector,
+                runtime_epoch=str(getattr(self._rpc, "runtime_epoch", "") or ""),
+                catalog_generation=result.catalog_generation,
+                config_generation=result.config_generation,
+                preference_revision=result.preference_revision,
+                mode=result.mode,
+                requested_model=result.requested_model,
+                thinking_requested=result.thinking_requested,
+                effective_provider=result.effective_provider,
+                effective_model=result.effective_model,
+                thinking_effective=result.thinking_effective,
+                status=result.status,
+                failure_reason=(result.reason_detail or None) if not result.ok else None,
+                finalize=True,
+            )
+        except Exception:  # noqa: BLE001 — 回执落盘是增值面
+            logger.debug(
+                "[PiBridge] turn runtime receipt persist failed turn=%s",
+                turn_id, exc_info=True,
+            )
 
     async def _acquire_turn_lease(self, turn_id: str, session_id: Optional[str], *, owner: Optional[asyncio.Task] = None) -> "_TurnLease":
         """Acquire the turn lock and bind it to an explicit ownership lease.
@@ -2450,6 +2561,17 @@ class PiBridge:
                 # 方向 09（parity D2/D7）：非流式 turn 收口的完成度负载
                 # （settle 管线产出，finally 的轨迹录制使用 —— 与流式对齐）。
                 _turn_map_product = None
+                # G37（WP05/WP08）：非流式同款 —— 模型应用结果 + usage 采集器。
+                _ns_model_result = None
+                _ns_usage_collector = None
+                try:
+                    from app.services.chat.model_runtime.usage_ledger import (
+                        TurnUsageCollector,
+                    )
+
+                    _ns_usage_collector = TurnUsageCollector(turn_sid, turn_id, run_id)
+                except Exception:  # noqa: BLE001
+                    _ns_usage_collector = None
                 try:
                     # F5/F24: publish the active turn's identity + cancellation token
                     # while the lock is held — abort() reads the sid for session
@@ -2508,6 +2630,27 @@ class PiBridge:
                     )
                     try:
                         await self._isolate_vendor_session(turn_sid)
+                        # G37（WP05/WP10）：非流式同款 —— 模型应用 + 预算
+                        # admission 在 prompt 字节之前；失败 raise（本路径的
+                        # 错误面是异常而非 SSE）。
+                        _ns_model_result = await self._apply_session_model_for_turn(
+                            turn_sid, turn_id, run_id, str(data.get("message") or ""),
+                        )
+                        if not _ns_model_result.ok:
+                            send_failed = True
+                            rt_ev.settle(
+                                Outcome.FAILED,
+                                failure_class=(
+                                    "session_budget_exceeded"
+                                    if _ns_model_result.status == "budget_rejected"
+                                    else "model_apply_error"
+                                ),
+                                detail=(_ns_model_result.reason_detail or "")[:200],
+                            )
+                            raise PiRpcError(
+                                _ns_model_result.reason_detail
+                                or "session model runtime refused this turn"
+                            )
                         prompt_resp = await self._rpc.request("prompt", data)
                     except PiRpcError as send_exc:
                         # #790 (B-6 parity with stream_prompt's ``send_failed``): the
@@ -2634,6 +2777,15 @@ class PiBridge:
                                     _ns_isvc.observe_turn_activity(
                                         turn_id, f"event:{event_type}",
                                     )
+                                # G37（WP08）：非流式 drain 同款 usage 采集。
+                                if _ns_usage_collector is not None:
+                                    try:
+                                        _ns_usage_collector.observe(event)
+                                    except Exception:  # noqa: BLE001
+                                        logger.debug(
+                                            "[PiBridge] usage observe failed turn=%s",
+                                            turn_id, exc_info=True,
+                                        )
                                 # PI-01（ADR-0286）：tool_execution_start/end 驱动
                                 # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
                                 _phase.observe_tool_event(event_type)
@@ -2767,6 +2919,11 @@ class PiBridge:
                         except Exception as e:  # noqa: BLE001
                             logger.warning("[PiBridge] abort-on-failed-turn (turn=%s): %s", turn_sid, e)
                     _cleanup_turn_state(turn_sid)
+                    # G37（WP07/WP08）：非流式同款回执/账本收口（幂等）。
+                    if _ns_model_result is not None and _ns_usage_collector is not None:
+                        self._persist_turn_runtime_receipt(
+                            _ns_model_result, collector=_ns_usage_collector,
+                        )
                     # G29（WP10）：非流式 turn teardown 同款交互失效（见 stream_prompt）。
                     try:
                         from app.services.chat.pi_runtime_interaction import (
@@ -3038,6 +3195,19 @@ class PiBridge:
                 # 显式捕获置位后 re-raise，finally 的单结算 seam 记 failed。
                 unclassified_error = False
                 _error_detail = ""
+                # G37（WP05/WP08）：本 turn 的模型应用结果与 usage 采集器 ——
+                # 与其他 flags 同点初始化，早退路径的 finally 也有诚实缺省。
+                _model_result = None
+                _model_status_pending = None
+                _usage_collector = None
+                try:
+                    from app.services.chat.model_runtime.usage_ledger import (
+                        TurnUsageCollector,
+                    )
+
+                    _usage_collector = TurnUsageCollector(turn_sid, turn_id, run_id)
+                except Exception:  # noqa: BLE001 — 采集器缺席 = 不入账（不阻断）
+                    _usage_collector = None
                 # F03（单结算 seam）：clean agent_settled 的投影管线在事件循环
                 # 内已跑过时置位，seam 不再重复（幂等去重）。
                 _projections_settled = False
@@ -3102,6 +3272,44 @@ class PiBridge:
                     # Send prompt command
                     try:
                         await self._isolate_vendor_session(turn_sid)
+                        # G37（WP05/WP10）：turn 期模型应用 + 预算 admission。
+                        # 必须在 isolate 之后（模型属于当前 vendor 会话）、
+                        # prompt 字节之前（预算拒绝时 stub/供应商请求计数
+                        # 不得增加，M30）。失败 → prompt 不发出，绝不假成功。
+                        _model_result = await self._apply_session_model_for_turn(
+                            turn_sid, turn_id, run_id, str(data.get("message") or ""),
+                        )
+                        if not _model_result.ok:
+                            send_failed = True
+                            _model_failure_class = (
+                                "session_budget_exceeded"
+                                if _model_result.status == "budget_rejected"
+                                else "model_apply_error"
+                            )
+                            rt_ev.settle(
+                                Outcome.FAILED,
+                                failure_class=_model_failure_class,
+                                detail=(_model_result.reason_detail or "")[:200],
+                            )
+                            yield sse_event("model_status", _model_result.sse_payload(turn_sid, turn_id))
+                            yield sse_event("task_error", {
+                                "task_id": turn_sid,
+                                "session_id": turn_sid,
+                                "turn_id": turn_id,
+                                "error": (
+                                    _model_result.reason_detail
+                                    or "session model runtime refused this turn"
+                                )[:500],
+                                "error_class": error_class_for_turn_failure(
+                                    _model_failure_class
+                                ),
+                            })
+                            yield sse_event("done", {"session_id": turn_sid})
+                            return
+                        # model_status 在 prompt 接受后、task_start 之后发射
+                        # （保持既有 SSE 首事件契约：task_start 仍是流的首个
+                        # 结构事件；model_status 是加性第二事件）。
+                        _model_status_pending = _model_result.sse_payload(turn_sid, turn_id)
                         prompt_resp = await self._rpc.request("prompt", data)
                     except PiRpcError as e:
                         logger.error(f"[PiBridge] stream_prompt send failed: {e}")
@@ -3165,6 +3373,13 @@ class PiBridge:
                         # 由 /health.agent_runtime_mode 与降级日志披露）。
                         "runtime_mode": "native",
                     })
+
+                    # G37（WP07）：turn 期模型应用回执（成功路径 —— task_start
+                    # 之后的加性事件；失败路径在 prompt 前已 model_status +
+                    # task_error + done 提前收口）。
+                    if _model_status_pending is not None:
+                        yield sse_event("model_status", _model_status_pending)
+                        _model_status_pending = None
 
                     # G: watch the subprocess death signal alongside the event queue so
                     # a mid-stream Pi crash ends the turn promptly (error + done +
@@ -3270,6 +3485,17 @@ class PiBridge:
                                     ):
                                         _interaction_service.observe_turn_activity(
                                             turn_id, f"event:{_evt_type}",
+                                        )
+                                # G37（WP08）：原生 message_end 终态 usage →
+                                # 采集器（assistant 主链 + toolResult nested，
+                                # 各记一次；账本落盘在 turn 收口 finally）。
+                                if _usage_collector is not None:
+                                    try:
+                                        _usage_collector.observe(event)
+                                    except Exception:  # noqa: BLE001 — 记账绝不打断流
+                                        logger.debug(
+                                            "[PiBridge] usage observe failed turn=%s",
+                                            turn_id, exc_info=True,
                                         )
                                 # PI-01（ADR-0286）：tool_execution_start/end 驱动
                                 # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
@@ -3569,6 +3795,14 @@ class PiBridge:
                     # results (written by the HTTP callback, never consumed after a
                     # disconnect). Without this they accumulate across sessions.
                     _cleanup_turn_state(turn_sid)
+                    # G37（WP07/WP08）：turn 运行回执 + usage 账本收口（幂等
+                    # 落盘；所有退出路径 —— clean/超时/取消/断连/应用失败 ——
+                    # 都经过此处一次）。落盘失败 → complete=False → 面
+                    # incomplete（M32），绝不伪造零值。
+                    if _model_result is not None and _usage_collector is not None:
+                        self._persist_turn_runtime_receipt(
+                            _model_result, collector=_usage_collector,
+                        )
                     # Clear the active-turn markers AFTER the abort above (abort reads
                     # them to cancel the token) and before releasing the lock.
                     self._active_turn_sid = None

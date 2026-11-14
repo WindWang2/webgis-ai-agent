@@ -215,6 +215,12 @@ class PiRpcClient:
         # ADR-0288（W08，#2061）：本次 spawn 的 LLM 配置代际（空 = 解析失败 /
         # 未锚定 —— 配置换代回收 fail-open 不触发）。
         self.spawn_config_generation: str = ""
+        # G37：worker 运行代。每次 start()（含 respawn）递增并重铸
+        # runtime_epoch —— receipt/账本按代归属；bridge 以 spawn_epoch 变化
+        # 判定「已应用模型状态」必须重验证（new_session/respawn 后 vendor
+        # 模型回到 settings 默认）。
+        self.spawn_epoch: int = 0
+        self.runtime_epoch: str = ""
         self._surface_dump_path: Optional[Path] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
@@ -324,6 +330,12 @@ class PiRpcClient:
         # （reader finally 里与 flag 一起 set 的 event，这里与 flag 一起 clear）。
         self._process_died = False
         self._process_died_event.clear()
+        # G37：新 spawn = 新运行代（respawn 后 vendor 会话/模型全部回到
+        # spawn 快照，账本按新代归属）。
+        import uuid as _uuid
+
+        self.spawn_epoch += 1
+        self.runtime_epoch = f"{os.getpid()}-{_uuid.uuid4().hex[:8]}-e{self.spawn_epoch}"
 
         # #1438：spawn 的全部阻塞步骤（目录/配置文件写盘、native surface
         # dump、subprocess.Popen 的 fork）整体 offload 到 worker 线程 ——
@@ -331,9 +343,14 @@ class PiRpcClient:
         # 会停摆事件循环上所有并发会话的流。
         await asyncio.to_thread(self._spawn_process)
 
-        # Start reader tasks for stdout and stderr to avoid OS pipe deadlock
-        self._reader_task = asyncio.create_task(self._read_responses())
-        self._stderr_task = asyncio.create_task(self._read_stderr())
+        # Start reader tasks for stdout and stderr to avoid OS pipe deadlock.
+        # G37（世代钉扎）：reader 绑定**本次 spawn 的进程对象**。外部 kill 后
+        # respawn 换代时，旧 reader 的 finally 若无守卫会把全局 ``_process_died``
+        # 翻真、fail 掉新代的 pending —— 新进程被旧尸体毒死（本任务 M06 旅程
+        # 实测暴露的既有竞态）。
+        _proc = self._process
+        self._reader_task = asyncio.create_task(self._read_responses(_proc))
+        self._stderr_task = asyncio.create_task(self._read_stderr(_proc))
 
         # Yield to let the reader task start (avoid race where _send_request writes
         # to stdin before the reader is ready to consume the response).
@@ -442,6 +459,21 @@ class PiRpcClient:
             self.spawn_config_generation = ""
 
         if llm_base and llm_model:
+            # G37（WP04）：原生目录投影 —— models.json 写**管理员允许目录**
+            # 全部模型（基础模型在前，settings.json default 仍指基础模型）。
+            # 共享文件只含管理员共同允许项 + $OPENAI_API_KEY 引用（无租户
+            # 数据）；内容由部署配置/单一解析点决定，worker 并发 spawn 写
+            # 同内容（原子替换）天然收敛。会话级选择经 turn 期 set_model，
+            # 绝不重写公共 defaults 实现个性化。
+            catalog_model_ids = [llm_model]
+            try:
+                from app.services.chat.model_runtime import session_catalog
+
+                catalog_model_ids = [
+                    item.item_id for item in session_catalog.build_catalog()
+                ] or [llm_model]
+            except Exception:  # noqa: BLE001 — 目录投影失败退回单模型（既有行为）
+                logger.debug("[PiRpcClient] session catalog projection fell back to base model", exc_info=True)
             _write_agent_text(PI_AGENT_DIR / "models.json",
                 json.dumps(
                     {
@@ -455,7 +487,8 @@ class PiRpcClient:
                                     "supportsReasoningEffort": False,
                                 },
                                 "models": [
-                                    {"id": llm_model, "name": llm_model, "reasoning": True}
+                                    {"id": mid, "name": mid, "reasoning": True}
+                                    for mid in catalog_model_ids
                                 ],
                             }
                         }
@@ -604,11 +637,16 @@ class PiRpcClient:
                 pass
             self._stderr_task = None
 
-    async def _read_stderr(self) -> None:
-        """Read and log stderr lines from Pi subprocess to prevent OS pipe deadlock."""
+    async def _read_stderr(self, proc: Optional[subprocess.Popen] = None) -> None:
+        """Read and log stderr lines from Pi subprocess to prevent OS pipe deadlock.
+
+        G37（世代钉扎）：与 _read_responses 同款 —— 只读自己代际的 stderr。
+        """
+        if proc is None:
+            proc = self._process
         try:
-            while self._process and self._process.stderr:
-                line = await asyncio.get_running_loop().run_in_executor(None, self._process.stderr.readline)
+            while proc and proc.stderr:
+                line = await asyncio.get_running_loop().run_in_executor(None, proc.stderr.readline)
                 if not line:
                     break
                 line = line.strip()
@@ -651,21 +689,28 @@ class PiRpcClient:
             self._event_queue.put_nowait(item)
         self._event_queue.put_nowait(event)
 
-    async def _read_responses(self) -> None:
+    async def _read_responses(self, proc: Optional[subprocess.Popen] = None) -> None:
         """Read responses and events from Pi stdout.
 
         审计 AGENT-05：之前 Pi 进程退出时 readline 返回 ""，循环 break 但
         所有 _pending_requests 的 future 永远不会被 resolve -> 调用方挂 300s。
         现在退出时主动 fail 所有 pending 请求。
+
+        G37（世代钉扎）：``proc`` 是本 reader 所属的进程对象（start() 传入）。
+        respawn 换代后旧 reader 只忠于自己的进程 —— 既不读新进程的 stdout
+        （偷走新 reader 的事件），finally 也不把新代标记死亡/fail 新代的
+        pending（守卫 ``self._process is proc``）。
         """
+        if proc is None:  # 兼容旧调用形态：默认当前进程
+            proc = self._process
         try:
-            while self._process and self._process.stdout:
+            while proc and proc.stdout:
                 # Bounded read: cap a single line at MAX_STDOUT_LINE_BYTES so
                 # a runaway Pi payload can't OOM the reader thread. readline()
                 # has no length limit; we approximate one by reading in chunks
                 # and bailing if no newline appears within the budget.
                 line = await asyncio.get_running_loop().run_in_executor(
-                    None, self._readline_bounded
+                    None, self._readline_bounded, proc
                 )
                 if line is None:
                     # Line exceeded the budget without a newline. Drop it and
@@ -677,8 +722,8 @@ class PiRpcClient:
                         MAX_STDOUT_LINE_BYTES,
                     )
                     self._fail_all_pending("Pi response exceeded stdout byte budget")
-                    if self._process is not None:
-                        self._process.terminate()
+                    if proc is not None:
+                        proc.terminate()
                     break
                 if not line:
                     break
@@ -719,6 +764,16 @@ class PiRpcClient:
         except Exception as e:
             logger.error(f"[PiRpcClient] Reader task crashed: {e}", exc_info=True)
         finally:
+            # G37（世代守卫）：本 reader 只在「它读的进程仍是当前进程」时才
+            # 应用死亡语义。旧代 reader（respawn 已换代 / stop() / is_alive()
+            # 已先行清场）不翻全局死亡旗、不清引用、不动新代的 pending ——
+            # 各先行路径自身已对旧代完成清算。
+            if self._process is not proc:
+                logger.info(
+                    "[PiRpcClient] stale reader of a replaced Pi generation "
+                    "exited (no cross-generation effects)"
+                )
+                return
             # Pi 进程退出 / reader 异常 -> fail 所有 pending 请求，避免 300s 挂起
             self._fail_all_pending("Pi process exited or reader stopped")
             # 标记为不可用（flag + 可等待的 asyncio.Event 同步翻转，让正在
@@ -782,7 +837,8 @@ class PiRpcClient:
         """Snapshot of currently pending request ids (abort-scoping)."""
         return set(self._pending_requests.keys())
 
-    def _readline_bounded(self) -> Optional[bytes]:
+    @staticmethod
+    def _readline_bounded(proc: Optional[subprocess.Popen]) -> Optional[bytes]:
         """Read one line from Pi stdout, capped at MAX_STDOUT_LINE_BYTES.
 
         Returns the line (bytes, including newline) on success, b"" on EOF,
@@ -794,8 +850,12 @@ class PiRpcClient:
         event loop. Production buffered pipes use one size-bounded readline;
         minimal legacy pipe adapters retain the bounded read(1) compatibility
         path. Neither buffers an entire unbounded malformed line.
+
+        G37（世代钉扎）：读**调用方传入的进程对象**（reader 自己的代际），
+        不再经 self._process —— respawn 换代后旧 reader 不得偷读新进程的
+        stdout（会抢走新 reader 的事件流）。
         """
-        stdout = self._process.stdout
+        stdout = proc.stdout if proc is not None else None
         if stdout is None:
             return b""
         import io
