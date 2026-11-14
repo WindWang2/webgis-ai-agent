@@ -41,6 +41,15 @@
   ruff/eslint/tsc 全清）。
 - 原 reviewer 复审结论（终版见 REVIEW.md 附录）：无阻塞发现，可合并。
 
+## 与兄弟任务 PR #2117（G37 会话模型运行配置）的接缝
+
+两分支共享 `agent_pi_bridge.py`/`chat.py`/`pi_rpc_client.py`/`tools/__init__.py`/
+`chat-tab.tsx`/`chat.ts`/`use-sse-stream.ts`，均为**加性局部接线**（不同函数/
+字段/事件），无语义冲突。G36 的 `profile.model_catalog_entry` 是 models.json
+模型条目的唯一视觉投影入口（vision → input/inputLimits）；G37 合流时模型
+选择/用量投影与该入口正交，保留其语义即可（见 INTERFACES.md「与 G37+ 的
+共享缝」）。本分支不依赖 #2117，可独立评审/合并。
+
 ## 迁移 / 回退
 
 - 加性列 `messages.attachments`（nullable；downgrade 直接 drop）；无数据回填；旧客户端零影响（attachments 缺省）。
