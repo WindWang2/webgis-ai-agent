@@ -5,7 +5,15 @@ vendor/pi @ b4afdddf44（pin 一致；pi_doctor 6 域全 PASS；466 工具含 we
 
 ## 测试层级与结果
 
-### L1 单元（tests/unit/test_visual_context_core.py）— 28 passed
+### 评审修复轮（commit 399f94238）
+- P1#1/#14 工具能力门访问面修复（get_bridge_pool+session 路由+rpc 属性）；
+  P1#2 V33 预检每 turn 执行（无附件纯文本 turn 同样换代）；P1#3
+  slim_event_result 排除 result_images；P1#4 store mutate 纯化（CAS 重试
+  副作用随 result 重建 + holder 取最终尝试）。
+- 新增修复回归 5 例：slim 排除 / CAS 重试不双减（模拟 WATCH 重跑）/
+  无附件预检换代 / 索引不可用→None / bound 不被帽驱逐。
+
+### L1 单元（tests/unit/test_visual_context_core.py）— 33 passed
 decoder（真实解码/EXIF/炸弹/动画/近空白/crop 链/缩略图）、evidence 身份不变量、
 store（登记/解析/撤销/共享/FIFO/预算）、resolver（授权/预算/能力门）、
 profile（投影/三重门/缓存）、V33 台账、dispatch 窄提取。
@@ -36,6 +44,9 @@ stub LLM（OpenAI 兼容）→ 真实 GIS 工具 → 权威 MapSpec → HTTP 会
   pi_durable_cancel / visual_repair_endpoint / pi_result_abi：91 passed。
 - pi_bridge_pool_prod_routing / pi_runtime_mode_disclosure / canvas_affordance /
   deep_review_runtime_api02 / review_core_medium_regressions：77 passed。
+- 修复轮后全量复跑：core 33✓ + wiring 9✓ + schema/parity/abi/lock/
+  durable/visual_repair/cross_tenant 113✓ + 真实 Pi 旅程 20 断言✓；
+  ruff/eslint/tsc 全清。
 - **既有失败（非本任务引入）**：tests/unit/test_turn_settlement_seam.py 5 例
   （MagicMock issue 非 awaitable）——干净 base 127669273 同条件复现
   （5 failed, 4 passed），证据留存于执行账本。

@@ -31,9 +31,16 @@
 - 前端：tsc main clean；vitest 30+40+8✓；i18n 1 既有失败（未触碰文件裸 CJK）
 - L4 浏览器未运行（无 Playwright 栈）——如实登记
 
-### R4（review → fix → 复审 → PR，进行中）
-- 独立 reviewer subagent（未参与实现）审全量 diff
-- 待：修复 P0/P1 → 复审 → commit/push/PR
+### R4（review → fix → 复审，fix 已完成）
+- 独立 reviewer（未参与实现）审全量 diff：4 P1 + 10 P2 + 9 P3，两个缺陷
+  实证复现（详见 REVIEW.md）；架构面判定 clean。
+- 修复 commit 399f94238：P1×4 全修 + P2×8（#7 经核实为伪命题）+ P3×5；
+  修复回归 5 例新增；全量复测通过（core 33/wiring 9/旅程 20 断言/回归 113）。
+- 复审：已交原 reviewer（进行中）。
+
+### R5（push + PR）
+- master 无漂移（origin/master 仍 = 127669273）。
+- 待：复审结论 → push → gh pr create
 
 ## 决策追加
 - D5: 旅程 driver 用 USE_REDIS=0（进程内锁/内存会话态）——单进程语义等价，
