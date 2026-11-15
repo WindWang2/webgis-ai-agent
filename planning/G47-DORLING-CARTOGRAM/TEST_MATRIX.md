@@ -108,5 +108,5 @@
 | 接近上限的大样本（400 单元 / 8000 边） | ⚠️ 未执行 | 参考轮廓 9000 点上限 + 简化容差会随规模变化，需一次真实压测 |
 | `stop_reason=time_budget` 下的逐位一致性 | ⚠️ 边界未声明 | 慢机会得到不同布局与指纹；`elapsed_s` 已在 `_VOLATILE_KEYS`，`stop_reason` 未纳入 |
 | `scripts/check_generated_staleness.py` 报 `docs/quality/*` 陈旧 | ⚠️ base 既有债 | 与本分支无关（未触碰），不在此修复 |
-| PNG/PDF 三格式回读的 4 个加锁用例 | ⚠️ 未执行 | 同仓重阶段锁被外部长期持有；已用 `LOCK_NB` 限时轮询等锁，仍未释放。**不写成已通过** |
+| PNG/PDF 三格式回读的 4 个加锁用例 | ⚠️ 未执行 | 同仓重阶段锁被外部长期持有：`LOCK_NB` 限时轮询 **181 次 / 1800s** 全程 `EWOULDBLOCK`，`/proc` 内看不到持有者（隔离 PID 命名空间，`id=root` 且 `flock` 自检在新建文件上正常 ⇒ 锁是真的被外部进程持有，不是本机 flock 失效）。**不写成已通过** |
 | `test_descriptor_coverage_gate.py` / `test_capability_registry_parity.py` | ⚠️ base 既有债 | 实跑红：`capabilities` 覆盖 94% < 95%（33 个缺失工具全为 print_layout/raster_*/model_catalog 等旧域）。`git stash` 后同样红，证明与 G47 无关 |
