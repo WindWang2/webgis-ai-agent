@@ -312,5 +312,8 @@
     "previewReady": "Preview ready (not committed)",
     "swatchAria": "Asset swatch preview",
     "ineligible": "Layer type ({type}) does not support symbol assets yet"
+  },
+  "dorlingCartogram": {
+    "title": "Dorling circle area cartogram"
   }
 }
