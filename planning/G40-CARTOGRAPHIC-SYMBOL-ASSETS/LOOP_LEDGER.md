@@ -105,3 +105,11 @@
 - 合流后回归：Pi journey 1✓（31s）/ cartography 3660✓ / API 快照+文档 15✓；
   tsc 仅 2 个纯 master 既有错误（origin/master 复现，非本分支文件）。
 - 状态：终审 GO + 合流完成 → push + PR。
+
+## 终态（2026-11-16）
+
+- **PR #2124**：https://github.com/WindWang2/webgis-ai-agent/pull/2124
+  branch `zcode/g40-cartographic-symbol-assets-20261114T175308Z` → master。
+- base = origin/master `34f4e3670`；head = `4ae59cc80`（6 commits）。
+- 停止条件全部满足：专属验收达成（真实调用链 + 故障面）；三轮独立评审
+  无阻塞（终审 GO）；已推送并创建 PR。不等待线上 CI。
