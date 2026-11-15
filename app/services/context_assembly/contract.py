@@ -279,6 +279,9 @@ class ProviderReport(BaseModel):
     degraded: bool = False             # collected via fallback path
     latency_ms: int = 0
     error: str = ""
+    # G43：可选资料源的真实去向（条目/块粒度，渲染时刻捕获；供 receipt
+    # source_lines 聚合 —— 与 items 平行，不进提示文本）。
+    source_refs: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 @runtime_checkable
@@ -337,6 +340,9 @@ class SharedTurnFacts(BaseModel):
     mapspec: Optional[Dict[str, Any]] = None
     map_state: Optional[Dict[str, Any]] = None
     harness_context: Optional[Any] = None   # HarnessTurnContext (hk.ctx.v1)
+    # G43（ADR-0295）：本 turn 冻结的会话可选资料策略（orchestrator 单次
+    # 加载；auto 即无行/默认 —— providers 行为与 pre-G43 字节等价）。
+    source_policy: Optional[Any] = None
     # G22-P2（GIS 状态恢复目录）：缺席 = None（provider 不投影，不虚构）。
     #: 本会话非终态 durable jobs 的有界投影 [{"id","status"}]（≤8）。
     durable_jobs: Optional[List[Dict[str, Any]]] = None

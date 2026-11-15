@@ -42,6 +42,9 @@ export interface ChatStreamMessage {
   /** G36（ADR-0291）：用户消息的视觉附件（乐观 chips + receipt 状态回填 +
    * 会话恢复；thumbUrl 仅本地预览，恢复态走受权缩略图端点）。 */
   attachments?: VisualAttachmentView[];
+  /** G43（ADR-0295）：本轮上下文装配回执摘要（SSE turn_context_receipt
+   * 事件回填 + 会话恢复；完整回执按 session+turn 拉取）。 */
+  turnContextReceipt?: import('@/lib/api/turnContext').TurnContextReceiptSummary;
   [key: string]: unknown;
 }
 
@@ -591,4 +594,51 @@ export function setFeatureEditProposalStatus(
       featureEditProposal: { ...p, status: args.status, error: args.error, receipt: args.receipt ?? p.receipt },
     };
   });
+}
+
+/** G43（ADR-0295）：把 turn_context_receipt 回执挂到 user 消息。
+ *
+ * - 挂载点按 turn_id 定位：已带本 turn 回执的消息是唯一挂载点（升级不
+ *   迁移）；无挂载点时挂最后一条**尚未携带任何回执**的 user 消息；
+ * - 状态单调（与后端状态机一致）：迟到的弱事件（如重复投递的
+ *   assembled）不降级已确证的强状态（submitted/not_sent/unknown）；
+ * - 找不到挂载点（乱序/纯 assistant 流）原样返回，不伪造。
+ */
+const TURN_RECEIPT_STATUS_RANK: Record<string, number> = {
+  assembled: 1,
+  not_sent: 2,
+  unknown: 2,
+  submitted: 3,
+};
+
+export function attachTurnContextReceipt(
+  prev: ChatStreamMessage[],
+  args: {
+    turnId: string;
+    receipt: import('@/lib/api/turnContext').TurnContextReceiptSummary;
+  },
+): ChatStreamMessage[] {
+  const mountIdx = prev.findIndex(
+    (m) => m.role === 'user' && m.turnContextReceipt?.turn_id === args.turnId,
+  );
+  if (mountIdx >= 0) {
+    const existing = prev[mountIdx].turnContextReceipt;
+    if (existing
+        && (TURN_RECEIPT_STATUS_RANK[existing.status] ?? 0)
+           > (TURN_RECEIPT_STATUS_RANK[args.receipt.status] ?? 0)) {
+      return prev; // 迟到弱事件不降级
+    }
+    const next = [...prev];
+    next[mountIdx] = { ...prev[mountIdx], turnContextReceipt: args.receipt };
+    return next;
+  }
+  for (let i = prev.length - 1; i >= 0; i--) {
+    const m = prev[i];
+    if (m.role !== 'user') continue;
+    if (m.turnContextReceipt) break; // 更早的 user 消息拥有自己的回执
+    const next = [...prev];
+    next[i] = { ...m, turnContextReceipt: args.receipt };
+    return next;
+  }
+  return prev;
 }

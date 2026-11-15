@@ -237,6 +237,9 @@ class ChatResponse(BaseModel):
     content: str
     # SEC-08：新建匿名会话时由服务端签发，前端需存储并在后续请求头里回传。
     owner_token: Optional[str] = None
+    # G43（ADR-0295）：本轮上下文装配回执摘要（有界；完整回执按
+    # session+turn 查询 context-receipts 端点）。None = 无回执（legacy）。
+    turn_receipt: Optional[dict] = None
 
 
 class MapStatePushRequest(BaseModel):
@@ -617,6 +620,9 @@ class SessionMessage(BaseModel):
     # G36（ADR-0291）：用户消息的视觉附件元数据（恢复渲染缩略图/来源用；
     # 缺席 = 无附件 —— 旧消息零改动）。
     attachments: Optional[list[dict]] = None
+    # G43（ADR-0295）：用户消息的本轮上下文回执摘要（缺席 = 无回执 ——
+    # legacy/早于本功能的 turn，UI 显示 coverage limited）。
+    context_receipt: Optional[dict] = None
 
 
 class SessionDetailResponse(BaseModel):

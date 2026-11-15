@@ -258,6 +258,37 @@ async def bind_turn_prompt(
       为空时（默认 typed 路径）由 provider 从权威源派生同样的块。
     - ``env_block``：situation 编译器拥有快照 advance 副作用，typed 路径
       原样作为 caller-injected 项注入（绝不二次派生）。
+
+    G43（ADR-0295）：需要 receipt 的调用方（turn bridge）改用
+    :func:`bind_turn_prompt_with_receipt` —— 本函数保留原签名与行为（只
+    返回字符串），旧调用方零改动。
+    """
+    message_, _receipt = await bind_turn_prompt_with_receipt(
+        message, token, session_id, cartography_block, env_block,
+        turn_id=turn_id, org_id=org_id, project_id=project_id,
+        user_id=user_id, query_text=query_text,
+    )
+    return message_
+
+
+async def bind_turn_prompt_with_receipt(
+    message: str,
+    token: str,
+    session_id: str,
+    cartography_block: str = "",
+    env_block: str = "",
+    *,
+    turn_id: str = "",
+    org_id: str = "",
+    project_id: str = "",
+    user_id: str = "",
+    query_text: str = "",
+):
+    """``bind_turn_prompt`` 的窄伴随结果版：返回 ``(message, receipt|None)``。
+
+    receipt 仅在 typed 装配成功时非 None；legacy 回退路径返回 None（调用
+    方按 mode=legacy/coverage limited 如实记录，绝不二次装配补造回执 ——
+    C29/C40 的诚实面）。
     """
     from app.services.context_assembly.flags import typed_context_assembly_enabled
 
@@ -279,8 +310,8 @@ async def bind_turn_prompt(
                 environment_block=env_block or "",
                 legacy_cartography_block=cartography_block or "",
             )
-            assembled, _receipt = await assemble_turn_context(req)
-            return assembled
+            assembled, receipt = await assemble_turn_context(req)
+            return assembled, receipt
         except ContextAssemblyRejected:
             raise
         except Exception:  # noqa: BLE001 — unexpected typed failure may use legacy
@@ -291,7 +322,7 @@ async def bind_turn_prompt(
     return await legacy_bind_turn_prompt(
         message, token, session_id, cartography_block, env_block,
         turn_id=turn_id,
-    )
+    ), None
 
 
 async def legacy_bind_turn_prompt(

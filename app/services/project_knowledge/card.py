@@ -54,7 +54,11 @@ _KIND_ORDER: Tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class ProjectKnowledgeCard:
-    """渲染结果（调用方可观测预算与截断事实）。"""
+    """渲染结果（调用方可观测预算与截断事实）。
+
+    G43 加性字段：``included_ids``（实际进入卡片的条目 id，回执源粒度）与
+    ``policy_excluded_ids``（被用户策略排除、从未参与渲染的条目 id）。
+    """
 
     project_id: str
     text: str
@@ -62,9 +66,17 @@ class ProjectKnowledgeCard:
     truncated: bool
     omitted: int
     char_budget: int
+    included_ids: Tuple[str, ...] = ()
+    policy_excluded_ids: Tuple[str, ...] = ()
+    #: 活跃但因卡片条数/预算上限未入卡的条目（诚实省略面）。
+    omitted_ids: Tuple[str, ...] = ()
+    #: 渲染时刻的权威版本快照（entry_id → version_token；仅真实存在的版本）。
+    live_versions: Tuple[Tuple[str, str], ...] = ()
+    #: 活跃但 authority liveness 失败（未参与渲染、未降级时也如实披露）。
+    not_live_ids: Tuple[str, ...] = ()
 
     @property
-    def chars(self) -> int:
+    def chars(self) -> str:
         return len(self.text)
 
 
@@ -103,16 +115,24 @@ def render_project_knowledge_card(
     char_budget: int = CARD_CHAR_BUDGET,
     max_items: int = CARD_MAX_ITEMS,
     now: Optional[object] = None,
+    exclude_entry_ids: Optional[set] = None,
 ) -> ProjectKnowledgeCard:
     """渲染有界 ``<project_knowledge>`` 块；空条目返回空 text。
 
     分组稳定（datasets → artifacts → …），失败警告独立且行数有界；
     超预算截断 + 省略回执（诚实省略）。``now`` 参数保留渲染确定性测试用。
+    G43：``exclude_entry_ids`` 在渲染前移除被策略排除的条目（不参与预算
+    竞争，也不计入 truncated）；这些 id 如实记录在 ``policy_excluded_ids``。
     """
+    excluded = set(exclude_entry_ids or ())
+    if excluded:
+        entries = [e for e in entries if str(e.id) not in excluded]
+        entries = list(entries)
     if not entries:
         return ProjectKnowledgeCard(
             project_id=project_id, text="", items=0,
             truncated=False, omitted=0, char_budget=char_budget,
+            included_ids=(), policy_excluded_ids=tuple(sorted(excluded)),
         )
 
     header = (
@@ -138,15 +158,21 @@ def render_project_knowledge_card(
     items = 0
     omitted = 0
     current_kind: Optional[str] = None
+    included_ids: List[str] = []
+    omitted_ids: List[str] = []
 
-    def _try_line(line: str) -> bool:
+    def _try_line(line: str, entry_id: str = "") -> bool:
         nonlocal used, items, omitted
         if items >= max_items or used + len(line) + 1 > char_budget:
             omitted += 1
+            if entry_id:
+                omitted_ids.append(entry_id)
             return False
         body.append(line + "\n")
         used += len(line) + 1
         items += 1
+        if entry_id:
+            included_ids.append(entry_id)
         return True
 
     for entry in normal:
@@ -162,7 +188,7 @@ def render_project_knowledge_card(
             line = _render_entry_line(entry)
         except Exception:  # noqa: BLE001 — 单行失败不炸整块
             continue
-        if not _try_line(line):
+        if not _try_line(line, str(entry.id)):
             # 不 break：变长行下后续条目未必超限，逐条如实计数（review P3-7）。
             continue
 
@@ -183,7 +209,7 @@ def render_project_knowledge_card(
                     line = _render_warning_line(entry)
                 except Exception:  # noqa: BLE001
                     continue
-                _try_line(line)
+                _try_line(line, str(entry.id))
         else:
             # section 都装不下：全部警告进省略回执。
             skipped_warnings += len(warnings)
@@ -199,17 +225,25 @@ def render_project_knowledge_card(
     return ProjectKnowledgeCard(
         project_id=project_id, text=text, items=items,
         truncated=omitted > 0, omitted=omitted, char_budget=char_budget,
+        included_ids=tuple(included_ids),
+        policy_excluded_ids=tuple(sorted(excluded)),
+        omitted_ids=tuple(omitted_ids),
     )
 
 
 def load_project_knowledge_card(
     db: Session, *, org_id: str, project_id: str, project_name: str = "",
+    exclude_entry_ids: Optional[set] = None,
+    read_only: bool = False,
 ) -> ProjectKnowledgeCard:
     """Load an authorized project's card only after batched authority checks.
 
     Projection entries cannot establish their own liveness. All kinds use the
     authority probes, including workflow/mission/place/preferences/warnings.
     Caller owns the transaction; demotions are flushed, never committed here.
+    G43：``exclude_entry_ids`` 在渲染前移除策略排除条目；``read_only=True``
+    跳过 demotion 写（预览/无副作用投影 —— liveness 判定本身不变，只是
+    不把失效条目落库降级，由下一次真实装配承担）。
     """
     from app.services.project_knowledge import store as ks
     from app.services.project_knowledge.liveness import live_version_tokens
@@ -219,10 +253,36 @@ def load_project_knowledge_card(
     tokens = live_version_tokens(db, project_id=project_id, probes=[
         (entry.authority_store, entry.authority_id) for entry in entries
     ])
-    ks.demote_changed_entries(db, org_id=org_id, project_id=project_id, tokens=tokens)
+    if not read_only:
+        ks.demote_changed_entries(db, org_id=org_id, project_id=project_id, tokens=tokens)
     live = [entry for entry in entries if tokens.get((entry.authority_store, entry.authority_id)) is not None
             and str(tokens[(entry.authority_store, entry.authority_id)])[:REF_TOKEN_MAX] == entry.version_token]
-    return render_project_knowledge_card(live, project_id=project_id, project_name=project_name)
+    card = render_project_knowledge_card(
+        live, project_id=project_id, project_name=project_name,
+        exclude_entry_ids=exclude_entry_ids,
+    )
+    # G43：渲染时刻的权威版本快照（区别于事后重读 —— 捕获即冻结在返回值里）。
+    live_versions = tuple(
+        (str(e.id), str(e.version_token)[:32]) for e in live
+    )
+    live_ids = {str(e.id) for e in live}
+    not_live_ids = tuple(
+        sorted(str(e.id) for e in entries if str(e.id) not in live_ids)
+    )
+    return ProjectKnowledgeCard(
+        project_id=card.project_id, text=card.text, items=card.items,
+        truncated=card.truncated, omitted=card.omitted,
+        char_budget=card.char_budget,
+        included_ids=card.included_ids,
+        policy_excluded_ids=card.policy_excluded_ids,
+        omitted_ids=card.omitted_ids,
+        live_versions=live_versions,
+        not_live_ids=not_live_ids,
+    )
 
 
-__all__ = ["ProjectKnowledgeCard", "render_project_knowledge_card", "load_project_knowledge_card"]
+__all__ = [
+    "ProjectKnowledgeCard",
+    "load_project_knowledge_card",
+    "render_project_knowledge_card",
+]
