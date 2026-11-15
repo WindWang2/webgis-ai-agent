@@ -104,7 +104,7 @@
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| 真实浏览器 E2E（缩放/平移/选择联动/键盘） | ⚠️ 未执行 | 需 Playwright 1 worker + 起 dev server；重阶段锁与时间预算内未跑 |
+| 真实浏览器 E2E（缩放/平移/选择联动/键盘） | ⚠️ 未执行（环境不通） | 本机实测连**既有** journey 也起不来：`playwright test e2e/journeys/j18-frame-interactive.journey.ts` 的 `webServer` 卡在 Next 引导，稳定报 `ENOENT frontend/.next/dev/server/pages/_app/build-manifest.json`（`node-brokered-fs-shim.cjs` 介入了读文件），120s 超时。属沙箱环境限制，非 G47 缺陷；须在有真浏览器的夜间 `quality-e2e` 车道覆盖 |
 | 接近上限的大样本（400 单元 / 8000 边） | ⚠️ 未执行 | 参考轮廓 9000 点上限 + 简化容差会随规模变化，需一次真实压测 |
 | `stop_reason=time_budget` 下的逐位一致性 | ⚠️ 边界未声明 | 慢机会得到不同布局与指纹；`elapsed_s` 已在 `_VOLATILE_KEYS`，`stop_reason` 未纳入 |
 | `scripts/check_generated_staleness.py` 报 `docs/quality/*` 陈旧 | ⚠️ base 既有债 | 与本分支无关（未触碰），不在此修复 |
