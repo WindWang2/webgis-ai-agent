@@ -3,6 +3,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  getExplorationGeneration,
   bindExploration,
   clearAllConditions,
   clearChartConditions,
@@ -120,5 +121,34 @@ describe('过滤投影', () => {
     unbindExploration();
     expect(getExplorationFilterExpression('layer-a')).toBeNull();
     expect(listConditions()).toHaveLength(0);
+  });
+});
+
+describe('竞态世代（E23/E24 语义锚）', () => {
+  it('条件连续变化 → generation 递增（旧响应按世代丢弃的依据）', () => {
+    bindExploration('ref:t', 1, 'layer-a');
+    const g0 = getExplorationGeneration();
+    setCondition({
+      kind: 'range', conditionId: 'c1', chartId: 'ch', field: 'v', gte: 1,
+    });
+    const g1 = getExplorationGeneration();
+    setCondition({
+      kind: 'range', conditionId: 'c1', chartId: 'ch', field: 'v', gte: 2,
+    });
+    const g2 = getExplorationGeneration();
+    expect(g1).toBeGreaterThan(g0);
+    expect(g2).toBeGreaterThan(g1);
+  });
+
+  it('组合 where 随最新条件集确定（B 迟到不覆盖：digest 单值）', async () => {
+    const { compileCombinedWhere } = await import('./contracts');
+    bindExploration('ref:t', 1, 'layer-a');
+    // 快速连续刷选 A→B：最终态只有 B 的 where（A 的响应即使迟到也因
+    // generation 不匹配被 runPreview 丢弃 —— store 层保证最终态一致性）
+    setCondition({ kind: 'range', conditionId: 'c', chartId: 'ch', field: 'v', gte: 100 });
+    setCondition({ kind: 'range', conditionId: 'c', chartId: 'ch', field: 'v', gte: 200 });
+    expect(compileCombinedWhere(listConditions())).toEqual({
+      op: 'gte', field: 'v', value: 200,
+    });
   });
 });
