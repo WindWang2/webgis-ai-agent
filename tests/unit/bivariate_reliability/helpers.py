@@ -1,7 +1,7 @@
 """G41 测试助手：生产式建层 / 冻结源 / 会话 ref。"""
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Optional
 
 
 def make_fc(rows: Iterable[Dict[str, Any]], *, geom: str = "Polygon") -> Dict[str, Any]:

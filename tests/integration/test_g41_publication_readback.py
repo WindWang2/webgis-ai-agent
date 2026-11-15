@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import fcntl
 import json
-import os
 import shutil
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -265,7 +265,7 @@ def test_publication_three_formats_independent_readback(mode, tmp_path):
     fragment = _legend_svg(legend)
     assert fragment, "G34 图例绘制器必须产出真实 SVG 片段"
     assert f'data-g41-type="{legend["type"]}"' in fragment
-    assert f'data-g41-revision="4"' in fragment
+    assert 'data-g41-revision="4"' in fragment
     assert "ref:publication-fixture" in fragment
 
     if mode == "bivariate":
@@ -422,7 +422,7 @@ def test_real_committed_paint_renders_in_production_svg(tmp_path):
             preview_digest=prev["candidate_digest"], trusted_dispatch=True)
         from app.services.mapspec_store import mapspec_store
         spec = await mapspec_store.get_mapspec(sid)
-        layer = next(l for l in spec["layers"] if l["id"] == "L1")
+        layer = next(item for item in spec["layers"] if item["id"] == "L1")
         ref = spec["sources"]["s1"]["ref_id"]
         payload = await sdm.get(sid, ref)
         return layer, payload["geojson"]

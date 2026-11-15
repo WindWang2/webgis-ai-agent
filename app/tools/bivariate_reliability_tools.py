@@ -11,7 +11,7 @@ model-origin 不能借工具跳过所有权或用户锁。
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from pydantic import BaseModel, Field
 

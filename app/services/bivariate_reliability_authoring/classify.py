@@ -24,7 +24,6 @@ from app.lib.cartography.bivariate import (
     bivariate_class_colors,
 )
 from app.services.bivariate_reliability_authoring.contract import (
-    ALGORITHM_VERSION,
     BivariateSpec,
 )
 from app.services.bivariate_reliability_authoring.errors import AuthoringError

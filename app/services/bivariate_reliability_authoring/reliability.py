@@ -17,13 +17,11 @@
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.lib.cartography.palettes import COLOR_PALETTES, resolve_palette_colors
 from app.services.bivariate_reliability_authoring.classify import (
-    assign_axis,
     axis_intervals,
     equal_interval,
     quantiles,

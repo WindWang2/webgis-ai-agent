@@ -12,7 +12,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from app.lib.cartography.thematic_spec import spec_to_paint
@@ -88,7 +88,7 @@ def _derive_features(
     field_name: str,
     names: List[str],
 ) -> List[Dict[str, Any]]:
-    has_biv = _check_derived_collision(frozen.features, names)
+    _check_derived_collision(frozen.features, names)
     out: List[Dict[str, Any]] = []
     for i, feat in enumerate(frozen.features):
         f = copy.deepcopy(feat)

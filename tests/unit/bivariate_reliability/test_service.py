@@ -216,7 +216,6 @@ async def test_b14_derived_field_collision_is_rejected(session_id):
 @pytest.mark.asyncio
 async def test_b15_source_mutation_during_freeze_is_rejected(session_id, monkeypatch):
     await seed_layer(session_id, make_fc(ROWS))
-    from app.services.bivariate_reliability_authoring import snapshot
 
     real = session_data_manager.get_ref_descriptor
     calls = {"n": 0}

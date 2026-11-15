@@ -23,7 +23,6 @@ apply 时不是「相信 preview 的数字」而是**重新冻结**并与计划�
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import logging
@@ -201,7 +200,6 @@ def check_anchor(plan_anchor: Optional[SourceAnchor], frozen: FrozenSource) -> N
     """计划锚 vs 新冻结代次：任何漂移 → STALE_SOURCE（含 ABA）。"""
     if plan_anchor is None:
         return
-    anchor = frozen.anchor()
     if plan_anchor.ref_id != frozen.ref_id:
         raise AuthoringError(
             "STALE_SOURCE",

@@ -167,7 +167,6 @@ def read_legend_content(mapspec: Dict[str, Any],
                 "label": s["label"] or f"{s['value']:g}",
                 "color": s["color"], "kind": "proportional", "layer_id": "",
             })
-    labels = " ".join(e["label"] for e in entries)
     return {
         "available": bool(entries or samples or canonicals),
         "title": titles[0] if titles else (
@@ -206,7 +205,6 @@ def layout_legend(
     dpi: Any,
 ) -> Dict[str, Any]:
     """计算真实排版计划（单位 = SVG user unit；条目零 slice）。"""
-    from app.services.print_layout_authoring.units import pt_to_canvas_units
 
     columns = max(1, min(4, int(layout.get("columns") or DEFAULT_COLUMNS)))
     column_gap_mm = float(layout.get("column_gap_mm") or 4.0)
