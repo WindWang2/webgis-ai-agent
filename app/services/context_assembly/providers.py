@@ -196,6 +196,7 @@ class ProjectKnowledgeProvider(BaseProvider):
             org_id=req.org_id or None,
             user_id=req.user_id or None,
             source_policy=getattr(facts, "source_policy", None),
+            read_only=bool(getattr(facts, "preview_mode", False)),
         )
         if not text:
             return []

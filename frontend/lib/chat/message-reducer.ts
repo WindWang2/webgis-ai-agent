@@ -623,19 +623,24 @@ export function attachTurnContextReceipt(
   );
   if (mountIdx >= 0) {
     const existing = prev[mountIdx].turnContextReceipt;
+    // review P3：与后端状态机一致 —— 只接受**严格更强**的状态转移
+    //（同 rank 迟到事件如 unknown-after-not_sent 不改写）。
     if (existing
         && (TURN_RECEIPT_STATUS_RANK[existing.status] ?? 0)
-           > (TURN_RECEIPT_STATUS_RANK[args.receipt.status] ?? 0)) {
-      return prev; // 迟到弱事件不降级
+           >= (TURN_RECEIPT_STATUS_RANK[args.receipt.status] ?? 0)) {
+      return prev;
     }
     const next = [...prev];
     next[mountIdx] = { ...prev[mountIdx], turnContextReceipt: args.receipt };
     return next;
   }
+  // review P3：无挂载点时只挂**最后一条**尚无回执的 user 消息 —— 事件
+  // 正常在消息为最新时到达；abort/重试竞态下的迟到事件宁可丢弃也不
+  // 误挂到更早/后续消息（误归因比缺席更糟）。
   for (let i = prev.length - 1; i >= 0; i--) {
     const m = prev[i];
     if (m.role !== 'user') continue;
-    if (m.turnContextReceipt) break; // 更早的 user 消息拥有自己的回执
+    if (m.turnContextReceipt) return prev;
     const next = [...prev];
     next[i] = { ...m, turnContextReceipt: args.receipt };
     return next;

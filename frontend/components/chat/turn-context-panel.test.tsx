@@ -69,6 +69,17 @@ describe('attachTurnContextReceipt', () => {
     expect(next[1].turnContextReceipt).toBeUndefined();
   });
 
+  it('rejects equal-rank late events (unknown cannot replace not_sent)', () => {
+    const prev = [userMsg('u1', {
+      turnContextReceipt: summary({ turn_id: 'turn-1', status: 'not_sent' }),
+    })];
+    const next = attachTurnContextReceipt(prev, {
+      turnId: 'turn-1',
+      receipt: summary({ turn_id: 'turn-1', status: 'unknown' }),
+    });
+    expect(next).toBe(prev); // 同 rank 迟到事件不改写
+  });
+
   it('drops late events when no mount point exists', () => {
     const prev = [{ ...userMsg('a1'), role: 'assistant', content: 'x' } as ChatStreamMessage];
     const next = attachTurnContextReceipt(prev, {

@@ -212,6 +212,7 @@ def _build_project_knowledge_block(
     org_id: Optional[str] = None,
     user_id: Optional[str] = None,
     source_policy: Optional[Any] = None,
+    read_only: bool = False,
 ) -> str:
     """Sync DB read of ProjectKnowledge card for Pi/legacy context (#1395).
 
@@ -224,6 +225,8 @@ def _build_project_knowledge_block(
     G43（ADR-0295）：``source_policy`` 的 ``pk:<entry_id>`` 排除在卡片渲染前
     生效（不参与预算竞争）；返回的 ScopedText 附带 ``entry_refs``（含真实
     version_token 快照与 omitted/not_live 如实去向）。
+    G43 review P1：``read_only=True``（预览）跳过 liveness 降级与 commit ——
+    预览零业务副作用（失效条目由下一次**真**装配承担降级）。
     """
     try:
         from app.services.project_knowledge import project_knowledge_enabled
@@ -265,8 +268,10 @@ def _build_project_knowledge_block(
                 project_id=str(project.id),
                 project_name=str(getattr(project, "name", "") or ""),
                 exclude_entry_ids=exclude_ids,
+                read_only=read_only,
             )
-            db.commit()  # Persist authority-backed projection demotions only.
+            if not read_only:
+                db.commit()  # Persist authority-backed projection demotions only.
             from app.lib.runtime.scoped_text import ScopedText
             text = ScopedText(card.text or "", source_scope={
                 "scope": "project", "scope_id": str(project.id), "project_id": str(project.id),

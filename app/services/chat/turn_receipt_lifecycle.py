@@ -74,10 +74,18 @@ async def persist_assembly_receipt(
     return read
 
 
-async def mark_not_sent(turn_id: str, *, reason: str) -> None:
+async def mark_not_sent(
+    turn_id: str, *, reason: str, session_id: str = ""
+) -> Optional[Dict[str, Any]]:
+    """Record not_sent; return the refreshed read model when ``session_id``
+    is given (review P2 — the caller's later message-summary must not show a
+    stale ``assembled`` state after the durable row moved on)."""
     from app.services import turn_context_store as store
 
     await store.record_not_sent(turn_id, reason=reason)
+    if session_id:
+        return await store.get_receipt(session_id, turn_id)
+    return None
 
 
 async def mark_submitted(
@@ -91,10 +99,15 @@ async def mark_submitted(
     return None
 
 
-async def mark_unknown(turn_id: str) -> None:
+async def mark_unknown(
+    turn_id: str, *, session_id: str = ""
+) -> Optional[Dict[str, Any]]:
     from app.services import turn_context_store as store
 
     await store.record_unknown(turn_id)
+    if session_id:
+        return await store.get_receipt(session_id, turn_id)
+    return None
 
 
 async def mark_turn_outcome(turn_id: str, *, outcome: str) -> None:
@@ -134,6 +147,7 @@ def sse_payload(
             "policy_version": receipt_read.get("policy_version"),
             "mode": receipt_read.get("assembly_mode"),
             "counts": counts,
+            "not_sent_reason": receipt_read.get("not_sent_reason"),
             "persisted": True,
         }
     if fallback is not None:
@@ -152,6 +166,7 @@ def sse_payload(
                 k: bounded.get(k)
                 for k in ("included", "omitted", "truncated", "sources_total")
             },
+            "not_sent_reason": None,
             "persisted": False,
         }
     return {

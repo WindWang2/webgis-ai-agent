@@ -76,7 +76,7 @@ class ProjectKnowledgeCard:
     not_live_ids: Tuple[str, ...] = ()
 
     @property
-    def chars(self) -> str:
+    def chars(self) -> int:
         return len(self.text)
 
 

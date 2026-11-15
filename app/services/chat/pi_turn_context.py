@@ -315,6 +315,21 @@ async def bind_turn_prompt_with_receipt(
         except ContextAssemblyRejected:
             raise
         except Exception:  # noqa: BLE001 — unexpected typed failure may use legacy
+            # review P3（纵深防御）：显式策略下，opaque caller 预拼块不可经
+            # 「意外 typed 失败 → legacy 回退」绕过 typed 拒绝 —— 回退前
+            # 显式复核（策略读失败保持旧回退行为，不新增阻断面）。
+            if (cartography_block or "").strip():
+                try:
+                    from app.services.turn_context_store import load_policy
+
+                    fallback_policy = await load_policy(session_id)
+                except Exception:  # noqa: BLE001
+                    fallback_policy = None
+                if fallback_policy is not None and fallback_policy.is_explicit:
+                    raise ContextAssemblyRejected(
+                        "explicit source policy cannot be honored with an "
+                        "opaque caller-injected cartography block"
+                    )
             logger.exception(
                 "[PiTurn] typed context assembly failed; legacy fallback session=%s",
                 session_id,

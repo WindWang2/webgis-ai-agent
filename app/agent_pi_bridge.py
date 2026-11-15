@@ -2762,15 +2762,19 @@ class PiBridge:
                         )
                         if not _ns_model_result.ok:
                             send_failed = True
-                            # G43（C18）：装配后未发出 —— 如实 not_sent。
-                            await turn_receipt_lc.mark_not_sent(
-                                turn_id,
-                                reason=(
-                                    "model_budget_rejected"
-                                    if _ns_model_result.status == "budget_rejected"
-                                    else "model_apply_error"
-                                ),
-                            )
+                            # G43（C18）：装配后未发出 —— 如实 not_sent
+                            #（刷新读模型，返回值披露真实状态）。
+                            _ns_receipt_read = (
+                                await turn_receipt_lc.mark_not_sent(
+                                    turn_id,
+                                    reason=(
+                                        "model_budget_rejected"
+                                        if _ns_model_result.status == "budget_rejected"
+                                        else "model_apply_error"
+                                    ),
+                                    session_id=turn_sid,
+                                )
+                            ) or _ns_receipt_read
                             rt_ev.settle(
                                 Outcome.FAILED,
                                 failure_class=(
@@ -2810,8 +2814,11 @@ class PiBridge:
                         # a retry duplicates side effects while this caller already
                         # returned an error.
                         send_failed = True
-                        # G43（C21）：RPC 异常 —— 可能已部分启动，诚实 unknown。
-                        await turn_receipt_lc.mark_unknown(turn_id)
+                        # G43（C21）：RPC 异常 —— 诚实 unknown（刷新读模型）。
+                        _ns_receipt_read = (
+                            await turn_receipt_lc.mark_unknown(
+                                turn_id, session_id=turn_sid)
+                        ) or _ns_receipt_read
                         rt_ev.settle(
                             Outcome.FAILED,
                             failure_class="pi_send_error",
@@ -3490,27 +3497,20 @@ class PiBridge:
                                 detail=(_model_result.reason_detail or "")[:200],
                             )
                             # G43（C18）：装配后、发出前被拒 —— 回执如实
-                            # not_sent，零假发送状态。
-                            await turn_receipt_lc.mark_not_sent(
-                                turn_id,
-                                reason=(
-                                    "model_budget_rejected"
-                                    if _model_result.status == "budget_rejected"
-                                    else "model_apply_error"
-                                ),
-                            )
+                            # not_sent，零假发送状态。刷新读模型（review P2：
+                            # 后续 on_turn_result 的消息摘要不得停留在
+                            # assembled）。
                             _turn_receipt_read = (
-                                await turn_receipt_lc.persist_assembly_receipt(
-                                    _turn_ctx_receipt,
-                                    session_id=turn_sid, turn_id=turn_id,
-                                    run_id=run_id,
-                                    org_id=context_org_id or "",
-                                    project_id=context_project_id or "",
-                                    user_id=context_user_id or "",
+                                await turn_receipt_lc.mark_not_sent(
+                                    turn_id,
+                                    reason=(
+                                        "model_budget_rejected"
+                                        if _model_result.status == "budget_rejected"
+                                        else "model_apply_error"
+                                    ),
+                                    session_id=turn_sid,
                                 )
-                                if _turn_receipt_read is None
-                                else _turn_receipt_read
-                            )
+                            ) or _turn_receipt_read
                             yield sse_event("model_status", _model_result.sse_payload(turn_sid, turn_id))
                             yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
                                 _turn_receipt_read, session_id=turn_sid,
@@ -3569,8 +3569,11 @@ class PiBridge:
                         logger.error(f"[PiBridge] stream_prompt send failed: {e}")
                         send_failed = True
                         # G43（C21）：RPC 异常 —— 可能已部分启动，诚实 unknown
-                        #（绝不复制上一 turn 的成功回执）。
-                        await turn_receipt_lc.mark_unknown(turn_id)
+                        #（绝不复制上一 turn 的成功回执；刷新读模型 —— review P2）。
+                        _turn_receipt_read = (
+                            await turn_receipt_lc.mark_unknown(
+                                turn_id, session_id=turn_sid)
+                        ) or _turn_receipt_read
                         yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
                             _turn_receipt_read, session_id=turn_sid,
                             turn_id=turn_id, fallback=_turn_ctx_receipt,

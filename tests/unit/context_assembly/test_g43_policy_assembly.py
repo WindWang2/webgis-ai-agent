@@ -162,7 +162,8 @@ class TestProviderPolicyApplication:
 
         captured = {}
 
-        def _fake_builder(project_id, *, user_id=None, org_id=None, source_policy=None):
+        def _fake_builder(project_id, *, user_id=None, org_id=None,
+                          source_policy=None, read_only=False):
             captured["policy"] = source_policy
             text = ScopedText("KNOWLEDGE", source_scope={
                 "scope": "project", "scope_id": "p1", "project_id": "p1",
@@ -201,6 +202,116 @@ class TestProviderPolicyApplication:
             "decision": "excluded_by_policy", "version_token": "",
             "label": "GIS 空间记忆（整块）",
         }]
+
+
+class TestPreviewReadOnlyContract:
+    """review P1：预览零业务副作用（真实种子 + 权威漂移 → 不降级）。"""
+
+    def test_preview_does_not_demote_stale_knowledge(self, tmp_path, monkeypatch):
+        """C07 行为真值：真装配降级漂移条目；read_only（预览）不降级。"""
+        from sqlalchemy import create_engine, select
+        from sqlalchemy.orm import sessionmaker
+
+        from app.models.db_model import Base as DbBase
+        from app.models.db_model import Organization, User
+        from app.models.project import CartoProjectFact, Project
+        from app.models.project_knowledge import ProjectKnowledgeEntry
+
+        db_file = tmp_path / "g43_preview.db"
+        eng = create_engine(
+            f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
+        DbBase.metadata.create_all(eng)
+        factory = sessionmaker(bind=eng, expire_on_commit=False)
+
+        import app.services.chat.context_assembler as ca_mod
+        monkeypatch.setattr(ca_mod, "_session_local_factory", factory)
+
+        with factory() as db:
+            db.add(Organization(id=None, name="o", slug="g43-prev"))
+            db.flush()
+            org = db.execute(select(Organization)).scalars().first()
+            db.add(User(id="u-prev", org_id=org.id, username="uprev",
+                        email="uprev@example.com", role="editor", is_active=True))
+            db.add(Project(id="p-prev", org_id=org.id, owner_id="u-prev",
+                           name="P", status="active"))
+            db.add(CartoProjectFact(
+                id="f-prev", project_id="p-prev", kind="preference",
+                subject="s", payload={"value": "v"}, fingerprint="fp-now",
+                status="active"))
+            db.add(CartoProjectFact(
+                id="f-prev2", project_id="p-prev", kind="preference",
+                subject="s2", payload={"value": "v"}, fingerprint="fp-now2",
+                status="active"))
+            # 自然键（org/project/kind/store/authority）各不相同
+            db.add(ProjectKnowledgeEntry(
+                id="pkx-stale", org_id=str(org.id), project_id="p-prev",
+                entity_kind="preference", subject="stale",
+                authority_store="carto_fact", authority_id="f-prev",
+                version_token="fp-OLD", summary="s", status="active"))
+            db.add(ProjectKnowledgeEntry(
+                id="pkx-stale2", org_id=str(org.id), project_id="p-prev",
+                entity_kind="preference", subject="stale2",
+                authority_store="carto_fact", authority_id="f-prev2",
+                version_token="fp-OLD-2", summary="s", status="active"))
+            db.commit()
+            org_id_str = str(org.id)
+
+        # 真 turn 语义（read_only=False）：漂移条目被降级提交
+        from app.services.chat.context_assembler import (
+            _build_project_knowledge_block,
+        )
+
+        _build_project_knowledge_block(
+            "p-prev", org_id=org_id_str, user_id="u-prev", read_only=False)
+        with factory() as db:
+            row = db.get(ProjectKnowledgeEntry, "pkx-stale")
+            assert row is not None and row.status in ("stale", "invalidated"), (
+                "真装配应降级漂移条目")
+            # 重种一个漂移条目（第一次真装配已把两个漂移条目都降级）
+            db.add(ProjectKnowledgeEntry(
+                id="pkx-stale3", org_id=org_id_str, project_id="p-prev",
+                entity_kind="preference", subject="stale3",
+                authority_store="carto_fact", authority_id="f-prev2",
+                version_token="fp-OLD-3", summary="s", status="active"))
+            db.commit()
+
+        # 预览语义（read_only=True）：漂移条目保持 active（零副作用红线）
+        _build_project_knowledge_block(
+            "p-prev", org_id=org_id_str, user_id="u-prev", read_only=True)
+        with factory() as db:
+            row2 = db.get(ProjectKnowledgeEntry, "pkx-stale3")
+            assert row2 is not None and row2.status == "active", (
+                "预览（read_only=True）不得降级知识条目 —— C07 副作用红线")
+        eng.dispose()
+
+    @pytest.mark.asyncio
+    async def test_knowledge_provider_forwards_read_only_flag(self, monkeypatch):
+        import app.services.chat.context_assembler as ca
+        from app.services.context_assembly.providers import ProjectKnowledgeProvider
+        from app.lib.runtime.scoped_text import ScopedText
+
+        captured = {}
+
+        def _fake(project_id, *, user_id=None, org_id=None,
+                  source_policy=None, read_only=False):
+            captured["read_only"] = read_only
+            text = ScopedText("K", source_scope={
+                "scope": "project", "scope_id": "p1", "project_id": "p1",
+                "org_id": "o", "sensitivity": "project_scoped"})
+            text.entry_refs = []
+            return text
+
+        monkeypatch.setattr(ca, "_build_project_knowledge_block", _fake)
+        req = _req()
+        # 真 turn（preview_mode 默认 False）
+        facts = SharedTurnFacts(map_state={}, plan=None)
+        await ProjectKnowledgeProvider().build(req, facts)
+        assert captured["read_only"] is False
+        # 预览（preview_mode=True）
+        facts_pv = SharedTurnFacts(map_state={}, plan=None)
+        facts_pv.preview_mode = True
+        await ProjectKnowledgeProvider().build(req, facts_pv)
+        assert captured["read_only"] is True
 
 
 class TestPreviewSideEffects:

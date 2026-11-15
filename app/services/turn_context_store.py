@@ -157,27 +157,56 @@ async def update_policy(
                 excluded=excluded, expected_version=expected_version,
                 authorized_source_ids=None, db=db,
             )
-    row = await db.get(_policy_row_cls(), session_id)
+    # review P2：CAS 必须原子 —— 条件 UPDATE（WHERE policy_version = expected）
+    # 的 rowcount 即裁决；两个并发 PUT 不会都胜出（丢失更新不可能）。
+    Row = _policy_row_cls()
+    row = await db.get(Row, session_id)
     if row is None:
         if expected_version not in (0, 1):
             raise PolicyConflict(SourcePolicy(session_id=session_id))
-        row = _policy_row_cls()(
+        row = Row(
             session_id=session_id, org_id=org_id or "", project_id=project_id or "",
-            user_id=user_id or "",
+            user_id=user_id or "", mode=mode, preferred=list(preferred),
+            excluded=list(excluded), policy_version=1,
+            updated_by_user_id=user_id or None,
         )
         db.add(row)
-    elif int(row.policy_version or 1) != int(expected_version):
-        raise PolicyConflict(_row_to_policy(row))
-    row.org_id = org_id or row.org_id
-    row.project_id = project_id or row.project_id
-    row.user_id = user_id or row.user_id
-    row.mode = mode
-    row.preferred = list(preferred)
-    row.excluded = list(excluded)
-    row.policy_version = int((row.policy_version or 0) + 1)
-    row.updated_by_user_id = user_id or None
+        try:
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001 — 并发首插竞态 → 冲突
+            await db.rollback()
+            current = await db.get(Row, session_id)
+            if current is not None:
+                raise PolicyConflict(_row_to_policy(current)) from exc
+            raise
+        return _row_to_policy(row)
+
+    from sqlalchemy import update as _update
+
+    result = await db.execute(
+        _update(Row)
+        .where(Row.session_id == session_id, Row.policy_version == int(expected_version))
+        .values(
+            org_id=org_id or row.org_id,
+            project_id=project_id or row.project_id,
+            user_id=user_id or row.user_id,
+            mode=mode,
+            preferred=list(preferred),
+            excluded=list(excluded),
+            policy_version=int(expected_version) + 1,
+            updated_by_user_id=user_id or None,
+        )
+    )
+    if result.rowcount != 1:
+        await db.rollback()
+        current = await db.get(Row, session_id)
+        raise PolicyConflict(
+            _row_to_policy(current) if current is not None
+            else SourcePolicy(session_id=session_id)
+        )
     await db.commit()
-    return _row_to_policy(row)
+    refreshed = await db.get(Row, session_id)
+    return _row_to_policy(refreshed if refreshed is not None else row)
 
 
 # ---------------------------------------------------------------------------
@@ -320,8 +349,10 @@ async def record_not_sent(
 async def record_submitted(
     turn_id: str, *, disposition: str, db=None
 ) -> bool:
+    # review P3：Pi 未来若新增 disposition 词表，收敛为 started（提交事实
+    # 已确证，不因词表演进丢失转移）。
     if disposition not in ("started", "queued", "handled"):
-        return False
+        disposition = "started"
     return await _update_receipt(
         turn_id,
         fields={"status": "submitted", "disposition": disposition,
@@ -555,26 +586,6 @@ async def _carto_memory_sources(*, project_id: str) -> List[Dict[str, Any]]:
         return []
 
 
-def message_receipt_summary(receipt_read: Dict[str, Any]) -> Dict[str, Any]:
-    """The bounded per-message summary stored on ``messages.context_receipt``
-    (full detail stays in the receipt row queried by session+turn)."""
-    payload = dict(receipt_read.get("payload") or {})
-    return {
-        "receipt_id": receipt_read.get("receipt_id"),
-        "turn_id": receipt_read.get("turn_id"),
-        "digest": receipt_read.get("digest"),
-        "status": receipt_read.get("status"),
-        "disposition": receipt_read.get("disposition"),
-        "turn_outcome": receipt_read.get("turn_outcome"),
-        "policy_version": receipt_read.get("policy_version"),
-        "mode": receipt_read.get("assembly_mode"),
-        "counts": {
-            k: payload.get(k)
-            for k in ("included", "omitted", "truncated", "sources_total")
-        },
-    }
-
-
 __all__ = [
     "NOT_SENT_REASONS",
     "PolicyConflict",
@@ -584,7 +595,6 @@ __all__ = [
     "list_authorized_sources",
     "list_receipts",
     "load_policy",
-    "message_receipt_summary",
     "record_assembly",
     "record_not_sent",
     "record_submitted",

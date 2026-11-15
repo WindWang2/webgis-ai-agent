@@ -174,6 +174,24 @@ async def post_context_preview(
     user_id, org_id = _actor(user)
     policy = None
     if req.policy_draft is not None:
+        # review P3：草稿策略与 PUT 同规则结构校验（mode/命名空间/冲突）。
+        from app.services.context_assembly.source_policy import (
+            validate_policy_payload,
+        )
+
+        _, _, draft_err = validate_policy_payload(
+            mode=req.policy_draft.mode,
+            preferred=req.policy_draft.preferred,
+            excluded=req.policy_draft.excluded,
+        )
+        if draft_err is not None:
+            raise HTTPException(
+                status_code=400, detail=f"invalid source policy: {draft_err}")
+        if req.policy_draft.mode == "auto" and (
+            req.policy_draft.preferred or req.policy_draft.excluded
+        ):
+            raise HTTPException(
+                status_code=400, detail="invalid source policy: auto_with_selection")
         catalog = await list_authorized_sources(
             session_id=session_id, org_id=org_id,
             project_id=req.policy_draft.project_id or req.project_id,

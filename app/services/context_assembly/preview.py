@@ -117,6 +117,9 @@ async def preview_turn_context(
     )
     facts = await _readonly_facts(req)
     facts.source_policy = policy
+    # review P1：只读投影模式 —— provider 写面（知识 demotion commit）被
+    # 跳过，预览前后权威行零变化。
+    facts.preview_mode = True
 
     providers = [
         CartographyMemoryProvider(),
