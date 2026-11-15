@@ -474,7 +474,12 @@ class AsyncHistoryService(HistoryStoreProtocol):
         tool_result=None,
         tool_call_id=None,
         reasoning_content: Optional[str] = None,
-    ) -> None:
+        attachments: Optional[list] = None,
+    ) -> Optional[int]:
+        """保存消息；G36（ADR-0291）加性 ``attachments``（有界元数据，非字节）。
+
+        返回消息 id（G36 证据绑定需要；旧调用方忽略返回值，兼容）。
+        """
         import anyio
         for attempt in range(3):
             try:
@@ -486,6 +491,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                     tool_calls=tool_calls,
                     tool_call_id=tool_call_id,
                     tool_result=tool_result,
+                    attachments=attachments,
                     created_at=datetime.now(timezone.utc),
                 )
                 self.db.add(msg)
@@ -493,7 +499,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 if conv:
                     conv.updated_at = datetime.now(timezone.utc)
                 await self.db.commit()
-                return
+                return int(msg.id) if msg.id is not None else None
             except Exception as e:
                 if "locked" in str(e).lower() and attempt < 2:
                     await anyio.sleep(0.1 * (attempt + 1))

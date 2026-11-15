@@ -22,6 +22,8 @@ _TOOL_MODULES = [
     ("app.tools.map_operations_tools", "register_map_operation_tools"),
     # ADR-0285：交互情境 scope —— 当前/历史选择 → 受验证分析输入（只读）
     ("app.tools.interaction_scope_tools", "register_interaction_scope_tools"),
+    # G36（ADR-0291）：视觉证据读取 —— 会话已授权图片证据 → 摘要 + 原生 ImageContent
+    ("app.tools.visual_context_tools", "register_visual_context_tools"),
     # GOAL 04：多尺度表达档案 —— inspect/preview/apply（scale_profile.v1）
     ("app.tools.scale_profile_tools", "register_scale_profile_tools"),
     # G27：多尺度表达策略生产接线 —— inspect + 局部 CAS apply
@@ -157,6 +159,9 @@ _TOOL_MODULES = [
     ("app.tools.print_layout_tools", "register_print_layout_tools"),
     # G35：时序地图动画媒体交付（能力/计划/提交/查询/取消/成果；独立模块防并发冲突）
     ("app.tools.temporal_media_tools", "register_temporal_media_tools"),
+    # G37：会话模型运行配置只读工具面（目录/状态/预算；独立模块防并发冲突；
+    # 只读，绝不升级权限 —— 选择变化只来自用户经正式 API 的请求）
+    ("app.tools.session_model_tools", "register_session_model_tools"),
 ]
 
 

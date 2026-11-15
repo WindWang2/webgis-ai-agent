@@ -10,6 +10,8 @@ export interface ChatMessage {
   resultId?: string;
   plan?: unknown;
   toolCalls?: unknown[];
+  /** G36（ADR-0291）：用户消息的视觉附件（乐观 chips/回执/恢复三态）。 */
+  attachments?: import('@/lib/chat/message-reducer').VisualAttachmentView[];
   [key: string]: unknown;
 }
 

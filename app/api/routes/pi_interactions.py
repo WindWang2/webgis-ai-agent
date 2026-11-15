@@ -205,9 +205,19 @@ async def cancel_runtime_interaction(
 # ── 用户面：运行中追加指令 + 队列可见性（WP09） ────────────────────────
 
 
+class TurnAttachmentRef(BaseModel):
+    """G36（ADR-0291）：运行中追加的视觉证据 ref（ref-only，同 ChatRequest）。"""
+
+    evidence_id: str = Field(pattern=r"^vev-[0-9a-f]{16}$")
+
+
 class TurnMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     mode: str = Field(pattern="^(adjust|queue)$")
+    # G36：运行中附图（原生 steer/follow_up images 通道；V31）。None/空 =
+    # 旧行为纯文本。
+    attachments: Optional[list[TurnAttachmentRef]] = Field(
+        default=None, max_length=4)
 
 
 @router.post("/sessions/{session_id}/turns/{turn_id}/messages")
@@ -259,6 +269,7 @@ async def send_turn_message(
             detail={"error": "CONTROL_GATE_BUSY", "message": "控制面忙，请稍后重试。"},
         )
     issued = None
+    _attach_receipts: list = []
     try:
         # 门内身份复核（对象同一性）：交接后绝不把追加指令写给后继 turn。
         if bridge._current_turn is not entry:
@@ -269,7 +280,21 @@ async def send_turn_message(
                     "message": "回合已交接，追加指令未送达。",
                 },
             )
-        issued = await bridge.rpc.issue(command, {"message": req.message})
+        # G36（ADR-0291，V31）：运行中附图经同一 bridge 解析（能力门/
+        # 归属/预算/台账与 prompt 路径同一裁决），原生 steer/follow_up
+        # images 参数送达。拒绝逐附件回执披露，不静默丢图。在飞 turn 持
+        # turn 锁消费事件流 —— 此处**禁止中途换代**（发现失效历史只阻断
+        # 图片；换代由下一 turn 边界的预检执行），避免与活流竞争
+        # new_session/事件排空。
+        payload: dict = {"message": req.message}
+        if req.attachments:
+            _img = await bridge._resolve_turn_images(
+                session_id, [a.model_dump() for a in req.attachments],
+                allow_regeneration=False)
+            if _img["images"]:
+                payload["images"] = _img["images"]
+            _attach_receipts = _img["receipts"]
+        issued = await bridge.rpc.issue(command, payload)
     finally:
         gate.release()
     disposition: Any = None
@@ -287,6 +312,11 @@ async def send_turn_message(
         "message_excerpt": req.message[:80],
         "disposition": disposition,
         "error": rpc_error or None,
+        "attachments": [
+            {"evidence_id": a.get("evidence_id"), "status": a.get("status"),
+             "reason": a.get("reason")}
+            for a in _attach_receipts[:4]
+        ] if _attach_receipts else [],
     }
     _turn_message_ledger(session_id).append(entry_record)
     # SSE 披露（当前 turn 的流会翻译发射 pi_turn_message）。

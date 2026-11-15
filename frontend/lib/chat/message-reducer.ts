@@ -39,7 +39,23 @@ export interface ChatStreamMessage {
   goalSatisfaction?: import('@/lib/types/goal-satisfaction').GoalSatisfactionView;
   /** /goal 03：要素编辑提案卡状态（EditProposalCard 渲染）。 */
   featureEditProposal?: import('@/lib/types/feature-edit').FeatureEditProposalState;
+  /** G36（ADR-0291）：用户消息的视觉附件（乐观 chips + receipt 状态回填 +
+   * 会话恢复；thumbUrl 仅本地预览，恢复态走受权缩略图端点）。 */
+  attachments?: VisualAttachmentView[];
   [key: string]: unknown;
+}
+
+/** G36：用户消息附件的视图状态（receipt 事件回填 status/reason）。 */
+export interface VisualAttachmentView {
+  evidence_id: string;
+  source_type: string;
+  label?: string;
+  thumbUrl?: string;
+  mapspec_revision?: number | null;
+  viewport_hash?: string;
+  /** pending | sent | refused（attachment_receipt 事件回填）。 */
+  status?: 'pending' | 'sent' | 'refused';
+  reason?: string;
 }
 
 export type ToolCallStatus = 'completed' | 'failed';
