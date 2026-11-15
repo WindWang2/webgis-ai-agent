@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { Database, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare } from 'lucide-react';
+import { Database, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
+import { useDataJoinStore } from '@/lib/hooks/use-data-join';
 import { describeApiError, isApiError } from '@/lib/api/transport';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import { useT } from '@/lib/i18n/useT';
@@ -453,6 +454,17 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         >
           <TerminalSquare size={14} aria-hidden />
           <span className="sr-only">{t('sidebar.ds.queryConsole')}</span>
+        </button>
+        {/* G38：数据关联工作台入口（两源富集作者直达；单源查询走控制台）。 */}
+        <button
+          type="button"
+          onClick={() => useDataJoinStore.getState().openWith()}
+          className="mb-1 inline-flex h-control-md w-control-md shrink-0 items-center justify-center rounded-md border border-edge-subtle text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          data-testid="open-data-join"
+          title={t('dataJoin.openPanel')}
+        >
+          <Link2 size={14} aria-hidden />
+          <span className="sr-only">{t('dataJoin.openPanel')}</span>
         </button>
       </div>
 

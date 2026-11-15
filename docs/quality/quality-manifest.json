@@ -149,6 +149,26 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "data_join_authoring"
+   ],
+   "category": "",
+   "conformance_tests": [
+    "tests/unit/data_join_authoring/test_executor_attribute.py",
+    "tests/unit/data_join_authoring/test_executor_spatial.py",
+    "tests/unit/data_join_authoring/test_service_flows.py"
+   ],
+   "deterministic": true,
+   "id": "data.join.authoring",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "data_preparation"
    ],
    "category": "data_access",
@@ -5952,7 +5972,7 @@
  ],
  "behavioral": {
   "dispatch": 258,
-  "mention": 202,
+  "mention": 210,
   "none": 17
  },
  "capabilities": [
@@ -6446,6 +6466,29 @@
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/gis_harness/test_resource_aware_selection.py"
+   ]
+  },
+  {
+   "category": "data_access",
+   "deterministic": true,
+   "domain": "general",
+   "id": "data_join_authoring",
+   "producer_algorithms": [
+    "data.join.authoring"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
+    "tests/unit/data_join_authoring/conftest.py",
+    "tests/unit/data_join_authoring/fixtures.py",
+    "tests/unit/data_join_authoring/test_executor_attribute.py",
+    "tests/unit/data_join_authoring/test_executor_spatial.py",
+    "tests/unit/data_join_authoring/test_keys_and_plan.py",
+    "tests/unit/data_join_authoring/test_perf_and_cancel.py",
+    "tests/unit/data_join_authoring/test_review_fixes.py",
+    "tests/unit/data_join_authoring/test_service_flows.py",
+    "tests/unit/data_join_authoring/test_tools_and_routes.py"
    ]
   },
   {
@@ -9196,12 +9239,12 @@
   }
  ],
  "counts": {
-  "algorithms": 256,
+  "algorithms": 257,
   "artifact_types": 23,
-  "capabilities": 194,
+  "capabilities": 195,
   "findings": 41,
   "recipes": 166,
-  "tools": 477
+  "tools": 485
  },
  "findings": [
   {
@@ -9553,7 +9596,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "78e4b6f5cf74147c5a094ef5578992ad0410372d92e6a60b538236aed8ce8f66",
+ "fingerprint": "2c10f8a9ae81200d64c66fffbe60095c60e20ccceecac9adde040c5bb9c446f7",
  "gate": {
   "fields": {
    "capabilities": {
@@ -9618,7 +9661,7 @@
    }
   },
   "pass": true,
-  "total": 477
+  "total": 485
  },
  "manifest_version": 2,
  "recipes": {
@@ -11773,6 +11816,9 @@
     "tests/perf/test_geocompute_v7_perf.py",
     "tests/test_runtime_chaos_plan_mode.py",
     "tests/test_spatial_reasoning_honesty_437.py",
+    "tests/unit/data_join_authoring/test_perf_and_cancel.py",
+    "tests/unit/data_join_authoring/test_review_fixes.py",
+    "tests/unit/data_join_authoring/test_service_flows.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_audit3_batch4_fixes.py",
     "tests/unit/test_cache_lineage_v4.py",
@@ -14992,6 +15038,7 @@
     "tests/unit/feature_edit/test_flagship_journey.py",
     "tests/unit/gis/test_action_compiler.py",
     "tests/unit/test_adapter_contract_v2.py",
+    "tests/unit/test_arcgis_token_not_in_url.py",
     "tests/unit/test_cloud_geospatial_adapters.py",
     "tests/unit/test_data_fabric_catalog_sync.py",
     "tests/unit/test_data_fabric_contract.py",
@@ -21667,6 +21714,212 @@
   {
    "behavior": "mention",
    "capabilities": [
+    "data_join_authoring"
+   ],
+   "deterministic": false,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_data_join_cancel",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "数据关联",
+    "join",
+    "取消"
+   ],
+   "tests": [
+    "tests/unit/data_join_authoring/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "data_join_authoring"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "medium",
+   "memory_class": "light",
+   "name": "webgis_data_join_describe",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "数据关联",
+    "join",
+    "源检查",
+    "字段",
+    "schema"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
+    "tests/unit/data_join_authoring/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "data_join_authoring"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "webgis_data_join_execute",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "数据关联",
+    "join",
+    "执行",
+    "富集",
+    "durable job"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
+    "tests/unit/data_join_authoring/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "data_join_authoring"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_data_join_list",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "数据关联",
+    "join",
+    "计划列表"
+   ],
+   "tests": [
+    "tests/unit/data_join_authoring/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "data_join_authoring"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_data_join_plan_upsert",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "数据关联",
+    "join",
+    "计划",
+    "draft"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
+    "tests/unit/data_join_authoring/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "data_join_authoring"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "webgis_data_join_preview",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "数据关联",
+    "join",
+    "诊断",
+    "基数",
+    "未匹配"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
+    "tests/unit/data_join_authoring/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "data_join_authoring"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "medium",
+   "memory_class": "light",
+   "name": "webgis_data_join_result",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "数据关联",
+    "join",
+    "结果",
+    "分页"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g38_data_join_journey.py",
+    "tests/unit/data_join_authoring/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "data_join_authoring"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_data_join_status",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "数据关联",
+    "join",
+    "状态",
+    "收据"
+   ],
+   "tests": [
+    "tests/unit/data_join_authoring/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
     "refresh_candidate_discard"
    ],
    "deterministic": false,
@@ -22362,6 +22615,7 @@
     "tests/unit/test_map_product_finalization_scenarios.py",
     "tests/unit/test_pi_bridge_compat.py",
     "tests/unit/test_pi_surface_abi_route.py",
+    "tests/unit/test_product_city_switch.py",
     "tests/unit/test_registry_list_coercion.py",
     "tests/unit/test_session_plan.py",
     "tests/unit/test_tool_catalog.py",

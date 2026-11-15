@@ -279,6 +279,22 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"[lifespan] pi turn registry sweep skipped: {e}")
 
+    # G38：数据关联孤儿 run 收敛（崩溃窗口「内容已发布/run 行未终态」按
+    # 因果证据补登记或失败；超龄 staging 清理）。best-effort，绝不阻断启动。
+    try:
+        from app.services.data_join_authoring import recovery as dj_recovery
+
+        await asyncio.to_thread(dj_recovery.sweep_staging)
+        result = await asyncio.to_thread(dj_recovery.recover_runs)
+        if result.get("completed") or result.get("failed"):
+            logger.info(
+                "[lifespan] data-join recovery: %s completed, %s failed",
+                len(result.get("completed") or []),
+                len(result.get("failed") or []),
+            )
+    except Exception as e:
+        logger.warning(f"[lifespan] data-join recovery skipped: {e}")
+
     registry = ToolRegistry()
     init_tools(registry)
     # ADR-0243：扩展平台引导（默认全关）。必须发生在 runtime manifest 编译
@@ -1143,6 +1159,8 @@ app.include_router(raster_authoring_routes.router, prefix="/api/v1", tags=["栅�
 # G33：矢量专题表达作者工作台（独立 router；对齐 raster_authoring 先例）
 from app.api.routes import thematic_authoring as thematic_authoring_routes  # noqa: E402
 app.include_router(thematic_authoring_routes.router, prefix="/api/v1", tags=["专题表达工作台"])
+from app.api.routes import data_join_authoring as data_join_authoring_routes  # noqa: E402
+app.include_router(data_join_authoring_routes.router, prefix="/api/v1", tags=["数据关联工作台 G38"])
 # G34：专业纸面版式与图册编排工作台（独立 router；UI 与 Pi 共用 service）
 from app.api.routes import print_layout as print_layout_routes  # noqa: E402
 app.include_router(print_layout_routes.router, prefix="/api/v1", tags=["纸面版式工作台"])

@@ -54,5 +54,6 @@
     "alert": "检测到 {count} 处快捷键冲突：{details}",
     "item": "{shortcut}（{titles}）",
     "separator": "；"
-  }
+  },
+  "dataJoin": "数据关联工作台"
 }

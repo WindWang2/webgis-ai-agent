@@ -580,6 +580,25 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
 | `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/commit` | Commit | object |
 
+### 数据关联工作台 G38
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/sources/describe` | Describe Source | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans` | Create Plan | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/plans` | List Plans | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Get Plan | object |
+| `PATCH` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Update Plan | object |
+| `DELETE` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Archive Plan | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/preview` | Preview Plan | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/execute` | Execute Plan | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs` | List Runs | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}` | Inspect Run | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/results` | Run Results | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/cancel` | Cancel Run | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/render-ref` | Render Ref | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/recover` | Recover | object |
+
 ### 纸面版式工作台
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1367,6 +1386,18 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：575（OpenAPI operations，不含流式豁免面外资源）_
+### 时序媒体交付 (G35)
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/temporal-media/capabilities` | Get Capabilities | object |
+| `POST` | `/api/v1/temporal-media/plan` | Post Plan | object |
+| `POST` | `/api/v1/temporal-media/submit` | Post Submit | object |
+| `GET` | `/api/v1/temporal-media/jobs` | Get Jobs | object |
+| `GET` | `/api/v1/temporal-media/jobs/{job_id}` | Get Job Status | object |
+| `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
+| `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
+
+_端点总数：596（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
