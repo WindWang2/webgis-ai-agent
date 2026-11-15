@@ -55,6 +55,7 @@ from app.api.routes import turn_journal as turn_journal_routes  # noqa: E402  # 
 from app.api.routes import pi_interactions as pi_interactions_routes  # noqa: E402  # G29 Pi 原生运行中交互
 from app.api.routes import ws_collab
 from app.api.routes import review_proposals
+from app.api.routes import visual_context  # G36 视觉上下文证据（ADR-0291）
 from app.api.routes import visual_repairs
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
 from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
@@ -65,6 +66,7 @@ from app.api.routes import data_preparation as data_preparation_routes  # noqa: 
 from app.api.routes import data_import as data_import_routes  # noqa: E402  # G17 staged 导入工作台
 from app.api.routes import topology_workbench as topology_workbench_routes  # noqa: E402  # G31 跨图层拓扑工作台
 from app.api.routes import field_compute as field_compute_routes  # noqa: E402
+from app.api.routes import raster_sampling as raster_sampling_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
 from app.api.routes import composition_template_assets as composition_template_assets_routes
@@ -808,6 +810,12 @@ async def _periodic_visual_blob_sweep(interval_seconds: float | None = None) -> 
             report = await asyncio.to_thread(sweep_orphan_screenshots)
             if report.get("swept"):
                 logger.info("[lifespan] visual blob sweep: %s", report)
+            # G36（ADR-0291）：同周期兜底回收视觉证据孤儿 blob（vevimg-/vevr-）。
+            from app.services.visual_context.refs import sweep_orphan_evidence_blobs
+
+            ev_report = await asyncio.to_thread(sweep_orphan_evidence_blobs)
+            if ev_report.get("swept"):
+                logger.info("[lifespan] visual evidence blob sweep: %s", ev_report)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -1156,6 +1164,8 @@ app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["
 app.include_router(review_proposals.router, prefix="/api/v1", tags=["审查会签"])
 # F15（ADR-0263）：user-approved visual repair + 截图 ref-only 通道。
 app.include_router(visual_repairs.router, prefix="/api/v1", tags=["AI对话"])
+# G36（ADR-0291）：视觉上下文证据受权入口（当前图/局部/参考图 → Pi 原生 images）。
+app.include_router(visual_context.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(workflow_resume_routes.router, prefix="/api/v1", tags=["AI对话"])
 # ADR-0097: 显式分析图 — SessionPlan/MapSpec/证据的只读派生投影端点。
 app.include_router(analysis_graph_routes.router, prefix="/api/v1", tags=["Agent Workbench"])
@@ -1171,6 +1181,7 @@ app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
 app.include_router(data_preparation_routes.router, prefix="/api/v1", tags=["数据准备"])
 app.include_router(data_import_routes.router, prefix="/api/v1", tags=["数据导入工作台"])
 app.include_router(field_compute_routes.router, prefix="/api/v1", tags=["字段计算"])
+app.include_router(raster_sampling_routes.router, prefix="/api/v1", tags=["栅格采样"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(ws_collab.router, prefix="/api/v1", tags=["WebSocket 协作"])
