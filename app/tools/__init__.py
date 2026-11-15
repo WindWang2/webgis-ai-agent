@@ -22,6 +22,8 @@ _TOOL_MODULES = [
     ("app.tools.map_operations_tools", "register_map_operation_tools"),
     # ADR-0285：交互情境 scope —— 当前/历史选择 → 受验证分析输入（只读）
     ("app.tools.interaction_scope_tools", "register_interaction_scope_tools"),
+    # G36（ADR-0291）：视觉证据读取 —— 会话已授权图片证据 → 摘要 + 原生 ImageContent
+    ("app.tools.visual_context_tools", "register_visual_context_tools"),
     # GOAL 04：多尺度表达档案 —— inspect/preview/apply（scale_profile.v1）
     ("app.tools.scale_profile_tools", "register_scale_profile_tools"),
     # G27：多尺度表达策略生产接线 —— inspect + 局部 CAS apply
@@ -49,6 +51,8 @@ _TOOL_MODULES = [
     ("app.tools.feature_edit_tools", "register_feature_edit_tools"),
     # G31：跨图层拓扑工作台工具面（ruleset/run/findings/repair preview）
     ("app.tools.topology_workbench_tools", "register_topology_workbench_tools"),
+    # G38：数据关联与空间富集作者工具面（describe/plan/preview/execute/status/result）
+    ("app.tools.data_join_authoring_tools", "register_data_join_authoring_tools"),
     # G32：持久要素变更提案工具面（起草/列表/差异/rebase 预览 —— 无批准权）
     ("app.tools.feature_proposal_tools", "register_feature_proposal_tools"),
 
@@ -103,6 +107,8 @@ _TOOL_MODULES = [
     ("app.tools.data_import_tools", "register_data_import_tools"),
     # G19：类型化字段计算工作台（catalog/preview/apply/result；独立模块防冲突）
     ("app.tools.field_compute_tools", "register_field_compute_tools"),
+    # G39：数值栅格采样工具面（plan/preview/execute/status/results；独立模块防冲突）
+    ("app.tools.raster_sampling_tools", "register_raster_sampling_tools"),
     # G24：权威拾取/选择集检查工具面（pick_detail/selection_inspect；独立模块防冲突）
     ("app.tools.selection_tools", "register_selection_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
@@ -155,8 +161,14 @@ _TOOL_MODULES = [
     ("app.tools.print_layout_tools", "register_print_layout_tools"),
     # G35：时序地图动画媒体交付（能力/计划/提交/查询/取消/成果；独立模块防并发冲突）
     ("app.tools.temporal_media_tools", "register_temporal_media_tools"),
+    # G41：双变量矩阵 / 估计值+可靠性双通道作者工作台（独立模块防并发冲突）
+    ("app.tools.bivariate_reliability_tools", "register_bivariate_reliability_tools"),
+    # G37：会话模型运行配置只读工具面（目录/状态/预算；独立模块防并发冲突；
+    # 只读，绝不升级权限 —— 选择变化只来自用户经正式 API 的请求）
+    ("app.tools.session_model_tools", "register_session_model_tools"),
     # G40：制图符号资产工作台（目录/导入/绑定预览/应用/解绑；独立模块防并发冲突）
     ("app.tools.cartographic_asset_tools", "register_cartographic_asset_tools"),
+
 ]
 
 

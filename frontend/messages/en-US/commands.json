@@ -54,5 +54,6 @@
     "alert": "{count} shortcut conflicts detected: {details}",
     "item": "{shortcut} ({titles})",
     "separator": "; "
-  }
+  },
+  "dataJoin": "Data Join Workbench"
 }

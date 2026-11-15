@@ -2,7 +2,7 @@
 
 import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
-import { Send, Sparkles, CheckCircle2, Square, RotateCcw } from 'lucide-react';
+import { Send, Sparkles, CheckCircle2, Square, RotateCcw, ImagePlus } from 'lucide-react';
 import type { AiStatus } from '@/lib/store/hud-types';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
@@ -28,7 +28,9 @@ import {
 import { CitationSourcesProvider, CitationSourceList, splitCitationBlocks, type CitationSource } from '@/components/chat/citation';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { RecoveryBanner } from '@/components/chat/recovery-banner';
+import { SessionModelSelector } from '@/components/chat/session-model-selector';
 import { adaptChartData } from "@/lib/chart-adapter";
+import { VisualAttachBar } from '@/components/sidebar/visual-attach';
 import { useLocale, useT } from '@/lib/i18n/useT';
 
 // Bundle-slimming: react-markdown (MiniMd) and recharts (ChartRenderer) load on
@@ -115,6 +117,8 @@ interface ChatMessage {
   agentPlan?: import('@/lib/types/agent-plan').AgentPlanState;
   layerAdded?: string;
   resultId?: string;
+  /** G36（ADR-0291）：用户消息的视觉附件（乐观 chips/回执/恢复三态）。 */
+  attachments?: import('@/lib/chat/message-reducer').VisualAttachmentView[];
   /** 方向 3：requirement IR blocking 澄清卡片状态。 */
   clarification?: ClarificationCardState;
   /** G28：任务完成语义卡（task_complete.goal_satisfaction）。 */
@@ -254,6 +258,34 @@ const t = useT();
             backgroundColor: 'var(--agent-accent)'
           }}
         >
+          {/* G36（ADR-0291）：用户消息附件 chips（乐观/回执/恢复三态）。 */}
+          {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
+            <div className="mb-1 flex flex-wrap gap-1" data-testid="message-attachments">
+              {(msg.attachments as import('@/lib/chat/message-reducer').VisualAttachmentView[]).map((a) => (
+                <span
+                  key={a.evidence_id}
+                  title={`${a.label ?? a.source_type}${a.status === 'refused' ? ` — ${a.reason ?? ''}` : ''}`}
+                  className="inline-flex items-center gap-1 rounded-pill bg-white/20 px-1.5 py-0.5 text-[11px]"
+                  data-testid={`message-attachment-${a.evidence_id}`}
+                >
+                  {a.thumbUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={a.thumbUrl} alt="" className="h-5 w-5 rounded-sm object-cover" />
+                  ) : (
+                    <ImagePlus size={10} aria-hidden />
+                  )}
+                  {a.source_type === 'map_viewport' && t('sidebar.chat.visualAttach.chipViewport')}
+                  {a.source_type === 'map_region' && t('sidebar.chat.visualAttach.chipRegion')}
+                  {a.source_type === 'reference_upload' && t('sidebar.chat.visualAttach.chipReference')}
+                  {a.mapspec_revision != null && <span>r{a.mapspec_revision}</span>}
+                  {a.status === 'sent' && <span aria-label={t('sidebar.chat.visualAttach.receiptSent')}>✓</span>}
+                  {a.status === 'refused' && (
+                    <span aria-label={t('sidebar.chat.visualAttach.receiptRefused')} title={a.reason}>✕</span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
           <div className="whitespace-pre-wrap">{splitCitationBlocks(msg.content).body}</div>
           <CitationSourceList sources={splitCitationBlocks(msg.content).sources} />
         </div>
@@ -630,6 +662,13 @@ const t = useT();
       {/* 不透明底 + 去掉 blur(12px)：composer 压在地图上，半透明会让输入文字
           与底图细节互相干扰，而 backdrop-filter 又是最贵的那类合成。 */}
       <div className="shrink-0 border-t border-edge-subtle bg-surface-panel">
+        {/* G37（会话模型运行配置）：目录/实际生效/用量工作台 —— 展开式
+            精简行；服务器回执不可读（新会话/权限）时整条隐藏。 */}
+        <SessionModelSelector
+          sessionId={sessionId ?? null}
+          ownerToken={ownerToken}
+          turnActive={Boolean(turnActive)}
+        />
         {/* UI V3：AI 错误在 chat 内可见（之前仅 top-bar/HUD 有指示，
             composer 静默恢复可用，用户无法感知失败） */}
         {aiStatus === 'error' && (
@@ -656,6 +695,10 @@ const t = useT();
             </InlineNotice>
           </div>
         )}
+        {/* G36（ADR-0291）：视觉附图条 —— 当前图/框选局部/参考图草稿与上传。 */}
+        <div className="px-panel">
+          <VisualAttachBar sessionId={sessionId} ownerToken={ownerToken} />
+        </div>
         <div className="flex items-end gap-2 px-panel pb-1 pt-2">
           {/* Textarea */}
           <textarea

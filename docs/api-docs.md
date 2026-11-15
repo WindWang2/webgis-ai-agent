@@ -580,6 +580,25 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
 | `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/commit` | Commit | object |
 
+### 数据关联工作台 G38
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/sources/describe` | Describe Source | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans` | Create Plan | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/plans` | List Plans | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Get Plan | object |
+| `PATCH` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Update Plan | object |
+| `DELETE` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}` | Archive Plan | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/preview` | Preview Plan | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/execute` | Execute Plan | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs` | List Runs | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}` | Inspect Run | object |
+| `GET` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/results` | Run Results | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/cancel` | Cancel Run | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/render-ref` | Render Ref | object |
+| `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/recover` | Recover | object |
+
 ### 制图符号资产工作台（G40）
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -610,6 +629,14 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/print-layout/preview` | Preview | object |
 | `POST` | `/api/v1/print-layout/export` | Export | object |
 | `POST` | `/api/v1/print-layout/templates` | Templates | object |
+
+### 双变量与可靠性作者工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | object |
+| `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
+| `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/commit` | Commit | object |
 
 ### 报告生成
 
@@ -648,6 +675,9 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}` | Get Session Table Artifact | TableArtifactResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/plan` | Get Session Plan | SessionPlanViewResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/plans/{plan_id}/confirm` | Confirm Destructive Plan | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/model` | Get Session Model | object |
+| `PUT` | `/api/v1/chat/sessions/{session_id}/model` | Put Session Model | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/usage` | Get Session Usage | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/mapspec/mutations` | Apply User Mapspec Mutation | MutationApplyResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/state` | Get Workbench State | WorkbenchStateResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
@@ -694,6 +724,10 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/apply` | Apply Visual Repair | VisualRepairApplyResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-repairs/reject` | Reject Visual Repair | VisualRepairRejectResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/visual-snapshots` | Upload Visual Snapshot | VisualScreenshotUploadResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/visual-context/evidence` | Intake Visual Evidence | VisualEvidenceResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/visual-context/evidence` | List Visual Evidence | VisualEvidenceListResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/visual-context/evidence/{evidence_id}/image` | Read Visual Evidence Image | object |
+| `DELETE` | `/api/v1/chat/sessions/{session_id}/visual-context/evidence/{evidence_id}` | Revoke Visual Evidence | VisualEvidenceResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/workflow-resume-anchor` | Create Workflow Resume Anchor | ResumeAnchorResponse |
 | `POST` | `/api/v1/chat/workflow-resume/{anchor_id}` | Resume Workflow From Anchor | WorkflowResumeResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/runtime-interactions` | Get Runtime Interactions | object |
@@ -827,6 +861,21 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/field-compute/result` | Result | object |
 | `GET` | `/api/v1/field-compute/project-results` | Project Results | object |
 | `DELETE` | `/api/v1/field-compute/plan/{plan_id}` | Discard Plan | FieldComputeDiscardResponse |
+
+### 栅格采样
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/raster-sampling/describe` | Describe | object |
+| `POST` | `/api/v1/raster-sampling/plan` | Create Plan | object |
+| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/revise` | Revise Plan | object |
+| `GET` | `/api/v1/raster-sampling/plan/{plan_id}` | Get Plan | object |
+| `GET` | `/api/v1/raster-sampling/plans` | List Plans | object |
+| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/preview` | Preview | object |
+| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/execute` | Execute | object |
+| `GET` | `/api/v1/raster-sampling/plan/{plan_id}/status` | Status | object |
+| `GET` | `/api/v1/raster-sampling/results` | Results | object |
+| `POST` | `/api/v1/raster-sampling/plan/{plan_id}/cancel` | Cancel | object |
 
 ### 知识库管理
 
@@ -1397,6 +1446,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：595（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：629（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

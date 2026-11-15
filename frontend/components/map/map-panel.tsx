@@ -109,6 +109,7 @@ export function sceneAssetsIdentity(committed: unknown): string {
   return `${mode}#${digest}`
 }
 import { MapActionHandler } from "./map-action-handler"
+import { makeMapCapture, registerMapCapture } from "@/lib/visual-context/map-capture"
 import { SceneController } from "./scene-controller"
 import { SketchEditor } from "./sketch-editor"
 import { LabelEditor } from "./label-editor"
@@ -434,6 +435,8 @@ export function MapPanel({
     return () => {
       mainInstanceHandleRef.current?.release()
       mainInstanceHandleRef.current = null
+      // G36：卸载时释放聊天附图采集登记（迟到的采集不得命中已销毁实例）。
+      registerMapCapture(null)
     }
   }, [])
   const processLayers = useHudStore((s: HudState) => s.processLayers)
@@ -1879,6 +1882,9 @@ export function MapPanel({
             useHudStore.getState().setMapLoaded(true);
             // G25：主图登记活实例预算（A09 —— 画幅网格调度把主图计入总数）。
             mainInstanceHandleRef.current = mapInstanceRegistry.register("main", "main");
+            // G36（ADR-0291）：登记聊天附图采集函数（活实例；mapKey 重建时
+            // 重新 onLoad → 重注册，卸载时释放）。
+            registerMapCapture(makeMapCapture(mapRef.current?.getMap() ?? null));
           }}
           onError={handleMapError}
           style={{ position: "absolute", inset: 0 }}

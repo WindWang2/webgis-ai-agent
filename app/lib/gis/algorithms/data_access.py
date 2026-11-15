@@ -144,6 +144,26 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            id="data.join.authoring", name="两源数据关联与空间富集",
+            conformance_tests=[
+                "tests/unit/data_join_authoring/test_executor_attribute.py",
+                "tests/unit/data_join_authoring/test_executor_spatial.py",
+                "tests/unit/data_join_authoring/test_service_flows.py",
+            ],
+            capabilities=["data_join_authoring"],
+            output_artifact_type="stats_table",
+            tool_candidates=["webgis_data_join_execute"],
+            cpu_cost="medium", memory_cost="medium", io_cost="medium",
+            preferred_execution_policy="ASYNC",
+            algorithm_family="data_access",
+            assumptions=["两源在行/对/输出预算内；键/空间谓词与基数政策显式声明"],
+            limitations=["本版仅属性键 + 点×面；null/missing 双侧永不匹配"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            priority=10,
+        ),
+
+        AlgorithmDescriptor(
             id="data.federated.chain", name="多源链式联邦查询",
             conformance_tests=[
                 "tests/unit/gis/test_algo_conformance_v2.py::test_federated_chain_two_source_attribute_join_oracle",

@@ -184,8 +184,10 @@ def build_object_manifest(
     # chunk 粒度局部读 —— adapter 见 lakehouse/arrow_adapter）。
     # "data_delivery"（G18）：数据交付包（多文件成员 + manifest/receipt；
     # 消费方为交付下载/幂等复用，dr/orphan 扫描面不变 —— 不入 DATA_OBJECT_KINDS）。
+    # "data_join"（G38）：数据关联派生成果终态包（GeoJSON/rows 成员 +
+    # manifest/receipt；消费方为结果分页/幂等复用，dr/orphan 扫描面不变）。
     if kind not in (*DATA_OBJECT_KINDS, "modelops_artifact", "arrow_ipc",
-                    "data_delivery"):
+                    "data_delivery", "data_join"):
         raise DataObjectError(f"unknown data object kind: {kind!r}")
     scope = dict(owner_scope)
     if not scope or set(scope) - {"session_id", "project_id"}:

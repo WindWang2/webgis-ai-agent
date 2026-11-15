@@ -84,6 +84,26 @@ _shift_primitive line w/h 近似说明。
 - 前端 15 passed + tsc 0；API 快照 + 文档漂移 15 passed；ruff 干净
 - 新增 oracle：N1 跨面 / N2 非交换变换 / N3 line / N6 孪生漂移锁
 
-## Round 3（终审，reviewer 槽位复用）
+## Round 3（终审，reviewer 槽位复用）—— GO-WITH-FIXES → 附带修复后 GO
 
-待填。
+报告存档 REVIEW_ROUND3_REPORT.md。复跑全绿（后端 67 + 前端 15 + tsc 0，
+全部其亲跑 + 独立探针）：
+
+- N1/N7/N3/N4/N6 **FIXED**；N2 主修复成立（20 项独立探针 17 过，3 项为
+  探针锚点误判）；N8 代码推理成立（无自动化测试遗留）。
+- 新发现：**R3-1（P2）** use x/y 在非平移祖先下组合次序错误（rsvg 实渲染
+  oracle 实证，错域 8×）；R3-2（P3）TS 孪生 tile bg 残留。
+- Reviewer 明示：R3-1 附带修复（2 行 + oracle）后 verdict 即 **GO**，
+  除此之外无任何阻塞项。
+
+**附带修复（commit 7781081cc）**：R3-1（_walk 组合 ancestor∘x/y∘own；
+scale/rotate oracle + 回归不变）+ R3-2（TS tile bg 全周期、组外）。
+修复后复跑：cartography **3660 passed** / Pi 真实旅程 **1 passed**（29s）/
+前端 **15 passed** + tsc 0 / ruff 干净。
+
+## 终结论
+
+三轮独立评审（Round 1：3P1+7P2+11P3；Round 2：+2P1+1P2+6P3；Round 3：
++1P2+1P3）全部 findings 已修复或按其建议处置；遗留仅 P3 级已知限制
+（F14/F15/F16/F18/F20、`_shift_primitive` line w/h 近似、N8 无自动化测试）
+——均如实记录于本文件与 PR 说明。**GO：可提交 PR。**

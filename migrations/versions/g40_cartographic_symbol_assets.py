@@ -1,7 +1,7 @@
 """G40: cartographic_symbol_assets（制图符号资产存储面）
 
 Revision ID: g40_cartographic_symbol_assets
-Revises: 0106_lifecycle_policy_org_unique
+Revises: bcf4e5b51f43 (merge head after #2122)
 Create Date: 2026-11-15
 
 可复用点符号/面纹理资产（cartoasset.*）+ 不可变版本快照。additive 新表
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 
 revision: str = "g40_cartographic_symbol_assets"
-down_revision: Union[str, Sequence[str], None] = "0106_lifecycle_policy_org_unique"
+down_revision: Union[str, Sequence[str], None] = "bcf4e5b51f43"  # 合流后唯一头（#2122 收拢 G36/G37/G38）
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

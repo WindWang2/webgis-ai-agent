@@ -205,6 +205,17 @@ class Settings(BaseSettings):
     LLM_CONTEXT_WINDOW: Optional[int] = None
     # 标题/摘要等辅助任务的廉价模型；空回退 LLM_MODEL
     LLM_TITLE_MODEL: str = ""
+    # ── G37（会话模型运行配置）──────────────────────────────────────
+    # 管理员在**当前已授权 OpenAI 兼容端点**上额外放开的模型 id（逗号分
+    # 隔）。基础模型（LLM_MODEL / 运行时 override 解析结果）恒在目录内；
+    # 目录项与基础模型共用同一服务器端凭证 —— 不开放任意 URL/API key。
+    # 生产改配走部署环境（与 /config/llm 的生产限制同一纪律）。
+    SESSION_MODEL_CATALOG_EXTRA: str = ""
+    # 会话级 token 预算上限（input+output 累计，宿主账本口径）：
+    # 0 = 不启用预算控制。MAX = admin 允许用户自设的上限（0 = 用户不可
+    # 自设）；DEFAULT = 新会话默认上限（0 = 默认无限制）。
+    SESSION_MODEL_TOKEN_CAP_MAX: int = 0
+    SESSION_MODEL_TOKEN_CAP_DEFAULT: int = 0
 
     # AC-01（ADR-0150）：意图语义解析的证据加权置信度与澄清策略。
     # 权重四分量（task_evidence/slot_completeness/entity_quality/

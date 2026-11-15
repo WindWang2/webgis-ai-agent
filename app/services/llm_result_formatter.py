@@ -452,7 +452,10 @@ def slim_event_result(result: Any) -> Any:
             west, south, east, north = parts
             bbox = [west, south, east, north]
 
-    exclude = {"geojson", "features", "data_list", "grid", "data"}
+    # G36（ADR-0291）：result_images 的 base64 只走原生 content 通道
+    # （abi_tool_response 窄投影给 vendor）——SSE/重放缓冲绝不携带
+    # 图像字节（回执已有 derived_sha256 可追溯）。
+    exclude = {"geojson", "features", "data_list", "grid", "data", "result_images"}
     slim = {k: v for k, v in result.items() if k not in exclude}
 
     if isinstance(result.get("mapspec"), dict):

@@ -14,10 +14,10 @@
 
 ## 总览
 
-- capability 词表：194 条（图内 194 节点）
-- 图节点 1165 / 边 3363 / graph fingerprint `92c90223ef1481ae`
-- provider 面：algorithm 256，component 23，model 0，provider(adapters) 18，template 8，tool 477，workflow(recipes) 166
-- 域分布：`cartography` 6，`general` 94，`network` 14，`platform` 20，`raster` 57，`statistics` 1，`temporal` 2
+- capability 词表：195 条（图内 195 节点）
+- 图节点 1175 / 边 3374 / graph fingerprint `57af3f48b04fb138`
+- provider 面：algorithm 257，component 23，model 0，provider(adapters) 18，template 8，tool 485，workflow(recipes) 166
+- 域分布：`cartography` 6，`general` 95，`network` 14，`platform` 20，`raster` 57，`statistics` 1，`temporal` 2
 
 ## Capability 词表
 
@@ -48,6 +48,7 @@
 | `cross_k_function` | general | density | native | — | yes | — | — |
 | `cross_pair_correlation` | general | density | native | — | yes | — | — |
 | `crs_transformation` | platform | platform | planned | — | yes | — | — |
+| `data_join_authoring` | general | data_access | native | — | yes | — | — |
 | `data_preparation` | general | data_access | native | — | no | — | — |
 | `data_source_pipeline` | platform | platform | planned | — | yes | — | — |
 | `dataset_ingest` | general | data_access | native | — | yes | — | — |
@@ -222,7 +223,7 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 75 | 1 | 173 | 10 | 0 |
+| 75 | 1 | 180 | 10 | 0 |
 
 ### orphan_capability（75）
 
@@ -304,7 +305,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（173）
+### unreachable_tool（180）
 
 - tool add_tile_service_layer is not exposed by any algorithm and has no capability/deprecation link
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
@@ -428,6 +429,13 @@
 - tool webgis_checkpoint is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_compile_map_plan is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_component_catalog is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_data_join_cancel is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_data_join_describe is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_data_join_list is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_data_join_plan_upsert is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_data_join_preview is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_data_join_result is not exposed by any algorithm and has no capability/deprecation link
+- tool webgis_data_join_status is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_discard_project_data_refresh is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_discover_components is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_execute_project_data_refresh is not exposed by any algorithm and has no capability/deprecation link

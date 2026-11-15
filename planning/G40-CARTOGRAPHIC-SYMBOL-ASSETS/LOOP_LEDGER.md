@@ -85,3 +85,12 @@
 - 复跑：cartography 3659✓ / Pi journey 1✓（29s）/ 前端 15✓ + tsc 0 /
   API 快照+文档 15✓ / ruff✓；N1/N2/N3/N6 新增 oracle。
 - Round 3 终审（reviewer 槽位复用）进行中。
+
+## 轮 5（2026-11-16）：Round-3 终审 GO → 收尾
+
+- Round 3：GO-WITH-FIXES —— N1/N7/N3/N4/N6 FIXED、N2 主修复成立；新发现
+  R3-1（P2，use x/y 组合次序，rsvg oracle 实证）+ R3-2（P3，TS tile bg）。
+  Reviewer 明示附带修复后即 GO。
+- 附带修复 commit 7781081cc（R3-1/R3-2 + oracle 测试）。
+- 最终回归：cartography 3660✓ / Pi journey 1✓（29s）/ 前端 15✓ + tsc 0。
+- REVIEW.md 终结论：GO，可提交 PR。剩余：fetch master 复核 → push → PR。

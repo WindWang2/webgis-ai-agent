@@ -23,6 +23,8 @@ import { ScalePortrayalPanel } from '@/components/hud/scale-portrayal-panel';
 // G33：矢量专题表达作者工作台（局部挂载；对齐 G20 栅格工作台先例）
 import { ThematicAuthoringPanel } from '@/components/hud/thematic-authoring-panel';
 import SymbolAssetPanel from '@/components/hud/symbol-asset-panel';
+// G41：双变量矩阵 / 估计值+可靠性双通道作者工作台（加性挂载，不改 G33 面板）
+import { BivariateReliabilityPanel } from '@/components/hud/bivariate-reliability-panel';
 
 /** 渲染模式 id → 消息键（spec 层型语义见 specPaintPatchFrom）。 */
 const MODE_LABELS: Record<string, string> = {
@@ -39,6 +41,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const setEditingLayerId = useHudStore((s) => s.setEditingLayerId);
   const [showRasterAuthoring, setShowRasterAuthoring] = useState(false);
   const [showThematicAuthoring, setShowThematicAuthoring] = useState(false);
+  const [showBivariateReliability, setShowBivariateReliability] = useState(false);
 
   const layer = layers.find((l) => l.id === editingLayerId);
   // audit #840: committed MapSpec 存在时，HUD 层样式不进入 paint
@@ -117,6 +120,24 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
     if (!specBacked || !specLayerKey) return null;
     const lt = String(layer?.type ?? '');
     return (lt === 'circle' || lt === 'fill') ? { layerId: specLayerKey } : null;
+  })();
+
+  // G41：双变量/可靠性作者入口。与 G33 不同，本域不要求层已有专题图例
+  // （用户从「已有矢量数据」出发），但必须是矢量层且源是会话 ref。
+  const g41VectorLayer = (() => {
+    const doc = committedSpec as {
+      layers?: Array<Record<string, unknown>>;
+      sources?: Record<string, Record<string, unknown>>;
+    } | null;
+    const hit = doc?.layers?.find(
+      (l) => l?.id === specLayerKey
+        || (typeof l?.id === 'string' && l.id.startsWith(`${specLayerKey}__`)),
+    );
+    if (!hit || typeof hit.source !== 'string') return null;
+    if (!['fill', 'circle', 'line'].includes(String(hit.type))) return null;
+    const src = doc?.sources?.[hit.source];
+    if (!src || src.type === 'raster' || src.type === 'numeric_raster') return null;
+    return { layerId: String(hit.id) };
   })();
 
   const specPaintPatchFrom = (patch: Partial<LayerStyle>): Record<string, unknown> => {
@@ -299,6 +320,22 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         {/* G40：制图符号资产（点符号/面纹理 → 预览 → 单笔 CAS 绑定） */}
         {symbolAssetLayer && (
           <SymbolAssetPanel layerId={symbolAssetLayer.layerId} />
+        )}
+        {/* G41：双变量 / 可靠性表达作者（成对字段 + 矩阵，或估计 + 有来源误差） */}
+        {g41VectorLayer && (
+          <div>
+            <button
+              type="button"
+              aria-expanded={showBivariateReliability}
+              onClick={() => setShowBivariateReliability((v) => !v)}
+              className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+            >
+              {t('bivariateReliability.title')}
+            </button>
+            {showBivariateReliability && (
+              <BivariateReliabilityPanel layerId={g41VectorLayer.layerId} />
+            )}
+          </div>
         )}
         {/* Name */}
         <div>

@@ -178,6 +178,14 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['mock'],
     owner: 'g22-pi-state-continuity',
   },
+  {
+    id: 'j23',
+    file: 'journeys/j23-g37-session-model.journey.ts',
+    title: '会话模型运行配置：目录选择→实际生效→用量入账→预算拒绝',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g37-session-model-runtime',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);

@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { Database, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare } from 'lucide-react';
+import { Database, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
+import { useDataJoinStore } from '@/lib/hooks/use-data-join';
 import { describeApiError, isApiError } from '@/lib/api/transport';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import { useT } from '@/lib/i18n/useT';
@@ -35,6 +36,7 @@ import { PrepareFlow } from './data-preparation/prepare-flow';
 import { DataDeliveryDialog } from '@/components/data-delivery/delivery-dialog';
 import type { DeliverySourceRef } from '@/lib/api/data-delivery';
 import { FieldComputePanel } from './data-preparation/field-compute-panel';
+import { RasterSamplingPanel } from './raster-sampling/raster-sampling-panel';
 
 // A-F-08: debounce window re-exported so consumers/tests keep importing it from
 // the tab entry point (constant itself lives with the catalog hook).
@@ -453,6 +455,17 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           <TerminalSquare size={14} aria-hidden />
           <span className="sr-only">{t('sidebar.ds.queryConsole')}</span>
         </button>
+        {/* G38：数据关联工作台入口（两源富集作者直达；单源查询走控制台）。 */}
+        <button
+          type="button"
+          onClick={() => useDataJoinStore.getState().openWith()}
+          className="mb-1 inline-flex h-control-md w-control-md shrink-0 items-center justify-center rounded-md border border-edge-subtle text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          data-testid="open-data-join"
+          title={t('dataJoin.openPanel')}
+        >
+          <Link2 size={14} aria-hidden />
+          <span className="sr-only">{t('dataJoin.openPanel')}</span>
+        </button>
       </div>
 
       {/* Catalog View */}
@@ -621,6 +634,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         >
           <PrepareFlow sessionId={sessionId} ownerToken={ownerToken} />
           <FieldComputePanel sessionId={sessionId} ownerToken={ownerToken} />
+          <RasterSamplingPanel sessionId={sessionId} ownerToken={ownerToken} />
         </div>
       )}
       {activeSubTab === 'explain' && (
