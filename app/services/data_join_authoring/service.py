@@ -270,7 +270,6 @@ async def create_plan(
     if len(blob) > _PLAN_JSON_MAX:
         raise DataJoinError(
             "invalid_plan", f"计划过大（{len(blob)} B > {_PLAN_JSON_MAX}）")
-    from datetime import datetime, timezone
 
     from app.core.database import SessionLocal
     from app.models.data_join_authoring import DataJoinPlan
@@ -344,7 +343,6 @@ async def update_plan(
         raise DataJoinError(
             "invalid_plan", f"计划过大（{len(blob)} B > {_PLAN_JSON_MAX}）")
     from app.core.database import SessionLocal
-    from app.models.data_join_authoring import DataJoinPlan
 
     with SessionLocal() as db:
         row = _get_plan_row(db, session_id, plan_id)
@@ -853,7 +851,7 @@ async def _execute_body(
         _mark("failed", error_code=exc.code)
         # 面向 job 的错误：runner 会 mark_failed；此处再抛让 job 记录原因
         raise
-    except Exception as exc:  # noqa: BLE001 — 未预期异常
+    except Exception:  # noqa: BLE001 — 未预期异常
         outputs.discard_staging(run_id)
         _mark("failed", error_code="internal_error")
         raise

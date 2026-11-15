@@ -15,7 +15,6 @@ from app.services.data_join_authoring import outputs, service
 from app.services.data_join_authoring.errors import DataJoinError
 from app.services.data_join_authoring.executor import JoinExecutor
 from app.services.data_join_authoring.plan import parse_plan
-from tests.unit.data_join_authoring.conftest import seed_session_source
 from tests.unit.data_join_authoring.fixtures import loaded_from_rows
 
 
@@ -113,8 +112,6 @@ async def test_j20_cancel_converges_no_public_artifact(seeded_sources, monkeypat
     )
     view = await service.create_plan(seed["session_id"], plan_data,
                                      actor=seed["actor"])
-    task_running = True
-
     import asyncio
 
     async def run_exec():

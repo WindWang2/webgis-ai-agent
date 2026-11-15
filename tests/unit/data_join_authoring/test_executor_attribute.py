@@ -16,7 +16,6 @@ from tests.unit.data_join_authoring.fixtures import (
     DUPLICATE_RIGHT_TABLE,
     FANOUT_LEFT_ROWS,
     FANOUT_RIGHT_ROWS,
-    POPULATION_TABLE,
     TYPES_LEFT_ROWS,
     TYPES_RIGHT_ROWS,
     admin_boundaries,

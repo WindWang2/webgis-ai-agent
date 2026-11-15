@@ -230,7 +230,6 @@ def test_table_source_for_spatial_blocked():
 
 def test_deterministic_replay_same_snapshot_identical_output():
     """J18：同快照重放 → 配对/输出值/身份逐位一致。"""
-    import copy
 
     left = loaded_from_fc("left", points_fc(), "fpL")
     right = loaded_from_fc("right", regions_fc(), "fpR")

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
 from typing import Any, Dict, List
 
 from app.services.data_join_authoring import outputs
@@ -67,7 +66,6 @@ def recover_runs(session_id: str | None = None) -> Dict[str, Any]:
 
     Returns: {"completed": [...], "failed": [...], "skipped_active": n}
     """
-    from datetime import datetime, timezone
 
     from sqlalchemy import select
 

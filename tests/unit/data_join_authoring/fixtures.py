@@ -1,7 +1,7 @@
 """G38 测试夹具 —— 可人工推导的 oracle 数据（J01–J14、J24/J25 同源）。"""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 def _poly(rings: List[List[List[float]]]) -> Dict[str, Any]:

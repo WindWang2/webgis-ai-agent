@@ -599,12 +599,12 @@ class JoinExecutor:
         plan = self.plan
         mapping = _resolved_field_map(plan, left, right)
         row: Dict[str, Any] = {"_join_status": status, "_join_left_ref": left_ref}
-        for side, field, out_name in mapping:
+        for side, field_name, out_name in mapping:
             if side == "left":
-                row[out_name] = left.rows[left_ord].get(field)
+                row[out_name] = left.rows[left_ord].get(field_name)
             else:
                 if right_ord is not None:
-                    row[out_name] = right.rows[right_ord].get(field)
+                    row[out_name] = right.rows[right_ord].get(field_name)
                 else:
                     row[out_name] = None
         if agg_source is not None:

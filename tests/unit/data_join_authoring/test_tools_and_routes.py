@@ -13,8 +13,6 @@ pytestmark = pytest.mark.usefixtures("db_tables")
 import app.tools as tools_pkg
 from app.models.db_model import Conversation
 from app.services.auth_history_bridge import require_owned_session
-from app.services.data_join_authoring import service
-from tests.unit.data_join_authoring.conftest import seed_session_source
 from tests.unit.data_join_authoring.fixtures import attr_plan
 
 

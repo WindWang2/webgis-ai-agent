@@ -9,7 +9,6 @@ from app.services.data_join_authoring import outputs, service
 from app.services.data_join_authoring.errors import DataJoinError
 from app.services.data_join_authoring.executor import JoinExecutor
 from app.services.data_join_authoring.plan import parse_plan
-from tests.unit.data_join_authoring.conftest import seed_session_source
 from tests.unit.data_join_authoring.fixtures import (
     attr_plan,
     loaded_from_fc,
@@ -105,7 +104,7 @@ def test_f6_spatial_unmatched_right_computed():
                       {"side": "right", "field": "rid"}],
     })
     ex = JoinExecutor(plan)
-    out = ex.run_spatial(left, right)
+    ex.run_spatial(left, right)
     assert ex.stats.unmatched_right_rows == 0   # R1 被命中（P1）
     assert ex.stats.output_rows == 7
     # 再验证未命中面：加一个孤立面 R9（无点命中）→ unmatched_right = 1
