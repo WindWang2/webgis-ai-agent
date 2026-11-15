@@ -143,7 +143,8 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
         # —— 多画幅运行时诚实降级 ——
         RenderDiagnosticSpec(
             "cartogram_unsupported", "warning",
-            "cartogram（变形地图）渲染运行时未实现，按未变形几何导出",
+            "面域变形 cartogram 投影未获支持，按未变形几何导出"
+            "（圆面积 / Dorling 变形走 cartogram 作者链路，不经该投影）",
         ),
         RenderDiagnosticSpec(
             "small_multiple_panel_skipped", "warning",
