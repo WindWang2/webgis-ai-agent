@@ -372,9 +372,14 @@ def where_to_maplibre(where: Optional[Dict[str, Any]]) -> Optional[List[Any]]:
 
 
 class SourceAnchorV2(BaseModel):
-    """G46 源锚：ref + 强 revision + 辅助指纹（重开时按此核对）。"""
+    """G46 源锚：ref + 强 revision + 辅助指纹（重开时按此核对）。
 
-    model_config = ConfigDict(extra="forbid")
+    ``extra="ignore"``：inspect/freeze 返回的 anchor()（G41 形状）携带
+    feature_count/algorithm_version 等辅助字段 —— 权威只取三元组，辅助
+    字段忽略（不因上游加披露字段而破坏已保存视图）。
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     ref_id: str = Field(min_length=1, max_length=128)
     content_revision: int = Field(ge=1)

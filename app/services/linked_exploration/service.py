@@ -146,9 +146,9 @@ async def preview_conditions(
         facet_where = contract.compile_combined_where(
             parsed, exclude_chart_id=chart.chart_id)
         facet_stats = await asyncio.to_thread(
-            chart_statistics, frozen.features, chart, facet_where)
+            chart_statistics, frozen.features, chart, where=facet_where)
         full_stats = await asyncio.to_thread(
-            chart_statistics, frozen.features, chart, combined)
+            chart_statistics, frozen.features, chart, where=combined)
         charts_out.append({
             "chart_id": chart.chart_id,
             "kind": chart.kind,
@@ -578,7 +578,9 @@ async def apply_view_to_mapspec(
                 },
                 upsert=True,
                 expected_revision=revision,
-                origin="user" if actor.get("user_id") else "agent",
+                # origin=agent：服务编排写入（用户经面板/Pi 触发，但写入方是
+                # 领域服务）；expected_revision 透传可选 CAS（G41 apply 同语义）
+                origin="agent",
                 actor="linked_exploration",
                 mutation_id=f"g46-apply-{view_id}-{chart.chart_id}",
             )
@@ -588,6 +590,14 @@ async def apply_view_to_mapspec(
                     "MapSpec 已被并发修改（superseded）—— 请刷新后重试",
                     status_code=409,
                     detail={"component_id": component_id})
+            if res.get("success") is False or res.get("is_error"):
+                raise LinkedExplorationError(
+                    "APPLY_REJECTED",
+                    f"组件写入被拒绝：{res.get('message') or res.get('warnings') or 'unknown'}",
+                    status_code=409,
+                    detail={"component_id": component_id,
+                            "result": {k: v for k, v in res.items()
+                                       if k in ("message", "warnings", "correction_hint")}})
             applied.append(component_id)
             revision = res.get("revision") or revision
     except LinkedExplorationError:

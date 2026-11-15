@@ -892,6 +892,14 @@ _FACTORY_BY_TYPE = {
     "legend": lambda component_id: legend_component(component_id=component_id),
     "attribution": lambda component_id: attribution_component(text="© OpenStreetMap contributors", component_id=component_id),
     "chart_panel": lambda component_id: chart_panel_component(component_id=component_id),
+    # G46：联合探索条件图表控件（多实例；options 携带 viewId/chartId/源锚，
+    # 渲染数据由前端实时 preview 获取 —— 与 chart_panel 的 inline/ref 协议不同）
+    "exploration_chart_panel": lambda component_id: CartographyComponent(
+        id=component_id, type="exploration_chart_panel", position="top-left",
+        priority=42, variant="default",
+        options={"variant": "default", "chartId": "", "kind": "category",
+                 "field": "", "aggregation": "count"},
+    ),
     "table_panel": lambda component_id: table_panel_component(component_id=component_id),
     "statistics_panel": lambda component_id: statistics_panel_component(component_id=component_id),
     "north_arrow": lambda component_id: north_arrow_component(component_id=component_id),

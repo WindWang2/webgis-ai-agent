@@ -109,6 +109,7 @@ def _condition_model(c: ConditionIn):
 
 @router.post("/inspect")
 async def inspect_source(
+    session_id: str,
     body: InspectBody,
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
@@ -123,6 +124,7 @@ async def inspect_source(
 
 @router.post("/preview")
 async def preview_conditions(
+    session_id: str,
     body: PreviewBody,
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
@@ -151,6 +153,7 @@ async def preview_conditions(
 
 @router.get("/views")
 async def list_views(
+    session_id: str,
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
     include_archived: bool = Query(default=False),
@@ -164,6 +167,7 @@ async def list_views(
 
 @router.post("/views")
 async def save_view(
+    session_id: str,
     body: SaveViewBody,
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
@@ -179,6 +183,7 @@ async def save_view(
 
 @router.get("/views/{view_id}")
 async def get_view(
+    session_id: str,
     view_id: str,
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
@@ -193,6 +198,7 @@ async def get_view(
 
 @router.patch("/views/{view_id}")
 async def update_view(
+    session_id: str,
     view_id: str,
     body: UpdateViewBody,
     conv: Conversation = Depends(require_owned_session),
@@ -210,6 +216,7 @@ async def update_view(
 
 @router.delete("/views/{view_id}")
 async def delete_view(
+    session_id: str,
     view_id: str,
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
@@ -226,6 +233,7 @@ async def delete_view(
 
 @router.post("/views/{view_id}/open")
 async def open_view(
+    session_id: str,
     view_id: str,
     conv: Conversation = Depends(require_owned_session),
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
@@ -240,6 +248,7 @@ async def open_view(
 
 @router.post("/views/{view_id}/apply")
 async def apply_view(
+    session_id: str,
     view_id: str,
     body: ApplyBody,
     conv: Conversation = Depends(require_owned_session),
@@ -250,5 +259,33 @@ async def apply_view(
         return await service.apply_view_to_mapspec(
             view_id, session_id, _actor(conv, x_session_token, session_id),
             expected_revision=body.expected_revision)
+    except LinkedExplorationError as e:
+        raise _fail(e)
+
+
+class ExportBody(BaseModel):
+    fmt: str = Field(default="svg", pattern="^(svg|png|pdf)$")
+    dpi: int = Field(default=150, ge=72, le=400)
+    view_id: Optional[str] = None
+    plan: Optional[Dict[str, Any]] = None
+    title: str = Field(default="", max_length=200)
+
+
+@router.post("/export")
+async def export_exploration(
+    session_id: str,
+    body: ExportBody,
+    conv: Conversation = Depends(require_owned_session),
+    x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
+) -> Dict[str, Any]:
+    """冻结导出：组合条件进图面 + facet 图表统计同范围（SVG/PNG/PDF）。"""
+    from app.services.linked_exploration.export import export_exploration as run
+
+    try:
+        return await run(
+            str(conv.session_id),
+            _actor(conv, x_session_token, session_id),
+            fmt=body.fmt, dpi=body.dpi, view_id=body.view_id,
+            plan_raw=body.plan, title=body.title)
     except LinkedExplorationError as e:
         raise _fail(e)

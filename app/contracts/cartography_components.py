@@ -37,6 +37,9 @@ ComponentType = Literal[
     "chart_panel",
     # Runtime V4（§10）：artifact-backed 交互表格面板（虚拟化 + 选择联动）。
     "table_panel",
+    # G46：联合探索条件图表控件（多实例；分类/区间条件发布到活动过滤 store；
+    # options 携带 viewId/chartId/源锚，渲染数据由前端实时 preview 获取）。
+    "exploration_chart_panel",
     "export_layout",
     # 区位插图（全国→省→市）：v2 全链路 native —— live SVG 渲染器
     # （inset-map.tsx）与导出 drawChromeInset 同链落地（AC-07 P6 复核：

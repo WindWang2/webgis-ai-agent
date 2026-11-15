@@ -296,12 +296,12 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         latency_class="medium",
-        memory_class="small",
+        memory_class="light",
         scale_class="medium",
         tags=("联合筛选", "持久视图", "linked exploration"),
         output_semantic_type="json",
         result_size_policy="inline_small",
-        data_mutations=("db_write",),
+        data_mutations=("session_state",),
         failure_modes=("invalid_args", "invalid_plan", "stale_source",
                        "plan_over_limit"),
     )
@@ -346,7 +346,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=True,
         latency_class="medium",
-        memory_class="small",
+        memory_class="light",
         scale_class="medium",
         tags=("联合筛选", "重开视图", "linked exploration"),
         output_semantic_type="json",
@@ -401,12 +401,12 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         latency_class="medium",
-        memory_class="small",
+        memory_class="light",
         scale_class="medium",
         tags=("联合筛选", "视图管理", "linked exploration"),
         output_semantic_type="json",
         result_size_policy="inline_small",
-        data_mutations=("db_write",),
+        data_mutations=("session_state",),
         failure_modes=("invalid_args", "view_not_found", "stale_view_revision"),
     )
     async def webgis_exploration_view_update(
@@ -445,7 +445,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         latency_class="medium",
-        memory_class="small",
+        memory_class="light",
         scale_class="medium",
         tags=("联合筛选", "应用视图", "linked exploration"),
         output_semantic_type="json",
@@ -474,4 +474,80 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
             "state": result.get("state"),
             "reconcile_via": "mapspec_event",
             "note": "图表组件已写入 MapSpec；条件激活/组合过滤由前端探索面板承载",
+        }
+
+
+def register_linked_exploration_export_tool(registry: ToolRegistry) -> None:
+    """注册 G46 导出工具（artifact_creation —— 真实字节 + 受权下载）。"""
+    from app.services.linked_exploration.export import export_exploration
+    from app.services.linked_exploration.errors import LinkedExplorationError
+
+    class ExportArgs(BaseModel):
+        fmt: str = Field(default="svg", description="svg | png | pdf")
+        dpi: int = Field(default=150, ge=72, le=400)
+        view_id: Optional[str] = Field(default=None, max_length=64)
+        plan: Optional[Dict[str, Any]] = Field(default=None)
+        title: str = Field(default="", max_length=200)
+
+    @tool(
+        registry,
+        name="webgis_exploration_export",
+        capabilities=["cartographic_publication", "exploration_authoring"],
+        tier=2,
+        domains=["exploration", "cartography", "publication"],
+        args_model=ExportArgs,
+        description=(
+            "冻结导出联合探索成果（SVG/PNG/PDF）：重新冻结核对源锚 → 组合条件"
+            "编译为图层 filter（与前端 live 同一表达式）→ facet 图表统计与口径"
+            "卡印入出版面 → 真实字节落盘 + 受权下载 URL。refs-only 回执，不携带"
+            "图像载荷；图面匹配集与统计同代（导出期间源变化 → typed 拒绝重冻）。"
+            "\n何时用：用户要『把当前筛选视图导出成图/报告』。"
+        ),
+        side_effect="artifact_creation",
+        network=False,
+        deterministic=False,
+        latency_class="slow",
+        memory_class="medium",
+        scale_class="large",
+        tags=("联合筛选", "导出", "出版", "linked exploration"),
+        output_semantic_type="artifact_refs",
+        result_size_policy="ref_offload",
+        failure_modes=("invalid_args", "stale_source", "mapspec_unavailable",
+                       "png_failed", "pdf_failed", "export_persist_failed"),
+    )
+    async def webgis_exploration_export(
+        fmt: str = "svg", dpi: int = 150, view_id: Optional[str] = None,
+        plan: Optional[Dict[str, Any]] = None, title: str = "",
+        session_id: str = "",
+    ) -> dict:
+        if not session_id:
+            return {"success": False, "code": "SOURCE_UNAVAILABLE",
+                    "message": "Missing session_id context"}
+        try:
+            result = await export_exploration(
+                session_id,
+                {"user_id": None, "org_id": None, "owner_token": None,
+                 "trusted_session_id": session_id},
+                fmt=fmt, dpi=dpi, view_id=view_id, plan_raw=plan, title=title)
+        except LinkedExplorationError as exc:
+            payload = exc.payload()
+            payload["success"] = False
+            return payload
+        except Exception:  # noqa: BLE001 - 工具错误契约
+            logger.warning("[linked_exploration] export failed", exc_info=True)
+            return {"success": False, "code": "G46_TOOL_FAILED",
+                    "message": "exploration export failed"}
+        return {
+            "success": True,
+            "format": result.get("format"),
+            "dpi": result.get("dpi"),
+            "bytes": result.get("bytes"),
+            "download_url": result.get("download_url"),
+            "manifest_url": result.get("manifest_url"),
+            "filename": result.get("filename"),
+            "match_count": result.get("match_count"),
+            "total": result.get("total"),
+            "conditions_digest": result.get("conditions_digest"),
+            "filtered_layer_ids": result.get("filtered_layer_ids"),
+            "note": "回执仅 refs；图面/统计与冻结代一致（回读核验用 manifest_url）",
         }
