@@ -72,6 +72,9 @@ export type SSEEventType =
   | 'pi_interaction_update'
   | 'pi_ui'
   | 'pi_turn_message'
+  // G37（会话模型运行配置）：turn 期模型应用回执（requested/effective/
+  // 思考档/失败原因；additive，旧消费者忽略）。
+  | 'model_status'
   | 'plan_step_done'
   | 'plan_finalized'
   // #1048: SessionPlan live deltas（双 host；与 plan_* 是两个计划概念，ADR-0076）
