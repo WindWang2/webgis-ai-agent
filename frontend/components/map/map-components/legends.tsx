@@ -48,7 +48,8 @@ function legendForComponent(component: MapSpecComponent, spec: RendererContext['
   // 注：'continuous' 不进发现词表 —— legendEntries 无 continuous 分支
   //（连续色带由 colorbar 组件承接，图例卡兜底会渲染空卡）
   const wanted: Record<string, string[]> = {
-    legend: ['graduated', 'bivariate'],
+    // G41：canonical 可靠性双通道图例也参与兜底发现（专用渲染器分支消费）。
+    legend: ['graduated', 'bivariate', 'reliability_dual_channel'],
     categorical_legend: ['categorical'],
   };
   const types = wanted[component.type] ?? [];
@@ -86,22 +87,56 @@ function legendVariantClasses(variant: string): { root: string; title: string } 
   return { root: 'px-2 py-1.5', title: 'text-micro font-medium' };
 }
 
+/** G41 canonical 格子（屏幕序）与旧 legend.colors 行主序兼容读取。 */
+interface G41Cell {
+  class_index: number;
+  color: string;
+  count: number;
+  empty?: boolean;
+  row_interval?: { label: string } | null;
+  col_interval?: { label: string } | null;
+}
+
 function BivariateMatrix({ legend, title }: { legend: LegendSpec; title?: string }) {
   // V4：3×3 双变量色阵（行=变量 B，列=变量 A；颜色与 paint match 逐格同源）
-  const colors = (legend as unknown as { colors?: string[] }).colors ?? [];
-  const n = Math.min(4, Math.max(2, Number((legend as unknown as { n?: number }).n ?? 3)));
-  const labelA = String((legend as unknown as { label_a?: string }).label_a ?? '');
-  const labelB = String((legend as unknown as { label_b?: string }).label_b ?? '');
+  const raw = legend as unknown as {
+    colors?: string[];
+    n?: number;
+    label_a?: string;
+    label_b?: string;
+    cells?: G41Cell[];
+    axes?: { row?: { arrow?: string; unit?: string | null }; col?: { unit?: string | null } };
+    counts?: { valid_pairs?: number };
+    missing?: { label?: string; count?: number };
+    boundary_rule?: string;
+  };
+  const colors = raw.colors ?? [];
+  const n = Math.min(4, Math.max(2, Number(raw.n ?? 3)));
+  const labelA = String(raw.label_a ?? '');
+  const labelB = String(raw.label_b ?? '');
   if (colors.length < n * n) return null;
+  // canonical 在场时用屏幕序 cells（其颜色/计数/区间来自服务端同一份合同），
+  // 旧 bivariate 图仍按 legend.colors 行主序显示，逐字节兼容（B04）。
+  const cells = Array.isArray(raw.cells) && raw.cells.length === n * n
+    ? raw.cells
+    : Array.from({ length: n * n }, (_, i) => ({
+        class_index: i, color: colors[i], count: -1,
+        row_interval: null, col_interval: null,
+      }));
+  const rowArrow = raw.axes?.row?.arrow === 'down' ? '↓' : '↑';
   return (
     <div data-testid="spec-chrome-bivariate-legend" className="map-chrome absolute z-30 rounded-chrome px-2 py-1.5 bottom-8 left-2" data-component-anchor>
       {title && <div className="text-micro font-medium text-map-chrome-ink">{title}</div>}
       <div className="mt-1 flex flex-col gap-0.5">
         <div className="flex items-center gap-1">
-          <span className="w-4 text-right text-micro text-map-chrome-ink-muted" aria-hidden>↑{labelB.slice(0, 4)}</span>
+          <span className="w-4 text-right text-micro text-map-chrome-ink-muted" aria-hidden>{rowArrow}{labelB.slice(0, 4)}</span>
           <div className="grid gap-px" style={{ gridTemplateColumns: `repeat(${n}, 14px)` }}>
-            {Array.from({ length: n * n }, (_, i) => (
-              <span key={i} aria-hidden className="h-3.5 w-3.5" style={{ background: colors[i] }} />
+            {cells.map((c, i) => (
+              <span key={i} aria-hidden className="h-3.5 w-3.5"
+                data-g41-cell={c.class_index}
+                data-g41-count={c.count}
+                title={`#${c.class_index} · ${c.col_interval?.label ?? ''} / ${c.row_interval?.label ?? ''} · n=${c.count}`}
+                style={{ background: c.color }} />
             ))}
           </div>
         </div>
@@ -109,6 +144,69 @@ function BivariateMatrix({ legend, title }: { legend: LegendSpec; title?: string
           <span className="w-4" aria-hidden />
           <span>→{labelA.slice(0, 10)}</span>
         </div>
+      </div>
+      {raw.counts && (
+        <div className="mt-1 max-w-[160px] break-words text-micro text-map-chrome-ink-muted"
+             data-testid="spec-chrome-bivariate-caption">
+          {tNow('map.legends.bivariatePairs', { count: raw.counts.valid_pairs ?? 0 })}
+          {raw.missing ? ` · ${raw.missing.label}: ${raw.missing.count ?? 0}` : ''}
+          {raw.axes?.col?.unit || raw.axes?.row?.unit
+            ? ` · ${tNow('map.legends.bivariateUnits', {
+                a: raw.axes?.col?.unit || '—', b: raw.axes?.row?.unit || '—',
+              })}`
+            : ''}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** G41 可靠性双通道图例：估计色阶 + 具体误差量名/单位/level/方向/缺失。 */
+function ReliabilityLegend({ legend, title }: { legend: LegendSpec; title?: string }) {
+  const raw = legend as unknown as {
+    estimate?: { label?: string; unit?: string | null; palette_colors?: string[] };
+    measure?: { kind?: string; level?: number; unit_note?: string; visual_meaning?: string; source?: string };
+    channel?: { kind?: string; clip?: string };
+    buckets?: Array<{ key: string; label: string; output: number; count: number }>;
+    missing?: { label?: string; count?: number; policy?: string };
+  };
+  return (
+    <div data-testid="spec-chrome-reliability-legend"
+         className="map-chrome absolute z-30 rounded-chrome px-2 py-1.5 bottom-8 left-2"
+         data-component-anchor>
+      {title && <div className="text-micro font-medium text-map-chrome-ink">{title}</div>}
+      <div className="mt-1 flex gap-px">
+        {(raw.estimate?.palette_colors ?? []).slice(0, 7).map((c, i) => (
+          <span key={i} aria-hidden className="h-3.5 w-3.5" style={{ background: c }} />
+        ))}
+      </div>
+      <div className="mt-1 max-w-[190px] break-words text-micro text-map-chrome-ink-muted">
+        {raw.estimate?.label} · {tNow('map.legends.reliabilityUnit', {
+          unit: raw.estimate?.unit || '—',
+        })}
+      </div>
+      <div className="mt-0.5 max-w-[190px] break-words text-micro text-map-chrome-ink-muted"
+           data-testid="spec-chrome-reliability-measure">
+        {tNow('map.legends.reliabilityMeasure', {
+          kind: raw.measure?.kind ?? '—', level: raw.measure?.level ?? '—',
+        })}
+      </div>
+      <div className="mt-0.5 max-w-[190px] break-words text-micro text-map-chrome-ink-muted">
+        {raw.measure?.unit_note}
+      </div>
+      <div className="mt-1 flex gap-px">
+        {(raw.buckets ?? []).slice(0, 10).map((b) => (
+          <span key={b.key} aria-hidden className="h-2.5 w-2.5"
+            data-g41-bucket={b.key} data-g41-bucket-count={b.count}
+            title={`${b.label} · n=${b.count}`}
+            style={{ background: '#64748b', opacity: b.output <= 1 ? b.output : 1 }} />
+        ))}
+      </div>
+      <div className="mt-0.5 max-w-[190px] break-words text-micro text-map-chrome-ink-muted">
+        {raw.measure?.visual_meaning}
+      </div>
+      <div className="mt-0.5 max-w-[190px] break-words text-micro text-map-chrome-ink-muted">
+        {raw.missing?.label}: {raw.missing?.count ?? 0} · {raw.missing?.policy}
       </div>
     </div>
   );
@@ -126,6 +224,11 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
   // / bivariate_raster 的 legend_spec 同源投影）
   if (legend.type === 'bivariate') {
     return <BivariateMatrix legend={legend} title={(legend as unknown as { title?: string }).title} />;
+  }
+  // G41：可靠性双通道图例必须有具体误差量名/单位/level/方向/缺失，
+  // 不能只输出一条没有量名的透明梯度（专用渲染器，不落通用条目卡）。
+  if (legend.type === 'reliability_dual_channel') {
+    return <ReliabilityLegend legend={legend} title={(legend as unknown as { title?: string }).title} />;
   }
   const entries = legendEntries(legend);
   if (!entries.length) return null;

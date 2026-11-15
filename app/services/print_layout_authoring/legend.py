@@ -104,6 +104,14 @@ def read_legend_content(mapspec: Dict[str, Any],
     不改写类别值、不写回 ``legend_spec``。
     """
     specs = _legend_specs_of(mapspec, component_id)
+    # G41：canonical 双变量矩阵 / 可靠性双通道图例内容。扁平条目卡不能替代
+    # 矩阵或误差量名——专用绘制器消费整份 canonical 合同（加性，不影响旧图）。
+    canonical: Optional[Dict[str, Any]] = None
+    for item in specs:
+        spec = item["spec"]
+        if isinstance(spec, dict) and spec.get("schema_version") == "g41_legend.v1":
+            canonical = spec
+            break
     entries: List[Dict[str, Any]] = []
     titles: List[str] = []
     units: List[str] = []
@@ -173,6 +181,7 @@ def read_legend_content(mapspec: Dict[str, Any],
         "source_layer_ids": layer_ids[:16],
         "kind": kind,
         "groups": len(specs),
+        "canonical": canonical,
     }
 
 
@@ -232,6 +241,18 @@ def layout_legend(
     capacity = max(1, int(math.floor((frame_pt - header_pt - footer_pt) / row_pt)))
     rows_per_column = max(1, int(math.ceil(total / columns))) if total else 1
     needed_pt = header_pt + rows_per_column * row_pt + footer_pt
+    # G41：canonical 矩阵/可靠性图例需要额外绘图高度。expand 策略据此扩框，
+    # 保证色阵格子与轴标不溢出面板（仍由 G34 决定位置/尺寸/字体/页框）。
+    canonical = content.get("canonical")
+    canonical_extra_mm = 0.0
+    if isinstance(canonical, dict):
+        ctype = canonical.get("type")
+        if ctype == "bivariate":
+            n = canonical.get("n") if isinstance(canonical.get("n"), int) else 3
+            canonical_extra_mm = 8.0 + max(2, min(3, n)) * 5.0
+        elif ctype == "reliability_dual_channel":
+            canonical_extra_mm = 14.0
+        needed_pt += mm_to_pt(canonical_extra_mm)
     needed_mm = pt_to_mm(needed_pt)
 
     # 比例符号：全表共享一个比例尺度（不因列分别缩放）。
@@ -327,4 +348,6 @@ def layout_legend(
         "has_out_of_range": bool(content.get("has_out_of_range")),
         "proportional": proportional,
         "group_by_layer": bool(layout.get("group_by_layer")),
+        "canonical": canonical,
+        "canonical_extra_mm": round(canonical_extra_mm, 4),
     }

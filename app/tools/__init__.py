@@ -155,6 +155,8 @@ _TOOL_MODULES = [
     ("app.tools.print_layout_tools", "register_print_layout_tools"),
     # G35：时序地图动画媒体交付（能力/计划/提交/查询/取消/成果；独立模块防并发冲突）
     ("app.tools.temporal_media_tools", "register_temporal_media_tools"),
+    # G41：双变量矩阵 / 估计值+可靠性双通道作者工作台（独立模块防并发冲突）
+    ("app.tools.bivariate_reliability_tools", "register_bivariate_reliability_tools"),
 ]
 
 
