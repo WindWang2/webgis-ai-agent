@@ -104,9 +104,27 @@ export type BivariateLegendSpec = {
   title?: string;
 };
 
+/**
+ * G41：估计值 + 有来源不确定度的双通道 canonical 图例。
+ * 内容由 app/services/bivariate_reliability_authoring/legend.py 单一产出；
+ * 索引签名允许后端加性扩展字段而不破坏前端类型收敛。
+ */
+export type ReliabilityLegendSpec = {
+  type: 'reliability_dual_channel';
+  title?: string;
+  unit?: string;
+  entries?: Array<{ label: string; color: string; kind?: string }>;
+  estimate?: { label?: string; unit?: string | null; palette_colors?: string[] };
+  measure?: { kind?: string; level?: number; unit_note?: string; visual_meaning?: string; source?: string };
+  buckets?: Array<{ key: string; label: string; output: number; count: number }>;
+  missing?: { label?: string; count?: number; policy?: string };
+  [key: string]: unknown;
+};
+
 export type LegendSpec =
   | GraduatedLegendSpec
   | ContinuousLegendSpec
   | CategoricalLegendSpec
   | DivergentLegendSpec
-  | BivariateLegendSpec;
+  | BivariateLegendSpec
+  | ReliabilityLegendSpec;

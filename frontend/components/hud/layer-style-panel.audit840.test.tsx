@@ -41,6 +41,15 @@ vi.mock('@/lib/mapspec/session-cursor', () => ({
     cursorListeners.add(cb);
     return () => cursorListeners.delete(cb);
   },
+  // 子面板（G41 双变量/可靠性）读取同一游标。本套用例只校验 #840 分层门控，
+  // 不建立会话 → sessionId 为空，子面板保持 idle（真实会话行为由
+  // bivariate-reliability-panel.test.tsx 覆盖），避免向不存在的会话发请求。
+  getMapSpecSessionCursor: () => ({
+    sessionId: undefined,
+    revision: 0,
+    ownerToken: null,
+    mapspecFingerprint: undefined,
+  }),
 }));
 
 const opacityCommit = vi.fn();
