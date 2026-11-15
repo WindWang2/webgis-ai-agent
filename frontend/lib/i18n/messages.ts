@@ -42,6 +42,7 @@ import zhCompositionAssets from '@/messages/zh-CN/compositionAssets.json'
 import zhDataPreparation from '@/messages/zh-CN/dataPreparation.json'
 import zhDataImport from '@/messages/zh-CN/dataImport.json'
 import zhFieldCompute from '@/messages/zh-CN/fieldCompute.json'
+import zhRasterSampling from '@/messages/zh-CN/rasterSampling.json'
 import zhTopology from '@/messages/zh-CN/topology.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
@@ -79,6 +80,7 @@ import enCompositionAssets from '@/messages/en-US/compositionAssets.json'
 import enDataPreparation from '@/messages/en-US/dataPreparation.json'
 import enDataImport from '@/messages/en-US/dataImport.json'
 import enFieldCompute from '@/messages/en-US/fieldCompute.json'
+import enRasterSampling from '@/messages/en-US/rasterSampling.json'
 import enTopology from '@/messages/en-US/topology.json'
 import enMarket from '@/messages/en-US/market.json'
 import enDataDelivery from '@/messages/en-US/dataDelivery.json'
@@ -121,6 +123,7 @@ export interface AppMessages {
   dataDelivery: typeof zhDataDelivery
   dataImport: typeof zhDataImport
   fieldCompute: typeof zhFieldCompute
+  rasterSampling: typeof zhRasterSampling
   topology: typeof zhTopology
 }
 
@@ -142,6 +145,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataDelivery: zhDataDelivery,
     dataImport: zhDataImport,
     fieldCompute: zhFieldCompute,
+    rasterSampling: zhRasterSampling,
     topology: zhTopology,
     story: zhStory,
     geoai: zhGeoai,
@@ -182,6 +186,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
     dataImport: enDataImport as unknown as AppMessages['dataImport'],
     fieldCompute: enFieldCompute as unknown as AppMessages['fieldCompute'],
+    rasterSampling: enRasterSampling as unknown as AppMessages['rasterSampling'],
     topology: enTopology as unknown as AppMessages['topology'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],
