@@ -72,4 +72,3 @@ alembic_version=0107_data_join_authoring）。
    可选依赖，`arrow_available()`，requirements 无声明）—— 干净 base 同一 venv
    逐位复现（5 failed / 52 passed 完全一致），属环境既有而非回归；本域 GeoParquet
    投影路径在同一探测语义下诚实降级（见 INTERFACES 已知边界）。
-
