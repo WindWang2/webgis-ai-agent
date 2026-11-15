@@ -48,6 +48,19 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         ),
 
         CapabilityDescriptor(
+            id="coordinate_operations", name="可审阅坐标操作与派生重投影", category="data_access",
+            description="已确认源 CRS 矢量的坐标操作作者面：服务器签发候选"
+                        "（含不可执行项与格网原因）、锁定冻结操作与环境证据、"
+                        "有界预览、durable 全量派生重投影（all-or-nothing）产出"
+                        "带 target CRS 的完整成果与独立 WGS84 显示副本。",
+            output_artifact_types=["feature_collection"],
+            preferred_execution="local_first",
+            deterministic=True,
+            purpose_template="{subject} 坐标操作重投影",
+            version="1.0",
+        ),
+
+        CapabilityDescriptor(
             id="data_join_authoring", name="数据关联与空间富集", category="data_access",
             description="两源关联作者面：属性键/空间点面关联计划（键变换、"
                         "基数与空值政策、字段映射、聚合），全量键/基数/未匹配"

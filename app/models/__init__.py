@@ -114,6 +114,11 @@ from app.models.cartography_quality import (  # noqa: F401 — 模型注册 + �
     CartographyQualityMetric,
 )
 
+from app.models.coordinate_operations import (  # noqa: F401 — 模型注册 + 再导出（G45）
+    CoordinateOperationPlan,
+    CoordinateOperationRun,
+)
+
 __all__ = [
     "TurnEventRow",
     "GISWorkingContextRow",
