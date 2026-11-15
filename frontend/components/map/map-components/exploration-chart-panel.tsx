@@ -16,7 +16,7 @@ import { useSyncExternalStore } from 'react';
 import { useT } from '@/lib/i18n/useT';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
-import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
+import { usePlacementPatchedComponent } from './floating-chrome';
 import type { RendererContext } from './types';
 import {
   getChartCondition,
@@ -29,7 +29,7 @@ import {
   getPreviewGeneration,
   subscribePreview,
 } from '@/lib/linked-exploration/preview-store';
-import type { ChartPreview, ChartStatistics } from '@/lib/linked-exploration/contracts';
+import type { ChartStatistics } from '@/lib/linked-exploration/contracts';
 
 const BAR_MAX = 18;   // 类别条形渲染上限（完整统计在面板/回执）
 const BIN_MAX = 32;
@@ -51,9 +51,6 @@ export function ExplorationChartPanelRenderer(
   const title = typeof options['title'] === 'string' && options['title']
     ? options['title'] as string
     : `${field} · ${kind === 'category' ? t('panel.kindCategory') : t('panel.kindRange')}`;
-  const aggregation = typeof options['aggregation'] === 'string'
-    ? options['aggregation'] as string : 'count';
-
   const preview = useMemo(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     () => getChartPreview(chartId), [chartId, getPreviewGeneration()]);
@@ -87,7 +84,6 @@ export function ExplorationChartPanelRenderer(
           chartId={chartId}
           kind={kind}
           field={field}
-          aggregation={aggregation}
           stats={preview.facet.statistics}
           activeCondition={condition as { values?: unknown[]; includeNull?: boolean; gte?: number; gt?: number; lte?: number; lt?: number } | null}
           t={t}
@@ -101,12 +97,11 @@ export function ExplorationChartPanelRenderer(
 }
 
 function ChartBody({
-  chartId, kind, field, aggregation, stats, activeCondition, t,
+  chartId, kind, field, stats, activeCondition, t,
 }: {
   chartId: string;
   kind: 'category' | 'range';
   field: string;
-  aggregation: string;
   stats: ChartStatistics;
   activeCondition: { values?: unknown[]; includeNull?: boolean; gte?: number; gt?: number; lte?: number; lt?: number } | null;
   t: (k: string, vars?: Record<string, string>) => string;
@@ -128,7 +123,6 @@ function ChartBody({
       field={field}
       bins={(stats.bins ?? []).slice(0, BIN_MAX)}
       active={activeCondition}
-      t={t}
     />
   );
 }
@@ -212,13 +206,12 @@ function CategoryBars({
 }
 
 function RangeHistogram({
-  chartId, field, bins, active, t,
+  chartId, field, bins, active,
 }: {
   chartId: string;
   field: string;
   bins: Array<{ index: number; gte: number; lte: number; upper_exclusive: boolean; label: string; count: number }>;
   active: { gte?: number; gt?: number; lte?: number; lt?: number } | null;
-  t: (k: string, vars?: Record<string, string>) => string;
 }) {
   const max = Math.max(1, ...bins.map((b) => b.count));
   const activeBin = (b: typeof bins[number]) => {
@@ -244,12 +237,11 @@ function RangeHistogram({
   };
 
   return (
-    <div className="flex items-end gap-1" data-testid={`g46-hist-${chartId}`} role="list">
+    <div className="flex items-end gap-1" data-testid={`g46-hist-${chartId}`}>
       {bins.map((b) => (
         <button
           key={b.index}
           type="button"
-          role="listitem"
           className="group flex flex-col items-center"
           onClick={() => pick(b)}
           aria-pressed={activeBin(b)}

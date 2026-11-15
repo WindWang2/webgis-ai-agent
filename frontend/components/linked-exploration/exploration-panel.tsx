@@ -13,7 +13,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '@/lib/i18n/useT';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { getSessionIdentity } from '@/lib/store/session-identity';
 import {
   asLinkedExplorationError,
   createLinkedExplorationClient,
@@ -39,9 +38,7 @@ import {
   registerChart,
   removeChart,
   removeCondition,
-  setCondition,
   subscribeExploration,
-  unbindExploration,
 } from '@/lib/linked-exploration/condition-store';
 import { fetchFeaturePage } from '@/lib/data-plane/paged-features';
 import { useLinkedExplorationStore } from '@/lib/hooks/use-linked-exploration';
@@ -104,7 +101,7 @@ export default function LinkedExplorationMount(props: Props) {
   );
 }
 
-function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
+export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
   const t = useT('linkedExploration');
   const client = useMemo(() => createLinkedExplorationClient(ownerToken), [ownerToken]);
   const layers = useHudStore((s) => s.layers);
@@ -133,7 +130,8 @@ function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
   // ─── 源绑定 → condition-store（地图过滤投影目标） ────────────────────────
   useEffect(() => {
     if (!sourceRef || !sourceLayerId) {
-      unbindExploration();
+      // 未选源：不动作者 store（E16：关闭面板/切 dock 不清条件；会话切换
+      // 由 session-cursor 的 resetExplorationStore 统一处理）。
       return;
     }
     const st = getExploration();
@@ -233,7 +231,9 @@ function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
     setAddValueField('');
   }, [addField, addKind, addAgg, addValueField, mapspecLayerId, t]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- generation is the change signal
   const charts = useMemo(() => listCharts(), [generation]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- generation is the change signal
   const conditions = useMemo(() => listConditions(), [generation]);
 
   // ─── 结果表（服务端分页；组合 where 下推） ────────────────────────────────
@@ -461,7 +461,7 @@ function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
             >
               <option value="">{t('charts.selectField')}</option>
               {candidateFields.map((f) => (
-                <option key={f.name} value={f.name}>{f.name}（{f.type}）</option>
+                <option key={f.name} value={f.name}>{t('charts.fieldOption', { name: f.name, type: f.type })}</option>
               ))}
             </select>
             <select
@@ -583,9 +583,7 @@ function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
               <p className="text-xs opacity-70">{t('preview.digest', { digest: preview.data.conditions_digest })}</p>
               {preview.data.charts.map((c: ChartPreview) => (
                 <p key={c.chart_id} className="text-xs opacity-70" data-testid={`g46-chart-stat-${c.chart_id}`}>
-                  {c.field}：{t('preview.facetMatched', { n: String(c.facet.statistics.matched) })}
-                  {' / '}
-                  {t('preview.fullMatched', { n: String(c.full.statistics.matched) })}
+                  {t('preview.chartStatLine', { field: c.field, facet: String(c.facet.statistics.matched), full: String(c.full.statistics.matched) })}
                   {c.facet.statistics.truncated ? ` · ${t('preview.truncated')}` : ''}
                 </p>
               ))}

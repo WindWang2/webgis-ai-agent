@@ -18,7 +18,8 @@
     "valueField": "Value field",
     "selectValueField": "Value field…",
     "add": "Add chart",
-    "remove": "Remove"
+    "remove": "Remove",
+    "fieldOption": "{name} ({type})"
   },
   "conditions": {
     "section": "Active conditions",
@@ -36,7 +37,8 @@
     "facetMatched": "{n} excluding own condition",
     "fullMatched": "{n} under all conditions",
     "truncated": "truncated",
-    "facetNote": "In-chart statistics use the “options under other conditions” scope (own condition excluded); the matched total uses the all-conditions scope"
+    "facetNote": "In-chart statistics use the “options under other conditions” scope (own condition excluded); the matched total uses the all-conditions scope",
+    "chartStatLine": "{field}: {facet} excluding own · {full} under all conditions"
   },
   "table": {
     "section": "Matched set table",

@@ -18,7 +18,8 @@
     "valueField": "值字段",
     "selectValueField": "值字段…",
     "add": "添加图表",
-    "remove": "移除"
+    "remove": "移除",
+    "fieldOption": "{name}（{type}）"
   },
   "conditions": {
     "section": "活动条件",
@@ -36,7 +37,8 @@
     "facetMatched": "排除自身条件后 {n}",
     "fullMatched": "全部条件后 {n}",
     "truncated": "已截断",
-    "facetNote": "图内统计为“其它条件下的可选项”口径（排除本图自身条件）；匹配总数为全部条件口径"
+    "facetNote": "图内统计为“其它条件下的可选项”口径（排除本图自身条件）；匹配总数为全部条件口径",
+    "chartStatLine": "{field}：排除自身条件后 {facet} · 全部条件后 {full}"
   },
   "table": {
     "section": "匹配集结果表",
