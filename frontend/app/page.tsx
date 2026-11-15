@@ -26,6 +26,7 @@ import { useRegisterCommands } from '@/lib/commands/registry';
 import { CommandPaletteRoot } from '@/components/command/command-palette-root';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
 import { useDataJoinStore } from '@/lib/hooks/use-data-join';
+import { useLinkedExplorationStore } from '@/lib/hooks/use-linked-exploration';
 import { useSearchDrawerStore } from '@/lib/hooks/use-search-drawer';
 import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
 import { UndoFlash, UndoHistoryPanel } from '@/components/workbench/undo-history-panel';
@@ -53,6 +54,7 @@ const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m =
 const TemplateGalleryV2 = dynamic(() => import('@/components/drawers/template-gallery-v2').then(m => ({ default: m.TemplateGalleryV2 })), { ssr: false });
 const QueryConsole = dynamic(() => import('@/components/console/query-console').then(m => ({ default: m.QueryConsole })), { ssr: false });
 const DataJoinPanel = dynamic(() => import('@/components/sidebar/data-join/data-join-panel').then(m => ({ default: m.DataJoinPanel })), { ssr: false });
+const LinkedExplorationMount = dynamic(() => import('@/components/linked-exploration/exploration-panel'), { ssr: false });
 const SearchDrawer = dynamic(() => import('@/components/search/search-drawer').then(m => ({ default: m.SearchDrawer })), { ssr: false });
 
 const MapPanel = dynamic(
@@ -309,6 +311,13 @@ export default function Home() {
         run: () => useDataJoinStore.getState().openWith(),
       },
       {
+        id: 'tools.linkedExploration',
+        title: tCmd('linkedExploration'),
+        group: tCmd('group.tools'),
+        keywords: 'explore filter linked charts lianhe tansuo shaixuan',
+        run: () => useLinkedExplorationStore.getState().openWith(),
+      },
+      {
         id: 'session.new',
         title: tCmd('newSession'),
         group: tCmd('group.session'),
@@ -559,6 +568,7 @@ export default function Home() {
       {/* ADR-0147：高级查询控制台（data-fabric query 契约消费面） */}
       <QueryConsole sessionId={sessionId} ownerToken={activeSessionToken} />
       <DataJoinPanel sessionId={sessionId} ownerToken={activeSessionToken} />
+      <LinkedExplorationMount sessionId={sessionId} ownerToken={activeSessionToken} />
 
       {/* ADR-0147：跨会话搜索（本地索引 + 跳转恢复；handleSelectSession 内含抽屉关闭语义） */}
       <SearchDrawer onSelectSession={handleSelectSession} />

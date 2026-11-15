@@ -55,5 +55,6 @@
     "item": "{shortcut}（{titles}）",
     "separator": "；"
   },
-  "dataJoin": "数据关联工作台"
+  "dataJoin": "数据关联工作台",
+  "linkedExploration": "联合探索工作台"
 }
