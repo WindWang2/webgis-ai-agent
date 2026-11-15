@@ -58,6 +58,9 @@ COMPONENT_KINDS = Literal[
     "title", "subtitle", "legend", "scale_bar", "north_arrow",
     "attribution", "disclosure", "map_slot", "text_block",
     "page_number", "toc", "group",
+    # G47 additive：受控示意图组件（Dorling 圆面积 cartogram 的纸面消费面）。
+    # 场景是**冻结的示意坐标**，不是地理图层；渲染只走本域 adapter。
+    "diagram",
 ]
 
 TEXT_BINDINGS = Literal[
@@ -198,6 +201,47 @@ class PrintLegendLayout(_Closed):
     title_wrap: bool = True
 
 
+class PrintDiagramCircle(_Closed):
+    """示意图中的一个圆：示意坐标（非经纬度）+ 数量 + 半径。"""
+
+    feature_id: str = Field(min_length=1, max_length=200)
+    label: str = Field(default="", max_length=80)
+    x: float
+    y: float
+    radius: float = Field(gt=0)
+    value: float = Field(ge=0)
+
+
+class PrintDiagramSpec(_Closed):
+    """G47 受控 diagram 组件场景（纸面消费面）。
+
+    只承载**已冻结**的示意布局：``layout_ref``/``layout_fingerprint`` 作溯源，
+    ``circles`` 是渲染真源（真实矢量圆），``extent`` 是示意坐标画布边长。
+    这里没有 CRS、没有地理范围字段 —— 示意图不会被当成地图槽消费。
+    """
+
+    layout_ref: Optional[str] = Field(default=None, max_length=200)
+    layout_fingerprint: Optional[str] = Field(default=None, max_length=64)
+    extent: float = Field(default=1000.0, gt=0, le=100000)
+    fit: Literal["contain"] = "contain"
+    circles: List[PrintDiagramCircle] = Field(default_factory=list, max_length=400)
+    reference_paths: List[str] = Field(default_factory=list, max_length=600)
+    legend_title: str = Field(default="", max_length=120)
+    legend_unit: str = Field(default="", max_length=24)
+    reference_circles: List[Dict[str, float]] = Field(default_factory=list, max_length=3)
+    disclosures: List[str] = Field(default_factory=list, max_length=8)
+    truncated: bool = False
+
+    @model_validator(mode="after")
+    def _bounded(self) -> "PrintDiagramSpec":
+        for c in self.circles:
+            if abs(c.x) > self.extent * 2 or abs(c.y) > self.extent * 2:
+                raise ValueError("diagram circle outside the declared extent")
+            if c.radius > self.extent:
+                raise ValueError("diagram radius exceeds the declared extent")
+        return self
+
+
 class PrintMapSlot(_Closed):
     """纸面地图槽：只引用既有 frame/product 或整幅当前地图。
 
@@ -234,11 +278,14 @@ class PrintComponent(_Closed):
     text: Optional[PrintTextSpec] = None
     legend: Optional[PrintLegendLayout] = None
     map_slot: Optional[PrintMapSlot] = None
+    diagram: Optional[PrintDiagramSpec] = None
 
     @model_validator(mode="after")
     def _kind_consistency(self) -> "PrintComponent":
         if self.kind == "map_slot" and self.map_slot is None:
             raise ValueError("map_slot component requires map_slot spec")
+        if self.kind == "diagram" and self.diagram is None:
+            raise ValueError("diagram component requires diagram spec")
         # legend 缺省时由 plan.legend_defaults 兜底（不在此处赋值，避免
         # validate_assignment 触发二次 model validator）。
         return self
