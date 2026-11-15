@@ -99,6 +99,11 @@ _TURN_FAILURE_CLASS_MAP = {
     "pi_process_died": TurnErrorClass.transport_error,
     "process_died": TurnErrorClass.transport_error,
     "pi_send_error": TurnErrorClass.transport_error,
+    # G37（会话模型运行配置）：模型应用失败（目录撤销/能力门/回读不匹配）
+    # 与会话 token 预算 admission 拒绝 —— 都是确定性策略拒绝，客户端应换
+    # 模型/新会话，自动重发只会复现。
+    "model_apply_error": TurnErrorClass.policy_reject,
+    "session_budget_exceeded": TurnErrorClass.policy_reject,
     # ADR-0282：Pi ≥0.99 的 prompt 响应携带 disposition；handled = 输入被
     # 扩展 input handler 消费、**无 agent run 启动**（agent_settled 永不到
     # 达）。诚实结算为失败而非伪装完成/挂满总预算。

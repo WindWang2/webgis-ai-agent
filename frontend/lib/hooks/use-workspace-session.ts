@@ -5,6 +5,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useChatStore } from '@/lib/store/useChatStore';
 import { apiFetch, isApiError } from '@/lib/api/transport';
 import { getPendingClarification } from '@/lib/api/chat';
+import { fetchVisualEvidenceThumb } from '@/lib/api/visual-context';
 import { attachRestoredClarification } from '@/lib/chat/message-reducer';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
@@ -258,7 +259,49 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
           role: m.role,
           content: m.content,
           timestamp: new Date(m.timestamp),
+          // G36（ADR-0291）：附件元数据恢复（V20 —— 刷新后仍有来源/版本/
+          // 缩略图，不只剩文件名）。缩略图按需受权拉取（fail-open：拉取
+          // 失败仅无图，不阻断消息恢复）。
+          ...(Array.isArray(m.attachments) && m.attachments.length
+            ? { attachments: m.attachments.map((a: any) => ({
+                evidence_id: String(a.evidence_id ?? ''),
+                source_type: String(a.source_type ?? 'reference_upload'),
+                label: typeof a.label === 'string' ? a.label : undefined,
+                mapspec_revision: a.mapspec_revision ?? null,
+                viewport_hash: typeof a.viewport_hash === 'string' ? a.viewport_hash : undefined,
+                // P2#9：恢复持久化的真实送模状态（无回执 = 未裁决，不冒充 sent）。
+                status: a.status === 'sent' || a.status === 'refused'
+                  ? a.status
+                  : undefined,
+                reason: typeof a.reason === 'string' ? a.reason : undefined,
+              })) }
+            : {}),
         }));
+        // G36：受权缩略图异步补挂（恢复后的 objectURL 注入对应消息）。
+        const attachMessages = restored.filter(
+          (m: any) => Array.isArray(m.attachments) && m.attachments.length > 0,
+        );
+        for (const m of attachMessages) {
+          for (const a of m.attachments as Array<{ evidence_id: string }>) {
+            if (!a.evidence_id) continue;
+            void fetchVisualEvidenceThumb(sid, a.evidence_id, token)
+              .then((blob) => {
+                if (signal.aborted) return;
+                const url = URL.createObjectURL(blob);
+                useChatStore.getState().setMessages((prev) => prev.map((msg) => {
+                  if (msg.id !== m.id || msg.role !== 'user') return msg;
+                  const atts = msg.attachments;
+                  if (!Array.isArray(atts)) return msg;
+                  return {
+                    ...msg,
+                    attachments: atts.map((x: import('@/lib/chat/message-reducer').VisualAttachmentView) =>
+                      x.evidence_id === a.evidence_id ? { ...x, thumbUrl: url } : x),
+                  };
+                }));
+              })
+              .catch(() => { /* 缩略图缺席 = 无图不阻断 */ });
+          }
+        }
         if (restored.length > 0) {
           restored.push({
             id: `session-switch-${Date.now()}`,
