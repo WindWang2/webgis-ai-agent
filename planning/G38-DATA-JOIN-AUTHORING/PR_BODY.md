@@ -30,6 +30,13 @@
 
 共享文件全部最小加性（tools 注册表 1 行、JobKind 1 枚举、capability 1 描述符、registry skip_keys 白名单 2 工具、路由挂载、i18n、.alloc.json 段位）。新表 migration 0107（down_revision=0106，照抄 0105 create_all 共存 guard；downgrade 反序删两表）。回退 = revert PR + downgrade 0107；无既有行为变更。
 
+## 最新并行 PR 兼容（#2117–#2120）
+
+执行时 master 未漂移（base=1276692737）。并行兄弟任务 G36/G37/G39/G41 与本 PR
+的共享面仅 `app/services/jobs/lifecycle.py`（各自加性 JobKind 枚举成员）与
+`app/main.py`（各自加性路由挂载）—— 语义零冲突；若合并顺序产生上下文行冲突，
+解决方式为保留双方加性行（各 1-2 行）。无共享服务/模型/迁移文件。
+
 ## 未测项与已知边界
 
 - master 既有失败 5 项（干净 base 复现，与本分支无关，清单见 TEST_EVIDENCE）。
