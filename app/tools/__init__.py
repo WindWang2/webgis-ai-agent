@@ -157,6 +157,9 @@ _TOOL_MODULES = [
     ("app.tools.print_layout_tools", "register_print_layout_tools"),
     # G35：时序地图动画媒体交付（能力/计划/提交/查询/取消/成果；独立模块防并发冲突）
     ("app.tools.temporal_media_tools", "register_temporal_media_tools"),
+    # G37：会话模型运行配置只读工具面（目录/状态/预算；独立模块防并发冲突；
+    # 只读，绝不升级权限 —— 选择变化只来自用户经正式 API 的请求）
+    ("app.tools.session_model_tools", "register_session_model_tools"),
 ]
 
 

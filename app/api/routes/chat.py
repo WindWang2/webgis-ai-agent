@@ -2639,3 +2639,11 @@ async def execute_tool_direct(
 # 路径前缀 /chat 由本 router 提供，子模块不自带前缀；放在模块尾部保持
 # 与原 chat.py 内联定义等价的注册语义（路径互不重叠，顺序无匹配影响）。
 router.include_router(_session_views_router)
+
+# G37（会话模型运行配置）：会话级模型目录/preference/用量视图 —— 与
+# session_views 同款挂载契约（owner 守卫在子模块内，前缀继承 /chat）。
+from app.api.routes.session_model_views import (  # noqa: E402
+    router as _session_model_views_router,
+)
+
+router.include_router(_session_model_views_router)

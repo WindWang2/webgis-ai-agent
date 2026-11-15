@@ -37,6 +37,7 @@ import { devOnly } from "@/lib/utils/logger";
 import { finalizationUserNotice } from "@/lib/map-product/finalizer";
 import { parseAgentRuntime, type AgentRuntime } from "@/lib/agent-runtime";
 import { configureAffordanceChannel, extractMountedWidget } from "@/lib/copilot/affordance";
+import { parseModelStatus, useModelRuntimeStore } from "@/lib/store/useModelRuntimeStore";
 
 // H03 / #1554：消息数组变换的纯 reducer 与事件域 typed adapters。
 // 本 hook 只保留 transport 编排（TokenBatcher 生命周期、fetch 派发、
@@ -1056,6 +1057,13 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             messageId: thinkingId,
             clarification,
           }));
+        }
+      } else if (event.event === 'model_status') {
+        // G37：本 turn 模型应用回执（requested/effective/思考档/失败原
+        // 因）—— 会话级实时旁证；权威事实在服务端回执，组件经 store 订阅。
+        const modelStatus = parseModelStatus(data);
+        if (modelStatus && modelStatus.session_id === sessionIdRef.current) {
+          useModelRuntimeStore.getState().observe(modelStatus);
         }
       } else if (event.event === 'pi_interaction') {
         // G29：原生运行中交互卡片挂到本轮助手消息（当前 run 阻塞等待）。

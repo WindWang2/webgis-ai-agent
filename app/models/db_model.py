@@ -1000,6 +1000,135 @@ class WorkflowNodeReuseRow(Base):
     )
 
 
+# ── G37（会话模型运行配置）──────────────────────────────────────────
+
+class ChatSessionModelPref(Base):
+    """会话级模型 preference（G37 WP03）。
+
+    键 = 既有 Conversation id（不引入第三个 session id 空间）；owner 校验
+    在路由层（与 conversation 同一归属）。``revision`` 支撑 CAS —— 两个
+    标签并发选择时以 expected_revision 原子竞争，失败方拿到明确冲突。
+    ``mode='inherit'`` 表示继承管理员基础配置（此时 item/thinking 为空）。
+    不保存任何凭证；thinking_level 只存用户请求档（实际生效以 turn 回执
+    的 get_state 回读为准）。
+    """
+    __tablename__ = "chat_session_model_prefs"
+
+    conversation_id = Column(
+        String(255), ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
+    )
+    mode = Column(String(16), nullable=False, default="inherit")
+    catalog_item_id = Column(String(160), nullable=True)
+    thinking_level = Column(String(16), nullable=True)
+    # 用户自设会话 token 上限（input+output 累计，宿主账本口径）；NULL =
+    # 未自设（回退 admin 默认）。写入路由钳制 ≤ settings.SESSION_MODEL_TOKEN_CAP_MAX。
+    session_token_cap = Column(BigInteger, nullable=True)
+    revision = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('inherit', 'explicit')", name="ck_csmp_mode"
+        ),
+        CheckConstraint("revision >= 1", name="ck_csmp_revision"),
+    )
+
+
+class ChatTurnRuntime(Base):
+    """每个 Pi turn 的模型运行回执 + 用量汇总（G37 WP07/WP08）。
+
+    ``turn_id`` 唯一；requested/effective 分列（set_model 请求 vs get_state
+    回读）；``response_model`` 是供应商可选上报的物理模型（缺席≠失败）。
+    用量列为账本聚合（明细在 ChatUsageRecord）；``complete`` 仅在
+    agent_settled 边界 finalize 后为真 —— 持久化失败/中断缺口保持 False，
+    UI 如实显示 incomplete。不含 key/原始请求头/完整 prompt。
+    """
+    __tablename__ = "chat_turn_runtime"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    session_id = Column(String(255), nullable=False)
+    turn_id = Column(String(64), nullable=False, unique=True)
+    run_id = Column(String(64), nullable=True)
+    runtime_epoch = Column(String(64), nullable=False, default="")
+    catalog_generation = Column(String(32), nullable=False, default="")
+    config_generation = Column(String(32), nullable=False, default="")
+    preference_revision = Column(Integer, nullable=True)
+    mode = Column(String(16), nullable=False, default="inherit")
+    requested_model = Column(String(160), nullable=False, default="")
+    thinking_requested = Column(String(16), nullable=True)
+    effective_provider = Column(String(64), nullable=True)
+    effective_model = Column(String(160), nullable=True)
+    thinking_effective = Column(String(16), nullable=True)
+    response_model = Column(String(160), nullable=True)
+    # applied | inherit_default | degraded_inherit | failed | budget_rejected
+    status = Column(String(24), nullable=False, default="pending")
+    failure_reason = Column(String(255), nullable=True)
+    tokens_input = Column(BigInteger, nullable=False, default=0)
+    tokens_output = Column(BigInteger, nullable=False, default=0)
+    tokens_cache_read = Column(BigInteger, nullable=False, default=0)
+    tokens_cache_write = Column(BigInteger, nullable=False, default=0)
+    tokens_total = Column(BigInteger, nullable=False, default=0)
+    cost_total = Column(BigInteger, nullable=True)   # micro-USD（1e-6 USD）整数
+    cost_source = Column(String(16), nullable=False, default="unknown")  # provider|estimated|unknown|mixed
+    records_expected = Column(Integer, nullable=False, default=0)
+    records_written = Column(Integer, nullable=False, default=0)
+    complete = Column(Boolean, nullable=False, default=False)
+    applied_at = Column(DateTime, nullable=True)
+    settled_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        # 与迁移 g3701 同名索引（create_all/alembic 两侧一致）
+        Index("idx_ctr_session_created", "session_id", "created_at"),
+        CheckConstraint(
+            "status IN ('pending', 'applied', 'inherit_default', 'degraded_inherit', "
+            "'failed', 'budget_rejected')",
+            name="ck_ctr_status",
+        ),
+    )
+
+
+class ChatUsageRecord(Base):
+    """单次原生 message_end 的终态 usage 记录（G37 WP08/WP09）。
+
+    ``(turn_id, call_seq)`` 唯一 —— 宿主事件重放/重复回调不重复计费；两
+    次文字完全相同的真实调用是两个 call_seq（内容 hash 不作唯一性）。
+    ``kind='tool_result'`` 是原生已合计的 nested usage（只计一次，绝不与
+    父 assistant 再相加）。usage_json 有界（token 分项），不含工具输出。
+    """
+    __tablename__ = "chat_usage_records"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    session_id = Column(String(255), nullable=False)
+    turn_id = Column(String(64), nullable=False)
+    call_seq = Column(Integer, nullable=False)
+    kind = Column(String(16), nullable=False)
+    provider = Column(String(64), nullable=True)
+    model = Column(String(160), nullable=True)
+    response_model = Column(String(160), nullable=True)
+    usage_json = Column(JSON, nullable=False, default=dict)
+    cost_total = Column(BigInteger, nullable=True)   # micro-USD 整数；NULL = 无价格事实
+    cost_from_provider = Column(Boolean, nullable=True)
+    stop_reason = Column(String(24), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("turn_id", "call_seq", name="uq_cur_turn_seq"),
+        # 与迁移 g3701 同名索引（create_all/alembic 两侧一致）
+        Index("idx_cur_session", "session_id"),
+        Index("idx_cur_turn", "turn_id"),
+        CheckConstraint(
+            "kind IN ('assistant', 'tool_result', 'other')", name="ck_cur_kind"
+        ),
+    )
+
+
 __all__ = [
     "Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission",
     "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult",
@@ -1008,5 +1137,6 @@ __all__ = [
     "GeoComputeArtifact", "GeoComputeTaskQuarantine", "OrgQuota", "AuditEvent",
     "RefreshTokenFamily", "WorkflowPackageRow", "WorkflowInstanceRow",
     "WorkflowInstanceNodeRow", "WorkflowEventRow", "WorkflowWorkerRow",
-    "WorkflowNodeReuseRow", "get_init_sql",
+    "WorkflowNodeReuseRow", "ChatSessionModelPref", "ChatTurnRuntime",
+    "ChatUsageRecord", "get_init_sql",
 ]

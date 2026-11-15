@@ -28,6 +28,7 @@ import {
 import { CitationSourcesProvider, CitationSourceList, splitCitationBlocks, type CitationSource } from '@/components/chat/citation';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { RecoveryBanner } from '@/components/chat/recovery-banner';
+import { SessionModelSelector } from '@/components/chat/session-model-selector';
 import { adaptChartData } from "@/lib/chart-adapter";
 import { VisualAttachBar } from '@/components/sidebar/visual-attach';
 import { useLocale, useT } from '@/lib/i18n/useT';
@@ -661,6 +662,13 @@ const t = useT();
       {/* 不透明底 + 去掉 blur(12px)：composer 压在地图上，半透明会让输入文字
           与底图细节互相干扰，而 backdrop-filter 又是最贵的那类合成。 */}
       <div className="shrink-0 border-t border-edge-subtle bg-surface-panel">
+        {/* G37（会话模型运行配置）：目录/实际生效/用量工作台 —— 展开式
+            精简行；服务器回执不可读（新会话/权限）时整条隐藏。 */}
+        <SessionModelSelector
+          sessionId={sessionId ?? null}
+          ownerToken={ownerToken}
+          turnActive={Boolean(turnActive)}
+        />
         {/* UI V3：AI 错误在 chat 内可见（之前仅 top-bar/HUD 有指示，
             composer 静默恢复可用，用户无法感知失败） */}
         {aiStatus === 'error' && (
