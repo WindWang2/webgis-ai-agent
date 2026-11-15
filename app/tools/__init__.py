@@ -168,6 +168,8 @@ _TOOL_MODULES = [
     ("app.tools.session_model_tools", "register_session_model_tools"),
     # G40：制图符号资产工作台（目录/导入/绑定预览/应用/解绑；独立模块防并发冲突）
     ("app.tools.cartographic_asset_tools", "register_cartographic_asset_tools"),
+    # G48：控制点影像配准与可交付地理栅格工作台（deferred-only，绝不进 NATIVE_TOOL_NAMES）
+    ("app.tools.georeferencing_tools", "register_georeferencing_tools"),
 
 ]
 

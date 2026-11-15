@@ -38,6 +38,7 @@ const TOOL_LABEL_KEYS: Record<MapToolId, string> = {
   delete_feature: 'runPanel.tools.deleteFeature',
   edit_labels: 'map.toolbar.editLabels',
   split_feature: 'runPanel.tools.splitFeature',
+  georef_pick_map: 'runPanel.tools.georefPickMap',
 };
 
 /** 阶段名展示词表：键 = aiStatus 逻辑值（保留），值 = 消息 key。 */

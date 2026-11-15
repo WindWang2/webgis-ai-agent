@@ -29,7 +29,9 @@ export type MapToolId =
   | 'delete_feature'
   | 'edit_labels'
   // G14：真实图层编辑（需先选定 editTarget）
-  | 'split_feature';
+  | 'split_feature'
+  // G48：控制点影像配准（地图选点，仅发布点击坐标）
+  | 'georef_pick_map';
 
 export const MAP_TOOLS: readonly MapToolId[] = [
   'measure_distance',

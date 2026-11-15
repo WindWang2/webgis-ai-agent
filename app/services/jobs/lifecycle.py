@@ -60,6 +60,8 @@ class JobKind(str, Enum):
     data_join = "data_join"            # G38 数据关联执行（进程内 durable runner）
     # G39（数值栅格采样）：点集/沿线采样执行（进程内 durable runner）
     raster_sampling = "raster_sampling"
+    # G48（控制点影像配准）：直传 6 参数仿射重投影与 COG 交付（进程内 durable runner）
+    georeference = "georeference"
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。

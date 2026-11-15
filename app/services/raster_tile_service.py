@@ -482,6 +482,43 @@ def render_raster_tile(
                 res = _transparent_tile_png(tile_size)
                 _set_cached_tile(key, res)
                 return res
+
+            from app.services.raster_authoring.alpha_adapter import (
+                detect_alpha_or_mask,
+                render_alpha_aware_window,
+            )
+
+            has_alpha_sem, alpha_band, has_internal_mask = detect_alpha_or_mask(src)
+            if has_alpha_sem and not (style is None and cmap_name and len(indexes) == 1 and str(src.dtypes[0]) != "uint8"):
+                scale = min(1.0, tile_size / float(win.width), tile_size / float(win.height))
+                dec_h = max(1, int(round(win.height * scale)))
+                dec_w = max(1, int(round(win.width * scale)))
+                rgba_out, all_nodata_tile = render_alpha_aware_window(
+                    src,
+                    color_indexes=indexes,
+                    alpha_band=alpha_band,
+                    has_internal_mask=has_internal_mask,
+                    src_crs=src_crs,
+                    dst_transform=dst_transform,
+                    dst_crs="EPSG:3857",
+                    out_h=tile_size,
+                    out_w=tile_size,
+                    resampling=style.resampling if style is not None else "bilinear",
+                    stretch=style.stretch if style is not None else None,
+                    colormap=(style.colormap if style is not None else cmap_name) if len(indexes) == 1 else None,
+                    opacity=float(style.opacity) if style is not None else 1.0,
+                    win=win,
+                    win_out_shape=(dec_h, dec_w),
+                )
+                if all_nodata_tile:
+                    res = _transparent_tile_png(tile_size)
+                else:
+                    buf = io.BytesIO()
+                    Image.fromarray(rgba_out, "RGBA").save(buf, format="PNG", compress_level=1)
+                    res = buf.getvalue()
+                _set_cached_tile(key, res)
+                return res
+
             count = len(indexes)
             # #595: decimate the read to ~the destination resolution. A low-zoom
             # tile's window can cover the WHOLE raster (10000×10000 uint16 × 3
