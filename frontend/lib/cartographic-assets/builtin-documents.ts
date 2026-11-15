@@ -1,6 +1,11 @@
 /**
  * G40 内置符号资产规范形（**生成物** —— 由 app/lib/cartography/symbol_asset.py
- * 的 BUILTIN_SYMBOL_ASSETS 单源生成（exclude_none）；勿手改）。
+ * 的 BUILTIN_SYMBOL_ASSETS 单源生成（exclude_none）；勿手改。再生成：
+ *   .venv/bin/python - <<'EOF'
+ *   import json; from app.lib.cartography.symbol_asset import BUILTIN_SYMBOL_ASSETS
+ *   print(json.dumps({k: d.model_dump(exclude_none=True) for k, d in BUILTIN_SYMBOL_ASSETS.items()}, ensure_ascii=False, indent=2))
+ *   EOF
+ * 漂移由 tests/cartography/test_g40_symbol_assets.py::test_builtin_ts_twin_no_drift 锁定。
  */
 import { SymbolAssetDocument } from './contracts';
 
@@ -448,7 +453,6 @@ export const BUILTIN_DOCUMENTS: Record<string, SymbolAssetDocument> = {
     "default_params": {
       "spacing_px": 12.0,
       "angle_deg": 45.0,
-      "angle2_deg": -45.0,
       "stroke_width_px": 1.2,
       "fg_color": "#334155",
       "bg_color": "transparent"
@@ -458,7 +462,7 @@ export const BUILTIN_DOCUMENTS: Record<string, SymbolAssetDocument> = {
       "license": "repo",
       "note": "WebGIS 内置交叉晕线（G40）"
     },
-    "content_digest": "sha256:30299713d15a78d78855f956838dda8530b80d7aca72a9db066becf6947805e2"
+    "content_digest": "sha256:fbeb2993fd05982801955be65744791f93dc0081ad284c5224f12e6d95b1dc4d"
   },
   "cartoasset.builtin.dots": {
     "schema_version": 1,

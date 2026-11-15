@@ -580,6 +580,24 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
 | `POST` | `/api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/commit` | Commit | object |
 
+### 制图符号资产工作台（G40）
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/cartographic-assets` | List Catalog | object |
+| `POST` | `/api/v1/cartographic-assets` | Create Asset | object |
+| `GET` | `/api/v1/cartographic-assets/{asset_id}` | Asset Detail | object |
+| `GET` | `/api/v1/cartographic-assets/{asset_id}/versions/{revision}/content` | Version Content | object |
+| `POST` | `/api/v1/cartographic-assets/{asset_id}/versions` | New Version | object |
+| `POST` | `/api/v1/cartographic-assets/{asset_id}/versions/{revision}/publish` | Publish | object |
+| `POST` | `/api/v1/cartographic-assets/{asset_id}/retire` | Retire | object |
+| `POST` | `/api/v1/cartographic-assets/{asset_id}/restore/{revision}` | Restore | object |
+| `DELETE` | `/api/v1/cartographic-assets/{asset_id}/versions/{revision}` | Delete Version | object |
+| `GET` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect Binding | object |
+| `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
+| `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/apply` | Apply | object |
+| `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/unbind` | Unbind | object |
+
 ### 纸面版式工作台
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1367,6 +1385,18 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 |---|---|---|---|
 | `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
 
-_端点总数：575（OpenAPI operations，不含流式豁免面外资源）_
+### 时序媒体交付 (G35)
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/temporal-media/capabilities` | Get Capabilities | object |
+| `POST` | `/api/v1/temporal-media/plan` | Post Plan | object |
+| `POST` | `/api/v1/temporal-media/submit` | Post Submit | object |
+| `GET` | `/api/v1/temporal-media/jobs` | Get Jobs | object |
+| `GET` | `/api/v1/temporal-media/jobs/{job_id}` | Get Job Status | object |
+| `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
+| `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
+
+_端点总数：595（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

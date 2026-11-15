@@ -120,10 +120,11 @@ export function rasterizePointSymbol(
  * F3（评审）：与 SVG `patternTransform="rotate(θ)"` 的几何**逐间距等价**
  * —— 旋转网格语义（线族方向 (q,p)/hyp、垂直间距恒 = spacing），而非
  * "tile 预旋转后轴对齐平铺"（后者 45° 时有效间距只有 0.707×spacing）。
- * 无缝平铺的格点解：方向取有理斜率 tanθ_eff = p/q（连分数逼近，误差
- * ≤0.3°），tile 边长 S = d_eff·√(p²+q²)，d_eff = S/√(p²+q²) ≈ d（亚像素
- * 量化误差）—— x/y 平移 S 各使相位推进 q·d_eff / p·d_eff（整数倍）→
- * 拼缝严格连续。
+ * 无缝平铺的格点解：方向取有理斜率 tanθ_eff = p/q（整数格点枚举逼近；
+ * 小间距下亚度级误差，大间距（d≥128）格点预算收紧 → 角度量化误差增大
+ * 至格点族最近档 —— N4 诚实披露），tile 边长 S = d_eff·√(p²+q²)，
+ * d_eff = S/√(p²+q²) ≈ d（亚像素量化误差）—— x/y 平移 S 各使相位推进
+ * q·d_eff / p·d_eff（整数倍）→ 拼缝严格连续。
  */
 export function rasterizeAreaTexture(
   doc: SymbolAssetDocument,
@@ -232,9 +233,11 @@ export function rationalLineLattice(
     }
   }
   if (best) return { p: best.p, q: best.q, size: best.size };
-  // 兜底：正交线族（θ≈0/90 或预算极端）—— 恒无缝。
-  if (Math.abs(tan) > 1) return { p: Math.sign(tan), q: 0, size: Math.max(8, Math.round(d)) };
-  return { p: 0, q: 1, size: Math.max(8, Math.round(d)) };
+  // 兜底：正交线族（θ≈0/90 或格点预算耗尽）—— 恒无缝；size 受 tile 预算
+  // 硬帽（N4：参数域最大 d=512，不得越过 PATTERN_TILE_SPAN）。
+  const fallbackSize = Math.max(8, Math.min(PATTERN_TILE_SPAN, Math.round(d)));
+  if (Math.abs(tan) > 1) return { p: Math.sign(tan), q: 0, size: fallbackSize };
+  return { p: 0, q: 1, size: fallbackSize };
 }
 
 /** swatch SVG 字符串（屏上图例；与后端 swatch_svg 同语义的 TS 投影）。 */

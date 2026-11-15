@@ -64,3 +64,14 @@
 - commit 9abcd60bb（59 文件 +9801/-58）。PR_BODY.md 已写。
 - 独立 reviewer（槽 3，未参与实现）已派出 Round 1 —— 等待报告。
 - 待办：review→修复→复审→fetch 最新 master 复核→push→PR。
+
+## 轮 3（2026-11-16）：Round-1 评审 → 修复 → Round-2 复审
+
+- Round 1 报告：GO-WITH-FIXES（3P1/7P2/11P3）—— 关键 P1：DB 资产 live 不可
+  渲染（F1）、导入 M 多坐标对静默丢几何+尾随 Z 丢失（F2）、live 纹理预旋转
+  与 patternTransform 语义分歧（F3）。
+- 修复 commit 83009c320：F1-F13/F17/F19 全部（详见 REVIEW.md 表）；F3 用
+  有理角格点（tanθ=p/q 连分数逼近 → 构造性无缝 + 间距亚像素保真）。
+- 复跑：后端 48✓ / cartography 3655✓ / Pi journey 1✓（28s）/ 前端 15✓ +
+  tsc 0 / unit 针对集 831✓（5 失败=干净 base 既有）/ ruff✓ / types 再生成。
+- Round 2 复审（reviewer 槽位复用，携 Round-1 报告）已派出 —— 等待结论。

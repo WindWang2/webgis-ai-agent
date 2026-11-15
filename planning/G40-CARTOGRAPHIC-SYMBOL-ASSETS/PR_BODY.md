@@ -31,7 +31,7 @@
 
 ## 独立评审
 
-Round 1 / 修复 / 复审记录见 `planning/G40-CARTOGRAPHIC-SYMBOL-ASSETS/REVIEW.md`（reviewer 为独立 subagent，未参与实现，自行复跑测试）。
+Round 1 = **GO-WITH-FIXES**（3×P1 + 7×P2 + 11×P3，reviewer 独立 subagent 自行复跑全部关键测试后报告；原文存档 `REVIEW_ROUND1_REPORT.md`）。全部 P1/P2 + 4×P3 已修复（commit 83009c320，逐项回归测试锁定）：DB 资产 live 可渲染（F1）、导入器合法几何零丢失（F2 M 隐式 L + 尾随 Z）、live 纹理改有理角格点与出版语义逐间距等价（F3）、schema fallback 字段自洽（F4）、幂等键含层（F5）、子层级联（F6）、版式导出身份（F7）、坐标帽全量（F8）、tile 周期/颜色双端统一（F9）、嵌套 svg 拒绝（F10）、根属性校验（F11）、use 偏移（F12，连带修复 use-path 变换嵌套 bug）、死参数移除（F13/F17/F19）。其余 P3（F14-F16/F18/F20/F21）记录为已知限制（REVIEW.md「明确不修」节 + 上文未测项）。Round 2 复审记录见 `REVIEW.md`。
 
 ## 兼容 / 迁移 / 回退
 

@@ -193,9 +193,16 @@ def texture_pattern_def(
     sx, sy = tw / tile_w, th / tile_h
     body = "".join(
         _primitive_svg(p) for p in (doc.pattern.tile_primitives or []))
+    # N5（评审）：svg_tile 不应用 patternTransform —— tile 自带取向，angle
+    # 仅程序化 hatch/dots 语义（live 光栅化同规则；此前导出侧误旋转）。
+    # 背景矩形按完整周期尺寸（此前 spacing 方形只盖局部）。
+    bg_full = (f'<rect x="0" y="0" width="{_f(tw)}" height="{_f(th)}" '
+               f'fill="{_esc(bg)}" stroke="none"/>') \
+        if bg not in ("transparent", "none") else ""
     return (f'<pattern id="{_esc(pattern_id)}" patternUnits="userSpaceOnUse" '
-            f'width="{_f(tw)}" height="{_f(th)}"{transform}>'
-            f'<g transform="scale({_f(sx)} {_f(sy)})">{bg_rect}{body}</g></pattern>')
+            f'width="{_f(tw)}" height="{_f(th)}">'
+            f'{bg_full}'
+            f'<g transform="scale({_f(sx)} {_f(sy)})">{body}</g></pattern>')
 
 
 # ── 图例 swatch ────────────────────────────────────────────────────────────

@@ -529,22 +529,15 @@ def _emit(
     stroke_w = _stroke_width_of(style)
     opacity = _opacity_of(style)
 
-    def transform_of() -> Optional[Tuple[float, float, float, float, float, float]]:
-        own = _parse_transform(el.get("transform"))
-        if own is None:
-            return matrix or None
-        if matrix is None:
-            return own
-        return _mat_mul(own, matrix)
-
+    # N2（评审）：walker 已把元素自身 transform 合入传入 matrix —— 此处
+    # 直接使用，绝不二次解析（此前 m 重复应用同一 transform）。
     m = matrix
     if tag == "path":
-        d = _flatten_path(el.get("d", ""), transform_of())
+        d = _flatten_path(el.get("d", ""), m)
         state.primitives.append(SymbolPrimitive(
             op="path", d=d, fill=fill, stroke=stroke,
             stroke_width=stroke_w if stroke != "none" else 0.0, opacity=opacity))
     elif tag == "rect":
-        m = transform_of()
         x = _check_coord(_num(el.get("x", "0"), where="rect x"), where="rect")
         y = _check_coord(_num(el.get("y", "0"), where="rect y"), where="rect")
         w = _num(el.get("width"), where="rect width")
@@ -592,7 +585,6 @@ def _emit(
                 fill=fill, stroke=stroke,
                 stroke_width=stroke_w if stroke != "none" else 0.0, opacity=opacity))
     elif tag == "circle":
-        m = transform_of()
         cx = _num(el.get("cx", "0"), where="circle cx")
         cy = _num(el.get("cy", "0"), where="circle cy")
         r = _num(el.get("r"), where="circle r")
@@ -629,7 +621,6 @@ def _emit(
                     stroke_width=stroke_w if stroke != "none" else 0.0, opacity=opacity)
         state.primitives.append(prim)
     elif tag == "ellipse":
-        m = transform_of()
         cx = _num(el.get("cx", "0"), where="ellipse cx")
         cy = _num(el.get("cy", "0"), where="ellipse cy")
         rx = _num(el.get("rx"), where="ellipse rx")
@@ -651,11 +642,13 @@ def _emit(
             op="path", d=d3, fill=fill, stroke=stroke,
             stroke_width=stroke_w if stroke != "none" else 0.0, opacity=opacity))
     elif tag == "line":
-        m = transform_of()
         x1 = _num(el.get("x1", "0"), where="line x1")
         y1 = _num(el.get("y1", "0"), where="line y1")
         x2 = _num(el.get("x2", "0"), where="line x2")
         y2 = _num(el.get("y2", "0"), where="line y2")
+        # N3（评审）：line 端点坐标帽（与 path/circle 同纪律）。
+        for _v in (x1, y1, x2, y2):
+            _check_coord(_v, where="line coord")
         p1 = _apply(m, x1, y1) if m else (x1, y1)
         p2 = _apply(m, x2, y2) if m else (x2, y2)
         prim = SymbolPrimitive(
@@ -665,7 +658,6 @@ def _emit(
             stroke_width=stroke_w if stroke_w > 0 else 1.0, opacity=opacity)
         state.primitives.append(prim)
     elif tag in ("polygon", "polyline"):
-        m = transform_of()
         pts = _points_attr(el.get("points", ""))
         if len(pts) < 2:
             raise SymbolAssetError("SVG_POINTS_SYNTAX", f"{tag} 点数 < 2")
@@ -678,17 +670,13 @@ def _emit(
             fill=fill, stroke=stroke,
             stroke_width=stroke_w if stroke != "none" else 0.0, opacity=opacity))
     elif tag == "use":
-        m = transform_of()
         href = el.get("href") or el.get("{http://www.w3.org/1999/xlink}href") or ""
         if not href.startswith("#") or len(href) < 2:
             raise SymbolAssetError("SVG_USE_TARGET", f"use href={href!r} 必须为文档内 #id")
         target_id = href[1:]
         # F12（评审）：use 的 x/y 偏移是平移（与 href 组合的 SVG 语义）。
-        try:
-            _ux = _num(el.get("x", "0"), where="use x")
-            _uy = _num(el.get("y", "0"), where="use y")
-        except (TypeError, ValueError):
-            _ux = _uy = 0.0
+        _ux = _num(el.get("x", "0"), where="use x")
+        _uy = _num(el.get("y", "0"), where="use y")
         _check_coord(_ux, where="use x")
         _check_coord(_uy, where="use y")
         if m is None and (_ux or _uy):
@@ -781,10 +769,13 @@ def _walk(
             "SVG_ELEMENT_UNSUPPORTED",
             "嵌套 <svg> 不支持（受控子集只接受根 <svg>）")
     own_matrix = matrix
-    if tag in ("g", "use", "defs") or el.get("transform"):
+    if el.get("transform"):
+        # N2（评审）：元素自身 transform 先作用于其坐标、再由父链映射 ——
+        # composed = parent ∘ own（此前 own∘parent 顺序颠倒）。
         own = _parse_transform(el.get("transform"))
         if own is not None:
-            own_matrix = _mat_mul(own, matrix) if matrix is not None else own
+            own_matrix = (_mat_mul(matrix, own) if matrix is not None
+                          else own)
     inherited2 = dict(inherited)
     inherited2.update(_style_dict(el))
     if tag == "defs":
@@ -873,8 +864,10 @@ def import_svg_asset(
             "根 <svg> 上的 paint/style 属性无绘制载体（应写在图元上）")
 
     state = _ImportState()
-    root_matrix = (1.0 / vb_w, 0.0, 0.0, 1.0 / vb_h, 0.0, 0.0) \
-        if kind == "area_texture" else None
+    # N1（评审）：纹理 tile 图元保持 **viewBox 域**坐标（渲染链 —— Python
+    # pattern / TS 孪生 / live 光栅化 / swatch —— 全部按 tile_viewbox 域
+    # 缩放；此前归一到单位方使导入 tile 渲染成角落微点）。
+    root_matrix = None
     inherited: Dict[str, str] = {}
     for child in root:
         _walk(state, child, root_matrix, inherited, depth=1, in_defs=False, root=root)

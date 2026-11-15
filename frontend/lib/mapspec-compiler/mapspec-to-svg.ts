@@ -666,7 +666,8 @@ function g40PatternDef(
     const periodH = th * scale * dpiScale;
     const sx = (periodW / tw).toFixed(4), sy = (periodH / th).toFixed(4);
     const body = (doc.pattern?.tile_primitives ?? []).map((p) => g40PrimitiveSvg(p as unknown as SymbolPrimitiveLike)).join("");
-    g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}"${transform}><g transform="scale(${sx} ${sy})">${bgRect}${body}</g></pattern>`);
+    // N5：svg_tile 不应用 patternTransform（tile 自带取向；与 Python/live 同规则）。
+    g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}"><g transform="scale(${sx} ${sy})">${bgRect}${body}</g></pattern>`);
     return patternId;
   }
   const lines = `<path d="M ${(-strokeW).toFixed(3)} 0 L ${(spacing + strokeW).toFixed(3)} 0" stroke="${fg}" stroke-width="${strokeW.toFixed(3)}" fill="none"/>`;

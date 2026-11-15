@@ -19,9 +19,14 @@
 from __future__ import annotations
 
 import copy
+import json
 import uuid
 
 import pytest
+
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 from app.lib.cartography.symbol_asset import (
     ANCHORS,
@@ -634,3 +639,62 @@ def test_f1_read_version_blob_injects_digest(tmp_path, monkeypatch):
     finally:
         db.close()
         engine.dispose()
+
+
+def test_n1_tile_import_coordinates_in_viewbox_domain():
+    """N1：导入 tile 图元保持 viewBox 域（渲染链按 tile_viewbox 缩放）。"""
+    tile = import_svg_asset(
+        b'<svg viewBox="0 0 24 24"><path d="M 0 12 L 24 12" stroke="#aa0000" '
+        b'stroke-width="2"/></svg>', kind="area_texture")
+    td = tile.pattern.tile_primitives[0].d
+    assert float(td[0][2]) == 12.0 and float(td[1][1]) == 24.0
+    # 渲染链（Python pattern）以 period=tile_viewbox 缩放 → 24 单位线充满
+    from app.lib.cartography.symbol_asset import normalize_texture_params
+    from app.lib.cartography.symbol_asset_svg import texture_pattern_def
+    params = normalize_texture_params({"pattern_scale": 1.0}, doc=tile)
+    pat = texture_pattern_def("pid", tile, params, dpi_scale=1.0)
+    assert 'width="24.000"' in pat and "#aa0000" in pat
+
+
+def test_n2_transforms_applied_exactly_once_correct_order():
+    doc = import_svg_asset(
+        b'<svg viewBox="0 0 40 40"><path d="M 10 0" transform="translate(5,0)" '
+        b'fill="#000000"/></svg>', kind="point_symbol")
+    assert doc.primitives[0].d[0] == ["M", 15.0, 0.0]
+    # own 先、父链后：(5 + 1) × 2 = 12（错误序 = 5×2 + 1 = 11）
+    nested = import_svg_asset(
+        b'<svg viewBox="0 0 40 40"><g transform="scale(2)"><path d="M 5 0" '
+        b'transform="translate(1,0)" fill="#000000"/></g></svg>',
+        kind="point_symbol")
+    assert abs(float(nested.primitives[0].d[0][1]) - 12.0) < 1e-6
+    # use transform + x/y：transform 后平移 → (15, 25)
+    used = import_svg_asset(
+        b'<svg viewBox="0 0 40 40"><defs><path id="p" d="M 0 0" fill="#000000"/>'
+        b'</defs><use href="#p" transform="translate(5,5)" x="10" y="20"/></svg>',
+        kind="point_symbol")
+    assert [float(v) for v in used.primitives[0].d[0][1:]] == [15.0, 25.0]
+
+
+def test_n3_line_coord_cap():
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(
+            b'<svg viewBox="0 0 40 40"><line x1="0" y1="0" x2="80000" y2="0" '
+            b'stroke="#000000"/></svg>', kind="point_symbol")
+    assert ei.value.code == "SVG_COORD_OUT_OF_RANGE"
+
+
+def test_n6_builtin_ts_twin_no_drift():
+    """TS builtin 孪生与 Python 单源逐 digest 一致（生成物漂移锁）。"""
+    import re
+
+    from app.lib.cartography.symbol_asset import BUILTIN_SYMBOL_ASSETS
+
+    ts_src = (REPO_ROOT / "frontend/lib/cartographic-assets/builtin-documents.ts"
+              ).read_text(encoding="utf-8")
+    m = re.search(r"BUILTIN_DOCUMENTS[^=]+=\s*(\{.*\});", ts_src, re.S)
+    assert m, "BUILTIN_DOCUMENTS 常量不可解析"
+    ts_docs = json.loads(m.group(1))
+    assert set(ts_docs) == set(BUILTIN_SYMBOL_ASSETS), (
+        set(ts_docs) ^ set(BUILTIN_SYMBOL_ASSETS))
+    for aid, py_doc in BUILTIN_SYMBOL_ASSETS.items():
+        assert ts_docs[aid]["content_digest"] == py_doc.content_digest, aid

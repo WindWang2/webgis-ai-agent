@@ -1666,7 +1666,10 @@ export class MapSpecRuntime {
       renderer.noteStyleLayerAdded(this.map, id);
     }
     // 幂等重挂：先清残留（recompile 路径上方已 remove，防御式兜底）。
-    this.repSublayersByLayer.set(layer.id, subIds);
+    // N8（评审）：合并而非整组替换 —— 同层可能已有 G40 纹理类别子层
+      //（texcat 注册先于此），`.set` 会把它们的级联登记抹掉 → 幽灵层。
+      const priorSubs = this.repSublayersByLayer.get(layer.id) ?? []
+      this.repSublayersByLayer.set(layer.id, [...priorSubs, ...subIds]);
   }
 
   private removeLayerSafe(id: string): void {

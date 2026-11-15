@@ -759,6 +759,66 @@
     "title": "AssessRequest",
     "type": "object"
    },
+   "AssetCreateBody": {
+    "properties": {
+     "description": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Description",
+      "type": "string"
+     },
+     "kind": {
+      "description": "point_symbol | area_texture",
+      "title": "Kind",
+      "type": "string"
+     },
+     "license_note": {
+      "default": "",
+      "maxLength": 300,
+      "title": "License Note",
+      "type": "string"
+     },
+     "name": {
+      "default": "",
+      "maxLength": 120,
+      "title": "Name",
+      "type": "string"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     },
+     "publish": {
+      "default": true,
+      "title": "Publish",
+      "type": "boolean"
+     },
+     "svg_base64": {
+      "anyOf": [
+       {
+        "maxLength": 700000,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "受控 SVG 子集字节（base64；~512KB 原始上限）",
+      "title": "Svg Base64"
+     },
+     "visibility": {
+      "default": "private",
+      "title": "Visibility",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "AssetCreateBody",
+    "type": "object"
+   },
    "AssetCreateRequest": {
     "properties": {
      "description": {
@@ -1370,6 +1430,52 @@
      }
     },
     "title": "BatchListResponse",
+    "type": "object"
+   },
+   "BindingCommitBody": {
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     }
+    },
+    "required": [
+     "plan",
+     "expected_revision"
+    ],
+    "title": "BindingCommitBody",
+    "type": "object"
+   },
+   "BindingPlanBody": {
+    "properties": {
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "BindingPlanBody",
     "type": "object"
    },
    "BlockCreateRequest": {
@@ -11036,6 +11142,66 @@
     "title": "MutationApplyResponse",
     "type": "object"
    },
+   "NewVersionBody": {
+    "properties": {
+     "description": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Description",
+      "type": "string"
+     },
+     "kind": {
+      "description": "point_symbol | area_texture",
+      "title": "Kind",
+      "type": "string"
+     },
+     "license_note": {
+      "default": "",
+      "maxLength": 300,
+      "title": "License Note",
+      "type": "string"
+     },
+     "name": {
+      "default": "",
+      "maxLength": 120,
+      "title": "Name",
+      "type": "string"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     },
+     "publish": {
+      "default": true,
+      "title": "Publish",
+      "type": "boolean"
+     },
+     "svg_base64": {
+      "anyOf": [
+       {
+        "maxLength": 700000,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "受控 SVG 子集字节（base64；~512KB 原始上限）",
+      "title": "Svg Base64"
+     },
+     "visibility": {
+      "default": "private",
+      "title": "Visibility",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "NewVersionBody",
+    "type": "object"
+   },
    "NodeCancelRequest": {
     "description": "POST /workflow-runtime/instances/{instance_id}/nodes/cancel 请求体。",
     "examples": [
@@ -20333,6 +20499,32 @@
     "title": "TurnMessageRequest",
     "type": "object"
    },
+   "UnbindBody": {
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "UnbindBody",
+    "type": "object"
+   },
    "UndoAgentCommitBody": {
     "description": "PR-D：撤销/重做一段 Agent 地图提交（Ctrl+Z 撤销整笔 Agent 提交）。\n\n``(base_revision, agent_revision]`` 必须是连续的 Agent 提交；服务端在锁内\n校验当前制图指纹（用户在其后有未撤销的改动 → 拒绝，不覆盖用户编辑）。",
     "properties": {
@@ -25640,6 +25832,828 @@
     "tags": [
      "MapBrief",
      "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets": {
+   "get": {
+    "operationId": "list_catalog_api_v1_cartographic_assets_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "kind",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Kind"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 30,
+       "maximum": 50,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_retired",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Include Retired",
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Catalog",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   },
+   "post": {
+    "operationId": "create_asset_api_v1_cartographic_assets_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AssetCreateBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Asset",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/apply": {
+   "post": {
+    "operationId": "apply_api_v1_cartographic_assets_sessions__session_id__layers__layer_id__apply_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BindingCommitBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Apply",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/inspect": {
+   "get": {
+    "operationId": "inspect_binding_api_v1_cartographic_assets_sessions__session_id__layers__layer_id__inspect_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect Binding",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/preview": {
+   "post": {
+    "operationId": "preview_api_v1_cartographic_assets_sessions__session_id__layers__layer_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BindingPlanBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/unbind": {
+   "post": {
+    "operationId": "unbind_api_v1_cartographic_assets_sessions__session_id__layers__layer_id__unbind_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UnbindBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Unbind",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}": {
+   "get": {
+    "operationId": "asset_detail_api_v1_cartographic_assets__asset_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Asset Detail",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/restore/{revision}": {
+   "post": {
+    "operationId": "restore_api_v1_cartographic_assets__asset_id__restore__revision__post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Restore",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/retire": {
+   "post": {
+    "operationId": "retire_api_v1_cartographic_assets__asset_id__retire_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "note",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 500,
+       "title": "Note",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Retire",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/versions": {
+   "post": {
+    "operationId": "new_version_api_v1_cartographic_assets__asset_id__versions_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/NewVersionBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "New Version",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/versions/{revision}": {
+   "delete": {
+    "operationId": "delete_version_api_v1_cartographic_assets__asset_id__versions__revision__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Version",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/versions/{revision}/content": {
+   "get": {
+    "operationId": "version_content_api_v1_cartographic_assets__asset_id__versions__revision__content_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Version Content",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/versions/{revision}/publish": {
+   "post": {
+    "operationId": "publish_api_v1_cartographic_assets__asset_id__versions__revision__publish_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Publish",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
     ]
    }
   },
@@ -39611,7 +40625,7 @@
   },
   "/api/v1/geocompute/cluster/ledger/limits": {
    "post": {
-    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。",
+    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。组织管理员不能改 ``global``。",
     "operationId": "cluster_set_ledger_limits_api_v1_geocompute_cluster_ledger_limits_post",
     "requestBody": {
      "content": {
@@ -39660,7 +40674,7 @@
   },
   "/api/v1/geocompute/cluster/metrics": {
    "get": {
-    "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。",
+    "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。\n组织管理员看不到这份全局视图。",
     "operationId": "cluster_metrics_api_v1_geocompute_cluster_metrics_get",
     "responses": {
      "200": {
@@ -39689,7 +40703,7 @@
   },
   "/api/v1/geocompute/cluster/runs/stuck": {
    "get": {
-    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。",
+    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。组织管理员看不到其他租户的 run。",
     "operationId": "cluster_stuck_runs_api_v1_geocompute_cluster_runs_stuck_get",
     "responses": {
      "200": {
@@ -39718,7 +40732,7 @@
   },
   "/api/v1/geocompute/cluster/runs/{run_id}/reset": {
    "post": {
-    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。",
+    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。\n组织管理员不能复位其他租户的 run。",
     "operationId": "cluster_reset_run_api_v1_geocompute_cluster_runs__run_id__reset_post",
     "parameters": [
      {
@@ -39785,7 +40799,7 @@
   },
   "/api/v1/geocompute/cluster/workers": {
    "get": {
-    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。",
+    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。组织管理员看不到这份全局拓扑。",
     "operationId": "cluster_workers_api_v1_geocompute_cluster_workers_get",
     "responses": {
      "200": {
@@ -42603,7 +43617,7 @@
   },
   "/api/v1/lakehouse/gc/plan": {
    "post": {
-    "description": "GC dry-run 计划（只读；plan token + 确定性候选清单）。\n\n**admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，\n会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、\nplan 响应也会枚举全局孤儿 id（跨租户泄漏）。",
+    "description": "GC dry-run 计划（只读；plan token + 确定性候选清单）。\n\n组织管理员不能扫全局对象库。没有 org 的管理员才是这个控制面。\n**admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，\n会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、\nplan 响应也会枚举全局孤儿 id（跨租户泄漏）。",
     "operationId": "plan_lakehouse_gc_api_v1_lakehouse_gc_plan_post",
     "parameters": [
      {
@@ -58753,7 +59767,7 @@
   },
   "/api/v2/geocompute/cluster/ledger/limits": {
    "post": {
-    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。",
+    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。组织管理员不能改 ``global``。",
     "operationId": "v2_geocompute_cluster_set_ledger_limits_api_v2_geocompute_cluster_ledger_limits",
     "requestBody": {
      "content": {
@@ -58803,7 +59817,7 @@
   },
   "/api/v2/geocompute/cluster/metrics": {
    "get": {
-    "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。",
+    "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。\n组织管理员看不到这份全局视图。",
     "operationId": "v2_geocompute_cluster_metrics_api_v2_geocompute_cluster_metrics",
     "responses": {
      "200": {
@@ -58833,7 +59847,7 @@
   },
   "/api/v2/geocompute/cluster/runs/stuck": {
    "get": {
-    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。",
+    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。组织管理员看不到其他租户的 run。",
     "operationId": "v2_geocompute_cluster_stuck_runs_api_v2_geocompute_cluster_runs_stuck",
     "responses": {
      "200": {
@@ -58863,7 +59877,7 @@
   },
   "/api/v2/geocompute/cluster/runs/{run_id}/reset": {
    "post": {
-    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。",
+    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。\n组织管理员不能复位其他租户的 run。",
     "operationId": "v2_geocompute_cluster_reset_run_api_v2_geocompute_cluster_runs_run_id_reset",
     "parameters": [
      {
@@ -58931,7 +59945,7 @@
   },
   "/api/v2/geocompute/cluster/workers": {
    "get": {
-    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。",
+    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。组织管理员看不到这份全局拓扑。",
     "operationId": "v2_geocompute_cluster_workers_api_v2_geocompute_cluster_workers",
     "responses": {
      "200": {
@@ -61182,7 +62196,7 @@
   },
   "/api/v2/lakehouse/gc/plan": {
    "post": {
-    "description": "GC dry-run 计划（只读；plan token + 确定性候选清单）。\n\n**admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，\n会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、\nplan 响应也会枚举全局孤儿 id（跨租户泄漏）。",
+    "description": "GC dry-run 计划（只读；plan token + 确定性候选清单）。\n\n组织管理员不能扫全局对象库。没有 org 的管理员才是这个控制面。\n**admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，\n会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、\nplan 响应也会枚举全局孤儿 id（跨租户泄漏）。",
     "operationId": "v2_lakehouse_plan_lakehouse_gc_api_v2_lakehouse_gc_plan",
     "parameters": [
      {
