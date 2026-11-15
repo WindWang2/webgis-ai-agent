@@ -79,6 +79,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 RUN = "g47" + uuid.uuid4().hex[:8]
 LAYER_ID = "g47-layer"
+_APPLY_TOOL = "webgis_dorling_cartogram_apply"
+_EXPORT_TOOL = "webgis_dorling_cartogram_export"
 os.environ["PI_AUTOSTART"] = "true"
 os.environ.setdefault("GIS_MANIFEST_STRICT", "0")
 
@@ -216,7 +218,10 @@ async def _job_row(session_id: str):
             .order_by(AnalysisTask.id.desc())
         ).scalars().all()
     return [{
-        "id": int(r.id), "status": str(r.status), "kind": getattr(r, "kind", None),
+        # 注意列名是 job_kind（ADR-0052 统一 durable job 字段），不是 kind ——
+        # 早先写成 getattr(r, "kind", None) 恒为 None，门永远红且看不出原因。
+        "id": int(r.id), "status": str(r.status),
+        "kind": getattr(r, "job_kind", None),
         "result_ref": getattr(r, "result_ref", None),
         "summary": getattr(r, "result_summary", None),
     } for r in rows]
@@ -391,8 +396,12 @@ def main() -> int:
 
         s3 = chat("开始求解这个布局")
         (WORK / "sse_run.log").write_text(s3, encoding="utf-8")
-        verdict["journeys"]["run_via_pi"] = (
-            "webgis_dorling_cartogram_run" in s3 and "job_id" in s3)
+        # 只认 step_result —— "job_id" 在同轮 tool_search 的描述文本里也出现，
+        # 单查子串会让 run 失败也判绿。
+        verdict["journeys"]["run_via_pi"] = bool(
+            '"tool": "webgis_dorling_cartogram_run", "result"' in s3
+            and '"job_id"' in s3
+            and '"tool": "webgis_dorling_cartogram_run", "error"' not in s3)
 
         rows = asyncio.run(_job_row(session_id))
         verdict["observations"]["job_rows"] = rows
@@ -472,9 +481,12 @@ def main() -> int:
 
         s5 = chat("把布局应用到图层")
         (WORK / "sse_apply.log").write_text(s5, encoding="utf-8")
+        # 必须真的出现 apply 的 step_result（成功回包），只匹配参数回显会被
+        # tool_search 描述文本里的同名字符串蒙过 —— 那是假绿。
         verdict["journeys"]["apply_via_pi"] = bool(
-            "webgis_dorling_cartogram_apply" in s5
-            and ('"committed": true' in s5 or '"committed":true' in s5))
+            f'"tool": "{_APPLY_TOOL}", "result"' in s5
+            and ('"committed": true' in s5 or '"committed":true' in s5)
+            and f'"tool": "{_APPLY_TOOL}", "error"' not in s5)
 
         layer, spec = asyncio.run(_layer(session_id))
         block = (layer or {}).get("cartogram_authoring") or {}
@@ -495,8 +507,12 @@ def main() -> int:
 
         s6 = chat("导出svg交付")
         (WORK / "sse_export.log").write_text(s6, encoding="utf-8")
-        verdict["journeys"]["export_via_pi"] = (
-            "webgis_dorling_cartogram_export" in s6 and "sha256" in s6)
+        # 同 apply：要求真 step_result。此前只查 "sha256" 子串，而 tool_search
+        # 的工具描述里就有 sha256 —— 导出其实 step_error 也判绿（假绿已实测）。
+        verdict["journeys"]["export_via_pi"] = bool(
+            f'"tool": "{_EXPORT_TOOL}", "result"' in s6
+            and '"sha256"' in s6
+            and f'"tool": "{_EXPORT_TOOL}", "error"' not in s6)
         # 独立复算：服务层同一布局的 SVG 字节哈希必须与 Pi 回执一致
         from app.services.cartogram_authoring import export_layout
         data, media, filename = asyncio.run(

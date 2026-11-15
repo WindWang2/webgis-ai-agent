@@ -56,9 +56,9 @@
 
 | 能力 | 用例 | 结果 |
 |---|---|---|
-| SVG：XML 解析出真实圆集合/半径/面积比/图例/披露/参考 path 在画布内 | `test_g47_publication_readback.py` | ✅（14 passed，见 §J 复跑记录） |
-| PNG：PIL 读像素，橙色覆盖面积 vs `π·s²·Σr²`；96/300 DPI 面积比 = (300/96)² | 同上 | ✅ |
-| PDF：pypdf 页几何 A4 横向 + zlib 解压内容流确认矢量填充与曲线算子 | 同上 | ✅ |
+| SVG：XML 解析出真实圆集合/半径/面积比/图例/披露/参考 path 在画布内 | `test_g47_publication_readback.py -k svg` | ✅ 9 passed（不加锁子集，实际执行） |
+| PNG：PIL 读像素，橙色覆盖面积 vs `π·s²·Σr²`；96/300 DPI 面积比 = (300/96)² | 同上 `-k "not svg"` | ⚠️ **未执行**：4 个用例走同仓重阶段锁，锁被其它 worktree 长时间持有（`flock` 阻塞式、持有者在隔离 PID 命名空间内不可见） |
+| PDF：pypdf 页几何 A4 横向 + zlib 解压内容流确认矢量填充与曲线算子 | 同上 | ⚠️ **未执行**：同上，同一个锁 |
 | 图例参考圆保持半径比例（无逐圆钳位） | `test_g47_review_regressions.py` | ✅ |
 
 ## G. 纸面 `diagram` 接缝（G34）
@@ -87,7 +87,7 @@
 | 能力 | 用例 | 结果 |
 |---|---|---|
 | 6 个工具全部注册、模块加载零异常 | `test_g47_review_regressions.py` | ✅ |
-| 端到端旅程（stub LLM SSE → uvicorn(app) → `/chat/stream` → `tool_search` → 6 工具 → 回读 artifact/层/job/导出） | `tests/integration/test_pi_g47_dorling_cartogram_journey.py` | ⚠️ 已编写，本轮**未执行完**（重阶段锁被其它 worktree 长时间占用；夜间 `quality-e2e` 会覆盖） |
+| 端到端旅程（stub LLM SSE → uvicorn(app) → `/chat/stream` → `tool_search` → 6 工具 → 回读 artifact/层/job/导出） | `tests/integration/test_pi_g47_dorling_cartogram_journey.py` | ✅ **1 passed / 81.8s**（23 项 gate 全绿）。首跑是**真红**：暴露 P0-4（`layout_ref` 被 registry 透明解引用 → apply/export 恒失败）与两条假绿门；修复后转绿 |
 
 ## J. 前端
 
@@ -108,3 +108,5 @@
 | 接近上限的大样本（400 单元 / 8000 边） | ⚠️ 未执行 | 参考轮廓 9000 点上限 + 简化容差会随规模变化，需一次真实压测 |
 | `stop_reason=time_budget` 下的逐位一致性 | ⚠️ 边界未声明 | 慢机会得到不同布局与指纹；`elapsed_s` 已在 `_VOLATILE_KEYS`，`stop_reason` 未纳入 |
 | `scripts/check_generated_staleness.py` 报 `docs/quality/*` 陈旧 | ⚠️ base 既有债 | 与本分支无关（未触碰），不在此修复 |
+| PNG/PDF 三格式回读的 4 个加锁用例 | ⚠️ 未执行 | 同仓重阶段锁被外部长期持有；已用 `LOCK_NB` 限时轮询等锁，仍未释放。**不写成已通过** |
+| `test_descriptor_coverage_gate.py` / `test_capability_registry_parity.py` | ⚠️ base 既有债 | 实跑红：`capabilities` 覆盖 94% < 95%（33 个缺失工具全为 print_layout/raster_*/model_catalog 等旧域）。`git stash` 后同样红，证明与 G47 无关 |

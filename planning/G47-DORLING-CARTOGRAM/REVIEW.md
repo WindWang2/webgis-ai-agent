@@ -75,8 +75,22 @@
 
 ### 复审（自评 + 门禁）
 
-- 后端：`tests/unit/test_g47_*.py` **160 passed**；`test_g47_print_diagram_seam.py` + `test_g47_service_lifecycle.py`
-  **19 passed**；`test_g47_publication_readback.py` 见 TEST_MATRIX。
+- 后端：`tests/unit/test_g47_*.py` **162 passed**（含本轮新增 2 条 ref 游标回归）；
+  `test_g47_print_diagram_seam.py` + `test_g47_service_lifecycle.py` **19 passed**；
+  `test_g47_publication_readback.py` 见 TEST_MATRIX（SVG 子集 9 passed，PNG/PDF 受锁未执行）。
 - 前端：`tsc --noEmit` 0 错；`eslint … --max-warnings 0` 0 告警；Vitest **29 passed**（含 i18n 键完备）。
-- 仍未解决（如实记录）：Pi 端到端旅程本轮未跑完（重阶段锁被占用）；真实浏览器 E2E 未执行；
-  大样本压测未做。三项都写进 TEST_MATRIX §K，不当作已通过。
+- 仍未解决（如实记录）：真实浏览器 E2E 未执行；大样本压测未做；PNG/PDF 加锁回读未跑。
+  三项都写进 TEST_MATRIX §K，不当作已通过。
+
+## 第二轮：Pi 旅程实测暴露的 P0-4（评审未覆盖，由真实运行发现）
+
+首跑 `PI_JOURNEY_E2E=1` 是**真红**，5 项 gate 失败。逐层定位后确认**不是**环境问题：
+
+| # | 级别 | 发现 | 修复 |
+|---|---|---|---|
+| 12 | **P0** | `layout_ref` 未声明 ref 游标语义：registry 的"透明解引用"把它当会话数据别名，就地替换成布局载荷（dict），`ApplyArgs.layout_ref: str` 随即在 Pydantic 校验处报 `Input should be a valid string`。生产会话里布局必然存在 ⇒ **apply 与 export 从 Pi/SSE 调用 100% 失败**（`sse_apply.log`/`sse_export.log` 双 `step_error` 实证） | `ApplyArgs.layout_ref` / `ExportArgs.layout_ref` 声明 `json_schema_extra={"ref_cursor": True}`（registry 提供的正解，不给核心加硬编码）；新增 `test_layout_ref_arguments_declare_ref_cursor_semantics` 与 `test_declared_layout_ref_survives_transparent_resolution` 钉住 |
+| 13 | P1（测试） | `_job_row` 读 `getattr(r, "kind")`，而列名是 `job_kind`（ADR-0052）⇒ `job_completed` gate **恒为 False**，是永红的死门 | 改读 `job_kind`，并加注释说明死因 |
+| 14 | P1（测试） | `apply/export/run` 三条 gate 只做全日志子串匹配：`"sha256"`/`"job_id"` 在同轮 `tool_search` 的工具描述里就出现 ⇒ 工具 `step_error` 也能判绿（export 实测假绿） | 三条 gate 改为要求该工具的 `step_result` 出现且无同名 `step_error` |
+
+修复后复跑：**1 passed / 81.8s**，23 项 gate 全绿（含 `job_completed`、`apply_via_pi`、
+`mapspec_block_committed`、`apply_is_one_mutation_with_undo`、`export_bytes_match_pi_receipt`）。

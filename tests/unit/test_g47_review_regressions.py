@@ -273,3 +273,39 @@ def test_legend_reference_circles_keep_their_radius_ratio():
     for ratio in ratios:
         assert ratio == pytest.approx(ratios[0], rel=1e-6)
     assert radii[0] > radii[1] > radii[2]
+
+
+# ── P0-4（Pi 旅程实测）：layout_ref 必须按 ref 游标直传 ──
+#
+# registry 的「透明解引用」阶段会把像 `ref:g47layout-...` 的参数当成会话数据
+# 别名，就地替换成载荷（dict）；`layout_ref: str` 随即在 Pydantic 校验处报
+# `Input should be a valid string`。生产链上布局必然存在 ⇒ apply/export 从
+# Pi/SSE 调用**永远**失败（旅程实测两工具皆 step_error）。声明 ref_cursor 是
+# registry 提供的正解，不需要给核心加硬编码。
+
+def test_layout_ref_arguments_declare_ref_cursor_semantics():
+    from app.tools.cartogram_tools import ApplyArgs, ExportArgs
+    from app.tools.registry import ToolRegistry
+
+    for model in (ApplyArgs, ExportArgs):
+        declared = ToolRegistry._declared_ref_cursor_keys(model)
+        assert "layout_ref" in declared, (
+            f"{model.__name__}.layout_ref 未声明 json_schema_extra="
+            "{'ref_cursor': True} —— registry 会把它解引用成载荷")
+
+
+def test_declared_layout_ref_survives_transparent_resolution():
+    """模拟解引用阶段：声明过的字段必须原样保留字符串引用。"""
+    from app.tools.cartogram_tools import ApplyArgs
+    from app.tools.registry import ToolRegistry
+
+    skip_keys = {"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"}
+    skip_keys |= ToolRegistry._declared_ref_cursor_keys(ApplyArgs)
+    args = {"layer_id": "g47-layer",
+            "layout_ref": "ref:g47layout-0123456789abcdef",
+            "expected_revision": 1}
+    # 解引用只跳过 skip_keys 里的键；未声明的 layout_ref 会被替换（复现面）
+    resolved = {k: (v if k in skip_keys else {"resolved": True})
+                for k, v in args.items()}
+    assert resolved["layout_ref"] == args["layout_ref"]
+    assert isinstance(resolved["layout_ref"], str)

@@ -49,7 +49,11 @@ class RunArgs(PlanArgs):
 
 class ApplyArgs(BaseModel):
     layer_id: str = Field(..., min_length=1, max_length=200)
-    layout_ref: str = Field(..., min_length=5, max_length=200)
+    # ref_cursor：布局 ref 是**游标**不是数据别名。不声明时 registry 的透明
+    # 解引用会把 `ref:g47layout-...` 就地替换成布局载荷（dict），
+    # `layout_ref: str` 随即校验失败 —— Pi/SSE 链上 apply 永远不可能成功。
+    layout_ref: str = Field(..., min_length=5, max_length=200,
+                            json_schema_extra={"ref_cursor": True})
     expected_revision: int = Field(..., ge=0, description="权威 MapSpec 修订（CAS）")
     allow_diagnostic: bool = Field(
         default=False,
@@ -63,7 +67,9 @@ class StatusArgs(BaseModel):
 
 
 class ExportArgs(BaseModel):
-    layout_ref: str = Field(..., min_length=5, max_length=200)
+    # ref_cursor：同 ApplyArgs —— 布局 ref 必须按游标直传，否则被透明解引用。
+    layout_ref: str = Field(..., min_length=5, max_length=200,
+                            json_schema_extra={"ref_cursor": True})
     format: str = Field(default="svg", pattern="^(svg|png|pdf)$")
     dpi: int = Field(default=96, ge=48, le=600)
 

@@ -81,3 +81,21 @@ Vitest 19 passed；i18n `key-completeness` 通过。
   （`b4afddd4`）的既有 worktree 检出复用；`pi_vendor_identity()` 报 `entry_built=True, kind=bundle, matches_expected_pin=True`。
 - 重阶段锁被其它 worktree 长时间占用时，集成测试会在 `flock` 上排队 —— 这是设计行为，不是死锁；
   非加锁用例（seam/lifecycle）先跑，加锁用例（readback）等锁。
+
+## L6 Pi 旅程实测 → P0-4 → 全绿 → 交付
+
+| 步骤 | 动作 | 结果 |
+|---|---|---|
+| 1 | 跑 `PI_JOURNEY_E2E=1 test_pi_g47_dorling_cartogram_journey.py` | ❌ **真红**：`job_completed` / `apply_via_pi` / `mapspec_block_committed` / `apply_is_one_mutation_with_undo` / `export_bytes_match_pi_receipt` 五项失败 |
+| 2 | 用 `TMPDIR` 固化 WORK 目录拿 `sse_*.log`（直接跑驱动会因缺 conftest 的 Redis 而 LockDegraded，必须在 pytest 内跑） | 拿到 `step_error: 参数 'layout_ref' 校验失败: Input should be a valid string` |
+| 3 | 逐层排除：`ApplyArgs` 直验通过、`reg.dispatch` dict/JSON 串两形态均通过 ⇒ 问题不在模型也不在 dispatch 解析 | 锁定 registry「透明解引用」阶段（`skip_keys` 只有 ref_id/layer_ref/layer_id/plan_id…，没有 layout_ref） |
+| 4 | 修 P0-4：两个 args model 的 `layout_ref` 声明 `ref_cursor` | `app/tools/cartogram_tools.py` |
+| 5 | 修两条测试自身缺陷：`kind`→`job_kind`；三条 gate 从"全日志子串"改为"该工具 step_result 出现且无 step_error" | `test_pi_g47_dorling_cartogram_journey.py` |
+| 6 | 加 2 条回归钉住 ref 游标语义 | `test_g47_review_regressions.py`（15 passed） |
+| 7 | 复跑 | ✅ **1 passed / 81.8s**，23 gate 全绿 |
+| 8 | 外溢检查 | `test_g47_*.py` **162 passed**；ruff 全绿；`test_descriptor_coverage_gate` / `test_capability_registry_parity` 红，但 `git stash` 后同样红 ⇒ base 既有债 |
+| 9 | 交付 | 分支 push 完成；PR **#2125** 已创建（`base=master`） |
+
+教训（写进流程而不是只写进文档）：**"只差重活没跑"不能当成"逻辑没问题"** —— 本轮最严重的缺陷
+（apply/export 在真实会话里必然失败）正是只有端到端旅程才能暴露的那一类；而旅程本身的三条 gate
+又恰好因为子串匹配而假绿，差点把它掩盖过去。门必须钉在**该工具自己的回包**上，而不是整段日志里。
