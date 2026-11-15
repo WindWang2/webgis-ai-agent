@@ -284,6 +284,15 @@ def _flatten_path(
     while i < len(parts):
         tok = parts[i]
         if _PATH_CMD_RE.fullmatch(tok):
+            # Z 是零参命令 —— 立即处理（尾随 Z 不再有后续 token 触发；
+            # 此前尾随 Z 静默丢失，破坏闭合填充）。
+            if tok.upper() == "Z":
+                out.append(["Z"])
+                cur_x, cur_y = start_x, start_y
+                last_ctrl, prev_was_cubic = None, False
+                cmd = None
+                i += 1
+                continue
             cmd = tok
             i += 1
             continue
@@ -292,15 +301,9 @@ def _flatten_path(
         upper = cmd.upper()
         relative = cmd != upper
         argn = {"M": 2, "L": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4,
-                "T": 2, "A": 7, "Z": 0}.get(upper, -1)
+                "T": 2, "A": 7}.get(upper, -1)
         if argn < 0:
             raise SymbolAssetError("SVG_PATH_CMD_UNSUPPORTED", f"命令 {cmd!r}")
-        if upper == "Z":
-            out.append(["Z"])
-            cur_x, cur_y = start_x, start_y
-            last_ctrl, prev_was_cubic = None, False
-            cmd = None
-            continue
         if argn == 0 or i + argn > len(parts):
             raise SymbolAssetError("SVG_PATH_SYNTAX", f"命令 {cmd} 参数不足")
         args = [_num(p, where=f"path {cmd}") for p in parts[i:i + argn]]
@@ -310,10 +313,25 @@ def _flatten_path(
             return args[idx] + (cur_x if idx % 2 == 0 else cur_y) if relative else args[idx]
 
         if upper == "M":
-            cur_x, cur_y = R(0), R(1)
-            start_x, start_y = cur_x, cur_y
-            out.append(["M", round(cur_x, 3), round(cur_y, 3)])
-            cmd = "m" if relative else "M"  # 后续隐式 L
+            # F2（评审）：SVG 语义 —— M 后续坐标对是**隐式 L**（不是连续
+            # moveto）；此前静默当 M 处理会让合法常用缩写几何丢失。
+            first_pair = True
+            while True:
+                if first_pair:
+                    cur_x, cur_y = R(0), R(1)
+                    start_x, start_y = cur_x, cur_y
+                    out.append(["M", round(cur_x, 3), round(cur_y, 3)])
+                    first_pair = False
+                else:
+                    cur_x, cur_y = R(0), R(1)
+                    out.append(["L", round(cur_x, 3), round(cur_y, 3)])
+                if i >= len(parts) or _PATH_CMD_RE.fullmatch(parts[i]):
+                    break
+                if i + 2 > len(parts):
+                    raise SymbolAssetError(
+                        "SVG_PATH_SYNTAX", "M/L 隐式续对参数不足")
+                args = [_num(p, where="path M/L") for p in parts[i:i + 2]]
+                i += 2
         elif upper == "L":
             cur_x, cur_y = R(0), R(1)
             out.append(["L", round(cur_x, 3), round(cur_y, 3)])
@@ -378,15 +396,22 @@ def _flatten_path(
             raise SymbolAssetError("SVG_PATH_TOO_LONG", f"path 命令数超 {MAX_PATH_CMDS}")
     if not out or out[0][0] != "M":
         raise SymbolAssetError("SVG_PATH_SYNTAX", "path 未以 M 开始")
-    if matrix is not None:
-        for j, c in enumerate(out):
+    # F8（评审）：坐标硬帽对**全部**展平坐标强制（无 transform 路径同样
+    # 检查 —— 此前仅变换路径受检，d="M 99999 0" 可入库）。
+    if matrix is None:
+        for c in out:
+            if c[0] == "Z":
+                continue
+            c[1:] = [round(_check_coord(float(v), where="path"), 3)
+                     for v in c[1:]]
+    else:
+        for c in out:
             if c[0] == "Z":
                 continue
             nums = c[1:]
             c[1:] = [
                 round(_check_coord(v, where="path"), 3)
                 for v in _xy6(nums, matrix)]  # type: ignore[assignment]
-        # 变换后坐标越界整体复查（含插值点）。
     return out
 
 
@@ -526,6 +551,8 @@ def _emit(
         h = _num(el.get("height"), where="rect height")
         if w <= 0 or h <= 0:
             raise SymbolAssetError("SVG_RECT_SIZE", "rect 宽高 ≤ 0")
+        for _v in (x, y, x + w, y + h):
+            _check_coord(_v, where="rect extent")
         rx = el.get("rx")
         corners: List[Tuple[float, float]] = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
         if rx:
@@ -571,6 +598,8 @@ def _emit(
         r = _num(el.get("r"), where="circle r")
         if r <= 0:
             raise SymbolAssetError("SVG_CIRCLE_R", "circle r ≤ 0")
+        for _v in (cx - r, cx + r, cy - r, cy + r):
+            _check_coord(_v, where="circle extent")
         if m is None:
             prim = SymbolPrimitive(
                 op="circle", cx=round(cx, 3), cy=round(cy, 3), r=round(r, 3),
@@ -607,6 +636,8 @@ def _emit(
         ry = _num(el.get("ry"), where="ellipse ry")
         if rx <= 0 or ry <= 0:
             raise SymbolAssetError("SVG_ELLIPSE_R", "ellipse 半轴 ≤ 0")
+        for _v in (cx - rx, cx + rx, cy - ry, cy + ry):
+            _check_coord(_v, where="ellipse extent")
         segs = 24
         d3: List[List[Union[str, float]]] = []
         for k in range(segs):
@@ -652,6 +683,18 @@ def _emit(
         if not href.startswith("#") or len(href) < 2:
             raise SymbolAssetError("SVG_USE_TARGET", f"use href={href!r} 必须为文档内 #id")
         target_id = href[1:]
+        # F12（评审）：use 的 x/y 偏移是平移（与 href 组合的 SVG 语义）。
+        try:
+            _ux = _num(el.get("x", "0"), where="use x")
+            _uy = _num(el.get("y", "0"), where="use y")
+        except (TypeError, ValueError):
+            _ux = _uy = 0.0
+        _check_coord(_ux, where="use x")
+        _check_coord(_uy, where="use y")
+        if m is None and (_ux or _uy):
+            m = (1.0, 0.0, 0.0, 1.0, _ux, _uy)
+        elif m is not None and (_ux or _uy):
+            m = _mat_mul((1.0, 0.0, 0.0, 1.0, _ux, _uy), m)
         if target_id in state.use_stack:
             raise SymbolAssetError(
                 "SVG_USE_CYCLE", f"use 引用循环: {' -> '.join(state.use_stack + [target_id])}")
@@ -662,24 +705,56 @@ def _emit(
         state.use_stack.append(target_id)
         try:
             for prim in target:
-                shifted = prim.model_copy(deep=True)
-                if shifted.d:
-                    shifted.d = [([c] if isinstance(c[0], str) else c) for c in shifted.d]
-                    for c in shifted.d:
-                        if c[0] == "Z":
-                            continue
-                        c[1:] = [round(v, 3) for v in _xy6(c[1:], m)]  # type: ignore[assignment]
-                elif shifted.points:
-                    shifted.points = [_apply(m, px, py) for px, py in shifted.points]
-                else:
-                    if shifted.cx is not None:
-                        shifted.cx, shifted.cy = _apply(m, shifted.cx, shifted.cy or 0.0)
-                    if shifted.x is not None:
-                        shifted.x, shifted.y = _apply(m, shifted.x, shifted.y or 0.0)
-                state.primitives.append(shifted)
+                state.primitives.append(
+                    _shift_primitive(prim, m))
         finally:
             state.use_stack.pop()
     # g/defs/svg 由 _walk 递归；其余 tag 不该到这里（_walk 已过滤）。
+
+
+def _shift_primitive(prim: Any, m: Optional[Tuple[float, ...]]) -> Any:
+    """use 引用图元的整体变换烘焙（平移/缩放/旋转展开到坐标）。
+
+    path：逐命令坐标变换（Z 保持）；points：逐点；circle：圆心变换 +
+    等比时半径缩放（非等比 use → path 化由导入期 g 处理，此处不达）；
+    rect/ellipse/line：以 x/y/cx/cy 基点变换（宽高随 |scale| 近似 —— use
+    偏移主场景是 x/y 平移，此时精确）。
+    """
+    shifted = prim.model_copy(deep=True)
+    if m is None:
+        return shifted
+    if shifted.op == "path" and shifted.d:
+        out_cmds: List[List[Union[str, float]]] = []
+        for cmd in shifted.d:
+            if not cmd or cmd[0] == "Z":
+                out_cmds.append(list(cmd))
+                continue
+            nums = [v for v in cmd[1:] if isinstance(v, (int, float))]
+            out_cmds.append(
+                [str(cmd[0])] + [round(v, 3) for v in _xy6(nums, m)])  # type: ignore[arg-type]
+        shifted.d = out_cmds  # type: ignore[assignment]
+        return shifted
+    if shifted.points:
+        shifted.points = [  # type: ignore[assignment]
+            (round(px, 3), round(py, 3)) for px, py in
+            (_apply(m, px, py) for px, py in shifted.points)]
+        return shifted
+    if shifted.op == "circle":
+        tx, ty = _apply(m, shifted.cx or 0.0, shifted.cy or 0.0)
+        shifted.cx, shifted.cy = round(tx, 3), round(ty, 3)
+        a = m[0]
+        if abs(a) > 1e-9:
+            shifted.r = round(abs(a) * (shifted.r or 0.0), 3)
+        return shifted
+    if shifted.cx is not None:
+        tx, ty = _apply(m, shifted.cx, shifted.cy or 0.0)
+        shifted.cx, shifted.cy = round(tx, 3), round(ty, 3)
+        return shifted
+    if shifted.x is not None:
+        tx, ty = _apply(m, shifted.x, shifted.y or 0.0)
+        shifted.x, shifted.y = round(tx, 3), round(ty, 3)
+        return shifted
+    return shifted
 
 
 def _walk(
@@ -699,8 +774,14 @@ def _walk(
     if tag not in _ALLOWED_ELEMENTS:
         raise SymbolAssetError("SVG_ELEMENT_UNSUPPORTED", f"未知元素 <{tag}>")
     _reject_attrs(el)
+    if tag == "svg":
+        # F10（评审）：嵌套 <svg> 的 viewBox/x/y 语义（视口嵌套）不在受控
+        # 子集 —— 显式拒绝（ADR-0292 承诺），不静默按组递归。
+        raise SymbolAssetError(
+            "SVG_ELEMENT_UNSUPPORTED",
+            "嵌套 <svg> 不支持（受控子集只接受根 <svg>）")
     own_matrix = matrix
-    if tag in ("g", "svg", "use", "defs") or el.get("transform"):
+    if tag in ("g", "use", "defs") or el.get("transform"):
         own = _parse_transform(el.get("transform"))
         if own is not None:
             own_matrix = _mat_mul(own, matrix) if matrix is not None else own
@@ -781,6 +862,15 @@ def import_svg_asset(
     if min_x != 0 or min_y != 0:
         raise SymbolAssetError(
             "SVG_VIEWBOX_ORIGIN", "viewBox 原点必须为 0 0（导入期不隐式平移）")
+
+    # F11（评审）：根元素属性同校验（onload/style url() 此前静默忽略）。
+    _reject_attrs(root)
+    root_style = _style_dict(root)
+    if root_style:
+        # 根上的 paint 属性无图元载体 —— 拒绝而非静默丢（诚实边界）。
+        raise SymbolAssetError(
+            "SVG_ROOT_PAINT_ATTRS",
+            "根 <svg> 上的 paint/style 属性无绘制载体（应写在图元上）")
 
     state = _ImportState()
     root_matrix = (1.0 / vb_w, 0.0, 0.0, 1.0 / vb_h, 0.0, 0.0) \

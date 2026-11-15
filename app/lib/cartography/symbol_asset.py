@@ -406,7 +406,7 @@ def normalize_texture_params(
     raw = dict(raw or {})
     unknown = set(raw) - {
         "spacing_px", "angle_deg", "stroke_width_px", "fg_color",
-        "bg_color", "pattern_scale", "angle2_deg"}
+        "bg_color", "pattern_scale"}
     if unknown:
         raise SymbolAssetError(
             "UNKNOWN_PARAM", f"未知面纹理参数: {sorted(unknown)}")
@@ -534,7 +534,7 @@ def _builtin_assets() -> List[Tuple[str, SymbolAssetDocument]]:
              kind="area_texture", name="交叉晕线",
              pattern=TexturePattern(type="cross_hatch"),
              default_params={"spacing_px": 12.0, "angle_deg": 45.0,
-                             "angle2_deg": -45.0, "stroke_width_px": 1.2,
+                             "stroke_width_px": 1.2,
                              "fg_color": "#334155", "bg_color": "transparent"},
              source={"origin": "builtin", "license": "repo",
                      "note": "WebGIS 内置交叉晕线（G40）"})),

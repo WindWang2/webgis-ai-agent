@@ -2,8 +2,7 @@
 
 - ``GET    /cartographic-assets``                              目录（builtin 内联
   规范形 + 调用者可见 DB 资产分页；kind 过滤）；
-- ``POST   /cartographic-assets``                              创建（SVG 导入或
-  builtin 引用建立私有副本；匿名拒绝）；
+- ``POST   /cartographic-assets``                              创建（受控 SVG 子集导入；匿名拒绝）；
 - ``GET    /cartographic-assets/{id}``                         详情+版本列表；
 - ``GET    /cartographic-assets/{id}/versions/{rev}/content``  规范形（scope）；
 - ``POST   /cartographic-assets/{id}/versions``                新版本；
@@ -274,7 +273,12 @@ async def version_content(asset_id: str, revision: int,
         raise HTTPException(status_code=500, detail={
             "code": "asset_document_error",
             "message": f"内容不可解析: {exc}"}) from exc
-    return {"success": True, "document": document, "meta": meta}
+    # F1（评审）：blob 是 exclude digest 的规范形 —— 注回 meta.content_digest
+    # 后**扁平**返回（前端 fetchDocByRef 直接消费文档本体，digest 自校验）。
+    if isinstance(document, dict):
+        document.setdefault("content_digest", meta.get("content_digest"))
+    return {"success": True, **(document if isinstance(document, dict) else {}),
+            "meta": meta}
 
 
 def _read_content_with_db(asset_id, revision, user_id, org_id, role):

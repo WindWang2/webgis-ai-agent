@@ -452,7 +452,8 @@ def _paper_for(plan: Dict[str, Any], page_id: str) -> tuple:
 
 
 async def submit_export(session_id: str, *, fmt: str = "pdf", dpi: int = 300,
-                        page_id: str = "", cancel_event: Any = None) -> Dict[str, Any]:
+                        page_id: str = "", cancel_event: Any = None,
+                        asset_identity: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """提交**既有**导出链（PDF/SVG/PNG），作者计划从同一 MapSpec 读取。
 
     返回 refs-only 回执；不返回整页像素或字体 bytes。取消 / 依赖缺失 →
@@ -479,7 +480,7 @@ async def submit_export(session_id: str, *, fmt: str = "pdf", dpi: int = 300,
     # G40：资产冻结解析（S27 —— 页面冻结任务创建时的 digest pin；失败
     # 条目不阻断导出，编译面 symbol_asset_unavailable 披露）。
     symbol_assets, symbol_failures = await asyncio.to_thread(
-        _resolve_symbol_assets_sync, mapspec)
+        _resolve_symbol_assets_sync, mapspec, asset_identity)
     comp = await asyncio.to_thread(
         compile_mapspec_to_svg_detailed,
         mapspec, target_dpi=dpi_i, width=int(pw * 4), height=int(ph * 4),
@@ -551,20 +552,29 @@ async def submit_export(session_id: str, *, fmt: str = "pdf", dpi: int = 300,
     }
 
 
-def _resolve_symbol_assets_sync(mapspec: Dict[str, Any]) -> tuple:
-    """G40：冻结文档 → ({digest: 规范形}, failures)（同步 DB；匿名=内置）。"""
+def _resolve_symbol_assets_sync(
+    mapspec: Dict[str, Any],
+    asset_identity: Optional[Dict[str, Any]] = None,
+) -> tuple:
+    """G40：冻结文档 → ({digest: 规范形}, failures)（同步 DB）。
+
+    身份优先级：显式 asset_identity（HTTP 路由登录用户）> 工具上下文
+    （Pi 面）> 匿名（builtin-only）。
+    """
     from app.core.database import SessionLocal
     from app.services.cartographic_assets.catalog import (
         collect_symbol_asset_documents,
     )
 
-    user_id = org_id = None
-    role = None
-    try:
-        from app.services.templates.composition_assets import tool_caller_identity
-        user_id, org_id = tool_caller_identity()
-    except Exception:  # noqa: BLE001 - 上下文缺席 → 匿名（builtin-only）
-        pass
+    user_id = (asset_identity or {}).get("user_id")
+    org_id = (asset_identity or {}).get("org_id")
+    role = (asset_identity or {}).get("role")
+    if user_id is None and org_id is None:
+        try:
+            from app.services.templates.composition_assets import tool_caller_identity
+            user_id, org_id = tool_caller_identity()
+        except Exception:  # noqa: BLE001 - 上下文缺席 → 匿名（builtin-only）
+            pass
     db = SessionLocal()
     try:
         return collect_symbol_asset_documents(

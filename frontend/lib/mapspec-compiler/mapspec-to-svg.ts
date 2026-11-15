@@ -658,10 +658,15 @@ function g40PatternDef(
     return patternId;
   }
   if (type === "svg_tile") {
+    // F9（评审）：tile 周期 = tile_viewbox × pattern_scale × dpiScale（与
+    // Python 导出/live 光栅化同式）；tile 图元保留自身颜色。
     const [tw, th] = doc.pattern?.tile_viewbox ?? [12, 12];
-    const sx = (spacing / tw).toFixed(4), sy = (spacing / th).toFixed(4);
+    const scale = Number(params.pattern_scale ?? 1);
+    const periodW = tw * scale * dpiScale;
+    const periodH = th * scale * dpiScale;
+    const sx = (periodW / tw).toFixed(4), sy = (periodH / th).toFixed(4);
     const body = (doc.pattern?.tile_primitives ?? []).map((p) => g40PrimitiveSvg(p as unknown as SymbolPrimitiveLike)).join("");
-    g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${spacing.toFixed(3)}" height="${(spacing * th / tw).toFixed(3)}"${transform}><g transform="scale(${sx} ${sy})">${bgRect}${body}</g></pattern>`);
+    g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}"${transform}><g transform="scale(${sx} ${sy})">${bgRect}${body}</g></pattern>`);
     return patternId;
   }
   const lines = `<path d="M ${(-strokeW).toFixed(3)} 0 L ${(spacing + strokeW).toFixed(3)} 0" stroke="${fg}" stroke-width="${strokeW.toFixed(3)}" fill="none"/>`;

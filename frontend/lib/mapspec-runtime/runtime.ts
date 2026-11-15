@@ -1451,8 +1451,8 @@ export class MapSpecRuntime {
       renderer.noteStyleLayerAdded(this.map, layer.id);
       recordLayerAdd();
       // G40：类别面纹理过滤子层（fill-pattern 恒定值语义 → 每类别一子层；
-      // 有界 ≤16，超帽已在投影披露）。层移除随 removeLayerSafe 的
-      // `${id}__` 前缀级联（与表达子层同纪律）。
+      // 有界 ≤16，超帽已在投影披露）。子层 id 注册进 repSublayersByLayer
+      // —— removeLayerSafe 显式级联删除（F6：注册表驱动，非前缀扫描）。
       if (g40Sublayers && g40Sublayers.length > 0) {
         for (const sub of g40Sublayers) {
           try {
@@ -1469,6 +1469,11 @@ export class MapSpecRuntime {
             this.map.addLayer(subDef, this.map.getLayer(layer.id)
               ? layer.id : undefined);
             renderer.noteStyleLayerAdded(this.map, subDef.id);
+            // F6（评审）：注册进级联表 —— 删层/解绑/重编译时同生命周期
+            // （与 rep 子层同纪律，杜绝幽灵纹理面）。
+            const reg = this.repSublayersByLayer.get(layer.id) ?? [];
+            reg.push(subDef.id);
+            this.repSublayersByLayer.set(layer.id, reg);
           } catch (err) {
             recordSymbolLawEvidence("symbol-asset-category-degraded", {
               reason: "add_layer_rejected", detail: String(err),

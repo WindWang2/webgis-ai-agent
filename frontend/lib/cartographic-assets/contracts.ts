@@ -185,7 +185,7 @@ export function normalizeTextureParams(
 ): TextureParams {
   const r = { ...(raw ?? {}) };
   const allowed = ['spacing_px', 'angle_deg', 'stroke_width_px', 'fg_color',
-                   'bg_color', 'pattern_scale', 'angle2_deg'];
+                   'bg_color', 'pattern_scale'];
   const unknown = Object.keys(r).filter((k) => !allowed.includes(k));
   if (unknown.length) {
     throw new SymbolAssetParamError('UNKNOWN_PARAM', unknown.join(','));

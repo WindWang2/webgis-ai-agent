@@ -744,6 +744,11 @@ class MapSpecLayerSymbolAssetCategoryBinding(_SpecModel):
     #: keep_current（保留统一绑定资产/不替换）。缺省 = keep_current。
     other_mode: Literal["fallback_asset", "keep_current"] = "keep_current"
     other_asset: Optional[StrictStr] = None
+    #: fallback 资产的钉版本三元组与实例参数（F4 评审：写链面既有字段，
+    #: schema 此前漏声明导致 extra_forbidden 拒绝整文档）。
+    other_revision: Optional[int] = Field(default=None, ge=1)
+    other_content_digest: Optional[StrictStr] = Field(default=None, max_length=96)
+    other_params: Optional[Dict[str, Any]] = None
 
 
 class MapSpecLayerSymbolAsset(_SpecModel):

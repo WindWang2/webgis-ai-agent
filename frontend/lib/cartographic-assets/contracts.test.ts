@@ -178,3 +178,44 @@ describe('TS SVG 孪生（mapspec-to-svg 资产消费）', () => {
     expect(svg2).not.toContain('<circle cx=');
   });
 });
+
+describe('rationalLineLattice（F3：live 纹理 = SVG patternTransform 语义）', () => {
+  it('seamless lattice: 45°/30°/0°/90° angle fidelity + spacing fidelity', async () => {
+    const { rationalLineLattice } = await import('./rasterize');
+    const cases: Array<[number, number, number]> = [
+      // [thetaDeg, d, maxAngleErrDeg]
+      [0, 24, 0.01],
+      [45, 24, 0.3],
+      [30, 24, 0.5],
+      [-45, 16, 0.3],
+      [90, 24, 0.01],
+      [60, 20, 0.5],
+    ];
+    for (const [theta, d, maxErr] of cases) {
+      const { p, q, size } = rationalLineLattice(theta, d);
+      const hyp = Math.hypot(p, q);
+      // 角度保真（有理斜率逼近）
+      const angleErr = Math.abs((Math.atan2(p, q) * 180) / Math.PI - theta);
+      expect(angleErr).toBeLessThanOrEqual(maxErr + 1e-9);
+      // 间距保真：d_eff = size/hyp ≈ d（亚像素量化）
+      const dEff = size / hyp;
+      expect(Math.abs(dEff - d)).toBeLessThanOrEqual(1.0);
+      // tile 预算
+      expect(size).toBeGreaterThanOrEqual(8);
+      expect(size).toBeLessThanOrEqual(256);
+      // 无缝性由构造保证：x/y 平移 size 使相位各推进 q·d_eff / p·d_eff
+      //（整数倍 d_eff）—— 这里锁 q、p 为整数与 d_eff 定义本身。
+      expect(Number.isInteger(p)).toBe(true);
+      expect(Number.isInteger(q)).toBe(true);
+      expect(Math.abs(size - Math.round(d * hyp))).toBeLessThanOrEqual(1);
+    }
+  });
+  it('极端角（0/90）取正交格点（周期恰为 d）', async () => {
+    const { rationalLineLattice } = await import('./rasterize');
+    expect(rationalLineLattice(0, 24)).toEqual({ p: 0, q: 1, size: 24 });
+    const v = rationalLineLattice(90, 24);
+    expect(Math.abs(v.p)).toBe(1);
+    expect(v.q).toBe(0);
+    expect(v.size).toBe(24);
+  });
+});

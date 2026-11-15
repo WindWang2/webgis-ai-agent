@@ -13,17 +13,24 @@ interface Props {
 }
 
 /** 绑定 → 内联 SVG swatch（doc 由 builtin/缓存取；缺席回退色块）。 */
-function AssetSwatch({ symbolAsset }: { symbolAsset: Record<string, unknown> }) {
+function AssetSwatch({
+  symbolAsset, categoryKey,
+}: {
+  symbolAsset: Record<string, unknown>;
+  categoryKey?: string | number | boolean;
+}) {
   const html = React.useMemo(() => {
     try {
       const binding = symbolAsset as unknown as Parameters<
         typeof resolveBindingSwatch>[0];
-      const svg = resolveBindingSwatch(binding);
+      // F19（评审）：按类别键解析规则资产（与出版图例同语义 —— 此前
+      // 所有类别共用主绑定 swatch，live 类别区分度丢失）。
+      const svg = resolveBindingSwatch(binding, categoryKey);
       return svg;
     } catch {
       return null;
     }
-  }, [symbolAsset]);
+  }, [symbolAsset, categoryKey]);
   if (!html) return null;
   return (
     <svg
@@ -48,7 +55,7 @@ export function CategoricalLegend({ spec, symbolAsset }: Props) {
                 data-testid="cat-swatch"
                 className="shrink-0 rounded-xs ring-1 ring-inset ring-map-chrome-border"
               >
-                <AssetSwatch symbolAsset={symbolAsset} />
+                <AssetSwatch symbolAsset={symbolAsset} categoryKey={c.key} />
               </div>
             ) : (
               <div

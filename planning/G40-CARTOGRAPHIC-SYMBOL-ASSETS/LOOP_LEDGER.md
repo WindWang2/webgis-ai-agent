@@ -47,3 +47,20 @@
   本 worktree venv（可选依赖，不碰共享环境）。
 - 重阶段锁尚未触发（未跑全量测试）；后续全量/E2E 前取
   webgis-heavy-stage.lock。
+
+## 轮 2（2026-11-16）：实现完成 + 测试 + 提交
+
+- 实现全链完成（详见 INTERFACES.md）：后端 8 新模块 + 15 共享文件加性接线；
+  前端 7 新模块 + 10 文件接线；i18n；ADR-0292；visual_variables texture→partial。
+- 测试：后端 G40 40 passed + cartography 全量 3654 passed（1 既有基线 deselect，
+  干净 base 复现）+ Pi 真实旅程 1 passed（10/10 verdict；vendor v1.5.2 pin 构建）
+  + 出版回读 5 passed（真实 PNG/PDF 像素 oracle）+ 前端 13 passed + tsc 0 +
+  ruff G40 文件全绿。unit 全量存在既有 test_service.py 同名收集冲突（干净
+  base 复现；拆分跑通过）。
+- 修复过程中发现并处理：mapspec store 读取 API 误用（改 G33 同款）、
+  session_data 修订读取（同款）、诊断死码门（登记发射点）、TS projection
+  再生成（SCHEMA_EXPORT_MODELS +3 类型）、librsvg CLI 缩放 pattern 丢失
+  （实证 + workaround）、anchorOffset 默认值镜像、_export_pdf 签名漏参。
+- commit 9abcd60bb（59 文件 +9801/-58）。PR_BODY.md 已写。
+- 独立 reviewer（槽 3，未参与实现）已派出 Round 1 —— 等待报告。
+- 待办：review→修复→复审→fetch 最新 master 复核→push→PR。

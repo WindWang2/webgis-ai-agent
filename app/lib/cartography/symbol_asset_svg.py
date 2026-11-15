@@ -183,15 +183,16 @@ def texture_pattern_def(
         return (f'<pattern id="{_esc(pattern_id)}" patternUnits="userSpaceOnUse" '
                 f'width="{_f(spacing)}" height="{_f(box_h)}"{transform}>'
                 f'{content}</pattern>')
-    # svg_tile：tile 周期平铺（tile_viewbox × pattern_scale × dpi_scale）。
+    # svg_tile：tile 周期平铺（周期 = tile_viewbox × pattern_scale ×
+    # dpi_scale —— 与 live 光栅化 tile 同式，F9）。tile 图元**保留自身
+    # 颜色**（fg_color 只作用于程序化 hatch/dots；导入 tile 的多色不被
+    # 覆涂）。
     tile_w, tile_h = doc.pattern.tile_viewbox or (12.0, 12.0)
     tw = tile_w * scale * dpi_scale
     th = tile_h * scale * dpi_scale
     sx, sy = tw / tile_w, th / tile_h
     body = "".join(
-        _primitive_svg(p, color_override=str(params.get("fg_color"))
-                       if p.fill not in ("none", "transparent") else None)
-        for p in (doc.pattern.tile_primitives or []))
+        _primitive_svg(p) for p in (doc.pattern.tile_primitives or []))
     return (f'<pattern id="{_esc(pattern_id)}" patternUnits="userSpaceOnUse" '
             f'width="{_f(tw)}" height="{_f(th)}"{transform}>'
             f'<g transform="scale({_f(sx)} {_f(sy)})">{bg_rect}{body}</g></pattern>')
@@ -214,6 +215,19 @@ def swatch_svg(
         ox = (box_w - w * s) / 2.0
         oy = (box_h - h * s) / 2.0
         body = "".join(_primitive_svg(p) for p in doc.primitives)
+        parts.append(
+            f'<g transform="translate({_f(ox)} {_f(oy)}) scale({_f(s)})">{body}</g>')
+    elif doc.pattern is not None and doc.pattern.type == "svg_tile":
+        # F9（评审）：导入 tile 的 swatch 画 tile 本体（保留自身颜色；
+        # 周期缩放进盒），不再误画通用晕线。
+        tile_w, tile_h = doc.pattern.tile_viewbox or (12.0, 12.0)
+        s = min(box_w / tile_w, box_h / tile_h)
+        ox = (box_w - tile_w * s) / 2.0
+        oy = (box_h - tile_h * s) / 2.0
+        body = "".join(
+            _primitive_svg(p) for p in (doc.pattern.tile_primitives or []))
+        if background:
+            pass  # 外层背景矩形已画
         parts.append(
             f'<g transform="translate({_f(ox)} {_f(oy)}) scale({_f(s)})">{body}</g>')
     else:

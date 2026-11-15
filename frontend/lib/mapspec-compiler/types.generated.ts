@@ -272,6 +272,9 @@ export interface MapSpecLayerSymbolAssetCategoryBinding {
   map?: MapSpecLayerSymbolAssetCategoryRule[];
   other_mode?: "fallback_asset" | "keep_current";
   other_asset?: string;
+  other_revision?: number;
+  other_content_digest?: string;
+  other_params?: Record<string, unknown>;
 }
 
 export interface MapSpecLayerSymbolAsset {

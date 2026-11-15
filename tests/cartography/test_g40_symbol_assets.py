@@ -510,3 +510,127 @@ async def test_s04_version_pin_semantics_on_binding():
         expected_revision=rev2, origin="user", actor="t")
     stored2 = (await mapspec_store.get_mapspec(sid))["layers"][0]["symbol_asset"]
     assert stored2["content_digest"] == sq.content_digest != stored1["content_digest"]
+
+
+# ─── Round-1 评审修复回归（F1/F2/F4/F9/F10/F11/F12） ──────────────────────
+
+def test_f2_implicit_lineto_and_trailing_z():
+    doc = import_svg_asset(
+        b'<svg viewBox="0 0 24 24"><path d="M 2 2 20 2 20 20 Z" fill="#005500"/></svg>',
+        kind="point_symbol")
+    cmds = [c[0] for c in doc.primitives[0].d]
+    assert cmds == ["M", "L", "L", "Z"], cmds
+    # 相对形式同语义
+    doc2 = import_svg_asset(
+        b'<svg viewBox="0 0 24 24"><path d="m 2 2 18 0 0 18 z" fill="#005500"/></svg>',
+        kind="point_symbol")
+    assert [c[0] for c in doc2.primitives[0].d] == ["M", "L", "L", "Z"]
+
+
+def test_f8_coord_cap_on_all_paths():
+    for d in ('M 99999 0 L 0 0', 'M 0 0 L 99999 0', 'M -99999 5 L 3 5'):
+        with pytest.raises(SymbolAssetError) as ei:
+            import_svg_asset(
+                f'<svg viewBox="0 0 24 24"><path d="{d}"/></svg>'.encode(),
+                kind="point_symbol")
+        assert ei.value.code == "SVG_COORD_OUT_OF_RANGE", d
+    # circle 外接同样受检
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(
+            b'<svg viewBox="0 0 24 24"><circle cx="20000" cy="0" r="4"/></svg>',
+            kind="point_symbol")
+    assert ei.value.code == "SVG_COORD_OUT_OF_RANGE"
+
+
+def test_f10_nested_svg_rejected():
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(
+            b'<svg viewBox="0 0 10 10"><svg x="1" y="1" width="4" height="4" '
+            b'viewBox="0 0 4 4"><path d="M0 0L4 4"/></svg></svg>',
+            kind="point_symbol")
+    assert ei.value.code == "SVG_ELEMENT_UNSUPPORTED"
+
+
+def test_f11_root_attrs_validated():
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(
+            b'<svg viewBox="0 0 10 10" onload="x()"><path d="M0 0L4 4"/></svg>',
+            kind="point_symbol")
+    assert ei.value.code == "SVG_EVENT_ATTR"
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(
+            b'<svg viewBox="0 0 10 10" style="fill:url(#x)"><path d="M0 0L4 4"/></svg>',
+            kind="point_symbol")
+    assert ei.value.code in ("SVG_URL_VALUE", "SVG_ROOT_PAINT_ATTRS")
+
+
+def test_f12_use_xy_offset_applied():
+    doc = import_svg_asset(
+        b'<svg viewBox="0 0 40 40"><defs><g id="s"><path d="M 0 0 L 6 0 L 3 6 Z" '
+        b'fill="#005500"/></g></defs><use href="#s" x="10" y="20"/></svg>',
+        kind="point_symbol")
+    xs = [c[1] for c in doc.primitives[0].d if c[0] in ("M", "L")]
+    assert min(xs) >= 10.0, xs  # 偏移生效（不再画在原点）
+
+
+def test_f4_fallback_asset_category_binding_schema_valid():
+    from app.lib.cartography.mapspec_schema import parse_mapspec
+
+    res = parse_mapspec({
+        "version": "2.1", "view": {"center": [0, 0], "zoom": 2},
+        "sources": {},
+        "layers": [{"id": "p", "source": "s", "type": "circle", "symbol_asset": {
+            "asset_id": "cartoasset.builtin.triangle", "revision": 1,
+            "content_digest": "sha256:" + "a" * 64, "kind": "point_symbol",
+            "category_binding": {
+                "field": "t", "key_type": "string", "map": [],
+                "other_mode": "fallback_asset",
+                "other_asset": "cartoasset.builtin.square",
+                "other_revision": 1,
+                "other_content_digest": "sha256:" + "b" * 64,
+                "other_params": {"size_px": 10}}}}]})
+    assert res.valid and not res.invalid_fields, [
+        (f.path, f.code) for f in res.invalid_fields]
+
+
+def test_f9_tile_swatch_and_pattern_keep_own_colors():
+    from app.lib.cartography.symbol_asset_svg import (
+        swatch_svg, texture_pattern_def)
+
+    tile = import_svg_asset(
+        b'<svg viewBox="0 0 12 12"><path d="M0 6 L12 6" stroke="#aa0000" '
+        b'stroke-width="2"/></svg>', kind="area_texture")
+    params = normalize_texture_params({}, doc=tile)
+    sw = swatch_svg(tile, params, box_w=24.0, box_h=19.2)
+    assert "#aa0000" in sw, "tile 自身颜色必须保留（不被 fg_color 覆涂）"
+    pat = texture_pattern_def("pid", tile, params, dpi_scale=1.0)
+    assert "#aa0000" in pat
+    # 周期 = tile_viewbox（12），不随 spacing 走
+    assert 'width="12.000"' in pat
+
+
+def test_f1_read_version_blob_injects_digest(tmp_path, monkeypatch):
+    """F1：DB 资产内容读回自带 content_digest（前端 fetchDocByRef 直接消费）。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import app.models  # noqa: F401
+    from app.core.database import Base
+    from app.services.cartographic_assets import catalog as svc
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        document = import_svg_asset(
+            b'<svg viewBox="0 0 24 24"><path d="M 12 3 L 22 20 L 2 20 Z" '
+            b'fill="#2563eb"/></svg>', kind="point_symbol")
+        asset, _ = svc.create_asset(db, document=document, creator_id="u1",
+                                    publish=True)
+        blob, meta = svc.read_version_blob(db, asset.id, 1, user_id="u1")
+        import json as _json
+        doc = _json.loads(blob.decode("utf-8"))
+        assert doc["content_digest"] == meta["content_digest"]
+    finally:
+        db.close()
+        engine.dispose()

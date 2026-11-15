@@ -475,6 +475,16 @@ def read_version_blob(
         if len(blob) > MAX_ASSET_JSON_BYTES:
             raise CartographicAssetError(
                 "asset_document_error", "blob 超字节预算")
+        # F1（评审）：blob 存的是 exclude digest 规范形 —— 读回面统一注回
+        # content_digest（与 builtin 路径同形；下载/回读校验消费同一形状）。
+        try:
+            doc_json = json.loads(blob.decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise CartographicAssetError(
+                "asset_document_error", f"blob 不可解析: {exc}") from exc
+        if isinstance(doc_json, dict):
+            doc_json.setdefault("content_digest", version.content_digest)
+        blob = json.dumps(doc_json, ensure_ascii=False).encode("utf-8")
     return blob, meta
 
 

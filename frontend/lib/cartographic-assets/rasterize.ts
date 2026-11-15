@@ -117,9 +117,13 @@ export function rasterizePointSymbol(
 /**
  * 面纹理 → ImageData tile（MapLibre fill-pattern 以 tile 周期平铺）。
  *
- * tile 边长 = spacing × ratio（hatch 族）；线族沿水平画、tile 整体由
- * MapLibre pattern 语义平铺（导出侧 patternTransform rotate(θ) 的对应：
- * tile 内容按 -θ 预旋转后平铺 —— 与 SVG 旋转水平线族几何等价）。
+ * F3（评审）：与 SVG `patternTransform="rotate(θ)"` 的几何**逐间距等价**
+ * —— 旋转网格语义（线族方向 (q,p)/hyp、垂直间距恒 = spacing），而非
+ * "tile 预旋转后轴对齐平铺"（后者 45° 时有效间距只有 0.707×spacing）。
+ * 无缝平铺的格点解：方向取有理斜率 tanθ_eff = p/q（连分数逼近，误差
+ * ≤0.3°），tile 边长 S = d_eff·√(p²+q²)，d_eff = S/√(p²+q²) ≈ d（亚像素
+ * 量化误差）—— x/y 平移 S 各使相位推进 q·d_eff / p·d_eff（整数倍）→
+ * 拼缝严格连续。
  */
 export function rasterizeAreaTexture(
   doc: SymbolAssetDocument,
@@ -127,26 +131,36 @@ export function rasterizeAreaTexture(
   pixelRatio: number = TEXTURE_PIXEL_RATIO,
 ): ImageData {
   const type: PatternType = doc.pattern?.type ?? 'hatch';
-  const spacing = Math.min(
-    PATTERN_TILE_SPAN,
-    Math.max(4, Math.round(params.spacing_px * params.pattern_scale * pixelRatio)));
   const stroke = params.stroke_width_px * pixelRatio;
-  const size = spacing;
-  const ctx = ctxOf(size, size);
-  if (params.bg_color !== 'transparent') {
-    ctx.fillStyle = params.bg_color;
-    ctx.fillRect(0, 0, size, size);
+
+  if (type === 'svg_tile') {
+    // F9（评审）：tile 周期 = tile_viewbox × pattern_scale × ratio（与导出
+    // pattern 同式）；tile 图元保留自身颜色（fg_color 不覆涂）。
+    const [tw, th] = doc.pattern?.tile_viewbox ?? [12, 12];
+    const w = Math.max(4, Math.min(PATTERN_TILE_SPAN,
+      Math.round(tw * params.pattern_scale * pixelRatio)));
+    const h = Math.max(4, Math.min(PATTERN_TILE_SPAN,
+      Math.round(th * params.pattern_scale * pixelRatio)));
+    const ctx = ctxOf(w, h);
+    if (params.bg_color !== 'transparent') {
+      ctx.fillStyle = params.bg_color;
+      ctx.fillRect(0, 0, w, h);
+    }
+    ctx.scale(w / tw, h / th);
+    for (const p of doc.pattern?.tile_primitives ?? []) paintPrim(ctx, p);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return ctx.getImageData(0, 0, w, h);
   }
-  const rad = (-params.angle_deg * Math.PI) / 180; // 预旋转（平铺后视觉 +θ）
-  ctx.save();
-  ctx.translate(size / 2, size / 2);
-  ctx.rotate(rad);
-  ctx.translate(-size / 2, -size / 2);
-  ctx.strokeStyle = params.fg_color;
-  ctx.lineWidth = Math.max(1, stroke);
-  ctx.lineCap = 'butt';
+
   if (type === 'dots') {
-    ctx.restore();
+    const spacing = Math.min(PATTERN_TILE_SPAN,
+      Math.max(4, Math.round(params.spacing_px * params.pattern_scale * pixelRatio)));
+    const size = spacing;
+    const ctx = ctxOf(size, size);
+    if (params.bg_color !== 'transparent') {
+      ctx.fillStyle = params.bg_color;
+      ctx.fillRect(0, 0, size, size);
+    }
     ctx.fillStyle = params.fg_color;
     const r = Math.max(1, stroke / 2);
     ctx.beginPath();
@@ -154,32 +168,73 @@ export function rasterizeAreaTexture(
     ctx.fill();
     return ctx.getImageData(0, 0, size, size);
   }
-  const span = size * 2; // 覆盖旋转后的 tile 范围
-  ctx.beginPath();
-  if (type === 'svg_tile') {
-    // 导入 tile：tile_viewbox 周期缩放到 spacing 后平铺一次（周期=tile）。
-    ctx.restore();
-    const [tw, th] = doc.pattern?.tile_viewbox ?? [12, 12];
-    const sx = size / tw;
-    const sy = size / th;
-    ctx.scale(sx, sy);
-    for (const p of doc.pattern?.tile_primitives ?? []) paintPrim(ctx, p);
-    return ctx.getImageData(0, 0, size, size);
+
+  // hatch / cross_hatch：有理角格点（θ_eff = atan(p/q)，无缝平铺严格解）
+  const d = params.spacing_px * params.pattern_scale * pixelRatio;
+  const theta = Math.max(-90, Math.min(90, params.angle_deg));
+  const { p, q, size } = rationalLineLattice(theta, d);
+  const hyp = Math.hypot(p, q);
+  const dEff = size / hyp;
+  const ctx = ctxOf(size, size);
+  if (params.bg_color !== 'transparent') {
+    ctx.fillStyle = params.bg_color;
+    ctx.fillRect(0, 0, size, size);
   }
-  // hatch / cross_hatch：水平线族（y=0 与 y=size 两端各半，保证周期接缝）
-  ctx.moveTo(-span, 0);
-  ctx.lineTo(span, 0);
-  ctx.moveTo(-span, size);
-  ctx.lineTo(span, size);
-  if (type === 'cross_hatch') {
-    ctx.moveTo(0, -span);
-    ctx.lineTo(0, span);
-    ctx.moveTo(size, -span);
-    ctx.lineTo(size, span);
+  ctx.strokeStyle = params.fg_color;
+  ctx.lineWidth = Math.max(1, stroke);
+  ctx.lineCap = 'butt';
+  // 方向 dir = (q,p)/hyp；法向 nrm = (-p,q)/hyp。线族：过 center + k·dEff·nrm。
+  const cx = size / 2;
+  const cy = size / 2;
+  const diag = size * 1.5;
+  const families: Array<[number, number]> = [[q / hyp, p / hyp]];
+  if (type === 'cross_hatch') families.push([-p / hyp, q / hyp]);
+  ctx.beginPath();
+  const kSpan = Math.ceil(diag / dEff) + 1;
+  for (const [dx, dy] of families) {
+    const nx = -dy;
+    const ny = dx;
+    for (let k = -kSpan; k <= kSpan; k++) {
+      const px = cx + nx * k * dEff;
+      const py = cy + ny * k * dEff;
+      ctx.moveTo(px - dx * diag / 2, py - dy * diag / 2);
+      ctx.lineTo(px + dx * diag / 2, py + dy * diag / 2);
+    }
   }
   ctx.stroke();
-  ctx.restore();
   return ctx.getImageData(0, 0, size, size);
+}
+
+/**
+ * 有理斜率格点选择：在 tile 预算内求 (p, q, S)，使 atan2(p,q) 最逼近 θ、
+ * S = round(d·√(p²+q²)) ∈ [8, 256]、d_eff = S/√(p²+q²) ≈ d。
+ * θ∈[-90,90]：p 可为负（镜像）；θ=±90 → (±1,0)；θ=0 → (0,1)。
+ */
+export function rationalLineLattice(
+  thetaDeg: number, d: number,
+): { p: number; q: number; size: number } {
+  const rad = (thetaDeg * Math.PI) / 180;
+  const tan = Math.tan(rad);
+  let best: { p: number; q: number; size: number; err: number } | null = null;
+  const cap = Math.max(8, Math.min(PATTERN_TILE_SPAN, Math.round(d * 40)));
+  const minSize = Math.max(8, Math.min(PATTERN_TILE_SPAN, Math.round(d)));
+  for (let q = 0; q <= 24; q++) {
+    for (let p = -24; p <= 24; p++) {
+      if (q === 0 && Math.abs(p) !== 1) continue; // ±90° 只有 (±1,0)
+      const hyp = Math.hypot(p, q);
+      if (hyp === 0) continue;
+      const size = Math.round(d * hyp);
+      if (size < minSize || size > cap) continue;
+      const err = Math.abs(Math.atan2(p, q) - rad);
+      if (!best || err < best.err - 1e-12) {
+        best = { p, q, size, err };
+      }
+    }
+  }
+  if (best) return { p: best.p, q: best.q, size: best.size };
+  // 兜底：正交线族（θ≈0/90 或预算极端）—— 恒无缝。
+  if (Math.abs(tan) > 1) return { p: Math.sign(tan), q: 0, size: Math.max(8, Math.round(d)) };
+  return { p: 0, q: 1, size: Math.max(8, Math.round(d)) };
 }
 
 /** swatch SVG 字符串（屏上图例；与后端 swatch_svg 同语义的 TS 投影）。 */
@@ -200,6 +255,15 @@ export function swatchSvgString(
     parts.push(
       `<g transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">` +
       primSvg(doc.primitives ?? []) + '</g>');
+  } else if (doc.pattern?.type === 'svg_tile') {
+    // F9（评审）：导入 tile 的 swatch 画 tile 本体（保留自身颜色）。
+    const [tw, th] = doc.pattern.tile_viewbox ?? [12, 12];
+    const s = Math.min(boxW / tw, boxH / th);
+    const ox = (boxW - tw * s) / 2;
+    const oy = (boxH - th * s) / 2;
+    parts.push(
+      `<g transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${s.toFixed(4)})">` +
+      primSvg(doc.pattern.tile_primitives ?? []) + '</g>');
   } else {
     const p = params as unknown as TextureParams;
     if (p?.bg_color && p.bg_color !== 'transparent') {

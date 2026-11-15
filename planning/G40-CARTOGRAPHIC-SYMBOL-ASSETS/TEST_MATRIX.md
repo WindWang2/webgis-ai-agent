@@ -46,7 +46,8 @@
 | G40 出版回读 | `pytest tests/cartography/test_g40_publication_readback.py` | 5 passed（含真实 PDF/PNG） |
 | Pi 真实旅程 | `PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_g40_symbol_asset_journey.py`（vendor pi v1.5.2 pin b4afdddf4 构建） | 1 passed（10/10 verdict） |
 | cartography 全量 | `pytest tests/cartography/` | 3654 passed, 3 skipped, 3 xfailed（deselect 1 既有基线：carto_ir_corpus scale_portrayal_cases —— 干净 base 复现同样失败） |
-| unit 全量 | `pytest tests/unit/` | 既有基线：thematic_authoring/test_service.py 与 gis_harness/temporal_products/test_service.py 同名无 __init__ 收集冲突（干净 base 复现）；拆分跑通过 |
+| unit 全量 | `pytest tests/unit/` | 既有基线：thematic_authoring/test_service.py 与 gis_harness/temporal_products/test_service.py 同名无 __init__ 收集冲突（干净 base 复现）；单进程全跑另有 ~104 order/环境敏感失败，未逐一归因 |
+| unit 针对集（G40 触及模块的全部引用方，46 文件） | `pytest $(grep -rln 触及模块 tests/unit/ \| grep -v modelops)` | **831 passed**；5 failed 全部在干净 base 逐条复现（test_heat_matrix_svg…/test_harvest_prefers…/test_specialist_carto_auditor×3 = 既有基线）——本分支零回归 |
 | 前端 | `vitest run lib/cartographic-assets/contracts.test.ts` | 13 passed |
 | tsc | `npx tsc --noEmit` | 0 error |
 | ruff | G40 触及文件 | All checks passed（print_layout 既有 F841/E741 为基线） |

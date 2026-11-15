@@ -330,7 +330,11 @@ def register_cartographic_asset_tools(registry: ToolRegistry) -> None:
 
         mutation_id = None
         try:
-            mutation_id = f"symbolasset:{plan_digest_of(plan)}:r{expected_revision}"
+            # F5（评审）：幂等键含 layer_id —— 同 plan 同 revision 绑**另一层**
+            # 是合法操作，不得被 dedup 吞掉。
+            mutation_id = (
+                f"symbolasset:{layer_id}:{plan_digest_of(plan)}"
+                f":r{expected_revision}")
         except Exception:  # noqa: BLE001 - 指纹失败不阻塞（服务端仍 CAS）
             mutation_id = None
         return _bound_receipt(await _guard_binding(apply_binding(
