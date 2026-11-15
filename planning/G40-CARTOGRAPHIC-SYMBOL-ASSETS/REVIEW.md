@@ -55,6 +55,35 @@
 - ruff（G40 触及文件）：All checks passed
 - types.generated.ts 再生成（F4 后）+ 投影契约测试绿
 
-## Round 2（复审，reviewer 槽位复用）
+## Round 2（复审，reviewer 槽位复用）—— GO-WITH-FIXES（报告存档 REVIEW_ROUND2_REPORT.md）
+
+复跑全绿（后端 48/G34 34/Pi journey/前端 15/tsc/ruff 均其亲跑）。Round-1
+修复判定：F1/F2/F3/F4/F5/F7/F10/F11/F13/F17/F19 FIXED（F3 无缝性由其独立
+Python 复刻 oracle 验证「全参数域 seam=0、间距 ≤0.22px」）；F6/F8/F9/F12
+PARTIAL（残留见 N3/N8/N5）。**新发现**（两轮共同盲区，pre-existing 于首
+commit）：
+
+| # | 级别 | 问题 | 修复（e459baf22） |
+|---|---|---|---|
+| N1 | P1 | svg_tile 导入归一单位方，渲染链按 viewBox 域 → 导入纹理全表面渲染为角落微点 | 导入保持 viewBox 域（root_matrix=None）+ 跨面 oracle 测试 |
+| N2 | P1 | 图元 transform 被双重应用 + 嵌套组合顺序颠倒（own∘parent） | _emit 不再二次解析；组合改 parent∘own；scale/translate 非交换 oracle |
+| N7 | P2 | OpenAPI 快照/api-docs 未随新路径刷新（2 仓库测试红） | API_SNAPSHOT_UPDATE 刷新 + gen_api_docs 再生成（15 passed） |
+| N3 | P3 | line 坐标帽缺失 | 端点 _check_coord + 测试 |
+| N4 | P3 | lattice docstring ≤0.3° 不实；兜底 size 无 256 帽 | docstring 诚实化 + 兜底帽 |
+| N5 | P3 | svg_tile 导出误加 patternTransform；bg_rect 只盖局部 | 双端 tile 不旋转 + bg 全周期 |
+| N6 | P3 | builtin TS 孪生漂移（F13 后未再生成） | 再生成 + Python↔TS digest 漂移锁测试（test_n6） |
+| N8 | P3 | rep 子层 `.set` 整组替换抹掉 texcat 注册（组合场景幽灵层） | 合并追加 |
+
+另据其微备注顺手修：use x/y 非数值 typed 拒绝（不再静默归零）。
+其明确不修（维持披露）：F14/F15/F16/F18/F20/F21 中未列项与
+_shift_primitive line w/h 近似说明。
+
+## Round-2 修复后验证（2026-11-16，commit e459baf22）
+
+- cartography 全量 3659 passed；Pi 真实旅程 1 passed（29s）
+- 前端 15 passed + tsc 0；API 快照 + 文档漂移 15 passed；ruff 干净
+- 新增 oracle：N1 跨面 / N2 非交换变换 / N3 line / N6 孪生漂移锁
+
+## Round 3（终审，reviewer 槽位复用）
 
 待填。

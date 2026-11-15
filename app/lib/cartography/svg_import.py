@@ -674,15 +674,8 @@ def _emit(
         if not href.startswith("#") or len(href) < 2:
             raise SymbolAssetError("SVG_USE_TARGET", f"use href={href!r} 必须为文档内 #id")
         target_id = href[1:]
-        # F12（评审）：use 的 x/y 偏移是平移（与 href 组合的 SVG 语义）。
-        _ux = _num(el.get("x", "0"), where="use x")
-        _uy = _num(el.get("y", "0"), where="use y")
-        _check_coord(_ux, where="use x")
-        _check_coord(_uy, where="use y")
-        if m is None and (_ux or _uy):
-            m = (1.0, 0.0, 0.0, 1.0, _ux, _uy)
-        elif m is not None and (_ux or _uy):
-            m = _mat_mul((1.0, 0.0, 0.0, 1.0, _ux, _uy), m)
+        # F12/R3-1：use 的 x/y 平移在 _walk 组合（ancestor∘x/y∘own —— 与
+        # SVG use 语义一致）；此处不再叠加。
         if target_id in state.use_stack:
             raise SymbolAssetError(
                 "SVG_USE_CYCLE", f"use 引用循环: {' -> '.join(state.use_stack + [target_id])}")
@@ -776,6 +769,20 @@ def _walk(
         if own is not None:
             own_matrix = (_mat_mul(matrix, own) if matrix is not None
                           else own)
+    if tag == "use":
+        # R3-1（评审）：use 的 x/y 是隐式平移，SVG 语义组合于自身 transform
+        # **之后**、祖先链**之内**：composed = ancestor ∘ translate(x,y) ∘
+        # own_el（此前叠最外层 —— scale/rotate 祖先下错域）。own_matrix 已
+        # 含父链，这里从 matrix + own_el 重算。
+        _ux = _num(el.get("x", "0"), where="use x")
+        _uy = _num(el.get("y", "0"), where="use y")
+        _check_coord(_ux, where="use x")
+        _check_coord(_uy, where="use y")
+        _t_xy = (1.0, 0.0, 0.0, 1.0, _ux, _uy)
+        _own_el = _parse_transform(el.get("transform"))
+        _eff = _t_xy if _own_el is None else _mat_mul(_t_xy, _own_el)
+        own_matrix = (_mat_mul(matrix, _eff) if matrix is not None
+                      else _eff)
     inherited2 = dict(inherited)
     inherited2.update(_style_dict(el))
     if tag == "defs":

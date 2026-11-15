@@ -698,3 +698,32 @@ def test_n6_builtin_ts_twin_no_drift():
         set(ts_docs) ^ set(BUILTIN_SYMBOL_ASSETS))
     for aid, py_doc in BUILTIN_SYMBOL_ASSETS.items():
         assert ts_docs[aid]["content_digest"] == py_doc.content_digest, aid
+
+
+def test_r3_1_use_xy_composes_inside_ancestors():
+    """R3-1：use x/y 平移组合于祖先链之内（ancestor∘x/y∘own）。
+
+    oracle 与评审 rsvg 实渲染同款：g scale(8) + use x=3 y=3 of 0..1 线
+    → (0..1) +3 → ×8 = (24..32, 24)（错序会得 24..88 或 3..11）。
+    """
+    doc = import_svg_asset(
+        b'<svg viewBox="0 0 40 40"><defs><path id="p" d="M 0 0 L 1 0" '
+        b'stroke="#000000" stroke-width="0.5"/></defs>'
+        b'<g transform="scale(8)"><use href="#p" x="3" y="3"/></g></svg>',
+        kind="point_symbol")
+    pts = [(float(c[1]), float(c[2]))
+           for c in doc.primitives[0].d if c[0] in ("M", "L")]
+    assert pts == [(24.0, 24.0), (32.0, 24.0)], pts
+    # rotate 祖先：rotate(90) ∘ translate(1,0) 作用 (0,0) → (0,1)
+    rot = import_svg_asset(
+        b'<svg viewBox="0 0 40 40"><defs><path id="p" d="M 0 0" fill="#000000"/>'
+        b'</defs><g transform="rotate(90)"><use href="#p" x="1" y="0"/></g></svg>',
+        kind="point_symbol")
+    x, y = (round(float(v), 3) for v in rot.primitives[0].d[0][1:])
+    assert (x, y) == (0.0, 1.0), (x, y)
+    # 平移祖先与扁平 transform+x/y（可交换情形）回归不变
+    flat = import_svg_asset(
+        b'<svg viewBox="0 0 40 40"><defs><path id="p" d="M 0 0" fill="#000000"/>'
+        b'</defs><use href="#p" transform="translate(5,5)" x="10" y="20"/></svg>',
+        kind="point_symbol")
+    assert [float(v) for v in flat.primitives[0].d[0][1:]] == [15.0, 25.0]

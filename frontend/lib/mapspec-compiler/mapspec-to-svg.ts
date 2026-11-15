@@ -666,8 +666,13 @@ function g40PatternDef(
     const periodH = th * scale * dpiScale;
     const sx = (periodW / tw).toFixed(4), sy = (periodH / th).toFixed(4);
     const body = (doc.pattern?.tile_primitives ?? []).map((p) => g40PrimitiveSvg(p as unknown as SymbolPrimitiveLike)).join("");
-    // N5：svg_tile 不应用 patternTransform（tile 自带取向；与 Python/live 同规则）。
-    g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}"><g transform="scale(${sx} ${sy})">${bgRect}${body}</g></pattern>`);
+    // N5：svg_tile 不应用 patternTransform（tile 自带取向；与 Python/live
+    // 同规则）。R3-2：背景矩形按完整周期尺寸且置于 scale 组**外**（与
+    // Python bg_full 对齐 —— 此前 spacing 方形在组内双重缩放 + 只盖局部）。
+    const bgFull = bg !== "transparent" && bg !== "none"
+      ? `<rect x="0" y="0" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}" fill="${bg}" stroke="none"/>`
+      : "";
+    g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}">${bgFull}<g transform="scale(${sx} ${sy})">${body}</g></pattern>`);
     return patternId;
   }
   const lines = `<path d="M ${(-strokeW).toFixed(3)} 0 L ${(spacing + strokeW).toFixed(3)} 0" stroke="${fg}" stroke-width="${strokeW.toFixed(3)}" fill="none"/>`;

@@ -75,3 +75,13 @@
 - 复跑：后端 48✓ / cartography 3655✓ / Pi journey 1✓（28s）/ 前端 15✓ +
   tsc 0 / unit 针对集 831✓（5 失败=干净 base 既有）/ ruff✓ / types 再生成。
 - Round 2 复审（reviewer 槽位复用，携 Round-1 报告）已派出 —— 等待结论。
+
+## 轮 4（2026-11-16）：Round-2 复审 → N1-N8 修复 → Round-3 终审
+
+- Round 2：GO-WITH-FIXES —— F1-F3 修复确认（F3 无缝性独立 oracle 验证），
+  但发现两个 pre-existing 同级盲区：N1（svg_tile 域不匹配 → 导入纹理渲染
+  为微点）、N2（transform 双应用 + 组合序颠倒）+ N7（OpenAPI 快照 2 红）。
+- 修复 commit e459baf22（N1/N2/N7 必修 + N3/N4/N5/N6/N8 + use x/y typed）。
+- 复跑：cartography 3659✓ / Pi journey 1✓（29s）/ 前端 15✓ + tsc 0 /
+  API 快照+文档 15✓ / ruff✓；N1/N2/N3/N6 新增 oracle。
+- Round 3 终审（reviewer 槽位复用）进行中。
