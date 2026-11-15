@@ -94,3 +94,14 @@
 - 附带修复 commit 7781081cc（R3-1/R3-2 + oracle 测试）。
 - 最终回归：cartography 3660✓ / Pi journey 1✓（29s）/ 前端 15✓ + tsc 0。
 - REVIEW.md 终结论：GO，可提交 PR。剩余：fetch master 复核 → push → PR。
+
+## 轮 6（2026-11-16）：合流 + 终稿
+
+- 合流 master 34f4e3670（#2117-#2122：G36/G37/G38/G39/G41 + 迁移头收拢）：
+  additive 冲突 5 文件解决（main/tools/legend/panel/api-docs）；迁移改接
+  bcf4e5b51f43 单头；快照+文档再生成（2ed97076a）。
+- 事故与恢复：误弹共享库旧 stash（codex 遗留）→ reset+checkout 恢复，
+  零损失（旧 stash 原样保留在共享库）。
+- 合流后回归：Pi journey 1✓（31s）/ cartography 3660✓ / API 快照+文档 15✓；
+  tsc 仅 2 个纯 master 既有错误（origin/master 复现，非本分支文件）。
+- 状态：终审 GO + 合流完成 → push + PR。

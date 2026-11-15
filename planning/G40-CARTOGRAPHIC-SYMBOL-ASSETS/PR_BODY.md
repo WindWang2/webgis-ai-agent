@@ -20,6 +20,16 @@
 - 复用：MapSpec 生命周期引擎（CAS/checkpoint/undo）、durable BlobStore、G34 units/legend/marginalia、G16 障碍接口与求解器、0098 资产表先例、composition_assets scope 纪律、G33 服务模式、Pi native surface/journey 架构。不建第二套 registry/MapSpec store/agent loop。
 - 不做（诚实边界）：素材市场/网络抓取/图片生成/任意矢量设计/复杂线装饰/沿线箭头/新标签求解器/declutter 首版/map 对齐旋转/G41 双变量语义。
 
+## 合流（最新 master 34f4e3670，#2117-#2122 已入）
+
+- additive 冲突解决：路由/工具注册与 G37/G38/G41 共存；layer-style-panel
+  四域面板（G33/G40/G41/G27）同挂；api-docs/OpenAPI 快照再生成（15 passed）。
+- 迁移头：G36/G37/G38 头已被 #2122 收拢为 `bcf4e5b51f43`；本分支迁移
+  `g40_cartographic_symbol_assets` 改接该唯一头（alembic 单头验证通过）。
+- 合流后回归：cartography **3660 passed** / Pi 真实旅程 **1 passed**（31s）/
+  tsc 仅剩 2 个**纯 master 既有**错误（cartography-result-card，G38/G41
+  合入引入，干净 origin/master 复现；非本分支文件）。
+
 ## 实际验证（TEST_MATRIX.md 全记录）
 
 - 后端 40 passed（规范形/导入恶意矩阵 S05-S08/绑定 CAS/undo/锁/S18 引用删除/S02 typed/出版）
@@ -29,9 +39,20 @@
 - 前端 vitest 13 passed + `tsc --noEmit` 0 error + ruff（G40 触及文件）全绿
 - 未测项如实披露：真实浏览器像素级（S15/S16/S24 live 面）未运行——以 MapLibre .d.ts 亲核 + runtime/compiler 单测 + headless 结构断言 + Pi 权威面覆盖语义（TEST_MATRIX「已知未测项」）
 
-## 独立评审
+## 独立评审（三轮，全部报告存档 planning/G40-CARTOGRAPHIC-SYMBOL-ASSETS/）
 
-Round 1 = **GO-WITH-FIXES**（3×P1 + 7×P2 + 11×P3，reviewer 独立 subagent 自行复跑全部关键测试后报告；原文存档 `REVIEW_ROUND1_REPORT.md`）。全部 P1/P2 + 4×P3 已修复（commit 83009c320，逐项回归测试锁定）：DB 资产 live 可渲染（F1）、导入器合法几何零丢失（F2 M 隐式 L + 尾随 Z）、live 纹理改有理角格点与出版语义逐间距等价（F3）、schema fallback 字段自洽（F4）、幂等键含层（F5）、子层级联（F6）、版式导出身份（F7）、坐标帽全量（F8）、tile 周期/颜色双端统一（F9）、嵌套 svg 拒绝（F10）、根属性校验（F11）、use 偏移（F12，连带修复 use-path 变换嵌套 bug）、死参数移除（F13/F17/F19）。其余 P3（F14-F16/F18/F20/F21）记录为已知限制（REVIEW.md「明确不修」节 + 上文未测项）。Round 2 复审记录见 `REVIEW.md`。
+- **Round 1 = GO-WITH-FIXES**（3×P1 + 7×P2 + 11×P3）：DB 资产 live 不可渲染（F1）、
+  导入 M 隐式 L/尾随 Z 丢几何（F2）、live 纹理预旋转与 patternTransform 语义分歧
+  （F3）等 → 修复 commit 83009c320（含 F4-F13/F17/F19）。
+- **Round 2 = GO-WITH-FIXES**（+2×P1 + 1×P2 + 6×P3，独立探针发现两轮共同盲区）：
+  N1 svg_tile 域不匹配（导入纹理渲染为微点）、N2 transform 双应用+组合序颠倒、
+  N7 OpenAPI 快照红 → 修复 commit e459baf22（含 N3-N8）。
+- **Round 3 = GO-WITH-FIXES → 附带修复后 GO**：N1/N2 核心/N7 判 FIXED（其独立
+  rsvg/oracle 实证；F3 无缝性「全参数域 seam=0」）；新发现 R3-1（use x/y 组合
+  次序，rsvg 实证）+ R3-2（TS tile bg）→ 附带修复 commit 7781081cc；reviewer
+  明示「除此之外无任何阻塞项」。
+- 遗留仅 P3 已知限制（REVIEW.md「明确不修」+「终结论」节）：F14/F15/F16/F18/
+  F20、`_shift_primitive` line w/h 近似、N8 无自动化测试。
 
 ## 兼容 / 迁移 / 回退
 
