@@ -118,8 +118,43 @@
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 真实浏览器 E2E（缩放/平移/选择联动/键盘） | ⚠️ 未执行（环境不通） | 本机实测连**既有** journey 也起不来：`playwright test e2e/journeys/j18-frame-interactive.journey.ts` 的 `webServer` 卡在 Next 引导，稳定报 `ENOENT frontend/.next/dev/server/pages/_app/build-manifest.json`（`node-brokered-fs-shim.cjs` 介入了读文件），120s 超时。属沙箱环境限制，非 G47 缺陷；须在有真浏览器的夜间 `quality-e2e` 车道覆盖 |
-| 接近上限的大样本（400 单元 / 8000 边） | ⚠️ 未执行 | 参考轮廓 9000 点上限 + 简化容差会随规模变化，需一次真实压测 |
+| 接近上限的大样本（400 单元 / 8000 边） | ✅ 已执行，**发现 P1-16** | 400 单元（20×20，值 100..999，760 条邻接）单进程实跑 **1.1–8.6s**，未撞 `max_seconds`；面积门 `max_rel_error ≤ 9.7e-08`（规模下「面积∝数量」仍精确）；参考轮廓 400 条全部生成。**但 `publication_ready` 在 n ≳ 64 时恒为 false**：停滞位移恒为 ~0.036、残重渗透恒为 3.2–5.1 diagram units，超 `max_pair_overlap_ratio=0.02`（详见 REVIEW.md P1-16 与此处下表） |
 | `stop_reason=time_budget` 下的逐位一致性 | ⚠️ 边界未声明 | 慢机会得到不同布局与指纹；`elapsed_s` 已在 `_VOLATILE_KEYS`，`stop_reason` 未纳入 |
 | `scripts/check_generated_staleness.py` 报 `docs/quality/*` 陈旧 | ⚠️ base 既有债 | 与本分支无关（未触碰），不在此修复 |
 | PNG/PDF 三格式回读的 4 个加锁用例 | ✅ 已执行（**未持锁**） | 已取得真实结果：`-k "not svg"` **5 passed / 21.5s**、整档 **14 passed / 20.0s**，走 `G47_LOCK_BYPASS=1`。锁仍被外部持有（`LOCK_NB` 轮询 181 次 / 1800s 全 `EAGAIN`；`flock EX/SH` 皆拒而 POSIX `lockf` 可得；`/proc` 与 `/proc/locks` 在该命名空间均不可见持有者）⇒ 断言原样执行但不持锁，结论含义见 §F 的加粗说明 |
 | `test_descriptor_coverage_gate.py` / `test_capability_registry_parity.py` | ⚠️ base 既有债 | 实跑红：`capabilities` 覆盖 94% < 95%（33 个缺失工具全为 print_layout/raster_*/model_catalog 等旧域）。`git stash` 后同样红，证明与 G47 无关 |
+
+## L. 规模实测（P1-16 证据，单进程 `OMP_NUM_THREADS=1`）
+
+合成网格 `n×n`（值 `(i*37+100)%900+100`，即 100..999，半径比约 1:3.16），
+一次 `compute_layout` 的真实结果：
+
+| n | extent | 迭代预算 | 实用迭代 | elapsed | stop_reason / status | 停滞位移 | 残重重叠对 | 最大圆对重叠 | 可发布 |
+|---|---|---|---|---|---|---|---|---|---|
+| 25 | 1200 | 1500 | 247 | 0.05s | `converged` | 0.0359 | 0 | 0.0034 | ✅ |
+| 64 | 1500 | 2000 | 400 | 0.16s | `stalled_with_overlap` | 0.0356 | 2 | 0.0351 | ❌ |
+| 100 | 2000 | 2000 | 637 | 0.38s | `stalled_with_overlap` | 0.0360 | 15 | 0.0317 | ❌ |
+| 400 | 1000 | 400 | 400 | 1.61s | status `not_converged` | 1.247 | 94 | 0.1631 | ❌ |
+| 400 | 1000 | 600 | 600 | 2.26s | status `not_converged` | — | 72 | 0.1488 | ❌ |
+| 400 | 2000 | 600 | 600 | 1.84s | status `not_converged` | — | 22 | 0.0507 | ❌ |
+| 400 | 3000 | 600 | 600 | 1.62s | status `not_converged` | — | 1 | 0.0305 | ❌ |
+| 400 | 4000 | 600 | 600 | 1.52s | status `not_converged` | — | 0 | 0.0134 | ❌（位移未稳） |
+| 400 | 8000 | 3000 | 2629 | 6.11s | `stalled_with_overlap` | 0.0357 | 55 | 0.1112 | ❌ |
+
+**迭代预算不是单调改善**（同 extent=4000，n=400）：
+
+| 预算 | stop_reason | 实用迭代 | 位移 | 残重对 | 最大圆对重叠 | 质量门 |
+|---|---|---|---|---|---|---|
+| 400 | `max_iterations` | 400 | 1.247 | 7 | 0.0070 | 通过（但位移未稳 ⇒ 不可发布） |
+| 1200 | `max_iterations` | 1200 | 0.198 | 200 | 0.0353 | 失败 |
+| 3000 | `stalled_with_overlap` | 2686 | 0.036 | 54 | 0.0898 | 失败 |
+
+**形态判据（n=64，extent=1500）**：`worst_pairs` 的 12 个值密集堆在阈值下方
+（0.03513, 0.02570, 0.01997, 0.01995, 0.01977, 0.01955, 0.01907, 0.01820, …），
+渗透量 `r_i+r_j-d` 集中在 **3.18–4.27** 单位 —— 是**平衡态分布**而非个别卡死对。
+n=400 更差：半径悬殊（13.68 vs 34.40）的邻对被拉得更深，渗透 3.82–5.12。
+
+**排除的替代解释**：`repulsion=1.0` 下 4 单位渗透会产生 ≈1.4 单位/轮位移，远大于停滞阈值
+`stop_rel = 1e-3·max_r ≈ 0.03` ⇒ 两体不可能停在那儿，只可能是**多体对向力抵消**；
+且质量 oracle 与求解器共用候选对集合（`evaluated_pairs` 2972 = `candidate_pairs_last` 2972），
+违规对**在受力集合内**，不是"漏扫导致永远不受力"。
