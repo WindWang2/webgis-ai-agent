@@ -3,8 +3,8 @@
 - **分支**：`zcode/g42-goal-repair-execution-20261115T124804Z`
 - **Worktree**：`/home/kevin/projects/webgis/webgis-worktrees/g42-goal-repair-execution-20261115T124804Z`
 - **Base**：`655f769ca17f17c5797da13b4c299b8fa600e370`（origin/master，任务期未移动）
-- **Head**：（commit 后填充）
-- **PR**：（创建后填充）
+- **Head**：`cd36176445eaa47e515c65b05a6cfbbdf7875a2c`
+- **PR**：https://github.com/WindWang2/webgis-ai-agent/pull/2166
 
 ## 复现要点
 
