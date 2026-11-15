@@ -67,3 +67,9 @@ alembic_version=0107_data_join_authoring）。
 3. tests/quality/test_findings_ratchet_gate.py::test_ratchet_passes_against_committed_baseline
 4. tests/quality/test_quality_scenario_corpus.py::test_slice_geometry_states_green[science_]
 5. tests/test_api_auth_required.py::TestAllMutatingRoutesAuth::test_mutating_routes_use_auth_enforcing_depends
+6. tests/delivery 5 项（geoparquet 写读/fast-path/ids-parquet 有界读等）：本任务私有
+   venv 按 requirements.txt+dev 安装不含 pyarrow（仓库将其定位为运行时探测的
+   可选依赖，`arrow_available()`，requirements 无声明）—— 干净 base 同一 venv
+   逐位复现（5 failed / 52 passed 完全一致），属环境既有而非回归；本域 GeoParquet
+   投影路径在同一探测语义下诚实降级（见 INTERFACES 已知边界）。
+
