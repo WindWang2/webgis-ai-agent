@@ -143,6 +143,7 @@ REQUIRED_CONTEXT_KINDS = (
 MAP_MUTATION_KINDS = (
     "add_layer", "remove_layer", "style_layer", "camera", "marker",
     "component", "map_product", "annotation", "theme", "filter",
+    "symbol_asset",  # G40：图层符号资产绑定/解绑（style_layer 的资产子面）
 )
 
 #: data_mutations 词汇（数据面 mutation 种类）。

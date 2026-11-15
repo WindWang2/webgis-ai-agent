@@ -166,6 +166,9 @@ _TOOL_MODULES = [
     # G37：会话模型运行配置只读工具面（目录/状态/预算；独立模块防并发冲突；
     # 只读，绝不升级权限 —— 选择变化只来自用户经正式 API 的请求）
     ("app.tools.session_model_tools", "register_session_model_tools"),
+    # G40：制图符号资产工作台（目录/导入/绑定预览/应用/解绑；独立模块防并发冲突）
+    ("app.tools.cartographic_asset_tools", "register_cartographic_asset_tools"),
+
 ]
 
 

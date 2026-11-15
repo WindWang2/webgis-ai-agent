@@ -164,6 +164,10 @@ from app.lib.cartography.data_tiers import TIER_EXPORT_FEATURES
 from app.lib.cartography.render_diagnostics import (
     diagnostic as _render_diagnostic,
 )
+
+#: G40：类别值与声明 key_type 不符的哨兵（typed 匹配失败，绝不字符串化
+#: 并类 —— S02）。
+_sentinel_mismatch = object()
 from app.services.mapspec_expr import (
     ACTIVE_EXPORT_ZOOM,
     DEFAULT_EXPORT_ZOOM,
@@ -1218,6 +1222,7 @@ def compile_mapspec_to_svg_detailed(
     paper_mm: Any = None,
     page_id: str = "",
     atlas_page: Any = None,
+    symbol_assets: Any = None,
 ) -> SvgCompilation:
     """G26：``raster_bindings``（layer_id → 冻结绑定 dict）在场时，数值
     栅格层按冻结表达以地理对齐 data-URI 窗口嵌入（图层顺序保持）；缺席
@@ -1228,6 +1233,12 @@ def compile_mapspec_to_svg_detailed(
     / 图例排版 / 地图槽 fit 进入**真实绘制面**（``_render_authored_chrome``
     与 ``project()``）；``paper_mm`` / ``page_id`` / ``atlas_page`` 只用于
     页级覆写与回执。四者全缺席时原签名与原输出逐字节不变。
+
+    G40 additive：``symbol_assets``（content_digest → SymbolAssetDocument
+    model_dump dict）在场时，携带 ``symbol_asset`` 绑定块的图层按规范化
+    资产绘制（点符号 defs/use + 变换障碍；面纹理 pattern；类别映射 typed
+    匹配）。缺席/缺 digest → ``symbol_asset_unavailable`` 诊断 + 不画
+    （绝不默认圆伪装，S23）。参数恒缺席时原输出逐字节不变。
     """
     cap, timeout_ms_val = _resolve_export_thresholds(
         mapspec, max_features, timeout_ms)
@@ -1286,6 +1297,116 @@ def compile_mapspec_to_svg_detailed(
     glyph_obstacles: List[Tuple[float, float, float, float]] = []
     # G26：数值栅格嵌入回执（绑定在场时逐层填充；见 _embed_numeric_raster_window）
     raster_placements: List[Dict[str, Any]] = []
+
+    # ── G40：规范化符号资产消费面（纯函数；缺 digest 诚实披露不伪装）──
+    _symasset_docs: Dict[str, Any] = {}
+    if isinstance(symbol_assets, dict) and symbol_assets:
+        from app.lib.cartography.symbol_asset import SymbolAssetDocument
+        for _sa_digest, _sa_doc in symbol_assets.items():
+            if isinstance(_sa_doc, SymbolAssetDocument):
+                _symasset_docs[str(_sa_digest)] = _sa_doc
+            elif isinstance(_sa_doc, dict):
+                try:
+                    _symasset_docs[str(_sa_digest)] = \
+                        SymbolAssetDocument.model_validate(_sa_doc)
+                except Exception:  # noqa: BLE001 - 损坏文档不进绘制面
+                    pass
+    _symasset_defs: Dict[str, str] = {}       # defs_id → 片段（去重，S25）
+    _symasset_def_seq = 0                     # defs 硬帽内单调命名
+    _MAX_SYMASSET_DEFS = 128
+
+    def _symasset_doc_for(digest: Any) -> Optional[Any]:
+        doc = _symasset_docs.get(str(digest or ""))
+        if doc is not None and str(getattr(doc, "content_digest", "")) == str(digest):
+            return doc
+        return None
+
+    def _symasset_defs_id(doc: Any, params: Dict[str, Any]) -> Optional[str]:
+        """点符号 defs 注册（同 digest+params 去重；超帽 None=不画+诊断）。"""
+        nonlocal _symasset_def_seq
+        from app.lib.cartography.symbol_asset import params_digest as _pd
+        defs_id = f"cartoasset-{str(doc.content_digest)[7:19]}-{_pd(doc.kind, params)}"
+        if defs_id in _symasset_defs:
+            return defs_id
+        if len(_symasset_defs) >= _MAX_SYMASSET_DEFS:
+            return None
+        from app.lib.cartography.symbol_asset_svg import point_symbol_def
+        color = params.get("color")
+        _symasset_defs[defs_id] = point_symbol_def(
+            defs_id, doc, color_override=str(color) if color else None)
+        _symasset_def_seq += 1
+        return defs_id
+
+    def _symasset_pattern_id(doc: Any, params: Dict[str, Any]) -> Optional[str]:
+        """面纹理 pattern 注册（同 digest+params 去重；超帽 None=不画+诊断）。"""
+        nonlocal _symasset_def_seq
+        from app.lib.cartography.symbol_asset import params_digest as _pd
+        pat_id = f"cartoap-{str(doc.content_digest)[7:19]}-{_pd(doc.kind, params)}"
+        if pat_id in _symasset_defs:
+            return pat_id
+        if len(_symasset_defs) >= _MAX_SYMASSET_DEFS:
+            return None
+        from app.lib.cartography.symbol_asset_svg import texture_pattern_def
+        _symasset_defs[pat_id] = texture_pattern_def(
+            pat_id, doc, params, dpi_scale=dpi_scale)
+        _symasset_def_seq += 1
+        return pat_id
+
+    def _symasset_for_feature(
+        binding: Dict[str, Any], props: Dict[str, Any],
+    ) -> Optional[Tuple[Any, Dict[str, Any]]]:
+        """要素级绑定解析（类别映射 typed 匹配；S02 不字符串化并类）。
+
+        返回 (doc, params)；不可解析（缺 digest/类别不匹配且无 other）时
+        返回 None —— 调用方发诊断并跳过该要素（不画默认圆伪装）。
+        """
+        cb = binding.get("category_binding")
+        main_doc = _symasset_doc_for(binding.get("content_digest"))
+        main_params = dict(binding.get("params") or {})
+        if not isinstance(cb, dict):
+            return (main_doc, main_params) if main_doc is not None else None
+        field = str(cb.get("field") or "")
+        raw = props.get(field) if field else None
+        key_type = str(cb.get("key_type") or "string")
+        # typed 规范化：值与声明型不符 → 不并入任何数值/字符串近邻类别。
+        norm_key: Any = None
+        if key_type == "number":
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                norm_key = None if raw is None else _sentinel_mismatch
+            else:
+                norm_key = float(raw)
+        elif key_type == "bool":
+            norm_key = raw if isinstance(raw, bool) else (
+                None if raw is None else _sentinel_mismatch)
+        else:
+            norm_key = raw if isinstance(raw, str) else (
+                None if raw is None else _sentinel_mismatch)
+        if norm_key is _sentinel_mismatch:
+            # 型不匹配（如 key_type=number 而属性是 "1"）→ 显式走 other 规则
+            norm_key = None
+        if norm_key is not None:
+            for rule in cb.get("map") or []:
+                if not isinstance(rule, dict):
+                    continue
+                rk = rule.get("key")
+                if key_type == "number":
+                    matched = (not isinstance(rk, bool)
+                               and isinstance(rk, (int, float))
+                               and float(rk) == norm_key)
+                else:
+                    matched = rk == norm_key
+                if matched:
+                    doc = _symasset_doc_for(rule.get("content_digest"))
+                    if doc is None:
+                        return None
+                    return doc, dict(rule.get("params") or main_params)
+        # 未匹配 / 缺字段 → other 规则（显式声明；缺省 keep_current=主绑定）
+        if str(cb.get("other_mode") or "keep_current") == "fallback_asset":
+            doc = _symasset_doc_for(cb.get("other_content_digest"))
+            if doc is None:
+                return None
+            return doc, dict(cb.get("other_params") or main_params)
+        return (main_doc, main_params) if main_doc is not None else None
 
     def _emit_diag(code: str, detail: str = "", layer_id: Any = None,
                    component_id: Any = None) -> None:
@@ -1396,6 +1517,7 @@ def compile_mapspec_to_svg_detailed(
                 mapspec, _parsed.model_dump(mode="json", exclude_none=True),
                 target_dpi=target_dpi_val, geo_bounds=geo_bounds,
                 page_id=page_id, paper_mm=paper_mm, atlas_page=atlas_page,
+                symbol_assets=_symasset_docs or None,
             )
             _g34_map = build_map_projection(
                 geo_bounds, _g34_draw["map_rect"], _g34_draw["map_fit"])
@@ -1890,6 +2012,61 @@ def compile_mapspec_to_svg_detailed(
                             coords = geom.get("coordinates")
                             if not coords:
                                 continue
+                            # ── G40：点符号资产绑定优先（规范形 use + 变换
+                            # 障碍；不画默认圆 —— 缺资产诚实披露）。──
+                            _sym_binding = (
+                                layer.get("symbol_asset")
+                                if isinstance(layer.get("symbol_asset"), dict)
+                                else None
+                            )
+                            if _sym_binding is not None and \
+                                    _sym_binding.get("kind") == "point_symbol":
+                                _sa_resolved = _symasset_for_feature(
+                                    _sym_binding, props)
+                                if _sa_resolved is None:
+                                    _emit_diag(
+                                        "symbol_asset_unavailable",
+                                        detail=str(_sym_binding.get("asset_id") or "")[:80],
+                                        layer_id=_lid)
+                                else:
+                                    _sa_doc, _sa_params = _sa_resolved
+                                    _defs_id = _symasset_defs_id(_sa_doc, _sa_params)
+                                    if _defs_id is None:
+                                        _emit_diag(
+                                            "symbol_asset_def_budget",
+                                            layer_id=_lid)
+                                    else:
+                                        from app.lib.cartography.symbol_asset_svg import (
+                                            point_symbol_obstacle_box,
+                                            point_symbol_use,
+                                        )
+                                        x, y = project(coords)
+                                        elements_svg += point_symbol_use(
+                                            _defs_id, float(x), float(y),
+                                            _sa_doc, _sa_params,
+                                            dpi_scale=dpi_scale)
+                                        if (
+                                            collision_mode
+                                            and _layer_glyph_obs_n < _MAX_OBSTACLES_PER_LAYER
+                                        ):
+                                            # 变换后保守外接盒（anchor 偏移 +
+                                            # 旋转 + 缩放 + stroke 近似已含）；
+                                            # 带身份进 v1 接口（同 circle 语义）。
+                                            _obs = point_symbol_obstacle_box(
+                                                float(x), float(y), _sa_doc,
+                                                _sa_params, dpi_scale=dpi_scale)
+                                            if geometry_v1:
+                                                _fid_sa, _ = _resolve_feature_identity(feat)
+                                                _circle_obstacles_v1.append(_ObstacleBox(
+                                                    box=_obs, kind="circle",
+                                                    layer_id=_lid, feature_id=_fid_sa))
+                                            else:
+                                                glyph_obstacles.append(_obs)
+                                            _layer_glyph_obs_n += 1
+                                continue
+                            coords = geom.get("coordinates")
+                            if not coords:
+                                continue
                             x, y = project(coords)
                             base_r = _safe_float(_resolve_paint_value(paint.get("circle-radius") or paint.get("radius"), props, 5.0), 5.0)
                             r = _fmt_num(base_r * dpi_scale)
@@ -1984,6 +2161,54 @@ def compile_mapspec_to_svg_detailed(
                                 continue
                             polygons = [coords] if geom.get("type") == "Polygon" else coords
                             if not isinstance(polygons, list):
+                                continue
+                            # ── G40：面纹理资产绑定优先（pattern 填充 +
+                            # evenodd 洞语义既有；背景色合同在参数）。──
+                            _sym_binding = (
+                                layer.get("symbol_asset")
+                                if isinstance(layer.get("symbol_asset"), dict)
+                                else None
+                            )
+                            if _sym_binding is not None and \
+                                    _sym_binding.get("kind") == "area_texture":
+                                _sa_resolved = _symasset_for_feature(
+                                    _sym_binding, props)
+                                if _sa_resolved is None:
+                                    _emit_diag(
+                                        "symbol_asset_unavailable",
+                                        detail=str(_sym_binding.get("asset_id") or "")[:80],
+                                        layer_id=_lid)
+                                    continue
+                                _sa_doc, _sa_params = _sa_resolved
+                                _pat_id = _symasset_pattern_id(_sa_doc, _sa_params)
+                                if _pat_id is None:
+                                    _emit_diag("symbol_asset_def_budget", layer_id=_lid)
+                                    continue
+                                _bg = str(_sa_params.get("bg_color") or "transparent")
+                                _outline = _escape_svg_attr(_resolve_paint_value(
+                                    paint.get("fill-outline-color") or paint.get("strokeColor"),
+                                    props, "#1d4ed8"))
+                                _outline_w = _fmt_num(1.0 * dpi_scale)
+                                for poly_rings in polygons:
+                                    if not isinstance(poly_rings, list) or not poly_rings:
+                                        continue
+                                    _ring_paths = []
+                                    for ring in poly_rings:
+                                        if not isinstance(ring, list) or not ring:
+                                            continue
+                                        _pts = " L ".join(",".join(project(c)) for c in ring)
+                                        _ring_paths.append(f"M {_pts} Z")
+                                    if not _ring_paths:
+                                        continue
+                                    _d_str = " ".join(_ring_paths)
+                                    if _bg not in ("transparent", "none"):
+                                        elements_svg += (
+                                            f'<path d="{_d_str}" fill="{_escape_svg_attr(_bg)}" '
+                                            f'fill-rule="evenodd" stroke="none" />\n')
+                                    elements_svg += (
+                                        f'<path d="{_d_str}" fill="url(#{_pat_id})" '
+                                        f'fill-rule="evenodd" stroke="{_outline}" '
+                                        f'stroke-width="{_outline_w}" />\n')
                                 continue
                             default_color = "#94a3b8" if layer_type == "fill-extrusion" else "#60a5fa"
                             default_opacity = 0.8 if layer_type == "fill-extrusion" else 0.6
@@ -2696,8 +2921,13 @@ def compile_mapspec_to_svg_detailed(
                 f'height="{_fmt_num(float(_clip["height"]))}" /></clipPath></defs>'
             )
             _g34_clip_attr = f' clip-path="url(#{_clip_id})"'
+        # G40：符号资产 defs（插入序确定；同 digest+params 已去重）。
+        _symasset_defs_str = ""
+        if _symasset_defs:
+            _symasset_defs_str = (
+                '<defs>' + "".join(_symasset_defs.values()) + '</defs>')
         return SvgCompilation(
-            svg=f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}{_g34_defs}
+            svg=f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}{_g34_defs}{_symasset_defs_str}
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers"{_g34_clip_attr}>
     {elements_svg}

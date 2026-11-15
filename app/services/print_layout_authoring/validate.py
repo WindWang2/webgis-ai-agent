@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import math
 from typing import Any, Dict, List, Optional
 
 from app.contracts.workbench_locks import _lock_matches, locked_component_ids_of

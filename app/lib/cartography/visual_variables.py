@@ -64,16 +64,20 @@ VISUAL_VARIABLES: Tuple[str, ...] = (
 
 #: runtime 支持状态（MapLibre/deck 表达域现状；与 model_library 的
 #: runtime_status 同风格——描述性标注，不虚构能力）。
+#: G40（2026-11）：shape/texture/orientation 的**受控资产绑定通道**已在
+#: live(MapLibre 6.10 addImage/icon-*/fill-pattern) + SVG/PNG/PDF 出版链
+#: 实证（planning/G40-CARTOGRAPHIC-SYMBOL-ASSETS）；自由形状/自由纹理/
+#: map 对齐语义仍未成契约 —— 维持 partial，不整体升 supported。
 CHANNEL_RUNTIME_STATUS: Dict[str, str] = {
     "position": "supported",
     "size": "supported",
-    "shape": "partial",      # MapLibre symbol 仅图标枚举，非自由形状
+    "shape": "partial",      # 图标枚举面扩至 G40 版本化符号资产（非自由形状）
     "hue": "supported",
     "lightness": "supported",
     "saturation": "supported",
     "opacity": "supported",
-    "texture": "unsupported",  # fill-pattern 有，但 CVD/print 语义未成契约
-    "orientation": "partial",  # icon-rotate 存在，语义面未成契约
+    "texture": "partial",    # G40 面纹理资产链已验证（fill-pattern+pattern 参数契约）；自由纹理/CVD 未成契约
+    "orientation": "partial",  # icon-rotate viewport 对齐已成 G40 合同；map/pitch 对齐未实现
 }
 
 #: grammar 可分配的通道（primary/secondary 都必须可分配）。

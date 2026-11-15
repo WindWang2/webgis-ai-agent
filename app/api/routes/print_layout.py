@@ -12,6 +12,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+
+from app.core.auth import get_current_user_optional
 from pydantic import BaseModel, Field
 
 from app.models.db_model import Conversation
@@ -163,10 +165,21 @@ async def preview(
 async def export(
     body: ExportBody,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    user: Any = Depends(get_current_user_optional),
     conv: Conversation = Depends(require_owned_session),
 ):
+    # F7（评审）：透传调用者身份 —— 符号资产冻结解析按属主 scope（此前
+    # 回落匿名 → 属主 DB 资产在版式导出中 symbol_asset_unavailable）。
+    from app.core.auth import actor_ids
+
+    user_id, org_id = actor_ids(user if isinstance(user, dict) else None)
     result = await _call(service.submit_export(
-        body.session_id, fmt=body.format, dpi=body.dpi, page_id=body.page_id))
+        body.session_id, fmt=body.format, dpi=body.dpi, page_id=body.page_id,
+        asset_identity={
+            "user_id": user_id or None,
+            "org_id": org_id,
+            "role": user.get("role") if isinstance(user, dict) else None,
+        }))
     _raise(result)
     return result
 

@@ -1,14 +1,48 @@
 'use client';
 
+import React from 'react';
 import type { CategoricalLegendSpec } from '@/lib/map-kit/types';
+import { resolveBindingSwatch } from '@/lib/cartographic-assets/legend-swatch';
 import { useT } from '@/lib/i18n/useT';
 import { LegendCard } from './legend-card';
 
 interface Props {
   spec: CategoricalLegendSpec;
+  /** G40：同层符号资产绑定 —— swatch 与地图同一规范形/参数（WP08）。 */
+  symbolAsset?: Record<string, unknown> | null;
 }
 
-export function CategoricalLegend({ spec }: Props) {
+/** 绑定 → 内联 SVG swatch（doc 由 builtin/缓存取；缺席回退色块）。 */
+function AssetSwatch({
+  symbolAsset, categoryKey,
+}: {
+  symbolAsset: Record<string, unknown>;
+  categoryKey?: string | number | boolean;
+}) {
+  const html = React.useMemo(() => {
+    try {
+      const binding = symbolAsset as unknown as Parameters<
+        typeof resolveBindingSwatch>[0];
+      // F19（评审）：按类别键解析规则资产（与出版图例同语义 —— 此前
+      // 所有类别共用主绑定 swatch，live 类别区分度丢失）。
+      const svg = resolveBindingSwatch(binding, categoryKey);
+      return svg;
+    } catch {
+      return null;
+    }
+  }, [symbolAsset, categoryKey]);
+  if (!html) return null;
+  return (
+    <svg
+      width="16" height="13" viewBox="0 0 16 13" role="img"
+      className="shrink-0 rounded-xs ring-1 ring-inset ring-map-chrome-border"
+      data-testid="cat-swatch-asset"
+      dangerouslySetInnerHTML={{ __html: `<rect width="16" height="13" fill="#ffffff"/>${html}` }}
+    />
+  );
+}
+
+export function CategoricalLegend({ spec, symbolAsset }: Props) {
   const t = useT();
   const { field, categories } = spec;
   return (
@@ -16,11 +50,20 @@ export function CategoricalLegend({ spec }: Props) {
       <div className="space-y-1">
         {categories.map((c) => (
           <div key={c.key} className="flex items-center gap-2">
-            <div
-              data-testid="cat-swatch"
-              className="h-icon-sm w-icon-sm shrink-0 rounded-xs ring-1 ring-inset ring-map-chrome-border"
-              style={{ backgroundColor: c.color }}
-            />
+            {symbolAsset ? (
+              <div
+                data-testid="cat-swatch"
+                className="shrink-0 rounded-xs ring-1 ring-inset ring-map-chrome-border"
+              >
+                <AssetSwatch symbolAsset={symbolAsset} categoryKey={c.key} />
+              </div>
+            ) : (
+              <div
+                data-testid="cat-swatch"
+                className="h-icon-sm w-icon-sm shrink-0 rounded-xs ring-1 ring-inset ring-map-chrome-border"
+                style={{ backgroundColor: c.color }}
+              />
+            )}
             <span className="truncate text-meta text-map-chrome-ink" title={c.label}>
               {c.label}
             </span>

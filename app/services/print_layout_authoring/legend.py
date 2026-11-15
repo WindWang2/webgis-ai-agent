@@ -61,7 +61,11 @@ def _legend_specs_of(mapspec: Dict[str, Any],
             if isinstance(raw, dict):
                 spec = normalize_legend_spec(raw)
                 if isinstance(spec, dict):
-                    out.append({"layer_id": str(layer.get("id") or ""), "spec": spec})
+                    item = {"layer_id": str(layer.get("id") or ""), "spec": spec}
+                    if isinstance(layer.get("symbol_asset"), dict):
+                        # G40：同层符号资产绑定（图例 swatch 同语义消费）
+                        item["symbol_asset"] = layer["symbol_asset"]
+                    out.append(item)
     if not out and isinstance(layout, dict):
         spec = layout.get("legend")
         if isinstance(spec, dict) and (spec.get("entries") or spec.get("categories")):
@@ -95,9 +99,67 @@ def _proportional_samples(spec: Optional[Dict[str, Any]]) -> List[Dict[str, Any]
     return out
 
 
+def _symbol_asset_doc(symbol_assets: Any, digest: Any):
+    """content_digest → SymbolAssetDocument（digest 对账；缺席 None）。"""
+    if not isinstance(symbol_assets, dict):
+        return None
+    from app.lib.cartography.symbol_asset import SymbolAssetDocument
+    raw = symbol_assets.get(str(digest or ""))
+    if raw is None:
+        return None
+    doc = raw if isinstance(raw, SymbolAssetDocument) else None
+    if doc is None:
+        try:
+            doc = SymbolAssetDocument.model_validate(raw)
+        except Exception:  # noqa: BLE001
+            return None
+    if str(doc.content_digest) != str(digest):
+        return None
+    return doc
+
+
+def _swatch_of(binding: Dict[str, Any], symbol_assets: Any) -> Optional[Dict[str, Any]]:
+    """绑定块 → 图例 swatch 描述符（含预渲染 SVG 片段；doc 缺席仅描述符）。"""
+    doc = _symbol_asset_doc(symbol_assets, binding.get("content_digest"))
+    desc: Dict[str, Any] = {
+        "asset_id": str(binding.get("asset_id") or ""),
+        "revision": binding.get("revision"),
+        "content_digest": str(binding.get("content_digest") or ""),
+        "kind": str(binding.get("kind") or ""),
+        "params": dict(binding.get("params") or {}),
+    }
+    if doc is not None:
+        from app.lib.cartography.symbol_asset_svg import swatch_svg
+        params = desc["params"]
+        desc["swatch_svg"] = swatch_svg(doc, params, box_w=24.0, box_h=19.2)
+    return desc
+
+
+def _swatch_for_entry_key(binding: Dict[str, Any], cb: Dict[str, Any],
+                          key: Any, symbol_assets: Any) -> Optional[Dict[str, Any]]:
+    """类别条目 → 该类别的规则资产 swatch（未匹配走 other/主绑定）。"""
+    for rule in cb.get("map") or []:
+        if not isinstance(rule, dict):
+            continue
+        if rule.get("key") == key:
+            rule_binding = dict(binding)
+            rule_binding["asset_id"] = rule.get("asset_id")
+            rule_binding["content_digest"] = rule.get("content_digest")
+            rule_binding["params"] = rule.get("params") or binding.get("params")
+            return _swatch_of(rule_binding, symbol_assets)
+    if str(cb.get("other_mode") or "keep_current") == "fallback_asset":
+        ob = dict(binding)
+        ob["asset_id"] = cb.get("other_asset")
+        ob["content_digest"] = cb.get("other_content_digest")
+        ob["params"] = cb.get("other_params") or binding.get("params")
+        return _swatch_of(ob, symbol_assets)
+    return _swatch_of(binding, symbol_assets)
+
+
 def read_legend_content(mapspec: Dict[str, Any],
                         component_id: str = "",
-                        group_by_layer: bool = False) -> Dict[str, Any]:
+                        group_by_layer: bool = False,
+                        symbol_assets: Any = None) -> Dict[str, Any]:
     """返回完整图例内容（含 nodata / 范围外 / unit / notes / 比例样本）。
 
     条目来自 ``derive_legend_items`` 这一 canonical 单源；G34 不重算断点、
@@ -148,24 +210,77 @@ def read_legend_content(mapspec: Dict[str, Any],
         notes.extend(str(n) for n in (model.get("notes") or []))
         has_nodata = has_nodata or bool(model.get("hasNodata"))
         kind = str(model.get("kind") or kind)
+        _binding = item.get("symbol_asset")
+        _cb = (_binding or {}).get("category_binding") \
+            if isinstance(_binding, dict) else None
         for e in model.get("entries") or []:
             if not isinstance(e, dict):
                 continue
             label = str(e.get("label") or "")
             if group_by_layer and item["layer_id"] and len(specs) > 1:
                 label = f"[{item['layer_id']}] {label}"
-            entries.append({
+            entry = {
                 "label": label,
                 "color": str(e.get("color") or "#888888"),
                 "kind": str(e.get("kind") or "class"),
                 "layer_id": item["layer_id"],
-            })
+            }
+            # G40：同层绑定 → 条目挂同语义 swatch（类别映射按 key 匹配）。
+            if isinstance(_binding, dict):
+                if isinstance(_cb, dict) and str(e.get("kind") or "") == "class":
+                    sw = _swatch_for_entry_key(
+                        _binding, _cb, e.get("value", e.get("label")),
+                        symbol_assets)
+                else:
+                    sw = _swatch_of(_binding, symbol_assets)
+                if sw is not None:
+                    entry["swatch"] = sw
+            entries.append(entry)
     # 比例符号专属图例：canonical 条目为空时用样本生成可读标签（仍不伪造数值）。
     if not entries and samples:
         for s in samples:
             entries.append({
                 "label": s["label"] or f"{s['value']:g}",
                 "color": s["color"], "kind": "proportional", "layer_id": "",
+            })
+    # G40：带符号资产绑定但无 legend_spec 的层 → 单条目（图层名 + swatch；
+    # S12：同色不同向的两个纹理层在图例中必须可分）。
+    if isinstance(mapspec, dict):
+        _covered = {str(e.get("layer_id") or "") for e in entries}
+        for layer in mapspec.get("layers") or []:
+            if not isinstance(layer, dict):
+                continue
+            _lid = str(layer.get("id") or "")
+            if not _lid or _lid in _covered:
+                continue
+            _binding = layer.get("symbol_asset")
+            if not isinstance(_binding, dict):
+                continue
+            if component_id:
+                # 组件显式 layerId 限定 —— 只给被指向的层加单条目
+                _layout = mapspec.get("layout")
+                _wanted = None
+                if isinstance(_layout, dict):
+                    for c in _layout.get("components") or []:
+                        if isinstance(c, dict) and c.get("id") == component_id:
+                            _opts = c.get("options")
+                            if isinstance(_opts, dict) and isinstance(
+                                    _opts.get("layerId"), str):
+                                _wanted = _opts["layerId"]
+                            break
+                if _wanted is not None and _wanted != _lid:
+                    continue
+            sw = _swatch_of(_binding, symbol_assets)
+            if sw is None:
+                continue
+            _params = dict(_binding.get("params") or {})
+            entries.append({
+                "label": str(layer.get("title") or _lid),
+                "color": str(_params.get("fg_color") or _params.get("color")
+                             or "#888888"),
+                "kind": "symbol_asset",
+                "layer_id": _lid,
+                "swatch": sw,
             })
     return {
         "available": bool(entries or samples or canonicals),

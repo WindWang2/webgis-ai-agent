@@ -12,8 +12,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
-import json
-import os
 import re
 import subprocess
 import tempfile
@@ -28,17 +26,14 @@ from app.lib.cartography.print_layout_schema import (
 from app.services.print_layout_authoring import (
     operations, template as template_mod,
 )
-from app.services.print_layout_authoring.compile import (
-    build_draw_plan, serializable_receipt,
-)
 from app.services.print_layout_authoring.fonts import (
     FONT_IDS, font_asset_version, font_resource_status,
 )
 from app.services.print_layout_authoring.pages import (
-    page_plan, sync_pages, planner_pages,
+    page_plan, sync_pages,
 )
 from app.services.print_layout_authoring.units import (
-    clamp_dpi, mm_to_canvas_units, mm_to_sample_px, units_corpus,
+    clamp_dpi, mm_to_sample_px, units_corpus,
 )
 from app.services.print_layout_authoring.validate import (
     check_source_revision, locks_of, validate_authoring,
@@ -457,7 +452,8 @@ def _paper_for(plan: Dict[str, Any], page_id: str) -> tuple:
 
 
 async def submit_export(session_id: str, *, fmt: str = "pdf", dpi: int = 300,
-                        page_id: str = "", cancel_event: Any = None) -> Dict[str, Any]:
+                        page_id: str = "", cancel_event: Any = None,
+                        asset_identity: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """提交**既有**导出链（PDF/SVG/PNG），作者计划从同一 MapSpec 读取。
 
     返回 refs-only 回执；不返回整页像素或字体 bytes。取消 / 依赖缺失 →
@@ -481,11 +477,16 @@ async def submit_export(session_id: str, *, fmt: str = "pdf", dpi: int = 300,
         geo_bounds = [100.0, 20.0, 110.0, 30.0]
     from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 
+    # G40：资产冻结解析（S27 —— 页面冻结任务创建时的 digest pin；失败
+    # 条目不阻断导出，编译面 symbol_asset_unavailable 披露）。
+    symbol_assets, symbol_failures = await asyncio.to_thread(
+        _resolve_symbol_assets_sync, mapspec, asset_identity)
     comp = await asyncio.to_thread(
         compile_mapspec_to_svg_detailed,
         mapspec, target_dpi=dpi_i, width=int(pw * 4), height=int(ph * 4),
         padding=24, include_chrome=True, bounds=geo_bounds,
         print_layout=plan, paper_mm=(pw, ph), page_id=page_id,
+        symbol_assets=symbol_assets or None,
     )
     receipt = dict(getattr(comp, "print_layout_receipt", None) or {})
     if receipt.get("status") == "compile_failed":
@@ -502,6 +503,11 @@ async def submit_export(session_id: str, *, fmt: str = "pdf", dpi: int = 300,
         "print_layout": receipt,
         "mapspec_revision": await _spec_revision(session_id, mapspec),
     }
+    if symbol_assets or symbol_failures:
+        manifest["symbol_assets"] = {
+            "resolved": sorted(symbol_assets.keys()),
+            "unresolved": symbol_failures[:16],
+        }
     if fmt == "svg":
         payload = _with_physical_size(comp.svg, pw, ph).encode("utf-8")
         media, ext = "image/svg+xml", ".svg"
@@ -546,6 +552,37 @@ async def submit_export(session_id: str, *, fmt: str = "pdf", dpi: int = 300,
     }
 
 
+def _resolve_symbol_assets_sync(
+    mapspec: Dict[str, Any],
+    asset_identity: Optional[Dict[str, Any]] = None,
+) -> tuple:
+    """G40：冻结文档 → ({digest: 规范形}, failures)（同步 DB）。
+
+    身份优先级：显式 asset_identity（HTTP 路由登录用户）> 工具上下文
+    （Pi 面）> 匿名（builtin-only）。
+    """
+    from app.core.database import SessionLocal
+    from app.services.cartographic_assets.catalog import (
+        collect_symbol_asset_documents,
+    )
+
+    user_id = (asset_identity or {}).get("user_id")
+    org_id = (asset_identity or {}).get("org_id")
+    role = (asset_identity or {}).get("role")
+    if user_id is None and org_id is None:
+        try:
+            from app.services.templates.composition_assets import tool_caller_identity
+            user_id, org_id = tool_caller_identity()
+        except Exception:  # noqa: BLE001 - 上下文缺席 → 匿名（builtin-only）
+            pass
+    db = SessionLocal()
+    try:
+        return collect_symbol_asset_documents(
+            db, mapspec, user_id=user_id, org_id=org_id, role=role)
+    finally:
+        db.close()
+
+
 _SVG_TAG_RE = re.compile(r"<svg\b[^>]*>", re.IGNORECASE)
 
 
@@ -582,7 +619,12 @@ def _svg_to_png(svg: str, width_mm: float, height_mm: float, dpi: int) -> bytes:
     with tempfile.TemporaryDirectory(prefix="g34-png-") as td:
         src = Path(td) / "page.svg"
         dst = Path(td) / "page.png"
-        src.write_bytes(svg.encode("utf-8"))
+        # G40：librsvg CLI 缩放 ≠ 内在尺寸时丢 pattern 内容（实证回归）
+        # —— 含纹理标记时改写根 width/height 为采样像素后按内在尺寸渲染
+        #（像素等价；既有无纹理页面路径与字节不变）。
+        from app.lib.cartography.symbol_asset_svg import prepare_svg_for_rasterize
+        src.write_bytes(prepare_svg_for_rasterize(
+            svg, w_px, h_px).encode("utf-8"))
         proc = subprocess.run(
             [exe, "-w", str(w_px), "-h", str(h_px), "-o", str(dst), str(src)],
             capture_output=True, timeout=60,

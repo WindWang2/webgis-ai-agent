@@ -28,7 +28,7 @@ from app.services.print_layout_authoring.legend import layout_legend, read_legen
 from app.services.print_layout_authoring.pages import page_plan
 from app.services.print_layout_authoring.template import binding_context, resolve_binding
 from app.services.print_layout_authoring.units import (
-    mm_to_canvas_units, mm_to_pt, pt_to_canvas_units, pt_to_mm,
+    mm_to_canvas_units, pt_to_canvas_units, pt_to_mm,
 )
 
 DRAW_PLAN_VERSION = "print_layout_draw.v1"
@@ -129,6 +129,7 @@ def build_draw_plan(
     page_id: str = "",
     paper_mm: Optional[Tuple[float, float]] = None,
     atlas_page: Optional[Dict[str, Any]] = None,
+    symbol_assets: Any = None,
 ) -> Dict[str, Any]:
     """作者计划 → 绘制计划（所有几何单位 = SVG viewBox user unit）。"""
     from app.services.print_layout_authoring.units import clamp_dpi
@@ -151,7 +152,8 @@ def build_draw_plan(
         page_info = {**page_info, **{k: v for k, v in atlas_page.items()
                                      if k in ("title", "page_number", "page_count", "binding_digest")}}
 
-    legend_content = read_legend_content(mapspec)
+    legend_content = read_legend_content(
+        mapspec, symbol_assets=symbol_assets)
     ctx = binding_context(
         mapspec, {"title": page_info.get("title", "")},
         page_number=int(page_info.get("page_number") or 1),
@@ -242,7 +244,7 @@ def build_draw_plan(
                 diagnostics.append({"code": "TEXT_OVERFLOW_BLOCKED", "component_id": cid})
         if kind == "legend":
             lay = {**(effective_plan.get("legend_defaults") or {}), **(c.get("legend") or {})}
-            content = read_legend_content(mapspec, cid,
+            content = read_legend_content(mapspec, cid, symbol_assets=symbol_assets,
                                           group_by_layer=bool(lay.get("group_by_layer")))
             lp = layout_legend(content, lay, f, typo, dpi)
             draw["legend"] = lp

@@ -759,6 +759,66 @@
     "title": "AssessRequest",
     "type": "object"
    },
+   "AssetCreateBody": {
+    "properties": {
+     "description": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Description",
+      "type": "string"
+     },
+     "kind": {
+      "description": "point_symbol | area_texture",
+      "title": "Kind",
+      "type": "string"
+     },
+     "license_note": {
+      "default": "",
+      "maxLength": 300,
+      "title": "License Note",
+      "type": "string"
+     },
+     "name": {
+      "default": "",
+      "maxLength": 120,
+      "title": "Name",
+      "type": "string"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     },
+     "publish": {
+      "default": true,
+      "title": "Publish",
+      "type": "boolean"
+     },
+     "svg_base64": {
+      "anyOf": [
+       {
+        "maxLength": 700000,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "受控 SVG 子集字节（base64；~512KB 原始上限）",
+      "title": "Svg Base64"
+     },
+     "visibility": {
+      "default": "private",
+      "title": "Visibility",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "AssetCreateBody",
+    "type": "object"
+   },
    "AssetCreateRequest": {
     "properties": {
      "description": {
@@ -1372,6 +1432,52 @@
     "title": "BatchListResponse",
     "type": "object"
    },
+   "BindingCommitBody": {
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     }
+    },
+    "required": [
+     "plan",
+     "expected_revision"
+    ],
+    "title": "BindingCommitBody",
+    "type": "object"
+   },
+   "BindingPlanBody": {
+    "properties": {
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "BindingPlanBody",
+    "type": "object"
+   },
    "BlockCreateRequest": {
     "properties": {
      "block": {
@@ -1514,6 +1620,77 @@
      "file"
     ],
     "title": "Body_export_map_as_pdf_api_v1_export_pdf_post",
+    "type": "object"
+   },
+   "Body_intake_visual_evidence_api_v1_chat_sessions__session_id__visual_context_evidence_post": {
+    "properties": {
+     "crop": {
+      "default": "",
+      "title": "Crop",
+      "type": "string"
+     },
+     "dpr": {
+      "default": 1.0,
+      "maximum": 8.0,
+      "minimum": 0.25,
+      "title": "Dpr",
+      "type": "number"
+     },
+     "image": {
+      "contentMediaType": "application/octet-stream",
+      "title": "Image",
+      "type": "string"
+     },
+     "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+     },
+     "mapspec_fingerprint": {
+      "default": "",
+      "title": "Mapspec Fingerprint",
+      "type": "string"
+     },
+     "mapspec_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mapspec Revision"
+     },
+     "origin_height": {
+      "default": 0,
+      "maximum": 16384.0,
+      "minimum": 0.0,
+      "title": "Origin Height",
+      "type": "integer"
+     },
+     "origin_width": {
+      "default": 0,
+      "maximum": 16384.0,
+      "minimum": 0.0,
+      "title": "Origin Width",
+      "type": "integer"
+     },
+     "source_type": {
+      "title": "Source Type",
+      "type": "string"
+     },
+     "viewport": {
+      "default": "",
+      "title": "Viewport",
+      "type": "string"
+     }
+    },
+    "required": [
+     "image",
+     "source_type"
+    ],
+    "title": "Body_intake_visual_evidence_api_v1_chat_sessions__session_id__visual_context_evidence_post",
     "type": "object"
    },
    "Body_upload_files_api_v1_upload_post": {
@@ -2774,6 +2951,28 @@
     "title": "ChartArtifactResponse",
     "type": "object"
    },
+   "ChatAttachmentRef": {
+    "description": "G36（ADR-0291）：聊天附件引用 —— 只携 evidence ref，不携字节。\n\nbytes 仅经受权 intake 端点（multipart）进入 blob store；本 DTO 是\nChatRequest 的加性字段（256KB 整闸不受影响）。服务端在 turn 发送时\n复验归属/存在/约束（bridge ``_resolve_turn_images``）。",
+    "properties": {
+     "evidence_id": {
+      "pattern": "^vev-[0-9a-f]{16}$",
+      "title": "Evidence Id",
+      "type": "string"
+     },
+     "purpose": {
+      "default": "context",
+      "description": "用途标记（context/verify_reference 等；回执披露用）",
+      "maxLength": 32,
+      "title": "Purpose",
+      "type": "string"
+     }
+    },
+    "required": [
+     "evidence_id"
+    ],
+    "title": "ChatAttachmentRef",
+    "type": "object"
+   },
    "ChatRequest": {
     "description": "聊天请求。",
     "examples": [
@@ -2783,6 +2982,14 @@
      }
     ],
     "properties": {
+     "attachments": {
+      "items": {
+       "$ref": "#/components/schemas/ChatAttachmentRef"
+      },
+      "maxItems": 4,
+      "title": "Attachments",
+      "type": "array"
+     },
      "canvas_actions": {
       "anyOf": [
        {
@@ -6049,6 +6256,33 @@
      "expected_revision"
     ],
     "title": "ExecuteBody",
+    "type": "object"
+   },
+   "ExecuteIn": {
+    "properties": {
+     "background": {
+      "default": false,
+      "title": "Background",
+      "type": "boolean"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "title": "ExecuteIn",
     "type": "object"
    },
    "ExecutePlanRequest": {
@@ -10947,6 +11181,60 @@
     "title": "MixedMapExportRequest",
     "type": "object"
    },
+   "ModelPreferenceUpdate": {
+    "properties": {
+     "expected_revision": {
+      "description": "CAS：当前已知 revision",
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "mode": {
+      "description": "inherit | explicit",
+      "title": "Mode",
+      "type": "string"
+     },
+     "model_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model Id"
+     },
+     "session_token_cap": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Token Cap"
+     },
+     "thinking_level": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Thinking Level"
+     }
+    },
+    "required": [
+     "mode",
+     "expected_revision"
+    ],
+    "title": "ModelPreferenceUpdate",
+    "type": "object"
+   },
    "MutationApplyResponse": {
     "description": "POST /chat/sessions/{session_id}/mapspec/mutations 响应。\n\n字段按 handler 实际返回逐项镜像（前端游标推进消费 ``mapspec`` +\n``mutation_revision``，见 frontend/lib/mapspec/user-mutation.ts）。\n#1239 初版模型 {session_id, revision} 与实测形状不符，以实测为准重写。",
     "examples": [
@@ -11067,6 +11355,66 @@
      "mutation_revision"
     ],
     "title": "MutationApplyResponse",
+    "type": "object"
+   },
+   "NewVersionBody": {
+    "properties": {
+     "description": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Description",
+      "type": "string"
+     },
+     "kind": {
+      "description": "point_symbol | area_texture",
+      "title": "Kind",
+      "type": "string"
+     },
+     "license_note": {
+      "default": "",
+      "maxLength": 300,
+      "title": "License Note",
+      "type": "string"
+     },
+     "name": {
+      "default": "",
+      "maxLength": 120,
+      "title": "Name",
+      "type": "string"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     },
+     "publish": {
+      "default": true,
+      "title": "Publish",
+      "type": "boolean"
+     },
+     "svg_base64": {
+      "anyOf": [
+       {
+        "maxLength": 700000,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "受控 SVG 子集字节（base64；~512KB 原始上限）",
+      "title": "Svg Base64"
+     },
+     "visibility": {
+      "default": "private",
+      "title": "Visibility",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "title": "NewVersionBody",
     "type": "object"
    },
    "NodeCancelRequest": {
@@ -12469,6 +12817,100 @@
     "title": "PlanConfirmRequest",
     "type": "object"
    },
+   "PlanCreateIn": {
+    "properties": {
+     "distance_mode": {
+      "default": "geodesic",
+      "title": "Distance Mode",
+      "type": "string"
+     },
+     "include_vertices": {
+      "default": true,
+      "title": "Include Vertices",
+      "type": "boolean"
+     },
+     "line_feature_id": {
+      "default": "",
+      "title": "Line Feature Id",
+      "type": "string"
+     },
+     "lines_ref": {
+      "default": "",
+      "title": "Lines Ref",
+      "type": "string"
+     },
+     "method": {
+      "default": "source_pixel",
+      "title": "Method",
+      "type": "string"
+     },
+     "mode": {
+      "pattern": "^(source_points|line_stations)$",
+      "title": "Mode",
+      "type": "string"
+     },
+     "name": {
+      "default": "",
+      "title": "Name",
+      "type": "string"
+     },
+     "nodata_policy": {
+      "default": "strict",
+      "title": "Nodata Policy",
+      "type": "string"
+     },
+     "points_ref": {
+      "default": "",
+      "title": "Points Ref",
+      "type": "string"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     },
+     "selection": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SelectionIn"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "sources": {
+      "items": {
+       "$ref": "#/components/schemas/SourceSpecIn"
+      },
+      "minItems": 1,
+      "title": "Sources",
+      "type": "array"
+     },
+     "station_crs": {
+      "default": "EPSG:4326",
+      "title": "Station Crs",
+      "type": "string"
+     },
+     "station_step": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Station Step"
+     }
+    },
+    "required": [
+     "mode",
+     "sources"
+    ],
+    "title": "PlanCreateIn",
+    "type": "object"
+   },
    "PlanDecisionRequest": {
     "additionalProperties": false,
     "properties": {
@@ -12642,6 +13084,76 @@
      "plan"
     ],
     "title": "PlanResponse",
+    "type": "object"
+   },
+   "PlanReviseIn": {
+    "properties": {
+     "distance_mode": {
+      "default": "",
+      "title": "Distance Mode",
+      "type": "string"
+     },
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "include_vertices": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Include Vertices"
+     },
+     "method": {
+      "default": "",
+      "title": "Method",
+      "type": "string"
+     },
+     "name": {
+      "default": "",
+      "title": "Name",
+      "type": "string"
+     },
+     "nodata_policy": {
+      "default": "",
+      "title": "Nodata Policy",
+      "type": "string"
+     },
+     "sources": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/SourceSpecIn"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sources"
+     },
+     "station_step": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Station Step"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "PlanReviseIn",
     "type": "object"
    },
    "PlanRunCancelResponse": {
@@ -12937,6 +13449,30 @@
      "skill_id"
     ],
     "title": "PresetRequest",
+    "type": "object"
+   },
+   "PreviewIn": {
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     },
+     "limit": {
+      "default": 64,
+      "maximum": 64.0,
+      "minimum": 1.0,
+      "title": "Limit",
+      "type": "integer"
+     }
+    },
+    "title": "PreviewIn",
     "type": "object"
    },
    "PreviewRefreshRequest": {
@@ -16991,6 +17527,28 @@
     "title": "SearchRequest",
     "type": "object"
    },
+   "SelectionIn": {
+    "properties": {
+     "handle": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Handle",
+      "type": "string"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "handle"
+    ],
+    "title": "SelectionIn",
+    "type": "object"
+   },
    "SessionDetailResponse": {
     "description": "GET /chat/sessions/{session_id} 响应（消息分页，最新端偏移）。",
     "examples": [
@@ -17368,6 +17926,21 @@
      }
     ],
     "properties": {
+     "attachments": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Attachments"
+     },
      "content": {
       "title": "Content",
       "type": "string"
@@ -18893,6 +19466,55 @@
     "title": "SourceProbeResponse",
     "type": "object"
    },
+   "SourceSpecIn": {
+    "properties": {
+     "band_labels": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Band Labels",
+      "type": "object"
+     },
+     "band_semantics": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Band Semantics",
+      "type": "object"
+     },
+     "band_units": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Band Units",
+      "type": "object"
+     },
+     "bands": {
+      "items": {
+       "type": "integer"
+      },
+      "title": "Bands",
+      "type": "array"
+     },
+     "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "ref_cursor": true,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id"
+    ],
+    "title": "SourceSpecIn",
+    "type": "object"
+   },
    "SourceState": {
     "description": "来源可用性词表（与 project_runtime.promotion 既有分类映射）。",
     "enum": [
@@ -20359,8 +20981,38 @@
     "title": "TopologyDeclaration",
     "type": "object"
    },
+   "TurnAttachmentRef": {
+    "description": "G36（ADR-0291）：运行中追加的视觉证据 ref（ref-only，同 ChatRequest）。",
+    "properties": {
+     "evidence_id": {
+      "pattern": "^vev-[0-9a-f]{16}$",
+      "title": "Evidence Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "evidence_id"
+    ],
+    "title": "TurnAttachmentRef",
+    "type": "object"
+   },
    "TurnMessageRequest": {
     "properties": {
+     "attachments": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/TurnAttachmentRef"
+        },
+        "maxItems": 4,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Attachments"
+     },
      "message": {
       "maxLength": 4000,
       "minLength": 1,
@@ -20378,6 +21030,32 @@
      "mode"
     ],
     "title": "TurnMessageRequest",
+    "type": "object"
+   },
+   "UnbindBody": {
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "UnbindBody",
     "type": "object"
    },
    "UndoAgentCommitBody": {
@@ -21206,6 +21884,143 @@
      "timestamp"
     ],
     "title": "VersionResponse",
+    "type": "object"
+   },
+   "VisualEvidenceListResponse": {
+    "properties": {
+     "evidence": {
+      "items": {
+       "$ref": "#/components/schemas/VisualEvidenceResponse"
+      },
+      "title": "Evidence",
+      "type": "array"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "evidence"
+    ],
+    "title": "VisualEvidenceListResponse",
+    "type": "object"
+   },
+   "VisualEvidenceResponse": {
+    "description": "intake/列表条目（ref-only；无字节）。",
+    "properties": {
+     "crop": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "integer"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Crop"
+     },
+     "derived_sha256": {
+      "title": "Derived Sha256",
+      "type": "string"
+     },
+     "derived_size": {
+      "default": 0,
+      "title": "Derived Size",
+      "type": "integer"
+     },
+     "evidence_id": {
+      "title": "Evidence Id",
+      "type": "string"
+     },
+     "height": {
+      "title": "Height",
+      "type": "integer"
+     },
+     "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+     },
+     "mapspec_fingerprint": {
+      "default": "",
+      "title": "Mapspec Fingerprint",
+      "type": "string"
+     },
+     "mapspec_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mapspec Revision"
+     },
+     "mime": {
+      "title": "Mime",
+      "type": "string"
+     },
+     "observations": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Observations",
+      "type": "array"
+     },
+     "origin_height": {
+      "default": 0,
+      "title": "Origin Height",
+      "type": "integer"
+     },
+     "origin_sha256": {
+      "title": "Origin Sha256",
+      "type": "string"
+     },
+     "origin_width": {
+      "default": 0,
+      "title": "Origin Width",
+      "type": "integer"
+     },
+     "session_id": {
+      "title": "Session Id",
+      "type": "string"
+     },
+     "source_type": {
+      "title": "Source Type",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     },
+     "viewport_hash": {
+      "default": "",
+      "title": "Viewport Hash",
+      "type": "string"
+     },
+     "width": {
+      "title": "Width",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "session_id",
+     "evidence_id",
+     "source_type",
+     "mime",
+     "origin_sha256",
+     "derived_sha256",
+     "width",
+     "height",
+     "state"
+    ],
+    "title": "VisualEvidenceResponse",
     "type": "object"
    },
    "VisualRepairApplyRequest": {
@@ -22844,6 +23659,59 @@
     "title": "WorkspaceSnapshotSummary",
     "type": "object"
    },
+   "app__api__routes__bivariate_reliability_authoring__CommitBody": {
+    "properties": {
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     },
+     "preview_digest": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Preview Digest",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan",
+     "expected_revision",
+     "preview_digest"
+    ],
+    "title": "CommitBody",
+    "type": "object"
+   },
+   "app__api__routes__bivariate_reliability_authoring__PreviewBody": {
+    "properties": {
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "PreviewBody",
+    "type": "object"
+   },
    "app__api__routes__brief__ShareRequest": {
     "properties": {
      "ttl_days": {
@@ -24224,6 +25092,239 @@
     "tags": [
      "认证",
      "认证"
+    ]
+   }
+  },
+  "/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/commit": {
+   "post": {
+    "operationId": "commit_api_v1_bivariate_reliability_sessions__session_id__layers__layer_id__commit_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__bivariate_reliability_authoring__CommitBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Commit",
+    "tags": [
+     "双变量与可靠性作者工作台",
+     "双变量与可靠性作者工作台"
+    ]
+   }
+  },
+  "/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/inspect": {
+   "get": {
+    "operationId": "inspect_api_v1_bivariate_reliability_sessions__session_id__layers__layer_id__inspect_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect",
+    "tags": [
+     "双变量与可靠性作者工作台",
+     "双变量与可靠性作者工作台"
+    ]
+   }
+  },
+  "/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/preview": {
+   "post": {
+    "operationId": "preview_api_v1_bivariate_reliability_sessions__session_id__layers__layer_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__bivariate_reliability_authoring__PreviewBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview",
+    "tags": [
+     "双变量与可靠性作者工作台",
+     "双变量与可靠性作者工作台"
     ]
    }
   },
@@ -25728,6 +26829,828 @@
     "tags": [
      "MapBrief",
      "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets": {
+   "get": {
+    "operationId": "list_catalog_api_v1_cartographic_assets_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "kind",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Kind"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 30,
+       "maximum": 50,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_retired",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Include Retired",
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Catalog",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   },
+   "post": {
+    "operationId": "create_asset_api_v1_cartographic_assets_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AssetCreateBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Asset",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/apply": {
+   "post": {
+    "operationId": "apply_api_v1_cartographic_assets_sessions__session_id__layers__layer_id__apply_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BindingCommitBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Apply",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/inspect": {
+   "get": {
+    "operationId": "inspect_binding_api_v1_cartographic_assets_sessions__session_id__layers__layer_id__inspect_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect Binding",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/preview": {
+   "post": {
+    "operationId": "preview_api_v1_cartographic_assets_sessions__session_id__layers__layer_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BindingPlanBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/unbind": {
+   "post": {
+    "operationId": "unbind_api_v1_cartographic_assets_sessions__session_id__layers__layer_id__unbind_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UnbindBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Unbind",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}": {
+   "get": {
+    "operationId": "asset_detail_api_v1_cartographic_assets__asset_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Asset Detail",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/restore/{revision}": {
+   "post": {
+    "operationId": "restore_api_v1_cartographic_assets__asset_id__restore__revision__post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Restore",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/retire": {
+   "post": {
+    "operationId": "retire_api_v1_cartographic_assets__asset_id__retire_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "note",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 500,
+       "title": "Note",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Retire",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/versions": {
+   "post": {
+    "operationId": "new_version_api_v1_cartographic_assets__asset_id__versions_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/NewVersionBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "New Version",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/versions/{revision}": {
+   "delete": {
+    "operationId": "delete_version_api_v1_cartographic_assets__asset_id__versions__revision__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Version",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/versions/{revision}/content": {
+   "get": {
+    "operationId": "version_content_api_v1_cartographic_assets__asset_id__versions__revision__content_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Version Content",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
+    ]
+   }
+  },
+  "/api/v1/cartographic-assets/{asset_id}/versions/{revision}/publish": {
+   "post": {
+    "operationId": "publish_api_v1_cartographic_assets__asset_id__versions__revision__publish_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "asset_id",
+      "required": true,
+      "schema": {
+       "title": "Asset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "revision",
+      "required": true,
+      "schema": {
+       "title": "Revision",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Publish",
+    "tags": [
+     "制图符号资产工作台（G40）",
+     "制图符号资产（G40）"
     ]
    }
   },
@@ -29476,6 +31399,140 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/model": {
+   "get": {
+    "description": "目录 + preference + 实际生效状态（读真实回执，不从 UI 乐观态反推）。",
+    "operationId": "get_session_model_api_v1_chat_sessions__session_id__model_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Session Model",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   },
+   "put": {
+    "description": "设置/恢复 preference（CAS + owner + 目录重验证）。\n\n写入只持久「目录项 identity + 请求档位」—— 实际生效永远以 turn 期\nset_model→get_state 回读为准（本端点不触碰 Pi，绝不宣称已生效）。",
+    "operationId": "put_session_model_api_v1_chat_sessions__session_id__model_put",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ModelPreferenceUpdate"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Put Session Model",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/plan": {
    "get": {
     "description": "当前 SessionPlan 信封投影（只读，#1047 —— Pi 路径面板水合源）。\n\n只返回 CURRENT_ALIAS 指向的当前信封 —— 历史信封（supersede 归档行）\n永不出现在响应里。无信封 → 204 显式空结果（同 map-state 写路由的\n空响应惯用法）：\"没有计划\"是正常态，不是错误。信封存在但 GIS 章节\n为空（槽位已开、intent 未跑）→ query/plan_id/recipe_id 为 null 的\n显式空投影。CanonicalPlan（plan_* HUD）与此端点无关。",
@@ -31293,6 +33350,363 @@
      }
     ],
     "summary": "Get Turn Queue",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/usage": {
+   "get": {
+    "description": "会话用量：累计 + 最近 turn + coverage/completeness（诚实分层）。",
+    "operationId": "get_session_usage_api_v1_chat_sessions__session_id__usage_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Session Usage",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/visual-context/evidence": {
+   "get": {
+    "operationId": "list_visual_evidence_api_v1_chat_sessions__session_id__visual_context_evidence_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VisualEvidenceListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Visual Evidence",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   },
+   "post": {
+    "description": "受权 intake：真实解码 → 送模派生 → 证据登记（draft）。",
+    "operationId": "intake_visual_evidence_api_v1_chat_sessions__session_id__visual_context_evidence_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_intake_visual_evidence_api_v1_chat_sessions__session_id__visual_context_evidence_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VisualEvidenceResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Intake Visual Evidence",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/visual-context/evidence/{evidence_id}": {
+   "delete": {
+    "description": "撤销（tombstone + blob 引用释放；V33 由 bridge 台账在下一 turn 复验）。",
+    "operationId": "revoke_visual_evidence_api_v1_chat_sessions__session_id__visual_context_evidence__evidence_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "evidence_id",
+      "required": true,
+      "schema": {
+       "title": "Evidence Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VisualEvidenceResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Revoke Visual Evidence",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/visual-context/evidence/{evidence_id}/image": {
+   "get": {
+    "description": "受权字节读取（sha 校验；缩略图按需生成，内存有界）。",
+    "operationId": "read_visual_evidence_image_api_v1_chat_sessions__session_id__visual_context_evidence__evidence_id__image_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "evidence_id",
+      "required": true,
+      "schema": {
+       "title": "Evidence Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "variant",
+      "required": false,
+      "schema": {
+       "default": "derived",
+       "pattern": "^(derived|thumbnail)$",
+       "title": "Variant",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Read Visual Evidence Image",
     "tags": [
      "AI对话",
      "AI对话"
@@ -53011,6 +55425,815 @@
     "tags": [
      "栅格表达工作台",
      "栅格表达工作台"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/describe": {
+   "get": {
+    "operationId": "describe_api_v1_raster_sampling_describe_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Describe",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/plan": {
+   "post": {
+    "operationId": "create_plan_api_v1_raster_sampling_plan_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanCreateIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Plan",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/plan/{plan_id}": {
+   "get": {
+    "operationId": "get_plan_api_v1_raster_sampling_plan__plan_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Plan",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/plan/{plan_id}/cancel": {
+   "post": {
+    "operationId": "cancel_api_v1_raster_sampling_plan__plan_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/plan/{plan_id}/execute": {
+   "post": {
+    "operationId": "execute_api_v1_raster_sampling_plan__plan_id__execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExecuteIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/plan/{plan_id}/preview": {
+   "post": {
+    "operationId": "preview_api_v1_raster_sampling_plan__plan_id__preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PreviewIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/plan/{plan_id}/revise": {
+   "post": {
+    "operationId": "revise_plan_api_v1_raster_sampling_plan__plan_id__revise_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanReviseIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Revise Plan",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/plan/{plan_id}/status": {
+   "get": {
+    "operationId": "status_api_v1_raster_sampling_plan__plan_id__status_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plan_id",
+      "required": true,
+      "schema": {
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Status",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/plans": {
+   "get": {
+    "operationId": "list_plans_api_v1_raster_sampling_plans_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Plans",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
+    ]
+   }
+  },
+  "/api/v1/raster-sampling/results": {
+   "get": {
+    "operationId": "results_api_v1_raster_sampling_results_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "plan_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Plan Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "execution_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Execution Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "page",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "minimum": 1,
+       "title": "Page",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "per_page",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "maximum": 500,
+       "minimum": 1,
+       "title": "Per Page",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_curves",
+      "required": false,
+      "schema": {
+       "default": true,
+       "title": "Include Curves",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "source_ref",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Source Ref",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "band",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Band"
+      }
+     },
+     {
+      "in": "query",
+      "name": "valid",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Valid"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Results",
+    "tags": [
+     "栅格采样",
+     "栅格采样"
     ]
    }
   },

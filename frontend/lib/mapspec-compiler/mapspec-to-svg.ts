@@ -34,6 +34,12 @@ export interface MapSpecToSvgOptions {
    * 不能进离线 SVG；缺席时编译器明确发诊断而不是静默输出坏链接。
    */
   numericRasterSnapshot?: (layerId: string, styleId: string) => string | null;
+  /**
+   * G40：符号资产规范形（content_digest → SymbolAssetDocument）。在场时
+   * 绑定层按资产图元绘制（与 Python mapspec_to_svg 同语义）；缺席 →
+   * symbol_asset_unavailable 诊断 + 不画（不默认圆伪装）。
+   */
+  symbolAssets?: Map<string, import("@/lib/cartographic-assets/contracts").SymbolAssetDocument>;
 }
 
 import { computeOversampleBoost, resolveOversampledTileGrid, mercY } from "../map-kit/oversample";
@@ -535,6 +541,185 @@ function resolveLabelText(value: unknown, properties: Record<string, unknown>, d
   return undefined;
 }
 
+
+// ─── G40：符号资产 SVG 投影（与 app/lib/cartography/symbol_asset_svg.py 同语义） ──
+
+function stableKeyOf(payload: unknown): string {
+  const s = JSON.stringify(payload);
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < s.length; i++) {
+    h1 ^= s.charCodeAt(i);
+    h1 = Math.imul(h1, 16777619) >>> 0;
+    h2 = (h2 + Math.imul(s.charCodeAt(i) + i, 2654435761)) >>> 0;
+  }
+  return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
+}
+
+function g40PrimitiveSvg(p: SymbolPrimitiveLike): string {
+  const attrs = `fill="${p.fill ?? "none"}"`;
+  const opAttr = (p.opacity ?? 1) < 1 ? ` fill-opacity="${p.opacity}"` : "";
+  if (p.op === "path" && p.d) {
+    const d = p.d.map((c) => c.join(" ")).join(" ");
+    return `<path d="${d}" ${attrs}${opAttr}${p.stroke && p.stroke !== "none" ? ` stroke="${p.stroke}" stroke-width="${p.stroke_width ?? 1}"` : ""}/>`;
+  }
+  if (p.op === "circle") {
+    return `<circle cx="${p.cx}" cy="${p.cy}" r="${p.r}" ${attrs}${opAttr}/>`;
+  }
+  if (p.op === "rect") {
+    return `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" ${attrs}${opAttr}/>`;
+  }
+  if (p.op === "polygon" || p.op === "polyline") {
+    const pts = (p.points ?? []).map((q) => `${q[0]},${q[1]}`).join(" ");
+    return `<${p.op} points="${pts}" ${attrs}${opAttr}/>`;
+  }
+  if (p.op === "line") {
+    return `<line x1="${p.x}" y1="${p.y}" x2="${(p.x ?? 0) + (p.w ?? 0)}" y2="${(p.y ?? 0) + (p.h ?? 0)}" stroke="${p.stroke ?? "#000"}" stroke-width="${Math.max(p.stroke_width ?? 1, 0.1)}"/>`;
+  }
+  return "";
+}
+
+interface SymbolPrimitiveLike {
+  op: string;
+  fill?: string;
+  stroke?: string;
+  stroke_width?: number;
+  opacity?: number;
+  d?: (string | number)[][];
+  cx?: number; cy?: number; r?: number;
+  x?: number; y?: number; w?: number; h?: number;
+  points?: [number, number][];
+}
+
+const g40Defs = new Map<string, string>();
+const MAX_G40_DEFS = 128;
+
+function g40PointDef(defsId: string, doc: import("@/lib/cartographic-assets/contracts").SymbolAssetDocument, colorOverride?: string): string | null {
+  if (g40Defs.has(defsId)) return defsId;
+  if (g40Defs.size >= MAX_G40_DEFS) return null;
+  const body = (doc.primitives ?? []).map((p) => g40PrimitiveSvg(colorOverride && p.fill && p.fill !== "none" ? { ...p, fill: colorOverride } as SymbolPrimitiveLike : (p as unknown as SymbolPrimitiveLike))).join("");
+  g40Defs.set(defsId, `<g id="${defsId}">${body}</g>`);
+  return defsId;
+}
+
+function g40PointTransform(
+  doc: import("@/lib/cartographic-assets/contracts").SymbolAssetDocument,
+  params: Record<string, any>,
+  dpiScale: number,
+): { inner: string; size: [number, number] } {
+  const [vw, vh] = doc.viewbox ?? [24, 24];
+  const s = (params.size_px / Math.max(vw, vh)) * dpiScale;
+  const anchor = params.anchor ?? "center";
+  const hx: Record<string, number> = { left: -vw / 2, center: 0, right: vw / 2 };
+  const vy: Record<string, number> = { top: -vh / 2, center: 0, bottom: vh / 2 };
+  const ax = anchor.includes("-") ? hx[anchor.split("-")[1]] : hx[anchor];
+  const ay = anchor.includes("-") ? vy[anchor.split("-")[0]] : vy[anchor];
+  const anchorX = vw / 2 + ax;
+  const anchorY = vh / 2 + ay;
+  const parts: string[] = [];
+  if (params.rotation_deg) parts.push(`rotate(${params.rotation_deg.toFixed(3)})`);
+  parts.push(`scale(${s.toFixed(4)})`);
+  parts.push(`translate(${(-anchorX).toFixed(3)} ${(-anchorY).toFixed(3)})`);
+  const corners = [
+    [-anchorX * s, -anchorY * s], [(vw - anchorX) * s, -anchorY * s],
+    [(vw - anchorX) * s, (vh - anchorY) * s], [-anchorX * s, (vh - anchorY) * s],
+  ];
+  if (params.rotation_deg) {
+    const rad = (params.rotation_deg * Math.PI) / 180;
+    const c = Math.cos(rad), sn = Math.sin(rad);
+    const rot = corners.map(([x, y]) => [x * c - y * sn, x * sn + y * c]);
+    const xs = rot.map((q) => q[0]), ys = rot.map((q) => q[1]);
+    return { inner: parts.join(" "), size: [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)] };
+  }
+  return { inner: parts.join(" "), size: [vw * s, vh * s] };
+}
+
+function g40PatternDef(
+  patternId: string,
+  doc: import("@/lib/cartographic-assets/contracts").SymbolAssetDocument,
+  params: Record<string, number | string>,
+  dpiScale: number,
+): string | null {
+  if (g40Defs.has(patternId)) return patternId;
+  if (g40Defs.size >= MAX_G40_DEFS) return null;
+  const spacing = Number(params.spacing_px ?? 12) * dpiScale * Number(params.pattern_scale ?? 1);
+  const strokeW = Number(params.stroke_width_px ?? 1.5) * dpiScale;
+  const angle = Number(params.angle_deg ?? 45);
+  const fg = String(params.fg_color ?? "#334155");
+  const bg = String(params.bg_color ?? "transparent");
+  const transform = angle ? ` patternTransform="rotate(${angle.toFixed(3)})"` : "";
+  const bgRect = bg !== "transparent" && bg !== "none"
+    ? `<rect x="0" y="0" width="${spacing.toFixed(3)}" height="${spacing.toFixed(3)}" fill="${bg}" stroke="none"/>` : "";
+  const type = doc.pattern?.type ?? "hatch";
+  let content: string;
+  if (type === "dots") {
+    content = `${bgRect}<circle cx="${(spacing / 2).toFixed(3)}" cy="${(spacing / 2).toFixed(3)}" r="${Math.max(strokeW / 2, 0.3).toFixed(3)}" fill="${fg}" stroke="none"/>`;
+    g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${spacing.toFixed(3)}" height="${spacing.toFixed(3)}">${content}</pattern>`);
+    return patternId;
+  }
+  if (type === "svg_tile") {
+    // F9（评审）：tile 周期 = tile_viewbox × pattern_scale × dpiScale（与
+    // Python 导出/live 光栅化同式）；tile 图元保留自身颜色。
+    const [tw, th] = doc.pattern?.tile_viewbox ?? [12, 12];
+    const scale = Number(params.pattern_scale ?? 1);
+    const periodW = tw * scale * dpiScale;
+    const periodH = th * scale * dpiScale;
+    const sx = (periodW / tw).toFixed(4), sy = (periodH / th).toFixed(4);
+    const body = (doc.pattern?.tile_primitives ?? []).map((p) => g40PrimitiveSvg(p as unknown as SymbolPrimitiveLike)).join("");
+    // N5：svg_tile 不应用 patternTransform（tile 自带取向；与 Python/live
+    // 同规则）。R3-2：背景矩形按完整周期尺寸且置于 scale 组**外**（与
+    // Python bg_full 对齐 —— 此前 spacing 方形在组内双重缩放 + 只盖局部）。
+    const bgFull = bg !== "transparent" && bg !== "none"
+      ? `<rect x="0" y="0" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}" fill="${bg}" stroke="none"/>`
+      : "";
+    g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${periodW.toFixed(3)}" height="${periodH.toFixed(3)}">${bgFull}<g transform="scale(${sx} ${sy})">${body}</g></pattern>`);
+    return patternId;
+  }
+  const lines = `<path d="M ${(-strokeW).toFixed(3)} 0 L ${(spacing + strokeW).toFixed(3)} 0" stroke="${fg}" stroke-width="${strokeW.toFixed(3)}" fill="none"/>`;
+  const extra = type === "cross_hatch"
+    ? `<path d="M 0 ${(-strokeW).toFixed(3)} L 0 ${(spacing + strokeW).toFixed(3)}" stroke="${fg}" stroke-width="${strokeW.toFixed(3)}" fill="none"/>` : "";
+  g40Defs.set(patternId, `<pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${spacing.toFixed(3)}" height="${spacing.toFixed(3)}"${transform}>${bgRect}${lines}${extra}</pattern>`);
+  return patternId;
+}
+
+/** 要素级绑定解析（类别 typed 匹配 —— 与 Python _symasset_for_feature 同语义）。 */
+function g40ResolveForFeature(
+  binding: Record<string, any>,
+  props: Record<string, unknown>,
+  docs: Map<string, import("@/lib/cartographic-assets/contracts").SymbolAssetDocument>,
+): { doc: import("@/lib/cartographic-assets/contracts").SymbolAssetDocument; params: Record<string, unknown> } | null {
+  const cb = binding.category_binding;
+  const mainDoc = docs.get(String(binding.content_digest ?? ""));
+  const mainParams = (binding.params ?? {}) as Record<string, unknown>;
+  if (!cb || typeof cb !== "object") return mainDoc ? { doc: mainDoc, params: mainParams } : null;
+  const raw = props[String(cb.field ?? "")];
+  let mismatch = false;
+  let matchedRule: Record<string, any> | null = null;
+  if (cb.key_type === "number") {
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      matchedRule = (cb.map ?? []).find((r: any) => typeof r.key === "number" && r.key === raw) ?? null;
+    } else if (raw !== undefined && raw !== null) mismatch = true;
+  } else if (cb.key_type === "bool") {
+    if (typeof raw === "boolean") {
+      matchedRule = (cb.map ?? []).find((r: any) => typeof r.key === "boolean" && r.key === raw) ?? null;
+    } else if (raw !== undefined && raw !== null) mismatch = true;
+  } else {
+    if (typeof raw === "string") {
+      matchedRule = (cb.map ?? []).find((r: any) => typeof r.key === "string" && r.key === raw) ?? null;
+    } else if (raw !== undefined && raw !== null) mismatch = true;
+  }
+  if (matchedRule) {
+    const doc = docs.get(String(matchedRule.content_digest ?? ""));
+    return doc ? { doc, params: (matchedRule.params ?? mainParams) as Record<string, unknown> } : null;
+  }
+  if (String(cb.other_mode ?? "keep_current") === "fallback_asset") {
+    const doc = docs.get(String(cb.other_content_digest ?? ""));
+    if (doc) return { doc, params: (cb.other_params ?? mainParams) as Record<string, unknown> };
+    return null;
+  }
+  return mainDoc ? { doc: mainDoc, params: mainParams } : null;
+}
+
 export function compileMapSpecToSvg(
   mapspec: any,
   options: MapSpecToSvgOptions = {}
@@ -558,6 +743,9 @@ function compileMapSpecToSvgBody(
   const height = options.height ?? 800;
   const padding = options.padding ?? 40;
   const dpiScale = targetDpi / 72;
+  // G40：每次编译独立 defs 去重表（确定性）。
+  g40Defs.clear();
+  const g40Docs = options.symbolAssets ?? new Map();
 
   // W6：确定性标签碰撞模式（v1.1 additive；缺省关闭 —— legacy 输出不变）。
   const collisionMode = mapspec?.layout?.labels?.collision === "deterministic";
@@ -948,6 +1136,42 @@ function compileMapSpecToSvgBody(
       const props = feat?.properties || {};
 
       if (layerType === "circle" && geom.type === "Point") {
+        // G40：点符号资产绑定优先（defs/use + 变换障碍；缺资产披露不画）。
+        const g40Binding = (layer as any).symbol_asset;
+        if (g40Binding && typeof g40Binding === "object" && g40Binding.kind === "point_symbol") {
+          const resolved = g40ResolveForFeature(g40Binding, props, g40Docs);
+          if (!resolved) {
+            options.onDiagnostic?.("symbol_asset_unavailable", String(g40Binding.asset_id ?? ""));
+          } else {
+            const params = resolved.params as Record<string, any>;
+            const digestKey = String(resolved.doc.content_digest).slice(7, 19);
+            const defsId = `cartoasset-${digestKey}-${stableKeyOf(resolved.params)}`;
+            const ok = g40PointDef(defsId, resolved.doc, typeof params.color === "string" ? params.color : undefined);
+            if (!ok) {
+              options.onDiagnostic?.("symbol_asset_def_budget", String(layer.id ?? ""));
+            } else {
+              const [px, py] = project(geom.coordinates as [number, number]);
+              const { inner, size } = g40PointTransform(resolved.doc, params, dpiScale);
+              elementsSvg += `<use href="#${defsId}" x="0" y="0" transform="translate(${px} ${py}) ${inner}"/>\n`;
+              if (collisionMode && layerGlyphObsN < MAX_OBSTACLES_PER_SOLVE) {
+                const gx = Number(px), gy = Number(py);
+                const hw = size[0] / 2, hh = size[1] / 2;
+                const obsBox: Box = [gx - hw, gy - hh, gx + hw, gy + hh];
+                if (geometryV1) {
+                  const { featureId } = resolveFeatureIdentity(feat as never);
+                  circleObstaclesV1.push({
+                    box: obsBox, kind: "circle",
+                    layerId: String(layer.id ?? ""), featureId: featureId ?? undefined,
+                  });
+                } else {
+                  glyphObstacles.push(obsBox);
+                }
+                layerGlyphObsN += 1;
+              }
+            }
+          }
+          return;
+        }
         const [x, y] = project(geom.coordinates as [number, number]);
         const baseRadius = finitePx(resolvePaintValue(paint["circle-radius"] ?? paint["radius"], props, 5), 5);
         const radius = fmtNum(baseRadius * dpiScale);
@@ -1048,6 +1272,31 @@ function compileMapSpecToSvgBody(
           extraAttrs += ' data-export-degraded="true" data-export-degraded-reason="3d_perspective_not_vectorized"';
         }
 
+        // G40：面纹理资产绑定优先（pattern 填充 + evenodd 洞；背景合同
+        // 在实例参数 bg_color —— transparent 不画底，S13）。
+        const g40Texture = (layer as any).symbol_asset;
+        const g40TextureOn = g40Texture && typeof g40Texture === "object"
+          && g40Texture.kind === "area_texture";
+        let g40PatId: string | null = null;
+        let g40Bg = "transparent";
+        let g40Outline = outlineColor;
+        if (g40TextureOn) {
+          const resolved = g40ResolveForFeature(g40Texture, props, g40Docs);
+          if (!resolved) {
+            options.onDiagnostic?.("symbol_asset_unavailable", String(g40Texture.asset_id ?? ""));
+            return;
+          }
+          const params = resolved.params as Record<string, number | string>;
+          const patId = `cartoap-${String(resolved.doc.content_digest).slice(7, 19)}-${stableKeyOf(resolved.params)}`;
+          const ok = g40PatternDef(patId, resolved.doc, params, dpiScale);
+          if (!ok) {
+            options.onDiagnostic?.("symbol_asset_def_budget", String(layer.id ?? ""));
+            return;
+          }
+          g40PatId = patId;
+          g40Bg = String(params.bg_color ?? "transparent");
+          g40Outline = escapeSvgAttr(resolvePaintValue(paint["fill-outline-color"] ?? paint["strokeColor"], props, "#1d4ed8"));
+        }
         polygons.forEach((polyRings: any) => {
           if (!Array.isArray(polyRings) || polyRings.length === 0) return;
           const ringPaths: string[] = [];
@@ -1058,6 +1307,13 @@ function compileMapSpecToSvgBody(
           });
           if (ringPaths.length === 0) return;
           const dStr = ringPaths.join(" ");
+          if (g40PatId) {
+            if (g40Bg !== "transparent" && g40Bg !== "none") {
+              elementsSvg += `<path d="${dStr}" fill="${g40Bg}" fill-rule="evenodd" stroke="none" />\n`;
+            }
+            elementsSvg += `<path d="${dStr}" fill="url(#${g40PatId})" fill-rule="evenodd" stroke="${g40Outline}" stroke-width="${outlineWidth}" />\n`;
+            return;
+          }
           elementsSvg += `<path d="${dStr}" fill="${color}" fill-opacity="${opacity}" fill-rule="evenodd" stroke="${outlineColor}" stroke-width="${outlineWidth}"${extraAttrs} />\n`;
         });
       } else if (layerType === "heatmap") {
@@ -1534,7 +1790,11 @@ function compileMapSpecToSvgBody(
     }
   }
 
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${viewBoxW} ${viewBoxH}" xmlns="http://www.w3.org/2000/svg">
+  // G40：符号资产 defs（插入序确定；同 digest+params 去重）。
+  const g40DefsStr = g40Defs.size > 0
+    ? `<defs>${Array.from(g40Defs.values()).join("")}</defs>` : "";
+
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${viewBoxW} ${viewBoxH}" xmlns="http://www.w3.org/2000/svg">${g40DefsStr}
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
     ${elementsSvg}

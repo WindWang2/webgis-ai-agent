@@ -25,6 +25,10 @@ import {
   type AuthoringProjection,
 } from "./label-authoring";
 import { toMapLibrePaint } from "@/lib/mapspec-runtime/paint-bridge";
+import type { SymbolAssetDocument } from "@/lib/cartographic-assets/contracts";
+import { projectSymbolAssetLayer } from "@/lib/cartographic-assets/live-project";
+import { releaseMap } from "@/lib/cartographic-assets/register";
+import { resolveLayerDocs } from "@/lib/cartographic-assets/api";
 import { isRefOnlySource } from "@/lib/mapspec/ref-source-resolver";
 import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debouncer";
 import * as renderer from "@/lib/map-kit/renderer";
@@ -189,6 +193,10 @@ export class MapSpecRuntime {
   private labelEventSeq = 0;
   /** v1.6：sourceId → 表达簇窗终点（clusterMaxZoom；spec 刷新期重算）。 */
   private repClusterBySource = new Map<string, number>();
+  // G40：符号资产规范形（digest 寻址；processOne 预热填充 —— addLayerSafe
+  // 同步消费）。缺席 → 绑定层跳过 + evidence 披露（不默认圆伪装，S23）。
+  private symbolAssetDocs = new Map<string, SymbolAssetDocument>();
+  private symbolAssetWarmToken = 0;
   /** v1.6：本 runtime 已应用的源级聚合配置（sourceId → 已应用 clusterMaxZoom
    * —— 值比对：簇窗终点中途变更（representation 键变 → recompile，无
    * source patch）也要重建源，否则 [旧终点, 新终点) 段簇 filter 恒空）。 */
@@ -505,6 +513,28 @@ export class MapSpecRuntime {
     return promise;
   }
 
+  /** G40：绑定资产预热（digest 寻址缓存；幂等，仅新 digest 触发拉取）。 */
+  private async warmSymbolAssets(spec: MapSpec | null | undefined): Promise<void> {
+    const layers = (spec?.layers ?? []) as Array<{ symbol_asset?: unknown }>;
+    if (!layers.some((l) => l && typeof l.symbol_asset === "object" && l.symbol_asset)) {
+      return;
+    }
+    const token = ++this.symbolAssetWarmToken;
+    try {
+      const { docs, missing } = await resolveLayerDocs(layers);
+      if (token !== this.symbolAssetWarmToken || this.disposed) return; // S17 迟到防护
+      for (const [digest, doc] of docs) this.symbolAssetDocs.set(digest, doc);
+      for (const miss of missing) {
+        recordSymbolLawEvidence("symbol-asset-unavailable", {
+          reason: "doc_resolve_failed",
+          detail: `${miss.digest.slice(0, 19)}: ${miss.reason}`,
+        });
+      }
+    } catch (err) {
+      devOnly.warn("[MapSpecRuntime] symbol asset warm failed:", err);
+    }
+  }
+
   private async processOne(nextSpec: MapSpec, retryAttempt: number): Promise<void> {
     if (this.disposed || !this.map) return;
 
@@ -522,6 +552,7 @@ export class MapSpecRuntime {
 
     this.clearStyleRecovery();
     this.lastError = null;
+    await this.warmSymbolAssets(nextSpec);
     const patch = await diffSpecsAsync(this.appliedSpec, nextSpec);
     if (this.disposed || !this.map) return;
     // Resolves when the patch's ops have actually run (last op = z-order).
@@ -1062,6 +1093,8 @@ export class MapSpecRuntime {
   }
 
   dispose(): void {
+    // G40：释放本实例的资产图像引用（末位引用才 removeImage，S16）。
+    if (this.map) { try { releaseMap(this.map); } catch { /* map 可能已销毁 */ } }
     resetTileMiss(this.map);
     this.disposed = true;
     if (this.pendingTimer) {
@@ -1311,13 +1344,55 @@ export class MapSpecRuntime {
       baseType = "heatmap";
       basePaint = heatmapOnlyPaint(nativePaint, this.sourceFeatureCounts.get(layer.source));
     }
+    // G40：符号资产绑定投影（点符号 → symbol/icon-*；面纹理 →
+    // fill-pattern）。资产缺席/注册失败 → 跳层 + evidence（不画默认圆）。
+    const g40Binding = (layer as any).symbol_asset;
+    let g40TypeOverride: string | null = null;
+    let g40LayoutExtra: Record<string, unknown> | null = null;
+    let g40PaintExtra: Record<string, unknown> | null = null;
+    let g40PaintRemove: string[] = [];
+    let g40MainFilterExtra: unknown = undefined;
+    let g40Sublayers: Array<{ suffix: string; filter: unknown; imageId: string }> | null = null;
+    if (g40Binding && typeof g40Binding === "object" && this.map) {
+      const proj = projectSymbolAssetLayer(this.map, g40Binding, this.symbolAssetDocs);
+      if ("failure" in proj) {
+        recordSymbolLawEvidence("symbol-asset-unavailable", {
+          reason: proj.failure.code,
+          detail: proj.failure.message.slice(0, 160),
+        }, layer.id);
+        this.lastError = `symbol_asset_unavailable:${layer.id}`;
+        return;
+      }
+      if (proj.patch.type) g40TypeOverride = proj.patch.type;
+      g40LayoutExtra = proj.patch.layout;
+      g40PaintExtra = proj.patch.paintOps.set;
+      g40PaintRemove = proj.patch.paintOps.remove;
+      g40MainFilterExtra = proj.patch.mainFilterExtra;
+      g40Sublayers = proj.patch.categorySublayers ?? null;
+      for (const miss of proj.failures) {
+        recordSymbolLawEvidence("symbol-asset-category-degraded", {
+          reason: miss.code, detail: miss.message.slice(0, 160),
+        }, layer.id);
+      }
+      for (const note of proj.patch.disclosures) {
+        recordSymbolLawEvidence("symbol-asset-disclosure", { detail: note.slice(0, 160) }, layer.id);
+      }
+    }
+    if (g40TypeOverride) baseType = g40TypeOverride;
+    if (g40PaintExtra) Object.assign(basePaint, g40PaintExtra);
+    for (const key of g40PaintRemove) delete basePaint[key];
     const def: any = {
       id: layer.id,
       type: baseType,
       ...(layer.type === "background" ? {} : { source: layer.source }),
       paint: basePaint,
-      layout: { ...(layer.layout || {}), visibility: vis.visibility },
+      layout: { ...(layer.layout || {}), ...(g40LayoutExtra ?? {}), visibility: vis.visibility },
     };
+    if (g40MainFilterExtra !== undefined) {
+      def.filter = def.filter
+        ? ["all", def.filter, g40MainFilterExtra]
+        : g40MainFilterExtra;
+    }
     // G20：数值栅格层引用派生 tile 源；透明度在服务端瓦片应用一次，
     // 不叠加 MapLibre raster-opacity（避免双重衰减）。
     if (spec?.sources?.[layer.source]?.type === "numeric_raster" && layer.raster_style?.style_id) {
@@ -1375,6 +1450,37 @@ export class MapSpecRuntime {
       this.layerSourceIndex.set(layer.id, layer.source);
       renderer.noteStyleLayerAdded(this.map, layer.id);
       recordLayerAdd();
+      // G40：类别面纹理过滤子层（fill-pattern 恒定值语义 → 每类别一子层；
+      // 有界 ≤16，超帽已在投影披露）。子层 id 注册进 repSublayersByLayer
+      // —— removeLayerSafe 显式级联删除（F6：注册表驱动，非前缀扫描）。
+      if (g40Sublayers && g40Sublayers.length > 0) {
+        for (const sub of g40Sublayers) {
+          try {
+            const subDef: any = {
+              id: `${layer.id}${sub.suffix}`,
+              type: "fill",
+              source: layer.source,
+              filter: sub.filter,
+              paint: { "fill-pattern": sub.imageId },
+              layout: { visibility: vis.visibility },
+            };
+            if (def.minzoom !== undefined) subDef.minzoom = def.minzoom;
+            if (def.maxzoom !== undefined) subDef.maxzoom = def.maxzoom;
+            this.map.addLayer(subDef, this.map.getLayer(layer.id)
+              ? layer.id : undefined);
+            renderer.noteStyleLayerAdded(this.map, subDef.id);
+            // F6（评审）：注册进级联表 —— 删层/解绑/重编译时同生命周期
+            // （与 rep 子层同纪律，杜绝幽灵纹理面）。
+            const reg = this.repSublayersByLayer.get(layer.id) ?? [];
+            reg.push(subDef.id);
+            this.repSublayersByLayer.set(layer.id, reg);
+          } catch (err) {
+            recordSymbolLawEvidence("symbol-asset-category-degraded", {
+              reason: "add_layer_rejected", detail: String(err),
+            }, layer.id);
+          }
+        }
+      }
       if (planEffective) {
         this.addRepresentationSublayersSafe(layer, repPlan!, vis, def);
       }
@@ -1560,7 +1666,10 @@ export class MapSpecRuntime {
       renderer.noteStyleLayerAdded(this.map, id);
     }
     // 幂等重挂：先清残留（recompile 路径上方已 remove，防御式兜底）。
-    this.repSublayersByLayer.set(layer.id, subIds);
+    // N8（评审）：合并而非整组替换 —— 同层可能已有 G40 纹理类别子层
+      //（texcat 注册先于此），`.set` 会把它们的级联登记抹掉 → 幽灵层。
+      const priorSubs = this.repSublayersByLayer.get(layer.id) ?? []
+      this.repSublayersByLayer.set(layer.id, [...priorSubs, ...subIds]);
   }
 
   private removeLayerSafe(id: string): void {

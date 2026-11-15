@@ -22,6 +22,7 @@ import { RasterAuthoringPanel } from '@/components/hud/raster-authoring-panel';
 import { ScalePortrayalPanel } from '@/components/hud/scale-portrayal-panel';
 // G33：矢量专题表达作者工作台（局部挂载；对齐 G20 栅格工作台先例）
 import { ThematicAuthoringPanel } from '@/components/hud/thematic-authoring-panel';
+import SymbolAssetPanel from '@/components/hud/symbol-asset-panel';
 // G41：双变量矩阵 / 估计值+可靠性双通道作者工作台（加性挂载，不改 G33 面板）
 import { BivariateReliabilityPanel } from '@/components/hud/bivariate-reliability-panel';
 
@@ -112,6 +113,13 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
     if (!thematicType) return null;
     if (!['fill', 'circle', 'line'].includes(String(hit.type))) return null;
     return { layerId: String(hit.id) };
+  })();
+
+  // G40：点（circle）/面（fill）矢量层挂符号资产面板（点符号/面纹理绑定）。
+  const symbolAssetLayer = (() => {
+    if (!specBacked || !specLayerKey) return null;
+    const lt = String(layer?.type ?? '');
+    return (lt === 'circle' || lt === 'fill') ? { layerId: specLayerKey } : null;
   })();
 
   // G41：双变量/可靠性作者入口。与 G33 不同，本域不要求层已有专题图例
@@ -308,6 +316,10 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
               <ThematicAuthoringPanel layerId={thematicVectorLayer.layerId} />
             )}
           </div>
+        )}
+        {/* G40：制图符号资产（点符号/面纹理 → 预览 → 单笔 CAS 绑定） */}
+        {symbolAssetLayer && (
+          <SymbolAssetPanel layerId={symbolAssetLayer.layerId} />
         )}
         {/* G41：双变量 / 可靠性表达作者（成对字段 + 矩阵，或估计 + 有来源误差） */}
         {g41VectorLayer && (
