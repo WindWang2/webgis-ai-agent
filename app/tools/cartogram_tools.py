@@ -75,7 +75,6 @@ def register_cartogram_tools(registry: ToolRegistry) -> None:
         apply_layout,
         error_payload,
         export_layout,
-        get_layout,
         inspect_layer,
         layout_status,
         parse_plan,

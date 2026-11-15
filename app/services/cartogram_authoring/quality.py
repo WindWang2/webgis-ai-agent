@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 MAX_REPORTED_OFFENDERS = 12
 #: artifact 里半径/坐标的落盘小数位。oracle **按同一精度**复核，否则它证明的是

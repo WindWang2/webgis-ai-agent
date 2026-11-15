@@ -10,7 +10,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.cartogram_authoring.contract import AuthoringPlan
 from app.services.cartogram_authoring.snapshot import FrozenSource, content_fingerprint

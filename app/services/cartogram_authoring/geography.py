@@ -193,7 +193,6 @@ def prepare_geography(
             correction_hint="先去重/合并统计单元，或在范围里显式排除并说明。")
 
     selected: List[Tuple[str, Dict[str, Any], Any]] = []
-    vertex_count = 0
     invalid: List[Dict[str, str]] = []
     empty: List[str] = []
     total_vertices = 0
@@ -229,7 +228,6 @@ def prepare_geography(
             continue
         total_vertices += _vertex_count(geom)
         selected.append((fid, props, geom))
-        vertex_count = total_vertices
 
     if invalid:
         raise AuthoringError(
