@@ -2,7 +2,7 @@
 
 复刻既有 quality-e2e real 档装配（ADR-0146）：本驱动以子进程承载
 stub LLM（node）+ 生产 uvicorn 后端 + `next dev` 前端，再以 Playwright
-跑 ``frontend/e2e/journeys/j18-g37-session-model.journey.ts`` ——
+跑 ``frontend/e2e/journeys/j23-g37-session-model.journey.ts`` ——
 浏览器 → 后端 → 真实 Pi（stub LLM 边界）→ dispatch → SSE → UI 的
 会话模型选择/生效/用量/预算拒绝全链。
 
@@ -181,7 +181,7 @@ def test_g37_browser_session_model_journey(tmp_path):
         }
         proc = subprocess.run(
             ["./node_modules/.bin/playwright", "test",
-             "e2e/journeys/j18-g37-session-model.journey.ts",
+             "e2e/journeys/j23-g37-session-model.journey.ts",
              "--reporter=list", "--workers=1"],
             cwd=FRONTEND, env=pw_env,
             capture_output=True, text=True, timeout=600,

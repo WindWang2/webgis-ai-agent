@@ -364,6 +364,7 @@
     "busy": "running",
     "pendingTitle": "A turn is in flight; the selection applies at the next turn boundary",
     "tokensTotal": "{total} tokens total",
+    "usageTitle": "Turn and cumulative token usage (host ledger)",
     "incomplete": "ledger incomplete",
     "refresh": "Refresh model status",
     "conflict": "Session model preference was updated in another tab; refreshed — pick again.",

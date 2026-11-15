@@ -364,6 +364,7 @@
     "busy": "运行中",
     "pendingTitle": "当前 turn 仍在运行；模型选择在下一 turn 边界应用",
     "tokensTotal": "累计 {total} tokens",
+    "usageTitle": "本回合与累计 token 用量（宿主账本）",
     "incomplete": "账本不完整",
     "refresh": "刷新模型状态",
     "conflict": "会话模型偏好已被其他标签页更新，已刷新，请重选。",

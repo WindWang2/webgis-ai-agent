@@ -23,7 +23,7 @@
 
 - 单元 38 例通过（目录/CAS/usage 提炼与幂等/费用三态/能力门/admission/应用编排/stream_prompt 协议路径）。
 - **真实 Pi 全链**（`tests/integration/test_pi_g37_session_model_journeys.py`，node stub LLM 记录每次请求的 model + 回包 usage/responseModel + uvicorn 生产 app + 真实 vendor v1.5.2 子进程）通过：J0 显式选 g37-b + `webgis_map_intent` 真实 dispatch + 2 条 usage 记录 + responseModel；J1 三会话并发/交错/回切不串模型，继承会话恒用默认；J2 预算拒绝时 stub 请求计数零增（prompt 字节未发出）；J3 kill→观测死亡→respawn 后偏好重应用、累计不归零；J4 Last-Event-ID 重放不重发不重计。
-- **浏览器全链**（`tests/integration/test_g37_browser_journey.py` + `e2e/journeys/j18-g37-session-model.journey.ts`，stub LLM + uvicorn + `next dev` + Playwright/Chromium）：UI 选择 g37-b → 服务端回执 effective=g37-b + 用量入账 → API 收紧上限后 UI 可见预算拒绝。
+- **浏览器全链**（`tests/integration/test_g37_browser_journey.py` + `e2e/journeys/j23-g37-session-model.journey.ts`，stub LLM + uvicorn + `next dev` + Playwright/Chromium）：UI 选择 g37-b → 服务端回执 effective=g37-b + 用量入账 → API 收紧上限后 UI 可见预算拒绝。
 - 迁移 `g3701` upgrade/downgrade/upgrade 实跑（sqlite）；alembic head 单调（g3701 ← 0106）。
 - 前端 `tsc --noEmit` 零错误、eslint（改动文件）零警告、vitest（store 解析 3 例）通过；zh/en i18n 同步。
 - 既有回归：test_pi_e2e / test_pi_bridge_lock / test_pi_model_config_generation / test_chat_api / test_session_ownership / test_g37 组合 71 通过；**2 个 base 既有失败**（`test_prompt_drain_timeout_raises_and_sends_abort`、`test_prompt_send_failure_sends_abort`：MagicMock 不可 await 的 abort 断言，干净 base 复现取证，非本 PR 引入、未修改）；`test_pi_rpc_client_810::stop_reap` 同为 base 既有。

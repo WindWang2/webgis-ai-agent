@@ -10,7 +10,7 @@
 | 迁移 | `alembic upgrade head` → 三表 + head=g3701；`downgrade -1` + `upgrade head` 回环 | ✅ 实跑（sqlite /tmp/g37-mig-test） |
 | 前端 | `tsc --noEmit`（主配置）零错误；eslint（改动文件）零警告；vitest store 解析 3 用例 | ✅（test 配置 tsc 的既有错误与 base 相同） |
 | 真实 Pi 全链（WP12） | `tests/integration/test_pi_g37_session_model_journeys.py`（PI_JOURNEY_E2E=1，node stub LLM + uvicorn 生产 app + 真实 vendor v1.5.2 子进程）：J0 M01/M20（显式 g37-b + webgis_map_intent 真实 dispatch + 2 条 usage + responseModel）、J1 M02/M03/M05、J2 M30（stub 请求计数零增）、J3 M06（kill→观测死亡→respawn 重应用 + 累计不归零）、J4 M23（Last-Event-ID 重放不重发不重计 + 非空转守卫） | ✅ 1 passed（真实 Pi 子进程 + 生产扩展 + 生产 dispatch + stub 协议记录；2026-11-15 00:35） |
-| 浏览器全链 | `tests/integration/test_g37_browser_journey.py`（stub LLM + uvicorn + `next dev --webpack` + Playwright/Chromium 真浏览器）驱动 `e2e/journeys/j18-g37-session-model.journey.ts` real 档：UI 建会话→展开目录选择 g37-b→第二轮后服务端回执 effective=g37-b + totals>0→API 收紧上限→UI 可见预算拒绝（policy_reject） | ✅ 1 passed（2026-11-15 01:0x；CORS 显式放行随机前端端口 + webpack dev 绕开 Turbopack hermetic root） |
+| 浏览器全链 | `tests/integration/test_g37_browser_journey.py`（stub LLM + uvicorn + `next dev --webpack` + Playwright/Chromium 真浏览器）驱动 `e2e/journeys/j23-g37-session-model.journey.ts` real 档：UI 建会话→展开目录选择 g37-b→第二轮后服务端回执 effective=g37-b + totals>0→API 收紧上限→UI 可见预算拒绝（policy_reject） | ✅ 1 passed（2026-11-15 01:0x；CORS 显式放行随机前端端口 + webpack dev 绕开 Turbopack hermetic root） |
 | 供应商真实账单 | 无真实凭据 | ❌ 不可得（费用事实按 provider/estimated/unknown 分层，stub 回包验证 provider 路径） |
 
 ## 关键修复（由旅程驱动）

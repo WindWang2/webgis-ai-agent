@@ -1,5 +1,5 @@
 /**
- * Journey 18 — G37 会话模型运行配置（real 档专用）。
+ * Journey 23 — G37 会话模型运行配置（real 档专用）。
  *
  * 真实浏览器 → 后端 → 真实 Pi（stub LLM 边界）→ 真实 dispatch → SSE → UI：
  *  1) 首轮建立会话（继承默认）；
@@ -27,7 +27,7 @@ function sessionIdOf(body: string): string | null {
   return body.match(/"session_id"\s*:\s*"([^"]+)"/)?.[1] ?? null;
 }
 
-test.describe('journey-18 G37 会话模型运行配置', () => {
+test.describe('journey-23 G37 会话模型运行配置', () => {
   test('real：目录选择→实际生效→用量入账→预算拒绝（浏览器全链）', async ({ page }) => {
     test.skip(MODE !== 'real', REAL_ONLY_REASON);
     const token = await loginViaApi(page);
