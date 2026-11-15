@@ -330,6 +330,10 @@ class VisualPolicy(BaseModel):
     max_output: float = Field(gt=0)
     #: 误差缺失/无效时的独立视觉输出（不等于 min 或 max）。
     unknown_output: float = Field(gt=0)
+    #: 误差**超出映射值域**（clip=clamp 时）的视觉输出。未声明则复用
+    #: ``unknown_output``，并在图例披露「越界与缺失共用中性输出，仅计数分列」——
+    #: 允许作者区分，但不允许悄悄把越界画成某个有效等级。
+    out_of_domain_output: Optional[float] = Field(default=None, gt=0)
     buckets: int = Field(default=5, ge=2, le=8)
     clip: Literal["clamp", "reject"] = "clamp"
     unknown_label: str = Field(default="误差缺失/未知", max_length=48)
@@ -341,6 +345,8 @@ class VisualPolicy(BaseModel):
         _finite(self.min_output, field="min_output")
         _finite(self.max_output, field="max_output")
         _finite(self.unknown_output, field="unknown_output")
+        if self.out_of_domain_output is not None:
+            _finite(self.out_of_domain_output, field="out_of_domain_output")
         if not self.min_value < self.max_value:
             raise AuthoringError(
                 "INVALID_VISUAL_DOMAIN",
@@ -353,7 +359,11 @@ class VisualPolicy(BaseModel):
         if self.channel == "opacity":
             for name, v in (("min_output", self.min_output),
                             ("max_output", self.max_output),
-                            ("unknown_output", self.unknown_output)):
+                            ("unknown_output", self.unknown_output),
+                            ("out_of_domain_output",
+                             self.out_of_domain_output)):
+                if v is None:
+                    continue
                 if not (0.05 <= v <= 1.0):
                     raise AuthoringError(
                         "INVALID_VISUAL_RANGE",
@@ -362,7 +372,11 @@ class VisualPolicy(BaseModel):
         elif self.channel == "stroke_width":
             for name, v in (("min_output", self.min_output),
                             ("max_output", self.max_output),
-                            ("unknown_output", self.unknown_output)):
+                            ("unknown_output", self.unknown_output),
+                            ("out_of_domain_output",
+                             self.out_of_domain_output)):
+                if v is None:
+                    continue
                 if not (0.1 <= v <= 25.0):
                     raise AuthoringError(
                         "INVALID_VISUAL_RANGE",

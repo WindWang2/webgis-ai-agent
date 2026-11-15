@@ -40,11 +40,11 @@
 
 | 项 | 结果 |
 |---|---|
-| 后端单测 `tests/unit/bivariate_reliability` | **72 passed**（含手算 oracle，不拿生产函数生成期望） |
+| 后端单测 `tests/unit/bivariate_reliability` | **73 passed**（含手算 oracle，不拿生产函数生成期望） |
 | 后端回归（thematic_authoring / G34 / v4 cartography / analysis converter） | **138 passed, 2 skipped** |
-| 出版三格式回读 `test_g41_publication_readback.py` | **5 passed**（SVG/PNG/PDF 独立回读、长名、跨 DPI、拒绝普通色条替代） |
+| 出版三格式回读 `test_g41_publication_readback.py` | **6 passed**（SVG/PNG/PDF 独立回读、长名、跨 DPI、拒绝普通色条替代、混合图层完整性） |
 | 真实 Pi 旅程 `PI_JOURNEY_E2E=1` | **1 passed，18/18 gates**，pin `v1.5.2-0-gb4afdddf4`（`matches_expected_pin=True`） |
-| 前端 G41 专项 | **11 passed** |
+| 前端 G41 专项 | **140 passed（14 文件）** |
 | 前端回归（受影响 12 文件） | 见 TEST_MATRIX T9 |
 | `tsc --noEmit` | 新代码 0 错误；仅 2 处既有 `cartography-result-card.tsx` |
 

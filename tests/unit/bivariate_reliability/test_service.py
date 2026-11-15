@@ -484,6 +484,49 @@ async def test_b30_revert_cleans_stale_bivariate_and_second_channel(session_id):
 
 
 @pytest.mark.asyncio
+async def test_revert_preview_reaches_layer_without_previous_legend(session_id):
+    """作者化前本来没有 legend_spec 的层，撤销必须可达（复审 P1-2）。
+
+    预览若把 ``previous_legend_spec is None`` 当作「无快照」拒绝，而提交侧把
+    ``None`` 当作「恢复为无图例」支持，二者矛盾会让撤销永远无法提交 ——
+    用户只能靠 MapSpec undo 绕过，违反「可撤销」。
+    """
+    from app.services.gis_world_state.mutation import apply_gis_mutation
+    from app.services.mapspec.intents import UpsertLayerIntent
+
+    ref_id = await register_geojson_ref(session_id, make_fc(ROWS))
+    seeded = await apply_gis_mutation(
+        session_id,
+        UpsertLayerIntent(layer={
+            "id": "L1", "type": "fill", "source": "s1",
+            "paint": {"color": "#cccccc"}, "data_binding": {"field": "a"},
+        }, source_data={"ref_id": ref_id}),
+        origin="agent", actor="test:seed")
+    assert not seeded.is_error, seeded.error_msg
+    assert "legend_spec" not in await read_layer(session_id)
+
+    p, r = await _preview(session_id, bivariate_plan())
+    await _commit(session_id, p, r)
+    assert (await read_layer(session_id))["legend_spec"]["type"] == "bivariate"
+
+    rp = parse_plan({"layer_id": "L1", "mode": "revert"})
+    rprev = await preview_expression(session_id, "L1", rp, trusted_dispatch=True)
+    assert rprev["candidate_digest"]
+    assert rprev["restores"]["had_legend"] is False
+    assert rprev["restores"]["source_ref"] == ref_id
+
+    rv = await commit_expression(
+        session_id, "L1", rp,
+        expected_revision=await current_revision(session_id),
+        preview_digest=rprev["candidate_digest"], trusted_dispatch=True)
+    assert rv["success"]
+    layer = await read_layer(session_id)
+    assert "legend_spec" not in layer
+    assert "bivariate" not in layer
+    assert layer["paint"]["color"] == "#cccccc"
+
+
+@pytest.mark.asyncio
 async def test_b31_foreign_owner_read_is_rejected(session_id, monkeypatch):
     from app.services.session_data_protocol import SessionRefDataResult
 

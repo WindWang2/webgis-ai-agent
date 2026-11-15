@@ -116,9 +116,11 @@ function BivariateMatrix({ legend, title }: { legend: LegendSpec; title?: string
   const labelB = String(raw.label_b ?? '');
   if (colors.length < n * n) return null;
   // canonical 在场时用屏幕序 cells（其颜色/计数/区间来自服务端同一份合同），
-  // 旧 bivariate 图仍按 legend.colors 行主序显示，逐字节兼容（B04）。
-  const cells = Array.isArray(raw.cells) && raw.cells.length === n * n
-    ? raw.cells
+  // 旧 bivariate 图仍按 legend.colors 行主序显示，**逐字节兼容**（B04）：
+  // 缺 cells 时不输出任何 data-g41-* 属性，也不显示虚构的 n=-1（复审 P2）。
+  const hasCells = Array.isArray(raw.cells) && raw.cells.length === n * n;
+  const cells: G41Cell[] = hasCells
+    ? (raw.cells as G41Cell[])
     : Array.from({ length: n * n }, (_, i) => ({
         class_index: i, color: colors[i], count: -1,
         row_interval: null, col_interval: null,
@@ -132,11 +134,17 @@ function BivariateMatrix({ legend, title }: { legend: LegendSpec; title?: string
           <span className="w-4 text-right text-micro text-map-chrome-ink-muted" aria-hidden>{rowArrow}{labelB.slice(0, 4)}</span>
           <div className="grid gap-px" style={{ gridTemplateColumns: `repeat(${n}, 14px)` }}>
             {cells.map((c, i) => (
-              <span key={i} aria-hidden className="h-3.5 w-3.5"
-                data-g41-cell={c.class_index}
-                data-g41-count={c.count}
-                title={`#${c.class_index} · ${c.col_interval?.label ?? ''} / ${c.row_interval?.label ?? ''} · n=${c.count}`}
-                style={{ background: c.color }} />
+              hasCells ? (
+                <span key={i} aria-hidden className="h-3.5 w-3.5"
+                  data-g41-cell={c.class_index}
+                  data-g41-count={c.count}
+                  data-g41-empty={c.empty ? 'true' : undefined}
+                  title={`#${c.class_index} · ${c.col_interval?.label ?? ''} / ${c.row_interval?.label ?? ''} · n=${c.count}`}
+                  style={{ background: c.color }} />
+              ) : (
+                <span key={i} aria-hidden className="h-3.5 w-3.5"
+                  style={{ background: c.color }} />
+              )
             ))}
           </div>
         </div>

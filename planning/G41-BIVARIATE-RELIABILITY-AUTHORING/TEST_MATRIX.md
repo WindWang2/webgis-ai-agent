@@ -14,13 +14,13 @@ pytest 单进程、Vitest `--maxWorkers=2`（4.1.11 无 `--minWorkers`，未写�
 | T2 | L1 合同 | `pytest tests/unit/bivariate_reliability/test_contract.py` | 20 passed |
 | T3 | L2 服务集成 | `pytest tests/unit/bivariate_reliability/test_service.py` | 24 passed |
 | T4 | L2 工具/路由 | `pytest tests/unit/bivariate_reliability/test_tools_and_routes.py` | 11 passed |
-| T5 | L1–L2 合计 | `pytest tests/unit/bivariate_reliability/` | **72 passed**（复审修复后重跑；新增 flip_rows 行映射与 clamp 越界桶两条回归） |
+| T5 | L1–L2 合计 | `pytest tests/unit/bivariate_reliability/` | **73 passed**（第 2 轮复审修复后重跑；新增 flip_rows 行映射、clamp 越界桶、无图例层 revert 可达三条回归） |
 | T6 | L3 前端组件 | `vitest components/hud/bivariate-reliability-panel.test.tsx` | 5 passed |
 | T7 | L3 图例/导出适配器 | `vitest lib/map-kit/g41-canonical-legend.test.ts` | 6 passed |
 | T8 | L3 i18n | `vitest test/i18n/key-completeness.test.ts` | 10 passed |
-| T9 | L3 前端回归 | `vitest` 14 个受影响文件（bivariate panel / canonical legend / layer-style-panel ×2 / thematic-authoring / thematic-legend / variants-v4 / export-chrome ×3 / vector-svg ×3 / i18n key-completeness） | **139 passed**（复审修复后重跑；期间发现并修复 `layer-style-panel.audit840.test.tsx` 的 `session-cursor` 不完整 mock 致新子面板抛错，已在该文件补 `getMapSpecSessionCursor`（`sessionId=undefined` → 子面板 idle），断言未改动） |
+| T9 | L3 前端回归 | `vitest` 14 个受影响文件（bivariate panel / canonical legend / layer-style-panel ×2 / thematic-authoring / thematic-legend / variants-v4 / export-chrome ×3 / vector-svg ×3 / i18n key-completeness） | **140 passed**（第 2 轮修复后重跑；含 `audit840` 的 `session-cursor` 不完整 mock 修复，以及新增「Apply 后仍可继续预览并再次应用」用例） |
 | T10 | L4 真实 Pi 两模式旅程 | `PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_g41_bivariate_reliability_journey.py -q -s` | **1 passed（18/18 gates true，`fail: []`）**，固定 pin `v1.5.2-0-gb4afdddf4`；判决原文见下节，详见下节 |
-| T11 | L5 真实出版三格式 | `pytest tests/integration/test_g41_publication_readback.py` | **5 passed**（复审修复后重跑：bivariate + reliability × SVG/PNG/PDF 独立回读、长字段名全文可回读、跨 DPI、拒绝普通色条替代） |
+| T11 | L5 真实出版三格式 | `pytest tests/integration/test_g41_publication_readback.py` | **6 passed**（第 2 轮修复后重跑：bivariate + reliability × SVG/PNG/PDF 独立回读、长字段名全文可回读、跨 DPI、拒绝普通色条替代、混合图层「矩阵 + 每条条目都画」；可靠性地图面断言真实 fill-opacity） |
 | T12 | 后端回归 | `pytest tests/unit/thematic_authoring/ tests/cartography/test_g34_print_layout_authoring.py tests/cartography/test_v4_cartography_libs.py tests/unit/test_analysis_cartography_converter.py` | **138 passed, 2 skipped**（复审修复后重跑，同值） |
 | T13 | 类型 | `pnpm exec tsc --noEmit` | 仅 2 处**既有**错误：`components/chat/cartography-result-card.tsx:24,49`（该文件本次未改，`git diff` 为空）；新代码 0 错误 |
 | T14 | i18n 裸 CJK | `vitest test/i18n/no-raw-cjk.test.ts` | 唯一失败为**既有** 4 个文件（`import-workbench.tsx` / `scale-portrayal-panel.tsx` / `thematic-authoring-panel.tsx` / `skill-workbench.tsx`，本次均未改）；新增文件 0 处 |

@@ -213,9 +213,7 @@ def compute_reliability(
             if mag is not None and abs(mag) < 1e-12:
                 scan.zero_measure += 1
             if extra.get("noncentered"):
-                disclosures.append(
-                    "存在不包含/不以估计值为中心的非对称区间——按来源模型合同"
-                    "如实保留，不机械强制居中或裁剪")
+                scan.noncentered_measure += 1
         magnitudes.append(mag)
         states.append(state)
         extras.append(extra)
@@ -242,6 +240,11 @@ def compute_reliability(
             "缺失不会自动当作 0 误差或最高可靠性",
             status_code=409, field="measure",
             correction_hint="提供真实非负误差/区间数值，或改用双变量矩阵模式。")
+
+    if scan.noncentered_measure:
+        disclosures.append(
+            f"{scan.noncentered_measure} 个要素的不确定度区间不含估计值或明显非对称"
+            "——按来源模型合同如实保留，不机械强制居中或裁剪")
 
     # ── 3. 有界视觉桶（归一化只用于视觉映射）──
     span = v.max_value - v.min_value
@@ -273,12 +276,17 @@ def compute_reliability(
             "label": f"误差 {v.min_value + t0 * span:g}–{v.min_value + t1 * span:g}"
                      f" {m.unit or '(单位未声明)'}",
         })
+    # 越界输出可由作者单独声明；未声明则复用中性 unknown 输出，并在图例
+    # 明确披露「共用同一输出、仅计数/图例分列」——不假装图面可分辨（复审 P2）。
+    out_of_domain_output = (v.out_of_domain_output
+                            if v.out_of_domain_output is not None
+                            else v.unknown_output)
     special = {
         _UNKNOWN: {"key": _UNKNOWN, "label": v.unknown_label,
                    "output": v.unknown_output, "count": 0},
         _OUT_OF_DOMAIN: {"key": _OUT_OF_DOMAIN,
                          "label": "误差超出映射值域（已按 clip 政策处理）",
-                         "output": v.unknown_output, "count": 0},
+                         "output": out_of_domain_output, "count": 0},
     }
 
     bucket_by_feature: List[str] = []
@@ -312,10 +320,14 @@ def compute_reliability(
             f"{scan.clipped} 个要素误差量超出映射值域，按 clip=clamp 使用独立的"
             "『越界/未知』视觉桶（不折叠进任何有效可靠性等级），并在图例披露；"
             "归一化结果不是置信度")
+    if abs(out_of_domain_output - v.unknown_output) < 1e-12:
+        disclosures.append(
+            f"越界与缺失共用中性输出 {out_of_domain_output:g}（图面不可分辨，"
+            "仅在桶计数与图例分列）；需区分请显式设 visual.out_of_domain_output")
 
     cases: List[List[Any]] = [[b["key"], b["output"]] for b in buckets]
     cases.append([_UNKNOWN, v.unknown_output])
-    cases.append([_OUT_OF_DOMAIN, v.unknown_output])
+    cases.append([_OUT_OF_DOMAIN, out_of_domain_output])
     bucket_paint: Dict[str, Any] = {
         "method": "match",
         "field": RELIABILITY_BUCKET_FIELD,

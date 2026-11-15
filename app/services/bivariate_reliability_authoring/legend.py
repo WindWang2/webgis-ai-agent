@@ -39,6 +39,21 @@ _READER_LOAD_NOTE = (
 )
 
 
+def _dedupe(notes: List[str]) -> List[str]:
+    """披露按首次出现去重（保持顺序）。
+
+    披露会随 legend_spec 持久化进 MapSpec；同一句话重复出现只增加载荷，
+    不增加信息。任何逐要素/逐桶追加的路径都必须先经过这里。
+    """
+    seen: set = set()
+    out: List[str] = []
+    for note in notes:
+        if note and note not in seen:
+            seen.add(note)
+            out.append(note)
+    return out
+
+
 def _source_block(anchor: Dict[str, Any], plan_digest: str) -> Dict[str, Any]:
     return {
         "ref_id": anchor.get("ref_id"),
@@ -80,7 +95,10 @@ def build_bivariate_legend(
         disclosures.append(
             "已交换两轴：类别索引、色阵意义、联合计数与图例标签/单位/断点同步转置")
     if spec.flip_rows:
-        disclosures.append("已纵向反转：格序、数值端点、paint 类别与箭头同步反转")
+        # 只反转**呈现方向**：屏幕行序与箭头；类别索引与 paint 语义不变。
+        # 披露文本必须与实现一致，否则读者会据此误判着色分档被重排（复审 P2）。
+        disclosures.append(
+            "已纵向反转呈现：屏幕行序与箭头方向反转；类别索引、着色与联合计数按规范行序（低→高）不变")
     return {
         "type": "bivariate",
         "schema_version": LEGEND_SCHEMA_VERSION,
@@ -133,7 +151,7 @@ def build_bivariate_legend(
         "histograms": {
             "a": visuals["histogram_a"], "b": visuals["histogram_b"],
         },
-        "disclosures": disclosures,
+        "disclosures": _dedupe(disclosures),
         "approximate": False,
         "notes": disclosures[:4],
     }
@@ -223,7 +241,7 @@ def build_reliability_legend(
             "zero_measure": scan.zero_measure,
         },
         "source": _source_block(anchor, plan_digest),
-        "disclosures": disclosures,
+        "disclosures": _dedupe(disclosures),
         "approximate": False,
         "notes": disclosures[:4],
         # G34 read_legend_content 兼容的扁平 canonical 条目

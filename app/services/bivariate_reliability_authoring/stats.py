@@ -221,6 +221,9 @@ class ReliabilityScan:
     invalid_measure: int = 0
     clipped: int = 0
     zero_measure: int = 0
+    #: 非居中/不含估计值的区间条数。作为**计数**披露一次，不逐要素追加文案：
+    #: 逐要素写字符串会让 legend_spec 随要素数线性膨胀（25 万要素 → 十几 MB）。
+    noncentered_measure: int = 0
     kind_counts: Dict[str, int] = field(default_factory=dict)
     diagnostics: List[str] = field(default_factory=list)
 
@@ -235,6 +238,7 @@ class ReliabilityScan:
             "invalid_measure": self.invalid_measure,
             "clipped": self.clipped,
             "zero_measure": self.zero_measure,
+            "noncentered_measure": self.noncentered_measure,
             "approximate": False,
         }
 

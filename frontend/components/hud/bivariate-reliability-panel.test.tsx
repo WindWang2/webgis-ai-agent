@@ -156,6 +156,28 @@ describe('BivariateReliabilityPanel', () => {
     expect(errorText).toContain('fix it');
   });
 
+  it('releases busy after a successful apply so authoring stays usable', async () => {
+    // 复审 P1：runCommit 里 `await reload()` 会推进 epoch，若 finally 仍按
+    // epoch 相等才释放 busy，成功后按钮会永久禁用（只能重挂面板恢复）。
+    render(<BivariateReliabilityPanel layerId="L1" />);
+    await waitFor(() => expect(screen.getByTestId('g41-bivariate-form')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('bivariateReliability.previewBtn'));
+    await waitFor(() => expect(screen.getByTestId('g41-preview')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('bivariateReliability.applyBtn'));
+    await waitFor(() => expect(commitMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(screen.getByText('bivariateReliability.previewBtn').closest('button'))
+        .not.toBeDisabled();
+    });
+    // 提交后旧的候选已消费：Apply 必须重新变为不可用，直到再次预览
+    expect(commitMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText('bivariateReliability.previewBtn'));
+    await waitFor(() => {
+      expect(screen.getByText('bivariateReliability.applyBtn').closest('button'))
+        .not.toBeDisabled();
+    });
+  });
+
   it('offers the reliability mode with measure and visual controls', async () => {
     render(<BivariateReliabilityPanel layerId="L1" />);
     await waitFor(() => expect(screen.getByTestId('g41-bivariate-form')).toBeInTheDocument());

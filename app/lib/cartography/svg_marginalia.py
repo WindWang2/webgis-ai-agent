@@ -262,8 +262,10 @@ def render_legend_box_authored(
     title_lines = list(lp.get("title_lines") or ["图例"])
     proportional = list(lp.get("proportional") or [])
     # G41：canonical 图例在场时由专用绘制器画完整矩阵/可靠性图例，
-    # 不用扁平色条冒充（旧图无此键 → 输出逐字节不变）。
-    canonical = lp.get("canonical") if isinstance(lp.get("canonical"), dict) else None
+    # 不用扁平色条冒充（旧图无此键 → 输出逐字节不变）。允许**多份**
+    # canonical（图例组件聚合多层）：逐份纵向排布，一份都不丢；非 canonical
+    # 层的扁平条目照旧绘制，不再被 canonical 整块吞掉（复审 P1）。
+    canonicals = [c for c in (lp.get("canonicals") or []) if isinstance(c, dict)]
     total = int(lp.get("entries_total") or len(entries))
     rendered = int(lp.get("entries_rendered") or 0)
     parts: List[str] = [
@@ -271,6 +273,7 @@ def render_legend_box_authored(
         f'data-g34-id="{escape_svg_text(str(draw.get("id") or ""))}" '
         f'data-g34-entries-total="{total}" '
         f'data-g34-entries-rendered="{rendered}" '
+        f'data-g34-canonicals="{len(canonicals)}" '
         f'data-g34-columns="{columns}" '
         f'data-g34-status="{escape_svg_text(str(lp.get("status") or ""))}" '
         f'data-g34-nodata="{"true" if lp.get("has_nodata") else "false"}" '
@@ -303,12 +306,20 @@ def render_legend_box_authored(
                 f'fill="#64748b">{escape_svg_text("单位：" + str(lp["unit"]))}</text>'
             )
         first_row_y = cursor_y + header + row_units * 0.75
-        if canonical is not None:
-            parts.append(render_g41_canonical_legend(
-                canonical, x0 + size * 0.5, cursor_y + header,
-                width=max(1.0, frame_w - size), size=size, family=family,
-                color=color, line_units=line_units))
-        box_entries = [] if canonical is not None else entries[start:start + count]
+        canon_top = cursor_y + header
+        if int(box.get("box_index") or 0) == 0:
+            for c in canonicals:
+                ctype = str(c.get("type") or "")
+                parts.append(render_g41_canonical_legend(
+                    c, x0 + size * 0.5, canon_top,
+                    width=max(1.0, frame_w - size), size=size, family=family,
+                    color=color, line_units=line_units))
+                lines = 7 if ctype == "bivariate" else 8
+                # 与 layout_legend 的占位推进量逐单位一致（帧高 + 半行）。
+                canon_top += lines * row_units + row_units * 0.5
+            if canonicals:
+                first_row_y = canon_top + row_units * 0.75
+        box_entries = entries[start:start + count]
         for idx, e in enumerate(box_entries):
             col = idx // rows_per_column
             row = idx % rows_per_column

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -56,6 +57,15 @@ _VECTOR_LAYER_TYPES = {"fill", "circle", "line", "symbol"}
 _MAX_FIELDS = 200
 _MAX_CELLS = 9
 _MAX_DISCLOSURES = 12
+
+
+def _is_constant_number(value: Any) -> bool:
+    """paint 值是常量数字（而非 match/interpolate 表达式或缺失）。
+
+    ``True``/``False`` 在 Python 里也是 int，必须显式排除——布尔不是透明度。
+    """
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(float(value)))
 
 
 @dataclass
@@ -394,11 +404,18 @@ async def preview_expression(
     _assert_not_shared_member(ctx, action="预览")
     if plan.mode == "revert":
         ev = ctx.layer.get(AUTHORING_KEY)
-        if not isinstance(ev, dict) or not isinstance(ev.get("previous_legend_spec"), dict):
+        # 判定「有可恢复快照」的依据是**上一代 source carrier**，而不是
+        # ``previous_legend_spec`` 是否为 dict：层在作者化之前本来就可能没有
+        # legend_spec，此时撤销的语义是「恢复为无图例」，而不是「无快照」。
+        # 两处判定若不一致，预览会拒、提交却支持 → 撤销整体不可达（复审 P1）。
+        prev_ref_raw = ev.get("previous_source_ref") if isinstance(ev, dict) else None
+        if not (isinstance(ev, dict) and isinstance(prev_ref_raw, str)
+                and prev_ref_raw.startswith("ref:")):
             raise AuthoringError(
                 "REVERT_SNAPSHOT_INVALID",
                 "没有本域作者决定前的表达快照，无法预览恢复", status_code=409,
                 correction_hint="使用 MapSpec undo 回退整笔提交。")
+        prev_legend = ev.get("previous_legend_spec")
         # 恢复也要绑定同一代源锚：UI/Pi 必须能拿到 candidate_digest，
         # 且源在预览后被刷新时旧恢复候选同样失效。
         frozen = await _freeze(ctx, owner_token=owner_token,
@@ -410,8 +427,12 @@ async def preview_expression(
             "source_anchor": frozen.anchor(),
             "plan_digest": plan.plan_digest(),
             "candidate_digest": plan.candidate_digest(frozen.anchor()),
-            "restores": {"legend_type": ev["previous_legend_spec"].get("type"),
-                         "source_ref": ev.get("previous_source_ref")},
+            "restores": {
+                "legend_type": (prev_legend.get("type")
+                                if isinstance(prev_legend, dict) else None),
+                "had_legend": isinstance(prev_legend, dict),
+                "source_ref": prev_ref_raw,
+            },
             "revision": await _current_revision(session_id),
             "disclosures": ["恢复本域作者决定前的完整表达（单步；更多历史用 undo）"],
         }
@@ -443,9 +464,13 @@ def _revert_layer(ctx: LayerContext, *, origin: str, actor: str,
     layer = dict(ctx.layer)
     prev_paint = ev.get("previous_paint")
     paint = dict(prev_paint) if isinstance(prev_paint, dict) else {}
-    # 显式中性 opacity：阻止生命周期引擎的 durable-presentation 继承把上一
-    # 模式的 reliability ``match`` 表达式重新注入恢复后的层（B30）。
-    paint.setdefault("opacity", 1.0)
+    # 显式中性 opacity：阻止生命周期引擎的 durable-presentation 继承把上一模式
+    # 的 reliability ``match`` 表达式重新注入恢复后的层（B30）。但**只在必要时**
+    # 补：上一代表达没有 opacity 而当前是表达式才写 1.0；上一代已有常量
+    # （含用户 0.4）必须原样保留，否则恢复会凭空改掉用户透明度（复审 P2）。
+    cur_opacity = (ctx.layer.get("paint") or {}).get("opacity")
+    if "opacity" not in paint and not _is_constant_number(cur_opacity):
+        paint["opacity"] = 1.0
     layer["paint"] = paint
     prev_legend = ev.get("previous_legend_spec")
     if prev_legend is None:
@@ -573,12 +598,15 @@ async def commit_expression(
                 paint.pop(k, None)
         for k, v in candidate.paint.items():
             paint[k] = v
-        # 未启用 opacity 第二通道时显式写中性常量 1.0。生命周期引擎的
-        # ``_preserve_durable_presentation`` 会把「既有层的 opacity」继承到
-        # 未声明 opacity 的整层 upsert 上；不显式写出会把上一模式的
-        # reliability match 表达式悄悄带回新图（B30 的真实交互坑）。
+        # 未启用 opacity 第二通道时：若既有 opacity 是**常量**（用户持久透明度
+        # 决策），必须原样保留；只有它是表达式或缺失时才写中性 1.0，阻止生命
+        # 周期引擎的 ``_preserve_durable_presentation`` 把上一模式的 reliability
+        # ``match`` 悄悄带回新图（B30 的真实交互坑）。一律写 1.0 会静默吃掉
+        # 用户设定的 0.4（复审 P2）。
         if "opacity" not in candidate.paint:
-            paint["opacity"] = 1.0
+            prev_opacity = paint.get("opacity")
+            if not (_is_constant_number(prev_opacity)):
+                paint["opacity"] = 1.0
         updated_layer["paint"] = paint
         updated_layer["legend_spec"] = candidate.legend_spec
         binding = dict(ctx.layer["data_binding"]) if isinstance(ctx.layer.get("data_binding"), dict) else {}

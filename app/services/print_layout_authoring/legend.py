@@ -18,7 +18,7 @@ from app.lib.cartography.render_scene import derive_legend_items
 from app.lib.cartography.thematic_spec import normalize_legend_spec
 from app.services.print_layout_authoring.fonts import wrap_text
 from app.services.print_layout_authoring.units import (
-    mm_to_canvas_units, mm_to_pt, pt_to_mm,
+    canvas_units_to_mm, mm_to_canvas_units, mm_to_pt, pt_to_canvas_units,
 )
 
 MAX_LEGEND_ENTRIES = 256
@@ -106,12 +106,10 @@ def read_legend_content(mapspec: Dict[str, Any],
     specs = _legend_specs_of(mapspec, component_id)
     # G41：canonical 双变量矩阵 / 可靠性双通道图例内容。扁平条目卡不能替代
     # 矩阵或误差量名——专用绘制器消费整份 canonical 合同（加性，不影响旧图）。
-    canonical: Optional[Dict[str, Any]] = None
-    for item in specs:
-        spec = item["spec"]
-        if isinstance(spec, dict) and spec.get("schema_version") == "g41_legend.v1":
-            canonical = spec
-            break
+    # 允许**多个** canonical（图例组件可聚合同一 MapSpec 的多层）：只保留第一份
+    # 会让其余层的条目整块消失且仍报 complete（复审 P1）。canonical 层不再产生
+    # 扁平条目，绘制器负责画完整矩阵；非 canonical 层照旧走扁平条目。
+    canonicals: List[Dict[str, Any]] = []
     entries: List[Dict[str, Any]] = []
     titles: List[str] = []
     units: List[str] = []
@@ -124,6 +122,9 @@ def read_legend_content(mapspec: Dict[str, Any],
     for item in specs:
         spec = item["spec"]
         layer_ids.append(item["layer_id"])
+        if isinstance(spec, dict) and spec.get("schema_version") == "g41_legend.v1":
+            canonicals.append({**spec, "layer_id": item["layer_id"]})
+            continue
         samples.extend(_proportional_samples(spec))
         model = derive_legend_items(spec)
         if model is None:
@@ -168,8 +169,10 @@ def read_legend_content(mapspec: Dict[str, Any],
             })
     labels = " ".join(e["label"] for e in entries)
     return {
-        "available": bool(entries or samples),
-        "title": titles[0] if titles else ("图例" if entries else ""),
+        "available": bool(entries or samples or canonicals),
+        "title": titles[0] if titles else (
+            str(canonicals[0].get("title") or "图例") if canonicals
+            else ("图例" if entries else "")),
         "unit": units[0] if units else "",
         "notes": notes[:4],
         "entries": entries[:MAX_LEGEND_ENTRIES],
@@ -181,7 +184,8 @@ def read_legend_content(mapspec: Dict[str, Any],
         "source_layer_ids": layer_ids[:16],
         "kind": kind,
         "groups": len(specs),
-        "canonical": canonical,
+        # 多份 canonical 全部保留（顺序 = 图层顺序），一份都不静默丢弃。
+        "canonicals": canonicals,
     }
 
 
@@ -237,23 +241,26 @@ def layout_legend(
     notes = list(content.get("notes") or [])
     footer_pt = len(notes) * mm_to_pt(3.0)
     row_pt = _row_height_pt(layout, typography)
-    frame_pt = mm_to_pt(frame_h)
-    capacity = max(1, int(math.floor((frame_pt - header_pt - footer_pt) / row_pt)))
+    # 单位换算提前到高度计算之前：canonical 的占位高度与绘制器共用同一
+    # 口径（``render_g41_canonical_legend`` 的 7/8 行框），否则会出现
+    # 「扩框量来自不会被绘制的行」——框高虚高且溢出页框（复审 P1-4）。
+    row_units = pt_to_canvas_units(row_pt, dpi)
+    header_units = pt_to_canvas_units(header_pt, dpi)
+    footer_units = pt_to_canvas_units(footer_pt, dpi)
+    gap_units = mm_to_canvas_units(column_gap_mm, dpi)
+    canonicals = [c for c in (content.get("canonicals") or []) if isinstance(c, dict)]
+    canonical_units = 0.0
+    for c in canonicals:
+        lines = 7 if str(c.get("type") or "") == "bivariate" else 8
+        # 帧高（7/8 行）+ 半行间距，与绘制器的推进量逐单位一致。
+        canonical_units += lines * row_units + row_units * 0.5
     rows_per_column = max(1, int(math.ceil(total / columns))) if total else 1
-    needed_pt = header_pt + rows_per_column * row_pt + footer_pt
-    # G41：canonical 矩阵/可靠性图例需要额外绘图高度。expand 策略据此扩框，
-    # 保证色阵格子与轴标不溢出面板（仍由 G34 决定位置/尺寸/字体/页框）。
-    canonical = content.get("canonical")
-    canonical_extra_mm = 0.0
-    if isinstance(canonical, dict):
-        ctype = canonical.get("type")
-        if ctype == "bivariate":
-            n = canonical.get("n") if isinstance(canonical.get("n"), int) else 3
-            canonical_extra_mm = 8.0 + max(2, min(3, n)) * 5.0
-        elif ctype == "reliability_dual_channel":
-            canonical_extra_mm = 14.0
-        needed_pt += mm_to_pt(canonical_extra_mm)
-    needed_mm = pt_to_mm(needed_pt)
+    needed_units = (header_units + canonical_units
+                    + rows_per_column * row_units + footer_units)
+    capacity = max(1, int(math.floor(
+        (mm_to_canvas_units(frame_h, dpi) - header_units - canonical_units
+         - footer_units) / row_units)))
+    needed_mm = canvas_units_to_mm(needed_units, dpi)
 
     # 比例符号：全表共享一个比例尺度（不因列分别缩放）。
     samples = list(content.get("proportional_samples") or [])
@@ -271,11 +278,7 @@ def layout_legend(
     # 普通色块尺寸同样全表共享
     swatch_units = mm_to_canvas_units(swatch_mm, dpi)
     symbol_units = mm_to_canvas_units(symbol_mm, dpi)
-    row_units = pt_to_canvas_units(row_pt, dpi)
-    header_units = pt_to_canvas_units(header_pt, dpi)
-    footer_units = pt_to_canvas_units(footer_pt, dpi)
     col_units = mm_to_canvas_units(col_w_mm, dpi)
-    gap_units = mm_to_canvas_units(column_gap_mm, dpi)
 
     def _box(start: int, count: int, box_index: int, height_mm: float) -> Dict[str, Any]:
         return {
@@ -348,6 +351,6 @@ def layout_legend(
         "has_out_of_range": bool(content.get("has_out_of_range")),
         "proportional": proportional,
         "group_by_layer": bool(layout.get("group_by_layer")),
-        "canonical": canonical,
-        "canonical_extra_mm": round(canonical_extra_mm, 4),
+        "canonicals": canonicals,
+        "canonical_height_mm": round(canvas_units_to_mm(canonical_units, dpi), 4),
     }

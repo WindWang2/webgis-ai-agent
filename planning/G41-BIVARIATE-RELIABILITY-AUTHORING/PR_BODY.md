@@ -27,11 +27,11 @@
 
 | 项 | 结果 |
 |---|---|
-| `pytest tests/unit/bivariate_reliability` | 72 passed（含手算 oracle） |
+| `pytest tests/unit/bivariate_reliability` | 73 passed（含手算 oracle） |
 | 后端回归（thematic_authoring / G34 / v4 cartography / converter） | 138 passed, 2 skipped |
-| `test_g41_publication_readback.py` | 5 passed（SVG/PNG/PDF 独立回读、长名全文、跨 DPI） |
+| `test_g41_publication_readback.py` | 6 passed（SVG/PNG/PDF 独立回读、长名全文、跨 DPI、混合图层完整性） |
 | `PI_JOURNEY_E2E=1` 真实 Pi 旅程 | 1 passed，18/18 gates，pin `v1.5.2-0-gb4afdddf4` |
-| 前端 G41 专项 + 回归 | 11 passed / 见 TEST_MATRIX T9 |
+| 前端 G41 专项 + 回归 | 14 文件 140 passed |
 | `tsc --noEmit` | 新代码 0 错误（仅 2 处既有 `cartography-result-card.tsx`） |
 
 Pi 旅程只 stub LLM 响应；RPC entry、`tool_search` deferred 激活、`ToolDispatchService`、`UpsertLayerIntent` 写入、派生 ref 冻结、受权下载回读均为生产代码。

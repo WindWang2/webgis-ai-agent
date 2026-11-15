@@ -122,7 +122,7 @@ def _legend_svg(legend: dict) -> str:
                            "legend_spec": legend}],
                "sources": {"s1": {"type": "geojson"}}}
     content = read_legend_content(mapspec, "legend-1")
-    assert content["canonical"] is not None, "canonical 图例必须被 G34 识别"
+    assert content["canonicals"], "canonical 图例必须被 G34 识别"
     lp = layout_legend(
         content,
         {"columns": 1, "continuation": "expand", "swatch_mm": 4.0},
@@ -131,8 +131,10 @@ def _legend_svg(legend: dict) -> str:
          "font_id": "noto-sans-sc-embedded"},
         96,
     )
-    assert lp["canonical"] is not None
-    assert lp["canonical_extra_mm"] > 0
+    assert lp["canonicals"], "排版计划必须携带全部 canonical（不丢层）"
+    assert lp["canonical_height_mm"] > 0
+    # 框高必须按真正会被绘制的 canonical 定，而不是按不会被画的扁平条目虚增
+    assert lp["needed_height_mm"] <= lp["frame_height_mm"] + 1e-6 or lp["status"] == "expanded"
     draw = {
         "id": "legend-1", "legend": lp,
         "box": {"x": 10.0, "y": 10.0,
@@ -153,21 +155,45 @@ def _full_svg(legend_fragment: str, map_body: str) -> str:
 
 
 def _map_body(legend: dict, class_field: str) -> str:
-    """生产 SVG 编译器编译真实矢量面（paint match 消费派生类字段）。"""
+    """生产 SVG 编译器编译真实矢量面（paint match 消费派生类字段）。
+
+    可靠性模式的派生字段是**字符串桶键**（``b0…``/``unknown``/``out_of_domain``），
+    用整数列举颜色会让所有要素落到 ``default``（图面全透明但测试仍通过——
+    复审 P2 指出的「只验容器」）。这里直接消费 canonical 的桶输出，让回读
+    断言的是真正被绘制的透明度。
+    """
     feats = _fc(ROWS)["features"]
-    for i, f in enumerate(feats):
-        f["properties"][class_field] = i % 9
+    if str(legend.get("type") or "") == "reliability_dual_channel":
+        buckets = [b for b in (legend.get("buckets") or [])
+                   if isinstance(b, dict) and b.get("key")]
+        assert buckets, "可靠性 canonical 必须带桶定义"
+        for i, f in enumerate(feats):
+            f["properties"][class_field] = buckets[i % len(buckets)]["key"]
+        # 第二通道 = **opacity** 的 match（不是 color）：把桶输出写进 color
+        # 会产出 fill="0.9" 这种非法颜色，图面看似有值实则不是颜色也不是透明度。
+        paint_color: Any = "#225588"
+        paint_opacity: Any = {
+            "method": "match", "field": class_field,
+            "cases": [[b["key"], b["output"]] for b in buckets],
+            "default": buckets[0]["output"],
+        }
+    else:
+        for i, f in enumerate(feats):
+            f["properties"][class_field] = i % 9
+        paint_color = {
+            "method": "match", "field": class_field,
+            "cases": [[i, c] for i, c in enumerate(
+                legend.get("colors") or legend["estimate"]["palette_colors"])],
+            "default": "rgba(0,0,0,0)",
+        }
+        paint_opacity = 1.0
     mapspec = {
         "sources": {"s1": {"type": "geojson",
                            "inlineData": {"type": "FeatureCollection",
                                           "features": feats}}},
         "layers": [{
             "id": "L1", "type": "fill", "source": "s1",
-            "paint": {"color": {"method": "match", "field": class_field,
-                                "cases": [[i, c] for i, c in enumerate(
-                                    legend.get("colors")
-                                    or legend["estimate"]["palette_colors"])],
-                                "default": "rgba(0,0,0,0)"}},
+            "paint": {"color": paint_color, "opacity": paint_opacity},
             "legend_spec": legend,
         }],
         "view": {"center": [116.05, 39.005], "zoom": 10},
@@ -255,6 +281,11 @@ def test_publication_three_formats_independent_readback(mode, tmp_path):
         assert "standard_error" in fragment
         assert "误差缺失" in fragment or "unknown" in fragment
         body = _map_body(legend, "__g41_rel_bucket")
+        # 第二通道必须真的落到 opacity 上（复审 P2：只验容器会放过全透明地图面）
+        assert 'fill-opacity="0.9"' in body, "最高可靠性桶的透明度未进产物"
+        assert 'fill-opacity="0.25"' in body, "最低可靠性桶的透明度未进产物"
+        assert 'fill="#225588"' in body, "估计主色通道必须正常绘制"
+        assert 'fill="0.' not in body, "桶输出不得被当作颜色写进 fill"
 
     svg = _full_svg(fragment, body)
     with _heavy_stage_lock():
@@ -285,6 +316,61 @@ def test_legend_rejects_plain_colorbar_substitute(tmp_path):
     assert "…" in long_fragment
     assert 'data-g41-col-label-full=' in long_fragment
     assert 'data-g41-row-label-full=' in long_fragment
+
+
+def test_mixed_canonical_and_plain_layers_keep_every_entry(tmp_path):
+    """复审 P1：图例组件聚合多层时，canonical 不得吞掉其它层的条目。
+
+    旧实现只取第一份 canonical，并把 ``box_entries`` 整体置空，于是同图的
+    graduated/categorical 层标签**一条都不画**，却仍报
+    ``entries_rendered == entries_total`` 且 ``complete=True`` —— 完整性门禁
+    形同虚设。这里同时断言「画了矩阵」和「画了每一条扁平条目」。
+    """
+    blegend, _, _ = _canonical_legends()
+    mapspec = {
+        "layers": [
+            {"id": "L1", "type": "fill", "source": "s1",
+             "legend_spec": blegend},
+            {"id": "L2", "type": "circle", "source": "s1",
+             "legend_spec": {
+                 "type": "categorical", "title": "监测点等级",
+                 "categories": [
+                     {"key": "a", "color": "#16a34a", "label": "一级"},
+                     {"key": "b", "color": "#f59e0b", "label": "二级"},
+                 ],
+                 "nodata": {"color": "#dddddd", "label": "无数据"},
+             }},
+        ],
+        "sources": {"s1": {"type": "geojson"}},
+    }
+    content = read_legend_content(mapspec, "legend-1")
+    assert len(content["canonicals"]) == 1, "两层只应有一份 canonical"
+    labels = [e["label"] for e in content["entries"]]
+    assert any("一级" in lab for lab in labels), labels
+    assert any("二级" in lab for lab in labels), labels
+
+    lp = layout_legend(
+        content,
+        {"columns": 1, "continuation": "expand", "swatch_mm": 4.0},
+        {"width": 120.0, "height": 80.0},
+        {"size_pt": 9.0, "line_height": 1.35,
+         "font_id": "noto-sans-sc-embedded"},
+        96,
+    )
+    assert lp["complete"] is True
+    assert lp["entries_rendered"] == lp["entries_total"] == len(content["entries"])
+    draw = {
+        "id": "legend-1", "legend": lp,
+        "box": {"x": 10.0, "y": 10.0,
+                "width": 300.0, "height": float(lp["boxes"][0]["height_units"])},
+        "font_family": "sans-serif", "font_size_units": 10.0,
+        "line_units": 13.5, "color": "#1e293b",
+    }
+    svg = render_legend_box_authored(draw, {"components": []})
+    assert 'data-g41-type="bivariate"' in svg, "canonical 矩阵必须被绘制"
+    assert svg.count("data-g34-entry=") == len(content["entries"]), (
+        "非 canonical 层的每一条条目都必须落到产物里")
+    assert "一级" in svg
 
 
 def test_real_committed_paint_renders_in_production_svg(tmp_path):

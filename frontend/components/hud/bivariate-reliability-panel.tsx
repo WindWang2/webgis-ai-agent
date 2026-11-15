@@ -292,7 +292,10 @@ export function BivariateReliabilityPanel({ layerId }: Props) {
       toast(`${payload.code}${where}: ${payload.message}`, 'error');
       setPreviewError(payload);
     } finally {
-      if (epoch === epochRef.current && gen === reqGenRef.current) setBusy(false);
+      // 提交是独占的（canApply 要求 !busy），因此本请求收尾必须无条件释放 busy。
+      // 成功路径里 ``await reload()`` 会推进 epochRef，若这里再按 epoch 相等才
+      // 释放，busy 将永久为真 —— 面板的预览/应用按钮此后全部禁用（复审 P1）。
+      setBusy(false);
     }
   }, [ctx, buildPlan, preview, canApply, layerId, reload, toast, t]);
 
