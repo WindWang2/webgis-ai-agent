@@ -86,7 +86,9 @@ class AggregateSpec(BaseModel):
         if self.alias:
             return self.alias
         if self.function == "count":
-            return "match_count"
+            # 无字段 = 系统 match_count 列（COUNT(*)）；显式字段 = COUNT(col)
+            # 独立列 <field>_count（评审 R1 —— 两者语义不同，不合一）
+            return "match_count" if not self.right_field else f"{self.right_field}_count"
         suffix = f"_{self.function}"
         return (self.right_field or "") + suffix
 

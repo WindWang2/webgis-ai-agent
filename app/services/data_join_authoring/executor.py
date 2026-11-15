@@ -612,8 +612,10 @@ class JoinExecutor:
             row["_join_right_ref"] = None
             row["match_count"] = len(hits)
             for agg in plan.aggregates:
-                if agg.function == "count" and agg.output_name() == "match_count":
-                    continue  # 系统 match_count 即 count 聚合（同语义）
+                if (agg.function == "count"
+                        and agg.output_name() == "match_count"
+                        and not agg.right_field):
+                    continue  # 无字段缺省 count 与系统 match_count 同义合一
                 values = (
                     [r.get(agg.right_field) for r in right_rows]
                     if agg.right_field else [None] * len(right_rows)
@@ -629,7 +631,9 @@ class JoinExecutor:
                 # 行 schema 一致（评审 F7）：未匹配/空键行也带聚合列（0/空值）
                 row["match_count"] = 0
                 for agg in plan.aggregates:
-                    if agg.function == "count" and agg.output_name() == "match_count":
+                    if (agg.function == "count"
+                            and agg.output_name() == "match_count"
+                            and not agg.right_field):
                         continue
                     row[agg.output_name()] = None
                     row[f"{agg.output_name()}_valid_count"] = 0
@@ -797,13 +801,21 @@ def _resolved_field_map(
         names[out] = f"{side}:{f}"
     for agg in plan.aggregates:
         out = agg.output_name()
-        if agg.function == "count" and out == "match_count":
-            # count 聚合缺省别名 = 系统 match_count 列（同一语义，不另起列）
+        # 仅「无字段、缺省别名」的 count 与系统 match_count 同义合一；
+        # 显式字段 count(col)（非空计数）是独立列（评审 R1）
+        if (agg.function == "count" and out == "match_count"
+                and not agg.right_field):
             continue
         if out in names or out in reserved:
             conflicts.append({"output": out, "side": "aggregate",
                               "field": agg.function, "reason": "duplicate"})
         names[out] = "aggregate"
+        # 生成分母列 <agg>_valid_count 也占用输出名空间（评审 R2）
+        vcol = f"{out}_valid_count"
+        if vcol in names or vcol in reserved:
+            conflicts.append({"output": vcol, "side": "aggregate",
+                              "field": agg.function, "reason": "duplicate"})
+        names[vcol] = "aggregate"
     if conflicts:
         raise DataJoinError(
             "field_mapping_conflict",

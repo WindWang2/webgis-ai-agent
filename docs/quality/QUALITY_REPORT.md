@@ -6,13 +6,12 @@
 
 ## Capability Coverage（QualityManifest）
 
-- tools 485 · algorithms 256 · capabilities 195 · artifact_types 23 · recipes 166
+- tools 485 · algorithms 257 · capabilities 195 · artifact_types 23 · recipes 166
 - 描述符富化闸：**PASS**（可执行工具 485）
 
 | finding code | count |
 |---|---|
 | ALGO_HEAVY_NO_VARIANTS | 1 |
-| CAPABILITY_NO_PRODUCER | 1 |
 | TOOL_DESCRIPTOR_INCOMPLETE | 23 |
 | TOOL_UNTESTED | 17 |
 

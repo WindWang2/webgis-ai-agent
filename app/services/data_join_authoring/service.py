@@ -599,24 +599,33 @@ async def execute_plan(
 
     from app.services.data_operations.runner import submit_async_job
 
-    job_id, job_status, reused = submit_async_job(
-        task_type=TASK_TYPE,
-        kind="data_join",
-        display_name=f"数据关联 · {(plan.title or plan.output_name)[:24]}",
-        params={
-            "session_id": session_id,
-            "plan_id": plan_id,
-            "run_id": run_id,
-            "run_revision": plan_revision,
-            "plan_digest": plan_digest,
-        },
-        idempotency_key=idem,
-        owner_id=actor.get("user_id"),
-        owner_token=actor.get("owner_token"),
-        org_id=actor.get("org_id"),
-        session_id=session_id,
-        project_id=None,
-    )
+    try:
+        job_id, job_status, reused = submit_async_job(
+            task_type=TASK_TYPE,
+            kind="data_join",
+            display_name=f"数据关联 · {(plan.title or plan.output_name)[:24]}",
+            params={
+                "session_id": session_id,
+                "plan_id": plan_id,
+                "run_id": run_id,
+                "run_revision": plan_revision,
+                "plan_digest": plan_digest,
+            },
+            idempotency_key=idem,
+            owner_id=actor.get("user_id"),
+            owner_token=actor.get("owner_token"),
+            org_id=actor.get("org_id"),
+            session_id=session_id,
+            project_id=None,
+        )
+    except Exception:
+        # 提交失败（评审 R3）：删除已落的 run 行 —— 不留无 job 的 pending 残留
+        with SessionLocal() as db:
+            dead = db.get(DataJoinRun, run_id)
+            if dead is not None:
+                db.delete(dead)
+                db.commit()
+        raise
     with SessionLocal() as db:
         run = db.get(DataJoinRun, run_id)
         run.job_id = job_id
@@ -1005,9 +1014,10 @@ def _find_active_run_by_key(session_id: str, base_key: str) -> Optional[Dict[str
         ).first()
         if row is None:
             return None
-        # 活跃判据复核（评审 F10）：run 行 pending/running 但关联 job 已终态
-        # （崩溃残留）不算活跃 —— 交由恢复/新世代处理，避免永久楔死
-        if row.job_id is not None and not _job_is_live(row.job_id):
+        # 活跃判据复核（评审 F10/R3）：run 行 pending/running 但关联 job 已
+        # 终态（崩溃残留）或从未回填 job（提交中途死亡）不算活跃 —— 交由
+        # 恢复/新世代处理，避免永久楔死
+        if row.job_id is None or not _job_is_live(row.job_id):
             return None
         return {"run_id": row.id, "job_id": row.job_id, "status": row.status}
 
@@ -1056,30 +1066,6 @@ def _find_run_by_job(session_id: str, job_id: int) -> Optional[str]:
             ).order_by(DataJoinRun.created_at.desc())
         ).first()
         return row.id if row is not None else None
-
-
-def _find_run_by_idem(session_id: str, idem: str) -> Optional[Dict[str, Any]]:
-    """按 base 键前缀找最新 run（含 :gN 世代 —— 评审 F5：收据短路不得
-    只匹配 0 世代，否则失效后重执行永不收敛）。"""
-    from sqlalchemy import select
-
-    from app.core.database import SessionLocal
-    from app.models.data_join_authoring import DataJoinRun
-
-    with SessionLocal() as db:
-        row = db.scalars(
-            select(DataJoinRun).where(
-                DataJoinRun.idempotency_key.like(f"{idem}%"),
-                DataJoinRun.session_id == session_id,
-            ).order_by(DataJoinRun.created_at.desc())
-        ).first()
-        if row is None:
-            return None
-        return {
-            "run_id": row.id, "status": row.status,
-            "receipt": row.receipt, "output_ref": row.output_ref,
-            "output_rows": row.output_rows,
-        }
 
 
 def _invalidate_run(session_id: str, run_id: str, code: str) -> None:

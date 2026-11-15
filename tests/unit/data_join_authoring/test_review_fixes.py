@@ -178,3 +178,46 @@ async def test_f13_table_rows_anchor_rejects_fc_payload(seeded_sources):
             seed["actor"])
     assert ei.value.code == "source_unresolvable"
     assert "rows" in ei.value.message
+
+
+def test_r1_unaliased_count_with_field_is_independent_column():
+    """R1：显式字段 count(col)（缺省别名）是独立 COUNT(col) 列，
+    不被系统 match_count（COUNT(*)）吞并。"""
+    left = loaded_from_rows("left", {"rows": [{"code": "A"}]}, "fpL")
+    right = loaded_from_rows(
+        "right", {"rows": [{"code": "A", "v": 1}, {"code": "A", "v": None}]},
+        "fpR")
+    plan = parse_plan(attr_plan(
+        keys=[{"left_field": "code", "right_field": "code"}],
+        output_cardinality="many_to_one",
+        field_map=[{"side": "left", "field": "code"}],
+        aggregates=[{"function": "count", "right_field": "v"}],
+    ))
+    ex = JoinExecutor(plan)
+    out = ex.run_attribute(left, right)
+    r = out[0]
+    assert r["match_count"] == 2                    # COUNT(*)：两匹配对
+    assert r["v_count"] == 1                        # COUNT(col)：非空 1
+    assert r["v_count_valid_count"] == 1
+
+
+def test_r2_generated_valid_count_names_in_conflict_scan():
+    """R2：用户字段名撞生成分母列 <agg>_valid_count → typed 冲突。"""
+    left = loaded_from_rows("left", {"rows": [{"code": "A"}]}, "fpL")
+    right = loaded_from_rows(
+        "right", {"rows": [{"code": "A", "v": 1}]}, "fpR")
+    plan = parse_plan(attr_plan(
+        keys=[{"left_field": "code", "right_field": "code"}],
+        output_cardinality="many_to_one",
+        field_map=[{"side": "left", "field": "code"},
+                   # 别名造碰撞：输出名 = 聚合生成分母列 v_sum_valid_count
+                   {"side": "right", "field": "v",
+                    "alias": "v_sum_valid_count"}],
+        aggregates=[{"function": "sum", "right_field": "v"}],
+    ))
+    ex = JoinExecutor(plan)
+    with pytest.raises(DataJoinError) as ei:
+        ex.run_attribute(left, right)
+    assert ei.value.code == "field_mapping_conflict"
+    assert any(c["output"] == "v_sum_valid_count"
+               for c in ei.value.detail["conflicts"])

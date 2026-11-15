@@ -47,6 +47,30 @@
   api_compatibility + quality_manifest + generated_graph + realtime 68 passed /
   1 既有（percent-encoded-url，base 复现在案）。
 
-## Round 2（复审：同 reviewer 携 Round-1 报告复核）
+## Round 2（复审：同 reviewer 携 Round-1 报告复核，HEAD 6070fa717）
 
-（待复审结论回填）
+- 结论：**GO**。Reviewer 逐项代码级核验 + 亲跑负载-bearing 套件 + 重放
+  Round-1 运行时探针（非只看新测试）：F1 空间门控（vitest 转移矩阵）、
+  F2 探针 301 行 → budget_exceeded、F3 published+data_object_id、F4 parity
+  与干净 base 逐字节一致、F5 run3 复用 run2、F6 孤立面→1、F7 键集一致、
+  F10 崩溃楔死消除、F13 table_rows 拒 FC / session_ref 通过。
+- 复跑：后端 68 passed；Pi 旅程 29.3s passed；前端 5 passed 零 unhandled；
+  兄弟回归 297 passed / 1 既有。
+- 残留 4×P3（R1 无别名 count(col) 被并入 match_count；R2 `<agg>_valid_count`
+  生成列不进冲突扫描；R3 job 回填窗口残留 pending run；R4 死代码
+  `_find_run_by_idem`）。
+- F11b（聚合列 UI 编辑器）维持披露式延后：空间 aggregate 模式 UI 可达
+  （诚实 match_count 富集），全量聚合语义 REST/Pi 工具可达。
+
+### Round-2 P3 残留落地（后续 commit）
+
+- R1：`AggregateSpec.output_name` —— 无字段 count = 系统 match_count；
+  显式字段 = 独立 `<field>_count`（COUNT(col)），emit/冲突扫描同语义；
+  回归 test_r1。
+- R2：`<agg>_valid_count` 生成列登记进输出名冲突扫描；回归 test_r2
+  （别名碰撞 typed 拒绝）。
+- R3：`submit_async_job` 失败 → 删除已落 run 行（无 job 的 pending 残留）；
+  `_find_active_run_by_key` 对 `job_id IS NULL` 的 pending run 判非活跃。
+- R4：删除死代码 `_find_run_by_idem`。
+- 终验：后端 **70 passed**（+R1/R2 回归）；Pi 旅程 1 passed（33.6s）；
+  前端 5 passed；manifest/report/drift/账本再生成后工件闸 40 passed。
