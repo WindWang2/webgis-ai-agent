@@ -83,7 +83,8 @@ async def export_exploration(
         session_id, plan.anchor.ref_id,
         owner_token=actor.get("owner_token"),
         trusted_dispatch=bool(actor.get("trusted_session_id")))
-    if (frozen.content_revision != plan.anchor.content_revision):
+    if (frozen.content_revision != plan.anchor.content_revision
+            or frozen.content_fingerprint != plan.anchor.content_fingerprint):
         raise LinkedExplorationError(
             "STALE_SOURCE",
             "导出期间源已推进 —— 已冻结任务保持原结果需重新打开视图",
@@ -112,6 +113,15 @@ async def export_exploration(
     }
     filtered_layer_ids = _apply_layer_filters(
         doc, plan.anchor.ref_id, combined_expr, frozen_fc)
+    if combined_expr is not None and not filtered_layer_ids:
+        # review P1-3：目标层失配必须披露（不允许静默未过滤导出）
+        raise LinkedExplorationError(
+            "EXPORT_NO_TARGET_LAYER",
+            "committed MapSpec 中没有引用该探索源的图层 —— 拒绝导出"
+            "未过滤图面（防口径声明与图面内容矛盾）",
+            status_code=409,
+            correction_hint="先在地图上以该 ref 建立图层（或核对视图绑定的"
+                            " layer_id），再导出。")
     _inject_chart_components(doc, preview, charts, title)
     _inject_annotation(doc, preview, conditions, plan.anchor.ref_id, title)
 
@@ -179,22 +189,30 @@ async def export_exploration(
     }
 
 
-def _layer_source_ref(layer: Dict[str, Any]) -> Optional[str]:
-    """图层 source entry → ref id（与 G41 source_ref_of 同协议）。"""
+def _layer_source_ref(layer: Dict[str, Any], doc: Dict[str, Any]) -> Optional[str]:
+    """图层 source → ref id（与 G41 source_ref_of 同协议）。
+
+    生产形态：``layer["source"] = "<source key>"`` + 顶层
+    ``sources[key] = {"type":"geojson","ref":"ref:...", ...}``（mutation
+    handlers / composite builder 写入）——必须经 sources 表反查。
+    兼容直接内联 dict / "ref:" 字符串的旧形态（review P1-3：此前对生产
+    形态返回 None → 导出静默未过滤）。
+    """
+    from app.services.bivariate_reliability_authoring.snapshot import source_ref_of
+
     src = layer.get("source")
-    if isinstance(src, str) and src.startswith("ref:"):
-        return src
+    if isinstance(src, str):
+        if src.startswith("ref:"):
+            return src
+        # source key → 顶层 sources 表反查（生产主路径）
+        entry = (doc.get("sources") or {}).get(src) if isinstance(doc.get("sources"), dict) else None
+        if isinstance(entry, dict):
+            resolved = source_ref_of(entry)
+            if resolved:
+                return resolved
+        return None
     if isinstance(src, dict):
-        for key in ("ref_id", "ref"):
-            v = src.get(key)
-            if isinstance(v, str) and v.startswith("ref:"):
-                return v
-    sources = layer.get("sources")
-    if isinstance(sources, list):
-        for s in sources:
-            v = _layer_source_ref(s if isinstance(s, dict) else {})
-            if v:
-                return v
+        return source_ref_of(src)
     return None
 
 
@@ -223,7 +241,7 @@ def _apply_layer_filters(
     for layer in layers:
         if not isinstance(layer, dict):
             continue
-        if _layer_source_ref(layer) != ref_id:
+        if _layer_source_ref(layer, doc) != ref_id:
             continue
         if src_key is not None:
             layer["source"] = src_key

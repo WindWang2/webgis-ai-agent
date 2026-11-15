@@ -104,6 +104,7 @@ STUB_JS = r"""
 import http from 'node:http';
 const fsMod = await import('node:fs');
 const scriptPath = process.env.JOURNEY_SCRIPT;
+const counters = {};
 const srv = http.createServer((req, res) => {
   let body = ''; req.on('data', (c) => (body += c));
   req.on('end', () => {
@@ -117,32 +118,37 @@ const srv = http.createServer((req, res) => {
         : Array.isArray(m.content) ? m.content.filter((b) => b.type === 'text').map((b) => b.text).join('') : '';
       lastUser = c; break;
     }
-    let script = {};
-    try { script = JSON.parse(fsMod.readFileSync(scriptPath, 'utf8')); } catch {}
-    const turns = script[lastUser] || [];
-    let idx = 0;
-    const next = () => {
-      if (idx >= turns.length) { res.end(JSON.stringify({
-        choices: [{ message: { role: 'assistant',
-          content: 'journey-turn-exhausted（脚本已用尽）' } }] })); return; }
-      const step = turns[idx]; idx += 1;
-      if (step.text !== undefined) {
-        res.end(JSON.stringify({ choices: [{ message: {
-          role: 'assistant', content: step.text } }] })); return; }
-      const name = step.tool || '';
-      const args = step.args || {};
-      const call = { id: 'call_' + Math.random().toString(36).slice(2),
-        type: 'function', function: { name, arguments: JSON.stringify(args) } };
-      res.end(JSON.stringify({ choices: [{ message: {
-        role: 'assistant', content: '', tool_calls: [call] } }] })); return; };
-    next();
+    const base = (lastUser || '').split('\n')[0].trim();
+    const turnScripts = JSON.parse(fsMod.readFileSync(scriptPath, 'utf8'));
+    const steps = turnScripts[base];
+    let step = null;
+    if (steps) {
+      counters[base] = (counters[base] || 0) + 1;
+      step = steps[Math.min(counters[base] - 1, steps.length - 1)];
+    } else {
+      step = { text: 'ok' };
+    }
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const sse = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
+    const id = 'c' + Date.now();
+    if (step.tool) {
+      sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
+        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_' + Math.random().toString(36).slice(2, 8),
+          type: 'function', function: { name: step.tool, arguments: JSON.stringify(step.args || {}) } }] } }] });
+      sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
+        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+    } else {
+      sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
+        choices: [{ index: 0, delta: { content: step.text || 'done' } }] });
+      sse({ id, object: 'chat.completion.chunk', created: 1, model: 'stub',
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+    }
+    res.write('data: [DONE]\n\n'); res.end();
   });
 });
-const s = srv.listen(0, '127.0.0.1', () => {
-  process.stderr.write('STUB_READY ' + s.address().port + '\n');
-});
+srv.listen(0, '127.0.0.1', () => process.stderr.write('STUB_READY ' + srv.address().port + '\n'));
+process.on('SIGTERM', () => process.exit(0));
 """
-
 
 def main() -> int:
     sys.path.insert(0, REPO)
@@ -335,6 +341,10 @@ def main() -> int:
             verdict["journeys"]["view_saved_db"] = len(rows) == 1 and (
                 rows[0].source_ref == ref)
             view_id = rows[0].id if rows else ""
+        scripts["列出视图"] = [
+            {"tool": "webgis_exploration_views", "args": {}},
+            {"text": "视图列表已读取。"},
+        ]
         scripts["重开视图"] = [
             {"tool": "webgis_exploration_views", "args": {"view_id": view_id}},
             {"text": "视图已打开。"},
@@ -346,9 +356,21 @@ def main() -> int:
         (WORK / "journey_script.json").write_text(
             json.dumps(scripts, ensure_ascii=False), encoding="utf-8")
 
+        b3b = chat("列出视图")
+        if "task_error" in b3b:
+            b3b = chat("列出视图")
+        verdict["journeys"]["pi_list_views_branch"] = (
+            '"views"' in b3b.replace(" ", "") and "AttributeError" not in b3b)
+
         b4 = chat("重开视图")
         if "task_error" in b4:
-            b4 = chat("重开视图")
+            b3b = chat("列出视图")
+        if "task_error" in b3b:
+            b3b = chat("列出视图")
+        verdict["journeys"]["pi_list_views_branch"] = (
+            '"views"' in b3b.replace(" ", "") and "AttributeError" not in b3b)
+
+        b4 = chat("重开视图")
         verdict["journeys"]["view_reopened_ready"] = (
             '"state":"ready"' in b4.replace(" ", ""))
 
@@ -424,8 +446,8 @@ def test_pi_g46_linked_exploration_journey(tmp_path: Path):
     gates = {
         "warmup_ok", "inspect_receipt", "preview_tool_called",
         "combined_match_count", "facet_denominators", "handle_present",
-        "view_saved_db", "view_reopened_ready", "applied_components",
-        "mapspec_components_persisted",
+        "view_saved_db", "pi_list_views_branch", "view_reopened_ready",
+        "applied_components", "mapspec_components_persisted",
     }
     for gate in gates:
         assert verdict["journeys"].get(gate) is True, (

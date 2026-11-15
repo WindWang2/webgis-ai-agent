@@ -31,8 +31,10 @@ from app.services.linked_exploration.contract import (
 from app.services.linked_exploration.errors import LinkedExplorationError
 
 #: 统计扫描帽（与 feature_aggregate.AGG_SCAN_LIMIT 同语义的独立声明：
-#: 本域在一次 preview 中最多做 1+N 次扫描，每次都受此帽）
-STATS_SCAN_LIMIT = 500_000
+#: 本域在一次 preview 中最多做 1+N 次扫描，每次都受此帽）。上限须 ≤
+#: freeze 的 MAX_SOURCE_FEATURES（250k）才是活守卫 —— review P3-3：
+#: 此前 500k 永不可触发（死守卫）。
+STATS_SCAN_LIMIT = 250_000
 
 _OTHER_KEY = "__other__"
 

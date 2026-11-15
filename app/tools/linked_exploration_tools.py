@@ -69,7 +69,9 @@ class SaveViewArgs(BaseModel):
 
 
 class ViewIdArgs(BaseModel):
-    view_id: str = Field(..., min_length=1, max_length=64)
+    #: 空 = 列出当前会话视图（工具描述广告的 list 分支；review P1-2：
+    #: 此前必填导致 list 调用校验直接失败）
+    view_id: str = Field(default="", max_length=64)
 
 
 class UpdateViewArgs(ViewIdArgs):
@@ -360,9 +362,10 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
             return {"success": False, "code": "SOURCE_UNAVAILABLE",
                     "message": "Missing session_id context"}
         if not view_id:
-            views = await _guard(service.list_views(session_id, _actor(session_id)))
-            if views.get("success") is False:
-                return views
+            listed = await _guard(service.list_views(session_id, _actor(session_id)))
+            if isinstance(listed, dict) and listed.get("success") is False:
+                return listed
+            views = listed if isinstance(listed, list) else []
             return {"success": True, "views": views[:_MAX_VIEWS],
                     "truncated": len(views) > _MAX_VIEWS}
         result = await _guard(service.open_view(

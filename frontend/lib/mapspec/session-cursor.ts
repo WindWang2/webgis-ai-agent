@@ -59,6 +59,10 @@ export function resetLiveState(): void {
   void import('../linked-exploration/condition-store')
     .then((m) => m.resetExplorationStore())
     .catch(() => { /* best-effort */ });
+  // G46：共享 preview 回执缓存同属会话内态（不跨会话残留旧统计）
+  void import('../linked-exploration/preview-store')
+    .then((m) => m.setPreviewData(null))
+    .catch(() => { /* best-effort */ });
   // Runtime V4：视口空间上下文同属会话内 transient 态（extent_change 载荷
   // 不跨会话泄漏；epoch bump 使挂起的 debounce 结算失效）。
   void import('../selection/viewport-context')

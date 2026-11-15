@@ -276,8 +276,14 @@
       "category": "analysis.chart_panel",
       "runtimeStatus": "native",
       "rendererRequired": true,
-      "rendererSupport": [],
-      "exporterSupport": [],
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ],
       "semanticRole": "statistics",
       "deprecated": false,
       "deprecatedBy": "",

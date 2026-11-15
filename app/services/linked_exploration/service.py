@@ -33,6 +33,12 @@ _INSPECT_CATEGORY_SAMPLE = 24
 _INSPECT_SAMPLE_ROWS = 20_000
 
 
+def _count_matching_exact(features, where):
+    """(count, exact) —— count_matching 对 ≤250k 冻结集恒精确可证。"""
+    n = count_matching(features, where=where, bbox=None)
+    return n, n is not None
+
+
 def _actor_owner_token(actor: Dict[str, Any]) -> Optional[str]:
     return actor.get("owner_token")
 
@@ -138,8 +144,8 @@ async def preview_conditions(
     combined = contract.compile_combined_where(parsed)
     digest = contract.conditions_digest(parsed)
 
-    match_count = await asyncio.to_thread(
-        count_matching, frozen.features, where=combined, bbox=None)
+    match_count, match_exact = await asyncio.to_thread(
+        _count_matching_exact, frozen.features, combined)
 
     charts_out: List[Dict[str, Any]] = []
     for chart in charts:
@@ -181,7 +187,9 @@ async def preview_conditions(
         "conditions_digest": digest,
         "combined_where": combined,
         "match_count": match_count,
-        "match_count_exact": True,
+        # review P3-3：精确性按 count_matching 的实际语义投影（≤250k 冻结
+        # 帽内恒精确；不硬编码 True 与上游常数隐式耦合）
+        "match_count_exact": match_exact,
         "total": frozen.feature_count,
         "map_filter": map_filter,
         "charts": charts_out,
@@ -369,6 +377,20 @@ async def update_view(
     row = await _owned_view(view_id, session_id)
     new_plan_raw = plan_raw if plan_raw is not None else row.plan
     plan = _validate_plan_payload(new_plan_raw)
+    # review P2-1：换计划与保存同面 —— 重新冻结核对锚（防 PATCH 绕过
+    # save_view 的 STALE_SOURCE 合同）
+    if plan_raw is not None:
+        frozen = await freeze_source_typed(
+            session_id, plan.anchor.ref_id,
+            owner_token=_actor_owner_token(actor), trusted_dispatch=_trusted(actor))
+        if (frozen.content_revision != plan.anchor.content_revision
+                or frozen.content_fingerprint != plan.anchor.content_fingerprint):
+            raise LinkedExplorationError(
+                "STALE_SOURCE",
+                f"计划锚已过期（计划 rev {plan.anchor.content_revision}，当前 "
+                f"rev {frozen.content_revision}）—— 更新前请重新预览",
+                status_code=409,
+                correction_hint="重新执行 preview 并用新锚更新。")
     digest = _plan_digest_of(plan)
     blob = json.dumps(plan.model_dump(mode="json"), ensure_ascii=False)
     if len(blob) > _PLAN_JSON_MAX:
@@ -499,6 +521,20 @@ async def open_view(
         _plan_conditions(plan), actor)
     out["state"] = "ready"
     out["preview"] = _bounded_preview(preview)
+
+    def _persist_preview() -> None:
+        from app.core.database import SessionLocal
+        from app.models.linked_exploration import ExplorationView
+
+        with SessionLocal() as db:
+            fresh = db.get(ExplorationView, row.id)
+            if fresh is None:
+                return
+            fresh.preview = out["preview"]
+            fresh.preview_digest = out["preview"].get("conditions_digest")
+            db.commit()
+
+    await asyncio.to_thread(_persist_preview)
     return out
 
 
@@ -584,7 +620,7 @@ async def apply_view_to_mapspec(
                 actor="linked_exploration",
                 mutation_id=f"g46-apply-{view_id}-{chart.chart_id}",
             )
-            if res.get("superseded"):
+            if res.get("status") == "superseded" or res.get("superseded"):
                 raise LinkedExplorationError(
                     "MAPSPEC_SUPERSEDED",
                     "MapSpec 已被并发修改（superseded）—— 请刷新后重试",
@@ -599,7 +635,12 @@ async def apply_view_to_mapspec(
                             "result": {k: v for k, v in res.items()
                                        if k in ("message", "warnings", "correction_hint")}})
             applied.append(component_id)
-            revision = res.get("revision") or revision
+            # patch_component 回执的权威 CAS 令牌是 mutation_revision
+            # （review P1-1：此前误读不存在的 "revision" 键 → 多图表 CAS
+            # 链从不前进，第二个组件必被拒）。superseded 折在 status 键。
+            new_rev = res.get("mutation_revision")
+            if isinstance(new_rev, int) and new_rev > (revision or 0):
+                revision = new_rev
     except LinkedExplorationError:
         await _rollback_components(session_id, applied)
         raise

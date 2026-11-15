@@ -499,3 +499,148 @@ class TestExportAllFormats:
 
         w, h = struct.unpack(">II", png_bytes[16:24])
         assert w > 0 and h > 0
+
+
+class TestReviewRegressions:
+    """独立 review P1/P2 修复的回归锚。"""
+
+    async def _plan(self, ref, inspect, chart_ids):
+        return {
+            "schema_version": 2, "anchor": inspect["anchor"],
+            "charts": [
+                {"chart_id": cid, "kind": "category", "field": "cat",
+                 "aggregation": "count", "value_field": None, "title": cid,
+                 "bins": 10, "layer_id": None}
+                for cid in chart_ids
+            ],
+            "conditions": [], "base_scope_note": "",
+        }
+
+    async def test_apply_cas_chain_multi_chart_p1_1(self):
+        """P1-1：多图表 + expected_revision CAS 链必须全量成功。
+
+        此前 revision 键误读取（不存在的 "revision"）→ 第二个组件永拿旧
+        CAS 令牌被拒 → 整体回滚。
+        """
+        from app.services.mapspec_store import mapspec_store
+
+        ref = await _seed()
+        inspect = await service.inspect_source(SESSION, ref, ACTOR)
+        plan = await self._plan(ref, inspect, ["chA", "chB"])
+        view = await service.save_view(SESSION, ACTOR, title="两图 CAS",
+                                       plan_raw=plan)
+        # 真实 CAS 基线（session_data 的 _cartographic_mutation_revision；
+        # 前序用例可能已推进 —— 不能假设 1）
+        from app.services.session_data import session_data_manager
+
+        base_rev = await session_data_manager.get_state_field(
+            SESSION, "_cartographic_mutation_revision")
+        base_rev = int(base_rev or 0)
+        result = await service.apply_view_to_mapspec(
+            view["view_id"], SESSION, ACTOR, expected_revision=base_rev)
+        assert result["state"] == "applied"
+        assert result["count"] == 2
+        spec = await mapspec_store.get_mapspec(SESSION)
+        ids = [c.get("id") for c in (spec.get("layout") or {}).get("components", [])
+               if isinstance(c, dict)]
+        assert "exploration-chart-chA" in ids and "exploration-chart-chB" in ids
+
+    async def test_pi_views_list_branch_p1_2(self):
+        """P1-2：list_views 返回 list（工具 list 分支契约锚）。"""
+        ref = await _seed()
+        inspect = await service.inspect_source(SESSION, ref, ACTOR)
+        plan = await self._plan(ref, inspect, ["c1"])
+        await service.save_view(SESSION, ACTOR, title="v", plan_raw=plan)
+        listed = await service.list_views(SESSION, ACTOR)
+        assert isinstance(listed, list) and len(listed) >= 1
+
+    async def test_update_view_revalidates_anchor_p2_1(self):
+        """P2-1：PATCH 换 plan 必须重新冻结核对锚（不可绕过 save 面）。"""
+        from app.services.session_data import session_data_manager
+
+        sid = "g46-journey-p21"
+        ref = await session_data_manager.store(sid, _fc(), prefix="g46p21")
+        actor = {**ACTOR, "trusted_session_id": sid}
+        inspect = await service.inspect_source(sid, ref, actor)
+        plan = await self._plan(ref, inspect, ["c1"])
+        view = await service.save_view(sid, actor, title="t", plan_raw=plan)
+        # 源推进后 PATCH 旧锚计划 → STALE_SOURCE（与 POST 同面）
+        fc2 = _fc()
+        fc2["features"] = fc2["features"][:3]
+        await session_data_manager.overwrite(sid, ref, fc2)
+        with pytest.raises(LinkedExplorationError) as ei:
+            await service.update_view(
+                view["view_id"], sid, actor, title=None, plan_raw=plan,
+                status=None, expected_revision=1)
+        assert ei.value.code == "STALE_SOURCE"
+
+    async def test_export_production_layer_shape_p1_3(self):
+        """P1-3：生产形态图层（source=key + sources 表 ref entry）导出过滤生效。"""
+        from app.services.export_paths import exports_root
+        from app.services.linked_exploration.export import export_exploration
+        from app.services.mapspec_store import mapspec_store
+
+        sid = "g46-journey-p13"
+        from app.services.session_data import session_data_manager
+
+        ref = await session_data_manager.store(sid, _fc(), prefix="g46p13")
+        actor = {**ACTOR, "trusted_session_id": sid}
+        inspect = await service.inspect_source(sid, ref, actor)
+        # 生产形态：source 是 sources 表 key；entry 带 ref（mutation_handlers 同款）
+        await mapspec_store.save_mapspec(sid, {
+            "version": "2", "view": {"bounds": [116.0, 38.9, 116.8, 39.1]},
+            "sources": {"src-1": {"type": "geojson", "ref": ref,
+                                   "ref_id": ref}},
+            "layers": [{"id": "prod-layer", "type": "fill", "source": "src-1",
+                        "paint": {"fill-color": "#3388aa"}}],
+            "layout": {"components": []},
+        })
+        plan = {
+            "schema_version": 2, "anchor": inspect["anchor"],
+            "charts": [{"chart_id": "ch-cat", "kind": "category", "field": "cat",
+                        "aggregation": "count", "value_field": None, "title": "类别",
+                        "bins": 10, "layer_id": "prod-layer"}],
+            "conditions": [
+                {"kind": "category", "condition_id": "cond-ch-cat",
+                 "chart_id": "ch-cat", "field": "cat", "values": ["a"],
+                 "include_null": False}],
+            "base_scope_note": "",
+        }
+        view = await service.save_view(sid, actor, title="生产形态导出",
+                                       plan_raw=plan)
+        result = await export_exploration(sid, actor, fmt="svg",
+                                          view_id=view["view_id"])
+        assert result["filtered_layer_ids"] == ["prod-layer"]
+        assert result["match_count"] == 5  # oracle：cat=a 5 行
+        # SVG 真实渲染了过滤面（非空图层）
+        fname = result["download_url"].rsplit("/", 1)[-1].split("?")[0]
+        svg_file = next(iter(Path(exports_root()).rglob(fname)))
+        svg = svg_file.read_text(encoding="utf-8")
+        assert "联合探索导出" in svg
+        assert "mapspec-vector-layers" in svg
+
+    async def test_export_no_target_layer_rejected(self):
+        """P1-3 披露面：有条件但 committed MapSpec 无引用层 → typed 拒绝。"""
+        from app.services.linked_exploration.export import export_exploration
+        from app.services.session_data import session_data_manager
+
+        sid = "g46-journey-p13b"
+        ref = await session_data_manager.store(sid, _fc(), prefix="g46p13b")
+        actor = {**ACTOR, "trusted_session_id": sid}
+        inspect = await service.inspect_source(sid, ref, actor)
+        from app.services.mapspec_store import mapspec_store
+
+        await mapspec_store.save_mapspec(sid, {
+            "version": "2", "view": {"bounds": [116.0, 38.9, 116.8, 39.1]},
+            "layers": [], "layout": {"components": []},
+        })
+        plan = {
+            "schema_version": 2, "anchor": inspect["anchor"],
+            "charts": [], "conditions": [
+                {"kind": "category", "condition_id": "c", "chart_id": "ch",
+                 "field": "cat", "values": ["a"], "include_null": False}],
+            "base_scope_note": "",
+        }
+        with pytest.raises(LinkedExplorationError) as ei:
+            await export_exploration(sid, actor, fmt="svg", plan_raw=plan)
+        assert ei.value.code == "EXPORT_NO_TARGET_LAYER"

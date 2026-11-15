@@ -41,6 +41,7 @@ import {
   subscribeExploration,
 } from '@/lib/linked-exploration/condition-store';
 import { fetchFeaturePage } from '@/lib/data-plane/paged-features';
+import { fetchSelectionFeatures } from '@/lib/api/selection-handles';
 import { useLinkedExplorationStore } from '@/lib/hooks/use-linked-exploration';
 import { setPreviewData } from '@/lib/linked-exploration/preview-store';
 
@@ -254,11 +255,39 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
     return Array.from(keys).slice(0, 8);
   }, [tableRows]);
 
+  const activeHandle = useMemo(
+    () => (preview.status === 'ready' ? preview.data.selection_handle?.handle ?? null : null),
+    [preview],
+  );
+
   const loadTable = useCallback((cursor: string | null) => {
     if (!sourceRef) return;
+    setTableState('loading');
+    const mergePage = (
+      features: Array<Record<string, unknown>>,
+      next: string | null,
+      total: number | null,
+    ) => {
+      setTableRows((prev) => (cursor ? [...prev, ...features] : features));
+      setTableCursor(next);
+      setTableTotal(total);
+      setTableState('ready');
+    };
+    // review P2-3：优先 where-scope 句柄分页（服务端权威完整集合；免
+    // /features where 的 2KB JSON 帽 —— 16 条件×64 值的合法组合不再断裂）。
+    // 无句柄（无条件）时走 where 下推自然序。
+    if (activeHandle) {
+      fetchSelectionFeatures({
+        sessionId, refId: sourceRef, handle: activeHandle, limit: 50,
+        cursor, ownerToken,
+      }).then((page) => mergePage(
+        page.features as Array<Record<string, unknown>>,
+        page.nextCursor, page.count,
+      )).catch(() => setTableState('error'));
+      return;
+    }
     const st = getExploration();
     const revision = st?.sourceRevision;
-    setTableState(cursor ? tableState : 'loading');
     fetchFeaturePage({
       sessionId,
       refId: sourceRef,
@@ -268,14 +297,12 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
       // fetchFeaturePage 的 where 是 JSON 字符串（服务端 allowlist 校验）
       where: combinedWhere ? JSON.stringify(combinedWhere) : undefined,
       ownerToken,
-    }).then((page) => {
-      setTableRows((prev) => (cursor ? [...prev, ...page.features.map((f) => (f.properties ?? {}) as Record<string, unknown>)] : page.features.map((f) => (f.properties ?? {}) as Record<string, unknown>)));
-      setTableCursor(page.nextCursor ?? null);
-      setTableTotal(page.totalMatching ?? null);
-      setTableState('ready');
-    }).catch(() => setTableState('error'));
+    }).then((page) => mergePage(
+      page.features.map((f) => (f.properties ?? {}) as Record<string, unknown>),
+      page.nextCursor ?? null, page.totalMatching ?? null,
+    )).catch(() => setTableState('error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, sourceRef, ownerToken, combinedWhere]);
+  }, [sessionId, sourceRef, ownerToken, combinedWhere, activeHandle]);
 
   useEffect(() => { loadTable(null); }, [loadTable]);
 
