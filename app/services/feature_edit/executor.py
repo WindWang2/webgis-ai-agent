@@ -265,6 +265,33 @@ async def commit_plan(
         except Exception:  # noqa: BLE001 — ledger 不可达不改变提交资格
             pass
 
+        # ── G44：active 合同冷读复核（锁内；DB 不可读 fail-closed）────────
+        # plan 绑定的 expected_contract 与当前 active（含「无」）不一致 → 409
+        # contract_changed：预览后合同激活/修订/退役都让旧 plan 过期（F12）。
+        from app.services.field_contracts import enforcement as fc_enforcement
+
+        try:
+            enforced = await fc_enforcement.resolve_active_contract(session_id, ref_id)
+        except fc_enforcement.ContractStateUnavailable as exc:
+            raise FeatureEditBlocked(
+                "contract_state_unavailable",
+                f"field-contract state unreadable; commit blocked (fail-closed): {exc}"[:200],
+            ) from exc
+        expected_contract = plan.get("expected_contract") if isinstance(plan.get("expected_contract"), dict) else None
+        current_contract_view = enforced.plan_view() if enforced is not None else None
+        if (expected_contract or {}).get("digest") != (current_contract_view or {}).get("digest"):
+            await _mark_plan_status_unlocked(session_id, plan_id, "conflicted")
+            raise FeatureEditConflict(
+                "contract_changed",
+                {
+                    "plan_id": plan_id,
+                    "expected_contract": expected_contract,
+                    "current_contract": current_contract_view,
+                    "journal": _head_summary(journal),
+                },
+            )
+        contract_fields = frozenset(enforced.declared_fields()) if enforced is not None else None
+
         # 重新求值（与 preview 同一纯函数路径；载荷在锁内冷读，指纹已验）。
         fc = extract_fc(payload)
         if fc is None:
@@ -282,6 +309,7 @@ async def commit_plan(
             fc, plan.get("ops") or [], derive_targets, target_payloads,
             plan_seed=plan_id,
             geometry_type=_declared_geometry_type(payload),
+            contract_fields=contract_fields,
         )
         if derive_findings:
             # 数据在预览后仍变了内容形态（同指纹不应发生——防御面）。
@@ -297,6 +325,29 @@ async def commit_plan(
             new_payload: Any = {**payload, "geojson": new_fc}
         else:
             new_payload = new_fc
+
+        # ── G44：提交锁内候选态合同门禁（写入前最后一道；与预览同内核）──
+        if enforced is not None:
+            changed_wfids = {
+                str(d.get("wfid"))
+                for d in deltas
+                if isinstance(d, dict) and d.get("wfid")
+            } | set(plan.get("target_wfids") or [])
+            contract_findings = fc_enforcement.validate_candidate_fc(
+                new_fc, enforced,
+                changed_wfids=changed_wfids, schema_changed=bool(schema_ops),
+            )
+            if contract_findings:
+                raise FeatureEditBlocked(
+                    "contract_violation",
+                    "commit blocked: candidate state violates the active field contract",
+                    {
+                        "contract": enforced.plan_view(),
+                        "findings": fc_enforcement.candidate_findings_projection(
+                            contract_findings
+                        ),
+                    },
+                )
 
         # G14/WP06：提交期拓扑复核（预览已查；指纹 CAS 后仍复核 = 防御面，
         # 规则声明随载荷走 —— envelope 变化即数据变化，由上方 CAS 拒绝）。
@@ -566,6 +617,44 @@ async def _apply_inverse_locked(
         new_payload: Any = {**payload, "geojson": new_fc}
     else:
         new_payload = new_fc
+
+    # ── G44：恢复态同样受当前 active 合同约束（F23）──────────────────────
+    # 违反 → typed 阻断（journal 未动、历史不改写）；合法 undo/redo 照常恢复。
+    # 处理路径：先修数据（新编辑）或 owner 修订/退役合同，再重试 undo。
+    from app.services.field_contracts import enforcement as fc_enforcement
+
+    try:
+        enforced = await fc_enforcement.resolve_active_contract(session_id, ref_id)
+    except fc_enforcement.ContractStateUnavailable as exc:
+        raise FeatureEditBlocked(
+            "contract_state_unavailable",
+            f"field-contract state unreadable; {kind} blocked (fail-closed): {exc}"[:200],
+        ) from exc
+    if enforced is not None:
+        changed_wfids = {
+            str(d.get("wfid"))
+            for d in effect_entry.get("deltas") or []
+            if isinstance(d, dict) and d.get("wfid")
+        }
+        restored_findings = fc_enforcement.validate_candidate_fc(
+            new_fc, enforced,
+            changed_wfids=changed_wfids,
+            schema_changed=bool(effect_entry.get("schema_ops")),
+        )
+        if restored_findings:
+            raise FeatureEditBlocked(
+                "contract_violation",
+                f"{kind} would restore a state that violates the active field contract "
+                "(history is preserved; fix the data via a new edit or revise/retire "
+                "the contract, then retry)",
+                {
+                    "kind": kind,
+                    "contract": enforced.plan_view(),
+                    "findings": fc_enforcement.candidate_findings_projection(
+                        restored_findings
+                    ),
+                },
+            )
     fp_after = compute_payload_fingerprint(new_payload)
     expected_after = effect_entry.get("fingerprint_after")
     if expected_after and fp_after != expected_after:

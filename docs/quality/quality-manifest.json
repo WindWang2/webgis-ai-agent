@@ -5972,8 +5972,8 @@
  ],
  "behavioral": {
   "dispatch": 258,
-  "mention": 210,
-  "none": 17
+  "mention": 222,
+  "none": 27
  },
  "capabilities": [
   {
@@ -7603,6 +7603,7 @@
     "tests/data/test_lakehouse_dataset_registry_v8.py",
     "tests/integration/spatial_events/test_api.py",
     "tests/integration/spatial_events/test_failures.py",
+    "tests/integration/test_pi_g39_raster_sampling_journey.py",
     "tests/jobs/test_job_api.py",
     "tests/jobs/test_job_celery_e2e.py",
     "tests/jobs/test_job_redaction_progress.py",
@@ -9242,9 +9243,9 @@
   "algorithms": 257,
   "artifact_types": 23,
   "capabilities": 195,
-  "findings": 41,
+  "findings": 65,
   "recipes": 166,
-  "tools": 485
+  "tools": 507
  },
  "findings": [
   {
@@ -9301,6 +9302,14 @@
    "domain": "tools",
    "severity": "low",
    "subject": "webgis_map_export",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: tags,capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_model_catalog",
    "surface": "tools"
   },
   {
@@ -9389,6 +9398,110 @@
    "domain": "tools",
    "severity": "low",
    "subject": "webgis_raster_expression_probe",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_raster_sampling_execute",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_raster_sampling_plan",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_raster_sampling_preview",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_raster_sampling_results",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_raster_sampling_status",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: tags,capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_session_budget_status",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: tags,capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_session_model_status",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_symbol_asset_create",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_symbol_asset_list",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_symbol_layer_apply",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_symbol_layer_inspect",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_symbol_layer_preview",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: capabilities",
+   "domain": "tools",
+   "severity": "low",
+   "subject": "webgis_symbol_layer_unbind",
    "surface": "tools"
   },
   {
@@ -9524,7 +9637,47 @@
    "detail": "registered tool without any static test reference",
    "domain": "tools",
    "severity": "medium",
+   "subject": "webgis_field_contract_assess",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "webgis_field_contract_draft",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "webgis_field_contract_inspect",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "webgis_field_contract_result",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
    "subject": "webgis_inspect_scale_portrayal",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "webgis_model_catalog",
    "surface": "tools"
   },
   {
@@ -9574,6 +9727,46 @@
    "severity": "medium",
    "subject": "webgis_print_layout_propose",
    "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "webgis_session_budget_status",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "webgis_session_model_status",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "webgis_symbol_asset_create",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "webgis_symbol_layer_inspect",
+   "surface": "tools"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "domain": "tools",
+   "severity": "medium",
+   "subject": "webgis_symbol_layer_preview",
+   "surface": "tools"
   }
  ],
  "findings_ratchet": {
@@ -9585,25 +9778,26 @@
    {
     "baseline": 0,
     "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-    "current": 23
+    "current": 37
    },
    {
     "baseline": 8,
     "code": "TOOL_UNTESTED",
-    "current": 17
+    "current": 27
    }
   ],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "2c10f8a9ae81200d64c66fffbe60095c60e20ccceecac9adde040c5bb9c446f7",
+ "fingerprint": "b472f91efc3bd61022cb58321b8107333eca49750859923d037cf6a6baf00168",
  "gate": {
   "fields": {
    "capabilities": {
-    "coverage": 96,
+    "coverage": 93,
     "missing": [
      "nearest_facility",
      "webgis_map_export",
+     "webgis_model_catalog",
      "webgis_print_layout_apply",
      "webgis_print_layout_capabilities",
      "webgis_print_layout_export",
@@ -9615,15 +9809,15 @@
      "webgis_raster_expression_describe",
      "webgis_raster_expression_export",
      "webgis_raster_expression_probe",
-     "webgis_temporal_media_cancel",
-     "webgis_temporal_media_capabilities",
-     "webgis_temporal_media_plan",
-     "webgis_temporal_media_result",
-     "webgis_temporal_media_status",
-     "webgis_temporal_media_submit"
+     "webgis_raster_sampling_execute",
+     "webgis_raster_sampling_plan",
+     "webgis_raster_sampling_preview",
+     "webgis_raster_sampling_results",
+     "webgis_raster_sampling_status",
+     "webgis_session_budget_status"
     ],
-    "missing_count": 19,
-    "pass": true,
+    "missing_count": 33,
+    "pass": false,
     "threshold": 95
    },
    "latency_class": {
@@ -9653,15 +9847,18 @@
      "vector_change_proposal_create",
      "vector_change_proposal_diff",
      "vector_change_proposal_list",
-     "vector_change_proposal_rebase_preview"
+     "vector_change_proposal_rebase_preview",
+     "webgis_model_catalog",
+     "webgis_session_budget_status",
+     "webgis_session_model_status"
     ],
-    "missing_count": 4,
+    "missing_count": 7,
     "pass": true,
     "threshold": 95
    }
   },
-  "pass": true,
-  "total": 485
+  "pass": false,
+  "total": 507
  },
  "manifest_version": 2,
  "recipes": {
@@ -21440,6 +21637,88 @@
    "tier": 2
   },
   {
+   "behavior": "mention",
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": false,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "webgis_bivariate_reliability_apply",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "双变量",
+    "提交",
+    "MapSpec",
+    "可靠性",
+    "bivariate reliability"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g41_bivariate_reliability_journey.py",
+    "tests/unit/bivariate_reliability/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "thematic_cartography",
+    "layer_browse"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "medium",
+   "memory_class": "medium",
+   "name": "webgis_bivariate_reliability_inspect",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "双变量",
+    "可靠性",
+    "不确定度",
+    "作者工作台",
+    "bivariate reliability"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g41_bivariate_reliability_journey.py",
+    "tests/unit/bivariate_reliability/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "slow",
+   "memory_class": "medium",
+   "name": "webgis_bivariate_reliability_preview",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "双变量",
+    "预览",
+    "矩阵",
+    "不确定度",
+    "bivariate reliability"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g41_bivariate_reliability_journey.py",
+    "tests/unit/bivariate_reliability/test_tools_and_routes.py"
+   ],
+   "tier": 2
+  },
+  {
    "behavior": "dispatch",
    "capabilities": [
     "map_export_publishing"
@@ -22018,6 +22297,110 @@
    "tier": 2
   },
   {
+   "behavior": "none",
+   "capabilities": [
+    "dataset_ingest"
+   ],
+   "deterministic": false,
+   "execution_policy": "async",
+   "flags": [
+    "untested"
+   ],
+   "latency_class": "medium",
+   "memory_class": "medium",
+   "name": "webgis_field_contract_assess",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "字段合同",
+    "field contract",
+    "完整评估",
+    "数据质量"
+   ],
+   "tests": [],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [
+    "dataset_ingest"
+   ],
+   "deterministic": false,
+   "execution_policy": "async",
+   "flags": [
+    "untested"
+   ],
+   "latency_class": "medium",
+   "memory_class": "light",
+   "name": "webgis_field_contract_draft",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "字段合同",
+    "field contract",
+    "草稿",
+    "业务规则"
+   ],
+   "tests": [],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [
+    "dataset_ingest"
+   ],
+   "deterministic": false,
+   "execution_policy": "async",
+   "flags": [
+    "untested"
+   ],
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_field_contract_inspect",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "字段合同",
+    "field contract",
+    "数据质量",
+    "业务规则"
+   ],
+   "tests": [],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [
+    "dataset_ingest"
+   ],
+   "deterministic": false,
+   "execution_policy": "async",
+   "flags": [
+    "untested"
+   ],
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_field_contract_result",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "字段合同",
+    "field contract",
+    "评估结果",
+    "违规"
+   ],
+   "tests": [],
+   "tier": 2
+  },
+  {
    "behavior": "dispatch",
    "capabilities": [
     "cartography_scale_inspect"
@@ -22476,6 +22859,7 @@
     "tests/acceptance/gis_agent/runner.py",
     "tests/benchmarks/test_planner_runtime_perf.py",
     "tests/integration/test_pi_g29_runtime_interaction_journeys.py",
+    "tests/integration/test_pi_g37_session_model_journeys.py",
     "tests/integration/test_pi_stub_llm_journeys.py",
     "tests/integration/test_pi_vendor_contract.py",
     "tests/test_gis_memory_wiring.py",
@@ -22622,6 +23006,26 @@
     "tests/unit/test_tool_catalog_sticky_684.py",
     "tests/unit/test_tool_registry_rationalization.py"
    ],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [],
+   "deterministic": true,
+   "execution_policy": "async",
+   "flags": [
+    "untested",
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_model_catalog",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [],
+   "tests": [],
    "tier": 2
   },
   {
@@ -23082,6 +23486,134 @@
    "tier": 2
   },
   {
+   "behavior": "mention",
+   "capabilities": [],
+   "deterministic": true,
+   "execution_policy": "async",
+   "flags": [
+    "descriptor_incomplete"
+   ],
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "webgis_raster_sampling_execute",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "栅格采样",
+    "执行",
+    "数据产品"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g39_raster_sampling_journey.py",
+    "tests/raster_sampling/test_publish_and_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [],
+   "deterministic": false,
+   "execution_policy": "async",
+   "flags": [
+    "descriptor_incomplete"
+   ],
+   "latency_class": "medium",
+   "memory_class": "medium",
+   "name": "webgis_raster_sampling_plan",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "栅格采样",
+    "点集提取",
+    "沿线剖面",
+    "波段"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g39_raster_sampling_journey.py",
+    "tests/raster_sampling/test_publish_and_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [],
+   "deterministic": true,
+   "execution_policy": "async",
+   "flags": [
+    "descriptor_incomplete"
+   ],
+   "latency_class": "fast",
+   "memory_class": "medium",
+   "name": "webgis_raster_sampling_preview",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "栅格采样",
+    "预览"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g39_raster_sampling_journey.py",
+    "tests/raster_sampling/test_publish_and_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [],
+   "deterministic": true,
+   "execution_policy": "async",
+   "flags": [
+    "descriptor_incomplete"
+   ],
+   "latency_class": "fast",
+   "memory_class": "medium",
+   "name": "webgis_raster_sampling_results",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "栅格采样",
+    "成果",
+    "分页"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g39_raster_sampling_journey.py",
+    "tests/raster_sampling/test_publish_and_tools.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [],
+   "deterministic": true,
+   "execution_policy": "async",
+   "flags": [
+    "descriptor_incomplete"
+   ],
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "webgis_raster_sampling_status",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "栅格采样",
+    "状态"
+   ],
+   "tests": [
+    "tests/raster_sampling/test_publish_and_tools.py"
+   ],
+   "tier": 2
+  },
+  {
    "behavior": "dispatch",
    "capabilities": [
     "plan_workflow_orchestration"
@@ -23271,6 +23803,46 @@
    "tier": 2
   },
   {
+   "behavior": "none",
+   "capabilities": [],
+   "deterministic": true,
+   "execution_policy": "async",
+   "flags": [
+    "untested",
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_session_budget_status",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [],
+   "tests": [],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [],
+   "deterministic": true,
+   "execution_policy": "async",
+   "flags": [
+    "untested",
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_session_model_status",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [],
+   "tests": [],
+   "tier": 2
+  },
+  {
    "behavior": "dispatch",
    "capabilities": [
     "point_profile"
@@ -23326,6 +23898,153 @@
     "tests/unit/test_pi_turn_context.py"
    ],
    "tier": 1
+  },
+  {
+   "behavior": "none",
+   "capabilities": [],
+   "deterministic": null,
+   "execution_policy": "async",
+   "flags": [
+    "untested",
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_symbol_asset_create",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "artifact_creation",
+   "status": "stable",
+   "tags": [
+    "符号资产",
+    "SVG 导入",
+    "symbol assets"
+   ],
+   "tests": [],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [],
+   "deterministic": null,
+   "execution_policy": "async",
+   "flags": [
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_symbol_asset_list",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "符号资产",
+    "目录",
+    "symbol assets"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g40_symbol_asset_journey.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [],
+   "deterministic": null,
+   "execution_policy": "async",
+   "flags": [
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_symbol_layer_apply",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "符号资产",
+    "提交",
+    "symbol assets"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g40_symbol_asset_journey.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [],
+   "deterministic": null,
+   "execution_policy": "async",
+   "flags": [
+    "untested",
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_symbol_layer_inspect",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "符号资产",
+    "图层",
+    "symbol assets"
+   ],
+   "tests": [],
+   "tier": 2
+  },
+  {
+   "behavior": "none",
+   "capabilities": [],
+   "deterministic": null,
+   "execution_policy": "async",
+   "flags": [
+    "untested",
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_symbol_layer_preview",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "cacheable_read",
+   "status": "stable",
+   "tags": [
+    "符号资产",
+    "预览",
+    "symbol assets"
+   ],
+   "tests": [],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [],
+   "deterministic": null,
+   "execution_policy": "async",
+   "flags": [
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_symbol_layer_unbind",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "state_mutation",
+   "status": "stable",
+   "tags": [
+    "符号资产",
+    "解绑",
+    "symbol assets"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g40_symbol_asset_journey.py"
+   ],
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -23510,6 +24229,7 @@
    ],
    "tests": [
     "tests/integration/test_pi_g33_thematic_authoring_journey.py",
+    "tests/integration/test_pi_g36_visual_context_journey.py",
     "tests/unit/thematic_authoring/test_tools_and_routes.py"
    ],
    "tier": 2
@@ -23658,6 +24378,30 @@
     "tests/unit/test_pi_harness.py",
     "tests/unit/test_planning_v3_scenarios.py",
     "tests/unit/test_tool_dispatch_service.py"
+   ],
+   "tier": 1
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
+   "deterministic": true,
+   "execution_policy": "async",
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "webgis_visual_evidence_read",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "visual",
+    "evidence",
+    "multimodal"
+   ],
+   "tests": [
+    "tests/integration/test_pi_g36_visual_context_journey.py"
    ],
    "tier": 1
   },

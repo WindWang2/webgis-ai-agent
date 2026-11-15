@@ -112,6 +112,10 @@ FINDING_CODES = frozenset({
     "ambiguous_target",          # 请求 id 命中多条要素（重复自然键）—— first-wins
                                 # 会编辑到用户没点的对象，typed 拒绝并披露重复数
     "dataset_read_only_source",  # 源只读，需先派生编辑副本
+    # ── G44 业务字段合同 finding codes ──
+    "contract_violation",        # 候选/恢复态违反 active 业务字段合同（detail 带违规投影）
+    "contract_state_unavailable",  # 合同 DB 不可读（存在性无法证明）—— fail-closed
+    "contract_rename_blocked",   # rename 命中合同声明字段 —— 需 owner 显式重绑（新合同修订）
 })
 
 # ─── 数据集级拓扑声明（envelope "topology" 键；G14 provisioning 写入） ─────

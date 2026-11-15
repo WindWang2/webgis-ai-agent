@@ -572,7 +572,9 @@
     "pickTarget": "选择要编辑的图层",
     "createEmptyTitle": "新建空图层",
     "createFailed": "创建失败",
-    "newLayerName": "新图层"
+    "newLayerName": "新图层",
+    "formInvalid": "属性表单存在校验错误",
+    "advancedJson": "高级（JSON）"
   },
   "labelEditor": {
     "title": "标注编辑",

@@ -60,6 +60,8 @@ class JobKind(str, Enum):
     data_join = "data_join"            # G38 数据关联执行（进程内 durable runner）
     # G39（数值栅格采样）：点集/沿线采样执行（进程内 durable runner）
     raster_sampling = "raster_sampling"
+    # G44（业务字段合同）：完整数据版本评估（进程内 durable runner）
+    field_contract_assess = "field_contract_assess"
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。

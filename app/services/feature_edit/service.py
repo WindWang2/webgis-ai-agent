@@ -90,6 +90,17 @@ async def build_and_store_plan(
         if op.get("op") == "snap_to_ref" and isinstance(target_ref, str):
             target_payloads[target_ref] = await session_data_manager.get(session_id, target_ref)
 
+    # G44：active 合同解析（DB 不可读 → fail-closed typed finding，F36）。
+    from app.services.field_contracts import enforcement as fc_enforcement
+
+    try:
+        enforced = await fc_enforcement.resolve_active_contract(session_id, ref_id)
+    except fc_enforcement.ContractStateUnavailable as exc:
+        return {}, [{
+            "code": "contract_state_unavailable",
+            "message": f"field-contract state unreadable; preview blocked: {exc}"[:200],
+        }]
+
     plan, findings = build_plan(
         ref_id=ref_id,
         payload=payload,
@@ -99,6 +110,7 @@ async def build_and_store_plan(
         dataset_fingerprint=compute_payload_fingerprint(payload),
         content_revision=revision,
         target_payloads=target_payloads,
+        field_contract=enforced,
     )
     if plan.get("committable"):
         await fe_executor.store_plan(session_id, plan)

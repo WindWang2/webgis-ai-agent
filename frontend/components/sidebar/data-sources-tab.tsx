@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { Database, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
+import { Database, FileCheck2, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
 import { useDataJoinStore } from '@/lib/hooks/use-data-join';
+import { useFieldContractsPanelStore } from '@/lib/hooks/use-field-contracts';
 import { describeApiError, isApiError } from '@/lib/api/transport';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import { useT } from '@/lib/i18n/useT';
@@ -430,7 +431,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       {/* 330px 默认宽下 5 个子页签 + 带文字的控制台按钮放不进一行，页签被挤成
           逐字竖排（「空/间/目/录」）。tablist 改为可横向滚动的单行（全局
           [role=tablist] 规则保证不换行），控制台入口收为图标按钮。 */}
-      <div className="flex shrink-0 items-end gap-1 border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2">
+      <div className="flex shrink-0 items-end gap-1 overflow-x-auto border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2">
         <div
           role="tablist"
           aria-label={t('sidebar.ds.subtabsAria')}
@@ -465,6 +466,17 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         >
           <Link2 size={14} aria-hidden />
           <span className="sr-only">{t('dataJoin.openPanel')}</span>
+        </button>
+        {/* G44：业务字段合同工作台入口（字段声明/评估/激活/批量填值）。 */}
+        <button
+          type="button"
+          onClick={() => useFieldContractsPanelStore.getState().openWith()}
+          className="mb-1 inline-flex h-control-md w-control-md shrink-0 items-center justify-center rounded-md border border-edge-subtle text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          data-testid="open-field-contracts"
+          title={t('fieldContracts.openPanel')}
+        >
+          <FileCheck2 size={14} aria-hidden />
+          <span className="sr-only">{t('fieldContracts.openPanel')}</span>
         </button>
       </div>
 
