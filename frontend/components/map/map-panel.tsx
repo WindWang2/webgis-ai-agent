@@ -12,6 +12,7 @@ import type { StyleSpecification } from "maplibre-gl"
 // #1597 — set the maplibre-gl worker URL before any Map is created.
 import "@/lib/maplibre-worker"
 import type { Layer } from "@/lib/types/layer"
+import { GOAL_REPAIR_REOBSERVE_EVENT } from "@/lib/types/goal-repair"
 
 /**
  * #689 图例-过滤对账的纯判定：图例 onFilterChange 载荷 → activeFilters 状态。
@@ -666,6 +667,14 @@ export function MapPanel({
   const interactiveIdsRef = useRef<string[]>([])
   const handleRuntimeStyleRecovery = useCallback(() => {
     setRuntimeRecoveryGeneration((generation) => generation + 1)
+  }, [])
+  // G42（有界目标补全）：补全面请求受控重观察 —— bump recovery generation
+  // 触发既有 reconcile 效应（→ 观察采集 POST 同修订新序号）。加性监听，
+  // 零新全局状态；事件名单一来源 lib/types/goal-repair。
+  useEffect(() => {
+    const handler = () => setRuntimeRecoveryGeneration((generation) => generation + 1)
+    window.addEventListener(GOAL_REPAIR_REOBSERVE_EVENT, handler)
+    return () => window.removeEventListener(GOAL_REPAIR_REOBSERVE_EVENT, handler)
   }, [])
   // 审计 F32：缓存上次计算的 IDs joined 字符串，相同则跳过 setInteractiveIds
   // -> 防止频繁 recompute 时产生 re-render 风暴。

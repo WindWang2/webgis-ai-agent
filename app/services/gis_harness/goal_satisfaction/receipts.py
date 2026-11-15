@@ -217,8 +217,8 @@ async def _collect_delivery(session_id: str) -> List[Dict[str, Any]]:
                 records = db.query(AnalysisTask).filter(
                     AnalysisTask.task_type == dl_service.TASK_TYPE,
                     AnalysisTask.session_id == session_id,
-                ).order_by(AnalysisTask.created_at.desc())[
-                    :FAMILY_BUDGETS["delivery"]].all()
+                ).order_by(AnalysisTask.created_at.desc()).limit(
+                    FAMILY_BUDGETS["delivery"]).all()
                 return ([str(r.id) for r in records],
                         str(conv.user_id))
 

@@ -135,6 +135,32 @@
     "missing": "缺失：{codes}",
     "nextAction": "建议：{action}"
   },
+  "goalRepair": {
+    "title": "目标补全",
+    "loading": "正在核对未兑现的需求…",
+    "unavailable": "当前没有可执行的补全计划（已满足或需先完成任务）",
+    "error": "补全操作失败，请重试。",
+    "running": "补全执行中…",
+    "busy": "处理中…",
+    "start": "补全本次目标",
+    "cancel": "取消补全",
+    "selectAction": "选择补全动作：{requirement}",
+    "disposition": {
+      "executable": "可执行",
+      "needs_acknowledgment": "需确认格式损失",
+      "needs_user_input": "需补充资料",
+      "unsupported": "暂不支持自动补全",
+      "blocked": "当前受阻"
+    },
+    "ackCode": "我了解该格式损失：{code}",
+    "ackRequired": "请先勾选全部格式损失确认，再启动补全。",
+    "blockers": "停止条件：{codes}",
+    "download": "下载成果",
+    "waitingDelivery": "交付任务 {jobId} 仍在执行，完成后自动计入验收。",
+    "verdictLine": "终验复核：{before} → {after}",
+    "noProgress": "无新证据，已按无进展停止。",
+    "outcomeUnknown": "执行进程中断，结果待对账。"
+  },
   "sessionPlan": {
     "status": {
       "pending": "待完成",

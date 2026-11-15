@@ -11,6 +11,7 @@ import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { ClarificationCard } from '@/components/chat/clarification-card';
 import { RuntimeInteractionCard } from '@/components/chat/runtime-interaction-card';
 import { GoalSatisfactionCard } from '@/components/chat/goal-satisfaction-card';
+import { GoalRepairPanel } from '@/components/chat/goal-repair-panel';
 import { EditProposalCard } from '@/components/chat/edit-proposal-card';
 import type { ClarificationCardState } from '@/lib/types/clarification';
 import { PlanCard } from '@/components/chat/plan-card';
@@ -640,6 +641,15 @@ const t = useT();
                 onClarificationRefresh={onClarificationRefresh}
               />
               </CitationSourcesProvider>
+              {/* G42：完成卡（非 satisfied）下的有界补全面 —— 预览/启动/取消/
+                  回执/重终验对照；attempt 状态经服务端读模型刷新可回看。 */}
+              {msg.goalSatisfaction &&
+                (msg.goalSatisfaction as import('@/lib/types/goal-satisfaction').GoalSatisfactionView).verdict !== 'satisfied' && (
+                  <GoalRepairPanel
+                    sessionId={sessionId ?? ''}
+                    active
+                  />
+                )}
             </div>
           ))}
 
