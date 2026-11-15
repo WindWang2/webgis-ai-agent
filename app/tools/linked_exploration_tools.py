@@ -186,7 +186,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_exploration_inspect",
-        capabilities=["layer_browse", "data_profile"],
+        capabilities=["linked_exploration", "layer_browse"],
         tier=2,
         domains=["exploration", "cartography"],
         args_model=InspectArgs,
@@ -232,7 +232,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_exploration_preview",
-        capabilities=["layer_browse", "data_analysis"],
+        capabilities=["linked_exploration", "layer_browse"],
         tier=2,
         domains=["exploration", "cartography"],
         args_model=PreviewArgs,
@@ -281,7 +281,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_exploration_view_save",
-        capabilities=["exploration_authoring"],
+        capabilities=["linked_exploration"],
         tier=2,
         domains=["exploration", "cartography"],
         args_model=SaveViewArgs,
@@ -332,7 +332,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_exploration_views",
-        capabilities=["exploration_authoring"],
+        capabilities=["linked_exploration"],
         tier=2,
         domains=["exploration", "cartography"],
         args_model=ViewIdArgs,
@@ -388,7 +388,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_exploration_view_update",
-        capabilities=["exploration_authoring"],
+        capabilities=["linked_exploration"],
         tier=2,
         domains=["exploration", "cartography"],
         args_model=UpdateViewArgs,
@@ -429,7 +429,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_exploration_apply",
-        capabilities=["exploration_authoring", "mapspec_write"],
+        capabilities=["linked_exploration", "layer_display_control"],
         tier=2,
         domains=["exploration", "cartography", "mapspec"],
         args_model=ApplyArgs,
@@ -492,7 +492,7 @@ def register_linked_exploration_export_tool(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_exploration_export",
-        capabilities=["cartographic_publication", "exploration_authoring"],
+        capabilities=["linked_exploration", "map_export_publishing"],
         tier=2,
         domains=["exploration", "cartography", "publication"],
         args_model=ExportArgs,

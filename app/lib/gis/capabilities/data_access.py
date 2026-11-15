@@ -48,6 +48,17 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         ),
 
         CapabilityDescriptor(
+            id="linked_exploration", name="多图联合筛选与持久探索视图", category="data_access",
+            description="围绕单一授权矢量源的多图联合探索：分类/数值区间条件"
+                        "组合求值（条件间 AND、同控件内 typed 值 OR）、facet 口径"
+                        "统计、服务端完整集合句柄、命名持久视图（源锚校验/CAS）"
+                        "与三格式冻结导出（Pi 与 UI 同一服务面）。",
+            output_artifact_types=["stats_table"],
+            preferred_execution="local_first",
+            deterministic=True,
+            purpose_template="{subject} 联合筛选探索",
+        ),
+        CapabilityDescriptor(
             id="data_join_authoring", name="数据关联与空间富集", category="data_access",
             description="两源关联作者面：属性键/空间点面关联计划（键变换、"
                         "基数与空值政策、字段映射、聚合），全量键/基数/未匹配"

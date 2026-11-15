@@ -260,7 +260,7 @@ def main() -> int:
             "http://127.0.0.1:{}/api/v1/chat/stream".format(api_port),
             data=json.dumps({"message": message,
                              "session_id": RUN + "-s1"}).encode(),
-            headers,
+            headers=headers,
         )
         with urllib.request.urlopen(req, timeout=240) as resp:
             body = resp.read().decode("utf-8", "replace")
