@@ -91,13 +91,23 @@ export function DataJoinPanel({ sessionId, ownerToken }: DataJoinPanelProps): Re
       setPlanId(null); setPlanRevision(0); setFieldMap([]); setAggregates([]);
       return;
     }
-    if (presetLeftRef) setLeft((s) => ({ ...s, refText: presetLeftRef }));
+    if (presetLeftRef) {
+      setLeft({ refText: presetLeftRef, describe: null, loading: false });
+    }
   }, [open, presetLeftRef]);
 
   const api = useMemo(
     () => (sessionId ? dataJoinApi.client(sessionId, ownerToken) : null),
     [sessionId, ownerToken],
   );
+
+  /** F1（评审）：空间模式不依赖属性键 —— 就绪判据按模式分派。
+   * attribute：双键字段；spatial：双源已绑定（pick_by_field 另需择一字段）。 */
+  const rulesReady =
+    mode === 'attribute'
+      ? Boolean(keyLeft.trim() && keyRight.trim())
+      : Boolean(left.refText.trim() && right.refText.trim())
+        && (multiMatch !== 'pick_by_field' || Boolean(keyRight.trim()));
 
   const describeSide = useCallback(async (side: 'left' | 'right') => {
     if (!api || !sessionId) return;
@@ -489,14 +499,14 @@ export function DataJoinPanel({ sessionId, ownerToken }: DataJoinPanelProps): Re
               <h3 className="text-body-sm font-medium text-ink">{t('stepDiagnostics')}</h3>
               <div className="flex gap-1.5">
                 <button
-                  type="button" onClick={() => void doPreview()} disabled={previewing || !keyLeft || !keyRight}
+                  type="button" onClick={() => void doPreview()} disabled={previewing || !rulesReady}
                   className="inline-flex items-center gap-1.5 rounded-md border border-edge-subtle px-3 py-1.5 text-body-sm text-ink-secondary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <RefreshCw size={14} className={previewing ? 'animate-spin' : ''} aria-hidden />
                   {t('preview')}
                 </button>
                 <button
-                  type="button" onClick={() => void doExecute()} disabled={running || !keyLeft || !keyRight}
+                  type="button" onClick={() => void doExecute()} disabled={running || !rulesReady}
                   className="inline-flex items-center gap-1.5 rounded-md bg-status-accent px-3 py-1.5 text-body-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <PlayCircle size={14} aria-hidden /> {t('execute')}
@@ -613,12 +623,16 @@ export function DataJoinPanel({ sessionId, ownerToken }: DataJoinPanelProps): Re
                   </div>
                   <div className="flex items-center gap-2 pt-1">
                     <button
-                      type="button" onClick={() => void addToMap()} disabled={toMapLoading || resultPage.output_kind !== 'enriched_layer'}
+                      type="button" onClick={() => void addToMap()}
+                      disabled={toMapLoading || resultPage.output_kind !== 'enriched_layer'
+                        || (resultPage.total_rows ?? 0) > 10000}
                       className="inline-flex items-center gap-1.5 rounded-md border border-edge-subtle px-3 py-1.5 text-body-sm text-ink-secondary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <MapPin size={14} aria-hidden /> {t('addToMap')}
                     </button>
-                    <span className="text-caption text-ink-muted">{t('deliveryNote')}</span>
+                    <span className="text-caption text-ink-muted">
+                      {(resultPage.total_rows ?? 0) > 10000 ? t('renderOverBudgetNote') : t('deliveryNote')}
+                    </span>
                   </div>
                 </>
               )}

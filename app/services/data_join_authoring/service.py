@@ -78,7 +78,9 @@ async def _resolve_source_view(
                 and source.get("kind") in ("session_ref", "table_rows")
                 and source.get("session_id") == session_id == trusted):
             ref = source.get("table_ref") or source.get("ref")
-            snapshot = await _trusted_session_snapshot(session_id, ref)
+            snapshot = await _trusted_session_snapshot(
+                session_id, ref,
+                expect_rows=source.get("kind") == "table_rows")
         else:
             raise DataJoinError(
                 "source_unresolvable",
@@ -109,9 +111,21 @@ async def _resolve_source_view(
     return view, evidence
 
 
-async def _trusted_session_snapshot(session_id: str, ref: str) -> Any:
-    """受信 session 内的 session_ref 直读（复用 G18 快照构建器，不复制剖析逻辑）。"""
-    from app.services.data_delivery.source_resolver import _snapshot_from_payload
+async def _trusted_session_snapshot(
+    session_id: str, ref: str, *, expect_rows: bool = False
+) -> Any:
+    """受信 session 内的 session_ref/table_rows 直读（复用 G18 快照构建器）。
+
+    ``expect_rows``（table_rows 锚）：按 G18 table_rows 路径的 rows 形态
+    强校验（评审 F13 —— FC 载荷不得经 table_rows 锚静默当几何源）。
+    """
+    from app.services.data_delivery.source_resolver import (
+        SourceSnapshot,
+        _as_rows_payload,
+        _canonical_json_sha256,
+        _profile_rows,
+        _snapshot_from_payload,
+    )
     from app.services.session_data import session_data_manager
 
     descriptor = await session_data_manager.get_ref_descriptor(session_id, ref)
@@ -125,6 +139,25 @@ async def _trusted_session_snapshot(session_id: str, ref: str) -> Any:
     label = ref
     if descriptor:
         label = str(descriptor.get("alias") or descriptor.get("title") or ref)
+    if expect_rows:
+        rows = _as_rows_payload(payload)
+        if rows is None:
+            raise DataJoinError(
+                "source_unresolvable",
+                f"引用不是 rows 表格形态：{ref}",
+                upstream_code="source_shape_unsupported", status=410,
+            )
+        snap = SourceSnapshot(
+            kind="table_rows", label=label, is_table=True,
+            row_count=len(rows["rows"]),
+            content_fingerprint=_canonical_json_sha256(rows["rows"]),
+            completeness={k: rows[k] for k in (
+                "is_complete", "truncated", "total_matching", "group_count")
+                if k in rows},
+            fields=_profile_rows(rows["rows"]), payload=rows,
+        )
+        snap._src_ref = ref
+        return snap
     snap = _snapshot_from_payload(label, payload, ref)
     snap.kind = "session_ref"
     if descriptor and isinstance(descriptor.get("content_revision"), int):
@@ -519,14 +552,13 @@ async def execute_plan(
 
     # 收据短路：最新已完成 run —— 内容可核验才复用（J28：内容被删 →
     # typed 失效，绝不凭历史收据返回成功）
-    existing = _find_run_by_idem(session_id, base_key)
-    if existing is not None and existing["status"] == "completed":
+    existing = _find_completed_run_by_key(session_id, base_key)
+    if existing is not None:
         try:
             outputs.verify_published(existing["run_id"])
             return {**existing, "idempotent_reuse": True}
         except DataJoinError:
             _invalidate_run(session_id, existing["run_id"], "receipt_missing")
-            existing = None
 
     # 活跃收敛（J19）：同 base 键已有 pending/running run（另一副本在跑）
     # → 复用该 run，不建双执行/双成果
@@ -542,33 +574,8 @@ async def execute_plan(
     generation = _count_runs_by_key_prefix(session_id, base_key)
     idem = base_key if generation == 0 else f"{base_key}:g{generation + 1}"
 
-    from app.services.data_operations.runner import submit_async_job
-
-    job_id, job_status, reused = submit_async_job(
-        task_type=TASK_TYPE,
-        kind="data_join",
-        display_name=f"数据关联 · {(plan.title or plan.output_name)[:24]}",
-        params={
-            "session_id": session_id,
-            "plan_id": plan_id,
-            "run_revision": plan_revision,
-            "plan_digest": plan_digest,
-        },
-        idempotency_key=idem,
-        owner_id=actor.get("user_id"),
-        owner_token=actor.get("owner_token"),
-        org_id=actor.get("org_id"),
-        session_id=session_id,
-        project_id=None,
-    )
-    if reused and job_status in ("pending", "queued", "running", "cancelling"):
-        # 极端竞态：并发提交同世代键 —— 收敛到既有 job/run
-        twin = _find_run_by_job(session_id, job_id)
-        if twin is not None:
-            return {**_run_view(session_id, twin), "idempotent_reuse": True,
-                    "job_id": job_id,
-                    "poll": f"/api/v1/tasks/jobs/{job_id}"}
-
+    # run 行先落（评审 F14）：CAS 终检在 job 创建之前 —— 若计划在此窗口被
+    # 修改，typed 拒绝且不留下孤儿 job。
     run_id = outputs.new_run_id()
     with SessionLocal() as db:
         prow = _get_plan_row(db, session_id, plan_id)
@@ -585,11 +592,47 @@ async def execute_plan(
             plan_revision=plan_revision,
             plan_digest=plan_digest,
             status="pending",
-            job_id=job_id,
             idempotency_key=idem,
         )
         db.add(run)
         db.commit()
+
+    from app.services.data_operations.runner import submit_async_job
+
+    job_id, job_status, reused = submit_async_job(
+        task_type=TASK_TYPE,
+        kind="data_join",
+        display_name=f"数据关联 · {(plan.title or plan.output_name)[:24]}",
+        params={
+            "session_id": session_id,
+            "plan_id": plan_id,
+            "run_id": run_id,
+            "run_revision": plan_revision,
+            "plan_digest": plan_digest,
+        },
+        idempotency_key=idem,
+        owner_id=actor.get("user_id"),
+        owner_token=actor.get("owner_token"),
+        org_id=actor.get("org_id"),
+        session_id=session_id,
+        project_id=None,
+    )
+    with SessionLocal() as db:
+        run = db.get(DataJoinRun, run_id)
+        run.job_id = job_id
+        db.commit()
+    if reused and job_status in ("pending", "queued", "running", "cancelling"):
+        # 极端竞态：并发提交同世代键 —— 收敛到既有 job 的 run（丢弃本 run 行）
+        twin = _find_run_by_job(session_id, job_id)
+        if twin is not None and twin != run_id:
+            with SessionLocal() as db:
+                dead = db.get(DataJoinRun, run_id)
+                if dead is not None:
+                    db.delete(dead)
+                    db.commit()
+            return {**_run_view(session_id, twin), "idempotent_reuse": True,
+                    "job_id": job_id,
+                    "poll": f"/api/v1/tasks/jobs/{job_id}"}
 
     if background:
         runner_task = asyncio.get_running_loop().create_task(
@@ -754,7 +797,9 @@ async def _execute_body(
             "run_id": run_id,
             "status": "completed",
             "output_kind": output_kind,
-            "output_ref": artifact_ref or f"ref:data-join/{run_id}",
+            # 台账登记失败时不伪造可解析 ref（评审 F12）；文件本体仍在
+            # DATA_DIR/data-join/<run_id> 且经 manifest/receipt 可核验
+            "output_ref": artifact_ref,
             "output_sha256": member_sha,
             "output_rows": n_rows,
             "counts": _stats_to_diagnostics(stats, plan),
@@ -917,6 +962,32 @@ async def list_runs(
 
 # ───────────────────────── 幂等复用 / 失效 ─────────────────────────
 
+def _find_completed_run_by_key(
+    session_id: str, base_key: str
+) -> Optional[Dict[str, Any]]:
+    """base 键前缀下最新 **completed** run（跨世代收敛锚点）。"""
+    from sqlalchemy import select
+
+    from app.core.database import SessionLocal
+    from app.models.data_join_authoring import DataJoinRun
+
+    with SessionLocal() as db:
+        row = db.scalars(
+            select(DataJoinRun).where(
+                DataJoinRun.session_id == session_id,
+                DataJoinRun.idempotency_key.like(f"{base_key}%"),
+                DataJoinRun.status == "completed",
+            ).order_by(DataJoinRun.created_at.desc())
+        ).first()
+        if row is None:
+            return None
+        return {
+            "run_id": row.id, "status": row.status,
+            "receipt": row.receipt, "output_ref": row.output_ref,
+            "output_rows": row.output_rows,
+        }
+
+
 def _find_active_run_by_key(session_id: str, base_key: str) -> Optional[Dict[str, Any]]:
     """同 base 键（含世代后缀）的 pending/running run（活跃收敛锚点）。"""
     from sqlalchemy import select
@@ -934,7 +1005,26 @@ def _find_active_run_by_key(session_id: str, base_key: str) -> Optional[Dict[str
         ).first()
         if row is None:
             return None
+        # 活跃判据复核（评审 F10）：run 行 pending/running 但关联 job 已终态
+        # （崩溃残留）不算活跃 —— 交由恢复/新世代处理，避免永久楔死
+        if row.job_id is not None and not _job_is_live(row.job_id):
+            return None
         return {"run_id": row.id, "job_id": row.job_id, "status": row.status}
+
+
+def _job_is_live(job_id: int) -> bool:
+    """job 存在且非终态（短事务；DB 瞬时不可用按 live 保守处理）。"""
+    try:
+        from app.core.database import SessionLocal
+        from app.models.db_model import AnalysisTask
+
+        with SessionLocal() as db:
+            row = db.get(AnalysisTask, int(job_id))
+            status = str(row.status) if row is not None else None
+            db.commit()
+        return status in ("pending", "queued", "running", "cancelling")
+    except Exception:  # noqa: BLE001 — 探测失败不阻塞提交（保守视为活跃）
+        return True
 
 
 def _count_runs_by_key_prefix(session_id: str, base_key: str) -> int:
@@ -969,6 +1059,8 @@ def _find_run_by_job(session_id: str, job_id: int) -> Optional[str]:
 
 
 def _find_run_by_idem(session_id: str, idem: str) -> Optional[Dict[str, Any]]:
+    """按 base 键前缀找最新 run（含 :gN 世代 —— 评审 F5：收据短路不得
+    只匹配 0 世代，否则失效后重执行永不收敛）。"""
     from sqlalchemy import select
 
     from app.core.database import SessionLocal
@@ -977,7 +1069,7 @@ def _find_run_by_idem(session_id: str, idem: str) -> Optional[Dict[str, Any]]:
     with SessionLocal() as db:
         row = db.scalars(
             select(DataJoinRun).where(
-                DataJoinRun.idempotency_key == idem,
+                DataJoinRun.idempotency_key.like(f"{idem}%"),
                 DataJoinRun.session_id == session_id,
             ).order_by(DataJoinRun.created_at.desc())
         ).first()

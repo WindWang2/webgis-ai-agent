@@ -8,10 +8,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
-const toastStore = { toasts: [] as unknown[], addToast: vi.fn(), removeToast: vi.fn() };
-vi.mock('@/components/ui/toast', () => ({
-  useToastStore: (selector: (s: typeof toastStore) => unknown) => selector(toastStore),
-}));
+// zustand store 形态：hook 是函数且带 getState（vi.mock 工厂被提升 ——
+// mock 形态在工厂内自建，不引用外层变量）
+vi.mock('@/components/ui/toast', () => {
+  const store = { toasts: [] as unknown[], addToast: vi.fn(), removeToast: vi.fn() };
+  return {
+    useToastStore: Object.assign(
+      (selector: (s: typeof store) => unknown) => selector(store),
+      { getState: () => store },
+    ),
+  };
+});
 
 const apiMock = vi.hoisted(() => ({
   describe: vi.fn(),
@@ -169,6 +176,36 @@ describe('DataJoinPanel', () => {
         _refId: 'ref:data-join-render-abc',
         type: 'vector',
       })));
+  });
+
+  it('F1：空间模式下预览/执行按双源就绪启用（不依赖属性键）', async () => {
+    apiMock.createPlan.mockResolvedValue({ plan_id: 'p1', revision: 1 });
+    apiMock.preview.mockResolvedValue({
+      status: 'ready', diagnostics: DIAG, sample_rows: [], sample_row_count: 0,
+      duration_ms: 5,
+    });
+    openPanel();
+    render(<DataJoinPanel sessionId="s1" ownerToken={null} />);
+    // 属性模式：无键 → 禁用
+    const previewBtn = screen.getByRole('button', { name: /预览诊断|preview/i });
+    expect(previewBtn).toBeDisabled();
+    // 切到空间模式：仍无源 → 禁用
+    fireEvent.change(screen.getByLabelText(/关联模式|join mode/i), {
+      target: { value: 'spatial_point_in_polygon' } });
+    expect(screen.getByRole('button', { name: /预览诊断|preview/i })).toBeDisabled();
+    // 绑定双源 → 启用（不要求键字段）
+    const srcInputs = screen.getAllByLabelText(/源|source/i);
+    fireEvent.change(srcInputs[0], { target: { value: 'ref:points' } });
+    fireEvent.change(srcInputs[1], { target: { value: 'ref:regions' } });
+    expect(screen.getByRole('button', { name: /预览诊断|preview/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /执行|execute/i })).toBeEnabled();
+    // pick_by_field 另需择一字段
+    fireEvent.change(screen.getByLabelText(/多区域匹配|multi-region/i), {
+      target: { value: 'pick_by_field' } });
+    expect(screen.getByRole('button', { name: /预览诊断|preview/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/择一优先字段|priority field/i), {
+      target: { value: 'priority' } });
+    expect(screen.getByRole('button', { name: /预览诊断|preview/i })).toBeEnabled();
   });
 
   it('纯表输出禁用加入地图（诚实披露）', async () => {

@@ -101,12 +101,17 @@ class JoinStats:
             items.append(item)
 
 
-def _agg_result(values: Sequence[Any], function: str) -> Tuple[Any, int]:
-    """闭合聚合（null 不当 0）。返回 (值, valid_count)。"""
+def _agg_result(
+    values: Sequence[Any], function: str, *, count_field: bool = False
+) -> Tuple[Any, int]:
+    """闭合聚合（null 不当 0）。返回 (值, valid_count)。
+
+    count：无字段 = COUNT(*)（匹配对数）；显式字段 = COUNT(col)（非空计数）。
+    """
     valid = [v for v in values if v is not None]
     n = len(valid)
     if function == "count":
-        return len(values), n
+        return (n if count_field else len(values)), n
     if n == 0:
         return None, 0
     nums: List[float] = []
@@ -300,6 +305,7 @@ class JoinExecutor:
                         left, right, i, None, status="null_key",
                         left_ref=left_ref, right_ref=None,
                     ))
+                    self._check_runtime_budget(pair_total, outputs)
                 continue
             bucket = index.get(key)
             if not bucket:
@@ -314,6 +320,7 @@ class JoinExecutor:
                         left, right, i, None, status="unmatched",
                         left_ref=left_ref, right_ref=None,
                     ))
+                    self._check_runtime_budget(pair_total, outputs)
                 continue
             matched_left += 1
             if aggregates:
@@ -341,18 +348,24 @@ class JoinExecutor:
                     left_ref=left_ref, right_ref=right.identity_of(j),
                 ))
                 pair_total += 1
-            if pair_total > self.pair_cap or len(outputs) > self.output_cap:
-                raise DataJoinError(
-                    "budget_exceeded",
-                    f"运行中超出预算（pairs={pair_total}/{self.pair_cap}，"
-                    f"output={len(outputs)}/{self.output_cap}）",
-                    pairs=pair_total, output_rows=len(outputs),
-                )
+            self._check_runtime_budget(pair_total, outputs)
         self.stats.matched_pairs = pair_total
         self.stats.matched_left_rows = matched_left
         self.stats.unmatched_left_rows = unmatched_left
         self.stats.output_rows = len(outputs)
         return outputs
+
+    def _check_runtime_budget(
+        self, pair_total: int, outputs: List[Dict[str, Any]]
+    ) -> None:
+        """运行中预算闸：每个左行处理后强制（含 null_key/unmatched 透传行）。"""
+        if pair_total > self.pair_cap or len(outputs) > self.output_cap:
+            raise DataJoinError(
+                "budget_exceeded",
+                f"运行中超出预算（pairs={pair_total}/{self.pair_cap}，"
+                f"output={len(outputs)}/{self.output_cap}）",
+                pairs=pair_total, output_rows=len(outputs),
+            )
 
     # ───────────────────── 空间路径（点×面） ─────────────────────
 
@@ -417,6 +430,7 @@ class JoinExecutor:
         matched_left = 0
         unmatched_left = 0
         null_geom = 0
+        matched_right_ords: set = set()   # 右快照序（被任一点命中的面行）
         for i, geom in enumerate(left.geometries or []):
             if i % _BATCH == 0:
                 self.should_cancel()
@@ -434,6 +448,7 @@ class JoinExecutor:
                         left, right, i, None, status="null_geometry",
                         left_ref=left_ref, right_ref=None,
                     ))
+                    self._check_runtime_budget(pair_total, outputs)
                 continue
             cand_idx = list(tree.query(pt))
             hits: List[int] = []  # 右行序（快照序）
@@ -447,6 +462,7 @@ class JoinExecutor:
                 if ok:
                     hits.append(j)
             hits.sort()  # 右快照序 —— 确定性（不随 STRtree 内部序）
+            matched_right_ords.update(hits)
             pair_total += len(hits)
             self.stats.candidate_pairs += len(hits)
             if pair_total > self.pair_cap:
@@ -468,6 +484,7 @@ class JoinExecutor:
                         left, right, i, None, status="unmatched",
                         left_ref=left_ref, right_ref=None,
                     ))
+                    self._check_runtime_budget(pair_total, outputs)
                 continue
             matched_left += 1
             outputs.extend(self._apply_multi_match(
@@ -483,6 +500,8 @@ class JoinExecutor:
         self.stats.matched_pairs = pair_total
         self.stats.matched_left_rows = matched_left
         self.stats.unmatched_left_rows = unmatched_left
+        # 右未匹配 = 有效右几何中从未被任何点命中的行（诚实计数，非缺省 0）
+        self.stats.unmatched_right_rows = len(valid_right) - len(matched_right_ords)
         self.stats.output_rows = len(outputs)
         return outputs
 
@@ -599,12 +618,21 @@ class JoinExecutor:
                     [r.get(agg.right_field) for r in right_rows]
                     if agg.right_field else [None] * len(right_rows)
                 )
-                value, valid = _agg_result(values, agg.function)
+                value, valid = _agg_result(
+                    values, agg.function, count_field=bool(agg.right_field))
                 row[agg.output_name()] = value
-                if agg.function in ("sum", "mean"):
-                    row[f"{agg.output_name()}_valid_count"] = valid
+                # 分母披露：所有聚合都带 valid_count（评审 F8：count/min/max 同样）
+                row[f"{agg.output_name()}_valid_count"] = valid
         else:
             row["_join_right_ref"] = right_ref
+            if plan.aggregates:
+                # 行 schema 一致（评审 F7）：未匹配/空键行也带聚合列（0/空值）
+                row["match_count"] = 0
+                for agg in plan.aggregates:
+                    if agg.function == "count" and agg.output_name() == "match_count":
+                        continue
+                    row[agg.output_name()] = None
+                    row[f"{agg.output_name()}_valid_count"] = 0
         # 身份：1:1 / N:1（单行输出）保留左身份；1:N 展开 → 服务端派生身份
         left_row = left.rows[left_ord]
         wid = left_row.get("_wfid")

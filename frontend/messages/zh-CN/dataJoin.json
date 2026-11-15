@@ -63,5 +63,5 @@
   "contentInvalidated": "成果内容已失效（被删除或校验失败）—— 可重新执行恢复",
   "deliveryNote": "完整数据（GeoJSON/行集 + DataObject）已登记产物中心，可经「交付数据」导出",
   "openPanel": "数据关联",
-  "joinFromHere": "以此为左源关联…"
+  "renderOverBudgetNote": "输出超过地图渲染投影上限（10k 行）——完整数据经导出交付获取"
 }

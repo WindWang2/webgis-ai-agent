@@ -29,8 +29,8 @@ from app.services.data_join_authoring.errors import DataJoinError
 class KeyFieldSpec:
     """一个键字段（左/右各一列；复合键 = 多个 spec）。
 
-    ``transform`` 仅作用于字符串值；对非字符串值声明 transform →
-    构造时 typed 拒绝（键族不可比，不做隐式 str()）。
+    ``transform`` 仅作用于字符串键值；数值/布尔键族不受字符串变换影响
+    （变换被跳过而非拒绝 —— 键族语义优先于文本清洗，不做隐式 str()）。
     """
 
     left_field: str

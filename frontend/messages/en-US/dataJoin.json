@@ -63,5 +63,5 @@
   "contentInvalidated": "Output content invalidated (deleted or failed verification) — re-execute to recover",
   "deliveryNote": "Full data (GeoJSON/rows + DataObject) is registered in the artifact center; export via \"Deliver data\"",
   "openPanel": "Data Join",
-  "joinFromHere": "Join using this as left source…"
+  "renderOverBudgetNote": "Output exceeds the map render projection cap (10k rows) — export via delivery for full data"
 }

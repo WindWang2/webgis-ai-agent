@@ -149,6 +149,26 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "data_join_authoring"
+   ],
+   "category": "",
+   "conformance_tests": [
+    "tests/unit/data_join_authoring/test_executor_attribute.py",
+    "tests/unit/data_join_authoring/test_executor_spatial.py",
+    "tests/unit/data_join_authoring/test_service_flows.py"
+   ],
+   "deterministic": true,
+   "id": "data.join.authoring",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "data_preparation"
    ],
    "category": "data_access",
@@ -6453,7 +6473,9 @@
    "deterministic": true,
    "domain": "general",
    "id": "data_join_authoring",
-   "producer_algorithms": [],
+   "producer_algorithms": [
+    "data.join.authoring"
+   ],
    "status": "native",
    "supports_large_data": true,
    "tests": [
@@ -9216,10 +9238,10 @@
   }
  ],
  "counts": {
-  "algorithms": 256,
+  "algorithms": 257,
   "artifact_types": 23,
   "capabilities": 195,
-  "findings": 42,
+  "findings": 41,
   "recipes": 166,
   "tools": 485
  },
@@ -9231,14 +9253,6 @@
    "severity": "medium",
    "subject": "terrain.cost_distance",
    "surface": "algorithms"
-  },
-  {
-   "code": "CAPABILITY_NO_PRODUCER",
-   "detail": "native capability without algorithm/tool producer",
-   "domain": "general",
-   "severity": "high",
-   "subject": "data_join_authoring",
-   "surface": "capabilities"
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
@@ -9569,11 +9583,6 @@
   "violations": [
    {
     "baseline": 0,
-    "code": "CAPABILITY_NO_PRODUCER",
-    "current": 1
-   },
-   {
-    "baseline": 0,
     "code": "TOOL_DESCRIPTOR_INCOMPLETE",
     "current": 23
    },
@@ -9586,7 +9595,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "6893c0b9fc88f5f10521e7b9f139f4f4f021ca746522862f11667cc9ccdc14c7",
+ "fingerprint": "b453e23d1aca16af5726aeee84e467190a1ff7eeb0d9a4bbbd1bd1ef03f51cd7",
  "gate": {
   "fields": {
    "capabilities": {

@@ -15,8 +15,8 @@
 ## 总览
 
 - capability 词表：195 条（图内 195 节点）
-- 图节点 1174 / 边 3371 / graph fingerprint `547bb2d2481a7c00`
-- provider 面：algorithm 256，component 23，model 0，provider(adapters) 18，template 8，tool 485，workflow(recipes) 166
+- 图节点 1175 / 边 3374 / graph fingerprint `57af3f48b04fb138`
+- provider 面：algorithm 257，component 23，model 0，provider(adapters) 18，template 8，tool 485，workflow(recipes) 166
 - 域分布：`cartography` 6，`general` 95，`network` 14，`platform` 20，`raster` 57，`statistics` 1，`temporal` 2
 
 ## Capability 词表
@@ -223,7 +223,7 @@
 
 | orphan_capability | cycle_detected | unreachable_tool | artifact_no_consumer | exposes_deprecated_tool |
 | --- | --- | --- | --- | --- |
-| 75 | 1 | 181 | 10 | 0 |
+| 75 | 1 | 180 | 10 | 0 |
 
 ### orphan_capability（75）
 
@@ -305,7 +305,7 @@
 ### cycle_detected（1）
 
 - capability:density_surface -> capability:grid_binning -> capability:density_surface (via capability)
-### unreachable_tool（181）
+### unreachable_tool（180）
 
 - tool add_tile_service_layer is not exposed by any algorithm and has no capability/deprecation link
 - tool analyze_vegetation_index is not exposed by any algorithm and has no capability/deprecation link
@@ -431,7 +431,6 @@
 - tool webgis_component_catalog is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_data_join_cancel is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_data_join_describe is not exposed by any algorithm and has no capability/deprecation link
-- tool webgis_data_join_execute is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_data_join_list is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_data_join_plan_upsert is not exposed by any algorithm and has no capability/deprecation link
 - tool webgis_data_join_preview is not exposed by any algorithm and has no capability/deprecation link
