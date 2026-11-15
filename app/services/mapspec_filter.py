@@ -102,7 +102,14 @@ def evaluate_filter(expr: Any, feature: GeoJSONFeature) -> bool:
     elif expr[1] == "$id":
         left = feature.get("id")
     if op in ("==", "!="):
-        if left is None:
+        # MapLibre 语义（G46 联合筛选对齐）：缺失属性与显式 null 都取 null；
+        # null == null → true；null == 5 → false；null != 5 → true。
+        # 与 evaluate_where 的 eq-null（命中缺席或 null）/ ne-null（值非
+        # null 才命中）逐算子一致 —— 前端 live 地图、SVG/PNG/PDF 导出与
+        # 服务端权威求值三处同一闭开/null 合同。
+        if left is None or right is None:
+            if left is None and right is None:
+                return op == "=="
             return op == "!="
         result = equal(left, right)
         return result if op == "==" else not result

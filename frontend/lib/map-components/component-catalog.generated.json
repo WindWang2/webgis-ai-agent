@@ -1727,6 +1727,11 @@
       "message": "组件配置无效，已跳过渲染"
     },
     {
+      "code": "constraint_layout_evaluated",
+      "severity": "info",
+      "message": "打印档已按 solve_layout_v5 求解约束版面（page_profile: {detail}）"
+    },
+    {
       "code": "diagnostics_truncated",
       "severity": "warning",
       "message": "诊断条目超出导出预算，超出部分未进入产物披露（上限 {detail} 条）"
@@ -1767,6 +1772,21 @@
       "message": "关键文本超限折行（wrap-not-clip，内容完整）（{detail}）"
     },
     {
+      "code": "label_authoring_applied",
+      "severity": "info",
+      "message": "要素级标注覆写已应用（{detail}）"
+    },
+    {
+      "code": "label_authoring_orphan",
+      "severity": "warning",
+      "message": "覆写目标要素在当前数据不存在，该覆写未应用（不漂移到其他要素；{detail}）"
+    },
+    {
+      "code": "label_authoring_stale",
+      "severity": "warning",
+      "message": "覆写绑定的数据 revision 与当前不一致，覆写照常应用并标记待复核（{detail}）"
+    },
+    {
       "code": "label_budget_exceeded",
       "severity": "warning",
       "message": "标签数量超出导出预算（{detail}），超出部分未渲染"
@@ -1785,6 +1805,16 @@
       "code": "label_field_missing",
       "severity": "warning",
       "message": "层声明的标注字段不在源字段集，标注按回退链渲染或缺失（{detail}）"
+    },
+    {
+      "code": "label_obstacles_budget",
+      "severity": "info",
+      "message": "图元障碍预算截断（公平交错分配；{detail}）"
+    },
+    {
+      "code": "label_pinned_conflict",
+      "severity": "warning",
+      "message": "用户固定标签与已放置标签/障碍/视口冲突：保留用户决定并报告（{detail}）"
     },
     {
       "code": "label_truncated",
@@ -1867,6 +1897,21 @@
       "message": "高 DPI 导出下栅格瓦片源仍按原 zoom 取图，瓦片细节不随分辨率提升（{detail}）"
     },
     {
+      "code": "raster_window_degraded",
+      "severity": "warning",
+      "message": "数值栅格层窗口渲染存在有界近似（{detail}）"
+    },
+    {
+      "code": "raster_window_embedded",
+      "severity": "info",
+      "message": "数值栅格层按冻结表达以地理对齐窗口嵌入导出件（{detail}）"
+    },
+    {
+      "code": "raster_window_no_overlap",
+      "severity": "warning",
+      "message": "数值栅格层与画幅范围无交集，透明省略（未读取边缘像元）（{detail}）"
+    },
+    {
       "code": "scale_unreliable_perspective",
       "severity": "warning",
       "message": "透视视角（pitch>{detail}°）下屏幕比例尺被透视压缩失真，导出件比例尺仅供参考；场景披露卡应随图注明"
@@ -1900,6 +1945,16 @@
       "code": "svg_3d_perspective_degrade",
       "severity": "info",
       "message": "矢量导出无法保留三维透视模型，已降级为 2D 平面投影表达（scene.mode={detail}）—— 不是可编辑的 3D 矢量"
+    },
+    {
+      "code": "symbol_asset_def_budget",
+      "severity": "warning",
+      "message": "符号资产 defs 超出导出预算上限，超出部分未绘制"
+    },
+    {
+      "code": "symbol_asset_unavailable",
+      "severity": "warning",
+      "message": "图层符号资产不可用（scope 外/版本退役/摘要不符），该层资产图元未绘制"
     },
     {
       "code": "table_ref_unavailable",

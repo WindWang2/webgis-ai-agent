@@ -168,6 +168,8 @@ _TOOL_MODULES = [
     ("app.tools.session_model_tools", "register_session_model_tools"),
     # G40：制图符号资产工作台（目录/导入/绑定预览/应用/解绑；独立模块防并发冲突）
     ("app.tools.cartographic_asset_tools", "register_cartographic_asset_tools"),
+    # G46：多图联合筛选与持久探索视图（inspect/preview/视图管理/apply；独立模块防并发冲突）
+    ("app.tools.linked_exploration_tools", "register_linked_exploration_tools"),
 
 ]
 
