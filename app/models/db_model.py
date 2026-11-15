@@ -241,6 +241,9 @@ class Message(Base):
     tool_calls = Column(JSON, nullable=True)  # FC tool calls
     tool_call_id = Column(String(255), nullable=True)
     tool_result = Column(JSON, nullable=True)  # tool execution result
+    # G36（ADR-0291）：用户消息的视觉附件元数据（evidence refs + 回执摘要；
+    # 只存有界元数据，绝不存 base64）。NULL = 无附件（存量行零改动）。
+    attachments = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     conversation = relationship("Conversation", back_populates="messages")

@@ -101,6 +101,22 @@ def _bounded_canvas(raw: Any) -> Optional[dict[str, int]]:
     return {"width": vals[0], "height": vals[1]}
 
 
+class ChatAttachmentRef(BaseModel):
+    """G36（ADR-0291）：聊天附件引用 —— 只携 evidence ref，不携字节。
+
+    bytes 仅经受权 intake 端点（multipart）进入 blob store；本 DTO 是
+    ChatRequest 的加性字段（256KB 整闸不受影响）。服务端在 turn 发送时
+    复验归属/存在/约束（bridge ``_resolve_turn_images``）。
+    """
+
+    evidence_id: str = Field(..., pattern=r"^vev-[0-9a-f]{16}$")
+    purpose: str = Field(
+        "context",
+        max_length=32,
+        description="用途标记（context/verify_reference 等；回执披露用）",
+    )
+
+
 class ChatRequest(BaseModel):
     """聊天请求。"""
 
@@ -149,6 +165,10 @@ class ChatRequest(BaseModel):
     # /canvas-actions 同源同 ingest，服务端内容寻重防双计）。None = 旧
     # 客户端 / 本轮无画布动作。
     canvas_actions: Optional[CanvasActionsEnvelopeDTO] = None
+    # G36（ADR-0291）：受权视觉证据 refs（当前图/局部/参考图）。ref-only
+    # 线格式 —— bytes 不进请求体；发送时服务端复验归属与约束。
+    attachments: list[ChatAttachmentRef] = Field(
+        default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def _cap_map_state_size(self):
@@ -594,6 +614,9 @@ class SessionMessage(BaseModel):
     role: str
     content: str
     timestamp: float
+    # G36（ADR-0291）：用户消息的视觉附件元数据（恢复渲染缩略图/来源用；
+    # 缺席 = 无附件 —— 旧消息零改动）。
+    attachments: Optional[list[dict]] = None
 
 
 class SessionDetailResponse(BaseModel):

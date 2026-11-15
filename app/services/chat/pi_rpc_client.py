@@ -215,6 +215,10 @@ class PiRpcClient:
         # ADR-0288（W08，#2061）：本次 spawn 的 LLM 配置代际（空 = 解析失败 /
         # 未锚定 —— 配置换代回收 fail-open 不触发）。
         self.spawn_config_generation: str = ""
+        # G36（ADR-0291）：本次 spawn 锚定的模型 id 与其目录是否声明 image
+        # input（视觉能力投影锚点；描述符此后换代 → 送图前拒绝，V11）。
+        self.spawn_model_id: str = ""
+        self.spawn_declared_image_input: bool = False
         # G37：worker 运行代。每次 start()（含 respawn）递增并重铸
         # runtime_epoch —— receipt/账本按代归属；bridge 以 spawn_epoch 变化
         # 判定「已应用模型状态」必须重验证（new_session/respawn 后 vendor
@@ -330,6 +334,8 @@ class PiRpcClient:
         # （reader finally 里与 flag 一起 set 的 event，这里与 flag 一起 clear）。
         self._process_died = False
         self._process_died_event.clear()
+        # G36（ADR-0291）：spawn 代计数（vision gate 的 get_state 缓存锚点；
+        # 每次 respawn 自增，目录核对按新代重做）。
         # G37：新 spawn = 新运行代（respawn 后 vendor 会话/模型全部回到
         # spawn 快照，账本按新代归属）。
         import uuid as _uuid
@@ -459,6 +465,15 @@ class PiRpcClient:
             self.spawn_config_generation = ""
 
         if llm_base and llm_model:
+            # G36（ADR-0291）：视觉能力投影 —— 管理员描述符确证 vision=True
+            # 时给模型条目加性补 input/inputLimits（Pi 目录省略 input 默认
+            # text-only）。spawn 锚点记录声明结果：此后描述符换代 → 与锚点
+            # 不一致 → 送图前拒绝（V11），文本不受影响。
+            from app.services.visual_context.profile import (
+                model_catalog_entry,
+                model_entry_declares_image,
+            )
+
             # G37（WP04）：原生目录投影 —— models.json 写**管理员允许目录**
             # 全部模型（基础模型在前，settings.json default 仍指基础模型）。
             # 共享文件只含管理员共同允许项 + $OPENAI_API_KEY 引用（无租户
@@ -474,6 +489,15 @@ class PiRpcClient:
                 ] or [llm_model]
             except Exception:  # noqa: BLE001 — 目录投影失败退回单模型（既有行为）
                 logger.debug("[PiRpcClient] session catalog projection fell back to base model", exc_info=True)
+            # G36 × G37：视觉投影必须覆盖目录中的每一项 —— 会话选择任一
+            # vision 模型时，Pi 侧目录也必须声明 image input；非 vision 项
+            # 保持 Pi 默认 text-only。
+            _model_entries = [
+                model_catalog_entry(mid, mid, True) for mid in catalog_model_ids
+            ]
+            _model_entry = _model_entries[0]
+            self.spawn_model_id = llm_model
+            self.spawn_declared_image_input = model_entry_declares_image(_model_entry)
             _write_agent_text(PI_AGENT_DIR / "models.json",
                 json.dumps(
                     {
@@ -486,10 +510,7 @@ class PiRpcClient:
                                     "supportsDeveloperRole": False,
                                     "supportsReasoningEffort": False,
                                 },
-                                "models": [
-                                    {"id": mid, "name": mid, "reasoning": True}
-                                    for mid in catalog_model_ids
-                                ],
+                                "models": _model_entries,
                             }
                         }
                     },

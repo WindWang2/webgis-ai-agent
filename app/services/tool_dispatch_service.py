@@ -142,6 +142,46 @@ class ToolDispatchResult:
     # （descriptor_missing）。None = 闸关或本次调用不含数据 ref。
     # BLOCK 路径不经过此字段（结构化 error 早退）。
     data_qualification: Optional[dict] = None
+    # G36（ADR-0291，additive）：工具显式声明的原生图像结果（有界
+    # ImageContent dict 列表）。**窄投影**：仅当工具返回携带
+    # ``result_images`` 键（webgis_visual_evidence_read 专属）时由 dispatch
+    # 提取 —— 绝不把任意 details 里的 image 字符串自动升级为可信内容。
+    result_images: list = field(default_factory=list)
+
+
+#: G36（ADR-0291）：工具结果图像的窄提取上限（单结果 1 图、base64 ≤2MiB）。
+_RESULT_IMAGE_MAX_COUNT = 1
+_RESULT_IMAGE_MAX_B64 = 2 * 1024 * 1024
+_RESULT_IMAGE_MIMES = ("image/png", "image/jpeg")
+
+
+def _extract_result_images(result: Any) -> list:
+    """G36：``result_images`` 键的**窄**投影（仅显式键；有界校验）。
+
+    只信任工具自己声明的 ``result_images``（webgis_visual_evidence_read
+    专属契约）——任意 details 里的 image 字符串不自动升级。畸形条目丢弃
+    （诚实缺席），绝不部分透传。
+    """
+    try:
+        raw = result.get("result_images") if isinstance(result, dict) else None
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for item in raw[:_RESULT_IMAGE_MAX_COUNT]:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "image":
+                continue
+            data = item.get("data")
+            mime = str(item.get("mimeType") or "")
+            if not isinstance(data, str) or mime not in _RESULT_IMAGE_MIMES:
+                continue
+            if not data or len(data) > _RESULT_IMAGE_MAX_B64:
+                continue
+            out.append({"type": "image", "data": data, "mimeType": mime})
+        return out
+    except Exception:  # noqa: BLE001 — 投影面绝不阻断 dispatch
+        return []
 
 
 # 重复调用拦截的 LLM 提示（独立常量，避免 ok/error 分支误用）
@@ -1814,6 +1854,7 @@ class ToolDispatchService:
             capability_evidence=capability_evidence,
             action_evidence=action_evidence,
             data_qualification=_data_qualification,
+            result_images=_extract_result_images(result),
         )
 
     async def _author_display_result(

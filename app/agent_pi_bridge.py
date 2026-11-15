@@ -414,6 +414,10 @@ def _slim_pi_details_payload(result: Any) -> Any:
     details_payload: Any = getattr(result, "raw_result", result)
     if isinstance(details_payload, dict):
         details_payload = dict(details_payload)
+        # G36（ADR-0291）：result_images 的字节走原生 content 通道
+        # （abi_tool_response 窄投影）——details 不重复携带 base64。
+        if "result_images" in details_payload:
+            details_payload.pop("result_images", None)
         # Raster data URL is not needed — frontend mounts via result_ref / imageRef
         if "image" in details_payload and isinstance(details_payload.get("image"), str):
             img = details_payload["image"]
@@ -1707,6 +1711,102 @@ class PiBridge:
                 turn_id, exc_info=True,
             )
 
+    async def _resolve_turn_images(
+        self,
+        turn_sid: str,
+        attachments: Optional[List[Dict[str, Any]]],
+        *,
+        allow_regeneration: bool = True,
+    ) -> Dict[str, Any]:
+        """G36（ADR-0291）：turn 时刻解析附件 → 原生 images + 回执。
+
+        调用点在 turn lease 内、prompt 发送前（两条 prompt 路径同款；
+        **无附件时也调用** —— V33 预检不依赖本轮是否带图）：
+
+        1. **V33 预检**：本 vendor 会话 transcript 里已送 pixels 的证据是否
+           全部仍获准（在场 + 未撤销 + 引用活着）。失效 → 强制 vendor 换代
+           （new_session + 台账换代 —— transcript 重建，旧 pixels 不再参与
+           请求；GIS 状态权威在宿主，由既有 per-turn 上下文装配重建）；
+           换代失败 → 阻断本次图片发送（宁可不送，不重送已撤图片）。
+           ``allow_regeneration=False``（steer 侧）：在飞 turn 持 turn 锁消费
+           事件流，中途换代/排空会偷走活事件 —— 只阻断图片，换代留给下一
+           turn 边界（预检在彼时必然再跑）。
+        2. **能力门（WP08）**：描述符确证 vision → spawn 锚点 → vendor
+           get_state 三重一致才送图；否则全部拒绝并给 typed reason（V10/
+           V11），文本会话照常。
+        3. **解析（WP06）**：会话归属/tombstone/blob sha/预算逐图裁决。
+
+        返回 ``{"images": [...], "receipts": [...], "blocked_reason": str}``。
+        """
+        from app.services.visual_context.profile import VisionGate
+        from app.services.visual_context.resolver import (
+            get_sent_image_ledger,
+            resolve_attachments,
+        )
+
+        if not getattr(self, "_vision_gate", None):
+            self._vision_gate = VisionGate()
+        ledger = get_sent_image_ledger()
+        blocked_reason = ""
+        # ── V33：已送 pixels 复验（每 turn；空台账零成本早退）──
+        if turn_sid:
+            try:
+                revoked = await ledger.find_revoked(turn_sid)
+            except Exception:  # noqa: BLE001 — 台账复验失败按阻断图片处理
+                logger.warning(
+                    "[PiBridge] sent-image ledger check failed session=%s",
+                    turn_sid[:24], exc_info=True)
+                revoked = None
+            if revoked is None:
+                # 索引瞬态不可用 ≠ 已撤销：只阻断图片，绝不换代（review P2#10
+                # —— 隐私安全但不毁灭对话记忆）。
+                blocked_reason = "ledger_check_failed"
+            elif revoked:
+                if allow_regeneration:
+                    # vendor 换代：transcript 清空 → 旧 pixels 不再参与请求。
+                    try:
+                        await self._rpc.request("new_session", {})
+                        await self._drain_stale_events()
+                        ledger.bump(turn_sid)
+                        logger.info(
+                            "[PiBridge] vendor session regenerated for revoked "
+                            "images session=%s revoked=%d",
+                            turn_sid[:24], len(revoked))
+                    except Exception:  # noqa: BLE001 — 换代失败 → 阻断图片
+                        logger.warning(
+                            "[PiBridge] vendor session regen failed; blocking "
+                            "images session=%s", turn_sid[:24], exc_info=True)
+                        blocked_reason = "revoked_history_regeneration_failed"
+                else:
+                    blocked_reason = "revoked_history_pending_regeneration"
+        # ── 能力门 ──
+        allowed, gate_reason = True, ""
+        if attachments and not blocked_reason:
+            model_id = str(getattr(self._rpc, "spawn_model_id", "") or "")
+            try:
+                allowed, gate_reason = await self._vision_gate.check(
+                    model_id=model_id,
+                    spawn_declared_image_input=bool(
+                        getattr(self._rpc, "spawn_declared_image_input", False)),
+                    rpc=self._rpc,
+                    spawn_epoch=getattr(self._rpc, "spawn_epoch", 0),
+                )
+            except Exception:  # noqa: BLE001 — 门失败 = 不送图
+                allowed, gate_reason = False, "runtime_state_unavailable"
+        # ── 解析 ──
+        outcome = await resolve_attachments(
+            turn_sid, attachments,
+            images_allowed=allowed and not blocked_reason,
+            allowed_reason=gate_reason or blocked_reason,
+        )
+        if outcome.any_sent and turn_sid:
+            ledger.record(turn_sid, outcome.receipts)
+        return {
+            "images": outcome.images,
+            "receipts": [r.to_dict() for r in outcome.receipts],
+            "blocked_reason": blocked_reason,
+        }
+
     async def _acquire_turn_lease(self, turn_id: str, session_id: Optional[str], *, owner: Optional[asyncio.Task] = None) -> "_TurnLease":
         """Acquire the turn lock and bind it to an explicit ownership lease.
 
@@ -2472,6 +2572,7 @@ class PiBridge:
         context_project_id: str = "",
         context_user_id: str = "",
         context_query_text: str = "",
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> dict:
         """Send a prompt to Pi agent (non-streaming).
 
@@ -2521,6 +2622,8 @@ class PiBridge:
             turn_id=turn_id,
             run_id=run_id,
         )
+        # G36：非流式路径的附件回执（随返回值披露，不进 RPC wire）。
+        _attachment_receipts: List[Dict[str, Any]] = []
 
         # Hold the lock across send + drain so turns are strictly serial on the
         # singleton bridge. Pi processes one prompt at a time, so this matches
@@ -2656,6 +2759,15 @@ class PiBridge:
                                 _ns_model_result.reason_detail
                                 or "session model runtime refused this turn"
                             )
+                        # G36（ADR-0291）：与 stream_prompt 同款图片解析
+                        # （lease 内、prompt 字节前；V33 预检**每 turn 执行**
+                        # —— 撤销后的纯文本 turn 同样触发换代；回执随返回值
+                        # 披露，不进 RPC wire —— Pi 只收 message/images）。
+                        _img_outcome = await self._resolve_turn_images(
+                            turn_sid, attachments)
+                        if _img_outcome["images"]:
+                            data["images"] = _img_outcome["images"]
+                        _attachment_receipts.extend(_img_outcome["receipts"])
                         prompt_resp = await self._rpc.request("prompt", data)
                     except PiRpcError as send_exc:
                         # #790 (B-6 parity with stream_prompt's ``send_failed``): the
@@ -3043,6 +3155,7 @@ class PiBridge:
         return {
             "sessionId": turn_sid,
             "content": final_text,
+            "attachment_receipts": _attachment_receipts,
         }
 
     async def stream_prompt(
@@ -3057,6 +3170,7 @@ class PiBridge:
         context_project_id: str = "",
         context_user_id: str = "",
         context_query_text: str = "",
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a prompt to Pi agent, yielding SSE events.
 
@@ -3070,6 +3184,8 @@ class PiBridge:
                 "completed"} (audit #818: lets the route persist the turn
                 transcript without re-parsing SSE strings). May be sync or
                 async.
+            attachments: G36 受权视觉证据 refs（[{evidence_id}]）；lease 内
+                解析为原生 images（能力门/预算/台账见 _resolve_turn_images）。
 
         Yields:
             SSE-formatted event strings
@@ -3080,6 +3196,9 @@ class PiBridge:
         # owns this turn — not bridge instance state a prior turn could have
         # overwritten.
         turn_sid = session_id or ""
+        # G36：本 turn 附件回执（SSE 已逐条披露；此处随 on_turn_result 交路由
+        # 持久化 status/reason —— 刷新恢复不把 refused 显示成 sent）。
+        _turn_attachment_receipts: List[Dict[str, Any]] = []
 
         def lookup_result(tool_call_id: str, _sid: str = turn_sid) -> Optional[ToolDispatchResult]:
             return get_cached_dispatch_result(tool_call_id, _sid)
@@ -3315,6 +3434,25 @@ class PiBridge:
                         # （保持既有 SSE 首事件契约：task_start 仍是流的首个
                         # 结构事件；model_status 是加性第二事件）。
                         _model_status_pending = _model_result.sse_payload(turn_sid, turn_id)
+                        # G36（ADR-0291）：受权附件 → 原生 images（lease 内，
+                        # prompt 字节之前；V33 预检**每 turn 执行** —— 撤销
+                        # 后的纯文本 turn 同样触发换代，旧 pixels 不随
+                        # transcript 续送；逐附件回执向 SSE 披露）。
+                        _img_outcome = await self._resolve_turn_images(
+                            turn_sid, attachments)
+                        if _img_outcome["images"]:
+                            data["images"] = _img_outcome["images"]
+                        _turn_attachment_receipts.extend(_img_outcome["receipts"])
+                        for _receipt in _img_outcome["receipts"]:
+                            try:
+                                _ev = sse_event("attachment_receipt", {
+                                    "session_id": turn_sid,
+                                    "turn_id": turn_id,
+                                    "attachment": _receipt,
+                                })
+                                yield _ev
+                            except Exception:  # noqa: BLE001 — 披露面绝不阻断
+                                pass
                         prompt_resp = await self._rpc.request("prompt", data)
                     except PiRpcError as e:
                         logger.error(f"[PiBridge] stream_prompt send failed: {e}")
@@ -3917,6 +4055,9 @@ class PiBridge:
                                 "turn_id": turn_id,
                                 "final_text": _turn_final_text,
                                 "completed": rt_ev.outcome.outcome == Outcome.SUCCEEDED,
+                                # G36（ADR-0291）：逐附件送模回执（含拒绝
+                                # reason；路由据此持久化真实 status）。
+                                "attachment_receipts": list(_turn_attachment_receipts),
                             }
                             _r = on_turn_result(_res)
                             if asyncio.iscoroutine(_r):

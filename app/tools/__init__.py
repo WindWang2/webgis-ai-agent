@@ -22,6 +22,8 @@ _TOOL_MODULES = [
     ("app.tools.map_operations_tools", "register_map_operation_tools"),
     # ADR-0285：交互情境 scope —— 当前/历史选择 → 受验证分析输入（只读）
     ("app.tools.interaction_scope_tools", "register_interaction_scope_tools"),
+    # G36（ADR-0291）：视觉证据读取 —— 会话已授权图片证据 → 摘要 + 原生 ImageContent
+    ("app.tools.visual_context_tools", "register_visual_context_tools"),
     # GOAL 04：多尺度表达档案 —— inspect/preview/apply（scale_profile.v1）
     ("app.tools.scale_profile_tools", "register_scale_profile_tools"),
     # G27：多尺度表达策略生产接线 —— inspect + 局部 CAS apply
