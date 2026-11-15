@@ -77,10 +77,10 @@
 
 - 后端：`tests/unit/test_g47_*.py` **162 passed**（含本轮新增 2 条 ref 游标回归）；
   `test_g47_print_diagram_seam.py` + `test_g47_service_lifecycle.py` **19 passed**；
-  `test_g47_publication_readback.py` 见 TEST_MATRIX（SVG 子集 9 passed，PNG/PDF 受锁未执行）。
+  `test_g47_publication_readback.py` 整档 **14 passed / 20.0s**（SVG 9 + PNG/PDF 5，锁外有界执行，见 TEST_MATRIX §F）。
 - 前端：`tsc --noEmit` 0 错；`eslint … --max-warnings 0` 0 告警；Vitest **29 passed**（含 i18n 键完备）。
-- 仍未解决（如实记录）：真实浏览器 E2E 未执行；大样本压测未做；PNG/PDF 加锁回读未跑。
-  三项都写进 TEST_MATRIX §K，不当作已通过。
+- 仍未解决（如实记录）：真实浏览器 E2E 未执行（沙箱 Next 引导不通）；≈400 单元大样本压测未做。
+  两项写进 TEST_MATRIX §K，不当作已通过。
 
 ## 第二轮：Pi 旅程实测暴露的 P0-4（评审未覆盖，由真实运行发现）
 
@@ -94,3 +94,7 @@
 
 修复后复跑：**1 passed / 81.8s**，23 项 gate 全绿（含 `job_completed`、`apply_via_pi`、
 `mapspec_block_committed`、`apply_is_one_mutation_with_undo`、`export_bytes_match_pi_receipt`）。
+
+| # | 级别 | 发现 | 修复 |
+|---|---|---|---|
+| 15 | P1（测试基建） | `_heavy_stage_lock()` 用**无限期阻塞**的 `flock(LOCK_EX)`：外部 worktree 一持锁，整份 PNG/PDF 回读套件静默挂死且零诊断（本轮实际损失约 1 小时；`/proc`/`/proc/locks`/`fuser` 全不可见持有者）。等价于没有超时的网络调用 | 改为有界等待（`G47_LOCK_WAIT_SECONDS`，默认 60s）→ 失败并给出锁路径/判别依据/两种处置；首次超时后本进程内快速失败，不再逐用例等满；新增显式放行口 `G47_LOCK_BYPASS=1`（打横幅，账本须注明未持锁）。争用路径以外部持锁为夹具实测：**20.4s 出结论** |

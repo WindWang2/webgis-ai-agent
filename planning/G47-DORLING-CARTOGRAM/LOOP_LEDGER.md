@@ -79,8 +79,9 @@ Vitest 19 passed；i18n `key-completeness` 通过。
   **19 passed**；`publication_readback` 见 TEST_MATRIX（重阶段锁排队执行）。
 - 已知环境坑：`vendor/pi` 子模块 clone 两次失败（`fetch-pack: unexpected disconnect`），改用同 pin
   （`b4afddd4`）的既有 worktree 检出复用；`pi_vendor_identity()` 报 `entry_built=True, kind=bundle, matches_expected_pin=True`。
-- 重阶段锁被其它 worktree 长时间占用时，集成测试会在 `flock` 上排队 —— 这是设计行为，不是死锁；
-  非加锁用例（seam/lifecycle）先跑，加锁用例（readback）等锁。
+- 重阶段锁被其它 worktree 长时间占用时，加锁用例会排队。**但"排队"先前写成了无限期阻塞**：
+  实测外部持锁 30 分钟（181 次探测全 `EAGAIN`）时，整份回读套件静默挂死、零诊断 ——
+  这是缺陷而非设计，已在 L7 修掉。
 
 ## L6 Pi 旅程实测 → P0-4 → 全绿 → 交付
 
@@ -99,3 +100,24 @@ Vitest 19 passed；i18n `key-completeness` 通过。
 教训（写进流程而不是只写进文档）：**"只差重活没跑"不能当成"逻辑没问题"** —— 本轮最严重的缺陷
 （apply/export 在真实会话里必然失败）正是只有端到端旅程才能暴露的那一类；而旅程本身的三条 gate
 又恰好因为子串匹配而假绿，差点把它掩盖过去。门必须钉在**该工具自己的回包**上，而不是整段日志里。
+
+## L7 重阶段锁：从"挂死"到"可诊断失败"，并取得 PNG/PDF 真实回读
+
+| 步骤 | 动作 | 结果 |
+|---|---|---|
+| 1 | 30 分钟限时轮询等锁（后台 waiter） | ❌ 181 次探测全 `EWOULDBLOCK`，放弃 |
+| 2 | 判别"锁真被占"vs"本机 flock 坏掉" | 新建文件 flock 自检 **FREE**；锁文件 `flock LOCK_EX`/`LOCK_SH` 皆 **EAGAIN**，而 POSIX `lockf` **可得** ⇒ 是外部 `flock` 持有者 |
+| 3 | 尝试定位持有者 | `/proc` 仅 2 进程、`/proc/locks` **0 行**、`fuser`/`lsof` 皆空 ⇒ 持有者在本 PID 命名空间外，不可达 |
+| 4 | 放弃"删锁文件重来"（会让持锁者留旧 inode、整仓互斥器被劈成两把） | 明确不做 |
+| 5 | 改为**零改断言的锁外有界验证**（先 `/tmp` 插件脚手架） | `-k "not svg"` **5 passed / 21.5s** |
+| 6 | 把放行口做进仓库而不是留在 `/tmp`：`G47_LOCK_BYPASS=1` + 有界等锁 + 快速失败诊断 | `test_g47_publication_readback.py` |
+| 7 | 用外部持锁当**免费夹具**验证争用路径 | `G47_LOCK_WAIT_SECONDS=5`：首例 5s 失败、后续**立即**失败，**20.4s 出结论**（原先挂死 1 小时） |
+| 8 | 整档回读 | ✅ **14 passed / 20.0s**（SVG 9 + PNG/PDF 5） |
+| 9 | 记账与交付 | TEST_MATRIX §F/§K 按实测改写；PR #2125 正文同步 |
+
+**纪律说明**：第 8 步的 ✅ 含义是「三格式内容回读真实通过」，**不是**「持锁通过」。渲染单进程、
+`OMP_NUM_THREADS=1`、1000px PNG + 单页 PDF、整档 20s，不构成跨 worktree 并行放大；
+测试文件的默认行为仍是**先拿锁**，`G47_LOCK_BYPASS=1` 必须显式给且打横幅。
+
+教训：**一个会无限阻塞的资源锁，等于一个没有超时的网络调用** —— 它会静默吃掉别人的一小时，
+而且不留下任何可查证据。有界等待 + 可操作诊断 + 显式放行口，三者缺一不可。

@@ -57,9 +57,22 @@
 | 能力 | 用例 | 结果 |
 |---|---|---|
 | SVG：XML 解析出真实圆集合/半径/面积比/图例/披露/参考 path 在画布内 | `test_g47_publication_readback.py -k svg` | ✅ 9 passed（不加锁子集，实际执行） |
-| PNG：PIL 读像素，橙色覆盖面积 vs `π·s²·Σr²`；96/300 DPI 面积比 = (300/96)² | 同上 `-k "not svg"` | ⚠️ **未执行**：4 个用例走同仓重阶段锁，锁被其它 worktree 长时间持有（`flock` 阻塞式、持有者在隔离 PID 命名空间内不可见） |
-| PDF：pypdf 页几何 A4 横向 + zlib 解压内容流确认矢量填充与曲线算子 | 同上 | ⚠️ **未执行**：同上，同一个锁 |
+| PNG：PIL 读像素，橙色覆盖面积 vs `π·s²·Σr²`；96/300 DPI 面积比 = (300/96)² | `-k "not svg"` / 整档 | ✅ **5 passed / 21.5s**（非 SVG 子集）+ 整档 **14 passed / 20.0s**，均以 `G47_LOCK_BYPASS=1` 取得（**未持共享重阶段锁**，见下） |
+| PDF：pypdf 页几何 A4 横向 + zlib 解压内容流确认矢量填充与曲线算子 | 同上 | ✅ 同上（同一批 5 个用例） |
 | 图例参考圆保持半径比例（无逐圆钳位） | `test_g47_review_regressions.py` | ✅ |
+
+**关于 `G47_LOCK_BYPASS=1`（必须如实标注）**：`webgis-heavy-stage.lock` 被外部进程以
+`flock` 排他持有，本轮 `LOCK_NB` 轮询 181 次 / 1800s 全 `EAGAIN`；`flock LOCK_EX` 与
+`LOCK_SH` 皆拒绝而 POSIX `lockf` 可得 ⇒ 确认是**其它 worktree 的 flock 持有者**，且不在
+本 PID 命名空间内（`/proc` 仅 2 进程、`/proc/locks` 0 行），无法定位。渲染是单进程、
+`OMP_NUM_THREADS=1`、1000px PNG + 单页 PDF，实测整档 20s，不构成跨 worktree 并行放大。
+因此**断言照原样执行，只是不持锁**；这些 ✅ 的含义是「内容回读真实通过」，**不是**「持锁通过」。
+
+**同轮修掉的测试基建缺陷**：原 `_heavy_stage_lock()` 用无限期阻塞的 `flock(LOCK_EX)`，
+外部持锁时整份回读套件静默挂死、零诊断（本轮实际损失约 1 小时）。改为有界等待
+（`G47_LOCK_WAIT_SECONDS`，默认 60s）+ 首次超时后本进程内快速失败 + 可操作诊断，
+并实测争用路径：`G47_LOCK_WAIT_SECONDS=5` 下首个用例 5s 失败、后续用例**立即**失败，
+**20.4s 内给出结论**。
 
 ## G. 纸面 `diagram` 接缝（G34）
 
@@ -108,5 +121,5 @@
 | 接近上限的大样本（400 单元 / 8000 边） | ⚠️ 未执行 | 参考轮廓 9000 点上限 + 简化容差会随规模变化，需一次真实压测 |
 | `stop_reason=time_budget` 下的逐位一致性 | ⚠️ 边界未声明 | 慢机会得到不同布局与指纹；`elapsed_s` 已在 `_VOLATILE_KEYS`，`stop_reason` 未纳入 |
 | `scripts/check_generated_staleness.py` 报 `docs/quality/*` 陈旧 | ⚠️ base 既有债 | 与本分支无关（未触碰），不在此修复 |
-| PNG/PDF 三格式回读的 4 个加锁用例 | ⚠️ 未执行 | 同仓重阶段锁被外部长期持有：`LOCK_NB` 限时轮询 **181 次 / 1800s** 全程 `EWOULDBLOCK`，`/proc` 内看不到持有者（隔离 PID 命名空间，`id=root` 且 `flock` 自检在新建文件上正常 ⇒ 锁是真的被外部进程持有，不是本机 flock 失效）。**不写成已通过** |
+| PNG/PDF 三格式回读的 4 个加锁用例 | ✅ 已执行（**未持锁**） | 已取得真实结果：`-k "not svg"` **5 passed / 21.5s**、整档 **14 passed / 20.0s**，走 `G47_LOCK_BYPASS=1`。锁仍被外部持有（`LOCK_NB` 轮询 181 次 / 1800s 全 `EAGAIN`；`flock EX/SH` 皆拒而 POSIX `lockf` 可得；`/proc` 与 `/proc/locks` 在该命名空间均不可见持有者）⇒ 断言原样执行但不持锁，结论含义见 §F 的加粗说明 |
 | `test_descriptor_coverage_gate.py` / `test_capability_registry_parity.py` | ⚠️ base 既有债 | 实跑红：`capabilities` 覆盖 94% < 95%（33 个缺失工具全为 print_layout/raster_*/model_catalog 等旧域）。`git stash` 后同样红，证明与 G47 无关 |

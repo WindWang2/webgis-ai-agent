@@ -19,9 +19,11 @@ import base64
 import fcntl
 import io
 import math
+import os
 import re
 import shutil
 import subprocess
+import time
 import zlib
 from contextlib import contextmanager
 from pathlib import Path
@@ -46,16 +48,55 @@ _LOCK_PATH = Path(
     ).stdout.strip()
 ) / "webgis-heavy-stage.lock"
 
+#: 等待同仓重阶段锁的上限（秒）。合法持有者可能是整包构建（数小时），长等无意义，
+#: 默认只给 60s 让"锁被占"这件事快速变成一条可读的失败而不是挂死。
+_LOCK_WAIT_SECONDS = float(os.environ.get("G47_LOCK_WAIT_SECONDS", "60"))
+#: 本进程内是否已确认锁被外部持有 —— 避免 4 个加锁用例各等满一次。
+_LOCK_BUSY = False
+
 #: 3×3 网格，值 100..900 → 半径比 1:3，面积比 1:9（便于像素级核验）。
 V9 = [100, 200, 300, 400, 500, 600, 700, 800, 900]
 
 
 @contextmanager
 def _heavy_stage_lock():
-    """同仓统一重阶段锁（媒体编码不与其他 worktree 并行放大）。"""
+    """同仓统一重阶段锁（媒体编码不与其他 worktree 并行放大）。
+
+    外部 worktree 长期持锁时**不**无限期阻塞：有界等待后失败，并给出锁路径与
+    诊断方向。原先的 ``flock(LOCK_EX)`` 会静默挂死整份回读套件 —— 持锁者不在
+    本 PID 命名空间时（容器/sandbox）连 ``/proc`` 都扫不到，除挂死外拿不到任何
+    线索。首次等待失败后本进程内直接快速失败，不重复等满。
+
+    ``G47_LOCK_BYPASS=1`` 是显式放行口，只在「锁被外部持有、仍要取得有界证据」
+    时使用；它会打出横幅，账本必须注明**未持锁**，不得当作持锁通过。
+    """
+    global _LOCK_BUSY
+    if os.environ.get("G47_LOCK_BYPASS") == "1":
+        print(f"[g47-lock] BYPASS=1：未持共享重阶段锁即渲染（{_LOCK_PATH}）"
+              " —— 有界证据，不等同于持锁通过", flush=True)
+        yield
+        return
+    if _LOCK_BUSY:
+        pytest.fail(f"共享重阶段锁已确认被外部持有：{_LOCK_PATH}", pytrace=False)
+
     _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK_PATH.open("a+") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+        while True:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    _LOCK_BUSY = True
+                    pytest.fail(
+                        f"重阶段锁 {_LOCK_WAIT_SECONDS:.0f}s 内未取得：{_LOCK_PATH}\n"
+                        "  flock LOCK_EX/LOCK_SH 皆 EAGAIN 而 POSIX lockf 可得 ⇒ 是其它\n"
+                        "  worktree 的 flock 持有者；持锁者若不在本 PID 命名空间，/proc\n"
+                        "  与 /proc/locks 都看不到它，无法定位。处置：等锁释放后重跑，或\n"
+                        "  以 G47_LOCK_BYPASS=1 取得有界证据（账本须注明未持锁）。",
+                        pytrace=False)
+                time.sleep(0.5)
         try:
             yield
         finally:
