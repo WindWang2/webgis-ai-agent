@@ -367,9 +367,13 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["raster", "georeferencing"],
         cost="medium",
-        side_effect="cacheable_read",
+        # Round-2 audit (#40): generate_preview persists plan state (fit_metrics,
+        # preview_digest/stale/bounds/path via mutate_plan_cas) and writes the
+        # preview PNG — cacheable_read/deterministic misattributed a state
+        # mutation as a pure read.
+        side_effect="state_mutation",
         network=False,
-        deterministic=True,
+        deterministic=False,
         latency_class="medium",
         memory_class="medium",
         scale_class="medium",

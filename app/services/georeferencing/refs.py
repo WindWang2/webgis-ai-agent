@@ -198,17 +198,27 @@ def purge_session_georef_state(session_id: str) -> int:
 
 def restore_blob_to_path(sha256: str, dest_path: Path) -> bool:
     """Materialize blob from BlobStore to ``dest_path`` atomically if local copy disappeared."""
-    raw = _store().get_blob(blob_key_for_sha(sha256))
-    if raw is None:
-        return False
+    import uuid as _uuid
+
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest_path.with_name(f".{dest_path.name}.tmp")
+    # Streaming restore with digest verification: get_blob() caps reads at
+    # MAX_BLOB_READ_BYTES (64 MiB) and raised BlobSizeExceeded for normalized
+    # uint16/PNG sources above it (round-2 audit #36 item 2); the filesystem
+    # store streams O(chunk) memory. Unique tmp name — concurrent restores of
+    # the same dest must not clobber each other's partial writes.
+    tmp = dest_path.with_name(f".{dest_path.name}.tmp-{os.getpid()}-{_uuid.uuid4().hex[:8]}")
     try:
-        tmp.write_bytes(raw)
+        got_any = False
+        with open(tmp, "wb") as out:
+            for chunk in _store().get_blob_stream(blob_key_for_sha(sha256), expected_sha256=sha256):
+                out.write(chunk)
+                got_any = True
+        if not got_any:
+            return False
         os.replace(tmp, dest_path)
+        return True
     finally:
         tmp.unlink(missing_ok=True)
-    return True
 
 
 def compute_file_sha256(path: Path) -> str:
