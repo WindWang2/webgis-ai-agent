@@ -27,45 +27,35 @@ _MAX_VIEWS = 20
 
 
 class InspectArgs(BaseModel):
-    ref: str = Field(..., min_length=1, max_length=128,
-                     description="会话矢量 ref（ref: 前缀，必须有强 content_revision）")
+    ref: str = Field(
+        ..., min_length=1, max_length=128,
+        description="会话矢量 ref（ref: 前缀，必须有强 content_revision）",
+        json_schema_extra={"ref_cursor": True})
 
 
-class ChartIn(BaseModel):
-    chart_id: str = Field(..., min_length=1, max_length=64)
-    kind: str = Field(..., description="category | range")
-    field: str = Field(..., min_length=1, max_length=64)
-    aggregation: str = Field(default="count",
-                             description="count | sum | mean | min | max")
-    value_field: Optional[str] = Field(default=None, max_length=64)
-    title: str = Field(default="", max_length=200)
-    bins: int = Field(default=10, ge=2, le=32)
-    layer_id: Optional[str] = Field(default=None, max_length=200)
-
-
-class ConditionIn(BaseModel):
-    kind: str = Field(..., description="category | range")
-    condition_id: str = Field(..., min_length=1, max_length=64)
-    chart_id: str = Field(..., min_length=1, max_length=64)
-    field: str = Field(..., min_length=1, max_length=64)
-    values: Optional[List[Any]] = None
-    include_null: bool = False
-    gte: Optional[float] = None
-    gt: Optional[float] = None
-    lte: Optional[float] = None
-    lt: Optional[float] = None
-
-
+#: charts/conditions 以原生 dict 列表传入（Pi 端 schema 校验不解析
+#: 嵌套 pydantic $defs —— review 运行时发现；typed 校验由工具内
+#: contract.ChartSpec/parse_conditions 完成，REST 面维持 pydantic 模型）。
 class PreviewArgs(BaseModel):
-    ref: str = Field(..., min_length=1, max_length=128)
-    charts: List[ChartIn] = Field(default_factory=list, max_length=8)
-    conditions: List[ConditionIn] = Field(default_factory=list, max_length=16)
+    ref: str = Field(..., min_length=1, max_length=128,
+                     json_schema_extra={"ref_cursor": True})
+    charts: List[Dict[str, Any]] = Field(
+        default_factory=list, max_length=8,
+        description="ChartSpec dict 列表：chart_id/kind(category|range)/"
+                    "field/aggregation(count|sum|mean|min|max)/value_field/"
+                    "title/bins(2-32)/layer_id")
+    conditions: List[Dict[str, Any]] = Field(
+        default_factory=list, max_length=16,
+        description="条件 dict 列表：category(values[]+include_null) 或 "
+                    "range(gte/gt/lte/lt 各≤1 端有限数)")
 
 
 class SaveViewArgs(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
+    #: ref_cursor：plan.anchor.ref_id 内嵌 ref id —— 解引用阶段跳过整字段
     plan: Dict[str, Any] = Field(
-        ..., description="ExplorationPlan（schema_version=2：anchor/charts/conditions）")
+        ..., description="ExplorationPlan（schema_version=2：anchor/charts/conditions）",
+        json_schema_extra={"ref_cursor": True})
 
 
 class ViewIdArgs(BaseModel):
@@ -76,7 +66,8 @@ class ViewIdArgs(BaseModel):
 
 class UpdateViewArgs(ViewIdArgs):
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
-    plan: Optional[Dict[str, Any]] = None
+    plan: Optional[Dict[str, Any]] = Field(
+        default=None, json_schema_extra={"ref_cursor": True})
     status: Optional[str] = Field(default=None, description="draft | archived")
     expected_revision: int = Field(..., ge=1)
 
@@ -110,15 +101,19 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
         return {"user_id": None, "org_id": None, "owner_token": None,
                 "trusted_session_id": session_id}
 
-    def _charts(raw: List[ChartIn]) -> List[Any]:
-        return [
-            contract.ChartSpec.model_validate(c.model_dump(exclude_none=True))
-            for c in raw
-        ]
+    def _charts(raw: List[Dict[str, Any]]) -> List[Any]:
+        out = []
+        for i, c in enumerate(raw or []):
+            try:
+                out.append(contract.ChartSpec.model_validate(c))
+            except Exception as exc:
+                raise LinkedExplorationError(
+                    "INVALID_CHART", f"charts[{i}] 非法：{exc}",
+                    index=i, status_code=422) from exc
+        return out
 
-    def _conditions(raw: List[ConditionIn]) -> List[Any]:
-        return contract.parse_conditions(
-            [c.model_dump(exclude_none=True) for c in raw])
+    def _conditions(raw: List[Dict[str, Any]]) -> List[Any]:
+        return contract.parse_conditions(raw or [])
 
     def _explain_conditions(parsed: List[Any]) -> List[Dict[str, Any]]:
         """Pi 可读的条件解释（哪些条件生效、typed 值、口径）。"""
@@ -489,7 +484,8 @@ def register_linked_exploration_export_tool(registry: ToolRegistry) -> None:
         fmt: str = Field(default="svg", description="svg | png | pdf")
         dpi: int = Field(default=150, ge=72, le=400)
         view_id: Optional[str] = Field(default=None, max_length=64)
-        plan: Optional[Dict[str, Any]] = Field(default=None)
+        plan: Optional[Dict[str, Any]] = Field(
+            default=None, json_schema_extra={"ref_cursor": True})
         title: str = Field(default="", max_length=200)
 
     @tool(
