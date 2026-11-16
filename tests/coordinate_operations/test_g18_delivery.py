@@ -11,7 +11,6 @@ import json
 import pytest
 
 from app.services.coordinate_operations import outputs, service
-from app.services.coordinate_operations.contracts import CoordinateOperationError
 from tests.coordinate_operations.conftest import make_point_features
 from tests.coordinate_operations.test_execute_flow import (
     ACTOR,
@@ -87,7 +86,7 @@ def _deliver_and_wait(spec_dict, acks=()):
 def _download(job_id):
     from app.services.data_delivery import store as dl_store
 
-    params_job = None
+    _ = None  # noqa: F841 — 历史占位
     # 交付收据在 DATA_DIR/data-delivery/<id>/；用 dl_store 读终态包
     delivery_id = None
     from app.core.database import SessionLocal
@@ -152,7 +151,6 @@ class TestG18Delivery:
         # 坐标与原生成果一致（首点 oracle 对账）
         native = outputs.load_output_fc(run["run_id"])
         p0 = native["features"][0]
-        import shapely
 
         g0 = gdf.geometry.iloc[0]
         assert abs(g0.x - p0["geometry"]["coordinates"][0]) < 1e-6

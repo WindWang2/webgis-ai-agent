@@ -41,10 +41,6 @@ def co_env(tmp_path, monkeypatch):
         connect_args={"check_same_thread": False})
     Base.metadata.create_all(sync_engine)
     # 本域模型（create_all 环境 = 迁移共存面；正式面走 alembic）
-    from app.models.coordinate_operations import (
-        CoordinateOperationPlan,
-        CoordinateOperationRun,
-    )  # noqa: F401
     async_engine = create_async_engine(f"sqlite+aiosqlite:///{db_file.as_posix()}")
     async_factory = async_sessionmaker(bind=async_engine, expire_on_commit=False)
     sync_factory = sessionmaker(bind=sync_engine)

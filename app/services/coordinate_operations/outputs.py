@@ -27,7 +27,7 @@ import os
 import secrets
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.coordinate_operations import contracts
 from app.services.coordinate_operations.contracts import CoordinateOperationError

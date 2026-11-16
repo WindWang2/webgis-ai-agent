@@ -21,13 +21,12 @@ attempt 查询不可达或漂移 → 不发布）→ 成果发布与显示副本
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -279,16 +278,13 @@ def run_streaming_transform(
             "budget_exceeded", f"冻结源 {total} 行超上限 {contracts.MAX_ROWS}")
 
     try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
+        import pyarrow.parquet as pq  # noqa: F401 — 可用性探测
 
         from app.services.data_fabric.vector_carrier import features_to_arrow
 
         have_arrow = True
     except ImportError:
         have_arrow = False
-        pa = pq = None  # type: ignore[assignment]
-        features_to_arrow = None  # type: ignore[assignment]
 
     geojson_path = staging_dir / f"{output_name}.geojson"
     parquet_path = staging_dir / f"{output_name}.parquet"

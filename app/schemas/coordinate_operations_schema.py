@@ -1,7 +1,7 @@
 """G45 坐标操作域 — 路由/工具共用的 pydantic 契约（G39 raster_sampling 同款）。"""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 

@@ -413,7 +413,6 @@ class TestStrictPublishGate:
         view, _ = _lock_best(
             co_env, src, plan_id=plan["plan_id"], revision=plan["revision"])
 
-        import app.services.coordinate_operations.service as svc
 
         orig_gate = out_mod.strict_publish_gate
 

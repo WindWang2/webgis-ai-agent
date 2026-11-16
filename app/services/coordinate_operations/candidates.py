@@ -79,7 +79,6 @@ def environment_fingerprint() -> Dict[str, Any]:
     for base in pyproj.datadir.get_data_dir().split(":"):
         gdir = None
         try:
-            import os
             gdir = __import__("pathlib").Path(base) / "grids"
             if gdir.is_dir():
                 for p in sorted(gdir.iterdir()):
@@ -165,7 +164,6 @@ def list_operations(
     Raises:
         operation_no_candidates: 两侧均无候选（含 available 与 unavailable）。
     """
-    from pyproj import CRS
     from pyproj.transformer import TransformerGroup
 
     from app.services.coordinate_operations.crs_contract import _crs_from_input
@@ -295,7 +293,6 @@ def resolve_candidate_for_lock(
                     f"候选 {candidate_id} 当前不可执行: "
                     f"{cand.get('missing_reason')}")
                 # 不可执行候选不给定义 —— 客户端拿不到可绕过的 pipeline。
-            from pyproj import CRS
             from pyproj.transformer import TransformerGroup
 
             from app.services.coordinate_operations.crs_contract import _crs_from_input

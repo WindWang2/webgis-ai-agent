@@ -133,7 +133,7 @@ async def describe_source(
     from app.services.coordinate_operations import freeze
 
     card = await freeze.resolve_eligible_source(session_id, source, actor)
-    snapshot = card.pop("_snapshot", None)
+    card.pop("_snapshot", None)
     src_desc = describe_crs(card["crs"])
     if not src_desc["dimension_supported"]:
         raise CoordinateOperationError(
@@ -474,8 +474,11 @@ async def preview_plan(
 
     from app.services.data_delivery.source_resolver import sample_parquet_geometry
 
-    if snapshot.parquet_path is not None:
+    if snapshot is not None and snapshot.parquet_path is not None:
         sample_parquet_geometry(snapshot, limit=max(sample_rows, 1))
+    if snapshot is None:
+        raise CoordinateOperationError(
+            "internal_error", "源快照缺失（预览样本不可读）")
     feats = snapshot.sample_features(limit=sample_rows)
 
     stats = execute.BatchStats()
@@ -811,7 +814,6 @@ def _mark_run(
 
 async def _execute_body(handle: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
     """执行体（WP07–WP09 全链）：详见模块 docstring 的不变式清单。"""
-    from concurrent.futures import ThreadPoolExecutor
 
     from app.lib.cancellation import OperationCancelled
     from app.services.coordinate_operations import freeze
@@ -1002,9 +1004,6 @@ async def _execute_body(handle: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
                     _EXEC_POOL, functools.partial(
                         outputs.discard_staging, run_id))
                 _mark_run(session_id, run_id, "cancelled")
-                from app.services.data_operations.runner import (
-                    AlreadyFinished as _AF,
-                )  # noqa: F401 — 终态由 runner 收敛；此处 run 行先对齐
                 raise OperationCancelled(
                     "publish blocked by durable cancel", job_id=ctx["job_id"]
                 ) from e
@@ -1014,7 +1013,7 @@ async def _execute_body(handle: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
             _EXEC_POOL, outputs.discard_staging, run_id)
         _mark_run(session_id, run_id, "failed", error_code=e.error_code)
         raise
-    except BaseException as e:  # noqa: BLE001 — 未预期异常同样诚实失败
+    except BaseException:  # noqa: BLE001 — 未预期异常同样诚实失败
         await asyncio.get_running_loop().run_in_executor(
             _EXEC_POOL, outputs.discard_staging, run_id)
         _mark_run(session_id, run_id, "failed", error_code="internal_error")

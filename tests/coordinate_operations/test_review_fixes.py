@@ -9,11 +9,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
-from app.services.coordinate_operations import contracts, outputs, service
+from app.services.coordinate_operations import service
 from app.services.coordinate_operations.contracts import CoordinateOperationError
 from tests.coordinate_operations.conftest import make_point_features
 

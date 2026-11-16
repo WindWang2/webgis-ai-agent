@@ -26,7 +26,7 @@ import json
 import logging
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.services.coordinate_operations import contracts
 from app.services.coordinate_operations.contracts import CoordinateOperationError
@@ -240,7 +240,6 @@ def freeze_source(snapshot: Any, run_dir: Path) -> Dict[str, Any]:
                 "source_revision_changed",
                 "源 GeoParquet 在解析与冻结之间发生变化（sha256 不一致）；"
                 "请重新描述源并更新计划")
-        row_count = int(snapshot.row_count)
         carrier = "parquet"
     else:
         features: List[Dict[str, Any]] = (
@@ -272,7 +271,6 @@ def freeze_source(snapshot: Any, run_dir: Path) -> Dict[str, Any]:
                 json.dumps(snapshot.payload, ensure_ascii=False,
                            separators=(",", ":")), encoding="utf-8")
             carrier = "json"
-        row_count = len(features)
 
     frozen_sha = _file_sha256(frozen)
     if carrier == "parquet" and snapshot.parquet_path is not None \
