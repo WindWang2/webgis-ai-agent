@@ -23,9 +23,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
-RECEIPT_SCHEMA = "ctx.receipt.v1"
+RECEIPT_SCHEMA = "ctx.receipt.v2"
 _MAX_ITEM_LINES = 64
 _MAX_DIGEST_ITEMS = 256
+#: G43：source 粒度行上界（bounded receipt；溢出如实计数）。
+_MAX_SOURCE_LINES = 96
 
 
 class ItemDecisionLine(BaseModel):
@@ -42,6 +44,28 @@ class ItemDecisionLine(BaseModel):
     est_tokens: int = 0
 
 
+class SourceDecisionLine(BaseModel):
+    """G43：一条可选资料源在本轮装配中的真实去向（条目/块粒度）。
+
+    ``source_id`` 是服务端铸造的命名空间 id（``pk:<id>`` / ``cm:<id>`` /
+    ``gm:block``）；``version_token`` 仅当权威源有真实版本时填写（知识条
+    目 version_token / 事实 last_verified_at+指纹），否则为空 —— 内容指纹
+    绝不冒充数据库 revision。decision 闭集：
+    included / preferred / excluded_by_policy / omitted_budget /
+    omitted_card_cap / stale / not_live。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    source_id: str
+    kind: str                     # project_knowledge_entry / carto_memory_fact / gis_memory_block
+    decision: str
+    item_id: str = ""             # 归属的 prompt 块 item（如 knowledge:card）
+    version_token: str = ""       # 权威版本（仅有真实 revision 时）
+    label: str = ""               # 有界显示名（subject，≤64 字符）
+    est_tokens: int = 0
+
+
 class ContextAssemblyReceipt(BaseModel):
     """Assembly receipt (identity + decisions + economics + digest)."""
 
@@ -52,6 +76,9 @@ class ContextAssemblyReceipt(BaseModel):
     turn_id: str = ""
     mode: str = "typed"                    # typed / legacy
     decision_lines: List[ItemDecisionLine] = Field(default_factory=list)
+    # G43：可选资料源的真实去向（条目/块粒度；自动模式无源投影时空表）。
+    source_lines: List[SourceDecisionLine] = Field(default_factory=list)
+    policy_version: int = 0               # 冻结的本轮策略 CAS 版本（0=auto）
     skipped_providers: Dict[str, str] = Field(default_factory=dict)
     planned_tokens: int = 0                # allocator plan (pre-render)
     actual_tokens: int = 0                 # rendered prompt estimate (same estimator)
@@ -78,6 +105,11 @@ class ContextAssemblyReceipt(BaseModel):
             "actual": self.actual_tokens,
             "pools": dict(sorted(self.pool_usage.items())),
             "skipped": dict(sorted(self.skipped_providers.items())),
+            "policy_version": self.policy_version,
+            "sources": [
+                [ln.source_id, ln.decision]
+                for ln in self.source_lines[:_MAX_SOURCE_LINES]
+            ],
             "items": [
                 [ln.item_id, ln.domain, ln.decision, ln.reason_code, ln.fingerprint]
                 for ln in self.decision_lines[:_MAX_DIGEST_ITEMS]
@@ -104,6 +136,7 @@ class ContextAssemblyReceipt(BaseModel):
             "pool_usage": dict(self.pool_usage),
             "skipped_providers": dict(self.skipped_providers),
             "governor": dict(self.governor),
+            "policy_version": self.policy_version,
             "included": sum(1 for ln in self.decision_lines if ln.decision == "included"),
             "omitted": sum(1 for ln in self.decision_lines if ln.decision.startswith("omitted")),
             "truncated": sum(1 for ln in self.decision_lines if ln.decision == "truncated"),
@@ -111,6 +144,8 @@ class ContextAssemblyReceipt(BaseModel):
             "scope_denied": sum(1 for ln in self.decision_lines if ln.decision == "scope_denied"),
             "items": [ln.model_dump() for ln in self.decision_lines[:max_items]],
             "items_total": len(self.decision_lines),
+            "sources": [ln.model_dump() for ln in self.source_lines[:_MAX_SOURCE_LINES]],
+            "sources_total": len(self.source_lines),
         }
 
     def log_bounded(self, logger_: Optional[Any] = None) -> None:
@@ -197,5 +232,6 @@ __all__ = [
     "RECEIPT_SCHEMA",
     "ContextAssemblyReceipt",
     "ItemDecisionLine",
+    "SourceDecisionLine",
     "build_item_lines",
 ]

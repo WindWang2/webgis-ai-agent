@@ -258,6 +258,37 @@ async def bind_turn_prompt(
       为空时（默认 typed 路径）由 provider 从权威源派生同样的块。
     - ``env_block``：situation 编译器拥有快照 advance 副作用，typed 路径
       原样作为 caller-injected 项注入（绝不二次派生）。
+
+    G43（ADR-0295）：需要 receipt 的调用方（turn bridge）改用
+    :func:`bind_turn_prompt_with_receipt` —— 本函数保留原签名与行为（只
+    返回字符串），旧调用方零改动。
+    """
+    message_, _receipt = await bind_turn_prompt_with_receipt(
+        message, token, session_id, cartography_block, env_block,
+        turn_id=turn_id, org_id=org_id, project_id=project_id,
+        user_id=user_id, query_text=query_text,
+    )
+    return message_
+
+
+async def bind_turn_prompt_with_receipt(
+    message: str,
+    token: str,
+    session_id: str,
+    cartography_block: str = "",
+    env_block: str = "",
+    *,
+    turn_id: str = "",
+    org_id: str = "",
+    project_id: str = "",
+    user_id: str = "",
+    query_text: str = "",
+):
+    """``bind_turn_prompt`` 的窄伴随结果版：返回 ``(message, receipt|None)``。
+
+    receipt 仅在 typed 装配成功时非 None；legacy 回退路径返回 None（调用
+    方按 mode=legacy/coverage limited 如实记录，绝不二次装配补造回执 ——
+    C29/C40 的诚实面）。
     """
     from app.services.context_assembly.flags import typed_context_assembly_enabled
 
@@ -279,11 +310,26 @@ async def bind_turn_prompt(
                 environment_block=env_block or "",
                 legacy_cartography_block=cartography_block or "",
             )
-            assembled, _receipt = await assemble_turn_context(req)
-            return assembled
+            assembled, receipt = await assemble_turn_context(req)
+            return assembled, receipt
         except ContextAssemblyRejected:
             raise
         except Exception:  # noqa: BLE001 — unexpected typed failure may use legacy
+            # review P3（纵深防御）：显式策略下，opaque caller 预拼块不可经
+            # 「意外 typed 失败 → legacy 回退」绕过 typed 拒绝 —— 回退前
+            # 显式复核（策略读失败保持旧回退行为，不新增阻断面）。
+            if (cartography_block or "").strip():
+                try:
+                    from app.services.turn_context_store import load_policy
+
+                    fallback_policy = await load_policy(session_id)
+                except Exception:  # noqa: BLE001
+                    fallback_policy = None
+                if fallback_policy is not None and fallback_policy.is_explicit:
+                    raise ContextAssemblyRejected(
+                        "explicit source policy cannot be honored with an "
+                        "opaque caller-injected cartography block"
+                    )
             logger.exception(
                 "[PiTurn] typed context assembly failed; legacy fallback session=%s",
                 session_id,
@@ -291,7 +337,7 @@ async def bind_turn_prompt(
     return await legacy_bind_turn_prompt(
         message, token, session_id, cartography_block, env_block,
         turn_id=turn_id,
-    )
+    ), None
 
 
 async def legacy_bind_turn_prompt(
