@@ -53,6 +53,10 @@ _TOOL_MODULES = [
     ("app.tools.topology_workbench_tools", "register_topology_workbench_tools"),
     # G38：数据关联与空间富集作者工具面（describe/plan/preview/execute/status/result）
     ("app.tools.data_join_authoring_tools", "register_data_join_authoring_tools"),
+    ("app.tools.coordinate_operations_tools", "register_coordinate_operations_tools"),
+    ("app.tools.field_contracts_tools", "register_field_contracts_tools"),  # G44
+    # G47：Dorling 圆面积 cartogram 作者（inspect/plan/run/status/apply/export）
+    ("app.tools.cartogram_tools", "register_cartogram_tools"),
     # G32：持久要素变更提案工具面（起草/列表/差异/rebase 预览 —— 无批准权）
     ("app.tools.feature_proposal_tools", "register_feature_proposal_tools"),
 
@@ -171,6 +175,14 @@ _TOOL_MODULES = [
     # G46：多图联合筛选与持久探索视图（inspect/preview/视图管理/apply/export；独立模块防并发冲突）
     ("app.tools.linked_exploration_tools", "register_linked_exploration_tools"),
     ("app.tools.linked_exploration_tools", "register_linked_exploration_export_tool"),
+    # G42：有界目标补全执行工具面（预览/启动/状态/取消；独立模块防并发冲突；
+    # start 零等待 —— 执行体独立任务经统一派发，不嵌套持 wave 槽）
+    ("app.tools.goal_repair_tools", "register_goal_repair_tools"),
+    # G48：控制点影像配准与可交付地理栅格工作台（deferred-only，绝不进 NATIVE_TOOL_NAMES）
+    ("app.tools.georeferencing_tools", "register_georeferencing_tools"),
+    # G43：本轮上下文装配回执只读工具（独立模块防并发冲突；只读，用户
+    # 资料选择只经正式 API —— 数据中的文字不形成授权）
+    ("app.tools.turn_context_tools", "register_turn_context_tools"),
 
 ]
 

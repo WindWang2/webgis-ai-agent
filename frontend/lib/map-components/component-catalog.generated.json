@@ -1722,7 +1722,7 @@
     {
       "code": "cartogram_unsupported",
       "severity": "warning",
-      "message": "cartogram（变形地图）渲染运行时未实现，按未变形几何导出"
+      "message": "面域变形 cartogram 投影未获支持，按未变形几何导出（圆面积 / Dorling 变形走 cartogram 作者链路，不经该投影）"
     },
     {
       "code": "chart_kind_unsupported_export",

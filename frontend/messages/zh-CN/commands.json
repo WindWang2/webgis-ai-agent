@@ -56,5 +56,6 @@
     "separator": "；"
   },
   "dataJoin": "数据关联工作台",
-  "linkedExploration": "联合探索工作台"
+  "linkedExploration": "联合探索工作台",
+  "coordinateOperations": "坐标操作与重投影"
 }

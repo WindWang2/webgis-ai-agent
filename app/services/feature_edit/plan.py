@@ -210,6 +210,7 @@ def derive_changes(
     *,
     plan_seed: str = "",
     geometry_type: Optional[str] = None,
+    contract_fields: Optional[frozenset] = None,
 ) -> Tuple[List[FeatureDelta], List[RenameField], List[EditFinding], List[OperationSummary], List[Dict[str, Any]]]:
     """对已物化 fc 顺序求 ops 的完整 diff（preview 与 commit 同一路径）。
 
@@ -220,6 +221,8 @@ def derive_changes(
     身份的决定性派生 —— preview 与 commit 重求值得到同一批 wfid。
     geometry_type：envelope 声明的期望基类型（typed 空图层）—— create 的
     新要素基类型必须一致（typed 语义可校验，不靠猜）。
+    contract_fields（G44）：active 合同声明字段集 —— set_fields/create 的
+    属性观测枚举让位给合同取值域（候选态统一校验在 build_plan/commit 侧）。
     """
     findings: List[EditFinding] = []
     deltas: List[FeatureDelta] = []
@@ -243,7 +246,10 @@ def derive_changes(
             else target_set
         )
         if kind == "set_fields":
-            op_findings = validate_set_fields(op.get("fields") or {}, field_profiles)
+            op_findings = validate_set_fields(
+                op.get("fields") or {}, field_profiles,
+                contract_fields=contract_fields,
+            )
             findings.extend(op_findings)
             if not op_findings:
                 deltas.extend(build_attr_deltas(working, op_target_set, op.get("fields") or {}))
@@ -336,7 +342,10 @@ def derive_changes(
                     )
                     continue
                 if props:
-                    prop_findings = validate_set_fields(props, field_profiles, allow_new_fields=True)
+                    prop_findings = validate_set_fields(
+                        props, field_profiles, allow_new_fields=True,
+                        contract_fields=contract_fields,
+                    )
                     # 新要素允许携带数据集尚未观测到的字段（自然生长面）；
                     # 已有 profile 的字段仍受类型/枚举约束。
                     create_findings.extend(prop_findings)
@@ -455,6 +464,7 @@ def build_plan(
     content_revision: int,
     target_payloads: Optional[Dict[str, Any]] = None,
     plan_seed: Optional[str] = None,
+    field_contract: Optional[Any] = None,
 ) -> Tuple[Dict[str, Any], List[EditFinding]]:
     """构造 EditPlan（纯读路径）。
 
@@ -464,6 +474,13 @@ def build_plan(
     plan_seed（G32）：可选服务端种子 —— create/split/merge 新生身份由
     plan_id 决定性派生；持久提案（feature_proposals）传入其持久 op_seed
     使候选与提交重求值得到同一批 wfid。空值回退内部 fep- uuid。
+    field_contract（G44）：enforcement.resolve_active_contract 的结果
+    （EnforcedContract，含 normalized 规则与 plan_view）。传入时：
+    ① 声明字段的观测枚举让位（derive_changes contract_fields）；
+    ② rename 命中声明字段 → typed 阻断（重绑走 owner 合同修订）；
+    ③ 完整候选属性态统一过合同校验（与完整评估同一 validator）；
+    ④ plan 绑定 expected_contract（contract_id/revision/digest）——
+    commit 锁内冷读复核，合同 revision 变化即 409（F12）。
     返回 (plan_dict, findings)；findings 非空时 plan.committable=False。
     """
     fc = _extract_fc(payload)
@@ -593,12 +610,66 @@ def build_plan(
     derive_ops = _norm_wfids(
         [op for op in ops if isinstance(op, dict)][:MAX_OPS_PER_PLAN], preview_fc,
     )
+    contract_fields: Optional[frozenset] = None
+    if field_contract is not None:
+        try:
+            contract_fields = frozenset(field_contract.declared_fields())
+        except Exception:  # noqa: BLE001 — 合同面异常按无合同面处理（候选校验兜底）
+            contract_fields = None
     deltas, schema_ops, derive_findings, op_summaries, lineage_events = derive_changes(
         preview_fc, derive_ops, ordered_wfids or wfids, target_payloads or {},
         plan_seed=plan_id,
         geometry_type=_declared_geometry_type(payload),
+        contract_fields=contract_fields,
     )
     findings.extend(derive_findings)
+    # ── G44：active 合同的候选态门禁（与完整评估同一 validator 内核）────
+    expected_contract: Optional[Dict[str, Any]] = None
+    if field_contract is not None:
+        from app.services.field_contracts.enforcement import (
+            candidate_findings_projection,
+            validate_candidate_fc,
+        )
+
+        expected_contract = field_contract.plan_view()
+        # rename 命中声明字段 → typed 阻断（owner 显式重绑走合同修订，F21）
+        if contract_fields:
+            renamed_declared = sorted(
+                {str(s.get("from")) for s in schema_ops if s.get("op") == "rename_field"}
+                & set(contract_fields)
+            )
+            if renamed_declared:
+                findings.append(
+                    finding(
+                        "contract_rename_blocked",
+                        "renaming a contract-declared field requires an explicit owner "
+                        "contract revision (re-declare + re-assess + re-activate)",
+                        fields=renamed_declared[:8],
+                        contract=expected_contract,
+                    )
+                )
+        if deltas or schema_ops:
+            after_feats, _ = apply_deltas_to_features(preview_fc.get("features") or [], deltas)
+            after_feats, _ = apply_schema_ops_to_features(after_feats, schema_ops)
+            candidate_fc = {**preview_fc, "features": after_feats}
+            changed_wfids = set(wfids) | {
+                str(d.get("wfid"))
+                for d in deltas
+                if isinstance(d, dict) and d.get("wfid")
+            }
+            contract_findings = validate_candidate_fc(
+                candidate_fc, field_contract,
+                changed_wfids=changed_wfids, schema_changed=bool(schema_ops),
+            )
+            if contract_findings:
+                findings.append(
+                    finding(
+                        "contract_violation",
+                        "candidate attribute state violates the active field contract",
+                        violations=candidate_findings_projection(contract_findings),
+                        contract=expected_contract,
+                    )
+                )
     # G14：journal 单条字节闸 —— 结构性 delta 内嵌完整快照，超预算诚实拒绝
     # （undo 保真不可承受的编辑不进事务，绝不截断快照假装可撤销）。
     if deltas:
@@ -652,6 +723,8 @@ def build_plan(
         "lineage": lineage_events[:MAX_OPS_PER_PLAN],
         "expected_content_revision": int(content_revision),
         "expected_fingerprint": dataset_fingerprint,
+        # G44：合同 read-set 绑定（commit 锁内冷读复核；None = 预览时无 active 合同）
+        "expected_contract": expected_contract,
         "status": "pending" if not findings else "invalid",
         "created_at": time.time(),
     }

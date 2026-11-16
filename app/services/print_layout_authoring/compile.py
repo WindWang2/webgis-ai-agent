@@ -19,6 +19,7 @@ MapSpec.layout.print_layout
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.lib.cartography.print_layout_schema import PRINT_RENDER_PATH
@@ -104,6 +105,79 @@ def build_map_projection(geo_bounds: Sequence[float], rect: Dict[str, float],
 
 def _component_typography(c: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
     return {**DEFAULT_TYPOGRAPHY, **(c.get("typography") or {})}
+
+
+_PATH_NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+
+
+def _transform_path(path: str, scale: float, ox: float, oy: float) -> str:
+    """把受控环形 path 的坐标按 ``v*scale + origin`` 变换（x/y 依次交替）。
+
+    ``cartogram_authoring.publication._ring_path`` 只产出 ``M x y L x y … Z``
+    这种严格的「先 x 后 y」序列，因此按数字出现次序做奇偶分配即可。若将来引入
+    单坐标命令（H/V/A），这里必须改成按命令解析 —— 否则会静默错位。
+    """
+    out: List[str] = []
+    axis = 0
+    pos = 0
+    for match in _PATH_NUMBER.finditer(path):
+        out.append(path[pos:match.start()])
+        value = float(match.group(0))
+        out.append(f"{value * scale + (ox if axis % 2 == 0 else oy):.3f}")
+        axis += 1
+        pos = match.end()
+    out.append(path[pos:])
+    return "".join(out)
+
+
+def _compile_diagram(spec: Dict[str, Any], box: Dict[str, float]) -> Dict[str, Any]:
+    """G47 diagram 场景 → canvas 单位（等比 contain；绝不非等比拉伸）。
+
+    示意图是**示意坐标**，没有 CRS；这里只做统一缩放与居中，让纸面上的
+    圆面积比例与冻结布局一致。
+
+    参考轮廓的 path 也在同一份 diagram 坐标里，必须套**同一个** scale/origin：
+    只缩放圆会让灰线轮廓与圆错位、被 viewBox 裁掉（"原图参照"名存实亡）。
+    """
+    extent = float(spec.get("extent") or 1000.0)
+    if extent <= 0:
+        extent = 1000.0
+    scale = min(box["width"], box["height"]) / extent
+    ox = box["x"] + (box["width"] - extent * scale) / 2.0
+    oy = box["y"] + (box["height"] - extent * scale) / 2.0
+    circles = []
+    for c in spec.get("circles") or []:
+        circles.append({
+            "feature_id": c.get("feature_id"),
+            "label": c.get("label") or "",
+            "x": ox + float(c.get("x") or 0.0) * scale,
+            "y": oy + float(c.get("y") or 0.0) * scale,
+            "radius": float(c.get("radius") or 0.0) * scale,
+            "value": c.get("value"),
+        })
+    reference_paths = [
+        _transform_path(str(p), scale, ox, oy)
+        for p in (spec.get("reference_paths") or [])
+    ]
+    return {
+        "fit": "contain",
+        "extent": extent,
+        "scale": scale,
+        "origin": [ox, oy],
+        "layout_ref": spec.get("layout_ref"),
+        "layout_fingerprint": spec.get("layout_fingerprint"),
+        "circles": circles,
+        "reference_paths": reference_paths,
+        "legend": {
+            "title": spec.get("legend_title") or "",
+            "unit": spec.get("legend_unit") or "",
+            "reference_circles": list(spec.get("reference_circles") or []),
+        },
+        "disclosures": list(spec.get("disclosures") or []),
+        "truncated": bool(spec.get("truncated")),
+        "coordinate_space": "print_canvas_units",
+        "is_geographic": False,
+    }
 
 
 def _text_of(c: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -255,6 +329,12 @@ def build_draw_plan(
             map_rect = box
             map_fit = str((c.get("map_slot") or {}).get("fit") or "contain")
             draw["map_slot"] = c.get("map_slot") or {}
+        if kind == "diagram":
+            scene = _compile_diagram(c.get("diagram") or {}, box)
+            draw["diagram"] = scene
+            if scene.get("truncated"):
+                diagnostics.append({"code": "DIAGRAM_SCENE_TRUNCATED",
+                                    "component_id": cid})
         components.append(draw)
 
     # 无地图槽时仍以整页安全区为地图矩形（保持旧地理语义，不拉伸）

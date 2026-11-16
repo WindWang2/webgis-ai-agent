@@ -99,4 +99,5 @@
 - planned：需要面积保持变形算法（Gastner-Newman 扩散等）与变形后几何的渲染契约，本分支未实现
 - 变形图必须同时披露原始地理轮廓参照（inset），否则读者失去地理定位
 - V5（ADR-0118 D8）：导出请求携带 cartogram 意图时诚实降级（cartogram_unsupported，按未变形几何渲染）—— 不伪造变形支持
+- 圆面积（Dorling）变形已由 cartogram 作者链路独立交付（示意布局 + 原地理轮廓参照 + diagram 出版 adapter，见 app/services/cartogram_authoring）；本视图仍指面域多边形变形，两者不可混为一谈
 

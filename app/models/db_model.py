@@ -244,6 +244,10 @@ class Message(Base):
     # G36（ADR-0291）：用户消息的视觉附件元数据（evidence refs + 回执摘要；
     # 只存有界元数据，绝不存 base64）。NULL = 无附件（存量行零改动）。
     attachments = Column(JSON, nullable=True)
+    # G43（ADR-0295）：用户消息的本轮上下文装配回执摘要（receipt_id/turn_id/
+    # digest/status/计数 —— 完整回执按 session+turn 查询 turn_context_receipts）。
+    # NULL = 无回执（legacy 会话/早于本功能的 turn，UI 显示 coverage limited）。
+    context_receipt = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     conversation = relationship("Conversation", back_populates="messages")
@@ -1129,6 +1133,95 @@ class ChatUsageRecord(Base):
     )
 
 
+class TurnContextReceiptRow(Base):
+    """每个 Pi turn 的实际上下文装配回执（G43，ADR-0295）。
+
+    ``turn_id`` 唯一 —— 重复事件/迟到回执按 turn 幂等归属，绝不串轮。
+    状态语义（诚实面，绝不伪造已发送）：
+    - ``assembled``：typed 装配完成（legacy 回退路径 mode=legacy 时也立行，
+      coverage 有限如实标注）；
+    - ``not_sent``：装配后未发出（模型/预算门拒绝、发送前异常），reason 记
+      闭集码；
+    - ``submitted``：prompt RPC 已返回，disposition ∈ started/queued/handled
+      独立记录（handled ≠ provider 消费；queued ≠ 已运行）；
+    - ``unknown``：进程中断/socket 写失败/回执落盘失败等无法确证的状态。
+    ``turn_outcome`` 独立记录 turn 终态（completed/failed/cancelled）。
+    payload 只存有界投影（指纹/计数/源去向），绝无全文、秘密、图片字节。
+    """
+    __tablename__ = "turn_context_receipts"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    session_id = Column(String(255), nullable=False)
+    turn_id = Column(String(64), nullable=False, unique=True)
+    run_id = Column(String(64), nullable=True)
+    org_id = Column(String(64), nullable=False, default="")
+    project_id = Column(String(255), nullable=False, default="")
+    user_id = Column(String(255), nullable=False, default="")
+    assembly_mode = Column(String(16), nullable=False, default="typed")  # typed / legacy / unknown
+    policy_version = Column(Integer, nullable=False, default=0)         # 冻结的本轮策略 CAS 版本
+    digest = Column(String(64), nullable=False, default="")
+    # assembled | not_sent | submitted | unknown
+    status = Column(String(16), nullable=False, default="assembled")
+    not_sent_reason = Column(String(48), nullable=True)   # model_budget_rejected / model_apply_error / pi_send_error / image_gate_rejected
+    disposition = Column(String(16), nullable=True)       # started / queued / handled
+    turn_outcome = Column(String(16), nullable=True)      # completed / failed / cancelled
+    user_message_id = Column(Integer, nullable=True)      # 关联用户消息（C04 历史读取）
+    payload = Column(JSON, nullable=False, default=dict)  # 有界回执投影（as_bounded_dict）
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("idx_tcr_session_created", "session_id", "created_at"),
+        CheckConstraint(
+            "status IN ('assembled', 'not_sent', 'submitted', 'unknown')",
+            name="ck_tcr_status",
+        ),
+        CheckConstraint(
+            "disposition IN ('started', 'queued', 'handled')",
+            name="ck_tcr_disposition",
+        ),
+        CheckConstraint(
+            "turn_outcome IN ('completed', 'failed', 'cancelled')",
+            name="ck_tcr_turn_outcome",
+        ),
+    )
+
+
+class SessionSourcePolicyRow(Base):
+    """会话级可选资料选择策略（G43；policy_version 为 CAS 令牌）。
+
+    只存服务端铸造的源 id（pk:/cm:/gm:block），绝不存源正文。默认无行 =
+    auto（全部可选资料按既有 builder 语义装配）。
+    """
+    __tablename__ = "session_source_policies"
+
+    session_id = Column(String(255), primary_key=True)
+    org_id = Column(String(64), nullable=False, default="")
+    project_id = Column(String(255), nullable=False, default="")
+    user_id = Column(String(255), nullable=False, default="")
+    mode = Column(String(16), nullable=False, default="auto")   # auto | explicit
+    preferred = Column(JSON, nullable=False, default=list)
+    excluded = Column(JSON, nullable=False, default=list)
+    policy_version = Column(Integer, nullable=False, default=1)
+    updated_by_user_id = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("mode IN ('auto', 'explicit')", name="ck_ssp_mode"),
+    )
+
+
 __all__ = [
     "Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission",
     "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult",
@@ -1138,5 +1231,6 @@ __all__ = [
     "RefreshTokenFamily", "WorkflowPackageRow", "WorkflowInstanceRow",
     "WorkflowInstanceNodeRow", "WorkflowEventRow", "WorkflowWorkerRow",
     "WorkflowNodeReuseRow", "ChatSessionModelPref", "ChatTurnRuntime",
-    "ChatUsageRecord", "get_init_sql",
+    "ChatUsageRecord", "TurnContextReceiptRow", "SessionSourcePolicyRow",
+    "get_init_sql",
 ]

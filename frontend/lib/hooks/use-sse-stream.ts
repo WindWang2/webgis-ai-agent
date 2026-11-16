@@ -63,6 +63,7 @@ import {
   setClarificationStatus,
   setPlanStatus,
   replaceClarificationEnvelope,
+  attachTurnContextReceipt,
   type ChatStreamMessage,
 } from '@/lib/chat/message-reducer';
 import {
@@ -1174,6 +1175,36 @@ export function useSSEStream(options: UseSSEStreamOptions) {
           }
           return prev;
         });
+      } else if (event.event === 'turn_context_receipt') {
+        // G43（ADR-0295）：本轮上下文装配回执 —— 挂到最后一条 user 消息
+        //（按 turn_id 幂等；跨会话守卫同款）。摘要有界：digest/计数/状态，
+        // 完整源清单在面板展开时按 session+turn 拉取。
+        const payload = (data ?? {}) as Record<string, unknown>;
+        const receiptSid = typeof payload.session_id === 'string' ? payload.session_id : '';
+        if (receiptSid && receiptSid !== sessionIdRef.current) return;
+        const turnId = typeof payload.turn_id === 'string' ? payload.turn_id : '';
+        if (!turnId) return;
+        const counts = (payload.counts ?? {}) as Record<string, unknown>;
+        const summary: import('@/lib/api/turnContext').TurnContextReceiptSummary = {
+          session_id: receiptSid,
+          turn_id: turnId,
+          receipt_id: typeof payload.receipt_id === 'number' ? payload.receipt_id : null,
+          digest: typeof payload.digest === 'string' ? payload.digest : null,
+          status: typeof payload.status === 'string' ? payload.status : 'unknown',
+          disposition: typeof payload.disposition === 'string' ? payload.disposition : null,
+          turn_outcome: typeof payload.turn_outcome === 'string' ? payload.turn_outcome : null,
+          policy_version: typeof payload.policy_version === 'number' ? payload.policy_version : 0,
+          mode: typeof payload.mode === 'string' ? payload.mode : 'typed',
+          counts: {
+            included: typeof counts.included === 'number' ? counts.included : undefined,
+            omitted: typeof counts.omitted === 'number' ? counts.omitted : undefined,
+            truncated: typeof counts.truncated === 'number' ? counts.truncated : undefined,
+            sources_total: typeof counts.sources_total === 'number' ? counts.sources_total : undefined,
+          },
+          persisted: payload.persisted !== false,
+        };
+        setMessages((prev) =>
+          attachTurnContextReceipt(prev, { turnId, receipt: summary }));
       }
     },
     [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent, refreshDatasetLayer, rotateLayerFetches]

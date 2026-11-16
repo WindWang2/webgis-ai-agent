@@ -90,6 +90,9 @@ from app.models.data_join_authoring import (  # noqa: F401 — 模型注册 + �
 )
 from app.models.linked_exploration import (  # noqa: F401 — 模型注册 + 再导出（G46）
     ExplorationView,
+from app.models.field_contracts import (  # noqa: F401 — 模型注册 + 再导出（G44）
+    FieldContract,
+    FieldContractAssessment,
 )
 from app.models.data_lifecycle import (  # noqa: F401 — 模型注册 + 再导出（V9）
     LifecycleObject,
@@ -115,6 +118,11 @@ from app.models.cartography_quality import (  # noqa: F401 — 模型注册 + �
     CartographyQualityBaseline,
     CartographyQualityWaiver,
     CartographyQualityMetric,
+)
+
+from app.models.coordinate_operations import (  # noqa: F401 — 模型注册 + 再导出（G45）
+    CoordinateOperationPlan,
+    CoordinateOperationRun,
 )
 
 __all__ = [

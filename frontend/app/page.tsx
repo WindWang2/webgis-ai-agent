@@ -27,6 +27,7 @@ import { CommandPaletteRoot } from '@/components/command/command-palette-root';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
 import { useDataJoinStore } from '@/lib/hooks/use-data-join';
 import { useLinkedExplorationStore } from '@/lib/hooks/use-linked-exploration';
+import { useCoordinateOperationsStore } from '@/lib/hooks/use-coordinate-operations';
 import { useSearchDrawerStore } from '@/lib/hooks/use-search-drawer';
 import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
 import { UndoFlash, UndoHistoryPanel } from '@/components/workbench/undo-history-panel';
@@ -55,6 +56,9 @@ const TemplateGalleryV2 = dynamic(() => import('@/components/drawers/template-ga
 const QueryConsole = dynamic(() => import('@/components/console/query-console').then(m => ({ default: m.QueryConsole })), { ssr: false });
 const DataJoinPanel = dynamic(() => import('@/components/sidebar/data-join/data-join-panel').then(m => ({ default: m.DataJoinPanel })), { ssr: false });
 const LinkedExplorationMount = dynamic(() => import('@/components/linked-exploration/exploration-panel'), { ssr: false });
+const CoordinateOperationsPanel = dynamic(() => import('@/components/sidebar/coordinate-operations/coordinate-operations-panel').then(m => ({ default: m.CoordinateOperationsPanel })), { ssr: false });
+// G44：业务字段合同工作台（声明/评估/激活/批量填值）——与 DataJoinPanel 同款挂载
+const FieldContractsPanel = dynamic(() => import('@/components/sidebar/field-contracts/field-contracts-panel').then(m => ({ default: m.FieldContractsPanel })), { ssr: false });
 const SearchDrawer = dynamic(() => import('@/components/search/search-drawer').then(m => ({ default: m.SearchDrawer })), { ssr: false });
 
 const MapPanel = dynamic(
@@ -316,6 +320,11 @@ export default function Home() {
         group: tCmd('group.tools'),
         keywords: 'explore filter linked charts lianhe tansuo shaixuan',
         run: () => useLinkedExplorationStore.getState().openWith(),
+        id: 'tools.coordinateOperations',
+        title: tCmd('coordinateOperations'),
+        group: tCmd('group.tools'),
+        keywords: 'crs reproject transform zuobiao toushi epsg proj',
+        run: () => useCoordinateOperationsStore.getState().openWith(),
       },
       {
         id: 'session.new',
@@ -569,6 +578,8 @@ export default function Home() {
       <QueryConsole sessionId={sessionId} ownerToken={activeSessionToken} />
       <DataJoinPanel sessionId={sessionId} ownerToken={activeSessionToken} />
       <LinkedExplorationMount sessionId={sessionId} ownerToken={activeSessionToken} />
+        <CoordinateOperationsPanel sessionId={sessionId} ownerToken={activeSessionToken} />
+      <FieldContractsPanel sessionId={sessionId} ownerToken={activeSessionToken} />
 
       {/* ADR-0147：跨会话搜索（本地索引 + 跳转恢复；handleSelectSession 内含抽屉关闭语义） */}
       <SearchDrawer onSelectSession={handleSelectSession} />
