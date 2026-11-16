@@ -1281,6 +1281,57 @@
     "title": "AtlasSubmitResponse",
     "type": "object"
    },
+   "AttemptStartRequest": {
+    "description": "start 请求体 —— 只含有界选择（action id / 损失确认码）。\n\n服务端重建其余一切（owner、tool、参数、权限均不可自报，R07/R08）。",
+    "properties": {
+     "acknowledged_losses": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 8,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "交付格式损失确认码（必须覆盖预览披露的全部义务）",
+      "title": "Acknowledged Losses"
+     },
+     "action_ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 8,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "选择执行的预览动作 id 子集；缺省 = 全部可执行动作",
+      "title": "Action Ids"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     }
+    },
+    "title": "AttemptStartRequest",
+    "type": "object"
+   },
    "AudioNarrative": {
     "additionalProperties": true,
     "description": "章节解说词（v1 只产文本与时长；TTS 是后向扩展位）。",
@@ -48511,6 +48562,268 @@
     "tags": [
      "控制点影像配准 (G48)",
      "控制点影像配准 (G48)"
+    ]
+   }
+  },
+  "/api/v1/goal-repair/attempts/{attempt_id}": {
+   "get": {
+    "description": "attempt 状态视图（含 waiting_delivery/runner 丢失的惰性对账）。",
+    "operationId": "get_goal_repair_attempt_api_v1_goal_repair_attempts__attempt_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "attempt_id",
+      "required": true,
+      "schema": {
+       "title": "Attempt Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Goal Repair Attempt",
+    "tags": [
+     "目标补全（G42）",
+     "Goal Repair / 目标补全"
+    ]
+   }
+  },
+  "/api/v1/goal-repair/attempts/{attempt_id}/cancel": {
+   "post": {
+    "description": "两阶段取消（幂等；已终态 = no-op 披露）。",
+    "operationId": "cancel_goal_repair_api_v1_goal_repair_attempts__attempt_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "attempt_id",
+      "required": true,
+      "schema": {
+       "title": "Attempt Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Goal Repair",
+    "tags": [
+     "目标补全（G42）",
+     "Goal Repair / 目标补全"
+    ]
+   }
+  },
+  "/api/v1/goal-repair/sessions/{session_id}/attempts": {
+   "post": {
+    "description": "启动一次有界补全（幂等：活跃 attempt 复用；busy 语义见 409 code）。",
+    "operationId": "start_goal_repair_api_v1_goal_repair_sessions__session_id__attempts_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AttemptStartRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Start Goal Repair",
+    "tags": [
+     "目标补全（G42）",
+     "Goal Repair / 目标补全"
+    ]
+   }
+  },
+  "/api/v1/goal-repair/sessions/{session_id}/preview": {
+   "get": {
+    "description": "版本化补全预览（零副作用；无计划/satisfied → typed 语义错误）。",
+    "operationId": "preview_goal_repair_api_v1_goal_repair_sessions__session_id__preview_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview Goal Repair",
+    "tags": [
+     "目标补全（G42）",
+     "Goal Repair / 目标补全"
     ]
    }
   },
