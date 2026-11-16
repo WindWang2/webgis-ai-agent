@@ -281,7 +281,9 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
         sessionId, refId: sourceRef, handle: activeHandle, limit: 50,
         cursor, ownerToken,
       }).then((page) => mergePage(
-        page.features as Array<Record<string, unknown>>,
+        // selection 端点返回完整 Feature 对象（与 /features 同形）——
+        // 与回退路径同映射 .properties（review NEW-1）
+        page.features.map((f) => ((f as { properties?: Record<string, unknown> }).properties ?? {})),
         page.nextCursor, page.count,
       )).catch(() => setTableState('error'));
       return;
@@ -301,7 +303,6 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
       page.features.map((f) => (f.properties ?? {}) as Record<string, unknown>),
       page.nextCursor ?? null, page.totalMatching ?? null,
     )).catch(() => setTableState('error'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, sourceRef, ownerToken, combinedWhere, activeHandle]);
 
   useEffect(() => { loadTable(null); }, [loadTable]);
