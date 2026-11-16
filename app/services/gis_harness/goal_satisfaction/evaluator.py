@@ -611,6 +611,12 @@ def _eval_export_requirement(
     out.evidence_ids = [receipt_id]
     if receipt is None or receipt.status == EvidenceStatus.ABSENT:
         out.missing.append(R_EXPORT_ABSENT)
+        # G42（goal repair 执行接线）：缺席分支补设 failed_rule —— 该码与
+        # repair_actions._RULE_ACTIONS 键同名（export_receipt_absent →
+        # export_product/run_delivery），缺失时 repair_plan_for 对「导出/
+        # 交付未兑现」永不生成动作，完成卡只剩披露无补全入口。加性：其余
+        # 消费方（next_action/missing 投影）不受影响。
+        out.failed_rule = R_EXPORT_ABSENT
         out.next_action = ("run_delivery" if requirement.delivery_expected
                            else "export_product")
         return out
@@ -632,10 +638,15 @@ def _eval_export_requirement(
     is_delivery = detail.startswith(_DELIVERY_DETAIL_PREFIX)
     if requirement.delivery_expected and not is_delivery:
         out.missing.append(R_DELIVERY_RECEIPT_ABSENT)
+        # G42：wrong-kind 分支同设 failed_rule（回执在证但类型不符 →
+        # 「用户导出了地图但要求的是数据交付」—— 常见形态；无 failed_rule
+        # 则 repair_plan_for 不生成动作，补全面无入口）。
+        out.failed_rule = R_DELIVERY_RECEIPT_ABSENT
         out.next_action = "run_delivery"
         return out
     if not requirement.delivery_expected and is_delivery:
         out.missing.append(R_EXPORT_ABSENT)
+        out.failed_rule = R_EXPORT_ABSENT
         out.next_action = "export_product"
         return out
     if is_delivery and receipts is not None:

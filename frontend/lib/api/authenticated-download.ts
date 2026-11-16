@@ -26,6 +26,8 @@ function isProtectedPath(path: string): boolean {
   if (path.startsWith('/api/v1/export/download/')) return true;
   // /api/v1/reports/{id}/download
   if (/^\/api\/v1\/reports\/[^/]+\/download$/.test(path)) return true;
+  // /api/v1/georeferencing/artifacts/{id}/download
+  if (/^\/api\/v1\/georeferencing\/artifacts\/[^/]+\/download$/.test(path)) return true;
   return false;
 }
 

@@ -1494,6 +1494,13 @@ class ToolRegistry:
                 if name in ("webgis_data_join_describe",
                             "webgis_data_join_plan_upsert"):
                     skip_keys.update({"source", "plan"})
+                # G18 数据交付：spec.source.ref 是「源锚身份」声明（service
+                # 经 G18 resolver 解析+鉴权，源指纹入幂等键）—— 与 G38 同门；
+                # 透明解引用会把嵌套 ref 展开成整份 FeatureCollection，破坏
+                # DeliverySpec 校验与幂等键语义（G42 goal repair 经派发执行
+                # run_delivery 时同样命中）。
+                if name in ("preview_data_delivery", "submit_data_delivery"):
+                    skip_keys.add("spec")
                 # Pi 兼容（V4）：capture_ref_of 注入面 —— 记录源参数的原始
                 # ref 游标（解引用后注入声明字段，工具由此知道数据来源）。
                 capture_fields = self._declared_cursor_capture_fields(model)

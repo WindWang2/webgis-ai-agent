@@ -24,6 +24,9 @@ import { getSelection, subscribeSelection, getSelectionGeneration } from '@/lib/
 import { submitEditOps, featureIdFromProperties, type SubmitEditResult } from '@/lib/edit/layer-edit-bridge';
 import { pickAuthoritativeFeature } from '@/lib/edit/mvt-pick';
 import { preciseFeatureHit } from '@/lib/edit/geometry-hit';
+import { bindingStatus, getContract } from '@/lib/api/field-contracts';
+import type { FieldContractDocument } from '@/lib/types/field-contracts';
+import { StructuredFeatureForm, type StructuredFeatureFormHandle } from '@/components/map/structured-feature-form';
 import { useT } from '@/lib/i18n/useT';
 
 const DRAFT_SOURCE = 'wb-feedit-src';
@@ -92,6 +95,11 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   const layers = (useHudStore((s) => s.layers) ?? EMPTY_LAYER_ROWS) as Array<{ id: string; name: string; source?: unknown; _refId?: string; _descriptor?: unknown; _mapspecLayerId?: string; _tileUrl?: string }>;
   const [status, setStatus] = useState<EditStatus>({ state: 'idle' });
   const [attributesJson, setAttributesJson] = useState('');
+  /* G44：生效合同 → create 属性走结构化表单（JSON 折叠为高级输入）。 */
+  const [contractRules, setContractRules] = useState<FieldContractDocument | null>(null);
+  const [structuredProps, setStructuredProps] = useState<Record<string, unknown>>({});
+  const structuredFormRef = useRef<StructuredFeatureFormHandle>(null);
+  const contractEpochRef = useRef(0);
   /** vertex 编辑：被选要素（HUD 行数据快照）与其几何 draft。 */
   const [vertexTarget, setVertexTarget] = useState<{ featureId: string; geometry: GeoJSON.Geometry } | null>(null);
   const [splitTarget, setSplitTarget] = useState<string | null>(null);
@@ -120,6 +128,33 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   }, [editTarget?.refId]);
 
   const getMap = useCallback(() => mapRef.current?.getMap() ?? null, [mapRef]);
+
+  /**
+   * G44：编辑目标变更时拉取生效合同（bindingStatus → ok 才取正文）。
+   * binding stale / missing / 请求失败 → 结构化表单不挂载，JSON 输入兜底
+   * （既有行为不变）；epoch 守卫防旧响应穿透。
+   */
+  useEffect(() => {
+    const epoch = ++contractEpochRef.current;
+    setContractRules(null);
+    setStructuredProps({});
+    const sid = getSessionIdentity().sessionId;
+    if (!sid || !refId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const binding = await bindingStatus(sid, refId, getSessionIdentity().ownerToken ?? undefined);
+        if (cancelled || epoch !== contractEpochRef.current) return;
+        if (binding.status !== 'ok' || !binding.contract) return;
+        const view = await getContract(sid, binding.contract.id, getSessionIdentity().ownerToken ?? undefined);
+        if (cancelled || epoch !== contractEpochRef.current) return;
+        setContractRules(view.rules);
+      } catch {
+        /* 合同不可用 → JSON 兜底，不阻断编辑手势 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [refId]);
 
   /**
    * 编辑目标拾取（G24/P2）：inline 图层沿用本地精确命中（A01 不回退）；
@@ -251,6 +286,18 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
     }
   }, [attributesJson, t]);
 
+  /** G44 create 属性收集：结构化表单（主）+ 高级 JSON（显式键覆盖）→ 同一 ops。 */
+  const collectCreateAttrs = useCallback((): Record<string, unknown> | string => {
+    const structured = contractRules ? { ...structuredProps } : {};
+    if (contractRules && !structuredFormRef.current?.validate()) {
+      structuredFormRef.current?.focusFirstError();
+      return t('map.edit.formInvalid');
+    }
+    const json = parseAttributes();
+    if (typeof json === 'string') return json;
+    return { ...structured, ...json };
+  }, [contractRules, structuredProps, parseAttributes, t]);
+
   const submit = useCallback(async (ops: Parameters<typeof submitEditOps>[2], opts: { featureIds?: string[]; labelKey: string; what: string }) => {
     if (!sessionId || !refId) return;
     setStatus({ state: 'submitting', what: opts.what });
@@ -288,7 +335,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       return;
     }
     if (draft.kind === 'line' && draft.points.length >= 2) {
-      const attrs = parseAttributes();
+      const attrs = collectCreateAttrs();
       if (typeof attrs === 'string') { setStatus({ state: 'failed', message: attrs }); return; }
       await submit(
         [{ op: 'create_features', features: [{ geometry: { type: 'LineString', coordinates: draft.points }, ...(Object.keys(attrs).length ? { properties: attrs } : {}) }] }],
@@ -297,14 +344,14 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       return;
     }
     if (draft.kind === 'polygon' && draft.points.length >= 3) {
-      const attrs = parseAttributes();
+      const attrs = collectCreateAttrs();
       if (typeof attrs === 'string') { setStatus({ state: 'failed', message: attrs }); return; }
       await submit(
         [{ op: 'create_features', features: [{ geometry: { type: 'Polygon', coordinates: [closeRing(draft.points)] }, ...(Object.keys(attrs).length ? { properties: attrs } : {}) }] }],
         { labelKey: 'map.edit.createPolygon', what: t('map.edit.createPolygon') },
       );
     }
-  }, [refId, submit, parseAttributes, splitTarget, t, bump]);
+  }, [refId, submit, collectCreateAttrs, splitTarget, t, bump]);
 
   /* ─── 点击手势：create / delete / vertex-select / split ─── */
   useEffect(() => {
@@ -318,7 +365,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       if (!active || !refId) return;
       const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat];
       if (active === 'draw_point') {
-        const attrs = parseAttributes();
+        const attrs = collectCreateAttrs();
         if (typeof attrs === 'string') { setStatus({ state: 'failed', message: attrs }); return; }
         await submit(
           [{ op: 'create_features', features: [{ geometry: { type: 'Point', coordinates: lngLat }, ...(Object.keys(attrs).length ? { properties: attrs } : {}) }] }],
@@ -366,7 +413,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
     map.on('click', onClick);
     map.on('dblclick', onDblClick);
     return () => { map.off('click', onClick); map.off('dblclick', onDblClick); };
-  }, [tool, mapReady, getMap, editTarget, refId, submit, parseAttributes, bump, t, splitTarget, completeDraft, pickEditTarget]);
+  }, [tool, mapReady, getMap, editTarget, refId, submit, collectCreateAttrs, bump, t, splitTarget, completeDraft, pickEditTarget]);
 
   /* ─── 顶点拖拽（edit_vertices + vertexTarget）─── */
   useEffect(() => {
@@ -505,14 +552,35 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
         </button>
       </div>
       {drawing && (
-        <div className="flex items-center gap-2">
-          <input
-            data-testid="feature-edit-attrs"
-            className="w-56 rounded-xs border border-edge-subtle bg-surface px-2 py-0.5"
-            placeholder={t('map.edit.attrsPlaceholder')}
-            value={attributesJson}
-            onChange={(e) => setAttributesJson(e.target.value)}
-          />
+        <div className="flex items-start gap-2">
+          {contractRules ? (
+            /* G44：生效合同 → 结构化字段表单为主输入（scrollable，字段多时不遮地图） */
+            <div className="max-h-40 w-72 overflow-y-auto rounded-xs border border-edge-subtle bg-surface p-1.5" data-testid="feature-edit-structured">
+              <StructuredFeatureForm
+                ref={structuredFormRef}
+                rules={contractRules}
+                onChange={setStructuredProps}
+              />
+              <details className="pt-1" data-testid="feature-edit-advanced-json">
+                <summary className="cursor-pointer text-ink-secondary hover:text-ink">{t('map.edit.advancedJson')}</summary>
+                <input
+                  data-testid="feature-edit-attrs"
+                  className="mt-1 w-full rounded-xs border border-edge-subtle bg-surface px-2 py-0.5"
+                  placeholder={t('map.edit.attrsPlaceholder')}
+                  value={attributesJson}
+                  onChange={(e) => setAttributesJson(e.target.value)}
+                />
+              </details>
+            </div>
+          ) : (
+            <input
+              data-testid="feature-edit-attrs"
+              className="w-56 rounded-xs border border-edge-subtle bg-surface px-2 py-0.5"
+              placeholder={t('map.edit.attrsPlaceholder')}
+              value={attributesJson}
+              onChange={(e) => setAttributesJson(e.target.value)}
+            />
+          )}
           {tool === 'split_feature' && (
             <span className="text-ink-secondary" data-testid="feature-edit-split-hint">
               {splitTarget ? t('map.edit.splitDrawLine') : t('map.edit.splitPickTarget')}

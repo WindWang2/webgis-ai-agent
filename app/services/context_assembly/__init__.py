@@ -13,6 +13,7 @@ project_knowledge / project_memory / gis_memory / gis_context / situation），
 - ``dedupe``    — 确定性去重（内容指纹 + 权威版本优先）
 - ``allocator`` — 分池预算分配（复用 ``context_budget.Category``/``plan_budget``）
 - ``receipt``   — ContextAssemblyReceipt（digest + settle-once + 有界投影）
+- ``source_policy`` — G43 会话级可选资料策略（源命名空间 + CAS 语义）
 - ``governor_link`` — LLM context 维度 plan/settle（observe-first）
 - ``providers`` — 既有 builder 的 typed 适配（零渲染逻辑复制）
 - ``assembly``  — 编排（two-wave 并行收集 → 消毒 → 去重 → 分配 → 渲染）

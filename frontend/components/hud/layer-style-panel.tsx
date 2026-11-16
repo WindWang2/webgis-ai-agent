@@ -25,6 +25,8 @@ import { ThematicAuthoringPanel } from '@/components/hud/thematic-authoring-pane
 import SymbolAssetPanel from '@/components/hud/symbol-asset-panel';
 // G41：双变量矩阵 / 估计值+可靠性双通道作者工作台（加性挂载，不改 G33 面板）
 import { BivariateReliabilityPanel } from '@/components/hud/bivariate-reliability-panel';
+// G47：Dorling 圆面积 cartogram 作者工作台（加性挂载；与 Pi 共用同一服务）
+import { DorlingCartogramPanel } from '@/components/hud/dorling-cartogram-panel';
 
 /** 渲染模式 id → 消息键（spec 层型语义见 specPaintPatchFrom）。 */
 const MODE_LABELS: Record<string, string> = {
@@ -42,6 +44,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const [showRasterAuthoring, setShowRasterAuthoring] = useState(false);
   const [showThematicAuthoring, setShowThematicAuthoring] = useState(false);
   const [showBivariateReliability, setShowBivariateReliability] = useState(false);
+  const [showDorlingCartogram, setShowDorlingCartogram] = useState(false);
 
   const layer = layers.find((l) => l.id === editingLayerId);
   // audit #840: committed MapSpec 存在时，HUD 层样式不进入 paint
@@ -135,6 +138,24 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
     );
     if (!hit || typeof hit.source !== 'string') return null;
     if (!['fill', 'circle', 'line'].includes(String(hit.type))) return null;
+    const src = doc?.sources?.[hit.source];
+    if (!src || src.type === 'raster' || src.type === 'numeric_raster') return null;
+    return { layerId: String(hit.id) };
+  })();
+
+  // G47：Dorling cartogram 入口。需要矢量层 + 会话 ref 源（与 G41 同口径），
+  // 面要素才是 cartogram 的统计单元。
+  const g47VectorLayer = (() => {
+    const doc = committedSpec as {
+      layers?: Array<Record<string, unknown>>;
+      sources?: Record<string, Record<string, unknown>>;
+    } | null;
+    const hit = doc?.layers?.find(
+      (l) => l?.id === specLayerKey
+        || (typeof l?.id === 'string' && l.id.startsWith(`${specLayerKey}__`)),
+    );
+    if (!hit || typeof hit.source !== 'string') return null;
+    if (!['fill', 'line', 'circle'].includes(String(hit.type))) return null;
     const src = doc?.sources?.[hit.source];
     if (!src || src.type === 'raster' || src.type === 'numeric_raster') return null;
     return { layerId: String(hit.id) };
@@ -334,6 +355,22 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             </button>
             {showBivariateReliability && (
               <BivariateReliabilityPanel layerId={g41VectorLayer.layerId} />
+            )}
+          </div>
+        )}
+        {/* G47：Dorling 圆面积 cartogram（示意布局 + 独立质量门 + 出版） */}
+        {g47VectorLayer && (
+          <div>
+            <button
+              type="button"
+              aria-expanded={showDorlingCartogram}
+              onClick={() => setShowDorlingCartogram((v) => !v)}
+              className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+            >
+              {t('dorlingCartogram.title')}
+            </button>
+            {showDorlingCartogram && (
+              <DorlingCartogramPanel layerId={g47VectorLayer.layerId} />
             )}
           </div>
         )}

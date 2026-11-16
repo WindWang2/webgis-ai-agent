@@ -22,7 +22,7 @@ for the design rationale.
 from dataclasses import dataclass
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, List, Optional
 
 from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import SessionStoreProtocol
@@ -114,6 +114,7 @@ def _build_project_context_block(
 
 def _build_project_memory_block(
     project_id: str, *, user_id: Optional[str] = None, org_id: Optional[str] = None,
+    source_policy: Optional[Any] = None,
 ) -> str:
     """Sync DB read of the project's cartographic memory (runs OFF the event loop).
 
@@ -124,6 +125,11 @@ def _build_project_memory_block(
 
     Pending drift warnings remain visible until an explicit consumer acknowledges
     them or the source is reclassified. Prompt reads never commit or consume facts.
+
+    G43（ADR-0295）：``source_policy`` 在渲染前过滤被排除的 ``cm:<fact_id>``
+    事实（单一渲染源内实施策略 —— typed 与预拼路径同语义）；返回的
+    ScopedText 附带 ``entry_refs``（渲染时刻的事实去向 + 权威版本）供回执
+    源粒度投影，**不**参与提示文本本身。
     """
     from app.services.cartography.distribution_drift import render_env_change_block
     from app.services.cartography.project_memory import (
@@ -142,22 +148,71 @@ def _build_project_memory_block(
                 return ""
             events = get_pending_env_changes(db, project_id, consume=False)
             facts = get_active_facts(db, project_id)
+            entry_refs = []
+            policy = source_policy
+            policy_map = {}
+            if policy is not None and getattr(policy, "is_explicit", False):
+                excluded = set(getattr(policy, "excluded", ()) or ())
+                preferred = set(getattr(policy, "preferred", ()) or ())
+                kept = []
+                for fact in facts:
+                    sid = f"cm:{fact.id}"
+                    if sid in excluded:
+                        policy_map[sid] = "excluded_by_policy"
+                        continue
+                    kept.append(fact)
+                facts = kept
+                # preferred 排序：优先条目排前（预算竞争占先；不扩预算）。
+                facts.sort(key=lambda f: (
+                    0 if f"cm:{f.id}" in preferred else 1,
+                    -(_fact_sort_key(f)),
+                ))
+            rendered_facts = facts
+            for fact in rendered_facts:
+                sid = f"cm:{fact.id}"
+                decision = "included"
+                if policy is not None and getattr(policy, "is_explicit", False):
+                    decision = policy.decision_for(sid)
+                entry_refs.append({
+                    "source_id": sid,
+                    "kind": "carto_memory_fact",
+                    "decision": decision if decision != "included" else "included",
+                    "version_token": (
+                        f"lv:{fact.last_verified_at.isoformat()[:19]}"
+                        if fact.last_verified_at else ""
+                    ),
+                    "label": f"{fact.kind} · {fact.subject}"[:64] if fact.subject else str(fact.kind)[:32],
+                })
+            for sid, decision in policy_map.items():
+                entry_refs.append({
+                    "source_id": sid, "kind": "carto_memory_fact",
+                    "decision": decision, "version_token": "", "label": "",
+                })
             from app.lib.runtime.scoped_text import ScopedText
-            return ScopedText(render_env_change_block(events) + render_memory_block(facts), source_scope={
+            text = ScopedText(render_env_change_block(events) + render_memory_block(rendered_facts), source_scope={
                 "scope": "project", "scope_id": str(project.id), "project_id": str(project.id),
                 "org_id": str(project.org_id) if project.org_id is not None else "", "sensitivity": "project_scoped",
             })
+            text.entry_refs = entry_refs  # type: ignore[attr-defined]
+            return text
     except Exception as ex:  # noqa: BLE001 — 记忆是增值上下文，失败不阻断对话
         logger.warning(
             "Cartographic project memory unavailable for %s: %s", project_id, ex
         )
         return ""
 
+def _fact_sort_key(fact) -> float:
+    """active 事实的稳定排序键（last_verified_at 降序，None 最老）。"""
+    verified = getattr(fact, "last_verified_at", None)
+    return verified.timestamp() if verified is not None else 0.0
+
 def _build_project_knowledge_block(
     project_id: str,
     *,
     org_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    source_policy: Optional[Any] = None,
+    read_only: bool = False,
 ) -> str:
     """Sync DB read of ProjectKnowledge card for Pi/legacy context (#1395).
 
@@ -166,6 +221,12 @@ def _build_project_knowledge_block(
     project has active entries, returns the bounded ``<project_knowledge>``
     card so reuse candidates are visible without the LLM calling knowledge
     tools. Fail-open: any error → empty string.
+
+    G43（ADR-0295）：``source_policy`` 的 ``pk:<entry_id>`` 排除在卡片渲染前
+    生效（不参与预算竞争）；返回的 ScopedText 附带 ``entry_refs``（含真实
+    version_token 快照与 omitted/not_live 如实去向）。
+    G43 review P1：``read_only=True``（预览）跳过 liveness 降级与 commit ——
+    预览零业务副作用（失效条目由下一次**真**装配承担降级）。
     """
     try:
         from app.services.project_knowledge import project_knowledge_enabled
@@ -189,6 +250,13 @@ def _build_project_knowledge_block(
         if not effective_org:
             # Tenant stamp required — never scan knowledge without org scope.
             return ""
+        exclude_ids = None
+        policy = source_policy
+        if policy is not None and getattr(policy, "is_explicit", False):
+            exclude_ids = {
+                sid[len("pk:"):] for sid in (getattr(policy, "excluded", ()) or ())
+                if sid.startswith("pk:")
+            }
         with SessionLocal() as db:
             project = ProjectService.get_project_with_auth(
                 db, project_id, user_id=user_id, org_id=org_int,
@@ -199,13 +267,54 @@ def _build_project_knowledge_block(
                 db, org_id=effective_org,
                 project_id=str(project.id),
                 project_name=str(getattr(project, "name", "") or ""),
+                exclude_entry_ids=exclude_ids,
+                read_only=read_only,
             )
-            db.commit()  # Persist authority-backed projection demotions only.
+            if not read_only:
+                db.commit()  # Persist authority-backed projection demotions only.
             from app.lib.runtime.scoped_text import ScopedText
-            return ScopedText(card.text or "", source_scope={
+            text = ScopedText(card.text or "", source_scope={
                 "scope": "project", "scope_id": str(project.id), "project_id": str(project.id),
                 "org_id": str(project.org_id) if project.org_id is not None else "", "sensitivity": "project_scoped",
             })
+            # G43 源粒度：getattr 防御（stub/旧形状卡片无这些字段 → 空投影，
+            # 不阻断块构建）。
+            versions = dict(getattr(card, "live_versions", None) or ())
+            included = set(getattr(card, "included_ids", None) or ())
+            omitted = set(getattr(card, "omitted_ids", None) or ())
+            not_live = set(getattr(card, "not_live_ids", None) or ())
+            policy_excluded = tuple(getattr(card, "policy_excluded_ids", None) or ())
+            entry_refs = []
+            for sid in included:
+                entry_refs.append({
+                    "source_id": f"pk:{sid}", "kind": "project_knowledge_entry",
+                    "decision": (
+                        policy.decision_for(f"pk:{sid}") if policy is not None
+                        and getattr(policy, "is_explicit", False) else "included"
+                    ),
+                    "version_token": str(versions.get(sid, ""))[:32],
+                    "label": "",
+                })
+            for sid in omitted:
+                entry_refs.append({
+                    "source_id": f"pk:{sid}", "kind": "project_knowledge_entry",
+                    "decision": "omitted_card_cap",
+                    "version_token": str(versions.get(sid, ""))[:32],
+                    "label": "",
+                })
+            for sid in not_live:
+                entry_refs.append({
+                    "source_id": f"pk:{sid}", "kind": "project_knowledge_entry",
+                    "decision": "not_live", "version_token": "", "label": "",
+                })
+            for sid in policy_excluded:
+                entry_refs.append({
+                    "source_id": f"pk:{sid}", "kind": "project_knowledge_entry",
+                    "decision": "excluded_by_policy", "version_token": "",
+                    "label": "",
+                })
+            text.entry_refs = entry_refs  # type: ignore[attr-defined]
+            return text
     except Exception as ex:  # noqa: BLE001 — additive context
         logger.warning("Failed to assemble project knowledge block: %s", ex)
         return ""

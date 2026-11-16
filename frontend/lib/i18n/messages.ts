@@ -43,12 +43,15 @@ import zhDataPreparation from '@/messages/zh-CN/dataPreparation.json'
 import zhDataImport from '@/messages/zh-CN/dataImport.json'
 import zhFieldCompute from '@/messages/zh-CN/fieldCompute.json'
 import zhRasterSampling from '@/messages/zh-CN/rasterSampling.json'
+import zhGeoreferencing from '@/messages/zh-CN/georeferencing.json'
 import zhTopology from '@/messages/zh-CN/topology.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import zhDataJoin from '@/messages/zh-CN/dataJoin.json'
 import zhCoordinateOperations from '@/messages/zh-CN/coordinateOperations.json'
 import enCoordinateOperations from '@/messages/en-US/coordinateOperations.json'
+import zhFieldContracts from '@/messages/zh-CN/fieldContracts.json'
+import zhCartogram from '@/messages/zh-CN/cartogram.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -84,10 +87,13 @@ import enDataPreparation from '@/messages/en-US/dataPreparation.json'
 import enDataImport from '@/messages/en-US/dataImport.json'
 import enFieldCompute from '@/messages/en-US/fieldCompute.json'
 import enRasterSampling from '@/messages/en-US/rasterSampling.json'
+import enGeoreferencing from '@/messages/en-US/georeferencing.json'
 import enTopology from '@/messages/en-US/topology.json'
 import enMarket from '@/messages/en-US/market.json'
 import enDataDelivery from '@/messages/en-US/dataDelivery.json'
 import enDataJoin from '@/messages/en-US/dataJoin.json'
+import enFieldContracts from '@/messages/en-US/fieldContracts.json'
+import enCartogram from '@/messages/en-US/cartogram.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -127,10 +133,13 @@ export interface AppMessages {
   dataDelivery: typeof zhDataDelivery
   dataJoin: typeof zhDataJoin
   coordinateOperations: typeof zhCoordinateOperations
+  fieldContracts: typeof zhFieldContracts
   dataImport: typeof zhDataImport
   fieldCompute: typeof zhFieldCompute
   rasterSampling: typeof zhRasterSampling
+  georeferencing: typeof zhGeoreferencing
   topology: typeof zhTopology
+  cartogram: typeof zhCartogram
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -151,9 +160,12 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataDelivery: zhDataDelivery,
     dataJoin: zhDataJoin,
     coordinateOperations: zhCoordinateOperations,
+    fieldContracts: zhFieldContracts,
+    cartogram: zhCartogram,
     dataImport: zhDataImport,
     fieldCompute: zhFieldCompute,
     rasterSampling: zhRasterSampling,
+    georeferencing: zhGeoreferencing,
     topology: zhTopology,
     story: zhStory,
     geoai: zhGeoai,
@@ -194,9 +206,12 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
     dataJoin: enDataJoin as unknown as AppMessages['dataJoin'],
     coordinateOperations: enCoordinateOperations as unknown as AppMessages['coordinateOperations'],
+    fieldContracts: enFieldContracts as unknown as AppMessages['fieldContracts'],
+    cartogram: enCartogram as unknown as AppMessages['cartogram'],
     dataImport: enDataImport as unknown as AppMessages['dataImport'],
     fieldCompute: enFieldCompute as unknown as AppMessages['fieldCompute'],
     rasterSampling: enRasterSampling as unknown as AppMessages['rasterSampling'],
+    georeferencing: enGeoreferencing as unknown as AppMessages['georeferencing'],
     topology: enTopology as unknown as AppMessages['topology'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],

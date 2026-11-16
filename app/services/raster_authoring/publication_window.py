@@ -339,6 +339,56 @@ def _render_window(
         dst_transform = rasterio.transform.from_bounds(
             *dst_bounds_3857, out_w, out_h)
 
+        from app.services.raster_authoring.alpha_adapter import (
+            detect_alpha_or_mask,
+            render_alpha_aware_window,
+        )
+
+        _has_alpha_sem, _alpha_band, _has_internal_mask = detect_alpha_or_mask(src)
+        if _has_alpha_sem:
+            _rgba, _all_nodata = render_alpha_aware_window(
+                src,
+                color_indexes=indexes,
+                alpha_band=_alpha_band,
+                has_internal_mask=_has_internal_mask,
+                src_crs=src_crs,
+                dst_transform=dst_transform,
+                dst_crs="EPSG:3857",
+                out_h=out_h,
+                out_w=out_w,
+                resampling=style.resampling,
+                stretch=style.stretch,
+                colormap=style.colormap if len(indexes) == 1 else None,
+                opacity=float(style.opacity),
+                win=win,
+                win_out_shape=(dec_h, dec_w),
+            )
+            from PIL import Image
+
+            buf = io.BytesIO()
+            Image.fromarray(_rgba, "RGBA").save(buf, format="PNG", compress_level=6)
+            try:
+                _bounds_wsen = rio_warp.transform_bounds(
+                    "EPSG:3857", "EPSG:4326", *dst_bounds_3857)
+            except Exception:  # noqa: BLE001
+                _bounds_wsen = tuple(dst_bounds_3857)
+            if truncated:
+                notes.append("resolution_capped_no_extra_remote_sensing_detail")
+            _lo_all = min(p[0] for p in style.stretch)
+            _hi_all = max(p[1] for p in style.stretch)
+            return WindowRenderResult(
+                png_bytes=buf.getvalue(),
+                bounds_wsen=tuple(float(v) for v in _bounds_wsen),  # type: ignore[arg-type]
+                bounds_3857=tuple(float(v) for v in dst_bounds_3857),  # type: ignore[arg-type]
+                width=out_w, height=out_h,
+                overlap=overlap,
+                all_nodata=_all_nodata,
+                constant=bool(_hi_all <= _lo_all),
+                truncated=truncated,
+                grid="mercator-window",
+                notes=tuple(notes),
+            )
+
         if src_crs == "EPSG:3857":
             # 同 CRS：read 的 out_shape 网格即目标网格（仅有分辨率差）。
             if (dec_w, dec_h) != (out_w, out_h):
