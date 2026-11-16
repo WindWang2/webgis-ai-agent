@@ -232,6 +232,7 @@ def generate_warped_preview(
     target_crs: str,
     resampling: str,
     target_resolution_m: Optional[float],
+    preview_name: Optional[str] = None,
 ) -> Tuple[Path, OutputGridSpec]:
     """Generate a downsampled transparent RGBA PNG preview matching the affine model (R19-R22)."""
     grid = compute_output_grid(source, coeffs, target_crs, target_resolution_m)
@@ -279,7 +280,11 @@ def generate_warped_preview(
 
     preview_dir = georef_session_dir(session_id) / "previews"
     preview_dir.mkdir(parents=True, exist_ok=True)
-    preview_path = preview_dir / f"{plan_id}_preview.png"
+    # Callers that still need to win a CAS race before publishing pass a unique
+    # ``preview_name``; they os.replace() onto the canonical file only after the
+    # plan revision survived the CAS check (a losing concurrent preview must
+    # never clobber the winner's already-published PNG).
+    preview_path = preview_dir / (preview_name or f"{plan_id}_preview.png")
     tmp = preview_path.with_name(f".{preview_path.name}.tmp-{uuid.uuid4().hex[:8]}")
     buf = io.BytesIO()
     Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", compress_level=4)

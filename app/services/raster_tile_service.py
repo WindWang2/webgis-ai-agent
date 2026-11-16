@@ -489,7 +489,23 @@ def render_raster_tile(
             )
 
             has_alpha_sem, alpha_band, has_internal_mask = detect_alpha_or_mask(src)
-            if has_alpha_sem and not (style is None and cmap_name and len(indexes) == 1 and str(src.dtypes[0]) != "uint8"):
+            if has_alpha_sem:
+                # Dataset-global stretch bounds (same source as the non-alpha
+                # path below): per-tile min/max on uint16/float alpha rasters
+                # gave adjacent tiles different normalization -> visible seams.
+                if style is not None and style.stretch is not None:
+                    alpha_stretch = tuple((float(lo), float(hi)) for lo, hi in style.stretch)
+                else:
+                    try:
+                        alpha_stretch = _get_band_stats(raster_path, src, indexes)
+                    except Exception:
+                        logger.debug(
+                            "[raster_tile_service] global stats unavailable for %s, "
+                            "alpha path falls back to per-tile normalization",
+                            raster_path,
+                            exc_info=True,
+                        )
+                        alpha_stretch = None
                 scale = min(1.0, tile_size / float(win.width), tile_size / float(win.height))
                 dec_h = max(1, int(round(win.height * scale)))
                 dec_w = max(1, int(round(win.width * scale)))
@@ -504,7 +520,7 @@ def render_raster_tile(
                     out_h=tile_size,
                     out_w=tile_size,
                     resampling=style.resampling if style is not None else "bilinear",
-                    stretch=style.stretch if style is not None else None,
+                    stretch=alpha_stretch,
                     colormap=(style.colormap if style is not None else cmap_name) if len(indexes) == 1 else None,
                     opacity=float(style.opacity) if style is not None else 1.0,
                     win=win,

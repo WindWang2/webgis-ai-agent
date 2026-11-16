@@ -177,6 +177,20 @@ def ring_to_wgs84_geojson(
         ring_wgs84.append([float(lon), float(lat)])
     if ring_wgs84 and ring_wgs84[0] != ring_wgs84[-1]:
         ring_wgs84.append(list(ring_wgs84[0]))
+    # Unwrap longitudes so a ring crossing the antimeridian keeps a continuous
+    # sweep: pyproj wraps every corner into [-180, 180], and naive min/max turns
+    # a ~300 km UTM zone-60N box into a ~357 deg "spans the globe" bbox. Lons
+    # outside [-180, 180] stay valid GeoJSON (well-defined modulo 360).
+    prev_lon: Optional[float] = None
+    for pt in ring_wgs84:
+        lon = pt[0]
+        if prev_lon is not None:
+            while lon - prev_lon > 180.0:
+                lon -= 360.0
+            while prev_lon - lon > 180.0:
+                lon += 360.0
+        pt[0] = lon
+        prev_lon = lon
     lons = [p[0] for p in ring_wgs84]
     lats = [p[1] for p in ring_wgs84]
     bbox = [min(lons), min(lats), max(lons), max(lats)]

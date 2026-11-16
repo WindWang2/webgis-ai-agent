@@ -136,6 +136,36 @@ def blob_has_live_ref(sha256: str, session_id: str) -> bool:
     return bool(refs.get(session_id, 0) > 0)
 
 
+_REFS_SCAN_CAP = 65536
+
+
+def iter_live_blob_keys_with_status() -> "tuple[list[str], bool]":
+    """Enumerate blob keys whose `_refs/` sidecar carries >= 1 live session ref.
+
+    Feeds the promotion-GC / quota-retention blob protection surface (fail-closed:
+    the caller treats ``truncated=True`` or a raised exception as "skip blob
+    deletes this cycle" — a possibly-incomplete protection set must never gate
+    a delete decision).
+    """
+    from app.core.config import settings
+
+    root = Path(settings.DATA_DIR) / "georeferencing" / "_refs"
+    keys: List[str] = []
+    if not root.is_dir():
+        return keys, False
+    scanned = 0
+    truncated = False
+    for p in sorted(root.glob("*/*.json")):
+        scanned += 1
+        if scanned > _REFS_SCAN_CAP:
+            truncated = True
+            break
+        sha = p.stem
+        if _load_refs(sha):
+            keys.append(blob_key_for_sha(sha))
+    return keys, truncated
+
+
 def active_georef_artifact_ids(session_id: str) -> List[str]:
     """Return active georeferencing raster_refs and artifact_ids to protect from GC."""
     try:

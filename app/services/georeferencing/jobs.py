@@ -358,7 +358,21 @@ async def start_georeference_job(
             cur.updated_at = datetime.now(timezone.utc).isoformat()
             return cur
 
-        mutate_plan_cas(session_id, plan.plan_id, expected_revision=None, mutator=_publish_result)
+        try:
+            mutate_plan_cas(session_id, plan.plan_id, expected_revision=None, mutator=_publish_result)
+        except Exception:
+            # R 审计 round-2（P2-4b）：plan 在 warp 进行中被删除/替换时，
+            # 发布期 CAS 失败 —— 此前 blob pin、session ref、artifact 行与
+            # COG 文件已经落库/落盘，全部泄漏。回滚到与注册取消栅栏同一
+            # 清理口径后再把失败上报给 job 记账。
+            out_path.unlink(missing_ok=True)
+            from app.services.artifact_registry import mark_status
+            from app.services.session_data import session_data_manager
+
+            await asyncio.to_thread(release_blob_ref, out_sha256, session_id)
+            await session_data_manager.delete_ref(session_id, raster_ref)
+            await mark_status(session_id, raster_ref, "superseded")
+            raise
         for old_art in cleanup_old:
             await cleanup_artifact_resources(session_id, old_art)
         _STAGE_BY_JOB[job_id] = "completed"

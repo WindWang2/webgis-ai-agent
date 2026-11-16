@@ -56,7 +56,12 @@ def detect_alpha_or_mask(src: Any) -> Tuple[bool, Optional[int], bool]:
         return True, alpha_band, False
 
     try:
-        mflags = src.mask_flags
+        # rasterio >= 1.3 renamed `mask_flags` -> `mask_flag_enums`; reading the
+        # removed attribute raised AttributeError that the broad except below
+        # swallowed, silently disabling internal-mask detection on rasterio 1.5+.
+        mflags = getattr(src, "mask_flag_enums", None)
+        if mflags is None:
+            mflags = getattr(src, "mask_flags", None)  # rasterio < 1.3 fallback
         if mflags:
             first = set(mflags[0])
             if (MaskFlags.per_dataset in first or MaskFlags.alpha in first) and MaskFlags.all_valid not in first:
@@ -213,6 +218,18 @@ def render_alpha_aware_window(
     else:
         src_alpha = np.ones((win_data.shape[1], win_data.shape[2]), dtype=np.float32)
 
+    # Declared nodata wins over alpha coverage: a pixel whose color bands carry
+    # the dataset's nodata value renders transparent even when its alpha band
+    # is opaque (mirrors src_nodata handling of the non-alpha reprojection path).
+    nodata_val = getattr(src, "nodata", None)
+    if nodata_val is not None:
+        try:
+            nodata_hit = np.any(win_data == nodata_val, axis=0)
+        except TypeError:  # non-numeric nodata vs band dtype mismatch
+            nodata_hit = None
+        if nodata_hit is not None and bool(nodata_hit.any()):
+            src_alpha = np.where(nodata_hit, np.float32(0.0), src_alpha)
+
     if win is not None:
         from affine import Affine as _Affine
 
@@ -254,6 +271,13 @@ def render_alpha_aware_window(
             dst_color = proc
     else:
         # uint16 (or other scalar) with internal mask: reproject float numerator/weight then stretch.
+        # NaN/Inf in float sources must never enter the warp: NaN * 0 = NaN smears
+        # through premultiplied bilinear weights and poisons the stretch min/max,
+        # turning every valid pixel pure black. Transparent (alpha=0) pixels are
+        # zeroed here — their color is never observed downstream.
+        vals_f = np.nan_to_num(
+            win_data.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0
+        )
         dst_w = np.zeros((out_h, out_w), dtype=np.float32)
         rio_resample = {
             "nearest": Resampling.nearest,
@@ -277,7 +301,7 @@ def render_alpha_aware_window(
         for idx in range(len(color_indexes)):
             if resampling == "nearest":
                 rio_reproject(
-                    source=win_data[idx].astype(np.float32),
+                    source=vals_f[idx],
                     destination=dst_f[idx],
                     src_transform=win_transform,
                     src_crs=src_crs,
@@ -288,7 +312,7 @@ def render_alpha_aware_window(
                     dst_nodata=0.0,
                 )
             else:
-                premul = win_data[idx].astype(np.float32) * src_alpha
+                premul = vals_f[idx] * src_alpha
                 dst_pre = np.zeros((out_h, out_w), dtype=np.float32)
                 rio_reproject(
                     source=premul,

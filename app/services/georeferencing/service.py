@@ -5,7 +5,9 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import math
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,6 +57,8 @@ from app.services.georeferencing.store import (
 )
 from app.services.georeferencing.warp import generate_warped_preview
 from app.services.jobs.store import DurableJobStore
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -529,7 +533,10 @@ def generate_preview(
             warnings=fit.blockers + fit.warnings,
         )
 
-    preview_path, grid = generate_warped_preview(
+    # R 审计 round-2（P2-4c）：预览先写唯一临时名，CAS 胜出后再原子改名到
+    # 规范路径 —— 否则并发预览的败者会在 CAS 检查前覆盖胜者已发布的 PNG。
+    tmp_name = f"{plan.plan_id}_preview.cas-{uuid.uuid4().hex[:8]}.png"
+    tmp_preview_path, grid = generate_warped_preview(
         session_id=session_id,
         plan_id=plan.plan_id,
         source=src,
@@ -537,8 +544,10 @@ def generate_preview(
         target_crs=plan.target_crs,
         resampling=plan.resampling,
         target_resolution_m=plan.target_resolution_m,
+        preview_name=tmp_name,
     )
-    digest = hashlib.sha256(preview_path.read_bytes()).hexdigest()[:16]
+    preview_path = tmp_preview_path.with_name(f"{plan.plan_id}_preview.png")
+    digest = hashlib.sha256(tmp_preview_path.read_bytes()).hexdigest()[:16]
 
     def _save_preview(cur: GeorefDraftPlan) -> GeorefDraftPlan:
         if cur.revision != plan.revision:
@@ -556,7 +565,12 @@ def generate_preview(
         cur.updated_at = _now()
         return cur
 
-    updated = mutate_plan_cas(session_id, plan_id, expected_revision=plan.revision, mutator=_save_preview)
+    try:
+        updated = mutate_plan_cas(session_id, plan_id, expected_revision=plan.revision, mutator=_save_preview)
+    except Exception:
+        tmp_preview_path.unlink(missing_ok=True)
+        raise
+    os.replace(tmp_preview_path, preview_path)
     return GeorefPreviewResponse(
         plan=updated,
         preview_available=True,
@@ -838,6 +852,18 @@ async def delete_source(session_id: str, source_id: str) -> int:
     from app.services.session_data import session_data_manager
 
     plans = [p for p in list_plans(session_id) if p.source_id == source_id]
+    # R 审计 round-2（P2-4b）：删除前先请求协作取消仍活跃的 job —— 否则
+    # in-flight warp 会在源/计划状态消失后继续执行，落到提交期 CAS 失败，
+    # 白做整幅 warp 并留下孤儿产物。取消是尽力而为：job 已终态或缺失时
+    # 不阻塞删除。
+    for p in plans:
+        if getattr(p, "active_job_id", None):
+            try:
+                await cancel_georeference_job(session_id, p.plan_id)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "[georef] cancel-before-delete failed plan=%s", p.plan_id, exc_info=True
+                )
     deleted, shas = delete_source_and_plans(session_id, source_id)
     if not deleted:
         raise GeorefDomainError(
