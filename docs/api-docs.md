@@ -599,6 +599,28 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/render-ref` | Render Ref | object |
 | `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/recover` | Recover | object |
 
+### 坐标操作工作台 G45
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/describe-source` | Describe Source | object |
+| `GET` | `/api/v1/coord-ops/crs/lookup` | Crs Lookup | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/operations` | List Operations | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans` | Create Plan | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/plans` | List Plans | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Get Plan | object |
+| `PATCH` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Update Plan | object |
+| `DELETE` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Archive Plan | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/lock` | Lock Plan | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/preview` | Preview Plan | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/execute` | Execute Plan | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs` | List Runs | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}` | Inspect Run | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/results` | Run Results | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/cancel` | Cancel Run | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/display-ref` | Display Ref | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/recover` | Recover | object |
+
 ### 制图符号资产工作台（G40）
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1446,6 +1468,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：629（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：646（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
