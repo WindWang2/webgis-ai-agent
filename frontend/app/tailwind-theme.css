@@ -1,0 +1,180 @@
+/* ═══ Auto-generated from tailwind.config.ts for Tailwind v4 (@theme). ═══
+   Migration note: v4 removed v3 runtime function colors (opacityValue shims);
+   native var() colors + color-mix now power the same /opacity modifiers. */
+@custom-variant dark (&:where(.dark, .dark *));
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --color-surface-canvas: var(--surface-canvas);
+  --color-surface-panel: var(--surface-panel);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-selected: var(--surface-selected);
+  --color-surface-scrim: var(--surface-scrim);
+  --color-surface-subtle: var(--surface-sunken);
+  --color-edge-subtle: var(--border-subtle);
+  --color-edge: var(--border-default);
+  --color-edge-strong: var(--border-strong);
+  --color-ink: var(--text-primary);
+  --color-ink-secondary: var(--text-secondary);
+  --color-ink-muted: var(--text-muted);
+  --color-ink-disabled: var(--text-disabled);
+  --color-ink-on-accent: var(--text-on-accent);
+  --color-status-accent: var(--accent);
+  --color-status-accent-vivid: var(--accent-vivid);
+  --color-status-accent-soft: var(--accent-soft);
+  --color-status-accent-border: var(--accent-border);
+  --color-status-success: var(--success);
+  --color-status-success-soft: var(--success-soft);
+  --color-status-success-border: var(--success-border);
+  --color-status-info: var(--info);
+  --color-status-info-soft: var(--info-soft);
+  --color-status-info-border: var(--info-border);
+  --color-status-warning: var(--warning);
+  --color-status-warning-soft: var(--warning-soft);
+  --color-status-warning-border: var(--warning-border);
+  --color-status-critical: var(--critical);
+  --color-status-critical-soft: var(--critical-soft);
+  --color-status-critical-border: var(--critical-border);
+  --color-status-neutral: var(--neutral);
+  --color-status-neutral-soft: var(--neutral-soft);
+  --color-status-neutral-border: var(--neutral-border);
+  --color-status-warn: var(--warning);
+  --color-status-warn-soft: var(--warning-soft);
+  --color-status-warn-border: var(--warning-border);
+  --color-status-danger: var(--critical);
+  --color-status-danger-soft: var(--critical-soft);
+  --color-status-danger-border: var(--critical-border);
+  --color-status-ok: var(--success);
+  --color-status-ok-soft: var(--success-soft);
+  --color-status-ok-border: var(--success-border);
+  --color-map-chrome: var(--map-chrome-bg);
+  --color-map-chrome-border: var(--map-chrome-border);
+  --color-map-chrome-ink: var(--map-chrome-text);
+  --color-map-chrome-ink-muted: var(--map-chrome-text-muted);
+  --color-agent-bg: var(--surface-canvas);
+  --color-agent-panel: var(--surface-panel);
+  --color-agent-panel2: var(--surface-raised);
+  --color-agent-glass: var(--surface-overlay);
+  --color-agent-border: var(--border-subtle);
+  --color-agent-border-mid: var(--border-default);
+  --color-agent-tp: var(--text-primary);
+  --color-agent-ts: var(--text-secondary);
+  --color-agent-tm: var(--text-muted);
+  --color-agent-accent: var(--agent-accent);
+  --color-agent-accent-dim: var(--accent-soft);
+  --color-agent-accent-brd: var(--accent-border);
+  --color-agent-blue: var(--info);
+  --color-agent-orange: var(--warning);
+  --color-agent-red: var(--critical);
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: var(--accent);
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --text-micro: var(--font-micro);
+  --text-micro--line-height: var(--leading-tight);
+  --text-caption: var(--font-caption);
+  --text-caption--line-height: var(--leading-tight);
+  --text-meta: var(--font-meta);
+  --text-meta--line-height: var(--leading-normal);
+  --text-body: var(--font-body);
+  --text-body--line-height: var(--leading-normal);
+  --text-title: var(--font-title);
+  --text-title--line-height: var(--leading-tight);
+  --text-heading: var(--font-heading);
+  --text-heading--line-height: var(--leading-tight);
+  --spacing-control-sm: var(--control-sm);
+  --spacing-control-md: var(--control-md);
+  --spacing-control-lg: var(--control-lg);
+  --spacing-row-sm: var(--row-sm);
+  --spacing-row-md: var(--row-md);
+  --spacing-row-lg: var(--row-lg);
+  --spacing-icon-sm: var(--icon-sm);
+  --spacing-icon-md: var(--icon-md);
+  --spacing-icon-lg: var(--icon-lg);
+  --spacing-panel: var(--panel-pad);
+  --spacing-topbar: var(--topH);
+  --spacing-statusbar: var(--stH);
+  --spacing-rail: var(--railW);
+  --spacing-sidebar: var(--sw);
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-pill: var(--radius-pill);
+  --radius-chrome: var(--map-chrome-radius);
+  --font-sans: "DM Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --shadow-raised: var(--elevation-raised);
+  --shadow-overlay: var(--elevation-overlay);
+  --shadow-drawer: var(--elevation-drawer);
+  --shadow-chrome: var(--map-chrome-shadow);
+  --shadow-agent-sm: var(--elevation-raised);
+  --shadow-agent-md: var(--elevation-overlay);
+  --shadow-agent-lg: var(--elevation-drawer);
+  --animate-hb-scan: hbScan 2.2s ease-in-out infinite;
+  --animate-ring-pulse: ringPulse 2.5s ease-out infinite;
+  --animate-ring-pulse-delay: ringPulse 2.5s ease-out 0.8s infinite;
+  --animate-ring-pulse-delay2: ringPulse 2.5s ease-out 1.6s infinite;
+  --animate-fade-up: fadeUp 0.2s ease both;
+  --animate-spulse: spulse 1.6s ease-in-out infinite;
+  --animate-dot-1: dotPulse 1.3s infinite 0s;
+  --animate-dot-2: dotPulse 1.3s infinite 0.18s;
+  --animate-dot-3: dotPulse 1.3s infinite 0.36s;
+  --animate-sidebar-in: sidebarIn 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-sidebar-out: sidebarOut 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-slide-from-right: slideFromRight 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes hbScan {
+  0% { left: -30%; opacity: 0; }
+  20% { opacity: 0.7; }
+  80% { opacity: 0.7; }
+  100% { left: 110%; opacity: 0; }
+}
+@keyframes ringPulse {
+  0% { transform: translate(-50%, -50%) scale(0.6); opacity: 0.5; }
+  100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes spulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@keyframes dotPulse {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.75); }
+  40% { opacity: 1; transform: scale(1); }
+}
+@keyframes sidebarIn {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+@keyframes sidebarOut {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+@keyframes slideFromRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}

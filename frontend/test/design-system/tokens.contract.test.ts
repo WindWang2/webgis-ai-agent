@@ -215,25 +215,32 @@ describe('V4 design tokens — Tailwind exposure', () => {
   });
 
   it('compiles opacity modifiers on token colours (bg-surface-raised/90 used to emit nothing)', async () => {
+    // Tailwind v4 port: the v3 PostCSS-plugin entrypoint is gone; compile the
+    // real @theme CSS through @tailwindcss/postcss with an inline source.
+    const { readFile } = await import('node:fs/promises');
+    const path = await import('node:path');
     const postcss = (await import('postcss')).default;
-    const tailwind = (await import('tailwindcss')).default;
-    const out = await postcss([
-      tailwind({
-        ...config,
-        content: [{ raw: '<div class="bg-surface-raised/90 text-status-warn border-edge-subtle/60 bg-surface-panel from-surface-panel to-surface-raised/80"></div>', extension: 'html' }],
-        corePlugins: { preflight: false },
-      }),
-    ]).process('@tailwind utilities;', { from: undefined });
+    const twPostcss = (await import('@tailwindcss/postcss')).default;
+    const appDir = path.resolve(__dirname, '../../app');
+    const themeCss = await readFile(path.join(appDir, 'tailwind-theme.css'), 'utf8');
+    const input = [
+      '@import "tailwindcss" source(none);',
+      themeCss,
+      '@source inline("bg-surface-raised/90 text-status-warn border-edge-subtle/60 bg-surface-panel from-surface-panel to-surface-raised/80");',
+    ].join('\n');
+    const out = await postcss([twPostcss()]).process(input, {
+      from: path.join(appDir, '__tw_probe__.css'),
+    });
     const css = out.css.replace(/\s+/g, ' ');
-    expect(css).toContain('color-mix(in srgb, var(--surface-raised) 90%, transparent)');
-    expect(css).toContain('color-mix(in srgb, var(--border-subtle) 60%, transparent)');
-    expect(css).toContain('color: var(--warning)');
-    // Gradients call the colour fn with a *numeric* opacityValue (0) — that
-    // crashed the production build before the String() coercion.
-    expect(css).toContain('--tw-gradient-from: var(--surface-panel)');
-    expect(css).toContain('color-mix(in srgb, var(--surface-panel) 0%, transparent)');
-    // No modifier → the bare var (Tailwind adds an inert --tw-bg-opacity: 1).
-    expect(css).toMatch(/\.bg-surface-panel \{ (--tw-bg-opacity: 1; )?background-color: var\(--surface-panel\) \}/);
+    // v4 derives modifier alpha via color-mix (oklab by default; v3 shim was srgb).
+    expect(css).toMatch(/color-mix\(in \w+, var\(--color-surface-raised\) 90%, transparent\)/);
+    expect(css).toMatch(/color-mix\(in \w+, var\(--color-edge-subtle\) 60%, transparent\)/);
+    expect(css).toContain('color: var(--color-status-warn)');
+    // Gradients: from-color keeps the bare var; the /80 to-color mixes alpha.
+    expect(css).toMatch(/--tw-gradient-from: var\(--color-surface-panel\)/);
+    expect(css).toMatch(/color-mix\(in \w+, var\(--color-surface-raised\) 80%, transparent\)/);
+    // No modifier -> the bare var (v4 drops v3's inert --tw-bg-opacity).
+    expect(css).toMatch(/\.bg-surface-panel \{ background-color: var\(--color-surface-panel\);? \}/);
   });
 
   it('exposes the dense type scale, control metrics and radius scale', () => {

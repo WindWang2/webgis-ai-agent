@@ -8,9 +8,9 @@
 -r requirements.txt
 
 # Testing framework
-# 依赖并集：#1887（pytest>=9.2.0）+ #1886（pytest-asyncio>=1.4.1.post1）
+# 依赖并集：#1887（pytest>=9.2.0）+ #1886（pytest-asyncio>=1.5.0）
 pytest>=9.2.0
-pytest-asyncio>=1.4.1.post1
+pytest-asyncio>=1.5.0
 pytest-cov>=7.1.0
 pytest-timeout>=2.4.0
 # 里程碑并行门禁（`pytest tests/unit -q -n 2 ...`，ADR-0153 门禁书命令）
@@ -30,4 +30,4 @@ openpyxl>=3.1.5
 python-calamine>=0.9.1
 
 # 与 requirements.txt / requirements.lock 同步，避免 CI 约束安装冲突。
-pypdf>=6.21.4  # WeasyPrint 70 ObjStm 页对象结构化读取（test_report_service_vector_svg）
+pypdf>=7.0.1  # WeasyPrint 70 ObjStm 页对象结构化读取（test_report_service_vector_svg）
