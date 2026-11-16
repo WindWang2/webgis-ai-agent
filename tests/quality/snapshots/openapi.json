@@ -3271,6 +3271,66 @@
     "title": "ChartArtifactResponse",
     "type": "object"
    },
+   "ChartIn": {
+    "properties": {
+     "aggregation": {
+      "default": "count",
+      "title": "Aggregation",
+      "type": "string"
+     },
+     "bins": {
+      "default": 10,
+      "title": "Bins",
+      "type": "integer"
+     },
+     "chart_id": {
+      "title": "Chart Id",
+      "type": "string"
+     },
+     "field": {
+      "title": "Field",
+      "type": "string"
+     },
+     "kind": {
+      "title": "Kind",
+      "type": "string"
+     },
+     "layer_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Layer Id"
+     },
+     "title": {
+      "default": "",
+      "title": "Title",
+      "type": "string"
+     },
+     "value_field": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value Field"
+     }
+    },
+    "required": [
+     "chart_id",
+     "kind",
+     "field"
+    ],
+    "title": "ChartIn",
+    "type": "object"
+   },
    "ChatAttachmentRef": {
     "description": "G36（ADR-0291）：聊天附件引用 —— 只携 evidence ref，不携字节。\n\nbytes 仅经受权 intake 端点（multipart）进入 blob store；本 DTO 是\nChatRequest 的加性字段（256KB 整闸不受影响）。服务端在 turn 发送时\n复验归属/存在/约束（bridge ``_resolve_turn_images``）。",
     "properties": {
@@ -4022,6 +4082,109 @@
      }
     },
     "title": "ComponentPlacement",
+    "type": "object"
+   },
+   "ConditionIn": {
+    "properties": {
+     "chart_id": {
+      "title": "Chart Id",
+      "type": "string"
+     },
+     "condition_id": {
+      "title": "Condition Id",
+      "type": "string"
+     },
+     "field": {
+      "title": "Field",
+      "type": "string"
+     },
+     "gt": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Gt"
+     },
+     "gte": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Gte"
+     },
+     "include_null": {
+      "default": false,
+      "title": "Include Null",
+      "type": "boolean"
+     },
+     "kind": {
+      "title": "Kind",
+      "type": "string"
+     },
+     "labels": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Labels"
+     },
+     "lt": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Lt"
+     },
+     "lte": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Lte"
+     },
+     "values": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Values"
+     }
+    },
+    "required": [
+     "kind",
+     "condition_id",
+     "chart_id",
+     "field"
+    ],
+    "title": "ConditionIn",
     "type": "object"
    },
    "ConditionalWhen": {
@@ -10169,6 +10332,21 @@
      "expected_revision"
     ],
     "title": "InitProjectBody",
+    "type": "object"
+   },
+   "InspectBody": {
+    "properties": {
+     "ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref"
+    ],
+    "title": "InspectBody",
     "type": "object"
    },
    "InspectRequest": {
@@ -19998,6 +20176,38 @@
     "title": "SampleFeatureOut",
     "type": "object"
    },
+   "SaveViewBody": {
+    "properties": {
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "title",
+     "plan"
+    ],
+    "title": "SaveViewBody",
+    "type": "object"
+   },
    "ScalePortrayalApplyBody": {
     "properties": {
      "expected_revision": {
@@ -23864,6 +24074,56 @@
     "title": "UnitConversionEvidence",
     "type": "object"
    },
+   "UpdateViewBody": {
+    "properties": {
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "plan": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Plan"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Status"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     }
+    },
+    "required": [
+     "expected_revision"
+    ],
+    "title": "UpdateViewBody",
+    "type": "object"
+   },
    "UploadDeleteResponse": {
     "description": "DELETE /uploads/{upload_id} 返回。",
     "examples": [
@@ -26530,6 +26790,106 @@
      "expected_revision"
     ],
     "title": "UpdatePlanBody",
+    "type": "object"
+   },
+   "app__api__routes__linked_exploration__ApplyBody": {
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Revision"
+     }
+    },
+    "title": "ApplyBody",
+    "type": "object"
+   },
+   "app__api__routes__linked_exploration__ExportBody": {
+    "properties": {
+     "dpi": {
+      "default": 150,
+      "maximum": 400.0,
+      "minimum": 72.0,
+      "title": "Dpi",
+      "type": "integer"
+     },
+     "fmt": {
+      "default": "svg",
+      "pattern": "^(svg|png|pdf)$",
+      "title": "Fmt",
+      "type": "string"
+     },
+     "plan": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Plan"
+     },
+     "title": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Title",
+      "type": "string"
+     },
+     "view_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "View Id"
+     }
+    },
+    "title": "ExportBody",
+    "type": "object"
+   },
+   "app__api__routes__linked_exploration__PreviewBody": {
+    "properties": {
+     "charts": {
+      "items": {
+       "$ref": "#/components/schemas/ChartIn"
+      },
+      "title": "Charts",
+      "type": "array"
+     },
+     "conditions": {
+      "items": {
+       "$ref": "#/components/schemas/ConditionIn"
+      },
+      "title": "Conditions",
+      "type": "array"
+     },
+     "create_handle": {
+      "default": true,
+      "title": "Create Handle",
+      "type": "boolean"
+     },
+     "ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref"
+    ],
+    "title": "PreviewBody",
     "type": "object"
    },
    "app__api__routes__print_layout__ApplyBody": {
@@ -56491,6 +56851,786 @@
     "tags": [
      "图层管理",
      "图层数据"
+    ]
+   }
+  },
+  "/api/v1/linked-exploration/export": {
+   "post": {
+    "description": "冻结导出：组合条件进图面 + facet 图表统计同范围（SVG/PNG/PDF）。",
+    "operationId": "export_exploration_api_v1_linked_exploration_export_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__linked_exploration__ExportBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Export Exploration Api V1 Linked Exploration Export Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Export Exploration",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
+    ]
+   }
+  },
+  "/api/v1/linked-exploration/inspect": {
+   "post": {
+    "operationId": "inspect_source_api_v1_linked_exploration_inspect_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InspectBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Inspect Source Api V1 Linked Exploration Inspect Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect Source",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
+    ]
+   }
+  },
+  "/api/v1/linked-exploration/preview": {
+   "post": {
+    "operationId": "preview_conditions_api_v1_linked_exploration_preview_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__linked_exploration__PreviewBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Preview Conditions Api V1 Linked Exploration Preview Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Preview Conditions",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
+    ]
+   }
+  },
+  "/api/v1/linked-exploration/views": {
+   "get": {
+    "operationId": "list_views_api_v1_linked_exploration_views_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_archived",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Include Archived",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Views Api V1 Linked Exploration Views Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Views",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
+    ]
+   },
+   "post": {
+    "operationId": "save_view_api_v1_linked_exploration_views_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SaveViewBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Save View Api V1 Linked Exploration Views Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Save View",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
+    ]
+   }
+  },
+  "/api/v1/linked-exploration/views/{view_id}": {
+   "delete": {
+    "operationId": "delete_view_api_v1_linked_exploration_views__view_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "view_id",
+      "required": true,
+      "schema": {
+       "title": "View Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "expected_revision",
+      "required": true,
+      "schema": {
+       "minimum": 1,
+       "title": "Expected Revision",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Delete View Api V1 Linked Exploration Views  View Id  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete View",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
+    ]
+   },
+   "get": {
+    "operationId": "get_view_api_v1_linked_exploration_views__view_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "view_id",
+      "required": true,
+      "schema": {
+       "title": "View Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get View Api V1 Linked Exploration Views  View Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get View",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
+    ]
+   },
+   "patch": {
+    "operationId": "update_view_api_v1_linked_exploration_views__view_id__patch",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "view_id",
+      "required": true,
+      "schema": {
+       "title": "View Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UpdateViewBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Update View Api V1 Linked Exploration Views  View Id  Patch",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Update View",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
+    ]
+   }
+  },
+  "/api/v1/linked-exploration/views/{view_id}/apply": {
+   "post": {
+    "operationId": "apply_view_api_v1_linked_exploration_views__view_id__apply_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "view_id",
+      "required": true,
+      "schema": {
+       "title": "View Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__linked_exploration__ApplyBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Apply View Api V1 Linked Exploration Views  View Id  Apply Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Apply View",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
+    ]
+   }
+  },
+  "/api/v1/linked-exploration/views/{view_id}/open": {
+   "post": {
+    "operationId": "open_view_api_v1_linked_exploration_views__view_id__open_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "view_id",
+      "required": true,
+      "schema": {
+       "title": "View Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Open View Api V1 Linked Exploration Views  View Id  Open Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Open View",
+    "tags": [
+     "联合探索 G46",
+     "联合探索 G46"
     ]
    }
   },

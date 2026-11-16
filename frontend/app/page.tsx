@@ -320,6 +320,8 @@ export default function Home() {
         group: tCmd('group.tools'),
         keywords: 'explore filter linked charts lianhe tansuo shaixuan',
         run: () => useLinkedExplorationStore.getState().openWith(),
+      },
+      {
         id: 'tools.coordinateOperations',
         title: tCmd('coordinateOperations'),
         group: tCmd('group.tools'),

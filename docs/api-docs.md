@@ -669,6 +669,21 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
 | `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/commit` | Commit | object |
 
+### 联合探索 G46
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/linked-exploration/inspect` | Inspect Source | object |
+| `POST` | `/api/v1/linked-exploration/preview` | Preview Conditions | object |
+| `GET` | `/api/v1/linked-exploration/views` | List Views | object |
+| `POST` | `/api/v1/linked-exploration/views` | Save View | object |
+| `GET` | `/api/v1/linked-exploration/views/{view_id}` | Get View | object |
+| `PATCH` | `/api/v1/linked-exploration/views/{view_id}` | Update View | object |
+| `DELETE` | `/api/v1/linked-exploration/views/{view_id}` | Delete View | object |
+| `POST` | `/api/v1/linked-exploration/views/{view_id}/open` | Open View | object |
+| `POST` | `/api/v1/linked-exploration/views/{view_id}/apply` | Apply View | object |
+| `POST` | `/api/v1/linked-exploration/export` | Export Exploration | object |
+
 ### Dorling 圆面积 cartogram 工作台
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1530,6 +1545,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：693（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：703（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->
