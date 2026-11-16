@@ -27,11 +27,14 @@
     （重阶段统一锁内执行）
 - 空库 alembic upgrade head 实测：exploration_views 落地、head=g46_linked_exploration_views
 
-## L3 Pi journey（真实子进程）— opt-in 门控（PI_JOURNEY_E2E=1）
-- test_pi_g46_linked_exploration_journey.py：stub LLM → uvicorn(app) → Pi 子进程
-  tool_search 发现 → webgis_exploration_inspect（feature_count=6）→ 组合 preview
-  （oracle match=2、facet=3、handle）→ view_save（DB 行落盘证据）→ open ready →
-  apply count=2 → MapSpec 组件持久化。10 个 gate。待真实执行记录（重阶段锁排队）。
+## L3 Pi journey（真实子进程）— 全绿 ✅（PI_JOURNEY_E2E=1，2026-11-16）
+- test_pi_g46_linked_exploration_journey.py：**1 passed in 25.7s（11 gates 全过）**
+  真实链：stub LLM（SSE 流式）→ uvicorn(app) → Pi 子进程 tool_search 发现 →
+  webgis_exploration_inspect（feature_count=6）→ 组合 preview（oracle match=2、
+  facet=3、handle）→ view_save（DB 行落盘证据）→ views list 分支 → open ready →
+  apply count=2 → MapSpec 组件持久化（checkpoint/revisions 落盘）
+- 途中修复：pi-rpc 管道继承挂起（driver finally 终止子进程）；stub 加固
+  （请求日志/异常不退出/存活快败）；驱动重复重试块修复
 
 ## L4 浏览器 e2e — 未运行（阻塞：无 Playwright journey 环境时段）
 - 前端组件/联动已由 L1 组件测+条件 store 测覆盖逻辑面；浏览器层标未测（诚实披露）
