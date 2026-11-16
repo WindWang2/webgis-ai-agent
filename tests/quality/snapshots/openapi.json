@@ -8085,6 +8085,9 @@
      "max": {
       "anyOf": [
        {
+        "type": "integer"
+       },
+       {
         "type": "number"
        },
        {
@@ -8108,6 +8111,9 @@
      },
      "min": {
       "anyOf": [
+       {
+        "type": "integer"
+       },
        {
         "type": "number"
        },
