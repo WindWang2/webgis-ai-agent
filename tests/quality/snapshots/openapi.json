@@ -3986,6 +3986,145 @@
     "title": "ComponentPlacement",
     "type": "object"
    },
+   "ConditionalWhen": {
+    "properties": {
+     "field": {
+      "title": "Field",
+      "type": "string"
+     },
+     "op": {
+      "enum": [
+       "eq",
+       "ne",
+       "in",
+       "not_in",
+       "gt",
+       "gte",
+       "lt",
+       "lte"
+      ],
+      "title": "Op",
+      "type": "string"
+     },
+     "value": {
+      "anyOf": [
+       {},
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value"
+     },
+     "values": {
+      "anyOf": [
+       {
+        "items": {},
+        "maxItems": 256,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Values"
+     }
+    },
+    "required": [
+     "field",
+     "op"
+    ],
+    "title": "ConditionalWhen",
+    "type": "object"
+   },
+   "ContractCreateRequest": {
+    "properties": {
+     "document": {
+      "$ref": "#/components/schemas/ContractDocument"
+     },
+     "ref_id": {
+      "maxLength": 128,
+      "minLength": 4,
+      "title": "Ref Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "ref_id",
+     "document"
+    ],
+    "title": "ContractCreateRequest",
+    "type": "object"
+   },
+   "ContractDocument": {
+    "description": "合同声明正文（版本化不可变内容；canonical digest 的输入）。",
+    "properties": {
+     "cross_rules": {
+      "items": {
+       "$ref": "#/components/schemas/CrossRuleIn"
+      },
+      "maxItems": 64,
+      "title": "Cross Rules",
+      "type": "array"
+     },
+     "fields": {
+      "items": {
+       "$ref": "#/components/schemas/FieldRuleIn"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Fields",
+      "type": "array"
+     },
+     "notes": {
+      "anyOf": [
+       {
+        "maxLength": 1024,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Notes"
+     },
+     "title": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Title",
+      "type": "string"
+     },
+     "version": {
+      "const": 1,
+      "default": 1,
+      "title": "Version",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "fields"
+    ],
+    "title": "ContractDocument",
+    "type": "object"
+   },
+   "ContractReviseRequest": {
+    "description": "草稿修订（revision CAS；active/retired 不可改内容 —— 新草稿走新行）。",
+    "properties": {
+     "document": {
+      "$ref": "#/components/schemas/ContractDocument"
+     },
+     "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "expected_revision",
+     "document"
+    ],
+    "title": "ContractReviseRequest",
+    "type": "object"
+   },
    "CreateDataSourceRequest": {
     "description": "POST /data-fabric/sources 请求体。",
     "examples": [
@@ -4208,6 +4347,134 @@
      "payload"
     ],
     "title": "CreateTemplateRequest",
+    "type": "object"
+   },
+   "CrossRuleIn": {
+    "description": "跨字段封闭规则：conditional_required | compare | unique。",
+    "properties": {
+     "fields": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 4,
+        "minItems": 1,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fields"
+     },
+     "kind": {
+      "enum": [
+       "conditional_required",
+       "compare",
+       "unique"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "left": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Left"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "maxLength": 256,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     },
+     "null_policy": {
+      "default": "ignore",
+      "enum": [
+       "ignore",
+       "participate"
+      ],
+      "title": "Null Policy",
+      "type": "string"
+     },
+     "op": {
+      "anyOf": [
+       {
+        "enum": [
+         "lt",
+         "lte",
+         "gt",
+         "gte"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Op"
+     },
+     "require": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 8,
+        "minItems": 1,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Require"
+     },
+     "right": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Right"
+     },
+     "rule_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Rule Id",
+      "type": "string"
+     },
+     "when": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ConditionalWhen"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "rule_id",
+     "kind"
+    ],
+    "title": "CrossRuleIn",
     "type": "object"
    },
    "CubeBuildRequest": {
@@ -7719,6 +7986,190 @@
      "field"
     ],
     "title": "FieldProposalOut",
+    "type": "object"
+   },
+   "FieldRuleIn": {
+    "description": "单字段声明（严格标量 + 取值域 + 展示元数据）。",
+    "properties": {
+     "default": {
+      "anyOf": [
+       {},
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Default"
+     },
+     "description": {
+      "anyOf": [
+       {
+        "maxLength": 512,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "empty_string": {
+      "default": "reject",
+      "enum": [
+       "reject",
+       "allow"
+      ],
+      "title": "Empty String",
+      "type": "string"
+     },
+     "enum": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 256,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Enum"
+     },
+     "exclusive_max": {
+      "default": false,
+      "title": "Exclusive Max",
+      "type": "boolean"
+     },
+     "exclusive_min": {
+      "default": false,
+      "title": "Exclusive Min",
+      "type": "boolean"
+     },
+     "field": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Field",
+      "type": "string"
+     },
+     "form_control": {
+      "anyOf": [
+       {
+        "enum": [
+         "text",
+         "textarea",
+         "select",
+         "date",
+         "datetime-local"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Form Control"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     },
+     "max": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Max"
+     },
+     "max_length": {
+      "anyOf": [
+       {
+        "maximum": 100000.0,
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Max Length"
+     },
+     "min": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Min"
+     },
+     "min_length": {
+      "anyOf": [
+       {
+        "maximum": 10000.0,
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Min Length"
+     },
+     "nullable": {
+      "default": false,
+      "title": "Nullable",
+      "type": "boolean"
+     },
+     "required": {
+      "default": false,
+      "title": "Required",
+      "type": "boolean"
+     },
+     "type": {
+      "enum": [
+       "string",
+       "number",
+       "integer",
+       "boolean",
+       "date",
+       "datetime"
+      ],
+      "title": "Type",
+      "type": "string"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     }
+    },
+    "required": [
+     "field",
+     "type"
+    ],
+    "title": "FieldRuleIn",
     "type": "object"
    },
    "FindingOut": {
@@ -33884,6 +34335,890 @@
      }
     ],
     "summary": "Withdraw Feature Proposal",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/field-contracts": {
+   "get": {
+    "operationId": "list_contracts_api_v1_chat_sessions__session_id__field_contracts_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "ref_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Ref Id"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Contracts Api V1 Chat Sessions  Session Id  Field Contracts Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Contracts",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   },
+   "post": {
+    "operationId": "create_contract_api_v1_chat_sessions__session_id__field_contracts_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ContractCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Contract Api V1 Chat Sessions  Session Id  Field Contracts Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Contract",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/field-contracts-assessments/{assessment_id}": {
+   "get": {
+    "operationId": "get_assessment_api_v1_chat_sessions__session_id__field_contracts_assessments__assessment_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "assessment_id",
+      "required": true,
+      "schema": {
+       "title": "Assessment Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Assessment Api V1 Chat Sessions  Session Id  Field Contracts Assessments  Assessment Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Assessment",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/field-contracts-assessments/{assessment_id}/findings": {
+   "get": {
+    "operationId": "assessment_findings_api_v1_chat_sessions__session_id__field_contracts_assessments__assessment_id__findings_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "assessment_id",
+      "required": true,
+      "schema": {
+       "title": "Assessment Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "cursor",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Cursor"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "code",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Code"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Assessment Findings Api V1 Chat Sessions  Session Id  Field Contracts Assessments  Assessment Id  Findings Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Assessment Findings",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/field-contracts/datasets/{ref_id}/binding": {
+   "get": {
+    "operationId": "get_binding_status_api_v1_chat_sessions__session_id__field_contracts_datasets__ref_id__binding_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Binding Status Api V1 Chat Sessions  Session Id  Field Contracts Datasets  Ref Id  Binding Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Binding Status",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/field-contracts/datasets/{ref_id}/observe": {
+   "get": {
+    "operationId": "observe_fields_api_v1_chat_sessions__session_id__field_contracts_datasets__ref_id__observe_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "ref_id",
+      "required": true,
+      "schema": {
+       "title": "Ref Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Observe Fields Api V1 Chat Sessions  Session Id  Field Contracts Datasets  Ref Id  Observe Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Observe Fields",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/field-contracts/{contract_id}": {
+   "get": {
+    "operationId": "get_contract_api_v1_chat_sessions__session_id__field_contracts__contract_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "contract_id",
+      "required": true,
+      "schema": {
+       "title": "Contract Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Contract Api V1 Chat Sessions  Session Id  Field Contracts  Contract Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Contract",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   },
+   "put": {
+    "operationId": "revise_contract_api_v1_chat_sessions__session_id__field_contracts__contract_id__put",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "contract_id",
+      "required": true,
+      "schema": {
+       "title": "Contract Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ContractReviseRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Revise Contract Api V1 Chat Sessions  Session Id  Field Contracts  Contract Id  Put",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Revise Contract",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/field-contracts/{contract_id}/activate": {
+   "post": {
+    "description": "owner 激活（完整零违反收据 + 编辑锁内指纹复核 + DB CAS）。",
+    "operationId": "activate_contract_api_v1_chat_sessions__session_id__field_contracts__contract_id__activate_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "contract_id",
+      "required": true,
+      "schema": {
+       "title": "Contract Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Activate Contract Api V1 Chat Sessions  Session Id  Field Contracts  Contract Id  Activate Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Activate Contract",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/field-contracts/{contract_id}/assess": {
+   "post": {
+    "operationId": "start_assessment_api_v1_chat_sessions__session_id__field_contracts__contract_id__assess_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "contract_id",
+      "required": true,
+      "schema": {
+       "title": "Contract Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Start Assessment Api V1 Chat Sessions  Session Id  Field Contracts  Contract Id  Assess Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Start Assessment",
+    "tags": [
+     "AI对话",
+     "AI对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/field-contracts/{contract_id}/retire": {
+   "post": {
+    "operationId": "retire_contract_api_v1_chat_sessions__session_id__field_contracts__contract_id__retire_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "contract_id",
+      "required": true,
+      "schema": {
+       "title": "Contract Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Retire Contract Api V1 Chat Sessions  Session Id  Field Contracts  Contract Id  Retire Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Retire Contract",
     "tags": [
      "AI对话",
      "AI对话"

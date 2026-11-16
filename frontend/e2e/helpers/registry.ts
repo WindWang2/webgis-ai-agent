@@ -186,6 +186,15 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['real'],
     owner: 'g37-session-model-runtime',
   },
+,
+  {
+    id: 'j24',
+    file: 'journeys/j24-g44-field-contracts.journey.ts',
+    title: '业务字段合同：作者激活→面板绑定→结构化表单→刷新持久',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g44-field-contracts',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);

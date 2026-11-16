@@ -179,6 +179,19 @@ async def merge_proposal(
         )
 
     # ── 构造 G14 plan（seed = 持久 op_seed → 出生身份与候选一致）。
+    # G44：merge 与其它写入口同链 —— 当前 active 合同参与候选校验
+    # （批准后的合同收紧在这里显式阻断，旧 approval 不授予新豁免，F22）。
+    from app.services.field_contracts import enforcement as fc_enforcement
+
+    try:
+        enforced = await fc_enforcement.resolve_active_contract(session_id, proposal.ref_id)
+    except fc_enforcement.ContractStateUnavailable as exc:
+        raise FeatureProposalBlocked(
+            "contract_state_unavailable",
+            "field-contract state unreadable; merge blocked (fail-closed)",
+            {"ref_id": proposal.ref_id},
+        ) from exc
+
     plan, findings = build_plan(
         ref_id=proposal.ref_id,
         payload=payload,
@@ -189,6 +202,7 @@ async def merge_proposal(
         content_revision=current_revision,
         target_payloads=dep_payloads,
         plan_seed=proposal.op_seed,
+        field_contract=enforced,
     )
     if not plan or not plan.get("committable"):
         raise FeatureProposalConflict(

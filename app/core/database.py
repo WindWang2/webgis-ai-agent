@@ -68,7 +68,26 @@ def get_engine():
             "pool_recycle": 3600,
         })
 
-    return create_engine(**engine_kwargs)
+    engine = create_engine(**engine_kwargs)
+
+    if is_sqlite:
+        # G44（dev/test lane 可靠性）：journal 模式切 WAL —— 读写不再互斥，
+        # 请求内审计/任务心跳等短写事务与领域并发写（如 field_contracts 的
+        # 后台评估）在 sqlite lane 下排队而非互相打 locked。仅 sqlite 生效，
+        # 生产 Postgres 路径零改动。
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_wal(dbapi_connection, _record):  # noqa: ANN001
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.close()
+            except Exception:  # noqa: BLE001 — PRAGMA 失败不阻断连接
+                pass
+
+    return engine
 
 
 Engine = get_engine()

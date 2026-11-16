@@ -572,7 +572,9 @@
     "pickTarget": "Pick a layer to edit",
     "createEmptyTitle": "Create empty layer",
     "createFailed": "Creation failed",
-    "newLayerName": "New layer"
+    "newLayerName": "New layer",
+    "formInvalid": "Attribute form has validation errors",
+    "advancedJson": "Advanced (JSON)"
   },
   "labelEditor": {
     "title": "Label editing",

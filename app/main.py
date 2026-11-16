@@ -1195,6 +1195,9 @@ app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对�
 # G32：持久要素变更提案与冲突审阅（agent 起草 / owner 审阅批准 / 真实提交桥）。
 from app.api.routes import feature_proposals as feature_proposals_routes  # noqa: E402
 app.include_router(feature_proposals_routes.router, prefix="/api/v1", tags=["AI对话"])
+# G44：业务字段合同（owner 声明/完整评估/激活/退役；结构化录入经 feature-edits 同链）。
+from app.api.routes import field_contracts as field_contracts_routes  # noqa: E402
+app.include_router(field_contracts_routes.router, prefix="/api/v1", tags=["AI对话"])
 # ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
 app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["AI对话"])
