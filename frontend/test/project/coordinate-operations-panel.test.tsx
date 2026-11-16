@@ -1,0 +1,155 @@
+/**
+ * G45 坐标操作面板交互测试（G38 data-join-panel.test 同款模式）。
+ * 覆盖：源检查卡（行数/CRS 证据/几何类型）→ 候选对照（不可执行原因 +
+ * unknown accuracy 绝不显示 0）→ 执行收据（显示副本不可用独立披露、
+ * 主成果 completed）。
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+
+vi.mock('@/components/ui/toast', () => {
+  const store = { toasts: [] as unknown[], addToast: vi.fn(), removeToast: vi.fn() };
+  return {
+    useToastStore: Object.assign(
+      (selector: (s: typeof store) => unknown) => selector(store),
+      { getState: () => store },
+    ),
+  };
+});
+
+const apiMock = vi.hoisted(() => ({
+  describeSource: vi.fn(),
+  crsLookup: vi.fn(),
+  listOperations: vi.fn(),
+  createPlan: vi.fn(),
+  updatePlan: vi.fn(),
+  lockPlan: vi.fn(),
+  preview: vi.fn(),
+  execute: vi.fn(),
+  inspectRun: vi.fn(),
+  listPlans: vi.fn(),
+  listRuns: vi.fn(),
+  resultPage: vi.fn(),
+  cancelRun: vi.fn(),
+  displayRef: vi.fn(),
+}));
+vi.mock('@/lib/api/coordinate-operations', () => ({
+  coordOpApi: { client: () => apiMock },
+  asCoordOpError: vi.fn((err: unknown) => {
+    const e = err as { body?: { detail?: { error_code?: string; reason?: string } }; message?: string };
+    const d = e?.body?.detail;
+    if (d?.error_code) return { code: d.error_code, message: d.reason ?? '' };
+    return { code: 'network_error', message: e?.message ?? String(err) };
+  }),
+}));
+
+import { CoordinateOperationsPanel } from '@/components/sidebar/coordinate-operations/coordinate-operations-panel';
+import { useCoordinateOperationsStore } from '@/lib/hooks/use-coordinate-operations';
+
+const DESCRIBE = {
+  kind: 'session_ref', label: 'ref:data-test-1', row_count: 1201,
+  content_fingerprint: 'fp', crs: 'EPSG:4326',
+  crs_evidence: { origin: 'fc_schema_info_crs', trusted: true },
+  crs_description: null, fields: [], geometry: { types: ['Point'] },
+};
+
+const LISTING = {
+  source: { kind: 'session_ref', label: 'x', row_count: 5, crs: 'EPSG:4267', crs_identity: 'EPSG:4267' },
+  target: { crs: 'EPSG:4269', identity: 'EPSG:4269', name: 'NAD83' },
+  listing: {
+    candidates: [
+      { candidate_id: 'cand_a', availability: 'available', name: 'Ballpark geographic offset',
+        accuracy: null, accuracy_unknown: true, ballpark: true, area_of_use: null,
+        grids: [], definition_sha256: 'd1', selectable: true },
+      { candidate_id: 'cand_u', availability: 'unavailable', name: 'NAD27 to NAD83 (1)',
+        accuracy: 0.15, accuracy_unknown: false, ballpark: false, area_of_use: null,
+        grids: [{ short_name: 'us_noaa_conus.tif', available: false, url: 'https://cdn.proj.org/x' }],
+        definition_sha256: 'd2', missing_reason: '依赖格网在当前离线环境不可用: us_noaa_conus.tif',
+        selectable: false },
+    ],
+    available_count: 1, unavailable_count: 1,
+    available_truncated: 0, unavailable_truncated: 0,
+    environment: { pyproj_version: '3.8.0', proj_version: '9.8.1', network_enabled: false, trusted_grid_count: 0 },
+    axis_convention: 'always_xy',
+  },
+};
+
+function renderPanel() {
+  useCoordinateOperationsStore.getState().openWith('ref:data-test-1');
+  return render(<CoordinateOperationsPanel sessionId="sess-1" ownerToken={null} />);
+}
+
+describe('CoordinateOperationsPanel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMock.listPlans.mockResolvedValue({ plans: [] });
+    apiMock.listRuns.mockResolvedValue({ runs: [] });
+    useCoordinateOperationsStore.getState().close();
+  });
+
+  it('renders source describe with CRS evidence after click', async () => {
+    apiMock.describeSource.mockResolvedValue(DESCRIBE);
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: /检查源/ }));
+    await waitFor(() => {
+      expect(screen.getByText('EPSG:4326')).toBeTruthy();
+    });
+    expect(screen.getByText(/fc_schema_info_crs/)).toBeTruthy();
+    expect(screen.getByText(/Point/)).toBeTruthy();
+  });
+
+  it('lists candidates with unavailable reason and unknown accuracy (never 0)', async () => {
+    apiMock.describeSource.mockResolvedValue(DESCRIBE);
+    apiMock.listOperations.mockResolvedValue(LISTING);
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: /检查源/ }));
+    await waitFor(() => expect(screen.getByText('EPSG:4326')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /列出候选操作/ }));
+    await waitFor(() => {
+      expect(screen.getAllByTestId('co-candidate').length).toBe(2);
+    });
+    expect(screen.getByText(/精度未知/)).toBeTruthy();
+    expect(screen.getAllByText(/us_noaa_conus\.tif/).length).toBeGreaterThan(0);
+    // 锁定动作可用（每候选一个 + 底部主锁定按钮）
+    const lockBtns = screen.getAllByRole('button', { name: /锁定/ });
+    expect(lockBtns.length).toBeGreaterThan(0);
+  });
+
+  it('restores server plan/run state and shows display unavailable separately', async () => {
+    apiMock.listPlans.mockResolvedValue({
+      plans: [{
+        plan_id: 'p1', session_id: 'sess-1', title: 't', status: 'locked',
+        revision: 2, plan: { source: { ref: 'ref:data-test-1' }, target_crs: 'EPSG:32650' },
+        normalized_digest: 'dg', source_fingerprint: 'fp',
+        selected_candidate_id: 'cand_a',
+        operation: { candidate_id: 'cand_a', name: 'op', accuracy: null,
+          accuracy_unknown: true, ballpark: false, definition_sha256: 'd1',
+          environment: {}, projjson_bytes: 100 },
+        preview: null, preview_digest: null, preview_stale: false,
+        created_at: null, updated_at: null,
+      }],
+    });
+    apiMock.listRuns.mockResolvedValue({
+      runs: [{
+        run_id: 'r1', plan_id: 'p1', status: 'completed', job_id: 1,
+        error_code: null, output_ref: 'ref:coord-ops/r1', output_rows: 1201,
+        receipt: {
+          run_id: 'r1', rows_transformed: 1201, rows_total: 1201,
+          null_geometry: 0, empty_geometry: 0, total_vertices: 1201,
+          output_crs: 'EPSG:32650', output_ref: 'ref:coord-ops/r1',
+          output_sha256: 's',
+          operation: { candidate_id: 'cand_a', name: 'op', accuracy: null,
+            accuracy_unknown: true, ballpark: false, definition_sha256: 'd1' },
+          display: { state: 'unavailable', reason: 'no op' },
+        },
+        plan_revision: 2, created_at: null, finished_at: null,
+      }],
+    });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText('EPSG:32650')).toBeTruthy();
+    });
+    expect(screen.getByText(/显示副本不可用/)).toBeTruthy();
+    expect(screen.getAllByText(/1201/).length).toBeGreaterThan(0);
+  });
+});

@@ -186,6 +186,14 @@ export const JOURNEYS: JourneyEntry[] = [
     modes: ['real'],
     owner: 'g37-session-model-runtime',
   },
+  {
+    id: 'j25',
+    file: 'journeys/j25-g45-coordinate-operations.journey.ts',
+    title: '坐标操作与重投影：上传声明CRS→候选/锁定/预览→执行→刷新恢复→GPKG下载',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g45-coordinate-operations',
+  },
 ];
 
 export const smokeJourneys = (): JourneyEntry[] => JOURNEYS.filter((j) => j.smoke);
