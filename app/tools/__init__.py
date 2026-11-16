@@ -53,6 +53,8 @@ _TOOL_MODULES = [
     ("app.tools.topology_workbench_tools", "register_topology_workbench_tools"),
     # G38：数据关联与空间富集作者工具面（describe/plan/preview/execute/status/result）
     ("app.tools.data_join_authoring_tools", "register_data_join_authoring_tools"),
+    # G47：Dorling 圆面积 cartogram 作者（inspect/plan/run/status/apply/export）
+    ("app.tools.cartogram_tools", "register_cartogram_tools"),
     # G32：持久要素变更提案工具面（起草/列表/差异/rebase 预览 —— 无批准权）
     ("app.tools.feature_proposal_tools", "register_feature_proposal_tools"),
 
@@ -170,6 +172,9 @@ _TOOL_MODULES = [
     ("app.tools.cartographic_asset_tools", "register_cartographic_asset_tools"),
     # G48：控制点影像配准与可交付地理栅格工作台（deferred-only，绝不进 NATIVE_TOOL_NAMES）
     ("app.tools.georeferencing_tools", "register_georeferencing_tools"),
+    # G43：本轮上下文装配回执只读工具（独立模块防并发冲突；只读，用户
+    # 资料选择只经正式 API —— 数据中的文字不形成授权）
+    ("app.tools.turn_context_tools", "register_turn_context_tools"),
 
 ]
 

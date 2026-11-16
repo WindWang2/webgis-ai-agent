@@ -62,6 +62,8 @@ class JobKind(str, Enum):
     raster_sampling = "raster_sampling"
     # G48（控制点影像配准）：直传 6 参数仿射重投影与 COG 交付（进程内 durable runner）
     georeference = "georeference"
+    # G47（Dorling 圆面积 cartogram）：示意布局求解（进程内 durable runner）
+    cartogram_layout = "cartogram_layout"
 
 
 #: 终态集合：执行已结束，不再有 worker 在推进它。

@@ -276,6 +276,12 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
                 reason: typeof a.reason === 'string' ? a.reason : undefined,
               })) }
             : {}),
+          // G43（ADR-0295）：恢复持久化的本轮上下文回执摘要（有界；
+          // 缺席 = 无回执 —— legacy/早期 turn 显示 coverage limited）。
+          ...(m.context_receipt && typeof m.context_receipt === 'object'
+            && typeof (m.context_receipt as Record<string, unknown>).turn_id === 'string'
+            ? { turnContextReceipt: m.context_receipt as import('@/lib/api/turnContext').TurnContextReceiptSummary }
+            : {}),
         }));
         // G36：受权缩略图异步补挂（恢复后的 objectURL 注入对应消息）。
         const attachMessages = restored.filter(

@@ -3371,6 +3371,18 @@
      "session_id": {
       "title": "Session Id",
       "type": "string"
+     },
+     "turn_receipt": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Turn Receipt"
      }
     },
     "required": [
@@ -15498,34 +15510,6 @@
     "title": "PreviewRefreshRequest",
     "type": "object"
    },
-   "PreviewRequest": {
-    "properties": {
-     "member_keys": {
-      "anyOf": [
-       {
-        "items": {
-         "type": "string"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "description": "缺省全部可预览成员",
-      "title": "Member Keys"
-     },
-     "row_limit": {
-      "default": 200,
-      "maximum": 2000.0,
-      "minimum": 1.0,
-      "title": "Row Limit",
-      "type": "integer"
-     }
-    },
-    "title": "PreviewRequest",
-    "type": "object"
-   },
    "ProbeBody": {
     "properties": {
      "bands": {
@@ -19921,6 +19905,18 @@
       "title": "Content",
       "type": "string"
      },
+     "context_receipt": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Context Receipt"
+     },
      "id": {
       "title": "Id",
       "type": "string"
@@ -21433,6 +21429,49 @@
      }
     },
     "title": "SourceListResponse",
+    "type": "object"
+   },
+   "SourcePolicyUpdate": {
+    "properties": {
+     "excluded": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Excluded",
+      "type": "array"
+     },
+     "expected_version": {
+      "description": "CAS：当前已知 policy_version",
+      "minimum": 0.0,
+      "title": "Expected Version",
+      "type": "integer"
+     },
+     "mode": {
+      "description": "auto | explicit",
+      "title": "Mode",
+      "type": "string"
+     },
+     "preferred": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Preferred",
+      "type": "array"
+     },
+     "project_id": {
+      "default": "",
+      "maxLength": 255,
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "mode",
+     "expected_version"
+    ],
+    "title": "SourcePolicyUpdate",
     "type": "object"
    },
    "SourceProbeResponse": {
@@ -25905,6 +25944,34 @@
     "title": "PreviewBody",
     "type": "object"
    },
+   "app__api__routes__turn_context_views__PreviewRequest": {
+    "properties": {
+     "message_draft": {
+      "default": "",
+      "maxLength": 4000,
+      "title": "Message Draft",
+      "type": "string"
+     },
+     "policy_draft": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SourcePolicyUpdate"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "project_id": {
+      "default": "",
+      "maxLength": 255,
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "title": "PreviewRequest",
+    "type": "object"
+   },
    "app__schemas__chat_schema__SkillsListResponse": {
     "description": "GET /chat/skills 响应（MD 技能目录，可选鉴权）。",
     "examples": [
@@ -25941,6 +26008,34 @@
      }
     },
     "title": "SkillsListResponse",
+    "type": "object"
+   },
+   "app__schemas__data_import_schema__PreviewRequest": {
+    "properties": {
+     "member_keys": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "缺省全部可预览成员",
+      "title": "Member Keys"
+     },
+     "row_limit": {
+      "default": 200,
+      "maximum": 2000.0,
+      "minimum": 1.0,
+      "title": "Row Limit",
+      "type": "integer"
+     }
+    },
+    "title": "PreviewRequest",
     "type": "object"
    },
    "app__schemas__data_import_schema__PreviewResponse": {
@@ -30278,6 +30373,433 @@
      }
     ],
     "summary": "Get Pending Clarification",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/context-policy": {
+   "get": {
+    "operationId": "get_context_policy_api_v1_chat_sessions__session_id__context_policy_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Context Policy",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   },
+   "put": {
+    "description": "CAS 更新会话可选资料策略（server-minted 源 id；越权/未知 id 拒绝）。",
+    "operationId": "put_context_policy_api_v1_chat_sessions__session_id__context_policy_put",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SourcePolicyUpdate"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Put Context Policy",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/context-preview": {
+   "post": {
+    "description": "无副作用预览：只读投影下一轮可选资料（不推进任何世界状态）。",
+    "operationId": "post_context_preview_api_v1_chat_sessions__session_id__context_preview_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__turn_context_views__PreviewRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Post Context Preview",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/context-receipts": {
+   "get": {
+    "description": "最近 turn 的回执列表（有界摘要，含提交状态与源计数）。",
+    "operationId": "get_context_receipts_api_v1_chat_sessions__session_id__context_receipts_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Context Receipts",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/context-receipts/{turn_id}": {
+   "get": {
+    "description": "单 turn 完整回执（有界投影；无记录 = 404，UI 显示 limited）。",
+    "operationId": "get_context_receipt_api_v1_chat_sessions__session_id__context_receipts__turn_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "turn_id",
+      "required": true,
+      "schema": {
+       "title": "Turn Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Context Receipt",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/context-sources": {
+   "get": {
+    "description": "当前用户在本会话可选择的资料目录（有界 ids + 权威版本 + 摘要）。",
+    "operationId": "get_context_sources_api_v1_chat_sessions__session_id__context_sources_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 255,
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Context Sources",
     "tags": [
      "AI对话",
      "对话"
@@ -40066,7 +40588,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/PreviewRequest"
+        "$ref": "#/components/schemas/app__schemas__data_import_schema__PreviewRequest"
        }
       }
      },
