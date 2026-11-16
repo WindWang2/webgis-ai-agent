@@ -1232,8 +1232,8 @@ export function MapPanel({
     const sketchTool = useHudStore.getState().activeMapTool
     if (sketchTool === 'draw_point' || sketchTool === 'draw_line' || sketchTool === 'draw_polygon'
       || sketchTool === 'delete_feature' || sketchTool === 'edit_vertices'
-      || sketchTool === 'edit_labels') {
-      // G16：标注编辑模式点选语义归 LabelEditor（不触发 POI/要素选择）。
+      || sketchTool === 'edit_labels' || sketchTool === 'georef_pick_map') {
+      // G16：标注编辑模式点选语义归 LabelEditor；G48：控制点拾取仅广播坐标。
       return
     }
 

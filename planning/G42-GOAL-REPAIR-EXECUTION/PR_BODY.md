@@ -87,9 +87,28 @@ map_product 块里：用户在任务完成卡上看到「partial / 缺 export �
 
 ## Review / Fix / Rereview
 
-- 独立 review（未参与实现的 reviewer，base..工作树全量 diff）：见
+- 独立 review（未参与实现的 reviewer，base..工作树全量 diff）：**BLOCKING 2
+  （P1×2）+ P2×5 + P3×4**；4 个「既有生产 bug」主张全部被独立复核证实。
+- 全部 P1/P2 已修（dispatch_spec 剔除原始 owner_token + 对账身份权威派生；
+  Pi cancel/status 归属校验前移到副作用之前；runner-lost 宽限改 900s 且依据
+  heartbeat；evaluator wrong-kind 分支补 failed_rule；receipts 缩进回归修正；
+  迟到交付收口补预算计费；LIKE 转义）。P3 中可低成本项已修，其余记录为已知
+  边界（多进程 dispatch_spec 快照覆写竞态、幂等键 255 截断理论碰撞、store
+  事件循环同步 IO、每历史卡面板轮询）。
+- 复审（同一 reviewer，逐项 + 实跑回归）：**REREVIEW: PASS**；两条非阻塞 nit
+  （settle 等待循环 checkpoint、wrong-kind 测试钉）已采纳。详见
   `planning/G42-GOAL-REPAIR-EXECUTION/REVIEW.md`。
-- （占位：评审结论与修复记录在交付前填充。）
+
+## 与最新 master / 兄弟 PR
+
+- base 655f769ca = 当前 origin/master（任务期未移动，无需合流）。
+- 开放 PR #2125（G47）/#2126（G43）/#2165（G48）：无语义交集；共享文件
+  （main.py / tools/__init__.py / i18n / api-stubs）均为加性行，行级冲突时
+  双方保留即可。G43 未合入本线完整可用（无任何依赖）。
+
+## Head
+
+- `cd3617644`（zcode/g42-goal-repair-execution-20261115T124804Z）
 
 ## 迁移/回退
 

@@ -2601,7 +2601,11 @@ class PiBridge:
         # #1678：与 app/services/chat/pi_rpc_client.py 对齐，从 core 取共享密钥
         # （原从 api/routes/pi_tools 反向 import，违反 ADR-0216 §6.5）。
         from app.core.bridge_secret import get_bridge_secret
-        from app.services.chat.pi_turn_context import bind_turn_prompt, issue_turn_token
+        from app.services.chat.pi_turn_context import (
+            bind_turn_prompt_with_receipt,
+            issue_turn_token,
+        )
+        from app.services.chat import turn_receipt_lifecycle as turn_receipt_lc
 
         turn_id = _mint_turn_id()
         turn_token = issue_turn_token(get_bridge_secret(), turn_sid, turn_id)
@@ -2609,7 +2613,10 @@ class PiBridge:
         if turn_sid:
             data["sessionId"] = turn_sid
 
-        # Runtime observability: prompt() now mints a real turn_id (previously)
+        # G43（ADR-0295）：非流式 turn 的上下文回执（装配捕获 + 落盘读模型）。
+        _ns_turn_receipt = None
+        _ns_receipt_read = None
+        # Runtime observability: prompt() now mints a real turn_id (previously
         # its cancellation token carried the *session* id as job_id, so the
         # non-stream path had no turn identity). run_id is a first-class turn
         # handle (the prior "run_id == session_id" reuse is retired here).
@@ -2727,7 +2734,8 @@ class PiBridge:
                     # Drop any residual events from a prior turn before sending, so they
                     # cannot be attributed to this turn.
                     await self._drain_stale_events()
-                    data["message"] = await bind_turn_prompt(
+                    # G43（ADR-0295）：非流式同款 receipt 捕获 + 落盘。
+                    _ns_prompt_message, _ns_turn_receipt = await bind_turn_prompt_with_receipt(
                         message, turn_token, turn_sid, cartography_context or "",
                         env_block=env_block or "",
                         turn_id=turn_id,
@@ -2735,6 +2743,14 @@ class PiBridge:
                         project_id=context_project_id or "",
                         user_id=context_user_id or "",
                         query_text=context_query_text or "",
+                    )
+                    data["message"] = _ns_prompt_message
+                    _ns_receipt_read = await turn_receipt_lc.persist_assembly_receipt(
+                        _ns_turn_receipt,
+                        session_id=turn_sid, turn_id=turn_id, run_id=run_id,
+                        org_id=context_org_id or "",
+                        project_id=context_project_id or "",
+                        user_id=context_user_id or "",
                     )
                     try:
                         await self._isolate_vendor_session(turn_sid)
@@ -2746,6 +2762,19 @@ class PiBridge:
                         )
                         if not _ns_model_result.ok:
                             send_failed = True
+                            # G43（C18）：装配后未发出 —— 如实 not_sent
+                            #（刷新读模型，返回值披露真实状态）。
+                            _ns_receipt_read = (
+                                await turn_receipt_lc.mark_not_sent(
+                                    turn_id,
+                                    reason=(
+                                        "model_budget_rejected"
+                                        if _ns_model_result.status == "budget_rejected"
+                                        else "model_apply_error"
+                                    ),
+                                    session_id=turn_sid,
+                                )
+                            ) or _ns_receipt_read
                             rt_ev.settle(
                                 Outcome.FAILED,
                                 failure_class=(
@@ -2761,7 +2790,7 @@ class PiBridge:
                             )
                         # G36（ADR-0291）：与 stream_prompt 同款图片解析
                         # （lease 内、prompt 字节前；V33 预检**每 turn 执行**
-                        # —— 撤销后的纯文本 turn 同样触发换代；回执随返回值
+                        # —— 撤销后的纯文本 turn 同样换代；回执随返回值
                         # 披露，不进 RPC wire —— Pi 只收 message/images）。
                         _img_outcome = await self._resolve_turn_images(
                             turn_sid, attachments)
@@ -2769,6 +2798,15 @@ class PiBridge:
                             data["images"] = _img_outcome["images"]
                         _attachment_receipts.extend(_img_outcome["receipts"])
                         prompt_resp = await self._rpc.request("prompt", data)
+                        # G43：RPC 已返回 —— 记录真实 disposition（started/
+                        # queued/handled；handled ≠ provider 消费）。
+                        _ns_receipt_read = await turn_receipt_lc.mark_submitted(
+                            turn_id,
+                            disposition=str(
+                                (prompt_resp or {}).get("disposition") or "started"
+                            )[:16],
+                            session_id=turn_sid,
+                        ) or _ns_receipt_read
                     except PiRpcError as send_exc:
                         # #790 (B-6 parity with stream_prompt's ``send_failed``): the
                         # prompt RPC itself raised. Pi may already have started the
@@ -2776,6 +2814,11 @@ class PiBridge:
                         # a retry duplicates side effects while this caller already
                         # returned an error.
                         send_failed = True
+                        # G43（C21）：RPC 异常 —— 诚实 unknown（刷新读模型）。
+                        _ns_receipt_read = (
+                            await turn_receipt_lc.mark_unknown(
+                                turn_id, session_id=turn_sid)
+                        ) or _ns_receipt_read
                         rt_ev.settle(
                             Outcome.FAILED,
                             failure_class="pi_send_error",
@@ -3138,6 +3181,20 @@ class PiBridge:
                     except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
                         pass
                     TURN_EVIDENCE.remove(turn_id)
+                    # G43（ADR-0295）：turn 终态独立入账（completed/failed/
+                    # cancelled 与提交状态正交；进程死亡补 unknown —— 单调
+                    # 状态机不会改写已确证的 submitted/not_sent）。
+                    try:
+                        await turn_receipt_lc.mark_turn_outcome(
+                            turn_id,
+                            outcome=await turn_receipt_lc.outcome_for_rt_ev(
+                                rt_ev.outcome.outcome if rt_ev.outcome else Outcome.FAILED
+                            ),
+                        )
+                        if process_died:
+                            await turn_receipt_lc.mark_unknown(turn_id)
+                    except Exception:  # noqa: BLE001 — 回执面绝不阻断收口
+                        pass
         finally:
             # #1108 INV-P1: backstop — whatever happened above (including a
             # cancellation delivered inside the inner finally before its own
@@ -3152,10 +3209,15 @@ class PiBridge:
             TURN_EVIDENCE.remove(turn_id)
             _cleanup_turn_state(turn_sid)
 
+        # G43（ADR-0295）：随返回值披露有界回执摘要（路由持久化/展示用）。
         return {
             "sessionId": turn_sid,
             "content": final_text,
             "attachment_receipts": _attachment_receipts,
+            "turn_receipt": turn_receipt_lc.sse_payload(
+                _ns_receipt_read, session_id=turn_sid, turn_id=turn_id,
+                fallback=_ns_turn_receipt,
+            ),
         }
 
     async def stream_prompt(
@@ -3206,13 +3268,22 @@ class PiBridge:
         # #1678：与 app/services/chat/pi_rpc_client.py 对齐，从 core 取共享密钥
         # （原从 api/routes/pi_tools 反向 import，违反 ADR-0216 §6.5）。
         from app.core.bridge_secret import get_bridge_secret
-        from app.services.chat.pi_turn_context import bind_turn_prompt, issue_turn_token
+        from app.services.chat.pi_turn_context import (
+            bind_turn_prompt_with_receipt,
+            issue_turn_token,
+        )
+        from app.services.chat import turn_receipt_lifecycle as turn_receipt_lc
 
         turn_id = _mint_turn_id()
         turn_token = issue_turn_token(get_bridge_secret(), turn_sid, turn_id)
         data: dict[str, Any] = {}
         if turn_sid:
             data["sessionId"] = turn_sid
+
+        # G43（ADR-0295）：本 turn 的上下文回执（装配捕获 + 落盘读模型；落盘
+        # 失败保持 None —— SSE/读模型如实 unknown，绝不伪造）。
+        _turn_ctx_receipt = None
+        _turn_receipt_read = None
 
         # V3: 每个 Pi turn 铸一个 turn_id，显式透传给 harness 记录与 SSE 负载
         # （绝不用全局 set_correlation —— 单例 harness 跨 session 累积会互相污染）。
@@ -3383,7 +3454,9 @@ class PiBridge:
                     # Drop residual events from a prior turn so they can't be dequeued
                     # and attributed to this session.
                     await self._drain_stale_events()
-                    data["message"] = await bind_turn_prompt(
+                    # G43（ADR-0295）：伴随 receipt 捕获（窄适配 —— 只把生产
+                    # 装配的 receipt 交给本 turn 生命周期，不二次装配）。
+                    _prompt_message, _turn_ctx_receipt = await bind_turn_prompt_with_receipt(
                         message, turn_token, turn_sid, cartography_context or "",
                         env_block=env_block or "",
                         turn_id=turn_id,
@@ -3391,6 +3464,14 @@ class PiBridge:
                         project_id=context_project_id or "",
                         user_id=context_user_id or "",
                         query_text=context_query_text or "",
+                    )
+                    data["message"] = _prompt_message
+                    _turn_receipt_read = await turn_receipt_lc.persist_assembly_receipt(
+                        _turn_ctx_receipt,
+                        session_id=turn_sid, turn_id=turn_id, run_id=run_id,
+                        org_id=context_org_id or "",
+                        project_id=context_project_id or "",
+                        user_id=context_user_id or "",
                     )
 
                     # Send prompt command
@@ -3415,7 +3496,27 @@ class PiBridge:
                                 failure_class=_model_failure_class,
                                 detail=(_model_result.reason_detail or "")[:200],
                             )
+                            # G43（C18）：装配后、发出前被拒 —— 回执如实
+                            # not_sent，零假发送状态。刷新读模型（review P2：
+                            # 后续 on_turn_result 的消息摘要不得停留在
+                            # assembled）。
+                            _turn_receipt_read = (
+                                await turn_receipt_lc.mark_not_sent(
+                                    turn_id,
+                                    reason=(
+                                        "model_budget_rejected"
+                                        if _model_result.status == "budget_rejected"
+                                        else "model_apply_error"
+                                    ),
+                                    session_id=turn_sid,
+                                )
+                            ) or _turn_receipt_read
                             yield sse_event("model_status", _model_result.sse_payload(turn_sid, turn_id))
+                            yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
+                                _turn_receipt_read, session_id=turn_sid,
+                                turn_id=turn_id, fallback=_turn_ctx_receipt,
+                                status_override="not_sent",
+                            ))
                             yield sse_event("task_error", {
                                 "task_id": turn_sid,
                                 "session_id": turn_sid,
@@ -3454,9 +3555,30 @@ class PiBridge:
                             except Exception:  # noqa: BLE001 — 披露面绝不阻断
                                 pass
                         prompt_resp = await self._rpc.request("prompt", data)
+                        # G43：RPC 已返回 —— 记录真实 disposition（started/
+                        # queued/handled；handled ≠ provider 消费，queued ≠
+                        # 已运行 —— C19/C20 的诚实面）。
+                        _turn_receipt_read = await turn_receipt_lc.mark_submitted(
+                            turn_id,
+                            disposition=str(
+                                (prompt_resp or {}).get("disposition") or "started"
+                            )[:16],
+                            session_id=turn_sid,
+                        ) or _turn_receipt_read
                     except PiRpcError as e:
                         logger.error(f"[PiBridge] stream_prompt send failed: {e}")
                         send_failed = True
+                        # G43（C21）：RPC 异常 —— 可能已部分启动，诚实 unknown
+                        #（绝不复制上一 turn 的成功回执；刷新读模型 —— review P2）。
+                        _turn_receipt_read = (
+                            await turn_receipt_lc.mark_unknown(
+                                turn_id, session_id=turn_sid)
+                        ) or _turn_receipt_read
+                        yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
+                            _turn_receipt_read, session_id=turn_sid,
+                            turn_id=turn_id, fallback=_turn_ctx_receipt,
+                            status_override="unknown",
+                        ))
                         # INV-7 + errors.py 红线：error 事件携带 error_class；文案
                         # 固定短语，原始 PiRpcError 文本只进日志（不内插进 SSE）。
                         yield sse_event("task_error", {
@@ -3485,6 +3607,13 @@ class PiBridge:
                             failure_class="pi_prompt_handled",
                             detail="prompt consumed by an input handler; no agent run started",
                         )
+                        # G43（C19）：handled ≠ provider 已收到/已运行 —— 回执
+                        # 提交状态 + disposition 如实分列。
+                        yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
+                            _turn_receipt_read, session_id=turn_sid,
+                            turn_id=turn_id, fallback=_turn_ctx_receipt,
+                            status_override="submitted",
+                        ))
                         yield sse_event("task_error", {
                             "task_id": turn_sid,
                             "session_id": turn_sid,
@@ -3523,6 +3652,18 @@ class PiBridge:
                     if _model_status_pending is not None:
                         yield sse_event("model_status", _model_status_pending)
                         _model_status_pending = None
+
+                    # G43（ADR-0295）：本轮上下文装配回执（task_start 之后的
+                    # 加性事件；保持既有 SSE 首事件契约 —— task_start 仍为首
+                    # 个结构事件）。payload 有界：digest/计数/disposition，
+                    # 无全文/秘密。
+                    try:
+                        yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
+                            _turn_receipt_read, session_id=turn_sid,
+                            turn_id=turn_id, fallback=_turn_ctx_receipt,
+                        ))
+                    except Exception:  # noqa: BLE001 — 披露面绝不阻断
+                        pass
 
                     # G: watch the subprocess death signal alongside the event queue so
                     # a mid-stream Pi crash ends the turn promptly (error + done +
@@ -4042,6 +4183,20 @@ class PiBridge:
                     except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
                         pass
                     TURN_EVIDENCE.remove(turn_id)
+                    # G43（ADR-0295）：turn 终态独立入账（completed/failed/
+                    # cancelled 与提交状态正交；进程死亡补 unknown —— 单调
+                    # 状态机不会改写已确证的 submitted/not_sent）。
+                    try:
+                        await turn_receipt_lc.mark_turn_outcome(
+                            turn_id,
+                            outcome=await turn_receipt_lc.outcome_for_rt_ev(
+                                rt_ev.outcome.outcome if rt_ev.outcome else Outcome.FAILED
+                            ),
+                        )
+                        if process_died:
+                            await turn_receipt_lc.mark_unknown(turn_id)
+                    except Exception:  # noqa: BLE001 — 回执面绝不阻断收口
+                        pass
                     # F03：tracker 结算已收敛进单结算 seam（kernel end_turn
                     # 同一实现；cancelled→cancel、failed/aborted/interrupted→fail、其余
                     # →complete），此处不再重复第二份 finally 记账。
@@ -4058,6 +4213,12 @@ class PiBridge:
                                 # G36（ADR-0291）：逐附件送模回执（含拒绝
                                 # reason；路由据此持久化真实 status）。
                                 "attachment_receipts": list(_turn_attachment_receipts),
+                                # G43（ADR-0295）：本轮上下文回执（路由把摘要
+                                # 关联到用户消息；turn_outcome 独立入账）。
+                                "turn_receipt": turn_receipt_lc.sse_payload(
+                                    _turn_receipt_read, session_id=turn_sid,
+                                    turn_id=turn_id, fallback=_turn_ctx_receipt,
+                                ),
                             }
                             _r = on_turn_result(_res)
                             if asyncio.iscoroutine(_r):

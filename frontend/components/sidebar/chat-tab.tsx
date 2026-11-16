@@ -30,6 +30,8 @@ import { CitationSourcesProvider, CitationSourceList, splitCitationBlocks, type 
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { RecoveryBanner } from '@/components/chat/recovery-banner';
 import { SessionModelSelector } from '@/components/chat/session-model-selector';
+import { TurnContextPanel } from '@/components/chat/turn-context-panel';
+import { TurnContextSources } from '@/components/chat/turn-context-sources';
 import { adaptChartData } from "@/lib/chart-adapter";
 import { VisualAttachBar } from '@/components/sidebar/visual-attach';
 import { useLocale, useT } from '@/lib/i18n/useT';
@@ -120,6 +122,8 @@ interface ChatMessage {
   resultId?: string;
   /** G36（ADR-0291）：用户消息的视觉附件（乐观 chips/回执/恢复三态）。 */
   attachments?: import('@/lib/chat/message-reducer').VisualAttachmentView[];
+  /** G43（ADR-0295）：本轮上下文装配回执摘要（SSE 回填 + 恢复）。 */
+  turnContextReceipt?: import('@/lib/api/turnContext').TurnContextReceiptSummary;
   /** 方向 3：requirement IR blocking 澄清卡片状态。 */
   clarification?: ClarificationCardState;
   /** G28：任务完成语义卡（task_complete.goal_satisfaction）。 */
@@ -204,6 +208,8 @@ const ChatMessageItem = memo(function ChatMessageItem({
   message: msg,
   mounted,
   thinkingText,
+  sessionId,
+  ownerToken,
   onPlanAction,
   onClarificationSubmit,
   onFeatureEditDecision,
@@ -213,6 +219,8 @@ const ChatMessageItem = memo(function ChatMessageItem({
   message: ChatMessage;
   mounted: boolean;
   thinkingText: string;
+  sessionId: string | null;
+  ownerToken?: string | null;
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
   onClarificationSubmit?: (
     state: import('@/lib/types/clarification').ClarificationCardState,
@@ -290,6 +298,14 @@ const t = useT();
           <div className="whitespace-pre-wrap">{splitCitationBlocks(msg.content).body}</div>
           <CitationSourceList sources={splitCitationBlocks(msg.content).sources} />
         </div>
+        {/* G43（ADR-0295）：本轮上下文回执（可展开；仅有回执的用户消息渲染）。 */}
+        {msg.turnContextReceipt && (
+          <TurnContextPanel
+            sessionId={sessionId}
+            ownerToken={ownerToken}
+            summary={msg.turnContextReceipt}
+          />
+        )}
       </div>
     </div>
   ) : (
@@ -639,6 +655,8 @@ const t = useT();
                 onRuntimeInteractionSubmit={onRuntimeInteractionSubmit}
       onFeatureEditDecision={onFeatureEditDecision}
                 onClarificationRefresh={onClarificationRefresh}
+                sessionId={sessionId ?? null}
+                ownerToken={ownerToken}
               />
               </CitationSourcesProvider>
               {/* G42：完成卡（非 satisfied）下的有界补全面 —— 预览/启动/取消/
@@ -678,6 +696,12 @@ const t = useT();
           sessionId={sessionId ?? null}
           ownerToken={ownerToken}
           turnActive={Boolean(turnActive)}
+        />
+        {/* G43（ADR-0295）：会话可选资料工作台（优先/排除 + 预览 + CAS）——
+            与模型选择同层的会话级控制面。 */}
+        <TurnContextSources
+          sessionId={sessionId ?? null}
+          ownerToken={ownerToken}
         />
         {/* UI V3：AI 错误在 chat 内可见（之前仅 top-bar/HUD 有指示，
             composer 静默恢复可用，用户无法感知失败） */}

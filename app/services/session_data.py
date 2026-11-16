@@ -999,6 +999,12 @@ class MemorySessionStore(BaseSessionStore):
             await release_session_screenshots(session_id)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Session {session_id}: visual screenshot release failed: {e}")
+        try:
+            from app.services.georeferencing.refs import purge_session_georef_state
+
+            purge_session_georef_state(session_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Session {session_id}: georeferencing state release failed: {e}")
         async with self._lock:
             self._store.pop(session_id, None)
             self._aliases.pop(session_id, None)

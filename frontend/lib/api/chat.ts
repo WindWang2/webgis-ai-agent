@@ -77,6 +77,9 @@ export type SSEEventType =
   // G37（会话模型运行配置）：turn 期模型应用回执（requested/effective/
   // 思考档/失败原因；additive，旧消费者忽略）。
   | 'model_status'
+  // G43（ADR-0295）：本轮上下文装配回执摘要（digest/计数/提交状态；
+  // additive，task_start 之后发射，旧消费者忽略）。
+  | 'turn_context_receipt'
   | 'plan_step_done'
   | 'plan_finalized'
   // #1048: SessionPlan live deltas（双 host；与 plan_* 是两个计划概念，ADR-0076）

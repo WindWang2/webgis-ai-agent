@@ -43,6 +43,12 @@ function summarize(spec: LegendSpec, t: TranslateFn): string {
       });
     case 'bivariate':
       return t('chat.carto.summary.bivariate', { count: spec.n });
+    case 'reliability_dual_channel':
+      // G41 加性图例类型：标题/单位由后端 canonical 图例自带，不再新增翻译键
+      // （否则 i18n 提取与四语言同步会被这次修复拖成另一个任务）。
+      return spec.title
+        ?? spec.estimate?.label
+        ?? (spec.measure?.kind ? `${spec.type} · ${spec.measure.kind}` : spec.type);
   }
 }
 
@@ -54,6 +60,9 @@ function swatches(spec: LegendSpec): string[] {
       return spec.palette_colors;
     case 'categorical':
       return spec.categories.map((c) => c.color);
+    case 'reliability_dual_channel':
+      // 估计值通道的调色板；不确定度走透明度，不占颜色序列。
+      return spec.estimate?.palette_colors ?? [];
     case 'bivariate':
       return spec.colors;
   }

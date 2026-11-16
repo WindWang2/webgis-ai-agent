@@ -67,6 +67,7 @@ from app.api.routes import data_import as data_import_routes  # noqa: E402  # G1
 from app.api.routes import topology_workbench as topology_workbench_routes  # noqa: E402  # G31 跨图层拓扑工作台
 from app.api.routes import field_compute as field_compute_routes  # noqa: E402
 from app.api.routes import raster_sampling as raster_sampling_routes  # noqa: E402
+from app.api.routes import georeferencing as georeferencing_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
 from app.api.routes import composition_template_assets as composition_template_assets_routes
@@ -294,6 +295,16 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.warning(f"[lifespan] data-join recovery skipped: {e}")
+
+    # G48：控制点影像配准孤儿任务与 staging 清理（重启收敛，绝不阻断启动）。
+    try:
+        from app.services.georeferencing import recovery as georef_recovery
+
+        georef_res = await asyncio.to_thread(georef_recovery.recover_interrupted_jobs)
+        if georef_res.get("failed") or georef_res.get("cancelled") or georef_res.get("staging_cleaned"):
+            logger.info("[lifespan] georef recovery: %s", georef_res)
+    except Exception as e:
+        logger.warning(f"[lifespan] georef recovery skipped: {e}")
 
     registry = ToolRegistry()
     init_tools(registry)
@@ -1172,6 +1183,9 @@ app.include_router(print_layout_routes.router, prefix="/api/v1", tags=["纸面�
 # G41：双变量与可靠性表达作者工作台（独立 router；UI 与 Pi 共用同一 service）
 from app.api.routes import bivariate_reliability_authoring as g41_routes  # noqa: E402
 app.include_router(g41_routes.router, prefix="/api/v1", tags=["双变量与可靠性作者工作台"])
+# G47：Dorling 圆面积 cartogram 作者工作台（独立 router；UI 与 Pi 共用同一 service）
+from app.api.routes import cartogram_authoring as g47_routes  # noqa: E402
+app.include_router(g47_routes.router, prefix="/api/v1", tags=["Dorling 圆面积 cartogram 工作台"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
@@ -1205,6 +1219,7 @@ app.include_router(data_preparation_routes.router, prefix="/api/v1", tags=["数�
 app.include_router(data_import_routes.router, prefix="/api/v1", tags=["数据导入工作台"])
 app.include_router(field_compute_routes.router, prefix="/api/v1", tags=["字段计算"])
 app.include_router(raster_sampling_routes.router, prefix="/api/v1", tags=["栅格采样"])
+app.include_router(georeferencing_routes.router, prefix="/api/v1", tags=["控制点影像配准 (G48)"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(ws_collab.router, prefix="/api/v1", tags=["WebSocket 协作"])
