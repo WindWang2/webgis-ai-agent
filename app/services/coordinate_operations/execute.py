@@ -159,7 +159,7 @@ def transform_feature(
         raise CoordinateOperationError(
             "execute_failed",
             f"行 {row_index} 输入坐标含非有限值（顶点 #{bad}）",
-            row_index=row_index)
+            row_index=row_index, phase="non_finite_input")
 
     tx, ty = op.transform_array(arr[:, 0], arr[:, 1])
     out = np.column_stack([tx, ty])
@@ -168,7 +168,7 @@ def transform_feature(
         raise CoordinateOperationError(
             "execute_failed",
             f"行 {row_index} 变换输出含非有限值（顶点 #{bad}；操作适用范围外"
-            "或输入超域）", row_index=row_index)
+            "或输入超域）", row_index=row_index, phase="non_finite_output")
 
     new_geom = dict(geom)
     if "coordinates" in new_geom:
@@ -254,6 +254,7 @@ def run_streaming_transform(
     output_name: str = "output",
     handle: Any = None,
     batch_rows: int = contracts.EXECUTE_BATCH_ROWS,
+    loop: Any = None,
 ) -> Dict[str, Any]:
     """冻结件 → 批变换 → staging 双载体输出（同步；建议线程池执行）。
 
@@ -352,7 +353,8 @@ def run_streaming_transform(
                 _report_progress(
                     handle,
                     value=int(done * 100 / max(total, 1)),
-                    message=f"已变换 {done}/{total} 行")
+                    message=f"已变换 {done}/{total} 行",
+                    loop=loop)
         out_f.write(
             f'],"crs":{{"type":"name","properties":{{"name":'
             f'"{target_crs}"}}}},'
@@ -447,27 +449,29 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _report_progress(handle: Any, **fields: Any) -> None:
-    """线程内进度上报：async handle → 线程安全调度回事件循环；同步 handle
-    （测试桩）直接调用。绝不产生未 await 的协程。"""
+def _report_progress(handle: Any, *, loop: Any = None, **fields: Any) -> None:
+    """线程内进度上报（评审 P1-2 修复）。
+
+    AsyncJobHandle.progress 是协程：worker 线程里没有 running loop ——
+    ``ensure_future`` 不可用（原实现 100% 走 close() 静默丢弃）。正确通道是
+    ``run_coroutine_threadsafe(coro, owner_loop)``（fire-and-forget，异常在
+    future 里消化）；owner loop 由提交方（service，事件循环线程）在提交
+    executor 前捕获传入。同步 handle（测试桩）直接调用。
+    """
     if handle is None:
         return
     try:
-        result = handle.progress(**fields)
         import inspect
 
+        result = handle.progress(**fields)
         if inspect.iscoroutine(result):
-            # AsyncJobHandle.progress 是协程 —— 调度回主循环 fire-and-forget
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-            if loop is not None:
+            if loop is not None and loop.is_running():
                 import contextlib
 
+                fut = asyncio.run_coroutine_threadsafe(result, loop)
                 with contextlib.suppress(Exception):
-                    asyncio.ensure_future(result)
-                    return
-            result.close()  # 无循环（纯同步测试）—— 丢弃并关闭，不留警告
+                    fut.result(timeout=5.0)  # 节流下低频；超时不再等
+            else:
+                result.close()  # 无可用 loop（纯同步测试）—— 关闭不留警告
     except Exception:  # noqa: BLE001 — 进度失败不阻断执行
         pass

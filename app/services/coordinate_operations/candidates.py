@@ -174,6 +174,16 @@ def list_operations(
     dst = _crs_from_input(target_crs_input)
     norm_aoi = normalize_aoi(aoi)
 
+    # 评审 P3：本域离线合同 —— network 开启即 typed 拒绝（格网只能来自
+    # 受信 bundle，不运行时联网补齐；开着网络枚举出的候选不可信）。
+    import pyproj
+
+    if pyproj.network.is_network_enabled():
+        raise CoordinateOperationError(
+            "operation_env_changed",
+            "pyproj 联网模式开启：本域坐标操作候选/锁定要求离线受信环境"
+            "（不自动联网补格网）；请关闭 PROJ network 后重试")
+
     kwargs: Dict[str, Any] = {"always_xy": True}
     if norm_aoi is not None:
         kwargs["area_of_interest"] = (

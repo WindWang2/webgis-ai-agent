@@ -116,6 +116,21 @@ describe('CoordinateOperationsPanel', () => {
   });
 
   it('restores server plan/run state and shows display unavailable separately', async () => {
+    const RUN_DETAIL = {
+      run_id: 'r1', plan_id: 'p1', status: 'completed', job_id: 1,
+      error_code: null, output_ref: 'ref:coord-ops/r1', output_rows: 1201,
+      receipt: {
+        run_id: 'r1', rows_transformed: 1201, rows_total: 1201,
+        null_geometry: 0, empty_geometry: 0, total_vertices: 1201,
+        output_crs: 'EPSG:32650', output_ref: 'ref:coord-ops/r1',
+        output_sha256: 's',
+        operation: { candidate_id: 'cand_a', name: 'op', accuracy: null,
+          accuracy_unknown: true, ballpark: false, definition_sha256: 'd1' },
+        display: { state: 'unavailable', reason: 'no op' },
+      },
+      plan_revision: 2, created_at: null, finished_at: null,
+    };
+    apiMock.inspectRun.mockResolvedValue(RUN_DETAIL);
     apiMock.listPlans.mockResolvedValue({
       plans: [{
         plan_id: 'p1', session_id: 'sess-1', title: 't', status: 'locked',
@@ -130,20 +145,10 @@ describe('CoordinateOperationsPanel', () => {
       }],
     });
     apiMock.listRuns.mockResolvedValue({
-      runs: [{
-        run_id: 'r1', plan_id: 'p1', status: 'completed', job_id: 1,
+      runs: [{ run_id: 'r1', plan_id: 'p1', status: 'completed', job_id: 1,
         error_code: null, output_ref: 'ref:coord-ops/r1', output_rows: 1201,
-        receipt: {
-          run_id: 'r1', rows_transformed: 1201, rows_total: 1201,
-          null_geometry: 0, empty_geometry: 0, total_vertices: 1201,
-          output_crs: 'EPSG:32650', output_ref: 'ref:coord-ops/r1',
-          output_sha256: 's',
-          operation: { candidate_id: 'cand_a', name: 'op', accuracy: null,
-            accuracy_unknown: true, ballpark: false, definition_sha256: 'd1' },
-          display: { state: 'unavailable', reason: 'no op' },
-        },
-        plan_revision: 2, created_at: null, finished_at: null,
-      }],
+        receipt_summary: { rows_total: 1201 }, plan_revision: 2,
+        created_at: null, finished_at: null }],
     });
     renderPanel();
     await waitFor(() => {

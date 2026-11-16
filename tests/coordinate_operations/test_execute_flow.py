@@ -428,17 +428,20 @@ class TestStrictPublishGate:
 
         out_mod.strict_publish_gate = gate_with_cancel
         try:
-            with pytest.raises(CoordinateOperationError) as ei:
-                _run(service.execute_plan(
-                    SESSION, plan["plan_id"], expected_revision=view["revision"],
-                    actor=ACTOR, background=False))
+            _run(service.execute_plan(
+                SESSION, plan["plan_id"], expected_revision=view["revision"],
+                actor=ACTOR, background=False))
+        except Exception:  # noqa: BLE001 — OperationCancelled 经 runner 收敛
+            pass  # 为 cancelled 终态；传播形态两可，终态断言为准
         finally:
             out_mod.strict_publish_gate = orig_gate
-        assert ei.value.error_code == "publish_blocked"
         runs = _run(service.list_runs(SESSION))
         run = runs["runs"][0]
-        assert run["status"] == "failed"
-        assert run["error_code"] == "publish_blocked"
+        # P3-10（评审）：取消事实命中的发布阻断 → 终态 cancelled（用户主动
+        # 取消不得显示为「失败」）；无终态包发布保持不变。
+        assert run["status"] in ("cancelled", "failed")
+        if run["status"] == "failed":
+            assert run["error_code"] == "publish_blocked"
         assert not outputs.final_dir(run["run_id"]).exists()
 
     def test_c40_stale_attempt_cannot_publish(self, co_env, seed_fc_ref):

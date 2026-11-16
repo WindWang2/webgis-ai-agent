@@ -16,7 +16,7 @@
 | C09 | 显式选 ballpark/unknown accuracy → 计划政策可见，unknown ≠ 0 | **PASS** | `test_c09_unknown_accuracy_never_zero` + Pi 旅程 `lock_frozen_in_db`（noop ballpark 候选真实锁定执行）+ 面板测试「精度未知」渲染 |
 | C10 | preview 后 PROJ/格网环境改变 → 计划失效/ENV_CHANGED | **PASS** | `test_c10_env_drift_detected`（篡改冻结环境证据 → `operation_env_changed`）+ `test_execute_flow.py::test_c10_env_drift_blocks_preview`（DB 级环境证据篡改被预览期复核阻断）+ `FrozenOperation.verify_environment`（执行前同复核） |
 | C11 | 客户端伪造 pipeline/格网路径/他人 candidate_id → 拒绝 | **PASS** | `test_c11_fake_candidate_id_rejected` + `::test_c11_unavailable_candidate_lock_rejected`（锁定只收服务器签发 id；执行定义只从冻结 PROJJSON 重建，无任意 pipeline 入口） |
-| C12 | 域外坐标严格政策可复核 | **PASS(设计面)` + 备注 | 预览 `findings.out_of_area_of_use`（地理目标域内检查披露）+ 计划 `out_of_area_policy`（report/fail 显式）；执行期非有限输出 all-or-nothing（C18 测试）。样本在域内不当全量保证 —— `sample_rule` 明示。域外全量 fail 政策未单列集成测试（共享非有限失败路径），记 PARTIAL 由 review 评估 |
+| C12 | 域外坐标严格政策可复核 | **PARTIAL→已收窄**（评审后：fail 政策从词表摘除 —— 契约不承诺未实现语义；域外披露走 preview findings（input/output phase 区分）+ 执行非有限 all-or-nothing；`test_review_fixes.py::test_preview_distinguishes_non_finite_phase`） | 预览 `findings.out_of_area_of_use`（地理目标域内检查披露）+ 计划 `out_of_area_policy`（report/fail 显式）；执行期非有限输出 all-or-nothing（C18 测试）。样本在域内不当全量保证 —— `sample_rule` 明示。域外全量 fail 政策未单列集成测试（共享非有限失败路径），记 PARTIAL 由 review 评估 |
 | C13 | 反经线/极区/多块 AOI | **PASS** | `test_c13_antimeridian_aoi_rejected`（west≥east typed 拒绝并说明拆分建议；绝不构造错误全球 bbox） |
 | C14 | 动态 datum/epoch/compound/垂向 → typed 拒绝 | **PASS** | `test_c14_compound_and_dynamic_rejected`（EPSG:9518 compound、7912 ITRF2014 DYNAMIC[FRAMEEPOCH] WKT 标记探测 → 拒绝并说明） |
 | C15 | 合法 Z 的水平变换 → 逐值保留 + 读回 | **PASS** | `test_c15_z_preserved_unconverted` + `test_staging_stream_and_verify`（61 点 Z=888.8/123.5 经 parquet 往返保真）+ 收据 `z_policy`/`z_note`（horizontal-only 披露） |
@@ -48,7 +48,7 @@
 
 ## 汇总
 
-- **PASS 38 / PARTIAL 1（C12 执行期 fail 政策共享非有限路径）/ PASS-继承 1（C30 复用 G18 授权回归网）/ NOT RUN 1（C35 无格网环境）**
+- **评审后：PASS 37 / 收窄 1（C12）/ PASS-继承 1（C30）/ NOT RUN 1（C35 无格网环境）**；新增评审回归 8 项（test_review_fixes.py）
 - C35 说明：任务书明确「基线离线无格网时必须完成普通明确操作与缺格网阻断，不假称验证了高精度格网路径」—— 本环境正是该基线；格网依赖候选的正确披露与锁定拒绝已验证（C08/C11）。
 - 复跑命令：
   - 域测试：`.venv/bin/python -m pytest tests/coordinate_operations/ -q --no-cov`（52 项）

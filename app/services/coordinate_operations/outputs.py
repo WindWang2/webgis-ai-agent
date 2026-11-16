@@ -100,12 +100,18 @@ def strict_publish_gate(handle: Any, job_id: int) -> None:
                     "publish_blocked", "发布前发现持久取消事实（已停止发布）")
             current_worker = getattr(row, "worker_id", None)
             current_attempt = getattr(row, "attempt", None)
-            if current_worker is not None and current_worker != handle.worker_id:
+            # 评审 P3-6：None = 无法确认 —— fail-closed（不因字段缺失放行）
+            if current_worker is None or current_attempt is None:
+                raise CoordinateOperationError(
+                    "publish_blocked",
+                    "job worker/attempt 字段缺失（claim 状态无法确认；"
+                    "按不可确认阻断发布）")
+            if current_worker != handle.worker_id:
                 raise CoordinateOperationError(
                     "publish_blocked",
                     f"job 已被新 worker 认领（{current_worker}）；本执行体"
                     "不得发布（迟到 attempt fencing）")
-            if current_attempt is not None and handle.attempt is not None \
+            if handle.attempt is not None \
                     and int(current_attempt) != int(handle.attempt):
                 raise CoordinateOperationError(
                     "publish_blocked",
@@ -205,15 +211,33 @@ def verify_published(run_id: str) -> Dict[str, Any]:
             "output_crs": manifest.get("output_crs")}
 
 
+_FC_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+
+
 def load_output_fc(run_id: str, output_name: str = "output") -> Dict[str, Any]:
-    """权威 GeoJSON 成果读取（结果分页/显示副本/回读 oracle 共用）。"""
+    """权威 GeoJSON 成果读取（结果分页/显示副本/回读 oracle 共用）。
+
+    LRU=2 mtime 缓存（评审 P2-4：分页/显示/重铸不再每次整文件 json.loads
+    —— 大成果下 O(全量) 解析每 run 至多一次；写方只有原子发布，mtime 漂移
+    即失效）。
+    """
     p = final_dir(run_id) / f"{output_name}.geojson"
     if not p.is_file():
         raise CoordinateOperationError(
             "result_unavailable", f"run {run_id} 无权威 GeoJSON 成果",
             run_id=run_id)
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        mtime = p.stat().st_mtime
+        cached = _FC_CACHE.get(run_id)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        fc = json.loads(p.read_text(encoding="utf-8"))
+        if len(_FC_CACHE) >= 2:
+            _FC_CACHE.clear()
+        _FC_CACHE[run_id] = (mtime, fc)
+        return fc
+    except CoordinateOperationError:
+        raise
     except Exception as e:
         raise CoordinateOperationError(
             "result_unavailable", f"run {run_id} 成果不可读: {e}",

@@ -3758,7 +3758,7 @@
      },
      "out_of_area_policy": {
       "default": "report",
-      "pattern": "^(report|fail)$",
+      "pattern": "^report$",
       "title": "Out Of Area Policy",
       "type": "string"
      },

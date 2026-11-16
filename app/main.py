@@ -295,6 +295,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[lifespan] data-join recovery skipped: {e}")
 
+    # G45：坐标操作域孤儿 run 收敛（崩溃窗口；评审 P2-5 —— 与 dj_recovery
+    # 同款启动期接线，best-effort 绝不阻断启动）。
+    try:
+        from app.services.coordinate_operations import service as co_service
+
+        result = await co_service.recover_all()
+        if result.get("converged"):
+            logger.info(
+                "[lifespan] coord-ops recovery: %s runs converged",
+                len(result.get("converged") or []),
+            )
+    except Exception as e:
+        logger.warning(f"[lifespan] coord-ops recovery skipped: {e}")
+
     registry = ToolRegistry()
     init_tools(registry)
     # ADR-0243：扩展平台引导（默认全关）。必须发生在 runtime manifest 编译

@@ -47,9 +47,9 @@ class CoordinateOperationPlanInput(BaseModel):
         pattern="^(preserve_unconverted|reject)$")
     #: keep（空几何保留 + 独立计数）—— 目前唯一政策，显式声明
     empty_geometry_policy: str = Field(default="keep", pattern="^keep$")
-    #: report（默认：执行不因域外失败，发现如实披露）| fail（样本或执行遇
-    #: 域外输出即失败 —— 显式收紧，不自动降低标准）
-    out_of_area_policy: str = Field(default="report", pattern="^(report|fail)$")
+    #: report（唯一支持值）：域外发现经预览 findings 与执行非有限
+    #: all-or-nothing 如实披露 —— fail 政策未实现，契约不承诺（评审 P2-3）。
+    out_of_area_policy: str = Field(default="report", pattern="^report$")
     project_id: Optional[str] = None
 
     model_config = {"extra": "forbid"}

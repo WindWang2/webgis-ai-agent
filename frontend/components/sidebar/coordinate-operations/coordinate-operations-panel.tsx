@@ -104,6 +104,10 @@ export function CoordinateOperationsPanel({
         setPlan(latest);
         setRefText((r) => r || latest.plan.source?.ref || '');
         setTargetCrs(latest.plan.target_crs);
+        // 服务器预览证据水合（评审 P3-13：重开不止步于「预览」步）
+        if (latest.preview && !latest.preview_stale) {
+          setPreview(latest.preview as unknown as PreviewView);
+        }
       }
       const { runs } = await api.listRuns();
       const latestRun = runs[0] ?? null;

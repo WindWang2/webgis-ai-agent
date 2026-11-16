@@ -252,7 +252,10 @@ async def _normalized_digest(
         "aoi_derivation": plan.get("aoi_derivation", "none"),
         "z_policy": plan.get("z_policy", "preserve_unconverted"),
         "empty_geometry_policy": plan.get("empty_geometry_policy", "keep"),
-        "out_of_area_policy": plan.get("out_of_area_policy", "report"),
+        # out_of_area_policy 只支持 report：fail 政策未实现（评审 P2-3）——
+        # 契约不承诺未兑现的语义；域外发现经 preview findings + 执行非有限
+        # all-or-nothing 如实披露。
+        "out_of_area_policy": "report",
     }
     if plan.get("_locked_operation_digest"):
         basis["operation_digest"] = plan["_locked_operation_digest"]
@@ -467,6 +470,7 @@ async def preview_plan(
         raise CoordinateOperationError(
             "source_revision_changed",
             "源在锁定后发生变化；请更新计划并重新锁定")
+    _enforce_z_policy(plan, card)
 
     from app.services.data_delivery.source_resolver import sample_parquet_geometry
 
@@ -477,7 +481,7 @@ async def preview_plan(
     stats = execute.BatchStats()
     pairs: List[Dict[str, Any]] = []
     findings: Dict[str, Any] = {
-        "non_finite_input": 0, "out_of_area_of_use": 0,
+        "non_finite_input": 0, "non_finite_output": 0, "out_of_area_of_use": 0,
         "null_geometry": 0, "empty_geometry": 0,
         "first_non_finite_row": None, "first_out_of_area_row": None,
     }
@@ -493,8 +497,13 @@ async def preview_plan(
         try:
             out = execute.transform_feature(f, op, stats, row_index=i + 1)
         except CoordinateOperationError as e:
-            if e.error_code == "execute_failed" and "非有限" in e.reason:
-                findings["non_finite_input"] += 1
+            phase = (e.details or {}).get("phase")
+            if e.error_code == "execute_failed" and phase in (
+                    "non_finite_input", "non_finite_output"):
+                key = ("non_finite_input" if phase == "non_finite_input"
+                       else "non_finite_output")
+                findings.setdefault(key, 0)
+                findings[key] += 1
                 findings["first_non_finite_row"] = findings[
                     "first_non_finite_row"] or (i + 1)
                 continue
@@ -591,11 +600,60 @@ def _is_geographic_crs(crs_input: str) -> bool:
 
 # ── 执行 ───────────────────────────────────────────────────────────────────
 
+def _enforce_z_policy(plan: Dict[str, Any], card: Dict[str, Any]) -> None:
+    """z_policy=reject（评审 P2-3 实现）：源几何含 Z 维即 typed 拒绝 ——
+    在冻结/变换前阻断，不让「reject」承诺被静默降级为保留。"""
+    if plan.get("z_policy") != "reject":
+        return
+    geom = card.get("geometry") or {}
+    has_z = bool(geom.get("has_z"))
+    if not has_z and card.get("kind") == "fabric_parquet":
+        # parquet 采样证据可能未带 has_z —— 以首特征坐标维度为准（有界读）
+        snap = card.get("_snapshot")
+        if snap is not None:
+            try:
+                sample = snap.sample_features(limit=5)
+                has_z = any(
+                    len(((f.get("geometry") or {}).get("coordinates") or [])[0:1]
+                        and _first_coord_len(f.get("geometry")) or 0) >= 3
+                    for f in sample if f.get("geometry"))
+            except Exception:  # noqa: BLE001 — 采样失败按未知处理（不猜）
+                has_z = True
+    if has_z:
+        raise CoordinateOperationError(
+            "unsupported_dimension",
+            "计划 z_policy=reject：源几何含 Z 维（horizontal-only 契约下"
+            "拒绝执行；如需保留 Z 原值请改用 preserve_unconverted）")
+
+
+def _first_coord_len(geom: Optional[Dict[str, Any]]) -> int:
+    node = geom
+    for _ in range(12):
+        if not isinstance(node, dict):
+            return 0
+        coords = node.get("coordinates")
+        if coords is None:
+            subs = node.get("geometries")
+            if subs:
+                node = subs[0]
+                continue
+            return 0
+        if isinstance(coords, list) and coords and isinstance(coords[0], (int, float)):
+            return len(coords)
+        if isinstance(coords, list) and coords:
+            node = {"coordinates": coords[0]}
+            continue
+        return 0
+    return 0
+
+
 def _build_idempotency_key(
     session_id: str, plan_id: str, plan_digest: str, source_fp: str,
 ) -> str:
-    key = (f"{contracts.TASK_TYPE}:{session_id}:{plan_id}:{plan_digest}:"
-           f"{source_fp[:48]}")
+    """幂等键（评审 P3：不截断原文 —— 长输入经 sha 摘要保完整区分度）。"""
+    raw = (f"{contracts.TASK_TYPE}:{session_id}:{plan_id}:{plan_digest}:"
+           f"{source_fp}")
+    key = f"{contracts.TASK_TYPE}:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"
     return key[:contracts.IDEMPOTENCY_KEY_MAX]
 
 
@@ -632,6 +690,7 @@ async def execute_plan(
         raise CoordinateOperationError(
             "source_revision_changed",
             "源在计划锁定后发生变化；请更新计划并重新锁定")
+    _enforce_z_policy(plan, card)
 
     base_key = _build_idempotency_key(
         session_id, plan_id, plan_digest, card["content_fingerprint"])
@@ -805,11 +864,13 @@ async def _execute_body(handle: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
             op_meta["operation_projjson"], op_meta["definition_sha256"],
             op_meta["environment"])
         target_crs = plan["target_crs"]
-        stats = await asyncio.get_running_loop().run_in_executor(
+        owner_loop = asyncio.get_running_loop()  # P1-2：进度跨线程回投
+        stats = await owner_loop.run_in_executor(
             _EXEC_POOL, functools.partial(
                 execute.run_streaming_transform, frozen, staging, op,
                 target_crs, output_name="output", handle=handle,
-                batch_rows=contracts.EXECUTE_BATCH_ROWS))
+                batch_rows=contracts.EXECUTE_BATCH_ROWS,
+                loop=owner_loop))
         handle.checkpoint()
 
         # 3. staging 核验（行数/CRS 声明一致性）
@@ -896,7 +957,8 @@ async def _execute_body(handle: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
             "total_vertices": stats["total_vertices"],
             "geometry_types": stats["geometry_types"],
             "output_crs": verified["crs"],
-            "output_ref": artifact_ref or f"ref:coord-ops/{run_id}",
+            "output_ref": artifact_ref,
+            "ledger_registration": ("ok" if artifact_ref else "failed"),
             "output_sha256": verified["geojson_sha256"],
             "geojson_bytes": stats["geojson_bytes"],
             "parquet_projection": stats["parquet_projection"],
@@ -951,7 +1013,20 @@ async def _execute_body(handle: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         raise
     except CoordinateOperationError as e:
         if e.error_code in ("publish_blocked",):
-            # 可恢复阻断：保留 staging（复跑可复用冻结件），run 落 failed+码
+            # 可恢复阻断：保留 staging，run 落 failed+码 —— 除非阻断源于
+            # 持久取消事实（评审 P3-10：用户主动取消不得显示为「失败」）。
+            cancelled = "持久取消事实" in e.reason or "cancelling" in e.reason
+            if cancelled or handle.token.cancelled:
+                await asyncio.get_running_loop().run_in_executor(
+                    _EXEC_POOL, functools.partial(
+                        outputs.discard_staging, run_id))
+                _mark_run(session_id, run_id, "cancelled")
+                from app.services.data_operations.runner import (
+                    AlreadyFinished as _AF,
+                )  # noqa: F401 — 终态由 runner 收敛；此处 run 行先对齐
+                raise OperationCancelled(
+                    "publish blocked by durable cancel", job_id=ctx["job_id"]
+                ) from e
             _mark_run(session_id, run_id, "failed", error_code=e.error_code)
             raise
         await asyncio.get_running_loop().run_in_executor(
@@ -1030,6 +1105,15 @@ async def _register_native_delivery_refs(
 _EXEC_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="coord-ops")
 
 
+def _transform_display_features(feats: List[Any], op: Any) -> List[Any]:
+    """显示副本逐要素变换（线程池执行；评审 P3-8：不阻塞事件循环）。"""
+    stats = execute.BatchStats()
+    out: List[Any] = []
+    for i, f in enumerate(feats):
+        out.append(execute.transform_feature(f, op, stats, row_index=i + 1))
+    return out
+
+
 async def _mint_display_copy(
     handle: Any, session_id: str, run_id: str, target_crs: str,
     plan: Dict[str, Any],
@@ -1053,12 +1137,10 @@ async def _mint_display_copy(
             resolved["operation_projjson"], resolved["definition_sha256"],
             resolved["environment"])
         handle.checkpoint()
-        stats = execute.BatchStats()
         feats = fc.get("features") or []
-        out_feats = []
-        for i, f in enumerate(feats):
-            out_feats.append(execute.transform_feature(
-                f, op, stats, row_index=i + 1))
+        out_feats = await asyncio.get_running_loop().run_in_executor(
+            _EXEC_POOL, functools.partial(
+                _transform_display_features, feats, op))
         display_fc = {
             "type": "FeatureCollection",
             "features": out_feats,
@@ -1155,8 +1237,10 @@ def _run_view(session_id: str, run_id: str) -> Dict[str, Any]:
 
 
 def _find_completed_run_by_key(
-    session_id: str, key: str,
+    session_id: str, base_key: str,
 ) -> Optional[Dict[str, Any]]:
+    """按 base_key 前缀匹配（评审 P1-1）：世代键（:g2…）的 completed run
+    同样可复用 —— 同输入重复执行不再因历史失败世代而全量重跑。"""
     from app.core.database import SessionLocal
     from app.models.coordinate_operations import CoordinateOperationRun
     from sqlalchemy import select
@@ -1164,7 +1248,7 @@ def _find_completed_run_by_key(
     with SessionLocal() as db:
         rows = db.execute(select(CoordinateOperationRun).where(
             CoordinateOperationRun.session_id == session_id,
-            CoordinateOperationRun.idempotency_key == key,
+            CoordinateOperationRun.idempotency_key.like(base_key + "%"),
             CoordinateOperationRun.status == "completed")
             .order_by(CoordinateOperationRun.created_at.desc()).limit(1)
         ).scalars().all()
@@ -1176,8 +1260,9 @@ def _find_completed_run_by_key(
 
 
 def _find_active_run_by_key(
-    session_id: str, key: str,
+    session_id: str, base_key: str,
 ) -> Optional[Dict[str, Any]]:
+    """同前缀语义：任一世代的活跃 run 即收敛锚（不并发起新执行）。"""
     from app.core.database import SessionLocal
     from app.models.coordinate_operations import CoordinateOperationRun
     from sqlalchemy import select
@@ -1185,7 +1270,7 @@ def _find_active_run_by_key(
     with SessionLocal() as db:
         rows = db.execute(select(CoordinateOperationRun).where(
             CoordinateOperationRun.session_id == session_id,
-            CoordinateOperationRun.idempotency_key == key,
+            CoordinateOperationRun.idempotency_key.like(base_key + "%"),
             CoordinateOperationRun.status.in_(("pending", "running")))
             .order_by(CoordinateOperationRun.created_at.desc()).limit(1)
         ).scalars().all()
@@ -1349,6 +1434,49 @@ class _NullHandle:
 
     def progress(self, *a: Any, **k: Any) -> bool:  # noqa: ARG002
         return False
+
+
+async def recover_all() -> Dict[str, Any]:
+    """全局孤儿收敛（lifespan 启动接线，评审 P2-5；G38 dj_recovery 同款）。
+
+    遍历全部非终态 run 行：job 已终态 → 按权威文件/manifest 收敛（C38）；
+    超龄 staging（run 已终态）清理。进程崩溃窗口不再等手动 /recover。
+    """
+    from app.core.database import SessionLocal
+    from app.models.coordinate_operations import CoordinateOperationRun
+    from sqlalchemy import select
+
+    converged: List[Dict[str, Any]] = []
+    with SessionLocal() as db:
+        runs = db.execute(select(CoordinateOperationRun).where(
+            CoordinateOperationRun.status.in_(("pending", "running")))
+        ).scalars().all()
+        session_ids = sorted({r.session_id for r in runs})
+        db.commit()
+    for sid in session_ids:
+        try:
+            out = await recover(sid)
+            converged.extend(out.get("converged") or [])
+        except Exception as e:  # noqa: BLE001 — 单会话失败不阻断整体收敛
+            logger.warning("[coord-ops] recover_all session %s failed: %s",
+                           sid, e)
+    # 超龄 staging 兜底（run 已终态或行已不存在的遗留目录，>1h mtime）
+    import shutil as _shutil
+    from datetime import datetime, timedelta, timezone
+
+    staging_root = outputs.domain_root() / ".staging"
+    if staging_root.is_dir():
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+        for child in staging_root.iterdir():
+            try:
+                if child.is_dir() and datetime.fromtimestamp(
+                        child.stat().st_mtime, tz=timezone.utc) < cutoff:
+                    _shutil.rmtree(child, ignore_errors=True)
+            except OSError:
+                continue
+    if converged:
+        logger.info("[coord-ops] recover_all converged %d runs", len(converged))
+    return {"converged": converged}
 
 
 async def recover(session_id: str) -> Dict[str, Any]:
