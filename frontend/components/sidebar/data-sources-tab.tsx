@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { Database, FileCheck2, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
+import { Crosshair, Database, FileCheck2, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
 import { useDataJoinStore } from '@/lib/hooks/use-data-join';
+import { useCoordinateOperationsStore } from '@/lib/hooks/use-coordinate-operations';
 import { useFieldContractsPanelStore } from '@/lib/hooks/use-field-contracts';
 import { describeApiError, isApiError } from '@/lib/api/transport';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
@@ -467,6 +468,17 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         >
           <Link2 size={14} aria-hidden />
           <span className="sr-only">{t('dataJoin.openPanel')}</span>
+        </button>
+        {/* G45：坐标操作与重投影入口（冻结操作候选审阅直达）。 */}
+        <button
+          type="button"
+          onClick={() => useCoordinateOperationsStore.getState().openWith()}
+          className="mb-1 inline-flex h-control-md w-control-md shrink-0 items-center justify-center rounded-md border border-edge-subtle text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          data-testid="open-coordinate-operations"
+          title={t('coordinateOperations.openPanel')}
+        >
+          <Crosshair size={14} aria-hidden />
+          <span className="sr-only">{t('coordinateOperations.openPanel')}</span>
         </button>
         {/* G44：业务字段合同工作台入口（字段声明/评估/激活/批量填值）。 */}
         <button

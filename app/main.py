@@ -296,6 +296,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[lifespan] data-join recovery skipped: {e}")
 
+    # G45：坐标操作域孤儿 run 收敛（崩溃窗口；评审 P2-5 —— 与 dj_recovery
+    # 同款启动期接线，best-effort 绝不阻断启动）。
+    try:
+        from app.services.coordinate_operations import service as co_service
+
+        result = await co_service.recover_all()
+        if result.get("converged"):
+            logger.info(
+                "[lifespan] coord-ops recovery: %s runs converged",
+                len(result.get("converged") or []),
+            )
+    except Exception as e:
+        logger.warning(f"[lifespan] coord-ops recovery skipped: {e}")
     # G48：控制点影像配准孤儿任务与 staging 清理（重启收敛，绝不阻断启动）。
     try:
         from app.services.georeferencing import recovery as georef_recovery
@@ -1172,6 +1185,8 @@ from app.api.routes import thematic_authoring as thematic_authoring_routes  # no
 app.include_router(thematic_authoring_routes.router, prefix="/api/v1", tags=["专题表达工作台"])
 from app.api.routes import data_join_authoring as data_join_authoring_routes  # noqa: E402
 app.include_router(data_join_authoring_routes.router, prefix="/api/v1", tags=["数据关联工作台 G38"])
+from app.api.routes import coordinate_operations as coordinate_operations_routes  # noqa: E402
+app.include_router(coordinate_operations_routes.router, prefix="/api/v1", tags=["坐标操作工作台 G45"])
 from app.api.routes import cartographic_assets as cartographic_assets_routes  # noqa: E402
 app.include_router(cartographic_assets_routes.router, prefix="/api/v1", tags=["制图符号资产工作台（G40）"])
 # G42：有界目标补全执行（goal repair 预览/启动/状态/取消；UI 与 Pi 共用同一 service）

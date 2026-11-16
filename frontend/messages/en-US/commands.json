@@ -55,5 +55,6 @@
     "item": "{shortcut} ({titles})",
     "separator": "; "
   },
-  "dataJoin": "Data Join Workbench"
+  "dataJoin": "Data Join Workbench",
+  "coordinateOperations": "Coordinate operations & reprojection"
 }

@@ -144,6 +144,25 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            id="coordinate.operations.reproject", name="可审阅坐标操作派生重投影",
+            conformance_tests=[
+                "tests/coordinate_operations/test_kernel_and_candidates.py",
+                "tests/coordinate_operations/test_execute_flow.py",
+            ],
+            capabilities=["coordinate_operations"],
+            output_artifact_type="feature_collection",
+            tool_candidates=["webgis_coordop_execute"],
+            cpu_cost="medium", memory_cost="medium", io_cost="medium",
+            preferred_execution_policy="ASYNC",
+            algorithm_family="data_access",
+            assumptions=["源 CRS 由载体权威元数据确认；操作/环境在计划中冻结"],
+            limitations=["静态 2D 核心（Z 仅原值保留）；无格网环境高精度操作不可执行"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            priority=10,
+        ),
+
+        AlgorithmDescriptor(
             id="data.join.authoring", name="两源数据关联与空间富集",
             conformance_tests=[
                 "tests/unit/data_join_authoring/test_executor_attribute.py",

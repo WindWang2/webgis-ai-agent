@@ -48,6 +48,8 @@ import zhTopology from '@/messages/zh-CN/topology.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import zhDataJoin from '@/messages/zh-CN/dataJoin.json'
+import zhCoordinateOperations from '@/messages/zh-CN/coordinateOperations.json'
+import enCoordinateOperations from '@/messages/en-US/coordinateOperations.json'
 import zhFieldContracts from '@/messages/zh-CN/fieldContracts.json'
 import zhCartogram from '@/messages/zh-CN/cartogram.json'
 import enCommon from '@/messages/en-US/common.json'
@@ -130,6 +132,7 @@ export interface AppMessages {
   dataPreparation: typeof zhDataPreparation
   dataDelivery: typeof zhDataDelivery
   dataJoin: typeof zhDataJoin
+  coordinateOperations: typeof zhCoordinateOperations
   fieldContracts: typeof zhFieldContracts
   dataImport: typeof zhDataImport
   fieldCompute: typeof zhFieldCompute
@@ -156,6 +159,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataPreparation: zhDataPreparation,
     dataDelivery: zhDataDelivery,
     dataJoin: zhDataJoin,
+    coordinateOperations: zhCoordinateOperations,
     fieldContracts: zhFieldContracts,
     cartogram: zhCartogram,
     dataImport: zhDataImport,
@@ -201,6 +205,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     dataPreparation: enDataPreparation as unknown as AppMessages['dataPreparation'],
     dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
     dataJoin: enDataJoin as unknown as AppMessages['dataJoin'],
+    coordinateOperations: enCoordinateOperations as unknown as AppMessages['coordinateOperations'],
     fieldContracts: enFieldContracts as unknown as AppMessages['fieldContracts'],
     cartogram: enCartogram as unknown as AppMessages['cartogram'],
     dataImport: enDataImport as unknown as AppMessages['dataImport'],

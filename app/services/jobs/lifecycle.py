@@ -60,6 +60,8 @@ class JobKind(str, Enum):
     data_join = "data_join"            # G38 数据关联执行（进程内 durable runner）
     # G39（数值栅格采样）：点集/沿线采样执行（进程内 durable runner）
     raster_sampling = "raster_sampling"
+    # G45（坐标操作执行）：坐标操作全量派生重投影（进程内 durable runner）
+    coord_operations = "coord_operations"
     # G44（业务字段合同）：完整数据版本评估（进程内 durable runner）
     field_contract_assess = "field_contract_assess"
     # G48（控制点影像配准）：直传 6 参数仿射重投影与 COG 交付（进程内 durable runner）

@@ -53,6 +53,7 @@ _TOOL_MODULES = [
     ("app.tools.topology_workbench_tools", "register_topology_workbench_tools"),
     # G38：数据关联与空间富集作者工具面（describe/plan/preview/execute/status/result）
     ("app.tools.data_join_authoring_tools", "register_data_join_authoring_tools"),
+    ("app.tools.coordinate_operations_tools", "register_coordinate_operations_tools"),
     ("app.tools.field_contracts_tools", "register_field_contracts_tools"),  # G44
     # G47：Dorling 圆面积 cartogram 作者（inspect/plan/run/status/apply/export）
     ("app.tools.cartogram_tools", "register_cartogram_tools"),
