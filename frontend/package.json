@@ -35,6 +35,7 @@
   },
   "devDependencies": {
     "@maplibre/maplibre-gl-style-spec": "26.6.0",
+    "@tailwindcss/postcss": "4.3.5",
     "@tailwindcss/typography": "^0.5.20",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
