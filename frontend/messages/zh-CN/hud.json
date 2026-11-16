@@ -312,5 +312,8 @@
     "previewReady": "预览就绪（未提交）",
     "swatchAria": "资产样式预览",
     "ineligible": "该层型（{type}）暂不支持符号资产绑定"
+  },
+  "dorlingCartogram": {
+    "title": "Dorling 圆面积 cartogram"
   }
 }

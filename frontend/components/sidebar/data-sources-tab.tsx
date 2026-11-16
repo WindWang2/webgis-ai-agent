@@ -38,6 +38,7 @@ import { DataDeliveryDialog } from '@/components/data-delivery/delivery-dialog';
 import type { DeliverySourceRef } from '@/lib/api/data-delivery';
 import { FieldComputePanel } from './data-preparation/field-compute-panel';
 import { RasterSamplingPanel } from './raster-sampling/raster-sampling-panel';
+import { GeoreferencingWorkbenchPanel } from '../georeferencing/GeoreferencingWorkbenchPanel';
 
 // A-F-08: debounce window re-exported so consumers/tests keep importing it from
 // the tab entry point (constant itself lives with the catalog hook).
@@ -647,6 +648,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           <PrepareFlow sessionId={sessionId} ownerToken={ownerToken} />
           <FieldComputePanel sessionId={sessionId} ownerToken={ownerToken} />
           <RasterSamplingPanel sessionId={sessionId} ownerToken={ownerToken} />
+          <GeoreferencingWorkbenchPanel sessionId={sessionId} ownerToken={ownerToken} />
         </div>
       )}
       {activeSubTab === 'explain' && (

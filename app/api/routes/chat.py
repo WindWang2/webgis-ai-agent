@@ -1156,9 +1156,30 @@ async def chat_completions(
                         _attach_meta = await _attachment_persist_meta(
                             pi_session_id, req.attachments,
                             receipts=result.get("attachment_receipts") or [])
+                        # G43（ADR-0295）：非流式同款回执摘要持久化。
+                        _ns_receipt_meta = result.get("turn_receipt") or None
                         _user_msg_id = await svc.save_message(
                             pi_session_id, "user", req.message,
-                            attachments=_attach_meta or None)
+                            attachments=_attach_meta or None,
+                            context_receipt=_ns_receipt_meta)
+                        if (
+                            _ns_receipt_meta
+                            and isinstance(_ns_receipt_meta, dict)
+                            and _user_msg_id is not None
+                        ):
+                            try:
+                                from app.services.turn_context_store import (
+                                    link_user_message,
+                                )
+
+                                await link_user_message(
+                                    str(_ns_receipt_meta.get("turn_id") or ""),
+                                    int(_user_msg_id),
+                                )
+                            except Exception:  # noqa: BLE001
+                                logger.debug(
+                                    "[pi-chat-nonstream] receipt link failed sid=%s",
+                                    pi_session_id, exc_info=True)
                         if _attach_meta and _user_msg_id is not None:
                             try:
                                 from app.services.visual_context.store import (
@@ -1234,6 +1255,8 @@ async def chat_completions(
                     session_id=pi_session_id,
                     content=final_content,
                     owner_token=pi_owner_token,
+                    # G43：非流式同语义回执披露（C34 与流式对齐）
+                    turn_receipt=result.get("turn_receipt") or None,
                 )
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
@@ -1450,9 +1473,32 @@ async def chat_stream(
                         _attach_meta = await _attachment_persist_meta(
                             pi_session_id, req.attachments,
                             receipts=result.get("attachment_receipts") or [])
+                        # G43（ADR-0295）：本轮上下文回执摘要随用户消息持久化
+                        #（有界 digest/状态/计数；完整回执按 session+turn 查询
+                        # turn-context 端点）。
+                        _turn_receipt_meta = result.get("turn_receipt") or None
                         _user_msg_id = await svc.save_message(
                             pi_session_id, "user", req.message,
-                            attachments=_attach_meta or None)
+                            attachments=_attach_meta or None,
+                            context_receipt=_turn_receipt_meta)
+                        if (
+                            _turn_receipt_meta
+                            and isinstance(_turn_receipt_meta, dict)
+                            and _user_msg_id is not None
+                        ):
+                            try:
+                                from app.services.turn_context_store import (
+                                    link_user_message,
+                                )
+
+                                await link_user_message(
+                                    str(_turn_receipt_meta.get("turn_id") or ""),
+                                    int(_user_msg_id),
+                                )
+                            except Exception:  # noqa: BLE001 — 关联失败不阻断转录
+                                logger.debug(
+                                    "[pi-chat] receipt link failed sid=%s",
+                                    pi_session_id, exc_info=True)
                         if _attach_meta and _user_msg_id is not None:
                             try:
                                 from app.services.visual_context.store import (
@@ -1748,6 +1794,11 @@ async def get_session_detail(
                 "attachments": (
                     [a for a in (m.attachments or [])][:4]
                     if m.attachments else None
+                ),
+                # G43（ADR-0295）：本轮上下文回执摘要（有界；仅 user 消息
+                # 携带；完整回执按 session+turn 查询 context-receipts 端点）。
+                "context_receipt": (
+                    m.context_receipt if isinstance(m.context_receipt, dict) else None
                 ),
             }
             for m in page
@@ -2647,3 +2698,11 @@ from app.api.routes.session_model_views import (  # noqa: E402
 )
 
 router.include_router(_session_model_views_router)
+
+# G43（本轮上下文回执与可控资料）：会话级可选资料目录/策略 CAS/无副作用
+# 预览/turn 回执读取 —— 同款挂载契约（owner 守卫在子模块内）。
+from app.api.routes.turn_context_views import (  # noqa: E402
+    router as _turn_context_views_router,
+)
+
+router.include_router(_turn_context_views_router)

@@ -55,10 +55,27 @@ class BaseProvider:
                 latency_ms=int((time.monotonic() - started) * 1000),
             )
         try:
-            items = await self.build(req, facts)
+            built = await self.build(req, facts)
+            # G43：可选资料 provider 返回 (items, source_refs)；其余 provider
+            # 保持纯 list 返回（零改动兼容）。
+            if isinstance(built, tuple) and len(built) == 2:
+                items, source_refs = built
+            else:
+                items, source_refs = built, []
             return ProviderReport(
                 provider_id=self.provider_id, domain=self.domain,
                 items=items,
+                source_refs=[
+                    {
+                        "source_id": str(r.get("source_id", ""))[:80],
+                        "kind": str(r.get("kind", ""))[:40],
+                        "decision": str(r.get("decision", ""))[:32],
+                        "version_token": str(r.get("version_token", ""))[:40],
+                        "label": str(r.get("label", ""))[:64],
+                    }
+                    for r in source_refs
+                    if isinstance(r, dict)
+                ][:96],
                 latency_ms=int((time.monotonic() - started) * 1000),
             )
         except Exception as exc:  # noqa: BLE001 — provider 缺席绝不阻断 turn
@@ -116,7 +133,11 @@ class CartographyVerdictProvider(BaseProvider):
 
 
 class CartographyMemoryProvider(BaseProvider):
-    """ADR-0069 project prior block (active facts only; stale never injected)."""
+    """ADR-0069 project prior block (active facts only; stale never injected).
+
+    G43：策略在单一渲染源内实施（``cm:<fact_id>`` 排除/优先），并携带
+    渲染时刻的事实去向 + 权威版本（``source_refs``）。
+    """
 
     provider_id = "cartography_memory"
     domain = ContextDomain.CARTOGRAPHY_MEMORY
@@ -130,22 +151,35 @@ class CartographyMemoryProvider(BaseProvider):
         text = await asyncio.to_thread(
             _build_project_memory_block, req.project_id,
             user_id=req.user_id or None, org_id=req.org_id or None,
+            source_policy=getattr(facts, "source_policy", None),
         )
         if not text:
             return []
         source_scope = getattr(text, "source_scope", None)
         if not source_scope:
             raise SourceScopeUnavailable("derived context is missing its source scope")
-        return [bounded_item(
+        item = bounded_item(
             item_id="carto:memory", provider_id=self.provider_id,
             domain=self.domain, content=text,
             **source_scope,
             evidence_ref="project_memory:active_facts",
-        )]
+        )
+        return self._report_items(item, text)
+
+    @staticmethod
+    def _report_items(item, text):
+        refs = getattr(text, "entry_refs", None)
+        if refs:
+            return [item], [dict(r) for r in refs]
+        return [item], []
 
 
 class ProjectKnowledgeProvider(BaseProvider):
-    """#1395 ``<project_knowledge>`` card (already XML-fenced by renderer)."""
+    """#1395 ``<project_knowledge>`` card (already XML-fenced by renderer).
+
+    G43：``pk:<entry_id>`` 排除在渲染前生效；条目去向含真实 version_token
+    快照与 omitted/not_live 如实披露（``source_refs``）。
+    """
 
     provider_id = "project_knowledge"
     domain = ContextDomain.PROJECT_KNOWLEDGE
@@ -161,22 +195,32 @@ class ProjectKnowledgeProvider(BaseProvider):
             req.project_id,
             org_id=req.org_id or None,
             user_id=req.user_id or None,
+            source_policy=getattr(facts, "source_policy", None),
+            read_only=bool(getattr(facts, "preview_mode", False)),
         )
         if not text:
             return []
         source_scope = getattr(text, "source_scope", None)
         if not source_scope:
             raise SourceScopeUnavailable("derived context is missing its source scope")
-        return [bounded_item(
+        item = bounded_item(
             item_id="knowledge:card", provider_id=self.provider_id,
             domain=self.domain, content=text,
             **source_scope,
             evidence_ref="project_knowledge:active_entries",
-        )]
+        )
+        refs = getattr(text, "entry_refs", None)
+        if refs:
+            return [item], [dict(r) for r in refs]
+        return [item], []
 
 
 class GisMemoryProvider(BaseProvider):
-    """ADR-0255 GIS spatial-memory prior (narrow interface, fail-open)."""
+    """ADR-0255 GIS spatial-memory prior (narrow interface, fail-open).
+
+    G43：块级可选源 ``gm:block`` —— 显式排除时整块不投影（receipt 记
+    excluded_by_policy）；粒度如实标注为块级。
+    """
 
     provider_id = "gis_memory"
     domain = ContextDomain.GIS_MEMORY
@@ -189,6 +233,15 @@ class GisMemoryProvider(BaseProvider):
             MemoryProjectionInput,
             build_memory_projection,
         )
+
+        policy = getattr(facts, "source_policy", None)
+        if policy is not None and getattr(policy, "is_explicit", False):
+            if policy.decision_for("gm:block") == "excluded_by_policy":
+                return [], [{
+                    "source_id": "gm:block", "kind": "gis_memory_block",
+                    "decision": "excluded_by_policy", "version_token": "",
+                    "label": "GIS 空间记忆（整块）",
+                }]
 
         text = await build_memory_projection(
             MemoryProjectionInput(
@@ -204,14 +257,24 @@ class GisMemoryProvider(BaseProvider):
         source_scope = getattr(text, "source_scope", None)
         if not source_scope:
             raise SourceScopeUnavailable("derived context is missing its source scope")
-        return [bounded_item(
+        item = bounded_item(
             item_id="memory:gis", provider_id=self.provider_id,
             domain=self.domain, content=text,
             # ADR-0255: org-scoped cross-session prior — renderable anywhere
             # inside its org, never outside it.
             **source_scope,
             evidence_ref="gis_memory:projection",
-        )]
+        )
+        refs = [{
+            "source_id": "gm:block", "kind": "gis_memory_block",
+            "decision": (
+                policy.decision_for("gm:block")
+                if policy is not None and getattr(policy, "is_explicit", False)
+                else "included"
+            ),
+            "version_token": "", "label": "GIS 空间记忆（整块）",
+        }]
+        return [item], refs
 
 
 class SessionPlanProvider(BaseProvider):

@@ -138,7 +138,12 @@ if process_role() != "worker":
             # aiosqlite 在默认 QueuePool 下跨 asyncio loop 会泄露 WorkerThread 导致 pytest 挂起。
             # NullPool 确保 Session 关闭时立即销毁 aiosqlite 连接与后台线程。
             _async_kwargs["poolclass"] = NullPool
-            _async_kwargs["connect_args"] = {"check_same_thread": False}
+            # G42：busy timeout 与同步侧 get_engine 的 V7 对称 —— sync/async
+            # 双引擎并发写同一 sqlite 文件时（durable job runner + 终验/
+            # 章节写），异步侧默认 5s 等待会抛 database is locked；30s 让
+            # 短事务排队而非失败（语义与同步侧注释一致）。
+            _async_kwargs["connect_args"] = {
+                "check_same_thread": False, "timeout": 30}
         elif not async_engine_uses_null_pool(settings.DATABASE_URL, settings.ENV):
             _async_kwargs["connect_args"] = {"server_settings": {"timezone": "UTC"}}
             # production/staging 用 QueuePool 复用连接（asyncpg 长生命周期高效）。

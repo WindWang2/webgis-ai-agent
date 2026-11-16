@@ -69,6 +69,12 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
         "云覆盖", "波段",
         "模型", "推理", "GeoAI", "modelops", "分割", "目标检测",
     ],
+    # G48 控制点影像配准
+    "georeferencing": [
+        "配准", "控制点", "GCP", "几何校正", "地理配准", "仿射",
+        "georeference", "georeferencing", "ground control point",
+        "affine", "RMSE", "GeoTIFF", "扫描图", "航拍图",
+    ],
     # 路网 / 路径 / 可达性 / 选址优化 / 巡航
     "network": [
         "路径", "路线", "导航", "可达", "通勤", "时圈", "等时圈", "等时线",
