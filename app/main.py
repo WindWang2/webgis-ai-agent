@@ -1174,6 +1174,9 @@ from app.api.routes import data_join_authoring as data_join_authoring_routes  # 
 app.include_router(data_join_authoring_routes.router, prefix="/api/v1", tags=["数据关联工作台 G38"])
 from app.api.routes import cartographic_assets as cartographic_assets_routes  # noqa: E402
 app.include_router(cartographic_assets_routes.router, prefix="/api/v1", tags=["制图符号资产工作台（G40）"])
+# G42：有界目标补全执行（goal repair 预览/启动/状态/取消；UI 与 Pi 共用同一 service）
+from app.api.routes import goal_repair as goal_repair_routes  # noqa: E402
+app.include_router(goal_repair_routes.router, prefix="/api/v1", tags=["目标补全（G42）"])
 # G34：专业纸面版式与图册编排工作台（独立 router；UI 与 Pi 共用 service）
 from app.api.routes import print_layout as print_layout_routes  # noqa: E402
 app.include_router(print_layout_routes.router, prefix="/api/v1", tags=["纸面版式工作台"])

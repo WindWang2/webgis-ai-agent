@@ -663,6 +663,12 @@
  "GET /api/v1/georeferencing/sources/{source_id}/image": {
   "__type__": "unknown"
  },
+ "GET /api/v1/goal-repair/attempts/{attempt_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/goal-repair/sessions/{session_id}/preview": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/health": {
   "__model__": "HealthResponse",
   "agent_runtime": "string",
@@ -2119,6 +2125,12 @@
   "__model__": "GeorefSourceResponse",
   "image_url": "string",
   "source": "GeorefSourceRecord"
+ },
+ "POST /api/v1/goal-repair/attempts/{attempt_id}/cancel": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/goal-repair/sessions/{session_id}/attempts [202]": {
+  "__type__": "unknown"
  },
  "POST /api/v1/knowledge/documents": {
   "__model__": "ApiResponse",

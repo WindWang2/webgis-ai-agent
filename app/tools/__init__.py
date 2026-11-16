@@ -170,6 +170,9 @@ _TOOL_MODULES = [
     ("app.tools.session_model_tools", "register_session_model_tools"),
     # G40：制图符号资产工作台（目录/导入/绑定预览/应用/解绑；独立模块防并发冲突）
     ("app.tools.cartographic_asset_tools", "register_cartographic_asset_tools"),
+    # G42：有界目标补全执行工具面（预览/启动/状态/取消；独立模块防并发冲突；
+    # start 零等待 —— 执行体独立任务经统一派发，不嵌套持 wave 槽）
+    ("app.tools.goal_repair_tools", "register_goal_repair_tools"),
     # G48：控制点影像配准与可交付地理栅格工作台（deferred-only，绝不进 NATIVE_TOOL_NAMES）
     ("app.tools.georeferencing_tools", "register_georeferencing_tools"),
     # G43：本轮上下文装配回执只读工具（独立模块防并发冲突；只读，用户

@@ -127,8 +127,24 @@ def register_mixed_map_export_tools(registry: ToolRegistry) -> None:
             )
         except MixedMapExportError as exc:
             return _error_payload(exc)
-        delivered = await persist_mixed_export(
-            session_id, artifact, principal=f"session:{session_id}")
+        # G42（goal repair 执行接线）：工具路径补 db + owner 上下文 —— UI
+        # REST 路径（/export/mixed 经 Depends）一直有 lineage，工具路径缺席
+        # 时 record_export_lineage fail-closed 跳过，导致经 Pi/agent 的导出
+        # 从不产生 goal 可见的 export_receipts 证据。与 UI 行为对齐：开一次
+        # async 会话供 persist 落 lineage，owner 身份取自 JobOrigin（失败不
+        # 阻断交付本身）。
+        from app.core.database import async_db_session
+        from app.services.jobs.context import current_origin
+
+        _origin = current_origin()
+        async with async_db_session() as _db:
+            delivered = await persist_mixed_export(
+                session_id, artifact, principal=f"session:{session_id}",
+                user_id=(getattr(_origin, "owner_id", None) or "unknown"),
+                owner_token=getattr(_origin, "owner_token", None),
+                db=_db)
+            if hasattr(_db, "commit"):
+                await _db.commit()
         if not delivered.get("success"):
             return delivered
         manifest = delivered["manifest"]
