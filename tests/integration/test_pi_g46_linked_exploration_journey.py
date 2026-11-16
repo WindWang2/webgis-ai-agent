@@ -104,10 +104,13 @@ STUB_JS = r"""
 import http from 'node:http';
 const fsMod = await import('node:fs');
 const scriptPath = process.env.JOURNEY_SCRIPT;
+const recFile = process.env.JOURNEY_REC;
 const counters = {};
 const srv = http.createServer((req, res) => {
   let body = ''; req.on('data', (c) => (body += c));
   req.on('end', () => {
+   try {
+    fsMod.appendFileSync(recFile, JSON.stringify({at: Date.now(), len: body.length}) + '\n');
     const parsed = JSON.parse(body || '{}');
     const msgs = parsed.messages || [];
     let lastUser = null;
@@ -144,8 +147,20 @@ const srv = http.createServer((req, res) => {
         choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
     }
     res.write('data: [DONE]\n\n'); res.end();
+   } catch (err) {
+    // 防御：任何异常都回一个合法终止响应（进程绝不退出 —— 死 stub 会让
+    // Pi 回调永久挂起，表现为 journey 无限 keepalive）
+    try {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ id: 'e', object: 'chat.completion.chunk', created: 1, model: 'stub', choices: [{ index: 0, delta: { content: 'stub-error-recovered' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ id: 'e', object: 'chat.completion.chunk', created: 1, model: 'stub', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      res.write('data: [DONE]\n\n'); res.end();
+    } catch { /* socket gone */ }
+   }
   });
 });
+process.on('uncaughtException', (e) => fsMod.appendFileSync(recFile, 'UNCAUGHT ' + (e && e.stack || e) + '\n'));
+process.on('SIGTERM', () => { try { fsMod.appendFileSync(recFile, 'SIGTERM\n'); } catch {} process.exit(0); });
 srv.listen(0, '127.0.0.1', () => process.stderr.write('STUB_READY ' + srv.address().port + '\n'));
 process.on('SIGTERM', () => process.exit(0));
 """
@@ -211,7 +226,9 @@ def main() -> int:
     with open(WORK / "stub_err.log", "w") as fh:
         stub = subprocess.Popen(
             ["node", str(stub_js)], stdout=subprocess.DEVNULL, stderr=fh,
-            env={**os.environ, "JOURNEY_SCRIPT": str(WORK / "journey_script.json")},
+            env={**os.environ,
+                 "JOURNEY_SCRIPT": str(WORK / "journey_script.json"),
+                 "JOURNEY_REC": str(WORK / "stub_rec.jsonl")},
         )
     stub_port = None
     deadline = time.monotonic() + 10
@@ -259,7 +276,11 @@ def main() -> int:
 
     def chat(message: str) -> str:
         nonlocal owner_token
+        if stub.poll() is not None:
+            raise RuntimeError(f"stub LLM died (rc={stub.returncode}) before turn: {message}")
         headers = {"Content-Type": "application/json"}
+        _chat_seq = getattr(chat, "_seq", 0) + 1
+        chat._seq = _chat_seq
         if owner_token:
             headers["X-Session-Token"] = owner_token
         req = urllib.request.Request(
@@ -270,6 +291,11 @@ def main() -> int:
         )
         with urllib.request.urlopen(req, timeout=240) as resp:
             body = resp.read().decode("utf-8", "replace")
+        try:
+            (WORK / f"sse_turn_{getattr(chat, '_seq', 0)}.log").write_text(
+                f"== {message}\n{body}", encoding="utf-8")
+        except OSError:
+            pass
         for block in body.split("\n\n"):
             for line in block.splitlines():
                 if line.startswith("data: ") and '"owner_token"' in line:
@@ -364,13 +390,7 @@ def main() -> int:
 
         b4 = chat("重开视图")
         if "task_error" in b4:
-            b3b = chat("列出视图")
-        if "task_error" in b3b:
-            b3b = chat("列出视图")
-        verdict["journeys"]["pi_list_views_branch"] = (
-            '"views"' in b3b.replace(" ", "") and "AttributeError" not in b3b)
-
-        b4 = chat("重开视图")
+            b4 = chat("重开视图")
         verdict["journeys"]["view_reopened_ready"] = (
             '"state":"ready"' in b4.replace(" ", ""))
 
@@ -392,6 +412,29 @@ def main() -> int:
         verdict["fail"].append(f"journey crashed: {exc!r}")
     finally:
         stub.terminate()
+        # pi-rpc 子进程（app 内线程拉起）继承了 driver 的 stdout/stderr
+        # 管道写端 —— 不终止它，pytest 侧 subprocess.run 的 communicate()
+        # 永远等不到 EOF（表现为旅程已完成但 pytest 挂到超时）。
+        import signal as _signal
+
+        kids: list = []
+        for tdir in Path("/proc/self/task").iterdir():
+            try:
+                kids.extend(
+                    int(x) for x in (tdir / "children").read_text().split())
+            except OSError:
+                continue
+        for pid in {p for p in kids if p != stub.pid}:
+            try:
+                os.kill(pid, _signal.SIGTERM)
+            except OSError:
+                pass
+        time.sleep(1.0)
+        for pid in {p for p in kids if p != stub.pid}:
+            try:
+                os.kill(pid, _signal.SIGKILL)
+            except OSError:
+                pass
 
     ok = not verdict["fail"] and all(verdict["journeys"].values())
     print("VERDICT " + json.dumps(verdict, ensure_ascii=False))
@@ -424,7 +467,8 @@ def test_pi_g46_linked_exploration_journey(tmp_path: Path):
     try:
         driver = tmp_path / "g46_driver.py"
         driver.write_text(_DRIVER_SOURCE, encoding="utf-8")
-        env = {**os.environ, "G46_WORK": str(tmp_path / "work")}
+        env = {**os.environ, "G46_WORK": str(tmp_path / "work"),
+               "PYTHONFAULTHANDLER": "1"}
         proc = subprocess.run(
             [sys.executable, str(driver), str(REPO_ROOT)],
             timeout=880, capture_output=True, text=True, env=env,
@@ -437,12 +481,16 @@ def test_pi_g46_linked_exploration_journey(tmp_path: Path):
     lines = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
     verdict_line = next(
         (ln for ln in reversed(lines) if ln.startswith("VERDICT ")), None)
+    # 诊断：无条件完整落盘 driver stderr（含 faulthandler 栈）
+    Path("/tmp/g46_driver_stderr.log").write_text(
+        proc.stderr or "", encoding="utf-8", errors="replace")
     assert verdict_line, (
         f"no verdict; stdout tail={lines[-5:] if lines else []}; "
         f"stderr tail={(proc.stderr or '')[-2000:]}")
     verdict = json.loads(verdict_line[len("VERDICT "):])
     assert proc.returncode == 0, (
-        f"journey failed: {verdict.get('fail')} stderr={proc.stderr[-2000:]}")
+        f"journey failed: {json.dumps(verdict, ensure_ascii=False)} "
+        f"stderr={proc.stderr[-2000:]}")
     gates = {
         "warmup_ok", "inspect_receipt", "preview_tool_called",
         "combined_match_count", "facet_denominators", "handle_present",
