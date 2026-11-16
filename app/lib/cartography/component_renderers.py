@@ -214,6 +214,15 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
             "组件 options 不复制场景状态"
         ),
     ),
+    "exploration_chart_panel": ComponentRendererSupport(
+        component_type="exploration_chart_panel", publication=True,
+        renderers=["interactive"], exporters=["png", "pdf", "svg"],
+        note=(
+            "G46：联合探索条件图表控件 —— live 由前端渲染器消费（facet 口径"
+            "+条件发布）；导出链经 G46 导出投影为 chart_panel inline 数据"
+            "（同编译面），此处 publication=True 声明导出通道可用性"
+        ),
+    ),
     "elevation_profile": ComponentRendererSupport(
         component_type="elevation_profile", publication=True,
         renderers=["interactive"], exporters=["png", "pdf", "svg"],

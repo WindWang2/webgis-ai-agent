@@ -192,6 +192,13 @@ import {
   subscribeSelection,
   getSelectionGeneration,
 } from "@/lib/selection/selection-store"
+// G46：联合探索活动过滤（作者条件，与 selection 分立的投影通道）
+import {
+  getExploration,
+  getExplorationFilterExpression,
+  getExplorationGeneration,
+  subscribeExploration,
+} from "@/lib/linked-exploration/condition-store"
 import { releaseSelectionHandle } from "@/lib/api/selection-handles"
 import { augmentBrushSelectionWithHandle } from "@/lib/selection/brush-handle"
 import { getSessionIdentity } from "@/lib/store/session-identity"
@@ -333,9 +340,26 @@ export function MapPanel({
   // id 空间桥接：chart 绑定的是 spec 层 id，HUD 路径按行 id 过滤 ——
   // 两个键都发（_mapspecLayerId 别名解析），别名缺席时如实只发原生键。
   const selectionGeneration = useSyncExternalStore(subscribeSelection, getSelectionGeneration)
+  // G46：联合探索条件世代（活动过滤投影的变更信号）
+  const explorationGeneration = useSyncExternalStore(subscribeExploration, getExplorationGeneration)
   const selectionFilters = useMemo(() => {
     const selection = getSelection()
-    if (!selection) return EMPTY_SELECTION_FILTERS
+    // G46：联合探索活动过滤（作者条件，与 hover/焦点/选中分立）——
+    // 组合 where 的 MapLibre 精确表达式（typed identity），AND 进同层
+    // 投影面（一次 setFilter 快路径；不写 MapSpec、不重拉 source）。
+    const exploration = getExploration()
+    const explorationExpression = exploration
+      ? getExplorationFilterExpression(exploration.layerId)
+      : null
+    const out: Record<string, unknown[]> = {}
+    if (explorationExpression && exploration) {
+      const keys = new Set<string>([exploration.layerId])
+      for (const row of useHudStore.getState().layers) {
+        if (row._mapspecLayerId === exploration.layerId) keys.add(row.id)
+      }
+      for (const key of keys) out[key] = explorationExpression
+    }
+    if (!selection) return Object.keys(out).length ? out : EMPTY_SELECTION_FILTERS
     // 两条投影通道（ADR-0091）：
     // - chart 类别选择 → filter_field/类别表达式（既有 D3 路径）；
     // - map 框选 / 表格点选的要素 id 选择 → id_field/ids 表达式（V4）。
@@ -343,16 +367,20 @@ export function MapPanel({
     const expression = selection.source === 'chart'
       ? getSelectionFilterExpression(selection.layer_id)
       : getSelectionIdFilterExpression(selection.layer_id)
-    if (!expression) return EMPTY_SELECTION_FILTERS
-    const keys = new Set<string>([selection.layer_id])
-    for (const row of useHudStore.getState().layers) {
-      if (row._mapspecLayerId === selection.layer_id) keys.add(row.id)
+    if (expression) {
+      const keys = new Set<string>([selection.layer_id])
+      for (const row of useHudStore.getState().layers) {
+        if (row._mapspecLayerId === selection.layer_id) keys.add(row.id)
+      }
+      for (const key of keys) {
+        // 作者条件与 transient 选择 AND 组合（E17：点击不替换作者条件）
+        const existing = out[key]
+        out[key] = existing ? ['all', existing, expression] : expression
+      }
     }
-    const out: Record<string, unknown[]> = {}
-    for (const key of keys) out[key] = expression
-    return out
+    return Object.keys(out).length ? out : EMPTY_SELECTION_FILTERS
     // eslint-disable-next-line react-hooks/exhaustive-deps -- generation is the change signal
-  }, [selectionGeneration])
+  }, [selectionGeneration, explorationGeneration])
 
   // Runtime V4（§11）：矩形框选模式 —— 拖拽画矩形，queryRenderedFeatures
   // 命中投影为有界选择载荷（ids ≤50 超限走 bbox 谓词 + 计数披露）。

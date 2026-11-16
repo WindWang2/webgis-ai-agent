@@ -27,6 +27,8 @@ import './design-candidates';
 // G3D05（ADR-0275）：三维制图产品组件（场景披露卡 / 线路高程剖面）。
 import './scene-disclosure';
 import './elevation-profile-panel';
+// G46：联合探索条件图表控件（多实例；facet 口径渲染 + 条件发布）。
+import './exploration-chart-panel';
 
 export function renderComponent(component: MapSpecComponent, ctx: RendererContext): React.ReactNode {
   const renderer = getComponentRenderer(component.type);

@@ -265,6 +265,34 @@
       }
     },
     {
+      "type": "exploration_chart_panel",
+      "variants": [
+        "default",
+        "category",
+        "range"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "top-left",
+      "category": "analysis.chart_panel",
+      "runtimeStatus": "native",
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "semanticRole": "statistics",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "",
+        "accent": ""
+      }
+    },
+    {
       "type": "export_layout",
       "variants": [
         "A4_landscape",

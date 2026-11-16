@@ -48,6 +48,16 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         ),
 
         CapabilityDescriptor(
+            id="linked_exploration", name="多图联合筛选与持久探索视图", category="data_access",
+            description="围绕单一授权矢量源的多图联合探索：分类/数值区间条件"
+                        "组合求值（条件间 AND、同控件内 typed 值 OR）、facet 口径"
+                        "统计、服务端完整集合句柄、命名持久视图（源锚校验/CAS）"
+                        "与三格式冻结导出（Pi 与 UI 同一服务面）。",
+            output_artifact_types=["stats_table"],
+            preferred_execution="local_first",
+            deterministic=True,
+            purpose_template="{subject} 联合筛选探索",
+        ),
             id="coordinate_operations", name="可审阅坐标操作与派生重投影", category="data_access",
             description="已确认源 CRS 矢量的坐标操作作者面：服务器签发候选"
                         "（含不可执行项与格网原因）、锁定冻结操作与环境证据、"

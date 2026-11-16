@@ -1198,6 +1198,9 @@ app.include_router(print_layout_routes.router, prefix="/api/v1", tags=["纸面�
 # G41：双变量与可靠性表达作者工作台（独立 router；UI 与 Pi 共用同一 service）
 from app.api.routes import bivariate_reliability_authoring as g41_routes  # noqa: E402
 app.include_router(g41_routes.router, prefix="/api/v1", tags=["双变量与可靠性作者工作台"])
+# G46：多图联合筛选与持久探索视图（独立 router；UI 与 Pi 共用同一 service）
+from app.api.routes import linked_exploration as linked_exploration_routes  # noqa: E402
+app.include_router(linked_exploration_routes.router, prefix="/api/v1", tags=["联合探索 G46"])
 # G47：Dorling 圆面积 cartogram 作者工作台（独立 router；UI 与 Pi 共用同一 service）
 from app.api.routes import cartogram_authoring as g47_routes  # noqa: E402
 app.include_router(g47_routes.router, prefix="/api/v1", tags=["Dorling 圆面积 cartogram 工作台"])

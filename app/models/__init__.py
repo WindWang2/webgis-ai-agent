@@ -88,6 +88,9 @@ from app.models.data_join_authoring import (  # noqa: F401 — 模型注册 + �
     DataJoinPlan,
     DataJoinRun,
 )
+from app.models.linked_exploration import (  # noqa: F401 — 模型注册 + 再导出（G46）
+    ExplorationView,
+)
 from app.models.field_contracts import (  # noqa: F401 — 模型注册 + 再导出（G44）
     FieldContract,
     FieldContractAssessment,

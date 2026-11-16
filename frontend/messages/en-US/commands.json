@@ -56,5 +56,6 @@
     "separator": "; "
   },
   "dataJoin": "Data Join Workbench",
+  "linkedExploration": "Linked Exploration Workbench",
   "coordinateOperations": "Coordinate operations & reprojection"
 }

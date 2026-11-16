@@ -1,0 +1,74 @@
+{
+  "panel": {
+    "title": "Linked Exploration",
+    "subtitle": "Multi-chart combined filtering · one source revision · named views",
+    "source": "Exploration source",
+    "selectSource": "Select a vector layer…",
+    "anchor": "Source anchor rev{rev} · {count} features",
+    "inspecting": "Freezing source and profiling fields…",
+    "kindCategory": "Category bars",
+    "kindRange": "Numeric range"
+  },
+  "charts": {
+    "section": "Chart instances",
+    "field": "Field",
+    "selectField": "Pick a field…",
+    "kind": "Chart kind",
+    "aggregation": "Aggregation",
+    "valueField": "Value field",
+    "selectValueField": "Value field…",
+    "add": "Add chart",
+    "remove": "Remove",
+    "fieldOption": "{name} ({type})"
+  },
+  "conditions": {
+    "section": "Active conditions",
+    "empty": "No conditions yet — click a category or range bin on a chart",
+    "clearChart": "Clear this chart's conditions",
+    "clearAll": "Clear all conditions",
+    "remove": "Remove condition {id}"
+  },
+  "preview": {
+    "loading": "Evaluating combination…",
+    "idle": "Bind a source and add charts to start exploring",
+    "matchLine": "Matched {matched} / {total} features",
+    "countInexact": " (over exact-count limit, not exact)",
+    "digest": "Conditions digest {digest}",
+    "facetMatched": "{n} excluding own condition",
+    "fullMatched": "{n} under all conditions",
+    "truncated": "truncated",
+    "facetNote": "In-chart statistics use the “options under other conditions” scope (own condition excluded); the matched total uses the all-conditions scope",
+    "chartStatLine": "{field}: {facet} excluding own · {full} under all conditions"
+  },
+  "table": {
+    "section": "Matched set table",
+    "loading": "Reading matched set…",
+    "error": "Read failed (condition JSON may exceed limits or source advanced)",
+    "empty": "Empty set — 0 matches (never falls back to full source)",
+    "total": "Server total {n}",
+    "more": "Load more"
+  },
+  "views": {
+    "section": "Named views",
+    "titlePlaceholder": "View title…",
+    "save": "Save view",
+    "saved": "View saved (source anchor verified)",
+    "open": "Reopen",
+    "apply": "Apply to map",
+    "applied": "Wrote {count} chart components into MapSpec",
+    "reopened": "View reopened (same-generation replay done)",
+    "needTitleAndPlan": "Need a title and a bound source",
+    "stalePrompt": "Source advanced — view keeps its original anchor; re-preview/re-bind before saving",
+    "staleReason": "View stale ({code}): {msg}"
+  },
+  "chart": {
+    "facetScope": "under other conditions",
+    "noData": "Waiting for combined preview…",
+    "truncatedNote": "Categories over the limit merged into other (see panel for overflow values)",
+    "otherNotFilterable": "Overflow values over budget, not filterable",
+    "otherOverflow": "other (not filterable)"
+  },
+  "commands": {
+    "openPanel": "Open linked exploration workbench"
+  }
+}
