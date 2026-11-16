@@ -38,3 +38,18 @@
 2. E23/E24 前端竞态补充测试（generation/epoch 拦截单测）
 3. 独立 review（未参与实现的 subagent）→ 修复 → 复审
 4. fetch 最新 master → 兼容检查 → push → PR
+
+## Round 2 复审结果（2026-11-16 上午）
+- R1 全部 P1×3 + P2-1 + P2-3 机制判定 **resolved**（复审实证：24 集成复跑通过；
+  CAS 链/反查/锚核对代码逐行核验）
+- 新发现并已修：NEW-1 结果表句柄路径 `.properties` 映射（P2，一行）；
+  NEW-3 ChartSpec title/layer_id/bins 全 kind 硬帽（P3）；NEW-4 潜伏注解清理（P3）
+- NEW-2（Pi journey 挂起）根因排查记录：
+  - faulthandler 栈：app 侧 pi_rpc_client._readline_bounded 等 Pi 回复；
+    Pi 等 stub LLM 回调
+  - 实证：stub node 进程在 turn 2 后死亡（zombie，stderr 无崩溃栈）
+  - 加固：stub 请求日志（JOURNEY_REC jsonl）+ try/catch 全包裹 +
+    uncaughtException 记录不退出 + driver 每回合前 stub 存活快败
+  - 环境噪音：机器上有 3 个 3 天前 pi-rpc 僵尸 + G43 卡死 12h 的 journey
+    （兄弟任务遗留；不触碰）
+- 修复 diff（R1+NEW）：ec68d86fb..HEAD（复审 agent 已核）
