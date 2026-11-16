@@ -97,7 +97,8 @@ def strict_publish_gate(handle: Any, job_id: int) -> None:
                     "publish_blocked", f"job {job_id} 行不可读（发布阻断）")
             if str(row.status) in ("cancelling", "cancelled"):
                 raise CoordinateOperationError(
-                    "publish_blocked", "发布前发现持久取消事实（已停止发布）")
+                    "publish_blocked", "发布前发现持久取消事实（已停止发布）",
+                    cancel_fact=True)
             current_worker = getattr(row, "worker_id", None)
             current_attempt = getattr(row, "attempt", None)
             # 评审 P3-6：None = 无法确认 —— fail-closed（不因字段缺失放行）

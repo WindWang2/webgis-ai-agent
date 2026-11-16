@@ -466,12 +466,11 @@ def _report_progress(handle: Any, *, loop: Any = None, **fields: Any) -> None:
         result = handle.progress(**fields)
         if inspect.iscoroutine(result):
             if loop is not None and loop.is_running():
-                import contextlib
-
                 fut = asyncio.run_coroutine_threadsafe(result, loop)
-                with contextlib.suppress(Exception):
-                    fut.result(timeout=5.0)  # 节流下低频；超时不再等
+                # fire-and-forget（Round-2 ③）：不阻塞变换线程；异常在回调消化
+                fut.add_done_callback(
+                    lambda f: f.exception() if not f.cancelled() else None)
             else:
-                result.close()  # 无可用 loop（纯同步测试）—— 关闭不留警告
+                result.close()  # 无可用 loop（纯同步/已关闭）—— 关闭不留警告
     except Exception:  # noqa: BLE001 — 进度失败不阻断执行
         pass

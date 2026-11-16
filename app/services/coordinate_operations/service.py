@@ -601,50 +601,30 @@ def _is_geographic_crs(crs_input: str) -> bool:
 # ── 执行 ───────────────────────────────────────────────────────────────────
 
 def _enforce_z_policy(plan: Dict[str, Any], card: Dict[str, Any]) -> None:
-    """z_policy=reject（评审 P2-3 实现）：源几何含 Z 维即 typed 拒绝 ——
-    在冻结/变换前阻断，不让「reject」承诺被静默降级为保留。"""
+    """z_policy=reject（评审 P2-3 实现 + Round-2 收敛）：
+
+    - session_ref/project_artifact：``_profile_fc`` 全扫 has_z —— 权威；
+    - fabric_parquet：has_z 来自 ``sample_parquet_geometry`` **采样** ——
+      采样未覆盖全量行时维度事实无法确认，reject 政策按「不可确认即拒绝」
+      保守阻断（不静默降级为 preserve；评审顾虑 a）。
+    """
     if plan.get("z_policy") != "reject":
         return
     geom = card.get("geometry") or {}
     has_z = bool(geom.get("has_z"))
     if not has_z and card.get("kind") == "fabric_parquet":
-        # parquet 采样证据可能未带 has_z —— 以首特征坐标维度为准（有界读）
-        snap = card.get("_snapshot")
-        if snap is not None:
-            try:
-                sample = snap.sample_features(limit=5)
-                has_z = any(
-                    len(((f.get("geometry") or {}).get("coordinates") or [])[0:1]
-                        and _first_coord_len(f.get("geometry")) or 0) >= 3
-                    for f in sample if f.get("geometry"))
-            except Exception:  # noqa: BLE001 — 采样失败按未知处理（不猜）
-                has_z = True
+        sampled = int(geom.get("sampled_rows") or 0)
+        if sampled < int(card.get("row_count") or 0):
+            raise CoordinateOperationError(
+                "unsupported_dimension",
+                "计划 z_policy=reject：GeoParquet 源的 Z 维证据来自采样"
+                f"（{sampled}/{card.get('row_count')} 行），无法确认全量无 Z ——"
+                "保守拒绝；请改用 preserve_unconverted 或先物化为全量可判源")
     if has_z:
         raise CoordinateOperationError(
             "unsupported_dimension",
             "计划 z_policy=reject：源几何含 Z 维（horizontal-only 契约下"
             "拒绝执行；如需保留 Z 原值请改用 preserve_unconverted）")
-
-
-def _first_coord_len(geom: Optional[Dict[str, Any]]) -> int:
-    node = geom
-    for _ in range(12):
-        if not isinstance(node, dict):
-            return 0
-        coords = node.get("coordinates")
-        if coords is None:
-            subs = node.get("geometries")
-            if subs:
-                node = subs[0]
-                continue
-            return 0
-        if isinstance(coords, list) and coords and isinstance(coords[0], (int, float)):
-            return len(coords)
-        if isinstance(coords, list) and coords:
-            node = {"coordinates": coords[0]}
-            continue
-        return 0
-    return 0
 
 
 def _build_idempotency_key(
@@ -1015,7 +995,8 @@ async def _execute_body(handle: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         if e.error_code in ("publish_blocked",):
             # 可恢复阻断：保留 staging，run 落 failed+码 —— 除非阻断源于
             # 持久取消事实（评审 P3-10：用户主动取消不得显示为「失败」）。
-            cancelled = "持久取消事实" in e.reason or "cancelling" in e.reason
+            cancelled = bool((e.details or {}).get("cancel_fact")) \
+                or "持久取消事实" in e.reason or handle.token.cancelled
             if cancelled or handle.token.cancelled:
                 await asyncio.get_running_loop().run_in_executor(
                     _EXEC_POOL, functools.partial(
