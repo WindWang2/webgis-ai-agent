@@ -877,6 +877,29 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/raster-sampling/results` | Results | object |
 | `POST` | `/api/v1/raster-sampling/plan/{plan_id}/cancel` | Cancel | object |
 
+### 控制点影像配准 (G48)
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/georeferencing/sources/upload` | Upload Georef Source | GeorefSourceResponse |
+| `GET` | `/api/v1/georeferencing/sources` | List Georef Sources | GeorefSourceListResponse |
+| `GET` | `/api/v1/georeferencing/sources/{source_id}` | Get Georef Source | GeorefSourceResponse |
+| `DELETE` | `/api/v1/georeferencing/sources/{source_id}` | Delete Georef Source | GeorefDeleteResponse |
+| `GET` | `/api/v1/georeferencing/sources/{source_id}/image` | Stream Georef Source Image | object |
+| `POST` | `/api/v1/georeferencing/plans` | Create Georef Plan | GeorefPlanResponse |
+| `GET` | `/api/v1/georeferencing/plans` | List Georef Plans | GeorefPlanListResponse |
+| `GET` | `/api/v1/georeferencing/plans/{plan_id}` | Get Georef Plan | GeorefPlanResponse |
+| `PUT` | `/api/v1/georeferencing/plans/{plan_id}/draft` | Update Georef Draft | GeorefPlanResponse |
+| `POST` | `/api/v1/georeferencing/plans/{plan_id}/gcps/import` | Import Georef Gcps | GeorefPlanResponse |
+| `GET` | `/api/v1/georeferencing/plans/{plan_id}/gcps/export` | Export Georef Gcps | object |
+| `POST` | `/api/v1/georeferencing/plans/{plan_id}/preview` | Preview Georef Plan | GeorefPreviewResponse |
+| `GET` | `/api/v1/georeferencing/plans/{plan_id}/preview/image` | Get Georef Preview Image | object |
+| `POST` | `/api/v1/georeferencing/plans/{plan_id}/execute` | Execute Georef Plan | GeorefExecuteResponse |
+| `POST` | `/api/v1/georeferencing/plans/{plan_id}/cancel` | Cancel Georef Plan | GeorefJobStatusResponse |
+| `GET` | `/api/v1/georeferencing/plans/{plan_id}/status` | Get Georef Status | GeorefJobStatusResponse |
+| `POST` | `/api/v1/georeferencing/plans/{plan_id}/bind-layer` | Bind Georef Mapspec Layer | GeorefBindLayerResponse |
+| `GET` | `/api/v1/georeferencing/artifacts/{artifact_id}/download` | Download Georef Artifact | object |
+
 ### 知识库管理
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -1446,6 +1469,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：629（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：647（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

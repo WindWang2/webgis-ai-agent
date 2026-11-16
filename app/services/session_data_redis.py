@@ -1726,6 +1726,13 @@ return results
             await purge_session_disk_state(session_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("Session %s: disk state purge failed: %s", session_id, e)
+        try:
+            import asyncio
+            from app.services.georeferencing.refs import purge_session_georef_state
+
+            await asyncio.to_thread(purge_session_georef_state, session_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Session %s: georef state purge failed: %s", session_id, e)
 
     async def is_session_active(self, session_id: str) -> bool:
         """会话是否仍在 active 集（供磁盘清扫判断存活性）。

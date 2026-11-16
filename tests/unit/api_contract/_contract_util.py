@@ -34,6 +34,10 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/layers/data/{ref_id}/terrain-tiles/{z}/{x}/{y}.png"): "PNG terrain tile bytes",
     ("GET", "/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt"): "MVT tile bytes",
     ("GET", "/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download"): "package blob stream",
+    ("GET", "/api/v1/georeferencing/sources/{source_id}/image"): "normalized PNG image bytes",
+    ("GET", "/api/v1/georeferencing/plans/{plan_id}/preview/image"): "warped preview PNG image bytes",
+    ("GET", "/api/v1/georeferencing/plans/{plan_id}/gcps/export"): "CSV or JSON GCP report download",
+    ("GET", "/api/v1/georeferencing/artifacts/{artifact_id}/download"): "authorized GeoTIFF/COG download bytes",
     # ── 定制 media type 的数据面透传（直接构造 Response，response_model 无法介入）──
     ("GET", "/api/v1/layers/data/{ref_id}"): "zero-copy layer data passthrough (media_type)",
     ("GET", "/api/v1/layers/data/{ref_id}/feature/{feature_id}"): "single feature passthrough (media_type)",

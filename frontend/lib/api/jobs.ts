@@ -25,7 +25,8 @@ export type JobKind =
   | 'analysis'
   | 'workflow'
   | 'explorer'
-  | 'atlas_export';
+  | 'atlas_export'
+  | 'georeference';
 
 /** 批量图册 job 的页级状态（additive；仅 kind=atlas_export 填充，≤21 条）。 */
 export interface AtlasPageStatusView {
