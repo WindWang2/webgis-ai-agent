@@ -171,6 +171,7 @@ COMPONENT_SEMANTIC_ROLES: dict = {
     "design_candidates": "disclosure",
     "scene_disclosure": "disclosure",
     "elevation_profile": "statistics",
+    "exploration_chart_panel": "statistics",
 }
 
 
@@ -198,6 +199,7 @@ _COMPONENT_EXAMPLES: dict = {
     "design_candidates": "表达模型层设计候选对比（为何选/为何弃/typed blocked）",
     "scene_disclosure": "三维场景模式/夸张系数/垂直基准/比例尺可信度披露卡",
     "elevation_profile": "沿线路的高程剖面折线面板（距离-高程轴）",
+    "exploration_chart_panel": "联合探索的分类/区间筛选图表实例（G46 条件控件）",
 }
 
 
@@ -221,6 +223,9 @@ COMPONENT_SEARCH_KEYWORDS: dict = {
                     "bar", "pie", "line chart", "直方图", "散点", "区县统计",
                     "统计对比"],
     "table_panel": ["表格", "数据表", "table", "明细"],
+    "exploration_chart_panel": ["联合筛选", "联动图表", "条件图表", "探索视图",
+                                "linked exploration", "exploration chart",
+                                "筛选控件"],
     "export_layout": ["导出", "版面", "打印", "a4", "export", "页面"],
     "annotation": ["注记", "标注", "文字", "脚注", "annotation", "标注文字",
                    "数据来源说明"],
@@ -491,6 +496,29 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
                       "switch_field", "filter", "highlight"],
         collision_class="panel", responsive="collapse",
         accessibility={"role": "img", "label_zh": "统计图表"},
+    ),
+    MapComponentDescriptor(
+        id="exploration_chart_panel", category="analysis.chart_panel",
+        type="exploration_chart_panel",
+        name="Exploration Chart Panel", name_zh="联合探索图表",
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf"],
+        required_context=["chart"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        # G46：联合探索条件控件（分类条形/数值区间）。每实例 = 一个 chartId
+        # 条件控件；options 携带 viewId/chartId/field/kind/源锚 —— 渲染数据
+        # 由前端实时 preview 获取（跟当前源版本），组件只存配置。
+        default_variant="default",
+        variants=["default", "category", "range"],
+        default_position="top-left",
+        allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
+        cardinality="multiple", priority=42,
+        states=["hidden", "visible", "collapsed", "expanded",
+                "floating", "docked", "anchored"],
+        interactions=["move", "resize", "pin", "collapse", "expand",
+                      "close", "restore", "filter", "highlight",
+                      "clear_condition", "clear_all"],
+        collision_class="panel", responsive="collapse",
+        accessibility={"role": "img", "label_zh": "联合探索图表"},
     ),
     MapComponentDescriptor(
         id="table_panel", category="analysis.table_panel", type="table_panel",

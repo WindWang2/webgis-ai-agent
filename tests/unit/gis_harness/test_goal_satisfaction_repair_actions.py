@@ -118,3 +118,21 @@ def test_all_registered_actions_have_complete_metadata():
         assert meta["side_effect"] in ("read_only", "write")
         if meta["side_effect"] == "write":
             assert meta["path"], f"{action} 缺执行路径"
+
+
+def test_g42_wrong_kind_receipt_rules_generate_plan_actions():
+    """G42（复审补充钉）：wrong-kind 回执分支的 failed_rule 进计划。
+
+    「用户导出了地图但要求的是数据交付」（及镜像）此前只有 missing 码、
+    无 failed_rule → repair_plan_for 不产动作 → 补全面无入口（G42 接缝
+    修复的两分支之一，与完全缺席分支同语义钉死）。
+    """
+    report = _report({
+        "export:gpkg": "delivery_receipt_absent",
+        "export:pdf": "export_receipt_absent",
+    })
+    plan = repair_plan_for(report)
+    assert plan is not None
+    actions = {a["action"] for a in plan["actions"]}
+    assert "run_delivery" in actions
+    assert "export_product" in actions

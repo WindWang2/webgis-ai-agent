@@ -11,6 +11,7 @@ runtime，绝不创建第二套 live runtime 或第二套 MapSpec。
 """
 from __future__ import annotations
 
+import base64
 import html as _html
 from typing import Any, Dict, List, Tuple
 
@@ -19,6 +20,40 @@ from app.services.print_layout_authoring.compile import build_draw_plan
 
 def _esc(v: Any) -> str:
     return _html.escape(str(v), quote=True)
+
+
+def _diagram_img(c: Dict[str, Any]) -> str:
+    """G47 diagram → 自包含 SVG data URI（纸面 PDF/PNG 路径）。
+
+    只画真实矢量圆与参考轮廓；等比 contain 由编译期 scale 保证，
+    这里固定 viewBox = 组件框，``width:100%;height:100%`` 不改变坐标比例。
+    """
+    d = c.get("diagram") or {}
+    box = c.get("box") or {}
+    x, y = float(box.get("x") or 0.0), float(box.get("y") or 0.0)
+    w, h = float(box.get("width") or 1.0), float(box.get("height") or 1.0)
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{x:.2f} {y:.2f} {w:.2f} {h:.2f}">',
+        f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="#ffffff"/>',
+        '<g fill="none" stroke="#94a3b8" stroke-width="0.8" opacity="0.7">',
+    ]
+    for d_path in d.get("reference_paths") or []:
+        parts.append(f'<path d="{_esc(d_path)}"/>')
+    parts.append("</g><g>")
+    for circle in d.get("circles") or []:
+        parts.append(
+            f'<circle data-feature-id="{_esc(circle.get("feature_id"))}" '
+            f'cx="{float(circle.get("x") or 0.0):.3f}" '
+            f'cy="{float(circle.get("y") or 0.0):.3f}" '
+            f'r="{float(circle.get("radius") or 0.0):.3f}" '
+            f'fill="#c2410c" fill-opacity="0.78" stroke="#7c2d12" stroke-width="0.6"/>')
+    parts.append("</g></svg>")
+    svg = "".join(parts)
+    b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return (f'<img data-g47-diagram="{_esc(c.get("id"))}" '
+            f'alt="{_esc((d.get("legend") or {}).get("title") or "diagram")}" '
+            f'src="data:image/svg+xml;base64,{b64}" '
+            f'style="width:100%;height:100%;display:block"/>')
 
 
 def authored_product_overlay(
@@ -108,4 +143,9 @@ def authored_product_overlay(
             html_parts.append(
                 f'<div data-g34-id="{_esc(c.get("id"))}" style="{base}">'
                 f'比例尺：{_esc(label)}</div>')
+        if c.get("kind") == "diagram":
+            html_parts.append(
+                f'<div data-g47-diagram-frame="{_esc(c.get("id"))}" '
+                f'style="position:absolute;left:{x:.2f}mm;top:{y:.2f}mm;'
+                f'width:{w:.2f}mm;height:{h:.2f}mm;">{_diagram_img(c)}</div>')
     return {"svg": svg_fragment, "html": "".join(html_parts)}

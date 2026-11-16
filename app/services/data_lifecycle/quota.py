@@ -769,18 +769,42 @@ def execute_retention_cleanup(
 
             store = get_filesystem_blob_store()
             locations = [str(b.get("location") or "") for b in blob_candidates]
-            snap = {
+            snap: Dict[str, Any] = {
                 "refcounts_by_location": referencing_counts(db, locations),
                 "artifact_locations": set(artifact_content_locations(db)),
                 "pinned_shas": set(pinned_content_sha256s(db)),
             }
+            # 域侧持有面（R 审计 round-2）：G40 资产版本行 + G48 georef 会话
+            # refcount —— 与 promotion GC 同一保护谓词，同一保护集来源；
+            # 任一扫描失败/截断 ⇒ 本轮跳过 blob 删除（fail-closed）。
+            from app.services.artifact_lifecycle import (
+                _georef_live_blob_keys,
+                _symbol_version_blob_keys,
+            )
+
+            domain_scan_failed = False
+            try:
+                snap["symbol_version_blob_keys"] = _symbol_version_blob_keys(db)
+                georef_keys, georef_truncated = _georef_live_blob_keys()
+                snap["georef_blob_keys"] = georef_keys
+            except Exception:
+                logger.exception(
+                    "[quota] retention execute: domain blob protection scan "
+                    "failed — skipping blob-deletion phase this cycle"
+                )
+                snap["symbol_version_blob_keys"] = set()
+                snap["georef_blob_keys"] = set()
+                georef_truncated = True
+                domain_scan_failed = True
             snap_locations, snap_shas, snap_truncated = (
                 workspace_snapshot_protected_pointers()
             )
             snap["snapshot_locations"] = snap_locations
             snap["snapshot_shas"] = snap_shas
-            snap["protection_scan_truncated"] = snap_truncated
-            if snap_truncated:
+            snap["protection_scan_truncated"] = bool(
+                snap_truncated or georef_truncated or domain_scan_failed
+            )
+            if snap["protection_scan_truncated"]:
                 # round-2 review MAJOR（fail-closed）：execute 侧新鲜扫描
                 # 仍截断 ⇒ 保护面可能不完整 —— 本轮绝不删除任何 blob
                 #（与 plan 同规则；修订行删除照常，blob 全部幸存）。

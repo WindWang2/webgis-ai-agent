@@ -181,6 +181,15 @@ export class JourneyWorld {
    * journey 的会话详情响应形状不变。
    */
   recoverySummary: Record<string, unknown> | null = null;
+  /**
+   * G42（目标补全面）：/goal-repair/* 桩状态。preview 缺席（null）时按
+   * 404 PLAN_NOT_FOUND 语义回 —— 与后端 typed 错误一致；attempts 是有界
+   * 状态机（running → 第 2 次读 terminal，receipts/verdict 由旅程种子）。
+   */
+  goalRepair: {
+    preview: Record<string, unknown> | null;
+    attempts: Array<Record<string, unknown> & { _reads?: number }>;
+  } = { preview: null, attempts: [] };
 
   job(id: string): JobRecord | undefined {
     return this.jobs.find((j) => j.id === id);
@@ -315,6 +324,98 @@ export async function installJourneyStubs(page: Page | BrowserContext, world: Jo
         await route.fulfill(json(out, origin));
       }
     });
+
+  // ── goal repair（G42 目标补全面）───────────────────────────────────────
+  await api(/\/api\/v1\/goal-repair\/sessions\/[^/]+\/preview(\?|$)/, () => {
+    if (!world.goalRepair.preview) {
+      return {
+        __raw: {
+          status: 404, contentType: 'application/json',
+          body: JSON.stringify({ detail: { code: 'PLAN_NOT_FOUND', error: 'no plan' } }),
+          headers: corsFor(),
+        },
+      };
+    }
+    return world.goalRepair.preview;
+  });
+  await api(/\/api\/v1\/goal-repair\/sessions\/[^/]+\/attempts(\?|$)/, (_url: URL, method: string, body: string) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    let selected: string[] | undefined;
+    let acked: string[] | undefined;
+    try {
+      const parsed = JSON.parse(body) as { action_ids?: string[]; acknowledged_losses?: string[] };
+      selected = parsed.action_ids;
+      acked = parsed.acknowledged_losses;
+    } catch { /* 空 body —— 全默认 */ }
+    const id = String(1000 + world.goalRepair.attempts.length + 1);
+    const attempt: Record<string, unknown> & { _reads?: number } = {
+      attempt_id: id, status: 'running', active: true, cancellable: true,
+      session_id: world.sessionDetail.session_id, goal_id: 'g-j42',
+      plan_version: 'e2e', outcome: null, final_verdict_before: 'partial',
+      final_verdict_after: null, final_changed: false, actions: [],
+      _selected: selected, _acked: acked, _reads: 0,
+    };
+    world.goalRepair.attempts.push(attempt);
+    return attempt;
+  });
+  await api(/\/api\/v1\/goal-repair\/attempts\/[^/]+(\?|$)/, (url: URL) => {
+    const id = url.pathname.split('/').pop() as string;
+    const attempt = world.goalRepair.attempts.find((a) => a.attempt_id === id);
+    if (!attempt) {
+      return {
+        __raw: {
+          status: 404, contentType: 'application/json',
+          body: JSON.stringify({ detail: { code: 'ATTEMPT_NOT_FOUND', error: 'gone' } }),
+          headers: corsFor(),
+        },
+      };
+    }
+    attempt._reads = (attempt._reads ?? 0) + 1;
+    // 第 2 次读起终态：回执 + 原终验投影（旅程种子 action 形状）。
+    if (attempt.status === 'running' && attempt._reads >= 2) {
+      const selected = (attempt._selected as string[] | undefined) ?? [];
+      const acked = new Set((attempt._acked as string[] | undefined) ?? []);
+      const preview = world.goalRepair.preview as { actions?: Array<{ action_id: string; action: string; disposition: string; ack_codes?: string[] }> } | null;
+      const actions = (preview?.actions ?? []).map((b) => {
+        const chosen = selected.length === 0 || selected.includes(b.action_id);
+        const ackOk = (b.ack_codes ?? []).every((c) => acked.has(c));
+        if (!chosen) {
+          return { action_id: b.action_id, action: b.action, requirement_id: '', status: 'skipped_cancelled', detail: '', evidence_ref: '', download_url: '', job_id: '', error_code: '' };
+        }
+        if (!ackOk) {
+          return { action_id: b.action_id, action: b.action, requirement_id: '', status: 'needs_acknowledgment', detail: 'format loss unconfirmed', evidence_ref: '', download_url: '', job_id: '', error_code: 'LOSS_ACK_REQUIRED' };
+        }
+        return { action_id: b.action_id, action: b.action, requirement_id: '', status: 'succeeded', detail: 'e2e receipt', evidence_ref: 'ref:e2e', download_url: '/api/v1/export/download/e2e.bin?exp=1&sig=2', job_id: '9001', error_code: '' };
+      });
+      attempt.actions = actions;
+      // 只按「被选中执行」的动作判定（未选中 = skipped，不阻断终验投影）。
+      const chosenActions = actions.filter(
+        (a) => (a as { status: string }).status !== 'skipped_cancelled');
+      const allSucceeded = chosenActions.length > 0
+        && chosenActions.every((a) => (a as { status: string }).status === 'succeeded');
+      attempt.status = 'completed';
+      attempt.active = false;
+      attempt.cancellable = false;
+      attempt.outcome = allSucceeded ? 'completed' : 'no_progress';
+      attempt.final_verdict_after = allSucceeded ? 'satisfied' : 'partial';
+      attempt.final_changed = allSucceeded;
+    }
+    const { _selected, _acked, _reads, ...view } = attempt as Record<string, unknown>;
+    void _selected; void _acked; void _reads;
+    return view;
+  });
+  await api(/\/api\/v1\/goal-repair\/attempts\/[^/]+\/cancel(\?|$)/, (url: URL, method: string) => {
+    if (method !== 'POST') return { detail: 'method not allowed' };
+    const id = url.pathname.split('/').pop() as string;
+    const attempt = world.goalRepair.attempts.find((a) => a.attempt_id === id);
+    if (attempt && attempt.active) {
+      attempt.status = 'cancelled';
+      attempt.active = false;
+      attempt.cancellable = false;
+      attempt.outcome = 'cancelled';
+    }
+    return { ...(attempt ?? {}), cancel_requested: true };
+  });
 
   // ── chat stream (SSE) ────────────────────────────────────────────────────
   await api(/\/api\/v1\/chat\/stream(\?|$)/, async (_url: URL, _m: string, _b: string, origin?: string) => ({
