@@ -193,7 +193,7 @@ export const JOURNEYS: JourneyEntry[] = [
     smoke: false,
     modes: ['real'],
     owner: 'g45-coordinate-operations',
-,
+  },
   {
     id: 'j24',
     file: 'journeys/j24-g44-field-contracts.journey.ts',

@@ -36,6 +36,9 @@
   "viewport_hash": "string",
   "width": "integer"
  },
+ "DELETE /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}": {
+  "__type__": "unknown"
+ },
  "DELETE /api/v1/data-fabric/sources/{source_id}": {
   "__model__": "SourceDeleteResponse",
   "message": "null|string",
@@ -389,6 +392,24 @@
  "GET /api/v1/config/skills": {
   "__model__": "app__schemas__config_schema__SkillsListResponse",
   "skills": "array<SkillListItem>"
+ },
+ "GET /api/v1/coord-ops/crs/lookup": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/plans": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/runs": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/runs/{run_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/results": {
+  "__type__": "unknown"
  },
  "GET /api/v1/data-delivery/capabilities": {
   "__model__": "DeliveryCapabilitiesResponse",
@@ -1430,6 +1451,9 @@
  "PATCH /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}": {
   "__type__": "unknown"
  },
+ "PATCH /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}": {
+  "__type__": "unknown"
+ },
  "PATCH /api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}": {
   "__type__": "unknown"
  },
@@ -1825,6 +1849,33 @@
   "filename": "string",
   "security": "string",
   "status": "string"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/describe-source": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/operations": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/plans": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/execute": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/lock": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/preview": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/recover": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/cancel": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/display-ref": {
+  "__type__": "unknown"
  },
  "POST /api/v1/data-delivery/jobs [202]": {
   "__model__": "DeliveryJobCreateResponse",

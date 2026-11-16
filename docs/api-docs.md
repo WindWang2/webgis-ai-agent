@@ -599,6 +599,28 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/render-ref` | Render Ref | object |
 | `POST` | `/api/v1/data-join-authoring/sessions/{session_id}/recover` | Recover | object |
 
+### 坐标操作工作台 G45
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/describe-source` | Describe Source | object |
+| `GET` | `/api/v1/coord-ops/crs/lookup` | Crs Lookup | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/operations` | List Operations | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans` | Create Plan | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/plans` | List Plans | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Get Plan | object |
+| `PATCH` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Update Plan | object |
+| `DELETE` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}` | Archive Plan | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/lock` | Lock Plan | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/preview` | Preview Plan | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/execute` | Execute Plan | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs` | List Runs | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}` | Inspect Run | object |
+| `GET` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/results` | Run Results | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/cancel` | Cancel Run | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/display-ref` | Display Ref | object |
+| `POST` | `/api/v1/coord-ops/sessions/{session_id}/recover` | Recover | object |
+
 ### 制图符号资产工作台（G40）
 
 | 方法 | 路径 | 说明 | 响应模型 |
@@ -616,6 +638,15 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
 | `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/apply` | Apply | object |
 | `POST` | `/api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/unbind` | Unbind | object |
+
+### 目标补全（G42）
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/goal-repair/sessions/{session_id}/preview` | Preview Goal Repair | object |
+| `POST` | `/api/v1/goal-repair/sessions/{session_id}/attempts` | Start Goal Repair | — |
+| `GET` | `/api/v1/goal-repair/attempts/{attempt_id}` | Get Goal Repair Attempt | object |
+| `POST` | `/api/v1/goal-repair/attempts/{attempt_id}/cancel` | Cancel Goal Repair | object |
 
 ### 纸面版式工作台
 
@@ -637,6 +668,19 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | object |
 | `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/preview` | Preview | object |
 | `POST` | `/api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/commit` | Commit | object |
+
+### Dorling 圆面积 cartogram 工作台
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/inspect` | Inspect | object |
+| `POST` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/plan` | Plan | object |
+| `POST` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/run` | Run | object |
+| `POST` | `/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/apply` | Apply | object |
+| `GET` | `/api/v1/cartogram/sessions/{session_id}/jobs/{job_id}` | Job Status | object |
+| `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts` | Layouts | object |
+| `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}` | Layout Detail | object |
+| `GET` | `/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}/export` | Layout Export | object |
 
 ### 报告生成
 
@@ -678,6 +722,12 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `GET` | `/api/v1/chat/sessions/{session_id}/model` | Get Session Model | object |
 | `PUT` | `/api/v1/chat/sessions/{session_id}/model` | Put Session Model | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/usage` | Get Session Usage | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/context-sources` | Get Context Sources | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/context-policy` | Get Context Policy | object |
+| `PUT` | `/api/v1/chat/sessions/{session_id}/context-policy` | Put Context Policy | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/context-preview` | Post Context Preview | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/context-receipts` | Get Context Receipts | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/context-receipts/{turn_id}` | Get Context Receipt | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/mapspec/mutations` | Apply User Mapspec Mutation | MutationApplyResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/state` | Get Workbench State | WorkbenchStateResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
@@ -715,6 +765,17 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/comments` | Comment Feature Proposal | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/audit` | Export Feature Proposal Audit | object |
 | `POST` | `/api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/withdraw` | Withdraw Feature Proposal | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/field-contracts` | List Contracts | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/field-contracts` | Create Contract | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/field-contracts/datasets/{ref_id}/observe` | Observe Fields | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/field-contracts/datasets/{ref_id}/binding` | Get Binding Status | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/field-contracts/{contract_id}` | Get Contract | object |
+| `PUT` | `/api/v1/chat/sessions/{session_id}/field-contracts/{contract_id}` | Revise Contract | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/field-contracts/{contract_id}/assess` | Start Assessment | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/field-contracts/{contract_id}/activate` | Activate Contract | object |
+| `POST` | `/api/v1/chat/sessions/{session_id}/field-contracts/{contract_id}/retire` | Retire Contract | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/field-contracts-assessments/{assessment_id}` | Get Assessment | object |
+| `GET` | `/api/v1/chat/sessions/{session_id}/field-contracts-assessments/{assessment_id}/findings` | Assessment Findings | object |
 | `GET` | `/api/v1/chat/sessions/{session_id}/map-operations` | List Map Operations | MapOperationListResponse |
 | `GET` | `/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}` | Get Map Operation | MapOperationReceiptResponse |
 | `POST` | `/api/v1/chat/sessions/{session_id}/map-operations/{operation_id}/commit` | Commit Pending Map Operation | MapOperationReceiptResponse |
@@ -1469,6 +1530,6 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 | `DELETE` | `/api/v1/temporal-media/jobs/{job_id}` | Cancel Job | object |
 | `GET` | `/api/v1/temporal-media/jobs/{job_id}/result` | Get Job Result | object |
 
-_端点总数：647（OpenAPI operations，不含流式豁免面外资源）_
+_端点总数：693（OpenAPI operations，不含流式豁免面外资源）_
 
 <!-- END GENERATED:API-CATALOG -->

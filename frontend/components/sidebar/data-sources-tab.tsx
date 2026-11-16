@@ -479,6 +479,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         >
           <Crosshair size={14} aria-hidden />
           <span className="sr-only">{t('coordinateOperations.openPanel')}</span>
+        </button>
         {/* G44：业务字段合同工作台入口（字段声明/评估/激活/批量填值）。 */}
         <button
           type="button"
