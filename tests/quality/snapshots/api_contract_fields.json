@@ -185,6 +185,21 @@
  "GET /api/v1/briefs/shared/{share_code}/view": {
   "__type__": "unknown"
  },
+ "GET /api/v1/cartogram/sessions/{session_id}/jobs/{job_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/inspect": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/cartogram/sessions/{session_id}/layouts": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}/export": {
+  "__type__": "unknown"
+ },
  "GET /api/v1/cartographic-assets": {
   "__type__": "unknown"
  },
@@ -231,6 +246,18 @@
   "requirement_revision": "integer",
   "schema_version": "string",
   "session_id": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/context-policy": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/context-receipts": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/context-receipts/{turn_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/context-sources": {
+  "__type__": "unknown"
  },
  "GET /api/v1/chat/sessions/{session_id}/display-confirmation": {
   "__model__": "DisplayConfirmationStatusResponse",
@@ -1466,6 +1493,15 @@
  "POST /api/v1/briefs/sessions/{session_id}/releases/{release_id}/share": {
   "__type__": "unknown"
  },
+ "POST /api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/apply": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/plan": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/run": {
+  "__type__": "unknown"
+ },
  "POST /api/v1/cartographic-assets": {
   "__type__": "unknown"
  },
@@ -1494,7 +1530,8 @@
   "__model__": "ChatResponse",
   "content": "string",
   "owner_token": "null|string",
-  "session_id": "string"
+  "session_id": "string",
+  "turn_receipt": "null|object"
  },
  "POST /api/v1/chat/sessions/{session_id}/canvas-actions": {
   "__model__": "CanvasActionsAckResponse",
@@ -1510,6 +1547,9 @@
   "observation_rejection_reason": "null|string",
   "observation_sequence": "integer",
   "overall_passed": "boolean|null"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/context-preview": {
+  "__type__": "unknown"
  },
  "POST /api/v1/chat/sessions/{session_id}/display-confirmation/ack": {
   "__model__": "DisplayAckResponse",
@@ -2766,6 +2806,9 @@
   "details": "unknown",
   "isError": "boolean",
   "toolCallId": "string"
+ },
+ "PUT /api/v1/chat/sessions/{session_id}/context-policy": {
+  "__type__": "unknown"
  },
  "PUT /api/v1/chat/sessions/{session_id}/model": {
   "__type__": "unknown"

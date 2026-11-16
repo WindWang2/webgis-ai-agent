@@ -602,54 +602,6 @@
     "title": "ApiResponse",
     "type": "object"
    },
-   "ApplyBody": {
-    "properties": {
-     "client_mutation_id": {
-      "default": "",
-      "maxLength": 128,
-      "title": "Client Mutation Id",
-      "type": "string"
-     },
-     "dpi": {
-      "default": 300,
-      "maximum": 600.0,
-      "minimum": 72.0,
-      "title": "Dpi",
-      "type": "integer"
-     },
-     "expected_revision": {
-      "minimum": 0.0,
-      "title": "Expected Revision",
-      "type": "integer"
-     },
-     "initialize": {
-      "default": false,
-      "title": "Initialize",
-      "type": "boolean"
-     },
-     "operations": {
-      "items": {
-       "additionalProperties": true,
-       "type": "object"
-      },
-      "maxItems": 32,
-      "title": "Operations",
-      "type": "array"
-     },
-     "session_id": {
-      "maxLength": 128,
-      "minLength": 1,
-      "title": "Session Id",
-      "type": "string"
-     }
-    },
-    "required": [
-     "session_id",
-     "expected_revision"
-    ],
-    "title": "ApplyBody",
-    "type": "object"
-   },
    "ArtifactCloneResponse": {
     "description": "Clone-as-pointer：新行指向同一 content_location（零字节复制）。",
     "properties": {
@@ -25740,6 +25692,49 @@
     "title": "ShareRequest",
     "type": "object"
    },
+   "app__api__routes__cartogram_authoring__ApplyBody": {
+    "properties": {
+     "acknowledge_stale_source": {
+      "default": false,
+      "title": "Acknowledge Stale Source",
+      "type": "boolean"
+     },
+     "allow_diagnostic": {
+      "default": false,
+      "title": "Allow Diagnostic",
+      "type": "boolean"
+     },
+     "client_mutation_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Mutation Id"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "layout_ref": {
+      "maxLength": 200,
+      "minLength": 5,
+      "title": "Layout Ref",
+      "type": "string"
+     }
+    },
+    "required": [
+     "layout_ref",
+     "expected_revision"
+    ],
+    "title": "ApplyBody",
+    "type": "object"
+   },
    "app__api__routes__data_join_authoring__PreviewBody": {
     "properties": {
      "expected_revision": {
@@ -25759,6 +25754,54 @@
      "expected_revision"
     ],
     "title": "PreviewBody",
+    "type": "object"
+   },
+   "app__api__routes__print_layout__ApplyBody": {
+    "properties": {
+     "client_mutation_id": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Client Mutation Id",
+      "type": "string"
+     },
+     "dpi": {
+      "default": 300,
+      "maximum": 600.0,
+      "minimum": 72.0,
+      "title": "Dpi",
+      "type": "integer"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "initialize": {
+      "default": false,
+      "title": "Initialize",
+      "type": "boolean"
+     },
+     "operations": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "maxItems": 32,
+      "title": "Operations",
+      "type": "array"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "expected_revision"
+    ],
+    "title": "ApplyBody",
     "type": "object"
    },
    "app__api__routes__print_layout__ExportBody": {
@@ -28900,6 +28943,640 @@
     "tags": [
      "MapBrief",
      "MapBrief"
+    ]
+   }
+  },
+  "/api/v1/cartogram/sessions/{session_id}/jobs/{job_id}": {
+   "get": {
+    "operationId": "job_status_api_v1_cartogram_sessions__session_id__jobs__job_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Job Status",
+    "tags": [
+     "Dorling 圆面积 cartogram 工作台",
+     "Dorling 圆面积 cartogram G47"
+    ]
+   }
+  },
+  "/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/apply": {
+   "post": {
+    "operationId": "apply_api_v1_cartogram_sessions__session_id__layers__layer_id__apply_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__cartogram_authoring__ApplyBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Apply",
+    "tags": [
+     "Dorling 圆面积 cartogram 工作台",
+     "Dorling 圆面积 cartogram G47"
+    ]
+   }
+  },
+  "/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/inspect": {
+   "get": {
+    "operationId": "inspect_api_v1_cartogram_sessions__session_id__layers__layer_id__inspect_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect",
+    "tags": [
+     "Dorling 圆面积 cartogram 工作台",
+     "Dorling 圆面积 cartogram G47"
+    ]
+   }
+  },
+  "/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/plan": {
+   "post": {
+    "operationId": "plan_api_v1_cartogram_sessions__session_id__layers__layer_id__plan_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plan",
+    "tags": [
+     "Dorling 圆面积 cartogram 工作台",
+     "Dorling 圆面积 cartogram G47"
+    ]
+   }
+  },
+  "/api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/run": {
+   "post": {
+    "operationId": "run_api_v1_cartogram_sessions__session_id__layers__layer_id__run_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layer_id",
+      "required": true,
+      "schema": {
+       "title": "Layer Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PlanBody"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Run",
+    "tags": [
+     "Dorling 圆面积 cartogram 工作台",
+     "Dorling 圆面积 cartogram G47"
+    ]
+   }
+  },
+  "/api/v1/cartogram/sessions/{session_id}/layouts": {
+   "get": {
+    "operationId": "layouts_api_v1_cartogram_sessions__session_id__layouts_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 50,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Layouts",
+    "tags": [
+     "Dorling 圆面积 cartogram 工作台",
+     "Dorling 圆面积 cartogram G47"
+    ]
+   }
+  },
+  "/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}": {
+   "get": {
+    "operationId": "layout_detail_api_v1_cartogram_sessions__session_id__layouts__layout_ref__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layout_ref",
+      "required": true,
+      "schema": {
+       "title": "Layout Ref",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "full",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Full",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Layout Detail",
+    "tags": [
+     "Dorling 圆面积 cartogram 工作台",
+     "Dorling 圆面积 cartogram G47"
+    ]
+   }
+  },
+  "/api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}/export": {
+   "get": {
+    "operationId": "layout_export_api_v1_cartogram_sessions__session_id__layouts__layout_ref__export_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "layout_ref",
+      "required": true,
+      "schema": {
+       "title": "Layout Ref",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "format",
+      "required": false,
+      "schema": {
+       "default": "svg",
+       "pattern": "^(svg|png|pdf)$",
+       "title": "Format",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "dpi",
+      "required": false,
+      "schema": {
+       "default": 96,
+       "maximum": 600,
+       "minimum": 48,
+       "title": "Dpi",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Layout Export",
+    "tags": [
+     "Dorling 圆面积 cartogram 工作台",
+     "Dorling 圆面积 cartogram G47"
     ]
    }
   },
@@ -53467,7 +54144,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/ApplyBody"
+        "$ref": "#/components/schemas/app__api__routes__print_layout__ApplyBody"
        }
       }
      },
