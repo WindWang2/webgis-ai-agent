@@ -12,7 +12,7 @@ function makeFeature(props: Record<string, unknown>, sub = 'ref:geojson-abc__poi
 
 describe('PoiInfoPanel（纯 DOM 悬浮窗）', () => {
   it('单要素：直接显示名称与属性，name 优先', () => {
-    render(
+    const { container } = render(
       <PoiInfoPanel
         x={100} y={300}
         features={[makeFeature({ name: '三圣小学', category: '科教文化服务', subtype: '学校;小学' })]}
@@ -24,6 +24,7 @@ describe('PoiInfoPanel（纯 DOM 悬浮窗）', () => {
     expect(screen.getAllByText('三圣小学').length).toBeGreaterThan(0)
     expect(screen.getByText(/成都市小学/)).toBeInTheDocument()
     expect(screen.getByText('subtype:')).toBeInTheDocument()
+    expect(container.firstElementChild).toHaveStyle({ transform: 'translate(-50%, -100%)', top: '286px' })
   })
 
   it('多要素：先列候选，点选后进入详情并可返回', () => {
@@ -76,7 +77,7 @@ describe('PoiInfoPanel（纯 DOM 悬浮窗）', () => {
       />,
     )
     const panel = container.firstElementChild as HTMLElement
-    expect(panel.style.transform).toContain('translate(-50%, 0)')
+    expect(panel).toHaveStyle({ transform: 'translate(-50%, 0)', top: '64px' })
   })
 })
 

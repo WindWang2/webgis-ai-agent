@@ -629,5 +629,31 @@
     "revisionNone": "—"
   },
   "layerDataFailed": "图层「{label}」数据加载失败，地图上可能显示为空。请稍后重试或刷新会话",
-  "unknownLayer": "未知图层"
+  "unknownLayer": "未知图层",
+  "scalePortrayal": {
+    "presetAuto": "启用自动 LOD",
+    "presetFixed": "固定密度 60%",
+    "presetRestore": "恢复自动",
+    "committed": "已提交（revision {p0}）",
+    "superseded": "版本已变化，请重试",
+    "notApplied": "未应用：{p0}",
+    "failed": "提交失败：{p0}",
+    "title": "按尺度表达",
+    "applied": "已生效",
+    "unapplied": "未生效",
+    "currentBand": "当前档位",
+    "scaleBand": "尺度带",
+    "pending": "待服务端确认",
+    "visibility": "可见性",
+    "hidden": "隐藏",
+    "visible": "显示",
+    "labelRatios": "标注密度 / 字号比",
+    "hiddenReason": "隐藏原因：",
+    "notAppliedHelp": "未显示「已生效」：旧项目未启用、策略未通过校验、被用户隐藏或无生产消费者。",
+    "userOverrides": "用户覆盖：",
+    "listSeparator": "、",
+    "disclosures": "显示策略披露（不改变数据/统计）",
+    "buttonLabel": "按尺度表达：{p0}",
+    "unknownReceipt": "未知回执"
+  }
 }

@@ -1,3 +1,4 @@
+import { scanMapCommandEmissions } from '../../test/helpers/scan-map-command-emissions';
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
@@ -33,13 +34,8 @@ function collectPyFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-// 「command 键 + 可选引号/方括号 + 分隔符 + 字符串字面量」：
-//   - "command": "query_features"      （dict 字面量）
-//   - res_data["command"] = "…"        （键赋值，带 ] 与 =）
-// 前置 lookbehind 排除 some_command 之类的变量名；值侧必须紧跟引号字面量，
-// 排除 "command": result.get(...) 这类非字面量发射。
-const COMMAND_EMISSION_RE =
-  /(?<![A-Za-z0-9_])["']?command["']?\s*\]?\s*[=:]\s*["']([A-Za-z][A-Za-z0-9_]{0,48})["']/g;
+// Only quoted dictionary keys/index writes are emissions; a local Pi
+// variable named command is not a map transport command.
 
 describe('前端命令目录 == 后端导出清单（app/contracts/map_commands.py）', () => {
   it('COMMAND_CATALOGUE 键集与 MAP_COMMAND_MANIFEST 完全相等（双向）', () => {
@@ -70,8 +66,7 @@ describe('后端命令发射 ⊆ 前端命令目录（#535 幽灵命令不变量
       const src = readFileSync(file, 'utf8');
       // Array.from: tsconfig.test.json 目标较低，RegExpStringIterator 不能直接
       // for-of（需 downlevelIteration）。
-      for (const match of Array.from(src.matchAll(COMMAND_EMISSION_RE))) {
-        const name = match[1].toLowerCase();
+      for (const name of scanMapCommandEmissions(src)) {
         if (!emissions.has(name)) emissions.set(name, []);
         emissions.get(name)!.push(file);
       }

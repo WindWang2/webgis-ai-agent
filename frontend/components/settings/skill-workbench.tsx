@@ -1,4 +1,6 @@
 'use client';
+
+import { useT } from '@/lib/i18n/useT';
 import { devOnly } from '@/lib/utils/logger';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -39,16 +41,16 @@ interface BindingInput {
   inlineText: string;
 }
 
-function runnabilityBadge(entry: SkillCatalogEntry): { text: string; cls: string } {
+function runnabilityBadge(entry: SkillCatalogEntry, labels: Record<'runnable' | 'deprecated' | 'unavailable' | 'guidanceOnly', string>): { text: string; cls: string } {
   switch (entry.runnability) {
     case 'runnable':
-      return { text: '可执行', cls: 'bg-emerald-500/15 text-emerald-500' };
+      return { text: labels.runnable, cls: 'bg-emerald-500/15 text-emerald-500' };
     case 'deprecated':
-      return { text: '已弃用', cls: 'bg-amber-500/15 text-amber-500' };
+      return { text: labels.deprecated, cls: 'bg-amber-500/15 text-amber-500' };
     case 'unavailable':
-      return { text: '能力不可用', cls: 'bg-red-500/15 text-red-400' };
+      return { text: labels.unavailable, cls: 'bg-red-500/15 text-red-400' };
     default:
-      return { text: '仅指导', cls: 'bg-slate-500/15 text-slate-400' };
+      return { text: labels.guidanceOnly, cls: 'bg-slate-500/15 text-slate-400' };
   }
 }
 
@@ -96,6 +98,11 @@ export function SkillWorkbench() {
 }
 
 function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
+  const t = useT('settings.skillWorkbench');
+  const badgeLabels = {
+    runnable: t('runnable'), deprecated: t('deprecated'),
+    unavailable: t('unavailable'), guidanceOnly: t('guidanceOnly'),
+  };
   const [catalog, setCatalog] = useState<SkillCatalogEntry[]>([]);
   const [guides, setGuides] = useState<SkillCatalogEntry[]>([]);
   const [candidates, setCandidates] = useState<SkillCatalogEntry[]>([]);
@@ -342,12 +349,11 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
 
   return (
     <section className="space-y-4" data-testid="skill-workbench">
-      <STitle title="技能作业工作台" sub="选择版本 · 绑定数据 · 审阅计划 · 启动执行 · 回看结果 · 复用配置" />
+      <STitle title={t('title')} sub={t('subtitle')} />
 
       {!sessionId && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
-          尚无活跃会话：先在对话中开启一个会话（数据 ref 与运行记录按会话归属），
-          再回到本工作台绑定数据。
+          {t('noSession')}
         </div>
       )}
       {error && (
@@ -365,9 +371,9 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
         <div className="space-y-2">
           <div className="flex gap-1 text-xs">
             {([
-              ['skills', `可执行技能 ${catalog.length}`],
-              ['guides', `方法指南 ${guides.length}`],
-              ['candidates', `扩展 ${candidates.length}`],
+              ['skills', t('skillsTab', { p0: catalog.length })],
+              ['guides', t('guidesTab', { p0: guides.length })],
+              ['candidates', t('extensionsTab', { p0: candidates.length })],
             ] as const).map(([key, label]) => (
               <button
                 key={key}
@@ -381,7 +387,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
           </div>
           <div className="max-h-[420px] space-y-1 overflow-y-auto pr-1">
             {activeList.map((entry) => {
-              const badge = entry.runnability ? runnabilityBadge(entry) : null;
+              const badge = entry.runnability ? runnabilityBadge(entry, badgeLabels) : null;
               return (
                 <button
                   key={`${entry.asset_type}:${entry.id}`}
@@ -410,14 +416,14 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
               );
             })}
             {activeList.length === 0 && (
-              <p className="p-2 text-xs text-muted-foreground">（空）</p>
+              <p className="p-2 text-xs text-muted-foreground">{t('empty')}</p>
             )}
           </div>
         </div>
 
         {/* ── 主面板 ── */}
         <div className="min-h-[420px] space-y-4 rounded-lg border border-border p-4">
-          {!selected && <p className="text-sm text-muted-foreground">从左侧目录选择一个技能开始。</p>}
+          {!selected && <p className="text-sm text-muted-foreground">{t('selectSkill')}</p>}
 
           {selected && (
             <>
@@ -428,7 +434,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                     {selected.id} v{selected.version}
                   </span>
                   {(() => {
-                    const badge = runnabilityBadge(selected);
+                    const badge = runnabilityBadge(selected, badgeLabels);
                     return (
                       <span className={`rounded px-1.5 py-0.5 text-[10px] ${badge.cls}`}>
                         {badge.text}
@@ -450,14 +456,14 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                 <div className="space-y-4" data-testid="configure-panel">
                   {/* 数据角色绑定 */}
                   <fieldset className="space-y-2">
-                    <legend className="text-sm font-medium">数据绑定（角色 → 会话 ref 或内联 GeoJSON）</legend>
+                    <legend className="text-sm font-medium">{t('bindings')}</legend>
                     {bindings.map((b, i) => (
                       <div key={b.role} className="space-y-1 rounded-md border border-border p-2">
                         <div className="flex items-center gap-2 text-xs">
                           <span className="font-mono">{b.role}</span>
                           <span className="text-muted-foreground">
                             {(selected.role_bindings || []).find((rb) => rb.role === b.role)
-                              ?.geometry_kinds.join('/') || '任意几何'}
+                              ?.geometry_kinds.join('/') || t('anyGeometry')}
                           </span>
                         </div>
                         <div className="flex gap-1 text-xs">
@@ -469,7 +475,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                               )
                             }
                           >
-                            会话 ref
+                            {t('sessionRef')}
                           </button>
                           <button
                             className={`rounded px-2 py-0.5 ${b.mode === 'inline' ? 'bg-primary/20' : 'bg-muted'}`}
@@ -479,13 +485,13 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                               )
                             }
                           >
-                            内联 GeoJSON
+                            {t('inlineGeojson')}
                           </button>
                         </div>
                         {b.mode === 'ref' ? (
                           <input
                             className="w-full rounded border border-border bg-background px-2 py-1 font-mono text-xs"
-                            placeholder="ref:geojson-…（本会话的数据引用）"
+                            placeholder={t('refPlaceholder')}
                             value={b.ref}
                             onChange={(e) =>
                               setBindings((arr) =>
@@ -511,13 +517,13 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                       </div>
                     ))}
                     {bindings.length === 0 && (
-                      <p className="text-xs text-muted-foreground">该技能无需数据绑定。</p>
+                      <p className="text-xs text-muted-foreground">{t('noBindings')}</p>
                     )}
                   </fieldset>
 
                   {/* 参数表单 */}
                   <fieldset className="space-y-2">
-                    <legend className="text-sm font-medium">参数</legend>
+                    <legend className="text-sm font-medium">{t('parameters')}</legend>
                     {paramSpecs.map((spec) => (
                       <label key={spec.name} className="block space-y-1 text-xs">
                         <span className="flex items-center gap-1">
@@ -539,7 +545,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                               setParams((p) => ({ ...p, [spec.name]: e.target.value }))
                             }
                           >
-                            <option value="">（未提供）</option>
+                            <option value="">{t('notProvided')}</option>
                             {(spec.enum_values || []).map((v) => (
                               <option key={v} value={v}>
                                 {v}
@@ -554,7 +560,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                               setParams((p) => ({ ...p, [spec.name]: e.target.value }))
                             }
                           >
-                            <option value="">（未提供）</option>
+                            <option value="">{t('notProvided')}</option>
                             <option value="true">true</option>
                             <option value="false">false</option>
                           </select>
@@ -572,7 +578,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                       </label>
                     ))}
                     {paramSpecs.length === 0 && (
-                      <p className="text-xs text-muted-foreground">该技能无声明参数。</p>
+                      <p className="text-xs text-muted-foreground">{t('noParameters')}</p>
                     )}
                   </fieldset>
 
@@ -582,23 +588,23 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                     onClick={onPrepare}
                     data-testid="prepare-btn"
                   >
-                    {busy ? '准备中…' : '预览执行计划（零副作用）'}
+                    {busy ? t('preparing') : t('previewPlan')}
                   </button>
                   {selected.runnability !== 'runnable' && (
                     <p className="text-xs text-muted-foreground">
-                      该资产不是可执行技能（{selected.runnability}）—— 只能作为方法指导。
+                      {t('guidancePrefix')}{selected.runnability}{t('guidanceSuffix')}
                     </p>
                   )}
 
                   {/* 预设 */}
                   <details className="rounded-md border border-border p-2">
                     <summary className="cursor-pointer text-xs font-medium">
-                      保存/复用配置预设（{presets.length}）
+                      {t('presetsPrefix')}{presets.length}{t('closeParen')}
                     </summary>
                     <div className="mt-2 flex gap-1">
                       <input
                         className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs"
-                        placeholder="预设名（如：学校点分布-标准配置）"
+                        placeholder={t('presetPlaceholder')}
                         value={presetName}
                         onChange={(e) => setPresetName(e.target.value)}
                       />
@@ -607,7 +613,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                         disabled={busy || !presetName.trim()}
                         onClick={onSavePreset}
                       >
-                        保存
+                        {t('save')}
                       </button>
                     </div>
                     <ul className="mt-2 space-y-1">
@@ -621,7 +627,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                             disabled={busy}
                             onClick={() => onReusePreset(p)}
                           >
-                            复用（重新绑定）
+                            {t('reuse')}
                           </button>
                         </li>
                       ))}
@@ -633,7 +639,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
               {phase === 'preview' && prepared && (
                 <div className="space-y-3" data-testid="preview-panel">
                   <h4 className="text-sm font-medium">
-                    执行计划预览（技能 digest {prepared.preview.skill.digest}）
+                    {t('previewPrefix')} {prepared.preview.skill.digest}{t('closeParen')}
                   </h4>
                   <ol className="space-y-1 text-xs">
                     {prepared.preview.steps.map((st) => (
@@ -644,7 +650,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                           <span className="text-muted-foreground">{st.side_effect}</span>
                         </div>
                         <div className="mt-0.5 text-muted-foreground">
-                          读取角色：{st.reads_roles.join(', ') || '—'} · 证据：
+                          {t('readRoles')}{st.reads_roles.join(', ') || '—'}  {t('evidence')}
                           {st.produces_evidence.join(', ') || '—'}
                         </div>
                       </li>
@@ -652,11 +658,11 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                   </ol>
                   <div className="text-xs">
                     <div>
-                      证据覆盖：{prepared.preview.evidence_covered.join(', ') || '—'}
+                      {t('coverage')}{prepared.preview.evidence_covered.join(', ') || '—'}
                     </div>
                     {prepared.preview.evidence_not_covered.length > 0 && (
                       <div className="text-amber-400">
-                        未覆盖义务（运行记录将如实保留）：{prepared.preview.evidence_not_covered.join(', ')}
+                        {t('uncovered')}{prepared.preview.evidence_not_covered.join(', ')}
                       </div>
                     )}
                   </div>
@@ -667,13 +673,13 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                       onClick={onStart}
                       data-testid="start-btn"
                     >
-                      {busy ? '启动中…' : '启动运行'}
+                      {busy ? t('starting') : t('startRun')}
                     </button>
                     <button
                       className="rounded-md bg-muted px-4 py-2 text-sm"
                       onClick={() => setPhase('configure')}
                     >
-                      返回修改
+                      {t('back')}
                     </button>
                   </div>
                 </div>
@@ -682,7 +688,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
               {(phase === 'running' || run) && run && (
                 <div className="space-y-2 text-sm" data-testid="run-panel">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">运行 {run.job_id}</span>
+                    <span className="font-medium">{t('run')} {run.job_id}</span>
                     <span
                       className={`rounded px-1.5 py-0.5 text-xs ${
                         run.status === 'completed'
@@ -696,16 +702,16 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                     </span>
                     {run.idempotent_reuse && (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                        幂等复用（未重复执行）
+                        {t('idempotentReuse')}
                       </span>
                     )}
                     {run.already_running && (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                        已在运行（双击/重试不重复执行）
+                        {t('alreadyRunning')}
                       </span>
                     )}
                   </div>
-                  {run.progress != null && <div>进度：{run.progress}%</div>}
+                  {run.progress != null && <div>{t('progress')}{run.progress}%</div>}
                   {(run.steps || []).length > 0 && (
                     <ol className="space-y-1 text-xs">
                       {(run.steps || []).map((st) => (
@@ -727,18 +733,18 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                     </ol>
                   )}
                   {run.result_ref && (
-                    <div className="font-mono text-xs">结果 ref：{run.result_ref}</div>
+                    <div className="font-mono text-xs">{t('resultRef')}{run.result_ref}</div>
                   )}
                   {(run.evidence_not_covered || []).length > 0 && (
                     <div className="text-xs text-amber-400">
-                      未覆盖义务：{(run.evidence_not_covered || []).join(', ')}
+                      {t('uncoveredResult')}{(run.evidence_not_covered || []).join(', ')}
                     </div>
                   )}
                   {run.error && <div className="text-xs text-red-400">{run.error}</div>}
                   <div className="flex gap-2">
                     {run.cancellable && (
                       <button className="rounded-md bg-muted px-3 py-1.5 text-xs" onClick={onCancel}>
-                        取消运行
+                        {t('cancelRun')}
                       </button>
                     )}
                     <button
@@ -750,7 +756,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
                         setPhase('configure');
                       }}
                     >
-                      再跑一次（重新准备）
+                      {t('runAgain')}
                     </button>
                   </div>
                 </div>
@@ -763,13 +769,13 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
       {/* 运行记录（刷新回看） */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium">本会话运行记录（刷新后仍可回看）</h4>
+          <h4 className="text-sm font-medium">{t('history')}</h4>
           {sessionId && (
             <button
               className="rounded bg-muted px-2 py-1 text-xs"
               onClick={() => refreshRuns(sessionId)}
             >
-              刷新
+              {t('refresh')}
             </button>
           )}
         </div>
@@ -799,7 +805,7 @@ function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
               </span>
             </li>
           ))}
-          {runs.length === 0 && <li className="text-muted-foreground">（暂无运行）</li>}
+          {runs.length === 0 && <li className="text-muted-foreground">{t('noRuns')}</li>}
         </ul>
       </div>
     </section>

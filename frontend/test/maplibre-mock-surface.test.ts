@@ -1,3 +1,4 @@
+import ts from 'typescript';
 /**
  * Coverage meta-test for the shared MapLibre mock — issue #404 acceptance
  * criterion.
@@ -44,6 +45,7 @@ interface AccessSite {
 
 function collectAccesses(): Map<string, AccessSite[]> {
   const found = new Map<string, AccessSite[]>();
+  const sourceFiles: string[] = [];
   const add = (name: string, site: AccessSite) => {
     const list = found.get(name) ?? [];
     list.push(site);
@@ -62,14 +64,20 @@ function collectAccesses(): Map<string, AccessSite[]> {
           /\.(ts|tsx)$/.test(entry.name) &&
           !/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name)
         ) {
-          const src = fs.readFileSync(full, 'utf8');
-          for (const access of scanMapAccesses(src, full)) {
-            add(access.name, { file: full, line: access.line, kind: access.kind });
-          }
+          sourceFiles.push(full);
         }
       }
     };
     walk(base);
+  }
+  const config = ts.readConfigFile(path.join(FRONTEND_ROOT, 'tsconfig.json'), ts.sys.readFile);
+  if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, FRONTEND_ROOT);
+  const program = ts.createProgram(sourceFiles, { ...parsed.options, incremental: false, noEmit: true, types: [] });
+  for (const full of sourceFiles) {
+    for (const access of scanMapAccesses(fs.readFileSync(full, 'utf8'), full, program)) {
+      add(access.name, { file: full, line: access.line, kind: access.kind });
+    }
   }
   return found;
 }
@@ -84,6 +92,15 @@ describe('shared MapLibre mock covers the app-level MapLibre surface (#404)', ()
       expect(map[name].isActive()).toBe(true);
     },
   );
+
+  it('models registered images through their real add/has/remove lifecycle', () => {
+    const map = makeMockMaplibreMap();
+    expect(map.hasImage('asset')).toBe(false);
+    map.addImage('asset', { width: 1, height: 1, data: new Uint8Array(4) });
+    expect(map.hasImage('asset')).toBe(true);
+    map.removeImage('asset');
+    expect(map.hasImage('asset')).toBe(false);
+  });
 
   it('every map.<method> the application source touches exists on the mock', () => {
     const map = makeMockMaplibreMap();

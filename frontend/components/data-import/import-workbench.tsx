@@ -721,7 +721,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
         <div className="rounded border p-2 text-xs" data-testid="diag-panel">
           <div className="flex items-center justify-between">
             <span className="font-medium">
-              {t('rejectDetail')} · {diag.lines} 行
+              {t('rejectDetail')} · {t('diagLineCount', { p0: diag.lines })}
             </span>
             <button type="button" className="underline" onClick={() => setDiag(null)}>
               {t('close')}

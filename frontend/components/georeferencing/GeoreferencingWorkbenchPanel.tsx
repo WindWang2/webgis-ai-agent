@@ -25,6 +25,7 @@ import {
   getMapSpecSessionCursor,
   setMapSpecRevision,
 } from '@/lib/mapspec/session-cursor';
+import { useSourceViewTransform } from '@/lib/georeferencing/use-source-view-transform';
 import { subscribeMapClick } from '@/lib/raster-authoring/map-click';
 import { useHudStore } from '@/lib/store/useHudStore';
 import {
@@ -62,7 +63,6 @@ import {
   imagePixelToContainer,
   residualArrowEnd,
   zoomAroundPoint,
-  type ViewTransform,
 } from '@/lib/georeferencing/coords';
 
 export interface GeoreferencingWorkbenchPanelProps {
@@ -249,7 +249,6 @@ export function GeoreferencingWorkbenchPanel({
   const [previewImgUrl, setPreviewImgUrl] = useState<string | null>(null);
   const [previewDims, setPreviewDims] = useState<{ width: number; height: number } | null>(null);
   const [panMode, setPanMode] = useState(false);
-  const [transform, setTransform] = useState<ViewTransform>({ fitScale: 1, zoom: 1, panX: 0, panY: 0 });
   const dragRef = useRef<{
     active: boolean;
     moved: boolean;
@@ -288,6 +287,9 @@ export function GeoreferencingWorkbenchPanel({
     () => sources.find((s) => s.source_id === (activePlan?.source_id || selectedSourceId)) ?? null,
     [sources, activePlan, selectedSourceId],
   );
+  const [transform, setTransform] = useSourceViewTransform(selectedSource, sessionId ?? null, {
+    width: VIEWER_WIDTH, height: VIEWER_HEIGHT,
+  });
 
   const applyPlanToEditor = useCallback((plan: GeorefDraftPlan) => {
     setActivePlan(plan);
@@ -464,19 +466,6 @@ export function GeoreferencingWorkbenchPanel({
   }, [stopPolling]);
 
   const selectedSourceIdKey = selectedSource?.source_id ?? null;
-  const selectedSourceWidth = selectedSource?.width ?? 0;
-  const selectedSourceHeight = selectedSource?.height ?? 0;
-
-  // Reset source canvas fit whenever source changes
-  useEffect(() => {
-    if (!selectedSourceIdKey) return;
-    setTransform(
-      computeFitTransform(
-        { width: selectedSourceWidth, height: selectedSourceHeight },
-        { width: VIEWER_WIDTH, height: VIEWER_HEIGHT },
-      ),
-    );
-  }, [selectedSourceIdKey, selectedSourceWidth, selectedSourceHeight]);
 
   // Load protected normalized source image ObjectURL
   useEffect(() => {

@@ -27,6 +27,11 @@ const bridgeMock = vi.hoisted(() => ({
 
 const requestRefFCMock = vi.hoisted(() => vi.fn());
 
+vi.mock('@/lib/api/chat', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/api/chat')>(),
+  fetchRuntimeInteractions: vi.fn().mockResolvedValue({ boot_id: 'test-boot', pending: [], recent: [] }),
+}));
+
 vi.mock('./useMapBridge', () => ({
   useMapBridge: (...args: unknown[]) => {
     bridgeMock.onEventCallback = args[2] as typeof bridgeMock.onEventCallback;
@@ -77,9 +82,11 @@ describe('useSSEStream render_work 信封收纳（ADR-0225）', () => {
         setSessionId: vi.fn(),
         sessionIdRef: sidRef,
         dispatchAction: vi.fn(),
-        registerToken: vi.fn(),
+        sessionTokenRef: { current: null },
+        getMapSnapshot: () => null,
+        userLocation: null,
         rememberSessionToken: vi.fn(),
-      } as never),
+      }),
     );
     return sidRef;
   }

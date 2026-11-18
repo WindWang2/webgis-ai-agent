@@ -221,16 +221,19 @@ describe('GeoreferencingWorkbenchPanel (G48)', () => {
       ),
     );
 
-    // Pick pixel coordinates by clicking source image canvas
+    // Image pixel (85, 60) is viewport (93.5, 66) after the real
+    // 12px-padded fit: scale .9, pan (17, 12). Never rely on an identity
+    // transform rendered before a passive source-change effect.
     const canvas = screen.getByTestId('georef-pixel-canvas');
     Object.defineProperty(canvas, 'getBoundingClientRect', {
       value: () => ({ left: 0, top: 0, width: 340, height: 240, right: 340, bottom: 240 }),
     });
-    fireEvent.mouseUp(canvas, { button: 0, clientX: 85, clientY: 60 });
+    fireEvent.mouseUp(canvas, { button: 0, clientX: 93.5, clientY: 66 });
     await waitFor(() => expect(screen.getByTestId('georef-gcp-row-0')).toBeInTheDocument());
 
     const pxInput = screen.getByLabelText('px-0') as HTMLInputElement;
     expect(Number(pxInput.value)).toBeCloseTo(85, 0);
+    expect(Number((screen.getByLabelText('py-0') as HTMLInputElement).value)).toBeCloseTo(60, 0);
 
     // Edit label then undo
     fireEvent.change(screen.getByLabelText('label-0'), { target: { value: 'TMP' } });

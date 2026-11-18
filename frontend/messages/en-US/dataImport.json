@@ -77,5 +77,6 @@
   "restoreHint": "Batch config lives on the server; restore after page refresh",
   "viewRejects": "View rejected rows",
   "rejectDetail": "Rejected rows detail",
-  "diagMore": "{p0} more rows hidden"
+  "diagMore": "{p0} more rows hidden",
+  "diagLineCount": "{p0} lines"
 }
