@@ -547,3 +547,48 @@ def test_snapshot_pointer_scan_truncation_skips_blob_deletion(
     assert execute_promotion_store_gc_sync(plan_ok)["deleted"] == [key_h]
     assert store.exists(key_h) is False
     assert store.exists(key_g) is True, "manifest 保护的 blob 完整扫描下仍不删"
+
+
+@pytest.mark.parametrize(("root", "expected"), [
+    ("location", "referenced by artifact_revisions"),
+    ("sha", "referenced by artifact_revisions (sha)"),
+    ("head", "head pointer (Artifact.metadata_json.content_location)"),
+    ("lakehouse", "lakehouse catalog, dataset registry, or content blob"),
+    ("pinned", "pinned"),
+])
+def test_gc_reports_specific_reference_before_overlapping_lakehouse_root(root, expected):
+    """Lakehouse's union includes revision/head roots; disclose their real cause."""
+    from app.services.artifact_lifecycle import _promotion_blob_protection
+
+    key = "a" * 64
+    location = f"aaaa/{key}.json"
+    assert _promotion_blob_protection(
+        key, location, 0, now=10000, grace_hours=1,
+        refcounts_by_location={location: 1} if root == "location" else {},
+        refcounts_by_sha={key: 1} if root == "sha" else {},
+        artifact_locations={location} if root == "head" else set(),
+        pinned_shas={key} if root == "pinned" else set(),
+        lakehouse_shas={key},
+    ) == expected
+
+
+def test_gc_reason_precedence_preserves_union_of_all_reference_guards():
+    """Changing disclosure priority must not turn any protected root deletable."""
+    from itertools import product
+    from app.services.artifact_lifecycle import _promotion_blob_protection
+
+    key = "b" * 64
+    location = f"bbbb/{key}.json"
+    for pinned, loc, sha, head, lake, symbol, georef, snapshot in product((False, True), repeat=8):
+        reason = _promotion_blob_protection(
+            key, location, 0, now=10000, grace_hours=1,
+            refcounts_by_location={location: 1} if loc else {},
+            refcounts_by_sha={key: 1} if sha else {},
+            artifact_locations={location} if head else set(),
+            pinned_shas={key} if pinned else set(),
+            lakehouse_shas={key} if lake else set(),
+            symbol_version_blob_keys={key} if symbol else set(),
+            georef_blob_keys={key} if georef else set(),
+            snapshot_locations={location} if snapshot else set(),
+        )
+        assert (reason is not None) == any((pinned, loc, sha, head, lake, symbol, georef, snapshot))
