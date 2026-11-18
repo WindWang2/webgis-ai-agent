@@ -154,7 +154,7 @@ async def _session_caller(
 
 def _job_scope(user: Dict[str, Any], owner_token: Optional[str]):
     """A capability grants only unbound anonymous jobs, never account/org/project jobs."""
-    from app.models.db_model import AnalysisTask
+    from app.models.db_model import AnalysisTask, Conversation
 
     uid, org = actor_ids(user)
     anonymous = and_(
@@ -164,8 +164,15 @@ def _job_scope(user: Dict[str, Any], owner_token: Optional[str]):
     )
     if not uid:
         return anonymous
+    # Preserve pre-#2198 rows whose creator was accidentally omitted, but only
+    # through a user-bound session. An anonymous capability is not this proof.
+    legacy_owned_session = select(Conversation.id).where(
+        Conversation.id == AnalysisTask.session_id, Conversation.user_id == uid,
+    ).exists()
     return or_(anonymous, and_(
-        AnalysisTask.creator_id == uid,
+        or_(AnalysisTask.creator_id == uid, and_(
+            AnalysisTask.creator_id.is_(None), legacy_owned_session,
+        )),
         or_(AnalysisTask.org_id.is_(None), AnalysisTask.org_id == org),
     ))
 

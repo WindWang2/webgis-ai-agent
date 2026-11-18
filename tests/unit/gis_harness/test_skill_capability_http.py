@@ -115,6 +115,14 @@ async def test_missing_wrong_or_other_session_capability_is_denied_for_every_ses
 async def test_authenticated_owner_unchanged_and_user_session_token_is_not_a_bypass(http_env):
     env = http_env
     base = "/api/v1/skill-jobs"
+    # Historical rows affected by #2198 remain visible only through their real
+    # authenticated session owner, not through any presented capability.
+    with env.factory() as db:
+        db.add(AnalysisTask(id=999, creator_id=None, org_id=81, session_id="owned-session", task_type="skill_job:legacy", job_kind="skill_job", status="pending", parameters={}))
+        db.commit()
+    assert (await env.client.get(base + "/runs/999", headers=env.headers)).status_code == 200
+    assert (await env.client.get(base + "/runs/999", headers=env.foreign | {"X-Session-Token": "not-a-user-bypass"})).status_code == 404
+    assert (await env.client.get(base + "/runs/999", headers=env.capability)).status_code == 404
     assert (await env.client.get(base + "/runs?session_id=owned-session", headers=env.headers)).status_code == 200
     assert (await env.client.get(base + "/runs/991", headers=env.headers)).status_code == 200
     for headers in [env.foreign, {"X-Session-Token": "not-a-user-bypass"}, env.foreign | {"X-Session-Token": "not-a-user-bypass"}]:
