@@ -71,7 +71,7 @@ export async function createSelectionHandle(params: {
       `/api/v1/layers/data/${encodeURIComponent(refId)}/selection?${q}`,
       {
         method: 'POST',
-        body: JSON.stringify(scope),
+        body: scope,
         ownerToken: ownerToken ?? undefined,
         label: 'Selection handle error',
         signal,

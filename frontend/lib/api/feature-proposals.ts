@@ -175,7 +175,7 @@ export async function decideFeatureProposal(
   if (s == null) throw new Error('feature-proposals: no session');
   return apiFetch<{ proposal: ProposalSummary }>(
     `${base(s.sessionId)}/${encodeURIComponent(proposalId)}/decisions`,
-    opts(s.ownerToken, { method: 'POST', body: JSON.stringify({ action, note }) }),
+    opts(s.ownerToken, { method: 'POST', body: { action, note } }),
   );
 }
 
@@ -188,7 +188,7 @@ export async function submitFeatureProposalResolutions(
     `${base(s.sessionId)}/${encodeURIComponent(proposalId)}/resolutions`,
     opts(s.ownerToken, {
       method: 'POST',
-      body: JSON.stringify({ expected_revision: expectedRevision, resolutions }),
+      body: { expected_revision: expectedRevision, resolutions },
     }),
   );
 }
@@ -202,7 +202,7 @@ export async function rebaseFeatureProposal(
     `${base(s.sessionId)}/${encodeURIComponent(proposalId)}/rebase`,
     opts(s.ownerToken, {
       method: 'POST',
-      body: JSON.stringify({ expected_revision: expectedRevision, apply }),
+      body: { expected_revision: expectedRevision, apply },
     }),
   );
 }
@@ -229,7 +229,7 @@ export async function withdrawFeatureProposal(proposalId: string, note?: string)
   if (s == null) throw new Error('feature-proposals: no session');
   return apiFetch<Record<string, unknown>>(
     `${base(s.sessionId)}/${encodeURIComponent(proposalId)}/withdraw`,
-    opts(s.ownerToken, { method: 'POST', body: JSON.stringify({ action: 'withdraw', note }) }),
+    opts(s.ownerToken, { method: 'POST', body: { action: 'withdraw', note } }),
   );
 }
 
@@ -262,6 +262,6 @@ export async function createFeatureProposal(input: {
   if (s == null) throw new Error('feature-proposals: no session');
   return apiFetch<ProposalSummary>(
     `${base(s.sessionId)}`,
-    opts(s.ownerToken, { method: 'POST', body: JSON.stringify(input) }),
+    opts(s.ownerToken, { method: 'POST', body: input }),
   );
 }

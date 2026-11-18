@@ -162,7 +162,7 @@ export async function createRuleset(body: {
     `${BASE}/rulesets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: body,
     },
   );
   return data.ruleset;
@@ -175,7 +175,7 @@ export async function updateRuleset(rulesetId: string, body: {
     `${BASE}/rulesets/${encodeURIComponent(rulesetId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: body,
     },
   );
   return data.ruleset;
@@ -191,7 +191,7 @@ export async function submitTopologyRun(body: {
     `${BASE}/runs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: body,
     },
   );
 }
@@ -260,7 +260,7 @@ export async function acceptException(findingId: string, reason: string): Promis
     `${BASE}/findings/${encodeURIComponent(findingId)}/exception`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
+      body: { reason },
     },
   );
   return data.exception;
@@ -291,7 +291,7 @@ export async function recheckRun(runId: string): Promise<{
     `${BASE}/runs/${encodeURIComponent(runId)}/recheck`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: {},
     },
   );
 }

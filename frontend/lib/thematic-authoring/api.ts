@@ -54,7 +54,7 @@ export function previewThematicPlan(
     `${base(ctx, layerId)}/preview`,
     {
       method: 'POST',
-      body: JSON.stringify({ plan: { ...plan, layer_id: layerId } }),
+      body: { plan: { ...plan, layer_id: layerId } },
       ownerToken: ctx.ownerToken,
       signal: ctx.signal,
       label: 'Thematic authoring',
@@ -70,11 +70,11 @@ export function commitThematicPlan(
     `${base(ctx, layerId)}/commit`,
     {
       method: 'POST',
-      body: JSON.stringify({
+      body: {
         plan: { ...plan, layer_id: layerId },
         expected_revision: expectedRevision,
         client_mutation_id: clientMutationId,
-      }),
+      },
       ownerToken: ctx.ownerToken,
       signal: ctx.signal,
       label: 'Thematic authoring',
