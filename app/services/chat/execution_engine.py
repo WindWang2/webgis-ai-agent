@@ -3269,6 +3269,19 @@ class ChatExecutionEngine:
                 self._session_owner_tokens.pop(session_id, None)
                 # F21: 每一项进程内清理都可能独立失败（Redis 抖动 / 可选模块缺失），
                 # 隔离失败，保证其余清理总能执行；路由语义不变（仍按 DB 删除结果返回）。
+                # #2217: bump 共享 hist_gen —— 其它副本按代际比对失效本地会话
+                # 缓存；不清的话，持有该会话缓存的副本看到代际未变，会继续
+                # 服务这个已删除的会话。本地记录新代际（与 _save_msg_async
+                # 写路径同款语义）；Redis 不可用时至少清掉本地代际记录。
+                try:
+                    _gen = await self._history_generation(session_id, bump=True)
+                    if _gen is not None:
+                        self._history_gens()[session_id] = _gen
+                    else:
+                        self._history_gens().pop(session_id, None)
+                except Exception as e:
+                    logger.warning(f"clear_session: history generation bump failed for {session_id}: {e}")
+                    self._history_gens().pop(session_id, None)
                 try:
                     await session_data_manager.clear_session(session_id)
                 except Exception as e:
