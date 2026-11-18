@@ -14,12 +14,17 @@ router = APIRouter(prefix="/portfolio", tags=["Mission Portfolio"])
 
 
 def _org(user: Dict[str, Any]) -> str:
-    from app.core import tenancy
+    # Portfolio is org-wide, unlike owner-token session resources. The fallback
+    # default org is a storage partition, never authorization to read its members.
+    # Resolve live membership, not a stale JWT org/role claim (including admin).
+    from app.models.db_model import User
 
-    org = tenancy.effective_org_in_thread(user)
-    if not org:
-        raise HTTPException(status_code=403, detail="org_context_required")
-    return org
+    uid = user.get("user_id") or user.get("id")
+    with _factory()() as db:
+        identity = db.get(User, str(uid)) if uid else None
+        if identity is None or not identity.is_active or identity.org_id is None:
+            raise HTTPException(status_code=403, detail="org_membership_required")
+        return str(identity.org_id)
 
 
 def _factory():

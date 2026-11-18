@@ -22,7 +22,10 @@ import os
 import secrets
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from app.services.data_delivery.source_resolver import DeliveryActor
 
 logger = logging.getLogger(__name__)
 
@@ -105,12 +108,30 @@ def delivery_files(delivery_id: str) -> List[Path]:
             if p.is_file() and p.name not in ("manifest.json", "receipt.json")]
 
 
+def require_project_write(project_id: str, actor: Optional[DeliveryActor], *, db=None) -> None:
+    """Recheck live owner/editor authority; a project id is never a capability."""
+    from app.core.database import SessionLocal
+    from app.services.project_service import ProjectService
+
+    if actor is None or not actor.user_id:
+        raise PermissionError("project_not_found")
+    if db is None:
+        with SessionLocal() as session:
+            require_project_write(project_id, actor, db=session)
+        return
+    if ProjectService.get_project_for_write(
+        db, project_id, user_id=actor.user_id, org_id=actor.org_id
+    ) is None:
+        raise PermissionError("project_not_found")
+
+
 def publish_data_object_for_delivery(
     delivery_id: str, *, owner_scope: Dict[str, str],
     source_refs: Optional[List[str]] = None,
     input_fingerprint: Optional[str] = None,
     payload: Optional[Dict[str, Any]] = None,
     budget: int = 256 * 1024 * 1024,
+    actor: Optional[DeliveryActor] = None,
 ) -> Dict[str, Any]:
     """终态包 → durable DataObject（CAS 去重）。
 
@@ -131,6 +152,8 @@ def publish_data_object_for_delivery(
         return {"state": "failed", "error": "no delivery files"}
     source_files = {p.name: p for p in files}
     try:
+        if owner_scope.get("project_id"):
+            require_project_write(owner_scope["project_id"], actor)
         identity = publish_data_object(
             source_files,
             kind="data_delivery",
@@ -185,23 +208,18 @@ def register_project_artifact(
     project_id: str, delivery_id: str, name: str, fmt: str,
     content_sha256: Optional[str], byte_size: int,
     row_count: int, parent_artifact_id: Optional[str],
+    *, actor: Optional[DeliveryActor] = None,
 ) -> Optional[str]:
     """项目产物登记（可选；失败不回滚已完成交付 —— 下载以 receipt 为准）。
 
     父源 lineage：源为项目产物时挂 parent → child（既有 ArtifactLineage）。
     """
     try:
-        from sqlalchemy import select as sa_select
-
         from app.core.database import SessionLocal
-        from app.models.project import Artifact, ArtifactLineage, Project
+        from app.models.project import Artifact, ArtifactLineage
 
         with SessionLocal() as db:
-            project = db.execute(
-                sa_select(Project.id).where(Project.id == project_id)
-            ).first()
-            if project is None:
-                return None
+            require_project_write(project_id, actor, db=db)
             artifact = Artifact(
                 project_id=project_id,
                 name=(name or "数据交付")[:255],

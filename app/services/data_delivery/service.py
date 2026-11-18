@@ -98,8 +98,13 @@ def execution_key(spec: DeliverySpec, actor: DeliveryActor,
                   project_id: Optional[str]) -> str:
     from app.services.jobs.submit import build_execution_key
 
-    owner = project_id or spec.source.session_id or actor.user_id or "-"
-    return build_execution_key(TASK_TYPE, owner, {
+    # Scope retries to the caller even when a project/session is shared. Tokens
+    # are never persisted in keys, logs or parameter snapshots.
+    principal = actor.user_id or hashlib.sha256(
+        (actor.owner_token or "").encode("utf-8")
+    ).hexdigest()
+    return build_execution_key(TASK_TYPE, principal, {
+        "org_id": actor.org_id, "project_id": project_id,
         "spec_fingerprint": spec_fingerprint(spec)})
 
 
@@ -226,6 +231,15 @@ def _estimate_bytes(fmt: str, rows: int) -> int:
     return int(_BYTES_PER_ROW_HEURISTIC.get(fmt, 600) * max(rows, 1))
 
 
+async def _authorize_target_project(project_id: str, actor: DeliveryActor) -> None:
+    try:
+        await asyncio.to_thread(dl_store.require_project_write, project_id, actor)
+    except PermissionError as exc:
+        raise DeliveryError(
+            dl_contracts.ERR_UNAUTHORIZED, "无权向该项目发布交付成果", status_code=404
+        ) from exc
+
+
 # ── 提交 ──────────────────────────────────────────────────────────────────
 
 async def submit_delivery(
@@ -234,6 +248,8 @@ async def submit_delivery(
     project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """提交交付任务：服务端复检（预览逻辑 + 损失确认）→ durable job → runner。"""
+    if project_id:
+        await _authorize_target_project(project_id, actor)
     acked = set(acknowledged_losses or [])
     preview = await preview_delivery(spec, actor)
     if preview.blocking_issues:
@@ -370,7 +386,7 @@ async def _run_delivery_job(
 
         # 阶段 C（async）：durable/台账登记（增值记录，绝不阻断交付本体）
         await _finalize_delivery(job_id, delivery_id, spec, snapshot, outcome,
-                                 project_id, worker_id)
+                                 project_id, worker_id, actor=actor)
     except OperationCancelled:
         dl_store.discard_staging(delivery_id)
         from app.core.database import SessionLocal
@@ -602,13 +618,17 @@ def _execute_delivery_sync(
 async def _finalize_delivery(
     job_id: str, delivery_id: str, spec: DeliverySpec,
     snapshot: SourceSnapshot, outcome: Dict[str, Any],
-    project_id: Optional[str], worker_id: str,
+    project_id: Optional[str], worker_id: str, *, actor: DeliveryActor,
 ) -> None:
     """阶段 C：durable DataObject + 台账登记 → 回指定稿 → 终态 completed。"""
     from fastapi.concurrency import run_in_threadpool
 
     from app.services.jobs.store import DurableJobStore
 
+    # Permission may have changed while the writer ran. Recheck before any
+    # project-scoped DataObject or artifact is published.
+    if project_id:
+        await _authorize_target_project(project_id, actor)
     receipt: DeliveryReceipt = outcome["receipt"]
     progress = _make_progress(job_id)
     progress(95, "durable 登记与回指定稿")
@@ -619,7 +639,7 @@ async def _finalize_delivery(
         owner_scope = {"session_id": spec.source.session_id}
     durable = await run_in_threadpool(
         dl_store.publish_data_object_for_delivery,
-        delivery_id, owner_scope=owner_scope,
+        delivery_id, owner_scope=owner_scope, actor=actor,
         source_refs=_source_refs(spec),
         input_fingerprint=snapshot.content_fingerprint,
         budget=dl_contracts.DATA_OBJECT_PUBLISH_BUDGET_BYTES)
@@ -646,7 +666,7 @@ async def _finalize_delivery(
             dl_store.register_project_artifact,
             project_id, delivery_id, receipt.filename, spec.format,
             receipt.content_sha256, receipt.bytes_total, receipt.row_count,
-            parent)
+            parent, actor=actor)
     dl_store.write_receipt(dl_store.final_dir(delivery_id),
                            _receipt_dict(receipt))
 
