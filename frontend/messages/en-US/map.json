@@ -629,5 +629,31 @@
     "revisionNone": "—"
   },
   "layerDataFailed": "Layer “{label}” failed to load and may appear empty. Retry or refresh the session.",
-  "unknownLayer": "Unknown layer"
+  "unknownLayer": "Unknown layer",
+  "scalePortrayal": {
+    "presetAuto": "Enable automatic LOD",
+    "presetFixed": "Fixed density 60%",
+    "presetRestore": "Restore automatic",
+    "committed": "Committed (revision {p0})",
+    "superseded": "The revision changed. Please try again.",
+    "notApplied": "Not applied: {p0}",
+    "failed": "Submission failed: {p0}",
+    "title": "Scale portrayal",
+    "applied": "Applied",
+    "unapplied": "Not applied",
+    "currentBand": "Current band",
+    "scaleBand": "Scale band",
+    "pending": "Awaiting server confirmation",
+    "visibility": "Visibility",
+    "hidden": "Hidden",
+    "visible": "Visible",
+    "labelRatios": "Label density / font-size ratio",
+    "hiddenReason": "Hidden reason:",
+    "notAppliedHelp": "Not marked “Applied”: not enabled in this project, invalid policy, hidden by the user, or no production consumer.",
+    "userOverrides": "User overrides:",
+    "listSeparator": ", ",
+    "disclosures": "Policy disclosures (data/statistics unchanged)",
+    "buttonLabel": "Scale portrayal: {p0}",
+    "unknownReceipt": "Unknown receipt"
+  }
 }
