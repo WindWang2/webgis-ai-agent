@@ -77,6 +77,16 @@ def _upgrade_postgres() -> None:
             ALTER COLUMN creator_id DROP NOT NULL
     """)
 
+    # #2205：模型声明 ondelete=CASCADE（db_model.py Layer.org_id），初始建表
+    # 遗漏 → PG 侧 layers_org_id_fkey 一直是 NO ACTION。幂等补齐（DROP IF
+    # EXISTS + ADD，重试安全）。
+    op.execute("""
+        ALTER TABLE layers
+            DROP CONSTRAINT IF EXISTS layers_org_id_fkey,
+            ADD CONSTRAINT layers_org_id_fkey
+                FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+    """)
+
     op.execute("""
         ALTER TABLE analysis_tasks
             DROP CONSTRAINT IF EXISTS analysis_tasks_org_id_fkey,
@@ -156,7 +166,9 @@ def _downgrade_postgres() -> None:
 
     op.execute("""
         ALTER TABLE conversations
-            DROP CONSTRAINT IF EXISTS conversations_user_id_fkey
+            DROP CONSTRAINT IF EXISTS conversations_user_id_fkey,
+            ADD CONSTRAINT conversations_user_id_fkey
+                FOREIGN KEY (user_id) REFERENCES users(id)
     """)
 
     op.execute("""
@@ -211,6 +223,15 @@ def _downgrade_postgres() -> None:
             ADD CONSTRAINT layers_creator_id_fkey
                 FOREIGN KEY (creator_id) REFERENCES users(id),
             ALTER COLUMN creator_id SET NOT NULL
+    """)
+
+    # #2205：upgrade 幂等补齐了 layers_org_id_fkey 级联形 —— downgrade 对称
+    # 恢复非级联形（与本迁移 upgrade 之前的形态一致），不丢 FK。
+    op.execute("""
+        ALTER TABLE layers
+            DROP CONSTRAINT IF EXISTS layers_org_id_fkey,
+            ADD CONSTRAINT layers_org_id_fkey
+                FOREIGN KEY (org_id) REFERENCES organizations(id)
     """)
 
     # Note: token_version column is dropped by migration 6c68ec475cfa downgrade,

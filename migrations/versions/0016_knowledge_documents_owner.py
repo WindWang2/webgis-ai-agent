@@ -39,6 +39,17 @@ def upgrade() -> None:
             batch_op.add_column(sa.Column('org_id', sa.Integer(), nullable=True))
             batch_op.add_column(sa.Column('creator_id', sa.String(length=255), nullable=True))
             batch_op.create_index('idx_document_org', ['org_id'])
+            # #2209：SQLite 路径补齐 FK（与 PG 分支 / 模型声明同形）。应用侧
+            # SQLite 连接不开 PRAGMA foreign_keys，本补齐面向 schema 声明正确性
+            # （pragma foreign_keys=ON 的连接与 create_all 对照均一致）。
+            batch_op.create_foreign_key(
+                'fk_knowledge_documents_org', 'organizations',
+                ['org_id'], ['id'], ondelete='CASCADE',
+            )
+            batch_op.create_foreign_key(
+                'fk_knowledge_documents_creator', 'users',
+                ['creator_id'], ['id'], ondelete='SET NULL',
+            )
     else:
         # PostgreSQL：IF NOT EXISTS 与 create_all 幂等共存（create_all 引导的
         # 存量库已有这两列 —— 见迁移头注释的 drift 背景）。
