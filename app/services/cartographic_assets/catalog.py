@@ -292,23 +292,25 @@ def _insert_version(
             "asset_document_error", "content_digest 与内容不符（写入拒绝）")
     for attempt in range(_MAX_REVISION_CREATE_ATTEMPTS):
         try:
-            latest = db.execute(
-                select(CartographicSymbolAssetVersion.revision)
-                .where(CartographicSymbolAssetVersion.asset_id == asset.id)
-                .order_by(CartographicSymbolAssetVersion.revision.desc())
-                .limit(1)).scalar() or 0
-            version = CartographicSymbolAssetVersion(
-                asset_id=asset.id, revision=int(latest) + 1,
-                document=json.loads(payload), status="draft",
-                content_digest=digest, blob_key=blob_key,
-                source_note=json.dumps(document.source, ensure_ascii=False)[:1000],
-                created_by=created_by)
-            db.add(version)
-            asset.latest_revision = version.revision
-            db.flush()
+            # 14b：版本号并发冲突只许回滚本版本插入（savepoint），
+            # db.rollback() 会连带丢弃调用方会话里未提交的先行写入。
+            with db.begin_nested():
+                latest = db.execute(
+                    select(CartographicSymbolAssetVersion.revision)
+                    .where(CartographicSymbolAssetVersion.asset_id == asset.id)
+                    .order_by(CartographicSymbolAssetVersion.revision.desc())
+                    .limit(1)).scalar() or 0
+                version = CartographicSymbolAssetVersion(
+                    asset_id=asset.id, revision=int(latest) + 1,
+                    document=json.loads(payload), status="draft",
+                    content_digest=digest, blob_key=blob_key,
+                    source_note=json.dumps(document.source, ensure_ascii=False)[:1000],
+                    created_by=created_by)
+                db.add(version)
+                asset.latest_revision = version.revision
+                db.flush()
             return version
         except Exception:
-            db.rollback()
             if attempt == _MAX_REVISION_CREATE_ATTEMPTS - 1:
                 raise
             logger.warning("[carto_assets] version insert retry %d", attempt)
@@ -572,16 +574,37 @@ def find_asset_references(asset_id: str, revision: Optional[int] = None,
     只读磁盘上的 mapspec.json（后端权威）；Redis-only 未落盘会话不在扫描
     面 —— 删除是显式低频操作，磁盘权威覆盖已保存会话（S21 重开后仍在的
     面）；截断时如实标注 ``truncated``。
+
+    扫描根与 ``mapspec/store.py`` 单一命名真相一致：会话目录在
+    ``<DATA_DIR|MAPSPEC_STORAGE_DIR>/.webgis-agent/<sid>/``；显式
+    ``storage_root`` 直接含会话目录（无 `.webgis-agent` 子层）时按原样扫描
+    （向后兼容测试/部署覆盖口）。
     """
     from app.core.config import settings
 
     base = Path(storage_root or os.environ.get("MAPSPEC_STORAGE_DIR")
                 or Path(settings.DATA_DIR))
+    nested = base / ".webgis-agent"
+    scan_root = nested if nested.is_dir() else base
     refs: List[Dict[str, Any]] = []
     scanned = 0
     truncated = False
-    if base.is_dir():
-        for session_dir in sorted(base.iterdir()):
+
+    def _record(sid: str, layer_id: str) -> Optional[Dict[str, Any]]:
+        if len(refs) >= 64:
+            return None
+        refs.append({"session_id": sid, "layer_id": layer_id})
+        return refs[-1]
+
+    def _binding_matches(binding: Any) -> bool:
+        if not isinstance(binding, dict):
+            return False
+        if binding.get("asset_id") != asset_id:
+            return False
+        return revision is None or binding.get("revision") == revision
+
+    if scan_root.is_dir():
+        for session_dir in sorted(scan_root.iterdir()):
             if not session_dir.is_dir():
                 continue
             if scanned >= max_sessions:
@@ -596,18 +619,34 @@ def find_asset_references(asset_id: str, revision: Optional[int] = None,
             except Exception:
                 continue
             for layer in (data or {}).get("layers") or []:
-                binding = layer.get("symbol_asset") if isinstance(layer, dict) else None
+                if not isinstance(layer, dict):
+                    continue
+                binding = layer.get("symbol_asset")
                 if not isinstance(binding, dict):
                     continue
-                if binding.get("asset_id") != asset_id:
-                    continue
-                if revision is not None and binding.get("revision") != revision:
-                    continue
-                refs.append({"session_id": session_dir.name,
-                             "layer_id": str(layer.get("id") or "")})
-                if len(refs) >= 64:
+                layer_id = str(layer.get("id") or "")
+                if _binding_matches(binding) and \
+                        _record(session_dir.name, layer_id) is None:
                     return {"refs": refs, "scanned_sessions": scanned,
                             "truncated": True}
+                # 14a：类别绑定规则与其它资产回退同样占用版本（漏扫可删
+                # 正在使用的版本）—— 与 collect_symbol_asset_documents 同面。
+                cb = binding.get("category_binding")
+                if isinstance(cb, dict):
+                    for rule in cb.get("map") or []:
+                        if _binding_matches(rule) and \
+                                _record(session_dir.name, layer_id) is None:
+                            return {"refs": refs, "scanned_sessions": scanned,
+                                    "truncated": True}
+                    if str(cb.get("other_mode") or "") == "fallback_asset":
+                        other = {
+                            "asset_id": cb.get("other_asset"),
+                            "revision": cb.get("other_revision"),
+                        }
+                        if _binding_matches(other) and \
+                                _record(session_dir.name, layer_id) is None:
+                            return {"refs": refs, "scanned_sessions": scanned,
+                                    "truncated": True}
     return {"refs": refs, "scanned_sessions": scanned, "truncated": truncated}
 
 
