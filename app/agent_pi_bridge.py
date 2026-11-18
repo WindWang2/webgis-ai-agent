@@ -198,6 +198,10 @@ class PiRpcError(Exception):
     pass
 
 
+class PiTurnContextUnavailable(PiRpcError):
+    """A verified callback has no matching local turn caller authority."""
+
+
 # ── Tool registry (injected at startup, shared by bridge + route) ──
 
 _tool_registry: Optional["ToolRegistry"] = None
@@ -512,7 +516,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     if _verified_turn:
         trusted_entry = get_active_turn_entry(session_id)
         if trusted_entry is None or trusted_entry.turn_id != _verified_turn:
-            raise PiRpcError("Pi callback has no matching local active turn")
+            raise PiTurnContextUnavailable("Pi callback has no matching local active turn")
         try:
             from app.lib.runtime import context as rt_ctx
 
