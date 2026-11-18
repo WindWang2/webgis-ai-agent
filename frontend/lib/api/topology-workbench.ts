@@ -7,7 +7,7 @@
 
 import { apiFetch } from './transport';
 
-const BASE = '/topology-workbench';
+const BASE = '/api/v1/topology-workbench';
 
 export type TopologySeverity = 'info' | 'warn' | 'error';
 export type FindingStatus = 'open' | 'accepted_exception' | 'resolved' | 'dismissed';

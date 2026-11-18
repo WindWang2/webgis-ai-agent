@@ -8,7 +8,7 @@
 
 import { apiFetch } from './transport';
 
-const BASE = '/data-join-authoring';
+const BASE = '/api/v1/data-join-authoring';
 
 export type JoinMode = 'attribute' | 'spatial_point_in_polygon';
 export type KeepSide = 'left' | 'inner';
