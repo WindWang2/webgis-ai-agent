@@ -68,6 +68,7 @@ def register_scale_profile_tools(registry: ToolRegistry) -> None:
             "webgis_apply_scale_representation。"
         ),
         side_effect="cacheable_read",
+        network=False,
         deterministic=True,
         latency_class="medium",
         memory_class="medium",
@@ -108,6 +109,7 @@ def register_scale_profile_tools(registry: ToolRegistry) -> None:
             "\n何时用：apply 前核对计划，或回答『综合后会丢多少要素』。"
         ),
         side_effect="cacheable_read",
+        network=False,
         deterministic=True,
         latency_class="medium",
         memory_class="heavy",
@@ -159,6 +161,7 @@ def register_scale_profile_tools(registry: ToolRegistry) -> None:
             "（同 operation_id 重放返回存证）；原始 ref/统计/图例不被改动。"
         ),
         side_effect="state_mutation",
+        network=False,
         deterministic=False,
         latency_class="slow",
         memory_class="heavy",

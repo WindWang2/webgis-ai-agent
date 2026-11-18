@@ -252,7 +252,7 @@ def register_capability_ecosystem_tools(registry: ToolRegistry) -> None:
         crs_semantics="projected_required",
         unit_semantics="meters",
         capabilities=("service_area",),
-        fallback_tool="network_service_area",
+        # A single service-area geometry cannot replace a multi-scheme comparison.
         failure_modes=("invalid_args", "unit_conflict", "budget", "disconnected_network"),
     )
     def network_service_coverage_consistency(

@@ -69,6 +69,7 @@ def register_scale_portrayal_tools(registry: ToolRegistry) -> None:
             "综合档案用 webgis_inspect_map_scale_profile。"
         ),
         side_effect="cacheable_read",
+        network=False,
         deterministic=True,
         latency_class="fast",
         memory_class="light",
@@ -117,6 +118,7 @@ def register_scale_portrayal_tools(registry: ToolRegistry) -> None:
             "webgis_inspect_scale_portrayal 再提出具体层/具体策略变化。"
         ),
         side_effect="state_mutation",
+        network=False,
         deterministic=False,
         latency_class="medium",
         memory_class="light",

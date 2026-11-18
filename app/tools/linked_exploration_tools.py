@@ -510,6 +510,7 @@ def register_linked_exploration_export_tool(registry: ToolRegistry) -> None:
         scale_class="large",
         tags=("联合筛选", "导出", "出版", "linked exploration"),
         output_semantic_type="artifact_refs",
+        produced_refs=("artifact", "manifest"),
         result_size_policy="ref_offload",
         failure_modes=("invalid_args", "stale_source", "mapspec_unavailable",
                        "png_failed", "pdf_failed", "export_persist_failed"),

@@ -83,7 +83,10 @@ ALGORITHMS: list = [
         tool_candidates=["network_service_coverage_consistency"],
         parameter_contract_ref="network_service_coverage_consistency",
         cpu_cost="medium", memory_cost="medium", io_cost="low",
-        preferred_execution_policy="THREAD", priority=15,
+        # A stats-table comparison is auxiliary to the service-area surface:
+        # prefer genuine geometry producers (priorities 25/30) for generic
+        # service_area requests; explicit comparison dispatch remains intact.
+        preferred_execution_policy="THREAD", priority=35,
         algorithm_family="service_coverage_consistency",
         deterministic=True,
         complexity="O(schemes × facilities × Dijkstra(E log V)) + O(k²) 两两 Jaccard",

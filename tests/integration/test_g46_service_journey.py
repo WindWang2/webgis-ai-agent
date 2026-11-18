@@ -11,6 +11,7 @@ evaluator 生成 expected。
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from pathlib import Path
 
@@ -425,6 +426,17 @@ class TestExport:
         assert candidates, f"exported file not found: {fname}"
         svg_text = candidates[0].read_text(encoding="utf-8")
         assert "联合探索导出" in svg_text
+        assert candidates[0].stat().st_size == result["bytes"]
+        # The exported artifact and manifest are both real, owner-protected refs;
+        # metadata must advertise these writer-produced outputs, not inline bytes.
+        manifest_name = result["manifest_url"].rsplit("/", 1)[-1].split("?")[0]
+        assert manifest_name == f"{fname}.manifest.json"
+        manifest = json.loads(candidates[0].with_name(manifest_name).read_text())
+        assert manifest["domain"] == "linked_exploration"
+        assert manifest["filename"] == fname
+        assert manifest["source_anchor"]["ref_id"] == ref
+        assert manifest["match_count"] == 5
+        assert manifest["conditions_digest"] == result["conditions_digest"]
 
 
 class TestExportAllFormats:
