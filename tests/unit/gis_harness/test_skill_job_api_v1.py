@@ -19,6 +19,9 @@ def _app(user: dict) -> TestClient:
     application = FastAPI()
     application.include_router(sj_routes.router, prefix="/api/v1")
     application.dependency_overrides[sj_routes.get_current_user] = lambda: user
+    # Contract tests inject the same principal at the explicit session-caller seam.
+    # Real Bearer/capability authorization is covered without overrides separately.
+    application.dependency_overrides[sj_routes._session_caller] = lambda: user
     return TestClient(application)
 
 
@@ -285,7 +288,7 @@ def test_preset_update_cross_org_rejected(registry):
         "name": "hijacked", "skill_id": "validate_spatial_data",
         "params": {}, "bindings_template": {},
     })
-    assert res.status_code == 422
+    assert res.status_code == 404  # same non-disclosing contract as read/delete
     # 原行未被篡改
     intact = client_a.get(f"/api/v1/skill-jobs/presets/{preset['id']}").json()
     assert intact["name"] == "org-a 预设"

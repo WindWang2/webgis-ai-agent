@@ -1,7 +1,7 @@
 """G30 技能作业 API —— 工作台（UI）与 Pi @tool 共享同一业务契约。
 
-端点（全部 owner-scoped；session 资源经 verify_session_owner 归属验证，
-无权一律 404 不泄露存在性）：
+端点（全部 owner-scoped；会话可凭已验证的匿名能力或登录身份访问，
+目录和预设保留账号认证；job 另校验 creator/org/project，拒绝能力越权）：
 
 - ``GET  /api/v1/skill-jobs/catalog``               分类型目录（runnable/…）
 - ``GET  /api/v1/skill-jobs/skills/{skill_id}``     单技能详情（参数 schema/绑定需求）
@@ -23,11 +23,15 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import and_, or_, select
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import actor_ids, get_current_user, get_owner_token
+from app.core.auth import (
+    actor_ids, auth_bypass_enabled, get_current_user, get_owner_token, security,
+)
 from app.core.database import get_async_db
 from app.services.auth_history_bridge import verify_session_owner
 
@@ -134,6 +138,58 @@ async def get_skill_detail(
 
 # ── prepare / start / 运行视图 ────────────────────────────────────────
 
+async def _session_caller(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> Dict[str, Any]:
+    """Absent Bearer may prove an anonymous session capability at the route guard.
+
+    Supplied invalid/revoked credentials never silently downgrade to anonymous.
+    Account-level catalog/preset dependencies deliberately remain authenticated.
+    """
+    if credentials is not None or request.headers.get("authorization") or auth_bypass_enabled():
+        return await get_current_user(credentials)
+    return {}
+
+
+def _job_scope(user: Dict[str, Any], owner_token: Optional[str]):
+    """A capability grants only unbound anonymous jobs, never account/org/project jobs."""
+    from app.models.db_model import AnalysisTask
+
+    uid, org = actor_ids(user)
+    anonymous = and_(
+        AnalysisTask.creator_id.is_(None), AnalysisTask.org_id.is_(None),
+        or_(AnalysisTask.project_id.is_(None), AnalysisTask.project_id == ""),
+        AnalysisTask.owner_token == owner_token if owner_token else False,
+    )
+    if not uid:
+        return anonymous
+    return or_(anonymous, and_(
+        AnalysisTask.creator_id == uid,
+        or_(AnalysisTask.org_id.is_(None), AnalysisTask.org_id == org),
+    ))
+
+
+async def _authorize_job(db: AsyncSession, job_id: int, user: Dict[str, Any], owner_token: Optional[str]):
+    from app.models.db_model import AnalysisTask
+    from app.services.project_service import ProjectService
+
+    row = (await db.execute(select(AnalysisTask).where(
+        AnalysisTask.id == job_id, AnalysisTask.job_kind == "skill_job",
+        _job_scope(user, owner_token),
+    ))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    if row.project_id:
+        uid, org = actor_ids(user)
+        project = await db.run_sync(lambda session: ProjectService.get_project_with_auth(
+            session, row.project_id, user_id=uid, org_id=org,
+        ))
+        if project is None:
+            raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    return row
+
+
 async def _authorize_session(
     db: AsyncSession, session_id: str,
     user: Dict[str, Any], owner_token: Optional[str],
@@ -146,7 +202,7 @@ async def _authorize_session(
 @router.post("/prepare")
 async def prepare(
     req: PrepareRequest,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -176,7 +232,7 @@ async def prepare(
 @router.post("/start")
 async def start(
     req: StartRequest,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -217,15 +273,32 @@ async def start(
 async def list_runs(
     session_id: str = Query(..., max_length=255),
     limit: int = Query(20, ge=1, le=50),
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
     """会话的技能作业运行列表（刷新回看权威：durable job 行）。"""
     await _authorize_session(db, session_id, user, owner_token)
-    from app.services.gis_harness.skill_jobs.runner import list_skill_job_views
+    from app.models.db_model import AnalysisTask
+    from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
 
-    runs = await list_skill_job_views(session_id=session_id, limit=limit)
+    # Apply principal scope before LIMIT so other principals cannot crowd out
+    # the caller's jobs in a mixed authenticated/anonymous session.
+    ids = (await db.execute(select(AnalysisTask.id).where(
+        AnalysisTask.session_id == session_id, AnalysisTask.job_kind == "skill_job",
+        _job_scope(user, owner_token),
+    ).order_by(AnalysisTask.created_at.desc()).limit(limit))).scalars().all()
+    runs = []
+    for jid in ids:
+        try:
+            await _authorize_job(db, jid, user, owner_token)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            continue
+        view = await get_skill_job_view(jid)
+        if view is not None:
+            runs.append(view)
     return {"runs": runs}
 
 
@@ -233,7 +306,7 @@ async def list_runs(
 async def get_run(
     job_id: int,
     session_id: str = Query("", max_length=255),
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -244,6 +317,7 @@ async def get_run(
     """
     from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
 
+    await _authorize_job(db, job_id, user, owner_token)
     view = await get_skill_job_view(job_id)
     if view is None:
         raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
@@ -261,13 +335,14 @@ async def get_run(
 async def cancel_run(
     job_id: int,
     session_id: str = Query(..., max_length=255),
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
     """取消（既有 durable 两阶段取消；已提交合法结果不虚假回滚）。"""
     from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
 
+    await _authorize_job(db, job_id, user, owner_token)
     view = await get_skill_job_view(job_id)
     if view is None or view.get("session_id") != session_id:
         raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
