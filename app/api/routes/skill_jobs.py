@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, get_owner_token
+from app.core.auth import actor_ids, get_current_user, get_owner_token
 from app.core.database import get_async_db
 from app.services.auth_history_bridge import verify_session_owner
 
@@ -139,7 +139,7 @@ async def _authorize_session(
     user: Dict[str, Any], owner_token: Optional[str],
 ) -> None:
     await verify_session_owner(db, session_id,
-                               user_id=str(user.get("id") or ""),
+                               user_id=actor_ids(user)[0] or "",
                                owner_token=owner_token)
 
 
@@ -197,7 +197,7 @@ async def start(
     prepared, inline_payloads = entry
     owner = SkillJobOwner(
         session_id=req.session_id,
-        user_id=str(user.get("id") or ""),
+        user_id=actor_ids(user)[0] or "",
         org_id=_org_of(user),
         project_id=str(user.get("project_id") or ""),
         owner_token=owner_token or "",
@@ -304,7 +304,7 @@ async def list_presets_ep(
 ):
     from app.services.gis_harness.skill_jobs.presets import list_presets
 
-    return {"presets": list_presets(org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""), project_id=project_id)}
+    return {"presets": list_presets(org_id=_org_of(user), creator_id=actor_ids(user)[0] or "", project_id=project_id)}
 
 
 @router.post("/presets")
@@ -320,7 +320,7 @@ async def create_preset_ep(
                 name=req.name, description=req.description,
                 skill_id=req.skill_id, skill_version=req.skill_version,
                 params=req.params, bindings_template=req.bindings_template),
-            org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""),
+            org_id=_org_of(user), creator_id=actor_ids(user)[0] or "",
             project_id=str(user.get("project_id") or ""))
     except ValueError as e:
         raise HTTPException(422, detail={"code": "PRESET_INVALID",
@@ -334,7 +334,7 @@ async def get_preset_ep(
 ):
     from app.services.gis_harness.skill_jobs.presets import get_preset
 
-    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""))
+    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or "")
     if preset is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     return preset
@@ -354,7 +354,7 @@ async def update_preset_ep(
                 name=req.name, description=req.description,
                 skill_id=req.skill_id, skill_version=req.skill_version,
                 params=req.params, bindings_template=req.bindings_template),
-            org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""),
+            org_id=_org_of(user), creator_id=actor_ids(user)[0] or "",
             preset_id=preset_id)
     except ValueError as e:
         if str(e) == "preset not found":
@@ -370,7 +370,7 @@ async def delete_preset_ep(
 ):
     from app.services.gis_harness.skill_jobs.presets import delete_preset
 
-    if not delete_preset(preset_id, org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or "")):
+    if not delete_preset(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or ""):
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     return {"deleted": True}
 
@@ -394,10 +394,10 @@ async def preset_prepare_ep(
     from app.services.gis_harness.skill_jobs.store import prepared_store
 
     # review P1-4：重用路径读原始行 —— 有界视图会截断 >64 字符参数。
-    preset_raw = get_preset_raw(preset_id, org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""))
+    preset_raw = get_preset_raw(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or "")
     if preset_raw is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
-    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""))
+    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or "")
     if preset is None:  # raw 与视图两次读之间被并发删除（R2 nit-2）
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     params = dict(preset_raw.get("params") or {})

@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from app.models.db_model import Conversation
-from app.core.auth import get_current_user_optional
+from app.core.auth import actor_ids, get_current_user_optional
 from app.schemas.raster_sampling_schema import (
     ExecuteIn,
     PlanCreateIn,
@@ -37,7 +37,7 @@ async def _owned(session_id: str, owner_token: Optional[str],
 def _user_owner(user: Optional[dict]) -> dict:
     user = user or {}
     return {
-        "user_id": str(user.get("id") or "") or None,
+        "user_id": actor_ids(user)[0],
         "owner_token": None,
         "org_id": user.get("org_id"),
     }
@@ -83,7 +83,7 @@ async def create_plan(
             nodata_policy=body.nodata_policy,
             sources=[s.model_dump() for s in body.sources],
             project_id=body.project_id,
-            owner=str((user or {}).get("id") or ""),
+            owner=actor_ids(user)[0] or "",
         )
     except RasterSamplingError as exc:
         raise _fail(exc) from exc
