@@ -8,7 +8,6 @@ from __future__ import annotations
 import pytest
 
 from app.lib.storymap.brief_factcheck import (
-    FactCheckOutcome,
     apply_outcomes,
     check_fact,
     check_facts,
@@ -18,8 +17,6 @@ from app.lib.storymap.brief_spec import (
     BRIEF_SPEC_SCHEMA_VERSION,
     BriefBlock,
     BriefFact,
-    BriefMapView,
-    BriefProvenance,
     EvidenceBinding,
     MapBriefSpec,
     is_brief_payload,

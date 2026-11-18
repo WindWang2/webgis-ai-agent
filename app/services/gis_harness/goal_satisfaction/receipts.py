@@ -349,7 +349,6 @@ async def collect_capability_receipts(
     chapter = chapter if isinstance(chapter, dict) else {}
     families: Dict[str, List[Dict[str, Any]]] = {}
     notes: List[str] = []
-    import asyncio
 
     collectors = (
         ("edit", lambda: _collect_edit(session_id)),

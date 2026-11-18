@@ -452,10 +452,12 @@ async def test_table_rows_csv(delivery_env, actor):
 
 async def test_fabric_parquet_fast_path(delivery_env, seeded_session, actor):
     """场景 4：fabric-parquet 无变换 → 安全字节复制（源身份可追踪）。"""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+    from importlib import import_module
 
-    from app.services.artifact_registry import fabric_parquet_path
+    # Keep the dependency initialization/availability checks explicit.
+    import_module("pyarrow")
+    import_module("pyarrow.parquet")
+
     from app.services.data_fabric.materialization_service import (
         materialization_service,
     )

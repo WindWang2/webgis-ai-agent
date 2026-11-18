@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import logging
-import math
 import os
 import uuid
 from datetime import datetime, timezone
@@ -51,7 +50,6 @@ from app.services.georeferencing.store import (
     get_plan,
     get_source,
     list_plans,
-    list_sources,
     mutate_plan_cas,
     save_plan_new,
 )

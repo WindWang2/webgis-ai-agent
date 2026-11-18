@@ -253,7 +253,6 @@ def test_degraded_swarm_progress_is_not_complete():
 
 
 def test_quota_lookup_failure_does_not_block_all_bytes(monkeypatch):
-    from app.services.project_runtime import promotion
 
     def _boom(*_a, **_k):
         raise RuntimeError("quota down")

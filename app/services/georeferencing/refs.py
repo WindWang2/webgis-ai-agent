@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from app.services.durable_blob_store import BlobKeyError, get_filesystem_blob_store
 from app.services.gis_harness.visual_observation.blob_lock import blob_ref_lock

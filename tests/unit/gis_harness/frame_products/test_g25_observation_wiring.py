@@ -17,7 +17,6 @@ import pytest
 
 
 def _districts_fc(year_values: Dict[int, Dict[str, float]]) -> Dict[str, Any]:
-    import json
 
     feats = []
     for y, values in year_values.items():

@@ -10,7 +10,7 @@ MapBriefSpec** 上进行（不存半合法载荷），revision 单调 +1。
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError

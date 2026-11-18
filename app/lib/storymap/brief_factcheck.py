@@ -20,7 +20,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from app.lib.storymap.brief_spec import BriefFact, EvidenceBinding
+from app.lib.storymap.brief_spec import BriefFact
 
 #: 相对容忍（浮点聚合的确定性重算漂移界）。
 REL_TOL = 1e-9

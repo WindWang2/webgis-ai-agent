@@ -411,7 +411,6 @@ class TestSharing:
         app2.dependency_overrides[get_current_user] = lambda: {
             "user_id": "u2"}
         # db override 需重新绑定同一 maker
-        from sqlalchemy.ext.asyncio import async_sessionmaker
 
         maker2 = None
         engine_ref = None

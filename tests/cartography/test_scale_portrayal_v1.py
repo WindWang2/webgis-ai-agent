@@ -144,7 +144,6 @@ def test_validate_scale_policy_legacy_and_typed_codes():
 # ── 4 档 zoomBands / 边界 ─────────────────────────────────────────────────
 
 def test_four_bands_top_ratio_monotonic_and_continuous():
-    from app.lib.cartography.scene_lod import build_label_zoom_bands
 
     d = sp.resolve_effective_scale_portrayal(zoom=10.0, layer={"id": "L"}, policy=_AUTO)
     bands = d.label_zoom_bands

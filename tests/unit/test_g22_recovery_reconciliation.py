@@ -13,7 +13,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import app.agent_pi_bridge as bridge_mod
 from app.agent_pi_bridge import PiBridge
 from app.services.context_assembly.providers import (
     GisStateRebuildProvider,

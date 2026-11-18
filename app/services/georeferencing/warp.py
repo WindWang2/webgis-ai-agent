@@ -15,7 +15,7 @@ import rasterio
 from affine import Affine
 from PIL import Image
 from pyproj import CRS
-from rasterio.enums import ColorInterp, Resampling
+from rasterio.enums import ColorInterp
 
 from app.lib.geo_raster.cog import CogWriteError, range_read_probe, to_cog, validate_cog
 from app.lib.geo_raster.env import open_raster, rasterio_env

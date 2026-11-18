@@ -5,7 +5,6 @@ A08（全 nodata/常值说明）、A09（RGB 通道顺序）、A13（中文可�
 """
 from __future__ import annotations
 
-import io
 
 import pytest
 

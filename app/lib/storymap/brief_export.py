@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -205,7 +204,6 @@ def build_release_manifest(
     spec_sha256: str,
 ) -> Dict[str, Any]:
     """机器可读发布 manifest（对账面：文件/证据/指纹/版本 pin）。"""
-    import hashlib
 
     spec = bundle.get("spec") or {}
     files = [
