@@ -9,7 +9,7 @@
 | 53f64c3f0 | M4-M6：store/preflight/release/export/分享 + 16 端点 + 14 集成测试 |
 | 35f4fe6ec | M7：六工具 + Pi 适配器链 + 13 安全负例（含 release_meta 泄漏修复） |
 | e7b9e8f77 | 前端：brief client + 面板 + story-view 挂载 + i18n + j13 双模式 e2e |
-| 80d9014dc | M9a：ADR-0288 + docs/features + TEST_MATRIX + FEATURE_ACCEPTANCE |
+| 80d9014dc | M9a：ADR-0298 + docs/features + TEST_MATRIX + FEATURE_ACCEPTANCE |
 | 551902494 | M8：独立审查清偿（P1×2+P2×4+P3×5，含审查回归负例） |
 | 6239f0551 | 复审残留清偿（N1/N2/N4；N3 记跟进） |
 

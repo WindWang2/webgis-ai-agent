@@ -14,7 +14,7 @@
 | af6bdbe2e | SW-09：终验收口披露行（auto 不再静默） |
 | af554bf9a | SW-05：AgentRunPanel 事件驱动刷新 |
 | 3c7d805c6 | SW-08：图表类别键盘可达（原生 select 同链） |
-| de49e0d23 | SW-10：回放金标 ×4 + ADR-0287 + 三契约文档 + planning |
+| de49e0d23 | SW-10：回放金标 ×4 + ADR-0297 + 三契约文档 + planning |
 | c90fc76f9 | 自审清偿：截断派生判据 2（前端预截样本不误判完整集） |
 | （后续） | 复审清偿 commit |
 

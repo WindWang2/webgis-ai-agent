@@ -211,6 +211,6 @@ G11 的底座几乎全部在场：StoryMapSpec 章节模型（§1）、会话资
 7. **私有分享与撤销**：按 report.py 模式给 brief 表加 `share_code/share_expires_at` 列 + create/revoke/view 端点 + `limit_public_report_access` 限流 + `public_*_projection`。
 8. **路由与迁移**：`$WT/app/api/routes/storymap.py` 增 brief CRUD/lock/release/export/share 端点（鉴权照抄 `require_owned_session` + project 三重门）；新迁移 `0104_map_briefs.py`（head 是 `0103_workflow_run_session`）。
 9. **Agent 工具**：新 `$WT/app/tools/storymap_tools.py` `register_storymap_tools(registry)`（compile_brief / regenerate_block / publish_brief；`session_id` 走注入探针约定），追加进 `$WT/app/tools/__init__.py:_TOOL_MODULES`。
-10. **测试与文档**：`$WT/tests/unit/test_mapbrief_*.py`（照 storymap 四件套）+ 新 e2e journey（照 j4）；`docs/adr/0288-*.md` + `docs/dev/g11-evidence-map-briefs-*.md`。
+10. **测试与文档**：`$WT/tests/unit/test_mapbrief_*.py`（照 storymap 四件套）+ 新 e2e journey（照 j4）；`docs/adr/0298-*.md` + `docs/dev/g11-evidence-map-briefs-*.md`。
 
 一句话：唯一真正“待开发”的是块级证据绑定模型（#1/#2）与其持久化/分享端点（#7/#8）；锁定、预检、冻结、离线打包、渲染、分享撤销、工具挂载全部有可直接复用的成熟先例。

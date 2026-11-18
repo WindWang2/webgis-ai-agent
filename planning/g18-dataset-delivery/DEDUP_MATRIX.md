@@ -16,5 +16,5 @@
 | #2022 G10 数据刷新 | owned-by-other | 不触碰外部重抓/增量更新；导出已有快照 |
 | #2032 UI 重设计 | owned-by-other | 仅新增独立组件 + 薄入口，不动主题/布局/面板骨架 |
 | #2021 G11 简报 / G12–G17、G19–G21 | owned-by-other | 不依赖其未合入 API；缺其增强时走基线兼容路径 |
-| #2004 选择截断治理 / ADR-0287 | present（吸收为规格约束） | selected_ids≤50 + matched_count 复核纳入 scope 合同 |
+| #2004 选择截断治理 / ADR-0297 | present（吸收为规格约束） | selected_ids≤50 + matched_count 复核纳入 scope 合同 |
 | G09 参数化批分析 | owned-by-other/前批 | 不做计算编排 |

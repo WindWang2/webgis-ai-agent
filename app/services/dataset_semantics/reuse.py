@@ -90,7 +90,7 @@ def evaluate_scoped_reuse(
     recorded_scope_fingerprint: str = "",
     current_scope_fingerprint: str = "",
 ) -> ReuseDecision:
-    """范围感知复用裁决（G03 GD-05 / ADR-0286 D6）。
+    """范围感知复用裁决（G03 GD-05 / ADR-0296 D6）。
 
     指纹一致但**任务范围已变化**（城市/视口切换）→ RECOMPUTE +
     ``TASK_SCOPE_CHANGED``——旧城市名下绑定的数据不得凭名字/指纹复用到

@@ -14,7 +14,7 @@
 - **R6（WP06-08 前端）**：frame-product lib + panel（Studio frames 子页签）+ N 方同步组 +
   spec-frames 诚实适配器 + i18n；j14 浏览器旅程（mock 档真实跑通）。commit 1f0225090
 - **R7（WP12）**：真实导出工件（PDF 文本层 + pdftoppm 像素核验 + SVG 结构）、基准 2/4/6、
-  native flip + catalog 再生 + 能力包注册 + ADR-0288。
+  native flip + catalog 再生 + 能力包注册 + ADR-0299。
   视觉验收两轮：首轮 FAIL（空白帧/标题重叠/图例失配）→ 根因（WeasyPrint SVG 渲染器
   不支持 g transform/多嵌套 svg —— 实证探针）+ viewBox 保留 + paint 重投影 + 图例透明度
   对齐 → 再审（结构全过；残余 2 项已修：fixture 分级跨类 + extent 覆盖几何）。

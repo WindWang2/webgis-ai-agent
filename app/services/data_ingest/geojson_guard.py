@@ -1,4 +1,4 @@
-"""恶意/病态 GeoJSON 输入守卫（G03 GD-09 / ADR-0286 D7）。
+"""恶意/病态 GeoJSON 输入守卫（G03 GD-09 / ADR-0296 D7）。
 
 背景（BASELINE 断链 9）：IngestPipeline 的既有防线只有载荷大小帽 + FC
 形状检查——NaN/±Infinity 坐标、超深嵌套结构（解析栈/递归耗尽）、超大

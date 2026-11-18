@@ -1,4 +1,4 @@
-# ADR-0288：多画幅产品契约（FrameProductContract.v1）与逐画幅终验
+# ADR-0299：多画幅产品契约（FrameProductContract.v1）与逐画幅终验
 
 - 状态：Accepted（G15-MULTIFRAME-CARTOGRAPHY）
 - 日期：2026-11-11

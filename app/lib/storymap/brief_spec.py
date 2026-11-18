@@ -1,4 +1,4 @@
-"""证据化地图简报契约（G11 / ADR-0288）——MapBriefSpec 领域模型。
+"""证据化地图简报契约（G11 / ADR-0298）——MapBriefSpec 领域模型。
 
 MapBriefSpec **继承** StoryMapSpec（additive-only）：既有 v1.1 消费者以
 ``StoryMapSpec.model_validate`` 读简报 dict 时未知键 round-trip 保留

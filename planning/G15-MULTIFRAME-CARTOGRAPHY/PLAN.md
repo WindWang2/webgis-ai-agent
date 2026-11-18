@@ -12,7 +12,7 @@
 - 前端（WP07/WP08）：`frontend/lib/cartography/frame-product/` 契约投影 + `components/workbench/frame-product-panel.tsx`（挂 map-studio-tab，最小接线）；多画幅查看器活跃 MapLibre ≤2 + 快照占位；相机同步组复用 comparison-sync 纯函数族。
 - Pi 工具（WP09）：`app/tools/frame_product_tools.py`（inspect/plan/apply/update/status），注册进 `_TOOL_MODULES`；上下文投影当前激活画幅/同步组/共享分级。
 - 终验（WP11）：在既有 ACK/evidence 面上加有界 frame 证据（frame_id+revision+状态），不建第二完成状态机。
-- WP12：真实基准 2/4/6 幅 + `small_multiple_map` native 化（几何/工件/导出组合达标后）+ ADR-0288。
+- WP12：真实基准 2/4/6 幅 + `small_multiple_map` native 化（几何/工件/导出组合达标后）+ ADR-0299。
 
 ## 工作包顺序与纵向路径策略
 

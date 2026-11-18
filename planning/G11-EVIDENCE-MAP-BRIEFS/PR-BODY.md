@@ -48,7 +48,7 @@ mapspec_to_svg 静态渲染 · ToolRegistry/Pi 桥 · 前端 transport/StoryView
 ## 破坏性变更 / 迁移
 
 无破坏性变更。新增迁移 `0104_map_briefs`（head 0103→0104，.alloc.json
-领号）；ADR-0288（watermark 288）。
+领号）；ADR-0298（watermark 288）。
 
 ## 未验证项
 

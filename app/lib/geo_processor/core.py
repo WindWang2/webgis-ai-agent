@@ -159,7 +159,7 @@ def to_feature_collection(data: Any) -> dict:
         if not data:
             return {"type": "FeatureCollection", "features": []}
 
-    # G03（ADR-0286 D6 集成）：session 存储规范形状 ``{"geojson": FC}`` 的
+    # G03（ADR-0296 D6 集成）：session 存储规范形状 ``{"geojson": FC}`` 的
     # 包装层（IngestPipeline 铸造的 ref 解析产物）在此拆包——否则 features
     # 与 crs member 都被遮蔽（工具面把合法数据当空层）。
     if (isinstance(data, dict) and data.get("type") != "FeatureCollection"

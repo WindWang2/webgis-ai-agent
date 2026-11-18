@@ -196,7 +196,7 @@ def _build_registry() -> AdapterRegistry:
                     aliases=("local_sqlite",),
                     supports_projection=True,
                     notes="declared local files (GeoJSON / sqlite); typed-unavailable when missing"),
-        # G03 GD-02（ADR-0286 D5）：远程单文件 GeoJSON（FC）真实实现。
+        # G03 GD-02（ADR-0296 D5）：远程单文件 GeoJSON（FC）真实实现。
         # #767 移除的是无实现的空 geojson alias（静默合成要素）；本条目
         # 是受控取回 + 预算截断 + typed 错误的真实数据源——声明式源专用。
         AdapterSpec("geojson_url", GeojsonUrlAdapter,

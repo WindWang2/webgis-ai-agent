@@ -107,7 +107,7 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         "evidence_map_brief", "证据化地图简报",
         "会话分析产出的证据化简报面：从真实产物生成可编辑草稿（每个数值绑定来源/字段/"
         "口径）、指标证据核对、块级编辑与锁定、发布预检、不可变冻结版本与私有离线交付"
-        "（G11/ADR-0288）。",
+        "（G11/ADR-0298）。",
     ),
     _cap(
         "dataset_profiling_quality", "数据画像与质量",

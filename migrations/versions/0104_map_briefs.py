@@ -4,7 +4,7 @@ Revision ID: 0104_map_briefs
 Revises: 0103_workflow_run_session
 Create Date: 2026-11-08
 
-ADR-0288：简报 = 会话作用域可编辑草稿（map_briefs，revision 单调）+
+ADR-0298：简报 = 会话作用域可编辑草稿（map_briefs，revision 单调）+
 不可变发布版本（map_brief_releases）。release 指向内容寻址 CAS 载荷
 （content_sha256 幂等键），brief 行删除后 release 保留（BRF-O11：旧版
 可读取）—— 故 brief_id 外键 ON DELETE SET NULL 并冗余 conversation_id

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def rows_to_feature_collection(rows: List[dict]) -> Optional[dict]:
-    """geocoded rows → GeoJSON FC（G03 GD-01 / ADR-0286 D3，纯函数）。
+    """geocoded rows → GeoJSON FC（G03 GD-01 / ADR-0296 D3，纯函数）。
 
     只有坐标有限的行成为要素（geocode 失败/跳过的行不进 FC，不虚构点位）；
     ``_`` 前缀 magic keys（_lat/_lon/_geocode_status…）剥离出 properties。
@@ -59,7 +59,7 @@ async def bridge_geocoded_to_session(
     ``add_layer(ref:...)`` / 分析工具可解析。返回桥接描述（失败返回 {}，
     非致命：桥接失败只影响可消费性，不影响探索结果本身）。
 
-    G03（ADR-0286 D3）：桥接同时把有效坐标行转 FC 经 IngestPipeline 铸
+    G03（ADR-0296 D3）：桥接同时把有效坐标行转 FC 经 IngestPipeline 铸
     **语义身份**（descriptor）——role binding/资格裁决从此能消费 explorer
     数据（此前对 explorer 数据只能 not_found）。全部行 geocode 失败 →
     不铸 FC（诚实零要素），``semantic_ref`` 缺席；铸链失败非致命（沿用

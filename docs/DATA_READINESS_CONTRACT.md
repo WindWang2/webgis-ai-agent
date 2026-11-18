@@ -1,4 +1,4 @@
-# DATA_READINESS_CONTRACT — 数据准备与资格判定链契约（G03 / ADR-0286）
+# DATA_READINESS_CONTRACT — 数据准备与资格判定链契约（G03 / ADR-0296）
 
 > 状态：随 zcode/goal-geodata-readiness-fabric-20261107 PR · 基线 master 585812ee4
 > 权威实现：`app/services/gis_harness/data_qualification.py`（五态资格）、
@@ -40,7 +40,7 @@ CapabilityRegistry 对账，非平行词表。
 - **不入语义指纹**（证据分级变化 ≠ 语义身份变化，与 license 同理）；
 - 字段级置信（role_confidence 等）仍在 FieldEntry——维度级是汇总非替代。
 
-## 3. 数据资格闸（工具分发面，ADR-0286 D4）
+## 3. 数据资格闸（工具分发面，ADR-0296 D4）
 
 `app/services/dataset_semantics/dispatch_gate.py`，接线于
 `tool_dispatch_service` 1.45 反幻觉网关之后：

@@ -167,7 +167,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
          "generate_monitoring_report"],
     ),
     _platform_binding(
-        "evidence_map_brief", "证据化地图简报（工具面绑定契约，G11/ADR-0288）",
+        "evidence_map_brief", "证据化地图简报（工具面绑定契约，G11/ADR-0298）",
         ["brief_create_draft", "brief_inspect_evidence", "brief_update_block",
          "brief_preflight", "brief_freeze_release", "brief_export"],
     ),
