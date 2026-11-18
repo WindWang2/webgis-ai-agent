@@ -200,7 +200,14 @@ def _windowed_zonal_stats(
             import rasterio as _rio
 
             win = from_bounds(minx, miny, maxx, maxy, reader.dataset.transform)
-            win = win.round_offsets().round_shape()
+            # Enclose the original floating endpoints, not a rounded width:
+            # flooring the offset first can otherwise discard covered centers.
+            col_start, row_start = math.floor(win.col_off), math.floor(win.row_off)
+            col_stop = math.ceil(win.col_off + win.width)
+            row_stop = math.ceil(win.row_off + win.height)
+            win = _rio.windows.Window(
+                col_start, row_start, col_stop - col_start, row_stop - row_start,
+            )
             full = _rio.windows.Window(0, 0, meta.width, meta.height)
             if not _rio.windows.intersect([win, full]):
                 out.append({**{k: None for k in stats}, "valid_pixel_coverage": None})

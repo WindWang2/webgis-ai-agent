@@ -215,3 +215,48 @@ def test_zonal_stats_does_not_mutate_input_fc():
             os.unlink(raster_path)
         except OSError:
             pass
+
+
+@pytest.mark.parametrize("pixel_bounds", [
+    (0.2, 0.2, 1.6, 1.6),
+    (0.4, 0.4, 0.8, 0.8),
+    (1.2, 1.2, 2.6, 3.6),
+    (-0.3, -0.3, 1.6, 1.6),
+    (3.4, 3.4, 5.2, 5.2),
+    (1.0, 1.0, 3.0, 3.0),
+])
+def test_fractional_zonal_window_matches_full_raster_oracle(tmp_path, pixel_bounds):
+    """#2234: bounding windows must not truncate covered cell centers."""
+    from rasterio.features import geometry_mask
+    from shapely.geometry import Polygon, mapping
+
+    from app.lib.geo_analysis.raster_ops import _windowed_zonal_stats
+
+    transform = from_origin(100, 200, 2, 3)
+    left, top, right, bottom = pixel_bounds
+    polygon = Polygon([transform * point for point in [
+        (left, top), (right, top), (right, bottom), (left, bottom),
+    ]])
+    image = np.arange(1, 26, dtype="float64").reshape(5, 5)
+    image[1, 1] = -9999
+    raster_path = tmp_path / "fractional.tif"
+    with rasterio.open(
+        raster_path, "w", driver="GTiff", height=5, width=5, count=1,
+        dtype="float64", crs="EPSG:3857", transform=transform, nodata=-9999,
+    ) as dst:
+        dst.write(image, 1)
+    covered = geometry_mask(
+        [mapping(polygon)], out_shape=image.shape, transform=transform,
+        invert=True, all_touched=False,
+    )
+    values = image[covered & (image != -9999)]
+    assert values.size > 0
+    result = _windowed_zonal_stats(
+        mapping(polygon), str(raster_path),
+        stats=["count", "sum", "mean", "min", "max", "std"],
+    )[0]
+    assert result["count"] == values.size
+    for key in ("sum", "mean", "min", "max", "std"):
+        assert result[key] == pytest.approx(getattr(values, key)())
+    assert result["valid_pixel_coverage"] == pytest.approx(
+        values.size / np.count_nonzero(covered))
