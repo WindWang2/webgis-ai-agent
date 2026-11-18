@@ -333,11 +333,9 @@ def temporal_composite(
 
 # ── medoid 时序合成（Flood 2013；光学多时相鲁棒合成正典）──────────────
 
-# medoid 距离累加面的独立预算：T·H·W ≤ 32M（Σ_s ‖x_t−x_s‖² 累加面为
-# T×HW float64 = 256MB 上界）——比 sar_temporal 通用守卫更紧（披露）。
-# review R2-5 口径注记：该守卫封的是输入栈；medoid 主循环的瞬态含 x 副本
-# 与每轮 (x − x[s]) 广播临时（≈ T×HW×k），峰值 ≈ 4–5× 输入栈 —— k>1 时
-# 为 GB 级，调用方按此口径估算内存。
+# medoid 距离累加面的独立预算：T·H·W ≤ 32M（T×HW float64，256MB）。
+# 输入/x 副本仍为 T×k×HW；逐无序时相对复用 k×HW 差值临时，
+# 不分配 T×T×k×HW 距离张量。总算术量 O(T²·k·HW)，T≤24。
 _MEDOID_CELL_LIMIT = 33_554_432
 
 
@@ -394,11 +392,19 @@ def medoid_composite(
     flat = arr.reshape(t_slices, n_bands, pixels)
     x = np.where(flat_valid[:, None, :], flat, 0.0)   # 无效切片置 0 只为算术
 
-    # dist_sum[t] = Σ_s ‖x_t − x_s‖²（双双有效对；无序对计两次——argmin 不变）
+    # True medoid: sum Euclidean norms, NOT squared norms (nearest mean).
+    # Each unordered pair contributes once to both candidates. Keep only
+    # one k×HW difference temporary, not a T×T distance tensor.
     dist_sum = np.zeros((t_slices, pixels), dtype=float)
-    for s in range(t_slices):
-        d2 = ((x - x[s: s + 1]) ** 2).sum(axis=1)     # (T, HW)
-        dist_sum += np.where(flat_valid[s][None, :] & flat_valid, d2, 0.0)
+    for t in range(t_slices):
+        for s in range(t):
+            delta = x[t] - x[s]
+            np.square(delta, out=delta)
+            distance = delta.sum(axis=0)
+            np.sqrt(distance, out=distance)
+            distance[~(flat_valid[t] & flat_valid[s])] = 0.0
+            dist_sum[t] += distance
+            dist_sum[s] += distance
     dist_sum[~flat_valid] = np.inf                    # 无效切片不可入选
 
     medoid_flat = np.argmin(dist_sum, axis=0)         # 平局 → 最早时相（确定）
