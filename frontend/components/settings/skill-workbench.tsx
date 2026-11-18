@@ -4,6 +4,7 @@ import { devOnly } from '@/lib/utils/logger';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { STitle } from '@/components/shared/section-title';
 import { getSessionIdentity, subscribeSessionIdentity } from '@/lib/store/session-identity';
+import { getAuthUser, subscribeAuth } from '@/lib/auth/tokenStore';
 import {
   SkillJobApiError,
   cancelSkillJobRun,
@@ -51,7 +52,50 @@ function runnabilityBadge(entry: SkillCatalogEntry): { text: string; cls: string
   }
 }
 
+type WorkbenchIdentity = ReturnType<typeof getSessionIdentity> & { userId: string | null };
+type WorkbenchScope = { identity: WorkbenchIdentity; generation: number; controller: AbortController };
+
+function readWorkbenchIdentity(): WorkbenchIdentity {
+  return { ...getSessionIdentity(), userId: getAuthUser()?.id ?? null };
+}
+
+function sameIdentity(left: WorkbenchIdentity, right: WorkbenchIdentity) {
+  return left.userId === right.userId && left.sessionId === right.sessionId && left.ownerToken === right.ownerToken;
+}
+
 export function SkillWorkbench() {
+  const [scope, setScope] = useState<WorkbenchScope>(() => ({
+    identity: readWorkbenchIdentity(), generation: 0, controller: new AbortController(),
+  }));
+  const scopeRef = useRef(scope);
+
+  useEffect(() => {
+    const syncIdentity = () => {
+      const current = scopeRef.current;
+      const identity = readWorkbenchIdentity();
+      if (!current.controller.signal.aborted && sameIdentity(current.identity, identity)) return;
+      // Invalidate synchronously: stale DOM handlers must not borrow the next Bearer token.
+      current.controller.abort();
+      const next = { identity, generation: current.generation + 1, controller: new AbortController() };
+      scopeRef.current = next;
+      setScope(next);
+    };
+    const unsubscribeSession = subscribeSessionIdentity(syncIdentity);
+    const unsubscribeAuth = subscribeAuth(syncIdentity);
+    // Covers store changes before subscription, and StrictMode's setup/cleanup cycle.
+    syncIdentity();
+    return () => {
+      unsubscribeSession();
+      unsubscribeAuth();
+      scopeRef.current.controller.abort();
+    };
+  }, []);
+
+  // Every cached value/form and polling lifetime belongs to one immutable identity scope.
+  return <IdentitySkillWorkbench key={scope.generation} scope={scope} />;
+}
+
+function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
   const [catalog, setCatalog] = useState<SkillCatalogEntry[]>([]);
   const [guides, setGuides] = useState<SkillCatalogEntry[]>([]);
   const [candidates, setCandidates] = useState<SkillCatalogEntry[]>([]);
@@ -67,56 +111,43 @@ export function SkillWorkbench() {
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [presetName, setPresetName] = useState('');
-  const [{ sessionId, ownerToken }, setIdentity] = useState(getSessionIdentity);
-  const requestControllerRef = useRef<AbortController | null>(null);
+  const { sessionId, ownerToken } = scope.identity;
+  const isCurrent = useCallback(() => (
+    !scope.controller.signal.aborted && sameIdentity(scope.identity, readWorkbenchIdentity())
+  ), [scope]);
   const requestOptions = useCallback(() => ({
     ownerToken: sessionId ? ownerToken : undefined,
-    signal: requestControllerRef.current?.signal,
-  }), [sessionId, ownerToken]);
+    signal: scope.controller.signal,
+  }), [sessionId, ownerToken, scope]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => subscribeSessionIdentity(() => {
-    // A prepared plan/run belongs to the old identity; never reuse it with a new token.
-    setIdentity(getSessionIdentity());
-    setPrepared(null);
-    setRun(null);
-    setRuns([]);
-    setSelected(null);
-    setPhase('catalog');
-    setBusy(false);
-    setError(null);
-  }), []);
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+  }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
-    requestControllerRef.current = controller;
-    return () => {
-      controller.abort();
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [sessionId, ownerToken]);
-
-  useEffect(() => {
+    if (!isCurrent()) return;
     const options = requestOptions();
     getCatalog(options)
       .then((c) => {
-        if (options.signal?.aborted) return;
+        if (!isCurrent()) return;
         setCatalog(c.skills || []);
         setGuides(c.md_guides || []);
         setCandidates(c.extension_candidates || []);
       })
-      .catch((err: unknown) => devOnly.warn('SkillWorkbench: catalog failed', err));
+      .catch((err: unknown) => { if (isCurrent()) devOnly.warn('SkillWorkbench: catalog failed', err); });
     listPresets(options)
-      .then((p) => { if (!options.signal?.aborted) setPresets(p.presets || []); })
+      .then((p) => { if (isCurrent()) setPresets(p.presets || []); })
       .catch(() => undefined);
-  }, [requestOptions]);
+  }, [requestOptions, isCurrent]);
 
   const refreshRuns = useCallback((sid: string) => {
+    if (!isCurrent() || sid !== sessionId) return;
     const options = requestOptions();
     listSkillJobRuns(sid, options)
-      .then((r) => { if (!options.signal?.aborted) setRuns(r.runs || []); })
+      .then((r) => { if (isCurrent()) setRuns(r.runs || []); })
       .catch(() => undefined);
-  }, [requestOptions]);
+  }, [requestOptions, isCurrent, sessionId]);
 
   useEffect(() => {
     if (sessionId) refreshRuns(sessionId);
@@ -132,12 +163,13 @@ export function SkillWorkbench() {
   const startPolling = useCallback(
     (jobId: string) => {
       stopPolling();
-      if (!sessionId) return;
+      if (!isCurrent() || !sessionId) return;
       const options = requestOptions();
       pollRef.current = setInterval(() => {
+        if (!isCurrent()) { stopPolling(); return; }
         getSkillJobRun(jobId, sessionId, options)
           .then((r) => {
-            if (options.signal?.aborted) return;
+            if (!isCurrent()) return;
             setRun(r);
             if (!r.active) {
               stopPolling();
@@ -147,10 +179,11 @@ export function SkillWorkbench() {
           .catch(() => undefined);
       }, 2500);
     },
-    [refreshRuns, sessionId, stopPolling, requestOptions],
+    [refreshRuns, sessionId, stopPolling, requestOptions, isCurrent],
   );
 
   const onSelectSkill = (entry: SkillCatalogEntry) => {
+    if (!isCurrent()) return;
     stopPolling();
     setError(null);
     setSelected(entry);
@@ -179,7 +212,7 @@ export function SkillWorkbench() {
       );
 
   const onPrepare = async () => {
-    if (!selected || !sessionId) return;
+    if (!isCurrent() || !selected || !sessionId) return;
     setBusy(true);
     setError(null);
     const options = requestOptions();
@@ -199,41 +232,41 @@ export function SkillWorkbench() {
         params: typedParams,
         bindings: buildBindings(),
       }, options);
-      if (options.signal?.aborted) return;
+      if (!isCurrent()) return;
       setPrepared(res);
       setPhase('preview');
     } catch (err) {
-      if (options.signal?.aborted) return;
+      if (!isCurrent()) return;
       if (err instanceof SkillJobApiError) setError({ code: err.code, message: err.message });
       else setError({ code: 'PREPARE_FAILED', message: String(err).slice(0, 160) });
     } finally {
-      if (!options.signal?.aborted) setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   const onStart = async () => {
-    if (!prepared || !sessionId) return;
+    if (!isCurrent() || !prepared || !sessionId) return;
     setBusy(true);
     setError(null);
     const options = requestOptions();
     try {
       const r = await startSkillJob({ prepared_id: prepared.prepared_id, session_id: sessionId }, options);
-      if (options.signal?.aborted) return;
+      if (!isCurrent()) return;
       setRun(r);
       setPhase('running');
       if (r.active) startPolling(r.job_id);
       else refreshRuns(sessionId);
     } catch (err) {
-      if (options.signal?.aborted) return;
+      if (!isCurrent()) return;
       if (err instanceof SkillJobApiError) setError({ code: err.code, message: err.message });
       else setError({ code: 'START_FAILED', message: String(err).slice(0, 160) });
     } finally {
-      if (!options.signal?.aborted) setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   const onCancel = async () => {
-    if (!run || !sessionId) return;
+    if (!isCurrent() || !run || !sessionId) return;
     try {
       await cancelSkillJobRun(run.job_id, sessionId, requestOptions());
     } catch {
@@ -242,7 +275,7 @@ export function SkillWorkbench() {
   };
 
   const onSavePreset = async () => {
-    if (!selected || !presetName.trim()) return;
+    if (!isCurrent() || !selected || !presetName.trim()) return;
     setBusy(true);
     const options = requestOptions();
     try {
@@ -255,22 +288,21 @@ export function SkillWorkbench() {
           bindings.map((b) => [b.role, { last_ref: b.ref, mode: b.mode }]),
         ),
       }, options);
-      if (options.signal?.aborted) return;
+      if (!isCurrent()) return;
       setPresetName('');
-      listPresets(options).then((p) => { if (!options.signal?.aborted) setPresets(p.presets || []); }).catch(() => undefined);
+      listPresets(options).then((p) => { if (isCurrent()) setPresets(p.presets || []); }).catch(() => undefined);
     } catch (err) {
-      if (options.signal?.aborted) return;
+      if (!isCurrent()) return;
       if (err instanceof SkillJobApiError) setError({ code: err.code, message: err.message });
     } finally {
-      if (!options.signal?.aborted) setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   const onReusePreset = async (preset: SkillJobPreset) => {
-    if (!sessionId) return;
+    if (!isCurrent() || !sessionId || !presets.includes(preset)) return;
     setBusy(true);
     setError(null);
-    const options = requestOptions();
     try {
       const entry =
         catalog.find((s) => s.id === preset.skill_id) || null;
@@ -301,7 +333,7 @@ export function SkillWorkbench() {
       // 前端预填 + 普通 prepare，让用户先核对绑定（ref 过期会 typed 报错）。
       await Promise.resolve();
     } finally {
-      if (!options.signal?.aborted) setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
