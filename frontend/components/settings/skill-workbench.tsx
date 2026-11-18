@@ -3,7 +3,7 @@ import { devOnly } from '@/lib/utils/logger';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { STitle } from '@/components/shared/section-title';
-import { getSessionIdentity } from '@/lib/store/session-identity';
+import { getSessionIdentity, subscribeSessionIdentity } from '@/lib/store/session-identity';
 import {
   SkillJobApiError,
   cancelSkillJobRun,
@@ -13,7 +13,6 @@ import {
   listPresets,
   listSkillJobRuns,
   prepareSkillJob,
-  presetPrepare,
   startSkillJob,
   type PrepareResponse,
   type SkillCatalogEntry,
@@ -68,32 +67,56 @@ export function SkillWorkbench() {
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [presetName, setPresetName] = useState('');
-  const [sessionId, setSessionId] = useState('');
+  const [{ sessionId, ownerToken }, setIdentity] = useState(getSessionIdentity);
+  const requestControllerRef = useRef<AbortController | null>(null);
+  const requestOptions = useCallback(() => ({
+    ownerToken: sessionId ? ownerToken : undefined,
+    signal: requestControllerRef.current?.signal,
+  }), [sessionId, ownerToken]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  useEffect(() => subscribeSessionIdentity(() => {
+    // A prepared plan/run belongs to the old identity; never reuse it with a new token.
+    setIdentity(getSessionIdentity());
+    setPrepared(null);
+    setRun(null);
+    setRuns([]);
+    setSelected(null);
+    setPhase('catalog');
+    setBusy(false);
+    setError(null);
+  }), []);
+
   useEffect(() => {
-    getCatalog()
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
+    return () => {
+      controller.abort();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [sessionId, ownerToken]);
+
+  useEffect(() => {
+    const options = requestOptions();
+    getCatalog(options)
       .then((c) => {
+        if (options.signal?.aborted) return;
         setCatalog(c.skills || []);
         setGuides(c.md_guides || []);
         setCandidates(c.extension_candidates || []);
       })
       .catch((err: unknown) => devOnly.warn('SkillWorkbench: catalog failed', err));
-    listPresets()
-      .then((p) => setPresets(p.presets || []))
+    listPresets(options)
+      .then((p) => { if (!options.signal?.aborted) setPresets(p.presets || []); })
       .catch(() => undefined);
-    const { sessionId: sid } = getSessionIdentity();
-    if (sid) setSessionId(sid);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
+  }, [requestOptions]);
 
   const refreshRuns = useCallback((sid: string) => {
-    listSkillJobRuns(sid)
-      .then((r) => setRuns(r.runs || []))
+    const options = requestOptions();
+    listSkillJobRuns(sid, options)
+      .then((r) => { if (!options.signal?.aborted) setRuns(r.runs || []); })
       .catch(() => undefined);
-  }, []);
+  }, [requestOptions]);
 
   useEffect(() => {
     if (sessionId) refreshRuns(sessionId);
@@ -109,9 +132,12 @@ export function SkillWorkbench() {
   const startPolling = useCallback(
     (jobId: string) => {
       stopPolling();
+      if (!sessionId) return;
+      const options = requestOptions();
       pollRef.current = setInterval(() => {
-        getSkillJobRun(jobId, sessionId)
+        getSkillJobRun(jobId, sessionId, options)
           .then((r) => {
+            if (options.signal?.aborted) return;
             setRun(r);
             if (!r.active) {
               stopPolling();
@@ -121,7 +147,7 @@ export function SkillWorkbench() {
           .catch(() => undefined);
       }, 2500);
     },
-    [refreshRuns, sessionId, stopPolling],
+    [refreshRuns, sessionId, stopPolling, requestOptions],
   );
 
   const onSelectSkill = (entry: SkillCatalogEntry) => {
@@ -156,6 +182,7 @@ export function SkillWorkbench() {
     if (!selected || !sessionId) return;
     setBusy(true);
     setError(null);
+    const options = requestOptions();
     try {
       const typedParams: Record<string, unknown> = {};
       (selected.parameters || []).forEach((spec) => {
@@ -171,14 +198,16 @@ export function SkillWorkbench() {
         skill_version: selected.version || '',
         params: typedParams,
         bindings: buildBindings(),
-      });
+      }, options);
+      if (options.signal?.aborted) return;
       setPrepared(res);
       setPhase('preview');
     } catch (err) {
+      if (options.signal?.aborted) return;
       if (err instanceof SkillJobApiError) setError({ code: err.code, message: err.message });
       else setError({ code: 'PREPARE_FAILED', message: String(err).slice(0, 160) });
     } finally {
-      setBusy(false);
+      if (!options.signal?.aborted) setBusy(false);
     }
   };
 
@@ -186,24 +215,27 @@ export function SkillWorkbench() {
     if (!prepared || !sessionId) return;
     setBusy(true);
     setError(null);
+    const options = requestOptions();
     try {
-      const r = await startSkillJob({ prepared_id: prepared.prepared_id, session_id: sessionId });
+      const r = await startSkillJob({ prepared_id: prepared.prepared_id, session_id: sessionId }, options);
+      if (options.signal?.aborted) return;
       setRun(r);
       setPhase('running');
       if (r.active) startPolling(r.job_id);
       else refreshRuns(sessionId);
     } catch (err) {
+      if (options.signal?.aborted) return;
       if (err instanceof SkillJobApiError) setError({ code: err.code, message: err.message });
       else setError({ code: 'START_FAILED', message: String(err).slice(0, 160) });
     } finally {
-      setBusy(false);
+      if (!options.signal?.aborted) setBusy(false);
     }
   };
 
   const onCancel = async () => {
     if (!run || !sessionId) return;
     try {
-      await cancelSkillJobRun(run.job_id, sessionId);
+      await cancelSkillJobRun(run.job_id, sessionId, requestOptions());
     } catch {
       /* 取消请求失败：下一轮轮询如实反映 */
     }
@@ -212,6 +244,7 @@ export function SkillWorkbench() {
   const onSavePreset = async () => {
     if (!selected || !presetName.trim()) return;
     setBusy(true);
+    const options = requestOptions();
     try {
       await createPreset({
         name: presetName.trim(),
@@ -221,13 +254,15 @@ export function SkillWorkbench() {
         bindings_template: Object.fromEntries(
           bindings.map((b) => [b.role, { last_ref: b.ref, mode: b.mode }]),
         ),
-      });
+      }, options);
+      if (options.signal?.aborted) return;
       setPresetName('');
-      listPresets().then((p) => setPresets(p.presets || [])).catch(() => undefined);
+      listPresets(options).then((p) => { if (!options.signal?.aborted) setPresets(p.presets || []); }).catch(() => undefined);
     } catch (err) {
+      if (options.signal?.aborted) return;
       if (err instanceof SkillJobApiError) setError({ code: err.code, message: err.message });
     } finally {
-      setBusy(false);
+      if (!options.signal?.aborted) setBusy(false);
     }
   };
 
@@ -235,6 +270,7 @@ export function SkillWorkbench() {
     if (!sessionId) return;
     setBusy(true);
     setError(null);
+    const options = requestOptions();
     try {
       const entry =
         catalog.find((s) => s.id === preset.skill_id) || null;
@@ -265,7 +301,7 @@ export function SkillWorkbench() {
       // 前端预填 + 普通 prepare，让用户先核对绑定（ref 过期会 typed 报错）。
       await Promise.resolve();
     } finally {
-      setBusy(false);
+      if (!options.signal?.aborted) setBusy(false);
     }
   };
 
