@@ -97,6 +97,8 @@ describe('changed-lane mapping (quality-e2e lane)', () => {
   it.each([
     { id: 'j15', file: 'journeys/j15-pi-mapspec-stub.journey.ts', modes: ['mock', 'real'] },
     { id: 'j16', file: 'journeys/j16-frame-product.journey.ts', modes: ['mock'] },
+    { id: 'g48', file: 'journeys/g48-georeferencing.journey.ts', modes: ['real'] },
+    { id: 'j42', file: 'journeys/j42-goal-repair-panel.journey.ts', modes: ['mock'] },
   ])('registers $id without expanding PR smoke', async ({ id, file, modes }) => {
     const { JOURNEYS, smokeJourneys } = await import('../../e2e/helpers/registry');
     expect(JOURNEYS.find((j) => j.id === id)).toMatchObject({

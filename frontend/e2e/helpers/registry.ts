@@ -3,7 +3,7 @@
  *
  * The canonical index of user journeys this suite protects. Parallel lines
  * (D–J) extend the suite by:
- *   1. adding `frontend/e2e/journeys/jN-<name>.journey.ts` (dual-mode where a
+ *   1. adding `frontend/e2e/journeys/<id>-<name>.journey.ts` (dual-mode where a
  *      backend can represent the surface, mock-only otherwise),
  *   2. registering it here (id, file, smoke flag, modes, owner line),
  *   3. if the journey should join the PR smoke gate, tagging it `@smoke`.
@@ -201,6 +201,22 @@ export const JOURNEYS: JourneyEntry[] = [
     smoke: false,
     modes: ['real'],
     owner: 'g44-field-contracts',
+  },
+  {
+    id: 'j42',
+    file: 'journeys/j42-goal-repair-panel.journey.ts',
+    title: '有界目标补全：预览→确认损失→启动→回执→终验对照',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'g42-goal-repair',
+  },
+  {
+    id: 'g48',
+    file: 'journeys/g48-georeferencing.journey.ts',
+    title: '控制点影像配准：上传→求解→预览→COG→绑定/下载→刷新恢复',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g48-georeferencing',
   },
 ];
 
