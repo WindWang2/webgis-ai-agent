@@ -30,6 +30,7 @@ import sys
 import time
 import uuid
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Optional
 
@@ -504,7 +505,14 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         _verified_turn = str(getattr(request, "verifiedTurnId", "") or "")
     except Exception:  # noqa: BLE001
         _verified_turn = ""
+    # Only the authenticated adapter's verified (session, turn) pair can
+    # recover caller authority. Capture the entry once before any await: a
+    # delayed callback must never borrow a successor turn's identity.
+    trusted_entry = None
     if _verified_turn:
+        trusted_entry = get_active_turn_entry(session_id)
+        if trusted_entry is None or trusted_entry.turn_id != _verified_turn:
+            raise PiRpcError("Pi callback has no matching local active turn")
         try:
             from app.lib.runtime import context as rt_ctx
 
@@ -520,7 +528,10 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     try:
         with bind_tool_call_id(request.toolCallId):
-            return await _dispatch_tool_bound(request, registry, tool_name, arguments, session_id)
+            return await _dispatch_tool_bound(
+                request, registry, tool_name, arguments, session_id,
+                trusted_entry=trusted_entry,
+            )
     finally:
         if _turn_binding is not None:
             try:
@@ -535,6 +546,8 @@ async def _dispatch_tool_bound(
     tool_name: str,
     arguments: dict,
     session_id: str,
+    *,
+    trusted_entry: Optional["_ActiveTurnEntry"] = None,
 ) -> "PiToolResponse":
     """dispatch_tool 的主体（turn 上下文已绑定后进入）。"""
     # The HTTP route verifies a signed turn token and writes its immutable sid
@@ -764,19 +777,33 @@ async def _dispatch_tool_bound(
         and request.sessionId != active_session
     ):
         turn_id, run_id = None, None
+    if trusted_entry is not None:
+        turn_id, run_id = trusted_entry.turn_id, trusted_entry.run_id
+    caller = trusted_entry.caller if trusted_entry is not None else _PiCallerIdentity()
     rt_ev = TURN_EVIDENCE.get(turn_id)
 
     with contextlib.ExitStack() as _rt_stack:
         _rt_stack.enter_context(rt_ctx.bind_runtime_context(
             turn_id=turn_id, run_id=run_id, session_id=request.sessionId
         ))
+        from app.services.provenance.context import (
+            ToolExecutionContext, reset_tool_execution_context, set_tool_execution_context,
+        )
+
+        # Bind even the anonymous/legacy case to mask unrelated inherited
+        # workflow context; ExitStack restores it on success, error or cancel.
+        _identity_token = set_tool_execution_context(ToolExecutionContext(
+            user_id=caller.user_id, org_id=caller.org_id,
+            project_id=caller.project_id, session_id=session_id, run_id=run_id,
+        ))
+        _rt_stack.callback(reset_tool_execution_context, _identity_token)
         if rt_ev is not None:
             _rt_stack.enter_context(bind_turn_evidence(rt_ev))
         t0 = time.monotonic()
         try:
             # V5-B: resolve the turn's cancellation token by SESSION from the
             # active-turn table (pool-safe).
-            _entry = get_active_turn_entry(session_id) if session_id else None
+            _entry = trusted_entry or (get_active_turn_entry(session_id) if session_id else None)
             if _entry is not None:
                 dispatch_token = _entry.token
             else:
@@ -791,8 +818,10 @@ async def _dispatch_tool_bound(
 
             _job_origin = JobOrigin(
                 session_id=session_id or None,
-                owner_id=None,
-                owner_token=None,
+                owner_id=caller.user_id,
+                owner_token=caller.owner_token,
+                org_id=caller.org_id,
+                project_id=caller.project_id,
                 run_id=run_id,
                 turn_id=turn_id,
                 agent_task_id=None,
@@ -1156,6 +1185,16 @@ def _hard_stop_pi_turn_for_no_progress(session_id: str) -> None:
 # The module-level aliases below stay as the single-active-turn view for
 # back-compat readers; with pool size 1 exactly one table entry exists and
 # behavior is byte-identical to the pre-V5 singleton.
+@dataclass(frozen=True)
+class _PiCallerIdentity:
+    """Server-only turn authority; never serialized to Pi or derived from tools."""
+
+    user_id: Optional[str] = None
+    owner_token: Optional[str] = field(default=None, repr=False)
+    org_id: Optional[int | str] = None
+    project_id: Optional[str] = None
+
+
 class _ActiveTurnEntry:
     """Per-session in-flight turn identity (V5-B).
 
@@ -1164,7 +1203,7 @@ class _ActiveTurnEntry:
     the worker whose subprocess owns the turn (abort RPC routing).
     """
 
-    __slots__ = ("session_id", "turn_id", "run_id", "token", "bridge", "context")
+    __slots__ = ("session_id", "turn_id", "run_id", "token", "bridge", "context", "caller")
 
     def __init__(
         self,
@@ -1174,6 +1213,7 @@ class _ActiveTurnEntry:
         bridge: Optional["PiBridge"] = None,
         run_id: Optional[str] = None,
         context: Optional[tuple[str, str]] = None,
+        caller: Optional[_PiCallerIdentity] = None,
     ) -> None:
         self.session_id = session_id
         self.turn_id = turn_id
@@ -1181,6 +1221,7 @@ class _ActiveTurnEntry:
         self.token = token
         self.bridge = bridge
         self.context = context  # (session_id, turn_id) capability pair
+        self.caller = caller or _PiCallerIdentity()
 
 
 _active_turns: dict[str, _ActiveTurnEntry] = {}
@@ -1192,6 +1233,7 @@ async def register_active_pi_turn(
     token: Optional[CancellationToken] = None,
     bridge: Optional["PiBridge"] = None,
     run_id: Optional[str] = None,
+    caller: Optional[_PiCallerIdentity] = None,
 ) -> None:
     """Register active turn in local process memory and Redis (if available)."""
     entry = _ActiveTurnEntry(
@@ -1201,6 +1243,7 @@ async def register_active_pi_turn(
         bridge=bridge,
         run_id=run_id,
         context=(session_id, turn_id),
+        caller=caller,
     )
     # G22-P1：本地登记变更与控制面 RPC 的「校验+写出」共用同一交接门
     # （bridge._control_gate）—— 后继 turn 的登记严格晚于前一 turn 迟到
@@ -2572,6 +2615,7 @@ class PiBridge:
         context_org_id: str = "",
         context_project_id: str = "",
         context_user_id: str = "",
+        context_owner_token: Optional[str] = None,
         context_query_text: str = "",
         attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> dict:
@@ -2702,7 +2746,13 @@ class PiBridge:
                     # the table, not the singleton slot).
                     _turn_token = CancellationToken(job_id=turn_id)
                     await register_active_pi_turn(
-                        turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
+                        turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id,
+                        caller=_PiCallerIdentity(
+                            user_id=context_user_id or None,
+                            owner_token=context_owner_token,
+                            org_id=context_org_id or None,
+                            project_id=context_project_id or None,
+                        ),
                     )
                     # ADR-0180（Harness Kernel）：非流式 turn 同样记账（与
                     # stream_prompt 同语义；best-effort 绝不阻断）。
@@ -3232,6 +3282,7 @@ class PiBridge:
         context_org_id: str = "",
         context_project_id: str = "",
         context_user_id: str = "",
+        context_owner_token: Optional[str] = None,
         context_query_text: str = "",
         attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[str, None]:
@@ -3420,7 +3471,13 @@ class PiBridge:
                 # V5-B: token minted first, registered WITH the session table.
                 _turn_token = CancellationToken(job_id=turn_id)
                 await register_active_pi_turn(
-                    turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
+                    turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id,
+                    caller=_PiCallerIdentity(
+                        user_id=context_user_id or None,
+                        owner_token=context_owner_token,
+                        org_id=context_org_id or None,
+                        project_id=context_project_id or None,
+                    ),
                 )
                 # ADR-0180（Harness Kernel）：turn 开始 → GIS 会话运行时记账
                 # （turn 台账 + 上一 turn 中断检测 + resume 计数）。增值披露，

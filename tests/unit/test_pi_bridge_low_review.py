@@ -425,3 +425,30 @@ async def test_receipt_scheduler_failure_preserves_terminal_settlement(
     accounting.assert_called_once()
     turn_host.assert_awaited_once()
     assert pi._lock_lease is None
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.asyncio
+async def test_turn_entry_captures_server_caller_scope(turn_host, streaming):
+    """#2210: both real bridge entrypoints retain the authenticated route scope."""
+    rpc = _rpc([{"type": "agent_settled"}])
+    pi = bridge.PiBridge(rpc=rpc)
+    kwargs = dict(session_id="low-session", context_user_id="real-user",
+                  context_org_id="17", context_project_id="real-project",
+                  context_owner_token="anonymous-capability")
+    if streaming:
+        _ = [frame async for frame in pi.stream_prompt("goal", **kwargs)]
+    else:
+        await pi.prompt("goal", **kwargs)
+    registration = bridge.register_active_pi_turn.await_args
+    caller = registration.kwargs["caller"]
+    assert registration.args[0] == "low-session"
+    assert caller.user_id == "real-user"
+    assert caller.org_id == "17"
+    assert caller.project_id == "real-project"
+    assert caller.owner_token == "anonymous-capability"
+    assert "anonymous-capability" not in repr(caller)
+    from dataclasses import FrozenInstanceError
+    with pytest.raises(FrozenInstanceError):
+        caller.user_id = "forged"
+    assert "anonymous-capability" not in str(rpc.request.call_args_list)
