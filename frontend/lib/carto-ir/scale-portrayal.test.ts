@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 import {
   activeBandIndex,
@@ -50,11 +50,10 @@ interface Corpus {
   cases: CorpusCase[];
 }
 
-const corpusPath = fileURLToPath(
-  new URL(
-    "../../../tests/cartography/carto_ir_corpus/scale_portrayal_cases.json",
-    import.meta.url,
-  ),
+// Vitest runs with frontend/ as cwd. Avoid Vite rewriting new URL(...,
+// import.meta.url) into an HTTP asset URL in the jsdom environment.
+const corpusPath = resolve(
+  process.cwd(), "../tests/cartography/carto_ir_corpus/scale_portrayal_cases.json",
 );
 const corpus = JSON.parse(readFileSync(corpusPath, "utf8")) as Corpus;
 
