@@ -3,12 +3,10 @@ from __future__ import annotations
 
 from collections import Counter
 import configparser
-import glob
 import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -34,22 +32,27 @@ def _jobs() -> dict:
 def test_backend_shards_cover_every_test_file_once() -> None:
     job = _jobs()["test-backend"]
     run = next(step["run"] for step in job["steps"] if step["name"] == "Run Tests with Coverage")
-    targets = re.findall(r'(\d+)\) TARGETS="([^"]+)"', run)
-    assert [int(shard) for shard, _ in targets] == job["strategy"]["matrix"]["shard"]
+    assert job["strategy"]["matrix"]["shard"] == SHARDS
+    assert 'python scripts/backend_test_shards.py --shard "${{ matrix.shard }}" --output "$SHARD_TARGETS"' in run
+    assert '"@$SHARD_TARGETS"' in run
+    assert '-m "not perf and not cartography and not real_services"' in run
+    assert "--cov=app" in run and "--dist loadfile" in run and "-n auto" in run
     counts = Counter()
-    for _, patterns in targets:
-        for pattern in patterns.split():
-            matches = glob.glob(str(ROOT / pattern))
-            assert matches, f"Shard target does not exist: {pattern}"
-            for match in matches:
-                path = Path(match)
-                counts.update(
-                    [path] if path.is_file()
-                    else set(path.rglob("test_*.py")) | set(path.rglob("*_test.py"))
-                )
+    sizes = []
+    for shard in SHARDS:
+        result = subprocess.run(
+            [sys.executable, "scripts/backend_test_shards.py", "--shard", str(shard)],
+            cwd=ROOT, text=True, capture_output=True, check=True,
+        )
+        modules = result.stdout.splitlines()
+        assert modules
+        assert modules == sorted(modules)
+        sizes.append(len(modules))
+        counts.update(ROOT / module for module in modules)
     expected = set((ROOT / "tests").rglob("test_*.py")) | set((ROOT / "tests").rglob("*_test.py"))
     assert set(counts) == expected, f"Unassigned tests: {sorted(expected - set(counts))}"
     assert {path: count for path, count in counts.items() if count != 1} == {}
+    assert max(sizes) - min(sizes) <= 1
 
 
 def test_workflow_preserves_raw_data_and_requires_complete_aggregation() -> None:
