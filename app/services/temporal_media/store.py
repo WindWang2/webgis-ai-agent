@@ -280,7 +280,10 @@ def _evict(root: Path) -> None:
 def publish_bytes(filename: str, data: bytes, ext: str,
                   principal: str) -> str:
     """原子发布到既有 exports 根 + 注册 .owner；返回签名下载 URL。"""
-    from app.api.routes.map import _persist_export_file, _set_export_owner
+    from app.services.export_storage import (
+        persist_export_file as _persist_export_file,
+        set_export_owner as _set_export_owner,
+    )
     from app.core.signing import sign_path
 
     _persist_export_file(filename, data, ext)
