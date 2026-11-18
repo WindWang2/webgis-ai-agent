@@ -182,6 +182,11 @@ async def fetch_shared_facts(req: TurnContextRequest) -> SharedTurnFacts:
             # items keyed on source_session_id would otherwise be scope-gated
             # out of the prompt with an empty scope id.
             facts.source_session_id = req.session_id
+        if req.session_id and facts.plan is not None:
+            # #2216: the execution-state projection needs the plan, not the
+            # source_session_id fallback — building it only inside the
+            # fallback branch meant every turn with a live SessionPlan got
+            # harness_context=None and HarnessStateProvider stayed dark.
             try:
                 from app.services.harness_kernel.context import build_turn_context
 

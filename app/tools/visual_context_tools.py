@@ -214,15 +214,25 @@ async def _model_vision_allowed(session_id: str = "") -> bool:
         bridge = (pool.bridge_for_session(session_id) if session_id
                   else pool.bridges[0])
         rpc = bridge.rpc  # G29 受控访问面（不私有 reach-in）
-        model_id = str(getattr(rpc, "spawn_model_id", "") or "")
         from app.services.visual_context.profile import (
             descriptor_vision_confirmed,
+            resolve_active_model,
             state_model_accepts_image,
         )
 
+        # #2212: 按活动模型裁决（set_model 切换后的会话模型优先于 spawn
+        # 基模型锚点），与 prompt 附件路径同一语义。
+        model_id, spawn_anchor_applies = resolve_active_model(
+            getattr(bridge, "_vendor_model_state", None),
+            session_id,
+            getattr(rpc, "spawn_epoch", 0),
+            str(getattr(rpc, "spawn_model_id", "") or ""),
+        )
         if descriptor_vision_confirmed(model_id) is not True:
             return False
-        if not bool(getattr(rpc, "spawn_declared_image_input", False)):
+        if spawn_anchor_applies and not bool(
+            getattr(rpc, "spawn_declared_image_input", False)
+        ):
             return False
         state = await rpc.request("get_state", {})
         return state_model_accepts_image(state) is True

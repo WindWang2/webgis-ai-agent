@@ -1765,6 +1765,9 @@ class PiBridge:
         attachments: Optional[List[Dict[str, Any]]],
         *,
         allow_regeneration: bool = True,
+        turn_id: str = "",
+        run_id: str = "",
+        bound_message: str = "",
     ) -> Dict[str, Any]:
         """G36（ADR-0291）：turn 时刻解析附件 → 原生 images + 回执。
 
@@ -1779,12 +1782,18 @@ class PiBridge:
            ``allow_regeneration=False``（steer 侧）：在飞 turn 持 turn 锁消费
            事件流，中途换代/排空会偷走活事件 —— 只阻断图片，换代留给下一
            turn 边界（预检在彼时必然再跑）。
-        2. **能力门（WP08）**：描述符确证 vision → spawn 锚点 → vendor
-           get_state 三重一致才送图；否则全部拒绝并给 typed reason（V10/
-           V11），文本会话照常。
+        1b. **#2213**：换代把 vendor 会话模型打回 spawn 默认 —— 复位
+           ``_vendor_model_state``、失效 ``_vision_gate`` 运行时缓存，并在
+           提供 turn 上下文（两条 prompt 路径）时立即重放
+           ``_apply_session_model_for_turn``；重放失败 raise（绝不静默回退
+           defaultModel 而 SSE/账本仍声称显式模型）。
+        2. **能力门（WP08 / #2212）**：按**活动模型**裁决 —— turn 期已
+           ``set_model`` 应用的会话模型优先于 spawn 基模型锚点；运行时
+           state 按 (epoch, 模型) 缓存，同 epoch 换模型必然重读。
         3. **解析（WP06）**：会话归属/tombstone/blob sha/预算逐图裁决。
 
-        返回 ``{"images": [...], "receipts": [...], "blocked_reason": str}``。
+        返回 ``{"images": [...], "receipts": [...], "blocked_reason": str,
+        "regenerated": bool}``。
         """
         from app.services.visual_context.profile import VisionGate
         from app.services.visual_context.resolver import (
@@ -1796,6 +1805,7 @@ class PiBridge:
             self._vision_gate = VisionGate()
         ledger = get_sent_image_ledger()
         blocked_reason = ""
+        regenerated = False
         # ── V33：已送 pixels 复验（每 turn；空台账零成本早退）──
         if turn_sid:
             try:
@@ -1816,28 +1826,55 @@ class PiBridge:
                         await self._rpc.request("new_session", {})
                         await self._drain_stale_events()
                         ledger.bump(turn_sid)
-                        logger.info(
-                            "[PiBridge] vendor session regenerated for revoked "
-                            "images session=%s revoked=%d",
-                            turn_sid[:24], len(revoked))
                     except Exception:  # noqa: BLE001 — 换代失败 → 阻断图片
                         logger.warning(
                             "[PiBridge] vendor session regen failed; blocking "
                             "images session=%s", turn_sid[:24], exc_info=True)
                         blocked_reason = "revoked_history_regeneration_failed"
+                    else:
+                        regenerated = True
+                        logger.info(
+                            "[PiBridge] vendor session regenerated for revoked "
+                            "images session=%s revoked=%d",
+                            turn_sid[:24], len(revoked))
+                        # #2213：new_session 后 Pi 会话模型回到 spawn 默认 ——
+                        # 已应用状态作废（下一 turn 预检据此强制重应用），
+                        # vision 运行时缓存同样失效（旧 state 会把过期能力
+                        # 放行给新默认模型）。
+                        self._vendor_model_state = None
+                        self._vision_gate.invalidate_runtime_cache()
                 else:
                     blocked_reason = "revoked_history_pending_regeneration"
+        # ── #2213 重放：换代后本 turn 的 prompt 仍须落在会话目标模型上 ──
+        if regenerated and turn_id:
+            _reapply = await self._apply_session_model_for_turn(
+                turn_sid, turn_id, run_id, bound_message)
+            if not _reapply.ok:
+                raise PiRpcError(
+                    _reapply.reason_detail
+                    or "session model re-apply after image-revocation "
+                       "regeneration failed"
+                )
         # ── 能力门 ──
         allowed, gate_reason = True, ""
         if attachments and not blocked_reason:
-            model_id = str(getattr(self._rpc, "spawn_model_id", "") or "")
+            from app.services.visual_context.profile import resolve_active_model
+
+            rpc_epoch = getattr(self._rpc, "spawn_epoch", 0)
+            # __new__ 测试路径可能没有 __init__ 的实例属性 —— 按缺席处理。
+            active_model_id, spawn_anchor_applies = resolve_active_model(
+                getattr(self, "_vendor_model_state", None),
+                turn_sid, rpc_epoch,
+                str(getattr(self._rpc, "spawn_model_id", "") or ""),
+            )
             try:
                 allowed, gate_reason = await self._vision_gate.check(
-                    model_id=model_id,
+                    model_id=active_model_id,
                     spawn_declared_image_input=bool(
                         getattr(self._rpc, "spawn_declared_image_input", False)),
                     rpc=self._rpc,
-                    spawn_epoch=getattr(self._rpc, "spawn_epoch", 0),
+                    spawn_epoch=rpc_epoch,
+                    spawn_anchor_applies=spawn_anchor_applies,
                 )
             except Exception:  # noqa: BLE001 — 门失败 = 不送图
                 allowed, gate_reason = False, "runtime_state_unavailable"
@@ -1853,6 +1890,7 @@ class PiBridge:
             "images": outcome.images,
             "receipts": [r.to_dict() for r in outcome.receipts],
             "blocked_reason": blocked_reason,
+            "regenerated": regenerated,
         }
 
     async def _acquire_turn_lease(self, turn_id: str, session_id: Optional[str], *, owner: Optional[asyncio.Task] = None) -> "_TurnLease":
@@ -2848,7 +2886,10 @@ class PiBridge:
                         # —— 撤销后的纯文本 turn 同样换代；回执随返回值
                         # 披露，不进 RPC wire —— Pi 只收 message/images）。
                         _img_outcome = await self._resolve_turn_images(
-                            turn_sid, attachments)
+                            turn_sid, attachments,
+                            turn_id=turn_id, run_id=run_id,
+                            bound_message=str(data.get("message") or ""),
+                        )
                         if _img_outcome["images"]:
                             data["images"] = _img_outcome["images"]
                         _attachment_receipts.extend(_img_outcome["receipts"])
@@ -3602,7 +3643,10 @@ class PiBridge:
                         # 后的纯文本 turn 同样触发换代，旧 pixels 不随
                         # transcript 续送；逐附件回执向 SSE 披露）。
                         _img_outcome = await self._resolve_turn_images(
-                            turn_sid, attachments)
+                            turn_sid, attachments,
+                            turn_id=turn_id, run_id=run_id,
+                            bound_message=str(data.get("message") or ""),
+                        )
                         if _img_outcome["images"]:
                             data["images"] = _img_outcome["images"]
                         _turn_attachment_receipts.extend(_img_outcome["receipts"])
