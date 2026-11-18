@@ -40,6 +40,7 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     ToolsListResponse,
 )
 from app.core.auth import (
+    actor_ids,
     authorize_session_write,
     get_current_user,
     get_current_user_optional,
@@ -1051,6 +1052,8 @@ async def chat_completions(
             # caller did not present) + one-way digest into map_state for the
             # store-level ref guard.
             pi_owner_token: Optional[str] = None
+            pi_caller_token: Optional[str] = None
+            pi_caller_user_id, _ = actor_ids(_user)
             if db is not None and hasattr(db, "execute"):
                 conversation, created = await AsyncHistoryService(
                     db
@@ -1060,6 +1063,11 @@ async def chat_completions(
                 pi_owner_token = _pi_stream_capability(
                     conversation, created, user_id, owner_token
                 )
+                # Only this admission's newly minted capability or an existing
+                # session capability just verified above is tool authority.
+                # Authenticated ownership does not validate arbitrary headers.
+                if conversation.user_id is None:
+                    pi_caller_token = pi_owner_token if created else owner_token
                 _conv_token = getattr(conversation, "owner_token", None)
                 if _conv_token:
                     try:
@@ -1114,7 +1122,8 @@ async def chat_completions(
                     env_block=environment_context,
                     context_org_id=memory_org or "",
                     context_project_id=req.project_id or "",
-                    context_user_id=user_id or "",
+                    context_user_id=pi_caller_user_id or "",
+                    context_owner_token=pi_caller_token,
                     context_query_text=req.message or "",
                     # G36（ADR-0291）：非流式同款图片解析（不静默丢附件）。
                     attachments=(
@@ -1322,6 +1331,8 @@ async def chat_stream(
     )
     pi_session_id = req.session_id
     pi_owner_token: Optional[str] = None
+    pi_caller_token: Optional[str] = None
+    pi_caller_user_id, _ = actor_ids(_user)
     try:
         await _guard_body_session(db, req.session_id, user_id, owner_token)
         await _guard_body_project(db, req.project_id, _user)
@@ -1338,6 +1349,9 @@ async def chat_stream(
                 pi_owner_token = _pi_stream_capability(
                     conversation, created, user_id, owner_token
                 )
+                # Never capture an unchecked header in the deferred generator.
+                if conversation.user_id is None:
+                    pi_caller_token = pi_owner_token if created else owner_token
                 # SEC-08 store-layer guard wiring: persist a ONE-WAY digest of
                 # the conversation's owner token so
                 # session_data_protocol._validate_owner_token can engage for
@@ -1655,7 +1669,8 @@ async def chat_stream(
                                 env_block=environment_context,
                                 context_org_id=memory_org or "",
                                 context_project_id=req.project_id or "",
-                                context_user_id=user_id or "",
+                                context_user_id=pi_caller_user_id or "",
+                                context_owner_token=pi_caller_token,
                                 context_query_text=req.message or "",
                                 attachments=(
                                     [a.model_dump() for a in req.attachments]
