@@ -385,3 +385,43 @@ async def test_old_outer_cleanup_preserves_successor_abort_routing(turn_host, mo
     finally:
         new.cancel()
         await asyncio.gather(new, return_exceptions=True)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.asyncio
+async def test_receipt_scheduler_failure_preserves_terminal_settlement(
+    turn_host, monkeypatch, streaming,
+):
+    """#2214: optional receipt failure cannot interrupt either teardown path."""
+    import app.services.chat.model_runtime.usage_ledger as ledger
+    import app.services.chat.pi_surface_metrics as metrics
+
+    persist = MagicMock(side_effect=RuntimeError("receipt backend unavailable"))
+    monkeypatch.setattr(ledger, "spawn_persist_task", persist)
+    summary = MagicMock(wraps=bridge.emit_turn_summary)
+    monkeypatch.setattr(bridge, "emit_turn_summary", summary)
+    accounting = MagicMock()
+    # maybe_record_turn is imported lazily at the terminal accounting seam.
+    import app.lib.harness.replay.recorder as recorder
+    monkeypatch.setattr(recorder, "maybe_record_turn", accounting)
+    monkeypatch.setattr(metrics, "record_timing", MagicMock())
+    rpc = _rpc([{"type": "agent_end", "messages": []}, {"type": "agent_settled"}])
+    pi = bridge.PiBridge(rpc=rpc)
+    sink = MagicMock()
+    if streaming:
+        frames = [frame async for frame in pi.stream_prompt(
+            "goal", session_id="low-session", on_turn_result=sink,
+        )]
+        assert frames
+        sink.assert_called_once()
+    else:
+        result = await pi.prompt("goal", session_id="low-session")
+        assert result["sessionId"] == "low-session"
+    persist.assert_called_once()
+    collector = persist.call_args.args[0]
+    assert collector.write_failures >= 1
+    pi._settle_turn_outcome.assert_awaited_once()
+    summary.assert_called_once()
+    accounting.assert_called_once()
+    turn_host.assert_awaited_once()
+    assert pi._lock_lease is None

@@ -1706,9 +1706,10 @@ class PiBridge:
                 finalize=True,
             )
         except Exception:  # noqa: BLE001 — 回执落盘是增值面
+            collector.write_failures += 1
             logger.debug(
                 "[PiBridge] turn runtime receipt persist failed turn=%s",
-                turn_id, exc_info=True,
+                collector.turn_id, exc_info=True,
             )
 
     async def _resolve_turn_images(
