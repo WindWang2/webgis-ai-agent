@@ -9,17 +9,21 @@
  * - 刷新回看：运行列表来自 durable 行（runs API）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-const { sessionState } = vi.hoisted(() => ({
-  sessionState: { sessionId: 'sess-wb-1' },
+const { sessionState, identityListeners } = vi.hoisted(() => ({
+  sessionState: { sessionId: 'sess-wb-1', ownerToken: 'owner-test' },
+  identityListeners: new Set<() => void>(),
 }));
 
 vi.mock('@/lib/store/session-identity', () => ({
   getSessionIdentity: () => sessionState,
   setSessionIdentity: vi.fn(),
-  subscribeSessionIdentity: () => () => undefined,
+  subscribeSessionIdentity: (listener: () => void) => {
+    identityListeners.add(listener);
+    return () => identityListeners.delete(listener);
+  },
 }));
 
 import { SkillWorkbench } from './skill-workbench';
@@ -195,4 +199,73 @@ describe('SkillWorkbench', () => {
       expect(screen.getByText('本会话运行记录', { exact: false })).toBeTruthy();
     });
   });
+});
+
+
+it('forwards the paired owner token and abortable context through list/prepare/start/cancel/poll', async () => {
+  vi.stubGlobal('fetch', fetchMock);
+  fetchMock.mockReset();
+  routeFetch();
+  const route = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (url.includes('/skill-jobs/start')) return Promise.resolve(jsonOk({ job_id: '9', status: 'running', active: true, cancellable: true }));
+    if (url.includes('/runs/9?')) return Promise.resolve(jsonOk({ job_id: '9', status: 'completed', active: false }));
+    return route(url, init);
+  });
+  const view = render(<SkillWorkbench />);
+  await userEvent.click(await screen.findByTestId('skill-validate_spatial_data'));
+  await userEvent.type(await screen.findByTestId('binding-ref-subject'), 'ref:geojson-x');
+  await userEvent.click(screen.getByTestId('prepare-btn'));
+  await screen.findByTestId('preview-panel');
+  await userEvent.click(screen.getByTestId('start-btn'));
+  await userEvent.click(await screen.findByRole('button', { name: /取消/ }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/runs/9?'))).toBe(true), { timeout: 4000 });
+  const sessionCalls = fetchMock.mock.calls.filter(([url]) => /\/(runs|prepare|start)(?:[/?]|$)/.test(String(url)));
+  expect(sessionCalls.length).toBeGreaterThanOrEqual(6);
+  for (const [, init] of sessionCalls) {
+    expect(new Headers(init.headers).get('X-Session-Token')).toBe('owner-test');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  }
+  const prepareBody = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/prepare'))![1].body;
+  expect(JSON.parse(prepareBody)).toMatchObject({ session_id: 'sess-wb-1' });
+  expect(JSON.parse(prepareBody)).not.toHaveProperty('ownerToken');
+  view.unmount();
+});
+
+
+it('aborts pending work on unmount and keeps session/token pairs together on switch', async () => {
+  vi.stubGlobal('fetch', fetchMock);
+  fetchMock.mockReset();
+  sessionState.sessionId = 'sess-wb-1';
+  sessionState.ownerToken = 'owner-test';
+  routeFetch();
+  const route = fetchMock.getMockImplementation()!;
+  const runRequests: Array<{ url: string; init: RequestInit }> = [];
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (url.includes('/runs?')) {
+      runRequests.push({ url, init: init! });
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      });
+    }
+    return route(url, init);
+  });
+  const view = render(<SkillWorkbench />);
+  await screen.findByTestId('skill-validate_spatial_data');
+  expect(runRequests).toHaveLength(1);
+  expect(new Headers(runRequests[0].init.headers).get('X-Session-Token')).toBe('owner-test');
+  await act(async () => {
+    sessionState.sessionId = 'sess-wb-2';
+    sessionState.ownerToken = 'owner-next';
+    identityListeners.forEach((listener) => listener());
+  });
+  await waitFor(() => expect(runRequests).toHaveLength(2));
+  expect(runRequests[0].init.signal?.aborted).toBe(true);
+  expect(runRequests[1].url).toContain('session_id=sess-wb-2');
+  expect(new Headers(runRequests[1].init.headers).get('X-Session-Token')).toBe('owner-next');
+  expect(runRequests[1].init.signal?.aborted).toBe(false);
+  view.unmount();
+  expect(runRequests[1].init.signal?.aborted).toBe(true);
+  sessionState.sessionId = 'sess-wb-1';
+  sessionState.ownerToken = 'owner-test';
 });

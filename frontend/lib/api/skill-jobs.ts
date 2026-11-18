@@ -124,7 +124,12 @@ export class SkillJobApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options?: {
+export interface SkillJobRequestOptions {
+  ownerToken?: string | null;
+  signal?: AbortSignal;
+}
+
+async function request<T>(path: string, options?: SkillJobRequestOptions & {
   method?: string;
   body?: unknown;
 }): Promise<T> {
@@ -132,6 +137,8 @@ async function request<T>(path: string, options?: {
     return await apiFetch<T>(path, {
       method: options?.method,
       body: options?.body,
+      ownerToken: options?.ownerToken,
+      signal: options?.signal,
     });
   } catch (err) {
     if (err instanceof ApiError) {
@@ -149,8 +156,8 @@ async function request<T>(path: string, options?: {
   }
 }
 
-export function getCatalog(): Promise<CatalogResponse> {
-  return request<CatalogResponse>('/api/v1/skill-jobs/catalog');
+export function getCatalog(options: SkillJobRequestOptions = {}): Promise<CatalogResponse> {
+  return request<CatalogResponse>('/api/v1/skill-jobs/catalog', options);
 }
 
 export function prepareSkillJob(payload: {
@@ -159,49 +166,53 @@ export function prepareSkillJob(payload: {
   skill_version?: string;
   params: Record<string, unknown>;
   bindings: Array<{ role: string; ref?: string; inline?: unknown }>;
-}): Promise<PrepareResponse> {
-    return request<PrepareResponse>('/api/v1/skill-jobs/prepare', {
+}, options: SkillJobRequestOptions = {}): Promise<PrepareResponse> {
+  return request<PrepareResponse>('/api/v1/skill-jobs/prepare', {
+    ...options,
     method: 'POST',
     body: payload,
   });
 }
 
-export function startSkillJob(payload: { prepared_id: string; session_id: string }): Promise<SkillJobRun> {
-    return request<SkillJobRun>('/api/v1/skill-jobs/start', {
+export function startSkillJob(payload: { prepared_id: string; session_id: string }, options: SkillJobRequestOptions = {}): Promise<SkillJobRun> {
+  return request<SkillJobRun>('/api/v1/skill-jobs/start', {
+    ...options,
     method: 'POST',
     body: payload,
   });
 }
 
-export function listSkillJobRuns(sessionId: string): Promise<{ runs: SkillJobRun[] }> {
-  return request<{ runs: SkillJobRun[] }>(`/api/v1/skill-jobs/runs?session_id=${encodeURIComponent(sessionId)}`);
+export function listSkillJobRuns(sessionId: string, options: SkillJobRequestOptions = {}): Promise<{ runs: SkillJobRun[] }> {
+  return request<{ runs: SkillJobRun[] }>(`/api/v1/skill-jobs/runs?session_id=${encodeURIComponent(sessionId)}`, options);
 }
 
 export function getSkillJobRun(
   jobId: string | number,
   sessionId: string,
+  options: SkillJobRequestOptions = {},
 ): Promise<SkillJobRun> {
   // 单读必须携带会话归属（后端按行内 session 验证 owner；review P1-2）
   return request<SkillJobRun>(
-    `/api/v1/skill-jobs/runs/${jobId}?session_id=${encodeURIComponent(sessionId)}`);
+    `/api/v1/skill-jobs/runs/${jobId}?session_id=${encodeURIComponent(sessionId)}`, options);
 }
 
-export function cancelSkillJobRun(jobId: string | number, sessionId: string): Promise<{ cancel_requested: boolean }> {
+export function cancelSkillJobRun(jobId: string | number, sessionId: string, options: SkillJobRequestOptions = {}): Promise<{ cancel_requested: boolean }> {
   return request<{ cancel_requested: boolean }>(
     `/api/v1/skill-jobs/runs/${jobId}/cancel?session_id=${encodeURIComponent(sessionId)}`,
-    { method: 'POST' },
+    { ...options, method: 'POST' },
   );
 }
 
-export function listPresets(): Promise<{ presets: SkillJobPreset[] }> {
-  return request<{ presets: SkillJobPreset[] }>('/api/v1/skill-jobs/presets');
+export function listPresets(options: SkillJobRequestOptions = {}): Promise<{ presets: SkillJobPreset[] }> {
+  return request<{ presets: SkillJobPreset[] }>('/api/v1/skill-jobs/presets', options);
 }
 
 export function createPreset(payload: {
   name: string; description?: string; skill_id: string; skill_version?: string;
   params: Record<string, unknown>; bindings_template: Record<string, unknown>;
-}): Promise<SkillJobPreset> {
-    return request<SkillJobPreset>('/api/v1/skill-jobs/presets', {
+}, options: SkillJobRequestOptions = {}): Promise<SkillJobPreset> {
+  return request<SkillJobPreset>('/api/v1/skill-jobs/presets', {
+    ...options,
     method: 'POST',
     body: payload,
   });
@@ -210,6 +221,7 @@ export function createPreset(payload: {
 export function presetPrepare(
   presetId: string,
   payload: { session_id: string; bindings: Array<{ role: string; ref?: string; inline?: unknown }>; params_override?: Record<string, unknown> },
+  options: SkillJobRequestOptions = {},
 ): Promise<PrepareResponse & { preset: { name: string }; param_sources: Array<{ name: string; source: string; value: unknown }> }> {
-  return request('/api/v1/skill-jobs/presets/' + encodeURIComponent(presetId) + '/prepare', { method: 'POST', body: payload });
+  return request('/api/v1/skill-jobs/presets/' + encodeURIComponent(presetId) + '/prepare', { ...options, method: 'POST', body: payload });
 }

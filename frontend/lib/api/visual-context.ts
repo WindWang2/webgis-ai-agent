@@ -77,7 +77,7 @@ export async function uploadVisualEvidence(
     `/api/v1/chat/sessions/${encodeURIComponent(opts.sessionId)}/visual-context/evidence`,
     {
       method: 'POST',
-      body: form,
+      rawBody: form,
       ownerToken: opts.ownerToken,
       label: '视觉证据上传失败',
     }

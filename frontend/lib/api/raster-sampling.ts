@@ -264,7 +264,7 @@ export async function createPlan(
   return apiFetch(`${RS_BASE}/plan?${qs}`, {
     method: 'POST',
     headers: headers(options),
-    body: JSON.stringify(params),
+    body: params,
     signal: options.signal,
   });
 }
@@ -280,7 +280,7 @@ export async function revisePlan(
   return apiFetch(`${RS_BASE}/plan/${encodeURIComponent(planId)}/revise?${qs}`, {
     method: 'POST',
     headers: headers(options),
-    body: JSON.stringify({ expected_revision: expectedRevision, ...updates }),
+    body: { expected_revision: expectedRevision, ...updates },
     signal: options.signal,
   });
 }
@@ -316,10 +316,10 @@ export async function previewPlan(
   return apiFetch(`${RS_BASE}/plan/${encodeURIComponent(planId)}/preview?${qs}`, {
     method: 'POST',
     headers: headers(options),
-    body: JSON.stringify({
+    body: {
       expected_revision: expectedRevision,
       limit,
-    }),
+    },
     signal: options.signal,
   });
 }
@@ -335,10 +335,10 @@ export async function executePlan(
   return apiFetch(`${RS_BASE}/plan/${encodeURIComponent(planId)}/execute?${qs}`, {
     method: 'POST',
     headers: headers(options),
-    body: JSON.stringify({
+    body: {
       expected_revision: expectedRevision,
       background,
-    }),
+    },
     signal: options.signal,
   });
 }
