@@ -376,7 +376,7 @@ async def test_idempotent_resubmit_reauth(delivery_env, seeded_session, actor):
     assert sub2["idempotent_reuse"] is True
     assert sub2["job_id"] == view.job_id
     # 跨用户重放同规格：无权访问原 job → 新 job（不泄漏他人交付）
-    other_spec = _spec(seeded_session["ref"], "gpkg")
+    _spec(seeded_session["ref"], "gpkg")
     from app.services.data_delivery.source_resolver import DeliveryActor as DA
 
     other = DA(user_id="user-2")

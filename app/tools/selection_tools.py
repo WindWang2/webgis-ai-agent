@@ -39,8 +39,10 @@ def _geom_summary(geometry: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     def _bbox(node: Any, acc: List[float]) -> None:
         if isinstance(node, (list, tuple)):
             if len(node) >= 2 and all(isinstance(v, (int, float)) for v in node[:2]):
-                acc[0] = min(acc[0], node[0]); acc[1] = min(acc[1], node[1])
-                acc[2] = max(acc[2], node[0]); acc[3] = max(acc[3], node[1])
+                acc[0] = min(acc[0], node[0])
+                acc[1] = min(acc[1], node[1])
+                acc[2] = max(acc[2], node[0])
+                acc[3] = max(acc[3], node[1])
                 return
             for v in node:
                 _bbox(v, acc)

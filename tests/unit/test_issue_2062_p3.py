@@ -298,9 +298,6 @@ def test_corrupt_schema_version_is_skipped(tmp_path, monkeypatch):
         "source_bindings": [], "datasets": [],
     }))
     monkeypatch.setattr(store_mod, "runtime_snapshots_dir", lambda _pid: directory)
-    listed = asyncio.get_event_loop().run_until_complete(
-        store_mod.ProjectRuntimeStore().list_snapshots(project)
-    ) if False else None
     # list_snapshots offloads to a thread; call the inner parser directly.
     rows = []
     for path in sorted(directory.glob("prs-*.json")):

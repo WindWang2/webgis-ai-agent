@@ -1088,7 +1088,7 @@ async def _handle_setlayout(ctx: MutationContext) -> HandlerOut:
             if not isinstance(c, dict):
                 continue
             cid = str(c.get("id") or "")
-            if not any(_lock_matches(l, cid) for l in locks):
+            if not any(_lock_matches(lock, cid) for lock in locks):
                 continue
             prev = prev_by_id.get(cid)
             if prev is None:

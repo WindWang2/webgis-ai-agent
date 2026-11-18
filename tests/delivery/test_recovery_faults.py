@@ -52,7 +52,7 @@ async def test_cancel_mid_run_no_half_file(delivery_env, actor, monkeypatch):
     original = writers_mod.GeoJSONWriter.write_batch
 
     def cancelling_write_batch(self, features):
-        out = original(self, features)
+        original(self, features)
         from app.lib.cancellation import OperationCancelled
         from app.services.jobs import registry as cancellation_registry
 
@@ -71,7 +71,6 @@ async def test_cancel_mid_run_no_half_file(delivery_env, actor, monkeypatch):
     assert view.receipt is None
     with pytest.raises(DeliveryError):
         await resolve_download(sub["job_id"], None, actor)
-    staging = delivery_env["data_dir"] / "data-delivery" / ".staging"
     finals = delivery_env["data_dir"] / "data-delivery"
     leftovers = [p for p in finals.iterdir() if p.name != ".staging"] \
         if finals.exists() else []

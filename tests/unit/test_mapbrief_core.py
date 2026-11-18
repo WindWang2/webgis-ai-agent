@@ -444,7 +444,7 @@ class TestBriefCompiler:
         assert spec.provenance.artifact_refs
         # 事实：表 2 行 ×1 数值列 + 图 2 行 ×1 + trace 统计 1（去重后）
         fact_labels = [f.label for f in spec.facts]
-        assert any("142" in l or "锦江" in l for l in fact_labels)
+        assert any("142" in label_text or "锦江" in label_text for label_text in fact_labels)
         table_facts = [f for f in spec.facts
                        if f.basis.artifact_ref == "ref:stats-schools"]
         assert table_facts, "table artifact must yield facts"
@@ -504,9 +504,6 @@ class TestBriefCompiler:
         class Conv:
             id = "s2"
 
-        spec = await bc.compile_brief_draft(
-            Conv(), db=None,
-        ) if False else None
         # db=None → messages 缺席；trace 缺席 → ValueError（422 语义）
         with pytest.raises(ValueError):
             await bc.compile_brief_draft(Conv(), db=None)

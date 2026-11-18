@@ -635,7 +635,7 @@ async def execute_plan(
 
 
 async def cancel_job(session_id: str, plan_id: str) -> Dict[str, Any]:
-    res = await cancel_georeference_job(session_id, plan_id)
+    await cancel_georeference_job(session_id, plan_id)
     return get_status(session_id, plan_id)
 
 

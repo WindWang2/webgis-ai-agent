@@ -406,14 +406,11 @@ class TestSharing:
         from app.core.database import get_async_db
 
         # 复用同一 DB 覆盖，但 current_user 换 u2
-        original_override = app2.dependency_overrides
         app2.include_router(brief_routes.router, prefix="/api/v1")
         app2.dependency_overrides[get_current_user] = lambda: {
             "user_id": "u2"}
         # db override 需重新绑定同一 maker
 
-        maker2 = None
-        engine_ref = None
         # 直接复用 app_client 的 override（闭包同一 maker）
         for dep, ov in app_client[0]._transport.app.dependency_overrides.items():  # noqa
             if dep is get_async_db:

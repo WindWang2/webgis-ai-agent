@@ -211,7 +211,7 @@ class TestReplaceGeometryTransaction:
         ], feature_ids=[wfid])
         assert prev2.status_code == 200
         assert prev2.json()["preview"][0]["geometry"]["positions_after"] == 5
-        r2 = (await _approve(client, s, prev2.json()["plan_id"])).json()["receipt"]
+        (await _approve(client, s, prev2.json()["plan_id"])).json()["receipt"]
         payload = await session_data_manager.get(s, ref)
         assert payload["geojson"]["features"][0]["geometry"]["coordinates"][0][0] == [116.00, 39.20]
 

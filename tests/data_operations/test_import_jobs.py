@@ -51,10 +51,6 @@ async def test_a01_concurrent_submit_single_job(ops_env):
         return_exceptions=True,
     )
     # 第二个提交在锁内看到 COMMITTING → 409 冲突（不是第二个 job）
-    codes = sorted(
-        out1.get("status", "conflict") if isinstance(out1, dict) else "conflict"
-        for out in (out1, out2)
-    )
     jobs = _job_ids(ops_env)
     assert len(jobs) == 1
     assert jobs[0]["kind"] == "data_import"
@@ -363,7 +359,6 @@ async def test_b1_slow_reader_never_clobbers_terminal_state(ops_env):
         # 冻结快照：提交中、无收据（B 的慢读从这一刻开始）
         frozen = staging_mod.load_state(state.batch_id)
         assert frozen.status.value == "committing" and not frozen.receipts
-        frozen_rev = frozen.rev
         release.set()
         task = svc_a._commit_tasks.get(state.batch_id)
         assert task is not None

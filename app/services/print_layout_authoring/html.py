@@ -119,7 +119,6 @@ def authored_product_overlay(
         lp = c.get("legend")
         if lp and lp.get("status") != "blocked":
             entries = list(lp.get("entries") or [])
-            color = _esc(c.get("color") or "#1e293b")
             cells = "".join(
                 f'<div style="display:inline-block;width:{100.0 / max(1, int(lp.get("columns") or 1)):.1f}%;'
                 f'vertical-align:top;font-size:{size_pt * 0.9:.2f}pt">'

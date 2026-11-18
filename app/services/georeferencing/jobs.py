@@ -189,7 +189,7 @@ async def start_georeference_job(
         cur.updated_at = datetime.now(timezone.utc).isoformat()
         return cur
 
-    frozen_plan = mutate_plan_cas(
+    mutate_plan_cas(
         session_id,
         plan.plan_id,
         expected_revision=expected_revision,

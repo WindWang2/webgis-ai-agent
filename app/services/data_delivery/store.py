@@ -126,7 +126,6 @@ def publish_data_object_for_delivery(
         publish_data_object,
     )
 
-    d = final_dir(delivery_id)
     files = _files(delivery_id)
     if not files:
         return {"state": "failed", "error": "no delivery files"}

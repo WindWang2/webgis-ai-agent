@@ -205,7 +205,6 @@ def build_release_manifest(
 ) -> Dict[str, Any]:
     """机器可读发布 manifest（对账面：文件/证据/指纹/版本 pin）。"""
 
-    spec = bundle.get("spec") or {}
     files = [
         {"name": "brief.html", "kind": "html", "status": "ready",
          "sha256": html_sha256, "bytes": html_bytes},

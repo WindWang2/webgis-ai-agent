@@ -260,7 +260,7 @@ class TestMixedPng:
 
         # 栅格A：10-20E；栅格B：15-25E（半重叠）—— 值域区分
         tif_a = _gradient_tif(tmp_path / "a.tif", west=10.0, dw=10.0)
-        tif_b = _gradient_tif(tmp_path / "b.tif", west=15.0, dw=10.0, nodata=None)
+        _gradient_tif(tmp_path / "b.tif", west=15.0, dw=10.0, nodata=None)
         rows, cols = np.mgrid[0:8, 0:8]
         write_tif(tmp_path / "b.tif", bands=1, width=8, height=8, dtype="float32",
                   values=(200 + rows * 10 + cols).astype("float32")[None],
@@ -292,7 +292,8 @@ class TestMixedPng:
         png = np.array(Image.open(tmp_path / "two.png").convert("RGB"))
         # A 覆盖 10-20E（x 0..200），B 覆盖 15-25E（x 100..500，值 200+ → 亮灰）。
         # x=50 只有 A：值 0*..≈小 → 暗；x=250 只有 B：值 ~228 → 亮。
-        left = int(png[250, 50, 0]); right = int(png[250, 250, 0])
+        left = int(png[250, 50, 0])
+        right = int(png[250, 250, 0])
         assert left <= 30, f"A-only 区应暗（got {left}）"
         assert right >= 90, f"B-only 区应亮（got {right}）"
 
@@ -376,7 +377,6 @@ class TestNodataAndAlpha:
         comp = compile_mapspec_to_svg_detailed(
             doc, width=200, height=200, padding=0, bounds=VIEW,
             raster_bindings=bindings)
-        m = re.search(r'data-g26-raster="raster-layer"[^>]*', comp.svg)
         uri = re.search(r'href="(data:image/png;base64,[^"]+)"',
                         comp.svg[comp.svg.find("<image"):])
         assert uri, "嵌入 image 元素携带 data URI"
