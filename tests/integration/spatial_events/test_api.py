@@ -335,7 +335,7 @@ class TestWebhook:
 
 
 class TestReplayAPI:
-    def test_dry_run_resume_force(self, api):
+    def test_dry_run_resume_force(self, api, monkeypatch):
         r = api.client.post("/api/v1/spatial-events/events",
                             json=_ingest_body(event_id="rp-1"))
         row_id = r.json()["row_id"]
@@ -352,11 +352,19 @@ class TestReplayAPI:
             json={"from_id": 0, "to_id": row_id},
         ).json()
         assert rep["skipped_processed"] == 1
+        # Force is an org-admin operation. Elevate only this explicit request,
+        # not the shared actor fixture used by the ordinary-user auth tests.
+        monkeypatch.setitem(
+            app.dependency_overrides, get_current_user,
+            lambda: {"id": "alice", "org_id": "org-a", "role": "admin"},
+        )
         # force 重放：幂等（fire/mission 不重复）
-        force = api.client.post(
+        force_response = api.client.post(
             "/api/v1/spatial-events/replay",
             json={"from_id": 0, "to_id": row_id, "force": True},
-        ).json()
+        )
+        assert force_response.status_code == 200, force_response.text
+        force = force_response.json()
         assert force["replayed"] == 1
         missions = api.runtime.store.list_unfinished(org_id="org-a", limit=10)
         assert len(missions) <= 1
@@ -366,6 +374,36 @@ class TestReplayAPI:
             json={"from_id": 10, "to_id": 5},
         )
         assert bad.status_code == 400
+
+
+    @pytest.mark.parametrize("role", [None, "viewer", "editor"])
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_force_replay_requires_admin_without_mutating_ledger(self, api, monkeypatch, role, dry_run):
+        response = api.client.post(
+            "/api/v1/spatial-events/events", json=_ingest_body(event_id="force-denied"),
+        )
+        assert response.status_code == 200, response.text
+        row_id = response.json()["row_id"]
+        actor = {"id": "alice", "org_id": "org-a"}
+        if role is not None:
+            actor["role"] = role
+        monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: actor)
+        before = api.client.get("/api/v1/spatial-events/events")
+        assert before.status_code == 200
+        rejected = api.client.post(
+            "/api/v1/spatial-events/replay",
+            json={"from_id": 0, "to_id": row_id, "force": True, "dry_run": dry_run},
+        )
+        assert rejected.status_code == 403
+        error = rejected.json()
+        assert error["code"] == "FORBIDDEN"
+        assert error["message"] == "admin_required"
+        assert error["category"] == "permission"
+        assert error["retryable"] is False
+        assert error["data"] is None
+        after = api.client.get("/api/v1/spatial-events/events")
+        assert after.status_code == 200
+        assert after.json() == before.json()
 
 
 class TestPortfolioAPI:
