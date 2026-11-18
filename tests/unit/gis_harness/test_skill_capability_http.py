@@ -135,3 +135,18 @@ async def test_account_presets_stay_authenticated_despite_valid_capability(http_
     assert (await client.get(base, headers=http_env.capability)).status_code == 401
     assert (await client.post(base, headers=http_env.capability, json={"name": "x", "skill_id": "validate_spatial_data"})).status_code == 401
     assert (await client.post(base + "/unknown/prepare", headers=http_env.capability, json={"session_id": "anon-session"})).status_code == 401
+
+
+@pytest.mark.parametrize("revoke", ["inactive", "token_version"])
+async def test_revoked_authenticated_principal_cannot_fall_back_to_valid_capability(http_env, revoke):
+    env = http_env
+    with env.factory() as db:
+        user = db.get(User, env.uid)
+        if revoke == "inactive":
+            user.is_active = False
+        else:
+            user.token_version += 1
+        db.commit()
+    auth.invalidate_live_user_state(env.uid)
+    response = await env.client.get("/api/v1/skill-jobs/runs?session_id=anon-session", headers=env.headers | env.capability)
+    assert response.status_code == (403 if revoke == "inactive" else 401)
