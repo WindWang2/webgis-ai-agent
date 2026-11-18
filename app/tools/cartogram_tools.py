@@ -404,7 +404,7 @@ def register_cartogram_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_dorling_cartogram_export",
-        capabilities=["thematic_cartography", "file_delivery"],
+        capabilities=["thematic_cartography", "map_export_publishing"],
         tier=2,
         domains=["cartography", "publication"],
         args_model=ExportArgs,

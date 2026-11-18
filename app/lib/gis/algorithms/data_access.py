@@ -12,6 +12,35 @@ from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
+    AlgorithmDescriptor(
+        id="data.linked_exploration.preview",
+        name="联动探索冻结源条件预览",
+        capabilities=["linked_exploration"],
+        category="data_access",
+        input_artifact_types=["feature_collection"],
+        # The preview returns bounded JSON statistics, not a persisted table artifact.
+        tool_candidates=["webgis_exploration_preview"],
+        runtime_status="native",
+        crs_class="CRS_AGNOSTIC",
+        preferred_execution_policy="ASYNC",
+        deterministic=True,
+        max_features_hint=250_000,
+        cpu_cost="medium",
+        memory_cost="high",
+        io_cost="medium",
+        assumptions=[
+            "同一冻结源（ref/revision/fingerprint）；ChartSpec 与 typed conditions 校验通过",
+            "类别/范围条件按 AND 求交；facet 排除本图条件，full 应用全部条件",
+        ],
+        limitations=[
+            "只返回有界 JSON 统计、源锚点与可选 selection handle，不生成持久 stats_table 产物",
+            "不替代探索视图创建、应用、表格分页或导出工具；范围图仅支持 count",
+        ],
+        conformance_tests=[
+            "tests/unit/gis/test_registry_residuals_2123.py::test_linked_exploration_preview_tool_uses_real_contract",
+            "tests/integration/test_g46_service_journey.py::TestInspectAndPreview::test_combined_intersection_e02",
+        ],
+    ),
         AlgorithmDescriptor(
             id="poi.query.local", name="POI 查询（本地优先）",
             conformance_tests=[
