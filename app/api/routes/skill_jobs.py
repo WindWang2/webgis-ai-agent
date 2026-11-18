@@ -304,7 +304,7 @@ async def list_presets_ep(
 ):
     from app.services.gis_harness.skill_jobs.presets import list_presets
 
-    return {"presets": list_presets(org_id=_org_of(user), project_id=project_id)}
+    return {"presets": list_presets(org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""), project_id=project_id)}
 
 
 @router.post("/presets")
@@ -320,7 +320,7 @@ async def create_preset_ep(
                 name=req.name, description=req.description,
                 skill_id=req.skill_id, skill_version=req.skill_version,
                 params=req.params, bindings_template=req.bindings_template),
-            org_id=_org_of(user), creator_id=str(user.get("id") or ""),
+            org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""),
             project_id=str(user.get("project_id") or ""))
     except ValueError as e:
         raise HTTPException(422, detail={"code": "PRESET_INVALID",
@@ -334,7 +334,7 @@ async def get_preset_ep(
 ):
     from app.services.gis_harness.skill_jobs.presets import get_preset
 
-    preset = get_preset(preset_id, org_id=_org_of(user))
+    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""))
     if preset is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     return preset
@@ -354,9 +354,11 @@ async def update_preset_ep(
                 name=req.name, description=req.description,
                 skill_id=req.skill_id, skill_version=req.skill_version,
                 params=req.params, bindings_template=req.bindings_template),
-            org_id=_org_of(user), creator_id=str(user.get("id") or ""),
+            org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""),
             preset_id=preset_id)
     except ValueError as e:
+        if str(e) == "preset not found":
+            raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"}) from e
         raise HTTPException(422, detail={"code": "PRESET_INVALID",
                                          "message": str(e)[:200]}) from e
 
@@ -368,7 +370,7 @@ async def delete_preset_ep(
 ):
     from app.services.gis_harness.skill_jobs.presets import delete_preset
 
-    if not delete_preset(preset_id, org_id=_org_of(user)):
+    if not delete_preset(preset_id, org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or "")):
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     return {"deleted": True}
 
@@ -392,10 +394,10 @@ async def preset_prepare_ep(
     from app.services.gis_harness.skill_jobs.store import prepared_store
 
     # review P1-4：重用路径读原始行 —— 有界视图会截断 >64 字符参数。
-    preset_raw = get_preset_raw(preset_id, org_id=_org_of(user))
+    preset_raw = get_preset_raw(preset_id, org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""))
     if preset_raw is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
-    preset = get_preset(preset_id, org_id=_org_of(user))
+    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=str(user.get("user_id") or user.get("id") or ""))
     if preset is None:  # raw 与视图两次读之间被并发删除（R2 nit-2）
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     params = dict(preset_raw.get("params") or {})

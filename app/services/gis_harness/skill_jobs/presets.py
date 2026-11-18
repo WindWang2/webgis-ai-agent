@@ -53,6 +53,16 @@ def _row_to_view(row: Any) -> Dict[str, Any]:
     }
 
 
+def _visible(row: Any, org_id: Optional[int], creator_id: str) -> bool:
+    """Real orgs share configuration; NULL-org rows remain creator-private."""
+    return bool(
+        row is not None and row.org_id == org_id
+        and (org_id is not None or (
+            creator_id and creator_id != "anonymous" and row.creator_id == creator_id
+        ))
+    )
+
+
 def save_preset(
     payload: PresetPayload,
     *,
@@ -75,6 +85,8 @@ def save_preset(
     if _payload_bytes > 16 * 1024:
         raise ValueError("预设载荷超限（≤16KB）：预设是配置引用，不承载大对象")
 
+    if org_id is None and (not creator_id or creator_id == "anonymous"):
+        raise ValueError("preset creator required")
     lib = get_skill_library()
     skill = lib.get(payload.skill_id)
     if skill is None:
@@ -89,7 +101,7 @@ def save_preset(
             row = db.get(SkillJobPreset, preset_id)
             # review P1-1：更新路径与 get/delete 同规则校验 org（跨 org 一律
             # not found，不泄露存在性）。
-            if row is None or row.org_id != org_id:
+            if not _visible(row, org_id, creator_id):
                 raise ValueError("preset not found")
             row.name = payload.name
             row.description = payload.description
@@ -123,6 +135,7 @@ def list_presets(
     *,
     org_id: Optional[int],
     project_id: str = "",
+    creator_id: str = "",
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
     """按 org（+可选 project）列出可见预设（有界）。"""
@@ -132,6 +145,10 @@ def list_presets(
     from app.models.db_model import SkillJobPreset
 
     stmt = select(SkillJobPreset).where(SkillJobPreset.org_id == org_id)
+    if org_id is None:
+        if not creator_id or creator_id == "anonymous":
+            return []
+        stmt = stmt.where(SkillJobPreset.creator_id == creator_id)
     if project_id:
         stmt = stmt.where(SkillJobPreset.project_id == project_id)
     stmt = stmt.order_by(SkillJobPreset.updated_at.desc()).limit(min(max(limit, 1), 100))
@@ -140,7 +157,7 @@ def list_presets(
         return [_row_to_view(r) for r in rows]
 
 
-def get_preset_raw(preset_id: str, *, org_id: Optional[int]) -> Optional[Dict[str, Any]]:
+def get_preset_raw(preset_id: str, *, org_id: Optional[int], creator_id: str = "") -> Optional[Dict[str, Any]]:
     """原始（未截断）预设数据 —— 仅供重用/prepare 路径（review P1-4：
     _row_to_view 的有界投影截断长参数，不能作为重用真相）。"""
     from app.core.database import SessionLocal
@@ -148,7 +165,7 @@ def get_preset_raw(preset_id: str, *, org_id: Optional[int]) -> Optional[Dict[st
 
     with SessionLocal() as db:
         row = db.get(SkillJobPreset, preset_id)
-        if row is None or row.org_id != org_id:
+        if not _visible(row, org_id, creator_id):
             return None
         return {
             "params": dict(row.params) if isinstance(row.params, dict) else {},
@@ -158,24 +175,24 @@ def get_preset_raw(preset_id: str, *, org_id: Optional[int]) -> Optional[Dict[st
         }
 
 
-def get_preset(preset_id: str, *, org_id: Optional[int]) -> Optional[Dict[str, Any]]:
+def get_preset(preset_id: str, *, org_id: Optional[int], creator_id: str = "") -> Optional[Dict[str, Any]]:
     from app.core.database import SessionLocal
     from app.models.db_model import SkillJobPreset
 
     with SessionLocal() as db:
         row = db.get(SkillJobPreset, preset_id)
-        if row is None or row.org_id != org_id:
+        if not _visible(row, org_id, creator_id):
             return None
         return _row_to_view(row)
 
 
-def delete_preset(preset_id: str, *, org_id: Optional[int]) -> bool:
+def delete_preset(preset_id: str, *, org_id: Optional[int], creator_id: str = "") -> bool:
     from app.core.database import SessionLocal
     from app.models.db_model import SkillJobPreset
 
     with SessionLocal() as db:
         row = db.get(SkillJobPreset, preset_id)
-        if row is None or row.org_id != org_id:
+        if not _visible(row, org_id, creator_id):
             return False
         db.delete(row)
         db.commit()
