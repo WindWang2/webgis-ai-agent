@@ -77,13 +77,13 @@ describe('resolveFrameEffectiveSpec', () => {
     const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
     expect(out.applied).toEqual(['layer_overrides', 'where_filter']);
     expect(out.filteredFeatureCount).toBe(1);
-    const layer = (out.document.layers as Array<Record<string, unknown>>)[0];
+    const layer = (out.document.layers as unknown as Array<Record<string, unknown>>)[0];
     expect(layer.opacity).toBe(0.6); // override 生效
-    const src = (out.document.sources as Record<string, Record<string, unknown>>)['src-0'];
+    const src = (out.document.sources as unknown as Record<string, Record<string, unknown>>)['src-0'];
     const payload = (src.inlineData ?? src.data) as { features: Array<{ properties: { year: number } }> };
     expect(payload.features.map((f) => f.properties.year)).toEqual([2022]);
     // 输入不可变（原 spec 三条要素仍在）。
-    const origSrc = (s.sources as Record<string, Record<string, unknown>>)['src-0'];
+    const origSrc = (s.sources as unknown as Record<string, Record<string, unknown>>)['src-0'];
     expect(((origSrc.inlineData ?? origSrc.data) as { features: unknown[] }).features).toHaveLength(3);
   });
 
@@ -95,7 +95,7 @@ describe('resolveFrameEffectiveSpec', () => {
     };
     const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
     expect(out.applied).toContain('shared_expression');
-    const layer = (out.document.layers as Array<Record<string, { legend_spec?: Record<string, unknown> }>>)[0];
+    const layer = (out.document.layers as unknown as Array<{ legend_spec?: Record<string, unknown> }>)[0];
     const legend = layer.legend_spec!;
     expect(legend.breaks).toEqual([0, 5, 10, 15, 20]); // 域级 breaks 原样（A18）
     expect(legend.method).toBe('quantile');
@@ -106,19 +106,19 @@ describe('resolveFrameEffectiveSpec', () => {
 
   it('time_window [start,end) 窗过滤（数值域左闭右开）', () => {
     const s = spec();
-    const slot = s.frame_product!.frames[0] as { data: Record<string, unknown> };
+    const slot = s.frame_product!.frames[0] as unknown as { data: Record<string, unknown> };
     delete slot.data.where;
     slot.data.time_window = { time_field: 'year', time_representation: 'year_int', start: 2020, end: 2024 };
     const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
     expect(out.applied).toEqual(['layer_overrides', 'time_window']);
-    const src = (out.document.sources as Record<string, Record<string, unknown>>)['src-0'];
+    const src = (out.document.sources as unknown as Record<string, Record<string, unknown>>)['src-0'];
     const payload = (src.inlineData ?? src.data) as { features: Array<{ properties: { year: number } }> };
     expect(payload.features.map((f) => f.properties.year)).toEqual([2020, 2022]); // [2020,2024)
   });
 
   it('time_window 契约 instant → year_int 归一（G15 J16 夹具同形：字符串界）', () => {
     const s = spec();
-    const slot = s.frame_product!.frames[0] as { data: Record<string, unknown> };
+    const slot = s.frame_product!.frames[0] as unknown as { data: Record<string, unknown> };
     delete slot.data.where;
     slot.data.time_window = {
       time_field: 'year', time_representation: 'year_int', granularity: 'year',
@@ -127,14 +127,14 @@ describe('resolveFrameEffectiveSpec', () => {
     };
     const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
     expect(out.filteredFeatureCount).toBe(1); // 仅 year=2022 命中
-    const src = (out.document.sources as Record<string, Record<string, unknown>>)['src-0'];
+    const src = (out.document.sources as unknown as Record<string, Record<string, unknown>>)['src-0'];
     const payload = (src.inlineData ?? src.data) as { features: Array<{ properties: { year: number } }> };
     expect(payload.features[0].properties.year).toBe(2022);
   });
 
   it('time_window 缺 time_representation → 与后端一致跳过过滤（M6 对齐）', () => {
     const s = spec();
-    const slot = s.frame_product!.frames[0] as { data: Record<string, unknown> };
+    const slot = s.frame_product!.frames[0] as unknown as { data: Record<string, unknown> };
     delete slot.data.where;
     slot.data.time_window = { time_field: 'year', start: 2020, end: 2024 }; // 无 representation
     const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
@@ -150,14 +150,14 @@ describe('resolveFrameEffectiveSpec', () => {
     };
     // independent 帧
     const s2 = spec();
-    (s2.frame_product!.frames[0] as { legend?: string }).legend = 'independent';
+    (s2.frame_product!.frames[0] as unknown as { legend?: string }).legend = 'independent';
     s2.frame_product!.shared_expression = s.frame_product!.shared_expression;
     const out2 = resolveFrameEffectiveSpec(s2, s2.frame_product, 'f-2022');
     expect(out2.applied).not.toContain('shared_expression');
     expect(out2.disclosures).toContain('shared_expression_skipped_independent_legend');
     // palette_colors 类数不匹配（层 2 类 vs 共享 4 类）→ 丢弃 + 披露
     const out = resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022');
-    const layer = (out.document.layers as Array<{ legend_spec?: Record<string, unknown> }>)[0];
+    const layer = (out.document.layers as unknown as Array<{ legend_spec?: Record<string, unknown> }>)[0];
     expect(layer.legend_spec!.breaks).toEqual([0, 5, 10, 15, 20]);
     expect(layer.legend_spec!.palette_colors).toBeUndefined();
     expect(out.disclosures).toContain('shared_expression_palette_colors_not_recomputed');
@@ -178,13 +178,13 @@ describe('resolveFrameEffectiveSpec', () => {
 
   it('绑定层缺席 / 源非内联 → typed error（不静默回退全幅）', () => {
     const s = spec();
-    (s.frame_product!.frames[0] as { data: { layer_id: string } }).data.layer_id = 'layer-x';
+    (s.frame_product!.frames[0] as unknown as { data: { layer_id: string } }).data.layer_id = 'layer-x';
     expect(() => resolveFrameEffectiveSpec(s, s.frame_product, 'f-2022')).toThrow(FrameEffectiveSpecError);
 
     const s2 = spec();
-    const layers = s2.layers as Array<Record<string, unknown>>;
+    const layers = s2.layers as unknown as Array<Record<string, unknown>>;
     layers[0].source = 'src-remote';
-    (s2.sources as Record<string, unknown>)['src-remote'] = { type: 'geojson', url: 'http://x' };
+    (s2.sources as unknown as Record<string, unknown>)['src-remote'] = { type: 'geojson', url: 'http://x' };
     try {
       resolveFrameEffectiveSpec(s2, s2.frame_product, 'f-2022');
       expect.unreachable('expected frame_source_not_inline');
@@ -198,6 +198,6 @@ describe('resolveFrameEffectiveSpec', () => {
     const s = spec();
     expect(() => resolveFrameEffectiveSpec(s, s.frame_product, 'f-none')).toThrow(FrameEffectiveSpecError);
     const doc = applyFrameLayerOverrides(spec(), null);
-    expect((doc.layers as Array<Record<string, unknown>>)[0].id).toBe('layer-0');
+    expect((doc.layers as unknown as Array<Record<string, unknown>>)[0].id).toBe('layer-0');
   });
 });

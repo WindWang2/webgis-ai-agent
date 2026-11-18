@@ -20,7 +20,7 @@ function fakeMap(cam: { lng: number; lat: number; zoom: number; bearing?: number
     getPitch: () => state.pitch,
     jumpTo: (opts) => {
       jumps.push(opts);
-      if (typeof opts.center === 'object') {
+      if (Array.isArray(opts.center)) {
         state.lng = opts.center[0];
         state.lat = opts.center[1];
       }

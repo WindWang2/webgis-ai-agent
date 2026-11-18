@@ -12,8 +12,8 @@ describe('G33 categorical key_type / default mirror', () => {
       type: 'categorical',
       field: 'code',
       categories: [
-        { key: 'a', color: '#aaaaaa' },
-        { key: '1', color: '#111111', key_type: 'number' },
+        { key: 'a', color: '#aaaaaa', label: 'a' },
+        { key: '1', color: '#111111', key_type: 'number', label: '1' },
       ],
     }) as unknown[];
     // ["match", ["get","code"], "a", "#aaaaaa", 1, "#111111", <default>]
@@ -29,8 +29,8 @@ describe('G33 categorical key_type / default mirror', () => {
       type: 'categorical',
       field: 'k',
       categories: [
-        { key: 'x', color: '#111111' },
-        { key: 'y', color: '#222222' },
+        { key: 'x', color: '#111111', label: 'x' },
+        { key: 'y', color: '#222222', label: 'y' },
       ],
       default: { color: '#cccccc', label: 'Other' },
     }) as unknown[];
@@ -43,8 +43,8 @@ describe('G33 categorical key_type / default mirror', () => {
       type: 'categorical',
       field: 'k',
       categories: [
-        { key: 'x', color: '#111111' },
-        { key: 'y', color: '#222222' },
+        { key: 'x', color: '#111111', label: 'x' },
+        { key: 'y', color: '#222222', label: 'y' },
       ],
     }) as unknown[];
     expect(expr[expr.length - 1]).toBe('#222222');
@@ -57,8 +57,8 @@ describe('G33 categorical key_type: bool parity with backend vocabulary', () => 
       type: 'categorical',
       field: 'flag',
       categories: [
-        { key: 'True', color: '#ff0000', key_type: 'bool' },
-        { key: 'False', color: '#0000ff', key_type: 'bool' },
+        { key: 'True', color: '#ff0000', key_type: 'bool', label: 'True' },
+        { key: 'False', color: '#0000ff', key_type: 'bool', label: 'False' },
       ],
     }) as unknown[];
     expect(expr[0]).toBe('match');

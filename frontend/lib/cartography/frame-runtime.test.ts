@@ -182,7 +182,7 @@ describe('projectFrameRuntime 状态分类', () => {
     spec.frame_product!.frames = spec.frame_product!.frames.filter(
       (fr) => fr.frame_id !== 'fp-t-2022',
     );
-    spec.layout!.frames = spec.layout!.frames.filter((lf) => lf.id !== 'fp-t-2022');
+    spec.layout!.frames = (spec.layout!.frames ?? []).filter((lf) => lf.id !== 'fp-t-2022');
     const out = projectFrameRuntime(inputs({
       spec,
       activeFrameId: 'fp-t-2020',
