@@ -250,8 +250,6 @@ def _promotion_blob_protection(
     """
     if key in pinned_shas:
         return "pinned"
-    if key in lakehouse_shas:
-        return "lakehouse catalog, dataset registry, or content blob"
     if key in symbol_version_blob_keys:
         return "cartographic symbol asset version row"
     if key in georef_blob_keys:
@@ -262,6 +260,10 @@ def _promotion_blob_protection(
         return "referenced by artifact_revisions (sha)"
     if location in artifact_locations:
         return "head pointer (Artifact.metadata_json.content_location)"
+    # Lakehouse roots include artifact revision/head references too. Preserve
+    # their specific diagnostic above; the union still protects every root.
+    if key in lakehouse_shas:
+        return "lakehouse catalog, dataset registry, or content blob"
     if location in snapshot_locations or key in snapshot_shas:
         return "workspace snapshot manifest pointer"
     if mtime > now - grace_hours * 3600.0:
