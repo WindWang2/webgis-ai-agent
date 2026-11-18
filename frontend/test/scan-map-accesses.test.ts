@@ -1,3 +1,4 @@
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { scanMapAccesses } from './helpers/scan-map-accesses';
 
@@ -78,4 +79,43 @@ describe('MapLibre mock surface scanner', () => {
       { name: 'toolbar', line: 1, kind: 'call' },
     ]);
   });
+});
+
+// Array-valued fields named map are not MapLibre maps; unknown receivers remain guarded.
+it('uses proven array types without suppressing unknown MapLibre methods', () => {
+  const name = '/virtual/map-surface.ts';
+  const source = `interface Binding { map: string[] }
+declare const binding: Binding;
+binding.map.find(() => true);
+binding.map.slice();
+binding.map.length;
+declare const ctx: { map: { futureMethod(): void } };
+ctx.map.futureMethod();`;
+  const options = { target: ts.ScriptTarget.ES2022, types: [] };
+  const host = ts.createCompilerHost(options);
+  const getSource = host.getSourceFile.bind(host);
+  host.getSourceFile = (file, version, onError, fresh) => file === name
+    ? ts.createSourceFile(file, source, version, true)
+    : getSource(file, version, onError, fresh);
+  const program = ts.createProgram([name], options, host);
+  expect(scanMapAccesses(source, name, program)).toEqual([
+    { name: 'futureMethod', line: 7, kind: 'call' },
+  ]);
+});
+
+it('honors positive array guards without suppressing the else or unguarded object branch', () => {
+  const source = `if (cb && Array.isArray(cb.map) && cb.map.length) { cb.map.slice(); }
+else { cb.map.futureMethod(); }
+cb.map.unknownMethod();`;
+  expect(scanMapAccesses(source)).toEqual([
+    { name: 'futureMethod', line: 2, kind: 'call' },
+    { name: 'unknownMethod', line: 3, kind: 'call' },
+  ]);
+});
+
+it('does not mistake a shadowed Array or an overwritten guarded field for proof', () => {
+  expect(scanMapAccesses('const Array = { isArray: () => true }; if (Array.isArray(ctx.map)) { ctx.map.futureMethod(); }'))
+    .toEqual([{ name: 'futureMethod', line: 1, kind: 'call' }]);
+  expect(scanMapAccesses('if (Array.isArray(cb.map)) { cb.map = replacement; cb.map.futureMethod(); }'))
+    .toEqual([{ name: 'futureMethod', line: 1, kind: 'call' }]);
 });
