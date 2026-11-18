@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { compileMapSpecToSvg } from './mapspec-to-svg';
+import type { GeoJSONMapSpecSource } from './types';
 
 const OPTS = { targetDpi: 72, width: 400, height: 300, padding: 20 };
 
@@ -16,7 +17,13 @@ function pt(id: string, lon: number, lat: number, name: string | null) {
   };
 }
 
-function schoolsSpec(overrides: unknown[] | undefined, labelsCfg: Record<string, unknown>) {
+function schoolsSpec(overrides: unknown[] | undefined, labelsCfg: Record<string, unknown>): {
+  version: string;
+  view: { center: number[]; zoom: number };
+  sources: { schools: GeoJSONMapSpecSource };
+  layers: Array<Record<string, unknown>>;
+  layout: { labels: Record<string, unknown> };
+} {
   const label: Record<string, unknown> = { field: 'name' };
   if (overrides !== undefined) label.authoring = { overrides };
   return {

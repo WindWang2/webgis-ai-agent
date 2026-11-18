@@ -190,11 +190,11 @@ describe('runtime label authoring（G16）', () => {
 
   it('label-only 变更（加覆写）不重建主层', () => {
     runtime.reconcile(specWith(undefined));
-    const mainAddsBefore = map._calls.addLayer.filter((c) => c.def.id === 'schools').length;
+    const mainAddsBefore = map._calls.addLayer.filter((c: { def: { id: string } }) => c.def.id === 'schools').length;
     runtime.reconcile(specWith({
       overrides: [{ featureId: 's1', pinned: true, offset: { dx: 1, dy: 1 }, idKey: null }],
     }));
-    const mainAddsAfter = map._calls.addLayer.filter((c) => c.def.id === 'schools').length;
+    const mainAddsAfter = map._calls.addLayer.filter((c: { def: { id: string } }) => c.def.id === 'schools').length;
     expect(mainAddsAfter).toBe(mainAddsBefore);
     expect(map.getLayer('schools-label-pinned')).toBeTruthy();
   });

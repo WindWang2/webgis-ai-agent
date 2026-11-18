@@ -17,9 +17,9 @@ const feats = [
 describe('projectAuthoring（G16 live 投影）', () => {
   it('orphan 不投影、active 分物料', () => {
     const proj = projectAuthoring([
-      { featureId: 's1', hidden: true, idKey: null },
-      { featureId: 'ghost', hidden: true, idKey: null },
-      { featureId: 's2', pinned: true, offset: { dx: 1, dy: 2 }, idKey: null },
+      { featureId: 's1', hidden: true },
+      { featureId: 'ghost', hidden: true },
+      { featureId: 's2', pinned: true, offset: { dx: 1, dy: 2 } },
     ], feats);
     expect(proj.active.map((o) => o.featureId)).toEqual(['s1', 's2']);
     expect(proj.orphan.map((o) => o.featureId)).toEqual(['ghost']);
@@ -35,7 +35,7 @@ describe('projectAuthoring（G16 live 投影）', () => {
 
   it('text 覆写 → match 表达式（含 id 与属性键分组）', () => {
     const proj = projectAuthoring([
-      { featureId: 's1', text: '自定义一', idKey: null },
+      { featureId: 's1', text: '自定义一' },
       { featureId: '7', text: '自定义七', idKey: 'OBJECTID' },
     ], feats);
     const expr = buildTextFieldExpr(proj, 'name') as unknown[];
@@ -48,8 +48,8 @@ describe('projectAuthoring（G16 live 投影）', () => {
 
   it('hidden → match false；pinned → match true；auto filter 排除两者', () => {
     const proj = projectAuthoring([
-      { featureId: 's1', hidden: true, idKey: null },
-      { featureId: 's2', pinned: true, idKey: null },
+      { featureId: 's1', hidden: true },
+      { featureId: 's2', pinned: true },
     ], feats);
     expect(JSON.stringify(buildHiddenExcludeFilter(proj))).toContain('false');
     expect(JSON.stringify(buildPinnedFilter(proj))).toContain('true');
@@ -59,7 +59,7 @@ describe('projectAuthoring（G16 live 投影）', () => {
 
   it('offset → text-offset match（[dx,dy] em 字面量）', () => {
     const proj = projectAuthoring([
-      { featureId: 's2', pinned: true, offset: { dx: 1.5, dy: -0.5 }, idKey: null },
+      { featureId: 's2', pinned: true, offset: { dx: 1.5, dy: -0.5 } },
     ], feats);
     const expr = JSON.stringify(buildTextOffsetExpr(proj, true));
     expect(expr).toContain('[1.5,-0.5]');
@@ -79,7 +79,7 @@ describe('R1 review fixes（G16）', () => {
     // 数值属性 与字符串覆写键确实匹配（to-string 归一）。
     const spec = await import('@maplibre/maplibre-gl-style-spec');
     const createExpression = (spec as unknown as {
-      createExpression?: (v: unknown) => { result: string; value?: { evaluate: (g: unknown) => unknown } };
+      createExpression?: (v: unknown, rootKey: string) => { result: string; value?: { evaluate: (g: unknown, feature?: unknown) => unknown } };
     }).createExpression;
     if (typeof createExpression !== 'function') {
       // 求值器不可用（版本差异）—— 退化为表达式形状断言（to-string 在场）。
@@ -113,8 +113,8 @@ describe('R1 review fixes（G16）', () => {
 
   it('P2-7：hidden+pinned 矛盾组合 → hidden 恒胜（pinned filter 排除）', () => {
     const proj = projectAuthoring([
-      { featureId: 's1', hidden: true, pinned: true, idKey: null },
-      { featureId: 's2', pinned: true, idKey: null },
+      { featureId: 's1', hidden: true, pinned: true },
+      { featureId: 's2', pinned: true },
     ], feats);
     const json = JSON.stringify(buildPinnedFilter(proj));
     expect(json).toContain('s2');
@@ -135,7 +135,7 @@ describe('R1 review fixes（G16）', () => {
 
   it('P3-22：危险 match 字面量名不进表达式', () => {
     const proj = projectAuthoring(
-      [{ featureId: 'toString', hidden: true, idKey: null }], null);
+      [{ featureId: 'toString', hidden: true }], null);
     expect(proj.unprojectable).toContain('toString');
     expect(buildHiddenExcludeFilter(proj)).toBeNull();
   });

@@ -83,7 +83,7 @@ function mockCtx() {
 const DRAW_BASE = {
   darkMode: false, scalePx: (v: number) => v, targetW: 1600, targetH: 1200,
   style: { fontFamily: 'sans-serif', accentColor: '#3182bd', marginPx: 40 },
-} as never;
+};
 
 describe('G41 Canvas 图例适配器', () => {
   it('canonical 双变量：逐格精确计数 + 单位/有效对/缺失/边界规则', () => {
@@ -137,7 +137,7 @@ describe('G41 矢量 SVG 导出', () => {
     expect(result.svg).toContain('data-g41-cell="6"');
     expect(result.svg).toContain('data-g41-count="1"');
     expect(result.svg).toContain('pairs=45');
-    expect(result.degradations.some((d) => d.detail.includes('bivariate matrix omitted')))
+    expect(result.degradations.some((d) => d.detail?.includes('bivariate matrix omitted')))
       .toBe(false);
   });
 

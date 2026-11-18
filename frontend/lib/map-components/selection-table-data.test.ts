@@ -23,7 +23,7 @@ const layer = {
   _tileUrl: 'http://x/tiles?session_id=sess-seltable-0001',
 } as unknown as Layer;
 
-function page(features: unknown[], opts: { next?: string | null; count?: number; countExact?: boolean } = {}) {
+function page(features: unknown[], opts: { next?: string | null; count?: number | null; countExact?: boolean } = {}) {
   return {
     features,
     pagination: { next_cursor: opts.next ?? null, has_more: !!opts.next, truncated: false, is_complete: !opts.next },
