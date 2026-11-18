@@ -375,13 +375,17 @@ class TestPortfolioAPI:
         with api.factory() as db:
             db.add(Organization(id=1, name="API org", slug="api-org"))
             db.add(User(id="alice", username="alice-api", email="alice-api@example.test", role="editor", org_id=1, is_active=True))
+            db.add(Organization(id=2, name="Other API org", slug="other-api-org"))
+            db.add(User(id="bob", username="bob-api", email="bob-api@example.test", role="editor", org_id=2, is_active=True))
             db.add(Project(id="proj-1", org_id=1, owner_id="alice", name="Real project", status="active"))
             db.commit()
         monkeypatch.setattr("app.core.database.SessionLocal", api.factory)
+        # Portfolio resolves live DB membership; align the event test seam with it.
+        monkeypatch.setattr("app.core.tenancy.effective_org_in_thread", lambda user: "1")
         api.client.post("/api/v1/spatial-events/events",
                         json=_ingest_body(project_id="proj-1"))
         s = api.client.get("/api/v1/portfolio/summary").json()
-        assert s["org_id"] == "org-a"
+        assert s["org_id"] == "1"
         pl = api.client.get("/api/v1/portfolio/projects").json()
         assert any(p["project_id"] == "proj-1" for p in pl["projects"])
         d = api.client.get("/api/v1/portfolio/projects/proj-1").json()
