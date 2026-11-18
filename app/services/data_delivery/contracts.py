@@ -10,7 +10,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from app.schemas.data_delivery_schema import DeliveryFormat
 
 # ── 硬帽（资源纪律：一次一个 writer，批式有界）───────────────────────────
 

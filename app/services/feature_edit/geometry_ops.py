@@ -453,7 +453,6 @@ def _split_polygon_or_line(
     - LineString：splitter 为 LineString/Point —— 交点切段。
     - Multi：逐 part 分割，全部 parts 汇总；无任何 part 被分 → not dividing。
     """
-    from shapely.geometry import MultiPolygon
 
     try:
         result = shapely_split(geom, splitter)

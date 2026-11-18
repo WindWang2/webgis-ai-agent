@@ -341,7 +341,6 @@ async def _promote_raster_artifact(
     per-project quota gates the put (dedup hits are free — no new bytes).
     """
     from app.services.artifact_registry import raster_png_path
-    from app.services.data_lifecycle.quota import check_quota
     from app.services.durable_blob_store import get_filesystem_blob_store
 
     path = raster_png_path(session_id, str(art.storage_ref or ""))
@@ -494,7 +493,6 @@ async def promote_run_artifacts(
     """
     from app.services.artifact_registry import is_raster_ref
     from app.services.artifact_revisions import record_revision
-    from app.services.data_lifecycle.quota import check_quota
     from app.services.durable_blob_store import get_filesystem_blob_store
     from app.services.session_data import session_data_manager
 

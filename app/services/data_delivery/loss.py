@@ -207,9 +207,6 @@ def analyze_losses(
 
     # ── 几何语义 ────────────────────────────────────────────────────────
     geometry_types: List[str] = list((snapshot.geometry or {}).get("types") or [])
-    mixed = len([t for t in geometry_types if not t.endswith("Collection")]) > 1 or (
-        len(geometry_types) > 1 and "GeometryCollection" not in geometry_types
-        and len(set(geometry_types)) > 1)
     if not snapshot.is_table and geometry_types:
         if fmt == "shapefile_zip" and len(set(geometry_types)) > 1:
             out.add(dl_contracts.LOSS_GEOMETRY_SPLIT_BY_TYPE,
@@ -238,10 +235,10 @@ def analyze_losses(
     if fmt == "shapefile_zip":
         fmap, fmap_losses = _shapefile_field_map(selected, fields_sel.field_map)
         out.field_map = fmap
-        for l in fmap_losses:
-            out.losses.append(l)
-            if l.requires_ack and l.code not in out.required_acks:
-                out.required_acks.append(l.code)
+        for loss in fmap_losses:
+            out.losses.append(loss)
+            if loss.requires_ack and loss.code not in out.required_acks:
+                out.required_acks.append(loss.code)
         bool_fields = [f["name"] for f in snapshot.fields
                        if f.get("inferred_type") == "bool" and f["name"] in selected]
         if bool_fields:

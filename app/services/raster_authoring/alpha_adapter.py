@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import Any, Optional, Sequence, Tuple
 
 import numpy as np
-import rasterio
 from rasterio.enums import ColorInterp, MaskFlags, Resampling
 from rasterio.warp import reproject as rio_reproject
 

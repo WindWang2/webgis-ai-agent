@@ -5,7 +5,6 @@ import hashlib
 import math
 import sqlite3
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 
@@ -370,7 +369,6 @@ def test_f11_ogc_relative_cursor_and_truncated_or(monkeypatch):
 
 def test_f14_fingerprint_ignores_signature_and_budget_is_clamped():
     from app.services.data_fabric.cog_materialization import (
-        DEFAULT_MAX_OUTPUT_BYTES,
         _params_fingerprint,
     )
 

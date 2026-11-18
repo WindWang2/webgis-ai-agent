@@ -13,8 +13,6 @@ import pytest
 
 from app.services.cartogram_authoring import contract as contract_mod
 from app.services.cartogram_authoring.contract import (
-    ALGORITHM_ID,
-    ALGORITHM_VERSION,
     MAX_FEATURES_HARD,
     clamp_plan_budget,
     parse_plan,

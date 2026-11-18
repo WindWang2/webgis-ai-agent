@@ -211,7 +211,7 @@ class TestReplaceGeometryTransaction:
         ], feature_ids=[wfid])
         assert prev2.status_code == 200
         assert prev2.json()["preview"][0]["geometry"]["positions_after"] == 5
-        r2 = (await _approve(client, s, prev2.json()["plan_id"])).json()["receipt"]
+        (await _approve(client, s, prev2.json()["plan_id"])).json()["receipt"]
         payload = await session_data_manager.get(s, ref)
         assert payload["geojson"]["features"][0]["geometry"]["coordinates"][0][0] == [116.00, 39.20]
 
@@ -489,7 +489,6 @@ class TestEditableCopy:
         assert copy["source_was_read_only"] is True and copy["derived_from"] == source_ref
 
         # 副本可编辑（首编辑走完整事务），原源指纹不变
-        import json as _json
 
         from app.services.data_ingest.pipeline import compute_payload_fingerprint
 
@@ -548,7 +547,6 @@ class TestReviewFixes:
 
     async def test_read_only_marked_after_preview_blocks_commit(self, client):
         """R3 P2-2：预览后源被标记只读 → pending plan 提交被拒（窗口闭合）。"""
-        from app.services.data_ingest.pipeline import compute_payload_fingerprint
 
         s = sid()
         created = await _create_empty(client, s, "Polygon")

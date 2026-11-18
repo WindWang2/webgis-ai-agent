@@ -513,7 +513,7 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             latency = round((time.time() - start_time) * 1000, 2)
             return DataFabricHealth(status="healthy", message="OGC API Features service online and responsive",
                                     details={"conformsTo": conforms[:5]}, latency_ms=latency)
-        except Exception as e:
+        except Exception:
             latency = round((time.time() - start_time) * 1000, 2)
             safe_url = DataFabricSecurity.redact_url(self.url)
             return DataFabricHealth(

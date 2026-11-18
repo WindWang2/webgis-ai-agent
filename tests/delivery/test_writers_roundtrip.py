@@ -11,7 +11,6 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-import pytest
 
 from app.services.data_delivery import contracts as dl_contracts
 from app.services.data_delivery.writers import (
@@ -159,7 +158,6 @@ def test_shapefile_grouped_zip_members_and_counts(tmp_path):
     assert any(n.endswith(".prj") for n in names), "CRS sidecar 存在"
     assert any(n.endswith(".cpg") for n in names), "编码 sidecar 存在"
     import pyogrio
-    import tempfile as tf
 
     with tempfile.TemporaryDirectory() as td:
         zf.extractall(td)
@@ -238,8 +236,10 @@ def test_reprojection_control_point():
 
 def test_projected_delivery_control_point(tmp_path):
     """整链：投影源 → GeoJSON 交付 → 反读坐标 ≈ 已知 WGS84 控制点。"""
-    import geopandas as gpd
-    from shapely.geometry import Point
+    from importlib import import_module
+
+    # Preserve the original dependency initialization check.
+    import_module("geopandas")
 
     # 直接用 writer 链（service transform 的几何路径）
     from app.services.data_delivery.writers import _round_coords

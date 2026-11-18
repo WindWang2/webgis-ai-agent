@@ -122,7 +122,7 @@ class TestHtmlInjection:
         assert "<rect" in clean
 
     def test_oversized_bundle_rejected(self):
-        spec = _spec(text="x" * 64)
+        _spec(text="x" * 64)
         # 直接构造超预算 HTML（绕过渲染预算检查的负例：预算守卫本身）
         huge = "<html>" + "x" * (MAX_BRIEF_HTML_BYTES + 1)
         assert len(huge.encode("utf-8")) > MAX_BRIEF_HTML_BYTES

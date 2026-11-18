@@ -204,7 +204,7 @@ class TestPartialPolicy:
             self, owner_root, session_id, store_root):
         await _seed_mixed_session(owner_root, session_id, store_root)
         # 删除底层数据文件 → 绑定解析失败 → blocking typed 拒绝
-        tif = _regional_tif(owner_root)
+        _regional_tif(owner_root)
         tif2 = _regional_tif(owner_root, name="gone.tif")
         tif2.unlink()
         # 直接让已提交层的文件消失

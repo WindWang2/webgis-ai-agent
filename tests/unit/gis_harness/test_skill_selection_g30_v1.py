@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-import pytest
 
 from app.services.gis_harness.skill_jobs.selection import (
     resolve_user_skill_selection,

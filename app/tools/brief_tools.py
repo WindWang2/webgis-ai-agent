@@ -80,7 +80,7 @@ def register_brief_tools(registry: ToolRegistry):
             return {"error": "无法确定当前会话 ID。"}
         from app.services.storymap.brief_compiler import compile_brief_draft
         from app.services.storymap.brief_store import (
-            RevisionConflict, create_brief, load_brief,
+            create_brief, load_brief,
         )
 
         gen = db = None
@@ -463,9 +463,7 @@ def register_brief_tools(registry: ToolRegistry):
     ) -> dict:
         if not session_id:
             return {"error": "无法确定当前会话 ID。"}
-        from sqlalchemy import select
 
-        from app.models.map_brief import MapBriefRelease
         from app.services.storymap.brief_release import list_releases
 
         gen = db = None

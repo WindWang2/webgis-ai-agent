@@ -5,9 +5,7 @@
 不拦区内标签、边界拦跨界标签；禁入面；页面组件遮挡；legacy 策略
 byte-stable；DPI 单位语义。
 """
-import math
 
-import pytest
 
 from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 

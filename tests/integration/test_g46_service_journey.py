@@ -10,9 +10,7 @@ evaluator 生成 expected。
 """
 from __future__ import annotations
 
-import asyncio
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -208,7 +206,6 @@ class TestInspectAndPreview:
     async def test_other_bucket_typed_values_e13(self):
         """低频类别 c 溢出到 other（max_groups 缩小场景用直接分桶测试）。
         这里用全量分桶验证 __other__ 真实类别分立（E12）+ 溢出披露结构。"""
-        from app.services.linked_exploration.buckets import category_buckets
 
         ref = await _seed()
         frozen_stats = await service.preview_conditions(

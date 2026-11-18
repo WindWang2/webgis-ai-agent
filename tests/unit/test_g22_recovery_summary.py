@@ -13,7 +13,7 @@ tests/test_chat_history_routes.py 相同）。
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -54,10 +54,10 @@ MAPSPEC = {
 #: 假 durable job 行（newest-first；parameters 携带敏感标记值，绝不可外泄）。
 JOB_ROWS = [
     SimpleNamespace(
-        id=424242, status="running", created_at=datetime(2026, 11, 12),
+        id=424242, status="running", created_at=datetime(2026, 11, 12, tzinfo=timezone.utc),
         parameters={"api_key": "SECRET-MUST-NOT-APPEAR"},
     ),
-    SimpleNamespace(id=424241, status="cancelling", created_at=datetime(2026, 11, 11), parameters={}),
+    SimpleNamespace(id=424241, status="cancelling", created_at=datetime(2026, 11, 11, tzinfo=timezone.utc), parameters={}),
 ]
 
 
@@ -205,7 +205,7 @@ async def test_durable_jobs_capped_at_eight_defensively(monkeypatch):
     _patch_mapspec(monkeypatch, MAPSPEC)
     _patch_has(monkeypatch, set())
     rows = [
-        SimpleNamespace(id=i, status="queued", created_at=datetime(2026, 1, 1))
+        SimpleNamespace(id=i, status="queued", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
         for i in range(12)
     ]
     monkeypatch.setattr(
@@ -309,13 +309,13 @@ def _route_client(monkeypatch):
     conv = MagicMock()
     conv.id = SID
     conv.title = "G22"
-    conv.created_at = datetime(2026, 11, 12)
-    conv.updated_at = datetime(2026, 11, 12)
+    conv.created_at = datetime(2026, 11, 12, tzinfo=timezone.utc)
+    conv.updated_at = datetime(2026, 11, 12, tzinfo=timezone.utc)
     msg = MagicMock()
     msg.id = 1
     msg.role = "user"
     msg.content = "hello"
-    msg.created_at = datetime(2026, 11, 12)
+    msg.created_at = datetime(2026, 11, 12, tzinfo=timezone.utc)
 
     class _Db:
         async def execute(self, stmt):

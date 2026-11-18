@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.schemas.data_delivery_schema import (
-    DeliveryFormat,
     DeliveryJobView,
     DeliveryPreview,
     DeliveryReceipt,
@@ -169,9 +168,9 @@ async def preview_delivery(spec: DeliverySpec, actor: DeliveryActor) -> Delivery
         estimated_rows=est_rows,
         estimated_bytes=est_bytes,
         estimate_note=est_note + "（估算非实测；字节为格式启发式）",
-        losses=[LossItem(code=l.code, message=l.message, fields=l.fields,
-                         requires_ack=l.requires_ack)
-                for l in losses.losses],
+        losses=[LossItem(code=loss.code, message=loss.message, fields=loss.fields,
+                         requires_ack=loss.requires_ack)
+                for loss in losses.losses],
         blocking_issues=blocking,
         required_acknowledgments=required,
         field_name_map_applied=losses.field_map,
@@ -533,8 +532,8 @@ def _execute_delivery_sync(
     # 声明已应用）。
     _WRITER_COUNTED_CODES = frozenset({dl_contracts.LOSS_FORMULA_PREFIX_SANITIZED})
     losses_applied.extend(
-        l.code for l in losses.losses
-        if l.code not in _WRITER_COUNTED_CODES
+        loss.code for loss in losses.losses
+        if loss.code not in _WRITER_COUNTED_CODES
     )
     if rows_written == 0:
         raise DeliveryError(
@@ -879,7 +878,7 @@ def _verify_output(staging: Path, fmt: str, expected_rows: Optional[int],
             for name, _gtype in layers:
                 info = pyogrio.read_info(str(files[0]), layer=name)
                 total += int(info["features"])
-            evidence["layers"] = [str(l[0]) for l in layers]
+            evidence["layers"] = [str(layer[0]) for layer in layers]
             evidence["rows_read"] = total
         elif fmt == "flatgeobuf":
             import pyogrio
@@ -1006,7 +1005,7 @@ def _receipt_summary(receipt: DeliveryReceipt) -> Dict[str, Any]:
         "scope": {k: receipt.scope.get(k) for k in
                   ("type", "requested", "delivered", "subset_of_selection",
                    "missing_ids_count")},
-        "download_url": f"/api/v1/data-delivery/jobs/{{job_id}}/download",
+        "download_url": "/api/v1/data-delivery/jobs/{job_id}/download",
     }
 
 

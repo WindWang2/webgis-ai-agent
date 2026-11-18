@@ -19,7 +19,6 @@ from app.services.feature_edit.contracts import (
     MAX_EDITABLE_FEATURES,
     TOPOLOGY_RULES,
     WFID_PROP,
-    finding,
 )
 from app.services.feature_edit.topology import extract_topology_declaration
 

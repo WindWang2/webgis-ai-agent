@@ -166,7 +166,8 @@ def render_authored_text_block(draw: Dict[str, Any]) -> str:
     x = float(box.get("x") or 0.0)
     y = float(box.get("y") or 0.0)
     w = float(box.get("width") or 0.0)
-    h = float(box.get("height") or 0.0)
+    # Preserve dimension validation although line metrics determine text height.
+    float(box.get("height") or 0.0)
     size = float(draw.get("font_size_units") or 10.0)
     line_units = float(draw.get("line_units") or size * 1.35)
     family = str(draw.get("font_family") or "sans-serif")
