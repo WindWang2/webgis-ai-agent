@@ -255,7 +255,7 @@ def register_linked_exploration_tools(registry: ToolRegistry) -> None:
                        "stats_over_limit"),
     )
     async def webgis_exploration_preview(
-        ref: str, charts: List[ChartIn], conditions: List[ConditionIn],
+        ref: str, charts: List[Dict[str, Any]], conditions: List[Dict[str, Any]],
         session_id: str = "",
     ) -> dict:
         if not session_id:
