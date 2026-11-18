@@ -17,6 +17,9 @@ import pytest
 # (capability_id, 绑定候选工具) —— 与 app/lib/gis/algorithms/platform.py
 # 逐字对齐（测试侧冗余一份是刻意的：双向漂移都能被抓住）。
 PLATFORM_BINDINGS = {
+    "evidence_map_brief": [
+        "brief_create_draft", "brief_inspect_evidence", "brief_update_block",
+        "brief_preflight", "brief_freeze_release", "brief_export"],
     "map_viewport_control": [
         "fly_to_location", "set_map_view", "reset_map_view",
         "zoom_to_bbox", "zoom_to_layer", "webgis_view_set"],
@@ -307,3 +310,7 @@ def test_extended_platform_bindings_preserve_surface_only_contract(cap_id, live_
     resolution = get_algorithm_resolver().resolve(cap_id)
     assert resolution.status == "unavailable"
     assert resolution.reason == "capability_planned"
+
+
+def test_platform_capability_evidence_map_brief(live_registry):
+    _assert_binding("evidence_map_brief", live_registry)

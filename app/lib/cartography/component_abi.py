@@ -229,6 +229,20 @@ COMPONENT_ABI_META: Dict[str, ComponentABIMeta] = {
     "map_border": ComponentABIMeta(props_schema={
         "style": _f("str", max_len=32, description="图框样式（frame/* 模板族）"),
     }),
+    "exploration_chart_panel": ComponentABIMeta(props_schema={
+        # Mirrors the real G46 writer/ChartSpec, without importing service code.
+        # Empty chartId/field remain valid for the harness factory placeholder.
+        "viewId": _f("str", max_len=64),
+        "chartId": _f("str", max_len=64),
+        "kind": _f("str", default="category", enum=("category", "range")),
+        "field": _f("str", max_len=64),  # FILTER_MAX_FIELD_LEN
+        "aggregation": _f("str", default="count", enum=("count", "sum", "mean", "min", "max")),
+        "valueField": _f("str", max_len=64),
+        "sourceRef": _f("str", max_len=128),
+        "sourceRevision": _f("int", min=1),
+        # bins is nullable for category charts; its kind-dependent validation
+        # remains in ChartSpec. Undeclared option keys retain the open ABI contract.
+    }),
     "chart_panel": ComponentABIMeta(props_schema={
         "chartType": _f("str", max_len=24, description="图表类型（chart_kinds 词表）"),
     }),
@@ -488,8 +502,18 @@ _RENDERER_CONSUMED_KEYS: Dict[str, set] = {
 }
 
 
+_SERVICE_WRITTEN_KEYS: Dict[str, set] = {
+    # app.services.linked_exploration.service.apply_view_to_mapspec -> patch_component(options=...).
+    # The writer is tested against this evidence set; do not import services here.
+    "exploration_chart_panel": {
+        "viewId", "chartId", "kind", "field", "aggregation", "valueField",
+        "sourceRef", "sourceRevision",
+    },
+}
+
+
 def _grounded_option_keys() -> Dict[str, set]:
-    """type → 写入面/消费面证据键集（default_options ∪ renderer 消费键）。"""
+    """type → 写入面/消费面证据键集（default_options ∪ renderer 消费键 ∪ service 写入键）。"""
     grounded: Dict[str, set] = {}
     try:
         from app.lib.cartography.component_templates import SEED_COMPONENT_TEMPLATES
@@ -498,8 +522,9 @@ def _grounded_option_keys() -> Dict[str, set]:
                 t.default_options.keys())
     except Exception as _exc:  # pragma: no cover - 防御性
         logging.getLogger(__name__).debug("component_abi: optional operation unavailable (%s)", type(_exc).__name__)
-    for ctype, keys in _RENDERER_CONSUMED_KEYS.items():
-        grounded.setdefault(ctype, set()).update(keys)
+    for evidence in (_RENDERER_CONSUMED_KEYS, _SERVICE_WRITTEN_KEYS):
+        for ctype, keys in evidence.items():
+            grounded.setdefault(ctype, set()).update(keys)
     return grounded
 
 
