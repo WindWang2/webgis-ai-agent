@@ -30,6 +30,7 @@ from app.lib.storymap.brief_spec import (
 from app.lib.storymap.spec import ArcRole
 from app.lib.storymap.story_compiler import compile_story_map
 
+# SHA1 is only for stable fact/block IDs; artifact integrity uses SHA256 below.
 # 每产物行提取上限（确定性：取前 N 行；简报整体另受 MAX_BRIEF_FACTS 约束）。
 _ROWS_PER_ARTIFACT = 8
 # stats 摘要键值进入事实的上限。
@@ -192,7 +193,7 @@ def _facts_from_artifacts(
                 kind = ("count" if "count" in field.lower() or "数量" in field
                         else "other")
                 facts.append(BriefFact(
-                    fact_id=f"fact-{hashlib.sha1(f'{ref}:{field_path}'.encode()).hexdigest()[:12]}",
+                    fact_id=f"fact-{hashlib.sha1(f'{ref}:{field_path}'.encode(), usedforsecurity=False).hexdigest()[:12]}",
                     label=(f"{row_name} · {field}" if isinstance(row_name, str)
                            else f"{label_base} · {field}"),
                     kind=kind,  # type: ignore[arg-type]
@@ -208,7 +209,7 @@ def _facts_from_artifacts(
                 covered.add((ref, field_path))
                 name = row.get("name") or row.get("x") or row.get("label")
                 facts.append(BriefFact(
-                    fact_id=f"fact-{hashlib.sha1(f'{ref}:{field_path}'.encode()).hexdigest()[:12]}",
+                    fact_id=f"fact-{hashlib.sha1(f'{ref}:{field_path}'.encode(), usedforsecurity=False).hexdigest()[:12]}",
                     label=(f"{name} · {field}" if isinstance(name, str)
                            else f"{label_base} · {field}"),
                     kind="other",
@@ -281,7 +282,7 @@ def _facts_from_trace_stats(
                     "artifact_sha256": _canonical_sha256(record),
                 })
             facts.append(BriefFact(
-                fact_id=f"fact-{hashlib.sha1(f's:{step.stage_id}:{step.ts}:{key}'.encode()).hexdigest()[:12]}",
+                fact_id=f"fact-{hashlib.sha1(f's:{step.stage_id}:{step.ts}:{key}'.encode(), usedforsecurity=False).hexdigest()[:12]}",
                 label=str(key)[:120],
                 kind="other",
                 value=float(val),
@@ -465,7 +466,7 @@ def _attach_blocks(spec: MapBriefSpec, records: Dict[str, Mapping[str, Any]]) ->
     for ch in chapters:
         if ch.narrative.strip():
             blocks.append(BriefBlock(
-                id=f"blk-text-{hashlib.sha1(ch.id.encode()).hexdigest()[:12]}",
+                id=f"blk-text-{hashlib.sha1(ch.id.encode(), usedforsecurity=False).hexdigest()[:12]}",
                 chapter_id=ch.id, kind="text", order=_next_order(),
                 origin="auto", text=ch.narrative))
 
@@ -474,14 +475,14 @@ def _attach_blocks(spec: MapBriefSpec, records: Dict[str, Mapping[str, Any]]) ->
     for i, fact in enumerate(spec.facts):
         chapter_id = metric_chapters[i % len(metric_chapters)] if metric_chapters else chapters[0].id
         blocks.append(BriefBlock(
-            id=f"blk-metric-{hashlib.sha1(fact.fact_id.encode()).hexdigest()[:12]}",
+            id=f"blk-metric-{hashlib.sha1(fact.fact_id.encode(), usedforsecurity=False).hexdigest()[:12]}",
             chapter_id=chapter_id, kind="metric", order=_next_order(),
             fact_id=fact.fact_id))
 
     # 3) 图表/表块：挂 widget 自带的 chapter_id。
     for w in spec.linked_widgets:
         blocks.append(BriefBlock(
-            id=f"blk-{w.kind}-{hashlib.sha1(w.id.encode()).hexdigest()[:12]}",
+            id=f"blk-{w.kind}-{hashlib.sha1(w.id.encode(), usedforsecurity=False).hexdigest()[:12]}",
             chapter_id=w.chapter_id or (chapters[0].id if chapters else ""),
             kind="chart" if w.kind == "chart" else "table",
             order=_next_order(), widget_id=w.id))
@@ -492,7 +493,7 @@ def _attach_blocks(spec: MapBriefSpec, records: Dict[str, Mapping[str, Any]]) ->
         if kf is None:
             continue
         blocks.append(BriefBlock(
-            id=f"blk-map-{hashlib.sha1(ch.id.encode()).hexdigest()[:12]}",
+            id=f"blk-map-{hashlib.sha1(ch.id.encode(), usedforsecurity=False).hexdigest()[:12]}",
             chapter_id=ch.id, kind="map_view", order=_next_order(),
             map_view=BriefMapView(
                 center=list(kf.center), zoom=kf.zoom, pitch=kf.pitch,
@@ -518,7 +519,7 @@ def _attach_blocks(spec: MapBriefSpec, records: Dict[str, Mapping[str, Any]]) ->
     for ref in sorted(records)[:MAX_BRIEF_SOURCES]:
         record = records[ref]
         blocks.append(BriefBlock(
-            id=f"blk-src-{hashlib.sha1(ref.encode()).hexdigest()[:12]}",
+            id=f"blk-src-{hashlib.sha1(ref.encode(), usedforsecurity=False).hexdigest()[:12]}",
             chapter_id=method_chapter, kind="source", order=_next_order(),
             binding=EvidenceBinding(
                 artifact_ref=ref,

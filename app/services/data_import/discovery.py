@@ -213,7 +213,8 @@ def zipset_dir_name(key_dir: str, base: str) -> str:
     import hashlib
 
     safe = _MEMBER_SAFE_RE.sub("_", f"{key_dir}__{base}")[:100]
-    digest = hashlib.sha1(f"{key_dir}\x00{base}".encode("utf-8")).hexdigest()[:8]
+    # Stable extraction-directory label, not an authentication/integrity proof.
+    digest = hashlib.sha1(f"{key_dir}\x00{base}".encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
     return f"set-{safe}-{digest}"
 
 
