@@ -399,7 +399,10 @@ def _filter_gamma_map(
     r_est = np.array(mean, dtype=float, copy=True)
     iterations_used = 0
 
-    homogeneous = np.isfinite(mean) & (cv2 <= cu2)
+    # For nonnegative intensities, a zero mean/variance window is exactly
+    # homogeneous. Its undefined 0/0 CV must not enter the MAP solver.
+    zero_window = (mean == 0) & (var == 0)
+    homogeneous = np.isfinite(mean) & ((cv2 <= cu2) | zero_window)
     point_target = np.isfinite(mean) & (cv2 > 2.0 * cu2)
     active = np.isfinite(mean) & ~homogeneous & ~point_target
 
@@ -519,6 +522,10 @@ def speckle_filter(
         out = _filter_kuan(plane, filled, valid_f, window, enl_val)
         formula = ("R = m + k·(x−m), k = (1 − Cu²/Cv²)/(1 + Cu²), "
                    "Cu² = 1/ENL  [Kuan 1985 闭式 MMSE]")
+
+    # Neighborhood statistics exclude invalid samples, but must not invent
+    # observations at invalid centers (including finite nodata sentinels).
+    out = np.where(valid, out, np.nan)
 
     enl_disclosure = ("显式参数" if enl_src == "explicit"
                       else "整图矩估计 mean²/var（均匀假设）")
