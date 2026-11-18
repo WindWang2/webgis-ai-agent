@@ -286,7 +286,14 @@ async def send_turn_message(
         # turn 锁消费事件流 —— 此处**禁止中途换代**（发现失效历史只阻断
         # 图片；换代由下一 turn 边界的预检执行），避免与活流竞争
         # new_session/事件排空。
-        payload: dict = {"message": req.message}
+        from app.core.bridge_secret import get_bridge_secret
+        from app.services.chat.pi_turn_context import attach_turn_context, issue_turn_token
+
+        # Native steer/follow_up becomes the latest user entry in Pi. Attach
+        # this still-live turn's authority under the handoff gate, neutralizing
+        # user-supplied control markers through the same helper as prompt().
+        turn_token = issue_turn_token(get_bridge_secret(), session_id, turn_id)
+        payload: dict = {"message": attach_turn_context(req.message, turn_token)}
         if req.attachments:
             _img = await bridge._resolve_turn_images(
                 session_id, [a.model_dump() for a in req.attachments],
