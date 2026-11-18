@@ -12,9 +12,9 @@ async def persist_snapshot_artifact(
     session_id: str, artifact: Dict[str, Any], *, principal: str
 ) -> Dict[str, Any]:
     """复用既有 export 目录 / 所有权侧车 / 签名下载 URL，不新建交付系统。"""
-    from app.api.routes.map import (
-        _persist_export_file,
-        _set_export_owner,
+    from app.services.export_storage import (
+        persist_export_file as _persist_export_file,
+        set_export_owner as _set_export_owner,
     )
     from app.core.signing import sign_path
 
