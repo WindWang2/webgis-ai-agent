@@ -119,7 +119,19 @@ describe('useMapBridge', () => {
       await result.current.send('hello', {});
     });
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'hello', undefined, { viewport_seq: 1 }, expect.any(AbortSignal), undefined, null, undefined, null, null
+      'hello', undefined, { viewport_seq: 1 }, expect.any(AbortSignal), undefined, null, undefined, null, null, null
+    );
+  });
+
+  it('keeps visual evidence in the explicit attachment argument', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([]));
+    const ownerToken = { current: 'owner-sid' };
+    const attachments = [{ evidence_id: 'evidence-current-turn' }];
+    const { result } = renderHook(() => useMapBridge('sid', dispatchAction, onEvent, ownerToken));
+    await act(async () => { await result.current.send('with evidence', {}, attachments); });
+    expect(mockStreamChat).toHaveBeenCalledExactlyOnceWith(
+      'with evidence', 'sid', { viewport_seq: 1 }, expect.any(AbortSignal),
+      undefined, 'owner-sid', undefined, null, null, attachments,
     );
   });
 
@@ -132,7 +144,7 @@ describe('useMapBridge', () => {
       await result.current.send('hello', { zoom: 10 });
     });
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'hello', 'sid-123', { zoom: 10, viewport_seq: 1 }, expect.any(AbortSignal), undefined, null, undefined, null, null
+      'hello', 'sid-123', { zoom: 10, viewport_seq: 1 }, expect.any(AbortSignal), undefined, null, undefined, null, null, null
     );
   });
 
@@ -146,7 +158,7 @@ describe('useMapBridge', () => {
       await result.current.send('hello', {});
     });
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'hello', 'sid-123', expect.anything(), expect.any(AbortSignal), undefined, null, undefined, 'proj-7', null
+      'hello', 'sid-123', expect.anything(), expect.any(AbortSignal), undefined, null, undefined, 'proj-7', null, null
     );
     hudState.activeProjectId = null;
   });
@@ -350,7 +362,7 @@ describe('useMapBridge', () => {
     // send() stamp comes first (seq 1) — the turn-start write outranks any
     // in-flight POST that predates it.
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'q', 's1', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null, undefined, null, null
+      'q', 's1', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null, undefined, null, null, null
     );
 
     // throttled POST #1 → seq 2
@@ -376,7 +388,7 @@ describe('useMapBridge', () => {
     mockStreamChat.mockReturnValue(hangingTurn());
     act(() => { result2.current.send('x', {}); });
     expect(mockStreamChat).toHaveBeenLastCalledWith(
-      'x', 's2', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null, undefined, null, null
+      'x', 's2', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null, undefined, null, null, null
     );
     vi.unstubAllGlobals();
   });
@@ -505,7 +517,7 @@ describe('useMapBridge', () => {
     // The reconnect re-POSTs the same turn with the last received id as
     // Last-Event-ID (7th arg) so the backend replays only the missed events.
     expect(mockStreamChat.mock.calls[1]).toEqual([
-      'q', 's1', expect.anything(), expect.any(AbortSignal), undefined, null, '3', null, null,
+      'q', 's1', expect.anything(), expect.any(AbortSignal), undefined, null, '3', null, null, null,
     ]);
     expect(onEvent).toHaveBeenCalledWith({ event: 'done', data: {} });
   });
