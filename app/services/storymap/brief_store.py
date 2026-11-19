@@ -28,6 +28,18 @@ from app.models.map_brief import MapBrief
 MAX_BRIEF_SPEC_BYTES = 512 * 1024
 
 
+def _revalidated(candidate: MapBriefSpec) -> MapBriefSpec:
+    """编辑产物的写库前复验。
+
+    ``model_copy(update=...)`` 不运行模型校验器 —— 带未知 chapter_id/fact_id
+    或非法 map_view 的补丁会绕过 ``_cross_references_resolve`` / ``_id_shape``
+    直接写库，此后每次 ``load_brief`` 都抛 BriefCorrupt（会话全部 brief
+    端点 422 锁死）。经 dump 复验（model_validate 对模型实例默认不重跑
+    校验器，必须走 dict 输入）把不变式拉回写库前。
+    """
+    return MapBriefSpec.model_validate(candidate.model_dump(mode="json"))
+
+
 class BriefNotFound(Exception):
     """简报不存在或不属于该会话（404 语义，防存在性泄露）。"""
 
@@ -153,7 +165,7 @@ def add_block(spec: MapBriefSpec, block: Mapping[str, Any]) -> MapBriefSpec:
         max_order = max((b.order for b in blocks), default=0)
         new_block = new_block.model_copy(update={"order": max_order + 1})
     blocks.append(new_block)
-    return spec.model_copy(update={"blocks": blocks})
+    return _revalidated(spec.model_copy(update={"blocks": blocks}))
 
 
 def update_block(
@@ -182,7 +194,7 @@ def update_block(
             updates["map_view"] = dict(updates["map_view"])
         updated = block.model_copy(update=updates)
         blocks[i] = updated
-        return spec.model_copy(update={"blocks": blocks})
+        return _revalidated(spec.model_copy(update={"blocks": blocks}))
     raise BriefNotFound(f"block {block_id} not found")
 
 
@@ -190,7 +202,7 @@ def delete_block(spec: MapBriefSpec, block_id: str) -> MapBriefSpec:
     blocks = [b for b in spec.blocks if b.id != block_id]
     if len(blocks) == len(spec.blocks):
         raise BriefNotFound(f"block {block_id} not found")
-    return spec.model_copy(update={"blocks": blocks})
+    return _revalidated(spec.model_copy(update={"blocks": blocks}))
 
 
 def add_chapter(
@@ -209,8 +221,8 @@ def add_chapter(
     if kf:
         kf["chapter_id"] = new_chapter.id
         keyframes.append(CameraKeyframe.model_validate(kf))
-    return spec.model_copy(update={
-        "chapters": chapters, "camera_keyframes": keyframes})
+    return _revalidated(spec.model_copy(update={
+        "chapters": chapters, "camera_keyframes": keyframes}))
 
 
 def update_chapter(
@@ -235,7 +247,7 @@ def update_chapter(
         def _key(c):
             return int(order_map.get(c.id, len(chapters)))
         chapters.sort(key=_key)
-    return spec.model_copy(update={"chapters": chapters})
+    return _revalidated(spec.model_copy(update={"chapters": chapters}))
 
 
 def delete_chapter(spec: MapBriefSpec, chapter_id: str) -> MapBriefSpec:
@@ -247,9 +259,9 @@ def delete_chapter(spec: MapBriefSpec, chapter_id: str) -> MapBriefSpec:
     blocks = [b for b in spec.blocks if b.chapter_id != chapter_id]
     keyframes = [k for k in spec.camera_keyframes
                  if k.chapter_id != chapter_id]
-    return spec.model_copy(update={
+    return _revalidated(spec.model_copy(update={
         "chapters": chapters, "blocks": blocks,
-        "camera_keyframes": keyframes})
+        "camera_keyframes": keyframes}))
 
 
 def merge_regenerated(
@@ -300,10 +312,10 @@ def merge_regenerated(
         replacement = fresh_facts.get(fact.fact_id)
         merged_facts.append(replacement if replacement is not None else fact)
 
-    return current.model_copy(update={
+    return _revalidated(current.model_copy(update={
         "blocks": merged_blocks, "facts": merged_facts,
         "provenance": fresh.provenance,
-    })
+    }))
 
 
 def compute_stale(

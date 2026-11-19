@@ -112,10 +112,10 @@ def build_bivariate_legend(
         "label_a": col["label"],
         "label_b": row["label"],
         # swap 后列轴 = 原 B、行轴 = 原 A —— 断点也须整体转置。
-        "breaks_a": [round(b, 6) for b in (result.breaks_b if spec.swap_axes
-                                           else result.breaks_a)],
-        "breaks_b": [round(b, 6) for b in (result.breaks_a if spec.swap_axes
-                                           else result.breaks_b)],
+        "breaks_a": [float(b) for b in (result.breaks_b if spec.swap_axes
+                                        else result.breaks_a)],
+        "breaks_b": [float(b) for b in (result.breaks_a if spec.swap_axes
+                                        else result.breaks_b)],
         # ── canonical 内容 ──
         "class_field": PAIR_CLASS_FIELD,
         "row_major": True,

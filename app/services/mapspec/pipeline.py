@@ -109,8 +109,18 @@ def process_layer_ingestion(
     # ``source_ref`` names an analysis input, not the displayable output. Only
     # an explicit ``result_ref`` may replace the source carrier; conflating the
     # two can make a layer point at its input while discarding its actual result.
+    # A ref supplied by THIS ingestion's source_data is authoritative (e.g. the
+    # bivariate derived display ref whose fields the paint references): the
+    # provenance result_ref names a PREVIOUS generation and must not clobber it.
+    explicit_ref: Optional[str] = None
+    if isinstance(processed_source_data, dict):
+        _cand = processed_source_data.get("ref_id")
+        if isinstance(_cand, str) and _cand.startswith("ref:"):
+            explicit_ref = _cand
+    elif isinstance(processed_source_data, str) and processed_source_data.startswith("ref:"):
+        explicit_ref = processed_source_data
     result_ref = provenance.get("result_ref")
-    if isinstance(result_ref, str) and result_ref:
+    if explicit_ref is None and isinstance(result_ref, str) and result_ref:
         source_entry["ref"] = result_ref
         source_entry["ref_id"] = result_ref
         source_entry["data_fingerprint"] = (

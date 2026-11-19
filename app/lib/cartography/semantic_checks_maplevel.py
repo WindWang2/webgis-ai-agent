@@ -643,8 +643,15 @@ def _check_viewport_covers_results(
         profile = source.get("profile") if isinstance(source, dict) else None
         bbox = profile.get("bbox") if isinstance(profile, dict) else None
         if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            try:
+                numeric_bbox = [float(b) for b in bbox]
+            except (TypeError, ValueError):
+                # 非数值 bbox 证据不可用 —— 跳过该层（与 view/bbox 缺席
+                # 同语义），绝不让一条坏 profile 把整个 viewport 检查
+                # 打成未捕获 ValueError。
+                continue
             visible_with_bbox.append(
-                {"id": str(layer.get("id") or ""), "bbox": [float(b) for b in bbox]})
+                {"id": str(layer.get("id") or ""), "bbox": numeric_bbox})
 
     if not isinstance(center, (list, tuple)) or len(center) != 2 or zoom is None:
         report.add_check(
