@@ -217,7 +217,7 @@ class _FireProjection:
             return {"kind": "widget", **entry}
         if req.method == "setTitle":
             self.title = req.set_title
-            return {"kind": "title", "title": self.set_title}
+            return {"kind": "title", "title": self.title}
         if req.method == "set_editor_text":
             # 建议输入 —— 只读投影，前端绝不静默覆盖用户草稿（WP08）。
             self.editor_suggestion = req.editor_text

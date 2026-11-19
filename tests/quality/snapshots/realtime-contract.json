@@ -4,6 +4,7 @@
  "sse": {
   "endpoint": "/api/v1/chat/stream",
   "events": [
+   "attachment_receipt",
    "clarification",
    "content",
    "done",
@@ -12,6 +13,7 @@
    "heartbeat",
    "keep_alive",
    "map_finalization",
+   "model_status",
    "pi_interaction",
    "pi_interaction_update",
    "pi_turn_message",
@@ -37,6 +39,7 @@
    "token",
    "tool_call",
    "tool_result",
+   "turn_context_receipt",
    "ui_action",
    "workflow_graph"
   ],

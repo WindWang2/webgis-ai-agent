@@ -457,7 +457,7 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
                     next.splice(i + 1, 0, { text: String(mid) });
                     setBreaksDraft(next);
                     setPreview(null);
-                  }}>＋</button>
+                  }}>+</button>
               )}
             </div>
           ))}

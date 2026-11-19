@@ -13,9 +13,7 @@ A20：迟到 worker 回调被代际拒绝 —— turn 交接后，旧 turn 的�
 """
 from __future__ import annotations
 
-import asyncio
 import os
-from types import SimpleNamespace
 
 import pytest
 
@@ -63,7 +61,6 @@ async def test_a20_late_callback_after_handoff_rejected_409(monkeypatch):
     """turn1 交接给 turn2 后，turn1 的回调 token（时钟窗内仍签名有效）必须
     被 live-turn 检查拒绝：409 + 不执行任何工具。"""
     os.environ["WEBGIS_BRIDGE_SECRET"] = "test-secret-a20"
-    import app.agent_pi_bridge as bridge_mod
     from app.api.routes.pi_tools import router
     from app.services.chat.pi_turn_context import (
         issue_turn_token,

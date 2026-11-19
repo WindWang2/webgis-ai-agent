@@ -71,7 +71,7 @@ class TestLabelAuthorJourney:
         # 刷新后仍在（真实落库）。
         engine = MapSpecLifecycleEngine()
         fresh = await engine.store.get_mapspec(sid)
-        label = next(l for l in fresh["layers"] if l["id"] == "schools")["label"]
+        label = next(layer for layer in fresh["layers"] if layer["id"] == "schools")["label"]
         ovs = label["authoring"]["overrides"]
         assert all(o.get("origin") == "agent" for o in ovs)
 
@@ -103,7 +103,7 @@ class TestLabelAuthorJourney:
         assert res["preview"]["reports"][0]["after"]["hidden"] is True
         engine = MapSpecLifecycleEngine()
         fresh = await engine.store.get_mapspec(sid)
-        label = next(l for l in fresh["layers"] if l["id"] == "schools")["label"]
+        label = next(layer for layer in fresh["layers"] if layer["id"] == "schools")["label"]
         assert "authoring" not in label
 
     async def test_atomic_rejection_surfaces_findings(self):
@@ -167,7 +167,7 @@ class TestLabelAuthorJourney:
 
 
 def _ov_of(res) -> list:
-    label = next(l for l in res.mapspec["layers"] if l["id"] == "schools")["label"]
+    label = next(layer for layer in res.mapspec["layers"] if layer["id"] == "schools")["label"]
     return (label.get("authoring") or {}).get("overrides") or []
 
 

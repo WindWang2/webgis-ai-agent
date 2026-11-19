@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-from app.services.selection_handles import create_selection, handle_store
+from app.services.selection_handles import create_selection
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry
 from app.tools.selection_tools import register_selection_tools

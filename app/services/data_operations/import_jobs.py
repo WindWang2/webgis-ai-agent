@@ -339,7 +339,6 @@ def _make_runner(
         )
 
     async def _runner() -> Dict[str, Any]:
-        cancelled = False
         try:
             await run_async_job(
                 job_id,
@@ -353,7 +352,7 @@ def _make_runner(
             # 认领失败（并发副本先认领）：本进程不留任何在飞标记
             pass
         except Exception:  # noqa: BLE001 — run_async_job 已落终态；runner 外层不重复报错
-            cancelled = True
+            pass
         finally:
             service._commit_tasks.pop(batch_id, None)
             service._cancel_events.pop(batch_id, None)

@@ -6,15 +6,9 @@ from __future__ import annotations
 
 import json
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from app.schemas.data_delivery_schema import (
-    DeliveryFieldSelection,
-    DeliverySourceRef,
-    DeliverySpec,
-)
 
 
 @pytest_asyncio.fixture

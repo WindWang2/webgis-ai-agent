@@ -137,7 +137,7 @@ class ToolDispatchResult:
     # ADR-0217（H10，additive）：GISAction IR 投影闸证据（plan/compile/
     # finding code 级，无参数）。None = 闸关或投影不可用。
     action_evidence: Optional[dict] = None
-    # G03/ADR-0286 D4（additive）：数据资格闸证据——放行时的有界数据事实
+    # G03/ADR-0296 D4（additive）：数据资格闸证据——放行时的有界数据事实
     # （qualification_context：crs/feature_count/bbox…）与披露
     # （descriptor_missing）。None = 闸关或本次调用不含数据 ref。
     # BLOCK 路径不经过此字段（结构化 error 早退）。
@@ -835,7 +835,7 @@ class ToolDispatchService:
                             )
                             tool_args_raw = tc["function"]["arguments"]
 
-            # 1.46 (G03/ADR-0286 D4) 数据资格闸：ref: 输入的语义证据完整性。
+            # 1.46 (G03/ADR-0296 D4) 数据资格闸：ref: 输入的语义证据完整性。
             # 记录面（recovery source_fingerprints）期望指纹与语义记录不一致
             # （stale）或记录损坏 → BLOCK 结构化错误早退（释放 dedup 槽位，
             # 与 1.45 同模式）；放行时附有界数据事实（模型可见）。

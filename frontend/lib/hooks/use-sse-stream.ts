@@ -462,6 +462,10 @@ export function useSSEStream(options: UseSSEStreamOptions) {
 
   useEffect(() => subscribeTurnEpoch(rotateLayerFetches), [rotateLayerFetches]);
 
+  const sendingRef = useRef(false);
+  const sendGenerationRef = useRef(0);
+  const loadingGuardRef = useRef(false);
+
   // Reset abort controller on session change to cancel in-flight layer fetches.
   // undefined → assigned is the server binding the currently live stream
   // (useMapBridge 同款豁免), not a session switch — aborting there kills the
@@ -472,6 +476,11 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     const sessionChanged = prev !== undefined && prev !== sessionId;
     prevSessionIdRef.current = sessionId;
     if (sessionChanged) {
+      // The old transport may take arbitrarily long to observe its abort.
+      // Its send lock/continuation must not block or settle the next session.
+      sendGenerationRef.current += 1;
+      sendingRef.current = false;
+      loadingGuardRef.current = false;
       layerFetchAbortRef.current?.abort();
       explorerAbortRef.current?.abort();
       explorerStreamsRef.current.clear();
@@ -597,10 +606,6 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       // 刷新失败：SSE mapspec 盖章镜像会随后收敛（content_revision 管线）
     }
   }, [sessionTokenRef]);
-
-  const sendingRef = useRef(false);
-  const sendGenerationRef = useRef(0);
-  const loadingGuardRef = useRef(false);
 
   const onEvent = useCallback(
     (event: SSEEvent) => {
@@ -1653,6 +1658,8 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             ? attachDrafts.map((d) => ({ evidence_id: d.evidenceId }))
             : null,
         );
+
+        if (sendGeneration !== sendGenerationRef.current) return false;
 
         // Flush any tokens still pending in the current frame so the final
         // streamed text is applied before the thinking→done transition.

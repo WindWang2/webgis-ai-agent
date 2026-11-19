@@ -10,11 +10,11 @@ BriefNotFound/ReleaseNotFound→404；PreflightBlocked→409（携带报告）�
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.report_sharing import limit_public_report_access

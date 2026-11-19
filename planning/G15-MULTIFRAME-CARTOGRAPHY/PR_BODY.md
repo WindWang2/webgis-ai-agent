@@ -46,7 +46,7 @@
 ## 关键文件
 
 - 契约：`app/lib/cartography/mapspec_schema.py`（v2.0 additive）、
-  `docs/adr/0288-frame-product-contract-and-per-frame-verification.md`
+  `docs/adr/0299-frame-product-contract-and-per-frame-verification.md`
 - 服务：`app/services/gis_harness/frame_products/`（resolver/shared_expression/
   service/verification）
 - 出版：`app/lib/cartography/publication_ir.py`（frame_slots + driver=product）、

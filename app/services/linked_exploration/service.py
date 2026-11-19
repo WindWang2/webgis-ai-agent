@@ -17,11 +17,11 @@ import logging
 import math
 from typing import Any, Dict, List, Optional, Sequence
 
-from app.services.feature_pages import count_matching, evaluate_where
+from app.services.feature_pages import count_matching
 from app.services.linked_exploration import contract
 from app.services.linked_exploration.buckets import chart_statistics
 from app.services.linked_exploration.errors import LinkedExplorationError
-from app.services.linked_exploration.snapshot import FrozenSource, freeze_source_typed
+from app.services.linked_exploration.snapshot import freeze_source_typed
 
 logger = logging.getLogger(__name__)
 

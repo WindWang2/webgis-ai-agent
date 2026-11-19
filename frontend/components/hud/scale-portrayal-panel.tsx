@@ -1,4 +1,6 @@
 'use client';
+
+import { useT } from '@/lib/i18n/useT';
 /**
  * G27 P4 —— 「按尺度表达」面板（样式/标注设置附近的小型可解释入口）。
  *
@@ -41,15 +43,16 @@ interface PolicyPreset {
 }
 
 const PRESETS: PolicyPreset[] = [
-  { id: 'auto', label: '启用自动 LOD',
+  { id: 'auto', label: 'presetAuto',
     policy: { version: G27_SCALE_POLICY_VERSION, mode: 'auto_lod' } },
-  { id: 'fixed', label: '固定密度 60%',
+  { id: 'fixed', label: 'presetFixed',
     policy: { version: G27_SCALE_POLICY_VERSION, mode: 'fixed_density',
       pinned_label_top_ratio: 0.6 } },
-  { id: 'restore', label: '恢复自动', policy: null },
+  { id: 'restore', label: 'presetRestore', policy: null },
 ];
 
 export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
+  const t = useT('map.scalePortrayal');
   const [zoom, setZoom] = useState<number>(8);
   const [explanation, setExplanation] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
@@ -127,19 +130,19 @@ export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
       );
       const status = typeof data?.status === 'string' ? data.status : '';
       setMessage(status === 'committed'
-        ? `已提交（revision ${String(data?.mapspec_revision ?? '')}）`
-        : status === 'superseded' ? '版本已变化，请重试' : `未应用：${status || '未知回执'}`);
+        ? t('committed', { p0: String(data?.mapspec_revision ?? '') })
+        : status === 'superseded' ? t('superseded') : t('notApplied', { p0: status || t('unknownReceipt') }));
       await refreshMapSpecAfterExternalMutation(
         sessionId,
         typeof data?.mapspec_revision === 'number' ? data.mapspec_revision : undefined,
       );
       await loadExplanation(zoom);
     } catch (err) {
-      setMessage(`提交失败：${err instanceof Error ? err.message : String(err)}`);
+      setMessage(t('failed', { p0: err instanceof Error ? err.message : String(err) }));
     } finally {
       setBusy(false);
     }
-  }, [busy, layerId, sessionId, zoom, loadExplanation]);
+  }, [busy, layerId, sessionId, zoom, loadExplanation, t]);
 
   // 真实 committed spec：view 必须基于实际 MapSpec（含 label.zoomBands），
   // 否则「已生效」判定会失去消费者依据；后端回执在场时以回执为准。
@@ -159,13 +162,13 @@ export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
 
   return (
     <section
-      aria-label="按尺度表达"
+      aria-label={t('title')}
       data-testid="scale-portrayal-panel"
       className="rounded border border-edge-subtle bg-surface-sunken p-3 space-y-2"
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-caption text-ink-muted uppercase tracking-wider">
-          按尺度表达
+          {t('title')}
         </span>
         <span
           className={`text-micro px-1.5 py-0.5 rounded-full border ${
@@ -174,34 +177,34 @@ export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
               : 'bg-surface-panel text-ink-muted border-edge-subtle'
           }`}
         >
-          {view.applied ? '已生效' : '未生效'}
+          {view.applied ? t('applied') : t('unapplied')}
         </span>
       </div>
 
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-caption text-ink">
-        <dt className="text-ink-muted">当前档位</dt>
+        <dt className="text-ink-muted">{t('currentBand')}</dt>
         <dd>{view.bandId} · z{view.effectiveZoom.toFixed(1)}</dd>
-        <dt className="text-ink-muted">尺度带</dt>
-        <dd>{view.tier === 'not_evaluated' ? '待服务端确认' : view.tier}</dd>
-        <dt className="text-ink-muted">可见性</dt>
-        <dd>{view.visibility === 'none' ? '隐藏' : '显示'}</dd>
-        <dt className="text-ink-muted">标注密度 / 字号比</dt>
+        <dt className="text-ink-muted">{t('scaleBand')}</dt>
+        <dd>{view.tier === 'not_evaluated' ? t('pending') : view.tier}</dd>
+        <dt className="text-ink-muted">{t('visibility')}</dt>
+        <dd>{view.visibility === 'none' ? t('hidden') : t('visible')}</dd>
+        <dt className="text-ink-muted">{t('labelRatios')}</dt>
         <dd>{view.topRatio.toFixed(2)} / {view.sizeRatio.toFixed(2)}</dd>
       </dl>
 
       {view.hiddenReason && (
         <p className="text-micro text-status-warning">
-          隐藏原因：{view.hiddenReason}
+          {t('hiddenReason')}{view.hiddenReason}
         </p>
       )}
       {!view.applied && (
         <p className="text-micro text-ink-muted">
-          未显示「已生效」：旧项目未启用、策略未通过校验、被用户隐藏或无生产消费者。
+          {t('notAppliedHelp')}
         </p>
       )}
       {view.userOverrides.length > 0 && (
         <p className="text-micro text-ink-muted">
-          用户覆盖：{view.userOverrides.join('、')}
+          {t('userOverrides')}{view.userOverrides.join(t('listSeparator'))}
         </p>
       )}
       {diagnostics.length > 0 && (
@@ -210,7 +213,7 @@ export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
         </ul>
       )}
       <details className="text-micro text-ink-muted">
-        <summary className="cursor-pointer">显示策略披露（不改变数据/统计）</summary>
+        <summary className="cursor-pointer">{t('disclosures')}</summary>
         <ul className="mt-1 space-y-0.5">
           {disclosures.map((d, i) => <li key={i}>{d}</li>)}
         </ul>
@@ -222,11 +225,11 @@ export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
             key={preset.id}
             type="button"
             disabled={busy}
-            aria-label={`按尺度表达：${preset.label}`}
+            aria-label={t('buttonLabel', { p0: t(preset.label) })}
             onClick={() => void commit(preset)}
             className="text-micro px-2 py-1 rounded border border-edge-subtle bg-surface-panel text-ink hover:border-status-accent-border disabled:opacity-50 cursor-pointer"
           >
-            {preset.label}
+            {t(preset.label)}
           </button>
         ))}
       </div>

@@ -1,4 +1,4 @@
-# INGEST_PERFORMANCE — 摄入管线本地基准（G03 GD-10 / ADR-0286）
+# INGEST_PERFORMANCE — 摄入管线本地基准（G03 GD-10 / ADR-0296）
 
 > 状态：随 zcode/goal-geodata-readiness-fabric-20261107 PR
 > 基准测试：`tests/perf/test_g03_ingest_bounded.py`（断言机器无关不变量；

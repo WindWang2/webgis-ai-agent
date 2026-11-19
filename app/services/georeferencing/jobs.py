@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +20,6 @@ from app.services.georeferencing.store import (
     georef_session_dir,
     get_idempotency_entry,
     get_plan,
-    get_source,
     mutate_plan_cas,
     record_idempotency_entry,
 )
@@ -192,7 +189,7 @@ async def start_georeference_job(
         cur.updated_at = datetime.now(timezone.utc).isoformat()
         return cur
 
-    frozen_plan = mutate_plan_cas(
+    mutate_plan_cas(
         session_id,
         plan.plan_id,
         expected_revision=expected_revision,

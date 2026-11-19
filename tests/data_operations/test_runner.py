@@ -7,11 +7,8 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from app.services.data_operations.runner import (
-    AlreadyFinished,
-    AsyncJobHandle,
     run_async_job,
     submit_async_job,
 )

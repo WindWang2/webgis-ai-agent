@@ -17,6 +17,9 @@ import pytest
 # (capability_id, 绑定候选工具) —— 与 app/lib/gis/algorithms/platform.py
 # 逐字对齐（测试侧冗余一份是刻意的：双向漂移都能被抓住）。
 PLATFORM_BINDINGS = {
+    "evidence_map_brief": [
+        "brief_create_draft", "brief_inspect_evidence", "brief_update_block",
+        "brief_preflight", "brief_freeze_release", "brief_export"],
     "map_viewport_control": [
         "fly_to_location", "set_map_view", "reset_map_view",
         "zoom_to_bbox", "zoom_to_layer", "webgis_view_set"],
@@ -40,7 +43,19 @@ PLATFORM_BINDINGS = {
         "gis_component_query", "add_tile_service_layer", "set_scene_assets",
         "webgis_compile_map_plan", "webgis_map_design_select",
         "webgis_product_edit", "webgis_list_composition_template_assets",
-        "webgis_save_composition_template"],
+        "webgis_save_composition_template",
+        "webgis_thematic_style_inspect",
+        "webgis_thematic_style_preview",
+        "webgis_thematic_style_apply",
+        "webgis_bivariate_reliability_inspect",
+        "webgis_bivariate_reliability_preview",
+        "webgis_bivariate_reliability_apply",
+        "webgis_dorling_cartogram_inspect",
+        "webgis_dorling_cartogram_plan",
+        "webgis_dorling_cartogram_run",
+        "webgis_dorling_cartogram_status",
+        "webgis_dorling_cartogram_apply",
+        "webgis_dorling_cartogram_export"],
     "map_export_publishing": [
         "export_batch_maps", "export_thematic_map",
         "webgis_cartography_status", "webgis_compile_maplibre",
@@ -67,7 +82,12 @@ PLATFORM_BINDINGS = {
         "gis_skill_search", "gis_skill_detail", "gis_skill_replay_check",
         "gis_skill_policy", "webgis_analysis_workflow_plan",
         "webgis_analysis_workflow_run", "webgis_analysis_workflow_status",
-        "webgis_analysis_workflow_recompute"],
+        "webgis_analysis_workflow_recompute",
+        "gis_skill_job_prepare",
+        "gis_skill_job_start",
+        "gis_skill_job_status",
+        "webgis_requirement_compile",
+        "webgis_goal_repair_start"],
     "scenario_simulation": [
         "spatial_decision_v2", "spatial_reasoning", "what_if_simulate"],
     "meta_tool_surface": [
@@ -307,3 +327,7 @@ def test_extended_platform_bindings_preserve_surface_only_contract(cap_id, live_
     resolution = get_algorithm_resolver().resolve(cap_id)
     assert resolution.status == "unavailable"
     assert resolution.reason == "capability_planned"
+
+
+def test_platform_capability_evidence_map_brief(live_registry):
+    _assert_binding("evidence_map_brief", live_registry)

@@ -89,7 +89,8 @@ def _goal_fingerprint(plan: Any, chapter: Dict[str, Any]) -> str:
     from app.services.session_plan import goal_key
 
     raw = goal_key(chapter, getattr(plan, "user_goal", "") or "")
-    return hashlib.sha1(str(raw).encode("utf-8")).hexdigest()[:16]
+    # Internal goal identity; authorization is checked separately.
+    return hashlib.sha1(str(raw).encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 def _evidence_signature(
@@ -111,7 +112,8 @@ def _evidence_signature(
         "product_fp": str(stored.get("product_state_fingerprint")
                           or "")[:64],
     }, sort_keys=True)
-    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+    # Progress/change detection only, not a cryptographic evidence signature.
+    return hashlib.sha1(blob.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 # ── 预览（零副作用）──────────────────────────────────────────────────────

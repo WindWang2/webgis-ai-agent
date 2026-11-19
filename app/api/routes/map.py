@@ -23,7 +23,7 @@ from app.core.auth import get_current_user_with_version, get_current_user_option
 from app.core.database import get_async_db
 from app.lib.cartography.pdf_renderer import RasterPdfBusyError
 from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
-from app.services import export_paths
+from app.services import export_paths, export_storage
 from app.schemas.map_schema import (
     ExportDiagnosticsResponse,
     ExportLineageInfo,
@@ -89,15 +89,14 @@ _MEDIA_TYPES = {
 # per export forever). Rereads fall back to the .owner sidecar file.
 from collections import OrderedDict as _OD
 
-_EXPORT_OWNERS: "dict[str, str]" = _OD()
-_EXPORT_OWNERS_MAX = 2048
+_EXPORT_OWNERS: "_OD[str, str]" = export_storage.EXPORT_OWNERS
+_EXPORT_OWNERS_MAX = export_storage.EXPORT_OWNERS_MAX
 
 
 def _export_owners_remember(filename: str, owner: str) -> None:
-    _EXPORT_OWNERS[filename] = owner
-    _EXPORT_OWNERS.move_to_end(filename)
-    while len(_EXPORT_OWNERS) > _EXPORT_OWNERS_MAX:
-        _EXPORT_OWNERS.popitem(last=False)
+    export_storage.remember_export_owner(
+        filename, owner, owners=_EXPORT_OWNERS, max_entries=_EXPORT_OWNERS_MAX,
+    )
 
 
 async def _export_principal(user: dict, session_id: Optional[str], token: Optional[str], db: AsyncSession) -> str:
@@ -121,18 +120,10 @@ def _export_download_url(filename: str, principal: str) -> str:
 
 
 def _set_export_owner(filename: str, user_id: str) -> None:
-    """记录文件所有权，并在 EXPORT_DIR 下持久化 .owner 侧车文件以支持多 worker 进程环境。"""
-    path = Path(_exports_dir_write()) / f"{filename}.owner"
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        with temporary.open("w", encoding="utf-8") as handle:
-            handle.write(user_id)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-    _export_owners_remember(filename, user_id)
+    """Compatibility wrapper; routes and producers share neutral persistence."""
+    export_storage.set_export_owner(
+        filename, user_id, owners=_EXPORT_OWNERS, max_entries=_EXPORT_OWNERS_MAX,
+    )
 
 
 async def _publish_export_owner(filename: str, owner: str) -> None:
@@ -145,19 +136,9 @@ async def _publish_export_owner(filename: str, owner: str) -> None:
 
 
 def _get_export_owner(filename: str) -> Optional[str]:
-    """读取文件所有者，优先从内存 _EXPORT_OWNERS 获取，没有则读取 .owner 侧车文件。"""
-    if filename in _EXPORT_OWNERS:
-        return _EXPORT_OWNERS[filename]
-    meta_path = os.path.join(_exports_dir_str(), f"{filename}.owner")
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                owner = f.read().strip()
-                _export_owners_remember(filename, owner)
-                return owner
-        except Exception:
-            pass
-    return None
+    return export_storage.get_export_owner(
+        filename, owners=_EXPORT_OWNERS, max_entries=_EXPORT_OWNERS_MAX,
+    )
 
 
 # ─── SVG sanitization (/review P1-5) ─────────────────────────────────────
@@ -922,13 +903,8 @@ def download_map_export(filename: str, _user: dict = Depends(get_current_user_op
 
 
 def _persist_export_file(filename: str, content: bytes, ext: str) -> None:
-    """同步 IO：写临时文件 + 原子 replace —— 移出事件循环（#592 与 #427 的
-    _write_export_file 同款纪律：上传分支此前把 ≤50MB 的写入内联在 async def，
-    慢盘/NFS 上会冻结全部并发 SSE 流）。"""
-    with tempfile.NamedTemporaryFile(dir=_exports_dir_write(), delete=False, suffix=ext) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-    os.replace(tmp_path, os.path.join(_exports_dir_write(), filename))
+    """Compatibility wrapper; async route callsites retain thread offloading."""
+    export_storage.persist_export_file(filename, content, ext)
 
 
 def _write_export_file(filepath: str, content: bytes) -> None:

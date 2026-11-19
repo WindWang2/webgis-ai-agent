@@ -449,7 +449,9 @@ describe('theme survives a reload', () => {
     const store = read('lib/store/useHudStore.ts');
     const providers = read('components/providers/client-providers.tsx');
     expect(store).toMatch(/skipHydration:\s*true/);
-    expect(providers).toMatch(/persist\.rehydrate\(/);
+    // Provider delegates to the real helper; it must still run after mount.
+    expect(providers).toMatch(/useEffect\(\(\) => \{\s*void rehydrateHudStore\(\)/);
+    expect(store).toMatch(/await useHudStore\.persist\.rehydrate\(\)/);
   });
 
   it('syncs the runtime accent into the CSS custom property', () => {

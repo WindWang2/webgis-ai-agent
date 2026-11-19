@@ -32,7 +32,7 @@ from app.lib.storymap.brief_preflight import PreflightReport, run_preflight
 from app.lib.storymap.brief_spec import MapBriefSpec
 from app.models.db_model import Conversation
 from app.models.map_brief import MapBriefRelease
-from app.services.storymap.brief_store import BriefNotFound, brief_row, load_brief
+from app.services.storymap.brief_store import brief_row, load_brief
 
 
 class PreflightBlocked(Exception):

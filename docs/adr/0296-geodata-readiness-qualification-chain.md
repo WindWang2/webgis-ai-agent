@@ -1,11 +1,11 @@
-# ADR 0286 — 数据资格判定链贯通（G03 Geodata Readiness）
+# ADR 0296 — 数据资格判定链贯通（G03 Geodata Readiness）
 
 - 状态：Proposed（随 zcode/goal-geodata-readiness-fabric-20261107 PR）
 - 日期：2026-11-07 · 基线 master 585812ee4
 - 关联：ADR-0265（GIS 数据集语义契约）· ADR-0266（Intent/Requirement IR）·
   ADR-0270（large data plane vNext）· ADR-0279（spatial semantic contract）·
   ADR-0171（ads-v1 声明式源）· ADR-0082（raster refs）
-- 编号说明：adr watermark 285 → 286。
+- 编号说明：原 ADR-0286 重号为 ADR-0296，消除与 Pi Turn 状态机文档的编号冲突。
 
 ## 背景
 

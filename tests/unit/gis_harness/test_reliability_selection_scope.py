@@ -4,7 +4,7 @@ normalize_payload 对 selected_ids 只取前 8 个且此前无 omitted 披露 �
 validate_analysis_scope 可能按前 8 个返回 usable，造成静默部分分析。
 
 合并仲裁（review-fix-rereview-20261108 执行合并时记录）：携带上限采用
-SW-02（PR #2014，ADR-0287）的 per-key cap —— selected_ids=50（三方对齐：
+SW-02（PR #2014，ADR-0297）的 per-key cap —— selected_ids=50（三方对齐：
 前端 selection-store 与 analysis_scope.MAX_SCOPE_FEATURE_IDS）、
 categories=20、宽字节预算 4096；本 PR（#2017）的诚实计数语义保留并按
 实际携带上限推导：

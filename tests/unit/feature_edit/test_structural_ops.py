@@ -4,7 +4,7 @@
 数值 oracle 独立推算：正方形面积/分割等价/合并并集均以显式坐标给出。
 """
 from app.services.feature_edit.contracts import WFID_PROP
-from app.services.feature_edit.identity import materialize_wfids, wfid_for_created
+from app.services.feature_edit.identity import materialize_wfids
 from app.services.feature_edit.journal import (
     apply_deltas_to_features,
     apply_entry_effects,

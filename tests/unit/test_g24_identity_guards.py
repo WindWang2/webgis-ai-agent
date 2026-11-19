@@ -6,7 +6,7 @@ import pytest
 from app.services.feature_edit.contracts import FINDING_CODES
 from app.services.feature_edit.identity import find_ambiguous_ids, resolve_feature_id
 from app.services.feature_edit.plan import build_plan
-from app.services.mvt import _chain_stable_id, _encode_value, _varint
+from app.services.mvt import _chain_stable_id, _encode_value
 from app.services.feature_pages import resolve_feature_stable_id
 
 

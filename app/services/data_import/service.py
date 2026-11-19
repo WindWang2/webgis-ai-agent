@@ -32,7 +32,6 @@ from app.services.data_import.models import (
     TableInterpretation,
     VectorInterpretation,
     compute_plan_hash,
-    utc_now_iso,
 )
 from app.services.data_import.preview import build_preview
 

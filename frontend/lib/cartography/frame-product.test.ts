@@ -24,7 +24,15 @@ const cam = (lng: number, zoom: number): CameraSnapshot => ({
 
 describe('resolveGroupSync（N 方同步组）', () => {
   const target = (id: string, group: string | null, camera: CameraSnapshot) => ({
-    id, syncGroup: group, camera, map: { jumpTo: () => {} },
+    id, syncGroup: group, camera,
+    // 与 HubMapLike/readCamera 同源的最小 map 相机面（jumpTo 记录收敛）。
+    map: {
+      getCenter: () => ({ lng: camera.center[0], lat: camera.center[1] }),
+      getZoom: () => camera.zoom,
+      getBearing: () => camera.bearing,
+      getPitch: () => camera.pitch,
+      jumpTo: () => {},
+    },
   });
 
   it('同组传播，组外不传播', () => {

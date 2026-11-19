@@ -12,7 +12,6 @@ artifact 是唯一真源 —— 图面、导出、Pi 回执、原图联动都从
 from __future__ import annotations
 
 import json
-import math
 
 import pytest
 

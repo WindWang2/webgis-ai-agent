@@ -97,6 +97,28 @@ def state_model_accepts_image(state: Optional[Dict[str, Any]]) -> Optional[bool]
     return "image" in inputs
 
 
+def resolve_active_model(
+    applied_state: Optional[tuple],
+    session_id: str,
+    spawn_epoch: Any,
+    spawn_model_id: str,
+) -> tuple[str, bool]:
+    """#2212: 活动模型解析 —— turn 期 ``set_model`` 应用并回读确证的会话
+    模型优先于 spawn 基模型。
+
+    返回 ``(model_id, spawn_anchor_applies)``；无有效已应用状态时回落
+    spawn 基模型且 spawn 锚点生效。
+    """
+    if (
+        applied_state is not None
+        and applied_state[0] == session_id
+        and applied_state[3] == spawn_epoch
+        and applied_state[2]
+    ):
+        return str(applied_state[2]), False
+    return str(spawn_model_id or ""), True
+
+
 class VisionGate:
     """送图前的三重门（描述符 → spawn 锚点 → 运行时 state）。
 
@@ -120,14 +142,26 @@ class VisionGate:
         spawn_declared_image_input: bool,
         rpc,
         spawn_epoch: Any = None,
+        spawn_anchor_applies: bool = True,
     ) -> tuple[bool, str]:
-        """返回 ``(allowed, reason)``；reason ∈ ``_ALLOWED_REASONS`` 或 ""。"""
+        """返回 ``(allowed, reason)``；reason ∈ ``_ALLOWED_REASONS`` 或 ""。
+
+        ``spawn_anchor_applies=False``：活动模型已在本 vendor 会话上经
+        turn 期 ``set_model`` 应用（#2212）—— spawn 锚点记录的是基模型
+        的目录投影，对会话切换后的模型无意义，跳过该门；运行时
+        ``get_state`` 核对仍然兜底。
+        """
         if descriptor_vision_confirmed(model_id) is not True:
             return False, "model_not_configured_for_vision"
-        if not spawn_declared_image_input:
+        if spawn_anchor_applies and not spawn_declared_image_input:
             return False, "worker_spawned_without_image_input"
-        # 运行时核对（按 spawn epoch 缓存；换代失效）。
-        if self._state_cache is None or self._state_epoch != spawn_epoch:
+        # 运行时核对（按 (spawn epoch, 模型标识) 缓存；换代或换模型都失效
+        # —— #2212(b)：同 epoch 内 set_model 切到纯文本模型时，过期缓存
+        # 不得继续放行）。
+        if (
+            self._state_cache is None
+            or self._state_epoch != (spawn_epoch, model_id)
+        ):
             state = None
             try:
                 state = await rpc.request("get_state", {})
@@ -135,7 +169,7 @@ class VisionGate:
                 logger.warning("[VisualProfile] get_state failed: %s", exc)
                 return False, "runtime_state_unavailable"
             self._state_cache = state if isinstance(state, dict) else {}
-            self._state_epoch = spawn_epoch
+            self._state_epoch = (spawn_epoch, model_id)
         accepts = state_model_accepts_image(self._state_cache)
         if accepts is not True:
             return False, "runtime_model_lacks_image_input"

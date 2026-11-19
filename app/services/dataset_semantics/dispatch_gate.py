@@ -1,4 +1,4 @@
-"""工具分发输入侧数据资格闸（G03 GD-08 / ADR-0286 D4）。
+"""工具分发输入侧数据资格闸（G03 GD-08 / ADR-0296 D4）。
 
 背景（BASELINE 断链 2）：五态资格裁决只在 recipe 编译面与
 ``compile_workflow_semantics`` 生效——Agent 走裸分析工具（buffer/

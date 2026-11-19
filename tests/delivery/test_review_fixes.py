@@ -8,9 +8,7 @@
 """
 from __future__ import annotations
 
-import json
 
-import pytest
 
 from app.schemas.data_delivery_schema import (
     DeliveryCrsSpec,
@@ -20,7 +18,6 @@ from app.schemas.data_delivery_schema import (
     DeliverySpec,
 )
 from app.services.data_delivery import (
-    DeliveryError,
     get_delivery_job,
     preview_delivery,
     submit_delivery,
@@ -138,7 +135,6 @@ async def test_delivery_job_has_no_dispatch_spec(delivery_env, seeded_session, a
 
 def _spec_for(ref: str):
     from app.schemas.data_delivery_schema import (
-        DeliveryFieldSelection,
         DeliverySourceRef,
         DeliverySpec,
     )

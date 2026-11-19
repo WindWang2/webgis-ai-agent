@@ -1,4 +1,4 @@
-import type maplibregl from 'maplibre-gl';
+import type { Map as MaplibreMap } from 'maplibre-gl';
 import { devOnly } from '@/lib/utils/logger';
 
 export type RenderOpType =
@@ -15,7 +15,7 @@ export interface RenderOperation {
   id: string;
   type: RenderOpType;
   priority?: 'high' | 'normal';
-  execute: (map: maplibregl.Map) => void;
+  execute: (map: MaplibreMap) => void;
 }
 
 export interface DebouncerOptions {
@@ -33,7 +33,7 @@ export interface FrameStats {
 }
 
 export class RenderDebouncer {
-  private map: maplibregl.Map | null;
+  private map: MaplibreMap | null;
   private highPriorityQueue: Map<string, RenderOperation> = new Map();
   private normalPriorityQueue: Map<string, RenderOperation> = new Map();
   private rafId: number | null = null;
@@ -41,7 +41,7 @@ export class RenderDebouncer {
   private onFrameStats?: (stats: FrameStats) => void;
   private isDisposed = false;
 
-  constructor(map: maplibregl.Map | null, options: DebouncerOptions = {}) {
+  constructor(map: MaplibreMap | null, options: DebouncerOptions = {}) {
     this.map = map;
     this.frameBudgetMs = options.frameBudgetMs ?? 10;
     this.onFrameStats = options.onFrameStats;

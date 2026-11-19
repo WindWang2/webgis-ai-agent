@@ -1,7 +1,7 @@
 """G30 技能作业 API —— 工作台（UI）与 Pi @tool 共享同一业务契约。
 
-端点（全部 owner-scoped；session 资源经 verify_session_owner 归属验证，
-无权一律 404 不泄露存在性）：
+端点（全部 owner-scoped；会话可凭已验证的匿名能力或登录身份访问，
+目录和预设保留账号认证；job 另校验 creator/org/project，拒绝能力越权）：
 
 - ``GET  /api/v1/skill-jobs/catalog``               分类型目录（runnable/…）
 - ``GET  /api/v1/skill-jobs/skills/{skill_id}``     单技能详情（参数 schema/绑定需求）
@@ -23,11 +23,15 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import and_, or_, select
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, get_owner_token
+from app.core.auth import (
+    actor_ids, auth_bypass_enabled, get_current_user, get_owner_token, security,
+)
 from app.core.database import get_async_db
 from app.services.auth_history_bridge import verify_session_owner
 
@@ -134,19 +138,78 @@ async def get_skill_detail(
 
 # ── prepare / start / 运行视图 ────────────────────────────────────────
 
+async def _session_caller(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> Dict[str, Any]:
+    """Absent Bearer may prove an anonymous session capability at the route guard.
+
+    Supplied invalid/revoked credentials never silently downgrade to anonymous.
+    Account-level catalog/preset dependencies deliberately remain authenticated.
+    """
+    if credentials is not None or request.headers.get("authorization") or auth_bypass_enabled():
+        return await get_current_user(credentials)
+    return {}
+
+
+def _job_scope(user: Dict[str, Any], owner_token: Optional[str]):
+    """A capability grants only unbound anonymous jobs, never account/org/project jobs."""
+    from app.models.db_model import AnalysisTask, Conversation
+
+    uid, org = actor_ids(user)
+    anonymous = and_(
+        AnalysisTask.creator_id.is_(None), AnalysisTask.org_id.is_(None),
+        or_(AnalysisTask.project_id.is_(None), AnalysisTask.project_id == ""),
+        AnalysisTask.owner_token == owner_token if owner_token else False,
+    )
+    if not uid:
+        return anonymous
+    # Preserve pre-#2198 rows whose creator was accidentally omitted, but only
+    # through a user-bound session. An anonymous capability is not this proof.
+    legacy_owned_session = select(Conversation.id).where(
+        Conversation.id == AnalysisTask.session_id, Conversation.user_id == uid,
+    ).exists()
+    return or_(anonymous, and_(
+        or_(AnalysisTask.creator_id == uid, and_(
+            AnalysisTask.creator_id.is_(None), legacy_owned_session,
+        )),
+        or_(AnalysisTask.org_id.is_(None), AnalysisTask.org_id == org),
+    ))
+
+
+async def _authorize_job(db: AsyncSession, job_id: int, user: Dict[str, Any], owner_token: Optional[str]):
+    from app.models.db_model import AnalysisTask
+    from app.services.project_service import ProjectService
+
+    row = (await db.execute(select(AnalysisTask).where(
+        AnalysisTask.id == job_id, AnalysisTask.job_kind == "skill_job",
+        _job_scope(user, owner_token),
+    ))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    if row.project_id:
+        uid, org = actor_ids(user)
+        project = await db.run_sync(lambda session: ProjectService.get_project_with_auth(
+            session, row.project_id, user_id=uid, org_id=org,
+        ))
+        if project is None:
+            raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    return row
+
+
 async def _authorize_session(
     db: AsyncSession, session_id: str,
     user: Dict[str, Any], owner_token: Optional[str],
 ) -> None:
     await verify_session_owner(db, session_id,
-                               user_id=str(user.get("id") or ""),
+                               user_id=actor_ids(user)[0] or "",
                                owner_token=owner_token)
 
 
 @router.post("/prepare")
 async def prepare(
     req: PrepareRequest,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -176,7 +239,7 @@ async def prepare(
 @router.post("/start")
 async def start(
     req: StartRequest,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -197,7 +260,7 @@ async def start(
     prepared, inline_payloads = entry
     owner = SkillJobOwner(
         session_id=req.session_id,
-        user_id=str(user.get("id") or ""),
+        user_id=actor_ids(user)[0] or "",
         org_id=_org_of(user),
         project_id=str(user.get("project_id") or ""),
         owner_token=owner_token or "",
@@ -217,15 +280,32 @@ async def start(
 async def list_runs(
     session_id: str = Query(..., max_length=255),
     limit: int = Query(20, ge=1, le=50),
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
     """会话的技能作业运行列表（刷新回看权威：durable job 行）。"""
     await _authorize_session(db, session_id, user, owner_token)
-    from app.services.gis_harness.skill_jobs.runner import list_skill_job_views
+    from app.models.db_model import AnalysisTask
+    from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
 
-    runs = await list_skill_job_views(session_id=session_id, limit=limit)
+    # Apply principal scope before LIMIT so other principals cannot crowd out
+    # the caller's jobs in a mixed authenticated/anonymous session.
+    ids = (await db.execute(select(AnalysisTask.id).where(
+        AnalysisTask.session_id == session_id, AnalysisTask.job_kind == "skill_job",
+        _job_scope(user, owner_token),
+    ).order_by(AnalysisTask.created_at.desc()).limit(limit))).scalars().all()
+    runs = []
+    for jid in ids:
+        try:
+            await _authorize_job(db, jid, user, owner_token)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            continue
+        view = await get_skill_job_view(jid)
+        if view is not None:
+            runs.append(view)
     return {"runs": runs}
 
 
@@ -233,7 +313,7 @@ async def list_runs(
 async def get_run(
     job_id: int,
     session_id: str = Query("", max_length=255),
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -244,6 +324,7 @@ async def get_run(
     """
     from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
 
+    await _authorize_job(db, job_id, user, owner_token)
     view = await get_skill_job_view(job_id)
     if view is None:
         raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
@@ -261,13 +342,14 @@ async def get_run(
 async def cancel_run(
     job_id: int,
     session_id: str = Query(..., max_length=255),
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(_session_caller),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
     """取消（既有 durable 两阶段取消；已提交合法结果不虚假回滚）。"""
     from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
 
+    await _authorize_job(db, job_id, user, owner_token)
     view = await get_skill_job_view(job_id)
     if view is None or view.get("session_id") != session_id:
         raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
@@ -304,7 +386,7 @@ async def list_presets_ep(
 ):
     from app.services.gis_harness.skill_jobs.presets import list_presets
 
-    return {"presets": list_presets(org_id=_org_of(user), project_id=project_id)}
+    return {"presets": list_presets(org_id=_org_of(user), creator_id=actor_ids(user)[0] or "", project_id=project_id)}
 
 
 @router.post("/presets")
@@ -320,7 +402,7 @@ async def create_preset_ep(
                 name=req.name, description=req.description,
                 skill_id=req.skill_id, skill_version=req.skill_version,
                 params=req.params, bindings_template=req.bindings_template),
-            org_id=_org_of(user), creator_id=str(user.get("id") or ""),
+            org_id=_org_of(user), creator_id=actor_ids(user)[0] or "",
             project_id=str(user.get("project_id") or ""))
     except ValueError as e:
         raise HTTPException(422, detail={"code": "PRESET_INVALID",
@@ -334,7 +416,7 @@ async def get_preset_ep(
 ):
     from app.services.gis_harness.skill_jobs.presets import get_preset
 
-    preset = get_preset(preset_id, org_id=_org_of(user))
+    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or "")
     if preset is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     return preset
@@ -354,9 +436,11 @@ async def update_preset_ep(
                 name=req.name, description=req.description,
                 skill_id=req.skill_id, skill_version=req.skill_version,
                 params=req.params, bindings_template=req.bindings_template),
-            org_id=_org_of(user), creator_id=str(user.get("id") or ""),
+            org_id=_org_of(user), creator_id=actor_ids(user)[0] or "",
             preset_id=preset_id)
     except ValueError as e:
+        if str(e) == "preset not found":
+            raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"}) from e
         raise HTTPException(422, detail={"code": "PRESET_INVALID",
                                          "message": str(e)[:200]}) from e
 
@@ -368,7 +452,7 @@ async def delete_preset_ep(
 ):
     from app.services.gis_harness.skill_jobs.presets import delete_preset
 
-    if not delete_preset(preset_id, org_id=_org_of(user)):
+    if not delete_preset(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or ""):
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     return {"deleted": True}
 
@@ -392,10 +476,10 @@ async def preset_prepare_ep(
     from app.services.gis_harness.skill_jobs.store import prepared_store
 
     # review P1-4：重用路径读原始行 —— 有界视图会截断 >64 字符参数。
-    preset_raw = get_preset_raw(preset_id, org_id=_org_of(user))
+    preset_raw = get_preset_raw(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or "")
     if preset_raw is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
-    preset = get_preset(preset_id, org_id=_org_of(user))
+    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or "")
     if preset is None:  # raw 与视图两次读之间被并发删除（R2 nit-2）
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     params = dict(preset_raw.get("params") or {})

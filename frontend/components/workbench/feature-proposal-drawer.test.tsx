@@ -33,10 +33,21 @@ import {
   mergeFeatureProposal,
   submitFeatureProposalResolutions,
 } from '@/lib/api/feature-proposals';
+import type {
+  ProposalDetail,
+  ProposalDiff,
+  ProposalSummary,
+} from '@/lib/api/feature-proposals';
 
 const mocked = vi.mocked;
 
-function summary(overrides: Record<string, unknown> = {}) {
+// 线负载还携带 dep_fingerprints（后端 contract 有、TS 接口未列）——
+// fixture 类型在 ProposalSummary 之上保留该运行时字段。
+type SummaryFixture = ProposalSummary & {
+  base: ProposalSummary['base'] & { dep_fingerprints: Record<string, unknown> };
+};
+
+function summaryBase(): SummaryFixture {
   return {
     proposal_id: 'fpr-abc123',
     ref_id: 'ref:geojson-x',
@@ -57,12 +68,15 @@ function summary(overrides: Record<string, unknown> = {}) {
     resolutions_count: 0,
     created_at: 1,
     updated_at: 2,
-    ...overrides,
   };
 }
 
-function detail(overrides: Record<string, unknown> = {}) {
-  return {
+function summary(overrides: Partial<ProposalSummary> = {}): ProposalSummary {
+  return Object.assign(summaryBase(), overrides);
+}
+
+function detail(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
+  return Object.assign({
     ...summary(),
     ops: [{ op: 'set_fields', wfids: ['wf1-x'], fields: { capacity: 500 } }],
     op_seed: 'fpr-abc123',
@@ -71,12 +85,11 @@ function detail(overrides: Record<string, unknown> = {}) {
     comments: [],
     approval: null,
     withdrawn_at: null,
-    ...overrides,
-  };
+  }, overrides);
 }
 
-function diff(overrides: Record<string, unknown> = {}) {
-  return {
+function diff(overrides: Partial<ProposalDiff> = {}): ProposalDiff {
+  const base: ProposalDiff = {
     proposal_id: 'fpr-abc123',
     revision: 1,
     base: summary().base,
@@ -113,8 +126,8 @@ function diff(overrides: Record<string, unknown> = {}) {
       current_changed: true,
     },
     lineage: [],
-    ...overrides,
   };
+  return Object.assign(base, overrides);
 }
 
 describe('FeatureProposalDrawer', () => {

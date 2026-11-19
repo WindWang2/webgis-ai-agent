@@ -345,7 +345,7 @@ def test_g22_packer_property_sweep_all_dimensions_bounded():
             assert "锁定" in body, dims
         if n_hidden:
             assert "隐藏" in body, dims
-        if any("label" in l for l in layers):
+        if any("label" in layer for layer in layers):
             assert "标注" in body, dims
         if n_frames:
             assert "多画幅" in body, dims

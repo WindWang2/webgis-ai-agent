@@ -84,7 +84,8 @@ def plan_version_for(plan: Dict[str, Any]) -> str:
          "actions": ident},
         sort_keys=True, ensure_ascii=False,
     ).encode("utf-8")
-    return hashlib.sha1(blob).hexdigest()[:16]
+    # Stable version key for server-reconstructed actions, not a credential.
+    return hashlib.sha1(blob, usedforsecurity=False).hexdigest()[:16]
 
 
 def _requirement_rows(stored_goal: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

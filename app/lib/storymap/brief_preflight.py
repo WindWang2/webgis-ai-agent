@@ -13,7 +13,7 @@ verdict 词表（对齐既有三态纪律）：
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional
 
 from app.lib.storymap.brief_factcheck import check_facts
 from app.lib.storymap.brief_spec import MapBriefSpec

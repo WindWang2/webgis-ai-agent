@@ -307,7 +307,7 @@ def _lock_hit(component_id: str, locks: List[str]) -> bool:
     ``scale__v2`` 绕过锁；同一条规则在 replace_plan / handler 里又各写一份。
     """
     cid = str(component_id)
-    return any(_lock_matches(str(l), cid) for l in locks)
+    return any(_lock_matches(str(lock), cid) for lock in locks)
 
 
 #: 锁组件被冻结的字段（``locked`` 自身是只读投影，不参与比较）。

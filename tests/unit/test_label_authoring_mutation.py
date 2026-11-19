@@ -47,7 +47,7 @@ async def _seed(session_id: str) -> MapSpecLifecycleEngine:
 
 def _overrides(res) -> list:
     layers = res.mapspec.get("layers", [])
-    label = next(l for l in layers if l["id"] == "schools")["label"]
+    label = next(layer for layer in layers if layer["id"] == "schools")["label"]
     return (label.get("authoring") or {}).get("overrides") or []
 
 
@@ -78,7 +78,7 @@ class TestAuthoringMutation:
         assert "feature_not_found" in res.error_msg
         # 原子：s1 的合法 op 也不落盘（错误回执不带 mapspec —— 读权威库）。
         fresh = await engine.store.get_mapspec("sess-g16-b")
-        label = next(l for l in fresh["layers"] if l["id"] == "schools")["label"]
+        label = next(layer for layer in fresh["layers"] if layer["id"] == "schools")["label"]
         assert (label.get("authoring") or {}).get("overrides") in (None, [])
 
     async def test_bad_target_type_rejected(self):
@@ -214,7 +214,7 @@ class TestAuthoringMutation:
         if res2.superseded or res2.is_error:
             # 用户最新决定保留。
             fresh = await engine.store.get_mapspec("sess-g16-j")
-            ovs = (next(l for l in fresh["layers"] if l["id"] == "schools")
+            ovs = (next(layer for layer in fresh["layers"] if layer["id"] == "schools")
                    ["label"].get("authoring") or {}).get("overrides") or []
             s1 = next(o for o in ovs if o["featureId"] == "s1")
             assert s1.get("hidden") is True

@@ -20,7 +20,7 @@ from app.services.print_layout_authoring.template import binding_context, resolv
 
 def component_is_locked(component_id: str, locks: List[str]) -> bool:
     """复用 workbench 锁命中谓词（含双向 ``__`` 族语义），不建第二锁位。"""
-    return any(_lock_matches(str(l), str(component_id)) for l in locks)
+    return any(_lock_matches(str(lock), str(component_id)) for lock in locks)
 
 
 def locks_of(mapspec: Dict[str, Any]) -> List[str]:

@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from sqlalchemy import inspect as sa_inspect
 
 from app.services.gis_harness.skill_jobs.contracts import SkillJobErrorCode
 from app.services.gis_harness.skill_jobs.prepare import prepare_skill_job

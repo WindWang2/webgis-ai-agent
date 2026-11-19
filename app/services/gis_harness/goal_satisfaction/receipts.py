@@ -280,9 +280,9 @@ async def _collect_raster(session_id: str) -> List[Dict[str, Any]]:
             if str(src.get("type") or "") != "numeric_raster":
                 continue
             layers = [
-                str(l.get("id") or "")[:64]
-                for l in (spec.get("layers") or [])[:64]
-                if isinstance(l, dict) and str(l.get("source") or "") == str(source_id)
+                str(layer.get("id") or "")[:64]
+                for layer in (spec.get("layers") or [])[:64]
+                if isinstance(layer, dict) and str(layer.get("source") or "") == str(source_id)
             ]
             rows.append({
                 "source_id": str(source_id)[:64],
@@ -349,7 +349,6 @@ async def collect_capability_receipts(
     chapter = chapter if isinstance(chapter, dict) else {}
     families: Dict[str, List[Dict[str, Any]]] = {}
     notes: List[str] = []
-    import asyncio
 
     collectors = (
         ("edit", lambda: _collect_edit(session_id)),

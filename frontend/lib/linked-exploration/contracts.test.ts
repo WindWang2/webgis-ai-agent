@@ -50,6 +50,7 @@ describe('compileCombinedWhere', () => {
     const w = compileCombinedWhere(
       [cat(['a']), rng({ gte: 1 }), {
         kind: 'category', conditionId: 'c3', chartId: 'ch3', field: 'zone', values: ['x'],
+        includeNull: false,
       }],
       'ch2',
     );

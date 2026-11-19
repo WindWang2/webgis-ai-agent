@@ -244,7 +244,7 @@ export async function previewBinding(
       method: 'POST',
       headers: { 'Content-Type': 'application/json',
                  ...sessionHeaders(ownerToken) },
-      body: JSON.stringify({ plan }),
+      body: { plan },
     });
 }
 
@@ -259,10 +259,10 @@ export async function applyBinding(
       method: 'POST',
       headers: { 'Content-Type': 'application/json',
                  ...sessionHeaders(ownerToken) },
-      body: JSON.stringify({
+      body: {
         plan, expected_revision: expectedRevision,
         ...(clientMutationId ? { client_mutation_id: clientMutationId } : {}),
-      }),
+      },
     });
 }
 
@@ -276,6 +276,6 @@ export async function unbindLayer(
       method: 'POST',
       headers: { 'Content-Type': 'application/json',
                  ...sessionHeaders(ownerToken) },
-      body: JSON.stringify({ expected_revision: expectedRevision }),
+      body: { expected_revision: expectedRevision },
     });
 }

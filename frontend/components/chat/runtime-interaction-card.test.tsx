@@ -96,6 +96,6 @@ describe('RuntimeInteractionCard', () => {
     expect(btn.disabled).toBe(true);
     const input = screen.getByRole('textbox');
     fireEvent.change(input, { target: { value: '自定义标题' } });
-    expect(screen.getByRole('button', { name: /提交回答|Submit answer/ }).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: /提交回答|Submit answer/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

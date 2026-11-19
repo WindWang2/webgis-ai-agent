@@ -106,7 +106,6 @@ def check_topology(
         wfids.append(wfid)
     affected = set(affected_wfids)
     by_wfid = dict(zip(wfids, geoms))
-    index_of = {w: i for i, w in enumerate(wfids)}
     tolerance_m = float(declaration.get("tolerance_m") or DEFAULT_TOPOLOGY_TOLERANCE_M)
 
     if "no_self_intersection" in rules:

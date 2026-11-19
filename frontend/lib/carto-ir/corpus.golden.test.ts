@@ -43,7 +43,23 @@ function loadFixtures(): CorpusFixture[] {
   return readdirSync(CORPUS_DIR)
     .filter((f) => f.endsWith('.json') && f !== 'contract_manifest.json')
     .sort()
-    .map((f) => JSON.parse(readFileSync(resolve(CORPUS_DIR, f), 'utf-8')) as CorpusFixture);
+    .flatMap((file) => {
+      const document = JSON.parse(readFileSync(resolve(CORPUS_DIR, file), 'utf-8'));
+      // G27 is an aggregate input/expected case collection, not a MapSpec
+      // compile golden. Its actual consumer is scale-portrayal.test.ts.
+      if (file === 'scale_portrayal_cases.json') {
+        if (typeof document.corpus_version !== 'string' || !Array.isArray(document.cases) || !document.cases.length
+          || document.cases.some((entry: Record<string, unknown>) => typeof entry.id !== 'string'
+            || typeof entry.zoom !== 'number' || !entry.layer || !entry.expected)) {
+          throw new Error(`Invalid G27 corpus: ${file}`);
+        }
+        return [];
+      }
+      if (typeof document.name !== 'string' || !document.spec || !document.expect) {
+        throw new Error(`Unknown or malformed MapSpec corpus: ${file}`);
+      }
+      return [document as CorpusFixture];
+    });
 }
 
 describe('contract manifest 双向漂移闸（前端侧）', () => {
@@ -63,6 +79,13 @@ describe('contract manifest 双向漂移闸（前端侧）', () => {
 
 describe('corpus fixtures → compileMapSpec golden', () => {
   const fixtures = loadFixtures();
+
+  it('dispatches the shared G27 aggregate to its exhaustive scale-policy consumer', () => {
+    const aggregate = JSON.parse(readFileSync(resolve(CORPUS_DIR, 'scale_portrayal_cases.json'), 'utf8'));
+    expect(aggregate.cases.length).toBeGreaterThan(0);
+    expect(new Set(aggregate.cases.map((entry: { id: string }) => entry.id)).size).toBe(aggregate.cases.length);
+    expect(loadFixtures().every((fixture) => typeof fixture.name === 'string' && fixture.spec && fixture.expect)).toBe(true);
+  });
 
   it('corpus 非空（fixture 目录漂移即红）', () => {
     expect(fixtures.length).toBeGreaterThanOrEqual(5);

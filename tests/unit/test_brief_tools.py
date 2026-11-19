@@ -196,8 +196,6 @@ class TestPiAdapterChain:
             response = await bridge_mod.dispatch_tool(request)
             assert isinstance(response, bridge_mod.PiToolResponse)
             assert not response.isError
-            payload = response.details if response.details else \
-                response.content[0].get("json") if response.content else None
             # 回执内容里应能找到真实领域结果（已核验指标 > 0）
             import json as _json
 

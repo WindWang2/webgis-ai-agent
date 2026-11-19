@@ -1,9 +1,12 @@
 'use client';
+
+import { useT } from '@/lib/i18n/useT';
 import { devOnly } from '@/lib/utils/logger';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { STitle } from '@/components/shared/section-title';
-import { getSessionIdentity } from '@/lib/store/session-identity';
+import { getSessionIdentity, subscribeSessionIdentity } from '@/lib/store/session-identity';
+import { getAuthUser, subscribeAuth } from '@/lib/auth/tokenStore';
 import {
   SkillJobApiError,
   cancelSkillJobRun,
@@ -13,7 +16,6 @@ import {
   listPresets,
   listSkillJobRuns,
   prepareSkillJob,
-  presetPrepare,
   startSkillJob,
   type PrepareResponse,
   type SkillCatalogEntry,
@@ -39,20 +41,68 @@ interface BindingInput {
   inlineText: string;
 }
 
-function runnabilityBadge(entry: SkillCatalogEntry): { text: string; cls: string } {
+function runnabilityBadge(entry: SkillCatalogEntry, labels: Record<'runnable' | 'deprecated' | 'unavailable' | 'guidanceOnly', string>): { text: string; cls: string } {
   switch (entry.runnability) {
     case 'runnable':
-      return { text: '可执行', cls: 'bg-emerald-500/15 text-emerald-500' };
+      return { text: labels.runnable, cls: 'bg-emerald-500/15 text-emerald-500' };
     case 'deprecated':
-      return { text: '已弃用', cls: 'bg-amber-500/15 text-amber-500' };
+      return { text: labels.deprecated, cls: 'bg-amber-500/15 text-amber-500' };
     case 'unavailable':
-      return { text: '能力不可用', cls: 'bg-red-500/15 text-red-400' };
+      return { text: labels.unavailable, cls: 'bg-red-500/15 text-red-400' };
     default:
-      return { text: '仅指导', cls: 'bg-slate-500/15 text-slate-400' };
+      return { text: labels.guidanceOnly, cls: 'bg-slate-500/15 text-slate-400' };
   }
 }
 
+type WorkbenchIdentity = ReturnType<typeof getSessionIdentity> & { userId: string | null };
+type WorkbenchScope = { identity: WorkbenchIdentity; generation: number; controller: AbortController };
+
+function readWorkbenchIdentity(): WorkbenchIdentity {
+  return { ...getSessionIdentity(), userId: getAuthUser()?.id ?? null };
+}
+
+function sameIdentity(left: WorkbenchIdentity, right: WorkbenchIdentity) {
+  return left.userId === right.userId && left.sessionId === right.sessionId && left.ownerToken === right.ownerToken;
+}
+
 export function SkillWorkbench() {
+  const [scope, setScope] = useState<WorkbenchScope>(() => ({
+    identity: readWorkbenchIdentity(), generation: 0, controller: new AbortController(),
+  }));
+  const scopeRef = useRef(scope);
+
+  useEffect(() => {
+    const syncIdentity = () => {
+      const current = scopeRef.current;
+      const identity = readWorkbenchIdentity();
+      if (!current.controller.signal.aborted && sameIdentity(current.identity, identity)) return;
+      // Invalidate synchronously: stale DOM handlers must not borrow the next Bearer token.
+      current.controller.abort();
+      const next = { identity, generation: current.generation + 1, controller: new AbortController() };
+      scopeRef.current = next;
+      setScope(next);
+    };
+    const unsubscribeSession = subscribeSessionIdentity(syncIdentity);
+    const unsubscribeAuth = subscribeAuth(syncIdentity);
+    // Covers store changes before subscription, and StrictMode's setup/cleanup cycle.
+    syncIdentity();
+    return () => {
+      unsubscribeSession();
+      unsubscribeAuth();
+      scopeRef.current.controller.abort();
+    };
+  }, []);
+
+  // Every cached value/form and polling lifetime belongs to one immutable identity scope.
+  return <IdentitySkillWorkbench key={scope.generation} scope={scope} />;
+}
+
+function IdentitySkillWorkbench({ scope }: { scope: WorkbenchScope }) {
+  const t = useT('settings.skillWorkbench');
+  const badgeLabels = {
+    runnable: t('runnable'), deprecated: t('deprecated'),
+    unavailable: t('unavailable'), guidanceOnly: t('guidanceOnly'),
+  };
   const [catalog, setCatalog] = useState<SkillCatalogEntry[]>([]);
   const [guides, setGuides] = useState<SkillCatalogEntry[]>([]);
   const [candidates, setCandidates] = useState<SkillCatalogEntry[]>([]);
@@ -68,32 +118,43 @@ export function SkillWorkbench() {
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [presetName, setPresetName] = useState('');
-  const [sessionId, setSessionId] = useState('');
+  const { sessionId, ownerToken } = scope.identity;
+  const isCurrent = useCallback(() => (
+    !scope.controller.signal.aborted && sameIdentity(scope.identity, readWorkbenchIdentity())
+  ), [scope]);
+  const requestOptions = useCallback(() => ({
+    ownerToken: sessionId ? ownerToken : undefined,
+    signal: scope.controller.signal,
+  }), [sessionId, ownerToken, scope]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+  }, []);
+
   useEffect(() => {
-    getCatalog()
+    if (!isCurrent()) return;
+    const options = requestOptions();
+    getCatalog(options)
       .then((c) => {
+        if (!isCurrent()) return;
         setCatalog(c.skills || []);
         setGuides(c.md_guides || []);
         setCandidates(c.extension_candidates || []);
       })
-      .catch((err: unknown) => devOnly.warn('SkillWorkbench: catalog failed', err));
-    listPresets()
-      .then((p) => setPresets(p.presets || []))
+      .catch((err: unknown) => { if (isCurrent()) devOnly.warn('SkillWorkbench: catalog failed', err); });
+    listPresets(options)
+      .then((p) => { if (isCurrent()) setPresets(p.presets || []); })
       .catch(() => undefined);
-    const { sessionId: sid } = getSessionIdentity();
-    if (sid) setSessionId(sid);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
+  }, [requestOptions, isCurrent]);
 
   const refreshRuns = useCallback((sid: string) => {
-    listSkillJobRuns(sid)
-      .then((r) => setRuns(r.runs || []))
+    if (!isCurrent() || sid !== sessionId) return;
+    const options = requestOptions();
+    listSkillJobRuns(sid, options)
+      .then((r) => { if (isCurrent()) setRuns(r.runs || []); })
       .catch(() => undefined);
-  }, []);
+  }, [requestOptions, isCurrent, sessionId]);
 
   useEffect(() => {
     if (sessionId) refreshRuns(sessionId);
@@ -109,9 +170,13 @@ export function SkillWorkbench() {
   const startPolling = useCallback(
     (jobId: string) => {
       stopPolling();
+      if (!isCurrent() || !sessionId) return;
+      const options = requestOptions();
       pollRef.current = setInterval(() => {
-        getSkillJobRun(jobId, sessionId)
+        if (!isCurrent()) { stopPolling(); return; }
+        getSkillJobRun(jobId, sessionId, options)
           .then((r) => {
+            if (!isCurrent()) return;
             setRun(r);
             if (!r.active) {
               stopPolling();
@@ -121,10 +186,11 @@ export function SkillWorkbench() {
           .catch(() => undefined);
       }, 2500);
     },
-    [refreshRuns, sessionId, stopPolling],
+    [refreshRuns, sessionId, stopPolling, requestOptions, isCurrent],
   );
 
   const onSelectSkill = (entry: SkillCatalogEntry) => {
+    if (!isCurrent()) return;
     stopPolling();
     setError(null);
     setSelected(entry);
@@ -153,9 +219,10 @@ export function SkillWorkbench() {
       );
 
   const onPrepare = async () => {
-    if (!selected || !sessionId) return;
+    if (!isCurrent() || !selected || !sessionId) return;
     setBusy(true);
     setError(null);
+    const options = requestOptions();
     try {
       const typedParams: Record<string, unknown> = {};
       (selected.parameters || []).forEach((spec) => {
@@ -171,47 +238,53 @@ export function SkillWorkbench() {
         skill_version: selected.version || '',
         params: typedParams,
         bindings: buildBindings(),
-      });
+      }, options);
+      if (!isCurrent()) return;
       setPrepared(res);
       setPhase('preview');
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof SkillJobApiError) setError({ code: err.code, message: err.message });
       else setError({ code: 'PREPARE_FAILED', message: String(err).slice(0, 160) });
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   const onStart = async () => {
-    if (!prepared || !sessionId) return;
+    if (!isCurrent() || !prepared || !sessionId) return;
     setBusy(true);
     setError(null);
+    const options = requestOptions();
     try {
-      const r = await startSkillJob({ prepared_id: prepared.prepared_id, session_id: sessionId });
+      const r = await startSkillJob({ prepared_id: prepared.prepared_id, session_id: sessionId }, options);
+      if (!isCurrent()) return;
       setRun(r);
       setPhase('running');
       if (r.active) startPolling(r.job_id);
       else refreshRuns(sessionId);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof SkillJobApiError) setError({ code: err.code, message: err.message });
       else setError({ code: 'START_FAILED', message: String(err).slice(0, 160) });
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   const onCancel = async () => {
-    if (!run || !sessionId) return;
+    if (!isCurrent() || !run || !sessionId) return;
     try {
-      await cancelSkillJobRun(run.job_id, sessionId);
+      await cancelSkillJobRun(run.job_id, sessionId, requestOptions());
     } catch {
       /* 取消请求失败：下一轮轮询如实反映 */
     }
   };
 
   const onSavePreset = async () => {
-    if (!selected || !presetName.trim()) return;
+    if (!isCurrent() || !selected || !presetName.trim()) return;
     setBusy(true);
+    const options = requestOptions();
     try {
       await createPreset({
         name: presetName.trim(),
@@ -221,18 +294,20 @@ export function SkillWorkbench() {
         bindings_template: Object.fromEntries(
           bindings.map((b) => [b.role, { last_ref: b.ref, mode: b.mode }]),
         ),
-      });
+      }, options);
+      if (!isCurrent()) return;
       setPresetName('');
-      listPresets().then((p) => setPresets(p.presets || [])).catch(() => undefined);
+      listPresets(options).then((p) => { if (isCurrent()) setPresets(p.presets || []); }).catch(() => undefined);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof SkillJobApiError) setError({ code: err.code, message: err.message });
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   const onReusePreset = async (preset: SkillJobPreset) => {
-    if (!sessionId) return;
+    if (!isCurrent() || !sessionId || !presets.includes(preset)) return;
     setBusy(true);
     setError(null);
     try {
@@ -265,7 +340,7 @@ export function SkillWorkbench() {
       // 前端预填 + 普通 prepare，让用户先核对绑定（ref 过期会 typed 报错）。
       await Promise.resolve();
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
@@ -274,12 +349,11 @@ export function SkillWorkbench() {
 
   return (
     <section className="space-y-4" data-testid="skill-workbench">
-      <STitle title="技能作业工作台" sub="选择版本 · 绑定数据 · 审阅计划 · 启动执行 · 回看结果 · 复用配置" />
+      <STitle title={t('title')} sub={t('subtitle')} />
 
       {!sessionId && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
-          尚无活跃会话：先在对话中开启一个会话（数据 ref 与运行记录按会话归属），
-          再回到本工作台绑定数据。
+          {t('noSession')}
         </div>
       )}
       {error && (
@@ -297,9 +371,9 @@ export function SkillWorkbench() {
         <div className="space-y-2">
           <div className="flex gap-1 text-xs">
             {([
-              ['skills', `可执行技能 ${catalog.length}`],
-              ['guides', `方法指南 ${guides.length}`],
-              ['candidates', `扩展 ${candidates.length}`],
+              ['skills', t('skillsTab', { p0: catalog.length })],
+              ['guides', t('guidesTab', { p0: guides.length })],
+              ['candidates', t('extensionsTab', { p0: candidates.length })],
             ] as const).map(([key, label]) => (
               <button
                 key={key}
@@ -313,7 +387,7 @@ export function SkillWorkbench() {
           </div>
           <div className="max-h-[420px] space-y-1 overflow-y-auto pr-1">
             {activeList.map((entry) => {
-              const badge = entry.runnability ? runnabilityBadge(entry) : null;
+              const badge = entry.runnability ? runnabilityBadge(entry, badgeLabels) : null;
               return (
                 <button
                   key={`${entry.asset_type}:${entry.id}`}
@@ -342,14 +416,14 @@ export function SkillWorkbench() {
               );
             })}
             {activeList.length === 0 && (
-              <p className="p-2 text-xs text-muted-foreground">（空）</p>
+              <p className="p-2 text-xs text-muted-foreground">{t('empty')}</p>
             )}
           </div>
         </div>
 
         {/* ── 主面板 ── */}
         <div className="min-h-[420px] space-y-4 rounded-lg border border-border p-4">
-          {!selected && <p className="text-sm text-muted-foreground">从左侧目录选择一个技能开始。</p>}
+          {!selected && <p className="text-sm text-muted-foreground">{t('selectSkill')}</p>}
 
           {selected && (
             <>
@@ -360,7 +434,7 @@ export function SkillWorkbench() {
                     {selected.id} v{selected.version}
                   </span>
                   {(() => {
-                    const badge = runnabilityBadge(selected);
+                    const badge = runnabilityBadge(selected, badgeLabels);
                     return (
                       <span className={`rounded px-1.5 py-0.5 text-[10px] ${badge.cls}`}>
                         {badge.text}
@@ -382,14 +456,14 @@ export function SkillWorkbench() {
                 <div className="space-y-4" data-testid="configure-panel">
                   {/* 数据角色绑定 */}
                   <fieldset className="space-y-2">
-                    <legend className="text-sm font-medium">数据绑定（角色 → 会话 ref 或内联 GeoJSON）</legend>
+                    <legend className="text-sm font-medium">{t('bindings')}</legend>
                     {bindings.map((b, i) => (
                       <div key={b.role} className="space-y-1 rounded-md border border-border p-2">
                         <div className="flex items-center gap-2 text-xs">
                           <span className="font-mono">{b.role}</span>
                           <span className="text-muted-foreground">
                             {(selected.role_bindings || []).find((rb) => rb.role === b.role)
-                              ?.geometry_kinds.join('/') || '任意几何'}
+                              ?.geometry_kinds.join('/') || t('anyGeometry')}
                           </span>
                         </div>
                         <div className="flex gap-1 text-xs">
@@ -401,7 +475,7 @@ export function SkillWorkbench() {
                               )
                             }
                           >
-                            会话 ref
+                            {t('sessionRef')}
                           </button>
                           <button
                             className={`rounded px-2 py-0.5 ${b.mode === 'inline' ? 'bg-primary/20' : 'bg-muted'}`}
@@ -411,13 +485,13 @@ export function SkillWorkbench() {
                               )
                             }
                           >
-                            内联 GeoJSON
+                            {t('inlineGeojson')}
                           </button>
                         </div>
                         {b.mode === 'ref' ? (
                           <input
                             className="w-full rounded border border-border bg-background px-2 py-1 font-mono text-xs"
-                            placeholder="ref:geojson-…（本会话的数据引用）"
+                            placeholder={t('refPlaceholder')}
                             value={b.ref}
                             onChange={(e) =>
                               setBindings((arr) =>
@@ -443,13 +517,13 @@ export function SkillWorkbench() {
                       </div>
                     ))}
                     {bindings.length === 0 && (
-                      <p className="text-xs text-muted-foreground">该技能无需数据绑定。</p>
+                      <p className="text-xs text-muted-foreground">{t('noBindings')}</p>
                     )}
                   </fieldset>
 
                   {/* 参数表单 */}
                   <fieldset className="space-y-2">
-                    <legend className="text-sm font-medium">参数</legend>
+                    <legend className="text-sm font-medium">{t('parameters')}</legend>
                     {paramSpecs.map((spec) => (
                       <label key={spec.name} className="block space-y-1 text-xs">
                         <span className="flex items-center gap-1">
@@ -471,7 +545,7 @@ export function SkillWorkbench() {
                               setParams((p) => ({ ...p, [spec.name]: e.target.value }))
                             }
                           >
-                            <option value="">（未提供）</option>
+                            <option value="">{t('notProvided')}</option>
                             {(spec.enum_values || []).map((v) => (
                               <option key={v} value={v}>
                                 {v}
@@ -486,7 +560,7 @@ export function SkillWorkbench() {
                               setParams((p) => ({ ...p, [spec.name]: e.target.value }))
                             }
                           >
-                            <option value="">（未提供）</option>
+                            <option value="">{t('notProvided')}</option>
                             <option value="true">true</option>
                             <option value="false">false</option>
                           </select>
@@ -504,7 +578,7 @@ export function SkillWorkbench() {
                       </label>
                     ))}
                     {paramSpecs.length === 0 && (
-                      <p className="text-xs text-muted-foreground">该技能无声明参数。</p>
+                      <p className="text-xs text-muted-foreground">{t('noParameters')}</p>
                     )}
                   </fieldset>
 
@@ -514,23 +588,23 @@ export function SkillWorkbench() {
                     onClick={onPrepare}
                     data-testid="prepare-btn"
                   >
-                    {busy ? '准备中…' : '预览执行计划（零副作用）'}
+                    {busy ? t('preparing') : t('previewPlan')}
                   </button>
                   {selected.runnability !== 'runnable' && (
                     <p className="text-xs text-muted-foreground">
-                      该资产不是可执行技能（{selected.runnability}）—— 只能作为方法指导。
+                      {t('guidancePrefix')}{selected.runnability}{t('guidanceSuffix')}
                     </p>
                   )}
 
                   {/* 预设 */}
                   <details className="rounded-md border border-border p-2">
                     <summary className="cursor-pointer text-xs font-medium">
-                      保存/复用配置预设（{presets.length}）
+                      {t('presetsPrefix')}{presets.length}{t('closeParen')}
                     </summary>
                     <div className="mt-2 flex gap-1">
                       <input
                         className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs"
-                        placeholder="预设名（如：学校点分布-标准配置）"
+                        placeholder={t('presetPlaceholder')}
                         value={presetName}
                         onChange={(e) => setPresetName(e.target.value)}
                       />
@@ -539,7 +613,7 @@ export function SkillWorkbench() {
                         disabled={busy || !presetName.trim()}
                         onClick={onSavePreset}
                       >
-                        保存
+                        {t('save')}
                       </button>
                     </div>
                     <ul className="mt-2 space-y-1">
@@ -553,7 +627,7 @@ export function SkillWorkbench() {
                             disabled={busy}
                             onClick={() => onReusePreset(p)}
                           >
-                            复用（重新绑定）
+                            {t('reuse')}
                           </button>
                         </li>
                       ))}
@@ -565,7 +639,7 @@ export function SkillWorkbench() {
               {phase === 'preview' && prepared && (
                 <div className="space-y-3" data-testid="preview-panel">
                   <h4 className="text-sm font-medium">
-                    执行计划预览（技能 digest {prepared.preview.skill.digest}）
+                    {t('previewPrefix')} {prepared.preview.skill.digest}{t('closeParen')}
                   </h4>
                   <ol className="space-y-1 text-xs">
                     {prepared.preview.steps.map((st) => (
@@ -576,7 +650,7 @@ export function SkillWorkbench() {
                           <span className="text-muted-foreground">{st.side_effect}</span>
                         </div>
                         <div className="mt-0.5 text-muted-foreground">
-                          读取角色：{st.reads_roles.join(', ') || '—'} · 证据：
+                          {t('readRoles')}{st.reads_roles.join(', ') || '—'}  {t('evidence')}
                           {st.produces_evidence.join(', ') || '—'}
                         </div>
                       </li>
@@ -584,11 +658,11 @@ export function SkillWorkbench() {
                   </ol>
                   <div className="text-xs">
                     <div>
-                      证据覆盖：{prepared.preview.evidence_covered.join(', ') || '—'}
+                      {t('coverage')}{prepared.preview.evidence_covered.join(', ') || '—'}
                     </div>
                     {prepared.preview.evidence_not_covered.length > 0 && (
                       <div className="text-amber-400">
-                        未覆盖义务（运行记录将如实保留）：{prepared.preview.evidence_not_covered.join(', ')}
+                        {t('uncovered')}{prepared.preview.evidence_not_covered.join(', ')}
                       </div>
                     )}
                   </div>
@@ -599,13 +673,13 @@ export function SkillWorkbench() {
                       onClick={onStart}
                       data-testid="start-btn"
                     >
-                      {busy ? '启动中…' : '启动运行'}
+                      {busy ? t('starting') : t('startRun')}
                     </button>
                     <button
                       className="rounded-md bg-muted px-4 py-2 text-sm"
                       onClick={() => setPhase('configure')}
                     >
-                      返回修改
+                      {t('back')}
                     </button>
                   </div>
                 </div>
@@ -614,7 +688,7 @@ export function SkillWorkbench() {
               {(phase === 'running' || run) && run && (
                 <div className="space-y-2 text-sm" data-testid="run-panel">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">运行 {run.job_id}</span>
+                    <span className="font-medium">{t('run')} {run.job_id}</span>
                     <span
                       className={`rounded px-1.5 py-0.5 text-xs ${
                         run.status === 'completed'
@@ -628,16 +702,16 @@ export function SkillWorkbench() {
                     </span>
                     {run.idempotent_reuse && (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                        幂等复用（未重复执行）
+                        {t('idempotentReuse')}
                       </span>
                     )}
                     {run.already_running && (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                        已在运行（双击/重试不重复执行）
+                        {t('alreadyRunning')}
                       </span>
                     )}
                   </div>
-                  {run.progress != null && <div>进度：{run.progress}%</div>}
+                  {run.progress != null && <div>{t('progress')}{run.progress}%</div>}
                   {(run.steps || []).length > 0 && (
                     <ol className="space-y-1 text-xs">
                       {(run.steps || []).map((st) => (
@@ -659,18 +733,18 @@ export function SkillWorkbench() {
                     </ol>
                   )}
                   {run.result_ref && (
-                    <div className="font-mono text-xs">结果 ref：{run.result_ref}</div>
+                    <div className="font-mono text-xs">{t('resultRef')}{run.result_ref}</div>
                   )}
                   {(run.evidence_not_covered || []).length > 0 && (
                     <div className="text-xs text-amber-400">
-                      未覆盖义务：{(run.evidence_not_covered || []).join(', ')}
+                      {t('uncoveredResult')}{(run.evidence_not_covered || []).join(', ')}
                     </div>
                   )}
                   {run.error && <div className="text-xs text-red-400">{run.error}</div>}
                   <div className="flex gap-2">
                     {run.cancellable && (
                       <button className="rounded-md bg-muted px-3 py-1.5 text-xs" onClick={onCancel}>
-                        取消运行
+                        {t('cancelRun')}
                       </button>
                     )}
                     <button
@@ -682,7 +756,7 @@ export function SkillWorkbench() {
                         setPhase('configure');
                       }}
                     >
-                      再跑一次（重新准备）
+                      {t('runAgain')}
                     </button>
                   </div>
                 </div>
@@ -695,13 +769,13 @@ export function SkillWorkbench() {
       {/* 运行记录（刷新回看） */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium">本会话运行记录（刷新后仍可回看）</h4>
+          <h4 className="text-sm font-medium">{t('history')}</h4>
           {sessionId && (
             <button
               className="rounded bg-muted px-2 py-1 text-xs"
               onClick={() => refreshRuns(sessionId)}
             >
-              刷新
+              {t('refresh')}
             </button>
           )}
         </div>
@@ -731,7 +805,7 @@ export function SkillWorkbench() {
               </span>
             </li>
           ))}
-          {runs.length === 0 && <li className="text-muted-foreground">（暂无运行）</li>}
+          {runs.length === 0 && <li className="text-muted-foreground">{t('noRuns')}</li>}
         </ul>
       </div>
     </section>

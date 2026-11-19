@@ -7,7 +7,7 @@
 3. **SW-09（P1）**：终验四层结构可区分，但 display-confirmation auto 模式下 UI 完全静默——"渲染已发生"被无声当作闭环。
 4. **SW-05/SW-08（P2）**：可解释面板手动刷新；图表类别选择无键盘路径。
 
-## 实现（ADR-0287；全部 additive，manifest 双闸同步）
+## 实现（ADR-0297；全部 additive，manifest 双闸同步）
 
 - **SW-02 范围披露契约**：`feature_selected`/`table_selection_changed` 白名单 + `matched_count`/`ids_truncated`（**服务端权威派生**，双判据：原始 id 数>50 或 matched>携带数——前端预截样本不误判）；`selected_ids` 专属上限 50 **三方对齐**（selection-store=IR=analysis_scope）；选择 kind 载荷预算 4096B（512B 会把截断恶化成整事件拒绝）；`bbox` 谓词进白名单；chart categories 20 对齐；无 id 图层 count-only 上行。投影→声称面→验证面→选择史四层贯通（`truncated_sample` 披露进 `checks.features`；史代披露与 previous 句柄同权）。
 - **SW-04**：`invertible` 扩展 paint/symbol（before 全数值在场；缺值诚实不可逆）；前端 `styleCommand`（undo/redo 经 `patch_layer_style` 用户通道反向重放）。
@@ -27,7 +27,7 @@
 - 回放金标：**31 passed**（18 场景 × 双跑 + present；2 条 32 字符 id 真实路径）
 - 前端全量 vitest：**5011 passed**（1 expected fail 为基线）+ tsc 0 + eslint 0 + i18n 双语
 - 新增测试：后端 24+（含复审钉扎）+ 语料 5；前端 13
-- 契约文档：`docs/SITUATED_WORKBENCH_CONTRACT.md`、`docs/INTERACTION_REPLAY_GOLDENS.md`、`docs/UX_JOURNEY_EVIDENCE.md`（J1–J8 → 测试证据映射）；ADR-0287
+- 契约文档：`docs/SITUATED_WORKBENCH_CONTRACT.md`、`docs/INTERACTION_REPLAY_GOLDENS.md`、`docs/UX_JOURNEY_EVIDENCE.md`（J1–J8 → 测试证据映射）；ADR-0297
 - 本地复现命令见 `planning/G05-SITUATED-WORKBENCH/TEST_MATRIX.md`
 
 ## 测试命令

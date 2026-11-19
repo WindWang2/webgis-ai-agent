@@ -1,4 +1,4 @@
-# SOURCE_QUALIFICATION_MATRIX — 数据源资格矩阵（G03 / ADR-0286）
+# SOURCE_QUALIFICATION_MATRIX — 数据源资格矩阵（G03 / ADR-0296）
 
 > 状态：随 zcode/goal-geodata-readiness-fabric-20261107 PR · 基线 master 585812ee4
 > 权威注册表：`app/services/data_fabric/registry.py`（单一事实源）

@@ -1280,7 +1280,7 @@ app.include_router(security_admin_routes.router, prefix="/api/v1", tags=["Securi
 from app.api.routes import storymap as storymap_routes  # noqa: E402
 
 app.include_router(storymap_routes.router, prefix="/api/v1", tags=["StoryMap"])
-# G11 证据化地图简报（ADR-0288）：草稿/编辑/预检/冻结/私有分享
+# G11 证据化地图简报（ADR-0298）：草稿/编辑/预检/冻结/私有分享
 from app.api.routes import brief as brief_routes  # noqa: E402
 
 app.include_router(brief_routes.router, prefix="/api/v1", tags=["MapBrief"])

@@ -1,4 +1,4 @@
-"""Remote GeoJSON URL Adapter（G03 GD-02 / ADR-0286 D5）。
+"""Remote GeoJSON URL Adapter（G03 GD-02 / ADR-0296 D5）。
 
 背景（BASELINE 断链 3）：``geojson`` alias 在 #767 被移除（它对真实远程
 URL 静默返回合成要素）之后，用户提供的 URL 型 GeoJSON 进不了 fabric

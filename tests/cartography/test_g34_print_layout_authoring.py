@@ -30,7 +30,7 @@ from app.lib.cartography.publication_ir import plan_publication_pages
 from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 from app.services.print_layout_authoring import operations, template as template_mod
 from app.services.print_layout_authoring.compile import (
-    build_draw_plan, build_map_projection,
+    build_map_projection,
 )
 from app.services.print_layout_authoring.fonts import (
     check_glyphs, font_asset_version, measure_text_pt, resolve_font, wrap_text,

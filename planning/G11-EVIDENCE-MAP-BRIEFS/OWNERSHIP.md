@@ -21,7 +21,7 @@
 | `frontend/messages/{zh-CN,en-US}/story.json` | 新增文案 key（中英同步） |
 | `frontend/e2e/journeys/j13-brief-*.journey.ts`、`frontend/e2e/fixtures/api-stubs.ts` | 新增 e2e + 桩 |
 | `tests/unit/test_mapbrief_*.py`、`tests/test_brief_*.py` | 新增测试 |
-| `docs/features/evidence-map-briefs.md`、`docs/adr/0288-*.md` | 新增文档 |
+| `docs/features/evidence-map-briefs.md`、`docs/adr/0298-*.md` | 新增文档 |
 
 ## 共享接缝（集中小提交，additive）
 

@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import logging
-import math
 import os
 import uuid
 from datetime import datetime, timezone
@@ -51,7 +50,6 @@ from app.services.georeferencing.store import (
     get_plan,
     get_source,
     list_plans,
-    list_sources,
     mutate_plan_cas,
     save_plan_new,
 )
@@ -637,7 +635,7 @@ async def execute_plan(
 
 
 async def cancel_job(session_id: str, plan_id: str) -> Dict[str, Any]:
-    res = await cancel_georeference_job(session_id, plan_id)
+    await cancel_georeference_job(session_id, plan_id)
     return get_status(session_id, plan_id)
 
 

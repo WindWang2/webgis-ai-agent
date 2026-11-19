@@ -8,9 +8,15 @@ import { LabelEditor } from './label-editor';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 // —— commit 通道 mock（断言一发一笔、原子 ops 形状）——
-const commitLabelAuthoring = vi.fn(async () => {});
+type LabelAuthoringOp = {
+  featureId: string;
+  op: 'set' | 'reset';
+  set?: { hidden?: boolean; text?: string; pinned?: boolean; offset?: { dx: number; dy: number } };
+  scope?: 'position' | 'text' | 'all';
+};
+const commitLabelAuthoring = vi.fn(async (_layerId: string, _ops: LabelAuthoringOp[]) => {});
 vi.mock('@/lib/mapspec/user-mutation', () => ({
-  commitLabelAuthoring: (...args: unknown[]) => commitLabelAuthoring(...args),
+  commitLabelAuthoring: (...args: [string, LabelAuthoringOp[]]) => commitLabelAuthoring(...args),
 }));
 vi.mock('@/lib/mapspec/session-cursor', () => ({
   getCommittedMapSpec: () => ({
@@ -170,10 +176,10 @@ describe('LabelEditor（G16 UI）', () => {
     });
     expect(commitLabelAuthoring).toHaveBeenCalledTimes(1);
     const [, ops] = commitLabelAuthoring.mock.calls[0];
-    expect(ops[0].set.pinned).toBe(true);
+    expect(ops[0].set?.pinned).toBe(true);
     // px→em：+60px/12px 字号 = 5em；+40px → 10/3em；叠加既有 (1,2) →
     // (6, 5.33)（round2 精度）。
-    expect(ops[0].set.offset).toEqual({ dx: 6, dy: 5.33 });
+    expect(ops[0].set?.offset).toEqual({ dx: 6, dy: 5.33 });
   });
 });
 
@@ -226,7 +232,7 @@ describe('LabelEditor R1 review fixes', () => {
     const [, ops] = commitLabelAuthoring.mock.calls[0];
     // 无既有 offset：Enter = 0.25（而非 0.25+0.25=0.5 双计）。
     expect(ops[0].featureId).toBe('s2');
-    expect(ops[0].set.offset).toEqual({ dx: 0.25, dy: 0 });
+    expect(ops[0].set?.offset).toEqual({ dx: 0.25, dy: 0 });
   });
 
   it('P2-11b：连续方向键跨 effect 重挂累计（nudge ref 存活）', async () => {
@@ -250,6 +256,6 @@ describe('LabelEditor R1 review fixes', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
     const [, ops] = commitLabelAuthoring.mock.calls[0];
-    expect(ops[0].set.offset).toEqual({ dx: 0.75, dy: 0 });
+    expect(ops[0].set?.offset).toEqual({ dx: 0.75, dy: 0 });
   });
 });

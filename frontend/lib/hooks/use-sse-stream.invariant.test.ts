@@ -28,6 +28,7 @@ import { hudStateToMapSpec } from '@/lib/mapspec-runtime/adapter';
 describe('Invariant: mounting large MVT layer leaves zero FC bytes (#667)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiFetchMock.mockResolvedValue({ boot_id: 'test-boot', pending: [], recent: [] });
     useHudStore.setState({ layers: [], results: [] });
     // H03：useChatStore 是消息单一 owner（模块单例）——测试间清空避免串扰。
     useChatStore.setState({ messages: [], streamingToken: '' });
@@ -72,7 +73,13 @@ describe('Invariant: mounting large MVT layer leaves zero FC bytes (#667)', () =
     // Let any microtasks settle (the fetch is async but should NOT be triggered)
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    expect(apiFetchMock).not.toHaveBeenCalled();
+    // Runtime-interaction metadata hydrates on mount; it is not a data-plane
+    // FeatureCollection fetch. Pin the complete call list so any FC request,
+    // on this path or another endpoint, still fails the zero-FC invariant.
+    expect(apiFetchMock.mock.calls).toEqual([[
+      '/api/v1/chat/sessions/sid-invariant/runtime-interactions',
+      { ownerToken: undefined, label: 'API Error' },
+    ]]);
 
     const layer = useHudStore.getState().layers.find(l => l.id === 'ref:big-100k');
     expect(layer).toBeDefined();

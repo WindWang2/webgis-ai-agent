@@ -1,5 +1,5 @@
 /**
- * G11 证据化地图简报 API client（ADR-0288）。
+ * G11 证据化地图简报 API client（ADR-0298）。
  *
  * 端点面：/api/v1/briefs/*（草稿/编辑/证据/预检/冻结/下载/分享）。
  * 匿名会话经 X-Session-Token（transport ownerToken 通道）；写操作携带

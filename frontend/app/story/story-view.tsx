@@ -72,7 +72,7 @@ import {
 } from '@/lib/api/storymap';
 import { StoryNarrator } from '@/components/story/story-narrator';
 import { StoryDashboard } from '@/components/story/story-dashboard';
-// G11（ADR-0288）：证据化地图简报 —— 草稿/编辑/证据/预检/发布/分享面板
+// G11（ADR-0298）：证据化地图简报 —— 草稿/编辑/证据/预检/发布/分享面板
 import { BriefPanel } from '@/components/story/brief-panel';
 
 /** 播放模式下逐章节推进的间隔（ms）；PDF 逐章定位等待同源。 */

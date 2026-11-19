@@ -10,8 +10,7 @@ evaluator 生成 expected。
 """
 from __future__ import annotations
 
-import asyncio
-import re
+import json
 from pathlib import Path
 
 import pytest
@@ -207,7 +206,6 @@ class TestInspectAndPreview:
     async def test_other_bucket_typed_values_e13(self):
         """低频类别 c 溢出到 other（max_groups 缩小场景用直接分桶测试）。
         这里用全量分桶验证 __other__ 真实类别分立（E12）+ 溢出披露结构。"""
-        from app.services.linked_exploration.buckets import category_buckets
 
         ref = await _seed()
         frozen_stats = await service.preview_conditions(
@@ -425,6 +423,17 @@ class TestExport:
         assert candidates, f"exported file not found: {fname}"
         svg_text = candidates[0].read_text(encoding="utf-8")
         assert "联合探索导出" in svg_text
+        assert candidates[0].stat().st_size == result["bytes"]
+        # The exported artifact and manifest are both real, owner-protected refs;
+        # metadata must advertise these writer-produced outputs, not inline bytes.
+        manifest_name = result["manifest_url"].rsplit("/", 1)[-1].split("?")[0]
+        assert manifest_name == f"{fname}.manifest.json"
+        manifest = json.loads(candidates[0].with_name(manifest_name).read_text())
+        assert manifest["domain"] == "linked_exploration"
+        assert manifest["filename"] == fname
+        assert manifest["source_anchor"]["ref_id"] == ref
+        assert manifest["match_count"] == 5
+        assert manifest["conditions_digest"] == result["conditions_digest"]
 
 
 class TestExportAllFormats:

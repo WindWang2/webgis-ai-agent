@@ -59,6 +59,7 @@ export const COMPONENT_LAYOUT_META: Record<string, ComponentLayoutMeta> = {
   annotation: { defaultSlot: 'top-left', priority: 0 },
   statistics_panel: { defaultSlot: 'top-left', priority: 1 },
   chart_panel: { defaultSlot: 'top-left', priority: 2 },
+  exploration_chart_panel: { defaultSlot: 'top-left', priority: 2 },
   // v2：区位插图（与 north_arrow 同占 top-right 族，槽内按 priority 堆叠）
   inset_map: { defaultSlot: 'top-right', priority: 3 },
   // VNext 披露族：methodology 落 bottom-left（attribution 之上）；

@@ -219,7 +219,10 @@ describe('FrameProductGrid', () => {
     });
     // active_frame CAS mutation（set_frame_product intent）。
     await waitFor(() => expect(mutations.length).toBeGreaterThanOrEqual(1), {
-      onTimeout: () => console.log('FETCH_LOG:', JSON.stringify(fetchLog.slice(0, 20))),
+      onTimeout: (error) => {
+        console.log('FETCH_LOG:', JSON.stringify(fetchLog.slice(0, 20)));
+        return error;
+      },
     });
     const body = mutations[0] as { intent: string; patch: { active_frame: string } };
     expect(body.intent).toBe('set_frame_product');
@@ -302,10 +305,10 @@ describe('FrameProductGrid', () => {
     );
     // 服务端删除 fp-t-2022（帧序 2020/2024）——新对象提交（引用判等广播）。
     const specAfterDelete = {
-      ...(spec as Record<string, unknown>),
+      ...(spec as unknown as Record<string, unknown>),
       frame_product: {
-        ...(spec.frame_product as Record<string, unknown>),
-        frames: (spec.frame_product!.frames as Array<Record<string, unknown>>).filter(
+        ...(spec.frame_product as unknown as Record<string, unknown>),
+        frames: (spec.frame_product!.frames as unknown as Array<Record<string, unknown>>).filter(
           (f) => f.frame_id !== 'fp-t-2022',
         ),
       },

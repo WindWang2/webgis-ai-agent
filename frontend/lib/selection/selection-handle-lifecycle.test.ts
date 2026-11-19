@@ -11,7 +11,7 @@ import {
   resetSelectionStore,
 } from '@/lib/selection/selection-store';
 
-let releaser: ReturnType<typeof vi.fn>;
+let releaser: ReturnType<typeof vi.fn<(handle: string, refId: string | undefined, layerId: string) => void>>;
 
 beforeEach(() => {
   releaser = vi.fn();

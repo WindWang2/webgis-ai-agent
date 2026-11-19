@@ -6,7 +6,9 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useChatStore } from '@/lib/store/useChatStore';
 import type { SSEEvent } from '@/lib/api/chat';
 
-vi.mock('@/lib/api/chat', () => ({
+vi.mock('@/lib/api/chat', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/api/chat')>(),
+  fetchRuntimeInteractions: vi.fn().mockResolvedValue({ boot_id: 'test-boot', pending: [], recent: [] }),
   streamChat: vi.fn(),
 }));
 
@@ -107,6 +109,47 @@ describe('Frontend SSE Adversarial Stress Tests', () => {
     });
 
     // Verify: No infinite loops, no uncaught exceptions, active status is stable
+    expect(mockStreamChat.mock.calls.map(([, sid]) => sid)).toEqual(['session-A', 'session-B']);
+    expect(mockStreamChat.mock.calls[0][3]?.aborted).toBe(true);
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it('releases the old session send lock without letting its late completion unlock the successor', async () => {
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const gateA = new Promise<void>((resolve) => { releaseA = resolve; });
+    const gateB = new Promise<void>((resolve) => { releaseB = resolve; });
+    mockStreamChat.mockImplementation(async function* (_msg, sid) {
+      yield { event: 'thinking', data: { session_id: sid } };
+      await (sid === 'session-A' ? gateA : gateB);
+      yield { event: 'token', data: { content: sid === 'session-A' ? 'late-A' : 'current-B', session_id: sid } };
+      yield { event: 'done', data: { session_id: sid } };
+    });
+    const sidRef: { current: string | undefined } = { current: 'session-A' };
+    const { result, rerender } = renderHook(({ sid }) => {
+      sidRef.current = sid;
+      return useSSEStream({
+        sessionId: sid, setSessionId: vi.fn(), sessionIdRef: sidRef,
+        dispatchAction, getMapSnapshot, userLocation: null,
+        sessionTokenRef: { current: null },
+      });
+    }, { initialProps: { sid: 'session-A' } });
+    let sendA!: Promise<boolean>;
+    await act(async () => { sendA = result.current.handleSend('start A'); });
+    rerender({ sid: 'session-B' });
+    let sendB!: Promise<boolean>;
+    await act(async () => { sendB = result.current.handleSend('start B'); });
+    expect(mockStreamChat.mock.calls.map(([, sid]) => sid)).toEqual(['session-A', 'session-B']);
+    expect(result.current.isLoading).toBe(true);
+
+    await act(async () => { releaseA(); expect(await sendA).toBe(false); });
+    await act(async () => { expect(await result.current.handleSend('duplicate B')).toBe(false); });
+    expect(mockStreamChat).toHaveBeenCalledTimes(2);
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => { releaseB(); expect(await sendB).toBe(true); });
+    const content = useChatStore.getState().messages.map((message) => message.content).join(' ');
+    expect(content).not.toContain('late-A');
+    expect(content).toContain('current-B');
     expect(result.current.isLoading).toBe(false);
   });
 

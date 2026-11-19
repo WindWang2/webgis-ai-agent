@@ -363,6 +363,7 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     // 的诚实缺席（ground_clamp 披露降级，不虚构高程）。
     getCanvasContainer: vi.fn(() => (typeof document !== 'undefined' ? document.createElement('div') : null)),
     queryTerrainElevation: vi.fn(() => null),
+    addImage: vi.fn((id: string, _image: unknown) => { images.add(id); return map; }),
     hasImage: vi.fn((id: string) => images.has(id)),
     removeImage: vi.fn((id: string) => {
       images.delete(id);

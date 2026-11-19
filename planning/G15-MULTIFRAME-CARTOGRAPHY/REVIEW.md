@@ -20,7 +20,7 @@
 
 评审同时确认（原文）：工具→服务→CAS→handler 链路真实；共享分级并集单次计算无视口采样；
 verification 快照≠live 且空 required 不可判 complete；未水合拒绝继承；版本阶梯/parity
-golden additive；资源界真实；无 ChatEngine 复活；ADR-0288 唯一；i18n 双语对称。
+golden additive；资源界真实；无 ChatEngine 复活；ADR-0299 唯一；i18n 双语对称。
 
 ## 修复后验证
 

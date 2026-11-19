@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from fixtures import (  # noqa: E402
+from .fixtures import (  # noqa: E402
     MINIMAL_KML,
     make_csv_bytes,
     make_geojson_bytes,
