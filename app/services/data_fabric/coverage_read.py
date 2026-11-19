@@ -168,10 +168,12 @@ async def read_coverage_subset(
             )
         lon_axis, lat_axis = spatial
         from pyproj import Transformer
+        from pyproj.exceptions import CRSError
 
         try:
             bbox = list(Transformer.from_crs("EPSG:4326", grid_crs, always_xy=True).transform_bounds(*bbox))
-        except ValueError as e:
+        # CRSError 是 RuntimeError 子类而非 ValueError（#2232）
+        except (ValueError, CRSError) as e:
             raise CoverageReadError("domain CRS cannot be transformed", reason_code=RC_AXIS_NOT_IDENTIFIABLE) from e
         subset_params[lon_axis] = (float(bbox[0]), float(bbox[2]))
         subset_params[lat_axis] = (float(bbox[1]), float(bbox[3]))

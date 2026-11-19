@@ -140,37 +140,38 @@ def build_strtree_index(
 ) -> Tuple[Any, List[Dict[str, Any]]]:
     """构建（或复用）STRtree 空间索引。
 
-    返回 ``(tree, features)``；调用方用 ``tree.query(bbox)`` 取候选下标
-    （shapely 2.x 返回 ndarray 下标）。缓存命中时不重建树。
+    返回 ``(tree, indexed_features)``；调用方用 ``tree.query(bbox)`` 取
+    候选下标（shapely 2.x 返回 ndarray 下标），下标与
+    ``indexed_features`` 严格对齐（#2233：geometry=None 的要素不进树，
+    两路返回形状一致 —— 此前 miss 返回 geoms / hit 返回全量 features，
+    任一要素无 bbox 时下标即错位）。
     """
     if runtime is not None:
         key = SpatialIndexRuntime.fingerprint(content_fingerprint)
         cached = runtime.get(key)
         if cached is not None:
-            tree, _geoms = cached
-            # 契约：第二个返回值恒为 ``features``（评审 MINOR —— hit/miss
-            # 两路返回形状一致；tree.query() 下标以 features 对齐）。
-            return tree, features
+            tree, indexed_features = cached
+            return tree, indexed_features
     try:
         from shapely import STRtree
         import shapely
     except Exception as exc:  # noqa: BLE001
         raise SpatialIndexUnavailable(f"shapely unavailable: {exc}") from exc
     geoms = []
+    indexed_features: List[Dict[str, Any]] = []
     for f in features:
         bbox = _feature_bbox(f)
         if bbox is None:
-            geoms.append(None)
-            continue
+            continue  # 不进树、不占下标 —— 与 indexed_features 严格对齐
         minx, miny, maxx, maxy = bbox
         geoms.append(shapely.box(minx, miny, maxx, maxy))
-    valid = [g for g in geoms if g is not None]
-    tree = STRtree(valid) if valid else None
+        indexed_features.append(f)
+    tree = STRtree(geoms) if geoms else None
     if runtime is not None and tree is not None:
-        approx = sum(len(str(g)) for g in valid[:64]) * max(1, len(valid) // 64)
+        approx = sum(len(str(g)) for g in geoms[:64]) * max(1, len(geoms) // 64)
         runtime.put(SpatialIndexRuntime.fingerprint(content_fingerprint),
-                    (tree, geoms), approx)
-    return tree, geoms
+                    (tree, indexed_features), approx)
+    return tree, indexed_features
 
 
 def grid_partition(

@@ -168,11 +168,13 @@ class CatalogFilter(BaseModel):
             return False
         if self.crs:
             from pyproj import CRS
+            from pyproj.exceptions import CRSError
 
             try:
                 if not entry.crs or CRS.from_user_input(entry.crs) != CRS.from_user_input(self.crs):
                     return False
-            except ValueError:
+            # CRSError 是 RuntimeError 子类而非 ValueError（#2232）
+            except (ValueError, CRSError):
                 return False
         if self.status and entry.status != self.status:
             return False
@@ -188,12 +190,14 @@ class CatalogFilter(BaseModel):
             if entry.extent is None:
                 return False  # 无法判定 ≠ 匹配（bbox 查询只返回可判定者）
             from pyproj import Transformer
+            from pyproj.exceptions import CRSError
 
             if not entry.crs:
                 return False
             try:
                 extent = Transformer.from_crs(entry.crs, "EPSG:4326", always_xy=True).transform_bounds(*entry.extent)
-            except ValueError:
+            # CRSError 是 RuntimeError 子类而非 ValueError（#2232）
+            except (ValueError, CRSError):
                 return False
             if not _bbox_intersects(self.bbox, extent):
                 return False

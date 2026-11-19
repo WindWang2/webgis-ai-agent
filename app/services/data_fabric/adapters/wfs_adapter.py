@@ -443,14 +443,33 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                     "antimeridian-crossing bbox is not supported by WFS BBOX pushdown"
                 )
             minx, miny, maxx, maxy = v2.spatial.bbox
-            params["BBOX"] = f"{minx},{miny},{maxx},{maxy},{_URN_CRS84 if not self.version.startswith('1.0') else 'EPSG:4326'}"
+            # #2233：BBOX 的 CRS 声明必须与 spatial.crs 一致（此前恒按
+            # CRS84/4326 声明 —— planner 因 server_reprojection=True 跳过
+            # 本地变换，非 4326 bbox 被服务端按错误 CRS 解释）。
+            from app.services.data_fabric.query.planner import parse_epsg
+
+            bbox_srid = parse_epsg(getattr(v2.spatial, "crs", None) or "EPSG:4326")
+            if bbox_srid is None:
+                raise InvalidQueryError(
+                    f"WFS bbox CRS {v2.spatial.crs!r} is not an EPSG code and cannot be negotiated"
+                )
+            if self.version.startswith("1.0"):
+                if bbox_srid != 4326:
+                    raise InvalidQueryError(
+                        "WFS 1.0 BBOX has no CRS suffix; submit bbox in EPSG:4326"
+                    )
+                bbox_urn = "EPSG:4326"
+                params["BBOX"] = f"{minx},{miny},{maxx},{maxy}"
+            else:
+                bbox_urn = _URN_CRS84 if bbox_srid == 4326 else f"urn:ogc:def:crs:EPSG::{bbox_srid}"
+                params["BBOX"] = f"{minx},{miny},{maxx},{maxy},{bbox_urn}"
 
         # 属性过滤器 → FES XML（POST）。V5：拆分计划只把下推半编译为 FES。
         post_xml: Optional[str] = None
         if remote_filter is not None:
             filter_xml = compile_predicate_fes(remote_filter)
             if v2.spatial is not None:
-                bbox_xml = compile_bbox_fes(v2.spatial.bbox)
+                bbox_xml = compile_bbox_fes(v2.spatial.bbox, srs_name=bbox_urn)
                 filter_xml = f'<ogc:And xmlns:ogc="http://www.opengis.net/ogc">{filter_xml}{bbox_xml}</ogc:And>'
                 params.pop("BBOX", None)
             # WFS 1.0 has no startIndex. local_slice over-fetches offset+limit

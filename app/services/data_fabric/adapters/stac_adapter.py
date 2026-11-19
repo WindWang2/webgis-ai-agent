@@ -573,11 +573,18 @@ class STACAdapter(GeospatialDataSourceAdapter):
         stac_remote, stac_local = resolve_plan_filter_split(v2.filter, plan)
         pushed = False
         fs = getattr(plan, "filter_split", None)
+        # #2233：全量可推（split.partial=False）时 planner 走历史整过滤
+        # 下推、不落 filter_split（fs=None）—— 此时 resolve 返回的
+        # stac_remote 即整棵 AST，同样必须编译下发；守卫路径
+        # （fs={"pushed": None, ...}）stac_remote=None，天然不推。
+        whole_push_legacy = fs is None and stac_remote is not None
         if (
             v2.filter is not None
             and stac_remote is not None
-            and isinstance(fs, dict)
-            and isinstance(fs.get("pushed"), dict)
+            and (
+                whole_push_legacy
+                or (isinstance(fs, dict) and isinstance(fs.get("pushed"), dict))
+            )
         ):
             from app.services.data_fabric.query.compilers import (
                 compile_predicate_cql2_json,

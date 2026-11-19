@@ -102,61 +102,69 @@ class GeojsonUrlAdapter(GeospatialDataSourceAdapter):
         except Exception as e:  # noqa: BLE001 — 网络面统一 typed 不可达
             raise SourceUnreachableError(
                 f"geojson url unreachable: {e}") from e
-        if resp.status_code >= 400:
-            raise SourceUnreachableError(
-                f"geojson url returned HTTP {resp.status_code}",
-                details={"url": self.url[:200]},
-            )
-        if not _content_type_allowed(resp.headers.get("Content-Type")):
-            raise SourceBadResponseError(
-                "geojson url Content-Type is not a declared GeoJSON type: "
-                f"{str(resp.headers.get('Content-Type'))[:64]}",
-                details={"allowed": list(_ALLOWED_CONTENT_TYPES)},
-            )
-        max_bytes = max_response_bytes()
-        chunks: List[bytes] = []
-        total = 0
-        # 复审 N4：流中断/超时抛原生 requests 异常——统一 typed 不可达，
-        # 直连调用者（preview/query 面）不暴露传输细节。
+        # #2233：所有提前退出/异常路径都必须关闭流式响应（此前 >=400、
+        # Content-Type 拒绝与读循环异常均泄漏连接）；对外错误只带脱敏 URL。
+        from app.services.data_fabric.security import DataFabricSecurity
+
+        redacted_url = DataFabricSecurity.redact_url(self.url)[:200]
         try:
-            for chunk in resp.iter_content(chunk_size=64 * 1024):
-                if time.monotonic() > overall_deadline:
-                    raise SourceBadResponseError(
-                        "geojson url fetch exceeded overall deadline "
-                        "(slow-drip source)", details={"url": self.url[:200]})
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > max_bytes:
-                    raise SourceBadResponseError(
-                        f"geojson url body exceeds budget "
-                        f"({max_bytes // (1024*1024)}MiB)",
-                        details={"hint": "declare a smaller file or a "
-                                         "paginated source"},
-                    )
-                chunks.append(chunk)
-        except SourceBadResponseError:
-            raise
-        except Exception as e:  # noqa: BLE001 — 断流/超时统一 typed
-            raise SourceUnreachableError(
-                f"geojson url stream interrupted: {e}") from e
-        try:
-            doc = json.loads(b"".join(chunks))
-        except ValueError as e:
-            raise SourceBadResponseError(
-                f"geojson url body is not valid JSON: {e}") from e
-        if not isinstance(doc, dict) or doc.get("type") != "FeatureCollection":
-            raise SourceBadResponseError(
-                "geojson url body is not a GeoJSON FeatureCollection "
-                "(no fabrication: not Features, not geometry objects)",
-                details={"url": self.url[:200]},
-            )
-        features = doc.get("features")
-        if not isinstance(features, list):
-            raise SourceBadResponseError(
-                "geojson url FeatureCollection has no features array")
-        self._cache = (now, doc)
-        return doc
+            if resp.status_code >= 400:
+                raise SourceUnreachableError(
+                    f"geojson url returned HTTP {resp.status_code}",
+                    details={"url": redacted_url},
+                )
+            if not _content_type_allowed(resp.headers.get("Content-Type")):
+                raise SourceBadResponseError(
+                    "geojson url Content-Type is not a declared GeoJSON type: "
+                    f"{str(resp.headers.get('Content-Type'))[:64]}",
+                    details={"allowed": list(_ALLOWED_CONTENT_TYPES)},
+                )
+            max_bytes = max_response_bytes()
+            chunks: List[bytes] = []
+            total = 0
+            # 复审 N4：流中断/超时抛原生 requests 异常——统一 typed 不可达，
+            # 直连调用者（preview/query 面）不暴露传输细节。
+            try:
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
+                    if time.monotonic() > overall_deadline:
+                        raise SourceBadResponseError(
+                            "geojson url fetch exceeded overall deadline "
+                            "(slow-drip source)", details={"url": redacted_url})
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise SourceBadResponseError(
+                            f"geojson url body exceeds budget "
+                            f"({max_bytes // (1024*1024)}MiB)",
+                            details={"hint": "declare a smaller file or a "
+                                             "paginated source"},
+                        )
+                    chunks.append(chunk)
+            except SourceBadResponseError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 断流/超时统一 typed
+                raise SourceUnreachableError(
+                    f"geojson url stream interrupted: {e}") from e
+            try:
+                doc = json.loads(b"".join(chunks))
+            except ValueError as e:
+                raise SourceBadResponseError(
+                    f"geojson url body is not valid JSON: {e}") from e
+            if not isinstance(doc, dict) or doc.get("type") != "FeatureCollection":
+                raise SourceBadResponseError(
+                    "geojson url body is not a GeoJSON FeatureCollection "
+                    "(no fabrication: not Features, not geometry objects)",
+                    details={"url": redacted_url},
+                )
+            features = doc.get("features")
+            if not isinstance(features, list):
+                raise SourceBadResponseError(
+                    "geojson url FeatureCollection has no features array")
+            self._cache = (now, doc)
+            return doc
+        finally:
+            resp.close()
 
     def _bounded_features(self, limit: int) -> Tuple[List[Dict[str, Any]], bool, int]:
         doc = self._fetch_fc()

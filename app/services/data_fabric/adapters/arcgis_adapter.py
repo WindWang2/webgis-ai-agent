@@ -372,7 +372,17 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
             minx, miny, maxx, maxy = v2.spatial.bbox
             params["geometry"] = f"{minx},{miny},{maxx},{maxy}"
             params["geometryType"] = "esriGeometryEnvelope"
-            params["inSR"] = "4326"
+            # #2233：envelope 的 inSR 必须随 spatial.crs（此前恒 4326 ——
+            # planner 因 server_reprojection=True 跳过本地变换，非 4326
+            # bbox 被服务端按错误 CRS 解释）。
+            from app.services.data_fabric.query.planner import parse_epsg
+
+            in_sr = parse_epsg(getattr(v2.spatial, "crs", None) or "EPSG:4326")
+            if in_sr is None:
+                raise InvalidQueryError(
+                    f"ArcGIS bbox CRS {v2.spatial.crs!r} is not an EPSG code and cannot be sent as inSR"
+                )
+            params["inSR"] = str(in_sr)
             params["spatialRel"] = "esriSpatialRelIntersects"
 
 

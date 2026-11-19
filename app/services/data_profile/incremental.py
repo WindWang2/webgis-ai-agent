@@ -55,11 +55,13 @@ def _h3_bucket(features: List[Dict[str, Any]], resolution: int, crs: Optional[st
     from app.services.data_profile.distribution import _representative_point
     if crs:
         from pyproj import CRS
+        from pyproj.exceptions import CRSError
 
         try:
             if not CRS.from_user_input(crs).is_geographic:
                 return {}
-        except ValueError:
+        # CRSError 是 RuntimeError 子类而非 ValueError（#2232）
+        except (ValueError, CRSError):
             return {}
 
     try:
