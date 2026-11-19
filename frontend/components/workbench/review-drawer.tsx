@@ -186,7 +186,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
         ref={panelRef}
         role="dialog"
         aria-label={t('drawerAria')}
-        className="flex w-[420px] flex-col border-l bg-surface-base"
+        className="flex w-[420px] flex-col border-l bg-surface-panel"
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="flex items-center gap-2 font-medium">
@@ -199,7 +199,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
         </div>
 
         {error != null && (
-          <div role="alert" className="bg-danger-surface px-4 py-2 text-sm text-danger-fg" data-testid="review-error">
+          <div role="alert" className="bg-status-danger-soft px-4 py-2 text-sm text-status-danger" data-testid="review-error">
             {error}
           </div>
         )}
@@ -209,7 +209,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
             {state.proposals.map((p) => (
               <li key={p.proposal_id}>
                 <button
-                  className={`w-full px-4 py-2 text-left hover:bg-surface-hover ${state.selectedId === p.proposal_id ? 'bg-surface-active' : ''}`}
+                  className={`w-full px-4 py-2 text-left hover:bg-surface-hover ${state.selectedId === p.proposal_id ? 'bg-surface-selected' : ''}`}
                   onClick={() => void openDetail(p.proposal_id)}
                 >
                   <div className="flex items-center justify-between">
@@ -233,12 +233,12 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
             <div className="border-t px-4 py-3" data-testid="review-detail">
               <div className="text-sm font-medium">{String(proposal.title)}</div>
               {detail.conflict && (
-                <div className="mt-1 text-xs text-danger-fg" data-testid="review-conflict">
+                <div className="mt-1 text-xs text-status-danger" data-testid="review-conflict">
                   {t('conflictChanged', { from: detail.base_revision, to: detail.current_revision })}
                 </div>
               )}
               {staleAnchors > 0 && (
-                <div className="mt-1 text-xs text-danger-fg" data-testid="review-stale">
+                <div className="mt-1 text-xs text-status-danger" data-testid="review-stale">
                   {t('staleCount', { count: staleAnchors })}
                 </div>
               )}
@@ -257,7 +257,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                     <li key={cid} className="rounded bg-surface-raised px-2 py-1 text-xs">
                       <span className="opacity-60">{String((c.author as Record<string, unknown>)?.actor_id ?? '?')}:</span>
                       {' '}{String(c.body)}
-                      {anchorState === 'stale' && <span className="ml-1 text-danger-fg">{t('anchorStale')}</span>}
+                      {anchorState === 'stale' && <span className="ml-1 text-status-danger">{t('anchorStale')}</span>}
                       {anchorState === 'unverified' && <span className="ml-1 opacity-50">{t('anchorUnverified')}</span>}
                     </li>
                   );
@@ -266,7 +266,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
 
               <div className="mt-2 flex gap-1">
                 <input
-                  className="flex-1 rounded border bg-surface-base px-2 py-1 text-xs"
+                  className="flex-1 rounded border bg-surface-sunken px-2 py-1 text-xs"
                   placeholder={t('commentPlaceholder')}
                   value={commentDraft}
                   onChange={(e) => setCommentDraft(e.target.value)}
@@ -310,7 +310,7 @@ export function ReviewDrawer({ open, onClose }: ReviewDrawerProps) {
                       {t('actionRequestChanges')}
                     </button>
                     <button
-                      className="rounded border px-2 py-1 text-xs text-danger-fg"
+                      className="rounded border px-2 py-1 text-xs text-status-danger"
                       disabled={busy}
                     onClick={() => void act('decisions', { decision: 'reject' })}
                     >

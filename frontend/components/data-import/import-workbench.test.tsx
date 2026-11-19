@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/lib/api/data-import', () => api);
 vi.mock('@/lib/store/session-identity', () => ({
   getSessionIdentity: vi.fn(() => ({ sessionId: 'sess-1', ownerToken: null })),
+  subscribeSessionIdentity: vi.fn(() => () => undefined),
 }));
 
 import { ImportWorkbench } from './import-workbench';

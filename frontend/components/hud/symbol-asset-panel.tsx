@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useT } from '@/lib/i18n/useT';
 
 import {
   ANCHORS, PointAnchor, SymbolAssetDocument,
@@ -33,7 +33,9 @@ interface InspectState {
 }
 
 export default function SymbolAssetPanel({ layerId }: { layerId: string }) {
-  const t = useTranslations('symbolAssets');
+  // R2 #2179：应用挂载的是自定义 I18nProvider（非 NextIntlClientProvider），
+  // next-intl 的 useTranslations 会抛 No intl context；键在 hud.symbolAssets。
+  const t = useT('hud.symbolAssets');
 
   const epochRef = useRef(0);
 
@@ -252,7 +254,7 @@ export default function SymbolAssetPanel({ layerId }: { layerId: string }) {
               if (typeof d.fg_color === 'string') setFgColor(d.fg_color);
             }
           }}
-          className="w-full border border-border-default rounded px-2 py-1 text-sm bg-surface-primary"
+          className="w-full border border-border-default rounded px-2 py-1 text-sm bg-surface-raised"
           data-testid="symbol-asset-select"
         >
           <option value="">{t('selectAsset')}</option>
@@ -280,7 +282,7 @@ export default function SymbolAssetPanel({ layerId }: { layerId: string }) {
             <input
               type="number" min={1} max={128} step={0.5} value={sizePx}
               onChange={(e) => setSizePx(Number(e.target.value))}
-              className="border border-border-default rounded px-2 py-0.5 bg-surface-primary"
+              className="border border-border-default rounded px-2 py-0.5 bg-surface-raised"
               data-testid="symbol-asset-size" />
           </label>
           <label className="flex flex-col gap-1">
@@ -288,7 +290,7 @@ export default function SymbolAssetPanel({ layerId }: { layerId: string }) {
             <input
               type="number" min={-360} max={360} step={1} value={rotation}
               onChange={(e) => setRotation(Number(e.target.value))}
-              className="border border-border-default rounded px-2 py-0.5 bg-surface-primary"
+              className="border border-border-default rounded px-2 py-0.5 bg-surface-raised"
               data-testid="symbol-asset-rotation" />
           </label>
           <label className="flex flex-col gap-1 col-span-2">
@@ -296,7 +298,7 @@ export default function SymbolAssetPanel({ layerId }: { layerId: string }) {
             <select
               value={anchor}
               onChange={(e) => setAnchor(e.target.value as PointAnchor)}
-              className="border border-border-default rounded px-2 py-0.5 bg-surface-primary"
+              className="border border-border-default rounded px-2 py-0.5 bg-surface-raised"
               data-testid="symbol-asset-anchor">
               {ANCHORS.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
@@ -309,7 +311,7 @@ export default function SymbolAssetPanel({ layerId }: { layerId: string }) {
             <input
               type="number" min={4} max={64} step={0.5} value={spacingPx}
               onChange={(e) => setSpacingPx(Number(e.target.value))}
-              className="border border-border-default rounded px-2 py-0.5 bg-surface-primary"
+              className="border border-border-default rounded px-2 py-0.5 bg-surface-raised"
               data-testid="symbol-asset-spacing" />
           </label>
           <label className="flex flex-col gap-1">
@@ -317,7 +319,7 @@ export default function SymbolAssetPanel({ layerId }: { layerId: string }) {
             <input
               type="number" min={-90} max={90} step={1} value={angleDeg}
               onChange={(e) => setAngleDeg(Number(e.target.value))}
-              className="border border-border-default rounded px-2 py-0.5 bg-surface-primary"
+              className="border border-border-default rounded px-2 py-0.5 bg-surface-raised"
               data-testid="symbol-asset-angle" />
           </label>
           <label className="flex flex-col gap-1">
@@ -325,14 +327,14 @@ export default function SymbolAssetPanel({ layerId }: { layerId: string }) {
             <input
               type="number" min={0.25} max={8} step={0.25} value={strokeW}
               onChange={(e) => setStrokeW(Number(e.target.value))}
-              className="border border-border-default rounded px-2 py-0.5 bg-surface-primary" />
+              className="border border-border-default rounded px-2 py-0.5 bg-surface-raised" />
           </label>
           <label className="flex flex-col gap-1">
             {t('fgColor')}
             <input
               type="color" value={fgColor}
               onChange={(e) => setFgColor(e.target.value)}
-              className="h-7 border border-border-default rounded bg-surface-primary"
+              className="h-7 border border-border-default rounded bg-surface-raised"
               data-testid="symbol-asset-fg" />
           </label>
           <label className="flex flex-col gap-1">
@@ -340,7 +342,7 @@ export default function SymbolAssetPanel({ layerId }: { layerId: string }) {
             <input
               type="color" value={bgColor} disabled={bgTransparent}
               onChange={(e) => setBgColor(e.target.value)}
-              className="h-7 border border-border-default rounded bg-surface-primary disabled:opacity-40" />
+              className="h-7 border border-border-default rounded bg-surface-raised disabled:opacity-40" />
           </label>
           <label className="flex items-center gap-1 self-end">
             <input

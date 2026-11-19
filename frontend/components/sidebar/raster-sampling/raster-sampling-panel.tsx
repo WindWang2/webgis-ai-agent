@@ -123,19 +123,45 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
   const [hoverSampleId, setHoverSampleId] = useState<string | null>(null);
   const [deliverySource, setDeliverySource] = useState<DeliverySourceRef | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** 会话代次（R2 #2190）：切换 sessionId 时 +1，在飞响应到达后不匹配即丢弃。 */
+  const sessionEpochRef = useRef(0);
 
   const opts = useMemo(() => ({ ownerToken }), [ownerToken]);
 
+  // R2 #2190：切换会话先停旧轮询、清计划/预览/成果/状态 —— 旧会话的
+  // 后台轮询不再打新 sessionId，旧结果也不泄入新会话。
+  useEffect(() => {
+    sessionEpochRef.current += 1;
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setPlan(null);
+    setStationCount(null);
+    setStationNotes([]);
+    setPreviewData(null);
+    setResults(null);
+    setStatusData(null);
+    setHoverSampleId(null);
+    setDeliverySource(null);
+    setCreating(false);
+    setPreviewing(false);
+    setExecuting(false);
+  }, [sessionId]);
+
   const loadRefs = useCallback(async () => {
     if (!sessionId) return;
+    const epoch = sessionEpochRef.current;
     setLoadingRefs(true);
     try {
       const res = await describeSources(sessionId, opts);
+      if (epoch !== sessionEpochRef.current) return;
       setRasterRefs(res.raster_refs || []);
     } catch (err) {
+      if (epoch !== sessionEpochRef.current) return;
       addToast(`${t('errorPrefix')}: ${(err as Error).message.slice(0, 120)}`, 'error');
     } finally {
-      setLoadingRefs(false);
+      if (epoch === sessionEpochRef.current) setLoadingRefs(false);
     }
   }, [sessionId, opts, addToast, t]);
 
@@ -183,6 +209,7 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
       addToast(t('noRasterRefs'), 'error');
       return;
     }
+    const epoch = sessionEpochRef.current;
     setCreating(true);
     try {
       const res = await createPlan(sessionId, {
@@ -202,6 +229,7 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
         name: planName,
         sources: specs,
       }, opts);
+      if (epoch !== sessionEpochRef.current) return;
       setPlan(res.plan);
       setStationCount(res.stations.count);
       setStationNotes(res.stations.notes || []);
@@ -220,21 +248,26 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
       addToast(t('planRequired'), 'error');
       return;
     }
+    const epoch = sessionEpochRef.current;
     setPreviewing(true);
     try {
       const res = await previewPlan(sessionId, plan.plan_id, plan.revision, 32, opts);
+      if (epoch !== sessionEpochRef.current) return;
       setPreviewData(res);
     } catch (err) {
+      if (epoch !== sessionEpochRef.current) return;
       addToast(`${t('errorPrefix')}: ${(err as Error).message.slice(0, 160)}`, 'error');
     } finally {
-      setPreviewing(false);
+      if (epoch === sessionEpochRef.current) setPreviewing(false);
     }
   };
 
   const refreshStatus = useCallback(async (planId: string) => {
     if (!sessionId) return null;
+    const epoch = sessionEpochRef.current;
     try {
       const res = await planStatus(sessionId, planId, opts);
+      if (epoch !== sessionEpochRef.current) return null;
       setStatusData(res);
       return res;
     } catch {
@@ -244,17 +277,20 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
 
   const loadResultsPage = useCallback(async (page: number) => {
     if (!sessionId || !plan) return;
+    const epoch = sessionEpochRef.current;
     setLoadingResults(true);
     try {
       const res = await fetchResults(sessionId, {
         planId: plan.plan_id, page, perPage: 50, includeCurves: true,
       }, opts);
+      if (epoch !== sessionEpochRef.current) return;
       setResults(res);
       setResultsPage(page);
     } catch (err) {
+      if (epoch !== sessionEpochRef.current) return;
       addToast(`${t('errorPrefix')}: ${(err as Error).message.slice(0, 160)}`, 'error');
     } finally {
-      setLoadingResults(false);
+      if (epoch === sessionEpochRef.current) setLoadingResults(false);
     }
   }, [sessionId, plan, opts, addToast, t]);
 
@@ -263,22 +299,31 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
       addToast(t('planRequired'), 'error');
       return;
     }
+    const epoch = sessionEpochRef.current;
+    const planId = plan.plan_id;
     setExecuting(true);
+    // R2 #2190：后台任务启动后 executing 必须保持到轮询终点 —— 旧代码
+    // finally 立即复位，状态与真实运行不符。
+    let backgroundRunning = false;
     try {
-      const res = await executePlan(sessionId, plan.plan_id, plan.revision, background, opts);
-      await refreshStatus(plan.plan_id);
+      const res = await executePlan(sessionId, planId, plan.revision, background, opts);
+      if (epoch !== sessionEpochRef.current) return;
+      await refreshStatus(planId);
       if (res.receipt) {
         addToast(`${t('receipt')}: ${res.receipt.execution_id}`, 'success');
         await loadResultsPage(1);
       } else if (res.job_id) {
         addToast(`${t('jobState')}: ${res.status ?? 'running'} (#${res.job_id})`, 'info');
         if (background && pollRef.current === null) {
+          backgroundRunning = true;
           pollRef.current = setInterval(async () => {
-            const st = await refreshStatus(plan.plan_id);
+            const st = await refreshStatus(planId);
+            if (epoch !== sessionEpochRef.current) return;
             const jobStatus = st?.job?.status;
             if (jobStatus && ['completed', 'failed', 'cancelled', 'stale'].includes(jobStatus)) {
               if (pollRef.current) clearInterval(pollRef.current);
               pollRef.current = null;
+              setExecuting(false);
               if (jobStatus === 'completed') await loadResultsPage(1);
             }
           }, 2500);
@@ -287,9 +332,10 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
         addToast(`${t('executeFailed')}: ${res.status ?? ''}`, 'warning');
       }
     } catch (err) {
+      if (epoch !== sessionEpochRef.current) return;
       addToast(`${t('errorPrefix')}: ${(err as Error).message.slice(0, 160)}`, 'error');
     } finally {
-      setExecuting(false);
+      if (!backgroundRunning) setExecuting(false);
     }
   };
 
@@ -346,8 +392,8 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
   }, [results, t]);
 
   const label = 'text-xs font-medium text-ink-muted';
-  const input = 'w-full rounded border border-line bg-surface px-2 py-1 text-xs';
-  const btn = 'rounded border border-line px-2 py-1 text-xs hover:bg-surface-active disabled:opacity-50';
+  const input = 'w-full rounded border border-edge-subtle bg-surface-raised px-2 py-1 text-xs';
+  const btn = 'rounded border border-edge-subtle px-2 py-1 text-xs hover:bg-surface-hover disabled:opacity-50';
   const btnPrimary = 'rounded bg-accent text-white px-2 py-1 text-xs hover:opacity-90 disabled:opacity-50';
 
   return (
@@ -361,7 +407,7 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
       <p className="text-xs text-ink-muted">{t('subtitle')}</p>
 
       {/* ── 站位输入 ── */}
-      <div className="space-y-2 rounded border border-line p-2">
+      <div className="space-y-2 rounded border border-edge-subtle p-2">
         <div className="flex gap-2">
           <label className="flex items-center gap-1 text-xs">
             <input type="radio" checked={mode === 'source_points'}
@@ -445,7 +491,7 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
       </div>
 
       {/* ── 源与波段 ── */}
-      <div className="space-y-2 rounded border border-line p-2">
+      <div className="space-y-2 rounded border border-edge-subtle p-2">
         <div className="flex items-center justify-between">
           <span className={label}>{t('sources')}</span>
           {sources.length < MAX_SOURCES && (
@@ -462,7 +508,7 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
         {sources.map((s) => {
           const bands = parseBands(bandsText[s.key] || '1');
           return (
-            <div key={s.key} className="space-y-1 rounded border border-line/60 p-1.5">
+            <div key={s.key} className="space-y-1 rounded border border-edge-subtle/60 p-1.5">
               <div className="flex gap-1">
                 <select className={input} value={s.ref_id}
                   onChange={(e) => setSourceField(s.key, 'ref_id', e.target.value)}>
@@ -553,7 +599,7 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
 
       {/* ── 计划摘要 ── */}
       {plan && (
-        <div className="rounded border border-line p-2 text-xs space-y-1">
+        <div className="rounded border border-edge-subtle p-2 text-xs space-y-1">
           <div className="flex flex-wrap gap-3">
             <span>{t('planId')}: <code>{plan.plan_id}</code></span>
             <span>{t('revision')}: {plan.revision}</span>
@@ -570,7 +616,7 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
 
       {/* ── 预览 ── */}
       {previewData && (
-        <div className="space-y-1 rounded border border-line p-2">
+        <div className="space-y-1 rounded border border-edge-subtle p-2">
           <div className="text-xs font-semibold">
             {t('preview')} · {previewData.station_selection.previewed_stations}/
             {previewData.station_selection.requested_stations}
@@ -595,7 +641,7 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
 
       {/* ── 任务状态 ── */}
       {statusData && (
-        <div className="rounded border border-line p-2 text-xs space-y-1">
+        <div className="rounded border border-edge-subtle p-2 text-xs space-y-1">
           <span className="font-semibold">{t('jobState')}: </span>
           {statusData.job ? (
             <span>#{statusData.job.job_id} = {statusData.job.status}</span>
@@ -620,7 +666,7 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
 
       {/* ── 成果 ── */}
       {results && (
-        <div className="space-y-2 rounded border border-line p-2">
+        <div className="space-y-2 rounded border border-edge-subtle p-2">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="font-semibold">{t('results')}</span>
             <span>{results.pagination.filtered_rows} / {results.pagination.total_rows}</span>
@@ -692,9 +738,9 @@ function SampleTable({ rows, t, hoverSampleId, onHover, onLocate }: {
   onLocate?: (row: SampleRow) => void;
 }) {
   return (
-    <div className="max-h-64 overflow-auto rounded border border-line/60">
+    <div className="max-h-64 overflow-auto rounded border border-edge-subtle/60">
       <table className="w-full text-left text-[11px]">
-        <thead className="sticky top-0 bg-surface-muted">
+        <thead className="sticky top-0 bg-surface-sunken">
           <tr>
             <th className="px-1 py-0.5">{t('colStation')}</th>
             <th className="px-1 py-0.5">{t('colParent')}</th>
@@ -792,7 +838,7 @@ function CurvesBlock({ curves, thinning, t, unitOfBand, hoverSampleId, onHover }
         }
         const thin = thinning[`${b.source_ref}#${b.band}`] || {};
         return (
-          <figure key={`${b.source_ref}-${b.band}`} className="rounded border border-line/60 p-1">
+          <figure key={`${b.source_ref}-${b.band}`} className="rounded border border-edge-subtle/60 p-1">
             <figcaption className="flex justify-between text-[11px] text-ink-muted">
               <span>{b.source_ref.slice(-10)} · band {b.band} · {unitOfBand(b.source_ref, b.band)}</span>
               <span title={t('curveThinning')}>

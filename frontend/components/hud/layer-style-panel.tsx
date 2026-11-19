@@ -121,8 +121,10 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   // G40：点（circle）/面（fill）矢量层挂符号资产面板（点符号/面纹理绑定）。
   const symbolAssetLayer = (() => {
     if (!specBacked || !specLayerKey) return null;
-    const lt = String(layer?.type ?? '');
-    return (lt === 'circle' || lt === 'fill') ? { layerId: specLayerKey } : null;
+    // R2 #2179：HUD layer.type('vector'|'raster'|…) 不蕴含 spec 层型 ——
+    // 判据必须取 committedSpec 层的 specLayerType（同 G33/G41/G47 口径）。
+    return (specLayerType === 'circle' || specLayerType === 'fill')
+      ? { layerId: specLayerKey } : null;
   })();
 
   // G41：双变量/可靠性作者入口。与 G33 不同，本域不要求层已有专题图例

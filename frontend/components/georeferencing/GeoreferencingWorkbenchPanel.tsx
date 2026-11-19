@@ -98,6 +98,21 @@ function newEmptyGcp(index: number): EditableGcpRow {
   };
 }
 
+/**
+ * 目标分辨率输入解析（R2 #2186）：空串 = 未设置（null）；「0」/负数/非法值
+ * 显式判 invalid —— 旧代码把 0 走 falsy 分支当 null 发送且 clear=false，
+ * 服务端静默保留旧分辨率。
+ */
+function parseTargetResolution(
+  raw: string,
+): { ok: true; value: number | null } | { ok: false; value: null } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: null };
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n <= 0) return { ok: false, value: null };
+  return { ok: true, value: n };
+}
+
 function toInputItems(rows: EditableGcpRow[]): GcpInputItem[] {
   const out: GcpInputItem[] = [];
   for (const r of rows) {
@@ -272,6 +287,12 @@ export function GeoreferencingWorkbenchPanel({
   const importJsonRef = useRef<HTMLInputElement | null>(null);
   const importCsvRef = useRef<HTMLInputElement | null>(null);
   const mutationEpochRef = useRef(0);
+  /**
+   * 会话/源切换代次（R2 #2186）：resetSessionUiState 与切源时 +1；上传/
+   * 保存/预览/执行/取消/导入/绑定/轮询的 await 之后若与本代次不符即丢弃，
+   * 旧会话（源）的响应不得污染当前工作台状态或重启轮询。
+   */
+  const sessionUiEpochRef = useRef(0);
   const deletedSourceIdsRef = useRef<Set<string>>(new Set());
   const tRef = useRef(t);
   tRef.current = t;
@@ -322,9 +343,12 @@ export function GeoreferencingWorkbenchPanel({
     (planId: string) => {
       if (!ctx) return;
       stopPolling();
+      const epoch = sessionUiEpochRef.current;
       const pollOnce = async () => {
+        if (epoch !== sessionUiEpochRef.current) { stopPolling(); return; }
         try {
           const st = await pollGeorefStatus(ctx, planId);
+          if (epoch !== sessionUiEpochRef.current) { stopPolling(); return; }
           setJobStatus(st);
           applyPlanToEditor(st.plan);
           if (!['pending', 'queued', 'running', 'cancelling'].includes(st.status)) {
@@ -357,6 +381,7 @@ export function GeoreferencingWorkbenchPanel({
   startPollingRef.current = startPolling;
 
   const resetSessionUiState = useCallback(() => {
+    sessionUiEpochRef.current += 1;
     stopPolling();
     setSources([]);
     setPlans([]);
@@ -532,11 +557,21 @@ export function GeoreferencingWorkbenchPanel({
     };
   }, [ctx, activePlanIdKey, activePreviewPath, activePreviewDigest, activePreviewStale]);
 
+  /**
+   * gcps 的 ref 镜像（R2 #2186）：mutateGcps 需要同步拿到 prev 以压撤销
+   * 快照，且 updater 必须保持纯函数 —— React 18 StrictMode 会双调用
+   * setState updater，旧的「在 setGcps updater 内 setUndoStack」每次编辑
+   * 压两条快照。
+   */
+  const gcpsRef = useRef<EditableGcpRow[]>([]);
+  useEffect(() => { gcpsRef.current = gcps; }, [gcps]);
+
   const mutateGcps = useCallback((updater: (prev: EditableGcpRow[]) => EditableGcpRow[]) => {
-    setGcps((prev) => {
-      setUndoStack((hist) => [...hist.slice(-24), prev]);
-      return updater(prev);
-    });
+    const prev = gcpsRef.current;
+    const next = updater(prev);
+    gcpsRef.current = next;
+    setGcps(next);
+    setUndoStack((hist) => [...hist.slice(-24), prev]);
     setDirty(true);
   }, []);
 
@@ -546,21 +581,24 @@ export function GeoreferencingWorkbenchPanel({
     return subscribeMapClick(([lng, lat]) => {
       const lon = Number(lng.toFixed(6));
       const la = Number(lat.toFixed(6));
-      mutateGcps((prev) => {
-        if (prev.length === 0) {
-          const g = newEmptyGcp(0);
-          g.wgs84_lon = lon;
-          g.wgs84_lat = la;
-          setSelectedGcpId(g.gcp_id);
-          return [g];
-        }
-        const targetId = selectedGcpId ?? prev[prev.length - 1].gcp_id;
-        return prev.map((g) =>
+      const prev = gcpsRef.current;
+      if (prev.length === 0) {
+        // 选中副作用移出 updater（StrictMode 双调用下不得留在纯 updater 内）。
+        const g = newEmptyGcp(0);
+        g.wgs84_lon = lon;
+        g.wgs84_lat = la;
+        mutateGcps(() => [g]);
+        setSelectedGcpId(g.gcp_id);
+        return;
+      }
+      const targetId = selectedGcpId ?? prev[prev.length - 1].gcp_id;
+      mutateGcps((rows) =>
+        rows.map((g) =>
           g.gcp_id === targetId
             ? { ...g, wgs84_lon: lon, wgs84_lat: la, map_x: null, map_y: null }
             : g,
-        );
-      });
+        ),
+      );
     });
   }, [activeMapTool, selectedGcpId, mutateGcps]);
 
@@ -570,10 +608,19 @@ export function GeoreferencingWorkbenchPanel({
       return;
     }
     mutationEpochRef.current += 1;
+    const epoch = sessionUiEpochRef.current;
+    // R2 #2186：分辨率输入「0」/非法值不再静默当 null 处理（null 且
+    // clear=false 会保留服务端旧分辨率）——显式拒绝并提示。
+    const parsedTargetRes = parseTargetResolution(targetResM);
+    if (!parsedTargetRes.ok) {
+      addToast(t('invalidTargetResM'), 'error');
+      return;
+    }
     setUploading(true);
     setShowIgnoreExifRetry(false);
     try {
       const res = await uploadGeorefSource(ctx, file, forceIgnoreExif);
+      if (epoch !== sessionUiEpochRef.current) return;
       let created: { plan: GeorefDraftPlan } | null = null;
       try {
         created = await createGeorefPlan(ctx, {
@@ -582,7 +629,7 @@ export function GeoreferencingWorkbenchPanel({
           name: file.name,
           target_crs: targetCrs,
           resampling,
-          target_resolution_m: targetResM ? Number(targetResM) : null,
+          target_resolution_m: parsedTargetRes.value,
           generate_cog: buildCog,
         });
       } finally {
@@ -594,6 +641,7 @@ export function GeoreferencingWorkbenchPanel({
         ]);
         setSelectedSourceId(res.source.source_id);
       }
+      if (epoch !== sessionUiEpochRef.current) return;
       if (created) {
         const createdPlan = created.plan;
         setPlans((prev) => [
@@ -606,6 +654,7 @@ export function GeoreferencingWorkbenchPanel({
       setBindMessage(null);
       setPartialBindRev(null);
     } catch (err) {
+      if (epoch !== sessionUiEpochRef.current) return;
       const info = asGeorefError(err);
       if (info.code === 'SOURCE_EXIF_FAILED') {
         setPendingRetryFile(file);
@@ -663,9 +712,17 @@ export function GeoreferencingWorkbenchPanel({
   const handleSaveDraft = useCallback(async (): Promise<GeorefDraftPlan | null> => {
     if (!ctx || !selectedSource) return null;
     mutationEpochRef.current += 1;
+    const epoch = sessionUiEpochRef.current;
     setSaving(true);
     try {
-      const parsedRes = targetResM.trim() ? Number(targetResM.trim()) : null;
+      // R2 #2186：「0」/非法分辨率显式拒绝（旧代码 parsedRes=0 走 falsy 分支
+      // 发送 null + clear=false，静默保留服务端旧分辨率）。
+      const parsed = parseTargetResolution(targetResM);
+      if (!parsed.ok) {
+        addToast(t('invalidTargetResM'), 'error');
+        return null;
+      }
+      const parsedRes = parsed.value;
       let plan = activePlan;
       if (!plan) {
         const res = await createGeorefPlan(ctx, {
@@ -674,9 +731,10 @@ export function GeoreferencingWorkbenchPanel({
           name: selectedSource.filename,
           target_crs: targetCrs.trim(),
           resampling,
-          target_resolution_m: parsedRes && Number.isFinite(parsedRes) ? parsedRes : null,
+          target_resolution_m: parsedRes,
           generate_cog: buildCog,
         });
+        if (epoch !== sessionUiEpochRef.current) return null;
         plan = res.plan;
         setPlans((prev) => [...prev, plan!]);
       }
@@ -684,15 +742,17 @@ export function GeoreferencingWorkbenchPanel({
         expected_revision: plan.revision,
         target_crs: targetCrs.trim(),
         resampling,
-        target_resolution_m: parsedRes && Number.isFinite(parsedRes) ? parsedRes : null,
+        target_resolution_m: parsedRes,
         clear_target_resolution: parsedRes == null,
         generate_cog: buildCog,
         gcps: toInputItems(gcps),
       });
+      if (epoch !== sessionUiEpochRef.current) return null;
       setPlans((prev) => prev.map((p) => (p.plan_id === res.plan.plan_id ? res.plan : p)));
       applyPlanToEditor(res.plan);
       return res.plan;
     } catch (err) {
+      if (epoch !== sessionUiEpochRef.current) return null;
       const info = asGeorefError(err);
       addToast(`${info.code}: ${info.message}`, 'error');
       return null;
@@ -710,6 +770,7 @@ export function GeoreferencingWorkbenchPanel({
     gcps,
     applyPlanToEditor,
     addToast,
+    t,
   ]);
 
   const handleUndo = () => {
@@ -773,25 +834,28 @@ export function GeoreferencingWorkbenchPanel({
     });
     if (!picked.inside) return;
 
-    mutateGcps((prev) => {
-      if (prev.length === 0) {
-        const g = newEmptyGcp(0);
-        g.px = picked.px;
-        g.py = picked.py;
-        setSelectedGcpId(g.gcp_id);
-        return [g];
-      }
-      const targetId = selectedGcpId ?? prev[prev.length - 1].gcp_id;
-      return prev.map((g) =>
+    const prev = gcpsRef.current;
+    if (prev.length === 0) {
+      const g = newEmptyGcp(0);
+      g.px = picked.px;
+      g.py = picked.py;
+      mutateGcps(() => [g]);
+      setSelectedGcpId(g.gcp_id);
+      return;
+    }
+    const targetId = selectedGcpId ?? prev[prev.length - 1].gcp_id;
+    mutateGcps((rows) =>
+      rows.map((g) =>
         g.gcp_id === targetId ? { ...g, px: picked.px, py: picked.py } : g,
-      );
-    });
+      ),
+    );
   };
 
   const handleImportFile = async (fmt: 'json' | 'csv', e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !ctx || !activePlan) return;
+    const epoch = sessionUiEpochRef.current;
     try {
       const content = await file.text();
       const coordsAreWgs84 = detectImportedCoordsAreWgs84(fmt, content);
@@ -802,6 +866,7 @@ export function GeoreferencingWorkbenchPanel({
         replace_existing: true,
         coords_are_wgs84: coordsAreWgs84,
       });
+      if (epoch !== sessionUiEpochRef.current) return;
       applyPlanToEditor(res.plan);
       setPlans((prev) => prev.map((p) => (p.plan_id === res.plan.plan_id ? res.plan : p)));
     } catch (err) {
@@ -811,19 +876,22 @@ export function GeoreferencingWorkbenchPanel({
 
   const handlePreview = async () => {
     if (!ctx) return;
+    const epoch = sessionUiEpochRef.current;
     let plan = activePlan;
     if (!plan || dirty) {
       plan = await handleSaveDraft();
     }
-    if (!plan) return;
+    if (!plan || epoch !== sessionUiEpochRef.current) return;
     setPreviewing(true);
     try {
       const res = await previewGeorefPlan(ctx, plan.plan_id, plan.revision);
+      if (epoch !== sessionUiEpochRef.current) return;
       applyPlanToEditor(res.plan);
       if (res.out_width && res.out_height) {
         setPreviewDims({ width: res.out_width, height: res.out_height });
       }
     } catch (err) {
+      if (epoch !== sessionUiEpochRef.current) return;
       addToast(asGeorefError(err).message, 'error');
     } finally {
       setPreviewing(false);
@@ -832,11 +900,12 @@ export function GeoreferencingWorkbenchPanel({
 
   const handleExecute = async () => {
     if (!ctx) return;
+    const epoch = sessionUiEpochRef.current;
     let plan = activePlan;
     if (!plan || dirty) {
       plan = await handleSaveDraft();
     }
-    if (!plan) return;
+    if (!plan || epoch !== sessionUiEpochRef.current) return;
     setExecuting(true);
     setBindMessage(null);
     setPartialBindRev(null);
@@ -850,15 +919,18 @@ export function GeoreferencingWorkbenchPanel({
         background: true,
         idempotency_key: idempotencyKey,
       });
+      if (epoch !== sessionUiEpochRef.current) return;
       startPolling(plan.plan_id);
       if (!res.background && res.artifact) {
         const st = await pollGeorefStatus(ctx, plan.plan_id);
+        if (epoch !== sessionUiEpochRef.current) return;
         setJobStatus(st);
         applyPlanToEditor(st.plan);
         setExecuting(false);
         stopPolling();
       }
     } catch (err) {
+      if (epoch !== sessionUiEpochRef.current) return;
       setExecuting(false);
       addToast(asGeorefError(err).message, 'error');
     }
@@ -866,8 +938,10 @@ export function GeoreferencingWorkbenchPanel({
 
   const handleCancel = async () => {
     if (!ctx || !activePlan) return;
+    const epoch = sessionUiEpochRef.current;
     try {
       const st = await cancelGeorefPlan(ctx, activePlan.plan_id);
+      if (epoch !== sessionUiEpochRef.current) return;
       setJobStatus(st);
       applyPlanToEditor(st.plan);
       if (st.status === 'completed' || st.status === 'failed' || st.status === 'cancelled') {
@@ -878,12 +952,14 @@ export function GeoreferencingWorkbenchPanel({
         startPolling(activePlan.plan_id);
       }
     } catch (err) {
+      if (epoch !== sessionUiEpochRef.current) return;
       addToast(asGeorefError(err).message, 'error');
     }
   };
 
   const handleBindLayer = async () => {
     if (!ctx || !activePlan?.latest_artifact) return;
+    const epoch = sessionUiEpochRef.current;
     setBinding(true);
     setBindMessage(null);
     setPartialBindRev(null);
@@ -893,6 +969,7 @@ export function GeoreferencingWorkbenchPanel({
         expected_mapspec_revision: curRev,
         layer_name: activePlan.name || selectedSource?.filename || activePlan.plan_id,
       });
+      if (epoch !== sessionUiEpochRef.current) return;
       if (res.bound) {
         if (typeof res.mapspec_revision === 'number') {
           setMapSpecRevision(res.mapspec_revision);
@@ -964,7 +1041,7 @@ export function GeoreferencingWorkbenchPanel({
     return (
       <section
         data-testid="georeferencing-workbench"
-        className="border-t border-line/60 px-3 py-3 text-xs text-ink-muted"
+        className="border-t border-edge-subtle/60 px-3 py-3 text-xs text-ink-muted"
       >
         <h3 className="text-sm font-medium text-ink">{t('title')}</h3>
         <p className="mt-1">{t('noSession')}</p>
@@ -976,7 +1053,7 @@ export function GeoreferencingWorkbenchPanel({
     <section
       data-testid="georeferencing-workbench"
       aria-label={t('title')}
-      className="border-t border-line/60 px-3 py-3 space-y-3 text-xs"
+      className="border-t border-edge-subtle/60 px-3 py-3 space-y-3 text-xs"
     >
       <div>
         <h3 className="text-sm font-semibold text-ink">{t('title')}</h3>
@@ -984,7 +1061,7 @@ export function GeoreferencingWorkbenchPanel({
       </div>
 
       {/* Intake & Source Selector */}
-      <div className="space-y-1.5 rounded border border-line/60 bg-surface p-2">
+      <div className="space-y-1.5 rounded border border-edge-subtle/60 bg-surface p-2">
         <div className="flex flex-wrap items-center gap-2">
           <label className="inline-flex cursor-pointer items-center gap-1 rounded bg-accent px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90">
             <span>{t('uploadBtn')}</span>
@@ -1023,9 +1100,14 @@ export function GeoreferencingWorkbenchPanel({
             <span className="text-[11px] text-ink-muted">{t('loadedSources')}:</span>
             <select
               data-testid="georef-source-select"
+              aria-label={t('sourceSelectAria')}
               value={selectedSource?.source_id ?? ''}
               onChange={(e) => {
                 const sid = e.target.value;
+                // R2 #2186：切源先推进代次 —— 在飞的 pollOnce/handleUpload/
+                // handleSaveDraft/handlePreview/handleExecute 回包此后即丢弃，
+                // 不得覆盖新源的工作台状态或重启旧轮询。
+                sessionUiEpochRef.current += 1;
                 stopPolling();
                 setExecuting(false);
                 setSelectedSourceId(sid);
@@ -1049,7 +1131,7 @@ export function GeoreferencingWorkbenchPanel({
                   setPreviewImgUrl(null);
                 }
               }}
-              className="min-w-0 flex-1 rounded border border-line bg-canvas px-1.5 py-0.5 text-[11px]"
+              className="min-w-0 flex-1 rounded border border-edge-subtle bg-surface-canvas px-1.5 py-0.5 text-[11px]"
             >
               {sources.map((s) => (
                 <option key={s.source_id} value={s.source_id}>
@@ -1062,7 +1144,7 @@ export function GeoreferencingWorkbenchPanel({
                 type="button"
                 data-testid="georef-delete-source-btn"
                 onClick={() => void handleDeleteSource()}
-                className="rounded border border-line px-1.5 py-0.5 text-[11px] text-status-critical hover:bg-status-critical/10"
+                className="rounded border border-edge-subtle px-1.5 py-0.5 text-[11px] text-status-critical hover:bg-status-critical/10"
               >
                 {t('deleteSource')}
               </button>
@@ -1101,7 +1183,7 @@ export function GeoreferencingWorkbenchPanel({
 
       {/* Plan Configuration */}
       {selectedSource && (
-        <div className="space-y-2 rounded border border-line/60 bg-surface p-2">
+        <div className="space-y-2 rounded border border-edge-subtle/60 bg-surface p-2">
           <div className="font-medium text-ink">{t('planSection')}</div>
           <div className="grid grid-cols-2 gap-2">
             <label className="space-y-0.5">
@@ -1114,7 +1196,7 @@ export function GeoreferencingWorkbenchPanel({
                   setTargetCrs(e.target.value);
                   setDirty(true);
                 }}
-                className="w-full rounded border border-line bg-canvas px-1.5 py-1 text-[11px]"
+                className="w-full rounded border border-edge-subtle bg-surface-canvas px-1.5 py-1 text-[11px]"
               />
               <datalist id="georef-crs-presets">
                 {CRS_PRESETS.map((c) => (
@@ -1131,7 +1213,7 @@ export function GeoreferencingWorkbenchPanel({
                   setResampling(e.target.value as 'bilinear' | 'nearest');
                   setDirty(true);
                 }}
-                className="w-full rounded border border-line bg-canvas px-1.5 py-1 text-[11px]"
+                className="w-full rounded border border-edge-subtle bg-surface-canvas px-1.5 py-1 text-[11px]"
               >
                 <option value="bilinear">{t('resamplingBilinear')}</option>
                 <option value="nearest">{t('resamplingNearest')}</option>
@@ -1150,7 +1232,7 @@ export function GeoreferencingWorkbenchPanel({
                   setTargetResM(e.target.value);
                   setDirty(true);
                 }}
-                className="w-full rounded border border-line bg-canvas px-1.5 py-1 text-[11px]"
+                className="w-full rounded border border-edge-subtle bg-surface-canvas px-1.5 py-1 text-[11px]"
               />
             </label>
           </div>
@@ -1171,7 +1253,7 @@ export function GeoreferencingWorkbenchPanel({
 
       {/* Dual-View Source Image Picker + SVG GCP & Residual Overlay */}
       {selectedSource && (
-        <div className="space-y-2 rounded border border-line/60 bg-surface p-2">
+        <div className="space-y-2 rounded border border-edge-subtle/60 bg-surface p-2">
           <div className="flex flex-wrap items-center justify-between gap-1">
             <span className="font-medium text-ink">{t('viewerSection')}</span>
             <div className="flex flex-wrap gap-1">
@@ -1183,7 +1265,7 @@ export function GeoreferencingWorkbenchPanel({
                     zoomAroundPoint(p, p.zoom * 1.35, VIEWER_WIDTH / 2, VIEWER_HEIGHT / 2),
                   )
                 }
-                className="rounded border border-line px-1.5 py-0.5 text-[11px]"
+                className="rounded border border-edge-subtle px-1.5 py-0.5 text-[11px]"
               >
                 {t('zoomIn')}
               </button>
@@ -1195,7 +1277,7 @@ export function GeoreferencingWorkbenchPanel({
                     zoomAroundPoint(p, p.zoom / 1.35, VIEWER_WIDTH / 2, VIEWER_HEIGHT / 2),
                   )
                 }
-                className="rounded border border-line px-1.5 py-0.5 text-[11px]"
+                className="rounded border border-edge-subtle px-1.5 py-0.5 text-[11px]"
               >
                 {t('zoomOut')}
               </button>
@@ -1210,7 +1292,7 @@ export function GeoreferencingWorkbenchPanel({
                     ),
                   )
                 }
-                className="rounded border border-line px-1.5 py-0.5 text-[11px]"
+                className="rounded border border-edge-subtle px-1.5 py-0.5 text-[11px]"
               >
                 {t('resetView')}
               </button>
@@ -1219,7 +1301,7 @@ export function GeoreferencingWorkbenchPanel({
                 data-testid="georef-pan-toggle-btn"
                 onClick={() => setPanMode((v) => !v)}
                 className={`rounded border px-1.5 py-0.5 text-[11px] ${
-                  panMode ? 'border-accent bg-accent/15 text-accent' : 'border-line'
+                  panMode ? 'border-accent bg-accent/15 text-accent' : 'border-edge-subtle'
                 }`}
               >
                 {panMode ? t('panMode') : t('pickPixelActive')}
@@ -1234,7 +1316,7 @@ export function GeoreferencingWorkbenchPanel({
             onMouseMove={handleCanvasMouseMove}
             onMouseUp={handleCanvasMouseUp}
             style={{ width: '100%', height: VIEWER_HEIGHT }}
-            className={`relative overflow-hidden rounded border border-line bg-neutral-900 select-none ${
+            className={`relative overflow-hidden rounded border border-edge-subtle bg-neutral-900 select-none ${
               panMode ? 'cursor-grab' : 'cursor-crosshair'
             }`}
           >
@@ -1334,7 +1416,7 @@ export function GeoreferencingWorkbenchPanel({
               className={`rounded border px-2 py-0.5 text-[11px] font-medium ${
                 activeMapTool === 'georef_pick_map'
                   ? 'border-accent bg-accent text-white'
-                  : 'border-line bg-canvas text-ink'
+                  : 'border-edge-subtle bg-surface-canvas text-ink'
               }`}
             >
               {activeMapTool === 'georef_pick_map' ? t('mapPickActive') : t('mapPickStart')}
@@ -1342,14 +1424,12 @@ export function GeoreferencingWorkbenchPanel({
             <button
               type="button"
               data-testid="georef-add-gcp-btn"
-              onClick={() =>
-                mutateGcps((prev) => {
-                  const next = newEmptyGcp(prev.length);
-                  setSelectedGcpId(next.gcp_id);
-                  return [...prev, next];
-                })
-              }
-              className="rounded border border-line px-2 py-0.5 text-[11px]"
+              onClick={() => {
+                const next = newEmptyGcp(gcpsRef.current.length);
+                mutateGcps((prev) => [...prev, next]);
+                setSelectedGcpId(next.gcp_id);
+              }}
+              className="rounded border border-edge-subtle px-2 py-0.5 text-[11px]"
             >
               {t('addGcp')}
             </button>
@@ -1358,7 +1438,7 @@ export function GeoreferencingWorkbenchPanel({
               data-testid="georef-undo-btn"
               disabled={undoStack.length === 0}
               onClick={handleUndo}
-              className="rounded border border-line px-2 py-0.5 text-[11px] disabled:opacity-40"
+              className="rounded border border-edge-subtle px-2 py-0.5 text-[11px] disabled:opacity-40"
             >
               {t('undoGcp')}
             </button>
@@ -1367,28 +1447,28 @@ export function GeoreferencingWorkbenchPanel({
                 <button
                   type="button"
                   onClick={() => importJsonRef.current?.click()}
-                  className="rounded border border-line px-1.5 py-0.5 text-[11px]"
+                  className="rounded border border-edge-subtle px-1.5 py-0.5 text-[11px]"
                 >
                   {t('importJson')}
                 </button>
                 <button
                   type="button"
                   onClick={() => importCsvRef.current?.click()}
-                  className="rounded border border-line px-1.5 py-0.5 text-[11px]"
+                  className="rounded border border-edge-subtle px-1.5 py-0.5 text-[11px]"
                 >
                   {t('importCsv')}
                 </button>
                 <button
                   type="button"
                   onClick={() => ctx && void downloadGeorefGcps(ctx, activePlan.plan_id, 'json')}
-                  className="rounded border border-line px-1.5 py-0.5 text-[11px]"
+                  className="rounded border border-edge-subtle px-1.5 py-0.5 text-[11px]"
                 >
                   {t('exportJson')}
                 </button>
                 <button
                   type="button"
                   onClick={() => ctx && void downloadGeorefGcps(ctx, activePlan.plan_id, 'csv')}
-                  className="rounded border border-line px-1.5 py-0.5 text-[11px]"
+                  className="rounded border border-edge-subtle px-1.5 py-0.5 text-[11px]"
                 >
                   {t('exportCsv')}
                 </button>
@@ -1412,9 +1492,9 @@ export function GeoreferencingWorkbenchPanel({
           <p className="text-[11px] text-ink-muted">{t('selectRowHint')}</p>
 
           {/* GCP Pair Table */}
-          <div className="max-h-48 overflow-auto rounded border border-line/60">
+          <div className="max-h-48 overflow-auto rounded border border-edge-subtle/60">
             <table className="w-full border-collapse text-[11px]" data-testid="georef-gcp-table">
-              <thead className="bg-canvas text-ink-muted">
+              <thead className="bg-surface-canvas text-ink-muted">
                 <tr>
                   <th className="px-1 py-0.5 text-left">{t('colLabel')}</th>
                   <th className="px-1 py-0.5 text-right">{t('colPx')}</th>
@@ -1436,7 +1516,7 @@ export function GeoreferencingWorkbenchPanel({
                       key={g.gcp_id}
                       data-testid={`georef-gcp-row-${idx}`}
                       onClick={() => setSelectedGcpId(g.gcp_id)}
-                      className={`border-t border-line/40 ${selected ? 'bg-accent/10' : ''}`}
+                      className={`border-t border-edge-subtle/40 ${selected ? 'bg-accent/10' : ''}`}
                     >
                       <td className="px-1 py-0.5">
                         <input
@@ -1449,7 +1529,7 @@ export function GeoreferencingWorkbenchPanel({
                               ),
                             )
                           }
-                          className="w-10 rounded border border-line/60 bg-canvas px-1"
+                          className="w-10 rounded border border-edge-subtle/60 bg-surface-canvas px-1"
                         />
                       </td>
                       <td className="px-1 py-0.5">
@@ -1464,7 +1544,7 @@ export function GeoreferencingWorkbenchPanel({
                               prev.map((x) => (x.gcp_id === g.gcp_id ? { ...x, px: v } : x)),
                             );
                           }}
-                          className="w-14 rounded border border-line/60 bg-canvas px-1 text-right font-mono"
+                          className="w-14 rounded border border-edge-subtle/60 bg-surface-canvas px-1 text-right font-mono"
                         />
                       </td>
                       <td className="px-1 py-0.5">
@@ -1479,7 +1559,7 @@ export function GeoreferencingWorkbenchPanel({
                               prev.map((x) => (x.gcp_id === g.gcp_id ? { ...x, py: v } : x)),
                             );
                           }}
-                          className="w-14 rounded border border-line/60 bg-canvas px-1 text-right font-mono"
+                          className="w-14 rounded border border-edge-subtle/60 bg-surface-canvas px-1 text-right font-mono"
                         />
                       </td>
                       <td className="px-1 py-0.5">
@@ -1498,7 +1578,7 @@ export function GeoreferencingWorkbenchPanel({
                               ),
                             );
                           }}
-                          className="w-16 rounded border border-line/60 bg-canvas px-1 text-right font-mono"
+                          className="w-16 rounded border border-edge-subtle/60 bg-surface-canvas px-1 text-right font-mono"
                         />
                       </td>
                       <td className="px-1 py-0.5">
@@ -1517,7 +1597,7 @@ export function GeoreferencingWorkbenchPanel({
                               ),
                             );
                           }}
-                          className="w-16 rounded border border-line/60 bg-canvas px-1 text-right font-mono"
+                          className="w-16 rounded border border-edge-subtle/60 bg-surface-canvas px-1 text-right font-mono"
                         />
                       </td>
                       <td className="px-1 py-0.5">
@@ -1533,7 +1613,7 @@ export function GeoreferencingWorkbenchPanel({
                               ),
                             )
                           }
-                          className="rounded border border-line/60 bg-canvas px-0.5"
+                          className="rounded border border-edge-subtle/60 bg-surface-canvas px-0.5"
                         >
                           <option value="fit">{t('roleFit')}</option>
                           <option value="check">{t('roleCheck')}</option>
@@ -1543,6 +1623,7 @@ export function GeoreferencingWorkbenchPanel({
                         <input
                           type="checkbox"
                           checked={g.enabled}
+                          aria-label={t('gcpEnabledAria', { index: idx + 1 })}
                           onChange={(e) =>
                             mutateGcps((prev) =>
                               prev.map((x) =>
@@ -1594,7 +1675,7 @@ export function GeoreferencingWorkbenchPanel({
       {diag && (
         <div
           data-testid="georef-diagnostics"
-          className="space-y-1.5 rounded border border-line/60 bg-surface p-2 text-[11px]"
+          className="space-y-1.5 rounded border border-edge-subtle/60 bg-surface p-2 text-[11px]"
         >
           <div className="flex items-center justify-between">
             <span className="font-medium text-ink">{t('diagnosticsTitle')}</span>
@@ -1647,14 +1728,14 @@ export function GeoreferencingWorkbenchPanel({
 
       {/* Preview, Execute, MapSpec Bind & Deliverable Downloads */}
       {selectedSource && activePlan && (
-        <div className="space-y-2 rounded border border-line/60 bg-surface p-2">
+        <div className="space-y-2 rounded border border-edge-subtle/60 bg-surface p-2">
           <div className="flex flex-wrap gap-1.5">
             <button
               type="button"
               data-testid="georef-preview-btn"
               disabled={previewing || isJobRunning}
               onClick={() => void handlePreview()}
-              className="rounded border border-line px-2 py-1 text-[11px] font-medium hover:bg-canvas disabled:opacity-50"
+              className="rounded border border-edge-subtle px-2 py-1 text-[11px] font-medium hover:bg-surface-canvas disabled:opacity-50"
             >
               {previewing ? t('previewing') : t('previewBtn')}
             </button>
@@ -1688,7 +1769,7 @@ export function GeoreferencingWorkbenchPanel({
                 })}
               </div>
               <div
-                className="flex justify-center rounded border border-line/60 p-1"
+                className="flex justify-center rounded border border-edge-subtle/60 p-1"
                 style={{
                   backgroundImage:
                     'linear-gradient(45deg, #e5e7eb 25%, transparent 25%), linear-gradient(-45deg, #e5e7eb 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e5e7eb 75%), linear-gradient(-45deg, transparent 75%, #e5e7eb 75%)',
@@ -1710,7 +1791,7 @@ export function GeoreferencingWorkbenchPanel({
           {jobStatus && (
             <div
               data-testid="georef-job-status"
-              className="rounded border border-line/60 bg-canvas px-2 py-1 text-[11px]"
+              className="rounded border border-edge-subtle/60 bg-surface-canvas px-2 py-1 text-[11px]"
             >
               {['pending', 'queued', 'running', 'cancelling'].includes(jobStatus.status)
                 ? t('jobRunning', { stage: jobStatus.stage, progress: jobStatus.progress })
@@ -1741,7 +1822,7 @@ export function GeoreferencingWorkbenchPanel({
                   activePlan.latest_artifact &&
                   void downloadGeorefArtifact(ctx, activePlan.latest_artifact.artifact_id)
                 }
-                className="rounded border border-line px-2 py-1 text-[11px] font-medium hover:bg-canvas"
+                className="rounded border border-edge-subtle px-2 py-1 text-[11px] font-medium hover:bg-surface-canvas"
               >
                 {t('downloadGeoTiff')}
               </button>
@@ -1749,7 +1830,7 @@ export function GeoreferencingWorkbenchPanel({
                 type="button"
                 data-testid="georef-download-report-btn"
                 onClick={handleDownloadReport}
-                className="rounded border border-line px-2 py-1 text-[11px] font-medium hover:bg-canvas"
+                className="rounded border border-edge-subtle px-2 py-1 text-[11px] font-medium hover:bg-surface-canvas"
               >
                 {t('downloadReport')}
               </button>

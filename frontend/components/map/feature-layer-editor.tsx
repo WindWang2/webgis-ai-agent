@@ -102,6 +102,16 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   const contractEpochRef = useRef(0);
   /** vertex 编辑：被选要素（HUD 行数据快照）与其几何 draft。 */
   const [vertexTarget, setVertexTarget] = useState<{ featureId: string; geometry: GeoJSON.Geometry } | null>(null);
+  /**
+   * vertexTarget 的 ref 镜像（R2 #2181）：拖拽 effect 若直接依赖 state，
+   * 首次 mousemove 的 setVertexTarget 会重建 effect、重置局部拖拽状态，
+   * 拖拽一帧即断。handlers 一律读 ref，effect 依赖保持 [tool, editTarget, …]。
+   */
+  const vertexTargetRef = useRef<{ featureId: string; geometry: GeoJSON.Geometry } | null>(null);
+  useEffect(() => { vertexTargetRef.current = vertexTarget; }, [vertexTarget]);
+  /** 拖拽手势跨 effect 重建存活（onDown 置位 / onUp 复位并提交）。 */
+  const draggingIndexRef = useRef(-1);
+  const geometryAtDragStartRef = useRef<GeoJSON.Geometry | null>(null);
   const [splitTarget, setSplitTarget] = useState<string | null>(null);
   const draftRef = useRef<Draft>(null);
   const [, forceRender] = useState(0);
@@ -251,12 +261,15 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
           type: 'Feature',
           geometry: {
             type: 'LineString',
+            // R2 #2181：LineString 坐标必须是 Position[]；多边形草稿用
+            // 闭合环让虚线预览带出封口段（原实现多嵌套一层 Position[][]，
+            // 是非法 GeoJSON）。
             coordinates: draft.kind === 'polygon' && draft.points.length >= 3
-              ? [closeRing(draft.points).map((p) => p)]
+              ? closeRing(draft.points)
               : draft.points,
-          } as never,
+          },
           properties: { meta: 'draft' },
-        } as never);
+        });
       }
       for (const p of draft.points) {
         features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: p }, properties: { meta: 'draft' } });
@@ -415,12 +428,10 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
     return () => { map.off('click', onClick); map.off('dblclick', onDblClick); };
   }, [tool, mapReady, getMap, editTarget, refId, submit, collectCreateAttrs, bump, t, splitTarget, completeDraft, pickEditTarget]);
 
-  /* ─── 顶点拖拽（edit_vertices + vertexTarget）─── */
+  /* ─── 顶点拖拽（edit_vertices + vertexTargetRef）─── */
   useEffect(() => {
     const map = getMap();
     if (!map || !mapReady || tool !== 'edit_vertices' || !editTarget) return;
-    let draggingIndex = -1;
-    let geometryAtDragStart: GeoJSON.Geometry | null = null;
 
     const setVertex = (geometry: GeoJSON.Geometry, index: number, next: [number, number]): GeoJSON.Geometry | null => {
       if (geometry.type === 'LineString') {
@@ -447,8 +458,9 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
     };
 
     const onDown = (e: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
-      if (!vertexTarget) return;
-      const vertices = ringOf(vertexTarget.geometry);
+      const vt = vertexTargetRef.current;
+      if (!vt) return;
+      const vertices = ringOf(vt.geometry);
       const m = getMap();
       if (!m) return;
       let hit = -1;
@@ -457,22 +469,25 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
         if (Math.hypot(p.x - e.point.x, p.y - e.point.y) <= 8) { hit = i; break; }
       }
       if (hit < 0) return;
-      draggingIndex = hit;
-      geometryAtDragStart = vertexTarget.geometry;
+      draggingIndexRef.current = hit;
+      geometryAtDragStartRef.current = vt.geometry;
       if (typeof m.dragPan?.disable === 'function') m.dragPan.disable();
     };
     const onMove = (e: MapMouseEvent) => {
-      if (draggingIndex < 0 || !vertexTarget) return;
-      // 逐帧只更新本地 draft（V04：mousemove 零 REST）
-      const next = setVertex(vertexTarget.geometry, draggingIndex, [e.lngLat.lng, e.lngLat.lat]);
-      if (next) setVertexTarget({ featureId: vertexTarget.featureId, geometry: next });
+      const vt = vertexTargetRef.current;
+      if (draggingIndexRef.current < 0 || !vt) return;
+      // 逐帧只更新本地 draft（V04：mousemove 零 REST）；setVertexTarget 触发
+      // 的重渲染不再重建本 effect（state 已改为 ref 镜像，#2181）。
+      const next = setVertex(vt.geometry, draggingIndexRef.current, [e.lngLat.lng, e.lngLat.lat]);
+      if (next) setVertexTarget({ featureId: vt.featureId, geometry: next });
     };
     const onUp = async () => {
-      if (draggingIndex < 0 || !vertexTarget) return;
-      const target = vertexTarget;
-      const before = geometryAtDragStart;
-      draggingIndex = -1;
-      geometryAtDragStart = null;
+      const vt = vertexTargetRef.current;
+      if (draggingIndexRef.current < 0 || !vt) return;
+      const target = vt;
+      const before = geometryAtDragStartRef.current;
+      draggingIndexRef.current = -1;
+      geometryAtDragStartRef.current = null;
       const m = getMap();
       if (typeof m?.dragPan?.enable === 'function') m.dragPan.enable();
       if (before && JSON.stringify(before) !== JSON.stringify(target.geometry)) {
@@ -494,7 +509,7 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       window.removeEventListener('mouseup', onUpWindow);
       if (typeof map.dragPan?.enable === 'function') map.dragPan.enable();
     };
-  }, [tool, mapReady, getMap, editTarget, vertexTarget, submit, t]);
+  }, [tool, mapReady, getMap, editTarget, submit, t]);
 
   /* ─── 键盘：Enter 完成 / Escape 取消（不落服务端写入） ─── */
   useEffect(() => {

@@ -68,5 +68,8 @@
   "downloadReport": "下载配准质检报告 (.md)",
   "noSession": "请先打开或创建一个会话",
   "selectRowHint": "提示：选中一行后在左图点击拾取像元，再开启地图点选拾取经纬度。",
-  "loadedSources": "已上传图像源"
+  "loadedSources": "已上传图像源",
+  "invalidTargetResM": "目标分辨率必须是大于 0 的数字（或留空使用源分辨率）",
+  "sourceSelectAria": "选择配准源影像",
+  "gcpEnabledAria": "启用第 {index} 个控制点"
 }
