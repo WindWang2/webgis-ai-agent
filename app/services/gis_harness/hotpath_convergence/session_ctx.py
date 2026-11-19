@@ -9,11 +9,12 @@ and distinct tenants never share a ClaimStore.
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 _LOCK = threading.RLock()
-_CTX: Dict[str, "HotpathTurnContext"] = {}
+_CTX: "OrderedDict[str, HotpathTurnContext]" = OrderedDict()
 _MAX_SESSIONS = 256
 
 
@@ -45,7 +46,8 @@ def _ctx_key(session_id: str, tenant_id: str = "") -> str:
 def _evict_if_needed() -> None:
     if len(_CTX) <= _MAX_SESSIONS:
         return
-    # FIFO-ish: drop oldest insertion order (dict preserves order).
+    # LRU：从最不最近使用端驱逐（命中会 move_to_end 刷新顺序，
+    # 活跃会话不被他租户新会话的纯插入挤掉）。
     drop = list(_CTX.keys())[: max(1, len(_CTX) - _MAX_SESSIONS)]
     for k in drop:
         _CTX.pop(k, None)
@@ -62,6 +64,8 @@ def get_turn_context(session_id: str, tenant_id: str = "") -> HotpathTurnContext
             )
             _CTX[key] = ctx
             _evict_if_needed()
+        else:
+            _CTX.move_to_end(key)
         return ctx
 
 

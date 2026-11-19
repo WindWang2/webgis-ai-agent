@@ -43,10 +43,8 @@ def _evaluator_spec() -> str:
     return os.getenv("GIS_VISUAL_EVALUATOR", "").strip()
 
 
-# m1 标注：本 seam 当前无生产调用方（finalizer/终验管线尚未接线 —— 有意为
-# 之：W9 只交付"可控扩展点 + 白名单校验"，deterministic observation 独立
-# 工作；接线是独立 roadmap 项，不得在本 seam 内隐式实现）。
-# 验证：grep get_visual_evaluator/run_visual_evaluation 仅命中本模块与测试。
+# 生产调用方：completion/pipeline.py 的 _maybe_run_visual_evaluation（
+# finalization 触发）与 app/api/routes/visual_repairs.py（评估器在场探测）。
 
 #: 允许触发视觉评估的事件白名单（§40：不默认每轮截图）。
 VISUAL_EVALUATION_TRIGGERS = frozenset({

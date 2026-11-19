@@ -159,3 +159,22 @@ def test_decision_record_scrub_uses_neutral_module(monkeypatch):
         inputs={"note": "key=sk-abcdef1234567890"},
     )
     assert "sk-abcdef1234567890" not in str(record["inputs"])
+
+
+class TestIssue2139TokenPrefixes:
+    """#2139 F3：tool_security 已知 token 前缀形态必须被 scrub 覆盖。"""
+
+    @pytest.mark.parametrize("secret", [
+        "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+        "gho_16C7e42F292c6912E7710c838347Ae178B4a",
+        "github_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyzABCDE1234567890",
+        "xoxb-123456789012-abcdefghijkl",
+        "xoxp-123456789012-abcdefghijkl",
+        "glpat-abcdefghij1234",
+        "shpat_abcdefghij1234",
+        "sq0atp-abcdefghij1234",
+    ])
+    def test_token_prefix_redacted(self, secret):
+        out = scrub_secret_strings(f"prefix {secret} suffix")
+        assert _REDACTED in out
+        assert secret not in out

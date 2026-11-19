@@ -205,8 +205,18 @@ class RuntimeSituation:
         if self.owner_scope_key:
             out["owner_scope_key"] = self.owner_scope_key
         if self.credentials_present:
-            out["credentials_present"] = dict(
-                list(self.credentials_present.items())[:_MAX_CRED_KEYS])
+            # perm:* 键优先占槽（截断不得静默丢掉已授予权限键 —— 否则与
+            # granted_permissions 视图矛盾）；超额诚实披露。
+            items = sorted(
+                self.credentials_present.items(),
+                key=lambda kv: (0 if str(kv[0]).startswith("perm:") else 1,
+                                str(kv[0])),
+            )
+            if len(items) > _MAX_CRED_KEYS:
+                self.truncations = {
+                    **self.truncations, "credentials_present": len(items),
+                }
+            out["credentials_present"] = dict(items[:_MAX_CRED_KEYS])
         if self.runtime_availability:
             out["runtime_availability"] = dict(
                 list(self.runtime_availability.items())[:_MAX_DEP_KEYS])
@@ -329,11 +339,20 @@ def _collect_identity(session_id: str, tenant_id: str) -> Dict[str, str]:
         observe_optional_failure(__name__)
     try:
         from app.services.gis_harness.hotpath_convergence.session_ctx import (
-            get_turn_context,
+            find_session_tenant,
+            peek_turn_context,
         )
 
-        hot = get_turn_context(session_id, tenant_id=tenant_id)
-        identity["mission_id"] = str(getattr(hot, "mission_id", "") or "")[:_STR_MAX]
+        # 只读采集：绝不 get_turn_context（分配 + FIFO 驱逐会挤掉真实
+        # 租户会话的 ClaimStore）。tenant 缺席时先经服务端来源解析再 peek。
+        hot_tid = str(tenant_id or "")[:64] or find_session_tenant(session_id)
+        hot = peek_turn_context(session_id, hot_tid)
+        if hot is not None:
+            identity["mission_id"] = str(
+                getattr(hot, "mission_id", "") or "")[:_STR_MAX]
+            if not identity["tenant_id"]:
+                identity["tenant_id"] = str(
+                    getattr(hot, "tenant_id", "") or "")[:_STR_MAX]
     except Exception:  # noqa: BLE001
         observe_optional_failure(__name__)
     return identity

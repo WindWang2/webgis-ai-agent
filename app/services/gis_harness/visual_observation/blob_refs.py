@@ -187,9 +187,30 @@ def blob_has_live_ref(sha256: str, session_id: str) -> bool:
     if not refs:
         return False         # Missing or corrupt ownership evidence is not authorization.
     if sid in refs:
+        _renew_lease(sha)
         return True
 
     return False
+
+
+def _renew_lease(sha: str) -> None:
+    """使用侧租约续期：vref 写入时间超半 TTL 时最佳努力刷新 ts。
+
+    sweep 的陈旧租约回收（lease_age ≥ TTL 按无引用删字节）只面向**真正被
+    遗弃**的引用 —— 活跃会话长期持有的 blob（>7 天无 ref 变更）靠使用
+    瞬间续期保住字节；续期失败 fail-open（下次使用再续）。
+    """
+    try:
+        store = _blob_store()
+        with blob_ref_lock(store, sha):
+            refs, ts = _load_entry(sha)
+            if not refs:
+                return
+            if time.time() - ts < DEFAULT_SWEEP_MAX_AGE_S / 2:
+                return
+            _save_refs(sha, refs)
+    except Exception:  # noqa: BLE001 — 续期失败不阻断授权面
+        observe_optional_failure(__name__)
 
 
 def blob_exists_with_refs(sha256: str) -> bool:
@@ -282,7 +303,8 @@ def sweep_orphan_screenshots(
                 if refs:
                     # 陈旧租约：引用非空但 vref 自上次写起整体超龄（并发丢减量
                     # 的永久泄漏面，P2-1）—— 按无引用回收。租约 TTL 与字节
-                    # TTL 同宽（sweep max_age_s）。
+                    # TTL 同宽（sweep max_age_s）。活跃使用方在授权命中时续期
+                    # （_renew_lease 刷新 ts）—— 超龄即真正被遗弃的引用。
                     lease_age = ts - ref_ts if ref_ts > 0 else age
                     if lease_age < max_age_s:
                         kept_refed += 1

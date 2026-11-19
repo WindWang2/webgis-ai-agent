@@ -200,3 +200,28 @@ class TestScopedResolve:
 class TestDefaultTtl:
     def test_default_ttl_short(self):
         assert DEFAULT_LEASE_TTL_S <= 600.0  # 短期租约语义
+
+
+class TestIssue2139:
+    def test_env_provider_empty_dict_stays_hermetic(self, monkeypatch):
+        """注入空 dict 不得回落真环境（旧 ``self._env or os.environ`` 会
+        在空 dict 时静默读宿主 secret）。"""
+        from app.lib.secret_lease import EnvSecretProvider
+
+        monkeypatch.setenv("GIS_TOOL_SECRET_HOSTED", "host-secret")
+        p = EnvSecretProvider(env={})
+        assert p.resolve_material("hosted") is None
+
+    def test_expired_first_lease_falls_through_to_valid(self):
+        """同凭证的旧租约过期不得挡住后绑定的有效租约。"""
+        from app.lib.secret_lease import set_secret_lease_manager
+
+        clock = [0.0]
+        mgr = SecretLeaseManager(
+            InMemorySecretProvider({"smtp": "s"}), clock=lambda: clock[0])
+        set_secret_lease_manager(mgr)
+        old = mgr.acquire("smtp", ttl_s=5)
+        clock[0] = 100.0  # old 已过期
+        new = mgr.acquire("smtp", ttl_s=50)
+        with bind_secret_leases((old.lease, new.lease)):
+            assert resolve_secret_lease("smtp") == "s"

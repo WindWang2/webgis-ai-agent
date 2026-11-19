@@ -25,10 +25,24 @@ SECRET_KEY_MARKERS = (
     "privatekey", "passphrase", "access_key", "auth_key", "signing_key",
 )
 
+#: 已知 secret token 前缀（**单一词表**：tool_security 的槽位拒收启发式
+#: 与本模块的 scrub 形态共享同一份 —— review #2139 F3，两处不得漂移）。
+SECRET_TOKEN_PREFIXES = (
+    "sk-", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-", "AKIA",
+    "glpat-", "shpat_", "sq0atp-", "-----BEGIN",
+)
+
 #: 字符串值内的秘密模式（repr 形态嵌套载荷、header 片段）。
 #: 只匹配高置信形态，避免误伤普通文本。
 SECRET_STRING_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
+    re.compile(r"ghp_[A-Za-z0-9]{8,}"),
+    re.compile(r"gho_[A-Za-z0-9]{8,}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{8,}"),
+    re.compile(r"xox[bp]-[A-Za-z0-9\-]{8,}"),
+    re.compile(r"glpat-[A-Za-z0-9_\-]{8,}"),
+    re.compile(r"shpat_[A-Za-z0-9]{8,}"),
+    re.compile(r"sq0atp-[A-Za-z0-9]{8,}"),
     re.compile(r"AKIA[A-Z0-9]{16}"),
     re.compile(r"(?i)bearer\s*:?[\s]*[A-Za-z0-9._\-]{8,}"),
     re.compile(
@@ -58,6 +72,7 @@ def scrub_secret_strings(text: str) -> str:
 
 __all__ = [
     "SECRET_KEY_MARKERS",
+    "SECRET_TOKEN_PREFIXES",
     "SECRET_STRING_PATTERNS",
     "is_secret_key",
     "scrub_secret_strings",

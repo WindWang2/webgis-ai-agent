@@ -207,3 +207,45 @@ def test_release_unknown_ref_is_noop(sid_a):
     assert release_blob_ref("ff" * 32, sid_a) is False
     assert add_blob_ref("", sid_a) is False
     assert add_blob_ref("ff" * 32, "") is False
+
+
+# ── #2138 回归：租约续期 + 非 FS 后端锁降级 ───────────────────────────────
+
+def test_live_ref_use_renews_stale_lease(sid_a):
+    """活跃会话授权命中续期租约：30 天未写的 vref 经使用续期后
+    sweep 不再按陈旧租约删字节（旧行为：误删仍被引用的字节）。"""
+    import json as _json
+
+    store = get_filesystem_blob_store()
+    data = _png(90)
+    sha = sha256_of_bytes(data)
+    store.put_blob(blob_key_for(sha), data, "binary")
+    add_blob_ref(sha, sid_a)
+    old_ts = time.time() - 30 * 24 * 3600
+    ref_raw = store.get_blob(ref_key_for(sha))
+    entry = _json.loads(ref_raw.decode())
+    entry["ts"] = int(old_ts)
+    store.put_blob(ref_key_for(sha), _json.dumps(entry).encode(), "json")
+    os.utime(store.primary_path(blob_key_for(sha), "binary"), (old_ts, old_ts))
+
+    # 授权命中 → 续期（ts 刷回当前）
+    assert blob_has_live_ref(sha, sid_a) is True
+    renewed = _json.loads(store.get_blob(ref_key_for(sha)).decode())
+    assert renewed["ts"] > old_ts + 24 * 3600
+
+    report = sweep_orphan_screenshots(max_age_s=7 * 24 * 3600)
+    assert store.exists(blob_key_for(sha))
+    assert report.get("swept", 0) >= 0
+    store.delete_blob(blob_key_for(sha))
+    store.delete_blob(ref_key_for(sha))
+
+
+def test_blob_ref_lock_degrades_without_filesystem_root():
+    """非文件系统后端（无 root 属性）：锁退化为进程内分条锁，不抛错。"""
+    from app.services.gis_harness.visual_observation.blob_lock import blob_ref_lock
+
+    class _ObjStore:
+        pass
+
+    with blob_ref_lock(_ObjStore(), "ab" * 16):
+        pass

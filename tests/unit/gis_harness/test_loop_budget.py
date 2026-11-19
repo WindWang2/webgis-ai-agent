@@ -72,6 +72,63 @@ def test_governor_unavailable_reserves_bounded_local_attempt(monkeypatch):
     assert loop_charge("sess-f", "replan") is False
 
 
+@pytest.fixture()
+def fresh_local_state():
+    loop_budget._LOCAL_ATTEMPTS.clear()
+    loop_budget._CHARGE_UNAVAILABLE_SINCE = None
+    yield
+    loop_budget._LOCAL_ATTEMPTS.clear()
+    loop_budget._CHARGE_UNAVAILABLE_SINCE = None
+
+
+def _raise(*_a, **_k):
+    raise RuntimeError("governor down")
+
+
+def test_charge_exception_trips_circuit_then_half_opens(fresh_governor, fresh_local_state,
+                                                        monkeypatch):
+    budget = fresh_governor.retries
+    real_charge = budget.charge
+    monkeypatch.setattr(budget, "charge", _raise)
+    assert loop_charge("sess-h", "replan") is False
+    # 熔断期内 admissible 不再触碰 governor，走本地兜底
+    monkeypatch.setattr(budget, "retry_allowed", _raise)
+    allowed, why = loop_retry_admissible("sess-h", "repair")
+    assert allowed is True
+    assert why == "governor_unavailable_local_reserved"
+    # 冷却后半开：重试 governor，成功后熔断复位
+    loop_budget._CHARGE_UNAVAILABLE_SINCE -= loop_budget._CHARGE_COOLDOWN + 1
+    monkeypatch.setattr(budget, "retry_allowed", lambda *_a, **_k: (True, "allow"))
+    allowed, why = loop_retry_admissible("sess-h", "repair")
+    assert allowed is True
+    assert why == "allow"
+    assert loop_budget._CHARGE_UNAVAILABLE_SINCE is None
+    monkeypatch.setattr(budget, "charge", real_charge)
+    assert loop_charge("sess-h", "repair") is True
+
+
+def test_local_table_full_of_active_sessions_rejects_new_key(fresh_local_state, monkeypatch):
+    monkeypatch.setattr(loop_budget, "_retry_budget", lambda: None)
+    now = loop_budget._now()
+    for i in range(loop_budget._LOCAL_SESSIONS):
+        loop_budget._LOCAL_ATTEMPTS[(f"sess-{i}", "replan")] = (1, now)
+    allowed, why = loop_retry_admissible("sess-new", "replan")
+    assert allowed is False
+    assert why == "local_retry_capacity_exhausted"
+
+
+def test_local_table_evicts_stale_sessions(fresh_local_state, monkeypatch):
+    monkeypatch.setattr(loop_budget, "_retry_budget", lambda: None)
+    now = loop_budget._now()
+    for i in range(loop_budget._LOCAL_SESSIONS):
+        loop_budget._LOCAL_ATTEMPTS[(f"sess-{i}", "replan")] = (
+            1, now - loop_budget._LOCAL_ENTRY_TTL - 1)
+    loop_budget._LOCAL_ATTEMPTS[("sess-fresh", "replan")] = (1, now)
+    allowed, why = loop_retry_admissible("sess-new", "replan")
+    assert allowed is True
+    assert why == "governor_unavailable_local_reserved"
+
+
 def test_unknown_loop_no_gate():
     assert loop_retry_admissible("sess-g", "nonexistent")[0] is True
     assert loop_charge("sess-g", "nonexistent") is False

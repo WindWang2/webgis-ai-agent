@@ -367,3 +367,60 @@ class TestReviewF15DefaultWorkerProbe:
 
         self._fake_registry(monkeypatch, [], fail=True)
         assert rs._default_worker_probe() is None
+
+
+class TestReadOnlyIdentityCollection:
+    """#2136：只读采集不得分配/驱逐 turn ctx；mission/tenant 经
+    find_session_tenant 解析后 peek。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean_ctx(self):
+        from app.services.gis_harness.hotpath_convergence import session_ctx
+
+        session_ctx.reset_turn_context()
+        yield
+        session_ctx.reset_turn_context()
+
+    def test_build_does_not_allocate_turn_ctx(self):
+        """dispatch 路径（不传 tenant）反复 build 不得新建 t:|s: 空 ctx。"""
+        from app.services.gis_harness.hotpath_convergence import session_ctx
+
+        merge_situation_facts(None, "sess-readonly")
+        merge_situation_facts(None, "sess-readonly")
+        assert session_ctx.peek_turn_context("sess-readonly", "") is None
+
+    def test_mission_id_resolved_from_real_tenant_ctx(self):
+        from app.services.gis_harness.hotpath_convergence import session_ctx
+
+        session_ctx.get_turn_context("sess-m", tenant_id="org-a")
+        session_ctx.set_mission_id("sess-m", "mis-9", tenant_id="org-a")
+        s = build_runtime_situation("sess-m")  # 调用方不传 tenant
+        assert s.mission_id == "mis-9"
+        assert s.tenant_id == "org-a"
+
+    def test_unknown_session_no_mission_no_allocation(self):
+        s = build_runtime_situation("sess-nowhere")
+        assert s.mission_id == ""
+        assert s.tenant_id == ""
+
+
+class TestPermFirstTruncation:
+    """#2137 F3：凭证满 8 时截断不得静默丢掉 perm:* 键。"""
+
+    def test_perm_keys_survive_truncation(self):
+        creds = {f"cred{i}": True for i in range(8)}
+        creds["perm:admin:publish"] = True
+        s = RuntimeSituation(credentials_present=creds)
+        q = s.to_qualification_dict()
+        assert q["credentials_present"]["perm:admin:publish"] is True
+        assert len(q["credentials_present"]) == 8
+        assert q["granted_permissions"] == ["admin:publish"]
+        # 诚实披露截断
+        assert s.truncations["credentials_present"] == 9
+
+    def test_untouched_when_under_cap(self):
+        s = RuntimeSituation(credentials_present={"smtp": True,
+                                                  "perm:x": True})
+        q = s.to_qualification_dict()
+        assert q["credentials_present"] == {"smtp": True, "perm:x": True}
+        assert "credentials_present" not in s.truncations
