@@ -387,6 +387,41 @@ def test_server_spatial_join_pushdown():
     assert join_sql and "GROUP BY" in join_sql[0].upper()
 
 
+def test_server_spatial_join_qualifies_columns_with_alias():
+    """#2230：双表别名 p/g 下同名列（如 geom/name）必须带表限定，
+    否则 AmbiguousColumn 或静默比较错表列。"""
+    from app.services.data_fabric.query.models import QuerySpecV2
+
+    executed: list = []
+    a = _adapter(executed, agg_rows=[("d1", 50)])
+    point_filter = QuerySpecV2(filter={"op": "eq", "field": "district", "value": "jinniu"})
+    polygon_filter = QuerySpecV2(filter={"op": "eq", "field": "name", "value": "d1"})
+    rows = a.server_spatial_join(
+        "public.schools",
+        "public.districts",
+        point_filter=point_filter,
+        polygon_filter=polygon_filter,
+        group_by_polygon_field="name",
+    )
+    assert rows and rows[0]["count"] == 50
+    join_sql = [sql for sql, _ in executed if "ST_Within" in sql]
+    assert join_sql, "join SQL must be issued"
+    sql = join_sql[0]
+    # geometry 列必须表限定
+    assert 'p."geom"' in sql, f"point geometry must be p-qualified: {sql}"
+    assert 'g."geom"' in sql, f"polygon geometry must be g-qualified: {sql}"
+    # 谓词列必须表限定（避免跨表比较错列）
+    assert 'p."district"' in sql, f"point filter must be p-qualified: {sql}"
+    assert 'g."name"' in sql, f"polygon filter must be g-qualified: {sql}"
+    where_clause = sql.split(" WHERE ", 1)[1]
+    assert '"geom" IS ' not in where_clause
+    # 无未限定的裸列引用出现在 WHERE（ST_Within 之外）
+    import re
+
+    bare = re.findall(r'(?<![\w.])"(district|name|geom|id|students)"', where_clause)
+    assert not bare, f"unqualified column refs in WHERE: {bare}"
+
+
 # ── 证据 ────────────────────────────────────────────────────────────────────
 
 

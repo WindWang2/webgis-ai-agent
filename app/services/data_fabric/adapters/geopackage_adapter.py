@@ -203,6 +203,40 @@ class GeoPackageAdapter(GeospatialDataSourceAdapter):
                 from pyproj import Transformer
 
                 bbox = Transformer.from_crs("EPSG:4326", info["crs"], always_xy=True).transform_bounds(*bbox)
+            if limit:
+                # #2233：页窗口直读（skip/max，+1 行判 has_more）—— >50k
+                # 层配小 limit 不再被 50,001 行整幅扫描预算误杀。bbox 只读
+                # 窗口时命中总数不可知 → total_matching=None（诚实），
+                # 非 bbox 用 read_info 元数据的整层计数（零行传输）。
+                fetch_limit = min(limit + 1, _MAX_QUERY_FEATURES + 1 - offset)
+                gdf = pyogrio.read_dataframe(
+                    str(path), layer=layer, bbox=bbox, columns=columns,
+                    skip_features=offset, max_features=fetch_limit,
+                )
+                if gdf.crs is not None:
+                    gdf = gdf.to_crs("EPSG:4326")
+                page = gdf.iloc[:limit]
+                has_more = len(gdf) > limit
+                total_hint = info.get("features")
+                if not isinstance(total_hint, int) or total_hint < 0:
+                    total_hint = None
+                matched = None if bbox else total_hint
+                return QueryResult(
+                    dataset_id=dataset_id,
+                    query_spec=query_spec,
+                    features=page.to_geo_dict()["features"],
+                    returned_count=len(page), total_count=total_hint, total_matching=matched,
+                    has_more=has_more, truncated=has_more,
+                    metadata={
+                        "adapter": "ads.geopackage",
+                        "source": "local_gpkg",
+                        "is_demo": False,
+                        "count": int(len(page)),
+                        "total_matched": matched,
+                        "total_matched_exact": matched is not None,
+                        "delivered_crs": "EPSG:4326" if gdf.crs is not None else None,
+                    },
+                )
             gdf = pyogrio.read_dataframe(
                 str(path), layer=layer, bbox=bbox, columns=columns,
                 max_features=_MAX_QUERY_FEATURES + 1,

@@ -192,7 +192,14 @@ class OgcTilesProxyService:
 
     @staticmethod
     def _dataset_id_of(item: Any) -> str:
-        """catalog 条目 id（= ``cid:tms``）就是 adapter 的 dataset_id。"""
+        """adapter 的 dataset_id = 目录条目的 ``name``（源内数据集 id，如
+        ``cid:tms``）。``item.id`` 是 ``cat_<source_id>_<name>`` 前缀形，
+        不能传给 adapter（#2231，否则目录同步后的瓦片请求全部按错误 id
+        查询失败）。无 ``name`` 的合成条目（测试/旧调用方）回退 ``id``。
+        """
+        name = str(getattr(item, "name", "") or "").strip()
+        if name:
+            return name
         return str(getattr(item, "id", "") or "")
 
     def stats(self) -> dict:
