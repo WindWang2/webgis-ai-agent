@@ -79,7 +79,7 @@ export function BriefPanel(props: BriefPanelProps): React.ReactElement {
     }
   }, [ownerToken, sessionId, t]);
 
-  useEffect(() => { void reload(); }, [reload]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void reload(); }, [reload]);
 
   const handleConflict = useCallback(async (err: unknown) => {
     if (err instanceof ApiError && err.status === 409) {

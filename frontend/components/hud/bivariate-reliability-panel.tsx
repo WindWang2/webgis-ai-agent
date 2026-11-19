@@ -99,7 +99,7 @@ export function BivariateReliabilityPanel({ layerId }: Props) {
   const [measureUnit, setMeasureUnit] = useState('');
   const [methodNote, setMethodNote] = useState('');
   const [channel, setChannel] = useState('opacity');
-  const [direction, setDirection] = useState('higher_less_reliable');
+  const [direction] = useState('higher_less_reliable');
   const [vMin, setVMin] = useState('0');
   const [vMax, setVMax] = useState('2');
   const [outMin, setOutMin] = useState('0.25');
@@ -240,6 +240,9 @@ export function BivariateReliabilityPanel({ layerId }: Props) {
     () => JSON.stringify(buildPlan), [buildPlan]);
 
   const ctx = useMemo((): G41ApiContext | null => {
+    // liveRevision 是刻意的重算信号：会话游标为外部 store，memo 体内引用
+    // 以声明依赖（否则切会话后 ctx 陈旧，规则也会报 unnecessary dependency）。
+    void liveRevision;
     const cursor = getMapSpecSessionCursor();
     if (!cursor.sessionId) return null;
     return { sessionId: cursor.sessionId, ownerToken: cursor.ownerToken };

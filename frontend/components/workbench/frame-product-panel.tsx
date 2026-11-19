@@ -10,9 +10,9 @@
  * （layout.frames[].enabled —— 经产品整表携带，身份键不受影响）、解绑。
  * 「已保存」= 服务端 revision 落定（回灌的 spec 即真相），无本地平行态。
  */
-import { useCallback, useEffect, useMemo, useId, useState } from 'react';
+import { useCallback, useId, useState } from 'react';
 import { useSyncExternalStore } from 'react';
-import { Layers, ArrowUp, ArrowDown, Eye, EyeOff, Target, Link2, Unlink } from 'lucide-react';
+import { ArrowUp, ArrowDown, Target, Link2, Unlink } from 'lucide-react';
 import { useT } from '@/lib/i18n/useT';
 import { useToastStore } from '@/components/ui/toast';
 import {
@@ -36,7 +36,6 @@ function useFrameProductView(): FrameProductView {
 export function FrameProductPanel() {
   const view = useFrameProductView();
   const t = useT();
-  const addToast = useToastStore((s) => s.addToast);
   const [busy, setBusy] = useState(false);
   const baseId = useId();
 

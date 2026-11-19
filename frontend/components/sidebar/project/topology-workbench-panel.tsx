@@ -13,7 +13,7 @@
  * - 例外是用户决定（理由必填）；修复候选明确区分建议与可提交计划。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GitBranch, LocateFixed, Network, RefreshCw } from 'lucide-react';
 
 import { EmptyState } from '@/components/shared/empty-state';
@@ -101,7 +101,6 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
   // 角色绑定（简化表单：会话 ref / bbox）
   const [bindingsDraft, setBindingsDraft] = useState<Record<string, BindingDraft>>({});
   const selectedRuleset = rulesets.find((r) => r.id === selectedRulesetId) ?? null;
-  const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null;
 
   const loadRulesets = useCallback(async () => {
     try {
@@ -137,7 +136,6 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
     } catch (err) {
       setError(parseApiErrorDetail(err, 'run detail'));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId]);
 
   const loadFindings = useCallback(async () => {
@@ -154,7 +152,7 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
     } catch (err) {
       setError(parseApiErrorDetail(err, 'findings'));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [selectedRunId, severityFilter, statusFilter, offset]);
 
   useEffect(() => { void loadRulesets(); }, [loadRulesets]);
@@ -162,13 +160,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
   useEffect(() => { void loadRunDetail(); }, [loadRunDetail]);
   useEffect(() => { void loadFindings(); }, [loadFindings]);
   // 运行中轮询（10s；完成后停）
-  const runningRef = useRef(false);
-  runningRef.current = runs.some((r) => r.status === 'pending' || r.status === 'running');
+  const running = runs.some((r) => r.status === 'pending' || r.status === 'running');
   useEffect(() => {
-    if (!runningRef.current) return;
+    if (!running) return;
     const h = window.setInterval(() => { void loadRuns(); void loadRunDetail(); }, 10_000);
     return () => window.clearInterval(h);
-  }, [runningRef.current, loadRuns, loadRunDetail]);
+  }, [running, loadRuns, loadRunDetail]);
 
   const handleCreateRuleset = async () => {
     setBusy(true); setError(null);

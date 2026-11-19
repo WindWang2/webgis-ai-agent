@@ -1250,7 +1250,13 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
     const fullPrefix = prefix ? `${prefix}${baseId}` : baseId;
     const sub = layerIds
       .filter((id) => {
-        return id === fullPrefix || id.startsWith(`${fullPrefix}__`) || id.startsWith(`${fullPrefix}-`);
+        if (id === fullPrefix || id.startsWith(`${fullPrefix}__`)) return true;
+        // H5b/#2144：'-' 只作**已知子层后缀**分隔（与 sublayerRank 同词表）
+        // —— 否则 'roads' 族会把 'roads-major__line'（另一层 'roads-major'
+        // 的子层）误收进来，期望序出现重复 id、锚定链错位。
+        if (!id.startsWith(`${fullPrefix}-`)) return false;
+        const rest = id.slice(fullPrefix.length + 1);
+        return rest in SUBLAYER_RANK;
       })
       .sort((a, b) => sublayerRank(b) - sublayerRank(a)); // rank 降序 = 顶在先
     desiredTopToBottom.push(...sub);
