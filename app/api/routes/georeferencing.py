@@ -1,6 +1,7 @@
 """G48 Control-Point (GCP) Image Georeferencing & Deliverable GeoRaster HTTP API."""
 from __future__ import annotations
 
+import asyncio
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
@@ -28,6 +29,9 @@ from app.schemas.georeferencing_schema import (
     GeorefSourceResponse,
     ImportGcpsIn,
     PreviewPlanIn,
+    artifact_public_view,
+    plan_public_view,
+    source_public_view,
 )
 from app.services.auth_history_bridge import require_owned_session
 from app.services.georeferencing import service, store
@@ -98,7 +102,7 @@ async def upload_georef_source(
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
     return GeorefSourceResponse(
-        source=src,
+        source=source_public_view(src),
         image_url=f"/api/v1/georeferencing/sources/{src.source_id}/image?session_id={session_id}&v={src.normalized_sha256[:12]}",
     )
 
@@ -112,7 +116,11 @@ async def list_georef_sources(
     session_id: str = Query(..., min_length=8, max_length=128),
     _conv: Conversation = Depends(require_owned_session),
 ):
-    return GeorefSourceListResponse(session_id=session_id, sources=store.list_sources(session_id))
+    sources = await asyncio.to_thread(store.list_sources, session_id)
+    return GeorefSourceListResponse(
+        session_id=session_id,
+        sources=[source_public_view(x) for x in sources],
+    )
 
 
 @router.get(
@@ -126,11 +134,11 @@ async def get_georef_source(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        src = service.require_source(session_id, source_id)
+        src = await asyncio.to_thread(service.require_source, session_id, source_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
     return GeorefSourceResponse(
-        source=src,
+        source=source_public_view(src),
         image_url=f"/api/v1/georeferencing/sources/{src.source_id}/image?session_id={session_id}&v={src.normalized_sha256[:12]}",
     )
 
@@ -145,7 +153,7 @@ async def stream_georef_source_image(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        path = service.get_source_viewer_image_path(session_id, source_id)
+        path = await asyncio.to_thread(service.get_source_viewer_image_path, session_id, source_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
@@ -184,7 +192,8 @@ async def create_georef_plan(
             detail={"code": GeorefErrorCode.INVALID_GCP_COORDS.value, "message": "Body session_id disagrees with query session_id."},
         )
     try:
-        plan = service.create_plan(
+        plan = await asyncio.to_thread(
+            service.create_plan,
             session_id=session_id,
             source_id=body.source_id,
             name=body.name,
@@ -193,10 +202,10 @@ async def create_georef_plan(
             target_resolution_m=body.target_resolution_m,
             generate_cog=body.generate_cog,
         )
-        src = service.require_source(session_id, plan.source_id)
+        src = await asyncio.to_thread(service.require_source, session_id, plan.source_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
-    return GeorefPlanResponse(plan=plan, source=src)
+    return GeorefPlanResponse(plan=plan_public_view(plan), source=source_public_view(src))
 
 
 @router.get(
@@ -208,7 +217,11 @@ async def list_georef_plans(
     session_id: str = Query(..., min_length=8, max_length=128),
     _conv: Conversation = Depends(require_owned_session),
 ):
-    return GeorefPlanListResponse(session_id=session_id, plans=store.list_plans(session_id))
+    plans = await asyncio.to_thread(store.list_plans, session_id)
+    return GeorefPlanListResponse(
+        session_id=session_id,
+        plans=[plan_public_view(p) for p in plans],
+    )
 
 
 @router.get(
@@ -222,11 +235,14 @@ async def get_georef_plan(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        plan = service.require_plan(session_id, plan_id)
-        src = store.get_source(session_id, plan.source_id)
+        plan = await asyncio.to_thread(service.require_plan, session_id, plan_id)
+        src = await asyncio.to_thread(store.get_source, session_id, plan.source_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
-    return GeorefPlanResponse(plan=plan, source=src)
+    return GeorefPlanResponse(
+        plan=plan_public_view(plan),
+        source=source_public_view(src) if src is not None else None,
+    )
 
 
 @router.put(
@@ -241,7 +257,8 @@ async def update_georef_draft(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        plan = service.revise_draft(
+        plan = await asyncio.to_thread(
+            service.revise_draft,
             session_id=session_id,
             plan_id=plan_id,
             expected_revision=body.expected_revision,
@@ -253,10 +270,13 @@ async def update_georef_draft(
             generate_cog=body.generate_cog,
             gcps=body.gcps,
         )
-        src = store.get_source(session_id, plan.source_id)
+        src = await asyncio.to_thread(store.get_source, session_id, plan.source_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
-    return GeorefPlanResponse(plan=plan, source=src)
+    return GeorefPlanResponse(
+        plan=plan_public_view(plan),
+        source=source_public_view(src) if src is not None else None,
+    )
 
 
 @router.post(
@@ -271,7 +291,8 @@ async def import_georef_gcps(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        plan = service.import_gcps(
+        plan = await asyncio.to_thread(
+            service.import_gcps,
             session_id=session_id,
             plan_id=plan_id,
             expected_revision=body.expected_revision,
@@ -280,10 +301,13 @@ async def import_georef_gcps(
             replace_existing=body.replace_existing,
             coords_are_wgs84=body.coords_are_wgs84,
         )
-        src = store.get_source(session_id, plan.source_id)
+        src = await asyncio.to_thread(store.get_source, session_id, plan.source_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
-    return GeorefPlanResponse(plan=plan, source=src)
+    return GeorefPlanResponse(
+        plan=plan_public_view(plan),
+        source=source_public_view(src) if src is not None else None,
+    )
 
 
 @router.get(
@@ -297,7 +321,7 @@ async def export_georef_gcps(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        content, media_type, fname = service.export_gcps(session_id, plan_id, fmt=fmt)
+        content, media_type, fname = await asyncio.to_thread(service.export_gcps, session_id, plan_id, fmt=fmt)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
     return Response(
@@ -319,11 +343,13 @@ async def preview_georef_plan(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        return service.generate_preview(
+        resp = await asyncio.to_thread(
+            service.generate_preview,
             session_id=session_id,
             plan_id=plan_id,
             expected_revision=body.expected_revision if body else None,
         )
+        return resp.model_copy(update={"plan": plan_public_view(resp.plan)})
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
 
@@ -338,7 +364,7 @@ async def get_georef_preview_image(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        path = service.get_preview_image_path(session_id, plan_id)
+        path = await asyncio.to_thread(service.get_preview_image_path, session_id, plan_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
     return FileResponse(path, media_type="image/png")
@@ -380,7 +406,7 @@ async def execute_georef_plan(
         status=res["status"],
         background=res["background"],
         idempotent_reuse=res["idempotent_reuse"],
-        artifact=res.get("artifact"),
+        artifact=artifact_public_view(res.get("artifact")),
         poll_url=f"/api/v1/georeferencing/plans/{plan_id}/status?session_id={session_id}",
     )
 
@@ -399,7 +425,11 @@ async def cancel_georef_plan(
         res = await service.cancel_job(session_id, plan_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
-    return GeorefJobStatusResponse(**res)
+    return GeorefJobStatusResponse(**{
+        **res,
+        "plan": plan_public_view(res["plan"]),
+        "artifact": artifact_public_view(res.get("artifact")),
+    })
 
 
 @router.get(
@@ -413,10 +443,14 @@ async def get_georef_status(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        res = service.get_status(session_id, plan_id)
+        res = await asyncio.to_thread(service.get_status, session_id, plan_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
-    return GeorefJobStatusResponse(**res)
+    return GeorefJobStatusResponse(**{
+        **res,
+        "plan": plan_public_view(res["plan"]),
+        "artifact": artifact_public_view(res.get("artifact")),
+    })
 
 
 @router.post(
@@ -434,7 +468,7 @@ async def bind_georef_mapspec_layer(
     await _sync_owner_verifier(session_id, conv)
     tok = owner_token or transport_owner_token(getattr(conv, "owner_token", None))
     try:
-        return await service.bind_mapspec_layer(
+        res = await service.bind_mapspec_layer(
             session_id=session_id,
             plan_id=plan_id,
             expected_mapspec_revision=body.expected_mapspec_revision,
@@ -447,6 +481,7 @@ async def bind_georef_mapspec_layer(
         )
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
+    return res.model_copy(update={"artifact": artifact_public_view(res.artifact)})
 
 
 @router.get(
@@ -459,7 +494,7 @@ async def download_georef_artifact(
     _conv: Conversation = Depends(require_owned_session),
 ):
     try:
-        path, art = service.resolve_authorized_artifact_download(session_id, artifact_id)
+        path, art = await asyncio.to_thread(service.resolve_authorized_artifact_download, session_id, artifact_id)
     except GeorefDomainError as exc:
         raise _http_err(exc) from exc
     return FileResponse(

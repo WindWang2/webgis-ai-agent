@@ -327,14 +327,19 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
         tmp.unlink(missing_ok=True)
 
 
-async def ingest_source_bytes(
+def _ingest_source_bytes_sync(
     *,
     session_id: str,
     filename: str,
     raw_bytes: bytes,
     ignore_exif: bool = False,
 ) -> GeorefSourceRecord:
-    """Validate, decode, EXIF-canonicalize, and immutably store an uploaded source raster."""
+    """Validate, decode, EXIF-canonicalize, and immutably store an uploaded source raster.
+
+    同步重实现 —— Pillow 解码 / GDAL 检查 / SHA256 / 落盘全部在调用线程执行；
+    async 入口 ``ingest_source_bytes`` 用 ``asyncio.to_thread`` 包裹，绝不在
+    事件循环上做大图解码（issue #2193）。
+    """
     if not raw_bytes:
         raise GeorefDomainError(
             GeorefErrorCode.SOURCE_DECODE_FAILED,
@@ -591,3 +596,26 @@ async def ingest_source_bytes(
     )
     save_source(record)
     return record
+
+
+async def ingest_source_bytes(
+    *,
+    session_id: str,
+    filename: str,
+    raw_bytes: bytes,
+    ignore_exif: bool = False,
+) -> GeorefSourceRecord:
+    """Async facade for :func:`_ingest_source_bytes_sync` (issue #2193).
+
+    ≤32M px 的 Pillow 解码、GDAL 临时 TIFF 检查、EXIF 转置、PNG/TIFF 编码、
+    SHA256 与 BlobStore 落盘全部卸载到工作线程，事件循环零阻塞。
+    """
+    import asyncio
+
+    return await asyncio.to_thread(
+        _ingest_source_bytes_sync,
+        session_id=session_id,
+        filename=filename,
+        raw_bytes=raw_bytes,
+        ignore_exif=ignore_exif,
+    )

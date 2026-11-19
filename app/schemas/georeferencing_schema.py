@@ -436,3 +436,34 @@ class GeorefDeleteResponse(BaseModel):
     deleted: bool
     source_id: str
     released_blobs: int = 0
+
+
+# ── Response views: server-path stripping (issue #2194) ─────────────────────
+#
+# 领域记录内部合法携带 normalized_path/file_path/preview_path（下载、清理、
+# 预览读图都依赖它们）；但 HTTP 响应绝不回显服务器文件系统路径
+# （对照 raster_authoring 的既定做法）。以下视图返回剥离后的副本，
+# 存储与文件操作始终使用原始记录。
+
+
+def source_public_view(src: GeorefSourceRecord) -> GeorefSourceRecord:
+    """API 响应视图：剥离 ``normalized_path``。"""
+    return src.model_copy(update={"normalized_path": ""})
+
+
+def artifact_public_view(art: Optional[GeorefArtifactRecord]) -> Optional[GeorefArtifactRecord]:
+    """API 响应视图：剥离 ``file_path``。"""
+    if art is None:
+        return None
+    return art.model_copy(update={"file_path": ""})
+
+
+def plan_public_view(plan: GeorefDraftPlan) -> GeorefDraftPlan:
+    """API 响应视图：剥离 ``preview_path`` 与嵌套 artifact 的 ``file_path``。"""
+    return plan.model_copy(update={
+        "preview_path": None,
+        "latest_artifact": artifact_public_view(plan.latest_artifact),
+        "superseded_artifacts": [
+            artifact_public_view(a) for a in plan.superseded_artifacts
+        ],
+    })

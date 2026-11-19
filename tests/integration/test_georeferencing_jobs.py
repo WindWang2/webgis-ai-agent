@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import io
 import threading
+from datetime import datetime, timezone
 
 import numpy as np
 import pytest
@@ -350,3 +351,320 @@ async def test_r29_mid_job_source_swap_aborts_fail_closed(isolated_env, monkeypa
         )
     assert exc_info.value.code == GeorefErrorCode.SOURCE_CORRUPT_OR_TAMPERED
     assert not list((georef_session_dir(sid) / "artifacts").glob("*.tif"))
+
+
+# ─── issue #2192：幂等键/_freeze TOCTOU ─────────────────────────────────
+
+
+def _snapshot_for(plan, source):
+    from app.schemas.georeferencing_schema import FrozenExecutionSnapshot
+    from app.services.georeferencing.warp import compute_output_grid
+
+    coeffs = plan.fit_metrics.coefficients
+    grid = compute_output_grid(source, coeffs, plan.target_crs, plan.target_resolution_m)
+    return FrozenExecutionSnapshot(
+        frozen_at=datetime.now(timezone.utc).isoformat(),
+        revision=int(plan.revision),
+        source_id=source.source_id,
+        original_sha256=source.original_sha256,
+        normalized_sha256=source.normalized_sha256,
+        target_crs=plan.target_crs,
+        resampling=plan.resampling,
+        target_resolution_m=plan.target_resolution_m,
+        generate_cog=plan.generate_cog,
+        ignore_exif=plan.ignore_exif,
+        affine=coeffs,
+        fit_gcps=[g for g in plan.gcps if g.enabled and g.role == "fit"],
+        check_gcps=[g for g in plan.gcps if g.enabled and g.role == "check"],
+        out_width=grid.out_width,
+        out_height=grid.out_height,
+        dst_transform=list(grid.dst_transform)[:6],
+        bounds_target_crs=grid.bounds_target_crs,
+        footprint_wgs84=grid.footprint_wgs84,
+        bounds_wgs84=grid.bounds_wgs84,
+        estimated_output_pixels=grid.estimated_pixels,
+        estimated_output_bytes=grid.estimated_bytes,
+    )
+
+
+def test_2192_freeze_plan_for_execution_atomic_across_threads(isolated_env):
+    """跨线程并发 freeze（= 跨进程语义，flock 是唯一的跨进程互斥）：
+
+    恰一个胜者原子落下 freeze+attach+幂等登记；败者在同一把锁内看到
+    胜者的存活 job → 409 CAS_CONFLICT，绝不出现 freeze→attach 中间态
+    被第二人覆盖（issue #2192 的 TOCTOU 负例）。
+    """
+    from sqlalchemy import select as sa_select
+
+    from app.models.db_model import AnalysisTask
+    from app.services.georeferencing.store import (
+        freeze_plan_for_execution,
+        get_idempotency_entry,
+    )
+
+    sid = isolated_env
+    src, plan = asyncio.run(_seed_valid_plan(sid))
+    assert plan.revision == 2
+
+    with SessionLocal() as db:
+        watermark = db.execute(
+            sa_select(AnalysisTask.id).order_by(AnalysisTask.id.desc()).limit(1)
+        ).first()
+        watermark_id = int(watermark[0]) if watermark else 0
+        j1 = DurableJobStore.create_sync(
+            db, task_type="georeference_warp", kind="georeference",
+            display_name="freeze-race-1", session_id=sid, parameters={},
+        )
+        j2 = DurableJobStore.create_sync(
+            db, task_type="georeference_warp", kind="georeference",
+            display_name="freeze-race-2", session_id=sid, parameters={},
+        )
+        db.commit()
+        jid1, jid2 = int(j1.id), int(j2.id)
+
+    def _checker(cur):
+        if not cur.active_job_id:
+            return
+        with SessionLocal() as db2:
+            row = DurableJobStore.get_sync(db2, int(cur.active_job_id))
+            if row is not None and JobStatus(row.status) in (
+                JobStatus.pending, JobStatus.queued,
+                JobStatus.running, JobStatus.cancelling,
+            ):
+                raise GeorefDomainError(
+                    GeorefErrorCode.CAS_CONFLICT, "active job conflict", status_code=409,
+                )
+
+    barrier = threading.Barrier(2)
+    outcomes: dict = {}
+
+    def _freeze(tag: str, jid: int, exec_id: str) -> None:
+        try:
+            barrier.wait(timeout=10)
+            freeze_plan_for_execution(
+                sid, plan.plan_id,
+                expected_revision=plan.revision,
+                snapshot=_snapshot_for(plan, src),
+                execution_id=exec_id,
+                job_id=str(jid),
+                conflict_checker=_checker,
+                idempotency_key="thread-race-key",
+                idempotency_payload={"job_id": str(jid), "execution_id": exec_id, "status": "pending"},
+            )
+            outcomes[tag] = ("ok", None)
+        except Exception as exc:  # noqa: BLE001
+            outcomes[tag] = ("err", exc)
+
+    t1 = threading.Thread(target=_freeze, args=("a", jid1, "gexec_ta"))
+    t2 = threading.Thread(target=_freeze, args=("b", jid2, "gexec_tb"))
+    t1.start(), t2.start()
+    t1.join(timeout=10), t2.join(timeout=10)
+
+    ok_tags = [t for t, (st, _) in outcomes.items() if st == "ok"]
+    err_tags = [t for t, (st, _) in outcomes.items() if st == "err"]
+    assert len(ok_tags) == 1 and len(err_tags) == 1, outcomes
+    loser_exc = outcomes[err_tags[0]][1]
+    assert isinstance(loser_exc, GeorefDomainError)
+    assert loser_exc.code == GeorefErrorCode.CAS_CONFLICT
+
+    winner_jid = jid1 if ok_tags[0] == "a" else jid2
+    fresh = get_plan(sid, plan.plan_id)
+    assert fresh.active_job_id == str(winner_jid)
+    assert fresh.frozen_snapshot is not None
+    entry = get_idempotency_entry(sid, "thread-race-key")
+    assert entry is not None and entry["job_id"] == str(winner_jid)
+
+    with SessionLocal() as db:
+        for orphan in (jid1, jid2):
+            if orphan != winner_jid:
+                DurableJobStore.request_cancel_sync(db, orphan)
+        db.commit()
+        rows = db.execute(
+            sa_select(AnalysisTask.id).where(
+                AnalysisTask.id > watermark_id,
+                AnalysisTask.id != winner_jid,
+                AnalysisTask.session_id == sid,
+                AnalysisTask.status.in_(["pending", "queued", "running"]),
+            )
+        ).all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_2192_concurrent_same_key_submit_deriv_single_job(isolated_env, monkeypatch):
+    """同一幂等键并发重试（真实重叠：第二个请求在第一个的 warp 中途进入）：
+
+    只派生一个 durable job；一个执行成功，另一个拿到 idempotent_reuse —
+    绝不复用失败/清空 active_job_id（issue #2192 正例 + 幂等语义）。
+    """
+    from sqlalchemy import select as sa_select
+
+    from app.models.db_model import AnalysisTask
+    from app.services.georeferencing.warp import run_direct_affine_warp as real_warp
+
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+
+    warp_started = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _slow_warp(**kwargs):
+        loop.call_soon_threadsafe(warp_started.set)
+        threading.Event().wait(0.4)
+        return real_warp(**kwargs)
+
+    monkeypatch.setattr(georef_jobs, "run_direct_affine_warp", _slow_warp)
+
+    async def _run():
+        return await execute_plan(
+            session_id=sid, plan_id=plan.plan_id, expected_revision=plan.revision,
+            background=False, idempotency_key="cc-key-2192",
+        )
+
+    first_fut = asyncio.ensure_future(_run())
+    await asyncio.wait_for(warp_started.wait(), timeout=5.0)
+    second_fut = asyncio.ensure_future(_run())
+    results = await asyncio.gather(first_fut, second_fut)
+
+    by_reuse = {bool(r["idempotent_reuse"]): r for r in results}
+    assert set(by_reuse) == {False, True}, results
+    done, reused = by_reuse[False], by_reuse[True]
+    assert done["status"] == "completed" and done["artifact"] is not None
+    assert reused["job_id"] == done["job_id"]
+    assert reused["status"] in ("pending", "running", "completed")
+
+    scoped = f"georef:{sid}:{plan.plan_id}:r{plan.revision}:cc-key-2192"
+    with SessionLocal() as db:
+        rows = db.execute(
+            sa_select(AnalysisTask.id).where(AnalysisTask.idempotency_key == scoped)
+        ).all()
+    assert len(rows) == 1
+
+    fresh = get_plan(sid, plan.plan_id)
+    assert fresh.active_job_id is None
+    assert fresh.latest_artifact is not None
+    assert fresh.latest_artifact.execution_id == done["execution_id"]
+
+
+@pytest.mark.asyncio
+async def test_2192_concurrent_no_key_second_execute_conflicts(isolated_env, monkeypatch):
+    """无幂等键并发 execute：第二个必须 409 CAS_CONFLICT（而非双开 warp），
+    且它抢先创建的孤儿 pending 行已被取消，绝不留存活作业。"""
+    from sqlalchemy import func as sa_func
+    from sqlalchemy import select as sa_select
+
+    from app.models.db_model import AnalysisTask
+    from app.services.georeferencing.warp import run_direct_affine_warp as real_warp
+
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+
+    with SessionLocal() as db:
+        watermark = db.execute(
+            sa_select(sa_func.max(AnalysisTask.id))
+        ).scalar_one_or_none() or 0
+
+    warp_started = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _slow_warp(**kwargs):
+        loop.call_soon_threadsafe(warp_started.set)
+        threading.Event().wait(0.5)
+        return real_warp(**kwargs)
+
+    monkeypatch.setattr(georef_jobs, "run_direct_affine_warp", _slow_warp)
+
+    first = await execute_plan(
+        session_id=sid, plan_id=plan.plan_id, expected_revision=plan.revision,
+        background=True,
+    )
+    await asyncio.wait_for(warp_started.wait(), timeout=5.0)
+
+    with pytest.raises(GeorefDomainError) as exc_info:
+        await execute_plan(
+            session_id=sid, plan_id=plan.plan_id, expected_revision=plan.revision,
+            background=True,
+        )
+    assert exc_info.value.code == GeorefErrorCode.CAS_CONFLICT
+
+    task = georef_jobs._RUNNERS.get(int(first["job_id"]))
+    if task is not None:
+        await asyncio.wait_for(task, timeout=10.0)
+
+    with SessionLocal() as db:
+        rows = db.execute(
+            sa_select(AnalysisTask.id, AnalysisTask.status).where(
+                AnalysisTask.id > watermark,
+                AnalysisTask.session_id == sid,
+                AnalysisTask.task_type == "georeference_warp",
+            )
+        ).all()
+    assert len(rows) == 2  # 一个执行 + 一个被及时取消的孤儿
+    statuses = {str(s) for _, s in rows}
+    assert "cancelled" in statuses
+    assert statuses <= {"completed", "cancelled", "failed"}
+
+    fresh = get_plan(sid, plan.plan_id)
+    assert fresh.active_job_id is None
+    assert fresh.latest_artifact is not None
+
+
+@pytest.mark.asyncio
+async def test_2192_reused_durable_row_never_spawns_second_runner(isolated_env, monkeypatch):
+    """submit_async_job 返回 reused=True（跨进程并发残留语义）：
+
+    直接返回既有 job 供轮询 —— 不起第二个 _run_guarded、不覆盖计划的
+    active_execution_id、不覆写幂等登记（issue #2192 复用负例）。"""
+    from app.services.georeferencing.warp import run_direct_affine_warp as real_warp
+
+    sid = isolated_env
+    _, plan = await _seed_valid_plan(sid)
+
+    warp_started = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _slow_warp(**kwargs):
+        loop.call_soon_threadsafe(warp_started.set)
+        threading.Event().wait(0.5)
+        return real_warp(**kwargs)
+
+    monkeypatch.setattr(georef_jobs, "run_direct_affine_warp", _slow_warp)
+
+    real_submit = georef_jobs.submit_async_job
+    calls = {"n": 0}
+    captured = {"jid": None}
+
+    def _fake_submit(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            jid, status, reused = real_submit(**kwargs)
+            captured["jid"] = jid
+            return jid, status, reused
+        return captured["jid"], "running", True
+
+    monkeypatch.setattr(georef_jobs, "submit_async_job", _fake_submit)
+
+    first = await execute_plan(
+        session_id=sid, plan_id=plan.plan_id, expected_revision=plan.revision,
+        background=True, idempotency_key="reused-key-2192",
+    )
+    assert first["idempotent_reuse"] is False
+    await asyncio.wait_for(warp_started.wait(), timeout=5.0)
+
+    second = await execute_plan(
+        session_id=sid, plan_id=plan.plan_id, expected_revision=plan.revision,
+        background=True, idempotency_key="reused-key-2192-b",
+    )
+    assert second["idempotent_reuse"] is True
+    assert second["job_id"] == first["job_id"]
+    # 复用路径不得再起 runner：_RUNNERS 里只有第一个 job 的任务。
+    assert list(georef_jobs._RUNNERS.keys()) == [int(first["job_id"])]
+
+    task = georef_jobs._RUNNERS.get(int(first["job_id"]))
+    if task is not None:
+        await asyncio.wait_for(task, timeout=10.0)
+
+    fresh = get_plan(sid, plan.plan_id)
+    assert fresh.active_execution_id == first["execution_id"]
+    assert fresh.latest_artifact is not None
+    assert fresh.latest_artifact.execution_id == first["execution_id"]
