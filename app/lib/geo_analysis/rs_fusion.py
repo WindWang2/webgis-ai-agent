@@ -163,7 +163,9 @@ def late_evidence_fusion(
     nb = np.where(b_ok, b < -sign_threshold, False)
     agreement[both & (sa & sb)] = AGREEMENT_CONSENSUS_POS
     agreement[both & (na & nb)] = AGREEMENT_CONSENSUS_NEG
-    agreement[both & (sa ^ sb)] = AGREEMENT_CONFLICT
+    # conflict = 方向相反（一正一负）。中性 × 有效 ≠ conflict——
+    # 零信号没有方向，不与活跃证据冲突（#2239）。
+    agreement[both & ((sa & nb) | (na & sb))] = AGREEMENT_CONFLICT
     agreement[both & ~(sa | sb | na | nb)] = AGREEMENT_BOTH_NEUTRAL
 
     counts: Dict[str, int] = {}
@@ -193,6 +195,8 @@ def late_evidence_fusion(
             "disclosures": [
                 "描述性晚期融合：非概率模型、无训练；缺源像元不与 0 混合",
                 "conflict=两模态证据方向相反——解读需人工复核",
+                "中性 × 有效（|e| ≤ sign_threshold）既不判 consensus 也不判"
+                " conflict：零信号无方向，归入 none（#2239）",
             ],
         },
     }

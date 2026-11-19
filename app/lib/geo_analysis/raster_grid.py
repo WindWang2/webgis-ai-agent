@@ -413,12 +413,22 @@ def aligned_reader(
             )
 
         profile = RasterGridProfile.from_dataset(src)
+        if src.gcps and src.gcps[0]:
+            # GCP-only 源：WarpedVRT 只认仿射（此处为恒等）→ 足迹全 NaN
+            # 垃圾（#2239）。按契约回退原文件，由调用方走显式 reproject。
+            yield src, src.nodata
+            return
         fill = (
             profile.nodata
             if profile.nodata is not None
             else _fallback_fill_nodata(profile)
         )
-        resampling = Resampling[decision.resampling]
+        try:
+            resampling = Resampling[decision.resampling]
+        except KeyError:
+            raise ValueError(
+                f"未知 resampling {decision.resampling!r}；合法值: "
+                f"{sorted(Resampling.__members__)}") from None
         vrt = WarpedVRT(
             src,
             crs=decision.target_crs,

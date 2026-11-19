@@ -131,10 +131,12 @@ def pca_bands(
     xc = x - mean
     if standardize:
         std = x.std(axis=0, ddof=1)
-        if (std <= 1e-15).any():
+        # n_valid==1 时 ddof=1 方差为 NaN——NaN ≤ 1e-15 为 False 会漏过
+        # 守卫并以 NaN 除法毒化 SVD（LinAlgError）；非有限一律拒绝（#2239）
+        if (~np.isfinite(std) | (std <= 1e-15)).any():
             raise DegenerateData(
-                f"standardize=True 但波段 {np.where(std <= 1e-15)[0].tolist()}"
-                "方差为 0——z-score 无定义",
+                f"standardize=True 但波段 {np.where(~np.isfinite(std) | (std <= 1e-15))[0].tolist()}"
+                "方差为 0/非有限——z-score 无定义",
                 correction_hint="剔除常量波段，或改用协方差 PCA "
                                 "(standardize=False)")
         xc = xc / std
@@ -143,7 +145,14 @@ def pca_bands(
     n_comps = int(vt.shape[0])              # ≤ min(n_valid−?, n_bands)
     k_out = min(k, n_comps)
     explained = (s_vals ** 2) / max(1, n_valid - 1)      # ddof=1（披露）
-    evr = explained / explained.sum()
+    total_var = float(explained.sum())
+    if not (total_var > 0.0):
+        # 常量输入/单一样本 → 零总方差：EVR 0/0=NaN 是静默损坏（#2239），
+        # typed 拒绝（信息量披露与退化数据守卫口径一致）
+        raise DegenerateData(
+            "PCA 输入总方差为 0（常量栈或有效样本不足）——分量无定义",
+            correction_hint="检查输入是否为常量栅格，或扩大有效像元数")
+    evr = explained / total_var
     loadings = vt.T                                      # bands × components
 
     scores = xc @ vt.T                                    # (n_valid, n_comps)

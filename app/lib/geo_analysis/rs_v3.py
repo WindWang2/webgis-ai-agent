@@ -321,6 +321,7 @@ def mnf(
         "noise_covariance": c_noise,
         "whiten_matrix": whiten,
         "mean": mean,
+        "std": (std if standardize else None),
         "scores": scores,
         "n_valid_pixels": n_valid,
         "common_valid_fraction": fraction,
@@ -352,7 +353,11 @@ def mnf_inverse(
     height, width = cube.shape[1], cube.shape[2]
     valid = np.isfinite(cube).all(axis=0)
     score_rows = cube[:, valid].T                      # (n, k)
-    recon = mean[None, :] + score_rows @ recon_matrix[:k, :]   # (n, n_bands)
+    recon = score_rows @ recon_matrix[:k, :]           # (n, n_bands)
+    std = mnf_result.get("std")                        # #2239: 反标准化
+    if std is not None:
+        recon = recon * np.asarray(std, dtype=float)[None, :]
+    recon = mean[None, :] + recon
     planes = np.full((recon.shape[1], height * width), np.nan, dtype=float)
     planes[:, valid.ravel()] = recon.T
     return planes.reshape(recon.shape[1], height, width)

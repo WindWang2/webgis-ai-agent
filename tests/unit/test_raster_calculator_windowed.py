@@ -141,3 +141,18 @@ def test_calculator_where_expression(aligned_rasters):
     expected = _reference_calculator(a, b, -9999, -9999, -9999, "where(A > 10, A, B)")
     with rasterio.open(result["output_path"]) as out:
         np.testing.assert_array_equal(out.read(1), expected)
+
+
+def test_calculator_fractional_constant_not_truncated_for_integer_a(tmp_path):
+    """#2131: 整型 A + 小数常量——B 常量面不得继承 A 的整型 dtype。"""
+    data_a = np.arange(64, dtype=np.uint16).reshape(8, 8) + 100
+    pa = str(tmp_path / "u16.tif")
+    _write_raster(pa, data_a)
+    for expr in ("A * B", "A / B"):
+        result = raster_calculator(pa, expression=expr, constant=0.5)
+        with rasterio.open(result["output_path"]) as out:
+            got = out.read(1)
+        a = data_a.astype(np.float64)
+        expected = a * 0.5 if expr == "A * B" else a / 0.5
+        # 修复前：full_like(uint16, 0.5) → B 全 0 → 乘得全 0 / 除得 inf→nodata
+        np.testing.assert_allclose(got, expected, rtol=1e-12)

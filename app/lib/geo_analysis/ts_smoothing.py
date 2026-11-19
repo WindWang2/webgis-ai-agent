@@ -141,9 +141,18 @@ def smooth_gapfill(
                 f"{valid_count}",
                 correction_hint="reduce window_length or gap-fill first",
             )
-        smoothed = savgol_filter(filled, window_length, polyorder)
+        # fill="none" 且存在缺口：savgol 不接受 NaN 输入。先临时线性填补
+        # 仅为拟合，再把覆盖缺口的窗口输出打回 NaN（与 moving_average 的
+        # nan_window_bleed 口径一致，披露见 meta）。
+        fit_input = filled
+        if fill == "none" and (~np.isfinite(v)).any():
+            fit_input, _ = _fill_gaps(v, "linear")
+        smoothed = savgol_filter(fit_input, window_length, polyorder)
         if fill == "none":
-            smoothed[~np.isfinite(v)] = np.nan
+            gap = (~np.isfinite(v)).astype(float)
+            touched = np.convolve(gap, np.ones(window_length),
+                                  mode="same") > 0
+            smoothed = np.where(touched, np.nan, smoothed)
     elif method == "moving_average":
         if window_length > n:
             raise InsufficientSamples(

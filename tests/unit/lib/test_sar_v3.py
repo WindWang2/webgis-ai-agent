@@ -737,3 +737,91 @@ def test_sar_v3_tools_schema_and_evidence():
     assert emap["success"] is True
     assert 2.0 < emap["global_enl"] < 7.0
     assert emap["scientific_evidence"]["algorithm"] == "sar.enl_map"
+
+
+# ── #2236 回归 ───────────────────────────────────────────────────────
+
+def test_coherence_single_nan_does_not_poison_windows():
+    """#2236: 单个 NaN/Inf 像元不得毒化其所在的所有窗口。"""
+    rng = np.random.RandomState(2236)
+    phase = rng.uniform(0.0, 2.0 * np.pi, size=(21, 21))
+    slc_a = np.exp(1j * phase)
+    slc_b = np.roll(slc_a, 3, axis=1)
+    slc_bad = slc_a.copy()
+    slc_bad[10, 10] = np.nan
+    res_bad = coherence_estimate(slc_bad, slc_b, window=5)
+    res_ref = coherence_estimate(slc_a, slc_b, window=5)
+    # 除坏像元自身外全场有限（修复前：w² 邻域 + 反射边界成片 NaN）
+    gamma = res_bad["gamma"]
+    assert np.isfinite(gamma[~np.isnan(gamma)]).all()
+    assert np.isnan(gamma).sum() <= 1
+    # 远离坏像元的像元与无坏像元基准一致（窗和按公共有效对口径）
+    far = np.ones_like(gamma, dtype=bool)
+    far[10 - 2:10 + 3, 10 - 2:10 + 3] = False
+    np.testing.assert_allclose(gamma[far], res_ref["gamma"][far], atol=1e-12)
+    # 手算 oracle：无效样本置 0 的窗均值口径
+    from scipy.ndimage import uniform_filter
+    valid = np.isfinite(slc_bad) & np.isfinite(slc_b)
+    cross = np.where(valid, slc_bad * np.conj(slc_b), 0.0)
+    num_re = uniform_filter(cross.real, size=5, mode="reflect")
+    num_im = uniform_filter(cross.imag, size=5, mode="reflect")
+    pow_a = uniform_filter(np.where(valid, np.abs(slc_bad) ** 2, 0.0),
+                           size=5, mode="reflect")
+    pow_b = uniform_filter(np.where(valid, np.abs(slc_b) ** 2, 0.0),
+                           size=5, mode="reflect")
+    denom = np.sqrt(pow_a * pow_b)
+    oracle = np.clip(np.where(denom > 0,
+                              np.hypot(num_re, num_im)
+                              / np.where(denom > 0, denom, np.nan),
+                              np.nan), 0.0, 1.0)
+    np.testing.assert_allclose(np.nan_to_num(gamma), np.nan_to_num(oracle),
+                               atol=1e-12)
+    # 确定性重放
+    np.testing.assert_array_equal(
+        gamma, coherence_estimate(slc_bad, slc_b, window=5)["gamma"])
+
+    # Inf 同样不得毒化
+    slc_inf = slc_a.copy()
+    slc_inf[3, 17] = np.inf
+    res_inf = coherence_estimate(slc_inf, slc_b, window=5)
+    assert np.isnan(res_inf["gamma"]).sum() <= 1
+    assert np.isfinite(res_inf["gamma"][10, 10])
+
+
+def test_rtc_dem_nodata_skirt_is_nodata_not_cliff():
+    """#2236: DEM nodata 的 1 像元梯度裙边须为 nodata，而非悬崖伪值。"""
+    dem = np.full((31, 31), 100.0)
+    dem[:, :10] = -9999.0
+    sigma = np.full((31, 31), 0.5)
+    for azimuth in (270.0, 90.0):
+        res = radiometric_terrain_correction(
+            sigma, dem, 10.0, azimuth, incidence_deg=40.0, dem_nodata=-9999.0)
+        # nodata 本体 + 裙边（col 10，Horn 3×3 邻域含 col 9 nodata）→ NaN；
+        # 内地（col 11+）平地 γ=σ⁰
+        assert np.isnan(res["array"][:, :11]).all()
+        assert np.isnan(res["local_incidence_deg"][:, :11]).all()
+        np.testing.assert_allclose(res["array"][15, 11:], 0.5, atol=1e-12)
+        assert res["local_incidence_deg"][15, 15] == pytest.approx(40.0)
+    # 全 DEM 有效时不引入裙边（平地恒等保持）
+    res_flat = radiometric_terrain_correction(
+        sigma, np.full((31, 31), 100.0), 10.0, 270.0, incidence_deg=40.0,
+        dem_nodata=-9999.0)
+    np.testing.assert_allclose(res_flat["array"], 0.5, atol=1e-12)
+    assert not np.isnan(res_flat["local_incidence_deg"]).any()
+
+
+def test_layover_shadow_dem_nodata_skirt_is_class_3():
+    """#2236: nodata 裙边须判为 3(nodata),不得被悬崖梯度误分为 layover/shadow。"""
+    dem = np.full((31, 31), 100.0)
+    dem[:, :10] = -9999.0
+    res = layover_shadow_mask(dem, 10.0, 270.0, incidence_deg=40.0,
+                              dem_nodata=-9999.0)
+    mask = res["mask"]
+    # 本体 + 裙边（col 10）→ 3；内地（col 11+）→ 0(normal,平地)
+    np.testing.assert_array_equal(mask[:, :11], 3.0)
+    np.testing.assert_array_equal(mask[15, 11:], 0.0)
+    assert res["fractions"]["nodata"] == pytest.approx(11 / 31, abs=1e-6)
+    # 确定性
+    np.testing.assert_array_equal(
+        mask, layover_shadow_mask(dem, 10.0, 270.0, incidence_deg=40.0,
+                                  dem_nodata=-9999.0)["mask"])

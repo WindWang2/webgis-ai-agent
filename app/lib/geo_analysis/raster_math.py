@@ -519,7 +519,11 @@ def raster_calculator(
             def _get_b_window(win: Window, data_a_win: np.ndarray) -> np.ndarray:
                 if src_b_reader is not None:
                     return src_b_reader.read(1, window=win)
-                return np.full_like(data_a_win, fill_value=const_val, dtype=data_a_win.dtype)
+                # 常量 B 不得继承 A 的 dtype：整型 A + 小数常量会被
+                # full_like 截断（uint16 + 0.5 → 0），A*B/A/B 静默错误
+                # （#2131）。float64 常量面与下方 _compute_dtype 提升一致。
+                return np.full(data_a_win.shape, float(const_val),
+                               dtype=np.float64)
 
             def _mask_b_window(data_b_win: np.ndarray) -> np.ndarray:
                 if src_b_reader is not None:
