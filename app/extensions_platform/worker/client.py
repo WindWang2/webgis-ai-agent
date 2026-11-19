@@ -720,9 +720,13 @@ class WorkerProcess:
             return frame
 
     def _request(self, body: dict[str, Any], timeout: float, timeout_code: DiagnosticCode) -> Any:
+        # review #2145：锁只覆盖「准入裁决 + in_flight 置位 + 写帧」——
+        # 整个调用持锁会让并发调用方阻塞在锁上（直到 N×call_timeout），
+        # 永远走不到下面的 OPERATION_IN_FLIGHT typed 拒绝（文档承诺的
+        # 并发语义），并把 shutdown/revocation 拖死在同一把锁上。
+        if self._proc is None or self._proc.poll() is not None:
+            raise self._crashed("worker is not running")
         with self._lock:
-            if self._proc is None or self._proc.poll() is not None:
-                raise self._crashed("worker is not running")
             if self.in_flight:
                 raise _diagnostic(
                     DiagnosticCode.OPERATION_IN_FLIGHT.value,
@@ -732,35 +736,39 @@ class WorkerProcess:
             self.in_flight = True
             call_id = f"c{time.monotonic_ns()}"
             body = {"id": call_id, **body}
-            deadline = time.monotonic() + max(timeout, 0.01)
             try:
                 assert self._proc is not None and self._proc.stdin is not None
                 write_frame(self._proc.stdin, body)
-                while True:
-                    frame = self._next_frame(deadline, timeout_code)
-                    ftype = frame.get("type")
-                    if ftype == "result" and frame.get("id") == call_id:
-                        if frame.get("ok"):
-                            return frame.get("value")
-                        err = frame.get("error") or {}
-                        raise _diagnostic(
-                            err.get("code", DiagnosticCode.ENTRY_POINT_FAILED.value),
-                            err.get("message", "worker call failed"),
-                            self._extension_id,
-                        )
-                    if ftype == "broker_request":
-                        self._dispatch_broker(frame)
-                        continue
-                    if ftype == "error":
-                        err = frame.get("error") or {}
-                        raise _diagnostic(
-                            err.get("code", DiagnosticCode.WORKER_PROTOCOL_MISMATCH.value),
-                            err.get("message", "worker protocol error"),
-                            self._extension_id,
-                        )
-                    # 无关帧（陈旧 result 等）：丢弃并继续。
-            finally:
+            except Exception:
                 self.in_flight = False
+                raise
+        deadline = time.monotonic() + max(timeout, 0.01)
+        try:
+            while True:
+                frame = self._next_frame(deadline, timeout_code)
+                ftype = frame.get("type")
+                if ftype == "result" and frame.get("id") == call_id:
+                    if frame.get("ok"):
+                        return frame.get("value")
+                    err = frame.get("error") or {}
+                    raise _diagnostic(
+                        err.get("code", DiagnosticCode.ENTRY_POINT_FAILED.value),
+                        err.get("message", "worker call failed"),
+                        self._extension_id,
+                    )
+                if ftype == "broker_request":
+                    self._dispatch_broker(frame)
+                    continue
+                if ftype == "error":
+                    err = frame.get("error") or {}
+                    raise _diagnostic(
+                        err.get("code", DiagnosticCode.WORKER_PROTOCOL_MISMATCH.value),
+                        err.get("message", "worker protocol error"),
+                        self._extension_id,
+                    )
+                # 无关帧（陈旧 result 等）：丢弃并继续。
+        finally:
+            self.in_flight = False
 
     def _dispatch_broker(self, frame: dict[str, Any]) -> None:
         assert self._proc is not None and self._proc.stdin is not None
@@ -801,24 +809,29 @@ class WorkerProcess:
         return self._proc is not None and self._proc.poll() is None
 
     def shutdown(self, grace_s: float = 3.0) -> None:
-        with self._lock:
-            proc = self._proc
-            if proc is None or proc.poll() is not None:
+        # review #2145：grace 等待**不占锁**（写帧仍需锁串行化）——
+        # 否则 revocation/deactivate 会被 in-flight 调用拖到 grace 结束，
+        # 线程池饿死。锁内只做状态检查与 shutdown 帧写入。
+        proc = self._proc
+        if proc is None or proc.poll() is not None:
+            with self._lock:
                 self._release()
-                return
-            try:
+            return
+        try:
+            with self._lock:
                 if proc.stdin is not None:
                     write_frame(proc.stdin, {"type": "shutdown"})
-            except (ProtocolError, BrokenPipeError, OSError):
-                self.kill()
-                return
-            deadline = time.monotonic() + grace_s
-            while time.monotonic() < deadline:
-                if proc.poll() is not None:
-                    self._release()
-                    return
-                time.sleep(0.02)
+        except (ProtocolError, BrokenPipeError, OSError):
             self.kill()
+            return
+        deadline = time.monotonic() + grace_s
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                with self._lock:
+                    self._release()
+                return
+            time.sleep(0.02)
+        self.kill()
 
     def kill(self) -> None:
         proc = self._proc

@@ -7,6 +7,8 @@ import textwrap
 import time
 from pathlib import Path
 
+import pytest
+
 
 from app.extensions_platform.diagnostics import DiagnosticCode, has_errors
 from app.extensions_platform.distribution import write_refresh_signal
@@ -252,3 +254,110 @@ def test_refresh_revocations_removes_inprocess_projection(tmp_path):
         assert host.get_record("lc3.pack").state is ExtensionState.QUARANTINED
     finally:
         host.reset()
+
+
+# ── #2145 回归：reload/activate 吊销闸 + 并发 typed 拒绝 ──────────────────
+
+def test_reload_refuses_quarantined_extension(tmp_path):
+    """#2145：reload 走 unload→DISCOVERED→activate，旧行为会把隔离包
+    （policy block）解除隔离重新激活。"""
+    _worker_pack(tmp_path)
+    policy = _policy(tmp_path, block=frozenset({"lc3.pack"}))
+    host = ExtensionHost(tool_registry=ToolRegistry(), policy=policy)
+    host.discover()
+    record = host.get_record("lc3.pack")
+    assert record.state is ExtensionState.QUARANTINED
+    diags = host.reload("lc3.pack")
+    assert has_errors(diags)
+    assert any(d.code is DiagnosticCode.TRUST_BLOCKED for d in diags), [
+        d.to_dict() for d in diags
+    ]
+    assert host.get_record("lc3.pack").state is ExtensionState.QUARANTINED
+    host.reset()
+
+
+def test_reload_reruns_signature_revocation_gate(tmp_path):
+    """#2145：discover 后吊销 → reload 必须重跑验签/吊销门（与 discover
+    同缝），隔离并拒绝 —— 旧行为只查 allow/block，allowlist 内被吊销的
+    包 reload 后复活。"""
+    from app.extensions_platform.trust_store import TrustStore
+
+    _worker_pack(tmp_path)
+    ts = _trust_store_file(tmp_path, [])
+    trust = TrustStore.load(ts)
+    host = ExtensionHost(
+        tool_registry=ToolRegistry(),
+        policy=_policy(tmp_path, trust_store=trust),
+    )
+    host.discover()
+    record = host.get_record("lc3.pack")
+    assert record.state is ExtensionState.COMPATIBLE
+    # 运维吊销：改宿主 policy 实际持有的 trust store 实例（discover 已从
+    # 文件重载进 policy —— 等价文件重载语义）。
+    object.__setattr__(
+        host._policy.trust_store, "revoked_packages",
+        (("lc3.pack", "1.0.0"),),
+    )
+    diags = host.reload("lc3.pack")
+    assert host.get_record("lc3.pack").state is ExtensionState.QUARANTINED
+    assert any(d.code is DiagnosticCode.PACKAGE_REVOKED for d in diags), [
+        d.to_dict() for d in diags
+    ]
+    host.reset()
+
+
+def test_activate_refuses_revoked_compatible_extension(tmp_path):
+    """#2145：吊销窗口 —— refresh_revocations 只处理 ACTIVE/DEGRADED；
+    discover 之后被吊销的 COMPATIBLE 包在 activate 时必须命中吊销复查。"""
+    from app.extensions_platform.trust_store import TrustStore
+
+    _worker_pack(tmp_path)
+    ts = _trust_store_file(tmp_path, [])
+    trust = TrustStore.load(ts)
+    host = ExtensionHost(
+        tool_registry=ToolRegistry(),
+        policy=_policy(tmp_path, trust_store=trust),
+    )
+    host.discover()
+    assert host.get_record("lc3.pack").state is ExtensionState.COMPATIBLE
+    object.__setattr__(
+        host._policy.trust_store, "revoked_packages",
+        (("lc3.pack", "1.0.0"),),
+    )
+    diags = host.activate("lc3.pack")
+    assert has_errors(diags)
+    assert any(d.code is DiagnosticCode.PACKAGE_REVOKED for d in diags), [
+        d.to_dict() for d in diags
+    ]
+    assert host.get_record("lc3.pack").state is ExtensionState.QUARANTINED
+    host.reset()
+
+
+def test_concurrent_worker_call_gets_typed_in_flight_refusal(tmp_path):
+    """#2145：_request 不再全程持锁 —— 并发调用方拿到 typed
+    OPERATION_IN_FLIGHT（旧行为：阻塞在锁上直到首个调用返回）。"""
+    from app.extensions_platform.diagnostics import ExtensionPlatformError
+
+    _worker_pack(tmp_path)
+    host = ExtensionHost(tool_registry=ToolRegistry(), policy=_policy(tmp_path))
+    host.discover()
+    assert not has_errors(host.activate("lc3.pack"))
+    import threading
+
+    record = host.get_record("lc3.pack")
+
+    def _slow_call():
+        record.worker.call("lc3_slow", {"seconds": 0.8}, timeout=5.0)
+
+    thread = threading.Thread(target=_slow_call, daemon=True)
+    thread.start()
+    time.sleep(0.2)
+    assert record.worker.in_flight is True
+    started = time.monotonic()
+    with pytest.raises(ExtensionPlatformError) as excinfo:
+        record.worker.call("lc3_slow", {"seconds": 0.1}, timeout=5.0)
+    elapsed = time.monotonic() - started
+    assert excinfo.value.diagnostic.code is DiagnosticCode.OPERATION_IN_FLIGHT
+    assert elapsed < 0.5, f"concurrent call blocked {elapsed:.2f}s (lock held)"
+    thread.join(timeout=5)
+    host.reset()

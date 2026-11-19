@@ -677,6 +677,27 @@ class ExtensionHost:
             ]
         if record.state is ExtensionState.QUARANTINED:
             return list(record.diagnostics)
+        # review #2145：吊销窗口收口 —— refresh_revocations 只处理 ACTIVE/
+        # DEGRADED；discover 之后被吊销的 COMPATIBLE 包在下一次 discover
+        # 之前仍可 activate。激活前对照当前信任根复查吊销面。
+        trust_store = self._policy.trust_store
+        if trust_store is not None:
+            revoked = trust_store.is_package_revoked(
+                extension_id, record.manifest.version)
+            if not revoked and record.fingerprint is not None:
+                revoked = trust_store.is_fingerprint_revoked(record.fingerprint)
+            if revoked:
+                record.state = ExtensionState.QUARANTINED
+                _metrics_safely(lambda m: m.record_quarantine("revocation"))
+                record.diagnostics.append(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.PACKAGE_REVOKED,
+                        f"extension {extension_id!r} is revoked in the trust store; "
+                        "activation refused and extension quarantined",
+                        extension_id=extension_id,
+                    )
+                )
+                return list(record.diagnostics)
         if (
             record.trust is TrustLevel.LOCAL_UNTRUSTED
             and not self._policy.allow_local_untrusted_activation
@@ -1648,6 +1669,19 @@ class ExtensionHost:
         drain: bool = False,
         drain_timeout_s: float = 10.0,
     ) -> list[ExtensionDiagnostic]:
+        if drain:
+            # review #2145：drain 等待**不持生命周期锁** —— 持锁 sleep
+            # 会把全部生命周期操作（activate/validate/discover）一起卡住
+            # 最多 drain_timeout 秒。锁外轮询 in_flight 清零（或超时），
+            # 真正的停用裁决仍在锁内（超时 → typed DRAIN_TIMEOUT）。
+            record = self._records.get(extension_id)
+            worker = getattr(record, "worker", None) if record is not None else None
+            if worker is not None and worker.in_flight:
+                import time as _time
+
+                deadline = _time.monotonic() + max(drain_timeout_s, 0.05)
+                while worker.in_flight and _time.monotonic() < deadline:
+                    _time.sleep(0.05)
         with self._lifecycle:
             return self._deactivate_locked(
                 extension_id, drain=drain, drain_timeout_s=drain_timeout_s,
@@ -1802,6 +1836,17 @@ class ExtensionHost:
                     extension_id=extension_id,
                 )
             ]
+        if record.state is ExtensionState.QUARANTINED:
+            # review #2145：与 upgrade() 同闸 —— reload 走 unload→DISCOVERED
+            # →activate，会把被吊销/篡改/崩溃循环隔离的包**解除隔离**重新
+            # 激活。隔离的唯一出口是 re-discover（重跑完整信任门）。
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.TRUST_BLOCKED,
+                    f"extension {extension_id!r} is quarantined; re-discover instead",
+                    extension_id=extension_id,
+                )
+            ]
         was_active = record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED)
         if was_active:
             deactivate_diags = self.deactivate(extension_id)
@@ -1854,20 +1899,24 @@ class ExtensionHost:
             return diagnostics + list(record.diagnostics)
         # Round-1 审计 M1：reload 必须重跑发现期信任门（blocklist 新增、
         # allowlist 撤销都可能发生在两次操作之间）。
+        # review #2145：内容变更检查必须对照**换血前**的信任级别 —— 先
+        # 覆盖 record.trust 会把签名提权的 TRUSTED_EXTENSION 降回
+        # LOCAL_UNTRUSTED，使受信包换血后的 FINGERPRINT_CHANGED 硬拒绝
+        # 退化成一句 warning。
+        prior_trust = record.trust
         trust = resolve_trust(
             extension_id,
             allowlist=self._policy.allow,
             blocklist=self._policy.block,
             builtin_ids=self._policy.builtin_ids,
         )
-        record.trust = trust
         record.manifest = manifest
         fingerprint, fp_diag = _refingerprint(record)
         if fp_diag is None:
             content_changed = (
                 record.fingerprint is not None and fingerprint != record.fingerprint
             )
-            if content_changed and record.trust in (
+            if content_changed and prior_trust in (
                 TrustLevel.TRUSTED_BUILTIN, TrustLevel.TRUSTED_EXTENSION
             ):
                 # Round-2 审计 N-3：受信扩展内容变更必须走重新发现（重新
@@ -1890,6 +1939,7 @@ class ExtensionHost:
                     )
                 )
             record.fingerprint = fingerprint
+        record.trust = trust
         if trust is TrustLevel.BLOCKED:
             record.state = ExtensionState.QUARANTINED
             record.diagnostics = [
@@ -1900,6 +1950,32 @@ class ExtensionHost:
                 )
             ]
             return diagnostics + list(record.diagnostics)
+        # review #2145：reload 必须重跑发现期**验签/吊销门**（与 discover
+        # 同缝）——否则 allowlist 内被吊销/篡改的包在 reload 后复活。
+        record.diagnostics = []
+        record.baseline_diagnostics = ()
+        diagnostics.extend(
+            self._apply_signature_verdict(
+                record,
+                verify_pack_signature(
+                    record.path,
+                    self._policy.trusted_publishers,
+                    trust_store=self._policy.trust_store,
+                    package_id=extension_id,
+                    version=manifest.version,
+                ),
+            )
+        )
+        if record.state is ExtensionState.QUARANTINED:
+            record.baseline_diagnostics = tuple(record.diagnostics)
+            reason = (
+                "revocation"
+                if any(d.code is DiagnosticCode.PACKAGE_REVOKED for d in record.diagnostics)
+                else "trust_policy"
+            )
+            _metrics_safely(lambda metrics: metrics.record_quarantine(reason))
+            return diagnostics + list(record.diagnostics)
+        record.baseline_diagnostics = tuple(record.diagnostics)
         record.state = ExtensionState.DISCOVERED
         record.diagnostics = []
         diagnostics.extend(self.validate_extension(extension_id))

@@ -84,8 +84,8 @@ def _key(tool: str, failure_class: str) -> str:
 
 
 class _FileLock:
-    """flock 文件锁（trace_store._FileLock 同款；非 POSIX 降级为无锁 ——
-    进程内锁已保证线程安全，跨进程互斥在非 POSIX 上文档化缺席）。"""
+    """flock 文件锁（trace_store._FileLock 同款；非 POSIX 或加锁失败降级为
+    无锁 —— 进程内锁已保证线程安全；降级**必须可观测**，不得静默）。"""
 
     def __init__(self, path: Path):
         self._lock_path = path.with_suffix(path.suffix + ".lock")
@@ -103,6 +103,12 @@ class _FileLock:
             if self._fd is not None:
                 os.close(self._fd)
                 self._fd = None
+            logger.warning(
+                "[RecoveryLedger] flock unavailable path=%s — "
+                "cross-process mutual exclusion degraded",
+                self._lock_path, exc_info=True,
+            )
+            observe_optional_failure(__name__)
         return self
 
     def __exit__(self, *exc: Any) -> None:
@@ -131,7 +137,18 @@ class RecoveryLedger:
         self._ttl = ttl_s
         self._cap = cap
         self._cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-        self._thread_lock = threading.Lock()
+        # 按 session 分锁：不同 session 的账本 I/O 互不串行（全局单锁会把
+        # 所有 session 的 flock + 文件 IO 串成一条全局队列）。
+        self._locks: Dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+    def _session_lock(self, session_id: str) -> threading.Lock:
+        with self._locks_guard:
+            lock = self._locks.get(session_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[session_id] = lock
+            return lock
 
     # -- 存储层 ----------------------------------------------------------
     def _load_locked(self, session_id: str) -> Dict[str, Any]:
@@ -174,7 +191,7 @@ class RecoveryLedger:
         path = _ledger_path(session_id)
         if path is None:
             return None
-        with self._thread_lock, _FileLock(path):
+        with self._session_lock(session_id), _FileLock(path):
             data = self._load_locked(session_id)
             entries = data.get("entries") or {}
             new_entries = fn(entries)
@@ -199,7 +216,7 @@ class RecoveryLedger:
         path = _ledger_path(session_id)
         if path is None:
             return {}
-        with self._thread_lock:
+        with self._session_lock(session_id):
             try:
                 mtime = path.stat().st_mtime_ns
             except OSError:
@@ -300,7 +317,7 @@ class RecoveryLedger:
             session_id,
             lambda entries: {} if entries else None,
         )
-        with self._thread_lock:
+        with self._session_lock(session_id):
             self._cache.pop(session_id, None)
 
     def snapshot(self, session_id: str, *, max_entries: int = 32) -> Dict[str, Any]:

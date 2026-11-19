@@ -28,7 +28,13 @@ def apply_resource_limits(
     max_cpu_seconds: Optional[int],
 ) -> tuple[list[str], list[str]]:
     """施加 POSIX rlimits。返回 (applied, warnings)——警告是 typed 降级
-    的证据（宿主将其转为 RESOURCE_LIMIT_UNAVAILABLE warning 诊断）。"""
+    的证据（宿主将其转为 RESOURCE_LIMIT_UNAVAILABLE warning 诊断）。
+
+    CPU 预算语义（review #2145）：RLIMIT_CPU 只降 **soft** 上限（hard 保留，
+    否则 renew_call_cpu_budget 无法按调用续期）——worker 内扩展代码可以
+    把 soft 调回 hard 或忽略 SIGXCPU，故 CPU 预算为**咨询性**；真正兜底
+    是宿主的 wall-clock 调用超时。RLIMIT_AS 软硬同设（内存不可自我提额）。
+    """
     global _cpu_budget_seconds
     _cpu_budget_seconds = None
     applied: list[str] = []

@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import math
 import uuid
 from typing import Annotated, Any, Optional
 
@@ -276,7 +277,14 @@ def _bounded_selection(raw: Any) -> dict[str, Any] | None:
         for item in (ids_raw if isinstance(ids_raw, list) else [])[:50]
         if isinstance(item, (str, int)) and str(item)
     ]
-    predicate = raw.get("predicate") if isinstance(raw.get("predicate"), dict) else None
+    # review #2145：客户端 predicate 是任意嵌套 JSON —— 与 observation 面
+    # 同门过 _bounded_observation_fragment（剥载荷/密钥、限深限字节），
+    # 不得原样持久化进 Redis map_state（注入通道 + secret 键外泄）。
+    predicate = None
+    if isinstance(raw.get("predicate"), dict):
+        bounded = _bounded_observation_fragment(raw["predicate"])
+        if isinstance(bounded, dict):
+            predicate = bounded
     if not ids and not predicate:
         return None
     matched = raw.get("matched_count")
@@ -429,6 +437,18 @@ async def _build_situation_env_block(
     return _build_environment_turn_context(req_map_state)
 
 
+def _coerce_finite_float(value: Any) -> Optional[float]:
+    """单字段数值强制（review #2145）：不可解析/非有限 → None（丢弃该
+    字段，绝不让一个坏字段吃掉整个环境块 —— 旧的 :.Nf 裸插值会在任何
+    非数值 lng/lat/bearing/accuracy 上 TypeError，被 blanket except 静默
+    吞成空块）。"""
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
+
+
 def _build_environment_turn_context(map_state: Optional[dict]) -> str:
     """Pi 兼容：把前端上报的环境感知渲染成有界 [环境感知] 块。
 
@@ -454,31 +474,47 @@ def _build_environment_turn_context(map_state: Optional[dict]) -> str:
         ]
         viewport = map_state.get("viewport") or {}
         center = viewport.get("center")
-        zoom = viewport.get("zoom")
-        if isinstance(center, (list, tuple)) and len(center) == 2 and zoom is not None:
-            extra = ""
-            if viewport.get("bearing"):
-                extra += f", bearing={viewport.get('bearing'):.0f}°"
-            if viewport.get("pitch"):
-                extra += f", pitch={viewport.get('pitch'):.0f}°"
-            if map_state.get("is_3d"):
-                extra += ", 3D"
-            lines.append(
-                f"- 视口中心(WGS84 经纬度): lng={center[0]:.4f}, lat={center[1]:.4f}, zoom={zoom:.2f}{extra}"
-            )
+        zoom = _coerce_finite_float(viewport.get("zoom"))
+        if (
+            isinstance(center, (list, tuple)) and len(center) == 2
+            and zoom is not None
+        ):
+            center_lng = _coerce_finite_float(center[0])
+            center_lat = _coerce_finite_float(center[1])
+            if center_lng is not None and center_lat is not None:
+                extra = ""
+                bearing = _coerce_finite_float(viewport.get("bearing"))
+                if bearing is not None:
+                    extra += f", bearing={bearing:.0f}°"
+                pitch = _coerce_finite_float(viewport.get("pitch"))
+                if pitch is not None:
+                    extra += f", pitch={pitch:.0f}°"
+                if map_state.get("is_3d"):
+                    extra += ", 3D"
+                lines.append(
+                    f"- 视口中心(WGS84 经纬度): lng={center_lng:.4f}, lat={center_lat:.4f}, zoom={zoom:.2f}{extra}"
+                )
         bounds = viewport.get("bounds")
         if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
-            w, s, e, n = bounds
-            lines.append(f"- 可视范围: W{w:.3f} S{s:.3f} E{e:.3f} N{n:.3f}")
+            coerced = [_coerce_finite_float(v) for v in bounds]
+            if all(v is not None for v in coerced):
+                w, s, e, n = coerced
+                lines.append(f"- 可视范围: W{w:.3f} S{s:.3f} E{e:.3f} N{n:.3f}")
         base_layer = map_state.get("base_layer")
         if isinstance(base_layer, str) and base_layer:
             lines.append(f"- 底图: {_xml_fence(TAG_UNTRUSTED_BASE_LAYER, base_layer)}")
         user_location = map_state.get("user_location")
         if isinstance(user_location, dict):
-            lines.append(
-                f"- 用户位置: {user_location.get('lng', 0):.6f}, {user_location.get('lat', 0):.6f} "
-                f"(±{user_location.get('accuracy', '?')}m)"
-            )
+            # review #2145：逐字段数值强制 —— 非数值字段丢弃（整个位置行
+            # 随之省略），字符串 accuracy 绝不裸插值进系统侧块。
+            loc_lng = _coerce_finite_float(user_location.get("lng"))
+            loc_lat = _coerce_finite_float(user_location.get("lat"))
+            if loc_lng is not None and loc_lat is not None:
+                accuracy = _coerce_finite_float(user_location.get("accuracy"))
+                acc_txt = f"±{accuracy:g}m" if accuracy is not None else "±?m"
+                lines.append(
+                    f"- 用户位置: {loc_lng:.6f}, {loc_lat:.6f} ({acc_txt})"
+                )
         sel_line = format_selected_feature(map_state.get("selected_feature"))
         if sel_line:
             lines.append(f"- 用户当前选中: {sel_line}")

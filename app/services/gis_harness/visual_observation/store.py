@@ -217,7 +217,8 @@ def resolve_visual_screenshot(
     """ref → 字节（评估瞬间；sha 校验 + 大小护栏；失败 → None 诚实缺席）。
 
     C13 会话绑定护栏：``session_id`` 非空且 vref 索引在场但不含该会话 →
-    None（跨会话猜 ref 读取不可行；vref 缺席 = 旧数据放行，不惩罚历史）。
+    None（跨会话猜 ref 读取不可行）；vref 缺席/损坏同样拒绝（fail-closed ——
+    无所有权证据不放行，见 blob_refs 模块契约）。
     """
     from app.services.durable_blob_store import get_filesystem_blob_store
 
