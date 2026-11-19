@@ -264,6 +264,13 @@ async def get_rate_limiter() -> RateLimiter:
         and (time.monotonic() - _rate_limiter_fallback_at) < _FALLBACK_REPROBE_S
     ):
         return _rate_limiter
+    # #2209：USE_REDIS=False 时绝不拨 REDIS_URL —— 直接内存后端（显式注入
+    # 的 Redis 后端已被上方早退返回，不受此门影响），与 task_queue /
+    # cache_broadcast / distributed_lock 同纪律。
+    if not settings.USE_REDIS:
+        if not isinstance(_rate_limiter, MemoryRateLimiter):
+            _rate_limiter = MemoryRateLimiter()
+        return _rate_limiter
 
     async with _get_limiter_lock():
         # Double-check inside lock to prevent socket leaks under burst

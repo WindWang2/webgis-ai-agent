@@ -313,11 +313,12 @@ def spreadsheet_safe_needs(spec_safe: bool, fmt: str) -> bool:
     return bool(spec_safe and fmt == "csv")
 
 
-FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+# #2209：\n 同样是公式注入向量（"\n=cmd|..."），与 \t \r 同列。
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 
 
 def sanitize_csv_cell(value: str) -> Tuple[str, bool]:
-    """spreadsheet-safe 单元格变换：公式前缀（= + - @ TAB CR）前加 "'"。
+    """spreadsheet-safe 单元格变换：公式前缀（= + - @ TAB CR LF）前加 "'"。
 
     返回 (新值, 是否变换)。仅当模式开启时由 writer 调用；receipt 记录
     变换计数（LOSS_FORMULA_PREFIX_SANITIZED）。

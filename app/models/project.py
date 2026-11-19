@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, BigInteger, ForeignKey, Index, JSON,
-    CheckConstraint, UniqueConstraint, Float, text
+    CheckConstraint, UniqueConstraint, Float, func, text
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -219,14 +219,24 @@ class WorkflowResumeAnchor(Base):
     __tablename__ = "workflow_resume_anchors"
 
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
-    session_id = Column(String(255), nullable=False, index=True)
+    session_id = Column(String(255), nullable=False)
     # 所有权/恢复授权：V5 严格 user 一致（匿名锚点不可恢复 —— 与
     # chat_resume 匿名拒绝同门）；project_id 记录项目归属供审计。
-    user_id = Column(String(255), nullable=True, index=True)
-    project_id = Column(String(255), nullable=True, index=True)
+    user_id = Column(String(255), nullable=True)
+    project_id = Column(String(255), nullable=True)
     # 有界锚点载荷（plan 摘要 + 关键 chapter 块 + trace 游标 + ref 清单）。
     anchor = Column(JSON, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, nullable=False,
+                        server_default=func.now(),
+                        default=lambda: datetime.now(timezone.utc))  # 对齐 0032 迁移（#2209）
+
+    __table_args__ = (
+        # 索引名对齐 0032 迁移（idx_resume_anchor_*，#2209 消除命名漂移；
+        # index=True 会生成 ix_workflow_resume_anchors_* 造成 compare_metadata 漂移）。
+        Index("idx_resume_anchor_session", "session_id"),
+        Index("idx_resume_anchor_user", "user_id"),
+        Index("idx_resume_anchor_project", "project_id"),
+    )
 
 
 class Artifact(Base):

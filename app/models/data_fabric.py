@@ -22,7 +22,8 @@ class DataSource(Base):
     endpoint_url = Column(Text, nullable=False)
     connection_profile = Column(JSON, nullable=False, default=dict)
     capabilities_json = Column(JSON, nullable=False, default=list)
-    status = Column(String(50), default="active", index=True)
+    status = Column(String(50), nullable=False, default="active",
+                    server_default="active", index=True)  # 对齐 0011 迁移（#2209）
     last_health_check = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -50,7 +51,8 @@ class DataFabricDataset(Base):
     title = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
     geometry_type = Column(String(50), nullable=True)
-    feature_type = Column(String(50), default="vector", index=True)
+    feature_type = Column(String(50), nullable=False, default="vector",
+                          server_default="vector", index=True)  # 对齐 0011 迁移（#2209）
     crs = Column(String(50), default="EPSG:4326")
     bbox_json = Column(JSON, nullable=True)
     tags_json = Column(JSON, nullable=False, default=list)

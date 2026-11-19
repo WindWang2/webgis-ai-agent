@@ -894,7 +894,9 @@ class WorkflowInstanceNodeRow(Base):
     heartbeat_at = Column(DateTime, nullable=True)
     cancel_requested = Column(Boolean, nullable=False, default=False)
     next_ready_at = Column(DateTime, nullable=True)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False,
+                        default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))  # 对齐 0034 迁移（#2209）
 
     __table_args__ = (
         UniqueConstraint("instance_id", "node_id", name="uq_wf_node_inst_node"),
@@ -1028,12 +1030,13 @@ class ChatSessionModelPref(Base):
     # 未自设（回退 admin 默认）。写入路由钳制 ≤ settings.SESSION_MODEL_TOKEN_CAP_MAX。
     session_token_cap = Column(BigInteger, nullable=True)
     revision = Column(Integer, nullable=False, default=1)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐 g3701 迁移（#2209）
     updated_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
-        nullable=False,
+        nullable=True,  # 对齐 g3701 迁移（#2209）
     )
 
     __table_args__ = (
@@ -1085,7 +1088,8 @@ class ChatTurnRuntime(Base):
     complete = Column(Boolean, nullable=False, default=False)
     applied_at = Column(DateTime, nullable=True)
     settled_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐 g3701 迁移（#2209）
 
     __table_args__ = (
         # 与迁移 g3701 同名索引（create_all/alembic 两侧一致）
@@ -1120,7 +1124,8 @@ class ChatUsageRecord(Base):
     cost_total = Column(BigInteger, nullable=True)   # micro-USD 整数；NULL = 无价格事实
     cost_from_provider = Column(Boolean, nullable=True)
     stop_reason = Column(String(24), nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐 g3701 迁移（#2209）
 
     __table_args__ = (
         UniqueConstraint("turn_id", "call_seq", name="uq_cur_turn_seq"),
@@ -1167,12 +1172,13 @@ class TurnContextReceiptRow(Base):
     turn_outcome = Column(String(16), nullable=True)      # completed / failed / cancelled
     user_message_id = Column(Integer, nullable=True)      # 关联用户消息（C04 历史读取）
     payload = Column(JSON, nullable=False, default=dict)  # 有界回执投影（as_bounded_dict）
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐迁移（#2209 漂移簇同形）
     updated_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
-        nullable=False,
+        nullable=True,  # 对齐迁移（#2209 漂移簇同形）
     )
 
     __table_args__ = (
@@ -1209,12 +1215,13 @@ class SessionSourcePolicyRow(Base):
     excluded = Column(JSON, nullable=False, default=list)
     policy_version = Column(Integer, nullable=False, default=1)
     updated_by_user_id = Column(String(255), nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐迁移（#2209 漂移簇同形）
     updated_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
-        nullable=False,
+        nullable=True,  # 对齐迁移（#2209 漂移簇同形）
     )
 
     __table_args__ = (

@@ -107,6 +107,10 @@ from app.models.composition_template_asset import (  # noqa: F401 — 模型注�
     CompositionTemplateAsset,
     CompositionTemplateAssetVersion,
 )
+from app.models.cartographic_symbol_asset import (  # noqa: F401 — 模型注册 + 再导出（G40，#2206）
+    CartographicSymbolAsset,
+    CartographicSymbolAssetVersion,
+)
 from app.models.story_map_asset import (  # noqa: F401 — 模型注册 + 再导出（G3D05/ADR-0275）
     StoryMapAsset,
 )
@@ -144,6 +148,8 @@ __all__ = [
     "TemplateVersion",
     "CompositionTemplateAsset",
     "CompositionTemplateAssetVersion",
+    "CartographicSymbolAsset",
+    "CartographicSymbolAssetVersion",
     "CartographyQualityRun",
     "CartographyQualityBaseline",
     "CartographyQualityWaiver",

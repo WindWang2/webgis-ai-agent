@@ -147,6 +147,11 @@ class _LazyRedis:
         self._bound_loop = None
 
     async def client(self):
+        # #2209：USE_REDIS=False 时绝不拨 REDIS_URL（本类是默认生产路径；
+        # 注入的测试/定制 client 不受此门约束）。抛错由 dispatch 的
+        # fail-open 捕获 → 放行处理，与 Redis 不可用同语义。
+        if not settings.USE_REDIS:
+            raise RuntimeError("USE_REDIS=false; idempotency redis client disabled")
         loop = asyncio.get_running_loop()
         if self._bound_loop is loop and self._redis is not None:
             return self._redis
@@ -230,16 +235,28 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             logger.warning("[Idempotency] lock probe failed (%s); fail-open", exc)
             redis = None
         if not acquired and redis is not None:
-            replay = await self._wait_for_response(redis, idem_key)
+            # #2202：等待/重取锁期间的 RedisError 必须按 fail-open 处理
+            # （C-F10 同源）——绝不把幂等层故障冒泡成 handler 未执行的 500。
+            try:
+                replay = await self._wait_for_response(redis, idem_key)
+            except Exception as exc:  # noqa: BLE001 — fail-open（C-F10 同源）
+                logger.warning("[Idempotency] Redis wait failed (%s); failing open", exc)
+                redis = None
+                replay = None
             if replay is not None:
                 return self._replay(replay, authority=request.state.idempotency_authority)
-            # Only a newly acquired lock can authorize another execution.
-            acquired = await redis.set(lock_key, token, nx=True, ex=LOCK_TTL_S)
-            if not acquired:
-                return JSONResponse(
-                    status_code=409, content={"detail": "Idempotent request is still in progress"},
-                    headers={"Retry-After": "1"},
-                )
+            if redis is not None:
+                # Only a newly acquired lock can authorize another execution.
+                try:
+                    acquired = await redis.set(lock_key, token, nx=True, ex=LOCK_TTL_S)
+                except Exception as exc:  # noqa: BLE001 — fail-open
+                    logger.warning("[Idempotency] lock reacquire failed (%s); failing open", exc)
+                    redis = None
+                if redis is not None and not acquired:
+                    return JSONResponse(
+                        status_code=409, content={"detail": "Idempotent request is still in progress"},
+                        headers={"Retry-After": "1"},
+                    )
         response = await call_next(request)
         if redis is not None:
             return await self._store_response(redis, idem_key, lock_key, token, response, principal=caller_principal_digest(request), authority=request.state.idempotency_authority)
@@ -275,6 +292,9 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         副作用二次执行，幂等契约反被中间件自己打破）。"""
         content_type = response.headers.get("content-type", "")
         if "application/json" not in content_type:
+            # #2202：非 JSON 响应不入缓存，但锁必须释放 —— 否则本请求持有的
+            # 单飞锁泄漏到 TTL 到期（60s 内同 key 并发全部 409）。
+            await self._release_lock(redis, lock_key, token)
             return response
         declared = _declared_content_length(response)
         if declared is not None and declared > MAX_BUFFER_BYTES:

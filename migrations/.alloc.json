@@ -86,6 +86,18 @@
     ],
     "zcode/g38-data-join-authoring-20261114T151651Z": [
       "0107"
+    ],
+    "fix/issues-core-migrations-20261118": [
+      "0108",
+      "0109",
+      "0110",
+      "0111",
+      "0112",
+      "0113",
+      "0114",
+      "0115",
+      "0116",
+      "0117"
     ]
   },
   "legacy_merged": {
@@ -182,6 +194,11 @@
       "revision": "0107_data_join_authoring",
       "down_revision": "0106_lifecycle_policy_org_unique",
       "file": "0107_data_join_authoring.py"
+    },
+    "0108": {
+      "branch": "fix/issues-core-migrations-20261118",
+      "revision": "0108_layers_org_fk_ondelete",
+      "down_revision": "dc0b99ededbd"
     }
   }
 }
