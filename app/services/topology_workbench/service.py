@@ -139,6 +139,7 @@ def get_ruleset(
 def list_rulesets(
     *, project_id: Optional[str], session_id: Optional[str],
     actor_user_id: Optional[str], is_admin: bool = False,
+    actor_org_id: Optional[Any] = None,
     limit: int = 50, offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int]:
     from app.core.database import SessionLocal
@@ -153,12 +154,35 @@ def list_rulesets(
         if session_id:
             stmt = stmt.where(TopologyRuleset.session_id == session_id)
             count_stmt = count_stmt.where(TopologyRuleset.session_id == session_id)
-        if actor_user_id and not is_admin:
-            stmt = stmt.where(TopologyRuleset.created_by == actor_user_id)
-            count_stmt = count_stmt.where(TopologyRuleset.created_by == actor_user_id)
+        vis = _visibility_clause(db, TopologyRuleset, actor_user_id, is_admin, actor_org_id)
+        if vis is not None:
+            stmt = stmt.where(vis)
+            count_stmt = count_stmt.where(vis)
         total = int(db.execute(count_stmt).scalar_one())
         rows = db.execute(stmt.limit(limit).offset(offset)).scalars().all()
         return [_ruleset_view(r) for r in rows], total
+
+
+def _visibility_clause(db: Any, model: Any, actor_user_id: Optional[str],
+                       is_admin: bool, actor_org_id: Optional[Any]) -> Optional[Any]:
+    # 列表可见性（#2200；与 data_quality._quality_report_clause 同语义）：
+    # - 非 admin、或 admin 但无 org：只看见自己创建的行；
+    # - 有 org 的 admin：own ∪ 同行 org ∪ NULL-org 且创建者 live org 同行。
+    from sqlalchemy import and_, or_
+
+    if actor_user_id and (not is_admin or actor_org_id in (None, "")):
+        return model.created_by == actor_user_id
+    if not (is_admin and actor_user_id and actor_org_id not in (None, "")):
+        return None
+    from app.models.db_model import User
+
+    creator_org = select(User.org_id).where(
+        User.id == model.created_by).scalar_subquery()
+    return or_(
+        model.created_by == actor_user_id,
+        model.org_id == actor_org_id,
+        and_(model.org_id.is_(None), creator_org == actor_org_id),
+    )
 
 
 def _get_owned_ruleset(
@@ -176,6 +200,33 @@ def _get_owned_ruleset(
             ruleset_id=ruleset_id,
         )
     return row
+
+
+def _same_org(left: Any, right: Any) -> bool:
+    if left in (None, "") or right in (None, ""):
+        return False
+    return str(left) == str(right)
+
+
+def _org_visible(db: Any, row: Any, actor_org_id: Any) -> bool:
+    """Admin 只覆盖同组织行（#2200；与 data_quality 面同语义）。
+
+    行 org_id 直接比对；NULL-org 行按创建者的**实时** User.org_id 归属
+    （JWT claim 可能 stale，行归属以 live 身份为准）。无 org 的 admin 不是
+    平台超管 —— 调用方必须先判 ``actor_org_id not in (None, "")``。
+    """
+    if actor_org_id in (None, ""):
+        return False
+    row_org = getattr(row, "org_id", None)
+    if row_org is not None:
+        return _same_org(row_org, actor_org_id)
+    creator_id = getattr(row, "created_by", None)
+    if not creator_id:
+        return False
+    from app.models.db_model import User
+
+    owner = db.get(User, str(creator_id))
+    return owner is not None and _same_org(owner.org_id, actor_org_id)
 
 
 def _owned(db: Any, row: Any, actor_user_id: Optional[str],
@@ -320,19 +371,23 @@ def _submit_durable_topology_job(run_id: str) -> Dict[str, Any]:
 
 def get_run(
     run_id: str, *, actor_user_id: Optional[str], is_admin: bool = False,
-    anchor_session_id: Optional[str] = None,
+    anchor_session_id: Optional[str] = None, actor_org_id: Optional[Any] = None,
 ) -> Dict[str, Any]:
     from app.core.database import SessionLocal
 
     with SessionLocal() as db:
-        row = _get_owned_run(db, run_id, actor_user_id, is_admin, anchor_session_id)
+        row = _get_owned_run(
+            db, run_id, actor_user_id, is_admin, anchor_session_id,
+            actor_org_id=actor_org_id,
+        )
         return _run_view(row)
 
 
 def list_runs(
     *, ruleset_id: Optional[str] = None, project_id: Optional[str] = None,
     session_id: Optional[str] = None, actor_user_id: Optional[str],
-    is_admin: bool = False, limit: int = 50, offset: int = 0,
+    is_admin: bool = False, actor_org_id: Optional[Any] = None,
+    limit: int = 50, offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int]:
     from app.core.database import SessionLocal
     from app.models.topology_workbench import TopologyRun
@@ -345,9 +400,10 @@ def list_runs(
             if value:
                 stmt = stmt.where(getattr(TopologyRun, field) == value)
                 count_stmt = count_stmt.where(getattr(TopologyRun, field) == value)
-        if actor_user_id and not is_admin:
-            stmt = stmt.where(TopologyRun.created_by == actor_user_id)
-            count_stmt = count_stmt.where(TopologyRun.created_by == actor_user_id)
+        vis = _visibility_clause(db, TopologyRun, actor_user_id, is_admin, actor_org_id)
+        if vis is not None:
+            stmt = stmt.where(vis)
+            count_stmt = count_stmt.where(vis)
         total = int(db.execute(count_stmt).scalar_one())
         rows = db.execute(stmt.limit(limit).offset(offset)).scalars().all()
         return [_run_view(r, detail=False) for r in rows], total
@@ -355,14 +411,21 @@ def list_runs(
 
 def _get_owned_run(
     db: Any, run_id: str, actor_user_id: Optional[str], is_admin: bool = False,
-    anchor_session_id: Optional[str] = None,
+    anchor_session_id: Optional[str] = None, actor_org_id: Optional[Any] = None,
 ):
     from app.models.topology_workbench import TopologyRun
 
     row = db.get(TopologyRun, run_id)
+    # #2200：admin 覆盖仅限同组织行（含 NULL-org 行按创建者 live org 归属）；
+    # 无 org 的 admin 不是平台超管 —— 与 data_quality 面同语义。
     if row is None or not (
-        (is_admin and actor_user_id)
-        or _owned(db, row, actor_user_id, anchor_session_id)
+        _owned(db, row, actor_user_id, anchor_session_id)
+        or (
+            is_admin
+            and actor_user_id
+            and actor_org_id not in (None, "")
+            and _org_visible(db, row, actor_org_id)
+        )
     ):
         raise WorkbenchError("not_owned", "运行不存在或无权访问", status=404, run_id=run_id)
     return row
@@ -395,7 +458,8 @@ def _run_view(row: Any, *, detail: bool = True) -> Dict[str, Any]:
 def list_findings(
     run_id: str, *, rule_id: Optional[str] = None, severity: Optional[str] = None,
     status: Optional[str] = None, actor_user_id: Optional[str],
-    is_admin: bool = False, limit: int = 50, offset: int = 0,
+    is_admin: bool = False, actor_org_id: Optional[Any] = None,
+    limit: int = 50, offset: int = 0,
     anchor_session_id: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
     """问题分页（完整计数披露 —— total 是全量计数，不是当前页）。"""
@@ -403,7 +467,10 @@ def list_findings(
     from app.models.topology_workbench import TopologyFinding
 
     with SessionLocal() as db:
-        _get_owned_run(db, run_id, actor_user_id, is_admin, anchor_session_id)
+        _get_owned_run(
+            db, run_id, actor_user_id, is_admin, anchor_session_id,
+            actor_org_id=actor_org_id,
+        )
         stmt = select(TopologyFinding).where(TopologyFinding.run_id == run_id)
         count_stmt = select(func.count()).select_from(TopologyFinding).where(
             TopologyFinding.run_id == run_id
@@ -430,7 +497,7 @@ def list_findings(
 
 def get_finding(
     finding_id: str, *, actor_user_id: Optional[str], is_admin: bool = False,
-    anchor_session_id: Optional[str] = None,
+    anchor_session_id: Optional[str] = None, actor_org_id: Optional[Any] = None,
 ) -> Dict[str, Any]:
     from app.core.database import SessionLocal
     from app.models.topology_workbench import TopologyFinding
@@ -439,13 +506,16 @@ def get_finding(
         row = db.get(TopologyFinding, finding_id)
         if row is None:
             raise WorkbenchError("finding_not_found", "问题不存在", status=404)
-        _get_owned_run(db, row.run_id, actor_user_id, is_admin, anchor_session_id)
+        _get_owned_run(
+            db, row.run_id, actor_user_id, is_admin, anchor_session_id,
+            actor_org_id=actor_org_id,
+        )
         return _finding_view(row, detail=True)
 
 
 async def get_finding_witness(
     finding_id: str, *, actor_user_id: Optional[str], is_admin: bool = False,
-    anchor_session_id: Optional[str] = None,
+    anchor_session_id: Optional[str] = None, actor_org_id: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """finding 的完整 witness 几何（BlobStore 读回 + 摘要校验 + stale 判定）。"""
     from app.core.database import SessionLocal
@@ -455,7 +525,10 @@ async def get_finding_witness(
         row = db.get(TopologyFinding, finding_id)
         if row is None:
             raise WorkbenchError("finding_not_found", "问题不存在", status=404)
-        run = _get_owned_run(db, row.run_id, actor_user_id, is_admin, anchor_session_id)
+        run = _get_owned_run(
+            db, row.run_id, actor_user_id, is_admin, anchor_session_id,
+            actor_org_id=actor_org_id,
+        )
         if not run.witness_key:
             raise WorkbenchError(
                 "source_unresolvable",

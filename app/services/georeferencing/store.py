@@ -8,10 +8,12 @@ import os
 import shutil
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from app.schemas.georeferencing_schema import (
+    FrozenExecutionSnapshot,
     GeorefDomainError,
     GeorefDraftPlan,
     GeorefErrorCode,
@@ -167,6 +169,57 @@ def mutate_plan_cas(
         state["plans"][plan_id] = updated.model_dump(mode="json")
         _write_state_unlocked(session_id, state)
         return updated
+
+
+def freeze_plan_for_execution(
+    session_id: str,
+    plan_id: str,
+    *,
+    expected_revision: int,
+    snapshot: FrozenExecutionSnapshot,
+    execution_id: str,
+    job_id: str,
+    conflict_checker: Callable[[GeorefDraftPlan], None],
+    idempotency_key: Optional[str] = None,
+    idempotency_payload: Optional[Dict[str, Any]] = None,
+) -> GeorefDraftPlan:
+    """Atomically freeze the plan, attach the active job, and record the idempotency entry.
+
+    单把 flock 关键区 —— 关闭 freeze→attach 之间的 TOCTOU 窗口（issue #2192）：
+    并发 execute（含跨进程）在此要么见到存活冲突（conflict_checker 抛 409），
+    要么原子落下 snapshot/execution_id/active_job_id/幂等登记，绝无中间态。
+    """
+    with _session_file_lock(session_id):
+        state = _read_state_unlocked(session_id)
+        raw = state["plans"].get(plan_id)
+        if raw is None:
+            raise GeorefDomainError(
+                GeorefErrorCode.FORBIDDEN_OR_NOT_FOUND,
+                f"Georeference plan '{plan_id}' not found.",
+                status_code=404,
+            )
+        current = GeorefDraftPlan.model_validate(raw)
+        if current.revision != int(expected_revision):
+            raise GeorefDomainError(
+                GeorefErrorCode.CAS_CONFLICT,
+                f"Revision mismatch for plan '{plan_id}': expected {expected_revision}, current is {current.revision}.",
+                status_code=409,
+                details={"expected_revision": expected_revision, "current_revision": current.revision},
+            )
+        conflict_checker(current)
+        current.frozen_snapshot = snapshot
+        current.active_execution_id = execution_id
+        current.active_job_id = str(job_id)
+        current.updated_at = datetime.now(timezone.utc).isoformat()
+        state["plans"][plan_id] = current.model_dump(mode="json")
+        if idempotency_key:
+            idem = state.setdefault("idempotency", {})
+            if len(idem) > 128:
+                oldest = next(iter(idem))
+                idem.pop(oldest, None)
+            idem[idempotency_key] = idempotency_payload or {}
+        _write_state_unlocked(session_id, state)
+        return current
 
 
 def record_idempotency_entry(

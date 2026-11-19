@@ -1,6 +1,7 @@
 """G48 Control-Point Georeferencing deferred Pi tools (no entry in NATIVE_TOOL_NAMES)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
@@ -192,7 +193,7 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
         try:
             out: Dict[str, Any] = {"success": True, "session_id": sid}
             if source_id:
-                src = service.require_source(sid, source_id)
+                src = await asyncio.to_thread(service.require_source, sid, source_id)
                 out["source"] = {
                     "source_id": src.source_id,
                     "filename": src.filename,
@@ -210,7 +211,7 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
                     "existing_georef": src.existing_georef.model_dump(mode="json"),
                 }
             else:
-                srcs = store.list_sources(sid)
+                srcs = await asyncio.to_thread(store.list_sources, sid)
                 out["sources"] = [
                     {
                         "source_id": s.source_id,
@@ -227,7 +228,7 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
                 out["sources_truncated"] = len(srcs) > _MAX_LIST_ITEMS
 
             if plan_id:
-                pl = service.require_plan(sid, plan_id)
+                pl = await asyncio.to_thread(service.require_plan, sid, plan_id)
                 out["plan"] = {
                     "plan_id": pl.plan_id,
                     "source_id": pl.source_id,
@@ -242,7 +243,7 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
                     "artifact": _bounded_artifact_summary(pl.latest_artifact),
                 }
             else:
-                pls = store.list_plans(sid)
+                pls = await asyncio.to_thread(store.list_plans, sid)
                 out["plans"] = [
                     {
                         "plan_id": p.plan_id,
@@ -392,7 +393,8 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
         if not sid:
             return {"success": False, "code": "FORBIDDEN_OR_NOT_FOUND", "message": "No authorized session_id."}
         try:
-            resp = service.generate_preview(
+            resp = await asyncio.to_thread(
+                service.generate_preview,
                 session_id=sid,
                 plan_id=plan_id,
                 expected_revision=expected_revision,
@@ -539,7 +541,7 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
         if not sid:
             return {"success": False, "code": "FORBIDDEN_OR_NOT_FOUND", "message": "No authorized session_id."}
         try:
-            st = service.get_status(sid, plan_id)
+            st = await asyncio.to_thread(service.get_status, sid, plan_id)
             return {
                 "success": True,
                 "plan_id": st["plan_id"],
@@ -586,8 +588,8 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
         if not sid:
             return {"success": False, "code": "FORBIDDEN_OR_NOT_FOUND", "message": "No authorized session_id."}
         try:
-            pl = service.require_plan(sid, plan_id)
-            src = service.require_source(sid, pl.source_id)
+            pl = await asyncio.to_thread(service.require_plan, sid, plan_id)
+            src = await asyncio.to_thread(service.require_source, sid, pl.source_id)
             residuals = []
             if pl.fit_metrics and pl.fit_metrics.residuals:
                 residuals = [

@@ -1000,9 +1000,13 @@ class MemorySessionStore(BaseSessionStore):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Session {session_id}: visual screenshot release failed: {e}")
         try:
+            import asyncio
+
             from app.services.georeferencing.refs import purge_session_georef_state
 
-            purge_session_georef_state(session_id)
+            # issue #2193：flock JSON store + BlobStore 释放是同步 IO，卸载到
+            # 工作线程（Redis 版 session_data_redis 已是 to_thread 同模式）。
+            await asyncio.to_thread(purge_session_georef_state, session_id)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Session {session_id}: georeferencing state release failed: {e}")
         async with self._lock:
