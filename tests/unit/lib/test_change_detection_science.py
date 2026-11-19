@@ -218,3 +218,32 @@ def test_change_science_determinism():
     t2 = threshold_change(noisy, method="mad")
     np.testing.assert_array_equal(t1["mask"], t2["mask"])
     assert t1["threshold_value"] == t2["threshold_value"]
+
+
+def test_threshold_change_mad_is_one_sided_and_validates_params():
+    """#2130: 幅度阈值单向（低于 median − k·MAD 不判变化）且参数有校验。"""
+    # 右偏幅度：低侧离群（真实低值）与高侧离群（真实变化）共存
+    mag = np.array([5.0, 5.0, 5.0, 5.0, 1.0, 0.5, 6.0, 4.0,
+                    20.0, 30.0])
+    k = 3.0
+    res = threshold_change(mag, method="mad", k=k)
+    med = float(np.median(mag))
+    mad = float(np.median(np.abs(mag - med)))
+    assert mad > 0  # 本例须走非退化分支
+    expected_threshold = med + k * 1.4826 * mad
+    assert res["threshold_value"] == pytest.approx(expected_threshold)
+    # 口径一致：mask 恰为 x >= threshold_value
+    np.testing.assert_array_equal(res["mask"], mag >= expected_threshold)
+    # 低侧极端值不判变化——幅度语义单向（|x−med| 超 k·MAD 也不算）
+    low = np.flatnonzero(mag < med - k * 1.4826 * mad)
+    assert low.size > 0  # 本例须含低侧离群
+    assert not res["mask"][low].any()
+    # k/percentile 校验
+    with pytest.raises(ValueError, match="k"):
+        threshold_change(mag, method="mad", k=0.0)
+    with pytest.raises(ValueError, match="k"):
+        threshold_change(mag, method="mad", k=-1.0)
+    with pytest.raises(ValueError, match="percentile"):
+        threshold_change(mag, method="percentile", percentile=0.0)
+    with pytest.raises(ValueError, match="percentile"):
+        threshold_change(mag, method="percentile", percentile=101.0)

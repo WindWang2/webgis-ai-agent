@@ -122,9 +122,15 @@ async function readCurrentSpec(sessionId: string, ownerToken: string | null): Pr
   // 优先本地 committed（session-cursor 已回灌的最新真相）；缺失才读服务端。
   const local = getCommittedMapSpec();
   if (local) return local as unknown as Record<string, unknown>;
-  const data = await apiFetch<{ mapspec?: Record<string, unknown> }>(
-    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/mapspec`,
-    { ownerToken, timeoutMs: 30_000, label: 'G25 read mapspec' },
+  // 后端只有 GET/POST .../map-state 与 POST .../mapspec/mutations ——
+  // 无 GET .../mapspec（#2183：此前回退到不存在的端点恒 404）。
+  const data = await apiFetch<{
+    map_state?: { mapspec?: Record<string, unknown>; _cartographic_mutation_revision?: unknown };
+  }>(
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-state`,
+    { ownerToken, timeoutMs: 30_000, label: 'G25 read map state' },
   );
-  return data.mapspec ?? null;
+  const revision = Number(data.map_state?._cartographic_mutation_revision);
+  if (Number.isFinite(revision)) setMapSpecRevision(revision);
+  return data.map_state?.mapspec ?? null;
 }

@@ -312,7 +312,9 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
       if (generationRef.current !== gen) return;
       addToast(t('describeFailed'), 'error');
     } finally {
-      setDescribeLoading(false);
+      // R2 #2191：只有最新代次才复位 loading —— 旧响应的 finally 不得在
+      // 新请求在飞时把按钮状态提前解锁。
+      if (generationRef.current === gen) setDescribeLoading(false);
     }
   };
 
@@ -345,7 +347,8 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
       if (generationRef.current !== gen) return;
       setCompileError(parseFieldComputeError(err));
     } finally {
-      setPreviewing(false);
+      // R2 #2191：同 describe —— 旧代次的 finally 不复位最新请求的 loading。
+      if (generationRef.current === gen) setPreviewing(false);
     }
   };
 
@@ -376,7 +379,8 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
       if (generationRef.current !== gen) return;
       setExecError(parseFieldComputeError(err));
     } finally {
-      setExecuting(false);
+      // R2 #2191：同 describe —— 旧代次的 finally 不复位最新请求的 executing。
+      if (generationRef.current === gen) setExecuting(false);
     }
   };
 
@@ -400,10 +404,13 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
 
   const handleOpenResult = async () => {
     if (!sessionId || !receipt) return;
+    const gen = generationRef.current;
     try {
       const res = await fieldComputeApi.getResult(sessionId, receipt.output_ref, { ownerToken });
+      if (generationRef.current !== gen) return;
       setResult(res);
     } catch {
+      if (generationRef.current !== gen) return;
       addToast(t('openResultFailed'), 'error');
     }
   };
@@ -427,8 +434,12 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
       _refId: receipt.output_ref,
       style: { color: '#16a34a' },
     });
+    // R2 #2191：loadToMap 跨 await 代次守卫 —— 会话/参数已切则旧水合结果
+    // 不得写进当前地图。
+    const gen = generationRef.current;
     try {
       const geojson = await dataFabricApi.fetchRefGeoJSON(receipt.output_ref, sessionId, { ownerToken });
+      if (generationRef.current !== gen) return;
       // 合法但空的 FeatureCollection 同样视为「结果为空」，不得报加载成功。
       if (geojson && Array.isArray(geojson.features) && geojson.features.length > 0) {
         updateLayer(layerId, { source: geojson });
@@ -439,6 +450,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
       removeLayer(layerId);
       addToast(t('loadIncomplete'), 'warning');
     } catch {
+      if (generationRef.current !== gen) return;
       removeLayer(layerId);
       addToast(t('loadFailed'), 'warning');
     }
@@ -494,8 +506,8 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="fc-root">
       {/* ── 数据来源 ─────────────────────────────────────────────── */}
-      <section className="rounded border border-line" data-testid="fc-source">
-        <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
+      <section className="rounded border border-edge-subtle" data-testid="fc-source">
+        <header className="flex items-center justify-between gap-2 border-b border-edge-subtle px-3 py-2">
           <span className="flex items-center gap-1.5 text-meta font-semibold text-ink">
             <FlaskConical size={14} />
             {t('title')}
@@ -518,7 +530,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
             <label className="flex flex-col gap-1 text-meta text-ink-600">
               {t('selectSource')}
               <select
-                className="rounded border border-line bg-white px-2 py-1 text-ink"
+                className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                 value={sourceRef}
                 onChange={(e) => { setSourceRef(e.target.value); setDescribeRes(null); bumpGeneration(); }}
                 data-testid="fc-source-select"
@@ -545,8 +557,8 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
       {describeRes && (
         <>
           {/* ── 字段 / 函数 / 几何资格 ──────────────────────────────── */}
-          <section className="rounded border border-line" data-testid="fc-schema">
-            <header className="border-b border-line px-3 py-2 text-meta font-semibold text-ink">
+          <section className="rounded border border-edge-subtle" data-testid="fc-schema">
+            <header className="border-b border-edge-subtle px-3 py-2 text-meta font-semibold text-ink">
               {t('schemaTitle')}
             </header>
             <div className="flex flex-col gap-2 p-3 text-meta text-ink-700">
@@ -555,7 +567,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                 <span>{t('dataShape', { shape: describeRes.data_shape })}</span>
                 <span>{t('crs', { crs: describeRes.crs, source: describeRes.crs_source })}</span>
               </div>
-              <div className="rounded border border-line px-2 py-1" data-testid="fc-geometry">
+              <div className="rounded border border-edge-subtle px-2 py-1" data-testid="fc-geometry">
                 <b>{t('geometryTitle')}</b>
                 {' · '}
                 {t('geometryMode', { mode: geom?.mode || '-' })}
@@ -575,7 +587,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                 <div className="flex items-center justify-between gap-2">
                   <b>{t('fieldsTitle', { count: fields.length })}</b>
                   <input
-                    className="w-32 rounded border border-line px-2 py-0.5 text-ink"
+                    className="w-32 rounded border border-edge-subtle px-2 py-0.5 text-ink"
                     value={fieldSearch}
                     onChange={(e) => setFieldSearch(e.target.value)}
                     placeholder={t('fieldSearch')}
@@ -588,7 +600,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                     <li key={f.name}>
                       <button
                         type="button"
-                        className="flex w-full items-center justify-between gap-2 rounded border border-line px-2 py-1 text-left hover:bg-slate-50"
+                        className="flex w-full items-center justify-between gap-2 rounded border border-edge-subtle px-2 py-1 text-left hover:bg-slate-50"
                         onClick={() => insertFieldRef(f.name)}
                         aria-label={t('insertField')}
                         title={t('insertField')}
@@ -611,7 +623,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                 </summary>
                 <ul className="mt-1 flex flex-col gap-1">
                   {functions.map((fn) => (
-                    <li key={fn.name} className="rounded border border-line px-2 py-1" data-testid={`fc-fn-${fn.name}`}>
+                    <li key={fn.name} className="rounded border border-edge-subtle px-2 py-1" data-testid={`fc-fn-${fn.name}`}>
                       <div className="flex flex-wrap items-center gap-2">
                         <b className="text-ink-800">{fn.name}</b>
                         <span className="text-ink-500">{t('functionMinMax', { min: fn.min_args, max: fn.max_args })}</span>
@@ -636,7 +648,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                       </thead>
                       <tbody>
                         {sampleRows.slice(0, 5).map((row, i) => (
-                          <tr key={i} className="border-t border-line">
+                          <tr key={i} className="border-t border-edge-subtle">
                             {sampleCols.map((c) => (
                               <td key={c} className="px-2 py-1 text-ink-800">{shortCell(row[c]) || t('valueEmpty')}</td>
                             ))}
@@ -652,11 +664,11 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
 
           {/* ── 构造计算列 ─────────────────────────────────────────── */}
           <form
-            className="flex flex-col gap-3 rounded border border-line"
+            className="flex flex-col gap-3 rounded border border-edge-subtle"
             onSubmit={(e) => { e.preventDefault(); void handlePreview(); }}
             data-testid="fc-form"
           >
-            <header className="border-b border-line px-3 py-2 text-meta font-semibold text-ink">
+            <header className="border-b border-edge-subtle px-3 py-2 text-meta font-semibold text-ink">
               {t('formTitle')}
             </header>
 
@@ -667,7 +679,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                   <button
                     key={ex.id}
                     type="button"
-                    className="rounded border border-line px-2 py-1 text-meta text-ink-700 hover:bg-slate-50"
+                    className="rounded border border-edge-subtle px-2 py-1 text-meta text-ink-700 hover:bg-slate-50"
                     onClick={() => applyExample(ex)}
                     title={ex.desc}
                     data-testid={`fc-example-${ex.id}`}
@@ -682,7 +694,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
               <label className="flex flex-col gap-1 text-meta text-ink-600">
                 {t('targetName')}
                 <input
-                  className="rounded border border-line bg-white px-2 py-1 text-ink"
+                  className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                   value={targetName}
                   onChange={(e) => { setTargetName(e.target.value); bumpGeneration(); }}
                   placeholder={t('targetNamePlaceholder')}
@@ -692,7 +704,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
               <label className="flex flex-col gap-1 text-meta text-ink-600">
                 {t('expression')}
                 <textarea
-                  className="min-h-[64px] rounded border border-line bg-white px-2 py-1 font-mono text-ink"
+                  className="min-h-[64px] rounded border border-edge-subtle bg-white px-2 py-1 font-mono text-ink"
                   value={expression}
                   onChange={(e) => { setExpression(e.target.value); bumpGeneration(); }}
                   placeholder={t('expressionPlaceholder')}
@@ -705,7 +717,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
               <label className="flex flex-col gap-1 text-meta text-ink-600">
                 {t('scopeMode')}
                 <select
-                  className="rounded border border-line bg-white px-2 py-1 text-ink"
+                  className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                   value={scopeMode}
                   onChange={(e) => { setScopeMode(e.target.value as 'all_rows' | 'predicate'); bumpGeneration(); }}
                   data-testid="fc-scope"
@@ -719,7 +731,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                   <label className="flex flex-col gap-1 text-meta text-ink-600">
                     {t('predField')}
                     <input
-                      className="rounded border border-line bg-white px-2 py-1 text-ink"
+                      className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                       value={predField}
                       onChange={(e) => { setPredField(e.target.value); bumpGeneration(); }}
                       data-testid="fc-pred-field"
@@ -728,7 +740,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                   <label className="flex flex-col gap-1 text-meta text-ink-600">
                     {t('predOp')}
                     <select
-                      className="rounded border border-line bg-white px-2 py-1 text-ink"
+                      className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                       value={predOp}
                       onChange={(e) => { setPredOp(e.target.value); bumpGeneration(); }}
                       data-testid="fc-pred-op"
@@ -739,7 +751,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                   <label className="flex flex-col gap-1 text-meta text-ink-600">
                     {t('predValue')}
                     <input
-                      className="rounded border border-line bg-white px-2 py-1 text-ink"
+                      className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                       value={predValue}
                       onChange={(e) => { setPredValue(e.target.value); bumpGeneration(); }}
                       data-testid="fc-pred-value"
@@ -751,7 +763,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
               <label className="flex flex-col gap-1 text-meta text-ink-600">
                 {t('declaredUnit')}
                 <input
-                  className="rounded border border-line bg-white px-2 py-1 text-ink"
+                  className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                   value={declaredUnit}
                   onChange={(e) => { setDeclaredUnit(e.target.value); bumpGeneration(); }}
                   placeholder={t('declaredUnitPlaceholder')}
@@ -761,7 +773,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
               <label className="flex flex-col gap-1 text-meta text-ink-600">
                 {t('fieldUnits')}
                 <textarea
-                  className="min-h-[48px] rounded border border-line bg-white px-2 py-1 font-mono text-ink"
+                  className="min-h-[48px] rounded border border-edge-subtle bg-white px-2 py-1 font-mono text-ink"
                   value={fieldUnitsText}
                   onChange={(e) => { setFieldUnitsText(e.target.value); bumpGeneration(); }}
                   placeholder={t('fieldUnitsPlaceholder')}
@@ -774,7 +786,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                 <label className="flex flex-col gap-1 text-meta text-ink-600">
                   {t('timezone')}
                   <input
-                    className="rounded border border-line bg-white px-2 py-1 text-ink"
+                    className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                     value={timezone}
                     onChange={(e) => { setTimezone(e.target.value); bumpGeneration(); }}
                     placeholder={t('timezonePlaceholder')}
@@ -784,7 +796,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                 <label className="flex flex-col gap-1 text-meta text-ink-600">
                   {t('dateFormat')}
                   <input
-                    className="rounded border border-line bg-white px-2 py-1 text-ink"
+                    className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                     value={dateFormat}
                     onChange={(e) => { setDateFormat(e.target.value); bumpGeneration(); }}
                     placeholder={t('dateFormatPlaceholder')}
@@ -796,7 +808,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
               <label className="flex flex-col gap-1 text-meta text-ink-600">
                 {t('errorPolicy')}
                 <select
-                  className="rounded border border-line bg-white px-2 py-1 text-ink"
+                  className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                   value={errorPolicy}
                   onChange={(e) => { setErrorPolicy(e.target.value); bumpGeneration(); }}
                   data-testid="fc-error-policy"
@@ -809,7 +821,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
               <label className="flex flex-col gap-1 text-meta text-ink-600">
                 {t('projectId')}
                 <input
-                  className="rounded border border-line bg-white px-2 py-1 text-ink"
+                  className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                   value={projectId}
                   onChange={(e) => { setProjectId(e.target.value); bumpGeneration(); }}
                   placeholder={t('projectIdPlaceholder')}
@@ -818,7 +830,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
               </label>
             </div>
 
-            <div className="flex flex-col gap-2 border-t border-line p-3">
+            <div className="flex flex-col gap-2 border-t border-edge-subtle p-3">
               {staleHint && (
                 <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-meta text-amber-800" data-testid="fc-stale">
                   {t('staleHint')}
@@ -889,8 +901,8 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
 
           {/* ── 采样预览 ───────────────────────────────────────────── */}
           {preview && (
-            <section className="rounded border border-line" data-testid="fc-preview-view">
-              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2">
+            <section className="rounded border border-edge-subtle" data-testid="fc-preview-view">
+              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-edge-subtle px-3 py-2">
                 <span className="text-meta font-semibold text-ink">
                   {t('previewTitle', { rows: preview.sampled_rows, total: preview.total_rows })}
                   {preview.truncated ? ` ${t('truncated')}` : ''}
@@ -925,7 +937,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                       </thead>
                       <tbody>
                         {preview.columns.map((c) => (
-                          <tr key={c.name} className="border-t border-line" data-testid={`fc-preview-col-${c.name}`}>
+                          <tr key={c.name} className="border-t border-edge-subtle" data-testid={`fc-preview-col-${c.name}`}>
                             <td className="px-2 py-1">{c.name}</td>
                             <td className="px-2 py-1 font-mono">{c.formula}</td>
                             <td className="px-2 py-1">{c.dtype}</td>
@@ -957,7 +969,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                       </thead>
                       <tbody>
                         {preview.before_after.map((ba) => (
-                          <tr key={ba.row} className="border-t border-line">
+                          <tr key={ba.row} className="border-t border-edge-subtle">
                             <td className="px-2 py-1">{ba.row}</td>
                             <td className="px-2 py-1 font-mono">{shortCell(ba.before) || t('valueEmpty')}</td>
                             <td className="px-2 py-1 font-mono">{shortCell(ba.after) || t('valueEmpty')}</td>
@@ -1039,8 +1051,8 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
 
           {/* ── 执行收据 ───────────────────────────────────────────── */}
           {receipt && (
-            <section className="rounded border border-line" data-testid="fc-receipt">
-              <header className="border-b border-line px-3 py-2 text-meta font-semibold text-ink">
+            <section className="rounded border border-edge-subtle" data-testid="fc-receipt">
+              <header className="border-b border-edge-subtle px-3 py-2 text-meta font-semibold text-ink">
                 {t('receiptTitle')}
               </header>
               <div className="flex flex-col gap-2 p-3 text-meta text-ink-700">
@@ -1135,8 +1147,8 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
 
           {/* ── 结果表 ─────────────────────────────────────────────── */}
           {result && (
-            <section className="rounded border border-line" data-testid="fc-result">
-              <header className="border-b border-line px-3 py-2 text-meta font-semibold text-ink">
+            <section className="rounded border border-edge-subtle" data-testid="fc-result">
+              <header className="border-b border-edge-subtle px-3 py-2 text-meta font-semibold text-ink">
                 {t('resultTitle', { ref: result.output_ref })}
               </header>
               <div className="flex flex-col gap-2 p-3 text-meta text-ink-700" data-testid="fc-result-table">
@@ -1157,7 +1169,7 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
                     </thead>
                     <tbody>
                       {(result.sample_rows ?? []).slice(0, 5).map((row, i) => (
-                        <tr key={i} className="border-t border-line">
+                        <tr key={i} className="border-t border-edge-subtle">
                           {resultColumns.map((c) => (
                             <td key={c} className="px-2 py-1 text-ink-800">{shortCell(row[c]) || t('valueEmpty')}</td>
                           ))}

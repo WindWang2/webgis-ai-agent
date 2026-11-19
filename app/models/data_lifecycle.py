@@ -29,6 +29,7 @@ from sqlalchemy import (
     JSON,
     String,
     UniqueConstraint,
+    func,
 )
 from app.core.database import Base
 
@@ -115,7 +116,12 @@ class LifecyclePolicy(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     __table_args__ = (
-        UniqueConstraint("org_id", "name", name="uq_lifecycle_policy_org_name"),
+        # #2209：UniqueConstraint(org_id, name) 对 org_id IS NULL 的全局行
+        # 不生效（PG/SQLite 唯一约束中 NULL 互不相等）——同一全局名可插入多行。
+        # 改用 COALESCE 表达式唯一索引：NULL 归一到哨兵 -1（organizations.id
+        # 自增恒正），全局默认名全局唯一，与 0106 迁移同形。
+        Index("uq_lifecycle_policy_org_name",
+              func.coalesce(org_id, -1), name, unique=True),
         CheckConstraint(
             "kind IN ('lakehouse_dataset','fabric_materialization',"
             "'artifact_cache','cog_output','worker_cache')",

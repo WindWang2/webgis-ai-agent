@@ -678,7 +678,12 @@ async def commit_expression(
                 correction_hint=str(result.correction_hint or ""))
         if getattr(result, "duplicate", False):
             # 幂等命中：库内已提交表达才是真相；本次新建的派生 ref 未被引用。
-            await session_data_manager.delete_ref(session_id, derived_ref)
+            # 清理失败只记录 —— 提交已成功，绝不让孤儿清理把成功回执打成异常。
+            try:
+                await session_data_manager.delete_ref(session_id, derived_ref)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[g41] failed to discard orphan derived ref %s: %s",
+                               derived_ref, exc)
             cleanup_needed = False
             logger.info("[g41] idempotent mutation hit; discarded orphan ref %s", derived_ref)
         cleanup_needed = False

@@ -165,3 +165,20 @@ def test_pca_preview_bounded_and_determinism():
     np.testing.assert_array_equal(np.asarray(res["loadings"]),
                                   np.asarray(again["loadings"]))
     assert res["explained_variance_ratio"] == again["explained_variance_ratio"]
+
+
+class TestDegenerateInputTypedRejection:
+    """#2239: 常量栈/单有效样本不得 LinAlgError 或静默 NaN EVR。"""
+
+    def test_constant_stack_covariance_pca_rejected(self):
+        from app.lib.gis.scientific_errors import DegenerateData
+        stack = np.stack([np.full((4, 4), 3.0), np.full((4, 4), 5.0)])
+        with pytest.raises(DegenerateData, match="总方差"):
+            pca_mod.pca_bands(stack, standardize=False)
+
+    def test_single_valid_pixel_standardize_rejected(self):
+        from app.lib.gis.scientific_errors import DegenerateData
+        stack = np.full((2, 4, 4), np.nan)
+        stack[:, 0, 0] = [1.0, 2.0]
+        with pytest.raises(DegenerateData, match="z-score|总方差"):
+            pca_mod.pca_bands(stack, standardize=True)

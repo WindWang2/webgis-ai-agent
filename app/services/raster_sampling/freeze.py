@@ -161,9 +161,25 @@ async def materialize_selection_input(
 def freeze_source_binding(
     source: Any, binding_overrides: Optional[Dict[str, Any]] = None
 ) -> SourceBinding:
-    """Resolved RasterSource → 不可变绑定（data_revision + stat 代次）。"""
+    """Resolved RasterSource → 不可变绑定（data_revision + stat 代次）。
+
+    band_semantics 冻结**有效语义**（用户声明 > 数据集 classification
+    元数据 > 缺省不写入）—— 15b：早前只存用户 overrides，而
+    ``_early_method_check`` 又拿来源标记（"declared"/"metadata"）比对
+    "continuous"，元数据标记的连续栅格恒被判 undeclared 拒绝插值。
+    """
     overrides = binding_overrides or {}
     bands = overrides.get("bands") or [1]
+    declared_sem = {str(k): str(v) for k, v in
+                    (overrides.get("band_semantics") or {}).items()}
+    from app.services.raster_sampling import kernel as _kernel
+
+    resolved_semantics: Dict[str, str] = {}
+    for b in bands:
+        facts = _kernel.band_facts_from_source(
+            source, int(b), declared_semantics=declared_sem.get(str(b)))
+        if facts.semantic in ("categorical", "continuous"):
+            resolved_semantics[str(b)] = facts.semantic
     stat = reader_schedule.stat_fingerprint(source.path)
     return SourceBinding(
         ref_id=source.ref_id,
@@ -175,10 +191,9 @@ def freeze_source_binding(
                      (overrides.get("band_labels") or {}).items()},
         band_units={str(k): str(v) for k, v in
                     (overrides.get("band_units") or {}).items()},
-        band_semantics={str(k): str(v) for k, v in
-                        (overrides.get("band_semantics") or {}).items()},
+        band_semantics=resolved_semantics,
         band_semantics_source=(
-            "declared" if overrides.get("band_semantics") else "metadata"),
+            "declared" if declared_sem else "metadata"),
         crs=source.crs,
     )
 

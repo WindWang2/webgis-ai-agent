@@ -107,7 +107,7 @@ export function PrintLayoutPanel({ onClose }: Props) {
     const generation = state.generation;
     dispatch({ type: 'preview-start' });
     try {
-      const out = await postPreview(ctx, {
+      const out = await postPreview({ ...ctx, signal: abortRef.current?.signal }, {
         page_id: state.pageId, dpi: state.dpi, include_svg: true,
       });
       if (generation !== genRef.current) return;  // 旧页回包丢弃
@@ -138,7 +138,7 @@ export function PrintLayoutPanel({ onClose }: Props) {
     const operations = [{ op: 'replace_plan', plan: state.draft }];
     dispatch({ type: 'apply-start' });
     try {
-      const dry = await postPropose(ctx, {
+      const dry = await postPropose({ ...ctx, signal: abortRef.current?.signal }, {
         operations, initialize: !state.committed, dpi: state.dpi,
       }).catch(() => null);
       if (dry && !dry.success) {
@@ -146,7 +146,7 @@ export function PrintLayoutPanel({ onClose }: Props) {
         setValidation((dry.issues ?? []).map((e) => String(e.code)));
         return;
       }
-      const out = await postApply(ctx, {
+      const out = await postApply({ ...ctx, signal: abortRef.current?.signal }, {
         operations,
         initialize: !state.committed,
         expected_revision: state.revision,
@@ -174,7 +174,8 @@ export function PrintLayoutPanel({ onClose }: Props) {
     if (!ctx) return;
     dispatch({ type: 'export-start' });
     try {
-      const out = await postExport(ctx, { format, dpi: state.dpi, page_id: state.pageId });
+      const out = await postExport({ ...ctx, signal: abortRef.current?.signal },
+        { format, dpi: state.dpi, page_id: state.pageId });
       if (!out.success) {
         dispatch({ type: 'export-failed', error: out.code ?? 'export_failed' });
         return;
@@ -217,7 +218,9 @@ export function PrintLayoutPanel({ onClose }: Props) {
   }, [state.draft, state.selectedIds]);
 
   const initializePlan = useCallback(() => {
-    dispatch({ type: 'patch-plan', patch: defaultPrintLayout() });
+    // R2 #2182：draft 为 null 时 patch-plan 会被 reducer 丢弃 —— 初始化
+    // 必须走 init-draft 建立首份草稿。
+    dispatch({ type: 'init-draft', plan: defaultPrintLayout() });
     dispatch({ type: 'select', ids: [] });
   }, []);
 
@@ -546,6 +549,9 @@ export function PrintLayoutPanel({ onClose }: Props) {
         <button type="button" className="btn btn-ghost text-meta" onClick={() => {
           abortRef.current?.abort();
           abortRef.current = new AbortController();
+          // R2 #2182：同步递增 genRef —— reducer 的 cancel 也 +1 generation，
+          // 在途回包（未随 abort 中止的）到达时与双 guard 不匹配即丢弃。
+          genRef.current += 1;
           dispatch({ type: 'cancel' });
         }}>
           {t('workbench.printLayout.cancelOperation')}

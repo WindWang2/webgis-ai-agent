@@ -17,11 +17,11 @@ from app.services.data_operations.runner import (
 )
 from app.services.georeferencing.refs import compute_file_sha256, pin_blob_from_path, release_blob_ref
 from app.services.georeferencing.store import (
+    freeze_plan_for_execution,
     georef_session_dir,
     get_idempotency_entry,
     get_plan,
     mutate_plan_cas,
-    record_idempotency_entry,
 )
 from app.services.georeferencing.warp import (
     WarpCancelledError,
@@ -44,6 +44,11 @@ logger = logging.getLogger(__name__)
 TASK_TYPE = "georeference_warp"
 _RUNNERS: Dict[int, asyncio.Task] = {}
 _STAGE_BY_JOB: Dict[int, str] = {}
+
+# 提交临界区（幂等预检 → 建 durable 行 → 原子 freeze+attach+登记）进程内串行化。
+# asyncio 单线程下同步段本不交错，但任何后续往这段里加的 await 都会重新
+# 打开 check-act 竞态（issue #2192）—— 用一把显式锁把「检查入锁」固化。
+_EXECUTE_SUBMIT_LOCK = asyncio.Lock()
 
 
 def get_job_stage(job_id: int) -> str:
@@ -90,37 +95,44 @@ async def start_georeference_job(
     scoped_idem_key = (
         f"{plan.plan_id}:r{expected_revision}:{idempotency_key}" if idempotency_key else None
     )
+
+    def _live_reuse_response(prior: Dict[str, Any], *, background: bool) -> Dict[str, Any]:
+        prior_jid = str(prior.get("job_id") or "")
+        live_status = ""
+        if prior_jid.isdigit():
+            with SessionLocal() as db:
+                row = DurableJobStore.get_sync(db, int(prior_jid))
+                if row is not None:
+                    live_status = str(row.status)
+        if live_status in ("pending", "queued", "running", "cancelling", "completed"):
+            fresh_plan = get_plan(session_id, plan.plan_id)
+            prior_exec_id = str(prior.get("execution_id") or "")
+            artifact = None
+            if (
+                live_status == "completed"
+                and fresh_plan is not None
+                and fresh_plan.latest_artifact is not None
+                and fresh_plan.latest_artifact.execution_id == prior_exec_id
+            ):
+                artifact = fresh_plan.latest_artifact
+            return {
+                "plan_id": plan.plan_id,
+                "job_id": prior_jid,
+                "execution_id": prior_exec_id,
+                "status": live_status,
+                "background": bool(background),
+                "idempotent_reuse": True,
+                "artifact": artifact,
+            }
+        return {}
+
     retry_after_terminal = False
     if scoped_idem_key:
         prior = get_idempotency_entry(session_id, scoped_idem_key)
         if prior is not None:
-            prior_jid = str(prior.get("job_id") or "")
-            live_status = ""
-            if prior_jid.isdigit():
-                with SessionLocal() as db:
-                    row = DurableJobStore.get_sync(db, int(prior_jid))
-                    if row is not None:
-                        live_status = str(row.status)
-            if live_status in ("pending", "queued", "running", "cancelling", "completed"):
-                fresh_plan = get_plan(session_id, plan.plan_id)
-                prior_exec_id = str(prior.get("execution_id") or "")
-                artifact = None
-                if (
-                    live_status == "completed"
-                    and fresh_plan is not None
-                    and fresh_plan.latest_artifact is not None
-                    and fresh_plan.latest_artifact.execution_id == prior_exec_id
-                ):
-                    artifact = fresh_plan.latest_artifact
-                return {
-                    "plan_id": plan.plan_id,
-                    "job_id": prior_jid,
-                    "execution_id": prior_exec_id,
-                    "status": live_status,
-                    "background": bool(background),
-                    "idempotent_reuse": True,
-                    "artifact": artifact,
-                }
+            reuse = _live_reuse_response(prior, background=background)
+            if reuse:
+                return reuse
             retry_after_terminal = True
 
     if not plan.fit_metrics or plan.fit_metrics.status != "valid" or plan.fit_metrics.coefficients is None:
@@ -163,38 +175,27 @@ async def start_georeference_job(
         estimated_output_bytes=grid.estimated_bytes,
     )
 
-    # Atomically check expected_revision, ensure no conflicting active job, and store frozen snapshot.
-    def _freeze(cur: GeorefDraftPlan) -> GeorefDraftPlan:
-        if cur.active_job_id:
-            try:
-                with SessionLocal() as db:
-                    row = DurableJobStore.get_sync(db, int(cur.active_job_id))
-                    if row is not None and JobStatus(row.status) in (
-                        JobStatus.pending,
-                        JobStatus.queued,
-                        JobStatus.running,
-                        JobStatus.cancelling,
-                    ):
-                        raise GeorefDomainError(
-                            GeorefErrorCode.CAS_CONFLICT,
-                            f"Active job {cur.active_job_id} is still running on plan '{cur.plan_id}'. Cancel it first or wait.",
-                            status_code=409,
-                        )
-            except GeorefDomainError:
-                raise
-            except Exception:  # noqa: BLE001
-                pass
-        cur.frozen_snapshot = snapshot
-        cur.active_execution_id = execution_id
-        cur.updated_at = datetime.now(timezone.utc).isoformat()
-        return cur
-
-    mutate_plan_cas(
-        session_id,
-        plan.plan_id,
-        expected_revision=expected_revision,
-        mutator=_freeze,
-    )
+    def _ensure_no_live_active(cur: GeorefDraftPlan) -> None:
+        if not cur.active_job_id:
+            return
+        try:
+            with SessionLocal() as db:
+                row = DurableJobStore.get_sync(db, int(cur.active_job_id))
+                if row is not None and JobStatus(row.status) in (
+                    JobStatus.pending,
+                    JobStatus.queued,
+                    JobStatus.running,
+                    JobStatus.cancelling,
+                ):
+                    raise GeorefDomainError(
+                        GeorefErrorCode.CAS_CONFLICT,
+                        f"Active job {cur.active_job_id} is still running on plan '{cur.plan_id}'. Cancel it first or wait.",
+                        status_code=409,
+                    )
+        except GeorefDomainError:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
 
     idem_db_key = (
         f"georef:{session_id}:{plan.plan_id}:{execution_id}"
@@ -202,39 +203,75 @@ async def start_georeference_job(
         else f"georef:{session_id}:{scoped_idem_key}"
     )
 
-    job_id, job_status, reused = submit_async_job(
-        task_type=TASK_TYPE,
-        kind="georeference",
-        display_name=f"影像配准 · {plan.name[:32]}",
-        params={
-            "plan_id": plan.plan_id,
-            "execution_id": execution_id,
-            "target_crs": snapshot.target_crs,
-            "resampling": snapshot.resampling,
-            "out_width": snapshot.out_width,
-            "out_height": snapshot.out_height,
-        },
-        idempotency_key=idem_db_key,
-        owner_id=owner_id,
-        owner_token=owner_token,
-        org_id=org_id,
-        session_id=session_id,
-        project_id=project_id,
-    )
+    # 临界区：幂等预检 → 建 durable 行 → 单把 flock 原子 freeze+attach+登记。
+    async with _EXECUTE_SUBMIT_LOCK:
+        if scoped_idem_key:
+            # 锁内复检：持锁期间另一请求可能已完成登记（issue #2192 把
+            # 幂等检查移入锁内，杜绝锁外 check-then-act）。
+            prior = get_idempotency_entry(session_id, scoped_idem_key)
+            if prior is not None:
+                reuse = _live_reuse_response(prior, background=background)
+                if reuse:
+                    return reuse
+                retry_after_terminal = True
+                idem_db_key = f"georef:{session_id}:{plan.plan_id}:{execution_id}"
 
-    def _attach_jid(cur: GeorefDraftPlan) -> GeorefDraftPlan:
-        if cur.active_execution_id == execution_id:
-            cur.active_job_id = str(job_id)
-        return cur
-
-    mutate_plan_cas(session_id, plan.plan_id, expected_revision=None, mutator=_attach_jid)
-
-    if scoped_idem_key:
-        record_idempotency_entry(
-            session_id,
-            scoped_idem_key,
-            {"job_id": str(job_id), "execution_id": execution_id, "status": job_status},
+        job_id, job_status, reused = submit_async_job(
+            task_type=TASK_TYPE,
+            kind="georeference",
+            display_name=f"影像配准 · {plan.name[:32]}",
+            params={
+                "plan_id": plan.plan_id,
+                "execution_id": execution_id,
+                "target_crs": snapshot.target_crs,
+                "resampling": snapshot.resampling,
+                "out_width": snapshot.out_width,
+                "out_height": snapshot.out_height,
+            },
+            idempotency_key=idem_db_key,
+            owner_id=owner_id,
+            owner_token=owner_token,
+            org_id=org_id,
+            session_id=session_id,
+            project_id=project_id,
         )
+
+        if reused:
+            # 既有 durable 行由并发提交（另一进程跨窗口，或崩溃残留）创建。
+            # 绝不为它再启第二个 _run_guarded —— 返回既有 job 供轮询。
+            fresh_plan = get_plan(session_id, plan.plan_id)
+            return {
+                "plan_id": plan.plan_id,
+                "job_id": str(job_id),
+                "execution_id": str(getattr(fresh_plan, "active_execution_id", None) or ""),
+                "status": str(job_status),
+                "background": bool(background),
+                "idempotent_reuse": True,
+                "artifact": getattr(fresh_plan, "latest_artifact", None),
+            }
+
+        try:
+            freeze_plan_for_execution(
+                session_id,
+                plan.plan_id,
+                expected_revision=expected_revision,
+                snapshot=snapshot,
+                execution_id=execution_id,
+                job_id=str(job_id),
+                conflict_checker=_ensure_no_live_active,
+                idempotency_key=scoped_idem_key,
+                idempotency_payload={"job_id": str(job_id), "execution_id": execution_id, "status": job_status},
+            )
+        except Exception:
+            # freeze 失败（计划消失/版本冲突/存活 job 冲突）：刚建的 pending
+            # 行成了孤儿 —— 立即取消，绝不留给 recovery 误标失败或 later claim。
+            try:
+                with SessionLocal() as db:
+                    DurableJobStore.request_cancel_sync(db, job_id)
+                    db.commit()
+            except Exception:  # noqa: BLE001
+                logger.warning("[georef] orphan pending job %s cancel failed", job_id, exc_info=True)
+            raise
 
     async def _body(handle) -> Dict[str, Any]:
         def _is_cancelled() -> bool:

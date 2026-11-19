@@ -332,7 +332,12 @@
     "boxPlotAria": "箱线图 {title}",
     "heatMatrixAria": "热矩阵 {title}",
     "unsupportedType": "无法渲染图表：未支持的类型 \"{type}\"",
-    "noData": "无数据"
+    "noData": "无数据",
+    "figureAria": "{type} 图表 {title}",
+    "figurePoints": "共 {count} 个数据点。",
+    "figureTopValues": "前 {n} 项值：{detail}",
+    "rankingListAria": "排名列表 {title}",
+    "untitled": "未命名图表"
   },
   "code": {
     "copy": "复制",

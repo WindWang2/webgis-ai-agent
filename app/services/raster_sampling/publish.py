@@ -432,6 +432,19 @@ def load_rows_for_curves(parquet_path: str) -> List[Dict[str, Any]]:
     return table.to_pylist()
 
 
+def _part_sort_key(part: str) -> Tuple[str, int]:
+    """part_id 自然序键：``part-2`` < ``part-10``（字典序会排反）。
+
+    尾部数字段按整数比较；无数字尾缀的 id 回退为纯字典序键。
+    """
+    head = part
+    while head and head[-1].isdigit():
+        head = head[:-1]
+    if head != part:
+        return (head, int(part[len(head):]))
+    return (part, -1)
+
+
 def build_display_curves(
     rows: List[Dict[str, Any]], *, part_breaks: Dict[str, Any] = None
 ) -> Dict[str, Any]:
@@ -456,7 +469,8 @@ def build_display_curves(
     out: Dict[str, Any] = {"bands": [], "thinning": {}}
     for key in sorted(series):
         pts = series[key]
-        pts.sort(key=lambda p: (p["part"], p["x"] if p["x"] is not None else 0))
+        pts.sort(key=lambda p: (_part_sort_key(p["part"]),
+                                p["x"] if p["x"] is not None else 0))
         # part 断口：与前一站位 part 不同 → gap_before
         for i in range(1, len(pts)):
             pts[i]["gap_before"] = pts[i]["part"] != pts[i - 1]["part"]

@@ -274,6 +274,11 @@ async def batch_geocode_cn(
         return {"error": "地址列表长度必须在 1~100 之间"}
     if not _has_provider(provider):
         return {"error": f"未配置 {provider} API Key"}
+    # #2156 P3：max_concurrency 未钳制时 0 → Semaphore(0) 全部协程永久阻塞
+    # （工具挂死到注册表超时），负数直接 ValueError，超大值打穿 provider
+    # QPS/熔断。钳到 1..10 并显式拒绝非法值。
+    if not 1 <= int(max_concurrency) <= 10:
+        return {"error": "max_concurrency 必须在 1~10 之间"}
 
     semaphore = asyncio.Semaphore(max_concurrency)
 

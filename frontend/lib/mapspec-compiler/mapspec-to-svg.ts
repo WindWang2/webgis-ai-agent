@@ -693,20 +693,20 @@ function g40ResolveForFeature(
   const mainParams = (binding.params ?? {}) as Record<string, unknown>;
   if (!cb || typeof cb !== "object") return mainDoc ? { doc: mainDoc, params: mainParams } : null;
   const raw = props[String(cb.field ?? "")];
-  let mismatch = false;
+  // 类型不符的值不并入类别匹配（与 Python _symasset_for_feature 同语义）。
   let matchedRule: Record<string, any> | null = null;
   if (cb.key_type === "number") {
     if (typeof raw === "number" && Number.isFinite(raw)) {
       matchedRule = (cb.map ?? []).find((r: any) => typeof r.key === "number" && r.key === raw) ?? null;
-    } else if (raw !== undefined && raw !== null) mismatch = true;
+    }
   } else if (cb.key_type === "bool") {
     if (typeof raw === "boolean") {
       matchedRule = (cb.map ?? []).find((r: any) => typeof r.key === "boolean" && r.key === raw) ?? null;
-    } else if (raw !== undefined && raw !== null) mismatch = true;
+    }
   } else {
     if (typeof raw === "string") {
       matchedRule = (cb.map ?? []).find((r: any) => typeof r.key === "string" && r.key === raw) ?? null;
-    } else if (raw !== undefined && raw !== null) mismatch = true;
+    }
   }
   if (matchedRule) {
     const doc = docs.get(String(matchedRule.content_digest ?? ""));

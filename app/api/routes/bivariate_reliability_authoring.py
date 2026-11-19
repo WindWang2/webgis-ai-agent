@@ -11,6 +11,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.models.db_model import Conversation
+from app.schemas.bivariate_reliability_schema import (
+    BivariateExpressionReceipt,
+    BivariateInspectResponse,
+)
 from app.services.auth_history_bridge import require_owned_session
 from app.services.bivariate_reliability_authoring import (
     AuthoringError,
@@ -43,7 +47,7 @@ class CommitBody(PreviewBody):
     client_mutation_id: Optional[str] = Field(default=None, max_length=128)
 
 
-@router.get("/sessions/{session_id}/layers/{layer_id}/inspect")
+@router.get("/sessions/{session_id}/layers/{layer_id}/inspect", response_model=BivariateInspectResponse)
 async def inspect(
     session_id: str,
     layer_id: str,
@@ -58,7 +62,7 @@ async def inspect(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/preview")
+@router.post("/sessions/{session_id}/layers/{layer_id}/preview", response_model=BivariateExpressionReceipt)
 async def preview(
     session_id: str,
     layer_id: str,
@@ -75,7 +79,7 @@ async def preview(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/commit")
+@router.post("/sessions/{session_id}/layers/{layer_id}/commit", response_model=BivariateExpressionReceipt)
 async def commit(
     session_id: str,
     layer_id: str,

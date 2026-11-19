@@ -1606,17 +1606,24 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 raise InvalidQueryError("server spatial join requires known CRS on both datasets")
             p_gcol, g_gcol = quote_ident(pm.geom_col), quote_ident(gm.geom_col)
             g_srid = gm.srid or 4326
+            g_geom = f"g.{g_gcol}"
             p_geom = (
-                f"ST_Transform({p_gcol}, {g_srid})" if (pm.srid and pm.srid != g_srid) else p_gcol
+                f"ST_Transform(p.{p_gcol}, {g_srid})"
+                if (pm.srid and pm.srid != g_srid)
+                else f"p.{p_gcol}"
             )
-            clauses = [f"{op_sql}({p_geom}, {g_gcol})"]
+            clauses = [f"{op_sql}({p_geom}, {g_geom})"]
             params: List[Any] = []
             if polygon_filter is not None and polygon_filter.filter is not None:
-                sql_f, p = compile_predicate_sql(polygon_filter.filter, allowed_fields=gm.field_names)
+                sql_f, p = compile_predicate_sql(
+                    polygon_filter.filter, allowed_fields=gm.field_names, table_alias="g"
+                )
                 clauses.append(sql_f)
                 params.extend(p)
             if point_filter is not None and point_filter.filter is not None:
-                sql_f, p = compile_predicate_sql(point_filter.filter, allowed_fields=pm.field_names)
+                sql_f, p = compile_predicate_sql(
+                    point_filter.filter, allowed_fields=pm.field_names, table_alias="p"
+                )
                 clauses.append(sql_f)
                 params.extend(p)
             group_field = group_by_polygon_field or (gm.pk_col or gm.field_names[0])

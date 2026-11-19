@@ -54,7 +54,6 @@ def register_user_decision_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_user_decision",
-        capabilities=["workspace_state_inspection"],
         description=(
             "在同一运行中的任务里向用户提出一个有界问题并等待回答。适用于："
             "用户明确要求在产出前核对标题/来源说明（kind=confirm/input/editor，"

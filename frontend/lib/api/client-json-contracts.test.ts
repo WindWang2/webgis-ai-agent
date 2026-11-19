@@ -6,6 +6,7 @@ import * as raster from './raster-sampling';
 import * as proposals from './feature-proposals';
 import * as topology from './topology-workbench';
 import { createSelectionHandle } from './selection-handles';
+import { postContextPreview, putSourcePolicy } from './turnContext';
 
 vi.mock('@/lib/mapspec/session-cursor', () => ({
   getMapSpecSessionCursor: () => ({ sessionId: 'session', ownerToken: 'owner-test' }),
@@ -21,6 +22,8 @@ const ruleset = { name: 'rules', rules: [] };
 const run = { session_id: 'session', ruleset_id: 'rules', bindings: {} } as Parameters<typeof topology.submitTopologyRun>[0];
 const scope = { kind: 'ids' as const, ids: ['a', 'b'] };
 const input = { ref_id: 'layer', ops: [{ op: 'delete', id: 'a' }], submit: true };
+const policyBody = { mode: 'auto', preferred: ['s1'], excluded: [], expected_version: 3, project_id: 'p1' };
+const previewBody = { project_id: 'p1', message_draft: 'hi' };
 
 type WriteCase = [string, () => Promise<unknown>, unknown];
 const cases: WriteCase[] = [
@@ -46,6 +49,8 @@ const cases: WriteCase[] = [
   ['topology submit', () => topology.submitTopologyRun(run), run],
   ['topology exception', () => topology.acceptException('finding', 'accepted'), { reason: 'accepted' }],
   ['topology recheck', () => topology.recheckRun('run'), {}],
+  ['turn context policy put', () => putSourcePolicy('session', policyBody, 'owner-test'), policyBody],
+  ['turn context preview', () => postContextPreview('session', previewBody, 'owner-test'), previewBody],
 ];
 
 describe('caller JSON contracts (#2175)', () => {
@@ -57,7 +62,7 @@ describe('caller JSON contracts (#2175)', () => {
     await invoke();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(init.method).toBe(name === 'topology update' ? 'PUT' : 'POST');
+    expect(init.method).toBe(name === 'topology update' || name === 'turn context policy put' ? 'PUT' : 'POST');
     expect(new Headers(init.headers).get('Content-Type')).toBe('application/json');
     expect(JSON.parse(init.body as string)).toEqual(expected);
     expect(init.body).toBe(JSON.stringify(expected));

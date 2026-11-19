@@ -48,7 +48,7 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
         tags=("geoai", "modelops"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def geoai_prompt_artifact_inspect(
         artifact: dict,
@@ -123,7 +123,8 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
         tags=("geoai", "modelops"),
         latency_class="slow",
         memory_class="heavy",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
+        capabilities=["model_promptable_segmentation"],
     )
     async def geoai_run_promptable(
         model_id: str,
@@ -208,7 +209,8 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
         tags=("geoai", "modelops"),
         latency_class="slow",
         memory_class="heavy",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
+        capabilities=["model_promptable_segmentation"],
     )
     async def geoai_prompt_refine(
         model_id: str,
@@ -268,7 +270,8 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
         tags=("geoai", "modelops"),
         latency_class="slow",
         memory_class="medium",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
+        capabilities=["model_embedding"],
     )
     async def geoai_embed(
         model_id: str,
@@ -315,7 +318,7 @@ def register_geoai_tools(registry: ToolRegistry) -> None:
         tags=("geoai", "modelops"),
         latency_class="slow",
         memory_class="medium",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def geoai_semantic_zero_shot(
         classes: List[str],

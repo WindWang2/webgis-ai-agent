@@ -75,7 +75,9 @@ def _blob_filename(content_hash: str) -> str:
 #（调用方按名 rollback）。镜像 store.MAPSPEC_REV_RETENTION 的裁剪模式。
 MAPSPEC_CKPT_RETENTION = 20
 
-_AUTO_CKPT_RE = re.compile(r"^ckpt_\d+$")
+#: 自动 checkpoint 目录名形态；``ckpt_<ms>`` 或同毫秒冲突时的 ``ckpt_<ms>_<n>``
+#: （ uniqueness 后缀只追加数字，保留可排序性与安全字符集）。
+_AUTO_CKPT_RE = re.compile(r"^ckpt_\d+(?:_\d+)?$")
 
 
 def _prune_and_write_manifest_sync(session_dir: Path, manifest: Dict[str, Any]) -> None:
@@ -264,7 +266,20 @@ async def snapshot(
     2. 整个 checkpoint 的内容哈希命中 manifest 时，复用已有 checkpoint_id，
        不重写 mapspec/descriptor。
     """
-    ckpt_id = checkpoint_id or f"ckpt_{int(time.time() * 1000)}"
+    if checkpoint_id is None:
+        # 同毫秒两次 snapshot（提交新世代后随即记录撤销点等）会 mint 相同
+        # ckpt_<ms>：旧实现覆写同名目录，manifest 两个 content_hash 指向同
+        # 一目录，rollback 恢复到错误世代。自动 id 必须唯一 —— 目录已被
+        # 不同内容占用时追加序号（同内容早已在第 3 步整 checkpoint 去重
+        # 命中复用，走不到这里）。
+        base_id = f"ckpt_{int(time.time() * 1000)}"
+        ckpt_id = base_id
+        _seq = 1
+        while (_checkpoints_root(session_dir) / ckpt_id).exists():
+            ckpt_id = f"{base_id}_{_seq}"
+            _seq += 1
+    else:
+        ckpt_id = checkpoint_id
     _validate_checkpoint_id(ckpt_id)
 
     session_id_for_refs = session_dir.name

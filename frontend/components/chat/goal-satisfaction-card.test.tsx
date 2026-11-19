@@ -4,7 +4,7 @@
  * 契约：裁决徽标 + 逐需求行（id/verdict/缺失码/建议动作）；「计算完成、
  * 地图等待显示」与「任务失败」通过 verdict 徽标与缺失码可区分（A24 UI 面）。
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { GoalSatisfactionCard } from './goal-satisfaction-card';
 import type { GoalSatisfactionView } from '@/lib/types/goal-satisfaction';

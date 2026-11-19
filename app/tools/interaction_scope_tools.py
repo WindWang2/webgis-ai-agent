@@ -59,7 +59,6 @@ def register_interaction_scope_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_selection_scope",
-        capabilities=["workspace_state_inspection"],
         domains=["statistics"],
         tier=2,
         args_model=WebgisSelectionScopeArgs,

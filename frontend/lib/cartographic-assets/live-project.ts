@@ -22,7 +22,6 @@ import {
   normalizePointParams,
   normalizeTextureParams,
   pointImageId,
-  patternImageId,
 } from './contracts';
 import { ensureRegistered, RegistrationFailure } from './register';
 import type { Map as MapLibreMap } from 'maplibre-gl';
@@ -65,26 +64,21 @@ export function resolveBindingForFeature(
   if (!cb) return mainDoc ? { doc: mainDoc, params: mainParams } : null;
   const raw = (props ?? {})[cb.field];
   let matched: { content_digest: string; params?: Record<string, unknown> } | null = null;
-  let typeMismatch = false;
+  // 类型不符的值（如 "1" 对 number 键，S02）不并入类别匹配 —— matched 保持
+  // null，直接落 other_mode/mainDoc 回退。
   if (cb.key_type === 'number') {
     if (typeof raw === 'number' && Number.isFinite(raw)) {
       matched = (cb.map.find(
         (r) => typeof r.key === 'number' && !Number.isNaN(r.key)
           && r.key === raw) ?? null);
-    } else if (raw !== undefined && raw !== null) {
-      typeMismatch = true; // "1" 不并入 1（S02）
     }
   } else if (cb.key_type === 'bool') {
     if (typeof raw === 'boolean') {
       matched = (cb.map.find((r) => typeof r.key === 'boolean' && r.key === raw) ?? null);
-    } else if (raw !== undefined && raw !== null) {
-      typeMismatch = true;
     }
   } else {
     if (typeof raw === 'string') {
       matched = (cb.map.find((r) => typeof r.key === 'string' && r.key === raw) ?? null);
-    } else if (raw !== undefined && raw !== null) {
-      typeMismatch = true;
     }
   }
   if (matched) {

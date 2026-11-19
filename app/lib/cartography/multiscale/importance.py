@@ -188,7 +188,8 @@ def derive_importance_model(
         non_null = sum(dist.values())
         derivation.selected = ImportanceModel(
             field=user_field,
-            value_order=present,
+            # 与词表序同款 canonical 化：kept/匹配面是 List[str] 契约。
+            value_order=[str(v) for v in present],
             matched_vocabulary="user_override",
             matched_field_synonym="user",
             evidence="user_override",
@@ -228,11 +229,15 @@ def derive_importance_model(
         if _normalize_field(field).endswith(("adminlevel", "admin_level")) or (
             _normalize_field(synonym[0]) in ("admin_level", "adminlevel", "行政级别", "行政等级")
         ):
-            # 行政级别：数值升序（0 国家 … 5 村级）或全别名匹配
+            # 行政级别：数值升序（0 国家 … 5 村级）或全别名匹配。
+            # 词表序一律 canonical 化为字符串 —— FeatureSelectionPolicy
+            # 契约要求 List[str]（数值 0..5 原样填入会让 plan/档案构建
+            # 在契约校验处 ValidationError 崩链）；数值匹配在 generalize
+            # 侧按 int 规范化对齐。
             if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
                 if all(_admin_rank(v) is not None for v in values):
                     matched_vocab = "admin_level"
-                    ordered = sorted(values, key=lambda v: int(v))
+                    ordered = [str(int(v)) for v in sorted(values, key=lambda v: int(v))]
             if matched_vocab == "":
                 ranks = {v: _admin_rank(v) for v in values}
                 if all(r is not None for r in ranks.values()):

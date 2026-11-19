@@ -38,6 +38,7 @@ def register_session_model_tools(registry: ToolRegistry):
         side_effect="pure",
         network=False,
         deterministic=True,
+        result_size_policy="bounded",
     )
     async def model_catalog_tool(session_id: str = "") -> dict:
         from app.services.chat.model_runtime import session_catalog
@@ -68,6 +69,7 @@ def register_session_model_tools(registry: ToolRegistry):
         side_effect="pure",
         network=False,
         deterministic=True,
+        result_size_policy="bounded",
     )
     async def session_model_status_tool(session_id: str = "") -> dict:
         if not session_id:
@@ -132,6 +134,7 @@ def register_session_model_tools(registry: ToolRegistry):
         side_effect="pure",
         network=False,
         deterministic=True,
+        result_size_policy="bounded",
     )
     async def session_budget_status_tool(session_id: str = "") -> dict:
         if not session_id:

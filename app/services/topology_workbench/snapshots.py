@@ -424,13 +424,15 @@ async def resolve_role_snapshot(
         await _verify_project_access(
             binding["project_id"], actor_user_id, actor_owner_token
         )
-        from app.core.async_runner import run_sync
+        import asyncio as _aio
 
-        features, revision, crs, fingerprint, label = run_sync(
-            _resolve_project_artifact_sync(
-                binding["project_id"], binding["artifact_id"],
-                binding.get("revision_no"),
-            )
+        # issue #2199：两个被调者都是同步 def（sync SessionLocal），此前在
+        # 事件循环内调 run_sync 被无条件 RuntimeError（POST /runs 恒 500）。
+        # 重活（修订内容读回 + 全量要素物化 + canonical 指纹）卸载工作线程。
+        features, revision, crs, fingerprint, label = await _aio.to_thread(
+            _resolve_project_artifact_sync,
+            binding["project_id"], binding["artifact_id"],
+            binding.get("revision_no"),
         )
         total_input = len(features)
         scope_semantics = None
@@ -498,10 +500,10 @@ async def _verify_project_access(
             if project is None:
                 raise HTTPException(status_code=404, detail="Project not found")
 
-    from app.core.async_runner import run_sync
+    import asyncio as _aio
 
     try:
-        await run_sync(_check)
+        await _aio.to_thread(_check)
     except HTTPException as exc:
         raise SnapshotError(
             "source_unauthorized", "项目访问被拒绝（项目不存在或无权）",

@@ -1329,6 +1329,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="indicator_kriging_surface",
     side_effect="deterministic_compute",
+    output_semantic_type="geojson_fc",
+    result_size_policy="ref_offload",
     tags=('指示克里金', '概率面', '地统计', '插值'),
            description=(
                "指示克里金：逐阈值把数值转为指示变量（I=1[z≤t]），各自拟合指示变异函数后做"
@@ -1489,6 +1491,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="cokriging_surface",
     side_effect="deterministic_compute",
+    output_semantic_type="geojson_fc",
+    result_size_policy="ref_offload",
     tags=('协同克里金', '地统计', '插值', '协变量'),
            description=(
                "协同定位协同克里金（Markov Model 1 近似）：主/次两个点要素集联合建模，"
@@ -1617,6 +1621,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="nearest_neighbor_surface",
     side_effect="deterministic_compute",
+    output_semantic_type="geojson_fc",
+    result_size_policy="ref_offload",
     tags=('最近邻', '泰森多边形', '插值', '分段常值'),
            description=(
                "最近邻插值：每个 H3 单元取最近样本值，输出 Voronoi（泰森）分段常值场。"
@@ -1681,6 +1687,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="natural_neighbor_surface",
     side_effect="deterministic_compute",
+    output_semantic_type="geojson_fc",
+    result_size_policy="ref_offload",
     tags=('自然邻域', '插值', 'sibson', 'voronoi'),
            description=(
                "自然邻域插值（Sibson 坐标）：权重=插入点从各自然邻域 Voronoi 单元"
@@ -1747,6 +1755,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="block_kriging_surface",
     side_effect="deterministic_compute",
+    output_semantic_type="geojson_fc",
+    result_size_policy="ref_offload",
     tags=('克里金', '块克里金', '地统计', '插值'),
            description=(
                "块克里金：以块支撑（默认自动=H3 单元尺度）估计块均值与块方差，"
@@ -1872,6 +1882,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            ),
            tier=2, domains=["statistics"], cost="heavy",
            side_effect="deterministic_compute",
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
            tags=("插值", "sgs", "条件模拟", "不确定性", "表面"),
            param_descriptions={
                "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
@@ -2003,6 +2015,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            ),
            tier=2, domains=["statistics"], cost="heavy",
            side_effect="deterministic_compute",
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
            tags=("插值", "cokriging", "共克里金", "多变量", "表面"),
            param_descriptions={
                "geojson": "主变量点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
@@ -2117,6 +2131,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            ),
            tier=2, domains=["statistics"], cost="heavy",
            side_effect="deterministic_compute",
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
            tags=("插值", "kriging", "时空", "表面", "时序"),
            param_descriptions={
                "geojson": "点要素集 GeoJSON（Point 几何，≥12 点、跨多时相）",

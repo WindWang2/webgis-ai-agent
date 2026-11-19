@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import select
 import threading
 from typing import BinaryIO
 
@@ -21,15 +20,27 @@ class StderrCapture:
         try:
             fd = self._stream.fileno()
             os.set_blocking(fd, False)
+        except (OSError, ValueError):
+            return
+        selector = None
+        try:
+            if os.name != "nt":
+                # fd ≥ 1024 会让 select.select 抛 ValueError（fd_set 上限，
+                # 繁忙 API 进程常见）—— drain 线程静默退出 → stderr 管
+                # 道(64KiB)灌满 → worker 阻塞。epoll/poll 无此上限。
+                import selectors
+
+                selector = selectors.DefaultSelector()
+                selector.register(fd, selectors.EVENT_READ)
             while not self._stop.is_set():
-                if os.name != "nt":
-                    ready, _, _ = select.select([fd], [], [], 0.1)
-                    if not ready:
+                if selector is not None:
+                    if not selector.select(0.1):
                         continue
                 try:
                     chunk = os.read(fd, 8192)
                 except BlockingIOError:
-                    self._stop.wait(0.01)
+                    if selector is None:
+                        self._stop.wait(0.01)
                     continue
                 if not chunk:
                     return
@@ -40,6 +51,9 @@ class StderrCapture:
         except (OSError, ValueError):
             # A failed/closed pipe stops diagnostics, never RPC dispatch.
             return
+        finally:
+            if selector is not None:
+                selector.close()
 
     def snapshot(self, limit: int = 400) -> str:
         with self._lock:

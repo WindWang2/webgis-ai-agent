@@ -248,7 +248,10 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
         ? ` @${payload.field ?? ''}[${payload.index}]` : payload.field ? ` @${payload.field}` : '';
       toast(`${payload.code}${where}: ${payload.message}`, 'error');
     } finally {
-      if (epoch === epochRef.current) setBusy(false);
+      // 提交是独占的（按钮要求 !busy），因此收尾必须无条件释放 busy。
+      // 成功路径里 ``await reload()`` 会推进 epochRef，若按 epoch 相等才
+      // 释放，busy 将永久为真 —— 面板按钮此后全部禁用（R2 #2180，同 G41 修法）。
+      setBusy(false);
     }
   }, [ctx, buildPlan, layerId, reload, toast, t]);
 

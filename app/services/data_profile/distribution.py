@@ -70,11 +70,13 @@ def spatial_distribution(
     """features → H3 直方图 + 热点摘要（有界、纯函数）。"""
     if crs:
         from pyproj import CRS
+        from pyproj.exceptions import CRSError
 
         try:
             if not CRS.from_user_input(crs).is_geographic:
                 return {"available": False, "reason": "projected_crs"}
-        except ValueError:
+        # CRSError 是 RuntimeError 子类而非 ValueError（#2232）
+        except (ValueError, CRSError):
             return {"available": False, "reason": "invalid_crs"}
     try:
         import h3

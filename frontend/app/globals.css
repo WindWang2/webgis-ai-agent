@@ -715,13 +715,16 @@ textarea {
 }
 
 /* U-7（#889）：StoryMap 播放器当前消息指示 —— active 消息左侧指示条 +
-   其余非用户消息轻微降透明（此前 activeIndex 只驱动滚动，无视觉高亮）。 */
+   其余非用户消息轻微降透明（此前 activeIndex 只驱动滚动，无视觉高亮）。
+   #2158：非活跃态不再用整容器 opacity（文字对比被同步压低、暗色跌破
+   AA）——改由 prose body 文字色 token 表达，指示条保留。 */
 .story-message-active {
   border-left: 2px solid var(--agent-accent, #38bdf8);
   padding-left: 1rem;
 }
 .story-message-idle {
-  opacity: 0.75;
+  --tw-prose-body: var(--text-muted);
+  --tw-prose-bold: var(--text-secondary);
 }
 
 /* ADR-0196：联动看板活跃 widget 脉冲环（StoryDashboard 高亮态）。

@@ -119,6 +119,7 @@ def register_turn_context_tools(registry: ToolRegistry):
         side_effect="pure",
         network=False,
         deterministic=True,
+        result_size_policy="bounded",
     )
     async def turn_context_receipt_tool(
         session_id: str = "", turn_id: str = "", limit: int = 48

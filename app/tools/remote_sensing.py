@@ -263,7 +263,7 @@ def register_rs_tools(registry: ToolRegistry):
           tags=("光谱指数", "ndvi", "ndwi", "evi", "波段运算", "spectral_index"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def compute_spectral_index(
+    def compute_spectral_index(
         index_id: str,
         bands: Dict[str, List[List[float]]],
         scale_factors: Optional[Dict[str, float]] = None,
@@ -360,7 +360,7 @@ def register_rs_tools(registry: ToolRegistry):
           tags=("sar", "时序统计", "时间维聚合", "变异系数", "分位数", "均值合成"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def sar_temporal_stats(
+    def sar_temporal_stats(
         stack: List[List[List[float]]],
         product: str = "mean",
         nodata_value: Optional[float] = None,
@@ -463,7 +463,7 @@ def register_rs_tools(registry: ToolRegistry):
           tags=("sar", "极化比", "vv", "vh", "植被结构", "后向散射"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def sar_vh_ratio(vv: List[List[float]], vh: List[List[float]]) -> dict:
+    def sar_vh_ratio(vv: List[List[float]], vh: List[List[float]]) -> dict:
         from app.lib.geo_analysis.sar_temporal import vh_ratio as _vh_ratio
 
         vv_arr = np.asarray(vv, dtype=float)
@@ -539,7 +539,7 @@ def register_rs_tools(registry: ToolRegistry):
           tags=("sar", "斑点滤波", "lee", "frost", "去噪", "speckle"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def sar_speckle_filter(
+    def sar_speckle_filter(
         array: List[List[float]],
         filter: str = "lee",
         window: str = "3",
@@ -647,7 +647,7 @@ def register_rs_tools(registry: ToolRegistry):
           tags=("sar", "辐射定标", "sigma0", "beta0", "gamma0", "calibration"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def sar_calibrate(
+    def sar_calibrate(
         array: List[List[float]],
         calibration_constant: float,
         incidence_deg: Optional[float] = None,
@@ -787,7 +787,7 @@ def register_rs_tools(registry: ToolRegistry):
           tags=("纹理", "glcm", "haralick", "对比度", "sar", "texture"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def sar_glcm_texture(
+    def sar_glcm_texture(
         array: List[List[float]],
         window: str = "3",
         levels: str = "16",
@@ -884,7 +884,7 @@ def register_rs_tools(registry: ToolRegistry):
           tags=("pca", "主成分", "降维", "波段合成", "svd", "去相关"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def raster_pca(
+    def raster_pca(
         bands: List[List[List[float]]],
         standardize: bool = False,
         n_components: Optional[int] = None,
@@ -973,7 +973,7 @@ def register_rs_tools(registry: ToolRegistry):
           tags=("tasseled_cap", "缨帽变换", "亮度", "绿度", "湿度", "canopy"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def tasseled_cap(
+    def tasseled_cap(
         bands: Dict[str, List[List[float]]],
         sensor: str,
         reflectance_domain: str = "at_satellite",
@@ -1061,7 +1061,7 @@ def register_rs_tools(registry: ToolRegistry):
           tags=("sar", "时序合成", "median", "年度合成", "底图", "composite"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def sar_temporal_composite(
+    def sar_temporal_composite(
         stack: List[List[List[float]]],
         method: str = "mean",
         percentile: Optional[float] = None,
@@ -1160,6 +1160,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="mnf_transform",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('mnf', '降噪', '降维', '遥感'),
           description=(
               "最小噪声分数变换 MNF（Green 1988）：局部差分估计噪声协方差 → 噪声白化 → "
@@ -1178,7 +1179,7 @@ def register_rs_tools(registry: ToolRegistry):
               "standardize": "True=逐波段 z-score 后变换；默认 False",
               "nodata_value": "可选标量哨兵值（任一波段无效 → 整像元剔除）",
           })
-    async def mnf_transform(
+    def mnf_transform(
         bands: Dict[str, List[List[float]]],
         n_components: Optional[int] = None,
         noise_estimation: str = "local_diff",
@@ -1232,6 +1233,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="ica_transform",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('ica', '独立成分', '降维', '遥感'),
           description=(
               "FastICA 独立成分分析（Hyvärinen 1999）：random_state=42 固定、"
@@ -1249,7 +1251,7 @@ def register_rs_tools(registry: ToolRegistry):
               "tol": "收敛容差（默认 1e-4）",
               "nodata_value": "可选标量哨兵值",
           })
-    async def ica_transform(
+    def ica_transform(
         bands: Dict[str, List[List[float]]],
         n_components: Optional[int] = None,
         max_iter: int = 200,
@@ -1299,6 +1301,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="spectral_angle_mapper",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('光谱匹配', 'sam', '目标检测', '高光谱'),
           description=(
               "光谱角制图 SAM（Kruse 1993）：逐像元光谱角 θ=arccos(⟨x,e⟩/(‖x‖‖e‖))，"
@@ -1315,7 +1318,7 @@ def register_rs_tools(registry: ToolRegistry):
               "angle_unit": "radians(默认)/degrees",
               "nodata_value": "可选标量哨兵值",
           })
-    async def spectral_angle_mapper(
+    def spectral_angle_mapper(
         bands: Dict[str, List[List[float]]],
         endmembers: Dict[str, List[float]],
         angle_unit: str = "radians",
@@ -1364,6 +1367,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="spectral_information_divergence",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('光谱匹配', 'sid', '目标检测', '高光谱'),
           description=(
               "光谱信息散度 SID（Chang 2000 对称形式）：p=x/Σx、q=e/Σe，"
@@ -1380,7 +1384,7 @@ def register_rs_tools(registry: ToolRegistry):
               "divergence": "symmetric（实现约定，披露）",
               "nodata_value": "可选标量哨兵值",
           })
-    async def spectral_information_divergence(
+    def spectral_information_divergence(
         bands: Dict[str, List[List[float]]],
         endmembers: Dict[str, List[float]],
         divergence: str = "symmetric",
@@ -1429,6 +1433,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="matched_filter",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('目标检测', '匹配滤波', '高光谱', '遥感'),
           description=(
               "匹配滤波目标检测（Boardman 1995）：全局协方差白化下的目标投影，"
@@ -1445,7 +1450,7 @@ def register_rs_tools(registry: ToolRegistry):
               "center": "True=均值中心化（默认）；False=不中心化",
               "nodata_value": "可选标量哨兵值",
           })
-    async def matched_filter(
+    def matched_filter(
         bands: Dict[str, List[List[float]]],
         target_signal: List[float],
         center: bool = True,
@@ -1483,6 +1488,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="rx_anomaly",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('异常检测', 'rx', '高光谱', '遥感'),
           description=(
               "RX 全局异常检测（Reed & Xiaoli 1990）：逐像元 Mahalanobis 距离 δ(x)，"
@@ -1499,7 +1505,7 @@ def register_rs_tools(registry: ToolRegistry):
               "threshold_sigma": "阈值倍数 k（默认 3.0）",
               "nodata_value": "可选标量哨兵值",
           })
-    async def rx_anomaly(
+    def rx_anomaly(
         bands: Dict[str, List[List[float]]],
         regularize: float = 1e-6,
         threshold_sigma: float = 3.0,
@@ -1542,6 +1548,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="mad_change",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('变化检测', 'mad', '多时相', '遥感'),
           description=(
               "MAD / IR-MAD 变化检测（Nielsen 1998）：两期栈标准化 → SVD-CCA → "
@@ -1559,7 +1566,7 @@ def register_rs_tools(registry: ToolRegistry):
               "n_iterms": "IR-MAD 迭代次数（0=一次性 MAD，默认；≤10）",
               "nodata_value": "可选标量哨兵值（两期同值）",
           })
-    async def mad_change(
+    def mad_change(
         stack_a: List[List[List[float]]],
         stack_b: List[List[List[float]]],
         n_iterms: int = 0,
@@ -1610,6 +1617,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="linear_unmixing",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('光谱解混', '丰度反演', 'fcls', '高光谱'),
           description=(
               "线性光谱解混 FCLS（Heinz & Chang 2001）：逐像元 "
@@ -1630,7 +1638,7 @@ def register_rs_tools(registry: ToolRegistry):
               "sum_to_one_weight": "和一约束 δ 增广权重（默认 1e6，一般无需调整）",
               "nodata_value": "可选标量哨兵值（任一波段无效 → 整像元 NaN）",
           })
-    async def linear_unmixing(
+    def linear_unmixing(
         bands: Dict[str, List[List[float]]],
         endmembers: List[List[float]],
         sum_to_one_weight: float = 1e6,
@@ -1677,6 +1685,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="medoid_composite",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('时序合成', 'medoid', '多时相', '遥感'),
           description=(
               "medoid 时序合成（Flood 2013 多维中位数）：多时相波段栈逐像元选"
@@ -1693,7 +1702,7 @@ def register_rs_tools(registry: ToolRegistry):
               "stack": "4D 时相栈 [T][n_bands][H][W]（须已配准对齐）",
               "nodata_value": "可选标量哨兵值（切片任一波段等于该值 → 整条剔除）",
           })
-    async def medoid_composite(
+    def medoid_composite(
         stack: List[List[List[List[float]]]],
         nodata_value: Optional[float] = None,
     ) -> dict:
@@ -1741,6 +1750,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="segment_image",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('图像分割', 'kmeans', '无监督分类', '遥感'),
           description=(
               "图像分割（Lloyd 1982 k-means 基座）：标准化光谱特征 + 加权空间坐标特征，"
@@ -1758,7 +1768,7 @@ def register_rs_tools(registry: ToolRegistry):
               "compactness": "空间权重乘子 0-1（默认 0.5；非 SLIC 语义，披露）",
               "nodata_value": "可选标量哨兵值",
           })
-    async def segment_image(
+    def segment_image(
         bands: Dict[str, List[List[float]]],
         n_segments: int = 50,
         spatial_weight: float = 0.5,
@@ -1811,6 +1821,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="extract_endmembers_vca",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('端元提取', '高光谱', 'vca', '遥感'),
           description=(
               "端元提取 VCA（Nascimento & Dias 2005 简化确定性变体，EXPERIMENTAL）："
@@ -1826,7 +1837,7 @@ def register_rs_tools(registry: ToolRegistry):
               "seed": "随机投影种子（默认 42，固定可复现）",
               "nodata_value": "可选标量哨兵值",
           })
-    async def extract_endmembers_vca(
+    def extract_endmembers_vca(
         bands: Dict[str, List[List[float]]],
         n_endmembers: int,
         seed: int = 42,
@@ -1867,6 +1878,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="band_correlation_table",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('波段相关', '相关矩阵', '波段统计', '遥感'),
           description=(
               "波段×波段 Pearson 相关矩阵 + 逐对样本数（stats_table 形）。"
@@ -1881,7 +1893,7 @@ def register_rs_tools(registry: ToolRegistry):
               "standardize": "逐波段 z-score（r 不变——线性不变性披露）；默认 False",
               "nodata_value": "可选标量哨兵值",
           })
-    async def band_correlation_table(
+    def band_correlation_table(
         bands: Dict[str, List[List[float]]],
         standardize: bool = False,
         nodata_value: Optional[float] = None,
@@ -1918,6 +1930,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="temporal_features",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('时序特征', '物候', '谐波', '遥感'),
           description=(
               "逐像元时序特征（栈第 0 轴=时间序）：min/max/mean/std/amplitude/"
@@ -1932,7 +1945,7 @@ def register_rs_tools(registry: ToolRegistry):
               "features": "逗号分隔特征子集或 'all'（默认）",
               "nodata_value": "可选标量哨兵值",
           })
-    async def temporal_features(
+    def temporal_features(
         stack: List[List[List[float]]],
         features: str = "all",
         nodata_value: Optional[float] = None,
@@ -1987,6 +2000,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="robust_normalize",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('辐射归一化', '分位拉伸', '预处理', '遥感'),
           description=(
               "稳健波段/场景归一化：逐波段 2-98 分位（可调）拉伸到 [0,1]，"
@@ -2004,7 +2018,7 @@ def register_rs_tools(registry: ToolRegistry):
               "upper_percentile": "上分位（默认 98.0）",
               "nodata_value": "可选标量哨兵值",
           })
-    async def robust_normalize(
+    def robust_normalize(
         bands: Dict[str, List[List[float]]],
         method: str = "percentile_match",
         reference: Optional[List[List[List[float]]]] = None,
@@ -2062,6 +2076,7 @@ def register_rs_tools(registry: ToolRegistry):
     @tool(registry, name="cloud_qc_basic",
     anti_examples=("挑选下载无云影像（用 fetch_sentinel）",),
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('云检测', '质量掩膜', 'cloud_mask', '遥感'),
           description=(
               "云 QC 基础咨询掩膜（EXPERIMENTAL）：brightness=(red+nir)/2 亮度阈值"
@@ -2079,7 +2094,7 @@ def register_rs_tools(registry: ToolRegistry):
               "brightness_percentile": "亮度分位（50-100，默认 97.5）",
               "ndvi_max_abs": "可选 |NDVI| ≤ 阈值条件（云光谱平坦）",
           })
-    async def cloud_qc_basic(
+    def cloud_qc_basic(
         red: List[List[float]],
         nir: List[List[float]],
         brightness_thresholds: Optional[float] = None,
@@ -2115,7 +2130,9 @@ def register_rs_tools(registry: ToolRegistry):
                 )
         res = _qc(
             red_arr, nir_arr,
-            brightness_thresholds=params.get("brightness_threshold"),
+            # #2164：契约参数名是 brightness_thresholds（复数）；旧代码按单数
+            # 读回恒为 None，显式阈值被静默丢弃并错误记为 percentile 来源。
+            brightness_thresholds=params.get("brightness_thresholds"),
             brightness_percentile=params["brightness_percentile"],
             ndvi_max_abs=params.get("ndvi_max_abs"))
         mask = res["qc_mask"]
@@ -2134,7 +2151,7 @@ def register_rs_tools(registry: ToolRegistry):
             payload, "remote.cloud_qc", tool="cloud_qc_basic",
             parameters_applied={
                 "brightness_percentile": params["brightness_percentile"],
-                "explicit_threshold": params.get("brightness_threshold")
+                "explicit_threshold": params.get("brightness_thresholds")
                 is not None,
                 "ndvi_condition": res["ndvi_condition"],
                 "suspect_fraction": round(res["suspect_fraction"], 6),
@@ -2165,6 +2182,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="sar_remove_thermal_noise",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('sar', '热噪声', '定标', 'sentinel'),
           description=(
               "SAR 热噪声去除：I_dn = max(I − N, 0)（标量噪声底或逐像元噪声 "
@@ -2189,7 +2207,7 @@ def register_rs_tools(registry: ToolRegistry):
               "input_domain": "输入量纲显式声明：auto(默认)/linear/db"
                               "（db → 类型化拒绝，先 db_to_linear 换算）",
           })
-    async def sar_remove_thermal_noise(
+    def sar_remove_thermal_noise(
         intensity: List[List[float]],
         noise_floor: Optional[float] = None,
         noise_lut: Optional[List[List[float]]] = None,
@@ -2245,6 +2263,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="sar_log_scale",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('sar', '定标', 'db换算', '振幅强度'),
           description=(
               "SAR 量纲换算（纯代数恒等式）：amplitude_to_intensity（A²）、"
@@ -2261,7 +2280,7 @@ def register_rs_tools(registry: ToolRegistry):
                       "linear_to_db/db_to_linear",
               "nodata_value": "可选标量哨兵值",
           })
-    async def sar_log_scale_tool(
+    def sar_log_scale_tool(
         array: List[List[float]],
         mode: str,
         nodata_value: Optional[float] = None,
@@ -2297,6 +2316,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="sar_multitemporal_speckle",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('sar', '斑点滤波', '多时相', '去噪'),
           description=(
               "多时相 SAR 斑点抑制（强度域 MT-Lee）：时序均值与空域 Lee 估计的"
@@ -2313,7 +2333,7 @@ def register_rs_tools(registry: ToolRegistry):
               "enl": "等效视数（>0；缺省整图矩估计并披露）",
               "nodata_value": "可选标量哨兵值（逐切片 + 时序共同感知）",
           })
-    async def sar_multitemporal_speckle(
+    def sar_multitemporal_speckle(
         stack: List[List[List[float]]],
         window: str = "3",
         enl: Optional[float] = None,
@@ -2369,6 +2389,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="sar_coherence_estimate",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('sar', '相干性', 'insar', '遥感'),
           description=(
               "复数相干性估计（EXPERIMENTAL）：γ = |Σ a·b*|/√(Σ|a|²Σ|b|²)"
@@ -2389,7 +2410,7 @@ def register_rs_tools(registry: ToolRegistry):
               "window": "估计窗口：3/5(默认)/7",
               "nodata_value": "可选标量哨兵值（对两历元实部生效）",
           })
-    async def sar_coherence_estimate(
+    def sar_coherence_estimate(
         slc_a_real: List[List[float]],
         slc_a_imag: List[List[float]],
         slc_b_real: List[List[float]],
@@ -2439,6 +2460,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="sar_radiometric_terrain_correction",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('sar', '地形校正', 'rtc', '辐射定标'),
           description=(
               "SAR 地形辐射校正 RTC（Small 2011）：γ_flat = σ⁰·cosθi/cosθl；"
@@ -2461,7 +2483,7 @@ def register_rs_tools(registry: ToolRegistry):
               "nodata_value": "σ⁰ 哨兵值（可选）",
               "dem_nodata": "DEM 哨兵值（可选）",
           })
-    async def sar_radiometric_terrain_correction(
+    def sar_radiometric_terrain_correction(
         sigma0: List[List[float]],
         dem: List[List[float]],
         cell_size: float,
@@ -2533,6 +2555,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="sar_layover_shadow_mask",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('sar', '叠掩', '阴影', '地形几何'),
           description=(
               "SAR 叠掩/阴影几何分类：{0=normal,1=layover,2=shadow,3=nodata}"
@@ -2554,7 +2577,7 @@ def register_rs_tools(registry: ToolRegistry):
               "incidence_lut": "可选逐像元入射角 LUT（2D 数组，与 dem 同形）",
               "dem_nodata": "DEM 哨兵值（可选）",
           })
-    async def sar_layover_shadow_mask(
+    def sar_layover_shadow_mask(
         dem: List[List[float]],
         cell_size: float,
         radar_range_azimuth: float,
@@ -2611,6 +2634,7 @@ def register_rs_tools(registry: ToolRegistry):
 
     @tool(registry, name="sar_enl_map",
     side_effect="deterministic_compute",
+    result_size_policy="bounded",
     tags=('sar', 'enl', '斑点噪声', '质检'),
           description=(
               "滑窗 ENL（等效视数）估计图：ENL = mean²/var（nan 感知）+ "
@@ -2627,7 +2651,7 @@ def register_rs_tools(registry: ToolRegistry):
               "window": "滑窗：3/5/7(默认)",
               "nodata_value": "可选标量哨兵值",
           })
-    async def sar_enl_map(
+    def sar_enl_map(
         intensity: List[List[float]],
         window: str = "7",
         nodata_value: Optional[float] = None,

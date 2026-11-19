@@ -56,6 +56,7 @@ def register_temporal_media_tools(registry: ToolRegistry) -> None:
         registry,
         name="webgis_temporal_media_capabilities",
         domains=["cartography", "temporal", "delivery"],
+        result_size_policy="bounded",
         tier=2,
         args_model=C.CapabilitiesArgs,
         description=(
@@ -76,6 +77,7 @@ def register_temporal_media_tools(registry: ToolRegistry) -> None:
         registry,
         name="webgis_temporal_media_plan",
         domains=["cartography", "temporal", "delivery"],
+        result_size_policy="bounded",
         tier=2,
         args_model=C.MediaPlanArgs,
         description=(
@@ -124,6 +126,7 @@ def register_temporal_media_tools(registry: ToolRegistry) -> None:
         registry,
         name="webgis_temporal_media_status",
         domains=["cartography", "temporal", "delivery"],
+        result_size_policy="bounded",
         tier=2,
         args_model=C.JobRefArgs,
         description=(
@@ -144,6 +147,7 @@ def register_temporal_media_tools(registry: ToolRegistry) -> None:
         registry,
         name="webgis_temporal_media_cancel",
         domains=["cartography", "temporal", "delivery"],
+        result_size_policy="bounded",
         tier=2,
         args_model=C.JobRefArgs,
         description=(

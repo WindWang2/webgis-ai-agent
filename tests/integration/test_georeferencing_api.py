@@ -314,7 +314,12 @@ async def test_api_lifecycle_tenant_isolation_cas_tamper_download_and_partial_bi
             assert ",-100.5," in formula_csv.text
 
             # R30: Tampered source file fails closed before warp/execution
-            norm_path = Path(up_body["source"]["normalized_path"])
+            # (#2194 后响应不再回显服务器路径 —— 篡改探针取内部存储记录的真实路径)
+            from app.services.georeferencing.store import get_source as _get_source
+
+            internal_src = _get_source(sid_a, source_id)
+            assert internal_src is not None and internal_src.normalized_path
+            norm_path = Path(internal_src.normalized_path)
             orig_bytes = norm_path.read_bytes()
             norm_path.write_bytes(b"TAMPERED_RASTER_BYTES")
             tampered_exec = await client.post(
@@ -464,3 +469,246 @@ async def test_api_lifecycle_tenant_isolation_cas_tamper_download_and_partial_bi
     finally:
         purge_session_georef_state(sid_a)
         purge_session_georef_state(sid_b)
+
+
+# ─── issue #2194：HTTP 响应不得回显服务器文件系统路径 ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_api_2194_responses_strip_server_paths(isolated_storage):
+    """upload/plan/preview/status/execute/bind 全链响应剥离 normalized_path /
+    preview_path / file_path（内部存储与下载仍依赖原路径，正例照常工作）。"""
+    sid, tok = await _create_owned_session("g48-api-sess-paths")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        headers = {"X-Session-Token": tok}
+
+        up = await client.post(
+            f"/api/v1/georeferencing/sources/upload?session_id={sid}",
+            headers=headers,
+            files={"file": ("scan.png", _sample_png(64, 48), "image/png")},
+        )
+        assert up.status_code == 200, up.text
+        up_body = up.json()
+        assert up_body["source"]["normalized_path"] == ""
+        source_id = up_body["source"]["source_id"]
+
+        # 内部记录仍带真实路径（正例：下载/读图链路不受影响）
+        from app.services.georeferencing.store import get_source
+
+        internal = get_source(sid, source_id)
+        assert internal is not None and internal.normalized_path
+
+        cp = await client.post(
+            f"/api/v1/georeferencing/plans?session_id={sid}",
+            headers=headers,
+            json={"session_id": sid, "source_id": source_id, "name": "paths",
+                  "target_crs": "EPSG:3857"},
+        )
+        assert cp.status_code == 200, cp.text
+        plan_id = cp.json()["plan"]["plan_id"]
+
+        from pyproj import Transformer
+
+        to_4326 = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+        gcps = []
+        for idx, (px, py) in enumerate([(4.0, 4.0), (60.0, 4.0), (60.0, 44.0), (4.0, 44.0)], start=1):
+            mx = 13370000.0 + 2.0 * px
+            my = 3530000.0 - 2.0 * py
+            lon, lat = to_4326.transform(mx, my)
+            gcps.append({"gcp_id": f"p{idx}", "px": px, "py": py,
+                         "wgs84_lon": lon, "wgs84_lat": lat, "role": "fit", "enabled": True})
+        draft = await client.put(
+            f"/api/v1/georeferencing/plans/{plan_id}/draft?session_id={sid}",
+            headers=headers,
+            json={"expected_revision": 1, "gcps": gcps},
+        )
+        assert draft.status_code == 200, draft.text
+
+        prev = await client.post(
+            f"/api/v1/georeferencing/plans/{plan_id}/preview?session_id={sid}",
+            headers=headers,
+            json={"expected_revision": 2},
+        )
+        assert prev.status_code == 200, prev.text
+        prev_plan = prev.json()["plan"]
+        assert "preview_path" not in prev_plan or prev_plan["preview_path"] in (None, "")
+
+        # 内部计划记录仍携带 preview_path（正例：preview/image 端点照常 200）
+        from app.services.georeferencing.store import get_plan
+
+        internal_plan = get_plan(sid, plan_id)
+        assert internal_plan is not None and internal_plan.preview_path
+        prev_img = await client.get(prev.json()["preview_image_url"], headers=headers)
+        assert prev_img.status_code == 200
+
+        exe = await client.post(
+            f"/api/v1/georeferencing/plans/{plan_id}/execute?session_id={sid}",
+            headers=headers,
+            json={"expected_revision": 2, "background": False},
+        )
+        assert exe.status_code == 200, exe.text
+        exe_body = exe.json()
+        assert exe_body["status"] == "completed"
+        assert exe_body["artifact"]["file_path"] == ""
+
+        status = await client.get(
+            f"/api/v1/georeferencing/plans/{plan_id}/status?session_id={sid}",
+            headers=headers,
+        )
+        assert status.status_code == 200, status.text
+        st_body = status.json()
+        assert st_body["plan"]["preview_path"] in (None, "")
+        assert st_body["artifact"]["file_path"] == ""
+        assert st_body["plan"]["latest_artifact"]["file_path"] == ""
+
+        # 内部 artifact 记录仍带真实路径（正例：下载端点照常 200 + sha 头）
+        internal_after = get_plan(sid, plan_id)
+        assert internal_after is not None
+        assert internal_after.latest_artifact is not None
+        assert internal_after.latest_artifact.file_path
+        artifact_id = st_body["artifact"]["artifact_id"]
+        dl = await client.get(
+            f"/api/v1/georeferencing/artifacts/{artifact_id}/download?session_id={sid}",
+            headers=headers,
+        )
+        assert dl.status_code == 200
+        assert dl.headers.get("X-Georef-Sha256")
+        assert "file-path" not in "-".join(k.lower() for k in dl.headers.keys())
+
+        bind = await client.post(
+            f"/api/v1/georeferencing/plans/{plan_id}/bind-layer?session_id={sid}",
+            headers=headers,
+            json={"expected_mapspec_revision": 0},
+        )
+        assert bind.status_code == 200, bind.text
+        bind_body = bind.json()
+        if bind_body.get("artifact"):
+            assert bind_body["artifact"]["file_path"] == ""
+
+
+# ─── issue #2193：georeferencing 全链 sync-in-async 卸载 ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_2193_upload_ingest_runs_off_event_loop_thread(isolated_storage, monkeypatch):
+    """ingest_source_bytes 的大图解码/编码/SHA256 必须在工作线程执行，
+    绝不占用事件循环线程（issue #2193）。"""
+    import threading
+
+    import app.services.georeferencing.intake as intake_mod
+
+    loop_tid = threading.get_ident()
+    worker_tid = {"tid": None}
+    real_sync = intake_mod._ingest_source_bytes_sync
+
+    def _spy(**kwargs):
+        worker_tid["tid"] = threading.get_ident()
+        return real_sync(**kwargs)
+
+    monkeypatch.setattr(intake_mod, "_ingest_source_bytes_sync", _spy)
+
+    from app.services.georeferencing.service import upload_source
+
+    big = _sample_png(512, 512)
+    src = await upload_source(session_id="g48-2193-thread", filename="big.png", raw_bytes=big)
+    assert src.source_id
+    assert worker_tid["tid"] is not None and worker_tid["tid"] != loop_tid
+    purge_session_georef_state("g48-2193-thread")
+
+
+@pytest.mark.asyncio
+async def test_2193_preview_status_download_off_event_loop(isolated_storage, monkeypatch):
+    """preview 的 warp+PNG、status 的 DB 读、download 的 SHA256 校验都在
+    工作线程执行（issue #2193；经真实 HTTP 路由面验证）。"""
+    import threading
+
+    import app.services.georeferencing.service as svc
+
+    loop_tid = threading.get_ident()
+    tids = {"preview": set(), "status": set(), "download": set()}
+    real_preview, real_status = svc.generate_preview, svc.get_status
+    real_download = svc.resolve_authorized_artifact_download
+
+    def _preview_spy(**kwargs):
+        tids["preview"].add(threading.get_ident())
+        return real_preview(**kwargs)
+
+    def _status_spy(*args, **kwargs):
+        tids["status"].add(threading.get_ident())
+        return real_status(*args, **kwargs)
+
+    def _download_spy(*args, **kwargs):
+        tids["download"].add(threading.get_ident())
+        return real_download(*args, **kwargs)
+
+    monkeypatch.setattr(svc, "generate_preview", _preview_spy)
+    monkeypatch.setattr(svc, "get_status", _status_spy)
+    monkeypatch.setattr(svc, "resolve_authorized_artifact_download", _download_spy)
+
+    sid, tok = await _create_owned_session("g48-api-sess-threads")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        headers = {"X-Session-Token": tok}
+        up = await client.post(
+            f"/api/v1/georeferencing/sources/upload?session_id={sid}",
+            headers=headers,
+            files={"file": ("scan.png", _sample_png(64, 48), "image/png")},
+        )
+        assert up.status_code == 200, up.text
+        source_id = up.json()["source"]["source_id"]
+        cp = await client.post(
+            f"/api/v1/georeferencing/plans?session_id={sid}",
+            headers=headers,
+            json={"session_id": sid, "source_id": source_id, "name": "threads"},
+        )
+        plan_id = cp.json()["plan"]["plan_id"]
+        from pyproj import Transformer
+
+        to_4326 = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+        gcps = []
+        for idx, (px, py) in enumerate([(4.0, 4.0), (60.0, 4.0), (60.0, 44.0), (4.0, 44.0)], start=1):
+            mx = 13370000.0 + 2.0 * px
+            my = 3530000.0 - 2.0 * py
+            lon, lat = to_4326.transform(mx, my)
+            gcps.append({"gcp_id": f"p{idx}", "px": px, "py": py,
+                         "wgs84_lon": lon, "wgs84_lat": lat, "role": "fit", "enabled": True})
+        draft = await client.put(
+            f"/api/v1/georeferencing/plans/{plan_id}/draft?session_id={sid}",
+            headers=headers,
+            json={"expected_revision": 1, "gcps": gcps},
+        )
+        assert draft.status_code == 200, draft.text
+
+        prev = await client.post(
+            f"/api/v1/georeferencing/plans/{plan_id}/preview?session_id={sid}",
+            headers=headers,
+            json={"expected_revision": 2},
+        )
+        assert prev.status_code == 200, prev.text
+
+        exe = await client.post(
+            f"/api/v1/georeferencing/plans/{plan_id}/execute?session_id={sid}",
+            headers=headers,
+            json={"expected_revision": 2, "background": False},
+        )
+        assert exe.status_code == 200, exe.text
+        artifact_id = exe.json()["artifact"]["artifact_id"]
+
+        st = await client.get(
+            f"/api/v1/georeferencing/plans/{plan_id}/status?session_id={sid}",
+            headers=headers,
+        )
+        assert st.status_code == 200, st.text
+
+        dl = await client.get(
+            f"/api/v1/georeferencing/artifacts/{artifact_id}/download?session_id={sid}",
+            headers=headers,
+        )
+        assert dl.status_code == 200
+
+    for name, seen in tids.items():
+        assert seen, f"{name} never invoked"
+        assert seen != {loop_tid}, f"{name} ran on the event loop thread"

@@ -9,12 +9,16 @@ import { useT } from '@/lib/i18n/useT';
  *
  * 原生 input[type=range] 承载键盘语义（←/→ 步进、Home/End 跳头尾），
  * aria-valuetext 报告章节标题；章节点位渲染为可点击刻度。
+ *
+ * #2158/#2162：disabled（导出进行中互斥）下发到全部控件；按钮与 range
+ * 应用 .touch-target —— 粗指针设备最小命中区 44×44（此前播放键约 21px）。
  */
 export function ChapterScrubber({
   total,
   activeIndex,
   titles,
   playing,
+  disabled = false,
   onSeek,
   onTogglePlay,
   onPrev,
@@ -24,6 +28,8 @@ export function ChapterScrubber({
   activeIndex: number;
   titles: string[];
   playing: boolean;
+  /** 导出进行中：播放/seek 与导出互斥抢 activeId，统一禁用（#2158）。 */
+  disabled?: boolean;
   onSeek: (index: number) => void;
   onTogglePlay: () => void;
   onPrev: () => void;
@@ -37,8 +43,8 @@ export function ChapterScrubber({
         type="button"
         aria-label={t('prevChapterAria')}
         onClick={onPrev}
-        disabled={total === 0 || safeIndex === 0}
-        className="rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink disabled:opacity-40"
+        disabled={disabled || total === 0 || safeIndex === 0}
+        className="touch-target rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink disabled:opacity-40"
       >
         <SkipBack size={13} aria-hidden />
       </button>
@@ -47,8 +53,8 @@ export function ChapterScrubber({
         aria-label={playing ? t('pauseAria') : t('playAria')}
         title={playing ? t('pauseTitle') : t('playTitle')}
         onClick={onTogglePlay}
-        disabled={total === 0}
-        className="rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
+        disabled={disabled || total === 0}
+        className="touch-target rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
       >
         {playing ? <Pause size={13} aria-hidden /> : <Play size={13} aria-hidden />}
       </button>
@@ -56,8 +62,8 @@ export function ChapterScrubber({
         type="button"
         aria-label={t('nextChapterAria')}
         onClick={onNext}
-        disabled={total === 0 || safeIndex >= total - 1}
-        className="rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink disabled:opacity-40"
+        disabled={disabled || total === 0 || safeIndex >= total - 1}
+        className="touch-target rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink disabled:opacity-40"
       >
         <SkipForward size={13} aria-hidden />
       </button>
@@ -70,7 +76,8 @@ export function ChapterScrubber({
         onChange={(e) => onSeek(Number(e.target.value))}
         aria-label={t('chapterProgressAria')}
         aria-valuetext={titles[safeIndex] ?? undefined}
-        className="h-1 w-full accent-[var(--agent-accent)]"
+        disabled={disabled || total === 0}
+        className="touch-target h-4 w-full accent-[var(--agent-accent)] disabled:opacity-40"
         data-testid="story-scrubber-range"
       />
       <span className="w-14 shrink-0 text-right font-mono text-caption text-ink-muted" aria-hidden>

@@ -87,7 +87,14 @@ export function DataDeliveryDialog({
   const [submitting, setSubmitting] = useState(false);
   const [job, setJob] = useState<DeliveryJobView | null>(null);
   const [history, setHistory] = useState<DeliveryJobView[]>([]);
-  const [epoch, setEpoch] = useState(0);
+  /**
+   * 预览代次守卫用 ref 而非 state（R2 #2187）：旧实现闭包捕获本次渲染的
+   * state epoch，`myEpoch !== epoch + 1` 恒真/恒假失去守卫意义；ref 在闭包
+   * 外可读最新值，过期响应才能真正被丢弃。
+   */
+  const epochRef = useRef(0);
+  /** 提交后轮询的中止器：关闭/卸载/换源即 abort，pollJob 循环随之退出。 */
+  const pollAbortRef = useRef<AbortController | null>(null);
 
   const spec: DeliverySpec | null = source
     ? {
@@ -106,29 +113,31 @@ export function DataDeliveryDialog({
 
   const runPreview = useCallback(async () => {
     if (!spec) return;
-    const myEpoch = epoch + 1;
-    setEpoch(myEpoch);
+    const myEpoch = ++epochRef.current;
     setPreviewing(true);
     setPreview(null);
     try {
       const p = await previewDataDelivery(spec);
-      if (myEpoch !== epoch + 1) return; // 过期响应不覆盖
+      if (myEpoch !== epochRef.current) return; // 过期响应不覆盖
       setPreview(p);
     } catch (e) {
+      if (myEpoch !== epochRef.current) return;
       const msg = e instanceof Error ? e.message : String(e);
       addToast(`${t('previewFailed')}: ${msg}`, 'error');
     } finally {
-      if (myEpoch === epoch + 1) setPreviewing(false);
+      if (myEpoch === epochRef.current) setPreviewing(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec?.source?.ref, spec?.source?.artifact_id, format, filename,
       targetCrs, allowUnknownCrs, precision, grouping, spreadsheetSafe]);
 
   const pollJob = useCallback(
-    async (jobId: string) => {
+    async (jobId: string, signal: AbortSignal) => {
       for (let i = 0; i < 600; i += 1) {
+        if (signal.aborted) return null;
         try {
           const view = await getDeliveryJob(jobId);
+          if (signal.aborted) return null;
           setJob(view);
           if (TERMINAL.has(view.status)) return view;
         } catch {
@@ -148,7 +157,12 @@ export function DataDeliveryDialog({
       const res = await submitDataDelivery(
         spec, preview.required_acknowledgments, projectId ?? undefined);
       addToast(res.message || t('submitted'));
-      const view = await pollJob(res.job_id);
+      // R2 #2187：新任务换新的中止器；旧轮询（若还挂着）立即作废。
+      pollAbortRef.current?.abort();
+      const controller = new AbortController();
+      pollAbortRef.current = controller;
+      const view = await pollJob(res.job_id, controller.signal);
+      if (controller.signal.aborted) return;
       if (view?.status === 'completed') {
         addToast(t('done'), 'success');
       }
@@ -160,6 +174,19 @@ export function DataDeliveryDialog({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec, preview, projectId]);
+
+  // R2 #2187：对话框关闭/卸载/换源时中止在飞轮询（原循环最长 12 分钟无人收）。
+  useEffect(() => {
+    if (!open || !source) {
+      pollAbortRef.current?.abort();
+      pollAbortRef.current = null;
+    }
+  }, [open, source]);
+
+  useEffect(() => () => {
+    pollAbortRef.current?.abort();
+    pollAbortRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (!open || !source) return;
@@ -224,7 +251,7 @@ export function DataDeliveryDialog({
             <select
               value={format}
               onChange={(e) => setFormat(e.target.value as DeliveryFormat)}
-              className="w-full rounded-sm border border-edge-subtle bg-surface px-2 py-1.5 text-body text-ink"
+              className="w-full rounded-sm border border-edge-subtle bg-surface-raised px-2 py-1.5 text-body text-ink"
             >
               {FORMAT_OPTIONS.map((f) => (
                 <option key={f.value} value={f.value}>
@@ -239,7 +266,7 @@ export function DataDeliveryDialog({
               value={filename}
               onChange={(e) => setFilename(e.target.value)}
               maxLength={100}
-              className="w-full rounded-sm border border-edge-subtle bg-surface px-2 py-1.5 text-body text-ink"
+              className="w-full rounded-sm border border-edge-subtle bg-surface-raised px-2 py-1.5 text-body text-ink"
             />
           </label>
           <label className="space-y-1 text-meta text-ink-secondary">
@@ -248,7 +275,7 @@ export function DataDeliveryDialog({
               value={targetCrs}
               placeholder={t('crsPlaceholder')}
               onChange={(e) => setTargetCrs(e.target.value)}
-              className="w-full rounded-sm border border-edge-subtle bg-surface px-2 py-1.5 text-body text-ink"
+              className="w-full rounded-sm border border-edge-subtle bg-surface-raised px-2 py-1.5 text-body text-ink"
             />
           </label>
           {format === 'geojson' || format === 'csv' ? (
@@ -259,7 +286,7 @@ export function DataDeliveryDialog({
                 placeholder={t('precisionHint')}
                 onChange={(e) => setPrecision(e.target.value)}
                 inputMode="numeric"
-                className="w-full rounded-sm border border-edge-subtle bg-surface px-2 py-1.5 text-body text-ink"
+                className="w-full rounded-sm border border-edge-subtle bg-surface-raised px-2 py-1.5 text-body text-ink"
               />
             </label>
           ) : null}
@@ -269,7 +296,7 @@ export function DataDeliveryDialog({
               <select
                 value={grouping}
                 onChange={(e) => setGrouping(e.target.value as 'single' | 'by_type')}
-                className="w-full rounded-sm border border-edge-subtle bg-surface px-2 py-1.5 text-body text-ink"
+                className="w-full rounded-sm border border-edge-subtle bg-surface-raised px-2 py-1.5 text-body text-ink"
               >
                 <option value="by_type">{t('groupByType')}</option>
                 <option value="single">{t('groupSingle')}</option>
@@ -310,7 +337,7 @@ export function DataDeliveryDialog({
               type="button"
               onClick={submit}
               disabled={submitting || (job != null && !TERMINAL.has(job.status))}
-              className="rounded-sm px-3 py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="rounded-sm bg-status-accent px-3 py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {submitting ? t('submitting') : t('submit')}
             </button>
@@ -411,7 +438,7 @@ export function DataDeliveryDialog({
                       filename: receipt?.filename,
                     }).catch(() => addToast(t('downloadFailed'), 'error'));
                   }}
-                  className="rounded-sm px-3 py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90"
+                  className="rounded-sm bg-status-accent px-3 py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90"
                 >
                   {t('download')}
                 </button>

@@ -881,16 +881,17 @@ export const layerCommands: Record<string, CommandEntry> = {
       }
       if (position === 'before' && !before_id) return { status: 'failed', error: 'invalid_params' };
 
-      // V3 round-2 FIX-B: resolve the target across BOTH id schemes (custom-…
-      // stack and store `…__…` sublayers). The old custom-only matcher never saw
-      // a MapSpec layer (`${id}__${sub}`) and failed target_not_found for every
-      // current layer.
-      const matched = matchMapLayers(map, layer_id);
-      const storeHasLayer = hudLayers(getHudState).some((l) => l.id === layer_id);
+      // H6/#2144：与 layer_style_update/remove_layer 同口径 —— 先经
+      // resolveLayerTargetsByRef 展开（ref:geojson-* 等 ref 目标恢复会话图层），
+      // 再对每个展开目标匹配。此前 lock 检查用展开后 targets、匹配却用原始
+      // layer_id：agent 以 ref 指代时恒 target_not_found，口径不一致。
+      const effectiveId = targets[0] ?? layer_id;
+      const matched = Array.from(new Set(targets.flatMap((t) => matchMapLayers(map, t))));
+      const storeHasLayer = targets.some((t) => hudLayers(getHudState).some((l) => l.id === t));
       if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
 
-      const customMatched = matched.filter((id) => isCustomSchemeMatch(layer_id, id));
-      const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
+      const customMatched = matched.filter((id) => isCustomSchemeMatch(effectiveId, id));
+      const storeMatched = matched.filter((id) => isStoreSchemeMatch(effectiveId, id));
 
       // 1. custom stack → legacy algorithm: move the group on the map within the
       //    custom stack (the runtime does not own these layers).
@@ -940,7 +941,8 @@ export const layerCommands: Record<string, CommandEntry> = {
             }
           }
         } else if (position === 'before' && before_id) {
-          const targetGroup = customIds.find((id: string) => id === `custom-${before_id}` || id.startsWith(`custom-${before_id}-`));
+          // H5/#2144 同根因：'-' 前缀会把 'custom-poi-2' 当成 'poi' 的锚点组。
+          const targetGroup = customIds.find((id: string) => id === `custom-${before_id}` || id.startsWith(`custom-${before_id}__`));
           // 锚点组不存在时保持原位（旧代码落 undefined → 整个组被甩到最顶层）。
           beforeAnchor = targetGroup ?? null;
         }
@@ -975,7 +977,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       let storeReordered = false;
       if (storeHasLayer) {
         const storeOrder = [...hudLayers(getHudState)];
-        const fromIdx = storeOrder.findIndex((l) => l.id === layer_id);
+        const fromIdx = storeOrder.findIndex((l) => l.id === effectiveId);
         if (fromIdx !== -1) {
           const [moved] = storeOrder.splice(fromIdx, 1);
           let toIdx: number;
@@ -1057,18 +1059,15 @@ export const layerCommands: Record<string, CommandEntry> = {
       // V3: missing target → explicit failed result (was a silent return).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
-      // V3 round-2 FIX-B: resolve the target across BOTH id schemes (custom-…
-      // stack and store `…__…` sublayers) before declaring a miss. The old code
-      // called setFilter on the bare id, which does not exist on a MapSpec map
-      // (`${id}__fill/__line/__point` are the real layer ids); MapLibre emits an
-      // ErrorEvent instead of throwing, so run() returned void and the dispatcher
-      // acked `succeeded` for a filter that never landed.
-      const matched = matchMapLayers(map, layer_id);
-      const storeHasLayer = hudLayers(getHudState).some((l) => l.id === layer_id);
+      // H6/#2144：与 lock 检查同口径 —— 先 resolveLayerTargetsByRef 展开再
+      // 逐目标匹配（ref 指代的恢复会话图层此前恒 target_not_found）。
+      const effectiveId = targets[0] ?? layer_id;
+      const matched = Array.from(new Set(targets.flatMap((t) => matchMapLayers(map, t))));
+      const storeHasLayer = targets.some((t) => hudLayers(getHudState).some((l) => l.id === t));
       if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
 
       const parsed = parseFilter(filter);
-      const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
+      const storeMatched = matched.filter((id) => isStoreSchemeMatch(effectiveId, id));
 
       // Apply to every matched sublayer BEFORE touching the store — a failed map
       // mutation must not leave a store-only filter that the next reconcile
@@ -1095,7 +1094,10 @@ export const layerCommands: Record<string, CommandEntry> = {
       // Persist the filter on the store layer so the MapSpecRuntime reconcile
       // keeps it (the adapter re-emits `layer.filter`; a bare setFilter would be
       // rolled back). null/'' clears it — the backend documents that contract.
-      getHudState().updateLayer(layer_id, { filter: parsed ?? null });
+      // H6：ref 展开的多行同属一族 —— 逐行落（与 updateStoreStyle 同纪律）。
+      for (const id of targets.length ? targets : [layer_id]) {
+        getHudState().updateLayer(id, { filter: parsed ?? null });
+      }
 
       if (matched.length === 0) {
         // Store-only: the reconcile owns the map sublayers → honest store_updated.
@@ -1105,7 +1107,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       // stored in HUD but renderer can only apply what tiles carry. Whitelist check
       // keeps the ack honest: field present → filter can work, field absent → degraded
       // (both are store_updated, never confirmed).
-      const targetLayer = hudLayers(getHudState).find((l) => l.id === layer_id);
+      const targetLayer = hudLayers(getHudState).find((l) => l.id === effectiveId);
       if (targetLayer && isMvtLayer(targetLayer)) {
         const _field = extractFilterField(parsed);
         const whitelist: string[] | null | undefined = targetLayer._descriptor?.filterable_fields;

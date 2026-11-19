@@ -114,7 +114,7 @@ export interface WarmResult {
  * 预热：builtin 列表 + 缺席 digest 的内容拉取。迟到结果安全：只填充
  * digest 寻址缓存（S17 —— 不绑定到任何特定会话）。
  */
-export async function warmDocs(digests: string[], sessionId?: string): Promise<WarmResult> {
+export async function warmDocs(digests: string[]): Promise<WarmResult> {
   const missing: Array<{ digest: string; reason: string }> = [];
   const need = digests.filter((d) => !cachedDoc(d));
   if (need.length === 0) return { ready: digests, missing };

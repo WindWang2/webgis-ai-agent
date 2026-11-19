@@ -68,5 +68,8 @@
   "downloadReport": "Download QC Report (.md)",
   "noSession": "Open or create a session first",
   "selectRowHint": "Tip: select a GCP row, click left canvas for pixel (px, py), then toggle Map Pick and click the map.",
-  "loadedSources": "Uploaded Sources"
+  "loadedSources": "Uploaded Sources",
+  "invalidTargetResM": "Target resolution must be a number greater than 0 (or leave empty to use the source resolution)",
+  "sourceSelectAria": "Select georeferencing source image",
+  "gcpEnabledAria": "Enable ground control point {index}"
 }

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import logging
 from typing import Any, Dict, Optional
 
@@ -178,6 +179,11 @@ async def create_asset(body: AssetCreateBody,
             raise HTTPException(status_code=422, detail={
                 "code": "asset_document_error",
                 "message": "创建需要 svg_base64（受控 SVG 子集导入）"})
+    # 14b：坏 base64 是客户端输入错误 → 422 typed，不得冒泡成 500。
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=422, detail={
+            "code": "asset_document_error",
+            "message": f"svg_base64 非法: {exc}"[:300]}) from exc
     except SymbolAssetError as exc:
         raise HTTPException(status_code=422, detail={
             "code": exc.code, "message": str(exc)[:300]}) from exc
@@ -302,6 +308,11 @@ async def new_version(asset_id: str, body: NewVersionBody,
         document = import_svg_asset(
             svg_bytes, kind=body.kind, name=body.name,
             license_note=body.license_note)
+    # 14b：坏 base64 是客户端输入错误 → 422 typed，不得冒泡成 500。
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=422, detail={
+            "code": "asset_document_error",
+            "message": f"svg_base64 非法: {exc}"[:300]}) from exc
     except SymbolAssetError as exc:
         raise HTTPException(status_code=422, detail={
             "code": exc.code, "message": str(exc)[:300]}) from exc

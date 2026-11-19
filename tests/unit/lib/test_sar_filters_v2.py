@@ -329,7 +329,7 @@ def test_sar_tools_schema_and_evidence():
     # 证据块挂载 + backend_selection 诊断（默认路径诚实记录）
     img = np.random.RandomState(3).gamma(4.0, 25.0, size=(6, 6)).tolist()
     speckle_fn = registry._tools["sar_speckle_filter"]
-    payload = asyncio.run(speckle_fn(img, filter="lee", window="3"))
+    payload = speckle_fn(img, filter="lee", window="3")
     assert payload["success"] is True
     ev = payload["scientific_evidence"]
     assert ev["algorithm"] == "sar.speckle_filter"
@@ -347,7 +347,7 @@ def test_sar_tools_schema_and_evidence():
     # 合成工具证据块
     stack = [[[1.0, 2.0], [3.0, 4.0]], [[3.0, 4.0], [5.0, 6.0]]]
     comp_fn = registry._tools["sar_temporal_composite"]
-    comp = asyncio.run(comp_fn(stack, method="median"))
+    comp = comp_fn(stack, method="median")
     assert comp["scientific_evidence"]["algorithm"] == "sar.temporal_composite"
 
 

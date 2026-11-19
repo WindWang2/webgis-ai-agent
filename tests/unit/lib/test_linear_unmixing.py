@@ -196,8 +196,8 @@ def test_fcls_tool_wrapper_inline_and_guard():
     bands = {
         f"band_{b}": mixed[b].round(9).tolist() for b in range(4)
     }
-    payload = asyncio.run(tool_fn(
-        bands=bands, endmembers=ENDMEMBERS.tolist()))
+    payload = tool_fn(
+        bands=bands, endmembers=ENDMEMBERS.tolist())
     assert payload["success"] is True
     assert payload["n_endmembers"] == 3
     ab = np.asarray(payload["abundances"])
@@ -211,6 +211,6 @@ def test_fcls_tool_wrapper_inline_and_guard():
     # 4M 值/波段 守卫：超限内联数组 → ResourceScaleMismatch
     big = np.zeros((2001, 2001))          # 4,004,001 > 4,000,000
     with pytest.raises(ResourceScaleMismatch):
-        asyncio.run(tool_fn(
+        tool_fn(
             bands={f"band_{b}": big.tolist() for b in range(4)},
-            endmembers=ENDMEMBERS.tolist()))
+            endmembers=ENDMEMBERS.tolist())

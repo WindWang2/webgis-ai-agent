@@ -32,7 +32,6 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         tags=["要素编辑", "feature edit", "编辑预览", "批量字段", "geometry fix"],
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="medium",
         description=(
@@ -97,7 +96,6 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         network=False,
         data_mutations=["session_state"],
         tags=["要素编辑", "feature edit", "提交", "数据修改"],
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="medium",
         deterministic=False,
@@ -151,7 +149,6 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,  # Reads the current mutable journal, not a pinned revision.
         tags=["要素编辑", "edit history", "撤销", "审计"],
-        capabilities=["dataset_ingest"],
         latency_class="fast",
         memory_class="light",
         description=(
@@ -202,7 +199,6 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         network=False,
         data_mutations=["session_state"],
         tags=["要素编辑", "数据集", "空图层", "草图升格"],
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="medium",
         deterministic=False,
@@ -269,7 +265,6 @@ def register_feature_edit_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         tags=["要素编辑", "lineage", "血缘", "分割", "合并"],
-        capabilities=["dataset_ingest"],
         latency_class="fast",
         memory_class="light",
         description=(

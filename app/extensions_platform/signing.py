@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -202,12 +203,22 @@ def generate_signing_keypair(out_dir: Path, key_id: str) -> tuple[Path, Path]:
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
-    private_path.write_bytes(private_pem)
-    public_path.write_bytes(public_pem)
+    # review #2145：私钥必须以 0600 **创建** —— write_bytes 走默认 umask
+    # 先落盘再 chmod，存在短暂世界可读窗口。
     try:
-        private_path.chmod(0o600)
-    except OSError:  # noqa: BLE001 - 非 POSIX 平台尽力而为
-        pass
+        fd = os.open(str(private_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_INVALID,
+                f"private key {str(private_path)!r} appeared concurrently; refusing to overwrite",
+            )
+        ) from exc
+    try:
+        os.write(fd, private_pem)
+    finally:
+        os.close(fd)
+    public_path.write_bytes(public_pem)
     return private_path, public_path
 
 

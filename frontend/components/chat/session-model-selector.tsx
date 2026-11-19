@@ -11,7 +11,7 @@
  * - 选择只经 PUT（CAS revision）—— 409 冲突自动刷新重试提示；localStorage
  *   的模型名永远不是生效事实。
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { useT } from '@/lib/i18n/useT';
 import { apiFetch, isApiError, describeApiError } from '@/lib/api/transport';
@@ -97,19 +97,25 @@ export function SessionModelSelector({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /** R2 #2191：load() 代次 —— 会话切换后旧 /model /usage 响应不得回写。 */
+  const loadGenRef = useRef(0);
   const liveStatus = useModelRuntimeStore(
     (s) => (sessionId ? s.bySession[sessionId] ?? null : null),
   );
 
   const load = useCallback(async () => {
     if (!sessionId) return;
+    // R2 #2191：代次守卫 —— 慢的 /model、/usage 响应不得覆盖新会话的徽标。
+    const gen = ++loadGenRef.current;
     try {
       const data = await apiFetch<ModelView>(
         `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/model`,
         { label: 'session model view load', ownerToken },
       );
+      if (loadGenRef.current !== gen) return;
       setView(data);
     } catch {
+      if (loadGenRef.current !== gen) return;
       setView(null); // 会话不可读（新建/权限）→ 整条隐藏，不伪造状态
     }
     try {
@@ -117,11 +123,22 @@ export function SessionModelSelector({
         `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/usage`,
         { label: 'session usage load', ownerToken },
       );
+      if (loadGenRef.current !== gen) return;
       setUsage(u);
     } catch {
+      if (loadGenRef.current !== gen) return;
       setUsage(null);
     }
   }, [sessionId, ownerToken]);
+
+  // 会话切换：立刻清旧视图并令在飞响应失效（旧 /model /usage 不得回写）。
+  useEffect(() => {
+    loadGenRef.current += 1;
+    setView(null);
+    setUsage(null);
+    setNotice(null);
+    setBusy(false);
+  }, [sessionId]);
 
   useEffect(() => {
     load();

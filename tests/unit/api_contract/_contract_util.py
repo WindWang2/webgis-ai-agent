@@ -26,7 +26,7 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     # ── 二进制 / 文件下发 ──
     ("GET", "/api/v1/static/{file_path:path}"): "static file bytes",
     ("GET", "/api/v1/sessions/{session_id}/raster/{raster_id}.png"): "PNG bytes",
-    ("GET", "/api/v1/reports/{report_id}/download"): "file download bytes",
+    ("GET", "/api/v1/raster-authoring/tiles/{ref_id}/{z}/{x}/{y}.png"): "PNG tile bytes",    ("GET", "/api/v1/reports/{report_id}/download"): "file download bytes",
     ("GET", "/api/v1/reports/shared/{share_code}/view"): "file view bytes",
     ("GET", "/api/v1/export/download/{filename}"): "file download bytes",
     ("GET", "/api/v1/data-delivery/jobs/{job_id}/download"): "data delivery file bytes",

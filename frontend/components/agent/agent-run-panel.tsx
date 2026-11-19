@@ -98,10 +98,16 @@ export function AgentRunPanel() {
     }
     const seq = ++graphSeqRef.current;
     setLoadingGraph(true);
-    const g = await getAnalysisGraph(sessionId, ownerToken ?? null);
-    if (seq !== graphSeqRef.current || getSessionIdentity().sessionId !== sessionId) return; // superseded
-    setGraph(g);
-    setLoadingGraph(false);
+    // #2140 F6：统一 finally 复位 —— superseded/early-return/异常出口此前跳过
+    // setLoadingGraph(false)，会话切换后刷新 spinner 会永久卡住；只复位当前
+    // 代次，被更新的请求自己的 finally 负责自己的复位。
+    try {
+      const g = await getAnalysisGraph(sessionId, ownerToken ?? null);
+      if (seq !== graphSeqRef.current || getSessionIdentity().sessionId !== sessionId) return; // superseded
+      setGraph(g);
+    } finally {
+      if (seq === graphSeqRef.current) setLoadingGraph(false);
+    }
   }, []);
 
   useEffect(() => {

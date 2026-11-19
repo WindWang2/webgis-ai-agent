@@ -403,6 +403,29 @@ def test_claim_store_scoped_by_tenant_and_session():
     reset_turn_context()
 
 
+def test_session_ctx_evicts_least_recently_used_not_active():
+    """#2137 F4：LRU —— 活跃会话（命中刷新）不被他租户新会话挤掉。"""
+    from app.services.gis_harness.hotpath_convergence import session_ctx
+
+    session_ctx.reset_turn_context()
+    try:
+        cap = session_ctx._MAX_SESSIONS
+        active = session_ctx.get_turn_context("active-sess", tenant_id="tenant-A")
+        for i in range(cap):
+            session_ctx.get_turn_context(f"flood-{i}", tenant_id="tenant-B")
+            # 活跃会话持续命中（刷新 LRU 顺序）
+            if i % 32 == 0:
+                assert session_ctx.get_turn_context(
+                    "active-sess", tenant_id="tenant-A") is active
+        # 再加一个触发驱逐：必须先逐出 tenant-B 的最老插入项，而不是活跃会话
+        session_ctx.get_turn_context("one-more", tenant_id="tenant-B")
+        assert len(session_ctx._CTX) <= cap
+        assert session_ctx.peek_turn_context("active-sess", "tenant-A") is active
+        assert session_ctx.peek_turn_context("flood-0", "tenant-B") is None
+    finally:
+        session_ctx.reset_turn_context()
+
+
 def test_mission_runtime_off_and_no_disable(monkeypatch):
     """#1332: GIS_MISSION_RUNTIME=off/no must disable runtime (and hotpath gate)."""
     from app.services.mission_runtime.service import mission_runtime_enabled

@@ -38,6 +38,8 @@ export function StoryDashboard({
       {widgets.map((w) => {
         const highlighted = highlightedIds.includes(w.id);
         const chart = w.kind === 'chart' ? adaptChartData(w.data) : null;
+        // #2158：非活跃态用边框/背景表达，不用整容器 opacity（会同时
+        // 压低内部文字对比度，暗色下跌破 AA）。
         return (
           <div
             key={w.id}
@@ -46,7 +48,7 @@ export function StoryDashboard({
             className={`rounded-lg border p-3 transition-all duration-500 bg-surface-raised/90 ${
               highlighted
                 ? 'border-status-info story-pulse-ring'
-                : 'border-edge-subtle opacity-55'
+                : 'border-edge-subtle'
             }`}
           >
             <header className="pb-1 text-caption font-medium uppercase tracking-wide text-ink-muted">

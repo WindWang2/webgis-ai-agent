@@ -5,6 +5,7 @@
 通道选择（durable authority / 进程账兜底 / 注入账本优先）。
 """
 import json
+import os
 import time
 
 import pytest
@@ -191,3 +192,36 @@ def test_two_process_concurrent_accounting(tmp_path, monkeypatch):
         assert p.returncode == 0, err.decode()[:400]
     led = RecoveryLedger()
     assert led.attempts("sess-xproc", "buffer_analysis", "tool_error") == 10
+
+
+# ── #2138 回归：锁降级可观测 + 按 session 分锁 ────────────────────────────
+
+def test_flock_oserror_degrades_observably(sid, monkeypatch, caplog):
+    """flock OSError 不再静默：记录失败警告 + 观察计数，语义降级不丢账本。"""
+    import logging
+
+    import app.services.gis_harness.recovery_ledger as rl
+
+    real_open = os.open
+
+    def _boom(*a, **k):
+        raise OSError("no locks")
+
+    monkeypatch.setattr(rl.os, "open", _boom)
+    with caplog.at_level(logging.WARNING, logger="app.services.gis_harness.recovery_ledger"):
+        led = get_recovery_ledger()
+        assert led.record_failure(sid, "tool_a", "tool_error") == 1
+    assert any("flock unavailable" in r.message for r in caplog.records)
+    monkeypatch.setattr(rl.os, "open", real_open)
+    # 降级期间记账仍生效（进程内锁兜底）
+    led2 = RecoveryLedger()
+    assert led2.attempts(sid, "tool_a", "tool_error") == 1
+
+
+def test_locks_are_per_session(sid):
+    """不同 session 持不同锁：一 session 持锁 I/O 不阻塞他 session 记账。"""
+    led = RecoveryLedger()
+    lock_a = led._session_lock("sess-a")
+    lock_b = led._session_lock("sess-b")
+    assert lock_a is not lock_b
+    assert led._session_lock("sess-a") is lock_a

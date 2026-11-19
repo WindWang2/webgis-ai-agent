@@ -37,7 +37,6 @@ def register_data_delivery_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         tier=2, domains=["dataset"], name="delivery_capabilities",
-        capabilities=["dataset_ingest"],
         description=(
             "查询数据交付格式能力与限制（真实驱动探测）：可用/受限/不可用格式、"
             "行数/字节/字段硬帽、writer 版本。"
@@ -49,6 +48,7 @@ def register_data_delivery_tools(registry: ToolRegistry) -> None:
         deterministic=True,
         latency_class="fast",
         memory_class="light",
+        result_size_policy="bounded",
         scale_class="small",
         tags=["数据交付", "delivery", "导出", "格式能力"],
         failure_modes=[],
@@ -72,7 +72,6 @@ def register_data_delivery_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         tier=2, domains=["dataset"], name="preview_data_delivery",
-        capabilities=["dataset_ingest"],
         description=(
             "交付预览（不改数据）：解析源引用 → 源身份/行数/完整性/CRS/几何画像、"
             "逐格式能力、损失清单（requires_ack）与阻断项。提交前必看。"
@@ -87,6 +86,7 @@ def register_data_delivery_tools(registry: ToolRegistry) -> None:
         deterministic=False,
         latency_class="medium",
         memory_class="medium",
+        result_size_policy="bounded",
         scale_class="medium",
         tags=["数据交付", "delivery", "预览", "保真", "损失"],
         failure_modes=["source_not_found", "source_expired", "invalid_args"],
@@ -112,7 +112,6 @@ def register_data_delivery_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         tier=2, domains=["dataset"], name="submit_data_delivery",
-        capabilities=["dataset_ingest"],
         description=(
             "提交数据交付任务（GeoJSON/GeoPackage/GeoParquet/CSV；受限 "
             "Shapefile ZIP/FlatGeobuf）。服务端复检阻断项并强制损失确认；"
@@ -169,7 +168,6 @@ def register_data_delivery_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         tier=2, domains=["dataset"], name="get_data_delivery",
-        capabilities=["dataset_ingest"],
         description=(
             "查询交付任务状态与回执（completed 含成员清单/行数/校验和/损失应用/"
             "CRS 证据 + 授权下载 URL）。"
@@ -183,6 +181,7 @@ def register_data_delivery_tools(registry: ToolRegistry) -> None:
         deterministic=True,
         latency_class="fast",
         memory_class="light",
+        result_size_policy="bounded",
         scale_class="small",
         tags=["数据交付", "delivery", "回执", "下载"],
         failure_modes=["not_found", "unauthorized"],

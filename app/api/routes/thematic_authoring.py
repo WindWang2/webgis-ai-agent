@@ -12,6 +12,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.models.db_model import Conversation
+from app.schemas.thematic_authoring_schema import (
+    ThematicExpressionReceipt,
+    ThematicInspectResponse,
+)
 from app.services.auth_history_bridge import require_owned_session
 from app.services.thematic_authoring import (
     commit_expression,
@@ -50,7 +54,7 @@ class CommitBody(PreviewBody):
 
 # ─── 作者检查（当前表达 + 同版本分布） ────────────────────────────────────
 
-@router.get("/sessions/{session_id}/layers/{layer_id}/inspect")
+@router.get("/sessions/{session_id}/layers/{layer_id}/inspect", response_model=ThematicInspectResponse)
 async def inspect(
     session_id: str,
     layer_id: str,
@@ -68,7 +72,7 @@ async def inspect(
 
 # ─── 预览（零 mutation） ───────────────────────────────────────────────────
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/preview")
+@router.post("/sessions/{session_id}/layers/{layer_id}/preview", response_model=ThematicExpressionReceipt)
 async def preview(
     session_id: str,
     layer_id: str,
@@ -87,7 +91,7 @@ async def preview(
 
 # ─── 单笔提交（同 id 整层 upsert；一次 CAS / 一个 checkpoint） ─────────────
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/commit")
+@router.post("/sessions/{session_id}/layers/{layer_id}/commit", response_model=ThematicExpressionReceipt)
 async def commit(
     session_id: str,
     layer_id: str,

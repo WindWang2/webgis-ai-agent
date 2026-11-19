@@ -191,3 +191,28 @@ class TestAdversarialReviewFixes:
                          "polarization": "vv"}
                         for i, t in enumerate(too_big)])
         del ResourceScaleMismatch
+
+
+class TestSarGapTimesNotPaired:
+    """#2239: 整时刻声明缺口的 SAR 获取不得与有效光学配对。"""
+
+    def test_gap_declared_sar_time_never_paired(self):
+        optical = _optical_desc(["2024-03-01", "2024-04-01"])
+        # 3-02 全部资产声明缺口；4-02 有效
+        sar = rcd.build_cube_descriptor(
+            cube_id="cube-sar", grid=_grid(),
+            assets=[
+                {"ref": "ref:raster/s-vv-gap", "time_iso": "2024-03-02",
+                 "role": "sar", "polarization": "vv", "gap_code": "missing_acquisition"},
+                {"ref": "ref:raster/s-vv-ok", "time_iso": "2024-04-02",
+                 "role": "sar", "polarization": "vv"},
+            ])
+        plan = ral.align_acquisitions(optical, sar, tolerance_days=5)
+        # 3-01 光学不得配到缺口 SAR（宁可缺口也不带不可用 ref）
+        mar = [p for p in plan.pairs if p.optical_time_iso.startswith("2024-03")]
+        assert mar == []
+        assert "2024-03-01T00:00:00Z" in plan.unpaired_optical_times
+        # 4-01 配到有效 SAR；缺口 SAR 时刻不进未配对账（从未可用）
+        assert len(plan.pairs) == 1
+        assert plan.pairs[0].sar_ref == "ref:raster/s-vv-ok"
+        assert plan.unpaired_sar_times == ()

@@ -125,12 +125,26 @@ def _ensure_default_org() -> None:
     )
 
 
+def _column_exists(table: str, column: str) -> bool:
+    """inspect 守卫：#2207 —— 幂等/可重试。PG 上 autocommit_block 会在
+    alembic_version 推进前提交可空 org_id 列；backfill/建索引中途失败后
+    重试若再 add_column 即 DuplicateColumn。列已存在则跳过。"""
+    insp = sa.inspect(op.get_bind())
+    if table not in set(insp.get_table_names()):
+        return False
+    return any(c.get("name") == column for c in insp.get_columns(table))
+
+
 def _add_columns() -> None:
     for table, _tenant, _ts in TENANT_TABLES:
         if table == 'geocompute_runs':
             continue  # 0033 已建列，本迁移只做回填+NOT NULL
+        if _column_exists(table, 'org_id'):
+            continue  # 重试幂等（#2207）：列已落库则跳过
         op.add_column(table, sa.Column('org_id', sa.String(length=255), nullable=True))
     for table in CONTROL_TABLES:
+        if _column_exists(table, 'org_id'):
+            continue  # 重试幂等（#2207）：列已落库则跳过
         op.add_column(table, sa.Column('org_id', sa.String(length=255), nullable=True))
 
 

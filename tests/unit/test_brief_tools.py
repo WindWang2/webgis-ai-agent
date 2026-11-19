@@ -205,3 +205,35 @@ class TestPiAdapterChain:
             assert "brief_created" in text or "brief" in text
         finally:
             bridge_mod.set_tool_registry(None)
+
+
+@pytest.mark.asyncio
+async def test_freeze_blob_io_runs_off_event_loop(brief_env, seeded_session,
+                                                  monkeypatch):
+    """#2229: freeze 内的 BlobStore 磁盘写必须卸载到工作线程 —— 同步文件
+    IO 阻塞事件 loop 会卡住同进程所有会话的并发请求。"""
+    import threading
+
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    registry, _ = brief_env
+    sid = seeded_session
+    await registry.dispatch("brief_create_draft", {"title": "简报"},
+                            session_id=sid)
+
+    store = get_filesystem_blob_store()
+    main_tid = threading.get_ident()
+    call_tids: list = []
+    orig_put = store.put_blob
+
+    def spy(key, data, content_type="json"):
+        call_tids.append(threading.get_ident())
+        return orig_put(key, data, content_type)
+
+    monkeypatch.setattr(store, "put_blob", spy)
+    frozen = await registry.dispatch(
+        "brief_freeze_release", {"allow_draft": True}, session_id=sid)
+    assert frozen["type"] == "brief_release_frozen"
+    assert call_tids, "freeze 必须写入 html/csv blob"
+    assert all(t != main_tid for t in call_tids), \
+        "BlobStore IO 必须从事件 loop 线程卸载"

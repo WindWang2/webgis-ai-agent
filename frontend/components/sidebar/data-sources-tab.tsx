@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Crosshair, Database, FileCheck2, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
@@ -129,6 +129,11 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
 
   // ── V2 数据工作台状态（数据集检视器 + 查询计划/结果） ─────────────────
   const inspectedIdRef = useRef<string | null>(null);
+  /** R2 #2191：materialize 代次 —— 会话切换后旧响应不得落进新会话。 */
+  const materializeEpochRef = useRef(0);
+  useEffect(() => {
+    materializeEpochRef.current += 1;
+  }, [sessionId]);
   const [inspectedItem, setInspectedItem] = useState<CatalogItem | null>(null);
   const [inspectedDescriptor, setInspectedDescriptor] = useState<DatasetDescriptor | null>(null);
   const [loadingDescriptor, setLoadingDescriptor] = useState(false);
@@ -333,12 +338,15 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       return;
     }
     setMaterializingId(item.id);
+    // R2 #2191：跨会话代次守卫 —— 会话切换后旧响应不得把图层加进新会话。
+    const epoch = materializeEpochRef.current;
     try {
       const res = await dataFabricApi.materializeCatalogItem({
         session_id: sessionId,
         catalog_item_id: item.id,
         ownerToken,
       });
+      if (epoch !== materializeEpochRef.current) return;
 
       // Add to frontend HUD layers as a REF-BACKED layer (same shape as the
       // workspace-session restore path): the mapspec adapter skips sourceless
@@ -372,6 +380,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       // carries the same session id / owner token as the materialize call.
       try {
         const geojson = await dataFabricApi.fetchRefGeoJSON(res.ref_id, sessionId, { ownerToken });
+        if (epoch !== materializeEpochRef.current) return;
         if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
           updateLayer(layerId, { source: geojson, _refId: res.ref_id });
         }
@@ -379,9 +388,11 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         // The layer exists and the ref was stored — only the immediate
         // hydration failed (transient or ownership issue). Say so instead of
         // faking success or silently leaving an invisible layer.
+        if (epoch !== materializeEpochRef.current) return;
         addToast(t('sidebar.ds.materializeHydrateFailed'), 'warning');
       }
     } catch (err) {
+      if (epoch !== materializeEpochRef.current) return;
       if (isApiError(err) && err.status === 401) {
         // The materialize route requires authentication — surface a clear
         // login-required message instead of a raw 401 toast.
@@ -390,7 +401,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         addToast(describeApiError(err, t('sidebar.ds.materializeFailed')), 'error');
       }
     } finally {
-      setMaterializingId(null);
+      if (epoch === materializeEpochRef.current) setMaterializingId(null);
     }
   };
 

@@ -172,3 +172,33 @@ def test_process_layer_ingestion_does_not_mutate_mapspec():
     assert "inlineData" in source_entry
     assert source_entry.get("existing") == "KEEP"
     assert "inlineData" not in mapspec["sources"]["s1"]
+
+
+# ── #2222 回归：显式 ref 载体不被 provenance.result_ref 覆写 ──────────
+
+
+def test_explicit_ref_carrier_survives_provenance_result_ref():
+    """bivariate 提交 source_data={"ref_id": 派生 ref} 时，layer 上遗留的
+    provenance.result_ref（上一代分析 ref）不得把 source 载体覆写回去 ——
+    否则 paint 引用的派生字段不存在，全部要素透明。"""
+    layer = {
+        "id": "l1", "source": "s1",
+        "provenance": {"result_ref": "ref:analysis_orig"},
+    }
+    _, source_entry, _ = process_layer_ingestion(
+        {}, layer, source_data={"ref_id": "ref:g41display_derived"})
+    assert source_entry.get("ref_id") == "ref:g41display_derived"
+    assert source_entry.get("ref") == "ref:g41display_derived"
+
+
+def test_provenance_result_ref_still_applies_without_explicit_ref():
+    """无显式 ref 载体时 result_ref 仍是载体回退权威（既有语义不回退）。"""
+    layer = {
+        "id": "l2", "source": "s2",
+        "provenance": {"result_ref": "ref:analysis_orig"},
+    }
+    _, source_entry, _ = process_layer_ingestion(
+        {}, layer,
+        source_data={"type": "FeatureCollection", "features": []})
+    assert source_entry.get("ref_id") == "ref:analysis_orig"
+    assert source_entry.get("ref") == "ref:analysis_orig"
