@@ -124,6 +124,7 @@ def _greedy_pairs(
     optical_times: Tuple[float, ...],
     sar_times: Tuple[float, ...],
     optical_valid: set,
+    sar_valid: set,
     optical_refs: Dict[float, Tuple[str, ...]],
     sar_refs: Dict[float, Tuple[str, ...]],
     tolerance_days: int,
@@ -131,7 +132,8 @@ def _greedy_pairs(
     """时间升序确定性贪心：每期光学取最近未占用 SAR（|dt| ≤ 容差）。
 
     配对携带**真实资产 ref**（同刻多波段取排序首个——确定性 canonical）；
-    一景 SAR（时刻）至多服务一期光学；声明缺口的时刻不消耗配对。
+    一景 SAR（时刻）至多服务一期光学；声明缺口的时刻不消耗配对
+    （光学与 SAR 两侧同口径，#2239）。
     """
     tol_sec = float(tolerance_days) * 86400.0
     used: set = set()
@@ -146,7 +148,7 @@ def _greedy_pairs(
             continue
         candidates = sorted(
             (s for s in sar_times if s not in used
-             and abs(s - t) <= tol_sec),
+             and s in sar_valid and abs(s - t) <= tol_sec),
             key=lambda s: (abs(s - t), s))
         if not candidates:
             unpaired_optical.append(t_iso)
@@ -159,7 +161,8 @@ def _greedy_pairs(
             dt_days=round((s - t) / 86400.0, 6),
         ))
     unpaired_sar = tuple(
-        iso_of(s) for s in sorted(sar_times) if s not in used)
+        iso_of(s) for s in sorted(sar_times)
+        if s not in used and s in sar_valid)
     return tuple(pairs), tuple(unpaired_optical), unpaired_sar
 
 
@@ -209,9 +212,19 @@ def align_acquisitions(
             if a.role == "optical" and parse_time_iso(a.time_iso) == t)
     }
     optical_valid_times = set(optical_times) - fully_invalid
+    # SAR 侧同口径：整时刻声明缺口（全部资产 gap_code 非 None）的获取
+    # 不参与配对、不进未配对账（#2239——不得把有效光学与不可用 SAR 配对）
+    sar_fully_invalid = {
+        t for t in sar_times
+        if not any(
+            a.gap_code is None
+            for a in _observation_assets(sar)
+            if a.role == "sar" and parse_time_iso(a.time_iso) == t)
+    }
+    sar_valid_times = set(sar_times) - sar_fully_invalid
 
     pairs, unpaired_optical, unpaired_sar = _greedy_pairs(
-        optical_times, sar_times, optical_valid_times,
+        optical_times, sar_times, optical_valid_times, sar_valid_times,
         optical_refs_by_time, sar_refs_by_time, tolerance_days)
 
     joint_missing = len(unpaired_optical)

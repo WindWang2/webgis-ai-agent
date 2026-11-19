@@ -123,3 +123,20 @@ class TestLateEvidenceFusion:
         o2 = rfu.late_evidence_fusion(a, b)
         assert (o1["fused"] == o2["fused"]).all()
         assert (o1["agreement"] == o2["agreement"]).all()
+
+
+class TestNeutralActiveNotConflict:
+    """#2239: 中性 × 有效 既非 consensus 也非 conflict。"""
+
+    def test_neutral_times_active_is_not_conflict(self):
+        a = np.array([[0.0, 0.0], [0.0, 2.0]])
+        b = np.array([[5.0, -5.0], [3.0, -1.0]])
+        out = rfu.late_evidence_fusion(a, b, names=("optical", "sar"))
+        agr = out["agreement"]
+        # (neutral, +active) 与 (neutral, −active)：零信号无方向
+        assert agr[0, 0] != rfu.AGREEMENT_CONFLICT
+        assert agr[0, 1] != rfu.AGREEMENT_CONFLICT
+        # (active+, active−) 仍判 conflict（锚点不回退）
+        assert agr[1, 1] == rfu.AGREEMENT_CONFLICT
+        # (0,+5) 语义披露存在
+        assert any("中性" in d for d in out["meta"]["disclosures"])

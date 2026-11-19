@@ -729,3 +729,24 @@ def test_rs_v3_registry_contracts_and_parity():
         desc = algos.get(aid)
         assert desc.scientific_status == "VALIDATED", aid
         assert desc.conformance_tests, aid
+
+
+def test_mnf_inverse_standardize_true_restores_original_scale():
+    """#2239: mnf(standardize=True) 的 mnf_inverse 必须做 std 反缩放。"""
+    rng = np.random.RandomState(2239)
+    base = rng.uniform(100.0, 200.0, (4, 5, 5))
+    trend = np.linspace(0.0, 50.0, 25).reshape(5, 5)
+    stack = np.stack([base[0] + trend,
+                      base[1] + 2.0 * trend,
+                      base[2] + rng.normal(0, 0.5, (5, 5)),
+                      base[3] + rng.normal(0, 0.5, (5, 5))])
+    res = mnf(stack, standardize=True)
+    recon = mnf_inverse(res)
+    # 全分量重建须回到原始量纲（量纲错误时残差 ~ 特征幅度）
+    np.testing.assert_allclose(recon, stack, atol=1e-6)
+    # 与 standardize=False 路径同精度
+    res_unstd = mnf(stack, standardize=False)
+    recon_unstd = mnf_inverse(res_unstd)
+    np.testing.assert_allclose(recon_unstd, stack, atol=1e-6)
+    # 确定性
+    np.testing.assert_array_equal(recon, mnf_inverse(res))

@@ -16,6 +16,7 @@ import rasterio
 from rasterio.transform import from_bounds, from_origin
 
 from app.lib.geo_analysis.raster_grid import (
+    RasterAlignmentDecision,
     RasterGridProfile,
     aligned_reader,
     decide_alignment,
@@ -268,3 +269,51 @@ def test_iter_bounded_windows_prefers_source_blocks(_td, monkeypatch):
         assert shapes == {(32, 32)}  # 2×2 个 32×32 块
     finally:
         os.remove(p)
+
+
+# ── #2239 回归 ───────────────────────────────────────────────────────
+
+def test_aligned_reader_rejects_unknown_resampling(_td):
+    """非法 resampling → typed ValueError（修复前为裸 KeyError）。"""
+    p = os.path.join(_td, f"g_{uuid.uuid4().hex[:6]}.tif")
+    _write(p, np.ones((8, 8), dtype="float32"))
+    decision = RasterAlignmentDecision(
+        status="needs_resample", reason="test",
+        target_crs="EPSG:4326",
+        target_transform=(1.0, 0.0, 0.0, 0.0, -1.0, 8.0),
+        target_width=8, target_height=8, resampling="bicubic_magic")
+    with pytest.raises(ValueError, match="resampling"):
+        with aligned_reader(p, decision):
+            pass  # pragma: no cover
+
+
+def test_aligned_reader_falls_back_for_gcp_source(_td):
+    """GCP-only 源：VRT 路径会把恒等仿射当真 → 全 NaN；须回退原文件。"""
+    from rasterio.control import GroundControlPoint
+
+    p = os.path.join(_td, f"g_{uuid.uuid4().hex[:6]}.tif")
+    data = np.arange(64, dtype="float32").reshape(8, 8)
+    with rasterio.open(
+        p, "w", driver="GTiff", height=8, width=8, count=1,
+        dtype="float32",
+    ) as dst:
+        dst.write(data, 1)
+        gcps = [
+            GroundControlPoint(row=0.0, col=0.0, x=0.0, y=8.0, z=0.0),
+            GroundControlPoint(row=0.0, col=8.0, x=8.0, y=8.0, z=0.0),
+            GroundControlPoint(row=8.0, col=0.0, x=0.0, y=0.0, z=0.0),
+            GroundControlPoint(row=8.0, col=8.0, x=8.0, y=0.0, z=0.0),
+        ]
+        dst.gcps = (gcps, "EPSG:4326")
+    with rasterio.open(p) as src:
+        assert src.gcps[0], "test setup: GCPs must be present"
+        assert src.transform.is_identity, "test setup: GCP-only identity affine"
+    decision = RasterAlignmentDecision(
+        status="needs_resample", reason="test",
+        target_crs="EPSG:4326",
+        target_transform=(1.0, 0.0, 0.0, 0.0, -1.0, 8.0),
+        target_width=8, target_height=8, resampling="nearest")
+    with aligned_reader(p, decision) as (ds, eff):
+        # 回退原文件：读到的是真实像元而非 VRT 全 NaN
+        np.testing.assert_array_equal(ds.read(1), data)
+        assert eff is None  # 源未声明 nodata

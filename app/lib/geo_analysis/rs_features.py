@@ -182,10 +182,15 @@ def _cusum_changepoint(values: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         std = np.nanstd(v, axis=0, ddof=1)
     dev = v - mean
     cs = np.nancumsum(np.where(np.isfinite(dev), dev, 0.0), axis=0)
-    # 与比例基线的偏差：S_k = cs_k − (k/(T−1))·cs_{T−1}（k = 1..T−1 处评估）
+    # 与比例基线的偏差：S_k = cs_k − (k/(T−1))·cs_{T−1}。候选手 k =
+    # 1..T−1（1-based 累积序）——cs[0]（S_1，阶跃紧邻 slice 0 后的峰值
+    # 位置）必须参与评估，否则变点指数系统性偏早 1（#2239）。
     ks = np.arange(1, n_t)
     denom = max(n_t - 1, 1)
-    sk = cs[1:] - (ks[:, None] / denom) * cs[n_t - 1]
+    if n_t > 1:
+        sk = cs[:n_t - 1] - (ks[:, None] / denom) * cs[n_t - 1]
+    else:
+        sk = cs[:0]
     with np.errstate(invalid="ignore"):
         mag = np.nanmax(np.abs(sk), axis=0) if n_t > 1 else np.zeros(n)
         arg = np.nanargmax(np.abs(sk), axis=0) + 1 if n_t > 1 else np.zeros(
