@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -18,6 +19,10 @@ from app.schemas.raster_spec import (
     raster_content_fingerprint,
 )
 from app.services.raster_authoring.budgets import MAX_BAND_COUNT_METADATA
+
+#: 模块级缓存锁：解析在 asyncio.to_thread 工作线程执行、失效钩子来自
+#: 其它线程 —— 无锁的读-改-写/迭代会 RuntimeError（dict changed size）。
+_CACHE_LOCK = threading.RLock()
 
 #: 数据修订解析缓存：(session, ref, path, mtime_ns, size) → (revision, expire)
 _REVISION_CACHE: Dict[tuple, tuple[str, float]] = {}
@@ -35,10 +40,11 @@ _SOURCE_CACHE_MAX = 128
 def invalidate_source_cache(session_id: str, ref_id: str) -> int:
     """ref 失效时同步清掉源描述子/修订缓存（与 tile/stats 缓存同生命周期）。"""
     dropped = 0
-    for cache in (_SOURCE_CACHE, _REVISION_CACHE):
-        for key in [k for k in cache if k[0] == session_id and k[1] == ref_id]:
-            cache.pop(key, None)
-            dropped += 1
+    with _CACHE_LOCK:
+        for cache in (_SOURCE_CACHE, _REVISION_CACHE):
+            for key in [k for k in cache if k[0] == session_id and k[1] == ref_id]:
+                cache.pop(key, None)
+                dropped += 1
     return dropped
 
 
@@ -63,17 +69,19 @@ _DESCRIPTOR_MAX_SIDE = 1024
 
 
 def _cache_put(cache: Dict[tuple, tuple[str, float]], key: tuple, value: str) -> None:
-    if len(cache) >= _REVISION_CACHE_MAX:
-        cache.clear()
-    cache[key] = (value, time.monotonic() + _REVISION_TTL_S)
+    with _CACHE_LOCK:
+        if len(cache) >= _REVISION_CACHE_MAX:
+            cache.clear()
+        cache[key] = (value, time.monotonic() + _REVISION_TTL_S)
 
 
 def _cache_get(cache: Dict[tuple, tuple[str, float]], key: tuple) -> Optional[str]:
-    hit = cache.get(key)
-    if hit and time.monotonic() <= hit[1]:
-        return hit[0]
-    cache.pop(key, None)
-    return None
+    with _CACHE_LOCK:
+        hit = cache.get(key)
+        if hit and time.monotonic() <= hit[1]:
+            return hit[0]
+        cache.pop(key, None)
+        return None
 
 
 @dataclass(frozen=True)
@@ -388,9 +396,10 @@ async def resolve_source(
         )
     except OSError:
         cache_key = (session_id, ref_id, safe_path, 0, 0, "")
-    cached = _SOURCE_CACHE.get(cache_key)
-    if cached and time.monotonic() <= cached[1]:
-        return cached[0]
+    with _CACHE_LOCK:
+        cached = _SOURCE_CACHE.get(cache_key)
+        if cached and time.monotonic() <= cached[1]:
+            return cached[0]
 
     try:
         descriptor, truncated = await asyncio.to_thread(_inspect_bounded, safe_path)
@@ -436,7 +445,8 @@ async def resolve_source(
         dataset_tags=dataset_tags,
         bands_truncated=truncated or descriptor.band_count > len(band_meta),
     )
-    if len(_SOURCE_CACHE) >= _SOURCE_CACHE_MAX:
-        _SOURCE_CACHE.clear()
-    _SOURCE_CACHE[cache_key] = (source, time.monotonic() + _SOURCE_TTL_S)
+    with _CACHE_LOCK:
+        if len(_SOURCE_CACHE) >= _SOURCE_CACHE_MAX:
+            _SOURCE_CACHE.clear()
+        _SOURCE_CACHE[cache_key] = (source, time.monotonic() + _SOURCE_TTL_S)
     return source

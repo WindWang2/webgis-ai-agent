@@ -98,3 +98,19 @@ def test_tool_plan_rejects_foreign_session():
 
     params = inspect.signature(fn).parameters
     assert "plan_id" in params and "session_id" in params
+
+
+def test_build_display_curves_part_order_is_natural():
+    """#2229: part-2 必须排在 part-10 之前（纯字典序 "part-10" < "part-2"），
+    且 part 切换的 gap 断口语义保持不变。"""
+    rows = []
+    for part, sid in (("part-10", "p10a"), ("part-2", "p2a")):
+        rows.append({"sample_id": sid, "source_ref": "ref:x", "band": 1,
+                     "chainage_m": 0.0, "station_index": 0,
+                     "physical_value": 1.0, "interpolated_value": None,
+                     "raw_value": 1.0, "valid": True, "part_id": part})
+    curves = build_display_curves(rows)
+    pts = curves["bands"][0]["points"]
+    assert [p["part"] for p in pts] == ["part-2", "part-10"]
+    assert pts[0]["gap"] is False
+    assert pts[1]["gap"] is True  # part 切换断口

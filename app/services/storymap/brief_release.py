@@ -188,44 +188,58 @@ async def freeze_brief_release(
     from app.services.durable_blob_store import get_filesystem_blob_store
 
     store = get_filesystem_blob_store()
-    store.put_blob(html_sha, html_bytes, "html")
-    store.put_blob(csv_sha, csv_bytes, "csv")
-
-    release_no_row = await db.scalar(select(func.max(MapBriefRelease.release_no)).where(
-        MapBriefRelease.brief_id == row.id))
-    release_no = int(release_no_row or 0) + 1
+    # 同步文件 IO 不得阻塞事件循环（BlobStore 是磁盘 CAS 写）。
+    await asyncio.to_thread(store.put_blob, html_sha, html_bytes, "html")
+    await asyncio.to_thread(store.put_blob, csv_sha, csv_bytes, "csv")
 
     manifest = build_release_manifest(
-        release_id="pending", release_no=release_no, brief_id=row.id,
+        release_id="pending", release_no=0, brief_id=row.id,
         frozen_revision=row.revision, draft=draft, bundle=bundle,
         html_sha256=html_sha, html_bytes=len(html_bytes),
         csv_sha256=csv_sha, csv_bytes=len(csv_bytes), spec_sha256=spec_sha)
     manifest["content_sha256"] = content_sha
+    manifest_text = json.dumps(manifest, ensure_ascii=False)
+    brief_id = row.id
+    conv_id = conv.id
+    frozen_revision = row.revision
 
-    release = MapBriefRelease(
-        brief_id=row.id, conversation_id=conv.id,
-        release_no=release_no, frozen_revision=row.revision,
-        status="ready", manifest=json.dumps(manifest, ensure_ascii=False),
-        content_sha256=content_sha, html_object_key=html_sha)
-    db.add(release)
-    try:
-        await db.flush()
-    except IntegrityError:
-        # 并发双提交（同 content 或 release_no 竞争）：内容寻址无半包；
-        # 回滚本帧未落内容后按幂等语义返回既有 release。
-        await db.rollback()
-        existing = await db.scalar(select(MapBriefRelease).where(
-            MapBriefRelease.content_sha256 == content_sha))
-        if existing is not None:
-            return {"release_id": existing.id,
-                    "release_no": existing.release_no,
-                    "already_released": True,
-                    "manifest": json.loads(existing.manifest)}
-        raise
+    # 并发 freeze 竞争（同 content 幂等键或 (brief_id, release_no) 唯一键）：
+    # flush 撞 IntegrityError 后回滚帧 —— 同 content 返回既有 release；
+    # 异 content 的取号竞争重取号重试（有界 3 次），不把瞬态竞争抛成 422。
+    release: Optional[MapBriefRelease] = None
+    last_integrity_error: Optional[IntegrityError] = None
+    for _attempt in range(3):
+        release_no_row = await db.scalar(select(func.max(
+            MapBriefRelease.release_no)).where(
+                MapBriefRelease.brief_id == brief_id))
+        release_no = int(release_no_row or 0) + 1
+        candidate = MapBriefRelease(
+            brief_id=brief_id, conversation_id=conv_id,
+            release_no=release_no, frozen_revision=frozen_revision,
+            status="ready", manifest=manifest_text,
+            content_sha256=content_sha, html_object_key=html_sha)
+        db.add(candidate)
+        try:
+            await db.flush()
+            release = candidate
+            break
+        except IntegrityError as exc:
+            last_integrity_error = exc
+            await db.rollback()
+            existing = await db.scalar(select(MapBriefRelease).where(
+                MapBriefRelease.content_sha256 == content_sha))
+            if existing is not None:
+                return {"release_id": existing.id,
+                        "release_no": existing.release_no,
+                        "already_released": True,
+                        "manifest": json.loads(existing.manifest)}
+    if release is None:
+        raise last_integrity_error  # type: ignore[misc] — 竞争未消解，如实上抛
+
     manifest = dict(manifest, release_id=release.id)
     release.manifest = json.dumps(manifest, ensure_ascii=False)
     await db.flush()
-    return {"release_id": release.id, "release_no": release_no,
+    return {"release_id": release.id, "release_no": release.release_no,
             "already_released": False, "manifest": manifest}
 
 

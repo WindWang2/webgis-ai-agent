@@ -179,7 +179,10 @@ def compute_reliability(
         "field": spec.estimate_field,
         "method": spec.estimate_method,
         "k": classes,
-        "breaks": [round(b, 6) for b in full_breaks],
+        # 断点保持分类器实际使用的全精度 —— 有损取整（如 round(_, 6)）会在
+        # 小量级值域上把断点塌缩成重复值，使 step/match paint 与图例区间
+        # 及真实分类结果漂移（legend 显示非零区间而所有要素落入最高档）。
+        "breaks": [float(b) for b in full_breaks],
         "palette": spec.estimate_palette,
         "palette_colors": palette_colors,
         "unit": spec.estimate_unit or None,
@@ -267,8 +270,8 @@ def compute_reliability(
         buckets.append({
             "key": f"b{i}",
             "index": i,
-            "lo": round(v.min_value + t0 * span, 6),
-            "hi": round(v.min_value + t1 * span, 6),
+            "lo": v.min_value + t0 * span,
+            "hi": v.min_value + t1 * span,
             "output": out,
             "count": 0,
             "label": f"误差 {v.min_value + t0 * span:g}–{v.min_value + t1 * span:g}"
@@ -365,7 +368,7 @@ def compute_reliability(
         buckets=buckets + [special[_UNKNOWN], special[_OUT_OF_DOMAIN]],
         measure_meta=measure_meta,
         scan=scan,
-        estimate_breaks=[round(b, 6) for b in full_breaks],
+        estimate_breaks=[float(b) for b in full_breaks],
         estimate_intervals=estimate_intervals,
         disclosures=disclosures,
     )
