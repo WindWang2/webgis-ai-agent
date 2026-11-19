@@ -47,7 +47,6 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         data_mutations=["session_state"],
         network=False,
         deterministic=False,
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         param_descriptions={
             "ref_id": "target editable dataset ref (ref:...)",
@@ -124,7 +123,6 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         side_effect="cacheable_read",
         network=False,
         deterministic=True,
-        capabilities=["dataset_ingest"],
         latency_class="fast",
         param_descriptions={
             "status": "optional status filter (draft/submitted/approved/merging/merged/...)",
@@ -177,7 +175,6 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         side_effect="cacheable_read",
         network=False,
         deterministic=False,
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         param_descriptions={
             "proposal_id": "proposal to inspect",
@@ -241,7 +238,6 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         side_effect="cacheable_read",
         network=False,
         deterministic=False,
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         param_descriptions={
             "proposal_id": "proposal to preview a rebase for",

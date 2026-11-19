@@ -30,7 +30,6 @@ def register_field_contracts_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         tags=["字段合同", "field contract", "数据质量", "业务规则"],
-        capabilities=["dataset_ingest"],
         latency_class="fast",
         memory_class="light",
         description=(
@@ -106,7 +105,6 @@ def register_field_contracts_tools(registry: ToolRegistry) -> None:
         data_mutations=["session_state"],
         deterministic=False,
         tags=["字段合同", "field contract", "草稿", "业务规则"],
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="light",
         description=(
@@ -193,7 +191,6 @@ def register_field_contracts_tools(registry: ToolRegistry) -> None:
         data_mutations=["session_state"],
         deterministic=False,
         tags=["字段合同", "field contract", "完整评估", "数据质量"],
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="medium",
         description=(
@@ -246,7 +243,6 @@ def register_field_contracts_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         tags=["字段合同", "field contract", "评估结果", "违规"],
-        capabilities=["dataset_ingest"],
         latency_class="fast",
         memory_class="light",
         description=(

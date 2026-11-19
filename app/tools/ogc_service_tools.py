@@ -155,7 +155,6 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         tier=2, domains=["dataset"], name="read_coverage_subset",
-        capabilities=["dataset_ingest"],  # CapabilityRegistry 既有项
         description=(
             "OGC API - Coverages 受控 subset 读取：按服务声明的轴（bbox 仅在可识别"
             "经纬轴时接受）与预算（max_cells/响应字节帽）读取 coverage 子集并物化"
@@ -233,7 +232,6 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         tier=2, domains=["dataset"], name="materialize_remote_raster_asset",
-        capabilities=["dataset_ingest"],  # CapabilityRegistry 既有项
         description=(
             "远程 COG/GeoTIFF 资产受控物化：SSRF 门 → 头读预检 → AOI/bands/"
             "overview 显式窗口读（请求/字节预算 + 可取消）→ 本地 COG ref"

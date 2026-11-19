@@ -118,7 +118,6 @@ def register_component_catalog(registry: ToolRegistry) -> None:
     tool(
         registry,
         tier=2, domains=["report"], name="webgis_component_catalog",
-        capabilities=['workspace_state_inspection'],
         description=(
             "读取当前地图的制图组件目录与状态（只读）。一次返回："
             "(1) 当前 MapSpec 的全部组件（id/type/enabled/位置/placement/variant/"

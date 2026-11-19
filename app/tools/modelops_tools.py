@@ -38,7 +38,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def modelops_list_models(
         task_type: Optional[str] = None,
@@ -73,7 +73,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def modelops_inspect_model(
         model_id: str,
@@ -108,7 +108,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def modelops_check_compatibility(
         model_id: str,
@@ -141,7 +141,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def modelops_estimate_resources(
         model_id: str,
@@ -181,7 +181,8 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="slow",
         memory_class="heavy",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
+        capabilities=['model_image_segmentation', 'model_object_detection', 'model_instance_segmentation', 'model_change_detection', 'model_super_resolution', 'model_temporal_forecast', 'model_temporal_classification', 'model_embedding'],
     )
     async def modelops_run_inference(
         model_id: str,
@@ -250,7 +251,8 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="slow",
         memory_class="heavy",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
+        capabilities=["model_promptable_segmentation"],
     )
     async def modelops_run_promptable(
         model_id: str,
@@ -305,7 +307,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="medium",
         memory_class="medium",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def modelops_evaluate_model(
         task_type: str,
@@ -347,7 +349,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def modelops_compare_results(manifest_a: dict, manifest_b: dict) -> dict:
         from app.services.modelops.service import get_modelops_service
@@ -369,7 +371,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def modelops_inspect_provenance(manifest: dict, section: Optional[str] = None) -> dict:
         from app.services.modelops.service import get_modelops_service
@@ -396,7 +398,6 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
     )
     async def modelops_record_metrics(
         model_id: str,
@@ -457,7 +458,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def modelops_model_history(
         model_id: str,
@@ -487,7 +488,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai", "图层"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="bounded",
     )
     async def modelops_publish_layers(
         outputs: dict,
@@ -548,7 +549,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         tags=("modelops", "geoai"),
         latency_class="fast",
         memory_class="light",
-        capabilities=["image_segmentation"],
+        result_size_policy="inline_small",
     )
     async def modelops_cancel_inference(cancel_key: str) -> dict:
         from app.services.modelops.service import get_modelops_service

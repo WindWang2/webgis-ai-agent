@@ -33,7 +33,6 @@ def register_world_state(registry: ToolRegistry) -> None:
     tool(
         registry,
         tier=2, domains=["mapspec"], name="webgis_world_state",
-        capabilities=['workspace_state_inspection'],
         description=(
             "读取当前会话的 GIS 世界状态快照（只读、有界、无数据负载）。"
             "一次返回：revision、视口、底图、图层列表（id/类型/可见性/不透明度/"
