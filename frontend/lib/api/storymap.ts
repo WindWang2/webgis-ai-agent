@@ -65,14 +65,16 @@ export interface StoryCompilePayload {
   title?: string;
 }
 
-/** POST /api/v1/storymap/compile —— 证据链/消息 → StoryMapSpec。 */
+/** POST /api/v1/storymap/compile —— 证据链/消息 → StoryMapSpec。
+ *  ownerToken：匿名会话的编译同样是 owner-gated 端点（#2140 F2）。 */
 export function compileStorySpec(
   payload: StoryCompilePayload,
-  init?: { signal?: AbortSignal },
+  init?: { signal?: AbortSignal; ownerToken?: string | null },
 ): Promise<StoryMapSpecDto> {
   return apiFetch<StoryMapSpecDto>('/api/v1/storymap/compile', {
     method: 'POST',
     body: payload as unknown as Record<string, unknown>,
+    ownerToken: init?.ownerToken ?? undefined,
     label: 'StoryMap 编译失败',
     signal: init?.signal,
   });

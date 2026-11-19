@@ -158,5 +158,7 @@
   "freezeFailed": "发布冻结失败",
   "downloadFailed": "下载失败",
   "shareFailed": "分享创建失败",
-  "unshareFailed": "分享撤销失败"
+  "unshareFailed": "分享撤销失败",
+  "storyLoading": "正在加载 StoryMap…",
+  "exportBusy": "导出进行中…"
 }

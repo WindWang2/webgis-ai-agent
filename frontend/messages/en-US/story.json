@@ -158,5 +158,7 @@
   "freezeFailed": "Freeze failed",
   "downloadFailed": "Download failed",
   "shareFailed": "Failed to create share",
-  "unshareFailed": "Failed to revoke share"
+  "unshareFailed": "Failed to revoke share",
+  "storyLoading": "Loading StoryMap…",
+  "exportBusy": "Export in progress…"
 }
