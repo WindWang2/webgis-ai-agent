@@ -332,7 +332,12 @@
     "boxPlotAria": "Box plot {title}",
     "heatMatrixAria": "Heat matrix {title}",
     "unsupportedType": "Cannot render chart: unsupported type \"{type}\"",
-    "noData": "No data"
+    "noData": "No data",
+    "figureAria": "{type} chart {title}",
+    "figurePoints": "{count} data points.",
+    "figureTopValues": "Top values: {detail}",
+    "rankingListAria": "Ranking list {title}",
+    "untitled": "Untitled chart"
   },
   "code": {
     "copy": "Copy",

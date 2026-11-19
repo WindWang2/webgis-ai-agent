@@ -20,6 +20,13 @@ import { deleteSession } from '@/lib/api/chat';
 import { describeApiError } from '@/lib/api/transport';
 import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
 import { mapInsetLeftStyle, mapChromeLeft, effectivePanelWidth } from '@/lib/utils/workspace-inset';
+// #2140 F5：壳层度量单一来源（与 globals.css --topH/--stH 同源）。
+import {
+  TOP_BAR_HEIGHT_PX,
+  STATUS_BAR_HEIGHT_PX,
+  MAP_CHROME_BOTTOM_HUD_OPEN_PX,
+  MAP_CHROME_BOTTOM_IDLE_PX,
+} from '@/lib/layout/shell-metrics';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
 import { useRegisterCommands } from '@/lib/commands/registry';
@@ -428,18 +435,21 @@ export default function Home() {
           flex: 1,
           position: 'relative',
           overflow: 'hidden',
-          marginTop: 42,
-          marginBottom: 24,
+          marginTop: TOP_BAR_HEIGHT_PX,
+          marginBottom: STATUS_BAR_HEIGHT_PX,
           // UI V4：地图 chrome（图例等）的水平避让偏移。地图容器真实收缩后
           // （见下方 wrapper），展开时 chrome 只需呼吸间距；收起时避开 rail。
           // 只有面板真实推挤地图（desktop 档展开）时 chrome 才只需呼吸间距；
           // thin 覆盖档/收起时避开竖排 rail，mobile 档 rail 在底部。
           ['--map-chrome-left' as string]: `${mapChromeLeft(insetOpen, { railVisible: !isMobile })}px`,
-          // UI V4：地图 chrome 的底部基线。workspace 已经预留 24px 状态条，
-          // HUD 展开到 210px 时需要再抬 186px。所有底部 chrome（读数条、比例尺、
+          // UI V4：地图 chrome 的底部基线。workspace 已经预留状态条
+          // （STATUS_BAR_HEIGHT_PX），HUD 展开到 210px 时需要再抬
+          // MAP_CHROME_BOTTOM_HUD_OPEN_PX。所有底部 chrome（读数条、比例尺、
           // 热力图例、专题图例）都从这一个变量堆叠，因此不会互相压盖 ——
           // 审计发现浮动图例与专题图例此前固定在同一 left/bottom 上必然重叠。
-          ['--map-chrome-bottom' as string]: hudOpen ? '196px' : '10px',
+          ['--map-chrome-bottom' as string]: hudOpen
+            ? `${MAP_CHROME_BOTTOM_HUD_OPEN_PX}px`
+            : `${MAP_CHROME_BOTTOM_IDLE_PX}px`,
         }}
       >
         {/* Map Panel — 左栏展开时容器真实收缩（ContextPanel 不再悬浮遮挡）：

@@ -5,7 +5,7 @@
  * 请求体/渲染产物断言（不依赖被测代码生成期望）。
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
@@ -146,8 +146,7 @@ async function bootPanel() {
 }
 
 
-describe('GeoAiPanel', () => {
-  beforeEach(() => {
+beforeEach(() => {
     setMapSpecSessionCursor('real-session', 0, 'real-owner-token');
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
@@ -196,8 +195,9 @@ describe('GeoAiPanel', () => {
       }
       return Promise.resolve(jsonOk({}));
     });
-  });
+});
 
+describe('GeoAiPanel', () => {
   it('加载模型（过滤 promptable）与预览', async () => {
     await bootPanel();
     const select = screen.getByTestId('model-select') as HTMLSelectElement;
@@ -262,5 +262,209 @@ describe('GeoAiPanel', () => {
     // 无提示再撤销 → 清除候选区（不抛错）。
     await userEvent.click(screen.getByTestId('undo'));
     expect(screen.getByText('提交后按分数列出')).toBeTruthy();
+  });
+});
+
+describe('GeoAiPanel 可访问性（#2157/#2159/#2163）', () => {
+  it('输入/select 有可编程名称（label + aria-label，#2163）', () => {
+    render(
+      <I18nProvider>
+        <GeoAiPanel />
+      </I18nProvider>,
+    );
+    expect(screen.getByRole('textbox', { name: '数据源栅格路径' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: '分割模型' })).toBeTruthy();
+    // 可见 <label for>（aria-label 之外的第二通道，读屏/点击双生效）。
+    expect(document.querySelector('label[for="geoai-source-uri"]')).toBeTruthy();
+    expect(document.querySelector('label[for="geoai-model-select"]')).toBeTruthy();
+  });
+
+  it('错误 role=alert；候选/队列有 aria-live 播报（#2163）', async () => {
+    render(
+      <I18nProvider>
+        <GeoAiPanel />
+      </I18nProvider>,
+    );
+    await userEvent.click(screen.getByTestId('load-preview'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('请输入数据目录内的栅格路径');
+    expect(screen.getByTestId('geoai-live').getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('暗色渲染不含裸 slate/emerald 色类（#2157 回归网）', () => {
+    const root = document.documentElement;
+    root.classList.add('dark');
+    root.setAttribute('data-theme', 'dark');
+    try {
+      const { container } = render(
+        <I18nProvider>
+          <GeoAiPanel />
+        </I18nProvider>,
+      );
+      const bare = container.querySelectorAll(
+        '[class*="bg-slate"],[class*="text-slate"],[class*="bg-emerald"],[class*="text-emerald"],[class*="bg-red-5"],[class*="text-red-7"]',
+      );
+      expect(bare).toHaveLength(0);
+    } finally {
+      root.classList.remove('dark');
+      root.removeAttribute('data-theme');
+    }
+  });
+
+  it('键盘：Tab 可聚焦叠加层，方向键移动光标，Enter 加点（#2159）', async () => {
+    const user = userEvent.setup();
+    await bootPanel();
+    const overlay = screen.getByTestId('prompt-overlay');
+    overlay.focus();
+    expect(document.activeElement).toBe(overlay);
+    await user.keyboard('{ArrowRight}{ArrowDown}');
+    expect(screen.getByTestId('kbd-cursor')).toBeTruthy();
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('prompt-point-0')).toBeTruthy();
+    expect(screen.getByTestId('submit')).toHaveTextContent('提交（1 提示）');
+  });
+
+  it('键盘：B 切框模式，两次 Enter 定框；Escape 取消（#2159）', async () => {
+    const user = userEvent.setup();
+    await bootPanel();
+    const overlay = screen.getByTestId('prompt-overlay');
+    overlay.focus();
+    await user.keyboard('b');
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('kbd-box-start')).toBeTruthy();
+    await user.keyboard('{ArrowRight}{ArrowRight}{ArrowDown}');
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('prompt-box-0')).toBeTruthy();
+    // Escape 取消未完成的第二个框：起点清除、无新框提交。
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('kbd-box-start')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByTestId('kbd-box-start')).toBeNull();
+    expect(screen.queryByTestId('prompt-box-1')).toBeNull();
+  });
+
+  it('触屏等价路径：框模式按钮切换后无修饰键拖拽 = 框提示（#2159）', async () => {
+    await bootPanel();
+    await userEvent.click(screen.getByTestId('mode-box'));
+    expect(screen.getByTestId('mode-box').getAttribute('aria-pressed')).toBe('true');
+    const overlay = screen.getByTestId('prompt-overlay');
+    await userEvent.pointer([
+      { target: overlay, keys: '[MouseLeft>]', coords: { x: 10, y: 10 } },
+      { target: overlay, coords: { x: 80, y: 45 } },
+      { keys: '[/MouseLeft]', coords: { x: 80, y: 45 } },
+    ]);
+    expect(screen.getByTestId('prompt-box-0')).toBeTruthy();
+  });
+
+  it('pointercancel 清理拖拽预览框，不留粘住状态（#2159）', async () => {
+    await bootPanel();
+    const overlay = screen.getByTestId('prompt-overlay');
+    await userEvent.pointer([{ target: overlay, keys: '[MouseLeft>]', coords: { x: 10, y: 10 } }]);
+    fireEvent.pointerMove(overlay, { clientX: 60, clientY: 40 });
+    expect(screen.getByTestId('drag-box')).toBeTruthy();
+    fireEvent.pointerCancel(overlay);
+    expect(screen.queryByTestId('drag-box')).toBeNull();
+    // 取消后移动不再复活预览框。
+    fireEvent.pointerMove(overlay, { clientX: 90, clientY: 60 });
+    expect(screen.queryByTestId('drag-box')).toBeNull();
+  });
+
+  it('#2163：提交 pending 时切源，旧请求返回后队列仍落终态、结果不渲染', async () => {
+    let resolveSeg: ((v: unknown) => void) | undefined;
+    const segPending = new Promise((resolve) => {
+      resolveSeg = resolve;
+    });
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/geoai/prompt-segment')) return segPending;
+      if (url.includes('/geoai/models')) {
+        return Promise.resolve(
+          jsonOk({ models: [{ model_id: 'm1', task_types: ['promptable_segmentation'] }] }),
+        );
+      }
+      if (url.includes('/geoai/preview')) return Promise.resolve(jsonOk(previewBody));
+      return Promise.resolve(jsonOk({}));
+    });
+    await bootPanel();
+    const overlay = screen.getByTestId('prompt-overlay');
+    await userEvent.pointer([
+      { target: overlay, keys: '[MouseLeft>]', coords: { x: 100, y: 50 } },
+      { keys: '[/MouseLeft]', coords: { x: 100, y: 50 } },
+    ]);
+    await userEvent.click(screen.getByTestId('submit'));
+    expect(screen.getByTestId('run-queue')).toHaveTextContent('进行中');
+    // 提交期间切换数据源 → 上下文改变，提示被清空。
+    const source = screen.getByTestId('source-uri');
+    await userEvent.clear(source);
+    await userEvent.type(source, '/data/other.tif');
+    expect(screen.queryByTestId('prompt-point-0')).toBeNull();
+    resolveSeg?.(jsonOk({ run_id: 'run-stale', outputs: { prompt_candidates: { windows: [
+      { candidates: [{ index: 0, score: 0.9, source: 'heuristic' }] },
+    ] } } }));
+    // 队列项必须落 done（showing run id），而不是永久 running。
+    await waitFor(() => expect(screen.getByText('run-stale')).toBeTruthy());
+    // 旧上下文的结果不得渲染进新页面。
+    expect(screen.queryByTestId('candidate-list')).toBeNull();
+  });
+
+  it('#2163：旧上下文的失败写入队列但不污染当前错误区', async () => {
+    let rejectSeg: ((e: unknown) => void) | undefined;
+    const segPending = new Promise((_resolve, reject) => {
+      rejectSeg = reject;
+    });
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/geoai/prompt-segment')) return segPending;
+      if (url.includes('/geoai/models')) {
+        return Promise.resolve(
+          jsonOk({ models: [{ model_id: 'm1', task_types: ['promptable_segmentation'] }] }),
+        );
+      }
+      if (url.includes('/geoai/preview')) return Promise.resolve(jsonOk(previewBody));
+      return Promise.resolve(jsonOk({}));
+    });
+    await bootPanel();
+    const overlay = screen.getByTestId('prompt-overlay');
+    await userEvent.pointer([
+      { target: overlay, keys: '[MouseLeft>]', coords: { x: 100, y: 50 } },
+      { keys: '[/MouseLeft]', coords: { x: 100, y: 50 } },
+    ]);
+    await userEvent.click(screen.getByTestId('submit'));
+    const source = screen.getByTestId('source-uri');
+    await userEvent.clear(source);
+    await userEvent.type(source, '/data/other.tif');
+    rejectSeg?.(new Error('boom'));
+    await waitFor(() =>
+      expect(screen.getByTestId('run-queue')).toHaveTextContent('boom'),
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('#2163：提交防重入 —— pending 期间重复点击只发一次请求', async () => {
+    let resolveSeg: ((v: unknown) => void) | undefined;
+    const segPending = new Promise((resolve) => {
+      resolveSeg = resolve;
+    });
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/geoai/prompt-segment')) return segPending;
+      if (url.includes('/geoai/models')) {
+        return Promise.resolve(
+          jsonOk({ models: [{ model_id: 'm1', task_types: ['promptable_segmentation'] }] }),
+        );
+      }
+      if (url.includes('/geoai/preview')) return Promise.resolve(jsonOk(previewBody));
+      return Promise.resolve(jsonOk({}));
+    });
+    await bootPanel();
+    const overlay = screen.getByTestId('prompt-overlay');
+    await userEvent.pointer([
+      { target: overlay, keys: '[MouseLeft>]', coords: { x: 100, y: 50 } },
+      { keys: '[/MouseLeft]', coords: { x: 100, y: 50 } },
+    ]);
+    await userEvent.click(screen.getByTestId('submit'));
+    // disabled 后第二次点击无效（忙挡 + 按钮态双重防护）。
+    expect(screen.getByTestId('submit')).toBeDisabled();
+    const calls = fetchMock.mock.calls.filter(([u]) =>
+      String(u).includes('/geoai/prompt-segment'),
+    );
+    expect(calls).toHaveLength(1);
+    resolveSeg?.(jsonOk({ run_id: 'run-1', outputs: {} }));
   });
 });
