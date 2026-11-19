@@ -361,7 +361,6 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       name="webgis_state_get",
-      capabilities=['workspace_state_inspection'],
       description="读取当前会话的 MapSpec 制图 Intent 文档与 MapMeta Profile。",
       args_model=WebgisStateGetArgs,
       tier=1,

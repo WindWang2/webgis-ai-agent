@@ -225,6 +225,7 @@ def register_field_compute_tools(registry: ToolRegistry) -> None:
         capabilities=["field_compute"],
         latency_class="medium",
         memory_class="light",
+        result_size_policy="bounded",
         description=(
             "列出类型化字段计算工作台的函数集版本、闭合表达式函数（数值/条件/"
             "文本/代码/日期/单位/几何）、支持的作用范围与错误策略、资源上限。"
@@ -258,6 +259,7 @@ def register_field_compute_tools(registry: ToolRegistry) -> None:
         capabilities=["field_compute"],
         latency_class="medium",
         memory_class="medium",
+        result_size_policy="bounded",
         description=(
             "在已登记的数据 ref 上编译安全表达式并预览计算列：返回字段/类型/单位/"
             "范围/样本 before-after/null 与 error 计数/预算预估，以及供确认执行的 "
@@ -519,6 +521,7 @@ def register_field_compute_tools(registry: ToolRegistry) -> None:
         capabilities=["field_compute"],
         latency_class="medium",
         memory_class="light",
+        result_size_policy="bounded",
         description=(
             "回读字段计算成果：验证新数据 ref 真实可读、字段存在、行数对账，"
             "返回有界样本（≤5 行）。用于生成后查表与后续制图前的结果确认。"

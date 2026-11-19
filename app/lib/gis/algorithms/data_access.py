@@ -253,7 +253,19 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/gis/test_algo_conformance_v2.py::test_workspace_inspection_readonly_contract",
             ],
             capabilities=["workspace_state_inspection"],
-            tool_candidates=["describe_workspace", "list_workspace_snapshots"],
+            # 真实只读检视面：产物账本（describe_artifact/find_artifacts_by_role/
+            # get_lineage/list_analysis_assets）、数据集目录（list_datasets/
+            # search_datasets）、上传与导入状态（list_uploaded_data/get_upload_info/
+            # import_batch_*）、图层引用（inventory_layers）与计算作业状态
+            # （field_compute_status）——逐 handler 核实 side_effect=pure。
+            tool_candidates=["describe_workspace", "list_workspace_snapshots",
+                             "describe_artifact", "find_artifacts_by_role",
+                             "get_lineage", "list_analysis_assets",
+                             "list_datasets", "search_datasets",
+                             "list_uploaded_data", "get_upload_info",
+                             "import_batch_inspect", "import_batch_receipt",
+                             "import_commit_status", "inventory_layers",
+                             "field_compute_status"],
             cpu_cost="low", memory_cost="low", io_cost="low",
             preferred_execution_policy="LOCAL",
             algorithm_family="data_access",

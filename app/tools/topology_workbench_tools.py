@@ -50,9 +50,9 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         tags=["拓扑", "topology", "规则集", "数据质量", "quality"],
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="light",
+        result_size_policy="bounded",
         description=(
             "创建/更新跨图层拓扑规则集（多数据集业务约束的作者面）。规则类型词表："
             "polygons_no_overlap(同源面禁重叠) / area_coverage(AOI 覆盖+排除区) / "
@@ -125,9 +125,9 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         tags=["拓扑", "topology", "检查", "durable job"],
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="medium",
+        result_size_policy="bounded",
         description=(
             "启动跨图层拓扑检查（durable job）：绑定源角色 → 权威快照解析（会话 ref / "
             "项目产物修订；选择句柄在提交时解析为可重放 scope）→ 逐规则求值 → 问题落库。"
@@ -192,9 +192,9 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=True,
         tags=["拓扑", "topology", "状态"],
-        capabilities=["dataset_ingest"],
         latency_class="fast",
         memory_class="light",
+        result_size_policy="bounded",
         description=(
             "查询拓扑检查运行状态：作业层状态 + 逐规则维度分离结论"
             "（applicability / input_completeness / computation / outcome）+ 计数。"
@@ -247,9 +247,9 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=True,
         tags=["拓扑", "topology", "问题", "findings"],
-        capabilities=["dataset_ingest"],
         latency_class="fast",
         memory_class="light",
+        result_size_policy="bounded",
         description=(
             "分页列出运行的问题（筛选 rule_id/severity/status）。total 是全量计数"
             "（非当前页）。每条含 finding_id、度量值/阈值/单位、bbox、状态"
@@ -313,9 +313,9 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=True,
         tags=["拓扑", "topology", "定位", "witness"],
-        capabilities=["dataset_ingest"],
         latency_class="fast",
         memory_class="light",
+        result_size_policy="bounded",
         description=(
             "问题详情：locator（源/版本/要素身份；含 stale 判定）、度量、witness "
             "GeoJSON（问题几何证据）。locator 的 snapshot_index 身份只在该快照指纹下"
@@ -382,9 +382,9 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
         network=False,
         deterministic=False,
         tags=["拓扑", "topology", "修复", "repair", "G14"],
-        capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="medium",
+        result_size_policy="bounded",
         description=(
             "为问题生成候选修复并（kind 支持 snap_endpoint / trim_to_target 时）构建 "
             "G14 预览 plan：列出目标要素身份、几何变化、量变预估。绝不直接写数据 —— "

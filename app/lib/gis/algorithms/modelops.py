@@ -294,7 +294,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         capabilities=["model_embedding"],
         input_artifact_types=["raster_surface"],
         output_artifact_type="feature_collection",
-        tool_candidates=_INFERENCE_TOOLS,
+        # geoai_embed 直连同一 embedding 推理路径（task_type="embedding"），
+        # 与 modelops 推理入口同为该算法的真实执行面。
+        tool_candidates=[*_INFERENCE_TOOLS, "geoai_embed"],
         cpu_cost="medium", memory_cost="medium", io_cost="low",
         preferred_execution_policy="ASYNC", priority=30,
         algorithm_family="model_inference",

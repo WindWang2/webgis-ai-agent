@@ -62,7 +62,6 @@ def register_visual_context_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="webgis_visual_evidence_read",
-        capabilities=["workspace_state_inspection"],
         domains=["cartography"],
         tier=1,
         args_model=VisualEvidenceReadArgs,

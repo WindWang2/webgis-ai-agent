@@ -57,6 +57,7 @@ def register_ingest_tools(registry: ToolRegistry) -> None:
         capabilities=["dataset_ingest"],
         latency_class="medium",
         memory_class="heavy",
+        result_size_policy="bounded",
         description=(
             "把一个内联 GeoJSON FeatureCollection 摄入当前会话：内容指纹去重 →"
             "有界画像 → 质量诊断 → 会话产物登记（账本可追溯、可复用）。"
