@@ -133,7 +133,10 @@ def _parse_transform(raw: Optional[str]) -> Optional[Tuple[float, float, float, 
         else:
             raise SymbolAssetError(
                 "SVG_TRANSFORM_UNSUPPORTED", f"transform {name}({args})")
-        matrix = _mat_mul(m, matrix)
+        # SVG transform-list 语义 = 嵌套 g 链：CTM = M1·M2·…·Mn，列表后者
+        # 先作用于元素坐标（14c：此前 _mat_mul(m, matrix) 把顺序颠倒成
+        # Mn·…·M1，多变换列表整体几何镜像错位）。
+        matrix = _mat_mul(matrix, m)
     return matrix
 
 
@@ -480,7 +483,9 @@ def _arc_to_cubics(
         e_y = cy + rx_abs * cos2 * sin_p + ry_abs * sin2 * cos_p
         d1x, d1y = -rx_abs * sin1 * cos_p - ry_abs * cos1 * sin_p, \
             -rx_abs * sin1 * sin_p + ry_abs * cos1 * cos_p
-        d2x, d2y = -rx_abs * sin2 * cos_p - ry_abs * sin2 * sin_p, \
+        # 14c：端点处导数 dE/dθ 的 ry 项取 cos2（此前误用 sin2 ——
+        # 旋转椭圆上端点切线方向偏差，曲线偏离真弧）。
+        d2x, d2y = -rx_abs * sin2 * cos_p - ry_abs * cos2 * sin_p, \
             -rx_abs * sin2 * sin_p + ry_abs * cos2 * cos_p
         out.append([
             px + t * d1x, py + t * d1y,
@@ -696,10 +701,12 @@ def _emit(
 def _shift_primitive(prim: Any, m: Optional[Tuple[float, ...]]) -> Any:
     """use 引用图元的整体变换烘焙（平移/缩放/旋转展开到坐标）。
 
-    path：逐命令坐标变换（Z 保持）；points：逐点；circle：圆心变换 +
-    等比时半径缩放（非等比 use → path 化由导入期 g 处理，此处不达）；
-    rect/ellipse/line：以 x/y/cx/cy 基点变换（宽高随 |scale| 近似 —— use
-    偏移主场景是 x/y 平移，此时精确）。
+    path：逐命令坐标变换（Z 保持）；points：逐点；circle：相似变换
+    （旋转+等比缩放，列正交等长）下圆保形 —— 圆心变换 + 半径乘
+    √|scale|（对任意旋转精确；此前 abs(m[0]) 在旋转下漏乘 cosθ 项）；
+    非相似（剪切/非等比）→ 16 边形 path 化（与导入期 circle 分支同纪律）；
+    line：两端点各自变换后重取 delta（w/h 随旋转/缩放，此前只平移基点）；
+    全部变换后坐标过 _check_coord 硬帽。
     """
     shifted = prim.model_copy(deep=True)
     if m is None:
@@ -717,15 +724,45 @@ def _shift_primitive(prim: Any, m: Optional[Tuple[float, ...]]) -> Any:
         return shifted
     if shifted.points:
         shifted.points = [  # type: ignore[assignment]
-            (round(px, 3), round(py, 3)) for px, py in
-            (_apply(m, px, py) for px, py in shifted.points)]
+            (round(_check_coord(_apply(m, px, py)[0], where="points"), 3),
+             round(_check_coord(_apply(m, px, py)[1], where="points"), 3))
+            for px, py in shifted.points]
         return shifted
     if shifted.op == "circle":
-        tx, ty = _apply(m, shifted.cx or 0.0, shifted.cy or 0.0)
-        shifted.cx, shifted.cy = round(tx, 3), round(ty, 3)
-        a = m[0]
-        if abs(a) > 1e-9:
-            shifted.r = round(abs(a) * (shifted.r or 0.0), 3)
+        cx, cy, r = shifted.cx or 0.0, shifted.cy or 0.0, shifted.r or 0.0
+        a, b_, c_, d_ = m[0], m[1], m[2], m[3]
+        n1 = a * a + b_ * b_
+        n2 = c_ * c_ + d_ * d_
+        ortho = abs(a * c_ + b_ * d_) <= 1e-9 * max(1.0, n1, n2)
+        if ortho and n1 > 0 and abs(n1 - n2) <= 1e-9 * max(1.0, n1, n2):
+            tx, ty = _apply(m, cx, cy)
+            shifted.cx = round(_check_coord(tx, where="circle"), 3)
+            shifted.cy = round(_check_coord(ty, where="circle"), 3)
+            shifted.r = round(math.sqrt(n1) * r, 3)
+            return shifted
+        segs = 16
+        d2: List[List[Union[str, float]]] = []
+        for k in range(segs):
+            ang = 2 * math.pi * k / segs
+            px, py = _apply(m, cx + r * math.cos(ang), cy + r * math.sin(ang))
+            d2.append((["M"] if k == 0 else ["L"]) +
+                      [round(_check_coord(px, where="circle"), 3),
+                       round(_check_coord(py, where="circle"), 3)])
+        d2.append(["Z"])
+        shifted.op = "path"
+        shifted.d = d2
+        shifted.cx = shifted.cy = shifted.r = None
+        return shifted
+    if shifted.op == "line":
+        x1, y1 = shifted.x or 0.0, shifted.y or 0.0
+        p1 = _apply(m, x1, y1)
+        p2 = _apply(m, x1 + (shifted.w or 0.0), y1 + (shifted.h or 0.0))
+        q1x = round(_check_coord(p1[0], where="line"), 3)
+        q1y = round(_check_coord(p1[1], where="line"), 3)
+        q2x = round(_check_coord(p2[0], where="line"), 3)
+        q2y = round(_check_coord(p2[1], where="line"), 3)
+        shifted.x, shifted.y = q1x, q1y
+        shifted.w, shifted.h = round(q2x - q1x, 3), round(q2y - q1y, 3)
         return shifted
     if shifted.cx is not None:
         tx, ty = _apply(m, shifted.cx, shifted.cy or 0.0)

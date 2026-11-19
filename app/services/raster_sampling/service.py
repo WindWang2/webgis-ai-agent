@@ -276,12 +276,9 @@ def _early_method_check(bindings: Sequence[SourceBinding], method: str) -> None:
     if method in INTERPOLATING_METHODS:
         for s in bindings:
             for b in s.bands:
-                declared = s.band_semantics.get(str(b))
-                if declared in ("categorical", "continuous"):
-                    semantic = declared
-                else:
-                    tags_sem = s.band_semantics_source
-                    semantic = ("continuous" if tags_sem == "continuous" else "undeclared")
+                # band_semantics 于 freeze 期已解析有效语义（用户声明 >
+                # 数据集 classification 元数据；15b），此处直接判定。
+                semantic = s.band_semantics.get(str(b))
                 if semantic == "categorical":
                     raise RasterSamplingError(
                         "METHOD_INCOMPATIBLE",

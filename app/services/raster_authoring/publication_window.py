@@ -392,7 +392,7 @@ def _render_window(
         if src_crs == "EPSG:3857":
             # 同 CRS：read 的 out_shape 网格即目标网格（仅有分辨率差）。
             if (dec_w, dec_h) != (out_w, out_h):
-                dst_data = np.zeros((count, out_w, out_h), dtype=win_data.dtype)
+                dst_data = np.zeros((count, out_h, out_w), dtype=win_data.dtype)
                 rio_warp.reproject(
                     source=win_data, destination=dst_data,
                     src_transform=win_transform, src_crs=src_crs,
@@ -403,7 +403,7 @@ def _render_window(
             else:
                 dst_data = win_data
         else:
-            dst_data = np.zeros((count, out_w, out_h), dtype=win_data.dtype)
+            dst_data = np.zeros((count, out_h, out_w), dtype=win_data.dtype)
             rio_warp.reproject(
                 source=win_data, destination=dst_data,
                 src_transform=win_transform, src_crs=src_crs,
@@ -415,7 +415,7 @@ def _render_window(
         # Coverage mask：源真实覆盖的像元（部分相交/旋转包络的空角透明）。
         if is_partial or rotated:
             win_mask = np.ones((dec_h, dec_w), dtype=np.uint8) * 255
-            coverage = np.zeros((out_w, out_h), dtype=np.uint8)
+            coverage = np.zeros((out_h, out_w), dtype=np.uint8)
             rio_warp.reproject(
                 source=win_mask, destination=coverage,
                 src_transform=win_transform, src_crs=src_crs,
@@ -424,7 +424,7 @@ def _render_window(
             )
             coverage_mask = coverage > 0
         else:
-            coverage_mask = np.ones((out_w, out_h), dtype=bool)
+            coverage_mask = np.ones((out_h, out_w), dtype=bool)
 
     # ── 冻结 stretch 归一（与瓦片/G20 快照同数学；全通道有效才绘制）──
     channels = []
@@ -444,7 +444,7 @@ def _render_window(
 
     if all_nodata:
         notes.append("all_nodata_or_no_overlap_in_view")
-        alpha = np.zeros((out_w, out_h), dtype=np.uint8)
+        alpha = np.zeros((out_h, out_w), dtype=np.uint8)
         if count >= 3:
             rgb = np.dstack([channels[0], channels[1], channels[2]])
         else:

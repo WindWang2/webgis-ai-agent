@@ -25,7 +25,39 @@ import numpy as np
 from PIL import Image
 import rasterio
 from rasterio.warp import reproject, Resampling, transform_bounds
-from rasterio.windows import from_bounds
+from rasterio.windows import Window, from_bounds
+
+
+def _window_from_bounds(left: float, bottom: float, right: float, top: float,
+                        transform) -> Window:
+    """Bounds → 浮点像素窗口（north-up 与 rasterio.windows.from_bounds
+    逐值等价；south-up（e>0）/旋转/剪切同样成立）。
+
+    rasterio 的 from_bounds 对「bounds 与 transform 朝向不一致」直接
+    WindowError —— 南向栅格的合法 GeoTIFF（PixelIsArea 负高度）因此
+    在窗口步就崩/全透明；旋转 affine 虽不出错，但取 min/max 的行列包络
+    与真足迹一致，故此处四角逆变换取包络对全部 affine 统一正确。
+    """
+    inv = ~transform
+    cols = []
+    rows = []
+    for gx, gy in ((left, top), (right, top), (right, bottom), (left, bottom)):
+        c, r = inv * (gx, gy)
+        cols.append(c)
+        rows.append(r)
+    c0, c1 = min(cols), max(cols)
+    r0, r1 = min(rows), max(rows)
+    return Window(col_off=c0, row_off=r0, width=c1 - c0, height=r1 - r0)
+
+
+def _decimated_window_transform(src, win, out_w: int, out_h: int):
+    """降采样读窗口的真实 transform：保留源 affine 全部项（b/d 旋转、
+    e>0 南向翻转）—— 此前 from_bounds(窗口包络) 重建 north-up transform，
+    旋转栅格经 warp 后整体错位（15a 实证），南向栅格直接翻转错位。"""
+    from rasterio.transform import Affine
+
+    return src.window_transform(win) * Affine.scale(
+        win.width / out_w, win.height / out_h)
 
 _MERCATOR_BOUND = 20037508.342789244
 _INITIAL_RESOLUTION = 2 * _MERCATOR_BOUND / 256.0
@@ -438,8 +470,8 @@ def render_raster_tile(
                 src_crs = src.crs
             src_bounds = transform_bounds("EPSG:3857", src_crs, *bounds_3857)
 
-            # Read windowed slice from source
-            win_raw = from_bounds(*src_bounds, transform=src.transform)
+            # Read windowed slice from source（南向/旋转 affine 安全窗口）
+            win_raw = _window_from_bounds(*src_bounds, transform=src.transform)
             win = win_raw.round_offsets().round_shape()
             try:
                 win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
@@ -544,16 +576,15 @@ def render_raster_tile(
             # out_shape scales each axis by min(1, tile_size / window) — GDAL
             # then picks the appropriate overview level. High-zoom windows
             # (≤ tile_size px) keep scale 1 → native read, unchanged behavior.
-            win_bounds = rasterio.windows.bounds(win, src.transform)
             scale = min(1.0, tile_size / float(win.width), tile_size / float(win.height))
             out_h = max(1, int(round(win.height * scale)))
             out_w = max(1, int(round(win.width * scale)))
             out_shape = (count, out_h, out_w)
             win_data = src.read(indexes=indexes, window=win, out_shape=out_shape)
             # The decimated read covers exactly the window's geographic extent
-            # at out_shape resolution — its transform is from_bounds of those
-            # bounds, not the native-grid window transform.
-            win_transform = rasterio.transform.from_bounds(*win_bounds, out_w, out_h)
+            # at out_shape resolution — its transform is the source affine
+            # scaled to the decimated grid（旋转/南向项保留；15a）。
+            win_transform = _decimated_window_transform(src, win, out_w, out_h)
 
             # Dataset-global stretch bounds (per band) so adjacent tiles share
             # one normalization instead of per-tile min/max (seam fix, #410).
@@ -783,7 +814,7 @@ def render_terrarium_tile(
                     "location would fabricate vertical evidence",
                 )
             src_bounds = transform_bounds("EPSG:3857", src.crs, *bounds_3857)
-            win_raw = from_bounds(*src_bounds, transform=src.transform)
+            win_raw = _window_from_bounds(*src_bounds, transform=src.transform)
             win = win_raw.round_offsets().round_shape()
             try:
                 win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
@@ -810,12 +841,11 @@ def render_terrarium_tile(
             # 再投影**：高程 bilinear + 有效权重 bilinear。阈值 254.5 = 双线性
             # 支撑域内混入任何 nodata 的像素一律判无效 —— nodata 边界的插值
             # 会产生 -4000m 级的"过渡高程"，那是伪证据，绝不编码。
-            win_bounds = rasterio.windows.bounds(win, src.transform)
             scale = min(1.0, tile_size / float(win.width), tile_size / float(win.height))
             out_h = max(1, int(round(win.height * scale)))
             out_w = max(1, int(round(win.width * scale)))
             win_elev = src.read(indexes=1, window=win, out_shape=(out_h, out_w)).astype(np.float64)
-            win_transform = rasterio.transform.from_bounds(*win_bounds, out_w, out_h)
+            win_transform = _decimated_window_transform(src, win, out_w, out_h)
 
             declared_nodata = src.nodata
             with np.errstate(invalid="ignore"):
