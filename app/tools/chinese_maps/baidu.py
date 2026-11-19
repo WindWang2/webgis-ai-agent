@@ -165,7 +165,11 @@ class BaiduProvider:
             return data
         result = data.get("result", {})
         loc = result.get("location", {})
-        bd_lng, bd_lat = loc.get("lng", 0), loc.get("lat", 0)
+        bd_lng, bd_lat = loc.get("lng"), loc.get("lat")
+        # #2156 P3：缺 location 旧实现回退 (0,0) 并 count=1「成功」——null
+        # island 假结果；改为诚实空集。
+        if bd_lng is None or bd_lat is None:
+            return {"results": [], "count": 0, "provider": "baidu"}
         lng, lat = self._to_wgs(bd_lng, bd_lat)
         # Baidu geocoding v3 不返回 canonical 地址，回显用户输入并把精度等级单独暴露
         return {
@@ -209,7 +213,9 @@ class BaiduProvider:
         endpoint = mode_map.get(mode, "driving")
         o_bd = self._to_src(origin[0], origin[1])
         d_bd = self._to_src(dest[0], dest[1])
-        params = {"origin": f"{o_bd[0]},{o_bd[1]}", "destination": f"{d_bd[0]},{d_bd[1]}"}
+        # #2151：directionlite 契约是「纬度,经度」（与本文件其它方法一致；
+        # 旧实现按 lng,lat 传，纬度分量 >90 被服务端判非法 → 空路线）。
+        params = {"origin": f"{o_bd[1]},{o_bd[0]}", "destination": f"{d_bd[1]},{d_bd[0]}"}
         if mode == "transit" and city:
             params["city"] = city
         data = await self._get(f"/directionlite/v1/{endpoint}", params)

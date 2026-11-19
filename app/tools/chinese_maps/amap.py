@@ -184,7 +184,12 @@ class AmapProvider:
             loc = g.get("location", "").split(",")
             if len(loc) != 2:
                 continue
-            gcj_lng, gcj_lat = float(loc[0]), float(loc[1])
+            # #2156 P3：非数值 location（如 "abc,def"）旧实现 float() 裸
+            # ValueError 崩掉整个工具；按畸形条目跳过（与 len!=2 同语义）。
+            try:
+                gcj_lng, gcj_lat = float(loc[0]), float(loc[1])
+            except (TypeError, ValueError):
+                continue
             lng, lat = self._to_wgs(gcj_lng, gcj_lat)
             results.append({
                 "location": [lng, lat],

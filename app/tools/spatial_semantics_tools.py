@@ -77,7 +77,7 @@ def register_spatial_semantics_tools(registry: ToolRegistry) -> None:
             "度量敏感工具执行前的第一步；未知不猜。"
         ),
     )
-    async def inspect_spatial_semantics(
+    def inspect_spatial_semantics(
         geojson: Any,
         scope_bbox: Optional[list] = None,
         scope_crs: str = "EPSG:4326",

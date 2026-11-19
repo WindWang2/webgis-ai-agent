@@ -692,8 +692,8 @@ def test_sar_v3_tools_schema_and_evidence():
 
     # 热噪声工具：payload + 证据块（sar.thermal_noise_removal）
     thermal_fn = registry._tools["sar_remove_thermal_noise"]
-    payload = asyncio.run(thermal_fn([[5.0, 1.0], [0.5, 2.0]],
-                                     noise_floor=1.0))
+    payload = thermal_fn([[5.0, 1.0], [0.5, 2.0]],
+                                     noise_floor=1.0)
     assert payload["success"] is True
     assert payload["clamped_pixels"] == 1
     ev = payload["scientific_evidence"]
@@ -706,8 +706,8 @@ def test_sar_v3_tools_schema_and_evidence():
     real = np.cos(0.7 * xs)[None, :] + np.zeros((6, 1))
     imag = np.sin(0.7 * xs)[None, :] + np.zeros((6, 1))
     coh_fn = registry._tools["sar_coherence_estimate"]
-    coh = asyncio.run(coh_fn(real.tolist(), imag.tolist(),
-                             real.tolist(), imag.tolist()))
+    coh = coh_fn(real.tolist(), imag.tolist(),
+                             real.tolist(), imag.tolist())
     assert coh["success"] is True
     assert coh["scientific_evidence"]["algorithm"] == "sar.coherence"
     assert coh["stats"]["min"] == pytest.approx(1.0, abs=1e-9)
@@ -715,9 +715,9 @@ def test_sar_v3_tools_schema_and_evidence():
     # 定标工具：入射角 LUT 通道 + lut_pixels 披露
     calib_fn = registry._tools["sar_calibrate"]
     lut = [[30.0, 30.0], [30.0, 30.0]]
-    calib = asyncio.run(calib_fn([[2.0, 4.0], [6.0, 8.0]],
+    calib = calib_fn([[2.0, 4.0], [6.0, 8.0]],
                                  calibration_constant=2.0,
-                                 incidence_lut=lut))
+                                 incidence_lut=lut)
     assert calib["success"] is True
     assert calib["lut_pixels"] == 4
     assert calib["incidence_lut_source"] == "incidence_lut"
@@ -727,13 +727,13 @@ def test_sar_v3_tools_schema_and_evidence():
     # speckle 工具：gamma_map 新方法可用（iterations_used 披露）
     spk_fn = registry._tools["sar_speckle_filter"]
     img = np.random.RandomState(4).gamma(4.0, 25.0, size=(6, 6)).tolist()
-    spk = asyncio.run(spk_fn(img, filter="gamma_map", window="3", enl=4.0))
+    spk = spk_fn(img, filter="gamma_map", window="3", enl=4.0)
     assert spk["success"] is True and spk["method"] == "gamma_map"
     assert 1 <= spk["iterations_used"] <= 10
 
     # ENL 图工具：全局 ENL ≈ 4 + 证据块
     enl_fn = registry._tools["sar_enl_map"]
-    emap = asyncio.run(enl_fn(img, window="3"))
+    emap = enl_fn(img, window="3")
     assert emap["success"] is True
     assert 2.0 < emap["global_enl"] < 7.0
     assert emap["scientific_evidence"]["algorithm"] == "sar.enl_map"

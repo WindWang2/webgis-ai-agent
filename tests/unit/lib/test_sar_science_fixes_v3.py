@@ -119,7 +119,7 @@ def test_r2_acquisitions_comparability_wired_to_tools():
               for i, m in enumerate(mixed)]
 
     stats_fn = registry._tools["sar_temporal_stats"]
-    payload = asyncio.run(stats_fn(stack, "mean", acquisitions=mixed4))
+    payload = stats_fn(stack, "mean", acquisitions=mixed4)
     ev_warns = payload["scientific_evidence"]["warnings"]
     assert any("轨道方向混搭" in w for w in ev_warns)
     assert any("入射角差" in w for w in ev_warns)
@@ -127,13 +127,13 @@ def test_r2_acquisitions_comparability_wired_to_tools():
     assert payload["success"] is True  # 披露级：结果照常产出
 
     comp_fn = registry._tools["sar_temporal_composite"]
-    comp = asyncio.run(comp_fn(stack, "median", acquisitions=mixed4))
+    comp = comp_fn(stack, "median", acquisitions=mixed4)
     assert any("轨道方向混搭" in w
                for w in comp["scientific_evidence"]["warnings"])
     assert comp["comparability_warnings"]
 
     # 缺省 acquisitions：行为与历史一致（无可比性警告）
-    plain = asyncio.run(stats_fn(stack, "mean"))
+    plain = stats_fn(stack, "mean")
     assert plain["meta"]["comparability_warnings"] == []
     assert plain["scientific_evidence"]["warnings"] == [
         plain["meta"]["disclosure"]]
@@ -268,10 +268,10 @@ def test_r6_thermal_noise_esa_reference_and_input_domain():
                   if s["function"]["name"] == "sar_remove_thermal_noise")
     assert "input_domain" in schema["parameters"]["properties"]
     thermal_fn = registry._tools["sar_remove_thermal_noise"]
-    payload = asyncio.run(thermal_fn([[5.0, 1.0], [0.5, 2.0]],
-                                     noise_floor=1.0))
+    payload = thermal_fn([[5.0, 1.0], [0.5, 2.0]],
+                                     noise_floor=1.0)
     assert payload["input_domain"] == "auto"
     assert payload["success"] is True
     with pytest.raises(UnsupportedMethod):
-        asyncio.run(thermal_fn([[5.0, 5.0], [5.0, 5.0]], noise_floor=1.0,
-                               input_domain="db"))
+        thermal_fn([[5.0, 5.0], [5.0, 5.0]], noise_floor=1.0,
+                               input_domain="db")
