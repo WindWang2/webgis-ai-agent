@@ -14,6 +14,13 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_user_optional_with_version
 from app.models.db_model import Conversation
+from app.schemas.raster_authoring_schema import (
+    RasterDescriptorResponse,
+    RasterExportResponse,
+    RasterExpressionReceipt,
+    RasterProbeResponse,
+    RasterRefsResponse,
+)
 from app.schemas.raster_spec import RasterExpressionError
 from app.services.auth_history_bridge import require_owned_session
 from app.services.mvt import single_flight, tile_lru_cache
@@ -72,7 +79,7 @@ class ExportBody(BaseModel):
 
 # ─── 已登记栅格 ref 列表（工作台选择器；有界、owner-scoped）─────────────────
 
-@router.get("/refs")
+@router.get("/refs", response_model=RasterRefsResponse)
 async def list_raster_refs(
     session_id: str = Query(..., min_length=8, max_length=128),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
@@ -105,7 +112,7 @@ async def list_raster_refs(
 
 # ─── 元数据 / 直方图 ───────────────────────────────────────────────────────
 
-@router.get("/descriptor/{ref_id}")
+@router.get("/descriptor/{ref_id}", response_model=RasterDescriptorResponse)
 async def descriptor(
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128),
@@ -131,7 +138,7 @@ async def descriptor(
 
 # ─── 真实像元检视（只读，不写 MapSpec）──────────────────────────────────────
 
-@router.post("/probe")
+@router.post("/probe", response_model=RasterProbeResponse)
 async def probe(
     body: ProbeBody,
     session_id: str = Query(..., min_length=8, max_length=128),
@@ -151,7 +158,7 @@ async def probe(
 
 # ─── 预览 / 提交（同一领域服务）────────────────────────────────────────────
 
-@router.post("/expression/preview")
+@router.post("/expression/preview", response_model=RasterExpressionReceipt)
 async def preview(
     body: ExpressionBody,
     session_id: str = Query(..., min_length=8, max_length=128),
@@ -168,7 +175,7 @@ async def preview(
         raise _fail(err) from err
 
 
-@router.post("/expression/commit")
+@router.post("/expression/commit", response_model=RasterExpressionReceipt)
 async def commit(
     body: CommitBody,
     session_id: str = Query(..., min_length=8, max_length=128),
@@ -261,7 +268,7 @@ async def styled_tile(
 
 # ─── 单幅同语义导出（冻结修订 + 受权下载）──────────────────────────────────
 
-@router.post("/export")
+@router.post("/export", response_model=RasterExportResponse)
 async def export_map(
     body: ExportBody,
     session_id: str = Query(..., min_length=8, max_length=128),
