@@ -111,7 +111,7 @@ def test_medoid_tool_wrapper():
     tool_fn = registry._tools["medoid_composite"]
 
     t = _scene()
-    payload = asyncio.run(tool_fn(stack=t.tolist()))
+    payload = tool_fn(stack=t.tolist())
     assert payload["success"] is True
     assert payload["time_slices"] == 3
     assert payload["scientific_evidence"]["algorithm"] == \
@@ -122,7 +122,7 @@ def test_medoid_tool_wrapper():
     # 4M 内联守卫
     big = np.zeros((2, 1, 1500, 1400))     # 4.2M 值 > 4M
     with pytest.raises(ResourceScaleMismatch):
-        asyncio.run(tool_fn(stack=big.tolist()))
+        tool_fn(stack=big.tolist())
 
 
 

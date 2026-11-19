@@ -150,10 +150,10 @@ def test_real_remote_sensing_quantile_evidence_keeps_array_type():
 
     reg = ToolRegistry()
     register_rs_tools(reg)
-    result = asyncio.run(reg._tools["robust_normalize"](
+    result = reg._tools["robust_normalize"](
         bands={"red": np.arange(36, dtype=float).reshape(6, 6).tolist()},
         method="percentile_stretch",
-    ))
+    )
     assert result["success"] is True
     parameters = result["scientific_evidence"]["parameters_applied"]
     assert parameters == {

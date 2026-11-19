@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import os
+import re
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator, Literal, Optional, Type, List, Tuple, Union, get_args, get_origin, Annotated
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model, ValidationError
@@ -285,6 +286,27 @@ from app.lib.json_size import (  # noqa: F401
 
 
 _ALIAS_LOOKUP_MAX_DISTINCT = 1024
+
+# #2150：aiohttp ClientResponseError / requests HTTPError 的 str() 携带完整
+# URL（含 amap key= / baidu ak= / tianditu tk= query），回执进 LLM 上下文
+# = 把地图服务密钥回传给模型。错误文本进回执前剥离所有 http(s) URL 的
+# query（保留 scheme://host/path 以便定位）。只作用于回执文本，不改日志。
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>)]+")
+
+
+def _redact_error_text_for_llm(text: str) -> str:
+    """剥离错误文本中所有 URL 的 query 部分（含 fragment）。"""
+    if not isinstance(text, str) or "http" not in text:
+        return text
+    def _strip(m: "re.Match[str]") -> str:
+        url = m.group(0)
+        for sep in ("?", "#"):
+            idx = url.find(sep)
+            if idx != -1:
+                url = url[:idx]
+        return url
+    return _URL_IN_TEXT_RE.sub(_strip, text)
+
 
 
 # ---------------------------------------------------------------------------
@@ -1419,8 +1441,11 @@ class ToolRegistry:
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError:
+                # #2156 P3：原始参数串不回显全文（MB 级载荷会灌进 LLM 上下文），
+                # 只留可诊断头部。
+                _raw_head = str(arguments)[:200]
                 return std_error_response(
-                    f"工具参数 JSON 格式错误: {arguments}",
+                    f"工具参数 JSON 格式错误: {_raw_head}",
                     code="VALIDATION_ERROR",
                     error_type="JSONDecodeError",
                 )
@@ -1822,7 +1847,7 @@ class ToolRegistry:
         except Exception as e:
             logger.exception(f"Tool execution failed: {name}")
             return std_error_response(
-                str(e),
+                _redact_error_text_for_llm(str(e)),
                 code="TOOL_ERROR",
                 error_type=type(e).__name__,
                 correction_hint="An unexpected error occurred during tool execution. Please review the error message and parameters."
@@ -1900,12 +1925,17 @@ class ToolRegistry:
             return _CELERY_FALLBACK
         try:
             return await asyncio.to_thread(task.get, timeout=timeout)
-        except Exception as exc:
-            # 投递成功后的任何失败（task.get 超时、结果后端抖动、worker 失联）：
-            # 任务可能仍在 worker 上执行（acks_late）。绝不能回落 THREAD 原地
-            # 重算 —— 同一工具并发双跑、写型副作用重复、API 进程内存被本应
-            # 隔离的重计算击穿（恰是 #1388 想解决的问题）。revoke 并诚实失败
-            # （与 spatial.py heatmap 的 Celery 纪律同口径）。
+        except (Exception, asyncio.CancelledError) as exc:
+            # 投递成功后的任何失败（task.get 超时、结果后端抖动、worker 失联），
+            # 以及外层 asyncio.timeout/调用方取消注入的 CancelledError（#2149：
+            # 外层 timeout 与 task.get 共用预算但起点更早，会先注入
+            # CancelledError；`except Exception` 捕不到 BaseException 系的它，
+            # 导致已投递任务永不 revoke）——任务可能仍在 worker 上执行
+            # （acks_late）。绝不能回落 THREAD 原地重算 —— 同一工具并发双跑、
+            # 写型副作用重复、API 进程内存被本应隔离的重计算击穿（恰是
+            # #1388 想解决的问题）。revoke 并诚实失败（与 spatial.py
+            # heatmap 的 Celery 纪律同口径）。CancelledError 捕获后必须
+            # 重抛，不吞掉取消语义。
             if task is not None:
                 try:
                     task.revoke(terminate=True)
@@ -1914,6 +1944,8 @@ class ToolRegistry:
                         "[registry] revoke failed for task %s: %s",
                         getattr(task, "id", None), revoke_exc,
                     )
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             logger.error(
                 "[registry] CELERY execution failed for %s (%s: %s) — no THREAD fallback",
                 name, type(exc).__name__, exc,

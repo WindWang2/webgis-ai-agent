@@ -181,10 +181,13 @@ def _escape_untrusted(text: str) -> str:
 def _wrap_untrusted(item: dict) -> dict:
     """对单条搜索结果用 sentinel 标签包裹文本字段，缓解 prompt injection。
 
-    保留 title/snippet/link/date 原始键供前端展示，同时把内容塞进
-    untrusted_block —— LLM 看 tool_result 时只会读到这块标签内容，
-    标签本身是强信号。所有字段先经 _escape_untrusted 转义，防止
-    fence 伪造（SEC-05）。
+    #2146：不再把原始 title/snippet 以同名键透传 —— tool_result 整体进
+    LLM 上下文（slim_tool_result 全量放行 data 列表），{**item, block}
+    会让围栏变成装饰：LLM 同时读到围栏内外的同一份未隔离文本，伪造
+    fence（SEC-05）只需让模型引用外层键。现在文本只存在于转义后的
+    untrusted_block 内；link/date 保持独立键（LLM 引用来源用，同样先
+    转义）。前端无 untrusted_block/原始键消费者（tool-call-card 仅
+    展示工具名），删除透传键不改变 UI 契约。
     """
     title = _escape_untrusted(item.get("title"))
     snippet = _escape_untrusted(item.get("snippet"))
@@ -199,7 +202,7 @@ def _wrap_untrusted(item: dict) -> dict:
         f"{snippet}\n"
         f"{_UNTRUSTED_CLOSE}"
     )
-    return {**item, "untrusted_block": block}
+    return {"link": link, "date": date, "untrusted_block": block}
 
 
 def _wrap_payload(payload: dict) -> dict:

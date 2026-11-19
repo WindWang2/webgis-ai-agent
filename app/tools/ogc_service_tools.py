@@ -205,12 +205,17 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
             CoverageReadError,
             read_coverage_subset as _read,
         )
+        from app.services.data_fabric.errors import DataFabricError
 
-        adapter = OGCCoveragesAdapter(ConnectionProfile(
-            id="coverage-read", source_type="ogc_api_coverages",
-            endpoint_url=url, name="coverage read",
-        ))
         try:
+            # #2148：适配器构造（含 SSRF validate_url → DataFabricError）必须
+            # 在 try 内 —— 旧实现放在外面，SSRF 拒绝以裸异常穿出类型化回执；
+            # subset 标量值的 tuple() 转换同样在 try 内（标量 → typed 校验
+            # 错误，而不是裸 TypeError）。
+            adapter = OGCCoveragesAdapter(ConnectionProfile(
+                id="coverage-read", source_type="ogc_api_coverages",
+                endpoint_url=url, name="coverage read",
+            ))
             result = await _read(
                 adapter, dataset_id,
                 session_id=session_id,
@@ -219,6 +224,24 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
                 bands=bands,
                 max_cells=int(max_cells),
             )
+        except DataFabricError as e:
+            # SSRF 拒绝/连接剖面非法 → typed 回执（与 inspect_data_service
+            # 的 R2 N4a 修法同口径），不裸穿。
+            return {
+                "status": "error",
+                "error_type": getattr(e, "code", None) or "data_fabric_error",
+                "error": str(e)[:300],
+                "details": getattr(e, "details", None),
+                "ref": None,
+            }
+        except (TypeError, ValueError) as e:
+            return {
+                "status": "error",
+                "error_type": "invalid_args",
+                "error": f"subsets/bbox 形态非法: {e}"[:300],
+                "details": None,
+                "ref": None,
+            }
         except CoverageReadError as e:
             return {
                 "status": "error",
