@@ -8,10 +8,11 @@ import {
   frameEditScopeLabel,
   resolveEditScope,
 } from '@/lib/cartography/frame-edit-scope';
-import { setMapSpecSessionCursor, commitMapSpecDocument } from '@/lib/mapspec/session-cursor';
+import { setMapSpecSessionCursor, commitMapSpecDocument, resetLiveState, getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
 
 const mutations: Array<Record<string, unknown>> = [];
+const mapStateReads: string[] = [];
 
 function specWithFrames(): MapSpec {
   return {
@@ -36,6 +37,13 @@ beforeEach(() => {
       if (String(input).includes('/mapspec/mutations')) {
         mutations.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
         return new Response(JSON.stringify({ status: 'ok', mutation_revision: 13 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (String(input).includes('/map-state')) {
+        mapStateReads.push(String(input));
+        return new Response(JSON.stringify({ session_id: 's-scope', map_state: { mapspec: specWithFrames(), _cartographic_mutation_revision: 12 } }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -98,5 +106,24 @@ describe('commitLayerOverrideForFrame（A03 仅本幅）', () => {
     });
     expect(out).toBe('routed');
     expect(mutations).toHaveLength(0);
+  });
+
+  it('#2183：本地 committed 缺失时回退 GET map-state（非不存在的 GET mapspec）', async () => {
+    resetLiveState(); // 清掉本地 committed → 触发服务端回退
+    const out = await commitLayerOverrideForFrame('fp-2', {
+      layerId: 'layer-0',
+      override: { visible: false },
+    });
+    expect(out).toBe('routed');
+    expect(mapStateReads).toHaveLength(1);
+    expect(mapStateReads[0]).toContain('/api/v1/chat/sessions/s-scope/map-state');
+    expect(mapStateReads[0]).not.toContain('/mapspec');
+    expect(mutations).toHaveLength(1);
+    const body = mutations[0] as { frames: Array<{ id?: string; layerOverrides?: Record<string, unknown> }> };
+    expect(body.frames.find((f) => f.id === 'fp-2')?.layerOverrides?.['layer-0']).toEqual({ visible: false });
+    resetLiveState();
+    setMapSpecSessionCursor('s-scope', 12, 'tok');
+    commitMapSpecDocument(specWithFrames() as never, 12);
+    expect(getMapSpecSessionCursor().revision).toBe(12);
   });
 });

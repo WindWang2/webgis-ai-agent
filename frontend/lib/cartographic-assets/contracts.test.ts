@@ -7,7 +7,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  ANCHORS, PointParams, TextureParams,
   anchorOffset, normalizePointParams, normalizeTextureParams,
   patternImageId, pointImageId,
 } from './contracts';

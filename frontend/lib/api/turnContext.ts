@@ -159,8 +159,7 @@ export async function putSourcePolicy(
       `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/context-policy`,
       {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body,
         label: 'turn context policy put',
         ownerToken,
       },
@@ -206,8 +205,7 @@ export async function postContextPreview(
     `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/context-preview`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body,
       label: 'turn context preview',
       ownerToken,
     },

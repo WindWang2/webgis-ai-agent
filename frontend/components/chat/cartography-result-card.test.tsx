@@ -77,6 +77,42 @@ describe('CartographyResultCard', () => {
     expect(screen.getByText(/等待运行时验证/)).toBeInTheDocument();
   });
 
+  it('#2184：reliability_dual_channel 图例渲染 summary 与估计值通道色板，不崩溃', () => {
+    const { container } = render(
+      <CartographyResultCard
+        result={{
+          legend_spec: {
+            type: 'reliability_dual_channel' as const,
+            title: '估计值 · 不确定度',
+            estimate: { label: '估计值', palette_colors: ['#eee', '#999', '#111'] },
+            measure: { kind: 'cv' },
+          },
+        }}
+        layerId="layer-g41"
+      />,
+    );
+    expect(screen.getByText('估计值 · 不确定度')).toBeInTheDocument();
+    const swatches = container.querySelectorAll('[data-testid="card-swatch"]');
+    expect(swatches.length).toBe(3);
+    expect((swatches[0] as HTMLElement).style.backgroundColor).toBeTruthy();
+  });
+
+  it('#2184：reliability_dual_channel 无 title 时回退 estimate.label，缺色板时不渲染色块', () => {
+    const { container } = render(
+      <CartographyResultCard
+        result={{
+          legend_spec: {
+            type: 'reliability_dual_channel' as const,
+            estimate: { label: '人口估计' },
+          },
+        }}
+        layerId="layer-g41"
+      />,
+    );
+    expect(screen.getByText('人口估计')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-testid="card-swatch"]')).toHaveLength(0);
+  });
+
   it('does not present partial deterministic evidence as a quality pass', () => {
     render(
       <CartographyResultCard

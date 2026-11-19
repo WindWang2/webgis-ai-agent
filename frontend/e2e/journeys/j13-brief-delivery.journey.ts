@@ -8,7 +8,7 @@
  * CAS 下载/分享撤销；外部者访问必须 401/403/404（所有权契约）。
  */
 import { test, expect, type Page, type BrowserContext } from 'playwright/test';
-import { awaitShellReady, defaultWorld, getJourneyAuth, loginViaApi, seedAuthUser } from '../helpers/bootstrap';
+import { awaitShellReady, defaultWorld, loginViaApi, seedAuthUser } from '../helpers/bootstrap';
 import { seedConversationViaApi } from '../helpers/real-chat';
 import { installJourneyStubs } from '../fixtures/api-stubs';
 import { MODE, REAL_ONLY_REASON } from '../helpers/mode';
@@ -215,7 +215,7 @@ function installBriefStubs(context: BrowserContext, state: BriefStubState): void
 }
 
 /** 打开 Story 页（与 j4 同款命令面板路径；真实 opener 认证）。 */
-async function openStory(page: Page, sessionId: string): Promise<Page> {
+async function openStory(page: Page): Promise<Page> {
   await page.keyboard.press('ControlOrMeta+k');
   await page.getByTestId('command-palette-input').fill('在故事视图打开当前会话');
   const popup = page.waitForEvent('popup');
@@ -320,7 +320,7 @@ test.describe('journey-13 证据化地图简报交付', () => {
       .getByRole('button').first().click();
     await expect(drawer).not.toBeVisible();
 
-    const story = await openStory(workspace, sessionId);
+    const story = await openStory(workspace);
     await openBriefPanel(story);
 
     // 1) 真实草稿：从会话真实消息/产物编译（消息种子至少给章节骨架）

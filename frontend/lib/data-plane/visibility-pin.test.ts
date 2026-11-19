@@ -205,6 +205,49 @@ describe('visibility-pin module', () => {
     expect(result).toHaveProperty('unpinned');
   });
 
+  it('#2144 H2：层先 visible 加入（缓存空）→ 数据落地自动补 pin', async () => {
+    const cache = new RefDataCache({ maxBytes: 10_000 });
+    const scheduler = new DataPlaneScheduler({
+      fetchImpl: () => Promise.resolve({ fc: { type: 'FeatureCollection', features: [] } }),
+      cache,
+    });
+    // 缓存尚空时登记期望 pin（等价于层先 visible 加入 store）。
+    expect(scheduler.applyDesiredPins('s', ['ref:a'])).toEqual({ pinned: 0, unpinned: 0 });
+    await scheduler.request({ sessionId: 's', refId: 'ref:a' });
+    expect(cache.peek('s::ref:a')?.pinned).toBe(true);
+  });
+
+  it('#2144 H2：层从期望集合移除 → 同会话内 unpin 回收预算（不止 visible:false）', async () => {
+    const cache = new RefDataCache({ maxBytes: 10_000 });
+    const scheduler = new DataPlaneScheduler({
+      fetchImpl: () => Promise.resolve({ fc: { type: 'FeatureCollection', features: [] } }),
+      cache,
+    });
+    scheduler.applyDesiredPins('s', ['ref:a', 'ref:b']);
+    await scheduler.request({ sessionId: 's', refId: 'ref:a' });
+    await scheduler.request({ sessionId: 's', refId: 'ref:b' });
+    expect(cache.peek('s::ref:a')?.pinned).toBe(true);
+    expect(cache.peek('s::ref:b')?.pinned).toBe(true);
+    // ref:a 从 store 移除（不是 visible:false，是彻底消失）→ 差集 unpin。
+    const out = scheduler.applyDesiredPins('s', ['ref:b']);
+    expect(out.unpinned).toBe(1);
+    expect(cache.peek('s::ref:a')?.pinned).toBe(false);
+    expect(cache.peek('s::ref:b')?.pinned).toBe(true);
+  });
+
+  it('#2144 H2：unpinSession 同时清期望集合 —— 旧会话 sweep 后 ref 再落地不复活 pin', async () => {
+    const cache = new RefDataCache({ maxBytes: 10_000 });
+    const scheduler = new DataPlaneScheduler({
+      fetchImpl: () => Promise.resolve({ fc: { type: 'FeatureCollection', features: [] } }),
+      cache,
+    });
+    scheduler.applyDesiredPins('s1', ['ref:a']);
+    expect(scheduler.unpinSession('s1')).toBe(0);
+    await scheduler.request({ sessionId: 's1', refId: 'ref:a' });
+    // 期望集合已随 sweep 清除：数据落地后不得按旧期望补 pin。
+    expect(cache.peek('s1::ref:a')?.pinned).toBe(false);
+  });
+
   it('syncVisibilityPins is callable repeatedly (session tracking, no throw)', () => {
     _resetVisibilityPinForTests();
     expect(() => syncVisibilityPins()).not.toThrow();

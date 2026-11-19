@@ -20,7 +20,6 @@ import {
   CoordOpRunView,
   CoordOpSourceRefInput,
   CrsLookupView,
-  CandidateView,
   OperationsListing,
   PreviewView,
   SourceDescribeView,
@@ -76,20 +75,6 @@ export function CoordinateOperationsPanel({
   sessionIdRef.current = sessionId ?? null;
   const epochRef = useRef(0);
 
-  useEffect(() => {
-    if (!open) {
-      epochRef.current += 1;
-      setDescribe(null); setListing(null); setCrsLookup(null);
-      setPlan(null); setPreview(null); setRun(null); setResultRows([]);
-      setError(null); setSelectedCandidate(null);
-      return;
-    }
-    if (presetSourceRef) setRefText(presetSourceRef);
-    // 刷新后恢复：服务器 plan/run 行是事实源（非 local state）
-    void refreshPlans();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, presetSourceRef]);
-
   const api = useMemo(
     () => (sessionId ? coordOpApi.client(sessionId, ownerToken) : null),
     [sessionId, ownerToken],
@@ -122,6 +107,20 @@ export function CoordinateOperationsPanel({
       }
     } catch { /* 列表失败不打断面板 */ }
   }, [api]);
+
+  useEffect(() => {
+    if (!open) {
+      epochRef.current += 1;
+      setDescribe(null); setListing(null); setCrsLookup(null);
+      setPlan(null); setPreview(null); setRun(null); setResultRows([]);
+      setError(null); setSelectedCandidate(null);
+      return;
+    }
+    if (presetSourceRef) setRefText(presetSourceRef);
+    // 刷新后恢复：服务器 plan/run 行是事实源（非 local state）
+    void refreshPlans();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, presetSourceRef]);
 
   const describeSource = useCallback(async () => {
     if (!api || !sessionId) return;

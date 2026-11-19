@@ -14,7 +14,7 @@
  * mock 档不提供真实候选/冻结/交付链 —— 整条仅 real 档（诚实 skip）。
  */
 import { test, expect, type Page } from 'playwright/test';
-import { loginViaApi, sendChat, openRailTab } from '../helpers/bootstrap';
+import { loginViaApi, openRailTab } from '../helpers/bootstrap';
 import { MODE, REAL_ONLY_REASON, API_ORIGIN } from '../helpers/mode';
 
 /**
@@ -54,7 +54,6 @@ test.describe('journey-25 G45 坐标操作与重投影', () => {
     // （未注水时 fill 不触发 onChange，按钮保持 disabled）。
     for (let i = 0; i < 90; i += 1) {
       await composer.fill('你好，准备做一次坐标操作重投影。');
-      // eslint-disable-next-line no-await-in-loop
       await page.waitForTimeout(1000);
       if (!(await sendBtn.isDisabled())) break;
     }
@@ -208,7 +207,6 @@ test.describe('journey-25 G45 坐标操作与重投影', () => {
     const job = (await jobResp.json()) as { job_id: string };
     let dlStatus = 'pending';
     for (let i = 0; i < 90 && !['completed', 'failed', 'cancelled'].includes(dlStatus); i += 1) {
-      // eslint-disable-next-line no-await-in-loop
       await page.waitForTimeout(2000);
       const view = await page.request.get(
         new URL(`/api/v1/data-delivery/jobs/${job.job_id}`, API_ORIGIN).href,
