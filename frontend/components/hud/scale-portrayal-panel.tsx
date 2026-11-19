@@ -79,9 +79,11 @@ export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
     };
   }, []);
 
-  const sessionId = useMemo(() => getMapSpecSessionCursor().sessionId, []);
-
+  // R2 #2189：sessionId 绝不冻结在挂载时刻（原 useMemo([]) 在会话切换/
+  // 挂载早于会话创建时会让 load/commit 打到过期或 null 会话）——每次
+  // 操作前从 cursor 现读。
   const loadExplanation = useCallback(async (z: number) => {
+    const { sessionId } = getMapSpecSessionCursor();
     if (!sessionId || !layerId) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     const epoch = ++epochRef.current;
@@ -104,16 +106,17 @@ export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
         if (epoch === epochRef.current) setExplanation(null);
       }
     }, DEBOUNCE_MS);
-  }, [sessionId, layerId]);
+  }, [layerId]);
 
   useEffect(() => { void loadExplanation(zoom); }, [zoom, loadExplanation]);
 
   const commit = useCallback(async (preset: PolicyPreset) => {
+    const { sessionId, revision } = getMapSpecSessionCursor();
     if (!sessionId || !layerId || busy) return;
+    const epoch = epochRef.current;
     setBusy(true);
     setMessage('');
     try {
-      const { revision } = getMapSpecSessionCursor();
       const data = await apiFetch<Record<string, unknown>>(
         `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/scale-portrayal`,
         {
@@ -129,20 +132,25 @@ export function ScalePortrayalPanel({ layerId }: { layerId: string }) {
         },
       );
       const status = typeof data?.status === 'string' ? data.status : '';
-      setMessage(status === 'committed'
-        ? t('committed', { p0: String(data?.mapspec_revision ?? '') })
-        : status === 'superseded' ? t('superseded') : t('notApplied', { p0: status || t('unknownReceipt') }));
+      if (epoch === epochRef.current) {
+        setMessage(status === 'committed'
+          ? t('committed', { p0: String(data?.mapspec_revision ?? '') })
+          : status === 'superseded' ? t('superseded') : t('notApplied', { p0: status || t('unknownReceipt') }));
+      }
       await refreshMapSpecAfterExternalMutation(
         sessionId,
         typeof data?.mapspec_revision === 'number' ? data.mapspec_revision : undefined,
       );
       await loadExplanation(zoom);
     } catch (err) {
-      setMessage(t('failed', { p0: err instanceof Error ? err.message : String(err) }));
+      if (epoch === epochRef.current) {
+        setMessage(t('failed', { p0: err instanceof Error ? err.message : String(err) }));
+      }
     } finally {
+      // commit 是独占的（入口要求 !busy），收尾无条件释放（同 G33/G41 修法）。
       setBusy(false);
     }
-  }, [busy, layerId, sessionId, zoom, loadExplanation, t]);
+  }, [busy, layerId, zoom, loadExplanation, t]);
 
   // 真实 committed spec：view 必须基于实际 MapSpec（含 label.zoomBands），
   // 否则「已生效」判定会失去消费者依据；后端回执在场时以回执为准。

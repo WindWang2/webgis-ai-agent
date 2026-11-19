@@ -12,7 +12,7 @@
  * 呈现为可继续。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlaskConical, RefreshCw } from 'lucide-react';
 
 import { dataPreparationApi, type FieldProposal, type InspectResponse, type PreparationReceipt, type PreviewResponse } from '@/lib/api/data-preparation';
@@ -63,6 +63,8 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
   const [preparing, setPreparing] = useState(false);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [receipt, setReceipt] = useState<PreparationReceipt | null>(null);
+  /** R2 #2191：会话代次 —— 切会话时递增，在飞 inspect/prepare/load 回包不匹配即丢弃。 */
+  const sessionEpochRef = useRef(0);
 
   const refreshUploads = useCallback(async () => {
     if (!sessionId) return;
@@ -82,6 +84,7 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
   }, [sessionId, ownerToken]);
 
   useEffect(() => {
+    sessionEpochRef.current += 1;
     setInspection(null);
     setReceipt(null);
     setPreview(null);
@@ -112,6 +115,7 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
 
   const handleInspect = async () => {
     if (!sessionId || !sourceRef) return;
+    const epoch = sessionEpochRef.current;
     setInspecting(true);
     setReceipt(null);
     setPreview(null);
@@ -120,6 +124,7 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
         { session_id: sessionId, source_ref: sourceRef, user_hints: roleChoices },
         { ownerToken },
       );
+      if (epoch !== sessionEpochRef.current) return;
       setInspection(res);
       // 预填高置信提案为默认选择（用户可改）。
       const defaults: Record<string, string> = {};
@@ -130,14 +135,16 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
       }
       setRoleChoices(defaults);
     } catch (err) {
+      if (epoch !== sessionEpochRef.current) return;
       addToast(describeApiError(err, 'inspect failed'), 'error');
     } finally {
-      setInspecting(false);
+      if (epoch === sessionEpochRef.current) setInspecting(false);
     }
   };
 
   const handlePrepare = async () => {
     if (!sessionId || !inspection || unresolved.length > 0) return;
+    const epoch = sessionEpochRef.current;
     setPreparing(true);
     try {
       // 步集 = 用户确认的角色映射（全部 source=user）+ auto 安全步（越界过滤）。
@@ -148,9 +155,12 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
         { session_id: sessionId, source_ref: sourceRef, steps, auto_steps: true },
         { ownerToken },
       );
+      if (epoch !== sessionEpochRef.current) return;
       const pv = await dataPreparationApi.previewPlan(planRes.plan.plan_id, sessionId, { ownerToken });
+      if (epoch !== sessionEpochRef.current) return;
       setPreview(pv);
       const exec = await dataPreparationApi.executePlan(planRes.plan.plan_id, sessionId, { ownerToken });
+      if (epoch !== sessionEpochRef.current) return;
       setReceipt(exec.receipt);
       // 确认角色写回 descriptor（版本化）—— 输出 ref 执行时已携带，此处
       // 对原件同键写回，跨会话恢复链可读。
@@ -160,15 +170,17 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
           { ownerToken },
         );
       } catch {
+        if (epoch !== sessionEpochRef.current) return;
         // 绑定写回是增值面（receipt 已携带确认）—— 失败只提示不回滚。
         addToast(t('clarifyHint'), 'warning');
       }
     } catch (err) {
+      if (epoch !== sessionEpochRef.current) return;
       const detail = isApiError(err) ? (err.body as Record<string, unknown> | null)?.detail : undefined;
       const msg = detail !== undefined ? String(detail) : describeApiError(err, 'prepare failed');
       addToast(msg, 'error');
     } finally {
-      setPreparing(false);
+      if (epoch === sessionEpochRef.current) setPreparing(false);
     }
   };
 
@@ -191,13 +203,16 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
       _refId: receipt.output_ref,
       style: { color: '#16a34a' },
     });
+    const epoch = sessionEpochRef.current;
     try {
       const geojson = await dataFabricApi.fetchRefGeoJSON(receipt.output_ref, sessionId, { ownerToken });
+      if (epoch !== sessionEpochRef.current) return;
       if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
         updateLayer(layerId, { source: geojson });
       }
       addToast(t('loadSuccess'), 'success');
     } catch {
+      if (epoch !== sessionEpochRef.current) return;
       addToast(t('loadFailed'), 'warning');
     }
   };
@@ -218,8 +233,8 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="prepare-flow">
       {/* ── 步骤 1：数据选择 + 检查 ─────────────────────────────── */}
-      <section className="rounded border border-line">
-        <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
+      <section className="rounded border border-edge-subtle">
+        <header className="flex items-center justify-between gap-2 border-b border-edge-subtle px-3 py-2">
           <span className="flex items-center gap-1.5 text-meta font-semibold text-ink">
             <FlaskConical size={14} />
             {t('title')}
@@ -243,7 +258,7 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
             <label className="flex flex-col gap-1 text-meta text-ink-600">
               {t('selectSource')}
               <select
-                className="rounded border border-line bg-white px-2 py-1 text-ink"
+                className="rounded border border-edge-subtle bg-white px-2 py-1 text-ink"
                 value={sourceRef}
                 onChange={(e) => setSourceRef(e.target.value)}
                 data-testid="dp-source-select"
@@ -270,8 +285,8 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
       {inspection && (
         <>
           {/* ── 步骤 2：收据 + 字段映射确认 ─────────────────────── */}
-          <section className="rounded border border-line" data-testid="dp-receipt">
-            <header className="border-b border-line px-3 py-2 text-meta font-semibold text-ink">
+          <section className="rounded border border-edge-subtle" data-testid="dp-receipt">
+            <header className="border-b border-edge-subtle px-3 py-2 text-meta font-semibold text-ink">
               {t('receiptTitle')}
             </header>
             <div className="flex flex-col gap-1.5 p-3 text-meta text-ink-700">
@@ -296,8 +311,8 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
             </div>
           </section>
 
-          <section className="rounded border border-line" data-testid="dp-mapping">
-            <header className="border-b border-line px-3 py-2 text-meta font-semibold text-ink">
+          <section className="rounded border border-edge-subtle" data-testid="dp-mapping">
+            <header className="border-b border-edge-subtle px-3 py-2 text-meta font-semibold text-ink">
               {t('mappingTitle')}
             </header>
             <div className="flex flex-col gap-1.5 p-3">
@@ -314,8 +329,8 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
 
           {/* ── 步骤 3：样本预览 ────────────────────────────────── */}
           {inspection.sample.length > 0 && (
-            <section className="rounded border border-line" data-testid="dp-sample">
-              <header className="border-b border-line px-3 py-2 text-meta font-semibold text-ink">
+            <section className="rounded border border-edge-subtle" data-testid="dp-sample">
+              <header className="border-b border-edge-subtle px-3 py-2 text-meta font-semibold text-ink">
                 {t('sampleTitle', { count: inspection.sample.length })}
                 {inspection.sample_truncated ? ` · ${t('sampleTruncated')}` : ''}
               </header>
@@ -328,7 +343,7 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
                   </thead>
                   <tbody>
                     {inspection.sample.slice(0, 10).map((row, i) => (
-                      <tr key={i} className="border-t border-line">
+                      <tr key={i} className="border-t border-edge-subtle">
                         {sampleFields.map((f) => (
                           <td key={f} className="px-2 py-1 text-ink-800">
                             {String(row.properties[f] ?? '')}
@@ -343,7 +358,7 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
           )}
 
           {/* ── 步骤 4：准备执行 + 入图 ─────────────────────────── */}
-          <section className="rounded border border-line" data-testid="dp-execute">
+          <section className="rounded border border-edge-subtle" data-testid="dp-execute">
             <div className="flex flex-col gap-2 p-3">
               {hardBlocked && (
                 <p className="rounded border border-red-300 bg-red-50 px-2 py-1 text-meta text-red-800" data-testid="dp-blocked-hint">
@@ -421,7 +436,7 @@ function FieldRoleRow({
   return (
     <label
       className={`flex items-center justify-between gap-2 rounded border px-2 py-1 text-meta ${
-        needsPick ? 'border-amber-300 bg-amber-50' : 'border-line'
+        needsPick ? 'border-amber-300 bg-amber-50' : 'border-edge-subtle'
       }`}
       data-testid={`dp-role-${proposal.field}`}
     >
@@ -441,7 +456,7 @@ function FieldRoleRow({
           </span>
         )}
         <select
-          className="rounded border border-line bg-white px-1 py-0.5 text-ink"
+          className="rounded border border-edge-subtle bg-white px-1 py-0.5 text-ink"
           value={value}
           onChange={(e) => onChange(e.target.value)}
         >

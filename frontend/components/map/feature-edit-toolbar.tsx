@@ -74,14 +74,14 @@ export function FeatureEditToolGroup() {
     <div className="flex items-center gap-1" data-testid="feature-edit-toolbar">
       {editTarget ? (
         <>
-          <span className="max-w-24 truncate rounded-xs bg-surface px-1.5 py-0.5 text-micro" data-testid="feature-edit-active-name">
+          <span className="max-w-24 truncate rounded-xs bg-surface-raised px-1.5 py-0.5 text-micro" data-testid="feature-edit-active-name">
             {(layers ?? []).find((l) => l.id === editTarget.layerId)?.name ?? editTarget.layerId}
           </span>
           <button
             type="button"
             aria-pressed={activeTool === 'split_feature'}
             className={`rounded-xs border border-edge-subtle px-1.5 py-1 hover:bg-surface-hover ${
-              activeTool === 'split_feature' ? 'bg-surface-active' : ''
+              activeTool === 'split_feature' ? 'bg-surface-selected' : ''
             }`}
             title={t('map.toolbar.splitFeatureTitle')}
             onClick={toggleSplit}
@@ -101,7 +101,7 @@ export function FeatureEditToolGroup() {
         </>
       ) : (
         <select
-          className="max-w-32 rounded-xs border border-edge-subtle bg-surface px-1.5 py-1 text-micro"
+          className="max-w-32 rounded-xs border border-edge-subtle bg-surface-raised px-1.5 py-1 text-micro"
           value=""
           data-testid="feature-edit-target-select"
           onChange={(e) => {

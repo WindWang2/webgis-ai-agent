@@ -248,6 +248,7 @@ export type PrintLayoutAction =
   | { type: 'select'; ids: string[] }
   | { type: 'patch-component'; id: string; patch: Partial<PrintComponent> }
   | { type: 'patch-plan'; patch: Partial<PrintLayoutV1> }
+  | { type: 'init-draft'; plan: PrintLayoutV1 }
   | { type: 'restore-committed' }
   | { type: 'page-switch'; pageId: string }
   | { type: 'preview-start' }
@@ -309,6 +310,13 @@ export function reducePrintLayout(
         phase: 'draft', previewSvg: null, errors: [],
       };
     }
+    case 'init-draft':
+      // R2 #2182：从无计划会话的 Initialize 入口 —— patch-plan 在 draft 为
+      // null 时直接丢弃，因此初始化走独立 action 建首份草稿。
+      return {
+        ...state, draft: structuredClone(action.plan),
+        phase: 'draft', previewSvg: null, errors: [],
+      };
     case 'restore-committed':
       return {
         ...state, draft: state.committed ? structuredClone(state.committed) : null,
@@ -354,8 +362,11 @@ export function reducePrintLayout(
     case 'export-failed':
       return { ...state, busy: false, phase: 'blocked', errors: [action.error] };
     case 'cancel':
+      // R2 #2182：取消同时递增 generation —— 在途预览/应用/导出回包到达时
+      // 与 genRef 不匹配即被丢弃，不会覆盖已取消状态。
       return {
         ...state, busy: false, phase: 'cancelled', previewSvg: null,
+        generation: state.generation + 1,
         errors: ['cancelled'],
       };
     case 'dpi':

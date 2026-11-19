@@ -18,6 +18,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { FileUp, Loader2, RefreshCw, X } from 'lucide-react';
 
@@ -39,7 +40,7 @@ import {
   type MemberConfig,
   type PreviewRow,
 } from '@/lib/api/data-import';
-import { getSessionIdentity } from '@/lib/store/session-identity';
+import { getSessionIdentity, subscribeSessionIdentity } from '@/lib/store/session-identity';
 import { useBoundedPoll } from '@/lib/hooks/use-cluster-poll';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { InlineNotice } from '@/components/shared/inline-notice';
@@ -59,7 +60,18 @@ function draftFromServer(saved: Record<string, unknown> | undefined): Draft {
 
 export function ImportWorkbench({ onClose }: { onClose: () => void }) {
   const t = useT('dataImport');
-  const { sessionId, ownerToken } = getSessionIdentity();
+  // R2 #2191：会话身份可切换 —— 挂载时读一次会让旧会话的批次/回执残留；
+  // 经 useSyncExternalStore 订阅，切换会话即重渲染并重取列表。
+  const sessionId = useSyncExternalStore(
+    subscribeSessionIdentity,
+    () => getSessionIdentity().sessionId,
+    () => undefined,
+  );
+  const ownerToken = useSyncExternalStore(
+    subscribeSessionIdentity,
+    () => getSessionIdentity().ownerToken,
+    () => undefined,
+  );
 
   const [batches, setBatches] = useState<ImportBatchSummary[] | null>(null);
   const [active, setActive] = useState<ImportBatch | null>(null);
@@ -72,6 +84,17 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
   const [pct, setPct] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const genRef = useRef(0);
+
+  // 会话切换：批次上下文整体作废（genRef 递增使在飞响应失效）。
+  useEffect(() => {
+    genRef.current += 1;
+    setActive(null);
+    setPreview(null);
+    setReceipts(null);
+    setFocusKey(null);
+    setError(null);
+    setBusy(null);
+  }, [sessionId]);
 
   const refreshList = useCallback(async () => {
     if (!sessionId) return;
@@ -102,7 +125,13 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
           next[m.member_key] = draftFromServer(detail.interpretations?.[m.member_key]);
         }
         setDrafts(next);
-        setFocusKey((k) => k ?? detail.members?.[0]?.member_key ?? null);
+        // R2 #2191：焦点键只在同批次重载时保留 —— 跨批次切换不得沿用
+        // 上一批次的成员键（旧 `k ?? ...` 会保留）。
+        setFocusKey((k) =>
+          k && detail.members?.some((m) => m.member_key === k)
+            ? k
+            : detail.members?.[0]?.member_key ?? null,
+        );
         setPreview(null);
         setReceipts(
           detail.receipts && Object.keys(detail.receipts).length
@@ -110,9 +139,11 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
             : null
         );
       } catch (e) {
+        if (genRef.current !== gen) return; // R2 #2191：旧批次的错误不得覆盖新批次
         setError(String((e as Error).message ?? e));
       } finally {
-        setBusy(null);
+        // 函数式复位：仅当 busy 仍归本操作持有（切批次后不被旧 finally 清掉）。
+        setBusy((b) => (b === 'load' ? null : b));
       }
     },
     [sessionId, ownerToken]
@@ -202,6 +233,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
 
   const handleCreate = async (files: FileList | null) => {
     if (!files || !files.length || !sessionId) return;
+    const gen = genRef.current;
     setBusy('creating');
     setError(null);
     setPct(0);
@@ -210,9 +242,10 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
       await refreshList();
       await loadBatch(created.batch_id);
     } catch (e) {
+      if (genRef.current !== gen) return;
       setError(String((e as Error).message ?? e));
     } finally {
-      setBusy(null);
+      setBusy((b) => (b === 'creating' ? null : b));
     }
   };
 
@@ -222,6 +255,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
 
   const handleSavePlan = async () => {
     if (!sessionId || !active) return;
+    const gen = genRef.current;
     setBusy('plan');
     setError(null);
     try {
@@ -247,9 +281,10 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
       );
       await loadBatch(active.batch_id); // 保存后配置回到服务器事实源
     } catch (e) {
+      if (genRef.current !== gen) return;
       setError(String((e as Error).message ?? e));
     } finally {
-      setBusy(null);
+      setBusy((b) => (b === 'plan' ? null : b));
     }
   };
 
@@ -268,14 +303,16 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
       if (genRef.current !== gen) return;
       setPreview(out.previews);
     } catch (e) {
+      if (genRef.current !== gen) return; // R2 #2191：旧批次的错误不得覆盖新批次
       setError(String((e as Error).message ?? e));
     } finally {
-      setBusy(null);
+      setBusy((b) => (b === 'preview' ? null : b));
     }
   };
 
   const handleCommit = async () => {
     if (!sessionId || !active) return;
+    const gen = genRef.current;
     setBusy('commit');
     setError(null);
     try {
@@ -295,39 +332,45 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
       await commitImportBatch(active.batch_id, sessionId, {}, { ownerToken });
       await loadBatch(active.batch_id);
     } catch (e) {
+      if (genRef.current !== gen) return;
       setError(String((e as Error).message ?? e));
     } finally {
-      setBusy(null);
+      setBusy((b) => (b === 'commit' ? null : b));
     }
   };
 
   const handleCancelCommit = async () => {
     if (!sessionId || !active) return;
+    const gen = genRef.current;
     setBusy('cancel');
     try {
       const { cancelImportBatch } = await import('@/lib/api/data-import');
       await cancelImportBatch(active.batch_id, sessionId, { ownerToken });
       await loadBatch(active.batch_id);
     } catch (e) {
+      if (genRef.current !== gen) return;
       setError(String((e as Error).message ?? e));
     } finally {
-      setBusy(null);
+      setBusy((b) => (b === 'cancel' ? null : b));
     }
   };
 
   const handleCleanup = async () => {
     if (!sessionId || !active) return;
+    const gen = genRef.current;
     setBusy('cleanup');
     try {
       await deleteImportBatch(active.batch_id, sessionId, { ownerToken });
+      if (genRef.current !== gen) return;
       setActive(null);
       setPreview(null);
       setReceipts(null);
       await refreshList();
     } catch (e) {
+      if (genRef.current !== gen) return;
       setError(String((e as Error).message ?? e));
     } finally {
-      setBusy(null);
+      setBusy((b) => (b === 'cleanup' ? null : b));
     }
   };
 
