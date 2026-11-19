@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from fixtures import make_csv_bytes  # noqa: E402
+from .fixtures import make_csv_bytes  # noqa: E402
 
 from app.core.config import settings
 from app.services.data_import import budgets
