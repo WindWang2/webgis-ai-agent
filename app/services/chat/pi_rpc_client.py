@@ -139,10 +139,16 @@ PI_TERM_STOP_TIMEOUT = _env_float("PI_TERM_STOP_TIMEOUT_S", 2.0)
 
 def _drain_and_close_stdin(proc: subprocess.Popen) -> None:
     """Close the child's stdin — v1.5.1 rpc-mode treats EOF as an orderly
-    shutdown request (onInputEnd → shutdown()). Safe when already closed."""
+    shutdown request (onInputEnd → shutdown()). Safe when already closed.
+
+    轻量进程 double（测试桩）可能没有 ``stdin`` 属性 —— 按缺席处理
+    （EOF 无从送达），有序停机阶梯的其余级（SIGTERM/SIGKILL/收尸）
+    不受影响，真实 Popen 的清理语义原样保留。
+    """
     try:
-        if proc.stdin is not None and not proc.stdin.closed:
-            proc.stdin.close()
+        stdin = getattr(proc, "stdin", None)
+        if stdin is not None and not stdin.closed:
+            stdin.close()
     except (BrokenPipeError, OSError):
         pass  # child already gone / pipe torn down — EOF already delivered
 

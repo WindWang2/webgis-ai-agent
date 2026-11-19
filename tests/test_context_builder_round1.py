@@ -93,7 +93,12 @@ async def test_summary_includes_schema_line(session_with_polygon_layer):
     sid, _ = session_with_polygon_layer
     summary = await build_map_state_summary(sid)
     assert "geom=Polygon" in summary
-    assert "pop:number" in summary
+    # 字段名与类型都是不可信特征属性值 —— P3 加固后按 fence 契约渲染
+    #（与下方专题图 field= 断言同款围栏形态）。
+    assert (
+        "<untrusted_feature_property>pop</untrusted_feature_property>:"
+        "<untrusted_feature_property>number</untrusted_feature_property>"
+    ) in summary
 
 
 async def test_summary_renders_thematic_style(session_with_polygon_layer):

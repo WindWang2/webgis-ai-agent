@@ -2555,11 +2555,18 @@ class PiBridge:
         # 后继 turn，因此翻转时不再整体早退（旧实现的早退会丢失 F03 诚实
         # 终态记录），仅告警披露。
         if _resolve_current_entry() is not target_entry:
+            _current_entry = _resolve_current_entry()
             logger.warning(
-                "[PiBridge] abort(session_id=%s): target turn was handed off "
-                "while the abort RPC response was pending; applying "
-                "snapshot-scoped effects only (token/source/pending-ids)",
+                "[PiBridge] abort(session_id=%s): TOCTOU — target turn %s "
+                "(session=%s) was handed off while the abort RPC response was "
+                "pending; the session table now resolves to turn=%s "
+                "(session=%s); applying snapshot-scoped effects only "
+                "(token/source/pending-ids)",
                 session_id,
+                getattr(target_entry, "turn_id", None) or "None",
+                getattr(target_entry, "session_id", None) or "None",
+                getattr(_current_entry, "turn_id", None) or "None",
+                getattr(_current_entry, "session_id", None) or "None",
             )
         if abort_token is not None:
             abort_token.cancel("abort requested")

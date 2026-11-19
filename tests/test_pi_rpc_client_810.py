@@ -5,6 +5,7 @@
   应抛 PiRpcError 而非裸 AttributeError（写入用捕获的本地句柄，
   句柄失效分类为 BrokenPipeError → PiRpcError）
 """
+import subprocess
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,7 +20,7 @@ class _StubbornProc:
         self.terminated = False
         self.killed = False
         self.wait_calls = 0
-        self.stdin = MagicMock()
+        self.stdin = MagicMock(closed=False)
 
     def terminate(self):
         self.terminated = True
@@ -32,7 +33,12 @@ class _StubbornProc:
         self.killed = True
 
     def wait(self, timeout=None):
+        # 真实 Popen.wait(timeout) 契约：进程存活（含 SIGTERM 后仍卡死）时
+        # 抛 TimeoutExpired；只有 SIGKILL 后才返回退出码。
         self.wait_calls += 1
+        if not self.killed:
+            raise subprocess.TimeoutExpired(cmd="pi", timeout=timeout)
+        return 0
 
 
 @pytest.mark.asyncio
