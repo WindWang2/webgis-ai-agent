@@ -13,6 +13,7 @@
 - CONC-F5: stop() survives the reader clearing _process concurrently.
 """
 import asyncio
+import subprocess
 import time
 
 import pytest
@@ -45,6 +46,28 @@ class _RpcStub:
         self.abort_calls += 1
         await asyncio.sleep(self.abort_delay)
         return {"ok": True}
+
+    async def issue(self, cmd, data=None):
+        """G22-P1 写相位契约（与真实 PiRpcClient.issue 同款）：登记
+        pending future、不等待响应；响应在 abort_delay 后到达（模拟
+        vendor 控制命令往返），由 collect 收割。"""
+        from app.services.chat.pi_rpc_client import IssuedRequest
+
+        self.abort_calls += 1
+        rid = f"ctl-{cmd}-{self.abort_calls}"
+        fut = asyncio.get_running_loop().create_future()
+        self._pending[rid] = fut
+
+        async def _resolve():
+            await asyncio.sleep(self.abort_delay)
+            if self._pending.pop(rid, None) is not None and not fut.done():
+                fut.set_result({"ok": True})
+
+        asyncio.get_running_loop().create_task(_resolve())
+        return IssuedRequest(id=rid, command=cmd, future=fut)
+
+    async def collect(self, issued, command=None):
+        return await issued.future
 
     def register(self, rid):
         fut = asyncio.get_running_loop().create_future()
@@ -268,6 +291,12 @@ async def test_F5_stop_tolerates_reader_clearing_process():
 
         def kill(self):
             self.killed = True
+
+        def wait(self, timeout=None):
+            # 真实 Popen.wait(timeout) 契约：进程未退出时抛 TimeoutExpired。
+            if self._exited:
+                return 0
+            raise subprocess.TimeoutExpired(cmd="pi", timeout=timeout)
 
     client._process = _Proc()
     client._reader_task = None
