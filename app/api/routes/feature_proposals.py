@@ -15,6 +15,16 @@ from fastapi.responses import JSONResponse
 
 from app.schemas.feature_proposal_schema import (
     CommentRequest,
+    FeatureProposalAuditResponse,
+    FeatureProposalCommentsResponse,
+    FeatureProposalConflictsResponse,
+    FeatureProposalDetailResponse,
+    FeatureProposalDiffResponse,
+    FeatureProposalEnvelopeResponse,
+    FeatureProposalListResponse,
+    FeatureProposalMergeResponse,
+    FeatureProposalRecoveryViewResponse,
+    FeatureProposalSummaryResponse,
     ProposalCreateRequest,
     ProposalDecisionRequest,
     ProposalUpdateRequest,
@@ -76,7 +86,7 @@ def _error_response(exc: FeatureProposalError) -> JSONResponse:
     return JSONResponse(status_code=status, content=payload)
 
 
-@router.post("/sessions/{session_id}/feature-proposals")
+@router.post("/sessions/{session_id}/feature-proposals", response_model=FeatureProposalSummaryResponse)
 async def create_feature_proposal(
     session_id: str,
     body: ProposalCreateRequest,
@@ -100,7 +110,7 @@ async def create_feature_proposal(
         return _error_response(exc)
 
 
-@router.get("/sessions/{session_id}/feature-proposals")
+@router.get("/sessions/{session_id}/feature-proposals", response_model=FeatureProposalListResponse)
 async def list_feature_proposals(
     session_id: str,
     status: Optional[str] = Query(default=None),
@@ -116,7 +126,7 @@ async def list_feature_proposals(
         return _error_response(exc)
 
 
-@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}")
+@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}", response_model=FeatureProposalDetailResponse)
 async def get_feature_proposal(
     session_id: str, proposal_id: str,
     _conv=Depends(require_owned_session),
@@ -127,7 +137,7 @@ async def get_feature_proposal(
         return _error_response(exc)
 
 
-@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}/diff")
+@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}/diff", response_model=FeatureProposalDiffResponse)
 async def get_feature_proposal_diff(
     session_id: str, proposal_id: str,
     page: int = Query(default=1, ge=1),
@@ -142,7 +152,7 @@ async def get_feature_proposal_diff(
         return _error_response(exc)
 
 
-@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}/conflicts")
+@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}/conflicts", response_model=FeatureProposalConflictsResponse)
 async def get_feature_proposal_conflicts(
     session_id: str, proposal_id: str,
     _conv=Depends(require_owned_session),
@@ -153,7 +163,7 @@ async def get_feature_proposal_conflicts(
         return _error_response(exc)
 
 
-@router.patch("/sessions/{session_id}/feature-proposals/{proposal_id}")
+@router.patch("/sessions/{session_id}/feature-proposals/{proposal_id}", response_model=FeatureProposalSummaryResponse)
 async def update_feature_proposal(
     session_id: str, proposal_id: str,
     body: ProposalUpdateRequest,
@@ -175,7 +185,7 @@ async def update_feature_proposal(
         return _error_response(exc)
 
 
-@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/resolutions")
+@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/resolutions", response_model=FeatureProposalEnvelopeResponse)
 async def submit_feature_proposal_resolutions(
     session_id: str, proposal_id: str,
     body: ResolutionSubmitRequest,
@@ -194,7 +204,7 @@ async def submit_feature_proposal_resolutions(
         return _error_response(exc)
 
 
-@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/rebase")
+@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/rebase", response_model=FeatureProposalEnvelopeResponse)
 async def rebase_feature_proposal(
     session_id: str, proposal_id: str,
     body: RebaseRequest,
@@ -212,7 +222,7 @@ async def rebase_feature_proposal(
         return _error_response(exc)
 
 
-@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/decisions")
+@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/decisions", response_model=FeatureProposalEnvelopeResponse)
 async def decide_feature_proposal(
     session_id: str, proposal_id: str,
     body: ProposalDecisionRequest,
@@ -233,7 +243,7 @@ async def decide_feature_proposal(
         return _error_response(exc)
 
 
-@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/merge")
+@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/merge", response_model=FeatureProposalMergeResponse)
 async def merge_feature_proposal(
     session_id: str, proposal_id: str,
     _conv=Depends(require_owned_session),
@@ -248,7 +258,7 @@ async def merge_feature_proposal(
         return _error_response(exc)
 
 
-@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}/recovery")
+@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}/recovery", response_model=FeatureProposalRecoveryViewResponse)
 async def feature_proposal_recovery_view(
     session_id: str, proposal_id: str,
     _conv=Depends(require_owned_session),
@@ -259,7 +269,7 @@ async def feature_proposal_recovery_view(
         return _error_response(exc)
 
 
-@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/recovery/resolve")
+@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/recovery/resolve", response_model=FeatureProposalEnvelopeResponse)
 async def resolve_feature_proposal_recovery(
     session_id: str, proposal_id: str,
     _conv=Depends(require_owned_session),
@@ -274,7 +284,7 @@ async def resolve_feature_proposal_recovery(
         return _error_response(exc)
 
 
-@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/comments")
+@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/comments", response_model=FeatureProposalCommentsResponse)
 async def comment_feature_proposal(
     session_id: str, proposal_id: str,
     body: CommentRequest,
@@ -291,7 +301,7 @@ async def comment_feature_proposal(
         return _error_response(exc)
 
 
-@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}/audit")
+@router.get("/sessions/{session_id}/feature-proposals/{proposal_id}/audit", response_model=FeatureProposalAuditResponse)
 async def export_feature_proposal_audit(
     session_id: str, proposal_id: str,
     _conv=Depends(require_owned_session),
@@ -302,7 +312,7 @@ async def export_feature_proposal_audit(
         return _error_response(exc)
 
 
-@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/withdraw")
+@router.post("/sessions/{session_id}/feature-proposals/{proposal_id}/withdraw", response_model=FeatureProposalEnvelopeResponse)
 async def withdraw_feature_proposal(
     session_id: str, proposal_id: str,
     body: ProposalDecisionRequest,

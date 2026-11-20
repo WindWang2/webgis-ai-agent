@@ -205,3 +205,157 @@ class CommentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     body: str = Field(min_length=1, max_length=2000)
+
+
+# ── HTTP 响应契约（ADR-0138 response_model 基线）──────────────────────────
+#
+# 逐字段镜像 ``app.services.feature_proposals`` 各回执的运行时形状
+# （proposal_summary / detail / diff / conflicts / merge / recovery / audit）。
+# 路由以 JSONResponse 直接构造响应，response_model 仅声明 OpenAPI 契约 +
+# 挂模门禁，不改变运行时序列化。所有响应模型 ``extra="allow"``：未知字段
+# 原样透传，保证挂模前后响应体逐字节一致。
+
+
+class FeatureProposalSummaryResponse(BaseModel):
+    """proposal_summary 形状（创建/PATCH/decide/withdraw 等信封内嵌）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    proposal_id: str
+    ref_id: str
+    title: str
+    author_kind: str
+    status: str
+    revision: int
+    candidate_digest: str
+    base: Dict[str, Any] = Field(default_factory=dict)
+    ops_count: int = 0
+    op_kinds: List[str] = Field(default_factory=list)
+    merge: Optional[Dict[str, Any]] = None
+    has_approval: bool = False
+    resolutions_count: int = 0
+    created_at: str
+    updated_at: str
+
+
+class FeatureProposalEnvelopeResponse(BaseModel):
+    """resolutions / rebase / decide / recovery-resolve / withdraw 共用信封。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    proposal: FeatureProposalSummaryResponse
+    applied: Optional[int] = None
+    rebased_to: Optional[Dict[str, Any]] = None
+    recovered_to: Optional[str] = None
+
+
+class FeatureProposalListResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    total: int
+    offset: int
+    items: List[FeatureProposalSummaryResponse] = Field(default_factory=list)
+
+
+class FeatureProposalDetailResponse(BaseModel):
+    """get_proposal_detail（summary + 完整ops/决议/评论/审批投影）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    proposal_id: str
+    ref_id: str
+    title: str
+    author_kind: str
+    status: str
+    revision: int
+    candidate_digest: str
+    base: Dict[str, Any] = Field(default_factory=dict)
+    ops_count: int = 0
+    op_kinds: List[str] = Field(default_factory=list)
+    merge: Optional[Dict[str, Any]] = None
+    has_approval: bool = False
+    resolutions_count: int = 0
+    created_at: float
+    updated_at: float
+    ops: List[Dict[str, Any]] = Field(default_factory=list)
+    op_seed: Optional[str] = None
+    resolutions: List[Dict[str, Any]] = Field(default_factory=list)
+    decisions: List[Dict[str, Any]] = Field(default_factory=list)
+    comments: List[Dict[str, Any]] = Field(default_factory=list)
+    approval: Optional[Dict[str, Any]] = None
+    withdrawn_at: Optional[float] = None
+
+
+class FeatureProposalDiffResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    proposal_id: str
+    revision: int
+    base: Dict[str, Any] = Field(default_factory=dict)
+    current: Dict[str, Any] = Field(default_factory=dict)
+    candidate_deltas: List[Dict[str, Any]] = Field(default_factory=list)
+    candidate_delta_count: int = 0
+    page: int = 1
+    page_size: int = 20
+    conflict_report: Optional[Dict[str, Any]] = None
+    lineage: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class FeatureProposalConflictsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    verdict: Optional[str] = None
+    conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+    unresolved_conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+    satisfied: List[Dict[str, Any]] = Field(default_factory=list)
+    independent_current_changes: Optional[Any] = None
+    identity: Optional[Any] = None
+    current_changed: Optional[Any] = None
+
+
+class FeatureProposalMergeResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+    proposal_id: str
+    already_merged: Optional[bool] = None
+    receipt: Optional[Dict[str, Any]] = None
+
+
+class FeatureProposalRecoveryViewResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    proposal_id: str
+    verdict: str
+    receipt: Optional[Dict[str, Any]] = None
+    merge: Optional[Dict[str, Any]] = None
+    base: Dict[str, Any] = Field(default_factory=dict)
+    candidate_digest: str
+    ops_summary: List[str] = Field(default_factory=list)
+    missing_evidence: List[str] = Field(default_factory=list)
+    guidance: str = ""
+
+
+class FeatureProposalCommentsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    comments: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class FeatureProposalAuditResponse(BaseModel):
+    """有界审阅证据导出（allowlist 投影；无内部路径/凭据）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    proposal_id: str
+    ref_id: str
+    title: str
+    author: Dict[str, Any] = Field(default_factory=dict)
+    status: str
+    revision: int
+    candidate_digest: str
+    base: Dict[str, Any] = Field(default_factory=dict)
+    decisions: List[Dict[str, Any]] = Field(default_factory=list)
+    resolutions: List[Dict[str, Any]] = Field(default_factory=list)
+    merge: Optional[Dict[str, Any]] = None
+    exported_at: str

@@ -29,6 +29,11 @@ from app.core.config import settings
 from app.core.database import get_async_db
 from app.models.db_model import Conversation
 from app.services.auth_history_bridge import require_owned_session
+from app.schemas.session_context_views_schema import (
+    SessionModelPutResponse,
+    SessionModelViewResponse,
+    SessionUsageResponse,
+)
 from app.services.chat.model_runtime import session_catalog
 from app.services.chat.model_runtime.session_model_prefs import (
     RevisionConflict,
@@ -77,7 +82,7 @@ async def _latest_receipt(db: AsyncSession, session_id: str):
     ).scalar_one_or_none()
 
 
-@router.get("/sessions/{session_id}/model")
+@router.get("/sessions/{session_id}/model", response_model=SessionModelViewResponse)
 async def get_session_model(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
@@ -133,7 +138,7 @@ async def get_session_model(
     }
 
 
-@router.put("/sessions/{session_id}/model")
+@router.put("/sessions/{session_id}/model", response_model=SessionModelPutResponse)
 async def put_session_model(
     session_id: str,
     req: ModelPreferenceUpdate,
@@ -244,7 +249,7 @@ async def put_session_model(
     }
 
 
-@router.get("/sessions/{session_id}/usage")
+@router.get("/sessions/{session_id}/usage", response_model=SessionUsageResponse)
 async def get_session_usage(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),

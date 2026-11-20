@@ -35,6 +35,17 @@ from app.lib.cartography.symbol_asset import (
 )
 from app.lib.cartography.svg_import import import_svg_asset
 from app.models.db_model import Conversation
+from app.schemas.cartographic_assets_schema import (
+    CartographicAssetContentResponse,
+    CartographicAssetCreateResponse,
+    CartographicAssetDeleteVersionResponse,
+    CartographicAssetDetailResponse,
+    CartographicAssetListResponse,
+    CartographicAssetRetireResponse,
+    CartographicAssetVersionResponse,
+    SymbolBindingInspectResponse,
+    SymbolBindingReceipt,
+)
 from app.services.auth_history_bridge import require_owned_session
 from app.services.cartographic_assets.binding import (
     SymbolBindingError,
@@ -119,7 +130,7 @@ class UnbindBody(BaseModel):
 
 # ─── 目录 ──────────────────────────────────────────────────────────────────
 
-@router.get("")
+@router.get("", response_model=CartographicAssetListResponse)
 async def list_catalog(
     kind: Optional[str] = Query(None),
     limit: int = Query(30, ge=1, le=50),
@@ -162,7 +173,7 @@ def _list_assets_with_db(*, user_id, org_id, role, kind, include_retired,
         db.close()
 
 
-@router.post("")
+@router.post("", response_model=CartographicAssetCreateResponse)
 async def create_asset(body: AssetCreateBody,
                        user: Any = Depends(get_current_user)):
     user_id, org_id, role = _actor(user)
@@ -233,7 +244,7 @@ def _asset_view(asset: Any, version: Any = None) -> Dict[str, Any]:
     return out
 
 
-@router.get("/{asset_id}")
+@router.get("/{asset_id}", response_model=CartographicAssetDetailResponse)
 async def asset_detail(asset_id: str,
                        user: Any = Depends(get_current_user_optional)):
     from app.services.cartographic_assets.catalog import list_versions
@@ -262,7 +273,7 @@ async def asset_detail(asset_id: str,
         raise _map_catalog_error(exc) from exc
 
 
-@router.get("/{asset_id}/versions/{revision}/content")
+@router.get("/{asset_id}/versions/{revision}/content", response_model=CartographicAssetContentResponse)
 async def version_content(asset_id: str, revision: int,
                           user: Any = Depends(get_current_user_optional)):
 
@@ -299,7 +310,7 @@ def _read_content_with_db(asset_id, revision, user_id, org_id, role):
         db.close()
 
 
-@router.post("/{asset_id}/versions")
+@router.post("/{asset_id}/versions", response_model=CartographicAssetVersionResponse)
 async def new_version(asset_id: str, body: NewVersionBody,
                       user: Any = Depends(get_current_user)):
     user_id, org_id, role = _actor(user)
@@ -340,7 +351,7 @@ async def new_version(asset_id: str, body: NewVersionBody,
         raise _map_catalog_error(exc) from exc
 
 
-@router.post("/{asset_id}/versions/{revision}/publish")
+@router.post("/{asset_id}/versions/{revision}/publish", response_model=CartographicAssetVersionResponse)
 async def publish(asset_id: str, revision: int,
                   user: Any = Depends(get_current_user)):
     from app.services.cartographic_assets.catalog import publish_version
@@ -367,7 +378,7 @@ async def publish(asset_id: str, revision: int,
         raise _map_catalog_error(exc) from exc
 
 
-@router.post("/{asset_id}/retire")
+@router.post("/{asset_id}/retire", response_model=CartographicAssetRetireResponse)
 async def retire(asset_id: str,
                  user: Any = Depends(get_current_user),
                  note: str = Query(default="", max_length=500)):
@@ -395,7 +406,7 @@ async def retire(asset_id: str,
         raise _map_catalog_error(exc) from exc
 
 
-@router.post("/{asset_id}/restore/{revision}")
+@router.post("/{asset_id}/restore/{revision}", response_model=CartographicAssetVersionResponse)
 async def restore(asset_id: str, revision: int,
                   user: Any = Depends(get_current_user)):
     from app.services.cartographic_assets.catalog import restore_asset
@@ -422,7 +433,7 @@ async def restore(asset_id: str, revision: int,
         raise _map_catalog_error(exc) from exc
 
 
-@router.delete("/{asset_id}/versions/{revision}")
+@router.delete("/{asset_id}/versions/{revision}", response_model=CartographicAssetDeleteVersionResponse)
 async def delete_version(asset_id: str, revision: int,
                          user: Any = Depends(get_current_user)):
     from app.services.cartographic_assets.catalog import delete_asset_version
@@ -457,7 +468,7 @@ def _binding_http(exc: SymbolBindingError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=detail)
 
 
-@router.get("/sessions/{session_id}/layers/{layer_id}/inspect")
+@router.get("/sessions/{session_id}/layers/{layer_id}/inspect", response_model=SymbolBindingInspectResponse)
 async def inspect_binding(
     session_id: str,
     layer_id: str,
@@ -471,7 +482,7 @@ async def inspect_binding(
         raise _binding_http(exc) from exc
 
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/preview")
+@router.post("/sessions/{session_id}/layers/{layer_id}/preview", response_model=SymbolBindingReceipt)
 async def preview(
     session_id: str,
     layer_id: str,
@@ -489,7 +500,7 @@ async def preview(
         raise _binding_http(exc) from exc
 
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/apply")
+@router.post("/sessions/{session_id}/layers/{layer_id}/apply", response_model=SymbolBindingReceipt)
 async def apply(
     session_id: str,
     layer_id: str,
@@ -511,7 +522,7 @@ async def apply(
         raise _binding_http(exc) from exc
 
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/unbind")
+@router.post("/sessions/{session_id}/layers/{layer_id}/unbind", response_model=SymbolBindingReceipt)
 async def unbind(
     session_id: str,
     layer_id: str,
