@@ -1138,20 +1138,67 @@ async def list_delivery_jobs(
 def _list_delivery_jobs_sync(
     actor: DeliveryActor, project_id: Optional[str], limit: int,
 ) -> List[DeliveryJobView]:
+    from sqlalchemy import exists as sa_exists
+    from sqlalchemy import or_ as sa_or
     from sqlalchemy import select as sa_select
 
     from app.core.database import SessionLocal
-    from app.models.db_model import AnalysisTask
+    from app.models.db_model import AnalysisTask, Conversation
+    from app.models.project import Project
 
+    # #2201：LIMIT 必须先落在**已按归属过滤**的行集上 —— 此前 SQL 在跨
+    # 全部租户的行集上 LIMIT 50/200 后才 Python 过滤，新任务多时匹配结果
+    # 被静默截断。这里把 _job_authorize 的四条归属规则等价下推为
+    # EXISTS/等值条件（owner_token 为 SHA-256 digest，等值比较成立）；
+    # 每行仍保留 _job_authorize 纵深校验（compare_digest / 404 语义不变）。
+    conds = []
+    if actor.user_id:
+        conds.append(AnalysisTask.creator_id == actor.user_id)
+    if actor.owner_token:
+        conds.append(AnalysisTask.owner_token == actor.owner_token)
+    # 会话归属（authorize_session_write 语义）：
+    #   conv.user_id 绑定 → 仅该用户；匿名行 → owner_token digest 匹配；
+    #   legacy NULL/NULL 行 fail-closed（两个 OR 支都不命中）。
+    conds.append(sa_exists().where(
+        Conversation.id == AnalysisTask.session_id,
+        sa_or(
+            Conversation.user_id.isnot(None).__and__(
+                Conversation.user_id == actor.user_id),
+            Conversation.user_id.is_(None).__and__(
+                Conversation.owner_token.isnot(None)).__and__(
+                Conversation.owner_token == actor.owner_token),
+        ),
+    ))
+    # 项目归属（_caller_may_access_project 语义）：
+    #   有主行 → owner 或同 org；org 无主行 → 仅同 org；legacy 公开行
+    #   （org/owner 双 NULL）→ 所有人可见。:org_id/:user_id 绑 NULL 时
+    #   对应等值支自然不成立（SQL NULL 语义）。
+    conds.append(sa_exists().where(
+        Project.id == AnalysisTask.project_id,
+        Project.status != "deleted",
+        sa_or(
+            Project.owner_id.isnot(None).__and__(sa_or(
+                Project.owner_id == actor.user_id,
+                Project.org_id == actor.org_id,
+            )),
+            Project.owner_id.is_(None).__and__(sa_or(
+                Project.org_id.is_(None),
+                Project.org_id == actor.org_id,
+            )),
+        ),
+    ))
+    stmt = sa_select(AnalysisTask).where(
+        AnalysisTask.task_type == TASK_TYPE,
+        sa_or(*conds),
+    )
+    if project_id:
+        stmt = stmt.where(AnalysisTask.project_id == project_id)
+    stmt = stmt.order_by(
+        AnalysisTask.created_at.desc()).limit(max(1, min(limit, 200)))
     with SessionLocal() as db:
-        stmt = sa_select(AnalysisTask).where(
-            AnalysisTask.task_type == TASK_TYPE).order_by(
-            AnalysisTask.created_at.desc()).limit(max(1, min(limit, 200)))
         rows = db.execute(stmt).scalars().all()
         views = []
         for record in rows:
-            if project_id and record.project_id != project_id:
-                continue
             try:
                 _job_authorize(record, actor)
             except DeliveryError:

@@ -120,6 +120,73 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.simulation_tools": "analysis",
     # G34：纸面版式与图册编排（作者决定写 MapSpec.layout.print_layout）
     "app.tools.print_layout_tools": "map_mutation",
+    # G45：可审阅坐标操作作者面（候选/锁定/预览/执行/结果同族 —— 派生重投影
+    # 是几何变换；status/cancel 运行控制仍属本域，不再细分）
+    "app.tools.coordinate_operations_tools": "transformation",
+    # 两源数据关联与空间富集（durable 执行产派生表/富集图层 —— 分析产出）
+    "app.tools.data_join_authoring_tools": "analysis",
+    # 项目源数据刷新（检查更新/执行刷新/采纳/回滚候选 —— 数据获取生命周期）
+    "app.tools.project_data_refresh_tools": "data_access",
+    # 多图联合筛选与持久探索视图（facet 统计/条件求值 —— 探索分析面）
+    "app.tools.linked_exploration_tools": "analysis",
+    # 拓扑工作台（规则集配置/检查运行/发现/修复预览 —— 拓扑分析）
+    "app.tools.topology_workbench_tools": "analysis",
+    # Dorling  Cartogram 专题表达（plan/run/apply 渲染产出；inspect/status 只读、
+    # export 导出名字覆盖）
+    "app.tools.cartogram_tools": "rendering",
+    # 任务简报（draft/update/freeze 编制成品；preflight/inspect 只读名字覆盖）
+    "app.tools.brief_tools": "export",
+    # 数据批量导入（计划/预检/提交/回执 —— 数据获取通道）
+    "app.tools.data_import_tools": "data_access",
+    # 时序动画媒体（真实渲染编码产物；capabilities 只读、result 取回名字覆盖）
+    "app.tools.temporal_media_tools": "rendering",
+    # 符号资产与符号图层（apply/unbind 写地图状态；list/inspect/preview 只读覆盖）
+    "app.tools.cartographic_asset_tools": "map_mutation",
+    # 地理配准（plan/execute 几何变换；inspect/preview/status/report 只读覆盖）
+    "app.tools.georeferencing_tools": "transformation",
+    # 字段计算工作台（apply 计算产出；catalog/preview/status/result 只读覆盖）
+    "app.tools.field_compute_tools": "analysis",
+    # 栅格采样（execute 采样分析；plan/preview/status/results 只读覆盖）
+    "app.tools.raster_sampling_tools": "analysis",
+    # 图幅/帧产品（plan/bind/update/unbind 写地图产品状态；status 只读覆盖）
+    "app.tools.frame_product_tools": "map_mutation",
+    # 字段语义契约（draft/assess/result 语义分析；inspect 只读覆盖）
+    "app.tools.field_contracts_tools": "analysis",
+    # 矢量变更提案（create 提案编制 → 数据变换域；list/diff/rebase 只读覆盖）
+    "app.tools.feature_proposal_tools": "transformation",
+    # 数据交付（submit 成品交付；capabilities/preview 只读覆盖）
+    "app.tools.data_delivery_tools": "export",
+    # 栅格表达式（apply 计算；describe/probe 只读、export 导出覆盖）
+    "app.tools.raster_expression_tools": "analysis",
+    # 目标修复执行编排（start/cancel 运行控制；preview 只读覆盖）
+    "app.tools.goal_repair_tools": "analysis",
+    # 技能任务（内部技能作业编排 —— 调试内部面）
+    "app.tools.skill_job_tools": "debug_internal",
+    # 专题样式创作（inspect/preview 只读、apply 写状态名字覆盖）
+    "app.tools.thematic_authoring_tools": "rendering",
+    # 双变量可靠性评估（apply 评估；inspect/preview 只读覆盖）
+    "app.tools.bivariate_reliability_tools": "analysis",
+    # 会话模型/预算状态（只读状态面）
+    "app.tools.session_model_tools": "inspection",
+    # 比例尺表达（inspect 只读、apply 写状态名字覆盖）
+    "app.tools.scale_portrayal_tools": "rendering",
+    # 注记创作（inspect 只读、author 写地图名字覆盖）
+    "app.tools.label_authoring_tools": "rendering",
+    # 矢量编辑（commit 变换名字覆盖既有；模块默认补 provision/lineage）
+    "app.tools.feature_edit_tools": "transformation",
+    # 选择/详情只读检视
+    "app.tools.selection_tools": "inspection",
+    # 能力生态扩展算子（分区条件分位统计/网络覆盖一致性 —— 分析）
+    "app.tools.capability_ecosystem_tools": "analysis",
+    # 视觉情境证据只读检视
+    "app.tools.visual_context_tools": "inspection",
+    # 用户决策（G29 运行中交互前门 —— 非 GIS 功能面；planning 面由审计
+    # 测试钉死为计划族，交互编排归内部面）
+    "app.tools.user_decision_tools": "debug_internal",
+    # 混合地图导出
+    "app.tools.mixed_map_export_tools": "export",
+    # 本轮上下文装配回执（只读）
+    "app.tools.turn_context_tools": "inspection",
 }
 
 # 工具名覆盖（模块默认之外的精确归类）
@@ -214,6 +281,71 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # context_revalidation_tools（ADR-0215）：跨会话续接 = 恢复既有工作上下文
     #（类比 workspace save/restore 的 data_access 归属）
     "webgis_context_bind_mission": "data_access",
+    # coordinate_operations_tools：状态/收据只读
+    "webgis_coordop_status": "inspection",
+    "webgis_coordop_result": "inspection",
+    # cartogram_tools：只读检视/状态 + 导出
+    "webgis_dorling_cartogram_inspect": "inspection",
+    "webgis_dorling_cartogram_status": "inspection",
+    "webgis_dorling_cartogram_export": "export",
+    # brief_tools：预检/证据检视只读
+    "brief_preflight": "inspection",
+    "brief_inspect_evidence": "inspection",
+    # temporal_media_tools：能力查询只读；result 是产物取回
+    "webgis_temporal_media_capabilities": "inspection",
+    "webgis_temporal_media_result": "export",
+    # cartographic_asset_tools：资产/图层只读面
+    "webgis_symbol_asset_list": "inspection",
+    "webgis_symbol_layer_inspect": "inspection",
+    "webgis_symbol_layer_preview": "inspection",
+    # georeferencing_tools：只读面
+    "webgis_georef_inspect": "inspection",
+    "webgis_georef_preview": "inspection",
+    "webgis_georef_status": "inspection",
+    "webgis_georef_report": "inspection",
+    # field_compute_tools：只读面
+    "field_compute_catalog": "inspection",
+    "field_compute_preview": "inspection",
+    "field_compute_status": "inspection",
+    "field_compute_result": "inspection",
+    # raster_sampling_tools：只读面
+    "webgis_raster_sampling_plan": "inspection",
+    "webgis_raster_sampling_preview": "inspection",
+    "webgis_raster_sampling_status": "inspection",
+    "webgis_raster_sampling_results": "inspection",
+    # frame_product_tools：状态只读
+    "frame_product_status": "inspection",
+    # field_contracts_tools：契约检视只读
+    "webgis_field_contract_inspect": "inspection",
+    # feature_proposal_tools：只读面
+    "vector_change_proposal_list": "inspection",
+    "vector_change_proposal_diff": "inspection",
+    "vector_change_proposal_rebase_preview": "inspection",
+    # data_delivery_tools：能力/预览只读
+    "delivery_capabilities": "inspection",
+    "preview_data_delivery": "inspection",
+    # raster_expression_tools：只读面 + 导出
+    "webgis_raster_expression_describe": "inspection",
+    "webgis_raster_expression_probe": "inspection",
+    "webgis_raster_expression_export": "export",
+    # goal_repair_tools：修复预览只读
+    "webgis_goal_repair_preview": "inspection",
+    # thematic_authoring_tools：只读面 + 样式应用写状态
+    "webgis_thematic_style_inspect": "inspection",
+    "webgis_thematic_style_preview": "inspection",
+    "webgis_thematic_style_apply": "map_mutation",
+    # bivariate_reliability_tools：只读面
+    "webgis_bivariate_reliability_inspect": "inspection",
+    "webgis_bivariate_reliability_preview": "inspection",
+    # scale_portrayal_tools：检视只读 + 应用写状态
+    "webgis_inspect_scale_portrayal": "inspection",
+    "webgis_apply_scale_portrayal": "map_mutation",
+    # label_authoring_tools：检视只读 + 注记写地图
+    "webgis_label_inspect": "inspection",
+    "webgis_label_author": "map_mutation",
+    # feature_edit_tools 残余：数据集供给是数据获取；血缘是只读检视
+    "vector_dataset_provision": "data_access",
+    "vector_feature_lineage": "inspection",
 }
 
 #: 分类有限集合（审计与披露依赖）
