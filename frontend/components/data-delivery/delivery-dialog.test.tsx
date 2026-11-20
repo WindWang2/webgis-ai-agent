@@ -48,7 +48,6 @@ function previewStub(overrides: Partial<DeliveryPreview> = {}): DeliveryPreview 
       constrained: false,
       reason: null,
       notes: [],
-      extensions: ['.geojson'],
     },
     formats: [],
     estimated_rows: 3,

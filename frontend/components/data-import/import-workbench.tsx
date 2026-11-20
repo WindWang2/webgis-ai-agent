@@ -177,7 +177,7 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poll.data]);
 
-  const members = active?.members ?? [];
+  const members = useMemo(() => active?.members ?? [], [active]);
   // P0-1（评审）：本地乐观选择态 + 即时落服务端（保存即确认点）。
   const [selectedOverride, setSelectedOverride] = useState<Set<string> | null>(null);
   const selectedKeys = useMemo(() => {
@@ -202,31 +202,33 @@ export function ImportWorkbench({ onClose }: { onClose: () => void }) {
     [active, sessionId, ownerToken]
   );
 
+  const persistSelection = useCallback(
+    async (keys: string[]) => {
+      if (!sessionId || !active) return;
+      try {
+        await saveImportPlan(active.batch_id, sessionId, { selected: keys }, { ownerToken });
+      } catch (e) {
+        setError(String((e as Error).message ?? e));
+        setSelectedOverride(null); // 失败回滚到服务器事实源
+      }
+    },
+    [active, sessionId, ownerToken, setSelectedOverride]
+  );
+
   const toggleSelect = useCallback(
     (memberKey: string) => {
       if (!active) return;
-      const base = new Set(
-        selectedOverride
-          ? [...selectedOverride]
-          : members.filter((m) => m.selected && !m.unsupported_reason).map((m) => m.member_key)
-      );
+      // selectedKeys 即当前生效选择（乐观覆盖在场时为其，否则为服务器事实源）。
+      const base = new Set(selectedKeys);
       if (base.has(memberKey)) {
         base.delete(memberKey);
       } else {
         base.add(memberKey);
       }
       setSelectedOverride(base); // 乐观：勾选立即响应
-      void (async () => {
-        if (!sessionId) return;
-        try {
-          await saveImportPlan(active.batch_id, sessionId, { selected: [...base] }, { ownerToken });
-        } catch (e) {
-          setError(String((e as Error).message ?? e));
-          setSelectedOverride(null); // 失败回滚到服务器事实源
-        }
-      })();
+      void persistSelection([...base]);
     },
-    [active, members, selectedOverride, sessionId, ownerToken]
+    [active, selectedKeys, persistSelection, setSelectedOverride]
   );
   const focusMember = members.find((m) => m.member_key === focusKey) ?? null;
   const shownMembers = members.slice(0, MEMBER_RENDER_CAP);
