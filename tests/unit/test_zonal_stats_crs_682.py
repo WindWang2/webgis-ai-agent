@@ -260,3 +260,64 @@ def test_fractional_zonal_window_matches_full_raster_oracle(tmp_path, pixel_boun
         assert result[key] == pytest.approx(getattr(values, key)())
     assert result["valid_pixel_coverage"] == pytest.approx(
         values.size / np.count_nonzero(covered))
+
+
+# ── #2134 回归（zonal_statistics 输入识别与有界读）────────────────────
+
+def test_zonal_unrecognized_string_raises(tmp_path):
+    """#2134: 既非路径也非 GeoJSON 的字符串 typed 拒绝（不静默返回 []）。"""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from app.lib.geo_analysis.raster_ops import zonal_statistics
+
+    raster_path = str(tmp_path / "z.tif")
+    with rasterio.open(raster_path, "w", driver="GTiff", height=4, width=4,
+                       count=1, dtype="float32", crs="EPSG:4326",
+                       transform=from_origin(0, 4, 1, 1)) as dst:
+        dst.write(np.ones((4, 4), dtype="float32"), 1)
+    with pytest.raises(ValueError, match="无法识别"):
+        zonal_statistics("this is not geojson nor a path", raster_path)
+    with pytest.raises(ValueError, match="解析失败"):
+        zonal_statistics('{"type": "FeatureCollection", broken', raster_path)
+
+
+def test_zonal_chunked_large_zone_matches_full_array_oracle(
+        tmp_path, monkeypatch):
+    """#2134: 大 zone 分块读的统计与整幅单次读一致（Welford 合并口径）。"""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+    from shapely.geometry import mapping, Polygon
+
+    import app.lib.geo_analysis.raster_ops as ops
+
+    rng = np.random.default_rng(2134)
+    h, w = 64, 24   # 高 64 > chunk 16，强制多块
+    data = rng.normal(size=(h, w))
+    raster_path = str(tmp_path / "big.tif")
+    transform = from_origin(100, 200, 2, 3)
+    with rasterio.open(raster_path, "w", driver="GTiff", height=h, width=w,
+                       count=1, dtype="float64", crs="EPSG:3857",
+                       transform=transform, nodata=-9999.0) as dst:
+        dst.write(data, 1)
+    poly = Polygon([(100, 0), (148, 0), (148, 200), (100, 200)])
+    fc = {"type": "FeatureCollection", "crs": "EPSG:3857",
+          "features": [{"type": "Feature", "geometry": mapping(poly),
+                        "properties": {}}]}
+    monkeypatch.setattr("app.lib.geo_analysis.raster_grid"
+                        ".window_side_from_budget", lambda *a, **k: 16)
+    (row,) = ops.zonal_statistics(
+        fc, raster_path,
+        stats=["count", "sum", "mean", "min", "max", "std"])
+    # 整幅 oracle（分块前的单次读口径）：cell-center 成员掩膜
+    from rasterio.features import geometry_mask
+    covered = geometry_mask([mapping(poly)], out_shape=data.shape,
+                            transform=transform, invert=True)
+    valid = covered & (data != -9999.0)
+    assert row["count"] == int(valid.sum())
+    for key in ("sum", "mean", "min", "max", "std"):
+        assert row[key] == pytest.approx(getattr(data[valid], key)(),
+                                         rel=1e-10), key
+    assert row["valid_pixel_coverage"] == pytest.approx(1.0)

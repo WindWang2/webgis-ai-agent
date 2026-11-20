@@ -104,10 +104,26 @@ def _gtiff_profile(src_profile: dict, nodata: Optional[float] = None, count: int
     return profile
 
 
-def _suffix_output_path(raster_path: str, suffix: str) -> str:
-    """Append a suffix before the file extension, avoiding collisions."""
+def _suffix_output_path(raster_path: str, suffix: str,
+                        params: Optional[dict] = None) -> str:
+    """Append a suffix before the file extension.
+
+    ``params`` 非空时追加参数短哈希（blake2s/4，8 hex）——输出名由
+    输入名 + 操作参数共同决定：同一输入不同 expression/scheme/分辨率
+    的再次调用不再原子覆盖先前产物，并发调用也不共享同一输出路径
+    （#2132）。params 为 None 保持旧命名（向后兼容直接调用方）。
+    """
     p = Path(raster_path)
-    return str(p.parent / f"{p.stem}{suffix}")
+    stem = f"{p.stem}{suffix}"
+    if params:
+        import hashlib
+        import json as _json
+
+        canonical = _json.dumps(params, sort_keys=True, default=str)
+        digest = hashlib.blake2s(canonical.encode("utf-8"),
+                                 digest_size=4).hexdigest()
+        stem = f"{p.stem}_{digest}{suffix}"
+    return str(p.parent / stem)
 
 
 def _validate_raster_expression(expression: str) -> None:
@@ -318,6 +334,42 @@ def _compute_dtype(arr: np.ndarray) -> np.ndarray:
 # ─── Operations ──────────────────────────────────────────────────
 
 
+def _default_out_nodata(scheme_values: list) -> tuple:
+    """无 nodata 源 + 未显式指定时的输出哨兵（#2133）。
+
+    返回 (nodata, disclosure)。浮点 scheme → NaN；整型 scheme → dtype 值域
+    内未被 scheme 占用的最小哨兵（合法零值类别不被吞），值域耗尽则 typed
+    拒绝。绝不默认 0——0 是常见合法类别值。
+    """
+    dtype0 = np.dtype(np.result_type(*scheme_values))
+    if np.issubdtype(dtype0, np.floating):
+        return float("nan"), "out_nodata=NaN（源未声明 nodata）"
+    info = np.iinfo(dtype0)
+    used = {int(v) for v in scheme_values}
+    # 哨兵选取约束：① 落在输出 dtype 值域内（不隐式加宽 dtype）；②
+    # |哨兵| ≤ 2**31-1——GDAL 的 GTiff nodata 标记对 int64 极值不
+    # roundtrip（实测 GDAL 3.12 把 int64 min 读回 -9.0），int32 安全子集
+    # 保证声明与读回一致；③ 扫描 O(|scheme|)（只跳过 scheme 实际占用的值）。
+    inner_lo = max(info.min, -(2 ** 31))
+    inner_hi = min(info.max, 2 ** 31 - 1)
+    domains = [(inner_lo, inner_hi)]
+    if info.min < inner_lo:
+        domains.append((info.min, inner_lo - 1))
+    if info.max > inner_hi:
+        domains.append((inner_hi + 1, info.max))
+    for lo, hi in domains:
+        cand = lo
+        while cand <= hi and cand in used:
+            cand += 1
+        if cand <= hi:
+            return np.array(cand, dtype=dtype0).item(), (
+                f"out_nodata={cand}（源未声明 nodata；dtype {dtype0} 值域内"
+                " 未被 scheme 占用的最小哨兵）")
+    raise ValueError(
+        f"reclassify scheme 占满 dtype {dtype0} 值域，无法选取 nodata "
+        "哨兵——请显式传 nodata= 或改用浮点 scheme value")
+
+
 def reclassify(
     raster_path: str,
     scheme: list[dict],
@@ -329,23 +381,33 @@ def reclassify(
         raster_path: Path to input raster (validated by caller).
         scheme: List of {min, max, value, label?} dicts. Applied in order;
             first match wins. Unmatched pixels become nodata.
-        nodata: Output nodata value (default: input raster's nodata or 0).
+        nodata: Output nodata value（默认：输入栅格的 nodata；源与参数
+            均未声明时按 scheme 取值域选哨兵——浮点 NaN / 整型取未被
+            scheme 占用的最小值，绝不默认 0（#2133），选择进 meta 披露）。
 
     Returns:
         dict with output_path, stats, and metadata.
     """
     _validate_scheme(scheme)
-    out_path = _suffix_output_path(raster_path, "_reclassified.tif")
+    out_path = _suffix_output_path(
+        raster_path, "_reclassified.tif",
+        params={"scheme": [
+            {k: (float(v) if isinstance(v, float) else v) for k, v in r.items()}
+            for r in scheme
+        ]})
 
     with rasterio.open(raster_path) as src:
         src_nodata = src.nodata if src.nodata is not None else src.profile.get("nodata")
 
         if nodata is not None:
             out_nodata = nodata
+            nodata_disclosure = None
         elif src_nodata is not None:
             out_nodata = src_nodata
+            nodata_disclosure = None
         else:
-            out_nodata = 0
+            scheme_values = [r.get("value", 0) for r in scheme]
+            out_nodata, nodata_disclosure = _default_out_nodata(scheme_values)
 
         scheme_values = [r.get("value", 0) for r in scheme]
         out_dtype = np.result_type(*scheme_values, out_nodata) if scheme_values else np.result_type(out_nodata)
@@ -416,6 +478,8 @@ def reclassify(
         "unique_values": unique_value_list,
         "labels": {str(k): v for k, v in label_map.items() if k in unique_vals},
     }
+    if nodata_disclosure:
+        stats["nodata_disclosure"] = nodata_disclosure
     return stats
 
 
@@ -435,7 +499,9 @@ def raster_calculator(
         expression: Numexpr-compatible expression using A (raster_a) and B (raster_b).
             Examples: "A + B", "A * 2", "(A - B) / (A + B)", "where(A > 0, A, 0)".
         constant: Scalar value used when raster_b is None.
-        nodata: Output nodata value.
+        nodata: Output nodata value（默认：输入 A 的 nodata；源与参数均未
+            声明时默认 NaN——合法零值结果不被当作缺失（#2133），进
+            quality_evidence 披露）。
         resampling: B→A 对齐重采样方法。缺省 bilinear（连续量）；输入是
             分类栅格（土地覆盖等）时必须传 "nearest"——bilinear 会混合出
             不存在的类别（§10）。
@@ -453,7 +519,11 @@ def raster_calculator(
     import numexpr as ne
 
     _validate_raster_expression(expression)
-    out_path = _suffix_output_path(raster_a, "_calc.tif")
+    out_path = _suffix_output_path(
+        raster_a, "_calc.tif",
+        params={"expression": expression,
+                "constant": constant,
+                "raster_b": raster_b or ""})
 
     with rasterio.open(raster_a) as src_a:
         grid_a = RasterGridProfile.from_dataset(src_a, raster_a)
@@ -468,9 +538,14 @@ def raster_calculator(
         )
 
         if nodata is None:
-            out_nodata = nodata_a if nodata_a is not None else 0
+            # 源未声明 nodata 时默认 NaN（输出恒为浮点）——旧默认 0 会把
+            # 合法的零值结果（A−B 相等、where(...,0)）静默写成 nodata
+            # （#2133）。显式 nodata 参数优先，不受此影响。
+            out_nodata = nodata_a if nodata_a is not None else float("nan")
+            out_nodata_defaulted_nan = nodata_a is None
         else:
             out_nodata = nodata
+            out_nodata_defaulted_nan = False
 
         window_side = window_side_from_budget()
 
@@ -602,6 +677,9 @@ def raster_calculator(
         "valid_pixel_count": finalized["stats"]["valid_pixel_count"],
         "nodata_pixel_count": finalized["stats"]["nodata_pixel_count"],
     }
+    if out_nodata_defaulted_nan:
+        evidence["nodata_disclosure"] = (
+            "out_nodata=NaN（源未声明 nodata）——合法零值结果不被当作缺失")
     if decision is not None:
         evidence["alignment"] = decision.to_dict()
         if decision.other_bounds and decision.reference_bounds:
@@ -661,20 +739,20 @@ def resample_raster(
     if not np.isfinite(target_resolution) or target_resolution <= 0:
         raise ValueError(f"target_resolution must be positive, got {target_resolution}")
 
-    out_path = _suffix_output_path(raster_path, "_resampled.tif")
-
-    # Artifact cache (ADR-0048): resample is the most expensive file-producing
-    # op and fully deterministic. A cache hit returns the stored GeoTIFF path
-    # without recomputing the warp. The compute closure runs only on a miss;
-    # concurrent misses are still singleflighted at the tool_cache layer.
-    from app.lib.artifact_cache import make_artifact_key, publish_artifact
-
     params = {
         "target_resolution": target_resolution,
         "target_crs": target_crs,
         "resampling": resampling,
         "resolution_unit": resolution_unit,
     }
+    out_path = _suffix_output_path(raster_path, "_resampled.tif",
+                                   params=params)
+
+    # Artifact cache (ADR-0048): resample is the most expensive file-producing
+    # op and fully deterministic. A cache hit returns the stored GeoTIFF path
+    # without recomputing the warp. The compute closure runs only on a miss;
+    # concurrent misses are still singleflighted at the tool_cache layer.
+    from app.lib.artifact_cache import make_artifact_key, publish_artifact
     cache_key = make_artifact_key(raster_path, "resample", params)
 
     def _compute() -> str:
@@ -723,7 +801,9 @@ def resample_raster(
             src_nodata = src.nodata if src.nodata is not None else src.profile.get("nodata")
             dst_nodata = profile.get("nodata")
 
-            with rasterio.open(out_path, "w", **profile) as dst:
+            # 原子写：失败/并发不得留半个 GeoTIFF 在原定输出路径（#2132）
+            with atomic_output(out_path) as _tmp_out, rasterio.open(
+                    _tmp_out, "w", **profile) as dst:
                 for i in range(1, src.count + 1):
                     reproject_kwargs = {
                         "source": rasterio.band(src, i),
