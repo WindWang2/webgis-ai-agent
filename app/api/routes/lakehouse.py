@@ -262,13 +262,19 @@ async def revise_lakehouse_cube(
     )
 
     try:
-        return await revise_session_cube(
+        result = await revise_session_cube(
             session_id, req.ref,
             updates=[u.model_dump() for u in req.updates],
             title=req.title,
         )
     except CubeServiceError as e:
         raise _http_from(e, not_found_codes=("CUBE_REF_MISSING",))
+    # #2141：修订响应同样过 cube JSON 响应闸（1M cells / 32MiB → 413），
+    # 与窗口端点同一闸门 —— 预览不得绕过 bounded JSON 面。
+    try:
+        return await asyncio.to_thread(cube_json_response, result, "first_step_preview")
+    except CubeResponseTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
 
 
 @router.post("/lakehouse/objects/{data_object_id}/verify")

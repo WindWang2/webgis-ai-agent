@@ -199,6 +199,12 @@
       "branch": "fix/issues-core-migrations-20261118",
       "revision": "0108_layers_org_fk_ondelete",
       "down_revision": "dc0b99ededbd"
+    },
+    "0109": {
+      "branch": "fix/fabric-data-residual-20261119",
+      "revision": "0109_data_join_runs_job_id_bigint",
+      "down_revision": "0108_layers_org_fk_ondelete",
+      "file": "0109_data_join_runs_job_id_bigint.py"
     }
   }
 }

@@ -129,7 +129,9 @@ def backup_cube_chunks(
     store = get_object_store()
     written = 0
     for rel, digest, _size in entries:
-        result = store.put_blob(digest, (base / rel).read_bytes(), "binary")
+        # #2143 N31：整读 read_bytes 曾把单 chunk 全量驻留内存（≤512MiB
+        # 总预算下单文件即可占满）；put_blob_from_path 真流式（零驻留）。
+        result = store.put_blob_from_path(digest, base / rel, "binary")
         if result.put_new:
             written += 1
     return {
