@@ -122,10 +122,13 @@ def meters_per_pixel(bounds: List[float], canvas_width: float) -> Optional[float
 
     ``mpp = (lng_span/360) × C × cos(lat_center) / canvas_px`` —— cos 修正
     抵消 Mercator 随纬度的放大（比例尺"投影感知"的核心项）。
+    跨反子午线 bounds（e<w）按 e+=360 归一化（F4：不再静默返回 None）。
     """
     try:
         w, s, e, n = bounds
         lng_span = float(e) - float(w)
+        if lng_span <= 0:
+            lng_span += 360.0
         if lng_span <= 0 or canvas_width <= 0:
             return None
         center_lat_rad = math.radians((float(s) + float(n)) / 2.0)
@@ -592,13 +595,37 @@ def _fmt_degree(v: float, axis: str) -> str:
 
 def render_graticule(bounds: List[float], project: Callable[[Tuple[float, float]], Tuple[Any, Any]],
                      *, lines: int = 6, color: str = "#64748b") -> str:
-    """经纬网：nice-step 经纬线（Mercator 下经线直、纬线直）+ 度标注。"""
+    """经纬网：nice-step 经纬线（Mercator 下经线直、纬线直）+ 度标注。
+
+    F4（#2129）：跨反子午线 bounds（e<w）按 e+=360 归一化画（不静默缺画）；
+    project 返回值经 _fmt + 有限性守卫（projector 直出 numpy/非标量不再
+    污染属性）；度标注经度回绕到 [-180,180) 常规形。
+    """
     try:
         w, s, e, n = (float(v) for v in bounds)
     except Exception:
         return ""
+    if not all(math.isfinite(v) for v in (w, s, e, n)):
+        return ""
+    if e < w:  # 跨反子午线：归一化到同一经度世界副本
+        e += 360.0
     if e <= w or n <= s:
         return ""
+    color_s = escape_svg_text(color)
+
+    def _pt(lng: float, lat: float) -> Optional[Tuple[float, float]]:
+        try:
+            px, py = project((lng, lat))
+            fx, fy = float(px), float(py)
+        except Exception:
+            return None
+        if not (math.isfinite(fx) and math.isfinite(fy)):
+            return None
+        return fx, fy
+
+    def _wrap_lng(v: float) -> float:
+        return ((v + 180.0) % 360.0) - 180.0
+
     lng_step = _nice_step(e - w, lines)
     lat_step = _nice_step(n - s, lines)
     parts: List[str] = ['<g class="chrome-graticule">']
@@ -610,15 +637,17 @@ def render_graticule(bounds: List[float], project: Callable[[Tuple[float, float]
         lng = lng_start + i * lng_step
         if not (w < lng < e):
             continue
-        p1 = project((lng, s))
-        p2 = project((lng, n))
+        p1 = _pt(lng, s)
+        p2 = _pt(lng, n)
+        if p1 is None or p2 is None:
+            continue
         parts.append(
-            f'<line x1="{p1[0]}" y1="{p1[1]}" x2="{p2[0]}" y2="{p2[1]}" '
-            f'stroke="{escape_svg_text(color)}" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.6" />'
+            f'<line x1="{_fmt(p1[0])}" y1="{_fmt(p1[1])}" x2="{_fmt(p2[0])}" y2="{_fmt(p2[1])}" '
+            f'stroke="{color_s}" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.6" />'
         )
         parts.append(
-            f'<text x="{p2[0]}" y="{_fmt(float(p2[1]) - 4)}" font-family="sans-serif" font-size="9" '
-            f'fill="{escape_svg_text(color)}" text-anchor="middle">{escape_svg_text(_fmt_degree(lng, "lng"))}</text>'
+            f'<text x="{_fmt(p2[0])}" y="{_fmt(p2[1] - 4)}" font-family="sans-serif" font-size="9" '
+            f'fill="{color_s}" text-anchor="middle">{escape_svg_text(_fmt_degree(_wrap_lng(lng), "lng"))}</text>'
         )
     lat_start = math.ceil(s / lat_step) * lat_step
     lat_count = max(0, min(int((n - lat_start) / lat_step) + 1, 2 * lines + 2))
@@ -626,15 +655,17 @@ def render_graticule(bounds: List[float], project: Callable[[Tuple[float, float]
         lat = lat_start + j * lat_step
         if not (s < lat < n):
             continue
-        p1 = project((w, lat))
-        p2 = project((e, lat))
+        p1 = _pt(w, lat)
+        p2 = _pt(e, lat)
+        if p1 is None or p2 is None:
+            continue
         parts.append(
-            f'<line x1="{p1[0]}" y1="{p1[1]}" x2="{p2[0]}" y2="{p2[1]}" '
-            f'stroke="{escape_svg_text(color)}" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.6" />'
+            f'<line x1="{_fmt(p1[0])}" y1="{_fmt(p1[1])}" x2="{_fmt(p2[0])}" y2="{_fmt(p2[1])}" '
+            f'stroke="{color_s}" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.6" />'
         )
         parts.append(
-            f'<text x="{_fmt(float(p1[0]) + 4)}" y="{p1[1]}" font-family="sans-serif" font-size="9" '
-            f'fill="{escape_svg_text(color)}" text-anchor="start">{escape_svg_text(_fmt_degree(lat, "lat"))}</text>'
+            f'<text x="{_fmt(p1[0] + 4)}" y="{_fmt(p1[1])}" font-family="sans-serif" font-size="9" '
+            f'fill="{color_s}" text-anchor="start">{escape_svg_text(_fmt_degree(lat, "lat"))}</text>'
         )
     parts.append("</g>")
     return "".join(parts)
@@ -826,14 +857,16 @@ def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
                     width: float = PANEL_WIDTH, vertical: bool = False,
                     stepped: bool = False, title_override: str = "",
                     gradient_id: str = "chrome-cb-grad") -> str:
-    """``gradient_id``：同文档多色带时必须唯一（review P1-3 —— SVG url(#id)
-    按文档首个 id 解析，重复 id 会让第二个色带渲染第一个的渐变）。"""
     """连续色带 → chrome-colorbar（legend_spec / options 双通道的统一渲染）。
 
     - spec：``{palette_colors[], min?, max?, unit?, field?, title?, nodata?}``
       （绑定 layer 的 legend_spec 优先，组件 options 内联兜底 —— 前端
       ``el.legendSpec`` 同语义；E-5：无 palette 不绘制，缺 min/max 画裸条）。
     - 变体：vertical（方向）/ stepped（离散色阶块，与 live stepped 等分同语义）。
+    ``gradient_id``：同文档多色带时必须唯一（review P1-3 —— SVG url(#id)
+    按文档首个 id 解析，重复 id 会让第二个色带渲染第一个的渐变）。
+    F3（#2129）：vertical 变体此前几何不变（仍 (width-20)×12 横条 + 12px
+    横条纹），hi/lo 标签超出卡片；vertical 现为窄条竖几何，标签置于条右。
     """
     if not isinstance(spec, dict):
         return ""
@@ -841,7 +874,11 @@ def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
               if isinstance(c, str) and c][:COLORBAR_MAX_STOPS]
     if not colors:
         return ""
-    ramp_w, ramp_h = width - 20.0, 12.0
+    # 竖向：窄条竖几何（条宽 12，条高随卡宽）；横向：(width-20)×12 横条。
+    if vertical:
+        ramp_w, ramp_h = 12.0, max(60.0, width - 50.0)
+    else:
+        ramp_w, ramp_h = width - 20.0, 12.0
     head = 18.0
     total_h = head + ramp_h + 16.0 + (14.0 if spec.get("nodata") else 0.0)
     parts = [_panel_card(x, y, width, total_h)]
@@ -884,8 +921,9 @@ def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
         lo = f"{vmin:g}{(' ' + unit) if unit else ''}"
         hi = f"{vmax:g}{(' ' + unit) if unit else ''}"
         if vertical:
-            parts.append(_panel_text(rx + ramp_w + 2.0, ry + 8.0, hi, size=7.5))
-            parts.append(_panel_text(rx + ramp_w + 2.0, ry + ramp_h, lo, size=7.5))
+            # 竖向：hi 顶 / lo 底，紧贴条右（在卡内 —— 条右 = x+10+ramp_w）。
+            parts.append(_panel_text(rx + ramp_w + 4.0, ry + 6.0, hi, size=7.5))
+            parts.append(_panel_text(rx + ramp_w + 4.0, ry + ramp_h, lo, size=7.5))
         else:
             parts.append(_panel_text(rx, ry + ramp_h + 9.0, lo, size=7.5))
             parts.append(_panel_text(rx + ramp_w, ry + ramp_h + 9.0, hi, size=7.5,
@@ -900,10 +938,16 @@ def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
     return f'<g class="chrome-colorbar">{"".join(parts)}</g>'
 
 
-def colorbar_height(spec: Any) -> float:
-    """色带装配前高度估计（stack 布局用；与渲染几何同表）。"""
+def colorbar_height(spec: Any, *, vertical: bool = False,
+                    width: float = PANEL_WIDTH) -> float:
+    """色带装配前高度估计（stack 布局用；与渲染几何同表）。
+
+    F3（#2129）：此前硬编码 50 与实际卡片高 46 不一致 —— 现与
+    render_colorbar 同公式（head 18 + ramp + 16 + nodata 14）。
+    """
     if not isinstance(spec, dict) or not [
         c for c in (spec.get("palette_colors") or []) if isinstance(c, str)
     ]:
         return 0.0
-    return 50.0 + (14.0 if isinstance(spec.get("nodata"), dict) else 0.0)
+    ramp_h = (max(60.0, width - 50.0) if vertical else 12.0)
+    return 18.0 + ramp_h + 16.0 + (14.0 if isinstance(spec.get("nodata"), dict) else 0.0)

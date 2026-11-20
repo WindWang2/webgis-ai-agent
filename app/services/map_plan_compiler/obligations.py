@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.contracts.workbench_locks import is_entity_locked
 from app.lib.cartography.plan_ir import MapPlanIR, spec_doc_of
 from app.services.map_plan_compiler.component_delta import _component_delta
 
@@ -136,16 +137,20 @@ def check_obligations(
                   if isinstance(component, dict)}
 
     # ── 闸 1：user lock 冲突（fail-closed，user-wins）────────────────────
-    locked_layers = set(ir.user_locks.layer_ids)
-    locked_components = set(ir.user_locks.component_ids)
+    # 15f：锁命中走共享谓词 is_entity_locked（含 __ 层族双向前缀）——
+    # 精确匹配会让 roads__line 之类的物理子层绕过锁定的逻辑层 roads。
+    locked_layers = frozenset(str(v) for v in ir.user_locks.layer_ids)
+    locked_components = frozenset(str(v) for v in ir.user_locks.component_ids)
     for li in ir.layer_intents:
-        if li.locked or (li.layer_id and li.layer_id in locked_layers):
+        if li.locked or (li.layer_id
+                         and is_entity_locked(str(li.layer_id), locked_layers)):
             findings.append(_finding(
                 "PLAN_LOCK_CONFLICT", "blocking", f"layer:{li.layer_id}",
                 "layer intent 目标被用户锁定；编译拒绝（user-wins）",
                 ("lock_snapshot",)))
     for ci in ir.component_intents:
-        if ci.locked or (ci.component_id and ci.component_id in locked_components):
+        if ci.locked or (ci.component_id
+                         and is_entity_locked(str(ci.component_id), locked_components)):
             if ci.action != "ensure" or _component_delta(ci, components.get(ci.component_id)):
                 findings.append(_finding(
                     "PLAN_LOCK_CONFLICT", "blocking", f"component:{ci.component_id}",

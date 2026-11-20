@@ -91,7 +91,7 @@ async def execute_tool(
     request.sessionId = session_id
     request.verifiedTurnId = turn_id
     try:
-        return await dispatch_tool(request)
+        return await dispatch_tool(request, _strict_turn_scope=True)
     except PiTurnContextUnavailable:
         # Redis liveness is not local caller authority. This is an affinity/
         # turn-state conflict, not transient overload or permission to replay.

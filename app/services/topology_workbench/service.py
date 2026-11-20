@@ -15,6 +15,7 @@ verify_session_owner（外来会话 404 不泄露存在性）；项目绑定经�
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -274,17 +275,20 @@ async def submit_run(
     from app.core.database import SessionLocal
     from app.models.topology_workbench import TopologyRun
 
-    with SessionLocal() as db:
+    def _load_ruleset() -> Tuple[List[Dict[str, Any]], Any, Any, str, Optional[str]]:
         # anchor_session_id 只由工具路径显式传入（bridge 已校验 turn 的
         # 会话绑定）；REST 不传 —— 请求体 session_id 不构成所有权证明。
-        ruleset = _get_owned_ruleset(
-            db, ruleset_id, actor_user_id, anchor_session_id,
-        )
-        rules = list(ruleset.rules or [])
-        digest = ruleset.digest
-        version = ruleset.current_version
-        rid = ruleset.id
-        ruleset_project = ruleset.project_id
+        with SessionLocal() as db:
+            ruleset = _get_owned_ruleset(
+                db, ruleset_id, actor_user_id, anchor_session_id,
+            )
+            return (
+                list(ruleset.rules or []), ruleset.digest,
+                ruleset.current_version, ruleset.id, ruleset.project_id,
+            )
+
+    # #2204：同步 SessionLocal 卸载到工作线程（调用顺序不变）。
+    rules, digest, version, rid, ruleset_project = await asyncio.to_thread(_load_ruleset)
 
     try:
         role_bindings = normalize_run_bindings(rules, bindings)
@@ -321,28 +325,35 @@ async def submit_run(
         for role, snap in snapshots.items()
     }
 
-    with SessionLocal() as db:
-        run = TopologyRun(
-            org_id=org_id, ruleset_id=rid, ruleset_digest=digest,
-            ruleset_version=version, rules_snapshot=rules,
-            status="pending", bindings=bindings_evidence,
-            method_version=METHOD_VERSION,
-            project_id=project_id or ruleset_project,
-            session_id=session_id, created_by=actor_user_id,
-        )
-        db.add(run)
-        db.commit()
-        run_id = run.id
+    def _create_run_row() -> str:
+        with SessionLocal() as db:
+            run = TopologyRun(
+                org_id=org_id, ruleset_id=rid, ruleset_digest=digest,
+                ruleset_version=version, rules_snapshot=rules,
+                status="pending", bindings=bindings_evidence,
+                method_version=METHOD_VERSION,
+                project_id=project_id or ruleset_project,
+                session_id=session_id, created_by=actor_user_id,
+            )
+            db.add(run)
+            db.commit()
+            return str(run.id)
+
+    run_id = await asyncio.to_thread(_create_run_row)
 
     result: Dict[str, Any] = {"run_id": run_id, "status": "pending"}
     if submit_job:
-        job_info = _submit_durable_topology_job(run_id)
-        with SessionLocal() as db:
-            row = db.get(TopologyRun, run_id)
-            if row is not None and job_info.get("job_id"):
-                row.job_id = str(job_info["job_id"])
-                db.commit()
-        result["job"] = job_info
+        def _submit_and_record() -> Dict[str, Any]:
+            info = _submit_durable_topology_job(run_id)
+            with SessionLocal() as db:
+                row = db.get(TopologyRun, run_id)
+                if row is not None and info.get("job_id"):
+                    row.job_id = str(info["job_id"])
+                    db.commit()
+            return info
+
+        # #2204：durable job 提交（sync SessionLocal + dispatch）整体卸载。
+        result["job"] = await asyncio.to_thread(_submit_and_record)
     return result
 
 
@@ -521,26 +532,29 @@ async def get_finding_witness(
     from app.core.database import SessionLocal
     from app.models.topology_workbench import TopologyFinding
 
-    with SessionLocal() as db:
-        row = db.get(TopologyFinding, finding_id)
-        if row is None:
-            raise WorkbenchError("finding_not_found", "问题不存在", status=404)
-        run = _get_owned_run(
-            db, row.run_id, actor_user_id, is_admin, anchor_session_id,
-            actor_org_id=actor_org_id,
-        )
-        if not run.witness_key:
-            raise WorkbenchError(
-                "source_unresolvable",
-                "该运行没有可读的 witness 证据（未落盘或被清理）", status=410,
+    def _lookup_witness() -> Tuple[Any, Any, int, str, Optional[str]]:
+        with SessionLocal() as db:
+            row = db.get(TopologyFinding, finding_id)
+            if row is None:
+                raise WorkbenchError("finding_not_found", "问题不存在", status=404)
+            run = _get_owned_run(
+                db, row.run_id, actor_user_id, is_admin, anchor_session_id,
+                actor_org_id=actor_org_id,
             )
-        idx = row.witness_index
-        key, sha = run.witness_key, run.witness_sha256
+            if not run.witness_key:
+                raise WorkbenchError(
+                    "source_unresolvable",
+                    "该运行没有可读的 witness 证据（未落盘或被清理）", status=410,
+                )
+            return row, run, int(row.witness_index), run.witness_key, run.witness_sha256
+
+    # #2204：同步 SessionLocal 查找 + witness blob（可能数 MB）读回均卸载。
+    row, run, idx, key, sha = await asyncio.to_thread(_lookup_witness)
 
     from app.services.durable_blob_store import get_filesystem_blob_store
 
     store = get_filesystem_blob_store()
-    raw = store.get_blob(key, expected_sha256=sha)
+    raw = await asyncio.to_thread(store.get_blob, key, expected_sha256=sha)
     if raw is None:
         raise WorkbenchError(
             "source_unresolvable",
@@ -600,11 +614,15 @@ async def _locator_staleness(run: Any, finding: Any) -> Dict[str, Any]:
                 from app.core.database import SessionLocal
                 from app.models.project import ArtifactRevision
 
-                with SessionLocal() as db:
-                    row = db.execute(
-                        sa_select(func.max(ArtifactRevision.revision_no)).where(
-                            ArtifactRevision.artifact_id == ref)
-                    ).scalar_one_or_none()
+                def _latest_revision() -> Optional[int]:
+                    with SessionLocal() as db:
+                        return db.execute(
+                            sa_select(func.max(ArtifactRevision.revision_no)).where(
+                                ArtifactRevision.artifact_id == ref)
+                        ).scalar_one_or_none()
+
+                # #2204：同步 SessionLocal 读卸载到工作线程。
+                row = await asyncio.to_thread(_latest_revision)
                 current = int(row) if row is not None else None
             else:
                 continue

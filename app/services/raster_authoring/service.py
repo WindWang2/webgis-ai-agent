@@ -6,6 +6,7 @@ MapSpec、不生成分析产物、不推进修订。
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -141,7 +142,11 @@ async def describe_raster(
     source = await resolve_source(
         session_id, ref_id, owner_token, trusted_dispatch=trusted_dispatch
     )
-    return descriptor_mod.describe(source, histogram_bands=histogram_bands, buckets=buckets)
+    # 15c：describe 是同步 GDAL/PIL（头 + 直方图采样），移出事件循环。
+    # asyncio.to_thread 顺序 await —— 与原地同步执行同序，无新增并发面。
+    return await asyncio.to_thread(
+        descriptor_mod.describe, source,
+        histogram_bands=histogram_bands, buckets=buckets)
 
 
 async def probe_raster(
@@ -154,8 +159,9 @@ async def probe_raster(
     source = await resolve_source(
         session_id, ref_id, owner_token, trusted_dispatch=trusted_dispatch
     )
-    return probe_pixels(
-        source, points, crs=crs, bands=bands,
+    # 15c：probe 逐点开窗读是同步 GDAL，移出事件循环（顺序 await 不新增并发）。
+    return await asyncio.to_thread(
+        probe_pixels, source, points, crs=crs, bands=bands,
         expected_data_revision=expected_data_revision,
     )
 
@@ -387,8 +393,13 @@ async def export_snapshot(
                 "source data revision changed after the export snapshot was frozen",
                 status_code=409,
             )
-        entries.append(build_entry(item["layer_id"], item["spec"], source))
-    artifact = compose(
+        # 15c：build_entry 内含 render_snapshot（GDAL/PIL 2048 边渲染），
+        # 逐层顺序 to_thread —— 冻结修订已落定，渲染顺序与原地执行一致。
+        entries.append(await asyncio.to_thread(
+            build_entry, item["layer_id"], item["spec"], source))
+    # compose 为 PIL 组合（重 CPU），同样移出事件循环。
+    artifact = await asyncio.to_thread(
+        compose,
         entries, fmt=fmt,
         frozen={
             "mapspec_revision": frozen["revision"],

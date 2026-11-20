@@ -224,6 +224,12 @@ class _Registry:
     def register(self, name, description, func, **kwargs) -> None:
         self._tools[name] = {"description": description, "func": func, "kwargs": kwargs}
 
+    def get(self, name):
+        # host._undo_projected_tool 经 ``registry.get(n) is owned`` 确认投影仍属
+        # 本扩展（ADR-0243 回滚守卫）；缺此方法 undo 抛 AttributeError。
+        entry = self._tools.get(name)
+        return entry["func"] if entry else None
+
     def unregister(self, name: str) -> bool:
         return self._tools.pop(name, None) is not None
 
