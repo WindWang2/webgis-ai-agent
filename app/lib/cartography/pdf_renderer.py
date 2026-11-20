@@ -45,33 +45,58 @@ class RasterPdfBusyError(RuntimeError):
     """并发闸已满（调用方应映射为 503 / 稍后重试）。"""
 
 
-def _register_vendored_cjk_font():
-    """注册仓内 Noto Sans SC 子集并返回 FontProperties；缺席 → None。"""
-    import matplotlib.font_manager as fm
+# F1（#2127）：addfont 每导出重复调用 → fontManager.ttflist 无界增长，
+# 且 2 线程并发闸下多线程改同一全局 fontManager。解析结果进程级缓存：
+# 注册/扫描只跑一次（锁内），每次调用仍**新构** FontProperties ——
+# 既有「per-call 隔离、线程不共享可变字体对象」纪律不变。
+_CJK_FONT_SPEC_LOCK = threading.Lock()
+#: None = 未解析；("file", path) | ("family", name) | ("none", "")
+_CJK_FONT_SPEC_RESOLVED: Optional[tuple] = None
 
-    if _VENDORED_FONT.is_file():
-        try:
-            fm.fontManager.addfont(str(_VENDORED_FONT))
-            return fm.FontProperties(fname=str(_VENDORED_FONT))
-        except Exception as e:  # noqa: BLE001 —— 字体损坏时走系统扫描
-            logger.warning("[pdf_renderer] vendored CJK font load failed: %s", e)
-    return None
+
+def _resolve_cjk_font_spec() -> tuple:
+    """一次性格式解析（vendored → 系统关键字扫描）；addfont 只发生一次。"""
+    global _CJK_FONT_SPEC_RESOLVED
+    with _CJK_FONT_SPEC_LOCK:
+        if _CJK_FONT_SPEC_RESOLVED is not None:
+            return _CJK_FONT_SPEC_RESOLVED
+        import matplotlib.font_manager as fm
+
+        spec: tuple = ("none", "")
+        if _VENDORED_FONT.is_file():
+            try:
+                fm.fontManager.addfont(str(_VENDORED_FONT))
+                spec = ("file", str(_VENDORED_FONT))
+            except Exception as e:  # noqa: BLE001 —— 字体损坏走系统扫描
+                logger.warning("[pdf_renderer] vendored CJK font load failed: %s", e)
+        if spec[0] == "none":
+            for f in fm.fontManager.ttflist:
+                if any(kw in f.name.lower() for kw in _CJK_KEYWORDS):
+                    spec = ("family", f.name)
+                    break
+            if spec[0] == "none":
+                logger.warning(
+                    "[pdf_renderer] CJK font not found in system. Chinese titles "
+                    "may render as tofu boxes. Recommend installing Noto CJK, "
+                    "Source Han Sans, or Microsoft YaHei."
+                )
+        _CJK_FONT_SPEC_RESOLVED = spec
+        return spec
 
 
 def _resolve_cjk_font_properties():
-    """Find a CJK font and return a Matplotlib FontProperties object for thread-safe isolation."""
+    """Find a CJK font and return a fresh Matplotlib FontProperties object.
+
+    解析（含全局 addfont 注册）按进程缓存；FontProperties 每调用新构，
+    并发渲染线程间不共享可变字体对象。
+    """
     import matplotlib.font_manager as fm
 
-    vendored = _register_vendored_cjk_font()
-    if vendored is not None:
-        return vendored
-    for f in fm.fontManager.ttflist:
-        if any(kw in f.name.lower() for kw in _CJK_KEYWORDS):
-            return fm.FontProperties(family=f.name)
-    logger.warning(
-        "[pdf_renderer] CJK font not found in system. Chinese titles may render as tofu boxes. "
-        "Recommend installing Noto CJK, Source Han Sans, or Microsoft YaHei."
-    )
+    kind, value = _resolve_cjk_font_spec()
+    if kind == "file":
+        return fm.FontProperties(fname=value)
+    if kind == "family":
+        return fm.FontProperties(family=value)
     return None
 
 
@@ -98,19 +123,68 @@ def _draw_north_arrow(fig, ax_map) -> None:
 
 
 def _draw_scale_bar(fig, ax_map, scale_bar: Dict[str, Any], map_frame: Dict[str, Any], cjk_font_prop=None) -> None:
-    """比例尺（ax 右下）：nice 单源数字 → 图面长度按地图画幅宽换算。"""
+    """比例尺（ax 右下）：nice 单源数字 → 图面长度按**实际渲染地图轴宽**换算。
+
+    F2（#2128）：aspect=equal + anchor C 的 letterbox 下，imshow 影像在
+    轴盒内按像素 1:1 适配居中 —— 用轴盒宽换算会把比例尺画长
+    （1/0.92 倍）或随 bbox_inches="tight" 漂移；此处取影像真实显示宽度。
+    截断到 0.4 上帽时重取 nice 数字并改写标签 —— 标签恒等于实长。
+    """
     import matplotlib.lines as mlines
+
+    from app.lib.cartography.layout_description import (
+        compute_nice_scale,
+        format_scale_label,
+    )
 
     nice = scale_bar.get("nice") or {}
     frame_w = float(map_frame.get("width") or 0)
     bar_px = float(nice.get("px") or 0)
     label = str(scale_bar.get("label") or "")
-    if bar_px <= 0 or frame_w <= 0 or not label:
+    mpp = float(scale_bar.get("metersPerPixel") or 0)
+    if bar_px <= 0 or frame_w <= 0 or not label or mpp <= 0:
         return
-    # bar 图面长度 = bar_px / 画幅总宽 → ax 宽度分数（上限 0.4 防溢出）
-    frac = min(bar_px / frame_w, 0.4)
-    x1 = 0.955
-    x0 = x1 - frac
+
+    # 影像实际显示宽度（fig 分数）：aspect=equal 会**改动轴盒**（adjustable=
+    # box + anchor C letterbox），分析式换算不可靠 —— 先 draw 一轮，从
+    # renderer 取影像真实显示 bbox（像素 → fig 分数）。
+    img_w_fig = 0.0
+    img_x_right = 0.955
+    if ax_map.images:
+        try:
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            bb = ax_map.images[0].get_window_extent(renderer=renderer)
+            if bb.width > 0:
+                img_w_fig = float(bb.width) / float(fig.bbox.width)
+                img_x_right = float(bb.x1) / float(fig.bbox.width)
+        except Exception:  # noqa: BLE001 —— 取不到显示bbox退轴盒宽
+            logger.debug("[pdf_renderer] scale bar fell back to axes box width")
+            axpos = ax_map.get_position()
+            img_w_fig = axpos.width
+            img_x_right = axpos.x0 + axpos.width
+    else:
+        axpos = ax_map.get_position()
+        img_w_fig = axpos.width
+        img_x_right = axpos.x0 + axpos.width
+
+    # 截断到显示宽的 0.4 上帽：重取 nice 数字，标签与实长严格一致。
+    max_bar_fig = 0.4 * img_w_fig
+    want_fig = bar_px / frame_w * img_w_fig
+    if want_fig > max_bar_fig:
+        capped_px = max_bar_fig / img_w_fig * frame_w
+        nice2 = compute_nice_scale(mpp, capped_px)
+        if nice2["px"] > 0 and nice2["px"] / frame_w * img_w_fig <= max_bar_fig + 1e-9:
+            bar_fig = nice2["px"] / frame_w * img_w_fig
+            label = format_scale_label(nice2["meters"])
+        else:  # nice 化仍超帽：按实长如实标注（不失真、不虚构 nice 数）
+            bar_fig = max_bar_fig
+            label = format_scale_label(mpp * capped_px)
+    else:
+        bar_fig = want_fig
+
+    x1 = img_x_right - 0.02
+    x0 = x1 - bar_fig
     y = 0.115
     for (xa, ya), (xb, yb) in (
         ((x0, y), (x1, y)),  # 主线

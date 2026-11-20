@@ -46,10 +46,16 @@ _SVG_SMIL_RE = re.compile(
     re.I | re.S)
 # N1（复审）：属性边界不止空白 —— 引号闭合后紧跟属性名（fill="x"onload=…）
 # 同样是合法属性分隔；捕获边界字符以免破坏前一个属性。
+# 15e：`/` 亦是合法属性分隔（<svg/onload=…>、<rect/onclick=…>）——
+# 并入边界类；data: URI 先掩码再剥事件属性，防 base64 串里恰含
+# "/on…=" 子串被误伤（掩码 token 不含 `/on` 形态）。
 _SVG_EVENT_RE = re.compile(
-    r"([\s\"'])on\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
+    r"([\s\"'/])on\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
 _SVG_HREF_RE = re.compile(
     r"(?:xlink:)?href\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
+_SVG_DATA_HREF_RE = re.compile(
+    r"(?:xlink:)?href\s*=\s*(\"data:[^\"]*\"|'data:[^']*'|data:[^\s>]+)",
+    re.I)
 
 #: 单文件 HTML 预算（内嵌 SVG/图表有界；超限显式失败优于半包）。
 MAX_BRIEF_HTML_BYTES = 8 * 1024 * 1024
@@ -70,9 +76,10 @@ def sanitize_svg(markup: str) -> str:
     """静态 SVG → 可内嵌安全形态。
 
     纵深防御白名单式收窄：无脚本（全形态）/无 SMIL/无 foreignObject/
-    无事件属性/href 仅 data:。审查实测的自闭合 script、未闭合 script、
-    未引号 ``href=javascript:``、``<set attributeName=onmouseover>``、
-    未引号外链 ``<image href=http://…>`` 全部被剔除（负例见
+    无事件属性（含 `/` 与引号粘连边界）/href 仅 data:。审查实测的自闭合
+    script、未闭合 script、未引号 ``href=javascript:``、
+    ``<set attributeName=onmouseover>``、未引号外链 ``<image href=http://…>``
+    全部被剔除（负例见
     tests/unit/test_mapbrief_security.py::TestSvgSanitizeHardened）。
     """
     out = _SVG_SCRIPT_PAIRED_RE.sub("", markup or "")
@@ -80,13 +87,26 @@ def sanitize_svg(markup: str) -> str:
     out = _SVG_SCRIPT_OPEN_RE.sub("", out)
     out = _SVG_SMIL_RE.sub("", out)
     out = _SVG_FOREIGN_RE.sub("", out)
+
+    # 先掩码 data: URI（事件属性剥离的 `/` 边界会误伤 base64 内的
+    # "/on…=" 子串），剥完事件属性再还原。
+    masked: List[str] = []
+
+    def _mask(match: "re.Match[str]") -> str:
+        masked.append(match.group(0))
+        return f"__SAN_DATAHREF_{len(masked) - 1}__"
+
+    out = _SVG_DATA_HREF_RE.sub(_mask, out)
     out = _SVG_EVENT_RE.sub(r"\1", out)
 
     def _drop_external(match: "re.Match[str]") -> str:
         url = (match.group(1) or "").strip("\"'")
         return match.group(0) if url.startswith("data:") else ""
 
-    return _SVG_HREF_RE.sub(_drop_external, out)
+    out = _SVG_HREF_RE.sub(_drop_external, out)
+    for i, span in enumerate(masked):
+        out = out.replace(f"__SAN_DATAHREF_{i}__", span)
+    return out
 
 
 def csv_safe(value: Any) -> str:
@@ -440,6 +460,11 @@ footer.evidence { margin-top: 56px; color: #7d8b9d; font-size: 13px; }
 """
 
 
+#: 模板占位符单次展开（15e：.replace 链会让先插入的载荷里的占位符
+#: 串被后续步骤二次展开 —— 单次扫描杜绝）。
+_HTML_PLACEHOLDER_RE = re.compile(r"__TITLE__|__VIEWER__|__JSON__")
+
+
 def render_brief_html(bundle: Mapping[str, Any]) -> str:
     """bundle → 自解压单文件 HTML。"""
     spec = bundle.get("spec") or {}
@@ -447,11 +472,13 @@ def render_brief_html(bundle: Mapping[str, Any]) -> str:
     title = str(metadata.get("title") or "地图简报")
     title_escaped = (title.replace("&", "&amp;").replace("<", "&lt;")
                      .replace(">", "&gt;"))
-    html = _HTML_SHELL
-    html = html.replace("__TITLE__", title_escaped)
-    html = html.replace(
-        "__VIEWER__", _VIEWER_JS.replace("</script>", "<\\/script>"))
-    html = html.replace("__JSON__", _embed_json(bundle))
+    replacements = {
+        "__TITLE__": title_escaped,
+        "__VIEWER__": _VIEWER_JS.replace("</script>", "<\\/script>"),
+        "__JSON__": _embed_json(bundle),
+    }
+    html = _HTML_PLACEHOLDER_RE.sub(
+        lambda m: replacements[m.group(0)], _HTML_SHELL)
     if len(html.encode("utf-8")) > MAX_BRIEF_HTML_BYTES:
         raise ValueError(
             f"brief html exceeds {MAX_BRIEF_HTML_BYTES} bytes budget")
