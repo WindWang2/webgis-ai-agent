@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const apiFetch = vi.fn(async () => ({}));
+const apiFetch = vi.fn(async (..._args: unknown[]) => ({}));
 vi.mock('@/lib/api/transport', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
 
 import { previewFeatureEdit } from './feature-edit';

@@ -97,6 +97,66 @@ describe('parseGltf fixture round-trip', () => {
     expect(parsed.roots[0].primitives[0].materialIndex).toBe(0);
     expect(parsed.materials[0].baseColorFactor).toEqual([0.2, 0.4, 0.6, 1]);
   });
+
+  it('#2144 H13：textures 按 glTF texture 索引对齐（baseColorTexture.index 经 source 映射 image）', async () => {
+    const imgA = new Uint8Array([0xaa, 0x01]);
+    const imgB = new Uint8Array([0xbb, 0x02, 0x03]);
+    const pos = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    const buf = new Uint8Array(2 + 3 + 36);
+    buf.set(imgA, 0);
+    buf.set(imgB, 2);
+    buf.set(new Uint8Array(pos.buffer), 5);
+    const b64 = typeof Buffer !== 'undefined'
+      ? Buffer.from(buf).toString('base64')
+      : btoa(Array.from(buf, (b) => String.fromCharCode(b)).join(''));
+    const doc = {
+      asset: { version: '2.0' },
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+      accessors: [{ bufferView: 2, componentType: 5126, count: 3, type: 'VEC3' }],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: 2 },
+        { buffer: 0, byteOffset: 2, byteLength: 3 },
+        { buffer: 0, byteOffset: 5, byteLength: 36 },
+      ],
+      buffers: [{ uri: `data:application/octet-stream;base64,${b64}`, byteLength: buf.length }],
+      images: [
+        { bufferView: 0, mimeType: 'image/png' },
+        { bufferView: 1, mimeType: 'image/png' },
+      ],
+      // textures 顺序与 images 不一致 + 交叉共享 —— 旧实现按 images 顺序建
+      // 表、把 texture 索引当 image 索引，此处会贴错图。
+      textures: [{ source: 1 }, { source: 0 }],
+      materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+    };
+    const parsed = await parseGltf(glbJson(doc));
+    expect(parsed.materials[0].baseColorTextureIndex).toBe(0);
+    // texture[0].source=1 → image[1]（imgB）；texture[1].source=0 → image[0]（imgA）。
+    expect(Array.from(parsed.textures[0].bytes)).toEqual([0xbb, 0x02, 0x03]);
+    expect(Array.from(parsed.textures[1].bytes)).toEqual([0xaa, 0x01]);
+    // 字节账按唯一 image 计（2+3），共享 image 不重复计数。
+    expect(parsed.stats.textureBytes).toBe(5);
+  });
+
+  it('#2144 H13：texture.source 越界 → typed corrupt 拒绝（不静默贴错图）', async () => {
+    const doc = {
+      asset: { version: '2.0' },
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+      accessors: [{ bufferView: 1, componentType: 5126, count: 3, type: 'VEC3' }],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: 36 },
+        { buffer: 0, byteOffset: 0, byteLength: 36 },
+      ],
+      buffers: [{ uri: 'data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', byteLength: 36 }],
+      images: [],
+      textures: [{ source: 0 }],
+      materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+    };
+    await expect(parseGltf(glbJson(doc))).rejects.toMatchObject({ code: 'corrupt' });
+  });
 });
 
 describe('typed rejections', () => {

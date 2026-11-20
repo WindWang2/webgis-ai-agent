@@ -534,15 +534,17 @@ function RenderRankingList({ chart, highlightedCategories, onSelectCategory }: R
       {rows.slice(0, 10).map((r, i) => {
         const highlighted = isHighlighted(r.name, highlightedCategories);
         return interactive ? (
-          <button
-            key={i}
-            type="button"
-            role="listitem"
-            onClick={() => onSelectCategory?.(r.name)}
-            className="flex items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-surface-raised"
-          >
-            {rowContent(r, i, highlighted)}
-          </button>
+          // a11y（#2185）：listitem 语义放在包裹层 —— button 是交互元素，
+          // 直接 role="listitem" 违反 no-interactive-element-to-noninteractive-role。
+          <div key={i} role="listitem">
+            <button
+              type="button"
+              onClick={() => onSelectCategory?.(r.name)}
+              className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-surface-raised"
+            >
+              {rowContent(r, i, highlighted)}
+            </button>
+          </div>
         ) : (
           <div key={i} role="listitem" className="flex items-center gap-2 rounded px-1 py-0.5">
             {rowContent(r, i, highlighted)}

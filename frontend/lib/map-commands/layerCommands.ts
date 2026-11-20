@@ -885,9 +885,11 @@ export const layerCommands: Record<string, CommandEntry> = {
       // resolveLayerTargetsByRef 展开（ref:geojson-* 等 ref 目标恢复会话图层），
       // 再对每个展开目标匹配。此前 lock 检查用展开后 targets、匹配却用原始
       // layer_id：agent 以 ref 指代时恒 target_not_found，口径不一致。
+      // 展开为空（custom 覆盖层不在 store/spec）→ 回退原始 id 直配。
       const effectiveId = targets[0] ?? layer_id;
-      const matched = Array.from(new Set(targets.flatMap((t) => matchMapLayers(map, t))));
-      const storeHasLayer = targets.some((t) => hudLayers(getHudState).some((l) => l.id === t));
+      const effectiveTargets = targets.length ? targets : [layer_id];
+      const matched = Array.from(new Set(effectiveTargets.flatMap((t) => matchMapLayers(map, t))));
+      const storeHasLayer = effectiveTargets.some((t) => hudLayers(getHudState).some((l) => l.id === t));
       if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
 
       const customMatched = matched.filter((id) => isCustomSchemeMatch(effectiveId, id));
@@ -1061,9 +1063,11 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       // H6/#2144：与 lock 检查同口径 —— 先 resolveLayerTargetsByRef 展开再
       // 逐目标匹配（ref 指代的恢复会话图层此前恒 target_not_found）。
+      // 展开为空（custom 覆盖层不在 store/spec）→ 回退原始 id 直配。
       const effectiveId = targets[0] ?? layer_id;
-      const matched = Array.from(new Set(targets.flatMap((t) => matchMapLayers(map, t))));
-      const storeHasLayer = targets.some((t) => hudLayers(getHudState).some((l) => l.id === t));
+      const effectiveTargets = targets.length ? targets : [layer_id];
+      const matched = Array.from(new Set(effectiveTargets.flatMap((t) => matchMapLayers(map, t))));
+      const storeHasLayer = effectiveTargets.some((t) => hudLayers(getHudState).some((l) => l.id === t));
       if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
 
       const parsed = parseFilter(filter);

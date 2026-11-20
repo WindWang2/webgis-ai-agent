@@ -111,9 +111,12 @@ export async function enterHighDpiRender(
   dpi: number,
   idleTimeoutMs?: number,
 ): Promise<HighDpiRenderResult> {
-  const targetPixelRatio = dpi / 96;
+  // #2144 H10：比率取 max(原生设备比, dpi/96) —— 替换式 setPixelRatio 在
+  // Retina（dpr=2）上 dpi=150 会降到 1.56 < 原生 2，导出件分辨率反而低于
+  // 默认 96dpi 导出。目标不高于原生比率时无需重渲染（原生已更优）。
   const origPixelRatio = map.getPixelRatio();
-  if (targetPixelRatio <= 1) {
+  const targetPixelRatio = Math.max(origPixelRatio, dpi / 96);
+  if (targetPixelRatio <= origPixelRatio) {
     return { mode: 'skipped', degradations: [] };
   }
   try {

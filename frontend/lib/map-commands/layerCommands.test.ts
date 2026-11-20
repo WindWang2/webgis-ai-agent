@@ -176,6 +176,34 @@ describe('apply_layer_filter (issue #393: dual-scheme + store sync + verificatio
     expect(updateLayer).toHaveBeenCalledWith('pop', { filter: ['>', ['get', 'pop'], 1000] });
   });
 
+  it('#2144 H5: custom 前缀不吞并同名前缀的其他层（target pop 不碰 custom-poi-2）', () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'custom-poi', type: 'circle' });
+    // id 'poi-2' 的覆盖层：'-' 后缀 '2' 不在已知子层词表 → 不属于 'poi' 族。
+    map.addLayer({ id: 'custom-poi-2', type: 'circle' });
+    const { ctx } = layerCtx(map);
+    ctx.params = { layer_id: 'poi', filter: ['>', ['get', 'v'], 1] };
+
+    const result = layerCommands.apply_layer_filter.run(ctx);
+
+    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    expect(map.setFilter).toHaveBeenCalledWith('custom-poi', ['>', ['get', 'v'], 1]);
+    expect(map.setFilter).not.toHaveBeenCalledWith('custom-poi-2', expect.anything());
+  });
+
+  it('#2144 H6: ref 目标展开 —— filter 落到恢复会话图层的子层与 store 行', () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'L1__fill', type: 'fill' });
+    const { ctx, updateLayer } = layerCtx(map, [{ id: 'L1', _refId: 'ref:r' }]);
+    ctx.params = { layer_id: 'ref:r', filter: ['==', ['get', 'k'], 1] };
+
+    const result = layerCommands.apply_layer_filter.run(ctx);
+
+    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    expect(map.setFilter).toHaveBeenCalledWith('L1__fill', ['==', ['get', 'k'], 1]);
+    expect(updateLayer).toHaveBeenCalledWith('L1', { filter: ['==', ['get', 'k'], 1] });
+  });
+
   it('parses string filters and clears the store filter when the expression is null', () => {
     const map = makeMockMaplibreMap();
     map.addLayer({ id: 'result__fill', type: 'fill' });
@@ -310,6 +338,20 @@ describe('reorder_layer (issue #393: MapSpec `${id}__` layers reorder durably)',
 
     expect(result).toEqual({ status: 'failed', error: 'target_not_found' });
     expect(reorderLayers).not.toHaveBeenCalled();
+  });
+
+  it('#2144 H6: reorder_layer 经 ref 展开定位 store 行（此前恒 target_not_found）', () => {
+    const map = makeMockMaplibreMap();
+    const { ctx, reorderLayers } = layerCtx(map, [{ id: 'L1' }, { id: 'L2', _refId: 'ref:r' }]);
+    ctx.command = 'reorder_layer';
+    ctx.params = { layer_id: 'ref:r', position: 'top' };
+
+    const result = layerCommands.reorder_layer.run(ctx);
+
+    expect(result).toEqual({ status: 'succeeded', result: { store_updated: true } });
+    expect(reorderLayers).toHaveBeenCalledTimes(1);
+    const order = reorderLayers.mock.calls[0][0].map((l: any) => l.id);
+    expect(order).toEqual(['L2', 'L1']);
   });
 
   it('still reorders legacy custom layers on the map (regression)', () => {
