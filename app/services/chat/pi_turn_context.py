@@ -406,7 +406,23 @@ async def _active_tools_block_for(
     资格事实（async 供给，线程安全）并铸 SurfaceReceipt；缺席保持旧行为。
     """
     try:
-        from app.services.chat.pi_native_surface import compute_turn_active_tools
+        from app.services.chat import pi_native_surface as pns
+
+        compute_turn_active_tools = pns.compute_turn_active_tools
+        if pns._PI_DYNAMIC_TOOL_SURFACE and pns.od_flow_tools(message):
+            from app.agent_pi_bridge import get_tool_registry
+
+            registry = get_tool_registry()
+            names = pns._pin_registered_tools(
+                registry, pns.NATIVE_TOOL_NAMES, pns.od_flow_tools(message),
+            )
+            pns._record_abstained_receipt(
+                registry, session_id, turn_id, extra=names, abstained=False,
+            )
+            return (
+                f"[{ACTIVE_TOOLS_MARKER}:"
+                f"{json.dumps(names, ensure_ascii=False, separators=(',', ':'))}]"
+            )
 
         capabilities = tuple(
             row.capability

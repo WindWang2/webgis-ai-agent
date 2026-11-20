@@ -23,6 +23,14 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.utils.best_effort import best_effort
+from app.services.flow_product.contracts import FlowProductConfig, FlowProductError
+from app.services.flow_product.service import (
+    FlowServiceError,
+    apply_flow_product_preview,
+    inspect_flow_source,
+    preview,
+    query_flow_product,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +47,7 @@ class ODFlowEdgesArgs(BaseModel):
     transparent alias resolution must NOT inline the OD payload into the
     argument (the tool resolves the ref itself, fetch-on-demand)."""
 
-    od_table_ref: str = Field(..., json_schema_extra={"ref_cursor": True})
+    od_table_ref: str = Field("", json_schema_extra={"ref_cursor": True})
     origin_lng_field: str = "origin_lng"
     origin_lat_field: str = "origin_lat"
     destination_lng_field: str = "destination_lng"
@@ -49,6 +57,16 @@ class ODFlowEdgesArgs(BaseModel):
     min_weight: float = 0.0
     aggregate: str = "none"
     normalize: bool = True
+    operation: str = "build"
+    flow: Optional[FlowProductConfig] = None
+    product_ref: str = Field("", json_schema_extra={"ref_cursor": True})
+    expected_revision: Optional[int] = None
+    mutation_id: Optional[str] = None
+    query_kind: str = "product"
+    object_id: str = ""
+    focus_direction: str = "both"
+    offset: int = 0
+    limit: int = 50
     # NOTE: session_id is intentionally NOT a model field — the registry
     # injects it from the dispatch context AFTER validation, so an
     # LLM/workflow-authored session_id is rejected here instead of reaching
@@ -118,19 +136,21 @@ def register_flow_tools(registry: ToolRegistry) -> None:
     @tool(registry,
         name="od_flow_edges",
         description=(
-            "Build a bounded OD flow line layer from structured OD input "
-            "(origin/destination coordinates + weight). Supports top-N "
-            "selection, weight threshold, bidirectional/origin/destination "
-            "aggregation, and weight normalization. Output renders as a "
-            "flow_od_arc map layer (width ← weight). Large inputs are fine: "
-            "selection is O(N log N), never pairwise; output is capped."
+            "Build or edit a bounded OD flow product from real OD rows "
+            "(coordinates or explicit node IDs + flow weight). Legacy build keeps "
+            "straight lines. operation=inspect|preview|apply|query adds directed, "
+            "undirected-total and net products with stable identities, node focus, "
+            "gross/net scope evidence, curves and visible direction markers. Net never "
+            "treats an unobserved reverse as zero; cost/time/distance matrices are not "
+            "flow volumes. Curves are decorative, never travel routes. Input/output "
+            "are capped and no pairwise matrix or external provider is used."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "od_table_ref": {
                     "type": "string",
-                    "description": "Session ref/alias of the OD table (rows with origin/destination coords + weight)",
+                    "description": "Session ref/alias of the OD table (required for inspect/preview or apply without product_ref)",
                 },
                 "origin_lng_field": {"type": "string", "description": "origin longitude field (default origin_lng)"},
                 "origin_lat_field": {"type": "string", "description": "origin latitude field (default origin_lat)"},
@@ -142,11 +162,21 @@ def register_flow_tools(registry: ToolRegistry) -> None:
                 "aggregate": {
                     "type": "string",
                     "enum": list(_AGGREGATION_MODES),
-                    "description": "aggregate duplicate pairs: none | bidirectional (A→B + B→A) | origin | destination",
+                    "description": "legacy build aggregation; origin/destination pseudo-lines are rejected with node-stat migration guidance",
                 },
                 "normalize": {"type": "boolean", "description": "add weight_norm ∈ [0,1] per flow"},
+                "operation": {"type": "string", "enum": ["build", "inspect", "preview", "apply", "query"]},
+                "flow": FlowProductConfig.model_json_schema(),
+                "product_ref": {"type": "string", "description": "session-owned preview ref for apply/query"},
+                "expected_revision": {"type": "integer", "description": "MapSpec CAS revision from preview or current state"},
+                "mutation_id": {"type": "string", "description": "optional idempotent apply key"},
+                "query_kind": {"type": "string", "enum": ["product", "node", "edge", "members"]},
+                "object_id": {"type": "string", "description": "node/edge render ID or legacy business node ID"},
+                "focus_direction": {"type": "string", "enum": ["inbound", "outbound", "both"]},
+                "offset": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200},
             },
-            "required": ["od_table_ref"],
+            "required": [],
         },
         args_model=ODFlowEdgesArgs,
         tier=2, domains=["network"],
@@ -160,7 +190,7 @@ def register_flow_tools(registry: ToolRegistry) -> None:
         result_size_policy="ref_offload",
     )
     async def od_flow_edges(
-        od_table_ref: str,
+        od_table_ref: str = "",
         origin_lng_field: str = "origin_lng",
         origin_lat_field: str = "origin_lat",
         destination_lng_field: str = "destination_lng",
@@ -170,9 +200,46 @@ def register_flow_tools(registry: ToolRegistry) -> None:
         min_weight: float = 0.0,
         aggregate: str = "none",
         normalize: bool = True,
+        operation: str = "build",
+        flow: Optional[FlowProductConfig] = None,
+        product_ref: str = "",
+        expected_revision: Optional[int] = None,
+        mutation_id: Optional[str] = None,
+        query_kind: str = "product",
+        object_id: str = "",
+        focus_direction: str = "both",
+        offset: int = 0,
+        limit: int = 50,
         session_id: Optional[str] = None,
     ) -> dict:
         try:
+            if operation != "build":
+                return await _run_flow_operation(
+                    session_id,
+                    operation=operation,
+                    od_table_ref=od_table_ref,
+                    origin_fields=(origin_lng_field, origin_lat_field, destination_lng_field, destination_lat_field),
+                    weight_field=weight_field,
+                    top_n=top_n,
+                    min_weight=min_weight,
+                    aggregate=aggregate,
+                    normalize=normalize,
+                    flow=flow,
+                    product_ref=product_ref,
+                    expected_revision=expected_revision,
+                    mutation_id=mutation_id,
+                    query_kind=query_kind,
+                    object_id=object_id,
+                    focus_direction=focus_direction,
+                    offset=offset,
+                    limit=limit,
+                )
+            if aggregate in ("origin", "destination"):
+                return {
+                    "success": False,
+                    "error": f"aggregate={aggregate} 的首端点伪总流线语义已停用",
+                    "correction_hint": "请改用 operation=preview 的节点 inbound/outbound/total 统计；旧产物保持可读，但不新造指向首个端点的总流线",
+                }
             if aggregate not in _AGGREGATION_MODES:
                 return {
                     "success": False,
@@ -256,7 +323,8 @@ def register_flow_tools(registry: ToolRegistry) -> None:
                 "legend_spec": (
                     {
                         "type": "continuous",
-                        "field": weight_field,
+                        "field": "weight",
+                        "source_field": weight_field,
                         "min": w_min,
                         "max": w_max,
                         "palette_colors": _plasma_colors(),
@@ -267,7 +335,8 @@ def register_flow_tools(registry: ToolRegistry) -> None:
                 ),
                 "metadata": {
                     "flow": True,
-                    "weight_field": weight_field,
+                    "weight_field": "weight",
+                    "source_weight_field": weight_field,
                     "weight_min": w_min,
                     "weight_max": w_max,
                     "width_max_px": 8.0,
@@ -282,9 +351,117 @@ def register_flow_tools(registry: ToolRegistry) -> None:
                 },
             }
             return fc
+        except (FlowServiceError, FlowProductError) as e:
+            return {
+                "success": False,
+                "error": str(e)[:300],
+                "code": getattr(e, "code", "FLOW_INPUT_INVALID"),
+                "correction_hint": "检查 OD 字段绑定、方向/缺失反向口径与源 revision 后重试",
+            }
         except Exception as e:  # noqa: BLE001 — bounded, disclosed failure
             logger.error("[flow_tools] od_flow_edges failed: %s", e, exc_info=True)
             return {"success": False, "error": f"OD 流向构建失败: {e}"[:300]}
+
+
+def _flow_operation_config(
+    od_table_ref: str,
+    origin_fields: Tuple[str, str, str, str],
+    weight_field: str,
+    top_n: int,
+    min_weight: float,
+    aggregate: str,
+    normalize: bool,
+    flow: Optional[FlowProductConfig],
+) -> FlowProductConfig:
+    if flow is not None:
+        if isinstance(flow, dict):
+            flow = FlowProductConfig(**flow)
+        if flow.od_table_ref and od_table_ref and flow.od_table_ref != od_table_ref:
+            raise FlowServiceError("FLOW_SOURCE_MISMATCH", "Top-level od_table_ref and flow.od_table_ref differ")
+        if aggregate in ("origin", "destination"):
+            raise FlowServiceError("FLOW_LEGACY_AGGREGATE_INVALID", "origin/destination pseudo-lines cannot be combined with a flow product")
+        return flow.model_copy(update={"od_table_ref": flow.od_table_ref or od_table_ref})
+    if aggregate in ("origin", "destination"):
+        raise FlowServiceError("FLOW_LEGACY_AGGREGATE_INVALID", "Use node inbound/outbound statistics instead of origin/destination pseudo-lines")
+    olng, olat, dlng, dlat = origin_fields
+    return FlowProductConfig(
+        od_table_ref=od_table_ref,
+        origin_lng_field=olng,
+        origin_lat_field=olat,
+        destination_lng_field=dlng,
+        destination_lat_field=dlat,
+        weight_field=weight_field,
+        weight_unit="count",
+        direction_mode="undirected-total" if aggregate == "bidirectional" else "directed",
+        top_n=top_n,
+        min_weight=min_weight,
+        normalize=normalize,
+        show_arrows=False,
+    )
+
+
+async def _run_flow_operation(
+    session_id: Optional[str],
+    *,
+    operation: str,
+    od_table_ref: str,
+    origin_fields: Tuple[str, str, str, str],
+    weight_field: str,
+    top_n: int,
+    min_weight: float,
+    aggregate: str,
+    normalize: bool,
+    flow: Optional[FlowProductConfig],
+    product_ref: str,
+    expected_revision: Optional[int],
+    mutation_id: Optional[str],
+    query_kind: str,
+    object_id: str,
+    focus_direction: str,
+    offset: int,
+    limit: int,
+) -> dict:
+    if not session_id:
+        return {"success": False, "error": "OD flow operation requires a session", "code": "FLOW_SESSION_REQUIRED"}
+    if operation == "query":
+        if not product_ref:
+            return {"success": False, "error": "query requires product_ref", "code": "FLOW_PRODUCT_REQUIRED"}
+        return await query_flow_product(
+            session_id, product_ref,
+            kind=query_kind, object_id=object_id, direction=focus_direction,
+            offset=offset, limit=limit,
+        )
+    if operation not in ("inspect", "preview", "apply"):
+        return {"success": False, "error": f"Unknown OD flow operation {operation}", "code": "FLOW_OPERATION_INVALID"}
+    if operation == "apply" and product_ref:
+        if expected_revision is None:
+            return {"success": False, "error": "apply requires expected_revision from preview/current MapSpec", "code": "FLOW_REVISION_REQUIRED"}
+        return await apply_flow_product_preview(
+            session_id, product_ref,
+            expected_revision=expected_revision,
+            mutation_id=mutation_id,
+            origin="agent",
+        )
+    config = _flow_operation_config(
+        od_table_ref, origin_fields, weight_field, top_n, min_weight,
+        aggregate, normalize, flow,
+    )
+    if not config.od_table_ref:
+        return {"success": False, "error": f"{operation} requires od_table_ref", "code": "FLOW_SOURCE_REQUIRED"}
+    if operation == "inspect":
+        return await inspect_flow_source(session_id, config)
+    preview_result = await preview(session_id, config)
+    if operation == "preview":
+        return preview_result
+    revision = expected_revision
+    if revision is None:
+        revision = preview_result["mapspec_revision"]
+    return await apply_flow_product_preview(
+        session_id, preview_result["product_ref"],
+        expected_revision=revision,
+        mutation_id=mutation_id,
+        origin="agent",
+    )
 
 
 async def _resolve_payload(od_table_ref: str, session_id: Optional[str]) -> Any:

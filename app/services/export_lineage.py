@@ -160,12 +160,17 @@ async def record_export_lineage(
         revision = 0
 
     # 3) 血缘注册（registry 内部自取 per-session lock；增值，绝不阻断）。
+    from app.services.flow_product.export import verify_flow_map_spec
+
+    flow_products = verify_flow_map_spec(mapspec or {})["products"][:4]
     metadata: Dict[str, Any] = {
         "format": fmt,
         "vector": bool(vector),
         "title": str(title or "")[:80],
         "mapspec_revision": int(revision),
     }
+    if flow_products:
+        metadata["flow_products"] = flow_products
     if pages:
         metadata["pages"] = int(pages)
     if target_dpi:

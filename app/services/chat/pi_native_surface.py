@@ -578,6 +578,20 @@ def distribution_cartography_tools(message: str) -> tuple[str, ...]:
     return ()
 
 
+def od_flow_tools(message: str) -> tuple[str, ...]:
+    """Keep the existing registered OD tool callable for explicit flow intent."""
+    import re
+
+    if re.search(
+        r"\bod\b|通勤|流图|流向|净流|分向|两向|双向|流入|流出",
+        message or "", flags=re.IGNORECASE,
+    ):
+        if re.search(r"编译|渲染|导出", message or ""):
+            return ("od_flow_edges", "webgis_compile_maplibre")
+        return ("od_flow_edges",)
+    return ()
+
+
 def _pin_registered_tools(
     registry: Any,
     names: Sequence[str],
@@ -700,7 +714,8 @@ def compute_turn_active_tools(
                     "reason": str(selection.abstain_reason)[:96],
                 })
             pinned = _pin_registered_tools(
-                registry, NATIVE_TOOL_NAMES, distribution_cartography_tools(message),
+                registry, NATIVE_TOOL_NAMES,
+                (*distribution_cartography_tools(message), *od_flow_tools(message)),
             )
             _record_abstained_receipt(registry, session_id, turn_id, extra=pinned)
             return pinned
@@ -712,7 +727,7 @@ def compute_turn_active_tools(
         names = _pin_registered_tools(
             registry,
             list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names])),
-            distribution_cartography_tools(message),
+            (*distribution_cartography_tools(message), *od_flow_tools(message)),
         )
         safe: list[str] = []
         for name in names:
@@ -747,7 +762,7 @@ def compute_turn_active_tools(
             if isinstance(item, dict)
         }
         safe = _pin_registered_tools(
-            registry, safe, distribution_cartography_tools(message), skip=qual_dropped,
+            registry, safe, (*distribution_cartography_tools(message), *od_flow_tools(message)), skip=qual_dropped,
         )
         # ADR-0253 D2：激活面 schema 字节预算 —— 只裁动态候选，native 前门
         # 恒保留；裁剪记因（disclosure + 链发射 + metrics），绝不阻断 turn。
@@ -760,7 +775,7 @@ def compute_turn_active_tools(
         # Distribution tools are a product path, not optional retrieval.
         # Re-pin after the byte budget so a Chengdu heatmap call stays legal.
         safe = _pin_registered_tools(
-            registry, safe, distribution_cartography_tools(message), skip=qual_dropped,
+            registry, safe, (*distribution_cartography_tools(message), *od_flow_tools(message)), skip=qual_dropped,
         )
         # ADR-0224：铸造 SurfaceReceipt（最终激活面 + 资格/预算全部逐出因；
         # 同 turn 幂等 —— 首次铸造后本 turn 内 surface 不可变）。
@@ -912,8 +927,9 @@ def _record_abstained_receipt(
     session_id: str,
     turn_id: str,
     extra: Sequence[str] = (),
+    abstained: bool = True,
 ) -> None:
-    """V6 弃权 turn 的 receipt：native 前门 only + abstained 标记。
+    """Pinned product-surface receipt; ``abstained`` records the retrieval outcome.
 
     回调 fingerprint echo 在弃权 turn 也要有对照真相（native 7 的 spec
     指纹）。session/turn 缺席或 ABI 关闭时跳过。
@@ -947,7 +963,7 @@ def _record_abstained_receipt(
             candidates=selected,
             selected=selected,
             drops=[],
-            abstained=True,
+            abstained=abstained,
         )
     except Exception:  # noqa: BLE001 — receipt 是披露/校验面，绝不阻断 turn
         logger.debug("[PiNativeSurface] abstained receipt mint failed", exc_info=True)

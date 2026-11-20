@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, List
+from typing import List
 
 from app.services.mapspec.mutation_contracts import MapSpecResult, MutationContext, MutationPlan
 from app.services.mapspec.mutation_primitives import _preserve_durable_presentation
@@ -104,7 +104,29 @@ async def apply_flow_product(ctx: MutationContext) -> MutationPlan | MapSpecResu
                 ctx, "FLOW_ARTIFACT_NOT_FOUND", f"OD flow artifact {ref} is unavailable.",
                 "Create a fresh preview; no partial edge/node/direction product was applied.",
             )
+        source["ref_id"] = ref
+        source.pop("url", None)
         source["content_revision"] = int(descriptor.get("content_revision") or 0)
+        from app.services.spatial_meta_profiler import profile_from_descriptor
+        import hashlib
+        import json
+
+        profile = profile_from_descriptor(descriptor) or {
+            "bbox": descriptor.get("bbox"),
+            "crs": None,
+            "crs_status": "unknown",
+            "featureCount": descriptor.get("feature_count"),
+            "geometryTypes": descriptor.get("geometry_types") or [],
+            "fields": {},
+            "fields_status": "unknown",
+            "suggestedView": {},
+            "temporalProfile": None,
+        }
+        source["profile"] = profile
+        profile_json = json.dumps(
+            profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode()
+        source["profile_fingerprint"] = "profile-sha256:" + hashlib.sha256(profile_json).hexdigest()
 
     loaded = ctx.loaded or {}
     mapspec = {**loaded}

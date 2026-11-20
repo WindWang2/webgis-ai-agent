@@ -95,6 +95,13 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "export_timeout_partial", "error",
             "导出超时，产物可能不完整（{detail}）",
         ),
+        RenderDiagnosticSpec("flow_source_unavailable", "error", "OD 流图源数据不可用（{detail}）"),
+        RenderDiagnosticSpec("flow_edge_count_mismatch", "error", "OD 流图声明边数与实际边数不一致（{detail}）"),
+        RenderDiagnosticSpec("flow_direction_missing", "error", "有向 OD 流图缺少方向标记图层（{detail}）"),
+        RenderDiagnosticSpec("flow_direction_unexpected", "error", "无向合计 OD 流图不应包含方向标记（{detail}）"),
+        RenderDiagnosticSpec("flow_direction_invalid", "error", "OD 方向标记未与边路径保持同一几何解释（{detail}）"),
+        RenderDiagnosticSpec("flow_legend_stale", "error", "OD 流图图例与方向/单位/编码口径不一致（{detail}）"),
+        RenderDiagnosticSpec("flow_direction_render_failed", "error", "OD 方向标记未进入实际导出件（{detail}）"),
         # —— 语义缩放（方向 5 / C6）：导出 = 固定 zoom 的一次裁决 ——
         RenderDiagnosticSpec(
             "layer_gated_by_zoom", "info",
