@@ -17,6 +17,14 @@ from app.core.auth import get_current_user_optional
 from pydantic import BaseModel, Field
 
 from app.models.db_model import Conversation
+from app.schemas.print_layout_schema import (
+    PrintLayoutCapabilitiesResponse,
+    PrintLayoutExportResponse,
+    PrintLayoutInspectResponse,
+    PrintLayoutPagesResponse,
+    PrintLayoutPreviewResponse,
+    PrintLayoutProposalReceipt,
+)
 from app.services.auth_history_bridge import require_owned_session
 from app.services.print_layout_authoring import service
 from app.services.print_layout_authoring.service import PrintLayoutServiceError
@@ -88,7 +96,7 @@ async def _call(coro: Any) -> Any:
         _raise(ex.to_dict())
 
 
-@router.get("/capabilities")
+@router.get("/capabilities", response_model=PrintLayoutCapabilitiesResponse)
 async def capabilities(
     session_id: str = Query(..., min_length=1, max_length=128),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
@@ -97,7 +105,7 @@ async def capabilities(
     return await _call(service.capabilities())
 
 
-@router.get("/inspect")
+@router.get("/inspect", response_model=PrintLayoutInspectResponse)
 async def inspect(
     session_id: str = Query(..., min_length=1, max_length=128),
     sync_planner: bool = Query(False),
@@ -107,7 +115,7 @@ async def inspect(
     return await _call(service.inspect(session_id, sync_planner=sync_planner))
 
 
-@router.get("/pages")
+@router.get("/pages", response_model=PrintLayoutPagesResponse)
 async def pages(
     session_id: str = Query(..., min_length=1, max_length=128),
     driver: str = Query("frames", pattern="^(frames|category|feature|time|product)$"),
@@ -124,7 +132,7 @@ async def pages(
         _raise(ex.to_dict())
 
 
-@router.post("/propose")
+@router.post("/propose", response_model=PrintLayoutProposalReceipt)
 async def propose(
     body: ProposeBody,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
@@ -133,7 +141,7 @@ async def propose(
     return await _call(service.propose(body.session_id, body.model_dump()))
 
 
-@router.post("/apply")
+@router.post("/apply", response_model=PrintLayoutProposalReceipt)
 async def apply(
     body: ApplyBody,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
@@ -148,7 +156,7 @@ async def apply(
     return result
 
 
-@router.post("/preview")
+@router.post("/preview", response_model=PrintLayoutPreviewResponse)
 async def preview(
     body: PreviewBody,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
@@ -161,7 +169,7 @@ async def preview(
     return result
 
 
-@router.post("/export")
+@router.post("/export", response_model=PrintLayoutExportResponse)
 async def export(
     body: ExportBody,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
@@ -184,7 +192,7 @@ async def export(
     return result
 
 
-@router.post("/templates")
+@router.post("/templates", response_model=PrintLayoutProposalReceipt)
 async def templates(
     body: TemplateBody,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),

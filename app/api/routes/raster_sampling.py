@@ -17,6 +17,14 @@ from app.schemas.raster_sampling_schema import (
     PlanCreateIn,
     PlanReviseIn,
     PreviewIn,
+    RasterSamplingCancelResponse,
+    RasterSamplingDescribeResponse,
+    RasterSamplingExecuteResponse,
+    RasterSamplingPlanListResponse,
+    RasterSamplingPlanResponse,
+    RasterSamplingPreviewResponse,
+    RasterSamplingResultsResponse,
+    RasterSamplingStatusResponse,
 )
 from app.services.auth_history_bridge import require_owned_session
 from app.services.raster_sampling import service
@@ -43,7 +51,7 @@ def _user_owner(user: Optional[dict]) -> dict:
     }
 
 
-@router.get("/raster-sampling/describe", tags=["栅格采样"])
+@router.get("/raster-sampling/describe", tags=["栅格采样"], response_model=RasterSamplingDescribeResponse)
 async def describe(
     session_id: str = Query(..., min_length=8, max_length=128),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
@@ -56,7 +64,7 @@ async def describe(
         raise _fail(exc) from exc
 
 
-@router.post("/raster-sampling/plan", tags=["栅格采样"])
+@router.post("/raster-sampling/plan", tags=["栅格采样"], response_model=RasterSamplingPlanResponse)
 async def create_plan(
     body: PlanCreateIn,
     session_id: str = Query(..., min_length=8, max_length=128),
@@ -89,7 +97,7 @@ async def create_plan(
         raise _fail(exc) from exc
 
 
-@router.post("/raster-sampling/plan/{plan_id}/revise", tags=["栅格采样"])
+@router.post("/raster-sampling/plan/{plan_id}/revise", tags=["栅格采样"], response_model=RasterSamplingPlanResponse)
 async def revise_plan(
     plan_id: str,
     body: PlanReviseIn,
@@ -109,7 +117,7 @@ async def revise_plan(
         raise _fail(exc) from exc
 
 
-@router.get("/raster-sampling/plan/{plan_id}", tags=["栅格采样"])
+@router.get("/raster-sampling/plan/{plan_id}", tags=["栅格采样"], response_model=RasterSamplingPlanResponse)
 async def get_plan(
     plan_id: str,
     session_id: str = Query(..., min_length=8, max_length=128),
@@ -121,7 +129,7 @@ async def get_plan(
         raise _fail(exc) from exc
 
 
-@router.get("/raster-sampling/plans", tags=["栅格采样"])
+@router.get("/raster-sampling/plans", tags=["栅格采样"], response_model=RasterSamplingPlanListResponse)
 async def list_plans(
     session_id: str = Query(..., min_length=8, max_length=128),
     _conv: Conversation = Depends(require_owned_session),
@@ -129,7 +137,7 @@ async def list_plans(
     return await service.list_plans_payload(session_id)
 
 
-@router.post("/raster-sampling/plan/{plan_id}/preview", tags=["栅格采样"])
+@router.post("/raster-sampling/plan/{plan_id}/preview", tags=["栅格采样"], response_model=RasterSamplingPreviewResponse)
 async def preview(
     plan_id: str,
     body: PreviewIn,
@@ -149,7 +157,7 @@ async def preview(
         raise _fail(exc) from exc
 
 
-@router.post("/raster-sampling/plan/{plan_id}/execute", tags=["栅格采样"])
+@router.post("/raster-sampling/plan/{plan_id}/execute", tags=["栅格采样"], response_model=RasterSamplingExecuteResponse)
 async def execute(
     plan_id: str,
     body: ExecuteIn,
@@ -172,7 +180,7 @@ async def execute(
         raise _fail(exc) from exc
 
 
-@router.get("/raster-sampling/plan/{plan_id}/status", tags=["栅格采样"])
+@router.get("/raster-sampling/plan/{plan_id}/status", tags=["栅格采样"], response_model=RasterSamplingStatusResponse)
 async def status(
     plan_id: str,
     session_id: str = Query(..., min_length=8, max_length=128),
@@ -187,7 +195,7 @@ async def status(
         raise _fail(exc) from exc
 
 
-@router.get("/raster-sampling/results", tags=["栅格采样"])
+@router.get("/raster-sampling/results", tags=["栅格采样"], response_model=RasterSamplingResultsResponse)
 async def results(
     session_id: str = Query(..., min_length=8, max_length=128),
     plan_id: str = Query(""),
@@ -214,7 +222,7 @@ async def results(
         raise _fail(exc) from exc
 
 
-@router.post("/raster-sampling/plan/{plan_id}/cancel", tags=["栅格采样"])
+@router.post("/raster-sampling/plan/{plan_id}/cancel", tags=["栅格采样"], response_model=RasterSamplingCancelResponse)
 async def cancel(
     plan_id: str,
     session_id: str = Query(..., min_length=8, max_length=128),

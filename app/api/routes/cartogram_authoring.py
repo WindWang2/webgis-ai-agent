@@ -13,6 +13,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from app.models.db_model import Conversation
+from app.schemas.cartogram_schema import (
+    CartogramApplyReceipt,
+    CartogramInspectResponse,
+    CartogramJobStatusResponse,
+    CartogramLayoutDetailResponse,
+    CartogramLayoutListResponse,
+    CartogramPlanReceipt,
+)
 from app.services.auth_history_bridge import require_owned_session
 from app.services.cartogram_authoring import (
     AuthoringError,
@@ -52,7 +60,7 @@ class ApplyBody(BaseModel):
     client_mutation_id: Optional[str] = Field(default=None, max_length=128)
 
 
-@router.get("/sessions/{session_id}/layers/{layer_id}/inspect")
+@router.get("/sessions/{session_id}/layers/{layer_id}/inspect", response_model=CartogramInspectResponse)
 async def inspect(
     session_id: str,
     layer_id: str,
@@ -66,7 +74,7 @@ async def inspect(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/plan")
+@router.post("/sessions/{session_id}/layers/{layer_id}/plan", response_model=CartogramPlanReceipt)
 async def plan(
     session_id: str,
     layer_id: str,
@@ -83,7 +91,7 @@ async def plan(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/run")
+@router.post("/sessions/{session_id}/layers/{layer_id}/run", response_model=CartogramPlanReceipt)
 async def run(
     session_id: str,
     layer_id: str,
@@ -100,7 +108,7 @@ async def run(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/layers/{layer_id}/apply")
+@router.post("/sessions/{session_id}/layers/{layer_id}/apply", response_model=CartogramApplyReceipt)
 async def apply(
     session_id: str,
     layer_id: str,
@@ -122,7 +130,7 @@ async def apply(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/jobs/{job_id}")
+@router.get("/sessions/{session_id}/jobs/{job_id}", response_model=CartogramJobStatusResponse)
 async def job_status(
     session_id: str,
     job_id: int,
@@ -134,7 +142,7 @@ async def job_status(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/layouts")
+@router.get("/sessions/{session_id}/layouts", response_model=CartogramLayoutListResponse)
 async def layouts(
     session_id: str,
     limit: int = Query(default=20, ge=1, le=50),
@@ -143,7 +151,7 @@ async def layouts(
     return await list_layouts(session_id, limit=limit)
 
 
-@router.get("/sessions/{session_id}/layouts/{layout_ref}")
+@router.get("/sessions/{session_id}/layouts/{layout_ref}", response_model=CartogramLayoutDetailResponse)
 async def layout_detail(
     session_id: str,
     layout_ref: str,

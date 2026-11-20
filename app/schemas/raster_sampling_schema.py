@@ -1,7 +1,7 @@
 """G39 raster_sampling API 请求/响应模型（路由面；工具面共用 service）。"""
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -59,3 +59,95 @@ class ExecuteIn(BaseModel):
     expected_revision: Optional[int] = None
     background: bool = False
     project_id: str = ""
+
+
+# ── HTTP 响应契约（ADR-0138 response_model 基线）──────────────────────────
+#
+# 逐字段镜像 ``app.services.raster_sampling`` 各回执的运行时形状
+# （describe / plan CRUD / preview / execute / status / results / cancel）。
+# 计划负载与收据等自由子文档以 Dict[str, Any] 透传。所有响应模型
+# ``extra="allow"``：未知字段原样透传，保证挂模前后响应体逐字节一致。
+
+
+class RasterSamplingDescribeResponse(BaseModel):
+    """会话已登记栅格源 + 采样预算词表（service.describe_sources 形状）。"""
+
+    model_config = {"extra": "allow"}
+
+    success: bool = True
+    session_id: str
+    raster_refs: List[Dict[str, Any]] = Field(default_factory=list)
+    truncated: bool = False
+    budgets: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RasterSamplingPlanResponse(BaseModel):
+    """create / revise / get 共用（stations/selection_materialized 仅 create）。"""
+
+    model_config = {"extra": "allow"}
+
+    success: bool = True
+    plan: Dict[str, Any] = Field(default_factory=dict)
+    stations: Optional[Dict[str, Any]] = None
+    selection_materialized: Optional[Any] = None
+
+
+class RasterSamplingPlanListResponse(BaseModel):
+    model_config = {"extra": "allow"}
+
+    success: bool = True
+    plans: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class RasterSamplingPreviewResponse(BaseModel):
+    model_config = {"extra": "allow"}
+
+    success: bool = True
+    plan_id: str
+    revision: int = 0
+    preview: bool = True
+    station_selection: Dict[str, Any] = Field(default_factory=dict)
+    read_metrics: Dict[str, Any] = Field(default_factory=dict)
+    cost_estimate: Optional[Any] = None
+    coverage_preview: Optional[Any] = None
+
+
+class RasterSamplingExecuteResponse(BaseModel):
+    """内联完成 = execution_id + summary；后台 = job 投影（job_id/status/params）。"""
+
+    model_config = {"extra": "allow"}
+
+    execution_id: Optional[str] = None
+    summary: Optional[Dict[str, Any]] = None
+    job_id: Optional[str] = None
+    status: Optional[str] = None
+    params: Optional[Dict[str, Any]] = None
+
+
+class RasterSamplingStatusResponse(BaseModel):
+    model_config = {"extra": "allow"}
+
+    success: bool = True
+    plan_id: str
+    revision: int = 0
+    job: Optional[Dict[str, Any]] = None
+    receipt_count: int = 0
+
+
+class RasterSamplingResultsResponse(BaseModel):
+    model_config = {"extra": "allow"}
+
+    success: bool = True
+    execution_id: str
+    plan_id: str
+    receipt: Dict[str, Any] = Field(default_factory=dict)
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
+    pagination: Dict[str, Any] = Field(default_factory=dict)
+    sample_table_ref: Optional[str] = None
+
+
+class RasterSamplingCancelResponse(BaseModel):
+    model_config = {"extra": "allow"}
+
+    success: bool = True
+    cancelled: List[Dict[str, Any]] = Field(default_factory=list)

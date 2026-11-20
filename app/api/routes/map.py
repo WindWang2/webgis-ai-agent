@@ -31,6 +31,7 @@ from app.schemas.map_schema import (
     GeoJSONExportResponse,
     MapExportResponse,
     MixedMapExportRequest,
+    MixedMapExportResponse,
     PdfExportResponse,
     VectorPdfExportResponse,
     VectorPdfRequest,
@@ -716,7 +717,7 @@ async def export_map_as_vector_pdf(
     }
 
 
-@router.post("/export/mixed", tags=["地图制图"])
+@router.post("/export/mixed", tags=["地图制图"], response_model=MixedMapExportResponse)
 async def export_map_as_mixed(
     body: MixedMapExportRequest,
     _user: dict = Depends(get_current_user_optional_with_version),

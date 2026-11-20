@@ -14,6 +14,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_user_optional, get_owner_token
+from app.schemas.goal_repair_schema import (
+    GoalRepairAttemptView,
+    GoalRepairPreviewResponse,
+)
 from app.services.gis_harness.goal_repair_execution import (
     GoalRepairErrorCode,
     build_repair_preview,
@@ -106,7 +110,7 @@ class AttemptStartRequest(BaseModel):
     project_id: Optional[str] = Field(default=None, max_length=128)
 
 
-@router.get("/sessions/{session_id}/preview")
+@router.get("/sessions/{session_id}/preview", response_model=GoalRepairPreviewResponse)
 async def preview_goal_repair(
     session_id: str,
     _user: Optional[dict] = Depends(get_current_user_optional),
@@ -122,7 +126,7 @@ async def preview_goal_repair(
     return preview
 
 
-@router.post("/sessions/{session_id}/attempts", status_code=202)
+@router.post("/sessions/{session_id}/attempts", status_code=202, response_model=GoalRepairAttemptView)
 async def start_goal_repair(
     session_id: str,
     body: AttemptStartRequest,
@@ -146,7 +150,7 @@ async def start_goal_repair(
     return view
 
 
-@router.get("/attempts/{attempt_id}")
+@router.get("/attempts/{attempt_id}", response_model=GoalRepairAttemptView)
 async def get_goal_repair_attempt(
     attempt_id: str,
     _user: Optional[dict] = Depends(get_current_user_optional),
@@ -169,7 +173,7 @@ async def get_goal_repair_attempt(
         raise _http_error(exc) from exc
 
 
-@router.post("/attempts/{attempt_id}/cancel")
+@router.post("/attempts/{attempt_id}/cancel", response_model=GoalRepairAttemptView)
 async def cancel_goal_repair(
     attempt_id: str,
     _user: Optional[dict] = Depends(get_current_user_optional),

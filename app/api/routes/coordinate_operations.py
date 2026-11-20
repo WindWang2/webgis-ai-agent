@@ -11,6 +11,19 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from app.models.db_model import Conversation
 from app.schemas.coordinate_operations_schema import (
+    CoordinateOperationDisplayRefResponse,
+    CoordinateOperationPlanArchiveResponse,
+    CoordinateOperationPlanListResponse,
+    CoordinateOperationPlanPreviewResponse,
+    CoordinateOperationPlanView,
+    CoordinateOperationRecoverResponse,
+    CoordinateOperationRunCancelResponse,
+    CoordinateOperationRunListResponse,
+    CoordinateOperationRunResultsResponse,
+    CoordinateOperationRunView,
+    CoordinateOpsCrsLookupResponse,
+    CoordinateOpsDescribeSourceResponse,
+    CoordinateOpsListOperationsResponse,
     DescribeSourceBody,
     ExecuteBody,
     ListOperationsBody,
@@ -49,7 +62,7 @@ def _source_dict(body_source) -> dict:
 
 # ─── 源与 CRS ───────────────────────────────────────────────────────────────
 
-@router.post("/sessions/{session_id}/describe-source")
+@router.post("/sessions/{session_id}/describe-source", response_model=CoordinateOpsDescribeSourceResponse)
 async def describe_source(
     session_id: str,
     body: DescribeSourceBody,
@@ -64,7 +77,7 @@ async def describe_source(
         raise _fail(err) from err
 
 
-@router.get("/crs/lookup")
+@router.get("/crs/lookup", response_model=CoordinateOpsCrsLookupResponse)
 async def crs_lookup(
     q: str = Query(..., min_length=1, max_length=256),
 ):
@@ -74,7 +87,7 @@ async def crs_lookup(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/operations")
+@router.post("/sessions/{session_id}/operations", response_model=CoordinateOpsListOperationsResponse)
 async def list_operations(
     session_id: str,
     body: ListOperationsBody,
@@ -92,7 +105,7 @@ async def list_operations(
 
 # ─── 计划 CRUD（CAS）+ 锁定 ────────────────────────────────────────────────
 
-@router.post("/sessions/{session_id}/plans")
+@router.post("/sessions/{session_id}/plans", response_model=CoordinateOperationPlanView)
 async def create_plan(
     session_id: str,
     body: PlanBody,
@@ -107,7 +120,7 @@ async def create_plan(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/plans")
+@router.get("/sessions/{session_id}/plans", response_model=CoordinateOperationPlanListResponse)
 async def list_plans(
     session_id: str,
     limit: int = Query(50, ge=1, le=100),
@@ -121,7 +134,7 @@ async def list_plans(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/plans/{plan_id}")
+@router.get("/sessions/{session_id}/plans/{plan_id}", response_model=CoordinateOperationPlanView)
 async def get_plan(
     session_id: str,
     plan_id: str,
@@ -133,7 +146,7 @@ async def get_plan(
         raise _fail(err) from err
 
 
-@router.patch("/sessions/{session_id}/plans/{plan_id}")
+@router.patch("/sessions/{session_id}/plans/{plan_id}", response_model=CoordinateOperationPlanView)
 async def update_plan(
     session_id: str,
     plan_id: str,
@@ -150,7 +163,7 @@ async def update_plan(
         raise _fail(err) from err
 
 
-@router.delete("/sessions/{session_id}/plans/{plan_id}")
+@router.delete("/sessions/{session_id}/plans/{plan_id}", response_model=CoordinateOperationPlanArchiveResponse)
 async def archive_plan(
     session_id: str,
     plan_id: str,
@@ -164,7 +177,7 @@ async def archive_plan(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/plans/{plan_id}/lock")
+@router.post("/sessions/{session_id}/plans/{plan_id}/lock", response_model=CoordinateOperationPlanView)
 async def lock_plan(
     session_id: str,
     plan_id: str,
@@ -183,7 +196,7 @@ async def lock_plan(
 
 # ─── 预览 / 执行 ───────────────────────────────────────────────────────────
 
-@router.post("/sessions/{session_id}/plans/{plan_id}/preview")
+@router.post("/sessions/{session_id}/plans/{plan_id}/preview", response_model=CoordinateOperationPlanPreviewResponse)
 async def preview_plan(
     session_id: str,
     plan_id: str,
@@ -201,7 +214,7 @@ async def preview_plan(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/plans/{plan_id}/execute")
+@router.post("/sessions/{session_id}/plans/{plan_id}/execute", response_model=CoordinateOperationRunView)
 async def execute_plan(
     session_id: str,
     plan_id: str,
@@ -221,7 +234,7 @@ async def execute_plan(
 
 # ─── 运行 ──────────────────────────────────────────────────────────────────
 
-@router.get("/sessions/{session_id}/runs")
+@router.get("/sessions/{session_id}/runs", response_model=CoordinateOperationRunListResponse)
 async def list_runs(
     session_id: str,
     plan_id: Optional[str] = Query(None, max_length=64),
@@ -235,7 +248,7 @@ async def list_runs(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/runs/{run_id}")
+@router.get("/sessions/{session_id}/runs/{run_id}", response_model=CoordinateOperationRunView)
 async def inspect_run(
     session_id: str,
     run_id: str,
@@ -247,7 +260,7 @@ async def inspect_run(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/runs/{run_id}/results")
+@router.get("/sessions/{session_id}/runs/{run_id}/results", response_model=CoordinateOperationRunResultsResponse)
 async def run_results(
     session_id: str,
     run_id: str,
@@ -262,7 +275,7 @@ async def run_results(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/runs/{run_id}/cancel")
+@router.post("/sessions/{session_id}/runs/{run_id}/cancel", response_model=CoordinateOperationRunCancelResponse)
 async def cancel_run(
     session_id: str,
     run_id: str,
@@ -274,7 +287,7 @@ async def cancel_run(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/runs/{run_id}/display-ref")
+@router.post("/sessions/{session_id}/runs/{run_id}/display-ref", response_model=CoordinateOperationDisplayRefResponse)
 async def display_ref(
     session_id: str,
     run_id: str,
@@ -289,7 +302,7 @@ async def display_ref(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/recover")
+@router.post("/sessions/{session_id}/recover", response_model=CoordinateOperationRecoverResponse)
 async def recover(
     session_id: str,
     conv: Conversation = Depends(require_owned_session),

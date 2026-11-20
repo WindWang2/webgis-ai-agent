@@ -27,6 +27,13 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_user_optional
 from app.models.db_model import Conversation
+from app.schemas.session_context_views_schema import (
+    ContextPolicyResponse,
+    ContextPreviewResponse,
+    ContextReceiptResponse,
+    ContextReceiptsResponse,
+    ContextSourcesResponse,
+)
 from app.services.auth_history_bridge import require_owned_session
 from app.services.turn_context_store import (
     PolicyConflict,
@@ -71,7 +78,7 @@ def _actor(user: Optional[dict]) -> tuple:
     return "", ""
 
 
-@router.get("/sessions/{session_id}/context-sources")
+@router.get("/sessions/{session_id}/context-sources", response_model=ContextSourcesResponse)
 async def get_context_sources(
     session_id: str,
     project_id: str = Query(default="", max_length=255),
@@ -99,7 +106,7 @@ async def get_context_sources(
     }
 
 
-@router.get("/sessions/{session_id}/context-policy")
+@router.get("/sessions/{session_id}/context-policy", response_model=ContextPolicyResponse)
 async def get_context_policy(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
@@ -115,7 +122,7 @@ async def get_context_policy(
     }
 
 
-@router.put("/sessions/{session_id}/context-policy")
+@router.put("/sessions/{session_id}/context-policy", response_model=ContextPolicyResponse)
 async def put_context_policy(
     session_id: str,
     req: SourcePolicyUpdate,
@@ -160,7 +167,7 @@ async def put_context_policy(
     }
 
 
-@router.post("/sessions/{session_id}/context-preview")
+@router.post("/sessions/{session_id}/context-preview", response_model=ContextPreviewResponse)
 async def post_context_preview(
     session_id: str,
     req: PreviewRequest,
@@ -223,7 +230,7 @@ async def post_context_preview(
     return preview
 
 
-@router.get("/sessions/{session_id}/context-receipts")
+@router.get("/sessions/{session_id}/context-receipts", response_model=ContextReceiptsResponse)
 async def get_context_receipts(
     session_id: str,
     limit: int = Query(default=20, ge=1, le=100),
@@ -241,7 +248,7 @@ async def get_context_receipts(
     }
 
 
-@router.get("/sessions/{session_id}/context-receipts/{turn_id}")
+@router.get("/sessions/{session_id}/context-receipts/{turn_id}", response_model=ContextReceiptResponse)
 async def get_context_receipt(
     session_id: str,
     turn_id: str,

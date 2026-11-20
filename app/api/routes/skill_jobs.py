@@ -33,6 +33,18 @@ from app.core.auth import (
     actor_ids, auth_bypass_enabled, get_current_user, get_owner_token, security,
 )
 from app.core.database import get_async_db
+from app.schemas.skill_jobs_schema import (
+    SkillJobCancelResponse,
+    SkillJobPresetDeleteResponse,
+    SkillJobPresetPrepareResponse,
+    SkillJobPresetView,
+    SkillJobPrepareResponse,
+    SkillJobRunView,
+    SkillJobRunsListResponse,
+    SkillJobSkillDetailResponse,
+    SkillJobsCatalogResponse,
+    SkillJobPresetsListResponse,
+)
 from app.services.auth_history_bridge import verify_session_owner
 
 logger = logging.getLogger(__name__)
@@ -102,7 +114,7 @@ def _typed_error(e: Exception) -> HTTPException:
 
 # ── 目录与详情 ────────────────────────────────────────────────────────
 
-@router.get("/catalog")
+@router.get("/catalog", response_model=SkillJobsCatalogResponse)
 async def get_catalog(
     domain: str = Query("", max_length=40),
     _user: Dict[str, Any] = Depends(get_current_user),
@@ -113,7 +125,7 @@ async def get_catalog(
     return build_catalog(domain=domain)
 
 
-@router.get("/skills/{skill_id}")
+@router.get("/skills/{skill_id}", response_model=SkillJobSkillDetailResponse)
 async def get_skill_detail(
     skill_id: str,
     _user: Dict[str, Any] = Depends(get_current_user),
@@ -206,7 +218,7 @@ async def _authorize_session(
                                owner_token=owner_token)
 
 
-@router.post("/prepare")
+@router.post("/prepare", response_model=SkillJobPrepareResponse)
 async def prepare(
     req: PrepareRequest,
     user: Dict[str, Any] = Depends(_session_caller),
@@ -236,7 +248,7 @@ async def prepare(
     }
 
 
-@router.post("/start")
+@router.post("/start", response_model=SkillJobRunView)
 async def start(
     req: StartRequest,
     user: Dict[str, Any] = Depends(_session_caller),
@@ -276,7 +288,7 @@ async def start(
     return view
 
 
-@router.get("/runs")
+@router.get("/runs", response_model=SkillJobRunsListResponse)
 async def list_runs(
     session_id: str = Query(..., max_length=255),
     limit: int = Query(20, ge=1, le=50),
@@ -309,7 +321,7 @@ async def list_runs(
     return {"runs": runs}
 
 
-@router.get("/runs/{job_id}")
+@router.get("/runs/{job_id}", response_model=SkillJobRunView)
 async def get_run(
     job_id: int,
     session_id: str = Query("", max_length=255),
@@ -338,7 +350,7 @@ async def get_run(
     return view
 
 
-@router.post("/runs/{job_id}/cancel")
+@router.post("/runs/{job_id}/cancel", response_model=SkillJobCancelResponse)
 async def cancel_run(
     job_id: int,
     session_id: str = Query(..., max_length=255),
@@ -379,7 +391,7 @@ async def cancel_run(
 
 # ── 预设 ──────────────────────────────────────────────────────────────
 
-@router.get("/presets")
+@router.get("/presets", response_model=SkillJobPresetsListResponse)
 async def list_presets_ep(
     project_id: str = Query("", max_length=255),
     user: Dict[str, Any] = Depends(get_current_user),
@@ -389,7 +401,7 @@ async def list_presets_ep(
     return {"presets": list_presets(org_id=_org_of(user), creator_id=actor_ids(user)[0] or "", project_id=project_id)}
 
 
-@router.post("/presets")
+@router.post("/presets", response_model=SkillJobPresetView)
 async def create_preset_ep(
     req: PresetRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -409,7 +421,7 @@ async def create_preset_ep(
                                          "message": str(e)[:200]}) from e
 
 
-@router.get("/presets/{preset_id}")
+@router.get("/presets/{preset_id}", response_model=SkillJobPresetView)
 async def get_preset_ep(
     preset_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -422,7 +434,7 @@ async def get_preset_ep(
     return preset
 
 
-@router.put("/presets/{preset_id}")
+@router.put("/presets/{preset_id}", response_model=SkillJobPresetView)
 async def update_preset_ep(
     preset_id: str,
     req: PresetRequest,
@@ -445,7 +457,7 @@ async def update_preset_ep(
                                          "message": str(e)[:200]}) from e
 
 
-@router.delete("/presets/{preset_id}")
+@router.delete("/presets/{preset_id}", response_model=SkillJobPresetDeleteResponse)
 async def delete_preset_ep(
     preset_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -457,7 +469,7 @@ async def delete_preset_ep(
     return {"deleted": True}
 
 
-@router.post("/presets/{preset_id}/prepare")
+@router.post("/presets/{preset_id}/prepare", response_model=SkillJobPresetPrepareResponse)
 async def preset_prepare_ep(
     preset_id: str,
     req: PresetPrepareRequest,

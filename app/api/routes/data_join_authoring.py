@@ -12,6 +12,18 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.models.db_model import Conversation
+from app.schemas.data_join_authoring_schema import (
+    DataJoinDescribeSourceResponse,
+    DataJoinPlanListResponse,
+    DataJoinPlanPreviewResponse,
+    DataJoinPlanView,
+    DataJoinRecoverResponse,
+    DataJoinRenderRefResponse,
+    DataJoinRunCancelResponse,
+    DataJoinRunListResponse,
+    DataJoinRunResultsResponse,
+    DataJoinRunView,
+)
 from app.services.auth_history_bridge import require_owned_session
 from app.services.data_join_authoring import service
 from app.services.data_join_authoring.errors import DataJoinError, http_status
@@ -66,7 +78,7 @@ class PageQuery(BaseModel):
 
 # ─── 源卡 ──────────────────────────────────────────────────────────────────
 
-@router.post("/sessions/{session_id}/sources/describe")
+@router.post("/sessions/{session_id}/sources/describe", response_model=DataJoinDescribeSourceResponse)
 async def describe_source(
     session_id: str,
     body: DescribeBody,
@@ -82,7 +94,7 @@ async def describe_source(
 
 # ─── 计划 CRUD（CAS） ─────────────────────────────────────────────────────
 
-@router.post("/sessions/{session_id}/plans")
+@router.post("/sessions/{session_id}/plans", response_model=DataJoinPlanView)
 async def create_plan(
     session_id: str,
     body: PlanBody,
@@ -96,7 +108,7 @@ async def create_plan(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/plans")
+@router.get("/sessions/{session_id}/plans", response_model=DataJoinPlanListResponse)
 async def list_plans(
     session_id: str,
     limit: int = Query(50, ge=1, le=100),
@@ -110,7 +122,7 @@ async def list_plans(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/plans/{plan_id}")
+@router.get("/sessions/{session_id}/plans/{plan_id}", response_model=DataJoinPlanView)
 async def get_plan(
     session_id: str,
     plan_id: str,
@@ -122,7 +134,7 @@ async def get_plan(
         raise _fail(err) from err
 
 
-@router.patch("/sessions/{session_id}/plans/{plan_id}")
+@router.patch("/sessions/{session_id}/plans/{plan_id}", response_model=DataJoinPlanView)
 async def update_plan(
     session_id: str,
     plan_id: str,
@@ -139,7 +151,7 @@ async def update_plan(
         raise _fail(err) from err
 
 
-@router.delete("/sessions/{session_id}/plans/{plan_id}")
+@router.delete("/sessions/{session_id}/plans/{plan_id}", response_model=DataJoinPlanView)
 async def archive_plan(
     session_id: str,
     plan_id: str,
@@ -155,7 +167,7 @@ async def archive_plan(
 
 # ─── 预览（全量诊断；零 mutation） ────────────────────────────────────────
 
-@router.post("/sessions/{session_id}/plans/{plan_id}/preview")
+@router.post("/sessions/{session_id}/plans/{plan_id}/preview", response_model=DataJoinPlanPreviewResponse)
 async def preview_plan(
     session_id: str,
     plan_id: str,
@@ -175,7 +187,7 @@ async def preview_plan(
 
 # ─── 执行 / 检查 / 结果 / 取消 ────────────────────────────────────────────
 
-@router.post("/sessions/{session_id}/plans/{plan_id}/execute")
+@router.post("/sessions/{session_id}/plans/{plan_id}/execute", response_model=DataJoinRunView)
 async def execute_plan(
     session_id: str,
     plan_id: str,
@@ -193,7 +205,7 @@ async def execute_plan(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/runs")
+@router.get("/sessions/{session_id}/runs", response_model=DataJoinRunListResponse)
 async def list_runs(
     session_id: str,
     plan_id: Optional[str] = Query(None, max_length=64),
@@ -207,7 +219,7 @@ async def list_runs(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/runs/{run_id}")
+@router.get("/sessions/{session_id}/runs/{run_id}", response_model=DataJoinRunView)
 async def inspect_run(
     session_id: str,
     run_id: str,
@@ -219,7 +231,7 @@ async def inspect_run(
         raise _fail(err) from err
 
 
-@router.get("/sessions/{session_id}/runs/{run_id}/results")
+@router.get("/sessions/{session_id}/runs/{run_id}/results", response_model=DataJoinRunResultsResponse)
 async def run_results(
     session_id: str,
     run_id: str,
@@ -233,7 +245,7 @@ async def run_results(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/runs/{run_id}/cancel")
+@router.post("/sessions/{session_id}/runs/{run_id}/cancel", response_model=DataJoinRunCancelResponse)
 async def cancel_run(
     session_id: str,
     run_id: str,
@@ -245,7 +257,7 @@ async def cancel_run(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/runs/{run_id}/render-ref")
+@router.post("/sessions/{session_id}/runs/{run_id}/render-ref", response_model=DataJoinRenderRefResponse)
 async def render_ref(
     session_id: str,
     run_id: str,
@@ -258,7 +270,7 @@ async def render_ref(
         raise _fail(err) from err
 
 
-@router.post("/sessions/{session_id}/recover")
+@router.post("/sessions/{session_id}/recover", response_model=DataJoinRecoverResponse)
 async def recover(
     session_id: str,
     conv: Conversation = Depends(require_owned_session),
