@@ -44,3 +44,33 @@ No services, heavy builds, temporary databases, queues, or task-specific ports s
 - Conformance hardening found duplicate family ID after renaming; restored stable existing ID `od-matrix` (IDs are compatibility keys), with flow-only queries/name.
 - Full corpus initially exposed 108 misses for the generated `OD通勤联系` phrase; added that OD-local term rather than relaxing assertions.
 - PASS: `pytest -q --no-cov tests/unit/gis_harness/test_conformance_corpus.py tests/unit/gis_harness/test_benchmark_harness.py tests/unit/gis_harness/test_od_flow_planner.py` → 15 passed, including full 20,088-case corpus and benchmark. Existing kriging divide-by-zero warnings (3) remain outside G21.
+
+## Loop 6 — Studio panel, live browser journey and three production fixes (2026-11-20)
+
+### Live verification setup (isolated, real services)
+- Rebuilt isolated `.venv` (Python 3.12.15) in this worktree after the host reset the main venv; `requirements.lock` + `requirements-dev.txt` (pytest 9.2.0).
+- Real backend `uvicorn app.main:app` on `127.0.0.1:38221` (in-memory session store after the original Redis on 16379 disappeared; `USE_REDIS=false`), isolated sqlite `DATA_DIR=.scratch/g21-ui`, `pnpm dev` frontend on `:32173`, synthetic CORS tile server on `:38222`. All scratch-only; nothing committed.
+- Session `g21-ui-6a6f00712986` with the Chengdu OD fixture (A→B=8, B→A=3, A→C=4, C→A=2).
+
+### Fix 1 — ref-source-resolver 304 misread as definitive failure
+- Evidence: backend log showed `GET /api/v1/layers/data/<flow-ref> … 304 Not Modified` immediately after apply; resolver `scheduleFetch` treated the ApiError(304) as failure → tombstone → flow layers never mounted (stale/expired). The browser HTTP cache revalidates the ETagged `/layers/data` response once any earlier fetch (panel preview) populated it.
+- Fix: resolver fetch now passes `cache: 'reload'` (additive `ApiFetchOptions.cache` passthrough in `frontend/lib/api/transport.ts`), and a residual 304 is no longer tombstoned (left unresolved for retry). Regression tests: `lib/mapspec/ref-source-resolve.test.ts` (+2).
+
+### Fix 2 — reconciler skipped source update when content_revision unchanged
+- Evidence (live map introspection via React-fiber walk in a Playwright probe): HUD-expanded sources carried the hydrated payload (4/4/3 features) while the committed `*-source` entries the mounted layers point at stayed empty. `sourceDefinitionsEqual` short-circuited on equal `content_revision` without comparing `inlineData`, so the client-side payload landing produced no `source:update`/layer recompile.
+- Fix: the revision short-circuit now also compares the inlineData fingerprint (WeakMap-cached). Regression tests: `lib/mapspec-compiler/reconciler.test.ts` (+2, incl. a no-false-update case).
+
+### Fix 3 — flow legend verification rejected the encoded-field legend contract
+- Evidence: `tests/cartography/test_flow_publication_formats.py` failed with `flow_legend_stale` because verification still required `legend.field == "weight"` while the product emits the continuous encoded field `weight_encoded` (0–1) with `source_field`/`source_domain` disclosing the original unit domain.
+- Fix: verification accepts `weight`/`weight_encoded` and additionally checks `source_field`/`source_domain` alignment with `encoding` (stricter, not looser).
+
+### Live browser acceptance (built-in Kimi browser, real app + real backend)
+- Directed flow renders on the live map: two separated curves per node pair, yellow ▶ direction marks along each curve, blue node circles sized by total flow, legend `分向流量（人次；保留 gross 100.0%）` with original `trips` domain 2–8. Screenshots captured in `.scratch/g21-ui`.
+- Refresh/restore: committed MapSpec (revision ≥2) restores 4 layers/3 sources, panel shows `已应用到地图`, product ref, gross retained 100.0%, net magnitude coverage 100.0%.
+- Click path: map click on the node position returns the node first in the candidate popup (`选择要素 (5)`: 武侯区 then the 4 edges) after the node-first sort fix; stable object id uses `properties.node_id`/`id` (MapLibre index fallback removed). Playwright `map.project` + `queryRenderedFeatures` confirmed 6 hits at the node point.
+- Panel journey: inspect (auto field binding), preview (stats 4/4/4, edges 4, gross retained 100.0%, nodes 3/3), one-transaction apply, refresh recovery — all exercised in the browser.
+- Export: backend three-format test (SVG 96/300 DPI, WeasyPrint PDF, pdftotext/pdftoppm PNG readback) passes after Fix 3.
+
+### Known honest gaps
+- In-browser FlowFocusCard render (inbound/outbound/net list after the node click) is covered by component tests (`components/flow/flow-product-panel.test.tsx`); the live headless probe could not open the right 制图 panel to screenshot the card (automation-environment limitation, not a product failure). Selection popup + node-first ordering + stable id were verified live.
+- Playwright headless GL loses the WebGL context across HMR reloads (map shows `地图暂不可用`; `重试地图` recovers); the built-in browser does not exhibit this.

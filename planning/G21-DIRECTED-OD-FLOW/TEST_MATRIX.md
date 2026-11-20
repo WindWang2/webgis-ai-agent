@@ -4,31 +4,48 @@ Every result must name exact command, revision, environment and evidence. `pendi
 
 | Layer | Scenario / oracle | Status | Evidence |
 |---|---|---|---|
-| Legacy backend | Existing `tests/unit/test_od_flow_runtime.py` straight lines, weight paint, refs | pending | — |
-| Legacy frontend | `frontend/lib/mapspec-compiler/flow-layer.test.ts` | pending | — |
-| Custom binding | `trips` drives standard weight, widths and legend | pending | — |
-| Directed arithmetic | A→B=8/B→A=3: directed 8/3, gross 11, net +5 A→B | pending | — |
-| Equal reverse | Equal values yield zero net without arbitrary arrow; original pair queryable | pending | — |
-| Coverage | 8/3 fully retained then net: gross retained 100%, net magnitude 5 | pending | — |
-| Missing reverse | Unobserved is not zero unless explicit source contract | pending | — |
-| Node totals | Origin with multiple destinations becomes node totals, never fake first-target total edge | pending | — |
-| Duplicates/dimensions | Declared time/category aggregation and exclusions | pending | — |
-| Binding | Nondefault fields/coords; missing coords never geocode | pending | — |
-| Cost semantics | Time/distance matrices rejected/disclosed as non-flow | pending | — |
-| Identity | Same lon/different lat, arrow-containing IDs, row permutations | pending | — |
-| Coordinate conflicts | Same node ID at conflicting coordinates rejects with correction path | pending | — |
-| Invalid weights | NaN/Inf/negative/missing excluded or rejected; valid JSON/no negative widths | pending | — |
-| Display scope | top-N 20→200 retains total/domain evidence and deterministic ties | pending | — |
-| Geometry | Directed curves, focus, antimeridian, self-loop, zero-length | pending | — |
-| Authority | UI/Pi interleaving, CAS/user-wins, stale result cannot overwrite | pending | — |
-| Persistence | Save/refresh/requery restores same config/ref/statistics | pending | — |
-| Cancellation | Late detail after cancel/session switch has no cross-session effect | pending | — |
-| Performance | 50k edges input, output/vertices/markers/query caps, no O(nodes²) | pending | — |
-| Export | Real PNG/SVG/PDF, 96/300 DPI and rotation; directions/widths/nodes/legend | pending | — |
-| Partial failure | Missing layer/direction markers makes verification incomplete | pending | — |
-| UI journey | Create→node focus→directed→filter→save→refresh in real page | pending | — |
-| Pi journey | Natural-language create/local modify via real Pi + local stub, no od_matrix/provider | pending | — |
-| Review | Independent review→fix→rereview closes blocking findings | pending | — |
+| Legacy backend | Existing `tests/unit/test_od_flow_runtime.py` straight lines, weight paint, refs | pass | `pytest tests/unit/test_od_flow_runtime.py` → 12 passed (worktree venv, `USE_REDIS=false`, isolated sqlite) |
+| Legacy frontend | `frontend/lib/mapspec-compiler/flow-layer.test.ts` | pass | included in `vitest run lib/mapspec-compiler` → 60 files / 664 passed (1 expected fail) |
+| Custom binding | `trips` drives standard weight, widths and legend | pass | `tests/unit/test_flow_product.py` + browser journey: legend shows original `trips` domain 2–8 with encoded widths |
+| Directed arithmetic | A→B=8/B→A=3: directed 8/3, gross 11, net +5 A→B | pass | `tests/unit/test_flow_product_service.py` known-answer cases |
+| Equal reverse | Equal values yield zero net without arbitrary arrow; original pair queryable | pass | `tests/unit/test_flow_product_service.py` |
+| Coverage | 8/3 fully retained then net: gross retained 100%, net magnitude 5 | pass | service tests + live panel showed `gross 保留率: 100.0%` / `net 幅度覆盖率: 100.0%` |
+| Missing reverse | Unobserved is not zero unless explicit source contract | pass | service tests; UI disables net mode with reason (`反向缺失处理=未知`) |
+| Node totals | Origin with multiple destinations becomes node totals, never fake first-target total edge | pass | service tests; node ref shows 武侯区 inbound 5 / outbound 12 / net 7 / total 17 |
+| Duplicates/dimensions | Declared time/category aggregation and exclusions | pass | service tests (repeat rows, category/time dims) |
+| Binding | Nondefault fields/coords; missing coords never geocode | pass | service tests; panel requires explicit node/coordinate fields |
+| Cost semantics | Time/distance matrices rejected/disclosed as non-flow | pass | service tests (cost-field refusal) |
+| Identity | Same lon/different lat, arrow-containing IDs, row permutations | pass | `tests/unit/test_flow_product_geometry.py` + service identity tests |
+| Coordinate conflicts | Same node ID at conflicting coordinates rejects with correction path | pass | service tests |
+| Invalid weights | NaN/Inf/negative/missing excluded or rejected; valid JSON/no negative widths | pass | service tests |
+| Display scope | top-N 20→200 retains total/domain evidence and deterministic ties | pass | service tests + browser: top-N=20 preview kept 4/4 edges and 100% retained |
+| Geometry | Directed curves, focus, antimeridian, self-loop, zero-length | pass | `tests/unit/test_flow_product_geometry.py`; live map shows two separated curves + ▶ per direction |
+| Authority | UI/Pi interleaving, CAS/user-wins, stale result cannot overwrite | pass | `tests/unit/test_flow_product_mapspec.py` (atomic family replace, expected_revision CAS, superseded) |
+| Persistence | Save/refresh/requery restores same config/ref/statistics | pass | browser: after full page reload + re-login + session reselect, panel restored `已应用到地图`, product ref, stats; backend map-state revision ≥2 |
+| Cancellation | Late detail after cancel/session switch has no cross-session effect | pass | `tests/unit/test_flow_product_surface.py` (guarded request/epoch semantics) |
+| Performance | 50k edges input, output/vertices/markers/query caps, no O(nodes²) | pass | service tests: 500k input cap, 5000 output cap, single-pass aggregation, bounded query |
+| Export | Real PNG/SVG/PDF, 96/300 DPI and rotation; directions/widths/nodes/legend | pass | `tests/cartography/test_flow_publication_formats.py` (SVG 96/300, WeasyPrint PDF, `pdftotext` ▶, `pdftoppm` PNG readback) → 1 passed |
+| Partial failure | Missing layer/direction markers makes verification incomplete | pass | `tests/unit/test_flow_export_verification.py` |
+| UI journey | Create→node focus→directed→filter→save→refresh in real page | partial | create/preview/apply/refresh verified live; node click selects the node (candidate popup node-first, stable id) but the focus-card render was verified in component tests only (headless probe could not open the right 制图 panel) |
+| Pi journey | Natural-language create/local modify via real Pi + local stub, no od_matrix/provider | pass | `PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_od_flow_journey.py` → 1 passed; `tests/unit/test_flow_product_surface.py test_pi_dynamic_surface.py test_flow_product_mapspec.py test_flow_product_service.py` with the flag → 25 passed |
+| Review | Independent review→fix→rereview closes blocking findings | pending | scheduled after PR push |
 
 ## Commands and results
-Pending baseline commands.
+
+Backend OD regression (worktree `.venv`, Python 3.12.15, `USE_REDIS=false`, isolated sqlite under `.scratch/g21-ui`, `OMP_NUM_THREADS=1`):
+
+```
+flock /home/kevin/projects/webgis/.bare/webgis-heavy-stage.lock .venv/bin/python -m pytest -q --no-cov -o timeout=240 \
+  tests/unit/test_flow_product_mapspec.py tests/unit/test_flow_product_service.py \
+  tests/unit/test_flow_product.py tests/unit/test_flow_product_geometry.py \
+  tests/unit/test_flow_product_surface.py tests/unit/test_flow_export_verification.py \
+  tests/unit/test_od_flow_runtime.py tests/unit/test_pi_dynamic_surface.py \
+  tests/cartography/test_flow_direction_svg.py tests/cartography/test_flow_publication_formats.py
+→ 98 passed
+```
+
+Real-Pi journey: `PI_JOURNEY_E2E=1 … pytest tests/integration/test_pi_od_flow_journey.py` → 1 passed; E2E-flagged surface/mapspec/service files → 25 passed.
+
+Frontend: `pnpm exec tsc --noEmit` → clean. `vitest run components/flow/… lib/flow/… lib/selection/flow-selection.test.ts lib/mapspec/… lib/mapspec-compiler/… components/map/map-panel.test.tsx` → 101 passed. Wider suites `lib/mapspec-compiler lib/mapspec-runtime lib/mapspec` → 60 files / 664 passed (1 expected fail, pre-existing).
+
+Lint: `uvx ruff check` on all changed backend files → All checks passed. `git diff --check` → clean.
