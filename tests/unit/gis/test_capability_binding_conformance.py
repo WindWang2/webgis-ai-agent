@@ -166,12 +166,15 @@ def test_manifest_v4_declares_binding_surfaces(live_manifest):
 
 
 def test_manifest_merges_declared_only_providers(live_manifest):
-    # recon 实测：image_segmentation 有 18 个声明面工具（算法链不可达）。
-    providers = live_manifest.capability_to_tools.get("image_segmentation", [])
+    # 声明面并入回归锚：#2257 后 image_segmentation 的同名异义声明簇已按
+    # model_* 词表拆分清偿（k-means 统计面只剩 segment_image 单 provider），
+    # 改用 field_compute —— 0 条 algorithm、4 个声明面 provider 的稳定
+    # 声明簇（绑定修复落地时测试作者按新真相更新目标能力）。
+    providers = live_manifest.capability_to_tools.get("field_compute", [])
     assert len(providers) > 1, "声明面 provider 必须并入反查图"
     declared_tools = {
         t for t, caps in live_manifest.declared_capability_bindings.items()
-        if "image_segmentation" in caps
+        if "field_compute" in caps
     }
     assert declared_tools, "实测声明簇缺失（数据回归？）"
     for t in declared_tools:

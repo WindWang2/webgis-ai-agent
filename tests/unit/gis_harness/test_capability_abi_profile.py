@@ -37,7 +37,10 @@ def _live_capabilities_with_multiple_tool_providers(min_providers: int = 2):
 
 
 @pytest.mark.parametrize("capability_id", [
-    "image_segmentation", "workspace_state_inspection", "poi_query",
+    # #2257 后 image_segmentation 只剩 segment_image 单 provider（同名异义
+    # 声明簇已拆去 model_* 词表）——多 provider 锚改 field_compute（4 声明面
+    # provider、0 algorithm 的稳定声明簇）。
+    "field_compute", "workspace_state_inspection", "poi_query",
 ])
 def test_multi_provider_capability_resolves_deterministically(capability_id):
     """3 类真实能力：多 provider 在解析/排序/manifest 三面一致且确定。"""
@@ -79,8 +82,9 @@ def test_profile_aggregates_multi_provider_surface():
 
 
 def test_profile_provenance_declared_vs_derived():
-    """声明/派生溯源可见（recon 实测：poi_query 双源、image_segmentation 声明簇）。"""
-    profile = capability_abi_profile("image_segmentation")
+    """声明/派生溯源可见（recon 实测：poi_query 双源；声明簇锚 #2257 后
+    改 field_compute —— image_segmentation 声明簇已按 model_* 词表拆分）。"""
+    profile = capability_abi_profile("field_compute")
     assert profile is not None
     sources = {t["source"] for t in profile["tools"]}
     assert "declared" in sources
@@ -91,7 +95,7 @@ def test_profile_provenance_declared_vs_derived():
 
 def test_profile_cancellation_contract_disclosed():
     """验收 #12：取消契约按 execution_policy 诚实披露（不虚构）。"""
-    profile = capability_abi_profile("image_segmentation")
+    profile = capability_abi_profile("field_compute")
     assert profile is not None
     for t in profile["tools"]:
         assert t["cancellation"] in ("durable", "dispatch_level")
