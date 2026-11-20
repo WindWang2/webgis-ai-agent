@@ -212,17 +212,20 @@ def register_nature_resource_tools(registry: ToolRegistry):
                 return {"success": True, "message": f"资产已从「{old_name}」重命名为「{new_name}」"}
 
             elif action == "delete":
-                # 删除物理文件
                 try:
                     from app.utils.path import validate_data_path
                     full_path = validate_data_path(record.filename, settings.DATA_DIR)
                 except ValueError as e:
                     return {"error": f"文件路径校验失败: {e}"}
-                if os.path.exists(full_path):
-                    os.remove(full_path)
-
+                # #2156 P3：先删行并提交，提交成功后再删物理文件 —— 旧实现
+                # 先 os.remove 再 db.delete，若提交失败，记录幸存但指向已删
+                # 文件（悬挂产物）。顺序颠倒后最坏情况是孤儿文件（可被
+                # GC/人工清理），而不是不可用的资产记录。
                 name = record.original_name
                 db.delete(record)
+                db.commit()
+                if os.path.exists(full_path):
+                    os.remove(full_path)
                 return {"success": True, "message": f"资产「{name}」及物理文件已永久删除"}
 
             return {"error": f"不支持的动作或缺少必要参数: {action}"}

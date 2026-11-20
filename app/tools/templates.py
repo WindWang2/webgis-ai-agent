@@ -189,6 +189,41 @@ def _get_template_by_id(
     return next((t for t in SEED_TEMPLATES if t.get("id") == template_id), None)
 
 
+# 类型相关 paint 键映射（与 composite_builder 同一口径；#2153）。
+_PAINT_COLOR_KEYS = ("fill-color", "line-color", "circle-color")
+_PAINT_OPACITY_KEYS = ("fill-opacity", "line-opacity", "circle-opacity")
+
+
+def _retarget_paint_patch(paint_patch: dict, layer_type: str) -> dict:
+    """#2153：按目标图层真实类型改写 paint patch 的键。旧实现按模板假定
+    硬编码 circle-*（single/categorical）或 fill-*（thematic）——把面模板
+    应用到 fill 图层会往持久化 MapSpec 写 circle-*（MapLibre 在 fill 层
+    上拒绝 circle-*，重载/门禁比对即分叉）；专题应用到点/线图层则写错
+    fill-color。键语义不变，只换载体键。"""
+    want_color = {"fill": "fill-color", "line": "line-color"}.get(
+        layer_type, "circle-color")
+    want_opacity = {"fill": "fill-opacity", "line": "line-opacity"}.get(
+        layer_type, "circle-opacity")
+    out: dict = {}
+    for key, value in paint_patch.items():
+        if key in _PAINT_COLOR_KEYS:
+            out[want_color] = value
+        elif key in _PAINT_OPACITY_KEYS:
+            out[want_opacity] = value
+        elif key == "circle-stroke-width":
+            # 描边宽度：line 层用 line-width；fill 层无描边载体键（与
+            # _semantic_paint_patch 对 fill 跳过 stroke 的语义一致）；
+            # 其余保持 circle-stroke-width。
+            if layer_type == "line":
+                out["line-width"] = value
+            elif layer_type == "circle":
+                out[key] = value
+            # fill：丢弃（MapLibre fill 层无 stroke-width 键）
+        else:
+            out[key] = value
+    return out
+
+
 async def _track_legacy_template_in_mapspec(
     session_id: Optional[str],
     layer_id: str,
@@ -214,6 +249,8 @@ async def _track_legacy_template_in_mapspec(
         )
         if layer is None:
             return None
+        # #2153：paint patch 按目标图层真实类型落键（composite_builder 口径）。
+        paint_patch = _retarget_paint_patch(paint_patch, layer.get("type") or "")
         layer = dict(layer)
         layer["paint"] = {**layer.get("paint", {}), **paint_patch}
         if legend_spec is not None:

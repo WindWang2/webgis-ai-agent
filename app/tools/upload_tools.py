@@ -31,8 +31,12 @@ def _resolve_session_id(provided: Optional[str]) -> Optional[str]:
     verified = getattr(ctx, "session_id", None)
     if verified:
         return verified if provided in (None, verified) else None
-    # No runtime context (direct execution / tests): trust the provided id.
-    return provided
+    # #2156 P3：无 runtime context 时 fail closed —— 旧实现直接信任 LLM 提供
+    # 的 id，任何未 bind_runtime_context 的执行路径（Celery 路由的同步工具、
+    # 子代理、harness_runner）都可用注入的 session_id 读其它会话的
+    # 上传/快照。经 registry dispatch 的正常链路总会绑定 context（可信
+    # session_id 注入），fail closed 不影响正常用户。
+    return None
 
 
 def register_upload_tools(registry: ToolRegistry):

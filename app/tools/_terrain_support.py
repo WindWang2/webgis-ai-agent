@@ -236,6 +236,16 @@ def _base_diagnostics(
     return diags
 
 
+def _nan_to_declared_nodata(arr: "np.ndarray", declared: float) -> "np.ndarray":
+    """#2156 P3：float 阵列里的 NaN 在写盘前重写成 profile 声明的 nodata。
+
+    旧实现 nodata=None 时声明 -9999 但不改写 NaN 单元 —— 文件实际 NaN 与
+    声明的 nodata 不一致，下游按声明值掩膜会漏掉。非 float 或无 NaN 原样返回。"""
+    if arr.dtype.kind == "f" and np.isnan(arr).any():
+        return np.where(np.isnan(arr), declared, arr)
+    return arr
+
+
 def _persist_filled_dem(
     source_path: str,
     filled: np.ndarray,
@@ -283,7 +293,8 @@ def _persist_filled_dem(
     try:
         with rasterio_env():
             with rasterio.open(target, "w", **profile) as dst:
-                dst.write(filled, 1)
+                dst.write(
+                    _nan_to_declared_nodata(filled, profile["nodata"]), 1)
     except RasterioIOError as exc:
         raise RasterReaderError(
             f"cannot write filled raster {target!r}: {exc}"
@@ -335,7 +346,8 @@ def _persist_raster_product(
     try:
         with rasterio_env():
             with rasterio.open(target, "w", **profile) as dst:
-                dst.write(arr, 1)
+                dst.write(
+                    _nan_to_declared_nodata(arr, profile["nodata"]), 1)
     except RasterioIOError as exc:
         raise RasterReaderError(
             f"cannot write raster product {target!r}: {exc}"

@@ -158,6 +158,15 @@ def register_report_tools(registry: ToolRegistry):
         if not session_id:
             return {"error": "无法确定当前会话 ID，请在对话中重试。"}
 
+        # #2156 P3：注册表校验模型由函数签名生成（format: str 任意字符串
+        # 可通过），而 ext 流入 os.path.join(REPORT_DIR, f"{id}.{ext}") —
+        # format="x/../../../../tmp/evil" 会在 REPORT_DIR 外任意建目录
+        # （report_service 的格式检查发生在 makedirs 之后）。工具层先验。
+        if format not in ("pdf", "html", "markdown", "md"):
+            return {
+                "error": f"不支持的报告格式: {format!r}（支持 pdf / html / markdown / md）"
+            }
+
         # #426 计算隔离：同步 SQLAlchemy 读写（db_session）经 to_thread
         # 下沉到 worker 线程；渲染由 spatial_report_engine.generate_report
         # 内部同样卸载（见 report_service.py）。

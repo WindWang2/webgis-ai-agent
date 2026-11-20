@@ -179,9 +179,26 @@ def register_geocompute_tools(registry: ToolRegistry):
         failure_modes=["missing_data"],
     )
     def get_execution_run(run_id: str) -> dict:
-        from app.services.geocompute.executor import engine
+        # #2154：与 cancel_execution_run 同一身份真相 —— 旧实现省略
+        # owner_scope，executor 跳过属主校验，任何持有他人 run_id 的会话
+        # （run_id 出现在工具输出/日志/任务卡片）都能读到该 run 的证据
+        # （output_ref/output_summary/error_message/fingerprints）。按 caller
+        # 派生 owner 域；无上下文按匿名隔离（fail-closed）。
+        from app.services.geocompute.executor import engine, owner_scope_for
 
-        run = engine.get_run(run_id)
+        caller: Optional[dict] = None
+        with best_effort(
+            "caller-identity-resolve",
+            "tools-geocompute-caller-identity-best-effort",
+        ):
+            from app.services.provenance.context import get_tool_execution_context
+
+            tc = get_tool_execution_context()
+            if tc is not None and getattr(tc, "user_id", None):
+                caller = {"user_id": str(tc.user_id),
+                          "org_id": getattr(tc, "org_id", None)}
+
+        run = engine.get_run(run_id, owner_scope=owner_scope_for(caller))
         if run is None:
             return {"status": "not_found", "run_id": run_id}
         return {

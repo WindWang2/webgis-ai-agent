@@ -273,6 +273,11 @@ def _read_window(
     c0 = max(0, col0)
     c1 = min(grid.width - 1, col1)
     win_h, win_w = r1 - r0 + 1, c1 - c0 + 1
+    if win_h <= 0 or win_w <= 0:
+        # #2220(a)：批内站位全部越界（紧贴边缘外时 clamp 后窗口为空）——
+        # 旧实现把负行列直传 rasterio Window → ValueError 崩掉整批。返回
+        # 空读，逐站位由 _station_rows 标 outside_extent。
+        return {}, {}, (r0, r1, c0, c1), {}
     est = win_h * win_w * grid.itemsize_est * len(bands)
     if est > _MAX_WINDOW_READ_BYTES:
         raise RasterSamplingError(
@@ -358,10 +363,20 @@ def _station_rows(
                                             "raw": None, "physical": None,
                                             "supports": []}
         else:
-            pixel = ((int(math.floor(col_f)), int(math.floor(row_f)))
+            # #2220(b)：pixel 语义 = (row, col)（与 source_pixel 分支及
+            # SampleRow 字段名一致）。旧实现存 (floor(col), floor(row))，
+            # 下游 row=pixel[0], col=pixel[1] 把 bilinear 的行列全部互换。
+            pixel = ((int(math.floor(row_f)), int(math.floor(col_f)))
                      if in_raster else (None, None))
             for b in binding.bands:
                 facts = grid.band_facts[int(b)]
+                if not data or int(b) not in data:
+                    # #2220(a) 空窗口读（整批越界）：逐波段 typed 无效行。
+                    outcomes[int(b)] = {"valid": False,
+                                        "reason": "outside_extent",
+                                        "raw": None, "physical": None,
+                                        "supports": []}
+                    continue
                 outcomes[int(b)] = kernel.sample_bilinear(
                     data[int(b)], valid[int(b)], row_f - r0, col_f - c0,
                     facts, shape=shape, mode=method,
@@ -391,7 +406,10 @@ def _station_rows(
             unit_status=facts.unit_status,
             method=method,
             support_pixels=[
-                {"row": s["row"], "col": s["col"],
+                # #2220(c)：sample_bilinear 收的是窗口局部坐标（row_f-r0,
+                # col_f-c0），supports 的 row/col 也是窗口局部 —— 回执必须
+                # 加回窗口 (r0,c0) 偏移，否则披露的支撑像元全部落在窗口原点。
+                {"row": s["row"] + r0, "col": s["col"] + c0,
                  "weight": round(float(s["weight"]), 9),
                  "valid": bool(s["valid"])}
                 for s in outcome.get("supports", [])

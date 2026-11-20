@@ -53,6 +53,16 @@ class PlanArgs(BaseModel):
     session_id: str = ""
 
 
+class InspectArgs(BaseModel):
+    """#2219：inspect 只读层资格/当前绑定，不需要绑定计划 —— 旧注册复用
+    PlanArgs（plan 必填）而 _inspect_layer 无 plan 形参，导致不带 plan 时
+    ``Field required``、带 plan 时 ``unexpected keyword argument 'plan'``，
+    工具两头都不可调用。独立参数模型与实际签名一致。"""
+
+    layer_id: str = Field(..., min_length=1, max_length=200)
+    session_id: str = ""
+
+
 class ApplyArgs(PlanArgs):
     expected_revision: int = Field(
         ..., ge=0,
@@ -286,7 +296,7 @@ def register_cartographic_asset_tools(registry: ToolRegistry) -> None:
         "webgis_symbol_layer_inspect",
         "检查图层的符号资产绑定资格与当前绑定（层型/修订/内置目录）。",
         _inspect_layer,
-        args_model=PlanArgs,
+        args_model=InspectArgs,
         tier=2, domains=["cartography", "mapspec"],
         side_effect="cacheable_read",
         tags=("符号资产", "图层", "symbol assets"),
