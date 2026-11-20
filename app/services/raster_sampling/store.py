@@ -7,8 +7,10 @@
         receipts.jsonl        # 收据（bounded ring）
         by_key/<digest>.json  # 稳定键收据（幂等短路事实源）
 
-CAS：计划修订以 ``(plan_id, revision)`` 比对后整文件原子替换；单进程
-asyncio 串行写 + 跨进程同卷 rename 原子性兜底（与先例一致）。
+CAS：计划修订以 ``(plan_id, revision)`` 比对后整文件原子替换；写路径经
+``threading.Lock`` 串行化（``asyncio.to_thread`` 把 mutator 分发到线程池，
+「单进程 asyncio 串行写」的旧假设不成立 —— 并发 CAS 曾出现 5 全胜 0 冲突），
+跨进程同卷 rename 原子性兜底（与先例一致）。
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import asyncio
 import json
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,6 +33,13 @@ _MAX_RECORDS = 200
 _PLANS_FILE = "plans.jsonl"
 _RECEIPTS_FILE = "receipts.jsonl"
 _BY_KEY_DIR = "by_key"
+
+# #2221：读-改-写 mutator 的全部临界区（load→mutate→atomic_write）共用
+# 一把进程内锁。asyncio.to_thread 把调用分发到默认线程池，同一事件循环上
+# 并发的 save_plan_cas / append_receipt 会在线程池里真并行 —— 无锁时 CAS
+# 的「读修订→比对→写回」整体竞态，5 并发全成功、append 互相覆盖。锁把
+# CAS 比对+写回变成原子段（锁内不 await，无线程内重入风险）。
+_STORE_LOCK = threading.Lock()
 
 
 def _domain_root(session_id: str) -> Path:
@@ -92,10 +102,11 @@ async def save_plan(plan: SamplingPlan) -> bool:
 
 
 def _save_plan_sync(plan: SamplingPlan) -> None:
-    path = _domain_root(plan.session_id) / _PLANS_FILE
-    records = [r for r in _load_jsonl(path) if r.get("plan_id") != plan.plan_id]
-    records.append(plan.model_dump())
-    _atomic_write_jsonl(path, records[-_MAX_RECORDS:])
+    with _STORE_LOCK:
+        path = _domain_root(plan.session_id) / _PLANS_FILE
+        records = [r for r in _load_jsonl(path) if r.get("plan_id") != plan.plan_id]
+        records.append(plan.model_dump())
+        _atomic_write_jsonl(path, records[-_MAX_RECORDS:])
 
 
 async def save_plan_cas(
@@ -106,26 +117,27 @@ async def save_plan_cas(
 
 
 def _save_plan_cas_sync(plan: SamplingPlan, expected_revision: int) -> SamplingPlan:
-    path = _domain_root(plan.session_id) / _PLANS_FILE
-    records = _load_jsonl(path)
-    current = next((r for r in records if r.get("plan_id") == plan.plan_id), None)
-    if current is None:
-        raise RasterSamplingError(
-            "PLAN_NOT_FOUND",
-            f"plan {plan.plan_id} not found for revision update",
-            field="plan_id", status_code=404)
-    if int(current.get("revision") or 0) != expected_revision:
-        raise RasterSamplingError(
-            "PLAN_REVISION_CONFLICT",
-            f"plan {plan.plan_id} is at revision "
-            f"{current.get('revision')}, expected {expected_revision}",
-            field="expected_revision", status_code=409,
-            correction_hint="Reload the plan and retry with its current "
-                            "revision.")
-    records = [r for r in records if r.get("plan_id") != plan.plan_id]
-    records.append(plan.model_dump())
-    _atomic_write_jsonl(path, records[-_MAX_RECORDS:])
-    return plan
+    with _STORE_LOCK:
+        path = _domain_root(plan.session_id) / _PLANS_FILE
+        records = _load_jsonl(path)
+        current = next((r for r in records if r.get("plan_id") == plan.plan_id), None)
+        if current is None:
+            raise RasterSamplingError(
+                "PLAN_NOT_FOUND",
+                f"plan {plan.plan_id} not found for revision update",
+                field="plan_id", status_code=404)
+        if int(current.get("revision") or 0) != expected_revision:
+            raise RasterSamplingError(
+                "PLAN_REVISION_CONFLICT",
+                f"plan {plan.plan_id} is at revision "
+                f"{current.get('revision')}, expected {expected_revision}",
+                field="expected_revision", status_code=409,
+                correction_hint="Reload the plan and retry with its current "
+                                "revision.")
+        records = [r for r in records if r.get("plan_id") != plan.plan_id]
+        records.append(plan.model_dump())
+        _atomic_write_jsonl(path, records[-_MAX_RECORDS:])
+        return plan
 
 
 async def get_plan(session_id: str, plan_id: str) -> Optional[SamplingPlan]:
@@ -166,13 +178,14 @@ async def delete_plan(session_id: str, plan_id: str) -> bool:
 
 
 def _delete_plan_sync(session_id: str, plan_id: str) -> bool:
-    path = _domain_root(session_id) / _PLANS_FILE
-    records = _load_jsonl(path)
-    kept = [r for r in records if r.get("plan_id") != plan_id]
-    if len(kept) == len(records):
-        return False
-    _atomic_write_jsonl(path, kept[-_MAX_RECORDS:])
-    return True
+    with _STORE_LOCK:
+        path = _domain_root(session_id) / _PLANS_FILE
+        records = _load_jsonl(path)
+        kept = [r for r in records if r.get("plan_id") != plan_id]
+        if len(kept) == len(records):
+            return False
+        _atomic_write_jsonl(path, kept[-_MAX_RECORDS:])
+        return True
 
 
 # ── 收据（幂等短路 + 稳定键） ────────────────────────────────────────
@@ -189,17 +202,18 @@ async def append_receipt(receipt: ExecutionReceipt, *, published: bool) -> bool:
 
 
 def _append_receipt_sync(receipt: ExecutionReceipt, published: bool) -> bool:
-    root = _domain_root(receipt.session_id)
-    ring_path = root / _RECEIPTS_FILE
-    records = [r for r in _load_jsonl(ring_path)
-               if r.get("execution_id") != receipt.execution_id]
-    records.append(receipt.model_dump())
-    _atomic_write_jsonl(ring_path, records[-_MAX_RECORDS:])
-    if published:
-        key_path = root / _BY_KEY_DIR / f"{receipt_stable_key(receipt.params_digest)}.json"
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write_jsonl(key_path, [receipt.model_dump()])
-    return True
+    with _STORE_LOCK:
+        root = _domain_root(receipt.session_id)
+        ring_path = root / _RECEIPTS_FILE
+        records = [r for r in _load_jsonl(ring_path)
+                   if r.get("execution_id") != receipt.execution_id]
+        records.append(receipt.model_dump())
+        _atomic_write_jsonl(ring_path, records[-_MAX_RECORDS:])
+        if published:
+            key_path = root / _BY_KEY_DIR / f"{receipt_stable_key(receipt.params_digest)}.json"
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write_jsonl(key_path, [receipt.model_dump()])
+        return True
 
 
 async def find_receipt(

@@ -1215,6 +1215,20 @@ class ToolRegistry:
             actual_mode = "ASYNC"
         else:
             actual_mode = "THREAD"
+        # #2156 P3：dispatch 的 session_id 是可信服务端上下文。HTTP 链路在
+        # 路由层已 bind RuntimeContext，但子代理 / harness / Celery 适配器等
+        # 内部调用方直接 dispatch(session_id=...) —— 未绑上下文时补绑，使
+        # _resolve_session_id 的会话所有权校验对「带可信会话的正常调用」
+        # 放行；裸调工具函数且携带 LLM 提供的 id 仍 fail closed。
+        _rt_cm = None
+        if session_id is not None:
+            from app.lib.runtime.context import (
+                bind_runtime_context as _bind_rt,
+                current_runtime_context as _cur_rt,
+            )
+            if getattr(_cur_rt(), "session_id", None) is None:
+                _rt_cm = _bind_rt(session_id=session_id)
+                _rt_cm.__enter__()
         try:
             result = await self._dispatch_impl(name, arguments, session_id)
         except Exception as e:  # noqa: BLE001
@@ -1222,6 +1236,8 @@ class ToolRegistry:
             active_exc = e
             raise
         finally:
+            if _rt_cm is not None:
+                _rt_cm.__exit__(None, None, None)
             duration_ms = int((_time.perf_counter() - start) * 1000)
             # #529: {"error": <str>} normal-return failures must be classified
             # as errors in the metrics row too (not silently "no error class").

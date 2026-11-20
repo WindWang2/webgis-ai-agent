@@ -117,7 +117,8 @@ async def preview_delivery(spec: DeliverySpec, actor: DeliveryActor) -> Delivery
     except (SourceResolutionError, ScopeError, LossError) as e:
         raise _err_from(e) from e
     if snapshot.parquet_path is not None:
-        sample_parquet_geometry(snapshot)
+        # #2204：首批 Parquet 几何采样是同步 IO + CPU 解析，搬出事件循环。
+        await asyncio.to_thread(sample_parquet_geometry, snapshot)
     try:
         plan = negotiate_scope(snapshot, spec.scope)
         losses = analyze_losses(

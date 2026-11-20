@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -341,7 +342,9 @@ class SourceSnapshot:
             if not self.parquet_path.is_file():
                 raise SourceResolutionError(
                     dl_contracts.ERR_SOURCE_EXPIRED, "源磁盘工件已不存在")
-            if _file_sha256(self.parquet_path) != self.content_fingerprint:
+            # #2204：整文件 SHA256 是重 CPU 同步读，搬出事件循环。
+            if (await asyncio.to_thread(_file_sha256, self.parquet_path)
+                    != self.content_fingerprint):
                 raise SourceResolutionError(
                     dl_contracts.ERR_SOURCE_REVISION_CHANGED,
                     "源 GeoParquet 工件在预览后发生变化，请重新预览后提交")
@@ -453,7 +456,10 @@ async def resolve_source(
             raise SourceResolutionError(
                 dl_contracts.ERR_SOURCE_NOT_FOUND,
                 f"磁盘工件不存在: {ref}（可能已被 GC 或会话清理）")
-        return _snapshot_from_parquet(ref, path)
+        # #2204：parquet 元数据解析 + 整文件指纹是同步 Parquet/SHA256 IO，
+        # 搬出事件循环（to_thread 只转移执行位置，不伪造可取消性 —— 取消
+        # 放弃等待但线程会跑完，语义与模块内既有 to_thread 一致）。
+        return await asyncio.to_thread(_snapshot_from_parquet, ref, path)
 
     if kind == "project_artifact":
         project_id, artifact_id = source.project_id, source.artifact_id
