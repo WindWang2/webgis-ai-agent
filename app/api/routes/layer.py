@@ -1043,22 +1043,44 @@ async def _require_owned_session_qtoken(
     头优先，query 兜底；ref_id+session_id+token 共同构成能力令牌。
     """
     if exp is not None and sig:
-        from sqlalchemy import select
         from app.core.signing import terrain_capability_path, verify_signature
         ref = str(request.path_params.get("ref_id") or "")
-        result = await db.execute(select(Conversation).where(Conversation.id == session_id))
-        conv = result.scalar_one_or_none()
-        # 签名绑定当前 owner_token 摘要：rotate 后旧 URL 立即失效。
-        # 无 owner_token 的认证会话仍用未绑定路径（rotate 对它们不适用）。
-        if (
-            ref
-            and conv is not None
-            and verify_signature(
-                terrain_capability_path(session_id, ref, owner_token=conv.owner_token),
+        presented = owner_token or token
+        conv = None
+        if ref and presented:
+            # 调用方呈交了 live 凭证：以该凭证摘要做 binding 直接验签（与
+            # 签名侧 signed_terrain_query(owner_token=...) 同源入参）。验签
+            # 失败即落入下方活凭证重检（verify_session_owner 是权威）——
+            # 此路径零 Conversation 读（#2123 基线残余）。
+            if verify_signature(
+                terrain_capability_path(session_id, ref, owner_token=presented),
                 exp,
                 sig,
-            )
-        ):
+            ):
+                try:
+                    from sqlalchemy import select
+                    result = await db.execute(select(Conversation).where(Conversation.id == session_id))
+                    conv = result.scalar_one_or_none()
+                except Exception:  # noqa: BLE001 — 快速路径 best-effort，失败即落入活凭证重检
+                    conv = None
+        elif ref:
+            # 纯签名 URL（MapLibre 瓦片取数无法附带 token/自定义头）：binding
+            # 取库内存储的 owner_token 摘要（签名侧同源入参）。快速路径
+            # best-effort：读取或验签的任何失败都落入下方活凭证重检
+            # （authoritative，fail-closed），绝不因快速路径故障改变裁决。
+            try:
+                from sqlalchemy import select
+                result = await db.execute(select(Conversation).where(Conversation.id == session_id))
+                stored = result.scalar_one_or_none()
+            except Exception:  # noqa: BLE001 — 同上：快速路径故障 ≠ 授权/拒绝裁决
+                stored = None
+            if stored is not None and verify_signature(
+                terrain_capability_path(session_id, ref, owner_token=stored.owner_token),
+                exp,
+                sig,
+            ):
+                conv = stored
+        if conv is not None:
             try:
                 request.state.terrain_capability_exp = int(exp)
             except (TypeError, ValueError):
