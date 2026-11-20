@@ -25,7 +25,6 @@ import {
   fetchResults,
   planStatus,
   previewPlan,
-  revisePlan,
   type CurvePoint,
   type PlanPayload,
   type PreviewResponse,
@@ -384,7 +383,6 @@ export function RasterSamplingPanel({ sessionId, ownerToken }: PanelProps) {
     setHoverSampleId(row.sample_id);
   };
 
-  const bandColumnMeta = results?.band_columns || {};
   const unitOfBand = useCallback((sourceRef: string, band: number): string => {
     const row = (results?.rows || []).find(
       (r) => r.source_ref === sourceRef && r.band === band);

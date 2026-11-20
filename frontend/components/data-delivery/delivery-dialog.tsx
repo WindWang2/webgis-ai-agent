@@ -27,7 +27,6 @@ import {
   DeliveryPreview,
   DeliverySourceRef,
   DeliverySpec,
-  fetchDeliveryCapabilities,
   getDeliveryJob,
   listDeliveryJobs,
   previewDataDelivery,

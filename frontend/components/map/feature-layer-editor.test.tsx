@@ -50,8 +50,9 @@ function fakeMap() {
 
 function clickHandlers(map: ReturnType<typeof fakeMap>) {
   const calls = map.on.mock.calls as Array<[string, unknown]>;
-  const click = calls.find(([ev]) => ev === 'click')?.[1] as ((e: unknown) => void) | undefined;
-  return { click };
+  const handler = calls.find(([ev]) => ev === 'click')?.[1];
+  if (typeof handler !== 'function') throw new Error('click handler not registered');
+  return { click: handler as (e: unknown) => void };
 }
 
 const MVT_LAYER = {
