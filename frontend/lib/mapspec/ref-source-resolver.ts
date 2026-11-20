@@ -277,6 +277,11 @@ function scheduleFetch(refId: string, fetchContext: RefFetchContext | null | und
           signal: controller.signal,
           timeoutMs: 120_000,
           label: 'Ref source resolve error',
+          // 本模块自持 LRU 缓存：默认缓存模式下浏览器会对带 ETag 的
+          // /layers/data 响应再验证，304 以 ApiError 冒出——一次缓存命中
+          // 会被误判为确定失败并给 ref 打墓碑（图层假"已过期"且永不挂载）。
+          // reload 绕过 HTTP 缓存，服务端恒返完整载荷。
+          cache: 'reload',
         },
       );
       if (!isCurrent()) return;
@@ -285,10 +290,12 @@ function scheduleFetch(refId: string, fetchContext: RefFetchContext | null | und
       } else {
         cacheSet(refId, FAILED);
       }
-    } catch {
-      if (isCurrent()) {
-        cacheSet(refId, FAILED);
-      }
+    } catch (err) {
+      if (!isCurrent()) return;
+      // 304（再验证命中）不是确定失败：留 unresolved，下一次 reconcile 重试，
+      // 不写墓碑——避免把"数据未变"呈现成"ref 已过期"。
+      if ((err as { status?: number } | null)?.status === 304) return;
+      cacheSet(refId, FAILED);
     }
   })().finally(() => {
     if (inFlight.get(refId)?.task === task) inFlight.delete(refId);

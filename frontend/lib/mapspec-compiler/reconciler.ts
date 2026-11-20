@@ -156,6 +156,14 @@ function sourceDefinitionsEqual(prev: unknown, next: unknown): boolean {
       if (key === "inlineData") continue;
       if (!isDeepEqual(p[key], n[key])) return false;
     }
+    // 同 revision ≠ 同载荷：inlineData 可由客户端侧后置补入/替换
+    // （HUD 合并 / ref-source-resolver 在 revision 不变时落地真实数据，
+    // 或先以空占位上图）。只按 revision 判等会把 source:update 连同
+    // 依赖图层的 recompile 一起跳过 —— 地图永远停在空占位。
+    // 指纹（WeakMap 缓存）兜底：空↔有、有↔变都能识别，同载荷零误报。
+    if (inlineDataFingerprint(p.inlineData) !== inlineDataFingerprint(n.inlineData)) {
+      return false;
+    }
     return true;
   }
 
