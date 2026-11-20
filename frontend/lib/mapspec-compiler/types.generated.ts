@@ -220,9 +220,9 @@ export interface MapSpecLayer {
   data_binding?: MapSpecLayerDataBinding;
   representation?: MapSpecLayerRepresentation;
   scale_profile?: Record<string, unknown>;
+  flow?: MapSpecLayerFlow;
   raster_style?: RasterExpressionSpec;
   symbol_asset?: MapSpecLayerSymbolAsset;
-  flow?: MapSpecLayerFlow;
 }
 
 export interface MapSpecLayerFlow {

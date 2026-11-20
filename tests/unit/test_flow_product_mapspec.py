@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 
-from app.lib.cartography.mapspec_schema import LATEST_VERSION, parse_mapspec
+from app.lib.cartography.mapspec_schema import KNOWN_VERSIONS, LATEST_VERSION, parse_mapspec
 from app.services.mapspec.lifecycle_engine import MapSpecLifecycleEngine
 from app.services.mapspec.intents import ApplyFlowProductIntent, InitProjectIntent
 from app.services.session_data import session_data_manager
@@ -42,7 +42,9 @@ def test_flow_layer_schema_is_additive_and_round_trips():
     }
     parsed = parse_mapspec(spec)
     assert parsed.valid
-    assert LATEST_VERSION == "1.10"
+    # 版本链合并后 LATEST 属于更高 additive 版本（G15/G16 号位）；flow 合同
+    # 自身锚在 1.10，spec 恒可向前升级解析。
+    assert "1.10" in KNOWN_VERSIONS
     assert parsed.document == spec
 
 

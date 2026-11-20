@@ -1,4 +1,21 @@
 {
+ "apply_flow_product_unknown_ref_rejected": [
+  {
+   "result": {
+    "correction_hint": "Re-read MapSpec and retry with the current mutation_revision.",
+    "has_mapspec": false,
+    "layer_ids": [],
+    "message": "User MapSpec mutations require expected_revision.",
+    "origin": "user",
+    "success": false
+   },
+   "state": {
+    "dedup_ids": [],
+    "revision": 0,
+    "runtime_layer_ids": []
+   }
+  }
+ ],
  "checkpoint_then_rollback": [
   {
    "result": {

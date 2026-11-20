@@ -14,6 +14,7 @@
 | decision_panel | ✓ | ✓ | ✓ | ✓ | — | V3：决策面板（候选排名 + 权重来源 + 硬约束否决）（native） |
 | design_candidates | ✓ | — | — | — | — | （native） |
 | elevation_profile | ✓ | ✓ | ✓ | ✓ | — | G3D05：线路高程剖面 —— live 折线面板（native） |
+| exploration_chart_panel | ✓ | ✓ | ✓ | ✓ | — | G46：联合探索条件图表控件 —— live 由前端渲染器消费（facet 口径+条件发布）（native） |
 | export_layout | — | ✓ | ✓ | — | — | exporter 读取 paperSize/orientation/dpi 版面参数（native） |
 | graticule | ✓ | ✓ | ✓ | ✓ | — | P3：live 经纬网渲染器落地（#1089 deferred 补齐）—— 与导出侧 _drawGraticules 共享 graticule-math 间隔/吸附语义（live SVG overlay，真实 bounds 比例定位）（native） |
 | inset_map | ✓ | ✓ | ✓ | ✓ | — | v2 P1 全链路：live 轻量静态 SVG 投影（不 mount 第二个 maplibre runtime）+ 导出 drawChromeInset 同链（native） |

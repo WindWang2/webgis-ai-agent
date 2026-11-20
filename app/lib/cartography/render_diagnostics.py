@@ -432,6 +432,18 @@ def catalog_section() -> List[Dict[str, str]]:
 #: （ADR-0118 D1 死码禁止的自动化收口，取代仅注释级约束）。
 EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "label_expression_unsupported": ("app.services.mapspec_to_svg",),
+    # G21（v1.10）OD flow 产品导出裁决（后端 flow_product/export + SVG 链发射；
+    # 前端孪生发射点在 lib/flow/flow-export.ts）。
+    "flow_source_unavailable": ("app.services.flow_product.export",),
+    "flow_edge_count_mismatch": ("app.services.flow_product.export",),
+    "flow_direction_missing": ("app.services.flow_product.export",),
+    "flow_direction_unexpected": ("app.services.flow_product.export",),
+    "flow_direction_invalid": ("app.services.flow_product.export",),
+    "flow_legend_stale": ("app.services.flow_product.export",),
+    "flow_direction_render_failed": (
+        "app.services.flow_product.export",
+        "frontend/lib/flow/flow-export.ts",
+    ),
     # G16（v2.1）要素级标注 authoring 披露（后端导出链发射）。
     "label_authoring_applied": ("app.services.mapspec_to_svg",),
     "label_authoring_orphan": ("app.services.mapspec_to_svg",),

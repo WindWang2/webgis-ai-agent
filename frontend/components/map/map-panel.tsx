@@ -372,6 +372,8 @@ export function MapPanel({
         }
       }
     }
+    // 无 transient 选择时：探索/flow 过滤（若有）即为全部投影面。
+    if (!selection) return Object.keys(out).length ? out : EMPTY_SELECTION_FILTERS
     // 两条投影通道（ADR-0091）：
     // - chart 类别选择 → filter_field/类别表达式（既有 D3 路径）；
     // - map 框选 / 表格点选的要素 id 选择 → id_field/ids 表达式（V4）。

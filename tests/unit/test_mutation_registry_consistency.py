@@ -132,6 +132,9 @@ def test_op_labels_match_legacy_table():
         "ReorderLayersIntent": "调整图层顺序",
         "PatchLayerStyleIntent": "修改图层样式",
         "PatchLayerLabelAuthoringIntent": "调整标注",
+        # G15 合并带入的既有标签（registry 已在 master 登记；表内补登，
+        # 避免合并后的红色假象——非新增行为变更）。
+        "SetFrameProductIntent": "调整多画幅产品",
         "PatchLayerPresentationIntent": "调整显隐/透明度",
         "PatchComponentIntent": "调整组件",
         "RemoveComponentIntent": "移除组件",

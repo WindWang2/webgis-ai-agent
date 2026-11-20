@@ -2,7 +2,7 @@
 
 > 由 registry 生成；真值：`component_registry.py` + `component_templates.py`。
 
-共 23 个组件类型 / 110 个变体模板。
+共 24 个组件类型 / 110 个变体模板。
 
 | type | 类目 | variants | 默认 | 卡数 | 位置 | 绑定 | 状态 |
 |---|---|---|---|---|---|---|---|
@@ -14,6 +14,7 @@
 | decision_panel | disclosure.decision_panel | default, compact | default | zero_or_one | top-left | — | native |
 | design_candidates | disclosure.design_candidates | default, compact | default | zero_or_one | top-left | — | native |
 | elevation_profile | analysis.elevation_profile | default, compact | default | multiple | bottom-left | — | native |
+| exploration_chart_panel | analysis.chart_panel | default, category, range | default | multiple | top-left | — | native |
 | export_layout | export.page_layout | A4_landscape, A4_portrait, A3_landscape, letter | A4_landscape | single | none | — | native |
 | graticule | navigation.graticule | light, geographic, projected | light | single | none | — | native |
 | inset_map | inset.map | overview, location, hierarchy | overview | zero_or_one | top-right | — | native |

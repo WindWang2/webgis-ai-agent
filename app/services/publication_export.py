@@ -375,7 +375,7 @@ def compile_publication_page(
         rendered_component_types=[str(t) for t in (comp.rendered_component_types or [])],
         omitted_components=[dict(o) for o in (comp.omitted_components or [])
                             if isinstance(o, dict)],
-        flow_verification=comp.flow_verification,
+        flow_verification=getattr(comp, "flow_verification", None),
         raster_placements=[dict(p) for p in _page_placements],
         print_layout_receipt=dict(getattr(comp, "print_layout_receipt", None) or {}),
     )
