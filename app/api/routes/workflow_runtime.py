@@ -135,11 +135,14 @@ async def register_package(
     owner = _owner(user)
     _check_profile(body.profile)
     await _authorize_project_write(body.project_id, user)
+    # #2204：参数表达式在调用线程内联求值 —— _org 的 SessionLocal 先经
+    # to_thread 解析，再传给工作线程闭包。
+    org_id = await asyncio.to_thread(_org, user)
     try:
         result = await asyncio.to_thread(
             svc.compile_and_register, body.query, owner_scope=owner,
             recipe_id=body.recipe_id, profile=body.profile,
-            project_id=body.project_id, org_id=_org(user))
+            project_id=body.project_id, org_id=org_id)
     except SV.WorkflowRuntimeError as e:
         raise _http(e.code, 422, e.detail)
     except (ValueError, RecursionError) as e:
@@ -210,10 +213,11 @@ async def create_instance(
         except Exception:  # noqa: BLE001
             raise
         try:
+            org_id = org_eff or await asyncio.to_thread(_org, user)
             inst = await asyncio.to_thread(
                 svc.instantiate, body.package_id, owner_scope=owner,
                 session_id=body.session_id, version=body.version,
-                project_id=body.project_id, org_id=org_eff or _org(user))
+                project_id=body.project_id, org_id=org_id)
         except SV.WorkflowRuntimeError as e:
             status = 404 if e.code == "PACKAGE_NOT_FOUND" else 422
             raise _http(e.code, status, e.detail)

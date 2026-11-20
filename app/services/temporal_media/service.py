@@ -6,6 +6,7 @@ LLM 上下文。``queued/pending/tool-returned`` 不等于完成；只有状态�
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import Any, Dict, Optional
 
@@ -80,7 +81,9 @@ def _bounded_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
 
 async def capabilities(args: CapabilitiesArgs, principal: str) -> Dict[str, Any]:
     """能力查询：实际 encoder/版本/限制/依赖缺失；绑定状态如实披露。"""
-    caps = probe_capabilities()
+    # issue #2204：probe 内含 shutil.which + ffmpeg/rsvg subprocess.run，
+    # 同步阻塞调用卸载到工作线程，事件循环零占用。
+    caps = await asyncio.to_thread(probe_capabilities)
     binding: Dict[str, Any] = {"available": False}
     try:
         frozen = await freeze_document(args.session_id, args.expected_revision)
@@ -106,7 +109,7 @@ async def capabilities(args: CapabilitiesArgs, principal: str) -> Dict[str, Any]
 async def preview(args: MediaPlanArgs, principal: str) -> Dict[str, Any]:
     """预览 = 计划本身（与提交采用同一份构建函数 + 同一 hash）。"""
     frozen = await freeze_document(args.session_id, args.expected_revision)
-    caps = probe_capabilities()
+    caps = await asyncio.to_thread(probe_capabilities)
     plan = build_plan(frozen, args, principal, caps)
     plan_ref = save_preview(principal, plan)
     # 勾选面板必须始终看到**全部**真实观测；plan.observations 是本次选中的
@@ -150,7 +153,7 @@ async def submit(args: SubmitArgs, principal: str) -> Dict[str, Any]:
             "submit requires plan_ref (from preview) or the full plan_hash",
             status_code=409)
     frozen = await freeze_document(args.session_id, args.expected_revision)
-    caps = probe_capabilities()
+    caps = await asyncio.to_thread(probe_capabilities)
     plan = build_plan(frozen, args, principal, caps)
     assert_plan_hash(plan, expected_hash)
 

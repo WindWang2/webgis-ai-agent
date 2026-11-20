@@ -359,12 +359,19 @@ async def cancel_run(
                 "cancelled": False,
                 "message": "运行不在可取消状态（终态不可取消）"}
 
+    import asyncio
+
     from app.core.database import SessionLocal
     from app.services.jobs.store import DurableJobStore
 
-    with SessionLocal() as sdb:
-        requested, _status = DurableJobStore.request_cancel_sync(sdb, job_id)
-        sdb.commit()
+    def _request_cancel() -> bool:
+        with SessionLocal() as sdb:
+            requested, _status = DurableJobStore.request_cancel_sync(sdb, job_id)
+            sdb.commit()
+            return bool(requested)
+
+    # #2204：同步 SessionLocal 事务卸载到工作线程（返回值经 to_thread 带回）。
+    requested = await asyncio.to_thread(_request_cancel)
     # review P2-11：与任务中心同款 —— DB 取消事实 + 进程内取消令牌双发，
     # 在飞执行体立即在步间检查点收敛（不等看门狗轮询）。
     if requested:
@@ -384,9 +391,15 @@ async def list_presets_ep(
     project_id: str = Query("", max_length=255),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+    import asyncio
+
     from app.services.gis_harness.skill_jobs.presets import list_presets
 
-    return {"presets": list_presets(org_id=_org_of(user), creator_id=actor_ids(user)[0] or "", project_id=project_id)}
+    # #2204：预设面是同步 SessionLocal 存储，卸载到工作线程。
+    presets = await asyncio.to_thread(
+        list_presets, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or "", project_id=project_id)
+    return {"presets": presets}
 
 
 @router.post("/presets")
@@ -394,10 +407,13 @@ async def create_preset_ep(
     req: PresetRequest,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+    import asyncio
+
     from app.services.gis_harness.skill_jobs.presets import PresetPayload, save_preset
 
     try:
-        return save_preset(
+        return await asyncio.to_thread(
+            save_preset,
             PresetPayload(
                 name=req.name, description=req.description,
                 skill_id=req.skill_id, skill_version=req.skill_version,
@@ -414,9 +430,13 @@ async def get_preset_ep(
     preset_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+    import asyncio
+
     from app.services.gis_harness.skill_jobs.presets import get_preset
 
-    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or "")
+    preset = await asyncio.to_thread(
+        get_preset, preset_id, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or "")
     if preset is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     return preset
@@ -428,10 +448,13 @@ async def update_preset_ep(
     req: PresetRequest,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+    import asyncio
+
     from app.services.gis_harness.skill_jobs.presets import PresetPayload, save_preset
 
     try:
-        return save_preset(
+        return await asyncio.to_thread(
+            save_preset,
             PresetPayload(
                 name=req.name, description=req.description,
                 skill_id=req.skill_id, skill_version=req.skill_version,
@@ -450,9 +473,13 @@ async def delete_preset_ep(
     preset_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+    import asyncio
+
     from app.services.gis_harness.skill_jobs.presets import delete_preset
 
-    if not delete_preset(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or ""):
+    if not await asyncio.to_thread(
+        delete_preset, preset_id, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or ""):
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     return {"deleted": True}
 
@@ -475,11 +502,19 @@ async def preset_prepare_ep(
     from app.services.gis_harness.skill_jobs.prepare import prepare_skill_job
     from app.services.gis_harness.skill_jobs.store import prepared_store
 
+    import asyncio
+
     # review P1-4：重用路径读原始行 —— 有界视图会截断 >64 字符参数。
-    preset_raw = get_preset_raw(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or "")
+    # #2204：预设读是同步 SessionLocal，串行卸载到工作线程（保持先 raw 后
+    # 视图的调用顺序与 404 语义）。
+    preset_raw = await asyncio.to_thread(
+        get_preset_raw, preset_id, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or "")
     if preset_raw is None:
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
-    preset = get_preset(preset_id, org_id=_org_of(user), creator_id=actor_ids(user)[0] or "")
+    preset = await asyncio.to_thread(
+        get_preset, preset_id, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or "")
     if preset is None:  # raw 与视图两次读之间被并发删除（R2 nit-2）
         raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
     params = dict(preset_raw.get("params") or {})
