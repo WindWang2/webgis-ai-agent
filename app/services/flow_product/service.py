@@ -101,8 +101,15 @@ async def inspect_flow_source(session_id: str, config: FlowProductConfig) -> Dic
     for row in rows[:20]:
         for key, value in row.items():
             fields.setdefault(key, type(value).__name__)
+    def _sample_value(value: object) -> object:
+        # 有界样例：长字符串截断，避免把超大字段值整块注入 agent 上下文
+        # （键数与行数已各自有界；值是用户自身租户数据，仍设长度帽）。
+        if isinstance(value, str) and len(value) > 200:
+            return value[:200] + "…"
+        return value
+
     sample = [
-        {str(k)[:64]: v for k, v in list(row.items())[:24]}
+        {str(k)[:64]: _sample_value(v) for k, v in list(row.items())[:24]}
         for row in rows[:8]
     ]
     return {

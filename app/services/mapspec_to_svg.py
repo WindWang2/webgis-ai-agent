@@ -2955,6 +2955,8 @@ def compile_mapspec_to_svg_detailed(
 
         if bounds_truncated and not any(item.get("code") == "features_truncated" for item in diagnostics):
             _emit_diag("features_truncated", detail=str(cap))
+        # G34：地理图形裁剪到纸面地图槽（contain 留白 / crop 明确裁切，
+        # 绝不越出纸面组件区域；clip 不改变 project 的等比语义）。
         _g34_defs = ""
         _g34_clip_attr = ""
         if _g34_draw is not None:
@@ -2967,6 +2969,7 @@ def compile_mapspec_to_svg_detailed(
                 f'height="{_fmt_num(float(_clip["height"]))}" /></clipPath></defs>'
             )
             _g34_clip_attr = f' clip-path="url(#{_clip_id})"'
+        # G40：符号资产 defs（插入序确定；同 digest+params 已去重）。
         _symasset_defs_str = ""
         if _symasset_defs:
             _symasset_defs_str = (

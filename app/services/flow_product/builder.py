@@ -490,14 +490,18 @@ def build_flow_product(
             "net": net, "net_status": status, "gross": gross,
         }
 
-    net_unknown_total = sum(
-        1 for (lo, hi, _dims), link in links.items()
-        if link_stats(lo, hi, link)["net"] is None
-    )
-    net_available = any(
-        link_stats(lo, hi, link)["net"] is not None
-        for (lo, hi, _dims), link in links.items()
-    ) or bool(self_loops)
+    # link_stats 每链接只算一次：unknown 计数、可用性判定与主循环共用，
+    # 避免重复遍历（review P2：原实现对同一 link 统计三遍）。
+    # 自环计入可用性：自环净流恒零 → 不产边但节点仍在（既有契约，
+    # 由 test_self_loop_gross_once_nodes_in_out_once 锁定）。
+    net_unknown_total = 0
+    net_available = bool(self_loops)
+    for (lo, hi, _dims), link in links.items():
+        st = link_stats(lo, hi, link)
+        if st["net"] is None:
+            net_unknown_total += 1
+        else:
+            net_available = True
     if mode == "net" and not net_available:
         raise FlowProductError(
             "净流无法计算：所有反向关系都未观测；missing_reverse=unknown 时"
