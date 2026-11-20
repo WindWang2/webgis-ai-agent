@@ -101,11 +101,16 @@ async def test_stale_verified_turn_cannot_borrow_successor_identity(monkeypatch)
     monkeypatch.setitem(bridge._active_turns, "same-session", SimpleNamespace(
         turn_id="successor", caller=SimpleNamespace(user_id="successor-user"),
     ))
-    with pytest.raises(bridge.PiRpcError, match="active turn"):
-        await bridge.dispatch_tool(bridge.PiToolRequest(
-            toolCallId="stale", name="irrelevant", sessionId="same-session",
-            verifiedTurnId="old-turn", arguments={"owner_id": "successor-user"},
-        ))
+    # #993/audit4 迟到回调契约：verified turn 已非本地活跃 turn → 不抛错，
+    # 回落 legacy 无上下文路径（trusted_entry=None —— 绝不绑定/借用后继 turn
+    # 身份），下游 tracker/evidence 守卫丢弃迟到记录并 warning。本不变式：
+    # 调用不传播异常、后继 turn 表项不被改动、身份不被借用。
+    resp = await bridge.dispatch_tool(bridge.PiToolRequest(
+        toolCallId="stale", name="irrelevant", sessionId="same-session",
+        verifiedTurnId="old-turn", arguments={"owner_id": "successor-user"},
+    ))
+    assert resp is not None
+    assert bridge.get_active_turn_entry("same-session").turn_id == "successor"
 
 
 @pytest.mark.asyncio

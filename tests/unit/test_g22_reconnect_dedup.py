@@ -71,7 +71,7 @@ async def test_a20_late_callback_after_handoff_rejected_409(monkeypatch):
 
     from app.agent_pi_bridge import PiToolResponse
 
-    async def _fake_dispatch(request):
+    async def _fake_dispatch(request, **_kwargs):
         executed.append(request.name)
         return PiToolResponse(
             toolCallId=request.toolCallId, isError=False,

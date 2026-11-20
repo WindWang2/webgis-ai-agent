@@ -67,7 +67,7 @@ async def test_pi_route_uses_signed_session_and_ignores_caller_session_id():
     assert actual is response
     assert request.sessionId == "owned-session"
     assert request.verifiedTurnId == "turn-1"
-    dispatcher.assert_awaited_once_with(request)
+    dispatcher.assert_awaited_once_with(request, _strict_turn_scope=True)
 
 
 @pytest.mark.asyncio
