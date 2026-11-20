@@ -25,6 +25,12 @@ from fastapi.responses import Response
 
 from app.api.routes.layer import _extract_fc, _layer_data_budget
 from app.models.db_model import Conversation
+from app.schemas.selection_handles_schema import (
+    SelectionFeaturesPageResponse,
+    SelectionHandleResponse,
+    SelectionMaterializeResponse,
+    SelectionReleaseResponse,
+)
 from app.services.auth_history_bridge import require_owned_session
 from app.services.selection_handles import (
     SELECTION_TTL_SECONDS,
@@ -81,7 +87,7 @@ async def _current_revision(session_id: str, ref_id: str) -> Optional[int]:
     return int(rev) if isinstance(rev, (int, float)) else None
 
 
-@router.post("/layers/data/{ref_id}/selection", tags=["图层数据"])
+@router.post("/layers/data/{ref_id}/selection", tags=["图层数据"], response_model=SelectionHandleResponse)
 async def create_selection_handle(
     ref_id: str,
     scope: Dict[str, Any],
@@ -157,7 +163,7 @@ async def _validated_handle(
     return entry, fc
 
 
-@router.get("/layers/data/{ref_id}/selection/{handle}", tags=["图层数据"])
+@router.get("/layers/data/{ref_id}/selection/{handle}", tags=["图层数据"], response_model=SelectionHandleResponse)
 async def get_selection_handle(
     ref_id: str,
     handle: str,
@@ -184,7 +190,7 @@ async def get_selection_handle(
     )
 
 
-@router.get("/layers/data/{ref_id}/selection/{handle}/features", tags=["图层数据"])
+@router.get("/layers/data/{ref_id}/selection/{handle}/features", tags=["图层数据"], response_model=SelectionFeaturesPageResponse)
 async def get_selection_features_page(
     ref_id: str,
     handle: str,
@@ -239,7 +245,7 @@ async def get_selection_features_page(
     )
 
 
-@router.post("/layers/data/{ref_id}/selection/{handle}/materialize", tags=["图层数据"])
+@router.post("/layers/data/{ref_id}/selection/{handle}/materialize", tags=["图层数据"], response_model=SelectionMaterializeResponse)
 async def materialize_selection_handle(
     ref_id: str,
     handle: str,
@@ -267,7 +273,7 @@ async def materialize_selection_handle(
     )
 
 
-@router.delete("/layers/data/{ref_id}/selection/{handle}", tags=["图层数据"])
+@router.delete("/layers/data/{ref_id}/selection/{handle}", tags=["图层数据"], response_model=SelectionReleaseResponse)
 async def release_selection_handle(
     ref_id: str,
     handle: str,

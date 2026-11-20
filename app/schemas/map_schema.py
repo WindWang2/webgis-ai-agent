@@ -284,3 +284,30 @@ class GeoJSONExportResponse(BaseModel):
     url: str
     format: str
     message: str
+
+
+class MixedMapExportResponse(BaseModel):
+    """POST /export/mixed 返回（G26：矢量+数值栅格统一编译交付回执）。
+
+    逐字段镜像 ``export_map_as_mixed`` 的运行时形状；manifest 派生子文档
+    （raster_layers/renderer/diagnostics）以 Dict/List 透传。extra="allow"：
+    未知字段原样透传，保证挂模前后响应体逐字节一致。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    success: bool
+    filename: str
+    url: str
+    manifest_url: str
+    format: str
+    media_type: str
+    bytes: int
+    mapspec_revision: Optional[int] = None
+    partial: bool = False
+    omitted_layers: List[Any] = Field(default_factory=list)
+    raster_layers: List[Dict[str, Any]] = Field(default_factory=list)
+    renderer: Dict[str, Any] = Field(default_factory=dict)
+    checksum: Optional[str] = None
+    render_diagnostics: List[Any] = Field(default_factory=list)
+    message: str
