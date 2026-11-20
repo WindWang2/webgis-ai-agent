@@ -63,6 +63,10 @@ def register_scene_tools(registry: ToolRegistry):
           deterministic=True,
           latency_class="fast",
           memory_class="light",
+          # 不设 result_size_policy：suggested_scene 原样透传调用方
+          # terrain_source 等输入（无界源），诚实留白 unknown
+          #（test_local_tool_metadata::test_scene_plan_does_not_claim_small_
+          # output_for_unbounded_source 钉死此契约）。
           scale_class="small",
           tags=("scene", "3d", "地形", "挤出", "规划", "场景"),
           output_semantic_type="plan",
@@ -159,6 +163,7 @@ def register_scene_tools(registry: ToolRegistry):
           deterministic=True,
           latency_class="fast",
           memory_class="light",
+          result_size_policy="bounded",
           scale_class="small",
           tags=("scene", "3d", "地形", "场景", "切换"),
           output_semantic_type="map_product",
@@ -223,6 +228,7 @@ def register_scene_tools(registry: ToolRegistry):
           deterministic=True,
           latency_class="fast",
           memory_class="light",
+          result_size_policy="bounded",
           scale_class="small",
           tags=("scene", "3d", "scene-assets", "3dtiles", "gltf", "资产"),
           output_semantic_type="map_product",

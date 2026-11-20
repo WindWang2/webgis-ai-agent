@@ -8,8 +8,9 @@
 - **常见密码表**：内置 top-N 常见口令（小写匹配；无新依赖 —— 不引
   zxcvbn 这类重依赖，词表随 ADR 演进）；
 - **渐进延迟**：登录失败按每标识符指数递增的人为延迟（0.5s→8s 封顶，
-  进程内 best-effort）；跨进程的硬上界仍由既有限流器承担（5/5min/IP
-  + 30/5min/标识符）——两层各管一个爆炸半径，不重复造轮子。
+  进程内 best-effort，超 4096 个活跃标识符时淘汰最旧条目）；跨进程的
+  硬上界由登录路由按 IP 承担（5 次失败/5min/IP + 30 次尝试/5min/IP）。
+  标识符不进硬限流键：同一 NAT 下用受害者用户名刷失败会把对方锁死。
 """
 from __future__ import annotations
 
@@ -90,6 +91,14 @@ def _evict_expired_failures(now: float) -> None:
     ]
     for k in stale:
         _failures.pop(k, None)
+    # 全是 15 分钟内的活跃标识符时，过期清扫删不掉任何条目。硬帽按
+    # 最近访问淘汰，避免撞库用互异用户名把进程内存撑无界。
+    overflow = len(_failures) - _FAILURES_EVICT_THRESHOLD
+    if overflow <= 0:
+        return
+    oldest = sorted(_failures.items(), key=lambda item: item[1][1])
+    for key, _entry in oldest[:overflow]:
+        _failures.pop(key, None)
 
 
 def record_login_failure(identifier: str) -> float:

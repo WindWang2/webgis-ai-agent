@@ -1,5 +1,7 @@
 "use client"
 import { useT } from '@/lib/i18n/useT';
+// G20：像元检视的地图点击广播（局部接线，不改既有交互）
+import { publishMapClick } from '@/lib/raster-authoring/map-click';
 import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from "react"
 import { AlertTriangle, RefreshCw } from "lucide-react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
@@ -10,6 +12,7 @@ import type { StyleSpecification } from "maplibre-gl"
 // #1597 — set the maplibre-gl worker URL before any Map is created.
 import "@/lib/maplibre-worker"
 import type { Layer } from "@/lib/types/layer"
+import { GOAL_REPAIR_REOBSERVE_EVENT } from "@/lib/types/goal-repair"
 
 /**
  * #689 图例-过滤对账的纯判定：图例 onFilterChange 载荷 → activeFilters 状态。
@@ -107,8 +110,11 @@ export function sceneAssetsIdentity(committed: unknown): string {
   return `${mode}#${digest}`
 }
 import { MapActionHandler } from "./map-action-handler"
+import { makeMapCapture, registerMapCapture } from "@/lib/visual-context/map-capture"
 import { SceneController } from "./scene-controller"
 import { SketchEditor } from "./sketch-editor"
+import { LabelEditor } from "./label-editor"
+import { FeatureLayerEditor } from "./feature-layer-editor"
 import { SpatialSketchTool } from "@/components/copilot/spatial-sketch-tool"
 import { WidgetHost } from "@/components/copilot/generative-widgets/widget-host"
 import { LegendStack } from "./legend-stack"
@@ -159,6 +165,8 @@ import {
 } from "@/lib/interaction/bus"
 import type { Scene3dPickHit } from "@/lib/map-kit/scene3d"
 import { ComparisonView } from "@/components/map/comparison"
+import { FrameProductGrid } from "@/components/map/frames/frame-grid"
+import { mapInstanceRegistry } from "@/components/map/frames/frame-instance-registry"
 import { TemporalTimeController } from "@/components/map/temporal-time-controller"
 import { applyTemporalToSpec } from "@/lib/temporal-map/filter"
 import type { MapSpecTemporalConfig } from "@/lib/mapspec-compiler/types"
@@ -173,18 +181,29 @@ import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
 import { nextViewportSeq, viewportSeqTracker } from "@/lib/utils/viewport-seq"
-import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
+import { buildTileTransformRequest, recoverFirstPartyTileAuth } from "@/lib/map-kit/tile-auth"
 import {
   getSelection,
   getSelectionEpoch,
   getSelectionFilterExpression,
   getSelectionIdFilterExpression,
   publishSelection,
+  registerSelectionHandleReleaser,
   subscribeSelection,
   getSelectionGeneration,
 } from "@/lib/selection/selection-store"
 import { flowNodeSelectionPayload, getFlowSelectionFilters } from "@/lib/selection/flow-selection"
 import { committedLayerBbox, flowFamilyLayerIds } from "@/lib/flow/flow-product"
+// G46：联合探索活动过滤（作者条件，与 selection 分立的投影通道）
+import {
+  getExploration,
+  getExplorationFilterExpression,
+  getExplorationGeneration,
+  subscribeExploration,
+} from "@/lib/linked-exploration/condition-store"
+import { releaseSelectionHandle } from "@/lib/api/selection-handles"
+import { augmentBrushSelectionWithHandle } from "@/lib/selection/brush-handle"
+import { getSessionIdentity } from "@/lib/store/session-identity"
 import { publishViewportContext } from "@/lib/selection/viewport-context"
 import {
   normalizeScreenRect,
@@ -323,19 +342,35 @@ export function MapPanel({
   // id 空间桥接：chart 绑定的是 spec 层 id，HUD 路径按行 id 过滤 ——
   // 两个键都发（_mapspecLayerId 别名解析），别名缺席时如实只发原生键。
   const selectionGeneration = useSyncExternalStore(subscribeSelection, getSelectionGeneration)
+  // G46：联合探索条件世代（活动过滤投影的变更信号）
+  const explorationGeneration = useSyncExternalStore(subscribeExploration, getExplorationGeneration)
   const selectionFilters = useMemo(() => {
     const selection = getSelection()
-    if (!selection) return EMPTY_SELECTION_FILTERS
+    // G46：联合探索活动过滤（作者条件，与 hover/焦点/选中分立）——
+    // 组合 where 的 MapLibre 精确表达式（typed identity），AND 进同层
+    // 投影面（一次 setFilter 快路径；不写 MapSpec、不重拉 source）。
+    const exploration = getExploration()
+    const explorationExpression = exploration
+      ? getExplorationFilterExpression(exploration.layerId)
+      : null
+    const out: Record<string, unknown[]> = {}
+    if (explorationExpression && exploration) {
+      const keys = new Set<string>([exploration.layerId])
+      for (const row of useHudStore.getState().layers) {
+        if (row._mapspecLayerId === exploration.layerId) keys.add(row.id)
+      }
+      for (const key of keys) out[key] = explorationExpression
+    }
+    // G21：OD flow 焦点过滤（共享 SelectionContext 的 flow 局部适配）——
+    // 与探索过滤同层叠加，键含 HUD 镜像行 id。
     const flowFilters = getFlowSelectionFilters(selection)
     if (flowFilters) {
-      const out: Record<string, unknown[]> = {}
       for (const [layerId, expression] of Object.entries(flowFilters)) {
         out[layerId] = expression
         for (const row of useHudStore.getState().layers) {
           if (row._mapspecLayerId === layerId) out[row.id] = expression
         }
       }
-      return out
     }
     // 两条投影通道（ADR-0091）：
     // - chart 类别选择 → filter_field/类别表达式（既有 D3 路径）；
@@ -344,16 +379,20 @@ export function MapPanel({
     const expression = selection.source === 'chart'
       ? getSelectionFilterExpression(selection.layer_id)
       : getSelectionIdFilterExpression(selection.layer_id)
-    if (!expression) return EMPTY_SELECTION_FILTERS
-    const keys = new Set<string>([selection.layer_id])
-    for (const row of useHudStore.getState().layers) {
-      if (row._mapspecLayerId === selection.layer_id) keys.add(row.id)
+    if (expression) {
+      const keys = new Set<string>([selection.layer_id])
+      for (const row of useHudStore.getState().layers) {
+        if (row._mapspecLayerId === selection.layer_id) keys.add(row.id)
+      }
+      for (const key of keys) {
+        // 作者条件与 transient 选择 AND 组合（E17：点击不替换作者条件）
+        const existing = out[key]
+        out[key] = existing ? ['all', existing, expression] : expression
+      }
     }
-    const out: Record<string, unknown[]> = {}
-    for (const key of keys) out[key] = expression
-    return out
+    return Object.keys(out).length ? out : EMPTY_SELECTION_FILTERS
     // eslint-disable-next-line react-hooks/exhaustive-deps -- generation is the change signal
-  }, [selectionGeneration])
+  }, [selectionGeneration, explorationGeneration])
 
   // Runtime V4（§11）：矩形框选模式 —— 拖拽画矩形，queryRenderedFeatures
   // 命中投影为有界选择载荷（ids ≤50 超限走 bbox 谓词 + 计数披露）。
@@ -364,6 +403,17 @@ export function MapPanel({
   const brushRectRef = useRef<HTMLDivElement | null>(null)
   const brushStartRef = useRef<{ x: number; y: number } | null>(null)
 
+  /* G24/P3：注册选择句柄释放器 —— 清空/替换/会话切换时 fire-and-forget
+   * DELETE（失败静默：服务端 TTL/revision 失效兜底，不阻塞 UI）。 */
+  useEffect(() => {
+    registerSelectionHandleReleaser((handle, refId) => {
+      const { sessionId, ownerToken } = getSessionIdentity()
+      if (!sessionId || !refId) return
+      void releaseSelectionHandle({ sessionId, refId, handle, ownerToken })
+    })
+    return () => { registerSelectionHandleReleaser(null) }
+  }, [])
+
   const [webglError, setWebglError] = useState<string | null>(null)
   const [mapKey, setMapKey] = useState(0)
 
@@ -372,6 +422,18 @@ export function MapPanel({
     const msg = errorObj?.message || (typeof errorObj === 'string' ? errorObj : '')
     const status = errorObj?.status
     const type = errorObj?.type || e?.type
+
+    if (status === 401) {
+      recoverFirstPartyTileAuth(status, () => {
+        const map = mapRef.current?.getMap?.()
+        if (!map?.getStyle) return
+        const sources = map.getStyle()?.sources ?? {}
+        for (const id of Object.keys(sources)) {
+          const src = map.getSource?.(id) as { reload?: () => void } | undefined
+          try { src?.reload?.() } catch { /* source already removed */ }
+        }
+      })
+    }
 
     // Non-fatal network / tile / sprite / glyph errors should NOT trigger full WebGL fallback UI
     const isTileOrNetwork =
@@ -413,6 +475,17 @@ export function MapPanel({
   }, [])
 
   const mapRef = useRef<MapRef>(null)
+  // G25：主图活实例登记句柄（onLoad 注册 / mapKey 重建与卸载时释放 ——
+  // 画幅网格预算仲裁把主图计入总数，A09）。
+  const mainInstanceHandleRef = useRef<{ release: () => void } | null>(null)
+  useEffect(() => {
+    return () => {
+      mainInstanceHandleRef.current?.release()
+      mainInstanceHandleRef.current = null
+      // G36：卸载时释放聊天附图采集登记（迟到的采集不得命中已销毁实例）。
+      registerMapCapture(null)
+    }
+  }, [])
   const processLayers = useHudStore((s: HudState) => s.processLayers)
   const cartographyTitle = useHudStore((s: HudState) => s.cartographyTitle)
   const focusLayerId = useHudStore((s: HudState) => s.focusLayerId)
@@ -642,6 +715,14 @@ export function MapPanel({
   const interactiveIdsRef = useRef<string[]>([])
   const handleRuntimeStyleRecovery = useCallback(() => {
     setRuntimeRecoveryGeneration((generation) => generation + 1)
+  }, [])
+  // G42（有界目标补全）：补全面请求受控重观察 —— bump recovery generation
+  // 触发既有 reconcile 效应（→ 观察采集 POST 同修订新序号）。加性监听，
+  // 零新全局状态；事件名单一来源 lib/types/goal-repair。
+  useEffect(() => {
+    const handler = () => setRuntimeRecoveryGeneration((generation) => generation + 1)
+    window.addEventListener(GOAL_REPAIR_REOBSERVE_EVENT, handler)
+    return () => window.removeEventListener(GOAL_REPAIR_REOBSERVE_EVENT, handler)
   }, [])
   // 审计 F32：缓存上次计算的 IDs joined 字符串，相同则跳过 setInteractiveIds
   // -> 防止频繁 recompute 时产生 re-render 风暴。
@@ -1189,11 +1270,18 @@ export function MapPanel({
     const map = mapRef.current?.getMap()
     if (!map) return
 
+    // G20：像元检视订阅（只广播坐标，不改变下面的选择/测距/草图语义）。
+    if (Number.isFinite(evt?.lngLat?.lng) && Number.isFinite(evt?.lngLat?.lat)) {
+      publishMapClick([evt.lngLat.lng, evt.lngLat.lat])
+    }
+
     // V7：草图工具激活时点选语义归 SketchEditor（它通过 map.on('click')
     // 自行接管），这里不得再触发 POI/要素选择。
     const sketchTool = useHudStore.getState().activeMapTool
     if (sketchTool === 'draw_point' || sketchTool === 'draw_line' || sketchTool === 'draw_polygon'
-      || sketchTool === 'delete_feature' || sketchTool === 'edit_vertices') {
+      || sketchTool === 'delete_feature' || sketchTool === 'edit_vertices'
+      || sketchTool === 'edit_labels' || sketchTool === 'georef_pick_map') {
+      // G16：标注编辑模式点选语义归 LabelEditor；G48：控制点拾取仅广播坐标。
       return
     }
 
@@ -1576,6 +1664,45 @@ export function MapPanel({
             : t('map.brush.matched', { count: projection.matched_count }),
         )
       }
+      /* G24/P3：截断框选 → 服务端权威句柄（A11/A12 —— 渲染命中不是全集；
+       * handle 承载 scope+revision+权威计数；补发 IR selection_handle 给
+       * Agent）。迟到守卫/补发布/IR 补发在 brush-handle 模块（可测）。 */
+      const familyLayer = brushRef
+        ? (useHudStore.getState().layers as Array<{
+            id: string; _refId?: string; _descriptor?: { content_revision?: number } | unknown;
+          }>).find((l) => l.id === family)
+        : undefined
+      const familyRevRaw = familyLayer?._descriptor as { content_revision?: number } | undefined
+      const familyRev = typeof familyRevRaw?.content_revision === 'number' ? familyRevRaw.content_revision : null
+      if (projection.truncated && brushRef && bbox && familyRev != null) {
+        const publishedRev = getSelection()?.revision ?? 0
+        const epochAtPublish = getSelectionEpoch()
+        void augmentBrushSelectionWithHandle({
+          sessionId: getSessionIdentity().sessionId ?? '',
+          refId: brushRef,
+          layerId: family,
+          bbox,
+          revision: familyRev,
+          selectedIds: projection.selected_ids,
+          idField: projection.id_field,
+          matchedCountRendered: projection.matched_count,
+          publishedRevision: publishedRev,
+          epochAtPublish,
+        }).then((outcome) => {
+          if (outcome.status === 'failed') {
+            // 建柄失败：保留有界谓词选择 + 诚实反馈（不伪造全集）
+            setBrushFeedback(t('map.brush.authoritativeFailed'))
+            return
+          }
+          if (outcome.status === 'discarded') return // 迟到：已被新交互取代，静默
+          if (outcome.countExact && typeof outcome.count === 'number') {
+            setBrushFeedback(t('map.brush.matchedAuthoritative', { count: outcome.count }))
+          }
+        }).catch(() => {
+          // 模块自身异常兜底（同 failed 语义）
+          setBrushFeedback(t('map.brush.authoritativeFailed'))
+        })
+      }
     }
     canvas.addEventListener('mousedown', onDown)
     window.addEventListener('mousemove', onMove)
@@ -1866,6 +1993,11 @@ export function MapPanel({
           onLoad={() => {
             setMapReady(true);
             useHudStore.getState().setMapLoaded(true);
+            // G25：主图登记活实例预算（A09 —— 画幅网格调度把主图计入总数）。
+            mainInstanceHandleRef.current = mapInstanceRegistry.register("main", "main");
+            // G36（ADR-0291）：登记聊天附图采集函数（活实例；mapKey 重建时
+            // 重新 onLoad → 重注册，卸载时释放）。
+            registerMapCapture(makeMapCapture(mapRef.current?.getMap() ?? null));
           }}
           onError={handleMapError}
           style={{ position: "absolute", inset: 0 }}
@@ -1875,6 +2007,9 @@ export function MapPanel({
         >
         <MapActionHandler />
         <SketchEditor mapRef={mapRef} />
+        <LabelEditor mapRef={mapRef} />
+        {/* G14：真实图层编辑手势面（editTarget 在场时激活；与草图工具互斥）。 */}
+        <FeatureLayerEditor mapRef={mapRef} />
         {/* ADR-0194：画布 copilot 手势覆层 + 生成式微 UI 挂载点（默认无工具/无卡片时不渲染）。 */}
         <SpatialSketchTool mapRef={mapRef} />
         <WidgetHost />
@@ -1979,6 +2114,17 @@ export function MapPanel({
         selectionFilters={selectionFilters}
       />
 
+      {/* G25 多画幅真实交互运行时网格（兄弟覆盖层 —— 与 ComparisonView 同款
+          挂载法；主图零布局改动，主图已计入活实例预算）。 */}
+      <FrameProductGrid
+        primaryMapRef={mapRef}
+        mapStyle={currentMapStyle}
+        transformRequest={transformRequest}
+        sessionId={sessionId}
+        ownerToken={ownerToken}
+        sessionTokenRef={sessionTokenRef}
+      />
+
       {/* Live cartography overlays — driven by layer.legend_spec */}
       {thematicLayers.length > 0 && !hasSpecLegend && (
         /* 栈的纵向预算由 LegendStack 自持：top 钉在地图标题之下，多层时
@@ -1991,6 +2137,8 @@ export function MapPanel({
             legendSpec: l.legend_spec!,
             onFilterChange: legendFilterHandlers[l.id],
             flashing: focusLayerId === l.id,
+            symbolAsset: (l as { symbol_asset?: Record<string, unknown> })
+              .symbol_asset ?? null,
           }))}
         />
       )}

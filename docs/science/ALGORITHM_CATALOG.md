@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：174 能力 · 253 算法 · 129 参数契约。
+统计：174 能力 · 255 算法 · 129 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -1170,6 +1170,9 @@ SAR 地形效应校正：RTC gamma 平坦化（Small 2011，γ_flat=σ⁰·cosθ
 - **`network.isochrone`** 网络等时圈（`native`·成熟度 实验）
   - 假设：外部高德路径规划 API 沿路网采样近似等时圈；mode 速度表：walking 80 / cycling 250 / driving 667 / transit 417 m/min
   - 局限：依赖外部 AMAP_API_KEY 与服务商可用性（结果含 fetched_at 戳）；本地路网等时圈用 network.service_area.multi（network_service_area / isochrone_network）；等时圈形态由服务商语义决定，与本地路网构图结果可不同
+- **`network.service_coverage.consistency`** 多方案路网服务覆盖一致性（`native`·成熟度 已验证，契约: `network_service_coverage_consistency`）
+  - 假设：比较对象 = 各方案 Dijkstra 可达的**覆盖边集**（Jaccard），不是地表覆盖面积比；边集相等 ⇔ consistency=1；边权量纲由 cost_unit 声明：米制 = 平面几何长度；时间制 = 显式 travel_time_s/duration_s/cost_s（要素级按段长占比分摊，多段线不重复计总时间）或 speed_mps 换算；时间模式缺真实时间成本 → typed TIME_COST_NOT_EVALUATED，绝不以几何长度冒充秒（秒 ≠ 米）
+  - 局限：设施点按最近节点欧氏吸附；不可达设施与吸附失败分别计数披露，不把无覆盖悄悄当零差异；不建模转向惩罚/拥堵；需要转向成本应改用 service_area 族并披露；方案两两比较 O(k²)：方案数受 MAX_SCHEMES 上界约束，超限 typed 拒绝
 - **`network.service_area.simple`** 简化服务区（速度表缓冲）（`native`·成熟度 实验）
   - 假设：距离 = 速度表[mode] × travel_time_min 的直线（欧氏）缓冲：walking 5 / cycling 15 / driving 40 km/h；不做路网构图、不解析拓扑 —— 输出是设施点的等距圆，非沿路可达范围
   - 局限：接近性代理（proxy）：速度表×时间的直线（欧氏）缓冲，忽略路网拓扑/单行线/障碍/河流分隔，实际路网可达范围可显著小于缓冲圈；跨水系/高架隔断的区域会严重高估覆盖（用 network.isochrone / network.service_area.multi 做真实路网等时圈）；速度为模式级常数，不含拥堵与路况
@@ -1918,6 +1921,10 @@ Delaunay TIN 三角网插值（linear / clough_tocher），凸包外不外推。
 
 面内栅格 min/max/mean/sum 统计。
 
+- **`raster.zonal.quantile_conditional`** 条件多分位数分区统计（`native`·成熟度 已验证，契约: `conditional_quantile_zonal_stats`）
+  - 假设：分位数 = 经验分位数（numpy.quantile 线性插值）；固定输入 + 固定分位数列表 ⇒ 输出逐位一致；有效样本分母 = zone 内像元 ∩ finite ∩ 非 nodata ∩ where 条件（不是 zone 总像元，也不是分区面积）；where 仅允许受限 value <op> <number>（and 连接），编译为谓词，绝不 eval 任意代码
+  - 局限：栅格与分区 CRS 不一致时不做隐式重采样对齐（上层须先变换；仅改 CRS 标签不等于变换成功）；小样本分区（有效像元 < 30）不提供置信区间，显式标注 not_evaluated；经纬度栅格仍可计算像元值分布，但其面积/长度不可按米解释（geographic_crs_warning 披露）
+  - 资源包络：192B/要素
 - **`remote.zonal_stats`** 分区统计（`native`·成熟度 已验证）
   - 假设：统计量在面掩膜内计算（nan-aware）；栅格与面 CRS 一致由上层保证；rasterstats/zonal 统计实现（all_touched=False 惯例）
   - 局限：面跨界像元按像元中心归属（惯例披露）

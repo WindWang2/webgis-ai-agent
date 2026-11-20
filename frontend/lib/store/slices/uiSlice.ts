@@ -12,13 +12,27 @@ import type { HudState, AiStatus, LeftTab, SettingsTab, ExportItem, SystemMessag
  * FE-3: 操作日志队列上限（队首最新，超限丢最旧）。
  */
 export const MAX_OPS_LOG = 200;
+/** Same bound as the ops log: export receipts and causal entries are recent-activity UI. */
+export const MAX_UI_FEED = 200;
+export const SIDEBAR_MIN_WIDTH = 280;
+/** Floor so existing 280–420 layouts stay valid; wide viewports may go higher. */
+export const SIDEBAR_MAX_WIDTH_FLOOR = 420;
+
+/** Sidebar drag cap. Small viewports keep the historical 420px ceiling. */
+export function sidebarWidthLimit(viewportWidth?: number): { min: number; max: number } {
+  const viewport = viewportWidth ?? (typeof window === 'undefined' ? 1280 : window.innerWidth);
+  const proportional = Math.floor(viewport * 0.4);
+  const room = Math.max(SIDEBAR_MIN_WIDTH, viewport - 320);
+  const max = Math.max(SIDEBAR_MAX_WIDTH_FLOOR, Math.min(proportional, room));
+  return { min: SIDEBAR_MIN_WIDTH, max: Math.max(SIDEBAR_MIN_WIDTH, max) };
+}
 
 /**
  * #999（最小版小屏适配）：ContextPanel 的初始开合由视口宽度决定。
  * 主工作台布局是桌面像素常量（rail 48 + 面板 280–420px），窄视口
  * （平板竖屏/手机，<768px）上展开的左栏会占满视口宽度。仅影响初始态；
  * 用户随后的开合（toggleLeftPanel / setLeftPanelOpen）不受约束。
- * SSR（无 window）保持展开，客户端 store 创建时再收敛。
+ * SSR 与客户端首帧均保持展开，挂载后再应用视口默认值及保存的偏好。
  */
 export const LEFT_PANEL_MIN_VIEWPORT_PX = 768;
 
@@ -29,7 +43,9 @@ export function defaultLeftPanelOpen(): boolean {
 
 export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => ({
   /* ─── HUD Panels (legacy compat) ─── */
-  leftPanelOpen: defaultLeftPanelOpen(),
+  // SSR and the first client snapshot must match. Apply the viewport default
+  // after mount, before persisted user preferences are restored.
+  leftPanelOpen: true,
   rightPanelOpen: true,
   toggleLeftPanel: () => set((s) => ({ leftPanelOpen: !s.leftPanelOpen })),
   toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
@@ -179,8 +195,13 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   sidebarWidth: 330,
   // UI V3 review：280–420 clamp 收敛到 setter（之前只在 context panel 的拖拽
   // 手柄处 clamp，tweaks 滑杆 240–480 可绕过并使 separator 的 aria-min/max 失真）。
-  setSidebarWidth: (width) =>
-    set({ sidebarWidth: Math.min(420, Math.max(280, Math.round(width))) }),
+  setSidebarWidth: (width) => {
+    const { min, max } = sidebarWidthLimit();
+    set({ sidebarWidth: Math.min(max, Math.max(min, Math.round(width))) });
+  },
+  // 宽视图是临时视图态（不持久化）：刷新回到用户自己的 sidebarWidth。
+  panelExpanded: false,
+  setPanelExpanded: (expanded) => set({ panelExpanded: expanded }),
 
   /* ─── v2 Feature Data ─── */
   opsLog: [],
@@ -195,9 +216,15 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   setRagResults: (results) => set({ ragResults: results }),
   exports: [],
   setExports: (items) => set({ exports: items }),
-  addExport: (item: ExportItem) => set((s) => ({ exports: [item, ...s.exports] })),
+  addExport: (item: ExportItem) => set((s) => {
+    const next = [item, ...s.exports];
+    return { exports: next.length > MAX_UI_FEED ? next.slice(0, MAX_UI_FEED) : next };
+  }),
   causalChain: [],
-  pushCausalEntry: (entry) => set((s) => ({ causalChain: [entry, ...s.causalChain] })),
+  pushCausalEntry: (entry) => set((s) => {
+    const next = [entry, ...s.causalChain];
+    return { causalChain: next.length > MAX_UI_FEED ? next.slice(0, MAX_UI_FEED) : next };
+  }),
   clearCausalChain: () => set({ causalChain: [] }),
 
   /* ─── Demo Mode ─── */

@@ -2,11 +2,12 @@
 import asyncio
 import json
 import logging
+import math
 import uuid
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +41,7 @@ from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测�
     ToolsListResponse,
 )
 from app.core.auth import (
+    actor_ids,
     authorize_session_write,
     get_current_user,
     get_current_user_optional,
@@ -275,7 +277,14 @@ def _bounded_selection(raw: Any) -> dict[str, Any] | None:
         for item in (ids_raw if isinstance(ids_raw, list) else [])[:50]
         if isinstance(item, (str, int)) and str(item)
     ]
-    predicate = raw.get("predicate") if isinstance(raw.get("predicate"), dict) else None
+    # review #2145：客户端 predicate 是任意嵌套 JSON —— 与 observation 面
+    # 同门过 _bounded_observation_fragment（剥载荷/密钥、限深限字节），
+    # 不得原样持久化进 Redis map_state（注入通道 + secret 键外泄）。
+    predicate = None
+    if isinstance(raw.get("predicate"), dict):
+        bounded = _bounded_observation_fragment(raw["predicate"])
+        if isinstance(bounded, dict):
+            predicate = bounded
     if not ids and not predicate:
         return None
     matched = raw.get("matched_count")
@@ -428,6 +437,18 @@ async def _build_situation_env_block(
     return _build_environment_turn_context(req_map_state)
 
 
+def _coerce_finite_float(value: Any) -> Optional[float]:
+    """单字段数值强制（review #2145）：不可解析/非有限 → None（丢弃该
+    字段，绝不让一个坏字段吃掉整个环境块 —— 旧的 :.Nf 裸插值会在任何
+    非数值 lng/lat/bearing/accuracy 上 TypeError，被 blanket except 静默
+    吞成空块）。"""
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
+
+
 def _build_environment_turn_context(map_state: Optional[dict]) -> str:
     """Pi 兼容：把前端上报的环境感知渲染成有界 [环境感知] 块。
 
@@ -453,31 +474,47 @@ def _build_environment_turn_context(map_state: Optional[dict]) -> str:
         ]
         viewport = map_state.get("viewport") or {}
         center = viewport.get("center")
-        zoom = viewport.get("zoom")
-        if isinstance(center, (list, tuple)) and len(center) == 2 and zoom is not None:
-            extra = ""
-            if viewport.get("bearing"):
-                extra += f", bearing={viewport.get('bearing'):.0f}°"
-            if viewport.get("pitch"):
-                extra += f", pitch={viewport.get('pitch'):.0f}°"
-            if map_state.get("is_3d"):
-                extra += ", 3D"
-            lines.append(
-                f"- 视口中心(WGS84 经纬度): lng={center[0]:.4f}, lat={center[1]:.4f}, zoom={zoom:.2f}{extra}"
-            )
+        zoom = _coerce_finite_float(viewport.get("zoom"))
+        if (
+            isinstance(center, (list, tuple)) and len(center) == 2
+            and zoom is not None
+        ):
+            center_lng = _coerce_finite_float(center[0])
+            center_lat = _coerce_finite_float(center[1])
+            if center_lng is not None and center_lat is not None:
+                extra = ""
+                bearing = _coerce_finite_float(viewport.get("bearing"))
+                if bearing is not None:
+                    extra += f", bearing={bearing:.0f}°"
+                pitch = _coerce_finite_float(viewport.get("pitch"))
+                if pitch is not None:
+                    extra += f", pitch={pitch:.0f}°"
+                if map_state.get("is_3d"):
+                    extra += ", 3D"
+                lines.append(
+                    f"- 视口中心(WGS84 经纬度): lng={center_lng:.4f}, lat={center_lat:.4f}, zoom={zoom:.2f}{extra}"
+                )
         bounds = viewport.get("bounds")
         if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
-            w, s, e, n = bounds
-            lines.append(f"- 可视范围: W{w:.3f} S{s:.3f} E{e:.3f} N{n:.3f}")
+            coerced = [_coerce_finite_float(v) for v in bounds]
+            if all(v is not None for v in coerced):
+                w, s, e, n = coerced
+                lines.append(f"- 可视范围: W{w:.3f} S{s:.3f} E{e:.3f} N{n:.3f}")
         base_layer = map_state.get("base_layer")
         if isinstance(base_layer, str) and base_layer:
             lines.append(f"- 底图: {_xml_fence(TAG_UNTRUSTED_BASE_LAYER, base_layer)}")
         user_location = map_state.get("user_location")
         if isinstance(user_location, dict):
-            lines.append(
-                f"- 用户位置: {user_location.get('lng', 0):.6f}, {user_location.get('lat', 0):.6f} "
-                f"(±{user_location.get('accuracy', '?')}m)"
-            )
+            # review #2145：逐字段数值强制 —— 非数值字段丢弃（整个位置行
+            # 随之省略），字符串 accuracy 绝不裸插值进系统侧块。
+            loc_lng = _coerce_finite_float(user_location.get("lng"))
+            loc_lat = _coerce_finite_float(user_location.get("lat"))
+            if loc_lng is not None and loc_lat is not None:
+                accuracy = _coerce_finite_float(user_location.get("accuracy"))
+                acc_txt = f"±{accuracy:g}m" if accuracy is not None else "±?m"
+                lines.append(
+                    f"- 用户位置: {loc_lng:.6f}, {loc_lat:.6f} ({acc_txt})"
+                )
         sel_line = format_selected_feature(map_state.get("selected_feature"))
         if sel_line:
             lines.append(f"- 用户当前选中: {sel_line}")
@@ -708,6 +745,56 @@ def _pi_unavailable() -> "HTTPException":
     return HTTPException(status_code=503, detail="Pi agent unavailable")
 
 
+async def _attachment_persist_meta(
+    session_id: str,
+    attachments: Optional[list],
+    *,
+    receipts: Optional[list] = None,
+) -> list[dict]:
+    """G36：附件的持久化元数据（V20 刷新恢复用；ref + 身份摘要）。
+
+    只取本会话证据索引里在场的条目（归属复核）；畸形/外来 ref 诚实跳过
+    （送模回执已另行披露拒绝原因）。元数据有界（无字节）。
+    """
+    if not attachments:
+        return []
+    try:
+        from app.services.visual_context.store import load_evidence_index
+
+        records = {r.evidence_id: r for r in await load_evidence_index(session_id)}
+        out: list[dict] = []
+        for ref in list(attachments)[:4]:
+            evidence_id = str(getattr(ref, "evidence_id", "") or "")
+            rec = records.get(evidence_id)
+            if rec is None:
+                continue
+            receipt = next(
+                (r for r in (receipts or [])
+                 if isinstance(r, dict) and r.get("evidence_id") == rec.evidence_id),
+                None)
+            out.append({
+                "evidence_id": rec.evidence_id,
+                "source_type": rec.source_type,
+                "mime": rec.mime,
+                "derived_sha256": rec.derived_sha256,
+                "width": rec.width,
+                "height": rec.height,
+                "mapspec_revision": rec.mapspec_revision,
+                "viewport_hash": rec.viewport_hash,
+                "label": rec.label,
+                "state": rec.state,
+                # 送模回执（sent/refused + reason）；缺席 = 本 turn 未裁决
+                # （恢复态不冒充 sent）。
+                **({"status": receipt.get("status"),
+                    "reason": str(receipt.get("reason") or "")[:80]}
+                   if receipt else {}),
+            })
+        return out
+    except Exception:  # noqa: BLE001 — 元数据面绝不阻断转录
+        logger.debug("[pi-chat] attachment meta build failed", exc_info=True)
+        return []
+
+
 def _use_pi_bridge() -> bool:
     """Return True when a Pi worker is alive.
 
@@ -751,6 +838,15 @@ async def _ensure_pi_bridge_available(session_id: Optional[str] = None) -> bool:
                 await recycle_fn()
         except Exception:  # noqa: BLE001 — 增值回收绝不阻断 turn 准入
             logger.warning("[chat] surface recycle check failed", exc_info=True)
+        # ADR-0288（W08，#2061 review-P1）：配置代漂移同样在 **每个 turn 边界**
+        # 检查 —— /config/llm 更新时若在飞 turn 而 deferred，下一 turn 必须
+        # 在这里完成换代，否则旧模型/端点/密钥无限期沿用。
+        try:
+            config_recycle_fn = getattr(candidate, "recycle_if_config_stale", None)
+            if config_recycle_fn and callable(config_recycle_fn):
+                await config_recycle_fn()
+        except Exception:  # noqa: BLE001 — 增值回收绝不阻断 turn 准入
+            logger.warning("[chat] config recycle check failed", exc_info=True)
         # review P1-1：回收可能已 stop 但 start 失败（worker 现死）——复检
         # 活性，死了走既有 lazy respawn；仍死则本 turn fail-closed（503）。
         if _bridge_alive(candidate):
@@ -901,6 +997,27 @@ async def _guard_body_project(db: AsyncSession, project_id: Optional[str], user:
         raise HTTPException(status_code=404, detail="Project not found")
 
 
+async def _may_write_project_memory(project_id: Optional[str], user: dict) -> bool:
+    """项目记忆是写。读权限（viewer / legacy 公开行）只能聊天，不能落记忆。"""
+    if not project_id:
+        return False
+    from app.core.auth import actor_ids
+    from app.services.project_service import ProjectService
+
+    user_id, org_id = actor_ids(user)
+    try:
+        async with async_db_session() as db:
+            project = await db.run_sync(
+                lambda session: ProjectService.get_project_for_write(
+                    session, project_id, user_id=user_id, org_id=org_id,
+                )
+            )
+    except Exception:  # noqa: BLE001 — 写门失败则不写，不阻断回合
+        logger.warning("[chat] project write check failed for %s", project_id, exc_info=True)
+        return False
+    return project is not None
+
+
 def _pi_stream_capability(
     conversation,
     created: bool,
@@ -945,6 +1062,22 @@ async def chat_completions(
     # V5-B: mint affinity session ID before availability check so non-streaming
     # turns without session_id distribute evenly across workers in the pool.
     _affinity_sid = req.session_id or str(uuid.uuid4())
+    # G30（R2 nit-1）：非流式 turn 与流式同款 skill_name 语义 —— 解析为显式
+    # 选择或按 turn 清除（否则流式设置的选择会跨非流式 turn 粘滞）。
+    try:
+        from app.services.gis_harness.hotpath_convergence.session_ctx import (
+            set_explicit_skill,
+        )
+        if req.skill_name:
+            from app.services.gis_harness.skill_jobs.selection import (
+                resolve_user_skill_selection,
+            )
+            set_explicit_skill(_affinity_sid,
+                               resolve_user_skill_selection(req.skill_name))
+        else:
+            set_explicit_skill(_affinity_sid, {})
+    except Exception:  # noqa: BLE001 — 选择面绝不阻断对话
+        logger.debug("[chat-completions] skill selection ctx failed", exc_info=True)
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id or _affinity_sid, project_id=req.project_id):
         if await _ensure_pi_bridge_available(_affinity_sid):
             turn_bridge = _pi_turn_bridge(_affinity_sid)
@@ -955,6 +1088,8 @@ async def chat_completions(
             # caller did not present) + one-way digest into map_state for the
             # store-level ref guard.
             pi_owner_token: Optional[str] = None
+            pi_caller_token: Optional[str] = None
+            pi_caller_user_id, _ = actor_ids(_user)
             if db is not None and hasattr(db, "execute"):
                 conversation, created = await AsyncHistoryService(
                     db
@@ -964,6 +1099,11 @@ async def chat_completions(
                 pi_owner_token = _pi_stream_capability(
                     conversation, created, user_id, owner_token
                 )
+                # Only this admission's newly minted capability or an existing
+                # session capability just verified above is tool authority.
+                # Authenticated ownership does not validate arbitrary headers.
+                if conversation.user_id is None:
+                    pi_caller_token = pi_owner_token if created else owner_token
                 _conv_token = getattr(conversation, "owner_token", None)
                 if _conv_token:
                     try:
@@ -1018,8 +1158,13 @@ async def chat_completions(
                     env_block=environment_context,
                     context_org_id=memory_org or "",
                     context_project_id=req.project_id or "",
-                    context_user_id=user_id or "",
+                    context_user_id=pi_caller_user_id or "",
+                    context_owner_token=pi_caller_token,
                     context_query_text=req.message or "",
+                    # G36（ADR-0291）：非流式同款图片解析（不静默丢附件）。
+                    attachments=(
+                        [a.model_dump() for a in req.attachments]
+                        if req.attachments else None),
                 )
                 pi_session_id = result.get("sessionId") or _affinity_sid or ""
                 final_content = result.get("content", "")
@@ -1051,7 +1196,50 @@ async def chat_completions(
                             pi_session_id,
                             user_id=user_id,
                         )
-                        await svc.save_message(pi_session_id, "user", req.message)
+                        # G36（ADR-0291，review P2#6）：非流式同款附件持久化
+                        # （回执来自 prompt() 返回值；绑定只针对实际送出项）。
+                        _attach_meta = await _attachment_persist_meta(
+                            pi_session_id, req.attachments,
+                            receipts=result.get("attachment_receipts") or [])
+                        # G43（ADR-0295）：非流式同款回执摘要持久化。
+                        _ns_receipt_meta = result.get("turn_receipt") or None
+                        _user_msg_id = await svc.save_message(
+                            pi_session_id, "user", req.message,
+                            attachments=_attach_meta or None,
+                            context_receipt=_ns_receipt_meta)
+                        if (
+                            _ns_receipt_meta
+                            and isinstance(_ns_receipt_meta, dict)
+                            and _user_msg_id is not None
+                        ):
+                            try:
+                                from app.services.turn_context_store import (
+                                    link_user_message,
+                                )
+
+                                await link_user_message(
+                                    str(_ns_receipt_meta.get("turn_id") or ""),
+                                    int(_user_msg_id),
+                                )
+                            except Exception:  # noqa: BLE001
+                                logger.debug(
+                                    "[pi-chat-nonstream] receipt link failed sid=%s",
+                                    pi_session_id, exc_info=True)
+                        if _attach_meta and _user_msg_id is not None:
+                            try:
+                                from app.services.visual_context.store import (
+                                    bind_evidence_to_message,
+                                )
+
+                                await bind_evidence_to_message(
+                                    pi_session_id,
+                                    [a["evidence_id"] for a in _attach_meta
+                                     if a.get("status") == "sent"],
+                                    _user_msg_id,
+                                )
+                            except Exception:  # noqa: BLE001 — 绑定失败不阻断
+                                logger.debug("[pi-chat] evidence bind failed sid=%s",
+                                             pi_session_id, exc_info=True)
                         if final_content:
                             await svc.save_message(pi_session_id, "assistant", final_content)
                 except Exception as e:
@@ -1070,43 +1258,50 @@ async def chat_completions(
                 # ADR-0069: harvest project memory AFTER this turn's verdict
                 # exists — memory lags evidence by one step and can never
                 # short-circuit review. Best-effort; never fails the turn.
-                await harvest_project_memory(pi_session_id, req.project_id)
+                # 读权限不写项目记忆（viewer / legacy 公开项目）。
+                _mem_ok = await _may_write_project_memory(req.project_id, _user)
+                if _mem_ok:
+                    await harvest_project_memory(pi_session_id, req.project_id)
                 # 方向 9（ADR-0255）：GIS 空间记忆收割（同位点，绝不抛）。
-                try:
-                    from app.services.gis_memory.harvest import (
-                        harvest_spatial_memory,
-                    )
+                if _mem_ok:
+                    try:
+                        from app.services.gis_memory.harvest import (
+                            harvest_spatial_memory,
+                        )
 
-                    await harvest_spatial_memory(
-                        pi_session_id,
-                        req.project_id,
-                        org_id=memory_org,
-                        user_id=user_id,
-                    )
-                except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
-                    logger.warning("[pi-chat-nonstream] gis memory harvest failed: %s", e)
+                        await harvest_spatial_memory(
+                            pi_session_id,
+                            req.project_id,
+                            org_id=memory_org,
+                            user_id=user_id,
+                        )
+                    except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
+                        logger.warning("[pi-chat-nonstream] gis memory harvest failed: %s", e)
                 # ADR-0190：会话 Settle 整合（显式偏好固化 + 高频记忆晋升
                 # 长效作用域），harvest 之后同纪律执行，绝不阻断 turn。
-                try:
-                    from app.services.gis_memory.memory_consolidator import (
-                        consolidate_after_harvest,
-                    )
+                if _mem_ok:
+                    try:
+                        from app.services.gis_memory.memory_consolidator import (
+                            consolidate_after_harvest,
+                        )
 
-                    await consolidate_after_harvest(
-                        pi_session_id,
-                        req.project_id,
-                        org_id=memory_org,
-                        user_id=user_id,
-                    )
-                except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
-                    logger.warning(
-                        "[pi-chat-nonstream] gis memory consolidation failed: %s",
-                        e,
-                    )
+                        await consolidate_after_harvest(
+                            pi_session_id,
+                            req.project_id,
+                            org_id=memory_org,
+                            user_id=user_id,
+                        )
+                    except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
+                        logger.warning(
+                            "[pi-chat-nonstream] gis memory consolidation failed: %s",
+                            e,
+                        )
                 return ChatResponse(
                     session_id=pi_session_id,
                     content=final_content,
                     owner_token=pi_owner_token,
+                    # G43：非流式同语义回执披露（C34 与流式对齐）
+                    turn_receipt=result.get("turn_receipt") or None,
                 )
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
@@ -1172,6 +1367,8 @@ async def chat_stream(
     )
     pi_session_id = req.session_id
     pi_owner_token: Optional[str] = None
+    pi_caller_token: Optional[str] = None
+    pi_caller_user_id, _ = actor_ids(_user)
     try:
         await _guard_body_session(db, req.session_id, user_id, owner_token)
         await _guard_body_project(db, req.project_id, _user)
@@ -1188,6 +1385,9 @@ async def chat_stream(
                 pi_owner_token = _pi_stream_capability(
                     conversation, created, user_id, owner_token
                 )
+                # Never capture an unchecked header in the deferred generator.
+                if conversation.user_id is None:
+                    pi_caller_token = pi_owner_token if created else owner_token
                 # SEC-08 store-layer guard wiring: persist a ONE-WAY digest of
                 # the conversation's owner token so
                 # session_data_protocol._validate_owner_token can engage for
@@ -1316,7 +1516,57 @@ async def chat_stream(
                 try:
                     async with async_db_session() as db:
                         svc = AsyncHistoryService(db)
-                        await svc.save_message(pi_session_id, "user", req.message)
+                        # G36（ADR-0291）：附件元数据随用户消息持久化（ref +
+                        # 身份摘要 + 真实送模回执 status/reason —— 刷新恢复
+                        # 不把 refused 显示成 sent，review P2#9）；保存后把
+                        # **实际送出**的证据 draft→bound。
+                        _attach_meta = await _attachment_persist_meta(
+                            pi_session_id, req.attachments,
+                            receipts=result.get("attachment_receipts") or [])
+                        # G43（ADR-0295）：本轮上下文回执摘要随用户消息持久化
+                        #（有界 digest/状态/计数；完整回执按 session+turn 查询
+                        # turn-context 端点）。
+                        _turn_receipt_meta = result.get("turn_receipt") or None
+                        _user_msg_id = await svc.save_message(
+                            pi_session_id, "user", req.message,
+                            attachments=_attach_meta or None,
+                            context_receipt=_turn_receipt_meta)
+                        if (
+                            _turn_receipt_meta
+                            and isinstance(_turn_receipt_meta, dict)
+                            and _user_msg_id is not None
+                        ):
+                            try:
+                                from app.services.turn_context_store import (
+                                    link_user_message,
+                                )
+
+                                await link_user_message(
+                                    str(_turn_receipt_meta.get("turn_id") or ""),
+                                    int(_user_msg_id),
+                                )
+                            except Exception:  # noqa: BLE001 — 关联失败不阻断转录
+                                logger.debug(
+                                    "[pi-chat] receipt link failed sid=%s",
+                                    pi_session_id, exc_info=True)
+                        if _attach_meta and _user_msg_id is not None:
+                            try:
+                                from app.services.visual_context.store import (
+                                    bind_evidence_to_message,
+                                )
+
+                                # 只绑定实际送出的附件（refused 留在 draft 态
+                                # —— 由 TTL/上限回收，不占 bound 保留名额）。
+                                await bind_evidence_to_message(
+                                    pi_session_id,
+                                    [a["evidence_id"] for a in _attach_meta
+                                     if a.get("status") == "sent"],
+                                    _user_msg_id,
+                                )
+                            except Exception:  # noqa: BLE001 — 绑定失败不阻断转录
+                                logger.debug(
+                                    "[pi-chat] evidence bind failed sid=%s",
+                                    pi_session_id, exc_info=True)
                 except Exception as e:  # noqa: BLE001 — transcript must not break the stream
                     logger.warning("[pi-chat] user message persistence failed for %s: %s", pi_session_id, e)
                 if not result.get("completed"):
@@ -1343,39 +1593,44 @@ async def chat_stream(
                 # ADR-0069: harvest project memory at turn end, after the
                 # verdict exists. Best-effort like the transcript/title writes
                 # above — memory is additive context, never a turn blocker.
-                await harvest_project_memory(pi_session_id, req.project_id)
+                # 读权限不写项目记忆（viewer / legacy 公开项目）。
+                _mem_ok = await _may_write_project_memory(req.project_id, _user)
+                if _mem_ok:
+                    await harvest_project_memory(pi_session_id, req.project_id)
                 # 方向 9（ADR-0255）：GIS 空间记忆收割（pending 候选排空 +
                 # MapSpec 剖面 + GC），同位点同纪律，绝不抛。
-                try:
-                    from app.services.gis_memory.harvest import (
-                        harvest_spatial_memory,
-                    )
+                if _mem_ok:
+                    try:
+                        from app.services.gis_memory.harvest import (
+                            harvest_spatial_memory,
+                        )
 
-                    await harvest_spatial_memory(
-                        pi_session_id,
-                        req.project_id,
-                        org_id=memory_org,
-                        user_id=user_id,
-                    )
-                except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
-                    logger.warning("[pi-chat] gis memory harvest failed: %s", e)
+                        await harvest_spatial_memory(
+                            pi_session_id,
+                            req.project_id,
+                            org_id=memory_org,
+                            user_id=user_id,
+                        )
+                    except Exception as e:  # noqa: BLE001 — 记忆绝不阻断 turn
+                        logger.warning("[pi-chat] gis memory harvest failed: %s", e)
                 # ADR-0190：会话 Settle 整合（显式偏好固化 + 高频记忆晋升
                 # 长效作用域），harvest 之后同纪律执行，绝不阻断 turn。
-                try:
-                    from app.services.gis_memory.memory_consolidator import (
-                        consolidate_after_harvest,
-                    )
+                if _mem_ok:
+                    try:
+                        from app.services.gis_memory.memory_consolidator import (
+                            consolidate_after_harvest,
+                        )
 
-                    await consolidate_after_harvest(
-                        pi_session_id,
-                        req.project_id,
-                        org_id=memory_org,
-                        user_id=user_id,
-                    )
-                except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
-                    logger.warning(
-                        "[pi-chat] gis memory consolidation failed: %s", e
-                    )
+                        await consolidate_after_harvest(
+                            pi_session_id,
+                            req.project_id,
+                            org_id=memory_org,
+                            user_id=user_id,
+                        )
+                    except Exception as e:  # noqa: BLE001 — 整合绝不阻断 turn
+                        logger.warning(
+                            "[pi-chat] gis memory consolidation failed: %s", e
+                        )
 
             # One id scope per turn: ids stay monotonic across batched token
             # events and structural events, in emission order (see sse.py).
@@ -1390,21 +1645,51 @@ async def chat_stream(
                         })
                         buffer.record(session_event)
                         yield session_event
-                    # audit #818: say so explicitly instead of silently dropping
-                    # the field. Pi 兼容审查修正：project_id 实际经
-                    # _build_cartography_turn_context 注入 [CARTOGRAPHY_MEMORY]
-                    # 生效 —— 通知只对真正被忽略的 skill_name 披露。
+                    # G30（audit #818 后续）：skill_name 现在真实生效 —— 解析
+                    # 为唯一技能/歧义/未命中三分支，显式选择进 session ctx
+                    # （计划缝尊重选择；eligibility 仍由 policy 裁决），执行经
+                    # gis_skill_job_* 工具。project_id 仍经
+                    # _build_cartography_turn_context 注入（不变）。
                     if req.skill_name:
-                        notice = sse_event("content", {
-                            "content": (
-                                f"（提示：当前 Pi 引擎通道暂不支持技能上下文字段，"
-                                f"本次请求将忽略 skill_name={req.skill_name}；"
-                                "技能工具仍可经 webgis_execute 调用。）"
-                            ),
-                            "session_id": pi_session_id,
-                        })
-                        buffer.record(notice)
-                        yield notice
+                        from app.services.gis_harness.skill_jobs.selection import (
+                            resolve_user_skill_selection,
+                            selection_notice_text,
+                        )
+                        try:
+                            _sel = resolve_user_skill_selection(req.skill_name)
+                        except Exception:  # noqa: BLE001 — 解析失败不阻断 turn
+                            logger.warning(
+                                "[pi-chat] skill_name resolve failed: %s",
+                                req.skill_name, exc_info=True)
+                            _sel = {"status": "not_found",
+                                    "requested_name": req.skill_name}
+                        try:
+                            from app.services.gis_harness.hotpath_convergence.session_ctx import (
+                                set_explicit_skill,
+                            )
+                            set_explicit_skill(pi_session_id, _sel)
+                        except Exception:  # noqa: BLE001 — ctx 写失败不阻断
+                            logger.debug("[pi-chat] explicit skill ctx set failed",
+                                         exc_info=True)
+                        _notice_text = selection_notice_text(_sel)
+                        if _notice_text:
+                            notice = sse_event("content", {
+                                "content": _notice_text,
+                                "session_id": pi_session_id,
+                            })
+                            buffer.record(notice)
+                            yield notice
+                    else:
+                        # review P2-8：本 turn 未带 skill_name —— 清除上一轮的
+                        # 显式选择（选择按 turn 生效，不跨 turn 粘滞）。
+                        try:
+                            from app.services.gis_harness.hotpath_convergence.session_ctx import (
+                                set_explicit_skill,
+                            )
+                            set_explicit_skill(pi_session_id, {})
+                        except Exception:  # noqa: BLE001
+                            logger.debug("[pi-chat] explicit skill clear failed",
+                                         exc_info=True)
                     # #398: record OUTSIDE the route batcher so the buffer
                     # holds the COALESCED chunks (up to 32 token events each)
                     # instead of every single token event — a token-heavy turn
@@ -1420,8 +1705,12 @@ async def chat_stream(
                                 env_block=environment_context,
                                 context_org_id=memory_org or "",
                                 context_project_id=req.project_id or "",
-                                context_user_id=user_id or "",
+                                context_user_id=pi_caller_user_id or "",
+                                context_owner_token=pi_caller_token,
                                 context_query_text=req.message or "",
+                                attachments=(
+                                    [a.model_dump() for a in req.attachments]
+                                    if req.attachments else None),
                             ),
                         ),
                         buffer,
@@ -1494,6 +1783,7 @@ async def list_sessions(
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session_detail(
     session_id: str,
+    request: Request,
     conv: Conversation = Depends(require_owned_session),
     db: AsyncSession = Depends(get_async_db),
     limit: int = Query(
@@ -1536,7 +1826,7 @@ async def get_session_detail(
     page = list(result.scalars().all())
     page.reverse()
 
-    return {
+    payload = {
         "id": conv.id,
         "title": conv.title,
         "createdAt": conv.created_at.timestamp() * 1000,
@@ -1551,10 +1841,34 @@ async def get_session_detail(
                 "role": m.role,
                 "content": m.content,
                 "timestamp": m.created_at.timestamp() * 1000,
+                # G36（ADR-0291）：附件元数据（有界；仅 user 消息携带）。
+                "attachments": (
+                    [a for a in (m.attachments or [])][:4]
+                    if m.attachments else None
+                ),
+                # G43（ADR-0295）：本轮上下文回执摘要（有界；仅 user 消息
+                # 携带；完整回执按 session+turn 查询 context-receipts 端点）。
+                "context_receipt": (
+                    m.context_receipt if isinstance(m.context_receipt, dict) else None
+                ),
             }
             for m in page
         ],
     }
+    # G22-P6（恢复可读性）：?recovery=1 —— 恢复摘要仅在显式请求时附挂
+    # （默认响应字节不变）。flag 经原始 Request 读取而非 Query 参数、
+    # recovery 不入 SessionDetailResponse —— OpenAPI 契约面（含快照）不变；
+    # 附挂时直接返回 JSONResponse 绕过 response_model 的字段过滤。摘要内部
+    # best-effort，失败按「未恢复」折叠不红。
+    if request.query_params.get("recovery", "").strip().lower() in ("1", "true"):
+        try:
+            from app.services.chat.recovery_summary import build_recovery_summary
+
+            payload["recovery"] = await build_recovery_summary(session_id)
+        except Exception:  # noqa: BLE001 — 摘要是附挂面，绝不使恢复请求失败
+            payload["recovery"] = {"status": "ok", "recovered": False}
+        return JSONResponse(content=payload)
+    return payload
 
 
 # ── 澄清闭环（方向 3 / ADR-0222）──────────────────────────────────────
@@ -1894,6 +2208,10 @@ async def push_cartographic_runtime_observation(
                 # 纯 3D 会话的应用证据从观察面持久化（此前被 DTO 静默丢弃）。
                 **({"scene3d_assets": req.scene3d_assets}
                    if req.scene3d_assets is not None else {}),
+                # G25：逐画幅真实观察在场（DTO 已归一为 ≤16 条封闭词表）
+                # 才落键 —— 缺席/非法按证据缺席（诚实降级）。
+                **({"frames": req.frames}
+                   if req.frames is not None else {}),
                 "map_idle": bool(req.map_idle) if req.map_idle is not None else None,
                 "observed_at": req.observed_at,
             }
@@ -2381,6 +2699,11 @@ async def execute_tool_direct(
     args = req.arguments
     if not tool_name:
         raise HTTPException(status_code=400, detail="missing tool name")
+    if not req.session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="session_id is required so the tool runs inside a tenant session",
+        )
 
     # tier 校验：catalog 把工具分为 1/2/3 层，3 = rare / heavy / destructive
     registry = get_registry()
@@ -2418,3 +2741,19 @@ async def execute_tool_direct(
 # 路径前缀 /chat 由本 router 提供，子模块不自带前缀；放在模块尾部保持
 # 与原 chat.py 内联定义等价的注册语义（路径互不重叠，顺序无匹配影响）。
 router.include_router(_session_views_router)
+
+# G37（会话模型运行配置）：会话级模型目录/preference/用量视图 —— 与
+# session_views 同款挂载契约（owner 守卫在子模块内，前缀继承 /chat）。
+from app.api.routes.session_model_views import (  # noqa: E402
+    router as _session_model_views_router,
+)
+
+router.include_router(_session_model_views_router)
+
+# G43（本轮上下文回执与可控资料）：会话级可选资料目录/策略 CAS/无副作用
+# 预览/turn 回执读取 —— 同款挂载契约（owner 守卫在子模块内）。
+from app.api.routes.turn_context_views import (  # noqa: E402
+    router as _turn_context_views_router,
+)
+
+router.include_router(_turn_context_views_router)

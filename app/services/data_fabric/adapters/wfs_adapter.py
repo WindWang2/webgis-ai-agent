@@ -114,6 +114,7 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         if "headers" in self.options:
             self.session.headers.update(self.options["headers"])
         self._caps_cache: Optional[Tuple[float, Any]] = None  # (monotonic, tree)
+        self._dft_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
 
     # ── 基础契约 ───────────────────────────────────────────────────────
 
@@ -286,7 +287,13 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         )
 
     def _describe_feature_type_fields(self, dataset_id: str) -> List[Dict[str, Any]]:
-        """DescribeFeatureType (W3C XSD) → 字段名/类型（defusedxml 解析）。"""
+        """DescribeFeatureType (W3C XSD) → 字段名/类型（defusedxml 解析）。
+
+        按 dataset_id 缓存 60s。query 每次 describe 否则都会多一次 DFT HTTP。
+        """
+        cached = self._dft_cache.get(dataset_id)
+        if cached is not None and (time.monotonic() - cached[0]) < 60:
+            return cached[1]
         params = {
             "SERVICE": "WFS",
             "REQUEST": "DescribeFeatureType",
@@ -315,7 +322,9 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                 etype = elem.get("type") or "unknown"
                 if name and name != local_name:
                     typed.append({"name": name, "type": str(etype).split(":")[-1]})
-        return typed or fields
+        fields = typed or fields
+        self._dft_cache[dataset_id] = (time.monotonic(), fields)
+        return fields
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
         bounded_limit = max(1, min(limit, MAX_PREVIEW_LIMIT))
@@ -434,17 +443,41 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                     "antimeridian-crossing bbox is not supported by WFS BBOX pushdown"
                 )
             minx, miny, maxx, maxy = v2.spatial.bbox
-            params["BBOX"] = f"{minx},{miny},{maxx},{maxy},{_URN_CRS84 if not self.version.startswith('1.0') else 'EPSG:4326'}"
+            # #2233：BBOX 的 CRS 声明必须与 spatial.crs 一致（此前恒按
+            # CRS84/4326 声明 —— planner 因 server_reprojection=True 跳过
+            # 本地变换，非 4326 bbox 被服务端按错误 CRS 解释）。
+            from app.services.data_fabric.query.planner import parse_epsg
+
+            bbox_srid = parse_epsg(getattr(v2.spatial, "crs", None) or "EPSG:4326")
+            if bbox_srid is None:
+                raise InvalidQueryError(
+                    f"WFS bbox CRS {v2.spatial.crs!r} is not an EPSG code and cannot be negotiated"
+                )
+            if self.version.startswith("1.0"):
+                if bbox_srid != 4326:
+                    raise InvalidQueryError(
+                        "WFS 1.0 BBOX has no CRS suffix; submit bbox in EPSG:4326"
+                    )
+                bbox_urn = "EPSG:4326"
+                params["BBOX"] = f"{minx},{miny},{maxx},{maxy}"
+            else:
+                bbox_urn = _URN_CRS84 if bbox_srid == 4326 else f"urn:ogc:def:crs:EPSG::{bbox_srid}"
+                params["BBOX"] = f"{minx},{miny},{maxx},{maxy},{bbox_urn}"
 
         # 属性过滤器 → FES XML（POST）。V5：拆分计划只把下推半编译为 FES。
         post_xml: Optional[str] = None
         if remote_filter is not None:
             filter_xml = compile_predicate_fes(remote_filter)
             if v2.spatial is not None:
-                bbox_xml = compile_bbox_fes(v2.spatial.bbox)
+                bbox_xml = compile_bbox_fes(v2.spatial.bbox, srs_name=bbox_urn)
                 filter_xml = f'<ogc:And xmlns:ogc="http://www.opengis.net/ogc">{filter_xml}{bbox_xml}</ogc:And>'
                 params.pop("BBOX", None)
-            post_xml = self._build_get_feature_xml(dataset_id, limit, offset if offset_pushed else 0, filter_xml, v2.select)
+            # WFS 1.0 has no startIndex. local_slice over-fetches offset+limit
+            # on the KVP path; the POST body must use the same window or
+            # features[offset:offset+limit] is empty once offset >= limit.
+            post_limit = (offset + limit) if local_slice else limit
+            post_offset = offset if offset_pushed else 0
+            post_xml = self._build_get_feature_xml(dataset_id, post_limit, post_offset, filter_xml, v2.select)
 
         try:
             if post_xml is not None:

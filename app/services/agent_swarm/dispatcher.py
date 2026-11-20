@@ -49,7 +49,8 @@ class SubagentDispatcherRuntime:
     """生产适配器：把 SpecialistAssignment 交给既有 SubagentDispatcher。
 
     角色是策略不是执行体（ADR-0237）：``SwarmSpecialistRole`` 映射到
-    ``subagent_roles`` 角色档，未知角色名降级为无角色委派并披露。
+    已注册的 ``subagent_roles`` 角色档。角色无法解析时 fail-closed
+    （FAILED / non_retryable），绝不降级为无域、可变更的 adhoc 子代理。
     任何装配/执行异常都折算 FAILED 券，绝不向上抛。
     """
 
@@ -61,6 +62,15 @@ class SubagentDispatcherRuntime:
     ) -> SubagentReceipt:
         started = time.time()
         try:
+            role_name = _role_name(assignment.task.role)
+        except Exception as exc:  # noqa: BLE001 — 角色缺失 fail-closed，不跑 adhoc
+            return _failed_receipt(
+                assignment,
+                error=f"specialist role unresolved: {exc}"[:MAX_ERROR_CHARS],
+                error_code=SwarmErrorCode.NON_RETRYABLE,
+                started=started,
+            )
+        try:
             from app.services.subagent import SubagentDispatcher  # 惰性：重依赖
 
             registry = _resolve_tool_registry()
@@ -69,7 +79,7 @@ class SubagentDispatcherRuntime:
             )
             result = await dispatcher.run(
                 task=_compose_task_text(assignment),
-                role=_role_name(assignment.task.role),
+                role=role_name,
             )
         except Exception as exc:  # noqa: BLE001 — 派发面诚实折算
             return _failed_receipt(
@@ -115,14 +125,33 @@ def _resolve_tool_registry() -> Any:
         return None
 
 
-def _role_name(role: SwarmSpecialistRole) -> Optional[str]:
-    try:
-        from app.services.subagent_roles import get_subagent_role
+# Swarm 枚举名不是注册表角色名。data_hunter / compute_specialist 必须落到
+# data_scout / geocompute 的只读预算档；缺映射或缺注册一律拒绝，不能回落 adhoc。
+_SWARM_ROLE_TO_SUBAGENT: dict[SwarmSpecialistRole, str] = {
+    SwarmSpecialistRole.DATA_HUNTER: "data_scout",
+    SwarmSpecialistRole.COMPUTE_SPECIALIST: "geocompute",
+    SwarmSpecialistRole.CARTOGRAPHY_SPECIALIST: "cartography_specialist",
+    SwarmSpecialistRole.AUDIT_JUDGE: "audit_judge",
+}
 
-        get_subagent_role(role.value)
-        return role.value
-    except Exception:  # noqa: BLE001 — 未知角色降级为无角色
-        return None
+
+def _role_name(role: SwarmSpecialistRole) -> str:
+    """Map a swarm specialist label onto a registered subagent role.
+
+    Raises when the label has no mapping or the target role is not registered.
+    Callers must not run that assignment as an unrestricted adhoc agent.
+    """
+    mapped = _SWARM_ROLE_TO_SUBAGENT.get(role)
+    if not mapped:
+        raise ValueError(
+            f"unmapped swarm specialist role: {getattr(role, 'value', role)!r}"
+        )
+    from app.services.agent_swarm.registry import ensure_subagent_roles_registered
+    from app.services.subagent_roles import get_subagent_role
+
+    ensure_subagent_roles_registered()
+    get_subagent_role(mapped)
+    return mapped
 
 
 def _compose_task_text(assignment: SpecialistAssignment) -> str:

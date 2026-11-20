@@ -160,7 +160,7 @@ export function useMapBridge(
   getSessionToken?: (sessionId: string) => string | null,
 ): {
   aiStatus: AiStatus;
-  send: (content: string, mapSnapshot: Record<string, unknown>) => Promise<void>;
+  send: (content: string, mapSnapshot: Record<string, unknown>, attachments?: Array<{ evidence_id: string }> | null) => Promise<void>;
   /** #988：中止进行中的 Agent 回合（用户点『停止』）。无在飞流时为 no-op。 */
   cancel: () => void;
   onViewportChange: (center: [number, number], zoom: number, bearing: number, pitch: number) => void;
@@ -301,7 +301,7 @@ export function useMapBridge(
   );
 
   const send = useCallback(
-    async (content: string, mapSnapshot: Record<string, unknown>): Promise<void> => {
+    async (content: string, mapSnapshot: Record<string, unknown>, attachments?: Array<{ evidence_id: string }> | null): Promise<void> => {
       // [ENG-P4] abort any in-flight stream before starting a new one
       abortControllerRef.current?.abort();
       mapActionCtxRef.current?.clearActions?.();
@@ -363,6 +363,7 @@ export function useMapBridge(
               attempt > 0 ? (lastEventId ?? "0") : undefined,
               useHudStore.getState().activeProjectId ?? null,
               stagedCanvas,
+              attachments && attachments.length ? attachments : null,
             )) {
               if (controller.signal.aborted || streamEpoch !== streamEpochRef.current) break;
               const currentSessionId = sessionIdRef.current;

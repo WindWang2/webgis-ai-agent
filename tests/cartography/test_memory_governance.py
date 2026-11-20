@@ -208,6 +208,11 @@ def _patched_route(monkeypatch, db_session):
         classmethod(lambda cls, db, project_id, user_id=None, org_id=None:
                     db.get(Project, project_id)),
     )
+    monkeypatch.setattr(
+        "app.services.project_service.ProjectService.get_project_for_write",
+        classmethod(lambda cls, db, project_id, user_id=None, org_id=None:
+                    db.get(Project, project_id)),
+    )
 
 
 @pytest.fixture()

@@ -168,3 +168,33 @@ def test_spectral_evi2_hand_golden():
         compute_spectral_index({"red": np.array([[0.2]])}, "evi2")
     again = compute_spectral_index({"red": red, "nir": nir}, "evi2")
     np.testing.assert_array_equal(again["array"], res_grid["array"])
+
+
+def test_sentinel2_coefficients_match_shi_xu2019_published_table():
+    """#2238: 注册表系数必须与所引文献 Shi & Xu 2019 发表表一致。
+
+    出处：IEEE JSTARS 12:4038-4048, doi:10.1109/JSTARS.2019.2938388，
+    Sentinel-2 MSI at-sensor reflectance 13 带表（B1..B12 含 B8A）的
+    6 带角色子集 blue=B2, green=B3, red=B4, nir=B8, swir1=B11,
+    swir2=B12。发表表逐位钉死（4 位小数），防止系数漂移回非引用值。
+    """
+    published = {
+        # 13 带表 TCB: B1..B12 = 0.2381, 0.2569, 0.2934, 0.3020, 0.3099,
+        # 0.3740, 0.4180, 0.3580, 0.3834, 0.0103, 0.0020, 0.0896, 0.0780
+        "brightness": [0.2569, 0.2934, 0.3020, 0.3580, 0.0896, 0.0780],
+        # TCG: -0.2266, -0.2818, -0.3020, -0.4283, -0.2959, 0.1602,
+        # 0.3127, 0.3138, 0.4261, 0.1454, -0.0017, -0.1341, -0.2538
+        "greenness": [-0.2818, -0.3020, -0.4283, 0.3138, -0.1341, -0.2538],
+        # TCW: 0.1825, 0.1763, 0.1615, 0.0486, 0.0170, 0.0223, 0.0219,
+        # -0.0755, -0.0910, -0.1369, 0.0003, -0.7701, -0.5293
+        "wetness": [0.1763, 0.1615, 0.0486, -0.0755, -0.7701, -0.5293],
+    }
+    for comp, row in published.items():
+        assert TASSELED_CAP_COEFFICIENTS["sentinel2"][comp] == row, comp
+    # 变换结果 = 发表系数行 × 波段（独立求和黄金，不读注册表）
+    bands = _bands_from_vector(_VECTOR)
+    res = tasseled_cap(bands, sensor="sentinel2")
+    for comp, row in published.items():
+        expected = sum(coef * v for coef, v in zip(row, _VECTOR))
+        assert res["components"][comp][0, 0] == pytest.approx(expected,
+                                                              abs=1e-12)

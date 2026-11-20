@@ -219,3 +219,34 @@ class TestPermissionNotAutoGranted:
         monkeypatch.setenv("GIS_TOOL_PERMISSIONS", "admin:publish")
         with bind_session_credentials("s"):
             assert "admin:publish" not in granted_permissions()
+
+
+class TestIssue2139Expiry:
+    def test_iso_expiry_with_colons_parsed_intact(self, monkeypatch):
+        """ISO 过期时间含 ':'（HH:MM:SS）—— 不得被截断/混进 owner_scope。"""
+        monkeypatch.setenv(
+            CREDENTIALS_ENV,
+            "smtp:secret:2026-12-01T00:00:00Z,geo:token:2099-01-01:tenant-a")
+        out = resolve_credential_presence()
+        assert out["smtp"].expires_at == "2026-12-01T00:00:00Z"
+        assert out["smtp"].owner_scope == ""
+        # 旧四段格式（日期型 expiry + scope）不受影响
+        assert out["geo"].expires_at == "2099-01-01"
+        assert out["geo"].owner_scope == "tenant-a"
+
+    def test_expired_credential_not_counted_present(self):
+        presences = {
+            "fresh": CredentialPresence("fresh", expires_at="2099-01-01"),
+            "stale": CredentialPresence("stale", expires_at="2001-01-01"),
+            "unknown": CredentialPresence("unknown", expires_at="not-a-date"),
+            "undeclared": CredentialPresence("undeclared"),
+        }
+        mapping = credentials_present_map(presences)
+        assert mapping == {"fresh": True, "unknown": True, "undeclared": True}
+
+    def test_prefix_list_shared_with_redaction(self):
+        """#2139 F3：scrub 与槽位拒收共用一份前缀词表，不得漂移。"""
+        from app.lib import redaction, tool_security
+
+        assert tool_security._SECRET_LIKE_PREFIXES is \
+            redaction.SECRET_TOKEN_PREFIXES

@@ -14,6 +14,7 @@
  * - 终态不回退：toolCalls 行一旦终态，后续同 id 事件不得改回 running。
  */
 import type { ToolCallEntry, PlanProposalPayload } from '@/lib/store/hud-types';
+import { t } from '@/lib/i18n/t';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { ClarificationCardState, ClarificationStatus } from '@/lib/types/clarification';
 
@@ -32,9 +33,32 @@ export interface ChatStreamMessage {
   resultId?: string;
   /** 方向 3：requirement IR blocking 澄清卡片（SSE clarification 事件挂载）。 */
   clarification?: ClarificationCardState;
+  /** G29：Pi 原生运行中交互卡片（SSE pi_interaction 事件挂载；当前 run 阻塞中）。 */
+  runtimeInteractions?: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState[];
+  /** G28：任务完成语义卡（task_complete.goal_satisfaction 挂载）。 */
+  goalSatisfaction?: import('@/lib/types/goal-satisfaction').GoalSatisfactionView;
   /** /goal 03：要素编辑提案卡状态（EditProposalCard 渲染）。 */
   featureEditProposal?: import('@/lib/types/feature-edit').FeatureEditProposalState;
+  /** G36（ADR-0291）：用户消息的视觉附件（乐观 chips + receipt 状态回填 +
+   * 会话恢复；thumbUrl 仅本地预览，恢复态走受权缩略图端点）。 */
+  attachments?: VisualAttachmentView[];
+  /** G43（ADR-0295）：本轮上下文装配回执摘要（SSE turn_context_receipt
+   * 事件回填 + 会话恢复；完整回执按 session+turn 拉取）。 */
+  turnContextReceipt?: import('@/lib/api/turnContext').TurnContextReceiptSummary;
   [key: string]: unknown;
+}
+
+/** G36：用户消息附件的视图状态（receipt 事件回填 status/reason）。 */
+export interface VisualAttachmentView {
+  evidence_id: string;
+  source_type: string;
+  label?: string;
+  thumbUrl?: string;
+  mapspec_revision?: number | null;
+  viewport_hash?: string;
+  /** pending | sent | refused（attachment_receipt 事件回填）。 */
+  status?: 'pending' | 'sent' | 'refused';
+  reason?: string;
 }
 
 export type ToolCallStatus = 'completed' | 'failed';
@@ -85,6 +109,8 @@ export interface NewToolCall {
   tool: string;
   arguments?: string;
   stepId?: string;
+  /** ADR-0288：嵌套调用的父 step_id（渲染为子行；顶层缺席）。 */
+  parentStepId?: string;
   startedAt: number;
 }
 
@@ -96,7 +122,7 @@ export function appendToolCall(
   prev: ChatStreamMessage[],
   args: { messageId: string; toolCall: NewToolCall },
 ): ChatStreamMessage[] {
-  const { tool, arguments: toolArgs, stepId, startedAt } = args.toolCall;
+  const { tool, arguments: toolArgs, stepId, parentStepId, startedAt } = args.toolCall;
   if (!tool) return prev;
   const idx = findIndexById(prev, args.messageId);
   if (idx === -1) return prev;
@@ -109,6 +135,7 @@ export function appendToolCall(
     status: 'running' as const,
     startedAt,
     ...(stepId ? { stepId } : {}),
+    ...(parentStepId ? { parentStepId } : {}),
   }];
   const copy = [...prev];
   copy[idx] = { ...prev[idx], toolCalls: next };
@@ -229,6 +256,73 @@ export function attachClarification(
   const copy = [...prev];
   copy[idx] = { ...prev[idx], clarification: args.clarification };
   return copy;
+}
+
+/**
+ * G28（A24）：task_complete.goal_satisfaction 挂到本轮助手消息
+ * （GoalSatisfactionCard 渲染 —— 「计算完成、地图等待显示」≠「任务失败」）。
+ *
+ * 覆盖语义：终态载荷每轮一份，新 verdict 直接覆盖旧卡（同 messageId）；
+ * 解析为 null 的载荷不挂载（零漂移）。
+ */
+export function attachGoalSatisfaction(
+  prev: ChatStreamMessage[],
+  args: { messageId: string; goal: import('@/lib/types/goal-satisfaction').GoalSatisfactionView },
+): ChatStreamMessage[] {
+  const idx = findIndexById(prev, args.messageId);
+  if (idx === -1) return prev;
+  const copy = [...prev];
+  copy[idx] = { ...prev[idx], goalSatisfaction: args.goal };
+  return copy;
+}
+
+/** G29：挂载/更新运行中交互卡（同消息可并存多条 —— 按 interactionId 去重）。 */
+export function upsertRuntimeInteraction(
+  prev: ChatStreamMessage[],
+  args: { messageId: string; card: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState },
+): ChatStreamMessage[] {
+  const idx = findIndexById(prev, args.messageId);
+  if (idx === -1) return prev;
+  const existing = prev[idx].runtimeInteractions ?? [];
+  const at = existing.findIndex((c) => c.interactionId === args.card.interactionId);
+  const next = at === -1
+    ? [...existing, args.card]
+    : existing.map((c, i) => (i === at ? { ...c, ...args.card } : c));
+  const copy = [...prev];
+  copy[idx] = { ...prev[idx], runtimeInteractions: next };
+  return copy;
+}
+
+/** G29：交互卡状态迁移（submitting/answered/终态/error）。 */
+export function setRuntimeInteractionStatus(
+  prev: ChatStreamMessage[],
+  args: {
+    interactionId: string;
+    status: import('@/lib/types/runtime-interaction').RuntimeInteractionStatus;
+    errorCode?: string;
+    answerDisplay?: string;
+    answerKind?: string;
+    resolveEvidence?: string;
+  },
+): ChatStreamMessage[] {
+  return prev.map((m) => {
+    if (!m.runtimeInteractions?.some((c) => c.interactionId === args.interactionId)) return m;
+    return {
+      ...m,
+      runtimeInteractions: m.runtimeInteractions.map((c) =>
+        c.interactionId === args.interactionId
+          ? {
+              ...c,
+              status: args.status,
+              ...(args.errorCode ? { errorCode: args.errorCode } : {}),
+              ...(args.answerDisplay ? { answerDisplay: args.answerDisplay } : {}),
+              ...(args.answerKind ? { answerKind: args.answerKind } : {}),
+              ...(args.resolveEvidence ? { resolveEvidence: args.resolveEvidence } : {}),
+            }
+          : c,
+      ),
+    };
+  });
 }
 
 /** 卡片状态迁移（提交中/已提交/过期/出错）与提交回显。 */
@@ -427,7 +521,9 @@ export function appendTurnNotice(
   prev: ChatStreamMessage[],
   args: { messageId: string; kind: 'cancelled' | 'error'; detail?: string },
 ): ChatStreamMessage[] {
-  const marker = args.kind === 'cancelled' ? '⏹️ [已取消]' : `⚠️ ${args.detail ?? '请求失败，请重试。'}`;
+  const marker = args.kind === 'cancelled'
+    ? t('chat.turnCancelled')
+    : t('chat.turnFailed', { detail: args.detail ?? t('chat.turnFailedDefault') });
   return prev.map((m) => {
     if (m.id !== args.messageId) return m;
     const existing = m.content && !m.isThinking ? m.content : '';
@@ -459,7 +555,7 @@ export function settleThinkingMessage(
 ): ChatStreamMessage[] {
   return prev.map((m) =>
     m.id === args.messageId && m.isThinking
-      ? { ...m, isThinking: false, content: m.content || args.fallbackText || '完成。' }
+      ? { ...m, isThinking: false, content: m.content || args.fallbackText || t('chat.turnComplete') }
       : m,
   );
 }
@@ -498,4 +594,56 @@ export function setFeatureEditProposalStatus(
       featureEditProposal: { ...p, status: args.status, error: args.error, receipt: args.receipt ?? p.receipt },
     };
   });
+}
+
+/** G43（ADR-0295）：把 turn_context_receipt 回执挂到 user 消息。
+ *
+ * - 挂载点按 turn_id 定位：已带本 turn 回执的消息是唯一挂载点（升级不
+ *   迁移）；无挂载点时挂最后一条**尚未携带任何回执**的 user 消息；
+ * - 状态单调（与后端状态机一致）：迟到的弱事件（如重复投递的
+ *   assembled）不降级已确证的强状态（submitted/not_sent/unknown）；
+ * - 找不到挂载点（乱序/纯 assistant 流）原样返回，不伪造。
+ */
+const TURN_RECEIPT_STATUS_RANK: Record<string, number> = {
+  assembled: 1,
+  not_sent: 2,
+  unknown: 2,
+  submitted: 3,
+};
+
+export function attachTurnContextReceipt(
+  prev: ChatStreamMessage[],
+  args: {
+    turnId: string;
+    receipt: import('@/lib/api/turnContext').TurnContextReceiptSummary;
+  },
+): ChatStreamMessage[] {
+  const mountIdx = prev.findIndex(
+    (m) => m.role === 'user' && m.turnContextReceipt?.turn_id === args.turnId,
+  );
+  if (mountIdx >= 0) {
+    const existing = prev[mountIdx].turnContextReceipt;
+    // review P3：与后端状态机一致 —— 只接受**严格更强**的状态转移
+    //（同 rank 迟到事件如 unknown-after-not_sent 不改写）。
+    if (existing
+        && (TURN_RECEIPT_STATUS_RANK[existing.status] ?? 0)
+           >= (TURN_RECEIPT_STATUS_RANK[args.receipt.status] ?? 0)) {
+      return prev;
+    }
+    const next = [...prev];
+    next[mountIdx] = { ...prev[mountIdx], turnContextReceipt: args.receipt };
+    return next;
+  }
+  // review P3：无挂载点时只挂**最后一条**尚无回执的 user 消息 —— 事件
+  // 正常在消息为最新时到达；abort/重试竞态下的迟到事件宁可丢弃也不
+  // 误挂到更早/后续消息（误归因比缺席更糟）。
+  for (let i = prev.length - 1; i >= 0; i--) {
+    const m = prev[i];
+    if (m.role !== 'user') continue;
+    if (m.turnContextReceipt) return prev;
+    const next = [...prev];
+    next[i] = { ...m, turnContextReceipt: args.receipt };
+    return next;
+  }
+  return prev;
 }

@@ -19,12 +19,45 @@ import io
 import collections
 import os
 import threading
+from dataclasses import dataclass
 from typing import Tuple, Dict, Optional
 import numpy as np
 from PIL import Image
 import rasterio
 from rasterio.warp import reproject, Resampling, transform_bounds
-from rasterio.windows import from_bounds
+from rasterio.windows import Window, from_bounds
+
+
+def _window_from_bounds(left: float, bottom: float, right: float, top: float,
+                        transform) -> Window:
+    """Bounds → 浮点像素窗口（north-up 与 rasterio.windows.from_bounds
+    逐值等价；south-up（e>0）/旋转/剪切同样成立）。
+
+    rasterio 的 from_bounds 对「bounds 与 transform 朝向不一致」直接
+    WindowError —— 南向栅格的合法 GeoTIFF（PixelIsArea 负高度）因此
+    在窗口步就崩/全透明；旋转 affine 虽不出错，但取 min/max 的行列包络
+    与真足迹一致，故此处四角逆变换取包络对全部 affine 统一正确。
+    """
+    inv = ~transform
+    cols = []
+    rows = []
+    for gx, gy in ((left, top), (right, top), (right, bottom), (left, bottom)):
+        c, r = inv * (gx, gy)
+        cols.append(c)
+        rows.append(r)
+    c0, c1 = min(cols), max(cols)
+    r0, r1 = min(rows), max(rows)
+    return Window(col_off=c0, row_off=r0, width=c1 - c0, height=r1 - r0)
+
+
+def _decimated_window_transform(src, win, out_w: int, out_h: int):
+    """降采样读窗口的真实 transform：保留源 affine 全部项（b/d 旋转、
+    e>0 南向翻转）—— 此前 from_bounds(窗口包络) 重建 north-up transform，
+    旋转栅格经 warp 后整体错位（15a 实证），南向栅格直接翻转错位。"""
+    from rasterio.transform import Affine
+
+    return src.window_transform(win) * Affine.scale(
+        win.width / out_w, win.height / out_h)
 
 _MERCATOR_BOUND = 20037508.342789244
 _INITIAL_RESOLUTION = 2 * _MERCATOR_BOUND / 256.0
@@ -57,6 +90,54 @@ logger = logging.getLogger(__name__)
 # PERF-F6: bounded (was unbounded per-path growth over process lifetime).
 _CRS_LESS_WARNED: "set[str]" = set()
 _CRS_LESS_WARNED_MAX = 4096
+
+
+# ─── G20 / raster_expression.v1：权威样式进入数据面 ─────────────────────────
+# 旧 ``cmap_name`` / ``bands`` 两个 Query 参数保持逐字兼容（style=None 时
+# 缓存键、渲染体、错误兜底与基线一致）。style 非 None 时，bands / stretch /
+# resampling / colormap / opacity / data_revision 全部真实进入渲染与缓存身份。
+@dataclass(frozen=True)
+class RasterRenderStyle:
+    """一次已提交表达的渲染投影（由 raster_authoring.render 构造）。"""
+
+    bands: Tuple[int, ...]
+    stretch: Optional[Tuple[Tuple[float, float], ...]]
+    colormap: Optional[str]
+    opacity: float
+    resampling: str
+    style_id: str = ""
+    data_revision: str = ""
+
+    @property
+    def cache_identity(self) -> str:
+        """样式 + 数据版本的内容身份（不同层同 ref 不串色、旧数据不出旧像素）。"""
+        return "|".join((
+            self.style_id or "unstyled",
+            self.data_revision or "unversioned",
+            ",".join(str(b) for b in self.bands),
+            self.colormap or "",
+            self.resampling,
+            str(self.opacity),
+            repr(self.stretch or ()),
+        ))
+
+
+class RasterTileError(RuntimeError):
+    """样式瓦片渲染失败（可观测，不用透明 PNG 伪装有效空白地图）。"""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _resampling_for(name: str) -> "Resampling":
+    """表达声明的重采样 → rasterio 枚举；分类数据只能 nearest。"""
+    return {
+        "nearest": Resampling.nearest,
+        "bilinear": Resampling.bilinear,
+        "cubic": Resampling.cubic,
+    }[name]
 
 
 def _channel_valid_mask(arr: np.ndarray, nodata_val) -> np.ndarray:
@@ -314,6 +395,7 @@ def render_raster_tile(
     tile_size: int = 256,
     cmap_name: Optional[str] = None,
     bands: Optional[Tuple[int, ...]] = None,
+    style: Optional[RasterRenderStyle] = None,
 ) -> bytes:
     """Render a 256x256 PNG tile for the given XYZ coordinates from a GeoTIFF.
 
@@ -322,13 +404,34 @@ def render_raster_tile(
       此前是死参数——只进缓存键不进渲染体。
     - ``bands``：1-based 波段组合（≤3）；缺省前 min(3, count)。
     - 样式（cmap/bands）进缓存键：换样式 = 新缓存条目，绝不重算遥感产物。
+
+    G20：``style`` 非 None 时消费**已提交**的完整表达（bands / 冻结的逐通道
+    stretch / resampling / colormap / opacity），并把 ``style_id + data_revision``
+    加入缓存身份。style=None 时行为与基线逐字一致（旧 PNG/旧 tile 回归）。
     """
-    if bands is not None and len(bands) not in (1, 3):
+    if style is not None:
+        if len(style.bands) not in (1, 3):
+            raise RasterTileError(
+                "BAND_COUNT_UNSUPPORTED", "styled render requires one or three bands"
+            )
+        if style.stretch is not None and len(style.stretch) != len(style.bands):
+            raise RasterTileError(
+                "STRETCH_CHANNEL_MISMATCH", "styled render needs one stretch pair per band"
+            )
+        if not 0.0 <= style.opacity <= 1.0:
+            raise RasterTileError("OPACITY_OUT_OF_RANGE", "styled opacity out of range")
+        if style.resampling not in ("nearest", "bilinear", "cubic"):
+            raise RasterTileError(
+                "UNSUPPORTED_RESAMPLING", f"unsupported resampling {style.resampling!r}"
+            )
+    elif bands is not None and len(bands) not in (1, 3):
         raise ValueError("Raster rendering supports one band or three RGB bands")
     if z < 0 or z > 22 or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         return _transparent_tile_png(tile_size)
 
     key = (raster_path, z, x, y, tile_size, cmap_name or "", bands or ())
+    if style is not None:
+        key = key + (style.cache_identity,)
     cached = _get_cached_tile(key)
     if cached is not None:
         return cached
@@ -367,8 +470,8 @@ def render_raster_tile(
                 src_crs = src.crs
             src_bounds = transform_bounds("EPSG:3857", src_crs, *bounds_3857)
 
-            # Read windowed slice from source
-            win_raw = from_bounds(*src_bounds, transform=src.transform)
+            # Read windowed slice from source（南向/旋转 affine 安全窗口）
+            win_raw = _window_from_bounds(*src_bounds, transform=src.transform)
             win = win_raw.round_offsets().round_shape()
             try:
                 win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
@@ -396,7 +499,14 @@ def render_raster_tile(
             # Issue #410: read ONLY the bands we render (max 3) — the previous
             # full-band read decoded every band of a >3-band raster (~2x waste).
             # C5：band selection（RasterStyleSpec.normalized_bands 语义同构）
-            if bands:
+            if style is not None:
+                indexes = tuple(int(b) for b in style.bands)
+                if any(b < 1 or b > src.count for b in indexes):
+                    raise RasterTileError(
+                        "BAND_OUT_OF_RANGE",
+                        "committed expression references a band absent from the current data revision",
+                    )
+            elif bands:
                 indexes = tuple(b for b in bands if 1 <= b <= src.count)[:3]
             else:
                 indexes = (1,) if src.count < 3 else (1, 2, 3)
@@ -404,6 +514,59 @@ def render_raster_tile(
                 res = _transparent_tile_png(tile_size)
                 _set_cached_tile(key, res)
                 return res
+
+            from app.services.raster_authoring.alpha_adapter import (
+                detect_alpha_or_mask,
+                render_alpha_aware_window,
+            )
+
+            has_alpha_sem, alpha_band, has_internal_mask = detect_alpha_or_mask(src)
+            if has_alpha_sem:
+                # Dataset-global stretch bounds (same source as the non-alpha
+                # path below): per-tile min/max on uint16/float alpha rasters
+                # gave adjacent tiles different normalization -> visible seams.
+                if style is not None and style.stretch is not None:
+                    alpha_stretch = tuple((float(lo), float(hi)) for lo, hi in style.stretch)
+                else:
+                    try:
+                        alpha_stretch = _get_band_stats(raster_path, src, indexes)
+                    except Exception:
+                        logger.debug(
+                            "[raster_tile_service] global stats unavailable for %s, "
+                            "alpha path falls back to per-tile normalization",
+                            raster_path,
+                            exc_info=True,
+                        )
+                        alpha_stretch = None
+                scale = min(1.0, tile_size / float(win.width), tile_size / float(win.height))
+                dec_h = max(1, int(round(win.height * scale)))
+                dec_w = max(1, int(round(win.width * scale)))
+                rgba_out, all_nodata_tile = render_alpha_aware_window(
+                    src,
+                    color_indexes=indexes,
+                    alpha_band=alpha_band,
+                    has_internal_mask=has_internal_mask,
+                    src_crs=src_crs,
+                    dst_transform=dst_transform,
+                    dst_crs="EPSG:3857",
+                    out_h=tile_size,
+                    out_w=tile_size,
+                    resampling=style.resampling if style is not None else "bilinear",
+                    stretch=alpha_stretch,
+                    colormap=(style.colormap if style is not None else cmap_name) if len(indexes) == 1 else None,
+                    opacity=float(style.opacity) if style is not None else 1.0,
+                    win=win,
+                    win_out_shape=(dec_h, dec_w),
+                )
+                if all_nodata_tile:
+                    res = _transparent_tile_png(tile_size)
+                else:
+                    buf = io.BytesIO()
+                    Image.fromarray(rgba_out, "RGBA").save(buf, format="PNG", compress_level=1)
+                    res = buf.getvalue()
+                _set_cached_tile(key, res)
+                return res
+
             count = len(indexes)
             # #595: decimate the read to ~the destination resolution. A low-zoom
             # tile's window can cover the WHOLE raster (10000×10000 uint16 × 3
@@ -413,31 +576,35 @@ def render_raster_tile(
             # out_shape scales each axis by min(1, tile_size / window) — GDAL
             # then picks the appropriate overview level. High-zoom windows
             # (≤ tile_size px) keep scale 1 → native read, unchanged behavior.
-            win_bounds = rasterio.windows.bounds(win, src.transform)
             scale = min(1.0, tile_size / float(win.width), tile_size / float(win.height))
             out_h = max(1, int(round(win.height * scale)))
             out_w = max(1, int(round(win.width * scale)))
             out_shape = (count, out_h, out_w)
             win_data = src.read(indexes=indexes, window=win, out_shape=out_shape)
             # The decimated read covers exactly the window's geographic extent
-            # at out_shape resolution — its transform is from_bounds of those
-            # bounds, not the native-grid window transform.
-            win_transform = rasterio.transform.from_bounds(*win_bounds, out_w, out_h)
+            # at out_shape resolution — its transform is the source affine
+            # scaled to the decimated grid（旋转/南向项保留；15a）。
+            win_transform = _decimated_window_transform(src, win, out_w, out_h)
 
             # Dataset-global stretch bounds (per band) so adjacent tiles share
             # one normalization instead of per-tile min/max (seam fix, #410).
-            try:
-                # C5：只对请求的波段子集计算/缓存全局 stretch（#595 纪律同样
-                # 适用于 stats 读取——绝不解码 >3 波段栅格的全部波段）
-                stats = _get_band_stats(raster_path, src, indexes)
-            except Exception:
-                logger.debug(
-                    "[raster_tile_service] global stats unavailable for %s, "
-                    "falling back to per-tile normalization",
-                    raster_path,
-                    exc_info=True,
-                )
-                stats = None
+            if style is not None and style.stretch is not None:
+                # G20：提交期冻结的全局范围（含 method/sample_count）随 style_id
+                # 进入缓存身份。每个数据版本只解析一次，绝不按瓦片各算范围。
+                stats = tuple((float(lo), float(hi)) for lo, hi in style.stretch)
+            else:
+                try:
+                    # C5：只对请求的波段子集计算/缓存全局 stretch（#595 纪律同样
+                    # 适用于 stats 读取——绝不解码 >3 波段栅格的全部波段）
+                    stats = _get_band_stats(raster_path, src, indexes)
+                except Exception:
+                    logger.debug(
+                        "[raster_tile_service] global stats unavailable for %s, "
+                        "falling back to per-tile normalization",
+                        raster_path,
+                        exc_info=True,
+                    )
+                    stats = None
 
             # Destination array for reproject
             dst_data = np.zeros((count, tile_size, tile_size), dtype=src.dtypes[0])
@@ -449,7 +616,7 @@ def render_raster_tile(
                 src_crs=src_crs,
                 dst_transform=dst_transform,
                 dst_crs="EPSG:3857",
-                resampling=Resampling.bilinear,
+                resampling=_resampling_for(style.resampling if style is not None else "bilinear"),
                 src_nodata=src.nodata,
                 # #596: with no declared nodata, `or 0` conflated "0 is
                 # nodata" with "0 is data". dst_nodata=None leaves the
@@ -499,7 +666,13 @@ def render_raster_tile(
                     stretch = stats[c] if stats is not None else ()
                     rgb[:, :, c] = np.where(valid_mask, _normalize_channel(arr, valid_mask, *stretch), 0)
 
-                band_valid = _channel_valid_mask(dst_data, nodata_val).any(axis=0) & coverage_mask
+                # G20：已提交表达的 RGB mask 规则 = 所有通道都有效才绘制
+                # （与 probe 的 PARTIALLY_MASKED 同源），避免把某一通道的
+                # 黑色填充值解释为真实低值。style=None 保留基线 any() 语义。
+                channel_mask = _channel_valid_mask(dst_data, nodata_val)
+                band_valid = (
+                    channel_mask.all(axis=0) if style is not None else channel_mask.any(axis=0)
+                ) & coverage_mask
                 alpha = np.where(band_valid, 255, 0).astype(np.uint8)
                 rgba = np.dstack([rgb, alpha])
                 img = Image.fromarray(rgba, "RGBA")
@@ -520,7 +693,18 @@ def render_raster_tile(
                 alpha = np.where(valid_mask, 255, 0).astype(np.uint8)
                 # C5：单波段着色——样式改动只换缓存键，不重跑遥感计算
                 rgb_out = None
-                if cmap_name:
+                if style is not None and style.colormap:
+                    # 与图例/导出同一个 LUT；未知名在提交期已拒绝，此处
+                    # 再次 fail-closed（绝不静默回落灰度）。
+                    from app.services.raster_authoring.palettes import colormap_lut
+
+                    lut = colormap_lut(style.colormap, 256)
+                    if lut is None:
+                        raise RasterTileError(
+                            "UNKNOWN_COLORMAP", f"colormap {style.colormap!r} has no LUT"
+                        )
+                    rgb_out = lut[gray]
+                elif cmap_name:
                     from app.schemas.raster_spec import apply_colormap_u8
 
                     colored = apply_colormap_u8(gray, cmap_name)
@@ -532,6 +716,14 @@ def render_raster_tile(
                     rgba = np.dstack([gray, gray, gray, alpha])
                 img = Image.fromarray(rgba, "RGBA")
 
+            if style is not None and style.opacity < 1.0:
+                # 透明度只在服务端瓦片里应用一次（compiler/runtime 不再叠加
+                # MapLibre raster-opacity，避免双重衰减）。
+                rgba[:, :, 3] = np.rint(
+                    rgba[:, :, 3].astype(np.float32) * float(style.opacity)
+                ).astype(np.uint8)
+                img = Image.fromarray(rgba, "RGBA")
+
             buf = io.BytesIO()
             img.save(buf, format="PNG", compress_level=1)
             png_bytes = buf.getvalue()
@@ -539,7 +731,18 @@ def render_raster_tile(
             _set_cached_tile(key, png_bytes)
             return png_bytes
 
+    except RasterTileError:
+        # 已提交样式渲染失败：不缓存、不返回透明瓦片伪装有效空白地图。
+        raise
     except Exception as err:
+        if style is not None:
+            logger.warning(
+                "[raster_tile_service] styled tile failed z=%s x=%s y=%s: %s",
+                z, x, y, err,
+            )
+            raise RasterTileError(
+                "RENDER_FAILED", "committed raster expression could not be rendered"
+            ) from err
         logger.warning(f"[raster_tile_service] Failed to render tile z={z} x={x} y={y} for {raster_path}: {err}")
         return _transparent_tile_png(tile_size)
 
@@ -611,7 +814,7 @@ def render_terrarium_tile(
                     "location would fabricate vertical evidence",
                 )
             src_bounds = transform_bounds("EPSG:3857", src.crs, *bounds_3857)
-            win_raw = from_bounds(*src_bounds, transform=src.transform)
+            win_raw = _window_from_bounds(*src_bounds, transform=src.transform)
             win = win_raw.round_offsets().round_shape()
             try:
                 win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
@@ -638,12 +841,11 @@ def render_terrarium_tile(
             # 再投影**：高程 bilinear + 有效权重 bilinear。阈值 254.5 = 双线性
             # 支撑域内混入任何 nodata 的像素一律判无效 —— nodata 边界的插值
             # 会产生 -4000m 级的"过渡高程"，那是伪证据，绝不编码。
-            win_bounds = rasterio.windows.bounds(win, src.transform)
             scale = min(1.0, tile_size / float(win.width), tile_size / float(win.height))
             out_h = max(1, int(round(win.height * scale)))
             out_w = max(1, int(round(win.width * scale)))
             win_elev = src.read(indexes=1, window=win, out_shape=(out_h, out_w)).astype(np.float64)
-            win_transform = rasterio.transform.from_bounds(*win_bounds, out_w, out_h)
+            win_transform = _decimated_window_transform(src, win, out_w, out_h)
 
             declared_nodata = src.nodata
             with np.errstate(invalid="ignore"):

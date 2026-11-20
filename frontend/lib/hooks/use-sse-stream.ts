@@ -1,11 +1,13 @@
 'use client';
 import { resolveFeatureId as resolveCanonicalFeatureId } from '@/lib/layers/feature-id';
+import { t as msg } from '@/lib/i18n/t';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { StepResultPayload } from '@/lib/api/chat';
 import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useChatStore, type ChatMessage } from '@/lib/store/useChatStore';
+import { useVisualAttachStore } from '@/lib/visual-context/attach-store';
 import { markRefSourceFailed } from '@/lib/mapspec/ref-source-resolver';
 import { requestRefFC } from '@/lib/data-plane/ref-service';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
@@ -15,6 +17,8 @@ import { reportLayerFetchFailure, syncSpecLayersToStore } from '@/lib/session/ma
 import { commitMapSpecDocument, getMapSpecSessionCursor, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { ingestRenderWork } from '@/lib/render-protocol/render-work';
 import { nextTurn, noteAgentDisplayed } from '@/lib/chat/turn-focus';
+import { attachGoalSatisfaction } from '@/lib/chat/message-reducer';
+import { parseGoalSatisfaction } from '@/lib/types/goal-satisfaction';
 import { flushInteractionBus } from '@/lib/interaction/bus';
 import { subscribeTurnEpoch } from '@/lib/map/turn-epoch';
 import { getSelection } from '@/lib/selection/selection-store';
@@ -33,6 +37,7 @@ import { devOnly } from "@/lib/utils/logger";
 import { finalizationUserNotice } from "@/lib/map-product/finalizer";
 import { parseAgentRuntime, type AgentRuntime } from "@/lib/agent-runtime";
 import { configureAffordanceChannel, extractMountedWidget } from "@/lib/copilot/affordance";
+import { parseModelStatus, useModelRuntimeStore } from "@/lib/store/useModelRuntimeStore";
 
 // H03 / #1554：消息数组变换的纯 reducer 与事件域 typed adapters。
 // 本 hook 只保留 transport 编排（TokenBatcher 生命周期、fetch 派发、
@@ -42,7 +47,7 @@ import {
   appendToolCall,
   applyTokenSnapshot,
   attachChart,
-  attachClarification,
+  attachClarification, upsertRuntimeInteraction, setRuntimeInteractionStatus,
   attachLayerChip,
   attachPlanProposal,
   attachFeatureEditProposal,
@@ -58,10 +63,14 @@ import {
   setClarificationStatus,
   setPlanStatus,
   replaceClarificationEnvelope,
+  attachTurnContextReceipt,
   type ChatStreamMessage,
 } from '@/lib/chat/message-reducer';
 import {
   clarificationDecision,
+  runtimeInteractionCard,
+  runtimeInteractionUpdate,
+  runtimeUiFire,
   errorEventDecision,
   mapFinalizationDecision,
   planReadyDecision,
@@ -71,6 +80,9 @@ import {
 import {
   getPendingClarification,
   submitClarificationAnswer,
+  submitRuntimeInteractionAnswer,
+  sendTurnMessage,
+  fetchRuntimeInteractions,
 } from '@/lib/api/chat';
 import { decideFeatureEditPlan, redoFeatureEdit, undoFeatureEdit } from '@/lib/api/feature-edit';
 import { featureEditCommand } from '@/lib/workbench/undo';
@@ -365,6 +377,9 @@ export function useSSEStream(options: UseSSEStreamOptions) {
   }, [setMessages]);
 
   const [agentRuntime, setAgentRuntime] = useState<AgentRuntime | null>(null);
+  // G29：当前在飞 turn 的 id（task_start 载荷；done/终态清除）—— 追加指令
+  // （steer/follow_up）的目标。
+  const activeTurnIdRef = useRef<string | null>(null);
 
   const thinkingMsgIdRef = useRef<string>('');
   // FE-P3-3 / #608：终态迁移与兜底 —— 变换经纯 reducer，写入单一 store。
@@ -447,6 +462,10 @@ export function useSSEStream(options: UseSSEStreamOptions) {
 
   useEffect(() => subscribeTurnEpoch(rotateLayerFetches), [rotateLayerFetches]);
 
+  const sendingRef = useRef(false);
+  const sendGenerationRef = useRef(0);
+  const loadingGuardRef = useRef(false);
+
   // Reset abort controller on session change to cancel in-flight layer fetches.
   // undefined → assigned is the server binding the currently live stream
   // (useMapBridge 同款豁免), not a session switch — aborting there kills the
@@ -457,6 +476,11 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     const sessionChanged = prev !== undefined && prev !== sessionId;
     prevSessionIdRef.current = sessionId;
     if (sessionChanged) {
+      // The old transport may take arbitrarily long to observe its abort.
+      // Its send lock/continuation must not block or settle the next session.
+      sendGenerationRef.current += 1;
+      sendingRef.current = false;
+      loadingGuardRef.current = false;
       layerFetchAbortRef.current?.abort();
       explorerAbortRef.current?.abort();
       explorerStreamsRef.current.clear();
@@ -583,10 +607,6 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     }
   }, [sessionTokenRef]);
 
-  const sendingRef = useRef(false);
-  const sendGenerationRef = useRef(0);
-  const loadingGuardRef = useRef(false);
-
   const onEvent = useCallback(
     (event: SSEEvent) => {
       const data = event.data as any;
@@ -665,6 +685,8 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             : undefined,
         );
         if (runtime) setAgentRuntime(runtime);
+        const turnId = (data as Record<string, unknown> | null)?.turn_id;
+        if (typeof turnId === 'string' && turnId) activeTurnIdRef.current = turnId;
       }
 
       if (data?.owner_token && typeof data.owner_token === 'string') {
@@ -704,6 +726,26 @@ export function useSSEStream(options: UseSSEStreamOptions) {
               tool: toolName,
               arguments: typeof data.arguments === 'string' ? data.arguments : undefined,
               stepId: typeof data.step_id === 'string' ? data.step_id : undefined,
+              startedAt: Date.now(),
+            },
+          }));
+        }
+      } else if (event.event === 'step_start') {
+        // ADR-0288（W06）：嵌套调用（codemode 脚本内 GIS 调用）只产生
+        // step_start/step_result（无 tool_call —— 非模型直发）。带
+        // parent_tool_call_id 的 step_start 为父工具行挂一条子行；顶层
+        // step_start 忽略（行由 tool_call 事件创建，避免双行）。
+        const parentStepId = typeof data?.parent_tool_call_id === 'string'
+          ? data.parent_tool_call_id
+          : undefined;
+        const toolName = typeof data?.tool === 'string' ? data.tool : '';
+        if (parentStepId && toolName) {
+          setMessages((prev) => appendToolCall(prev, {
+            messageId: thinkingId,
+            toolCall: {
+              tool: toolName,
+              stepId: typeof data.step_id === 'string' ? data.step_id : undefined,
+              parentStepId,
               startedAt: Date.now(),
             },
           }));
@@ -966,9 +1008,20 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       } else if (event.event === 'done' || event.event === 'task_complete') {
         // #518: isThinking 必须在终态事件到达时翻转（连接仍可保持打开推送
         // explorer 进度）。#608: 残留 running 行兜底终结，spinner 不永转。
+        activeTurnIdRef.current = null; // G29：turn 终态 → 追加指令目标失效
         finalizeToolCalls('failed', '未收到执行结果');
         if (thinkingId) {
           setMessages((prev) => clearThinkingFlag(prev, { messageId: thinkingId }));
+        }
+        // G28（A24）：task_complete.goal_satisfaction → GoalSatisfactionCard。
+        // 与 SSE/最终文本消费同一持久化裁决（bounded_payload 投影）；载荷
+        // 缺席/解析非法 → 不挂载（零漂移）。跨会话已被 INV-2 顶部守卫拦截。
+        const goal = parseGoalSatisfaction(data);
+        if (goal && thinkingId) {
+          setMessages((prev) => attachGoalSatisfaction(prev, {
+            messageId: thinkingId,
+            goal,
+          }));
         }
       } else if (event.event === 'tool_result') {
         // Legacy engine emits tool_result after step_result; Pi path may omit
@@ -1011,6 +1064,152 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             clarification,
           }));
         }
+      } else if (event.event === 'model_status') {
+        // G37：本 turn 模型应用回执（requested/effective/思考档/失败原
+        // 因）—— 会话级实时旁证；权威事实在服务端回执，组件经 store 订阅。
+        const modelStatus = parseModelStatus(data);
+        if (modelStatus && modelStatus.session_id === sessionIdRef.current) {
+          useModelRuntimeStore.getState().observe(modelStatus);
+        }
+      } else if (event.event === 'pi_interaction') {
+        // G29：原生运行中交互卡片挂到本轮助手消息（当前 run 阻塞等待）。
+        // 跨会话守卫与 clarification 同款；载荷校验在 runtimeInteractionCard。
+        const payloadSid =
+          typeof (data as Record<string, unknown> | null)?.session_id === 'string'
+            ? ((data as Record<string, unknown>).session_id as string)
+            : '';
+        if (payloadSid && payloadSid !== sessionIdRef.current) return;
+        const card = runtimeInteractionCard(data);
+        if (card && thinkingId) {
+          setMessages((prev) => upsertRuntimeInteraction(prev, {
+            messageId: thinkingId,
+            card,
+          }));
+        }
+      } else if (event.event === 'pi_interaction_update') {
+        // G29：卡片状态更新（回答已接纳/续接观察/取消/过期/失效）。可能
+        // 迟到于消息切换 —— 全列扫描按 interactionId 命中。跨会话守卫与
+        // pi_interaction 同款（review P3-9：不对称是脆弱面）。
+        const updateSid =
+          typeof (data as Record<string, unknown> | null)?.session_id === 'string'
+            ? ((data as Record<string, unknown>).session_id as string)
+            : '';
+        if (updateSid && updateSid !== sessionIdRef.current) return;
+        const update = runtimeInteractionUpdate(data);
+        if (update) {
+          const statusMap: Record<string, import('@/lib/types/runtime-interaction').RuntimeInteractionStatus> = {
+            answer_written: 'answered',
+            resolved: 'resolved',
+            cancelled: 'cancelled',
+            timed_out: 'timed_out',
+            invalidated: 'invalidated',
+          };
+          const next = statusMap[update.state];
+          if (next) {
+            setMessages((prev) => setRuntimeInteractionStatus(prev, {
+              interactionId: update.interactionId,
+              status: next,
+              answerDisplay: update.answerDisplay,
+              answerKind: update.answerKind,
+              resolveEvidence: update.evidence,
+            }));
+          }
+        }
+      } else if (event.event === 'pi_ui') {
+        // G29：fire-and-forget 只读投影 —— notify 以有界 content 行披露，
+        // 不要求回答、不渲染 HTML；status/widget/title/建议仅记录状态。
+        const fire = runtimeUiFire(data);
+        if (fire?.kind === 'notify' && fire.message) {
+          const tag = fire.notifyType === 'error' ? '⚠' : fire.notifyType === 'warning' ? '⚠' : 'ℹ';
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `pi-ui-notify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              role: 'assistant',
+              content: `${tag} ${fire.message}`,
+              timestamp: Date.now(),
+            } as import('@/lib/chat/message-reducer').ChatStreamMessage,
+          ]);
+        }
+      } else if (event.event === 'pi_turn_message') {
+        // G29：运行中追加指令的真实 disposition（接纳 ≠ 已消费）。跨会话
+        // 守卫同款（review P3-9）；文案走 i18n（review P3-7）。
+        const payload = (data ?? {}) as Record<string, unknown>;
+        const steerSid = typeof payload.session_id === 'string' ? payload.session_id : '';
+        if (steerSid && steerSid !== sessionIdRef.current) return;
+        const modeLabel = payload.mode === 'queue'
+          ? msg('chat.interaction.steerQueued')
+          : msg('chat.interaction.steerSent');
+        const disposition = payload.disposition
+          ? ` (${typeof payload.disposition === 'string' ? payload.disposition : JSON.stringify(payload.disposition).slice(0, 80)})`
+          : '';
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `pi-steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            role: 'assistant',
+            content: `${modeLabel}${disposition}`,
+            timestamp: Date.now(),
+          } as import('@/lib/chat/message-reducer').ChatStreamMessage,
+        ]);
+      } else if (event.event === 'attachment_receipt') {
+        // G36（ADR-0291）：逐附件送模回执 —— 回填最后一条带附件的用户消息
+        // （sent/refused + reason；跨会话守卫同款）。
+        const payload = (data ?? {}) as Record<string, unknown>;
+        const receiptSid = typeof payload.session_id === 'string' ? payload.session_id : '';
+        if (receiptSid && receiptSid !== sessionIdRef.current) return;
+        const attachment = payload.attachment as Record<string, unknown> | undefined;
+        if (!attachment || typeof attachment.evidence_id !== 'string') return;
+        const evidenceId = attachment.evidence_id;
+        const status = attachment.status === 'sent' ? 'sent' : 'refused';
+        const reason = typeof attachment.reason === 'string' ? attachment.reason.slice(0, 80) : undefined;
+        setMessages((prev) => {
+          for (let i = prev.length - 1; i >= 0; i--) {
+            const m = prev[i];
+            const atts = m.attachments;
+            if (m.role === 'user' && Array.isArray(atts)
+                && atts.some((a) => a.evidence_id === evidenceId)) {
+              const next = [...prev];
+              next[i] = {
+                ...m,
+                attachments: atts.map((a) =>
+                  a.evidence_id === evidenceId ? { ...a, status, reason } : a),
+              };
+              return next;
+            }
+          }
+          return prev;
+        });
+      } else if (event.event === 'turn_context_receipt') {
+        // G43（ADR-0295）：本轮上下文装配回执 —— 挂到最后一条 user 消息
+        //（按 turn_id 幂等；跨会话守卫同款）。摘要有界：digest/计数/状态，
+        // 完整源清单在面板展开时按 session+turn 拉取。
+        const payload = (data ?? {}) as Record<string, unknown>;
+        const receiptSid = typeof payload.session_id === 'string' ? payload.session_id : '';
+        if (receiptSid && receiptSid !== sessionIdRef.current) return;
+        const turnId = typeof payload.turn_id === 'string' ? payload.turn_id : '';
+        if (!turnId) return;
+        const counts = (payload.counts ?? {}) as Record<string, unknown>;
+        const summary: import('@/lib/api/turnContext').TurnContextReceiptSummary = {
+          session_id: receiptSid,
+          turn_id: turnId,
+          receipt_id: typeof payload.receipt_id === 'number' ? payload.receipt_id : null,
+          digest: typeof payload.digest === 'string' ? payload.digest : null,
+          status: typeof payload.status === 'string' ? payload.status : 'unknown',
+          disposition: typeof payload.disposition === 'string' ? payload.disposition : null,
+          turn_outcome: typeof payload.turn_outcome === 'string' ? payload.turn_outcome : null,
+          policy_version: typeof payload.policy_version === 'number' ? payload.policy_version : 0,
+          mode: typeof payload.mode === 'string' ? payload.mode : 'typed',
+          counts: {
+            included: typeof counts.included === 'number' ? counts.included : undefined,
+            omitted: typeof counts.omitted === 'number' ? counts.omitted : undefined,
+            truncated: typeof counts.truncated === 'number' ? counts.truncated : undefined,
+            sources_total: typeof counts.sources_total === 'number' ? counts.sources_total : undefined,
+          },
+          persisted: payload.persisted !== false,
+        };
+        setMessages((prev) =>
+          attachTurnContextReceipt(prev, { turnId, receipt: summary }));
       }
     },
     [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, setMessages, startExplorerProgressStream, onSessionPlanEvent, refreshDatasetLayer, rotateLayerFetches]
@@ -1148,6 +1347,174 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     [setMessages, refreshPendingClarification, sessionIdRef, sessionTokenRef],
   );
 
+  // G29：运行中交互提交（REST 直达原生协议 —— 当前 run 自动续行，无续行消息）。
+  const handleRuntimeInteractionSubmit = useCallback(
+    (
+      state: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState,
+      answer: { value?: string; confirmed?: boolean; cancelled?: boolean },
+    ) => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      setMessages((prev) =>
+        setRuntimeInteractionStatus(prev, {
+          interactionId: state.interactionId, status: 'submitting',
+        }),
+      );
+      submitRuntimeInteractionAnswer(
+        sid, state.interactionId, answer, sessionTokenRef.current || undefined,
+      )
+        .then((result) => {
+          if (sessionIdRef.current !== sid) return;
+          // accepted → answer_written（等待任务继续；后续 pi_interaction_update
+          // 会把 resolved/终态推来）。already_answered/duplicate → 用服务端状态。
+          const state2 = result.state === 'answer_written' ? 'answered' : result.state;
+          const mapped = (['resolved', 'cancelled', 'timed_out', 'invalidated'] as const).includes(
+            state2 as never,
+          )
+            ? (state2 as import('@/lib/types/runtime-interaction').RuntimeInteractionStatus)
+            : 'answered';
+          const display =
+            answer.cancelled ? undefined
+            : answer.value ?? (answer.confirmed === true
+              ? msg('chat.interaction.confirmYes')
+              : answer.confirmed === false ? msg('chat.interaction.confirmNo') : undefined);
+          setMessages((prev) =>
+            setRuntimeInteractionStatus(prev, {
+              interactionId: state.interactionId,
+              status: mapped,
+              answerDisplay: display,
+            }),
+          );
+        })
+        .catch((err: unknown) => {
+          if (sessionIdRef.current !== sid) return;
+          const code = err instanceof ApiError
+            ? String((err.body as { error?: unknown } | null)?.error ?? err.status)
+            : '';
+          setMessages((prev) =>
+            setRuntimeInteractionStatus(prev, {
+              interactionId: state.interactionId,
+              status: 'error',
+              errorCode: code,
+            }),
+          );
+        });
+    },
+    [setMessages, sessionIdRef, sessionTokenRef],
+  );
+
+  // G29：运行中追加指令（adjust=steer / queue=follow_up）。与澄清续行不同：
+  // 当前 run 不中断；disposition 由 pi_turn_message 事件披露。
+  const handleTurnMessage = useCallback(
+    async (text: string, mode: 'adjust' | 'queue'): Promise<boolean> => {
+      const sid = sessionIdRef.current;
+      const tid = activeTurnIdRef.current;
+      if (!sid || !tid) return false;
+      // G36（ADR-0291，V31）：运行中附图 —— 草稿随 steer/follow_up 原生
+      // images 通道送达（服务端同一 bridge 裁决面）；无草稿 = 旧行为。
+      const drafts = useVisualAttachStore.getState().sessionId === sid
+        ? useVisualAttachStore.getState().consumeDrafts()
+        : [];
+      try {
+        const result = await sendTurnMessage(
+          sid, tid, text, mode, sessionTokenRef.current || undefined,
+          drafts.length
+            ? drafts.map((d) => ({ evidence_id: d.evidenceId }))
+            : null,
+        );
+        // review P2#8：回执披露进转录（含拒绝原因），accepted !== true 同样
+        // 回滚草稿（附件已保存、指令未送达 —— 用户可重试）。
+        const resultRec = result as unknown as Record<string, unknown>;
+        const receipts = Array.isArray(resultRec.attachments)
+          ? (resultRec.attachments as Array<
+              { evidence_id?: string; status?: string; reason?: string }
+            >)
+          : [];
+        if (receipts.length) {
+          const lines = receipts.map((r) => {
+            const okPart = r.status === 'sent'
+              ? msg('sidebar.chat.visualAttach.receiptSent')
+              : `${msg('sidebar.chat.visualAttach.receiptRefused')}${r.reason ? ` (${r.reason})` : ''}`;
+            return `${r.evidence_id ?? ''} ${okPart}`;
+          }).join(' / ');
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `pi-attach-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              role: 'assistant',
+              content: `📎 ${lines}`,
+              timestamp: Date.now(),
+            } as import('@/lib/chat/message-reducer').ChatStreamMessage,
+          ]);
+        }
+        const accepted = result.accepted === true;
+        if (!accepted && drafts.length
+            && useVisualAttachStore.getState().sessionId === sid) {
+          const still = useVisualAttachStore.getState().drafts;
+          for (const d of drafts) {
+            if (!still.some((x) => x.evidenceId === d.evidenceId)) {
+              useVisualAttachStore.getState().addDraft(d);
+            }
+          }
+        }
+        return accepted;
+      } catch {
+        // 发送失败：草稿回滚（证据仍为服务端 draft 态）。
+        if (drafts.length && useVisualAttachStore.getState().sessionId === sid) {
+          const still = useVisualAttachStore.getState().drafts;
+          for (const d of drafts) {
+            if (!still.some((x) => x.evidenceId === d.evidenceId)) {
+              useVisualAttachStore.getState().addDraft(d);
+            }
+          }
+        }
+        return false;
+      }
+    },
+    [sessionIdRef, sessionTokenRef, setMessages],
+  );
+
+  // G29（WP10）：刷新/重连水合 —— GET pending 运行中交互，把仍可作答的
+  // 卡片挂到一条稳定的助手消息上（页面刷新后活请求仍可回答；进程重启后
+  // 服务端如实返回空/终态 —— 绝不伪造跨代际可作答）。
+  useEffect(() => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    let cancelled = false;
+    fetchRuntimeInteractions(sid, sessionTokenRef.current || undefined)
+      .then((view) => {
+        if (cancelled || sessionIdRef.current !== sid) return;
+        const cards = (view.pending ?? [])
+          .map((p) => runtimeInteractionCard(p))
+          .filter((c): c is NonNullable<typeof c> => c !== null);
+        if (cards.length === 0) return;
+        setMessages((prev) => {
+          const hydrateId = `${sid}-runtime-interactions`;
+          const existing = prev.find((m) => m.id === hydrateId);
+          const baseMessage = existing ?? {
+            id: hydrateId,
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+          } as import('@/lib/chat/message-reducer').ChatStreamMessage;
+          const merged = {
+            ...baseMessage,
+            runtimeInteractions: cards,
+          };
+          return existing
+            ? prev.map((m) => (m.id === hydrateId ? merged : m))
+            : [...prev, merged];
+        });
+      })
+      .catch(() => {
+        /* 水合失败静默 —— SSE 流/ring 仍是主通道 */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, setMessages]);
+
   // #468: the ref carries handleSend's success signal (true = the turn
   // completed; false/rejection = failed) so plan approval can roll back.
   const handleSendRef = useRef<((text: string) => Promise<boolean>) | null>(null);
@@ -1239,11 +1606,30 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         focus_layer_id: focusLayerId ?? null,
       };
 
+      // G36（ADR-0291）：消费视觉附图草稿（ref-only；evidence bytes 已在
+      // intake 上传）。乐观消息携带附件 chips；发送失败时草稿回滚（证据
+      // 仍是服务端 draft 态，未绑定消息 —— 「附件已保存、turn 未开始」）。
+      const attachDrafts = useVisualAttachStore.getState().sessionId === sessionIdRef.current
+        ? useVisualAttachStore.getState().consumeDrafts()
+        : [];
+      const userMsgId = msgIdGen.current.next();
       setMessages((prev) => appendMessage(prev, {
-        id: msgIdGen.current.next(),
+        id: userMsgId,
         role: 'user',
         content: userMsg,
         timestamp: new Date(),
+        ...(attachDrafts.length
+          ? {
+              attachments: attachDrafts.map((d) => ({
+                evidence_id: d.evidenceId,
+                source_type: d.sourceType,
+                label: d.label,
+                thumbUrl: d.thumbUrl,
+                mapspec_revision: d.mapspecRevision ?? null,
+                status: 'pending',
+              })),
+            }
+          : {}),
       }));
 
       const thinkingMsgId = msgIdGen.current.next();
@@ -1265,7 +1651,15 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         // stuck. It is still set before the first await, so a same-tick second
         // send (which can only run once we yield at bridge.send) sees it.
         sendingRef.current = true;
-        await bridge.send(userMsg, mapState);
+        await bridge.send(
+          userMsg,
+          mapState,
+          attachDrafts.length
+            ? attachDrafts.map((d) => ({ evidence_id: d.evidenceId }))
+            : null,
+        );
+
+        if (sendGeneration !== sendGenerationRef.current) return false;
 
         // Flush any tokens still pending in the current frame so the final
         // streamed text is applied before the thinking→done transition.
@@ -1276,13 +1670,25 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         // bridge resolves even when the stream died — the store's terminal
         // aiStatus (synced by useMapBridge before the send promise settles)
         // is the truthful signal.
-        return useHudStore.getState().aiStatus !== 'error';
+        const ok = useHudStore.getState().aiStatus !== 'error';
+        // G36：turn 未成功起步（发送失败/未开始）→ 草稿回滚（服务端证据仍
+        // 是 draft 态）；turn 已开始则证据随回执转 bound，不回滚。
+        if (!ok && attachDrafts.length
+            && useVisualAttachStore.getState().sessionId === sessionIdRef.current) {
+          const stillPending = useVisualAttachStore.getState().drafts;
+          for (const d of attachDrafts) {
+            if (!stillPending.some((x) => x.evidenceId === d.evidenceId)) {
+              useVisualAttachStore.getState().addDraft(d);
+            }
+          }
+        }
+        return ok;
       } finally {
         // A superseded stream must not unlock the next send.
         if (sendGeneration === sendGenerationRef.current) sendingRef.current = false;
       }
     },
-    [bridge, getMapSnapshot, userLocation, setMessages]
+    [bridge, getMapSnapshot, userLocation, setMessages, sessionIdRef]
   );
 
 
@@ -1386,6 +1792,8 @@ export function useSSEStream(options: UseSSEStreamOptions) {
     handleSend,
     handlePlanAction,
     handleClarificationSubmit,
+    handleRuntimeInteractionSubmit,
+    handleTurnMessage,
     handleFeatureEditDecision,
     refreshPendingClarification,
     bridge,

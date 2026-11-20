@@ -107,20 +107,25 @@ def compile_predicate_sql(
     *,
     allowed_fields: Optional[Sequence[str]] = None,
     geom_field: str = "geom",
+    table_alias: Optional[str] = None,
 ) -> SQLFragment:
-    """属性谓词 → 参数化 SQL 片段（pyformat 占位符）。"""
+    """属性谓词 → 参数化 SQL 片段（pyformat 占位符）。
+
+    ``table_alias``：多表（自关联/空间 join）场景下限定列引用，避免
+    AmbiguousColumn 或跨表比较错列；仅接受白名单标识符。
+    """
     if allowed_fields is not None:
         validate_predicate_fields(node, allowed_fields)
-    return _sql_node(node)
+    return _sql_node(node, table_alias=table_alias)
 
 
-def _sql_node(node: Any) -> SQLFragment:
+def _sql_node(node: Any, table_alias: Optional[str] = None) -> SQLFragment:
     op = node.op
     if op == "and":
         parts: List[str] = []
         params: List[Any] = []
         for a in node.args:
-            s, p = _sql_node(a)
+            s, p = _sql_node(a, table_alias=table_alias)
             parts.append(s)
             params.extend(p)
         return "(" + " AND ".join(parts) + ")", params
@@ -128,15 +133,20 @@ def _sql_node(node: Any) -> SQLFragment:
         parts = []
         params = []
         for a in node.args:
-            s, p = _sql_node(a)
+            s, p = _sql_node(a, table_alias=table_alias)
             parts.append(s)
             params.extend(p)
         return "(" + " OR ".join(parts) + ")", params
     if op == "not":
-        s, p = _sql_node(node.arg)
+        s, p = _sql_node(node.arg, table_alias=table_alias)
         return f"(NOT {s})", p
 
     col = quote_ident(node.field)
+    if table_alias is not None:
+        from app.services.data_fabric.query.predicates import _check_field_name
+
+        _check_field_name(table_alias)
+        col = f"{table_alias}.{col}"
     if op == "eq":
         if node.value is None:
             return f"{col} IS NULL", []
@@ -160,9 +170,8 @@ def _sql_node(node: Any) -> SQLFragment:
     if op == "between":
         return f"{col} BETWEEN %s AND %s", [node.low, node.high]
     if op == "like":
-        # %/_ 由调用者作为模式语义提供；转义服务器端通配符不是默认（GIS 前缀
-        # 匹配是常见意图）。pattern 本身经参数绑定，无注入面。
-        return f"{col} LIKE %s", [node.pattern]
+        # 与本地求值 / FES 同一转义约定：反斜杠转义 % _ \。pattern 参数绑定。
+        return f"{col} LIKE %s ESCAPE '\\'", [node.pattern]
     if op == "is_null":
         return f"{col} IS {'NOT ' if node.negated else ''}NULL", []
     raise PredicateError(f"cannot compile op {op!r} to SQL")
@@ -432,7 +441,7 @@ def compile_predicate_fes(
         return compile_predicate_fes(and_node, ns=ns)
     if op == "like":
         return (
-            f'<ogc:PropertyIsLike xmlns:ogc="{ns}" wildCard="%" singleChar="_" escapeChar="!">'
+            f'<ogc:PropertyIsLike xmlns:ogc="{ns}" wildCard="%" singleChar="_" escapeChar="\\">'
             f"<ogc:PropertyName>{_fes_value(node.field)}</ogc:PropertyName>"
             f"<ogc:Literal>{_fes_value(node.pattern)}</ogc:Literal></ogc:PropertyIsLike>"
         )

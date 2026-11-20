@@ -239,6 +239,22 @@ def test_stale_claims_cannot_grant_org_or_admin_access(client, session_factory):
     assert denied.status_code == 403
 
 
+def test_org_admin_cannot_version_builtin_template(client, session_factory):
+    _make_template(session_factory, "tmpl_builtin", is_builtin=True, org_id=1)
+    denied = client.post(
+        "/api/v1/templates/tmpl_builtin/versions",
+        json={"payload": {"paperSize": "A3"}},
+        headers=_token("root", "admin"),
+    )
+    assert denied.status_code == 403
+    dep = client.post(
+        "/api/v1/templates/tmpl_builtin/versions/1/deprecate",
+        json={"note": "no"},
+        headers=_token("root", "admin", org_id=1),
+    )
+    assert dep.status_code == 403
+
+
 def test_builtin_readable_but_not_writable_by_non_admin(client, session_factory):
     _make_template(session_factory, "tmpl_builtin", is_builtin=True)
     _make_version(session_factory, "tmpl_builtin", {"paperSize": "A4"})

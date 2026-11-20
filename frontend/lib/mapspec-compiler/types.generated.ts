@@ -28,6 +28,11 @@ export interface InterpolateStyleMethod {
   /** H02（任务书 §B）：legend_spec.nodata 的无数据色 —— null/missing
    *  特征值分派到此色而非最低类；全部下降点同语义。 */
   nodata?: string;
+  /** G33：输出变换 —— "sqrt" 对插值结果取平方根。比例圆符号的「面积∝
+   *  数值」精确映射：stops 携带 r²（面积），插值线性于数值（等值差→等
+   *  面积差），输出 √面积=半径。双端（live compileStyleMethod / 导出
+   *  _resolve_paint_value）同口径。 */
+  output_transform?: "sqrt";
 }
 
 export interface StepStyleMethod {
@@ -87,13 +92,14 @@ export interface MapSpecLayerLayout {
 export interface MapSpec {
   version: string;
   view?: MapSpecView;
-  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | Model3dMapSpecSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
+  sources: Record<string, DataFabricMapSpecSource | GeoJSONMapSpecSource | Model3dMapSpecSource | NumericRasterMapSpecSource | RasterDemMapSpecSource | RasterMapSpecSource | VectorMapSpecSource>;
   layers: MapSpecLayer[];
   layout?: MapSpecLayoutConfig;
   thresholds?: MapThresholds;
   scenario_mode?: "split_view" | "swipe_compare";
   scene?: MapSceneConfig;
   temporal?: MapSpecTemporalConfig;
+  frame_product?: FrameProductConfig;
 }
 
 export interface MapSpecView {
@@ -107,6 +113,7 @@ export type MapSpecSource =
     | GeoJSONMapSpecSource
   | VectorMapSpecSource
   | RasterMapSpecSource
+  | NumericRasterMapSpecSource
   | RasterDemMapSpecSource
   | DataFabricMapSpecSource
   | Model3dMapSpecSource;
@@ -133,6 +140,40 @@ export interface RasterMapSpecSource {
   imageRef: string;
   bounds: [number, number, number, number];
   imageSize?: [number, number];
+}
+
+export interface NumericRasterMapSpecSource {
+  type: "numeric_raster";
+  schema_version?: "raster_expression.v1";
+  refId: string;
+  bounds: [number, number, number, number];
+  crs?: string;
+  dataRevision: string;
+  dataFingerprint?: string;
+  bandCount?: number;
+}
+
+export interface RasterStretchBounds {
+  min: number;
+  max: number;
+  source?: "manual" | "bounded_sample" | "descriptor";
+  method?: string;
+  sample_count?: number;
+  approximate?: boolean;
+  per_channel?: number[][];
+}
+
+export interface RasterExpressionSpec {
+  schema_version?: "raster_expression.v1";
+  mode: "single" | "rgb";
+  bands: number[];
+  stretch: RasterStretchBounds;
+  colormap?: string;
+  opacity?: number;
+  resampling?: "nearest" | "bilinear" | "cubic";
+  classification?: "continuous" | "classified";
+  data_revision?: string;
+  style_id?: string;
 }
 
 export interface RasterDemMapSpecSource {
@@ -179,6 +220,8 @@ export interface MapSpecLayer {
   data_binding?: MapSpecLayerDataBinding;
   representation?: MapSpecLayerRepresentation;
   scale_profile?: Record<string, unknown>;
+  raster_style?: RasterExpressionSpec;
+  symbol_asset?: MapSpecLayerSymbolAsset;
   flow?: MapSpecLayerFlow;
 }
 
@@ -238,6 +281,37 @@ export interface MapSpecLayerDataBinding {
   class_field?: string;
 }
 
+export interface MapSpecLayerSymbolAssetCategoryRule {
+  key: boolean | number | string;
+  asset_id: string;
+  revision: number;
+  content_digest: string;
+  params?: Record<string, unknown>;
+}
+
+export interface MapSpecLayerSymbolAssetCategoryBinding {
+  field: string;
+  key_type?: "number" | "string" | "bool";
+  map?: MapSpecLayerSymbolAssetCategoryRule[];
+  other_mode?: "fallback_asset" | "keep_current";
+  other_asset?: string;
+  other_revision?: number;
+  other_content_digest?: string;
+  other_params?: Record<string, unknown>;
+}
+
+export interface MapSpecLayerSymbolAsset {
+  schema_version?: 1;
+  asset_id: string;
+  revision: number;
+  content_digest: string;
+  kind: "point_symbol" | "area_texture";
+  params?: Record<string, unknown>;
+  category_binding?: MapSpecLayerSymbolAssetCategoryBinding;
+  applied_by?: Record<string, unknown>;
+  prev_paint_snapshot?: Record<string, unknown>;
+}
+
 export interface MapSpecRepresentationWindow {
   min_zoom: number;
   max_zoom: number;
@@ -262,6 +336,7 @@ export interface MapSpecLayerLabel {
   zoomBands?: MapSpecLabelZoomBand[];
   sizeRatio?: number;
   haloMode?: "auto" | "static";
+  authoring?: LabelAuthoringConfig;
 }
 
 export interface MapSpecLabelZoomBand {
@@ -269,6 +344,37 @@ export interface MapSpecLabelZoomBand {
   maxZoom: number;
   topRatio?: number;
   sizeRatio?: number;
+}
+
+export interface LabelOffsetOverride {
+  dx: number;
+  dy: number;
+}
+
+export interface LabelAuthoringOverride {
+  featureId: string;
+  idKey?: string;
+  hidden?: boolean;
+  pinned?: boolean;
+  offset?: LabelOffsetOverride;
+  text?: string;
+  callout?: boolean;
+  priority?: number;
+  origin?: "user" | "agent";
+  sourceRevision?: number;
+  frameId?: string;
+  note?: string;
+}
+
+export interface LabelAuthoringConfig {
+  overrides?: LabelAuthoringOverride[];
+}
+
+export interface LabelForbiddenZone {
+  id: string;
+  ring: number[][];
+  origin?: "user" | "agent";
+  note?: string;
 }
 
 export interface MapSpecLegendConfig {
@@ -330,6 +436,8 @@ export interface MapSpecFrame {
 export interface MapLabelConfig {
   collision?: "deterministic";
   maxLabels?: number;
+  obstaclePolicy?: "circles_legacy" | "geometry_v1";
+  forbiddenZones?: LabelForbiddenZone[];
 }
 
 export interface ComponentLinkSpec {
@@ -348,6 +456,7 @@ export interface MapSpecLayoutConfig {
   labels?: MapLabelConfig;
   component_links?: ComponentLinkSpec[];
   composition?: Record<string, unknown>;
+  print_layout?: Record<string, unknown>;
 }
 
 export interface MapThresholds {
@@ -473,4 +582,53 @@ export interface TemporalCompareConfig {
 export interface TemporalPlaybackConfig {
   playing?: boolean;
   rate?: number;
+}
+
+export interface FrameProductConfig {
+  schema_version?: "frame_product.v1";
+  enabled: boolean;
+  product_kind: "time_series" | "category_compare" | "variable_compare" | "detail_frames";
+  grid: FrameProductGridConfig;
+  frames: ProductFrameSlot[];
+  shared_expression?: SharedExpressionConfig;
+  active_frame?: string;
+  quality?: string[];
+  disclosures?: string[];
+}
+
+export interface FrameProductGridConfig {
+  columns: number;
+  title?: string;
+}
+
+export interface ProductFrameSlot {
+  frame_id: string;
+  title?: string;
+  legend?: "shared" | "independent" | "shared_plus_frame";
+  sync_group?: string;
+  data?: FrameDataBinding;
+}
+
+export interface FrameDataBinding {
+  ref: string;
+  layer_id: string;
+  content_revision?: number;
+  field?: string;
+  where?: Record<string, unknown>;
+  time_window?: Record<string, unknown>;
+}
+
+export interface SharedExpressionConfig {
+  field: string;
+  semantics?: "count" | "ratio" | "index" | "other";
+  unit?: string;
+  denominator?: string;
+  method: string;
+  k: number;
+  palette: string;
+  breaks?: number[];
+  domain_status?: "complete" | "partial" | "unknown";
+  per_frame_counts?: Record<string, number>;
+  sample_size?: number;
+  eligibility?: string[];
 }

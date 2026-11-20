@@ -79,6 +79,12 @@ class LLMConfigUpdateResponse(BaseModel):
 
     status: str
     config: LLMConfig
+    # ADR-0288（W08，#2061）additive：Pi worker 换代披露（缺席 = 旧客户端
+    # / Pi 桥不可用时不携带）。期望代（本次更新后的解析指纹）vs 各 worker
+    # 实际生效代经 /health 与 pi_doctor 可持续对账。
+    expected_generation: Optional[str] = None
+    pi_workers_recycled: Optional[int] = None
+    pi_workers_deferred: Optional[int] = None
 
 
 class LLMTestRequest(BaseModel):

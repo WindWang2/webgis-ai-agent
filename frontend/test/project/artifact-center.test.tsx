@@ -106,7 +106,7 @@ describe('ArtifactCenter', () => {
       await new Promise((r) => setTimeout(r, 260));
     });
     fireEvent.click(screen.getAllByRole('button', { name: '确认克隆？' })[0]);
-    await waitFor(() => expect(api.cloneArtifact).toHaveBeenCalledWith('art-1'));
+    await waitFor(() => expect(api.cloneArtifact).toHaveBeenCalledWith('art-1', 'p1'));
     expect(await screen.findByText(/克隆成功：新产物 art-clone-9/)).toBeInTheDocument();
   });
 

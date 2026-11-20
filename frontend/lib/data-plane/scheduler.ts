@@ -168,6 +168,14 @@ export class DataPlaneScheduler {
   };
   private seq = 0;
   private onFulfilled?: (refId: string, fc: FeatureCollectionLike, etag?: string) => void;
+  /**
+   * 期望 pin 集合（#2144 H2）：session → 当前应 pin 的 refId 集。
+   * setRefPinned 只触碰**已存在**的缓存条目 —— 层以 visible 加入时缓存
+   * 尚空（pin 0 条），数据落地写成 pinned:false 后签名不变，旧逻辑永不补
+   * pin。这里记录期望集合：fetch 落地时按期望补 pin；层从 store 移除时
+   * 对差集 unpin（同会话内回收预算）。
+   */
+  private readonly desiredPin = new Map<string, Set<string>>();
   private idleWaiters: Array<() => void> = [];
 
   constructor(deps: RefFetchDeps) {
@@ -322,6 +330,32 @@ export class DataPlaneScheduler {
     return n;
   }
 
+  /**
+   * 期望 pin 集合对账（#2144 H2）：visibleRefIds 是当前应 pin 的 ref 全集
+   * （仅可见层；隐藏/移除层不在其中）。新增期望立即 pin 既有代次；从期望
+   * 消失的 ref（层被移除）全部 unpin —— 同会话内被删层的数据不再永久钉在
+   * 预算里。返回 { pinned, unpinned } 触碰计数（幂等）。
+   */
+  applyDesiredPins(sessionId: string, visibleRefIds: readonly string[]): { pinned: number; unpinned: number } {
+    const next = new Set(visibleRefIds);
+    const prev = this.desiredPin.get(sessionId) ?? new Set<string>();
+    let pinned = 0;
+    let unpinned = 0;
+    for (const refId of next) {
+      if (!prev.has(refId)) pinned += this.setRefPinned(sessionId, refId, true);
+    }
+    for (const refId of prev) {
+      if (!next.has(refId)) unpinned += this.setRefPinned(sessionId, refId, false);
+    }
+    this.desiredPin.set(sessionId, next);
+    return { pinned, unpinned };
+  }
+
+  /** 查询某 ref 的期望 pin 状态（fetch 落地补 pin 用；缺省 false）。 */
+  isDesiredPinned(sessionId: string, refId: string): boolean {
+    return this.desiredPin.get(sessionId)?.has(refId) ?? false;
+  }
+
   /** 会话级 unpin sweep（会话切换防 pinned 集合单调增长 —— pinned 是
    *  跨会话单例缓存上的状态，残留会把预算整体钉死）。返回触碰数。 */
   unpinSession(sessionId: string): number {
@@ -331,6 +365,7 @@ export class DataPlaneScheduler {
         if (this.cache.setPinned(key, false)) n += 1;
       }
     }
+    this.desiredPin.delete(sessionId);
     return n;
   }
 
@@ -461,6 +496,11 @@ export class DataPlaneScheduler {
           // 不在 set 内隐式重算。
           const bytes = estimateFeatureCollectionBytes(outcome.fc);
           this.cache.set(key, outcome.fc, { etag: outcome.etag, bytes });
+          // #2144 H2：层先 visible 加入时缓存尚空（pin 0 条）—— 数据落地
+          // 必须按期望集合补 pin，否则显示中的层数据被预算逐出。
+          if (this.isDesiredPinned(req.sessionId, req.refId)) {
+            this.cache.setPinned(key, true);
+          }
           this.counters.fetchOk += 1;
           recordDataPlaneBytes(bytes);
           this.onEvent?.('fulfilled', { refId: req.refId, sessionId: req.sessionId });

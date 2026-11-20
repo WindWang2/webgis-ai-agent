@@ -1,0 +1,1648 @@
+............F.F.....................F................................... [ 36%]
+............s........................................................... [ 73%]
+........................E.E.E.EFEE.E.E.E.EE.......E.E.EFEFEFEEFEE..      [100%]
+==================================== ERRORS ====================================
+_ ERROR at teardown of TestMutationIdempotency.test_same_id_replays_committed_revision _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":52,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-c2a6c8ed"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":52,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-c2a6c8ed"],"targetCount":1}
+_ ERROR at teardown of TestMutationIdempotency.test_lost_response_retry_returns_duplicate_not_superseded _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":52,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-b2418ce9"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":52,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-b2418ce9"],"targetCount":1}
+_ ERROR at teardown of TestMutationIdempotency.test_concurrent_same_id_single_execution _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":52,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-1309b967"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":52,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-1309b967"],"targetCount":1}
+_ ERROR at teardown of TestMutationIdempotency.test_failed_mutation_leaves_no_record_so_retry_reexecutes _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":52,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-ca522b87"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":52,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-ca522b87"],"targetCount":1}
+____ ERROR at teardown of TestMutationIdempotency.test_dedup_index_bounded _____
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":80,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-ff221dbe"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-ff221dbe/revisions/mapspec_rev_1794500031965_000129_d9cf04.json"],"targetCount":1}
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":80,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-ff221dbe"],"targetCount":1}
+___________ ERROR at setup of test_adapter_route_produces_provenance ___________
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x7f83cf8be340>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_pytest.runner.SetupState object at 0x7f8419abc440>
+item = <Coroutine test_adapter_route_produces_provenance>
+
+    def setup(self, item: Item) -> None:
+        """Setup objects along the collector chain to the item."""
+        needed_collectors = item.listchain()
+    
+        # If a collector fails its setup, fail its entire subtree of items.
+        # The setup is not retried for each item - the same exception is used.
+        for col, (finalizers, exc) in self.stack.items():
+>           assert col in needed_collectors, "previous item was not torn down properly"
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: previous item was not torn down properly
+
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:527: AssertionError
+_ ERROR at teardown of TestDeterministicRaces.test_remove_vs_agent_upsert_no_zombie _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":60,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-fa40a08d"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":60,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-fa40a08d"],"targetCount":1}
+_ ERROR at teardown of TestDeterministicRaces.test_user_toggle_vs_agent_hide_same_second _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":59,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-fa11b532"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":59,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-fa11b532"],"targetCount":1}
+_ ERROR at teardown of TestDeterministicRaces.test_user_pin_blocks_template_apply _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":57,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-d87859fb"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":57,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-d87859fb"],"targetCount":1}
+_ ERROR at teardown of TestDeterministicRaces.test_superseded_then_retry_with_fresh_revision _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":59,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-b059abfe"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":59,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-b059abfe"],"targetCount":1}
+__________ ERROR at setup of TestReconciliation.test_zombie_detection __________
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x7f83ccb936a0>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_pytest.runner.SetupState object at 0x7f8419abc440>
+item = <Function test_zombie_detection>
+
+    def setup(self, item: Item) -> None:
+        """Setup objects along the collector chain to the item."""
+        needed_collectors = item.listchain()
+    
+        # If a collector fails its setup, fail its entire subtree of items.
+        # The setup is not retried for each item - the same exception is used.
+        for col, (finalizers, exc) in self.stack.items():
+>           assert col in needed_collectors, "previous item was not torn down properly"
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: previous item was not torn down properly
+
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:527: AssertionError
+____ ERROR at teardown of test_ws_collab_sync_projection_carries_anomalies _____
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":56,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-212dc5f4"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":56,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-212dc5f4"],"targetCount":1}
+_ ERROR at teardown of TestReviewFixes.test_b1_upsert_preserves_when_durable_stamp_present _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":60,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-e4993dfb"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":60,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-e4993dfb"],"targetCount":1}
+_ ERROR at teardown of TestReviewFixes.test_b1_ring_only_legacy_session_still_refuses _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":56,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-e3fd83fb"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":56,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-e3fd83fb"],"targetCount":1}
+_ ERROR at teardown of TestReviewFixes.test_c1_strip_removes_live_entry_after_commit_then_raise _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":60,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-d650445d"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":51,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-d650445d/checkpoints/ckpt_1794500036024"],"targetCount":1}
+------------------------------ Captured log call -------------------------------
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:859 MapSpec mutation failed for session mtn-session-d650445d: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:1377 MapSpec transaction rollback FAILED for session mtn-session-d650445d: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 1359, in _rollback_to_snapshot
+    saved = await self.store.save_mapspec(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":60,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-d650445d"],"targetCount":1}
+_ ERROR at teardown of TestReviewFixes.test_c4_duplicate_response_carries_current_revision _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":56,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-8c23a89f"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-8c23a89f/mapspec.json"],"targetCount":1}
+------------------------------ Captured log call -------------------------------
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:859 MapSpec mutation failed for session mtn-session-8c23a89f: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":56,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-8c23a89f"],"targetCount":1}
+_ ERROR at teardown of TestReviewFixes.test_a1_user_pin_hit_stamps_user_pinned _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":56,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-c8961ec5"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-c8961ec5/mapspec.json"],"targetCount":1}
+------------------------------ Captured log call -------------------------------
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:859 MapSpec mutation failed for session mtn-session-c8961ec5: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":56,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-c8961ec5"],"targetCount":1}
+__ ERROR at setup of test_settime_playback_merge_does_not_mutate_loaded_spec ___
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x7f83cd2cab60>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_pytest.runner.SetupState object at 0x7f8419abc440>
+item = <Coroutine test_settime_playback_merge_does_not_mutate_loaded_spec>
+
+    def setup(self, item: Item) -> None:
+        """Setup objects along the collector chain to the item."""
+        needed_collectors = item.listchain()
+    
+        # If a collector fails its setup, fail its entire subtree of items.
+        # The setup is not retried for each item - the same exception is used.
+        for col, (finalizers, exc) in self.stack.items():
+>           assert col in needed_collectors, "previous item was not torn down properly"
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: previous item was not torn down properly
+
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:527: AssertionError
+_ ERROR at teardown of test_rollback_restores_pre_mutation_spec_after_save_failure _
+
+    @pytest.fixture
+    async def clean_session():
+        sid = f"mtn-session-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(sid)
+        yield sid
+>       await session_data_manager.clear_session(sid)
+
+tests/cartography/test_mutation_transactions.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":53,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...ebgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-f8860895"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-f8860895/mapspec.json"],"targetCount":1}
+------------------------------ Captured log call -------------------------------
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:859 MapSpec mutation failed for session mtn-session-f8860895: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":53,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-f8860895"],"targetCount":1}
+________________ ERROR at setup of test_adr_numbers_are_unique _________________
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x7f83cd0b62a0>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/logging.py:858: in pytest_runtest_setup
+    yield
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_pytest.runner.SetupState object at 0x7f8419abc440>
+item = <Function test_adr_numbers_are_unique>
+
+    def setup(self, item: Item) -> None:
+        """Setup objects along the collector chain to the item."""
+        needed_collectors = item.listchain()
+    
+        # If a collector fails its setup, fail its entire subtree of items.
+        # The setup is not retried for each item - the same exception is used.
+        for col, (finalizers, exc) in self.stack.items():
+>           assert col in needed_collectors, "previous item was not torn down properly"
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: previous item was not torn down properly
+
+../../webgis-ai-agent/.venv/lib/python3.13/site-packages/_pytest/runner.py:527: AssertionError
+=================================== FAILURES ===================================
+______________________ test_op_labels_match_legacy_table _______________________
+
+    def test_op_labels_match_legacy_table():
+        """journal 标签 = 既有标签及已发布 scene / temporal / data-revision 标签。
+    
+        缺表意图（ApplyVisualHealPatch / PatchWorkbenchDelta）保持
+        回退类名 —— 与重构前行为一致；补词属行为变更，另行评审。
+        """
+        legacy = {
+            "SetViewIntent": "调整视图",
+            "SetLayoutIntent": "调整版面",
+            "SetTimeIntent": "调整时间维度",
+            "SetBasemapIntent": "切换底图",
+            "InitProjectIntent": "初始化项目",
+            "UpsertLayerIntent": "挂载图层",
+            "UpsertSourceIntent": "挂载数据源",
+            "RemoveLayerIntent": "移除图层",
+            "ReorderLayersIntent": "调整图层顺序",
+            "PatchLayerStyleIntent": "修改图层样式",
+            "PatchLayerLabelAuthoringIntent": "调整标注",
+            "PatchLayerPresentationIntent": "调整显隐/透明度",
+            "PatchComponentIntent": "调整组件",
+            "RemoveComponentIntent": "移除组件",
+            "DuplicateComponentIntent": "复制组件",
+            "RebindComponentIntent": "重绑定组件",
+            "CheckpointIntent": "创建检查点",
+            "RollbackIntent": "回滚",
+            "RestoreStyleIntent": "恢复样式版本",
+            "SetWorkbenchStateIntent": "更新工作台组织",
+            "SetScenarioModeIntent": "切换推演模式",
+            # v1.7（G3D02）：新表意图的有意标签（journal 可读性 —— 行为变更
+            # 经本表显式登记评审）。
+            "SetSceneAssetsIntent": "写入三维场景资产",
+            "SetSceneIntent": "调整场景",
+            "RefreshDataRevisionIntent": "刷新数据版本戳",
+            "SetTemporalViewIntent": "调整时态视图",
+            # PR-D：新意图的有意标签（journal 可读性，经本表显式登记）。
+            "UndoAgentCommitIntent": "撤销 Agent 提交",
+        }
+        for d in MUTATION_REGISTRY.all():
+            if d.intent_cls.__name__ in legacy:
+                assert d.op_label == legacy[d.intent_cls.__name__], d.kind
+            else:
+>               assert d.op_label is None, f"{d.kind} 新增标签属行为变更"
+E               AssertionError: SetFrameProductIntent 新增标签属行为变更
+E               assert '调整多画幅产品' is None
+E                +  where '调整多画幅产品' = IntentDescriptor(intent_cls=<class 'app.services.mapspec.intents.SetFrameProductIntent'>, handler=<function _handle_se...品', collab_event=None, collab_payload=None, provenance_detail=<function _pd_none at 0x7f8418326020>, lock_targets=None).op_label
+
+tests/unit/test_mutation_registry_consistency.py:155: AssertionError
+_________________ test_http_body_codec_coverage_and_roundtrip __________________
+
+    def test_http_body_codec_coverage_and_roundtrip():
+        """schema 的全部 mutation Body 都有 codec，且 codec 产出对应 intent。"""
+        from typing import get_args
+    
+        from app.schemas import mapspec_mutation_schema as ms
+    
+        # Annotated[Union[...], Field(discriminator=...)]：第一参即 Union
+        union_members = {
+            m.__name__ for m in get_args(ms.UserMapSpecMutationRequest.__args__[0])
+        }
+    
+        body_classes = [
+            v for k, v in vars(ms).items() if isinstance(v, type) and k.endswith("Body")
+        ]
+        # PR-D：+UndoAgentCommitBody（16 → 17）；G16：+PatchLayerLabelAuthoringBody
+>       assert len(body_classes) == 18
+E       AssertionError: assert 19 == 18
+E        +  where 19 = len([<class 'app.schemas.mapspec_mutation_schema.PatchLayerPresentationBody'>, <class 'app.schemas.mapspec_mutation_schema...ss 'app.schemas.mapspec_mutation_schema.SetViewBody'>, <class 'app.schemas.mapspec_mutation_schema.SetSceneBody'>, ...])
+
+tests/unit/test_mutation_registry_consistency.py:188: AssertionError
+________________________ test_every_tool_is_classified _________________________
+
+    def test_every_tool_is_classified():
+        """全量工具归类完备（uncategorized 必须为空 —— 新工具必须声明归类）。"""
+        manifest = build_tool_category_manifest(_registry())
+        uncategorized = manifest["uncategorized"]["tools"]
+>       assert uncategorized == [], (
+            f"unclassified tools (declare them in app/tools/categories.py): {uncategorized}"
+        )
+E       AssertionError: unclassified tools (declare them in app/tools/categories.py): ['brief_create_draft', 'brief_export', 'brief_freeze_release', 'brief_inspect_evidence', 'brief_preflight', 'brief_update_block', 'conditional_quantile_zonal_stats', 'delivery_capabilities', 'field_compute_apply', 'field_compute_catalog', 'field_compute_preview', 'field_compute_result', 'field_compute_status', 'frame_product_bind', 'frame_product_plan', 'frame_product_status', 'frame_product_unbind', 'frame_product_update', 'get_data_delivery', 'import_batch_commit', 'import_batch_inspect', 'import_batch_preview', 'import_batch_receipt', 'import_commit_status', 'import_plan_configure', 'network_service_coverage_consistency', 'preview_data_delivery', 'submit_data_delivery', 'vector_dataset_provision', 'vector_feature_lineage', 'webgis_adopt_project_data_refresh', 'webgis_check_project_source_updates', 'webgis_discard_project_data_refresh', 'webgis_execute_project_data_refresh', 'webgis_explain_stale_map_product', 'webgis_label_author', 'webgis_label_inspect', 'webgis_map_export', 'webgis_pick_detail', 'webgis_preview_project_data_refresh', 'webgis_print_layout_apply', 'webgis_print_layout_capabilities', 'webgis_print_layout_export', 'webgis_print_layout_inspect', 'webgis_print_layout_pages', 'webgis_print_layout_preview', 'webgis_print_layout_propose', 'webgis_project_refresh_status', 'webgis_raster_expression_apply', 'webgis_raster_expression_describe', 'webgis_raster_expression_export', 'webgis_raster_expression_probe', 'webgis_rollback_project_data_refresh', 'webgis_selection_inspect']
+E       assert ['brief_creat...e_block', ...] == []
+E         
+E         Left contains 54 more items, first extra item: 'brief_create_draft'
+E         Use -v to get more diff
+
+tests/unit/test_tool_registry_rationalization.py:30: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.tools:__init__.py:159 [ToolInit] Failed to load app.tools.scale_portrayal_tools.register_scale_portrayal_tools: 工具 webgis_inspect_scale_portrayal 声明了非法 memory_class='small'，合法值: unknown, light, medium, heavy
+WARNING  app.tools.skills:skills.py:215 Skipping README.md: no 'name' in frontmatter
+_______________ TestMutationIdempotency.test_dedup_index_bounded _______________
+
+self = <test_mutation_transactions.TestMutationIdempotency object at 0x7f83dd0d03b0>
+clean_session = 'mtn-session-ff221dbe'
+
+    async def test_dedup_index_bounded(self, clean_session):
+        await _seed_spec(clean_session)
+        engine = MapSpecLifecycleEngine()
+        for i in range(70):
+>           res = await engine.apply_mutation(
+                clean_session,
+                PatchLayerPresentationIntent(layer_id="road", visible=(i % 2 == 0)),
+                origin="agent", mutation_id=f"m-{i}",
+            )
+
+tests/cartography/test_mutation_transactions.py:270: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/mapspec/lifecycle_engine.py:784: in apply_mutation
+    save_res = await self.store.save_mapspec(
+app/services/mapspec/store.py:421: in save_mapspec
+    await asyncio.to_thread(
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:548: in _persist_disk_sync
+    stale.unlink(missing_ok=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1235: in _safe_path_unlink
+    _try_trash(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...200Z/data/.webgis-agent/mtn-session-ff221dbe/revisions/mapspec_rev_1794500031965_000129_d9cf04.json"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-ff221dbe/revisions/mapspec_rev_1794500031965_000129_d9cf04.json"],"targetCount":1}
+___ TestReviewFixes.test_c1_strip_removes_live_entry_after_commit_then_raise ___
+
+args = ('mtn-session-d650445d', {'version': '1.0', 'view': {}, 'sources': {'road-src': {'type': 'geojson', 'inlineData': {'ty... ...}, ...}}, 'layers': [{'id': 'road', 'source': 'road-src', 'type': 'circle', 'paint': {'opacity': 0.9}, ...}], ...})
+kwargs = {'mutation_revision': 2, 'layer_op': None, 'extra_fields': {'_mutation_dedup': {'a6f775bfcfda4ea3a35d8e4661be3376': {'...1794500035897', 'post_fingerprint': 'carto-sha256:859706b2285cf0fc7811bd1b118d7d1ec2b2256f7ba3e8f2c3837c68d29693d3'}]}}
+
+    async def save_then_raise(*args, **kwargs):
+        await real_save(*args, **kwargs)
+>       raise RuntimeError("post-commit failure")
+E       RuntimeError: post-commit failure
+
+tests/cartography/test_mutation_transactions.py:578: RuntimeError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_mutation_transactions.TestReviewFixes object at 0x7f83dcce02b0>
+clean_session = 'mtn-session-d650445d'
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f83dd0ea820>
+
+    async def test_c1_strip_removes_live_entry_after_commit_then_raise(
+        self, clean_session, monkeypatch,
+    ):
+        """C1：save 成功后抛错 → 回滚路径必须剥除 **live** 索引里的存证
+        （读快照会空转，留下吞掉同 id 重试的孤儿条目）。"""
+        engine = MapSpecLifecycleEngine()
+        await _seed_spec(clean_session)
+        real_save = engine.store.save_mapspec
+        mid = f"m-{uuid.uuid4().hex[:8]}"
+    
+        async def save_then_raise(*args, **kwargs):
+            await real_save(*args, **kwargs)
+            raise RuntimeError("post-commit failure")
+    
+        monkeypatch.setattr(engine.store, "save_mapspec", save_then_raise)
+>       failed = await engine.apply_mutation(
+            clean_session,
+            PatchLayerPresentationIntent(layer_id="road", visible=False),
+            origin="agent", mutation_id=mid,
+        )
+
+tests/cartography/test_mutation_transactions.py:581: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/mapspec/lifecycle_engine.py:889: in apply_mutation
+    await discard_checkpoint(
+app/services/mapspec/checkpoint.py:185: in discard_checkpoint
+    await asyncio.to_thread(_remove)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/checkpoint.py:175: in _remove
+    _shutil.rmtree(ckpt_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":51,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...t-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-d650445d/checkpoints/ckpt_1794500036024"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":51,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-d650445d/checkpoints/ckpt_1794500036024"],"targetCount":1}
+------------------------------ Captured log call -------------------------------
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:859 MapSpec mutation failed for session mtn-session-d650445d: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:1377 MapSpec transaction rollback FAILED for session mtn-session-d650445d: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 1359, in _rollback_to_snapshot
+    saved = await self.store.save_mapspec(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+_____ TestReviewFixes.test_c4_duplicate_response_carries_current_revision ______
+
+args = ('mtn-session-8c23a89f', {'version': '1.0', 'view': {}, 'sources': {'road-src': {'type': 'geojson', 'inlineData': {'ty... ...}, ...}}, 'layers': [{'id': 'road', 'source': 'road-src', 'type': 'circle', 'paint': {'opacity': 0.9}, ...}], ...})
+kwargs = {'mutation_revision': 1, 'layer_op': ('upsert', 'road', {'id': 'road', 'source': 'road-src', 'type': 'circle', 'paint'...{'b7b5592baa2b467aab7729829c9349a2': {'revision': 1, 'ts': 1794500036.4305186, 'origin': 'agent', 'committed': True}}}}
+
+    async def save_then_raise(*args, **kwargs):
+        await real_save(*args, **kwargs)
+>       raise RuntimeError("post-commit failure")
+E       RuntimeError: post-commit failure
+
+tests/cartography/test_mutation_transactions.py:578: RuntimeError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_mutation_transactions.TestReviewFixes object at 0x7f83dcce03e0>
+clean_session = 'mtn-session-8c23a89f'
+
+    async def test_c4_duplicate_response_carries_current_revision(self, clean_session):
+        """C4：并发推进后的同 id 重放 → 回执 revision 与权威 spec 同代
+        （客户端游标不再落后一代）。"""
+>       await _seed_spec(clean_session)
+
+tests/cartography/test_mutation_transactions.py:602: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/cartography/test_mutation_transactions.py:85: in _seed_spec
+    res = await apply_gis_mutation(
+app/services/gis_world_state/mutation.py:445: in apply_gis_mutation
+    result = await active_engine.apply_mutation(
+app/services/mapspec/lifecycle_engine.py:866: in apply_mutation
+    rollback_ok = await self._rollback_to_snapshot(
+app/services/mapspec/lifecycle_engine.py:1373: in _rollback_to_snapshot
+    await discard(session_id)
+app/services/mapspec/store.py:260: in discard_mapspec
+    await asyncio.to_thread(_unlink)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:258: in _unlink
+    mapspec_path.unlink(missing_ok=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1235: in _safe_path_unlink
+    _try_trash(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...es/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-8c23a89f/mapspec.json"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-8c23a89f/mapspec.json"],"targetCount":1}
+------------------------------ Captured log call -------------------------------
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:859 MapSpec mutation failed for session mtn-session-8c23a89f: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+___________ TestReviewFixes.test_a1_user_pin_hit_stamps_user_pinned ____________
+
+args = ('mtn-session-c8961ec5', {'version': '1.0', 'view': {}, 'sources': {'road-src': {'type': 'geojson', 'inlineData': {'ty... ...}, ...}}, 'layers': [{'id': 'road', 'source': 'road-src', 'type': 'circle', 'paint': {'opacity': 0.9}, ...}], ...})
+kwargs = {'mutation_revision': 1, 'layer_op': ('upsert', 'road', {'id': 'road', 'source': 'road-src', 'type': 'circle', 'paint'... {'b8d0a384a855403fb52724c86724c505': {'revision': 1, 'ts': 1794500036.783553, 'origin': 'agent', 'committed': True}}}}
+
+    async def save_then_raise(*args, **kwargs):
+        await real_save(*args, **kwargs)
+>       raise RuntimeError("post-commit failure")
+E       RuntimeError: post-commit failure
+
+tests/cartography/test_mutation_transactions.py:578: RuntimeError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_mutation_transactions.TestReviewFixes object at 0x7f83dd0e5c70>
+clean_session = 'mtn-session-c8961ec5'
+
+    async def test_a1_user_pin_hit_stamps_user_pinned(self, clean_session):
+        """A1：user 意图触及 workbench 锁面 → 引擎印记 USER_PINNED
+        （阶梯顶在生产路径可达，进 provenance）。"""
+>       await _seed_spec(clean_session)
+
+tests/cartography/test_mutation_transactions.py:630: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/cartography/test_mutation_transactions.py:85: in _seed_spec
+    res = await apply_gis_mutation(
+app/services/gis_world_state/mutation.py:445: in apply_gis_mutation
+    result = await active_engine.apply_mutation(
+app/services/mapspec/lifecycle_engine.py:866: in apply_mutation
+    rollback_ok = await self._rollback_to_snapshot(
+app/services/mapspec/lifecycle_engine.py:1373: in _rollback_to_snapshot
+    await discard(session_id)
+app/services/mapspec/store.py:260: in discard_mapspec
+    await asyncio.to_thread(_unlink)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:258: in _unlink
+    mapspec_path.unlink(missing_ok=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1235: in _safe_path_unlink
+    _try_trash(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...es/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-c8961ec5/mapspec.json"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-c8961ec5/mapspec.json"],"targetCount":1}
+------------------------------ Captured log call -------------------------------
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:859 MapSpec mutation failed for session mtn-session-c8961ec5: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+_________ test_rollback_restores_pre_mutation_spec_after_save_failure __________
+
+args = ('mtn-session-f8860895', {'version': '1.0', 'view': {}, 'sources': {}, 'layers': [], ...})
+kwargs = {'mutation_revision': 1, 'layer_op': None, 'extra_fields': None}
+
+    async def save_then_raise(*args, **kwargs):
+        await real_save(*args, **kwargs)
+>       raise RuntimeError("post-commit failure")
+E       RuntimeError: post-commit failure
+
+tests/cartography/test_mutation_transactions.py:578: RuntimeError
+
+During handling of the above exception, another exception occurred:
+
+clean_session = 'mtn-session-f8860895'
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f83dd0ea820>
+
+    @pytest.mark.cartography
+    @pytest.mark.asyncio
+    async def test_rollback_restores_pre_mutation_spec_after_save_failure(
+        clean_session, monkeypatch,
+    ):
+        """提交阶段 save 失败 → 回滚恢复的必须是变更前的 spec（快照非别名引用）。
+    
+        深度评审回归：rollback 快照曾直接引用 loaded，而 handler 的就地变异
+        （time.playback 合并）会顺共享引用写穿快照 —— 被拒变更经回滚落盘为
+        last-known-good。
+        """
+        engine = MapSpecLifecycleEngine()
+>       seeded = await engine.apply_mutation(
+            clean_session,
+            SetTimeIntent(enabled=True, field="ts", playback={"speed": 1.0}),
+        )
+
+tests/cartography/test_mutation_transactions.py:692: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/mapspec/lifecycle_engine.py:866: in apply_mutation
+    rollback_ok = await self._rollback_to_snapshot(
+app/services/mapspec/lifecycle_engine.py:1373: in _rollback_to_snapshot
+    await discard(session_id)
+app/services/mapspec/store.py:260: in discard_mapspec
+    await asyncio.to_thread(_unlink)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:258: in _unlink
+    mapspec_path.unlink(missing_ok=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1235: in _safe_path_unlink
+    _try_trash(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...es/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-f8860895/mapspec.json"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+----------------------------- Captured stderr call -----------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/mtn-session-f8860895/mapspec.json"],"targetCount":1}
+------------------------------ Captured log call -------------------------------
+ERROR    app.services.mapspec.lifecycle_engine:lifecycle_engine.py:859 MapSpec mutation failed for session mtn-session-f8860895: post-commit failure
+Traceback (most recent call last):
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/services/mapspec/lifecycle_engine.py", line 784, in apply_mutation
+    save_res = await self.store.save_mapspec(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_mutation_transactions.py", line 578, in save_then_raise
+    raise RuntimeError("post-commit failure")
+RuntimeError: post-commit failure
+=============================== warnings summary ===============================
+tests/unit/test_mapspec_layout_intent_v5.py:22
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/unit/test_mapspec_layout_intent_v5.py:22: PytestUnknownMarkWarning: Unknown pytest.mark.unit - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    pytestmark = pytest.mark.unit
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/unit/test_mutation_registry_consistency.py::test_op_labels_match_legacy_table
+FAILED tests/unit/test_mutation_registry_consistency.py::test_http_body_codec_coverage_and_roundtrip
+FAILED tests/unit/test_tool_registry_rationalization.py::test_every_tool_is_classified
+FAILED tests/cartography/test_mutation_transactions.py::TestMutationIdempotency::test_dedup_index_bounded
+FAILED tests/cartography/test_mutation_transactions.py::TestReviewFixes::test_c1_strip_removes_live_entry_after_commit_then_raise
+FAILED tests/cartography/test_mutation_transactions.py::TestReviewFixes::test_c4_duplicate_response_carries_current_revision
+FAILED tests/cartography/test_mutation_transactions.py::TestReviewFixes::test_a1_user_pin_hit_stamps_user_pinned
+FAILED tests/cartography/test_mutation_transactions.py::test_rollback_restores_pre_mutation_spec_after_save_failure
+ERROR tests/cartography/test_mutation_transactions.py::TestMutationIdempotency::test_same_id_replays_committed_revision
+ERROR tests/cartography/test_mutation_transactions.py::TestMutationIdempotency::test_lost_response_retry_returns_duplicate_not_superseded
+ERROR tests/cartography/test_mutation_transactions.py::TestMutationIdempotency::test_concurrent_same_id_single_execution
+ERROR tests/cartography/test_mutation_transactions.py::TestMutationIdempotency::test_failed_mutation_leaves_no_record_so_retry_reexecutes
+ERROR tests/cartography/test_mutation_transactions.py::TestMutationIdempotency::test_dedup_index_bounded
+ERROR tests/cartography/test_mutation_transactions.py::test_adapter_route_produces_provenance
+ERROR tests/cartography/test_mutation_transactions.py::TestDeterministicRaces::test_remove_vs_agent_upsert_no_zombie
+ERROR tests/cartography/test_mutation_transactions.py::TestDeterministicRaces::test_user_toggle_vs_agent_hide_same_second
+ERROR tests/cartography/test_mutation_transactions.py::TestDeterministicRaces::test_user_pin_blocks_template_apply
+ERROR tests/cartography/test_mutation_transactions.py::TestDeterministicRaces::test_superseded_then_retry_with_fresh_revision
+ERROR tests/cartography/test_mutation_transactions.py::TestReconciliation::test_zombie_detection
+ERROR tests/cartography/test_mutation_transactions.py::test_ws_collab_sync_projection_carries_anomalies
+ERROR tests/cartography/test_mutation_transactions.py::TestReviewFixes::test_b1_upsert_preserves_when_durable_stamp_present
+ERROR tests/cartography/test_mutation_transactions.py::TestReviewFixes::test_b1_ring_only_legacy_session_still_refuses
+ERROR tests/cartography/test_mutation_transactions.py::TestReviewFixes::test_c1_strip_removes_live_entry_after_commit_then_raise
+ERROR tests/cartography/test_mutation_transactions.py::TestReviewFixes::test_c4_duplicate_response_carries_current_revision
+ERROR tests/cartography/test_mutation_transactions.py::TestReviewFixes::test_a1_user_pin_hit_stamps_user_pinned
+ERROR tests/cartography/test_mutation_transactions.py::test_settime_playback_merge_does_not_mutate_loaded_spec
+ERROR tests/cartography/test_mutation_transactions.py::test_rollback_restores_pre_mutation_spec_after_save_failure
+ERROR tests/test_adr_numbering_contract.py::test_adr_numbers_are_unique - Ass...
+8 failed, 182 passed, 1 skipped, 1 warning, 20 errors in 31.26s

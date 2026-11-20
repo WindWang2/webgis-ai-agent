@@ -114,7 +114,7 @@ INTERACTION_KINDS: Dict[str, KindSpec] = dict([
     # selection-store / analysis_scope.MAX_SCOPE_FEATURE_IDS）。
     _k(
         "feature_selected",
-        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field", "matched_count", "ids_truncated", "bbox"),
+        ("layer_id", "feature_id", "field_names", "geometry_digest", "dataset_ref", "selected_ids", "id_field", "matched_count", "ids_truncated", "bbox", "selection_handle"),
         sensitivity=SENSITIVITY_LIMITED,
     ),
     _k(

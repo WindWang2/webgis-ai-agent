@@ -44,19 +44,28 @@ from tests.fixtures.pi_mocks import make_token_event
 
 
 def _make_rpc(seed_events: list[dict] | None = None) -> MagicMock:
-    """MagicMock PiRpcClient: ``prompt`` seeds events, ``abort`` is recorded.
+    """MagicMock PiRpcClient: ``prompt`` seeds events; control-plane writes
+    (clear_queue/abort) go through the real G22-P1 ``issue``/``collect``
+    write/response phase contract.
 
     No ``agent_end`` is seeded unless asked, so the turn parks awaiting the
     next event — the mid-turn state every chaos test here needs.
     """
+    from app.services.chat.pi_rpc_client import IssuedRequest
+
     rpc = MagicMock()
     rpc.events = asyncio.Queue()
     rpc.start = AsyncMock()
     rpc.stop = AsyncMock()
     rpc.process_died = False
     rpc.fail_all_pending = MagicMock()
+    rpc.fail_pending_ids = MagicMock()
+    rpc.pending_request_ids = MagicMock(return_value=set())
+    commands: list[str] = []
+    rpc.commands = commands
 
     async def _request(cmd: str, data: dict | None = None):
+        commands.append(cmd)
         if cmd == "prompt":
             for ev in seed_events or []:
                 await rpc.events.put(ev)
@@ -65,12 +74,26 @@ def _make_rpc(seed_events: list[dict] | None = None) -> MagicMock:
             return {"ok": True}
         return {}
 
+    async def _issue(cmd: str, data: dict | None = None) -> IssuedRequest:
+        # 写相位：只登记 future（响应下一事件循环 tick 到达），由 collect 收割。
+        commands.append(cmd)
+        fut = asyncio.get_running_loop().create_future()
+        asyncio.get_running_loop().call_soon(fut.set_result, {"ok": True})
+        return IssuedRequest(id=f"stub-{len(commands)}", command=cmd, future=fut)
+
+    async def _collect(issued: IssuedRequest, command: str | None = None):
+        return await issued.future
+
     rpc.request = AsyncMock(side_effect=_request)
+    rpc.issue = AsyncMock(side_effect=_issue)
+    rpc.collect = AsyncMock(side_effect=_collect)
     return rpc
 
 
 def _rpc_commands(rpc: MagicMock) -> list[str]:
-    return [c.args[0] for c in rpc.request.call_args_list if c.args]
+    """Every RPC command written to the vendor, both request() and the
+    G22-P1 issue() control-plane path (clear_queue/abort)."""
+    return list(rpc.commands)
 
 
 @pytest.fixture(autouse=True)
@@ -505,24 +528,26 @@ async def test_prompt_publishes_active_turn_markers(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_abort_toctou_sid_flip_logs_warning(caplog):
-    """P1: abort() reads _active_turn_sid lock-free, then awaits the abort
+    """P1: abort() snapshots the target turn entry, then awaits the abort
     RPC — in that gap the matched turn can end and a different session's
-    turn start, so the GLOBAL abort kills the wrong turn. The post-RPC
-    re-read must log a warning naming both sessions and must not raise."""
+    turn take over the bridge. The post-response re-read must log a TOCTOU
+    warning naming both sessions and must not raise."""
     rpc = _make_rpc([make_token_event("hi")])
     bridge = PiBridge(rpc=rpc)
 
-    original_request = rpc.request
+    original_issue = rpc.issue
 
-    async def flipping_request(cmd, data=None):
+    async def flipping_issue(cmd, data=None):
         if cmd == "abort":
-            # Simulate the flip DURING the abort RPC: the matched turn ends
-            # and a different session's turn takes over the bridge.
-            bridge._active_turn_sid = "sess-OTHER"
-            return {"ok": True}
-        return await original_request(cmd, data)
+            # Simulate the handoff DURING the abort RPC: by the time the
+            # abort response lands, the session table resolves sess-A to a
+            # DIFFERENT session's turn entry (G22-P1 entry-identity contract).
+            bridge_mod._active_turns["sess-A"] = bridge_mod._ActiveTurnEntry(
+                session_id="sess-OTHER", turn_id="turn-OTHER", token=None,
+            )
+        return await original_issue(cmd, data)
 
-    rpc.request = AsyncMock(side_effect=flipping_request)
+    rpc.issue = AsyncMock(side_effect=flipping_issue)
 
     gen = bridge.stream_prompt("hi", session_id="sess-A")
     first = await gen.__anext__()

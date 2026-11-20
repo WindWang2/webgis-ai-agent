@@ -36,6 +36,7 @@ import type { RenderApplyAck } from '@/lib/render-protocol/render-apply-ack';
 import { noteRenderSettled, snapshotRenderPerfBlock } from '@/lib/telemetry/render-probes';
 // G3D02 v1.7：3D 场景资产状态环（有界观察披露 —— observation 上行面）。
 import { sceneAssetStatusSnapshot } from '@/lib/map-kit/scene3d/status';
+import { latestFrameObservationRows } from '@/lib/cartography/frame-observation';
 import type { RenderPerfBlock } from '@/lib/telemetry/render-probes';
 
 /** Map 'idle' may never fire (raster churn / animation) — settle is bounded.
@@ -395,6 +396,21 @@ export function collectRenderObservation({
       code: e.code,
       ...(e.reason ? { reason: e.reason } : {}),
     })),
+    // G25 逐画幅真实观察（网格运行时发布过才携带；缺席 = 未上报语义）。
+    ...(latestFrameObservationRows()
+      ? {
+          frames: latestFrameObservationRows()!.slice(-16).map((r) => ({
+            frame_id: r.frame_id,
+            mode: r.mode,
+            ...(typeof r.mapspec_revision === 'number' ? { mapspec_revision: r.mapspec_revision } : {}),
+            ...(r.content_revision !== null && r.content_revision !== undefined
+              ? { content_revision: r.content_revision }
+              : {}),
+            ...(r.fingerprint ? { fingerprint: r.fingerprint } : {}),
+            ...(r.source_error ? { source_error: r.source_error } : {}),
+          })),
+        }
+      : {}),
     ...(canvas ? { canvas } : {}),
   };
 }

@@ -12,6 +12,35 @@ from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
+    AlgorithmDescriptor(
+        id="data.linked_exploration.preview",
+        name="联动探索冻结源条件预览",
+        capabilities=["linked_exploration"],
+        category="data_access",
+        input_artifact_types=["feature_collection"],
+        # The preview returns bounded JSON statistics, not a persisted table artifact.
+        tool_candidates=["webgis_exploration_preview"],
+        runtime_status="native",
+        crs_class="CRS_AGNOSTIC",
+        preferred_execution_policy="ASYNC",
+        deterministic=True,
+        max_features_hint=250_000,
+        cpu_cost="medium",
+        memory_cost="high",
+        io_cost="medium",
+        assumptions=[
+            "同一冻结源（ref/revision/fingerprint）；ChartSpec 与 typed conditions 校验通过",
+            "类别/范围条件按 AND 求交；facet 排除本图条件，full 应用全部条件",
+        ],
+        limitations=[
+            "只返回有界 JSON 统计、源锚点与可选 selection handle，不生成持久 stats_table 产物",
+            "不替代探索视图创建、应用、表格分页或导出工具；范围图仅支持 count",
+        ],
+        conformance_tests=[
+            "tests/unit/gis/test_registry_residuals_2123.py::test_linked_exploration_preview_tool_uses_real_contract",
+            "tests/integration/test_g46_service_journey.py::TestInspectAndPreview::test_combined_intersection_e02",
+        ],
+    ),
         AlgorithmDescriptor(
             id="poi.query.local", name="POI 查询（本地优先）",
             conformance_tests=[
@@ -144,6 +173,45 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            id="coordinate.operations.reproject", name="可审阅坐标操作派生重投影",
+            conformance_tests=[
+                "tests/coordinate_operations/test_kernel_and_candidates.py",
+                "tests/coordinate_operations/test_execute_flow.py",
+            ],
+            capabilities=["coordinate_operations"],
+            output_artifact_type="feature_collection",
+            tool_candidates=["webgis_coordop_execute"],
+            cpu_cost="medium", memory_cost="medium", io_cost="medium",
+            preferred_execution_policy="ASYNC",
+            algorithm_family="data_access",
+            assumptions=["源 CRS 由载体权威元数据确认；操作/环境在计划中冻结"],
+            limitations=["静态 2D 核心（Z 仅原值保留）；无格网环境高精度操作不可执行"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            priority=10,
+        ),
+
+        AlgorithmDescriptor(
+            id="data.join.authoring", name="两源数据关联与空间富集",
+            conformance_tests=[
+                "tests/unit/data_join_authoring/test_executor_attribute.py",
+                "tests/unit/data_join_authoring/test_executor_spatial.py",
+                "tests/unit/data_join_authoring/test_service_flows.py",
+            ],
+            capabilities=["data_join_authoring"],
+            output_artifact_type="stats_table",
+            tool_candidates=["webgis_data_join_execute"],
+            cpu_cost="medium", memory_cost="medium", io_cost="medium",
+            preferred_execution_policy="ASYNC",
+            algorithm_family="data_access",
+            assumptions=["两源在行/对/输出预算内；键/空间谓词与基数政策显式声明"],
+            limitations=["本版仅属性键 + 点×面；null/missing 双侧永不匹配"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            priority=10,
+        ),
+
+        AlgorithmDescriptor(
             id="data.federated.chain", name="多源链式联邦查询",
             conformance_tests=[
                 "tests/unit/gis/test_algo_conformance_v2.py::test_federated_chain_two_source_attribute_join_oracle",
@@ -185,7 +253,19 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/gis/test_algo_conformance_v2.py::test_workspace_inspection_readonly_contract",
             ],
             capabilities=["workspace_state_inspection"],
-            tool_candidates=["describe_workspace", "list_workspace_snapshots"],
+            # 真实只读检视面：产物账本（describe_artifact/find_artifacts_by_role/
+            # get_lineage/list_analysis_assets）、数据集目录（list_datasets/
+            # search_datasets）、上传与导入状态（list_uploaded_data/get_upload_info/
+            # import_batch_*）、图层引用（inventory_layers）与计算作业状态
+            # （field_compute_status）——逐 handler 核实 side_effect=pure。
+            tool_candidates=["describe_workspace", "list_workspace_snapshots",
+                             "describe_artifact", "find_artifacts_by_role",
+                             "get_lineage", "list_analysis_assets",
+                             "list_datasets", "search_datasets",
+                             "list_uploaded_data", "get_upload_info",
+                             "import_batch_inspect", "import_batch_receipt",
+                             "import_commit_status", "inventory_layers",
+                             "field_compute_status"],
             cpu_cost="low", memory_cost="low", io_cost="low",
             preferred_execution_policy="LOCAL",
             algorithm_family="data_access",

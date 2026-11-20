@@ -68,6 +68,86 @@ def _closed_way_is_area(tags: dict) -> bool:
     return True
 
 
+def _stitch_way_rings(ways: list) -> list:
+    """把 member way 几何按端点相接缝合成环（Overpass ``out body geom``
+    的 relation member 是分段折线，需按 shared vertex 串联后闭合）。"""
+    rings: list = []
+    for w in ways:
+        coords = [[p["lon"], p["lat"]] for p in w.get("geometry") or []]
+        if len(coords) < 2:
+            continue
+        placed = False
+        for ring in rings:
+            if ring[-1] == coords[0]:
+                ring.extend(coords[1:])
+                placed = True
+                break
+            if ring[-1] == coords[-1]:
+                ring.extend(reversed(coords[:-1]))
+                placed = True
+                break
+            if ring[0] == coords[-1]:
+                ring[:0] = coords[:-1]
+                placed = True
+                break
+            if ring[0] == coords[0]:
+                ring[:0] = list(reversed(coords[1:]))
+                placed = True
+                break
+        if not placed:
+            rings.append(list(coords))
+    # 闭合（首尾不等时补上首点）
+    for ring in rings:
+        if ring and ring[0] != ring[-1]:
+            ring.append(ring[0])
+    return rings
+
+
+def _point_in_ring(lon: float, lat: float, ring: list) -> bool:
+    """射线法点在环内判定（hole 归属用；ring 已闭合）。"""
+    inside = False
+    n = len(ring)
+    for i in range(n - 1):
+        x1, y1 = ring[i]
+        x2, y2 = ring[i + 1]
+        if (y1 > lat) != (y2 > lat):
+            x_in = x1 + (lat - y1) * (x2 - x1) / (y2 - y1)
+            if lon < x_in:
+                inside = not inside
+    return inside
+
+
+def _relation_polygon_geometry(el: dict) -> Optional[dict]:
+    """#2152：``out body geom`` 的 relation 不从 ``center`` 取点，而是把
+    outer/inner member way 缝合成 (Multi)Polygon。旧实现只认 ``center``
+    键（该键只在 ``out center`` 时出现），导致行政边界/关系型 POI 被静默
+    丢弃（0 features → 每次都降级 Nominatim 或假空成功）。"""
+    members = [
+        m for m in (el.get("members") or [])
+        if m.get("type") == "way" and m.get("geometry")
+    ]
+    if not members:
+        return None
+    outers = [m for m in members if m.get("role") in ("outer", "")]
+    inners = [m for m in members if m.get("role") == "inner"]
+    if not outers:
+        outers, inners = members, []
+    outer_rings = [r for r in _stitch_way_rings(outers) if len(r) >= 4]
+    if not outer_rings:
+        return None
+    inner_rings = [r for r in _stitch_way_rings(inners) if len(r) >= 4]
+    polygons = []
+    for o in outer_rings:
+        holes = [
+            h for h in inner_rings
+            if _point_in_ring(h[0][0], h[0][1], o)
+        ]
+        polygons.append([o] + holes)
+    if len(polygons) == 1:
+        return {"type": "Polygon", "coordinates": polygons[0]}
+    return {"type": "MultiPolygon", "coordinates": polygons}
+
+
 def _overpass_to_geojson(data: str | dict) -> dict:
     """将 Overpass JSON 结果转为 GeoJSON（接受原始字符串或已解析 dict）。"""
     try:
@@ -95,7 +175,10 @@ def _overpass_to_geojson(data: str | dict) -> dict:
             else:
                 geometry = {"type": "LineString", "coordinates": coords}
         elif el.get("type") == "relation":
-            if "center" in el:
+            # #2152：优先由 member way 组装真实 (Multi)Polygon（out body
+            # geom 语义）；无 member 几何时才退回 center 点（out center）。
+            geometry = _relation_polygon_geometry(el)
+            if geometry is None and "center" in el:
                 geometry = {"type": "Point", "coordinates": [el["center"]["lon"], el["center"]["lat"]]}
 
         if geometry:
@@ -614,6 +697,13 @@ def register_osm_tools(registry: ToolRegistry):
             "source": source,
             "fetched_at": _utcnow_iso(),
         }
+        # #2152：双源皆未命中时显式错误 —— 旧实现返回 count=0 的成功信封，
+        # 调用方无法区分「边界不存在」与「查询失败」。
+        if boundary_result["count"] == 0:
+            boundary_result["error"] = (
+                f"未找到行政边界: {name!r} (admin_level={admin_level})，"
+                "Overpass relation 与 Nominatim 均未命中"
+            )
         if fallback_note:
             boundary_result["fallback_note"] = fallback_note
         return boundary_result

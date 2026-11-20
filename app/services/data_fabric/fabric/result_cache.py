@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -193,9 +194,12 @@ class FederatedResultCache:
                 with self._lock:
                     self.hits += 1
             return remote
-        payload = entry.payload
+        try:
+            payload = copy.deepcopy(entry.payload)
+        except Exception:  # noqa: BLE001 - 不可复制的命中按 miss，绝不交出共享对象
+            return None
         if isinstance(payload, dict):
-            disclosed = dict(payload)
+            disclosed = payload
             disclosed["result_cache"] = {
                 "hit": True,
                 "age_s": age,
@@ -226,7 +230,11 @@ class FederatedResultCache:
         if isinstance(rows, list) and len(rows) > self.MAX_CACHED_ROWS:
             return  # R2-M3：超大结果直接不缓存（宁可 miss 不可驻留巨条目）
         try:
-            entry = ResultCacheEntry(payload, self._ttl_s, fingerprints, scope_key)
+            stored = copy.deepcopy(payload)
+        except Exception:  # noqa: BLE001 - 不可复制载荷不缓存（调用方原地修改不得污染缓存）
+            return
+        try:
+            entry = ResultCacheEntry(stored, self._ttl_s, fingerprints, scope_key)
         except Exception:  # noqa: BLE001 - 不可序列化载荷不缓存
             return
         if entry.bytes_len > self._max_bytes:
@@ -242,7 +250,7 @@ class FederatedResultCache:
             ):
                 _, evicted = self._entries.popitem(last=False)
                 self._bytes -= evicted.bytes_len
-        self._backend_put(key, payload, ttl_s=self._ttl_s)
+        self._backend_put(key, stored, ttl_s=self._ttl_s)
 
     def put_negative(self, key: str, error_code: str) -> None:
         if error_code not in _NEGATIVE_CODES:

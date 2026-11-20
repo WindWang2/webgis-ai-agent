@@ -503,31 +503,52 @@ function RenderKpiCards({ chart }: RenderProps) {
   );
 }
 
-/** V4：排名列表（值降序 + 比例条）。 */
+/** V4：排名列表（值降序 + 比例条）。
+ *  #2158：无 onSelectCategory 时渲染普通列表 —— 可 Tab/可点击但无动作的
+ *  假按钮会让读屏与键盘用户进入死胡同；有回调时才渲染 button。 */
 function RenderRankingList({ chart, highlightedCategories, onSelectCategory }: RenderProps) {
+  const t = useT('chat');
   const rows = [...chart.data].sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
   const max = Math.max(...rows.map((r) => r.value ?? 0), 1);
+  const interactive = typeof onSelectCategory === 'function';
+  const rowContent = (r: ChartDataPoint, i: number, highlighted: boolean) => (
+    <>
+      <span className="w-4 text-right text-micro tabular-nums text-map-chrome-ink-muted">{i + 1}</span>
+      <span className="w-20 truncate text-micro text-map-chrome-ink">{r.name}</span>
+      <span className="h-2 flex-1 rounded-sm bg-edge-subtle">
+        <span
+          className="block h-2 rounded-sm"
+          style={{ width: `${((r.value ?? 0) / max) * 100}%`, background: highlighted ? HIGHLIGHT_FILL : "#06b6d4", opacity: highlighted || !highlightedCategories?.length ? 1 : 0.35 }}
+        />
+      </span>
+      <span className="w-14 text-right text-micro tabular-nums text-map-chrome-ink-muted">{r.value?.toLocaleString()}</span>
+    </>
+  );
   return (
-    <div className="flex flex-col gap-1 p-1" data-testid="chart-ranking-list">
+    <div
+      className="flex flex-col gap-1 p-1"
+      data-testid="chart-ranking-list"
+      role="list"
+      aria-label={t('chart.rankingListAria', { title: chart.title || t('chart.untitled') })}
+    >
       {rows.slice(0, 10).map((r, i) => {
         const highlighted = isHighlighted(r.name, highlightedCategories);
-        return (
-          <button
-            key={i}
-            type="button"
-            {...(onSelectCategory ? { onClick: () => onSelectCategory(r.name) } : {})}
-            className="flex items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-surface-raised"
-          >
-            <span className="w-4 text-right text-micro tabular-nums text-map-chrome-ink-muted">{i + 1}</span>
-            <span className="w-20 truncate text-micro text-map-chrome-ink">{r.name}</span>
-            <span className="h-2 flex-1 rounded-sm bg-edge-subtle">
-              <span
-                className="block h-2 rounded-sm"
-                style={{ width: `${((r.value ?? 0) / max) * 100}%`, background: highlighted ? HIGHLIGHT_FILL : "#06b6d4", opacity: highlighted || !highlightedCategories?.length ? 1 : 0.35 }}
-              />
-            </span>
-            <span className="w-14 text-right text-micro tabular-nums text-map-chrome-ink-muted">{r.value?.toLocaleString()}</span>
-          </button>
+        return interactive ? (
+          // a11y（#2185）：listitem 语义放在包裹层 —— button 是交互元素，
+          // 直接 role="listitem" 违反 no-interactive-element-to-noninteractive-role。
+          <div key={i} role="listitem">
+            <button
+              type="button"
+              onClick={() => onSelectCategory?.(r.name)}
+              className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-surface-raised"
+            >
+              {rowContent(r, i, highlighted)}
+            </button>
+          </div>
+        ) : (
+          <div key={i} role="listitem" className="flex items-center gap-2 rounded px-1 py-0.5">
+            {rowContent(r, i, highlighted)}
+          </div>
         );
       })}
     </div>
@@ -582,8 +603,31 @@ interface ChartCoreProps {
   onSelectCategory?: ((name: string) => void) | null;
 }
 
+/** 图表可访问名称：类型 + 标题（#2158 —— 柱线图此前对读屏完全匿名）。 */
+function chartFigureName(t: ReturnType<typeof useT>, chart: ChartData): string {
+  return t('chart.figureAria', {
+    type: chart.type,
+    title: chart.title || t('chart.untitled'),
+  });
+}
+
+/** 等价数据摘要（sr-only figcaption）：点数 + 前 5 项「名: 值」。 */
+function chartFigureSummary(t: ReturnType<typeof useT>, chart: ChartData): string {
+  const points = chart.data ?? [];
+  const top = [...points]
+    .filter((p) => typeof p.value === 'number')
+    .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
+    .slice(0, 5);
+  if (top.length === 0) {
+    return t('chart.figurePoints', { count: points.length });
+  }
+  const detail = top.map((p) => `${p.name}: ${p.value}`).join(', ');
+  return `${t('chart.figurePoints', { count: points.length })} ${t('chart.figureTopValues', { n: top.length, detail })}`;
+}
+
 /** 共用图表渲染核（无外层卡片/标题 —— 由调用方按自己的 chrome 组合）。 */
 export function ChartCore({ chart, height = 200, highlightedCategories, onSelectCategory }: ChartCoreProps) {
+  const t = useT('chat');
   const Renderer = CHART_RENDERERS[chart.type]
   if (!Renderer) return null
   // 类别选择语义只对离散轴图表成立（line/scatter/area 的 x 是序列/数值域，
@@ -598,11 +642,16 @@ export function ChartCore({ chart, height = 200, highlightedCategories, onSelect
   ]);
   const categorySelect = CATEGORY_SELECT_KINDS.has(chart.type) ? onSelectCategory : null;
   return (
-    <Renderer
-      chart={chart}
-      height={height}
-      highlightedCategories={highlightedCategories}
-      onSelectCategory={categorySelect}
-    />
+    // figure + sr-only figcaption：每个图表都有可访问名称与等价数据摘要，
+    // 不依赖视觉阅读（#2158）。
+    <figure className="m-0" aria-label={chartFigureName(t, chart)}>
+      <Renderer
+        chart={chart}
+        height={height}
+        highlightedCategories={highlightedCategories}
+        onSelectCategory={categorySelect}
+      />
+      <figcaption className="sr-only">{chartFigureSummary(t, chart)}</figcaption>
+    </figure>
   )
 }

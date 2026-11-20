@@ -131,7 +131,9 @@ function clearTimers(): void {
 }
 
 function buildAuthFrame(): { type: 'auth'; mode: 'session' | 'bearer'; token: string } | null {
-  const ownerToken = getMapSpecSessionCursor().ownerToken;
+  const cursor = getMapSpecSessionCursor();
+  if (boundSessionId && cursor.sessionId && cursor.sessionId !== boundSessionId) return null;
+  const ownerToken = cursor.ownerToken;
   if (ownerToken) return { type: 'auth', mode: 'session', token: ownerToken };
   const token = getAccessToken();
   return token ? { type: 'auth', mode: 'bearer', token } : null;

@@ -402,7 +402,8 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                             report = bind_session_roles(
                                 wf_profile.data_roles, records,
                                 session_id=session_id,
-                                expected_fingerprints=expected)
+                                expected_fingerprints=expected,
+                                truncated_refs=int(getattr(records, "truncated_refs", 0) or 0))
                             evidence_map = role_qualification_evidence(report)
                             if evidence_map:
                                 role_evidence = evidence_map

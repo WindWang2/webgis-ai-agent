@@ -7,9 +7,26 @@ import { motion } from 'framer-motion';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { LayerStyle } from '@/lib/types/layer';
 import { setLayerOpacityAndCommit } from '@/lib/mapspec/user-mutation';
+import {
+  commitLayerOverrideForFrame,
+  frameEditScopeLabel,
+  resolveEditScope,
+} from '@/lib/cartography/frame-edit-scope';
+import { getFrameGridSnapshot } from '@/lib/cartography/frame-grid-store';
 import { getCommittedMapSpec, subscribeMapSpecLive } from '@/lib/mapspec/session-cursor';
 import { useT } from '@/lib/i18n/useT';
 import { t as tNow } from '@/lib/i18n/t';
+// G20：栅格专属工作台（局部挂载，不改全局布局/主题）
+import { RasterAuthoringPanel } from '@/components/hud/raster-authoring-panel';
+// G27：按尺度表达（可解释控制 + 局部覆盖，仅在有 committed spec 层时挂载）
+import { ScalePortrayalPanel } from '@/components/hud/scale-portrayal-panel';
+// G33：矢量专题表达作者工作台（局部挂载；对齐 G20 栅格工作台先例）
+import { ThematicAuthoringPanel } from '@/components/hud/thematic-authoring-panel';
+import SymbolAssetPanel from '@/components/hud/symbol-asset-panel';
+// G41：双变量矩阵 / 估计值+可靠性双通道作者工作台（加性挂载，不改 G33 面板）
+import { BivariateReliabilityPanel } from '@/components/hud/bivariate-reliability-panel';
+// G47：Dorling 圆面积 cartogram 作者工作台（加性挂载；与 Pi 共用同一服务）
+import { DorlingCartogramPanel } from '@/components/hud/dorling-cartogram-panel';
 
 /** 渲染模式 id → 消息键（spec 层型语义见 specPaintPatchFrom）。 */
 const MODE_LABELS: Record<string, string> = {
@@ -24,6 +41,10 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const layers = useHudStore((s) => s.layers);
   const updateLayer = useHudStore((s) => s.updateLayer);
   const setEditingLayerId = useHudStore((s) => s.setEditingLayerId);
+  const [showRasterAuthoring, setShowRasterAuthoring] = useState(false);
+  const [showThematicAuthoring, setShowThematicAuthoring] = useState(false);
+  const [showBivariateReliability, setShowBivariateReliability] = useState(false);
+  const [showDorlingCartogram, setShowDorlingCartogram] = useState(false);
 
   const layer = layers.find((l) => l.id === editingLayerId);
   // audit #840: committed MapSpec 存在时，HUD 层样式不进入 paint
@@ -56,6 +77,92 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
     );
     return hit?.type;
   })();
+  // G20：数值栅格层挂局部表达工作台；旧 PNG / 瓦片层没有数值源，
+  // 只显示「从已登记栅格绑定」的选择器，绝不出现伪波段/伪像元控件。
+  const numericRaster = (() => {
+    const doc = committedSpec as {
+      layers?: Array<Record<string, unknown>>;
+      sources?: Record<string, Record<string, unknown>>;
+    } | null;
+    const hit = doc?.layers?.find(
+      (l) => l?.id === specLayerKey
+        || (typeof l?.id === 'string' && l.id.startsWith(`${specLayerKey}__`)),
+    );
+    if (!hit || !hit.raster_style || typeof hit.source !== 'string') return null;
+    const src = doc?.sources?.[hit.source];
+    if (!src || src.type !== 'numeric_raster') return null;
+    return {
+      layerId: String(hit.id),
+      refId: typeof src.refId === 'string' ? src.refId : undefined,
+      committedStyle: hit.raster_style as never,
+      committedLegend: (hit.legend_spec ?? null) as never,
+    };
+  })();
+
+  // G33：矢量专题层（fill/circle/line + 专题 legend_spec）挂作者工作台；
+  // 非专题层不挂（先由 create_thematic_map 建立表达再编辑）。
+  const thematicVectorLayer = (() => {
+    const doc = committedSpec as {
+      layers?: Array<Record<string, unknown>>;
+    } | null;
+    const hit = doc?.layers?.find(
+      (l) => l?.id === specLayerKey
+        || (typeof l?.id === 'string' && l.id.startsWith(`${specLayerKey}__`)),
+    );
+    if (!hit || typeof hit.source !== 'string') return null;
+    const spec = hit.legend_spec as Record<string, unknown> | null;
+    const thematicType = ['graduated', 'categorical', 'continuous', 'divergent']
+      .includes(String(spec?.type)) && typeof spec?.field === 'string' && spec.field;
+    if (!thematicType) return null;
+    if (!['fill', 'circle', 'line'].includes(String(hit.type))) return null;
+    return { layerId: String(hit.id) };
+  })();
+
+  // G40：点（circle）/面（fill）矢量层挂符号资产面板（点符号/面纹理绑定）。
+  const symbolAssetLayer = (() => {
+    if (!specBacked || !specLayerKey) return null;
+    // R2 #2179：HUD layer.type('vector'|'raster'|…) 不蕴含 spec 层型 ——
+    // 判据必须取 committedSpec 层的 specLayerType（同 G33/G41/G47 口径）。
+    return (specLayerType === 'circle' || specLayerType === 'fill')
+      ? { layerId: specLayerKey } : null;
+  })();
+
+  // G41：双变量/可靠性作者入口。与 G33 不同，本域不要求层已有专题图例
+  // （用户从「已有矢量数据」出发），但必须是矢量层且源是会话 ref。
+  const g41VectorLayer = (() => {
+    const doc = committedSpec as {
+      layers?: Array<Record<string, unknown>>;
+      sources?: Record<string, Record<string, unknown>>;
+    } | null;
+    const hit = doc?.layers?.find(
+      (l) => l?.id === specLayerKey
+        || (typeof l?.id === 'string' && l.id.startsWith(`${specLayerKey}__`)),
+    );
+    if (!hit || typeof hit.source !== 'string') return null;
+    if (!['fill', 'circle', 'line'].includes(String(hit.type))) return null;
+    const src = doc?.sources?.[hit.source];
+    if (!src || src.type === 'raster' || src.type === 'numeric_raster') return null;
+    return { layerId: String(hit.id) };
+  })();
+
+  // G47：Dorling cartogram 入口。需要矢量层 + 会话 ref 源（与 G41 同口径），
+  // 面要素才是 cartogram 的统计单元。
+  const g47VectorLayer = (() => {
+    const doc = committedSpec as {
+      layers?: Array<Record<string, unknown>>;
+      sources?: Record<string, Record<string, unknown>>;
+    } | null;
+    const hit = doc?.layers?.find(
+      (l) => l?.id === specLayerKey
+        || (typeof l?.id === 'string' && l.id.startsWith(`${specLayerKey}__`)),
+    );
+    if (!hit || typeof hit.source !== 'string') return null;
+    if (!['fill', 'line', 'circle'].includes(String(hit.type))) return null;
+    const src = doc?.sources?.[hit.source];
+    if (!src || src.type === 'raster' || src.type === 'numeric_raster') return null;
+    return { layerId: String(hit.id) };
+  })();
+
   const specPaintPatchFrom = (patch: Partial<LayerStyle>): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     const push = (k: string, v: unknown) => { if (v !== undefined) out[k] = v; };
@@ -161,6 +268,30 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const commitOpacity = (val: number) => {
     if (draftOpacity === null || val === layer.opacity) return;
     setDraftOpacity(null);
+    // G25（P2 编辑范围路由）：多画幅网格打开且有活动画幅时，「允许
+    // override」的图层操作落到该帧 layerOverrides（仅本幅 —— 其余帧与
+    // 根层默认值不动）；无活动画幅走既有根级 presentation 提交。
+    const gridSnap = getFrameGridSnapshot();
+    const frameScope = resolveEditScope(gridSnap.open, gridSnap.activeFrameId);
+    if (frameScope === 'frame_only' && gridSnap.activeFrameId) {
+      const specLayerId = layer._mapspecLayerId || layer.id;
+      void commitLayerOverrideForFrame(gridSnap.activeFrameId, {
+        layerId: specLayerId,
+        override: { opacity: val },
+      })
+        .then((outcome) => {
+          if (outcome !== 'superseded') {
+            updateLayer(layer.id, { opacity: val });
+          }
+        })
+        .catch(() => {
+          useToastStore.getState().addToast(
+            t('layerStyle.frameOverrideFailed', { scope: frameEditScopeLabel(frameScope) }),
+            'error',
+          );
+        });
+      return;
+    }
     // audit #842: 经带回滚的 wrapper 提交 —— 裸 void commitLayerPresentation
     // 失败时 unhandled rejection 且本地透明度不回滚（与服务端分叉）。
     void setLayerOpacityAndCommit(layer.id, val);
@@ -189,6 +320,62 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* G27：按尺度表达（可解释控制 + 局部覆盖），仅在 spec 层在场时挂载 */}
+        {specBacked && specLayerKey && (
+          <ScalePortrayalPanel layerId={specLayerKey} />
+        )}
+        {/* G33：专题表达作者工作台（字段分布/断点/类表/比例符号 → 单笔提交） */}
+        {thematicVectorLayer && (
+          <div>
+            <button
+              type="button"
+              aria-expanded={showThematicAuthoring}
+              onClick={() => setShowThematicAuthoring((v) => !v)}
+              className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+            >
+              {t('thematicAuthoring.title')}
+            </button>
+            {showThematicAuthoring && (
+              <ThematicAuthoringPanel layerId={thematicVectorLayer.layerId} />
+            )}
+          </div>
+        )}
+        {/* G40：制图符号资产（点符号/面纹理 → 预览 → 单笔 CAS 绑定） */}
+        {symbolAssetLayer && (
+          <SymbolAssetPanel layerId={symbolAssetLayer.layerId} />
+        )}
+        {/* G41：双变量 / 可靠性表达作者（成对字段 + 矩阵，或估计 + 有来源误差） */}
+        {g41VectorLayer && (
+          <div>
+            <button
+              type="button"
+              aria-expanded={showBivariateReliability}
+              onClick={() => setShowBivariateReliability((v) => !v)}
+              className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+            >
+              {t('bivariateReliability.title')}
+            </button>
+            {showBivariateReliability && (
+              <BivariateReliabilityPanel layerId={g41VectorLayer.layerId} />
+            )}
+          </div>
+        )}
+        {/* G47：Dorling 圆面积 cartogram（示意布局 + 独立质量门 + 出版） */}
+        {g47VectorLayer && (
+          <div>
+            <button
+              type="button"
+              aria-expanded={showDorlingCartogram}
+              onClick={() => setShowDorlingCartogram((v) => !v)}
+              className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+            >
+              {t('dorlingCartogram.title')}
+            </button>
+            {showDorlingCartogram && (
+              <DorlingCartogramPanel layerId={g47VectorLayer.layerId} />
+            )}
+          </div>
+        )}
         {/* Name */}
         <div>
           <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">{t('style.name')}</span>
@@ -379,6 +566,24 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         {/* === RASTER CONTROLS === */}
         {(layer.type === 'raster' || layer.type === 'tile') && (
           <>
+            {/* G20：数值栅格表达工作台入口。旧亮度/对比/饱和控件仍按
+                specBacked 禁用并如实说明，不新增静默无效的旋钮。 */}
+            <button
+              type="button"
+              aria-expanded={showRasterAuthoring}
+              onClick={() => setShowRasterAuthoring((v) => !v)}
+              className="w-full text-left text-caption text-status-accent hover:underline focus:outline-none focus:ring-2 focus:ring-status-accent rounded"
+            >
+              {t('rasterAuthoring.title')}
+            </button>
+            {showRasterAuthoring && (
+              <RasterAuthoringPanel
+                layerId={numericRaster?.layerId ?? String(specLayerKey ?? layer.id)}
+                refId={numericRaster?.refId}
+                committedStyle={numericRaster?.committedStyle ?? null}
+                committedLegend={numericRaster?.committedLegend ?? null}
+              />
+            )}
             <div>
               <span className="text-caption text-ink-muted uppercase tracking-wider mb-1.5 block">
                 {t('style.brightness')} <span className="text-ink-disabled font-mono">{brightness.toFixed(1)}</span>

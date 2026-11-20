@@ -1,6 +1,49 @@
 {
+ "DELETE /api/v1/briefs/sessions/{session_id}/blocks/{block_id}": {
+  "__type__": "unknown"
+ },
+ "DELETE /api/v1/briefs/sessions/{session_id}/chapters/{chapter_id}": {
+  "__type__": "unknown"
+ },
+ "DELETE /api/v1/briefs/sessions/{session_id}/releases/{release_id}/share": {
+  "__type__": "unknown"
+ },
+ "DELETE /api/v1/cartographic-assets/{asset_id}/versions/{revision}": {
+  "__model__": "CartographicAssetDeleteVersionResponse",
+  "asset_id": "string",
+  "deleted": "boolean",
+  "reference_scan": "object",
+  "revision": "integer"
+ },
  "DELETE /api/v1/chat/sessions/{session_id}": {
   "__model__": "ClearSessionResponse",
+  "status": "string"
+ },
+ "DELETE /api/v1/chat/sessions/{session_id}/visual-context/evidence/{evidence_id}": {
+  "__model__": "VisualEvidenceResponse",
+  "crop": "null|object",
+  "derived_sha256": "string",
+  "derived_size": "integer",
+  "evidence_id": "string",
+  "height": "integer",
+  "label": "string",
+  "mapspec_fingerprint": "string",
+  "mapspec_revision": "integer|null",
+  "mime": "string",
+  "observations": "array<string>",
+  "origin_height": "integer",
+  "origin_sha256": "string",
+  "origin_width": "integer",
+  "session_id": "string",
+  "source_type": "string",
+  "state": "string",
+  "viewport_hash": "string",
+  "width": "integer"
+ },
+ "DELETE /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}": {
+  "__model__": "CoordinateOperationPlanArchiveResponse",
+  "plan_id": "string",
+  "revision": "integer",
   "status": "string"
  },
  "DELETE /api/v1/data-fabric/sources/{source_id}": {
@@ -8,10 +51,44 @@
   "message": "null|string",
   "success": "boolean|null"
  },
+ "DELETE /api/v1/data-import/batches/{batch_id}": {
+  "__model__": "DeleteResponse",
+  "batch_id": "string",
+  "deleted": "boolean",
+  "note": "string"
+ },
+ "DELETE /api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}": {
+  "__model__": "DataJoinPlanView",
+  "created_at": "null|string",
+  "left_fingerprint": "null|string",
+  "normalized_digest": "string",
+  "plan": "object",
+  "plan_id": "string",
+  "preview": "null|object",
+  "preview_digest": "null|string",
+  "project_id": "null|string",
+  "revision": "integer",
+  "right_fingerprint": "null|string",
+  "session_id": "string",
+  "status": "string",
+  "title": "string",
+  "updated_at": "null|string"
+ },
  "DELETE /api/v1/data-preparation/plan/{plan_id}": {
   "__model__": "DiscardPlanResponse",
   "plan_id": "string",
   "state": "string"
+ },
+ "DELETE /api/v1/field-compute/plan/{plan_id}": {
+  "__model__": "FieldComputeDiscardResponse",
+  "plan_id": "string",
+  "state": "string"
+ },
+ "DELETE /api/v1/georeferencing/sources/{source_id}": {
+  "__model__": "GeorefDeleteResponse",
+  "deleted": "boolean",
+  "released_blobs": "integer",
+  "source_id": "string"
  },
  "DELETE /api/v1/knowledge/document/{document_id}": {
   "__model__": "ApiResponse",
@@ -19,6 +96,10 @@
   "data": "null|unknown",
   "message": "string",
   "success": "boolean"
+ },
+ "DELETE /api/v1/layers/data/{ref_id}/selection/{handle}": {
+  "__model__": "SelectionReleaseResponse",
+  "released": "boolean"
  },
  "DELETE /api/v1/projects/artifacts/{artifact_id}/pin": {
   "__model__": "ArtifactPinResponse",
@@ -58,6 +139,10 @@
   "data": "null|unknown",
   "message": "string",
   "success": "boolean"
+ },
+ "DELETE /api/v1/skill-jobs/presets/{preset_id}": {
+  "__model__": "SkillJobPresetDeleteResponse",
+  "deleted": "boolean"
  },
  "DELETE /api/v1/tasks/jobs/{job_id}": {
   "__model__": "JobCancelResponse",
@@ -99,6 +184,147 @@
   "user_id": "null|string",
   "username": "null|string"
  },
+ "GET /api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/inspect": {
+  "__model__": "BivariateInspectResponse",
+  "algorithm_version": "string",
+  "current": "object",
+  "fields": "array<object>",
+  "fields_truncated": "boolean",
+  "layer_id": "string",
+  "layer_type": "null|string",
+  "measure_evidence_contract": "object",
+  "notes": "array<string>|null",
+  "revision": "integer",
+  "shared_expression_scope": "null|object",
+  "source": "object",
+  "source_anchor": "object",
+  "supported": "object"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/evidence/{fact_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/releases": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/releases/{release_id}/download": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/releases/{release_id}/facts.csv": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/sessions/{session_id}/releases/{release_id}/manifest": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/shared/{share_code}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/briefs/shared/{share_code}/view": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/cartogram/sessions/{session_id}/jobs/{job_id}": {
+  "__model__": "CartogramJobStatusResponse",
+  "attempt": "integer|null",
+  "created_at": "null|string",
+  "error": "null|unknown",
+  "job_id": "integer",
+  "message": "null|string",
+  "progress": "null|unknown",
+  "result_ref": "null|string",
+  "result_summary": "null|object",
+  "status": "string",
+  "task_type": "null|string",
+  "updated_at": "null|string"
+ },
+ "GET /api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/inspect": {
+  "__model__": "CartogramInspectResponse",
+  "contract": "object",
+  "current": "null|object",
+  "fields": "array<object>",
+  "fields_truncated": "boolean",
+  "geometry_types": "array<string>",
+  "layer_id": "string",
+  "layer_type": "null|string",
+  "revision": "integer|null",
+  "source": "object",
+  "source_anchor": "object",
+  "supported": "object"
+ },
+ "GET /api/v1/cartogram/sessions/{session_id}/layouts": {
+  "__model__": "CartogramLayoutListResponse",
+  "items": "array<object>",
+  "session_id": "string",
+  "truncated": "boolean"
+ },
+ "GET /api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}": {
+  "__model__": "CartogramLayoutDetailResponse",
+  "adjacency": "null|object",
+  "algorithm": "null|object",
+  "area_scale": "null|object",
+  "candidate_digest": "null|string",
+  "circle_count": "integer|null",
+  "circles_sample": "array<object>|null",
+  "coordinate_space": "null|string",
+  "disclosures": "array<string>",
+  "excluded_count": "integer|null",
+  "is_geographic": "boolean|null",
+  "kind": "null|string",
+  "layout_ref": "string",
+  "legend": "null|object",
+  "metrics": "null|object",
+  "missing_count": "integer|null",
+  "plan_digest": "null|string",
+  "publication_ready": "boolean|null",
+  "quantity": "null|object",
+  "reference_outline_count": "integer|null",
+  "schema_version": "integer|null",
+  "source": "null|object",
+  "status": "null|string",
+  "units": "null|unknown",
+  "zero_count": "integer|null"
+ },
+ "GET /api/v1/cartogram/sessions/{session_id}/layouts/{layout_ref}/export": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/cartographic-assets": {
+  "__model__": "CartographicAssetListResponse",
+  "assets": "array<object>",
+  "limit": "integer",
+  "offset": "integer",
+  "success": "boolean",
+  "total": "integer"
+ },
+ "GET /api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/inspect": {
+  "__model__": "SymbolBindingInspectResponse",
+  "builtin_assets": "array<object>",
+  "current_binding": "null|object",
+  "eligibility": "object",
+  "layer_id": "string",
+  "revision": "integer",
+  "success": "boolean"
+ },
+ "GET /api/v1/cartographic-assets/{asset_id}": {
+  "__model__": "CartographicAssetDetailResponse",
+  "asset": "CartographicAssetView",
+  "success": "boolean",
+  "versions": "array<object>"
+ },
+ "GET /api/v1/cartographic-assets/{asset_id}/versions/{revision}/content": {
+  "__model__": "CartographicAssetContentResponse",
+  "content_digest": "string",
+  "default_params": "object",
+  "kind": "string",
+  "meta": "object",
+  "name": "string",
+  "pattern": "null|object",
+  "primitives": "array<object>",
+  "schema_version": "integer",
+  "source": "object",
+  "success": "boolean",
+  "viewbox": "array<number>|null"
+ },
  "GET /api/v1/chat/sessions": {
   "__model__": "SessionListResponse",
   "has_more": "boolean",
@@ -134,6 +360,44 @@
   "schema_version": "string",
   "session_id": "string"
  },
+ "GET /api/v1/chat/sessions/{session_id}/context-policy": {
+  "__model__": "ContextPolicyResponse",
+  "effective_when": "null|string",
+  "policy": "SourcePolicyView",
+  "scope_note": "string",
+  "session_id": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/context-receipts": {
+  "__model__": "ContextReceiptsResponse",
+  "coverage_note": "string",
+  "receipts": "array<object>",
+  "session_id": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/context-receipts/{turn_id}": {
+  "__model__": "ContextReceiptResponse",
+  "assembly_mode": "null|string",
+  "created_at": "null|string",
+  "digest": "null|string",
+  "disposition": "null|string",
+  "not_sent_reason": "null|string",
+  "payload": "object",
+  "policy_version": "integer|null",
+  "receipt_id": "integer|null",
+  "run_id": "null|string",
+  "session_id": "null|string",
+  "status": "null|string",
+  "turn_id": "null|string",
+  "turn_outcome": "null|string",
+  "updated_at": "null|string",
+  "user_message_id": "null|string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/context-sources": {
+  "__model__": "ContextSourcesResponse",
+  "counts": "object",
+  "project_id": "string",
+  "session_id": "string",
+  "sources": "array<object>"
+ },
  "GET /api/v1/chat/sessions/{session_id}/display-confirmation": {
   "__model__": "DisplayConfirmationStatusResponse",
   "confirmed": "boolean",
@@ -143,6 +407,87 @@
   "required_render_seq": "integer",
   "session_id": "string",
   "verdict_present": "boolean"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/feature-proposals": {
+  "__model__": "FeatureProposalListResponse",
+  "items": "array<FeatureProposalSummaryResponse>",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}": {
+  "__model__": "FeatureProposalDetailResponse",
+  "approval": "null|object",
+  "author_kind": "string",
+  "base": "object",
+  "candidate_digest": "string",
+  "comments": "array<object>",
+  "created_at": "number",
+  "decisions": "array<object>",
+  "has_approval": "boolean",
+  "merge": "null|object",
+  "op_kinds": "array<string>",
+  "op_seed": "null|string",
+  "ops": "array<object>",
+  "ops_count": "integer",
+  "proposal_id": "string",
+  "ref_id": "string",
+  "resolutions": "array<object>",
+  "resolutions_count": "integer",
+  "revision": "integer",
+  "status": "string",
+  "title": "string",
+  "updated_at": "number",
+  "withdrawn_at": "null|number"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/audit": {
+  "__model__": "FeatureProposalAuditResponse",
+  "author": "object",
+  "base": "object",
+  "candidate_digest": "string",
+  "decisions": "array<object>",
+  "exported_at": "string",
+  "merge": "null|object",
+  "proposal_id": "string",
+  "ref_id": "string",
+  "resolutions": "array<object>",
+  "revision": "integer",
+  "status": "string",
+  "title": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/conflicts": {
+  "__model__": "FeatureProposalConflictsResponse",
+  "conflicts": "array<object>",
+  "current_changed": "null|unknown",
+  "identity": "null|unknown",
+  "independent_current_changes": "null|unknown",
+  "satisfied": "array<object>",
+  "unresolved_conflicts": "array<object>",
+  "verdict": "null|string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/diff": {
+  "__model__": "FeatureProposalDiffResponse",
+  "base": "object",
+  "candidate_delta_count": "integer",
+  "candidate_deltas": "array<object>",
+  "conflict_report": "null|object",
+  "current": "object",
+  "lineage": "array<object>",
+  "page": "integer",
+  "page_size": "integer",
+  "proposal_id": "string",
+  "revision": "integer"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery": {
+  "__model__": "FeatureProposalRecoveryViewResponse",
+  "base": "object",
+  "candidate_digest": "string",
+  "guidance": "string",
+  "merge": "null|object",
+  "missing_evidence": "array<string>",
+  "ops_summary": "array<string>",
+  "proposal_id": "string",
+  "receipt": "null|object",
+  "verdict": "string"
  },
  "GET /api/v1/chat/sessions/{session_id}/interaction-events/projection": {
   "__model__": "InteractionProjectionResponse",
@@ -166,6 +511,18 @@
   "map_state": "null|object",
   "session_id": "string"
  },
+ "GET /api/v1/chat/sessions/{session_id}/model": {
+  "__model__": "SessionModelViewResponse",
+  "budget": "object",
+  "catalog": "array<object>",
+  "catalog_generation": "string",
+  "last_turn": "SessionModelLastTurn|null",
+  "pending_next_turn": "boolean",
+  "preference": "SessionModelPreference",
+  "session_id": "string",
+  "target": "object",
+  "thinking_controllable": "boolean"
+ },
  "GET /api/v1/chat/sessions/{session_id}/plan": {
   "__model__": "SessionPlanViewResponse",
   "envelope_id": "string",
@@ -188,7 +545,7 @@
   "session_id": "string"
  },
  "GET /api/v1/chat/sessions/{session_id}/review/proposals": {
-  "__model__": "ProposalListResponse",
+  "__model__": "app__schemas__review_schema__ProposalListResponse",
   "proposals": "array<object>",
   "session_id": "string"
  },
@@ -204,6 +561,25 @@
  "GET /api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}": {
   "__model__": "TableArtifactResponse",
   "table": "unknown"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/usage": {
+  "__model__": "SessionUsageResponse",
+  "cost_source": "string",
+  "cost_total_micro_usd": "integer|null",
+  "coverage": "object",
+  "recent_turns": "array<SessionUsageTurn>",
+  "session_id": "string",
+  "totals": "SessionUsageTokenBlock",
+  "turns_incomplete": "integer",
+  "turns_recorded": "integer"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/visual-context/evidence": {
+  "__model__": "VisualEvidenceListResponse",
+  "evidence": "array<VisualEvidenceResponse>",
+  "session_id": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/visual-context/evidence/{evidence_id}/image": {
+  "__type__": "unknown"
  },
  "GET /api/v1/chat/sessions/{session_id}/workbench/artifact-status": {
   "__model__": "WorkbenchArtifactStatusResponse"
@@ -232,6 +608,120 @@
  "GET /api/v1/config/skills": {
   "__model__": "app__schemas__config_schema__SkillsListResponse",
   "skills": "array<SkillListItem>"
+ },
+ "GET /api/v1/coord-ops/crs/lookup": {
+  "__model__": "CoordinateOpsCrsLookupResponse",
+  "area_of_use": "null|object",
+  "axis_official": "unknown",
+  "canonical_sha256": "string",
+  "carrier_convention": "unknown",
+  "dimension_supported": "boolean",
+  "dimension_unsupported_reason": "null|string",
+  "identity": "string",
+  "input": "string",
+  "name": "string",
+  "type_name": "string",
+  "units": "object"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/plans": {
+  "__model__": "CoordinateOperationPlanListResponse",
+  "plans": "array<CoordinateOperationPlanView>"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}": {
+  "__model__": "CoordinateOperationPlanView",
+  "created_at": "null|string",
+  "normalized_digest": "string",
+  "operation": "null|object",
+  "plan": "object",
+  "plan_id": "string",
+  "preview": "null|object",
+  "preview_digest": "null|string",
+  "preview_stale": "boolean",
+  "project_id": "null|string",
+  "revision": "integer",
+  "selected_candidate_id": "null|string",
+  "session_id": "string",
+  "source_fingerprint": "null|string",
+  "status": "string",
+  "title": "string",
+  "updated_at": "null|string"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/runs": {
+  "__model__": "CoordinateOperationRunListResponse",
+  "runs": "array<CoordinateOperationRunListItem>"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/runs/{run_id}": {
+  "__model__": "CoordinateOperationRunView",
+  "created_at": "null|string",
+  "error_code": "null|string",
+  "finished_at": "null|string",
+  "idempotent_reuse": "boolean|null",
+  "job_id": "integer|null",
+  "output_ref": "null|string",
+  "output_rows": "integer|null",
+  "plan_id": "null|string",
+  "plan_revision": "integer|null",
+  "poll": "null|string",
+  "receipt": "null|object",
+  "run_id": "string",
+  "status": "string"
+ },
+ "GET /api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/results": {
+  "__model__": "CoordinateOperationRunResultsResponse",
+  "crs": "null|object|string",
+  "cursor": "integer",
+  "next_cursor": "integer|null",
+  "output_kind": "string",
+  "page_size": "integer",
+  "rows": "array<object>",
+  "run_id": "string",
+  "total_rows": "integer"
+ },
+ "GET /api/v1/data-delivery/capabilities": {
+  "__model__": "DeliveryCapabilitiesResponse",
+  "cancel_endpoint": "string",
+  "formats": "array<FormatCapability>",
+  "limits": "DeliveryLimitsView",
+  "writer_versions": "object"
+ },
+ "GET /api/v1/data-delivery/jobs": {
+  "__array_of__": {
+   "__model__": "DeliveryJobView",
+   "completed_at": "null|string",
+   "created_at": "null|string",
+   "download_url": "null|string",
+   "error": "null|string",
+   "error_code": "null|string",
+   "filename": "null|string",
+   "format": "null|string",
+   "job_id": "string",
+   "progress": "integer",
+   "progress_message": "null|string",
+   "receipt": "DeliveryReceipt|null",
+   "spec_fingerprint": "null|string",
+   "stage": "null|string",
+   "status": "string"
+  }
+ },
+ "GET /api/v1/data-delivery/jobs/{job_id}": {
+  "__model__": "DeliveryJobView",
+  "completed_at": "null|string",
+  "created_at": "null|string",
+  "download_url": "null|string",
+  "error": "null|string",
+  "error_code": "null|string",
+  "filename": "null|string",
+  "format": "null|string",
+  "job_id": "string",
+  "progress": "integer",
+  "progress_message": "null|string",
+  "receipt": "DeliveryReceipt|null",
+  "spec_fingerprint": "null|string",
+  "stage": "null|string",
+  "status": "string"
+ },
+ "GET /api/v1/data-delivery/jobs/{job_id}/download": {
+  "__type__": "unknown"
  },
  "GET /api/v1/data-fabric/catalog": {
   "__model__": "CatalogListResponse"
@@ -279,6 +769,96 @@
   "name": "null|string",
   "source_type": "null|string",
   "status": "null|string"
+ },
+ "GET /api/v1/data-import/batches": {
+  "__model__": "BatchListResponse",
+  "batches": "array<object>"
+ },
+ "GET /api/v1/data-import/batches/{batch_id}": {
+  "__model__": "BatchDetailResponse",
+  "attribution": "string",
+  "batch_id": "string",
+  "created_at": "string",
+  "expires_at": "string",
+  "interpretations": "object",
+  "license": "string",
+  "members": "array<object>",
+  "notes": "array<string>",
+  "plan_hashes": "object",
+  "plan_version": "integer",
+  "previewed_hashes": "object",
+  "receipts": "object",
+  "session_id": "string",
+  "sources": "array<object>",
+  "status": "string",
+  "updated_at": "string"
+ },
+ "GET /api/v1/data-import/batches/{batch_id}/receipts": {
+  "__model__": "ReceiptsResponse",
+  "batch_id": "string",
+  "notes": "array<string>",
+  "plan_version": "integer",
+  "receipts": "object",
+  "status": "string"
+ },
+ "GET /api/v1/data-join-authoring/sessions/{session_id}/plans": {
+  "__model__": "DataJoinPlanListResponse",
+  "count": "integer",
+  "plans": "array<DataJoinPlanView>"
+ },
+ "GET /api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}": {
+  "__model__": "DataJoinPlanView",
+  "created_at": "null|string",
+  "left_fingerprint": "null|string",
+  "normalized_digest": "string",
+  "plan": "object",
+  "plan_id": "string",
+  "preview": "null|object",
+  "preview_digest": "null|string",
+  "project_id": "null|string",
+  "revision": "integer",
+  "right_fingerprint": "null|string",
+  "session_id": "string",
+  "status": "string",
+  "title": "string",
+  "updated_at": "null|string"
+ },
+ "GET /api/v1/data-join-authoring/sessions/{session_id}/runs": {
+  "__model__": "DataJoinRunListResponse",
+  "count": "integer",
+  "runs": "array<DataJoinRunSummary>"
+ },
+ "GET /api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}": {
+  "__model__": "DataJoinRunView",
+  "content_invalidated": "boolean|null",
+  "created_at": "null|string",
+  "error_code": "null|string",
+  "finished_at": "null|string",
+  "idempotent_reuse": "boolean|null",
+  "job_id": "integer|null",
+  "output_ref": "null|string",
+  "output_rows": "integer|null",
+  "output_sha256": "null|string",
+  "plan_digest": "null|string",
+  "plan_id": "null|string",
+  "plan_revision": "integer|null",
+  "poll": "null|string",
+  "receipt": "null|object",
+  "run_id": "string",
+  "session_id": "null|string",
+  "status": "string"
+ },
+ "GET /api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/results": {
+  "__model__": "DataJoinRunResultsResponse",
+  "crs": "null|object|string",
+  "cursor": "integer",
+  "next_cursor": "integer|null",
+  "output_kind": "string",
+  "output_ref": "null|string",
+  "page_size": "integer",
+  "rows": "array<DataJoinResultRow>",
+  "run_id": "string",
+  "total_rows": "integer"
  },
  "GET /api/v1/data-lifecycle/gc/plans": {
   "__model__": "Page_Dict_str__Any__",
@@ -344,6 +924,10 @@
  "GET /api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download": {
   "__type__": "unknown"
  },
+ "GET /api/v1/field-compute/plans": {
+  "__model__": "FieldComputePlanListResponse",
+  "plans": "array<FieldComputePlanOut>"
+ },
  "GET /api/v1/geocompute/cluster/metrics": {
   "__model__": "ClusterMetricsResponse"
  },
@@ -365,9 +949,102 @@
  "GET /api/v1/geocompute/runs/{run_id}/summary": {
   "__model__": "RunSummaryResponse"
  },
+ "GET /api/v1/georeferencing/artifacts/{artifact_id}/download": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/georeferencing/plans": {
+  "__model__": "GeorefPlanListResponse",
+  "plans": "array<GeorefDraftPlan>",
+  "session_id": "string"
+ },
+ "GET /api/v1/georeferencing/plans/{plan_id}": {
+  "__model__": "GeorefPlanResponse",
+  "plan": "GeorefDraftPlan",
+  "source": "GeorefSourceRecord|null"
+ },
+ "GET /api/v1/georeferencing/plans/{plan_id}/gcps/export": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/georeferencing/plans/{plan_id}/preview/image": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/georeferencing/plans/{plan_id}/status": {
+  "__model__": "GeorefJobStatusResponse",
+  "artifact": "GeorefArtifactRecord|null",
+  "error_code": "null|string",
+  "error_message": "null|string",
+  "execution_id": "null|string",
+  "job_id": "null|string",
+  "plan": "GeorefDraftPlan",
+  "plan_id": "string",
+  "progress": "integer",
+  "stage": "string",
+  "status": "string"
+ },
+ "GET /api/v1/georeferencing/sources": {
+  "__model__": "GeorefSourceListResponse",
+  "session_id": "string",
+  "sources": "array<GeorefSourceRecord>"
+ },
+ "GET /api/v1/georeferencing/sources/{source_id}": {
+  "__model__": "GeorefSourceResponse",
+  "image_url": "string",
+  "source": "GeorefSourceRecord"
+ },
+ "GET /api/v1/georeferencing/sources/{source_id}/image": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/goal-repair/attempts/{attempt_id}": {
+  "__model__": "GoalRepairAttemptView",
+  "actions": "array<object>",
+  "active": "boolean",
+  "attempt_id": "string",
+  "blockers": "array<string>",
+  "budget_denied": "array<string>|null",
+  "cancel_requested": "boolean|null",
+  "cancellable": "boolean",
+  "completed_at": "null|string",
+  "created_at": "null|string",
+  "entry": "string",
+  "error": "null|string",
+  "final_changed": "boolean",
+  "final_verdict_after": "null|string",
+  "final_verdict_before": "null|string",
+  "goal_id": "string",
+  "heartbeat_at": "null|string",
+  "note": "null|string",
+  "outcome": "null|string",
+  "parent_attempt_id": "string",
+  "plan_version": "string",
+  "schema_version": "string",
+  "selected_action_ids": "array<string>|null",
+  "session_id": "string",
+  "status": "string",
+  "turn_id": "string"
+ },
+ "GET /api/v1/goal-repair/sessions/{session_id}/preview": {
+  "__model__": "GoalRepairPreviewResponse",
+  "actions": "array<object>",
+  "active_attempt": "null|object",
+  "attempts": "array<object>",
+  "blockers": "array<string>",
+  "evidence_signature": "string",
+  "goal_fingerprint": "string",
+  "goal_id": "string",
+  "mapspec_revision": "integer",
+  "observation_seq": "integer",
+  "plan_version": "string",
+  "progress_rule": "string",
+  "schema_version": "string",
+  "session_id": "string",
+  "signal": "string",
+  "verdict": "string"
+ },
  "GET /api/v1/health": {
   "__model__": "HealthResponse",
   "agent_runtime": "string",
+  "agent_runtime_mode": "null|string",
+  "agent_runtime_reason": "null|string",
   "pi_vendor": "null|string",
   "pi_workers_alive": "null|string",
   "service": "string",
@@ -436,6 +1113,25 @@
  },
  "GET /api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png": {
   "__type__": "unknown"
+ },
+ "GET /api/v1/layers/data/{ref_id}/selection/{handle}": {
+  "__model__": "SelectionHandleResponse",
+  "count": "integer|null",
+  "count_exact": "boolean",
+  "handle": "string",
+  "missing_ids": "array<string>|null",
+  "revision": "integer|null",
+  "scope": "object",
+  "ttl_seconds": "integer"
+ },
+ "GET /api/v1/layers/data/{ref_id}/selection/{handle}/features": {
+  "__model__": "SelectionFeaturesPageResponse",
+  "features": "array<object>",
+  "pagination": "object",
+  "reason_codes": "array<string>",
+  "revision": "integer|null",
+  "selection": "object",
+  "type": "string"
  },
  "GET /api/v1/layers/data/{ref_id}/terrain-tiles.json": {
   "__type__": "unknown"
@@ -506,6 +1202,51 @@
   "truncated": "boolean|null",
   "type": "null|string"
  },
+ "GET /api/v1/print-layout/capabilities": {
+  "__model__": "PrintLayoutCapabilitiesResponse",
+  "budgets": "object",
+  "component_kinds": "array<string>",
+  "default_plan": "object",
+  "font_asset_version": "string",
+  "font_ids": "array<string>",
+  "fonts": "unknown",
+  "operations": "array<string>",
+  "paper_profiles": "object",
+  "render_path": "string",
+  "schema_version": "string",
+  "success": "boolean",
+  "text_bindings": "array<string>",
+  "units": "object"
+ },
+ "GET /api/v1/print-layout/inspect": {
+  "__model__": "PrintLayoutInspectResponse",
+  "code": "null|string",
+  "font_asset_version": "null|string",
+  "issues": "array<object>",
+  "locks": "object",
+  "mapspec_revision": "integer|null",
+  "note": "null|string",
+  "numbering": "null|object",
+  "plan": "null|object",
+  "planner_sync": "null|object",
+  "schema_version": "null|string",
+  "status": "string",
+  "success": "boolean",
+  "validation": "null|object"
+ },
+ "GET /api/v1/print-layout/pages": {
+  "__model__": "PrintLayoutPagesResponse",
+  "binding_changed": "boolean",
+  "disabled_pages": "array<object>",
+  "exceeds_budget": "boolean",
+  "page_budget": "integer",
+  "page_count": "integer",
+  "pages": "array<object>",
+  "planner_page_count": "integer",
+  "status": "string",
+  "success": "boolean",
+  "toc": "array<object>"
+ },
  "GET /api/v1/projects": {
   "__model__": "Page_ProjectSummary_",
   "has_more": "boolean",
@@ -556,6 +1297,48 @@
   "counts": "object",
   "facts": "array<object>",
   "project_id": "string"
+ },
+ "GET /api/v1/projects/{project_id}/data-refresh/proposals": {
+  "__model__": "app__schemas__project_data_refresh_schema__ProposalListResponse",
+  "count": "integer",
+  "items": "array<object>",
+  "project_id": "string"
+ },
+ "GET /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}": {
+  "__model__": "RefreshProposal",
+  "adopted_mapspec_fingerprint": "string",
+  "adopted_revision": "integer|null",
+  "baseline_snapshot_id": "string",
+  "created_at": "number",
+  "diffs": "array<SourceDiff>",
+  "inventory": "SourceInventory",
+  "mapspec_fingerprint": "string",
+  "mapspec_revision": "integer",
+  "org_id": "string",
+  "owner_id": "string",
+  "plan": "RefreshPlan",
+  "project_id": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "schema_version": "integer",
+  "session_id": "string",
+  "source_versions": "object",
+  "status": "ProposalStatus",
+  "updated_at": "number",
+  "user_locks": "array<string>",
+  "warnings": "array<string>"
+ },
+ "GET /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/status": {
+  "__model__": "StatusResponse",
+  "adopted_revision": "integer|null",
+  "candidate_attempts": "integer",
+  "candidate_status": "string",
+  "mapspec_revision": "integer",
+  "progress": "array<object>",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "proposal_status": "string",
+  "recoverable": "boolean"
  },
  "GET /api/v1/projects/{project_id}/data-usage": {
   "__model__": "DataUsageResponse",
@@ -706,6 +1489,80 @@
  "GET /api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}": {
   "__model__": "WorkspaceSnapshotInspectResponse"
  },
+ "GET /api/v1/raster-authoring/descriptor/{ref_id}": {
+  "__model__": "RasterDescriptorResponse",
+  "band_count": "integer",
+  "bands": "array<RasterBandMeta>",
+  "bounds_epsg4326": "array<number>|null",
+  "bounds_source_crs": "array<number>|null",
+  "capabilities": "RasterDescriptorCapabilities",
+  "content_fingerprint": "string",
+  "crs": "null|string",
+  "crs_present": "boolean",
+  "data_revision": "string",
+  "defaults": "object",
+  "disclosures": "array<string>",
+  "driver": "string",
+  "has_overviews": "boolean",
+  "height": "integer",
+  "histograms": "array<RasterHistogram>",
+  "nodata": "null|number",
+  "ref_id": "string",
+  "resolution_x": "null|number",
+  "resolution_y": "null|number",
+  "session_id": "string",
+  "statistics": "RasterBandStatistics|null",
+  "success": "boolean",
+  "transform": "array<number>|null",
+  "width": "integer"
+ },
+ "GET /api/v1/raster-authoring/refs": {
+  "__model__": "RasterRefsResponse",
+  "refs": "array<RasterRefItem>",
+  "success": "boolean",
+  "truncated": "boolean"
+ },
+ "GET /api/v1/raster-authoring/tiles/{ref_id}/{z}/{x}/{y}.png": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/raster-sampling/describe": {
+  "__model__": "RasterSamplingDescribeResponse",
+  "budgets": "object",
+  "raster_refs": "array<object>",
+  "session_id": "string",
+  "success": "boolean",
+  "truncated": "boolean"
+ },
+ "GET /api/v1/raster-sampling/plan/{plan_id}": {
+  "__model__": "RasterSamplingPlanResponse",
+  "plan": "object",
+  "selection_materialized": "null|unknown",
+  "stations": "null|object",
+  "success": "boolean"
+ },
+ "GET /api/v1/raster-sampling/plan/{plan_id}/status": {
+  "__model__": "RasterSamplingStatusResponse",
+  "job": "null|object",
+  "plan_id": "string",
+  "receipt_count": "integer",
+  "revision": "integer",
+  "success": "boolean"
+ },
+ "GET /api/v1/raster-sampling/plans": {
+  "__model__": "RasterSamplingPlanListResponse",
+  "plans": "array<object>",
+  "success": "boolean"
+ },
+ "GET /api/v1/raster-sampling/results": {
+  "__model__": "RasterSamplingResultsResponse",
+  "execution_id": "string",
+  "pagination": "object",
+  "plan_id": "string",
+  "receipt": "object",
+  "rows": "array<object>",
+  "sample_table_ref": "null|string",
+  "success": "boolean"
+ },
  "GET /api/v1/ready": {
   "__model__": "ReadyResponse",
   "ready": "boolean"
@@ -739,6 +1596,74 @@
  },
  "GET /api/v1/sessions/{session_id}/raster/{raster_id}.png": {
   "__type__": "unknown"
+ },
+ "GET /api/v1/skill-jobs/catalog": {
+  "__model__": "SkillJobsCatalogResponse",
+  "counts": "object",
+  "extension_candidates": "array<object>",
+  "md_guides": "array<object>",
+  "schema_version": "string",
+  "skills": "array<object>"
+ },
+ "GET /api/v1/skill-jobs/presets": {
+  "__model__": "SkillJobPresetsListResponse",
+  "presets": "array<SkillJobPresetView>"
+ },
+ "GET /api/v1/skill-jobs/presets/{preset_id}": {
+  "__model__": "SkillJobPresetView",
+  "bindings_template": "object",
+  "creator_id": "string",
+  "description": "string",
+  "id": "string",
+  "name": "string",
+  "params": "object",
+  "project_id": "string",
+  "skill_digest": "string",
+  "skill_id": "string",
+  "skill_version": "string"
+ },
+ "GET /api/v1/skill-jobs/runs": {
+  "__model__": "SkillJobRunsListResponse",
+  "runs": "array<SkillJobRunView>"
+ },
+ "GET /api/v1/skill-jobs/runs/{job_id}": {
+  "__model__": "SkillJobRunView",
+  "active": "boolean",
+  "artifact_refs": "object",
+  "attempt": "integer",
+  "cancellable": "boolean",
+  "completed_at": "null|string",
+  "created_at": "null|string",
+  "error": "null|string",
+  "evidence_covered": "array<unknown>",
+  "evidence_not_covered": "array<unknown>",
+  "job_id": "string",
+  "kind": "string",
+  "message": "string",
+  "progress": "null|number",
+  "project_id": "null|string",
+  "result_ref": "null|string",
+  "retryable": "boolean",
+  "run_record": "null|object",
+  "session_id": "null|string",
+  "skill": "object",
+  "skill_id": "string",
+  "skill_version": "string",
+  "status": "string",
+  "steps": "array<object>"
+ },
+ "GET /api/v1/skill-jobs/skills/{skill_id}": {
+  "__model__": "SkillJobSkillDetailResponse",
+  "asset_type": "string",
+  "completion_evidence": "array<string>",
+  "description": "string",
+  "domain": "string",
+  "id": "string",
+  "name": "string",
+  "quality_obligations": "array<object>",
+  "runnability": "string",
+  "runnability_reasons": "array<string>",
+  "version": "string"
  },
  "GET /api/v1/spatial-events/stream": {
   "__type__": "unknown"
@@ -786,6 +1711,7 @@
   "finished_at": "null|string",
   "id": "string",
   "kind": "string",
+  "member_status": "array<object>|null",
   "message": "null|string",
   "name": "string",
   "page_status": "array<object>|null",
@@ -837,6 +1763,34 @@
   "thumbnail_url": "null|string",
   "updated_at": "null|string",
   "version": "integer"
+ },
+ "GET /api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/inspect": {
+  "__model__": "ThematicInspectResponse",
+  "current": "object",
+  "distribution": "object",
+  "fields": "array<object>",
+  "layer_id": "string",
+  "layer_type": "null|string",
+  "notes": "array<string>|null",
+  "revision": "integer",
+  "shared_expression_scope": "null|object",
+  "source": "object"
+ },
+ "GET /api/v1/topology-workbench/rulesets": {
+  "__model__": "Page_Dict_str__Any__",
+  "has_more": "boolean",
+  "items": "array<object>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/topology-workbench/runs": {
+  "__model__": "Page_Dict_str__Any__",
+  "has_more": "boolean",
+  "items": "array<object>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
  },
  "GET /api/v1/uploads": {
   "__model__": "UploadListResponse",
@@ -993,6 +1947,69 @@
   "__model__": "LivenessResponse",
   "status": "string"
  },
+ "PATCH /api/v1/briefs/sessions/{session_id}": {
+  "__type__": "unknown"
+ },
+ "PATCH /api/v1/briefs/sessions/{session_id}/blocks/{block_id}": {
+  "__type__": "unknown"
+ },
+ "PATCH /api/v1/briefs/sessions/{session_id}/chapters/{chapter_id}": {
+  "__type__": "unknown"
+ },
+ "PATCH /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}": {
+  "__model__": "FeatureProposalSummaryResponse",
+  "author_kind": "string",
+  "base": "object",
+  "candidate_digest": "string",
+  "created_at": "string",
+  "has_approval": "boolean",
+  "merge": "null|object",
+  "op_kinds": "array<string>",
+  "ops_count": "integer",
+  "proposal_id": "string",
+  "ref_id": "string",
+  "resolutions_count": "integer",
+  "revision": "integer",
+  "status": "string",
+  "title": "string",
+  "updated_at": "string"
+ },
+ "PATCH /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}": {
+  "__model__": "CoordinateOperationPlanView",
+  "created_at": "null|string",
+  "normalized_digest": "string",
+  "operation": "null|object",
+  "plan": "object",
+  "plan_id": "string",
+  "preview": "null|object",
+  "preview_digest": "null|string",
+  "preview_stale": "boolean",
+  "project_id": "null|string",
+  "revision": "integer",
+  "selected_candidate_id": "null|string",
+  "session_id": "string",
+  "source_fingerprint": "null|string",
+  "status": "string",
+  "title": "string",
+  "updated_at": "null|string"
+ },
+ "PATCH /api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}": {
+  "__model__": "DataJoinPlanView",
+  "created_at": "null|string",
+  "left_fingerprint": "null|string",
+  "normalized_digest": "string",
+  "plan": "object",
+  "plan_id": "string",
+  "preview": "null|object",
+  "preview_digest": "null|string",
+  "project_id": "null|string",
+  "revision": "integer",
+  "right_fingerprint": "null|string",
+  "session_id": "string",
+  "status": "string",
+  "title": "string",
+  "updated_at": "null|string"
+ },
  "POST /api/v1/atlas/jobs": {
   "__model__": "AtlasSubmitResponse",
   "idempotent_reuse": "boolean",
@@ -1032,11 +2049,232 @@
   "token_type": "string",
   "user": "UserInfo"
  },
+ "POST /api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/commit": {
+  "__model__": "BivariateExpressionReceipt",
+  "algorithm_version": "null|string",
+  "can_undo": "boolean|null",
+  "candidate_digest": "null|string",
+  "candidate_fingerprint": "null|string",
+  "committed": "boolean",
+  "current_fingerprint": "null|string",
+  "derived": "null|object",
+  "disclosures": "array<string>",
+  "export": "null|object",
+  "layer_id": "null|string",
+  "legend": "null|object",
+  "mapspec_fingerprint": "null|string",
+  "mode": "string",
+  "mutations": "integer|null",
+  "plan_digest": "null|string",
+  "preview_only": "boolean|null",
+  "restores": "null|object",
+  "revision": "integer|null",
+  "source_anchor": "null|object",
+  "stats_basis": "null|object",
+  "success": "boolean",
+  "summary": "null|object"
+ },
+ "POST /api/v1/bivariate-reliability/sessions/{session_id}/layers/{layer_id}/preview": {
+  "__model__": "BivariateExpressionReceipt",
+  "algorithm_version": "null|string",
+  "can_undo": "boolean|null",
+  "candidate_digest": "null|string",
+  "candidate_fingerprint": "null|string",
+  "committed": "boolean",
+  "current_fingerprint": "null|string",
+  "derived": "null|object",
+  "disclosures": "array<string>",
+  "export": "null|object",
+  "layer_id": "null|string",
+  "legend": "null|object",
+  "mapspec_fingerprint": "null|string",
+  "mode": "string",
+  "mutations": "integer|null",
+  "plan_digest": "null|string",
+  "preview_only": "boolean|null",
+  "restores": "null|object",
+  "revision": "integer|null",
+  "source_anchor": "null|object",
+  "stats_basis": "null|object",
+  "success": "boolean",
+  "summary": "null|object"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/blocks": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/chapters": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/draft": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/preflight": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/regenerate": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/releases": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/briefs/sessions/{session_id}/releases/{release_id}/share": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/apply": {
+  "__model__": "CartogramApplyReceipt",
+  "can_undo": "boolean",
+  "committed": "boolean",
+  "coordinate_space": "null|string",
+  "diagnostic": "boolean",
+  "disclosures": "array<string>",
+  "duplicate": "boolean",
+  "layer_id": "string",
+  "layout_ref": "string",
+  "mapspec_fingerprint": "null|string",
+  "mutations": "integer",
+  "publication_ready": "boolean",
+  "revision": "integer",
+  "stale_source": "boolean",
+  "success": "boolean"
+ },
+ "POST /api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/plan": {
+  "__model__": "CartogramPlanReceipt",
+  "algorithm": "object",
+  "area_scale": "object",
+  "budgets": "object",
+  "candidate_digest": "string",
+  "disclosures": "array<string>",
+  "examples": "array<object>",
+  "geometry": "object",
+  "idempotent_reuse": "boolean|null",
+  "job_id": "integer|null",
+  "layer_id": "null|string",
+  "mode": "string",
+  "note": "null|string",
+  "plan_digest": "string",
+  "poll": "null|string",
+  "quality_gate": "object",
+  "quantity": "object",
+  "revision": "integer|null",
+  "solver": "object",
+  "source_anchor": "object",
+  "status": "null|string",
+  "success": "boolean",
+  "units_for_layout": "object"
+ },
+ "POST /api/v1/cartogram/sessions/{session_id}/layers/{layer_id}/run": {
+  "__model__": "CartogramPlanReceipt",
+  "algorithm": "object",
+  "area_scale": "object",
+  "budgets": "object",
+  "candidate_digest": "string",
+  "disclosures": "array<string>",
+  "examples": "array<object>",
+  "geometry": "object",
+  "idempotent_reuse": "boolean|null",
+  "job_id": "integer|null",
+  "layer_id": "null|string",
+  "mode": "string",
+  "note": "null|string",
+  "plan_digest": "string",
+  "poll": "null|string",
+  "quality_gate": "object",
+  "quantity": "object",
+  "revision": "integer|null",
+  "solver": "object",
+  "source_anchor": "object",
+  "status": "null|string",
+  "success": "boolean",
+  "units_for_layout": "object"
+ },
+ "POST /api/v1/cartographic-assets": {
+  "__model__": "CartographicAssetCreateResponse",
+  "asset": "CartographicAssetView",
+  "success": "boolean"
+ },
+ "POST /api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/apply": {
+  "__model__": "SymbolBindingReceipt",
+  "asset": "null|object",
+  "binding_fingerprint": "null|string",
+  "can_undo": "boolean|null",
+  "category_binding": "null|object",
+  "committed": "boolean",
+  "layer_id": "string",
+  "mapspec_fingerprint": "null|string",
+  "mutations": "integer|null",
+  "params": "null|object",
+  "preview": "null|object",
+  "restored_paint": "boolean|null",
+  "revision": "integer|null",
+  "success": "boolean",
+  "unbound": "boolean|null"
+ },
+ "POST /api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/preview": {
+  "__model__": "SymbolBindingReceipt",
+  "asset": "null|object",
+  "binding_fingerprint": "null|string",
+  "can_undo": "boolean|null",
+  "category_binding": "null|object",
+  "committed": "boolean",
+  "layer_id": "string",
+  "mapspec_fingerprint": "null|string",
+  "mutations": "integer|null",
+  "params": "null|object",
+  "preview": "null|object",
+  "restored_paint": "boolean|null",
+  "revision": "integer|null",
+  "success": "boolean",
+  "unbound": "boolean|null"
+ },
+ "POST /api/v1/cartographic-assets/sessions/{session_id}/layers/{layer_id}/unbind": {
+  "__model__": "SymbolBindingReceipt",
+  "asset": "null|object",
+  "binding_fingerprint": "null|string",
+  "can_undo": "boolean|null",
+  "category_binding": "null|object",
+  "committed": "boolean",
+  "layer_id": "string",
+  "mapspec_fingerprint": "null|string",
+  "mutations": "integer|null",
+  "params": "null|object",
+  "preview": "null|object",
+  "restored_paint": "boolean|null",
+  "revision": "integer|null",
+  "success": "boolean",
+  "unbound": "boolean|null"
+ },
+ "POST /api/v1/cartographic-assets/{asset_id}/restore/{revision}": {
+  "__model__": "CartographicAssetVersionResponse",
+  "content_digest": "null|string",
+  "revision": "integer",
+  "status": "null|string",
+  "success": "boolean"
+ },
+ "POST /api/v1/cartographic-assets/{asset_id}/retire": {
+  "__model__": "CartographicAssetRetireResponse",
+  "status": "string",
+  "success": "boolean"
+ },
+ "POST /api/v1/cartographic-assets/{asset_id}/versions": {
+  "__model__": "CartographicAssetVersionResponse",
+  "content_digest": "null|string",
+  "revision": "integer",
+  "status": "null|string",
+  "success": "boolean"
+ },
+ "POST /api/v1/cartographic-assets/{asset_id}/versions/{revision}/publish": {
+  "__model__": "CartographicAssetVersionResponse",
+  "content_digest": "null|string",
+  "revision": "integer",
+  "status": "null|string",
+  "success": "boolean"
+ },
  "POST /api/v1/chat/completions": {
   "__model__": "ChatResponse",
   "content": "string",
   "owner_token": "null|string",
-  "session_id": "string"
+  "session_id": "string",
+  "turn_receipt": "null|object"
  },
  "POST /api/v1/chat/sessions/{session_id}/canvas-actions": {
   "__model__": "CanvasActionsAckResponse",
@@ -1053,6 +2291,19 @@
   "observation_sequence": "integer",
   "overall_passed": "boolean|null"
  },
+ "POST /api/v1/chat/sessions/{session_id}/context-preview": {
+  "__model__": "ContextPreviewResponse",
+  "blocks": "array<ContextPreviewBlock>",
+  "disclaimer": "string",
+  "estimate": "object",
+  "generated_at": "string",
+  "is_preview": "boolean",
+  "not_previewed": "array<string>",
+  "policy": "SourcePolicyView|null",
+  "schema": "string",
+  "session_id": "string",
+  "sources": "array<object>"
+ },
  "POST /api/v1/chat/sessions/{session_id}/display-confirmation/ack": {
   "__model__": "DisplayAckResponse",
   "accepted": "boolean",
@@ -1060,6 +2311,70 @@
   "reason": "null|string",
   "render_seq": "integer",
   "task_complete": "boolean|null"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/feature-proposals": {
+  "__model__": "FeatureProposalSummaryResponse",
+  "author_kind": "string",
+  "base": "object",
+  "candidate_digest": "string",
+  "created_at": "string",
+  "has_approval": "boolean",
+  "merge": "null|object",
+  "op_kinds": "array<string>",
+  "ops_count": "integer",
+  "proposal_id": "string",
+  "ref_id": "string",
+  "resolutions_count": "integer",
+  "revision": "integer",
+  "status": "string",
+  "title": "string",
+  "updated_at": "string"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/comments": {
+  "__model__": "FeatureProposalCommentsResponse",
+  "comments": "array<object>"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/decisions": {
+  "__model__": "FeatureProposalEnvelopeResponse",
+  "applied": "integer|null",
+  "proposal": "FeatureProposalSummaryResponse",
+  "rebased_to": "null|object",
+  "recovered_to": "null|string"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/merge": {
+  "__model__": "FeatureProposalMergeResponse",
+  "already_merged": "boolean|null",
+  "proposal_id": "string",
+  "receipt": "null|object",
+  "status": "string"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/rebase": {
+  "__model__": "FeatureProposalEnvelopeResponse",
+  "applied": "integer|null",
+  "proposal": "FeatureProposalSummaryResponse",
+  "rebased_to": "null|object",
+  "recovered_to": "null|string"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/recovery/resolve": {
+  "__model__": "FeatureProposalEnvelopeResponse",
+  "applied": "integer|null",
+  "proposal": "FeatureProposalSummaryResponse",
+  "rebased_to": "null|object",
+  "recovered_to": "null|string"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/resolutions": {
+  "__model__": "FeatureProposalEnvelopeResponse",
+  "applied": "integer|null",
+  "proposal": "FeatureProposalSummaryResponse",
+  "rebased_to": "null|object",
+  "recovered_to": "null|string"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/feature-proposals/{proposal_id}/withdraw": {
+  "__model__": "FeatureProposalEnvelopeResponse",
+  "applied": "integer|null",
+  "proposal": "FeatureProposalSummaryResponse",
+  "rebased_to": "null|object",
+  "recovered_to": "null|string"
  },
  "POST /api/v1/chat/sessions/{session_id}/interaction-events": {
   "__model__": "InteractionIngestResponse",
@@ -1177,6 +2492,27 @@
   "__model__": "RotateOwnerTokenResponse",
   "owner_token": "string"
  },
+ "POST /api/v1/chat/sessions/{session_id}/visual-context/evidence": {
+  "__model__": "VisualEvidenceResponse",
+  "crop": "null|object",
+  "derived_sha256": "string",
+  "derived_size": "integer",
+  "evidence_id": "string",
+  "height": "integer",
+  "label": "string",
+  "mapspec_fingerprint": "string",
+  "mapspec_revision": "integer|null",
+  "mime": "string",
+  "observations": "array<string>",
+  "origin_height": "integer",
+  "origin_sha256": "string",
+  "origin_width": "integer",
+  "session_id": "string",
+  "source_type": "string",
+  "state": "string",
+  "viewport_hash": "string",
+  "width": "integer"
+ },
  "POST /api/v1/chat/sessions/{session_id}/visual-repairs/apply": {
   "__model__": "VisualRepairApplyResponse",
   "applied": "boolean",
@@ -1251,6 +2587,9 @@
  "POST /api/v1/config/llm": {
   "__model__": "LLMConfigUpdateResponse",
   "config": "LLMConfig",
+  "expected_generation": "null|string",
+  "pi_workers_deferred": "integer|null",
+  "pi_workers_recycled": "integer|null",
   "status": "string"
  },
  "POST /api/v1/config/llm/test": {
@@ -1274,6 +2613,139 @@
   "security": "string",
   "status": "string"
  },
+ "POST /api/v1/coord-ops/sessions/{session_id}/describe-source": {
+  "__model__": "CoordinateOpsDescribeSourceResponse",
+  "artifact_revision_no": "integer|null",
+  "completeness": "object",
+  "content_fingerprint": "string",
+  "content_revision": "integer|null",
+  "crs": "string",
+  "crs_description": "object",
+  "crs_evidence": "object",
+  "fields": "array<object>",
+  "geometry": "null|object",
+  "kind": "string",
+  "label": "string",
+  "row_count": "integer",
+  "units": "object"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/operations": {
+  "__model__": "CoordinateOpsListOperationsResponse",
+  "listing": "unknown",
+  "source": "object",
+  "target": "object"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/plans": {
+  "__model__": "CoordinateOperationPlanView",
+  "created_at": "null|string",
+  "normalized_digest": "string",
+  "operation": "null|object",
+  "plan": "object",
+  "plan_id": "string",
+  "preview": "null|object",
+  "preview_digest": "null|string",
+  "preview_stale": "boolean",
+  "project_id": "null|string",
+  "revision": "integer",
+  "selected_candidate_id": "null|string",
+  "session_id": "string",
+  "source_fingerprint": "null|string",
+  "status": "string",
+  "title": "string",
+  "updated_at": "null|string"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/execute": {
+  "__model__": "CoordinateOperationRunView",
+  "created_at": "null|string",
+  "error_code": "null|string",
+  "finished_at": "null|string",
+  "idempotent_reuse": "boolean|null",
+  "job_id": "integer|null",
+  "output_ref": "null|string",
+  "output_rows": "integer|null",
+  "plan_id": "null|string",
+  "plan_revision": "integer|null",
+  "poll": "null|string",
+  "receipt": "null|object",
+  "run_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/lock": {
+  "__model__": "CoordinateOperationPlanView",
+  "created_at": "null|string",
+  "normalized_digest": "string",
+  "operation": "null|object",
+  "plan": "object",
+  "plan_id": "string",
+  "preview": "null|object",
+  "preview_digest": "null|string",
+  "preview_stale": "boolean",
+  "project_id": "null|string",
+  "revision": "integer",
+  "selected_candidate_id": "null|string",
+  "session_id": "string",
+  "source_fingerprint": "null|string",
+  "status": "string",
+  "title": "string",
+  "updated_at": "null|string"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/plans/{plan_id}/preview": {
+  "__model__": "CoordinateOperationPlanPreviewResponse",
+  "accuracy_note": "string",
+  "area_of_use_check": "string",
+  "coordinate_pairs": "array<object>",
+  "findings": "object",
+  "operation": "null|object",
+  "plan_digest": "string",
+  "plan_id": "string",
+  "plan_revision": "integer",
+  "preview_is_not_full_execution": "boolean",
+  "sample_rows_requested": "integer",
+  "sample_rows_transformed": "integer",
+  "sample_rule": "string",
+  "source_extent": "array<number>|null",
+  "target_extent": "array<number>|null"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/recover": {
+  "__model__": "CoordinateOperationRecoverResponse",
+  "converged": "array<object>"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/cancel": {
+  "__model__": "CoordinateOperationRunCancelResponse",
+  "already_terminal": "boolean|null",
+  "run_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/coord-ops/sessions/{session_id}/runs/{run_id}/display-ref": {
+  "__model__": "CoordinateOperationDisplayRefResponse",
+  "reason": "null|string",
+  "ref": "null|string",
+  "rows": "integer|null",
+  "state": "string"
+ },
+ "POST /api/v1/data-delivery/jobs [202]": {
+  "__model__": "DeliveryJobCreateResponse",
+  "idempotent_reuse": "boolean",
+  "job_id": "string",
+  "message": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-delivery/preview": {
+  "__model__": "DeliveryPreview",
+  "blocking_issues": "array<LossItem>",
+  "downloadable_after": "string",
+  "estimate_note": "null|string",
+  "estimated_bytes": "integer|null",
+  "estimated_rows": "integer|null",
+  "field_name_map_applied": "null|object",
+  "formats": "array<FormatCapability>",
+  "losses": "array<LossItem>",
+  "requested_format": "FormatCapability",
+  "required_acknowledgments": "array<string>",
+  "scope_note": "null|string",
+  "source": "SourceIdentity",
+  "spec_fingerprint": "string"
+ },
  "POST /api/v1/data-fabric/catalog/{item_id}/explain": {
   "__model__": "CatalogExplainResponse"
  },
@@ -1293,6 +2765,122 @@
  },
  "POST /api/v1/data-fabric/sources/{source_id}/sync": {
   "__model__": "SourceSyncResponse"
+ },
+ "POST /api/v1/data-import/batches": {
+  "__model__": "BatchCreateResponse",
+  "batch_id": "string",
+  "created_at": "string",
+  "expires_at": "string",
+  "members": "array<object>",
+  "notes": "array<string>",
+  "session_id": "string",
+  "sources": "array<object>",
+  "status": "string"
+ },
+ "POST /api/v1/data-import/batches/{batch_id}/cancel": {
+  "__model__": "CancelResponse",
+  "batch_id": "string",
+  "cancel_requested": "boolean|null",
+  "job_id": "null|string",
+  "message": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-import/batches/{batch_id}/commit": {
+  "__model__": "CommitAcceptedResponse",
+  "batch_id": "string",
+  "idempotent_reuse": "boolean",
+  "job_id": "null|string",
+  "members": "array<string>",
+  "message": "string",
+  "poll": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-import/batches/{batch_id}/plan": {
+  "__model__": "PlanSaveResponse",
+  "batch_id": "string",
+  "plan_hashes": "object",
+  "plan_version": "integer",
+  "status": "string"
+ },
+ "POST /api/v1/data-import/batches/{batch_id}/preview": {
+  "__model__": "app__schemas__data_import_schema__PreviewResponse",
+  "batch_id": "string",
+  "plan_version": "integer",
+  "previews": "array<object>"
+ },
+ "POST /api/v1/data-join-authoring/sessions/{session_id}/plans": {
+  "__model__": "DataJoinPlanView",
+  "created_at": "null|string",
+  "left_fingerprint": "null|string",
+  "normalized_digest": "string",
+  "plan": "object",
+  "plan_id": "string",
+  "preview": "null|object",
+  "preview_digest": "null|string",
+  "project_id": "null|string",
+  "revision": "integer",
+  "right_fingerprint": "null|string",
+  "session_id": "string",
+  "status": "string",
+  "title": "string",
+  "updated_at": "null|string"
+ },
+ "POST /api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/execute": {
+  "__model__": "DataJoinRunView",
+  "content_invalidated": "boolean|null",
+  "created_at": "null|string",
+  "error_code": "null|string",
+  "finished_at": "null|string",
+  "idempotent_reuse": "boolean|null",
+  "job_id": "integer|null",
+  "output_ref": "null|string",
+  "output_rows": "integer|null",
+  "output_sha256": "null|string",
+  "plan_digest": "null|string",
+  "plan_id": "null|string",
+  "plan_revision": "integer|null",
+  "poll": "null|string",
+  "receipt": "null|object",
+  "run_id": "string",
+  "session_id": "null|string",
+  "status": "string"
+ },
+ "POST /api/v1/data-join-authoring/sessions/{session_id}/plans/{plan_id}/preview": {
+  "__model__": "DataJoinPlanPreviewResponse",
+  "blocked": "null|object",
+  "blocked_code": "null|string",
+  "diagnostics": "object",
+  "duration_ms": "integer",
+  "plan": "DataJoinPlanView",
+  "sample_row_count": "integer|null",
+  "sample_rows": "array<object>|null",
+  "status": "string"
+ },
+ "POST /api/v1/data-join-authoring/sessions/{session_id}/recover": {
+  "__model__": "DataJoinRecoverResponse",
+  "completed": "array<string>",
+  "failed": "array<string>",
+  "skipped_active": "integer"
+ },
+ "POST /api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/cancel": {
+  "__model__": "DataJoinRunCancelResponse",
+  "cancel_requested": "boolean|null",
+  "job_id": "integer|null",
+  "note": "null|string",
+  "run_id": "string",
+  "status": "null|string"
+ },
+ "POST /api/v1/data-join-authoring/sessions/{session_id}/runs/{run_id}/render-ref": {
+  "__model__": "DataJoinRenderRefResponse",
+  "render_ref": "string",
+  "rows": "integer"
+ },
+ "POST /api/v1/data-join-authoring/sessions/{session_id}/sources/describe": {
+  "__model__": "DataJoinDescribeSourceResponse",
+  "row_count": "integer",
+  "sample_fields": "array<object>",
+  "session_id": "string",
+  "source": "object"
  },
  "POST /api/v1/data-preparation/bindings/fields": {
   "__model__": "FieldBindingResponse",
@@ -1320,7 +2908,7 @@
   "receipt": "ReceiptSummaryOut"
  },
  "POST /api/v1/data-preparation/plan/{plan_id}/preview": {
-  "__model__": "PreviewResponse",
+  "__model__": "app__schemas__data_preparation_schema__PreviewResponse",
   "degraded": "array<string>",
   "estimated_rows_after": "integer",
   "plan_id": "string",
@@ -1355,6 +2943,24 @@
   "message": "string",
   "url": "string"
  },
+ "POST /api/v1/export/mixed": {
+  "__model__": "MixedMapExportResponse",
+  "bytes": "integer",
+  "checksum": "null|string",
+  "filename": "string",
+  "format": "string",
+  "manifest_url": "string",
+  "mapspec_revision": "integer|null",
+  "media_type": "string",
+  "message": "string",
+  "omitted_layers": "array<unknown>",
+  "partial": "boolean",
+  "raster_layers": "array<object>",
+  "render_diagnostics": "array<unknown>",
+  "renderer": "object",
+  "success": "boolean",
+  "url": "string"
+ },
  "POST /api/v1/export/pdf": {
   "__model__": "PdfExportResponse",
   "filename": "string",
@@ -1367,6 +2973,7 @@
   "__model__": "VectorPdfExportResponse",
   "atlas": "boolean",
   "atlas_pages": "array<object>|null",
+  "constraint_layout": "null|object",
   "filename": "string",
   "format": "string",
   "frames_rendered": "integer",
@@ -1382,6 +2989,21 @@
   "target_dpi": "integer|null",
   "url": "string",
   "vector": "boolean"
+ },
+ "POST /api/v1/field-compute/plan": {
+  "__model__": "FieldComputePlanResponse",
+  "column_order": "array<string>",
+  "data_shape": "string",
+  "estimated_ops": "integer",
+  "geometry": "object",
+  "plan": "FieldComputePlanOut",
+  "scope_summary": "object",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/field-compute/plan/{plan_id}/cancel": {
+  "__model__": "FieldComputeCancelResponse",
+  "cancelled": "boolean",
+  "plan_id": "string"
  },
  "POST /api/v1/geocompute/cluster/ledger/limits": {
   "__model__": "LedgerLimitsResponse"
@@ -1407,6 +3029,124 @@
  "POST /api/v1/geocompute/runs/{run_id}/cancel": {
   "__model__": "RunCancelResponse"
  },
+ "POST /api/v1/georeferencing/plans": {
+  "__model__": "GeorefPlanResponse",
+  "plan": "GeorefDraftPlan",
+  "source": "GeorefSourceRecord|null"
+ },
+ "POST /api/v1/georeferencing/plans/{plan_id}/bind-layer": {
+  "__model__": "GeorefBindLayerResponse",
+  "artifact": "GeorefArtifactRecord|null",
+  "bound": "boolean",
+  "current_mapspec_revision": "integer|null",
+  "error_code": "null|string",
+  "layer_id": "null|string",
+  "mapspec": "null|object",
+  "mapspec_revision": "integer|null",
+  "message": "string",
+  "partial_success": "boolean"
+ },
+ "POST /api/v1/georeferencing/plans/{plan_id}/cancel": {
+  "__model__": "GeorefJobStatusResponse",
+  "artifact": "GeorefArtifactRecord|null",
+  "error_code": "null|string",
+  "error_message": "null|string",
+  "execution_id": "null|string",
+  "job_id": "null|string",
+  "plan": "GeorefDraftPlan",
+  "plan_id": "string",
+  "progress": "integer",
+  "stage": "string",
+  "status": "string"
+ },
+ "POST /api/v1/georeferencing/plans/{plan_id}/execute": {
+  "__model__": "GeorefExecuteResponse",
+  "artifact": "GeorefArtifactRecord|null",
+  "background": "boolean",
+  "execution_id": "string",
+  "idempotent_reuse": "boolean",
+  "job_id": "string",
+  "plan_id": "string",
+  "poll_url": "string",
+  "status": "string"
+ },
+ "POST /api/v1/georeferencing/plans/{plan_id}/gcps/import": {
+  "__model__": "GeorefPlanResponse",
+  "plan": "GeorefDraftPlan",
+  "source": "GeorefSourceRecord|null"
+ },
+ "POST /api/v1/georeferencing/plans/{plan_id}/preview": {
+  "__model__": "GeorefPreviewResponse",
+  "estimated_output_bytes": "integer|null",
+  "estimated_output_pixels": "integer|null",
+  "out_height": "integer|null",
+  "out_width": "integer|null",
+  "plan": "GeorefDraftPlan",
+  "preview_available": "boolean",
+  "preview_image_url": "null|string",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/georeferencing/sources/upload": {
+  "__model__": "GeorefSourceResponse",
+  "image_url": "string",
+  "source": "GeorefSourceRecord"
+ },
+ "POST /api/v1/goal-repair/attempts/{attempt_id}/cancel": {
+  "__model__": "GoalRepairAttemptView",
+  "actions": "array<object>",
+  "active": "boolean",
+  "attempt_id": "string",
+  "blockers": "array<string>",
+  "budget_denied": "array<string>|null",
+  "cancel_requested": "boolean|null",
+  "cancellable": "boolean",
+  "completed_at": "null|string",
+  "created_at": "null|string",
+  "entry": "string",
+  "error": "null|string",
+  "final_changed": "boolean",
+  "final_verdict_after": "null|string",
+  "final_verdict_before": "null|string",
+  "goal_id": "string",
+  "heartbeat_at": "null|string",
+  "note": "null|string",
+  "outcome": "null|string",
+  "parent_attempt_id": "string",
+  "plan_version": "string",
+  "schema_version": "string",
+  "selected_action_ids": "array<string>|null",
+  "session_id": "string",
+  "status": "string",
+  "turn_id": "string"
+ },
+ "POST /api/v1/goal-repair/sessions/{session_id}/attempts [202]": {
+  "__model__": "GoalRepairAttemptView",
+  "actions": "array<object>",
+  "active": "boolean",
+  "attempt_id": "string",
+  "blockers": "array<string>",
+  "budget_denied": "array<string>|null",
+  "cancel_requested": "boolean|null",
+  "cancellable": "boolean",
+  "completed_at": "null|string",
+  "created_at": "null|string",
+  "entry": "string",
+  "error": "null|string",
+  "final_changed": "boolean",
+  "final_verdict_after": "null|string",
+  "final_verdict_before": "null|string",
+  "goal_id": "string",
+  "heartbeat_at": "null|string",
+  "note": "null|string",
+  "outcome": "null|string",
+  "parent_attempt_id": "string",
+  "plan_version": "string",
+  "schema_version": "string",
+  "selected_action_ids": "array<string>|null",
+  "session_id": "string",
+  "status": "string",
+  "turn_id": "string"
+ },
  "POST /api/v1/knowledge/documents": {
   "__model__": "ApiResponse",
   "code": "string",
@@ -1420,6 +3160,124 @@
   "data": "null|unknown",
   "message": "string",
   "success": "boolean"
+ },
+ "POST /api/v1/layers/data/{ref_id}/selection": {
+  "__model__": "SelectionHandleResponse",
+  "count": "integer|null",
+  "count_exact": "boolean",
+  "handle": "string",
+  "missing_ids": "array<string>|null",
+  "revision": "integer|null",
+  "scope": "object",
+  "ttl_seconds": "integer"
+ },
+ "POST /api/v1/layers/data/{ref_id}/selection/{handle}/materialize": {
+  "__model__": "SelectionMaterializeResponse",
+  "coarse_bbox": "boolean",
+  "feature_count": "integer",
+  "ref_id": "string",
+  "revision": "integer|null"
+ },
+ "POST /api/v1/print-layout/apply": {
+  "__model__": "PrintLayoutProposalReceipt",
+  "adopted_values": "null|object",
+  "binding_drift": "boolean|null",
+  "changes": "array<object>",
+  "code": "string",
+  "committed": "boolean|null",
+  "correction_hint": "null|string",
+  "dry_run": "boolean|null",
+  "issues": "array<object>",
+  "locks": "null|object",
+  "message": "null|string",
+  "mutation_revision": "integer|null",
+  "plan_fingerprint": "null|string",
+  "rebased_from": "integer|null",
+  "schema_version": "null|string",
+  "scope": "null|object",
+  "skipped_locked": "array<unknown>",
+  "status": "null|string",
+  "success": "boolean",
+  "validation": "null|object"
+ },
+ "POST /api/v1/print-layout/export": {
+  "__model__": "PrintLayoutExportResponse",
+  "bytes": "integer|null",
+  "checksum": "null|string",
+  "code": "null|string",
+  "details": "null|object",
+  "download_url": "null|string",
+  "dpi": "integer|null",
+  "filename": "null|string",
+  "format": "null|string",
+  "manifest_url": "null|string",
+  "message": "null|string",
+  "print_layout": "null|object",
+  "status": "null|string",
+  "success": "boolean"
+ },
+ "POST /api/v1/print-layout/preview": {
+  "__model__": "PrintLayoutPreviewResponse",
+  "code": "null|string",
+  "committed": "boolean|null",
+  "diagnostics": "array<unknown>|null",
+  "dpi": "integer|null",
+  "errors": "array<object>",
+  "font_status": "array<object>",
+  "page_id": "null|string",
+  "paper_mm": "null|object",
+  "receipt": "null|object",
+  "sample_px": "null|object",
+  "status": "null|string",
+  "success": "boolean",
+  "svg": "null|string",
+  "svg_bytes": "integer|null",
+  "svg_sha256": "null|string",
+  "warnings": "array<object>"
+ },
+ "POST /api/v1/print-layout/propose": {
+  "__model__": "PrintLayoutProposalReceipt",
+  "adopted_values": "null|object",
+  "binding_drift": "boolean|null",
+  "changes": "array<object>",
+  "code": "string",
+  "committed": "boolean|null",
+  "correction_hint": "null|string",
+  "dry_run": "boolean|null",
+  "issues": "array<object>",
+  "locks": "null|object",
+  "message": "null|string",
+  "mutation_revision": "integer|null",
+  "plan_fingerprint": "null|string",
+  "rebased_from": "integer|null",
+  "schema_version": "null|string",
+  "scope": "null|object",
+  "skipped_locked": "array<unknown>",
+  "status": "null|string",
+  "success": "boolean",
+  "validation": "null|object"
+ },
+ "POST /api/v1/print-layout/templates": {
+  "__model__": "PrintLayoutProposalReceipt",
+  "adopted_values": "null|object",
+  "binding_drift": "boolean|null",
+  "changes": "array<object>",
+  "code": "string",
+  "committed": "boolean|null",
+  "correction_hint": "null|string",
+  "dry_run": "boolean|null",
+  "issues": "array<object>",
+  "locks": "null|object",
+  "message": "null|string",
+  "mutation_revision": "integer|null",
+  "plan_fingerprint": "null|string",
+  "rebased_from": "integer|null",
+  "schema_version": "null|string",
+  "scope": "null|object",
+  "skipped_locked": "array<unknown>",
+  "status": "null|string",
+  "success": "boolean",
+  "validation": "null|object"
  },
  "POST /api/v1/projects [201]": {
   "__model__": "ProjectResponse",
@@ -1461,6 +3319,103 @@
  },
  "POST /api/v1/projects/{project_id}/data-gc/plan": {
   "__model__": "DataGcPlanResponse"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/check": {
+  "__model__": "CheckReceipt",
+  "changed": "integer",
+  "checked_at": "number",
+  "inventory": "SourceInventory",
+  "missing": "integer",
+  "project_id": "string",
+  "sources_total": "integer",
+  "stale": "boolean",
+  "truncated": "boolean",
+  "unchanged": "integer",
+  "unverifiable": "integer",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/preview": {
+  "__model__": "RefreshProposal",
+  "adopted_mapspec_fingerprint": "string",
+  "adopted_revision": "integer|null",
+  "baseline_snapshot_id": "string",
+  "created_at": "number",
+  "diffs": "array<SourceDiff>",
+  "inventory": "SourceInventory",
+  "mapspec_fingerprint": "string",
+  "mapspec_revision": "integer",
+  "org_id": "string",
+  "owner_id": "string",
+  "plan": "RefreshPlan",
+  "project_id": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "schema_version": "integer",
+  "session_id": "string",
+  "source_versions": "object",
+  "status": "ProposalStatus",
+  "updated_at": "number",
+  "user_locks": "array<string>",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/adopt": {
+  "__model__": "AdoptionReceipt",
+  "action": "string",
+  "map_observation": "string",
+  "mapspec_fingerprint": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "replayed": "boolean",
+  "restored_snapshot_id": "string",
+  "revision_after": "integer",
+  "revision_before": "integer",
+  "status": "string",
+  "task_execution": "string",
+  "tool_execution": "string",
+  "version_adoption": "string",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/discard": {
+  "__model__": "AdoptionReceipt",
+  "action": "string",
+  "map_observation": "string",
+  "mapspec_fingerprint": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "replayed": "boolean",
+  "restored_snapshot_id": "string",
+  "revision_after": "integer",
+  "revision_before": "integer",
+  "status": "string",
+  "task_execution": "string",
+  "tool_execution": "string",
+  "version_adoption": "string",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/execute": {
+  "__model__": "ExecuteRefreshResponse",
+  "candidate": "RefreshCandidate|null",
+  "conflicts": "array<object>",
+  "preserved": "array<string>",
+  "receipt": "object",
+  "replayed": "boolean"
+ },
+ "POST /api/v1/projects/{project_id}/data-refresh/proposals/{proposal_id}/rollback": {
+  "__model__": "AdoptionReceipt",
+  "action": "string",
+  "map_observation": "string",
+  "mapspec_fingerprint": "string",
+  "proposal_fingerprint": "string",
+  "proposal_id": "string",
+  "replayed": "boolean",
+  "restored_snapshot_id": "string",
+  "revision_after": "integer",
+  "revision_before": "integer",
+  "status": "string",
+  "task_execution": "string",
+  "tool_execution": "string",
+  "version_adoption": "string",
+  "warnings": "array<string>"
  },
  "POST /api/v1/projects/{project_id}/datasets": {
   "__model__": "ProjectDatasetResponse",
@@ -1739,6 +3694,113 @@
  "POST /api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/restore": {
   "__model__": "WorkspaceSnapshotRestoreResponse"
  },
+ "POST /api/v1/raster-authoring/export": {
+  "__model__": "RasterExportResponse",
+  "bytes": "integer",
+  "download_url": "string",
+  "embedded": "boolean",
+  "expression_summary": "object",
+  "filename": "string",
+  "frozen_revision": "integer",
+  "frozen_style_ids": "array<string>",
+  "limits": "array<string>",
+  "media_type": "string",
+  "omitted_layers": "array<string>",
+  "success": "boolean"
+ },
+ "POST /api/v1/raster-authoring/expression/commit": {
+  "__model__": "RasterExpressionReceipt",
+  "committed": "boolean",
+  "data_revision": "string",
+  "expression": "RasterExpressionSpec",
+  "expression_statement": "object",
+  "expression_version": "string",
+  "layer_id": "string",
+  "legend": "object",
+  "mapspec": "null|object",
+  "mapspec_fingerprint": "null|string",
+  "mapspec_revision": "integer|null",
+  "mutations": "integer",
+  "projection": "null|object",
+  "ref_id": "string",
+  "source_id": "string",
+  "state": "string",
+  "statistics_provenance": "RasterStatisticsProvenance",
+  "style_id": "string",
+  "success": "boolean"
+ },
+ "POST /api/v1/raster-authoring/expression/preview": {
+  "__model__": "RasterExpressionReceipt",
+  "committed": "boolean",
+  "data_revision": "string",
+  "expression": "RasterExpressionSpec",
+  "expression_statement": "object",
+  "expression_version": "string",
+  "layer_id": "string",
+  "legend": "object",
+  "mapspec": "null|object",
+  "mapspec_fingerprint": "null|string",
+  "mapspec_revision": "integer|null",
+  "mutations": "integer",
+  "projection": "null|object",
+  "ref_id": "string",
+  "source_id": "string",
+  "state": "string",
+  "statistics_provenance": "RasterStatisticsProvenance",
+  "style_id": "string",
+  "success": "boolean"
+ },
+ "POST /api/v1/raster-authoring/probe": {
+  "__model__": "RasterProbeResponse",
+  "bands": "array<integer>",
+  "classification": "string",
+  "data_revision": "string",
+  "interpolated": "boolean",
+  "method": "string",
+  "points": "array<RasterProbePoint>",
+  "ref_id": "string",
+  "session_id": "string",
+  "success": "boolean",
+  "truncated": "boolean"
+ },
+ "POST /api/v1/raster-sampling/plan": {
+  "__model__": "RasterSamplingPlanResponse",
+  "plan": "object",
+  "selection_materialized": "null|unknown",
+  "stations": "null|object",
+  "success": "boolean"
+ },
+ "POST /api/v1/raster-sampling/plan/{plan_id}/cancel": {
+  "__model__": "RasterSamplingCancelResponse",
+  "cancelled": "array<object>",
+  "success": "boolean"
+ },
+ "POST /api/v1/raster-sampling/plan/{plan_id}/execute": {
+  "__model__": "RasterSamplingExecuteResponse",
+  "execution_id": "null|string",
+  "job_id": "null|string",
+  "params": "null|object",
+  "status": "null|string",
+  "summary": "null|object"
+ },
+ "POST /api/v1/raster-sampling/plan/{plan_id}/preview": {
+  "__model__": "RasterSamplingPreviewResponse",
+  "cost_estimate": "null|unknown",
+  "coverage_preview": "null|unknown",
+  "plan_id": "string",
+  "preview": "boolean",
+  "read_metrics": "object",
+  "revision": "integer",
+  "station_selection": "object",
+  "success": "boolean"
+ },
+ "POST /api/v1/raster-sampling/plan/{plan_id}/revise": {
+  "__model__": "RasterSamplingPlanResponse",
+  "plan": "object",
+  "selection_materialized": "null|unknown",
+  "stations": "null|object",
+  "success": "boolean"
+ },
  "POST /api/v1/reports": {
   "__model__": "ApiResponse",
   "code": "string",
@@ -1752,6 +3814,68 @@
   "data": "null|unknown",
   "message": "string",
   "success": "boolean"
+ },
+ "POST /api/v1/skill-jobs/prepare": {
+  "__model__": "SkillJobPrepareResponse",
+  "idempotency_key": "string",
+  "prepared_id": "string",
+  "preview": "object",
+  "skill": "object"
+ },
+ "POST /api/v1/skill-jobs/presets": {
+  "__model__": "SkillJobPresetView",
+  "bindings_template": "object",
+  "creator_id": "string",
+  "description": "string",
+  "id": "string",
+  "name": "string",
+  "params": "object",
+  "project_id": "string",
+  "skill_digest": "string",
+  "skill_id": "string",
+  "skill_version": "string"
+ },
+ "POST /api/v1/skill-jobs/presets/{preset_id}/prepare": {
+  "__model__": "SkillJobPresetPrepareResponse",
+  "param_sources": "array<object>",
+  "prepared_id": "string",
+  "preset": "object",
+  "preview": "object",
+  "skill": "object"
+ },
+ "POST /api/v1/skill-jobs/runs/{job_id}/cancel": {
+  "__model__": "SkillJobCancelResponse",
+  "cancel_requested": "boolean|null",
+  "cancelled": "boolean|null",
+  "job_id": "string",
+  "message": "null|string",
+  "status": "null|string"
+ },
+ "POST /api/v1/skill-jobs/start": {
+  "__model__": "SkillJobRunView",
+  "active": "boolean",
+  "artifact_refs": "object",
+  "attempt": "integer",
+  "cancellable": "boolean",
+  "completed_at": "null|string",
+  "created_at": "null|string",
+  "error": "null|string",
+  "evidence_covered": "array<unknown>",
+  "evidence_not_covered": "array<unknown>",
+  "job_id": "string",
+  "kind": "string",
+  "message": "string",
+  "progress": "null|number",
+  "project_id": "null|string",
+  "result_ref": "null|string",
+  "retryable": "boolean",
+  "run_record": "null|object",
+  "session_id": "null|string",
+  "skill": "object",
+  "skill_id": "string",
+  "skill_version": "string",
+  "status": "string",
+  "steps": "array<object>"
  },
  "POST /api/v1/storymap/compile": {
   "__model__": "StoryMapSpec",
@@ -1799,6 +3923,56 @@
   "thumbnail_url": "null|string",
   "updated_at": "null|string",
   "version": "integer"
+ },
+ "POST /api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/commit": {
+  "__model__": "ThematicExpressionReceipt",
+  "actual_k": "integer|null",
+  "can_undo": "boolean|null",
+  "candidate_fingerprint": "null|string",
+  "class_table": "array<object>",
+  "committed": "boolean",
+  "current_fingerprint": "null|string",
+  "disclosures": "array<string>",
+  "distribution": "object",
+  "field": "string",
+  "layer_id": "null|string",
+  "legend_spec": "object",
+  "mapspec_fingerprint": "null|string",
+  "mode": "string",
+  "mutations": "integer|null",
+  "paint": "null|object",
+  "plan_digest": "string",
+  "requested_k": "integer|null",
+  "revision": "integer|null",
+  "size_paint": "null|object",
+  "size_samples": "array<object>|null",
+  "source_anchor": "object",
+  "stats_basis": "null|object"
+ },
+ "POST /api/v1/thematic-authoring/sessions/{session_id}/layers/{layer_id}/preview": {
+  "__model__": "ThematicExpressionReceipt",
+  "actual_k": "integer|null",
+  "can_undo": "boolean|null",
+  "candidate_fingerprint": "null|string",
+  "class_table": "array<object>",
+  "committed": "boolean",
+  "current_fingerprint": "null|string",
+  "disclosures": "array<string>",
+  "distribution": "object",
+  "field": "string",
+  "layer_id": "null|string",
+  "legend_spec": "object",
+  "mapspec_fingerprint": "null|string",
+  "mode": "string",
+  "mutations": "integer|null",
+  "paint": "null|object",
+  "plan_digest": "string",
+  "requested_k": "integer|null",
+  "revision": "integer|null",
+  "size_paint": "null|object",
+  "size_samples": "array<object>|null",
+  "source_anchor": "object",
+  "stats_basis": "null|object"
  },
  "POST /api/v1/upload": {
   "__model__": "UploadResponse",
@@ -1928,6 +4102,26 @@
   "isError": "boolean",
   "toolCallId": "string"
  },
+ "PUT /api/v1/chat/sessions/{session_id}/context-policy": {
+  "__model__": "ContextPolicyResponse",
+  "effective_when": "null|string",
+  "policy": "SourcePolicyView",
+  "scope_note": "string",
+  "session_id": "string"
+ },
+ "PUT /api/v1/chat/sessions/{session_id}/model": {
+  "__model__": "SessionModelPutResponse",
+  "effective_when": "string",
+  "pending_next_turn": "boolean",
+  "preference": "SessionModelPreference",
+  "session_id": "string",
+  "thinking_controllable": "boolean"
+ },
+ "PUT /api/v1/georeferencing/plans/{plan_id}/draft": {
+  "__model__": "GeorefPlanResponse",
+  "plan": "GeorefDraftPlan",
+  "source": "GeorefSourceRecord|null"
+ },
  "PUT /api/v1/projects/{project_id}": {
   "__model__": "ProjectResponse",
   "created_at": "string",
@@ -1939,5 +4133,18 @@
   "owner_id": "null|string",
   "status": "string",
   "updated_at": "string"
+ },
+ "PUT /api/v1/skill-jobs/presets/{preset_id}": {
+  "__model__": "SkillJobPresetView",
+  "bindings_template": "object",
+  "creator_id": "string",
+  "description": "string",
+  "id": "string",
+  "name": "string",
+  "params": "object",
+  "project_id": "string",
+  "skill_digest": "string",
+  "skill_id": "string",
+  "skill_version": "string"
  }
 }

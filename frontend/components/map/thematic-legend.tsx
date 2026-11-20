@@ -12,9 +12,11 @@ import { devOnly } from "@/lib/utils/logger";
 interface Props {
   spec: LegendSpec | null | undefined;
   onFilterChange?: (visibleBreaks: number[][]) => void;
+  /** G40：同层符号资产绑定（类别/统一 swatch 同语义消费；缺席不变） */
+  symbolAsset?: Record<string, unknown> | null;
 }
 
-export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilterChange }: Props) {
+export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilterChange, symbolAsset }: Props) {
   if (!spec) return null;
   switch (spec.type) {
     case 'graduated':
@@ -22,7 +24,7 @@ export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilte
     case 'continuous':
       return <ContinuousLegend spec={spec} />;
     case 'categorical':
-      return <CategoricalLegend spec={spec} />;
+      return <CategoricalLegend spec={spec} symbolAsset={symbolAsset} />;
     case 'divergent':
       return <DivergentLegend spec={spec} />;
     case 'bivariate':
@@ -36,6 +38,26 @@ export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilte
             ))}
           </div>
           <div className="text-xs text-muted">→{spec.label_a} / ↑{spec.label_b}</div>
+        </div>
+      );
+    case 'reliability_dual_channel':
+      // G41：chat 结果卡路径也给出误差量名/单位/level 与缺失，不伪造信心。
+      return (
+        <div className="flex flex-col gap-1" data-testid="thematic-reliability-legend">
+          <div className="flex gap-px">
+            {(spec.estimate?.palette_colors ?? []).slice(0, 7).map((c, i) => (
+              <span key={i} className="h-4 w-4" style={{ background: c }} />
+            ))}
+          </div>
+          <div className="text-xs text-muted break-words">
+            {spec.estimate?.label} · {spec.measure?.kind} · {spec.measure?.unit_note}
+          </div>
+          <div className="text-xs text-muted break-words">
+            {spec.measure?.visual_meaning}
+          </div>
+          <div className="text-xs text-muted">
+            {spec.missing?.label}: {spec.missing?.count ?? 0}
+          </div>
         </div>
       );
     default: {

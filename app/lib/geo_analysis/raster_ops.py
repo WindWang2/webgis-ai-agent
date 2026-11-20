@@ -76,11 +76,29 @@ def zonal_statistics(
 
     geojson_obj: Union[dict, None] = None
     if isinstance(polygons_geojson, str):
+        candidate = polygons_geojson.strip()
         if os.path.exists(polygons_geojson):
-            with open(polygons_geojson, "r", encoding="utf-8") as f:
+            # 路径输入走 validate_data_path 工作区校验（#2134：不再对
+            # 任意 LLM 提供的字符串直接 os.path.exists + open）。
+            from app.utils.path import validate_data_path
+
+            safe_path = validate_data_path(polygons_geojson)
+            with open(safe_path, "r", encoding="utf-8") as f:
                 geojson_obj = json.load(f)
-        elif polygons_geojson.strip().startswith("{"):
-            geojson_obj = json.loads(polygons_geojson)
+        elif candidate.startswith("{"):
+            try:
+                geojson_obj = json.loads(polygons_geojson)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"polygons_geojson 是 JSON 起始但解析失败: {e}"
+                ) from e
+        else:
+            # #2134：未识别输入（既非存在路径也非 GeoJSON）typed 拒绝——
+            # 旧行为静默返回 []（feat_list 空），调用方无法区分
+            # "无重叠" 与 "输入 entirely 无效"。
+            raise ValueError(
+                "polygons_geojson 字符串既非存在的文件路径，也非 GeoJSON "
+                "对象文本——无法识别输入（拒绝静默空结果）")
     elif isinstance(polygons_geojson, dict):
         geojson_obj = polygons_geojson
 
@@ -134,8 +152,12 @@ def _windowed_zonal_stats(
     Replaces the rasterstats library hand-off, whose internals materialize
     whole-band reads for every zone. Each zone reads only its own pixel
     window (bbox → window, clamped to the raster), masks by the polygon,
-    and computes the requested statistics in numpy. Semantics preserved
-    from the rasterstats contract: statistic keys exactly as requested
+    and computes the requested statistics in numpy; zones larger than the
+    memory-budget window are read in row chunks with incremental
+    (Welford-merged) statistics — per-zone memory stays O(chunk), so a
+    national-scale polygon no longer means a whole-raster read (#2134).
+    Semantics preserved from the rasterstats contract: statistic keys
+    exactly as requested
     (min/max/mean/sum/count), nodata excluded, ``all_touched=False``-style
     cell-center membership. Every row also carries valid_pixel_coverage
     (None when no zone pixels can be measured); repaired zones additionally
@@ -200,59 +222,102 @@ def _windowed_zonal_stats(
             import rasterio as _rio
 
             win = from_bounds(minx, miny, maxx, maxy, reader.dataset.transform)
-            win = win.round_offsets().round_shape()
+            # Enclose the original floating endpoints, not a rounded width:
+            # flooring the offset first can otherwise discard covered centers.
+            col_start, row_start = math.floor(win.col_off), math.floor(win.row_off)
+            col_stop = math.ceil(win.col_off + win.width)
+            row_stop = math.ceil(win.row_off + win.height)
+            win = _rio.windows.Window(
+                col_start, row_start, col_stop - col_start, row_stop - row_start,
+            )
             full = _rio.windows.Window(0, 0, meta.width, meta.height)
             if not _rio.windows.intersect([win, full]):
                 out.append({**{k: None for k in stats}, "valid_pixel_coverage": None})
                 continue
             win = win.intersection(full)
-            arr = reader.read_window(
-                (int(win.col_off), int(win.row_off), int(win.width), int(win.height))
-            ).astype(np.float64, copy=False)
-            # #1736：掩膜必须用**修复后**的 poly —— 窗口由 poly.bounds 定，
-            # 若仍用修复前的 geom 做掩膜，统计区与披露的 geometry_repair
-            # 记录不是同一个几何（无效环在栅格化规则下甚至可能整片落空，
-            # 产出全 None 的「貌似无数据」行）。
-            mask = geometry_mask(
-                [poly], out_shape=arr.shape,
-                transform=reader.window_transform(win), invert=True,
+            # #2134：大 zone（如国家级 polygon = 整幅栅格）必须分块读——
+            # 逐 zone 内存 O(chunk) 而非 O(zone bbox)。统计按块增量
+            # 合并（Welford 方差合并，min/max/sum 直积），结果与整幅
+            # 单次读一致（同一 float64 累加口径）。
+            from app.lib.geo_analysis.raster_grid import (
+                window_side_from_budget,
             )
-            vals_all = arr[mask]
-            if meta.nodata is not None:
-                vals = vals_all[vals_all != meta.nodata]
-            else:
-                vals = vals_all
-            vals = vals[np.isfinite(vals)]
+
+            chunk_rows = max(1, int(window_side_from_budget()))
+            n_vals = 0
+            acc_mean = 0.0
+            acc_m2 = 0.0
+            acc_sum = 0.0
+            acc_min = math.inf
+            acc_max = -math.inf
+            total_masked = 0
+            for row0 in range(int(win.row_off),
+                              int(win.row_off) + int(win.height), chunk_rows):
+                n_rows = min(chunk_rows,
+                             int(win.row_off) + int(win.height) - row0)
+                sub = _rio.windows.Window(
+                    int(win.col_off), row0, int(win.width), n_rows)
+                arr_chunk = reader.read_window(
+                    (int(sub.col_off), int(sub.row_off),
+                     int(sub.width), int(sub.height))
+                ).astype(np.float64, copy=False)
+                # #1736：掩膜必须用**修复后**的 poly —— 窗口由 poly.bounds 定，
+                # 若仍用修复前的 geom 做掩膜，统计区与披露的 geometry_repair
+                # 记录不是同一个几何（无效环在栅格化规则下甚至可能整片落空，
+                # 产出全 None 的「貌似无数据」行）。
+                mask_chunk = geometry_mask(
+                    [poly], out_shape=arr_chunk.shape,
+                    transform=reader.window_transform(sub), invert=True,
+                )
+                vals_all = arr_chunk[mask_chunk]
+                total_masked += int(vals_all.size)
+                if meta.nodata is not None:
+                    vals = vals_all[vals_all != meta.nodata]
+                else:
+                    vals = vals_all
+                vals = vals[np.isfinite(vals)]
+                c = int(vals.size)
+                if c == 0:
+                    continue
+                chunk_mean = float(vals.mean())
+                chunk_m2 = float(((vals - chunk_mean) ** 2).sum())
+                tot = n_vals + c
+                delta = chunk_mean - acc_mean
+                acc_mean += delta * c / tot
+                acc_m2 += chunk_m2 + delta * delta * n_vals * c / tot
+                n_vals = tot
+                acc_sum += float(vals.sum())
+                acc_min = min(acc_min, float(vals.min()))
+                acc_max = max(acc_max, float(vals.max()))
             # ADR-0284（断点 9 修复）：逐 zone 有效像元覆盖率披露——
             # 90% nodata 的 zone 均值与全有效 zone 在产物上不再不可区分。
-            total_masked = int(vals_all.size)
-            coverage = (float(vals.size) / total_masked
+            coverage = (float(n_vals) / total_masked
                         if total_masked > 0 else None)
             row: dict = {}
             if repair_rec is not None:
                 row["geometry_repair"] = repair_rec.to_dict()
             for key in stats:
                 if key == "count":
-                    row["count"] = int(vals.size)
-                elif vals.size == 0:
+                    row["count"] = int(n_vals)
+                elif n_vals == 0:
                     row[key] = None
                 elif key == "min":
-                    row["min"] = float(vals.min())
+                    row["min"] = float(acc_min)
                 elif key == "max":
-                    row["max"] = float(vals.max())
+                    row["max"] = float(acc_max)
                 elif key == "mean":
-                    row["mean"] = float(vals.mean())
+                    row["mean"] = float(acc_mean)
                 elif key == "sum":
-                    row["sum"] = float(vals.sum())
+                    row["sum"] = float(acc_sum)
                 elif key == "std":
-                    row["std"] = float(vals.std())
+                    row["std"] = float(math.sqrt(acc_m2 / n_vals))
                 else:
                     logger.warning(
                         "zonal: unsupported stat %r returned as None "
                         "(supported: min/max/mean/sum/std/count)", key,
                     )
                     row[key] = None
-            if "count" not in stats and vals.size == 0:
+            if "count" not in stats and n_vals == 0:
                 repair_rec_kept = row.get("geometry_repair")
                 row = {k: None for k in stats}
                 if repair_rec_kept is not None:

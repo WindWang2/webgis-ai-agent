@@ -33,8 +33,8 @@ from app.services.data_fabric.adapters.postgis_adapter import _parse_safe_where
         ("code >= 'x<y'", '"code" >= %s', "x<y"),
         ("label != 'v>w'", '"label" != %s', "v>w"),
         ("label <= 'v>=w'", '"label" <= %s', "v>=w"),
-        ("note LIKE '%a>b%'", '"note" LIKE %s', "%a>b%"),
-        ("note LIKE '%a>=b%'", '"note" LIKE %s', "%a>=b%"),
+        ("note LIKE '%a>b%'", '"note" LIKE %s ESCAPE \'\\\'', "%a>b%"),
+        ("note LIKE '%a>=b%'", '"note" LIKE %s ESCAPE \'\\\'', "%a>=b%"),
         ("sym = '>'", '"sym" = %s', ">"),
         ("sym = '<='", '"sym" = %s', "<="),
         ('name = "a>b"', '"name" = %s', "a>b"),  # double-quoted value

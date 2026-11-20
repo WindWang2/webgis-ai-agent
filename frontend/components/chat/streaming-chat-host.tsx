@@ -55,6 +55,8 @@ export function StreamingChatHost({
     handleSend,
     handlePlanAction,
     handleClarificationSubmit,
+    handleRuntimeInteractionSubmit,
+    handleTurnMessage,
     handleFeatureEditDecision,
     refreshPendingClarification,
     bridge,
@@ -93,6 +95,9 @@ export function StreamingChatHost({
       ownerToken={activeSessionToken}
       onPlanAction={handlePlanAction}
       onClarificationSubmit={handleClarificationSubmit}
+      onRuntimeInteractionSubmit={handleRuntimeInteractionSubmit}
+      onTurnMessage={(text, mode) => { void handleTurnMessage(text, mode); }}
+      turnActive={aiStatus === 'thinking' || aiStatus === 'acting'}
       onFeatureEditDecision={handleFeatureEditDecision}
       onClarificationRefresh={refreshPendingClarification}
       agentRuntime={agentRuntime}

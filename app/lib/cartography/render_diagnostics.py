@@ -68,6 +68,15 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "layer_coordinates_invalid", "warning",
             "图层包含超出经纬度合法范围的坐标，已跳过无效几何",
         ),
+        # —— G40：符号资产绑定链（缺资产/预算 —— 不画不伪装）——
+        RenderDiagnosticSpec(
+            "symbol_asset_unavailable", "warning",
+            "图层符号资产不可用（scope 外/版本退役/摘要不符），该层资产图元未绘制",
+        ),
+        RenderDiagnosticSpec(
+            "symbol_asset_def_budget", "warning",
+            "符号资产 defs 超出导出预算上限，超出部分未绘制",
+        ),
         # —— label engine V5（长文本不再静默溢出）——
         # review-r1：移除 label_suppressed_too_long —— 词表内唯一无发射器的
         # 死码（孪生编译器只截断不省略，fit_label_text 无"放不下"路径；
@@ -141,7 +150,8 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
         # —— 多画幅运行时诚实降级 ——
         RenderDiagnosticSpec(
             "cartogram_unsupported", "warning",
-            "cartogram（变形地图）渲染运行时未实现，按未变形几何导出",
+            "面域变形 cartogram 投影未获支持，按未变形几何导出"
+            "（圆面积 / Dorling 变形走 cartogram 作者链路，不经该投影）",
         ),
         RenderDiagnosticSpec(
             "small_multiple_panel_skipped", "warning",
@@ -232,6 +242,27 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "层声明的标注字段不在源字段集，标注按回退链渲染或缺失"
             "（{detail}）",
         ),
+        # —— G16（v2.1）要素级标注 authoring 披露 ──────────────────────
+        RenderDiagnosticSpec(
+            "label_authoring_applied", "info",
+            "要素级标注覆写已应用（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_authoring_orphan", "warning",
+            "覆写目标要素在当前数据不存在，该覆写未应用（不漂移到其他要素；{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_authoring_stale", "warning",
+            "覆写绑定的数据 revision 与当前不一致，覆写照常应用并标记待复核（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_pinned_conflict", "warning",
+            "用户固定标签与已放置标签/障碍/视口冲突：保留用户决定并报告（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_obstacles_budget", "info",
+            "图元障碍预算截断（公平交错分配；{detail}）",
+        ),
         # —— 高 DPI 渲染策略（ADR-0157 P1）——
         RenderDiagnosticSpec(
             "highdpi_rerender_timeout_degraded", "warning",
@@ -317,6 +348,19 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "publication_layout_truncated", "warning",
             "出版版面容量限制，{detail}",
         ),
+        # —— G26 数值栅格出版窗口嵌入（同一冻结表达；地理对齐/有界）——
+        RenderDiagnosticSpec(
+            "raster_window_embedded", "info",
+            "数值栅格层按冻结表达以地理对齐窗口嵌入导出件（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "raster_window_no_overlap", "warning",
+            "数值栅格层与画幅范围无交集，透明省略（未读取边缘像元）（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "raster_window_degraded", "warning",
+            "数值栅格层窗口渲染存在有界近似（{detail}）",
+        ),
     )
 }
 
@@ -388,7 +432,22 @@ def catalog_section() -> List[Dict[str, str]]:
 #: （ADR-0118 D1 死码禁止的自动化收口，取代仅注释级约束）。
 EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     "label_expression_unsupported": ("app.services.mapspec_to_svg",),
+    # G16（v2.1）要素级标注 authoring 披露（后端导出链发射）。
+    "label_authoring_applied": ("app.services.mapspec_to_svg",),
+    "label_authoring_orphan": ("app.services.mapspec_to_svg",),
+    "label_authoring_stale": ("app.services.mapspec_to_svg",),
+    "label_pinned_conflict": ("app.services.mapspec_to_svg",),
+    "label_obstacles_budget": ("app.services.mapspec_to_svg",),
     "layer_coordinates_invalid": ("app.services.mapspec_to_svg",),
+    # G40：符号资产绑定链（Python 导出 + TS 孪生双发射点）。
+    "symbol_asset_unavailable": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    "symbol_asset_def_budget": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
     "chart_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
     "table_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
     "chart_kind_unsupported_export": ("frontend/lib/map-kit/export-chrome.ts",),
@@ -547,6 +606,10 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     ),
     "raster_layer_unavailable_vector_pdf": ("app.services.publication_export",),
     "pdf_font_fallback": ("app.services.publication_export",),
+    # G26：数值栅格出版窗口嵌入（发射点 = SVG 编译器 raster 分支）
+    "raster_window_embedded": ("app.services.mapspec_to_svg",),
+    "raster_window_no_overlap": ("app.services.mapspec_to_svg",),
+    "raster_window_degraded": ("app.services.mapspec_to_svg",),
     # G04（#1999）：画布打印档求解回执的发射器（exporter 应用 zones 并上报）
     "constraint_layout_evaluated": ("frontend/lib/map-kit/exporter.ts",),
     # vector_pdf_unavailable 的发射器是导出路由（503 结构化错误回退提示）

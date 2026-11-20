@@ -478,10 +478,11 @@ def threshold_change(
 ) -> Dict:
     """变化幅度的统计阈值分类（MAD 稳健 z / 分位数）。
 
-    - ``mad``：稳健 z = (x − median) / (1.4826 · MAD)，|z| ≥ k 判变化
-      （阈值即 median + k·1.4826·MAD；k 默认 3）。MAD=0（退化尺度，
-      如近常量背景 + 尖峰）时：严格高于中位数即判变化并在 meta 披露；
-    - ``percentile``：x ≥ 第 p 百分位数判变化（p 默认 95）。
+    - ``mad``：稳健阈值 threshold = median + k·1.4826·MAD，幅度
+      ``x ≥ threshold`` 判变化（幅度语义为单向超阈值；k 默认 3，须 >0）。
+      MAD=0（退化尺度，如近常量背景 + 尖峰）时：严格高于中位数即判变化
+      并在 meta 披露；
+    - ``percentile``：x ≥ 第 p 百分位数判变化（p 默认 95，须在 (0, 100]）。
 
     NaN 像元（nodata）不参与阈值估计也不判变化。诚实披露：逐像元
     z/分位检验假设空间独立——近似（见 THRESHOLD_DISCLOSURE）。
@@ -506,11 +507,17 @@ def threshold_change(
     warnings: list[str] = []
     mask = np.zeros(arr.shape, dtype=bool)
     if method_key == "mad":
+        k = float(k)
+        if not (np.isfinite(k) and k > 0):
+            raise ValueError(
+                f"k 必须为正有限数，got {k!r}")
         med = float(np.median(vals))
         mad = float(np.median(np.abs(vals - med)))
         if mad > 0:
-            threshold_value = med + float(k) * 1.4826 * mad
-            mask = finite & (np.abs(arr - med) >= float(k) * 1.4826 * mad)
+            # 幅度变化 = 单向超阈值（#2130）：低于 median − k·MAD 的像元
+            # 不是"变化"，与报告的 threshold_value 口径一致。
+            threshold_value = med + k * 1.4826 * mad
+            mask = finite & (arr >= threshold_value)
         else:
             # 退化尺度：MAD=0（常量背景）。严格高于中位数即变化，
             # 阈值报告为最小超中位值 —— 诚实披露该退化路径。
@@ -525,7 +532,11 @@ def threshold_change(
                 "MAD=0（常量背景退化尺度）：高于中位数即判变化，"
                 "阈值取最小超中位值")
     else:
-        threshold_value = float(np.percentile(vals, float(percentile)))
+        p = float(percentile)
+        if not (np.isfinite(p) and 0.0 < p <= 100.0):
+            raise ValueError(
+                f"percentile 必须在 (0, 100]，got {p!r}")
+        threshold_value = float(np.percentile(vals, p))
         mask = finite & (arr >= threshold_value)
 
     n_valid = int(np.sum(finite))

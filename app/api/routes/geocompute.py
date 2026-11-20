@@ -431,6 +431,15 @@ async def list_execution_runs(
     }
 
 
+def _reject_org_scoped_cluster_admin(user: Dict[str, Any]) -> None:
+    """组织管理员不能看全局集群拓扑、队列和卡住的 run。"""
+    if user.get("org_id") not in (None, ""):
+        raise HTTPException(
+            status_code=403,
+            detail="org admins cannot read the global cluster control plane",
+        )
+
+
 @router.get("/cluster/metrics", response_model=ClusterMetricsResponse, tags=["GeoCompute / Cluster Runtime V6"])
 async def cluster_metrics(
     user: Dict[str, Any] = Depends(require_admin),
@@ -439,7 +448,9 @@ async def cluster_metrics(
 
     有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；
     取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。
+    组织管理员看不到这份全局视图。
     """
+    _reject_org_scoped_cluster_admin(user)
     from app.services.geocompute.cluster.metrics import ClusterMetrics
 
     def _snap():
@@ -682,8 +693,9 @@ async def cluster_workers(user: Dict[str, Any] = Depends(require_admin)):
     """V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。
 
     capability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement
-    对其退回 V6 profiles 匹配语义）。
+    对其退回 V6 profiles 匹配语义）。组织管理员看不到这份全局拓扑。
     """
+    _reject_org_scoped_cluster_admin(user)
     from app.services.geocompute.cluster.store import ClusterRunStore
 
     def _workers():
@@ -712,7 +724,8 @@ async def cluster_workers(user: Dict[str, Any] = Depends(require_admin)):
 @router.get("/cluster/runs/stuck", response_model=ClusterStuckRunsResponse, tags=["GeoCompute / Cluster Runtime V7"])
 async def cluster_stuck_runs(user: Dict[str, Any] = Depends(require_admin)):
     """V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run
-    （admin 排障；有界 ≤50 行，无载荷）。"""
+    （admin 排障；有界 ≤50 行，无载荷）。组织管理员看不到其他租户的 run。"""
+    _reject_org_scoped_cluster_admin(user)
     from app.services.geocompute.cluster.store import ClusterRunStore
 
     def _stuck():
@@ -736,7 +749,13 @@ async def cluster_reset_run(
     同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。
 
     require_admin：这是全局控制面动作（与 metrics 同一信任域）。
+    组织管理员不能复位其他租户的 run。
     """
+    if user.get("org_id") not in (None, ""):
+        raise HTTPException(
+            status_code=403,
+            detail="org admins cannot reset cluster runs",
+        )
     from app.services.geocompute.cluster.store import ClusterRunStore
 
     def _reset():
@@ -776,8 +795,13 @@ async def cluster_set_ledger_limits(
     模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。
 
     scope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的
-    scope 域词表；越界 typed 422）。
+    scope 域词表；越界 typed 422）。组织管理员不能改 ``global``。
     """
+    if body.scope_key == "global" and user.get("org_id") not in (None, ""):
+        raise HTTPException(
+            status_code=403,
+            detail="org admins cannot change the global ledger limit",
+        )
     from app.services.geocompute.cluster.store import ClusterLedger
 
     def _set():

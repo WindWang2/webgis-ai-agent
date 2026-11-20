@@ -903,6 +903,13 @@ async def load_records_for_plan(
                 # V4 review 修复：table_panel 的 tableRef 是独立绑定面 ——
                 # 不入活集合会被 sweep 判 stale → GC 删掉仍在用的表数据。
                 _add(opts.get("tableRef"))
+    try:
+        from app.services.georeferencing.refs import active_georef_artifact_ids
+
+        for aid in active_georef_artifact_ids(session_id):
+            _add(aid)
+    except Exception:  # noqa: BLE001 — G48 purge/inactive defensive fail-open
+        pass
     return live
 
 

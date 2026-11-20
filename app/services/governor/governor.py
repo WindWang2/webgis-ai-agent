@@ -144,7 +144,9 @@ class HarnessResourceGovernor:
         """
         enforce = self.config.mode is GovernorMode.ENFORCE
         try:
-            if demand.session_id and self.cancellations.is_cancelled(demand.session_id):
+            if demand.session_id and self.cancellations.is_cancelled(
+                demand.session_id, demand.turn_id or "",
+            ):
                 decision = ResourceDecision(
                     decision=AdmissionDecision.REJECT,
                     reasons=["session_cancelled"],
@@ -350,13 +352,24 @@ class HarnessResourceGovernor:
     # ── 取消 / 会话生命周期 ─────────────────────────────────────────
 
     async def cancel_session(self, session_id: str,
-                             reason: CancelReason) -> int:
-        """取消会话：live 释放 + 排队候补唤醒（pending 不启动）。"""
+                             reason: CancelReason, *,
+                             turn_id: str = "") -> int:
+        """取消会话：live 释放 + 排队候补唤醒（pending 不启动）。
+
+        The cancel flag is scoped to the turns in flight (plus an explicit
+        ``turn_id``). A later turn is admitted again — ``close_session``
+        has no production caller, so a session-sticky flag would reject
+        every subsequent turn.
+        """
         released = await self._release_all(session_id)
+        turn_ids = [r.turn_id for r in released if r.turn_id]
+        if turn_id:
+            turn_ids.append(turn_id)
         await self.bp.cancel_session_waiters(session_id)
         self.cancellations.cancel(
             session_id, reason,
             release_reservations=lambda _sid: [r.reservation_id for r in released],
+            turn_ids=turn_ids,
         )
         return len(released)
 
@@ -456,7 +469,8 @@ class HarnessResourceGovernor:
                 r.released = True
         for r in targets:
             try:
-                self.ledger.release(r)
+                from app.services.governor.session_budget import live_dims_of
+                self.ledger.release(r, actual=live_dims_of(r.charged))
             except Exception:  # noqa: BLE001
                 gmetrics.inc_internal_error("cancel_release_ledger")
         for ticket in tickets:

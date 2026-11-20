@@ -281,6 +281,18 @@ describe('drawChromeNorthArrow — 旋转符号 parity', () => {
     const rotate = calls.find((c) => c.op === 'rotate');
     expect(rotate?.args[0]).toBeCloseTo((-30 * Math.PI) / 180, 6);
   });
+
+  it('字母 N 画在旋转坐标系里，不留在屏幕正上方', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeNorthArrow({ ctx, ...DRAW_BASE }, { kind: 'north_arrow', anchor: 'top-right' }, 90, { marginX: 40 });
+    const rotateAt = calls.findIndex((c) => c.op === 'rotate');
+    const letter = calls.findIndex((c) => c.op === 'fillText' && c.args[0] === 'N');
+    expect(rotateAt).toBeGreaterThanOrEqual(0);
+    expect(letter).toBeGreaterThan(rotateAt);
+    const n = calls[letter];
+    expect(n.args[1]).toBe(0);
+    expect(n.args[2]).toBeLessThan(0);
+  });
 });
 
 describe('drawChromeScaleBar — bottom-right 槽位', () => {
@@ -356,6 +368,29 @@ describe('drawChromeStatsPanel / drawChromeChartPanel — 面板导出', () => {
     );
     const rects = calls.filter((c) => c.op === 'fillRect');
     expect(rects.length).toBeGreaterThanOrEqual(2); // 两条数据条
+  });
+
+  it('#2144 H12：负值柱以 0 为基线向下绘；0 值柱无高度（不假绘正高度）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: {
+          type: 'bar', title: '盈亏',
+          data: [{ name: 'a', value: 4 }, { name: 'b', value: -2 }, { name: 'c', value: 0 }],
+        },
+      },
+      { marginX: 40 },
+    );
+    const bars = calls
+      .filter((c) => c.op === 'fillRect')
+      .map((c) => c.args as number[]);
+    expect(bars).toHaveLength(2); // 0 值柱不再有正高度
+    const [pos, neg] = bars;
+    // 同一 0 基线：正柱底 = 负柱顶（旧实现所有柱从底边向上画，负柱显示为正）。
+    expect(pos[1] + pos[3]).toBeCloseTo(neg[1], 6);
+    expect(pos[1]).toBeLessThan(neg[1]); // 正柱在基线上方、负柱在下方
   });
 
   it('pie 图绘制扇形（arc 调用）', () => {

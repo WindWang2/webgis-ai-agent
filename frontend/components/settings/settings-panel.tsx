@@ -17,6 +17,7 @@ import type { SettingsTab } from '@/lib/store/hud-types';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { LlmConfig } from './llm-config';
 import { SkillsHub } from './skills-hub';
+import { SkillWorkbench } from './skill-workbench';
 import { RagConfig } from './rag-config';
 import { MapConfig } from './map-config';
 import { SystemSettings } from './system-settings';
@@ -54,7 +55,14 @@ function TabContent({ tab }: { tab: string }) {
     case 'llm':
       return <LlmConfig />;
     case 'skills':
-      return <SkillsHub />;
+      return (
+        <div className="space-y-6">
+          {/* G30：技能作业工作台（可执行面）——核心执行入口 */}
+          <SkillWorkbench />
+          {/* 原只读目录 + 管理员上传（md-skill 资产管理面，保留权限不变） */}
+          <SkillsHub />
+        </div>
+      );
     case 'rag':
       return <RagConfig />;
     case 'map':

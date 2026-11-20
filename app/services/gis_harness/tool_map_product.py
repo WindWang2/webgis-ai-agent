@@ -280,7 +280,38 @@ async def webgis_map_product(
     scope_name = str(getattr(intent.scope, "name", "") or "")
     scope_verdict: Optional[ScopeGeographyVerdict] = None
     scope_warning = ""
+    # primary_ref, overlay_refs, and already-bound layer sources are the same
+    # geography fact. A city switch must not keep drawing the previous city
+    # just because the primary label matches or the primary ref was omitted.
+    scope_subjects: List[tuple] = []
     if scope_name and primary_ref:
+        primary_features = (
+            primary_data.get("features") if isinstance(primary_data, dict) else None
+        )
+        scope_subjects.append((
+            "primary_ref",
+            primary_ref,
+            None,
+            primary_descriptor,
+            primary_data if isinstance(primary_data, dict) else None,
+            primary_features if isinstance(primary_features, list) else None,
+        ))
+    if scope_name:
+        from app.services.gis_harness.scope_ref_guard import layer_source_ref
+
+        seen_refs = {primary_ref} if primary_ref else set()
+        for overlay_ref in overlay_refs:
+            if not overlay_ref or overlay_ref in seen_refs:
+                continue
+            seen_refs.add(overlay_ref)
+            scope_subjects.append(("overlay_ref", overlay_ref, None, None, None, None))
+        for layer_id in layer_ids:
+            bound_ref = layer_source_ref(spec, layer_id)
+            if not bound_ref or bound_ref in seen_refs:
+                continue
+            seen_refs.add(bound_ref)
+            scope_subjects.append(("layer_id", bound_ref, layer_id, None, None, None))
+    if scope_subjects:
         from app.services.gis_harness.scope_ref_guard import (
             place_evidence_from_payload,
             product_scope_geography,
@@ -288,28 +319,54 @@ async def webgis_map_product(
         )
         from app.services.local_first import admin_bbox_wgs84
 
-        features = primary_data.get("features") if isinstance(primary_data, dict) else None
-        scope_verdict = product_scope_geography(
-            scope_name,
-            descriptor=place_evidence_from_payload(
-                primary_descriptor,
-                primary_data if isinstance(primary_data, dict) else None,
-            ),
-            features=features if isinstance(features, list) else None,
-            scope_bbox_lookup=admin_bbox_wgs84,
-        )
-        if scope_verdict["verdict"] == "mismatched":
+        for kind, ref, layer_id, descriptor, payload, features in scope_subjects:
+            if descriptor is None and ref:
+                descriptor = await session_data_manager.get_ref_descriptor(
+                    session_id, ref)
+            # A stored bbox is enough to reject another city's extent. Load
+            # features only when that box is missing, so a city name on the
+            # payload can still contradict the scope.
+            if payload is None and features is None and ref:
+                from app.services.gis_harness.scope_ref_guard import (
+                    _descriptor_bbox,
+                )
+                if _descriptor_bbox(descriptor) is None:
+                    loaded = await session_data_manager.get(session_id, ref)
+                    if isinstance(loaded, dict):
+                        payload = loaded
+                        loaded_features = loaded.get("features")
+                        features = (
+                            loaded_features if isinstance(loaded_features, list)
+                            else None
+                        )
+            subject_verdict = product_scope_geography(
+                scope_name,
+                descriptor=place_evidence_from_payload(descriptor, payload),
+                features=features,
+                scope_bbox_lookup=admin_bbox_wgs84,
+            )
+            if kind == "primary_ref" or scope_verdict is None:
+                scope_verdict = subject_verdict
+            if subject_verdict["verdict"] != "mismatched":
+                continue
             code = (
                 "scope_bbox_disjoint"
-                if scope_verdict.get("evidence") == "bbox"
+                if subject_verdict.get("evidence") == "bbox"
                 else "scope_ref_mismatch"
             )
+            subject_label = {
+                "primary_ref": "primary_ref",
+                "overlay_ref": "overlay_ref",
+                "layer_id": "已绑定图层",
+            }.get(kind, kind)
+            if layer_id:
+                await mapspec_store.layer_remove(session_id, layer_id)
             message = (
-                f"primary_ref 的范围框与当前范围 {scope_name} 不相交，"
+                f"{subject_label} 的范围框与当前范围 {scope_name} 不相交，"
                 "已拒绝把其他地区的数据画到新图上。请重新查询该范围的数据。"
                 if code == "scope_bbox_disjoint"
                 else (
-                    f"primary_ref 的地点与当前范围 {scope_name} 不一致，"
+                    f"{subject_label} 的地点与当前范围 {scope_name} 不一致，"
                     "已拒绝把旧城市数据画到新图上。请重新查询该范围的数据。"
                 )
             )
@@ -317,13 +374,15 @@ async def webgis_map_product(
                 "success": False,
                 "code": code,
                 "message": message,
-                "reason": scope_verdict.get("reason"),
-                "scope_geography": scope_verdict,
+                "reason": subject_verdict.get("reason"),
+                "scope_geography": subject_verdict,
+                "scope_subject": kind,
             }
-        if scope_verdict["verdict"] == "unverified":
+        if scope_verdict is not None and scope_verdict["verdict"] == "unverified":
             scope_warning = unverified_scope_warning(scope_name)
             out.setdefault("warnings", []).append(scope_warning)
-        out["scope_geography"] = scope_verdict
+        if scope_verdict is not None:
+            out["scope_geography"] = scope_verdict
     if primary_data is not None:
         from app.services.analysis_cartography_converter import (
             convert_analysis_to_mapspec_layer,

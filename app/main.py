@@ -35,12 +35,16 @@ from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, interaction_events as interaction_events_routes, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes, feature_edits as feature_edits_routes
 from app.api.routes import atlas_jobs as atlas_jobs_routes  # noqa: E402  # 批量图册发布
+from app.api.routes import skill_jobs as skill_job_routes  # noqa: E402  # G30 技能作业工作台
 from app.api.routes import mission_runtime as mission_runtime_routes  # noqa: E402  # ADR-0197
 from app.api.routes import map_operations as map_operations_routes  # noqa: E402  # ADR-0278
 from app.api.routes import display_confirmation as display_confirmation_routes  # noqa: E402  # ADR-0278
 from app.api.routes import situation_views as situation_views_routes  # noqa: E402  # ADR-0285
 from app.api.routes import project_runtime as project_runtime_routes  # noqa: E402  # ADR-0226
+from app.api.routes import project_data_refresh as project_data_refresh_routes  # noqa: E402  # G10
 from app.api.routes import project_knowledge as project_knowledge_routes  # noqa: E402
+from app.api.routes import data_delivery as data_delivery_routes  # noqa: E402  # G18 数据交付
+from app.api.routes import selection_handles as selection_handles_routes  # noqa: E402  # G24 权威选择集句柄
 # Spatial Event Control Plane（事件驱动空间操作控制平面）：REST/SSE/webhook/
 # replay + Mission Portfolio 只读投影（org 域；runtime 默认关，读路径常开）。
 from app.api.routes import spatial_events as spatial_events_routes  # noqa: E402
@@ -48,8 +52,10 @@ from app.api.routes import portfolio as portfolio_routes  # noqa: E402
 from app.api.routes import geoai as geoai_routes  # noqa: E402  # ADR-0198（Platform 11）
 from app.api.routes import cockpit as cockpit_routes  # noqa: E402  # Agent Ops Cockpit (read-only projections)
 from app.api.routes import turn_journal as turn_journal_routes  # noqa: E402  # H04 ADR-0268 durable turn journal diagnostics
+from app.api.routes import pi_interactions as pi_interactions_routes  # noqa: E402  # G29 Pi 原生运行中交互
 from app.api.routes import ws_collab
 from app.api.routes import review_proposals
+from app.api.routes import visual_context  # G36 视觉上下文证据（ADR-0291）
 from app.api.routes import visual_repairs
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
 from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
@@ -57,9 +63,15 @@ from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 # 文件，不改任何既有路由的签名/response_model（§8 冲突契约）。
 from app.api.routes import data_quality as data_quality_routes
 from app.api.routes import data_preparation as data_preparation_routes  # noqa: E402
+from app.api.routes import data_import as data_import_routes  # noqa: E402  # G17 staged 导入工作台
+from app.api.routes import topology_workbench as topology_workbench_routes  # noqa: E402  # G31 跨图层拓扑工作台
+from app.api.routes import field_compute as field_compute_routes  # noqa: E402
+from app.api.routes import raster_sampling as raster_sampling_routes  # noqa: E402
+from app.api.routes import georeferencing as georeferencing_routes  # noqa: E402
 from app.api.routes import data_lifecycle as data_lifecycle_routes
 from app.api.routes import template_versions as template_versions_routes
 from app.api.routes import composition_template_assets as composition_template_assets_routes
+from app.api.routes import temporal_media as temporal_media_routes  # noqa: E402  # G35
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -150,14 +162,18 @@ def _start_extension_revocation_tick(ext_host: Any) -> Optional[asyncio.Task]:
     async def _tick() -> None:
         while True:
             try:
-                quarantined = ext_host.refresh_revocations()
+                # 快路径通常只 stat mtime；mtime 变化后的重读/验签/指纹
+                # 是同步重 I/O，必须离开事件循环。
+                quarantined = await asyncio.to_thread(ext_host.refresh_revocations)
                 if quarantined:
                     logger.warning(
                         "[lifespan] extensions quarantined by revocation: %s",
                         quarantined,
                     )
-                if install_root and ext_host.refresh_signal_changed(install_root):
-                    ext_host.discover()
+                if install_root and await asyncio.to_thread(
+                    ext_host.refresh_signal_changed, install_root
+                ):
+                    await asyncio.to_thread(ext_host.discover)
                     logger.info("[lifespan] extensions refreshed by signal")
             except Exception as exc:  # noqa: BLE001 - tick 失败绝不拖垮宿主
                 logger.warning("[lifespan] extension revocation tick failed: %s", exc)
@@ -253,6 +269,55 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"[lifespan] collab bus skipped: {e}")
+
+    # G22-P3：清扫本实例前缀的陈旧 Redis active_turn key（上个崩溃/重启
+    # 进程的遗留；TTL 15min 只是有界兜底）。best-effort，绝不阻断启动。
+    try:
+        from app.services.chat.pi_turn_context import pi_turn_registry
+
+        await pi_turn_registry.sweep_own_keys()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[lifespan] pi turn registry sweep skipped: {e}")
+
+    # G38：数据关联孤儿 run 收敛（崩溃窗口「内容已发布/run 行未终态」按
+    # 因果证据补登记或失败；超龄 staging 清理）。best-effort，绝不阻断启动。
+    try:
+        from app.services.data_join_authoring import recovery as dj_recovery
+
+        await asyncio.to_thread(dj_recovery.sweep_staging)
+        result = await asyncio.to_thread(dj_recovery.recover_runs)
+        if result.get("completed") or result.get("failed"):
+            logger.info(
+                "[lifespan] data-join recovery: %s completed, %s failed",
+                len(result.get("completed") or []),
+                len(result.get("failed") or []),
+            )
+    except Exception as e:
+        logger.warning(f"[lifespan] data-join recovery skipped: {e}")
+
+    # G45：坐标操作域孤儿 run 收敛（崩溃窗口；评审 P2-5 —— 与 dj_recovery
+    # 同款启动期接线，best-effort 绝不阻断启动）。
+    try:
+        from app.services.coordinate_operations import service as co_service
+
+        result = await co_service.recover_all()
+        if result.get("converged"):
+            logger.info(
+                "[lifespan] coord-ops recovery: %s runs converged",
+                len(result.get("converged") or []),
+            )
+    except Exception as e:
+        logger.warning(f"[lifespan] coord-ops recovery skipped: {e}")
+    # G48：控制点影像配准孤儿任务与 staging 清理（重启收敛，绝不阻断启动）。
+    try:
+        from app.services.georeferencing import recovery as georef_recovery
+
+        georef_res = await asyncio.to_thread(georef_recovery.recover_interrupted_jobs)
+        if georef_res.get("failed") or georef_res.get("cancelled") or georef_res.get("staging_cleaned"):
+            logger.info("[lifespan] georef recovery: %s", georef_res)
+    except Exception as e:
+        logger.warning(f"[lifespan] georef recovery skipped: {e}")
 
     registry = ToolRegistry()
     init_tools(registry)
@@ -785,6 +850,12 @@ async def _periodic_visual_blob_sweep(interval_seconds: float | None = None) -> 
             report = await asyncio.to_thread(sweep_orphan_screenshots)
             if report.get("swept"):
                 logger.info("[lifespan] visual blob sweep: %s", report)
+            # G36（ADR-0291）：同周期兜底回收视觉证据孤儿 blob（vevimg-/vevr-）。
+            from app.services.visual_context.refs import sweep_orphan_evidence_blobs
+
+            ev_report = await asyncio.to_thread(sweep_orphan_evidence_blobs)
+            if ev_report.get("swept"):
+                logger.info("[lifespan] visual evidence blob sweep: %s", ev_report)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -1106,6 +1177,33 @@ from app.api.routes import version as version_routes  # noqa: E402
 
 app.include_router(version_routes.router, prefix="/api/v1", tags=["系统"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
+# G20：持久化数值栅格表达工作台（独立 router，layer.py 零修改）
+from app.api.routes import raster_authoring as raster_authoring_routes  # noqa: E402
+app.include_router(raster_authoring_routes.router, prefix="/api/v1", tags=["栅格表达工作台"])
+# G33：矢量专题表达作者工作台（独立 router；对齐 raster_authoring 先例）
+from app.api.routes import thematic_authoring as thematic_authoring_routes  # noqa: E402
+app.include_router(thematic_authoring_routes.router, prefix="/api/v1", tags=["专题表达工作台"])
+from app.api.routes import data_join_authoring as data_join_authoring_routes  # noqa: E402
+app.include_router(data_join_authoring_routes.router, prefix="/api/v1", tags=["数据关联工作台 G38"])
+from app.api.routes import coordinate_operations as coordinate_operations_routes  # noqa: E402
+app.include_router(coordinate_operations_routes.router, prefix="/api/v1", tags=["坐标操作工作台 G45"])
+from app.api.routes import cartographic_assets as cartographic_assets_routes  # noqa: E402
+app.include_router(cartographic_assets_routes.router, prefix="/api/v1", tags=["制图符号资产工作台（G40）"])
+# G42：有界目标补全执行（goal repair 预览/启动/状态/取消；UI 与 Pi 共用同一 service）
+from app.api.routes import goal_repair as goal_repair_routes  # noqa: E402
+app.include_router(goal_repair_routes.router, prefix="/api/v1", tags=["目标补全（G42）"])
+# G34：专业纸面版式与图册编排工作台（独立 router；UI 与 Pi 共用 service）
+from app.api.routes import print_layout as print_layout_routes  # noqa: E402
+app.include_router(print_layout_routes.router, prefix="/api/v1", tags=["纸面版式工作台"])
+# G41：双变量与可靠性表达作者工作台（独立 router；UI 与 Pi 共用同一 service）
+from app.api.routes import bivariate_reliability_authoring as g41_routes  # noqa: E402
+app.include_router(g41_routes.router, prefix="/api/v1", tags=["双变量与可靠性作者工作台"])
+# G46：多图联合筛选与持久探索视图（独立 router；UI 与 Pi 共用同一 service）
+from app.api.routes import linked_exploration as linked_exploration_routes  # noqa: E402
+app.include_router(linked_exploration_routes.router, prefix="/api/v1", tags=["联合探索 G46"])
+# G47：Dorling 圆面积 cartogram 作者工作台（独立 router；UI 与 Pi 共用同一 service）
+from app.api.routes import cartogram_authoring as g47_routes  # noqa: E402
+app.include_router(g47_routes.router, prefix="/api/v1", tags=["Dorling 圆面积 cartogram 工作台"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
@@ -1114,12 +1212,20 @@ app.include_router(flow_product_routes.router, prefix="/api/v1", tags=["AI对话
 app.include_router(interaction_events_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0227 Interaction IR V1
 app.include_router(situation_views_routes.router, prefix="/api/v1", tags=["AI对话"])  # ADR-0285 situation/turn-chain 只读视图
 app.include_router(feature_edits_routes.router, prefix="/api/v1", tags=["AI对话"])  # /goal 03 feature editing
+# G32：持久要素变更提案与冲突审阅（agent 起草 / owner 审阅批准 / 真实提交桥）。
+from app.api.routes import feature_proposals as feature_proposals_routes  # noqa: E402
+app.include_router(feature_proposals_routes.router, prefix="/api/v1", tags=["AI对话"])
+# G44：业务字段合同（owner 声明/完整评估/激活/退役；结构化录入经 feature-edits 同链）。
+from app.api.routes import field_contracts as field_contracts_routes  # noqa: E402
+app.include_router(field_contracts_routes.router, prefix="/api/v1", tags=["AI对话"])
 # ADR-0278（Track A）：地图表现层操作事务（回执环/owner 受控提交）+ 最终显示确认 human seam。
 app.include_router(map_operations_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(display_confirmation_routes.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(review_proposals.router, prefix="/api/v1", tags=["审查会签"])
 # F15（ADR-0263）：user-approved visual repair + 截图 ref-only 通道。
 app.include_router(visual_repairs.router, prefix="/api/v1", tags=["AI对话"])
+# G36（ADR-0291）：视觉上下文证据受权入口（当前图/局部/参考图 → Pi 原生 images）。
+app.include_router(visual_context.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(workflow_resume_routes.router, prefix="/api/v1", tags=["AI对话"])
 # ADR-0097: 显式分析图 — SessionPlan/MapSpec/证据的只读派生投影端点。
 app.include_router(analysis_graph_routes.router, prefix="/api/v1", tags=["Agent Workbench"])
@@ -1127,10 +1233,16 @@ app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
 # ADR-0052: 统一任务中心必须先注册 —— task.router 的 GET /tasks/{task_id}
 # 会把字面量 "jobs" 当成 task_id 匹配掉。
 app.include_router(jobs_routes.router, prefix="/api/v1", tags=["任务管理"])
+# G30：可执行技能作业工作台（目录/prepare/start/运行回看/预设）。
+app.include_router(skill_job_routes.router, prefix="/api/v1", tags=["技能作业"])
 app.include_router(atlas_jobs_routes.router, prefix="/api/v1", tags=["地图制图"])
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
 app.include_router(data_preparation_routes.router, prefix="/api/v1", tags=["数据准备"])
+app.include_router(data_import_routes.router, prefix="/api/v1", tags=["数据导入工作台"])
+app.include_router(field_compute_routes.router, prefix="/api/v1", tags=["字段计算"])
+app.include_router(raster_sampling_routes.router, prefix="/api/v1", tags=["栅格采样"])
+app.include_router(georeferencing_routes.router, prefix="/api/v1", tags=["控制点影像配准 (G48)"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(ws_collab.router, prefix="/api/v1", tags=["WebSocket 协作"])
@@ -1145,6 +1257,9 @@ app.include_router(data_lifecycle_routes.router, prefix="/api/v1", tags=["数据
 app.include_router(template_versions_routes.router, prefix="/api/v1", tags=["地图制图模板 V9（版本化）"])
 app.include_router(composition_template_assets_routes.router, prefix="/api/v1", tags=["组合模板资产（G04）"])
 app.include_router(data_fabric.router, prefix="/api/v1", tags=["Data Fabric / 数据织网"])
+app.include_router(data_delivery_routes.router, prefix="/api/v1", tags=["Data Delivery / 数据交付"])  # G18
+app.include_router(selection_handles_routes.router, prefix="/api/v1", tags=["图层数据"])  # G24 权威选择集句柄
+app.include_router(topology_workbench_routes.router, prefix="/api/v1", tags=["跨图层拓扑工作台 G31"])
 app.include_router(lakehouse_routes.router, prefix="/api/v1", tags=["Lakehouse / 空间数据湖仓"])
 app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["Lakehouse / 数据集版本（V8）"])
 app.include_router(extensions_marketplace_routes.router, prefix="/api/v1", tags=["Extension Marketplace / 扩展市场（只读）"])
@@ -1152,6 +1267,7 @@ app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
 app.include_router(mission_runtime_routes.router, prefix="/api/v1", tags=["Mission Runtime"])
 app.include_router(project_runtime_routes.router, prefix="/api/v1", tags=["Project Runtime"])  # ADR-0226
+app.include_router(project_data_refresh_routes.router, prefix="/api/v1", tags=["Project Data Refresh (G10)"])
 app.include_router(project_knowledge_routes.router, prefix="/api/v1", tags=["Project Knowledge"])
 app.include_router(geoai_routes.router, prefix="/api/v1", tags=["GeoAI"])
 # Agent Ops Cockpit：只读投影面（无写端点；operator 动作沿用 mission-runtime 路由）
@@ -1166,7 +1282,13 @@ app.include_router(security_admin_routes.router, prefix="/api/v1", tags=["Securi
 from app.api.routes import storymap as storymap_routes  # noqa: E402
 
 app.include_router(storymap_routes.router, prefix="/api/v1", tags=["StoryMap"])
+# G11 证据化地图简报（ADR-0298）：草稿/编辑/预检/冻结/私有分享
+from app.api.routes import brief as brief_routes  # noqa: E402
+
+app.include_router(brief_routes.router, prefix="/api/v1", tags=["MapBrief"])
 app.include_router(pi_tools.router, tags=["PI工具"])
+app.include_router(pi_interactions_routes.router, prefix="/api/v1", tags=["AI对话"])  # G29 运行中交互用户面
+app.include_router(pi_interactions_routes.pi_router, tags=["PI工具"])  # G29 扩展回调面（bridge secret）
 # Spatial Event Control Plane + Mission Portfolio（只读投影；additive）。
 app.include_router(spatial_events_routes.router, prefix="/api/v1", tags=["Spatial Events"])
 app.include_router(turn_journal_routes.router, prefix="/api/v1", tags=["Harness Turn Journal"])  # H04 ADR-0268（只读诊断）
@@ -1182,3 +1304,7 @@ app.include_router(build_v2_router(), tags=["API v2"])
 if not os.path.exists(settings.DATA_DIR):
     os.makedirs(settings.DATA_DIR, exist_ok=True)
 app.include_router(static_routes.router, prefix="/api/v1", tags=["静态文件"])
+
+# G35：时序地图动画媒体交付（能力/计划/提交/查询/取消/成果）。
+app.include_router(temporal_media_routes.router, prefix="/api/v1",
+                   tags=["时序媒体交付 (G35)"])

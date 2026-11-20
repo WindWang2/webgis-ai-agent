@@ -196,17 +196,24 @@ export function useCartographicObservation({
     }
     if (!map || !sessionId || !fingerprint) return
 
-    // P9：error 监听一次性注册（幂等；卸载/替换时摘除旧监听）。
-    if (getMap && !errorHandlerRef.current) {
+    // P9：error 监听挂在当前 map 实例上。WebGL 恢复（mapKey）会换实例，
+    // 旧 handler 留在已销毁的 map 上时必须解绑再挂到新实例。
+    if (getMap) {
       const mapInstance = getMap()
-      if (mapInstance) {
+      if (mapInstance && mapInstance !== errorMapRef.current) {
+        const previousMap = errorMapRef.current
+        const previousHandler = errorHandlerRef.current
+        if (previousMap && previousHandler) {
+          try { previousMap.off('error', previousHandler) } catch { /* destroyed map */ }
+        }
         const handler = (e: unknown) => runtimeErrorRingRef.current.push(e)
         try {
           mapInstance.on('error', handler)
           errorHandlerRef.current = handler
           errorMapRef.current = mapInstance
         } catch {
-          // 监听失败不阻断观测（错误环为空即可）
+          errorHandlerRef.current = null
+          errorMapRef.current = null
         }
       }
     }

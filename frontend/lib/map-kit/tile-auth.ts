@@ -1,5 +1,11 @@
 import type { RequestParameters } from 'maplibre-gl';
-import { getAccessToken } from '@/lib/auth/tokenStore';
+import {
+  clearAuth,
+  getAccessToken,
+  getRefreshToken,
+  isAccessTokenExpired,
+  refreshAuthToken,
+} from '@/lib/auth/tokenStore';
 import { isFirstPartyUrl } from '@/lib/api/first-party';
 
 /**
@@ -59,4 +65,38 @@ export function buildTileTransformRequest(
     if (ownerToken) headers['X-Session-Token'] = ownerToken;
     return Object.keys(headers).length > 0 ? { url, headers } : { url };
   };
+}
+
+let tileAuthRecovery: Promise<void> | null = null;
+let tileAuthRecoveryAt = 0;
+const TILE_AUTH_COOLDOWN_MS = 15_000;
+
+/**
+ * MapLibre tile fetches can't retry through apiFetch. On a first-party 401,
+ * refresh once and let the caller reload sources so the next request picks
+ * up the new access token (transformRequest reads it live).
+ */
+export function recoverFirstPartyTileAuth(status: number | undefined, retry: () => void): void {
+  if (status !== 401) return;
+  if (tileAuthRecovery) return;
+  const now = Date.now();
+  if (now - tileAuthRecoveryAt < TILE_AUTH_COOLDOWN_MS) return;
+  tileAuthRecoveryAt = now;
+  tileAuthRecovery = (async () => {
+    try {
+      if (getRefreshToken() !== null) {
+        const ok = await refreshAuthToken();
+        if (ok) retry();
+        return;
+      }
+      if (isAccessTokenExpired(getAccessToken())) clearAuth();
+    } finally {
+      tileAuthRecovery = null;
+    }
+  })();
+}
+
+export function _resetTileAuthRecoveryForTests(): void {
+  tileAuthRecovery = null;
+  tileAuthRecoveryAt = 0;
 }

@@ -36,6 +36,9 @@ const TOOL_LABEL_KEYS: Record<MapToolId, string> = {
   draw_polygon: 'runPanel.tools.drawPolygon',
   edit_vertices: 'runPanel.tools.editVertices',
   delete_feature: 'runPanel.tools.deleteFeature',
+  edit_labels: 'map.toolbar.editLabels',
+  split_feature: 'runPanel.tools.splitFeature',
+  georef_pick_map: 'runPanel.tools.georefPickMap',
 };
 
 /** 阶段名展示词表：键 = aiStatus 逻辑值（保留），值 = 消息 key。 */
@@ -95,10 +98,16 @@ export function AgentRunPanel() {
     }
     const seq = ++graphSeqRef.current;
     setLoadingGraph(true);
-    const g = await getAnalysisGraph(sessionId, ownerToken ?? null);
-    if (seq !== graphSeqRef.current || getSessionIdentity().sessionId !== sessionId) return; // superseded
-    setGraph(g);
-    setLoadingGraph(false);
+    // #2140 F6：统一 finally 复位 —— superseded/early-return/异常出口此前跳过
+    // setLoadingGraph(false)，会话切换后刷新 spinner 会永久卡住；只复位当前
+    // 代次，被更新的请求自己的 finally 负责自己的复位。
+    try {
+      const g = await getAnalysisGraph(sessionId, ownerToken ?? null);
+      if (seq !== graphSeqRef.current || getSessionIdentity().sessionId !== sessionId) return; // superseded
+      setGraph(g);
+    } finally {
+      if (seq === graphSeqRef.current) setLoadingGraph(false);
+    }
   }, []);
 
   useEffect(() => {

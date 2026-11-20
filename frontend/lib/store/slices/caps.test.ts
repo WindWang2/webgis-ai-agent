@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createStore } from "zustand/vanilla";
 import { createLayersSlice, MAX_ANNOTATIONS } from "./layersSlice";
-import { createUiSlice, MAX_OPS_LOG } from "./uiSlice";
+import { createUiSlice, MAX_OPS_LOG, MAX_UI_FEED } from "./uiSlice";
 
 // FE-3 (design §7): bounded UI state — annotations cap 500, opsLog cap 200
 // (findings E4: unbounded arrays). Tests assert the caps hold and that the
@@ -80,6 +80,20 @@ describe("store slice caps (FE-3)", () => {
       const store = makeStore();
       for (let i = 0; i < 5; i++) store.getState().pushOpLog({ id: `op-${i}` } as any);
       expect(store.getState().opsLog).toHaveLength(5);
+    });
+  });
+
+  describe("exports and causal chain", () => {
+    it(`keeps at most ${MAX_UI_FEED} exports and causal entries`, () => {
+      const store = makeStore();
+      for (let i = 0; i < MAX_UI_FEED + 5; i++) {
+        store.getState().addExport({ id: `e-${i}` } as any);
+        store.getState().pushCausalEntry({ id: `c-${i}` } as any);
+      }
+      expect(store.getState().exports).toHaveLength(MAX_UI_FEED);
+      expect(store.getState().causalChain).toHaveLength(MAX_UI_FEED);
+      expect(store.getState().exports[0]).toEqual({ id: `e-${MAX_UI_FEED + 4}` });
+      expect(store.getState().causalChain[0]).toEqual({ id: `c-${MAX_UI_FEED + 4}` });
     });
   });
 });

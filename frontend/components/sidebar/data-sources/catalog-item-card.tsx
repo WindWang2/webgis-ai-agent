@@ -53,7 +53,9 @@ const t = useT();
         </div>
       </div>
 
-      <div className="mt-2 flex items-center gap-2 border-t border-edge-subtle pt-2 text-caption">
+      {/* 操作行：按钮文案不换行（旧版在 280–330px 下「数据集」「加载至地图」
+          被折成两行竖排）；空间不足时整行 wrap，主操作保持右对齐。 */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-edge-subtle pt-2 text-caption [&>button]:whitespace-nowrap">
         <button
           type="button"
           onClick={() => onInspect(item)}

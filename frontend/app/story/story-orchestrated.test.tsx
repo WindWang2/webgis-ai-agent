@@ -214,17 +214,18 @@ describe('StoryView 编排模式（ADR-0196）', () => {
 
     const panel = screen.getByTestId('story-narrative-panel');
     const mapBox = screen.getByTestId('story-map-container');
-    // split 模式：面板贴左、地图相对布局
+    // split 模式：面板贴左、地图相对布局（裸 token 匹配 —— max-md: 变体
+    // 里的 absolute 是移动端降级，不代表桌面位置类，#2162）。
     expect(panel.className).toMatch(/\brelative\b/);
-    expect(panel.className).not.toMatch(/\babsolute\b/);
+    expect(panel.className).not.toMatch(/(^|\s)absolute(\s|$)/);
 
     await user.click(screen.getByRole('button', { name: '沉浸模式' }));
 
     // immersive：panel/map 的 position 必须互斥（旧实现 relative+absolute 并存被 CSS 顺序判负）
-    expect(panel.className).toMatch(/\babsolute\b/);
-    expect(panel.className).not.toMatch(/\brelative\b/);
-    expect(mapBox.className).toMatch(/\babsolute\b/);
-    expect(mapBox.className).not.toMatch(/\brelative\b/);
+    expect(panel.className).toMatch(/(^|\s)absolute(\s|$)/);
+    expect(panel.className).not.toMatch(/(^|\s)relative(\s|$)/);
+    expect(mapBox.className).toMatch(/(^|\s)absolute(\s|$)/);
+    expect(mapBox.className).not.toMatch(/(^|\s)relative(\s|$)/);
     // 看板给右浮面板让位（calc 偏移），否则被面板完全盖住
     expect(screen.getByTestId('story-dashboard-mount').className).toContain('calc(');
   });

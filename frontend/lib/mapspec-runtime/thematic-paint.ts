@@ -222,7 +222,16 @@ function categoricalToMatch(spec: any): unknown | null {
   const mixed = new Set(categories.map((cat) => typeof (Array.isArray(cat) ? cat[0] : cat?.key))).size > 1;
   for (const cat of categories) {
     if (cat && typeof cat === "object" && cat.key != null && cat.color) {
-      const key = mixed ? String(cat.key) : cat.key;
+      let key: string | number | boolean = mixed ? String(cat.key) : cat.key;
+      // G33：key_type 声明源值类型时发类型化 case（MapLibre match 严格类型
+      // 比较——数值字段的字符串键从不命中）。与后端 spec_to_paint 同口径。
+      if (cat.key_type === "number" && !mixed) {
+        const num = Number(cat.key);
+        if (Number.isFinite(num)) key = num;
+      } else if (cat.key_type === "bool" && !mixed) {
+        // 后端合同词表是 "bool"（stats.key_kind_of）——不是 "boolean"。
+        key = String(cat.key).toLowerCase() === "true";
+      }
       if (seen.has(String(key))) continue;
       seen.add(String(key));
       cases.push(key, cat.color);
@@ -235,7 +244,13 @@ function categoricalToMatch(spec: any): unknown | null {
   }
   if (cases.length === 0) return null;
 
-  // Backend contract: default = last category color (legend_spec.default ignored).
+  // Backend contract: default = last category color. G33（加性镜像）：显式
+  // legend_spec.default（other 桶）优先——作者声明过未列出值语义时不静默
+  // 借用末类颜色（与后端 _categorical_to_match 同口径）。
+  const explicitDefault = spec.default as { color?: string } | undefined;
+  if (explicitDefault && typeof explicitDefault.color === "string" && explicitDefault.color) {
+    return ["match", mixed ? ["to-string", ["get", field]] : ["get", field], ...cases, explicitDefault.color];
+  }
   const lastColor = cases[cases.length - 1];
   // AC-06 P6：out_of_range 是数值域语义，categorical（match 吸收全部未命中）
   // 不适用 —— 显式 evidence 而非静默忽略。

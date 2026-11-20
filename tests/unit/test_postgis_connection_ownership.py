@@ -69,6 +69,10 @@ def test_direct_connection_is_closed_without_pool_lookup(adapter, monkeypatch):
     conn = SlottedConnection()
     lookup = Mock(return_value=None)
     monkeypatch.setattr(pga, "_get_or_create_postgis_pool", lookup)
+    # Direct connect pins the SSRF-checked address before calling the driver.
+    monkeypatch.setattr(
+        pga, "_pinned_libpq_target", lambda host, allow_private=False: (host, "127.0.0.1"),
+    )
     monkeypatch.setattr(psycopg2, "connect", lambda **kw: conn)
 
     with adapter._connection_context() as acquired:

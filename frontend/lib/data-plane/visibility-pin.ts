@@ -44,6 +44,13 @@ type PickVisible = { _refId?: string; visible?: boolean };
 /**
  * 同步一次 pin 状态（命令式入口；store 订阅消费它，测试直接调它）。
  * 返回 {pinned, unpinned} 计数（调度器条目触碰数，幂等重设同值也计入）。
+ *
+ * #2144 H2：走调度器期望集合对账 —— 只按当前 store 内容逐层 setRefPinned
+ * 会留下两个缺口：(1) 层先 visible 加入时缓存为空 pin 0 条，数据随后落地
+ * 写成 pinned:false，签名不变永不补 pin（由调度器 fetch 落地补 pin 兜底）；
+ * (2) 从 store 移除的层没人 unpin，同会话内被删层数据永久钉在预算里
+ * （由期望集合差集 unpin 回收）。首个出现的层决定该 ref 的期望（与旧
+ * 逐层语义一致）。
  */
 export function applyVisibilityPins(
   layers: Array<PickVisible>,
@@ -54,16 +61,14 @@ export function applyVisibilityPins(
   try {
     const scheduler = getRefScheduler();
     const seen = new Set<string>();
+    const visible: string[] = [];
     for (const layer of layers) {
       const refId = layer._refId;
       if (!refId || seen.has(refId)) continue;
       seen.add(refId);
-      if (layer.visible !== false) {
-        pinned += scheduler.setRefPinned(sessionId, refId, true);
-      } else {
-        unpinned += scheduler.setRefPinned(sessionId, refId, false);
-      }
+      if (layer.visible !== false) visible.push(refId);
     }
+    ({ pinned, unpinned } = scheduler.applyDesiredPins(sessionId, visible));
   } catch {
     // 调度器缺席/构造失败：pin 是预算优化，不阻断渲染链路。
   }

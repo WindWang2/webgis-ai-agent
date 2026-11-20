@@ -259,7 +259,10 @@ class TiandituProvider:
             return data
         result = data.get("result", {})
         loc = result.get("location", {})
-        lng, lat = loc.get("lon", 0), loc.get("lat", 0)
+        lng, lat = loc.get("lon"), loc.get("lat")
+        # #2156 P3：缺 location 不回退 (0,0) null island，诚实空集。
+        if lng is None or lat is None:
+            return {"results": [], "count": 0, "provider": "tianditu"}
         return {
             "results": [{
                 "location": [lng, lat],

@@ -38,7 +38,8 @@ class AtlasRequestPolicy(BaseModel):
     )
 
     driver: str = Field(default="frames")
-    """frames | category | feature（非法值 → 400 atlas_policy_invalid）。"""
+    """frames | category | feature | product（G15 同页多画幅；非法值 → 400
+    atlas_policy_invalid）。product 需要 MapSpec 已绑定启用的 frame_product。"""
     layerId: Optional[str] = Field(default=None, max_length=120)
     """类别/特征驱动目标图层 id；缺省自动定位首个内联 geojson 图层。"""
     categoryProperty: Optional[str] = Field(default=None, max_length=120)
@@ -83,6 +84,39 @@ class VectorPdfRequest(BaseModel):
 
     # 安全决策（R2-M3/M8）：不提供 sessionId 水合 —— ref 载体源由调用方
     # 内联后提交（前端 exporter 内存中已持有数据）；未内联 → 400 typed 拒绝。
+
+
+class MixedMapExportRequest(BaseModel):
+    """POST /export/mixed 请求体（G26：矢量+数值栅格混合地图统一导出）。
+
+    从**会话权威 MapSpec** 冻结修订导出（不是调用方载荷）——栅格 ref 的
+    owner 校验在服务端解析层执行；`expected_revision` 可选 CAS 基线。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "session_id": "sess-123",
+                    "format": "pdf",
+                    "expected_revision": 7,
+                    "partial_policy": "blocking",
+                    "target_dpi": 300,
+                }
+            ]
+        }
+    )
+
+    session_id: str = Field(min_length=1, max_length=128)
+    format: str = Field(pattern="^(png|svg|pdf)$")
+    expected_revision: Optional[int] = Field(default=None, ge=0)
+    """CAS 基线（可选）：冻结时修订不符 → 409（不混两个修订）。"""
+    partial_policy: str = Field(default="blocking", pattern="^(blocking|allow_partial)$")
+    """blocking（默认）：会遗漏图层时 typed 拒绝；allow_partial：显式选择并
+    携带完整 omitted_layers 清单（请求「完整地图」不能带遗漏还报 complete）。"""
+    target_dpi: Optional[int] = None
+    """PDF 渲染 DPI（72-600 钳制；生效值随 manifest 披露；缺省 300）。"""
+    title: Optional[str] = Field(default=None, max_length=200)
 
 
 class GeoJSONExportRequest(BaseModel):
@@ -249,4 +283,31 @@ class GeoJSONExportResponse(BaseModel):
     filename: str = Field(...)
     url: str
     format: str
+    message: str
+
+
+class MixedMapExportResponse(BaseModel):
+    """POST /export/mixed 返回（G26：矢量+数值栅格统一编译交付回执）。
+
+    逐字段镜像 ``export_map_as_mixed`` 的运行时形状；manifest 派生子文档
+    （raster_layers/renderer/diagnostics）以 Dict/List 透传。extra="allow"：
+    未知字段原样透传，保证挂模前后响应体逐字节一致。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    success: bool
+    filename: str
+    url: str
+    manifest_url: str
+    format: str
+    media_type: str
+    bytes: int
+    mapspec_revision: Optional[int] = None
+    partial: bool = False
+    omitted_layers: List[Any] = Field(default_factory=list)
+    raster_layers: List[Dict[str, Any]] = Field(default_factory=list)
+    renderer: Dict[str, Any] = Field(default_factory=dict)
+    checksum: Optional[str] = None
+    render_diagnostics: List[Any] = Field(default_factory=list)
     message: str

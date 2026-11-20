@@ -77,8 +77,12 @@ _chain_runs: "OrderedDict[str, ExplorerChainRun]" = OrderedDict()
 _chain_redis: Optional["_redis.Redis"] = None
 
 
-def _get_chain_redis() -> "_redis.Redis":
+def _get_chain_redis() -> "Optional[_redis.Redis]":
     global _chain_redis
+    # #2209：USE_REDIS=False 时绝不拨 REDIS_URL —— durable 注册表退化为纯
+    # 内存（调用方已有 None/异常降级路径），与 task_queue 等组件同纪律。
+    if not settings.USE_REDIS:
+        return None
     if _chain_redis is None:
         _chain_redis = _redis.Redis.from_url(
             settings.REDIS_URL,
@@ -138,7 +142,10 @@ def persist_chain_run_sync(
             {"stage_ids": list(stage_ids), "owner": owner or ""},
             ensure_ascii=False,
         )
-        _get_chain_redis().set(
+        client = _get_chain_redis()
+        if client is None:
+            return  # USE_REDIS=False：纯内存注册表，无 durable 副本
+        client.set(
             _chain_key(final_task_id), payload, ex=_CHAIN_RUNS_TTL_SECONDS
         )
     except Exception as e:  # noqa: BLE001 Redis 不可达 → 仅内存，下次轮询降级
@@ -151,7 +158,10 @@ def persist_chain_run_sync(
 def load_chain_run_sync(final_task_id: str) -> Optional[ExplorerChainRun]:
     """Read the chain-run record from Redis (call inside a worker thread)."""
     try:
-        raw = _get_chain_redis().get(_chain_key(final_task_id))
+        client = _get_chain_redis()
+        if client is None:
+            return None  # USE_REDIS=False：纯内存注册表，无 durable 副本
+        raw = client.get(_chain_key(final_task_id))
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "[Explorer] durable chain-run read failed for %s: %s",

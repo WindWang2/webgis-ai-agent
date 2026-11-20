@@ -329,7 +329,7 @@ class GISDatasetDescriptor(BaseModel):
     license: str = ""                               # 许可证标识（"" = 无证据，不虚构）
     attribution: str = ""                           # 归因文本（来源要求署名时的权威字符串）
 
-    # 维度级证据三态（G03 GD-01 / ADR-0286 D1）：observed = 直接证据；
+    # 维度级证据三态（G03 GD-01 / ADR-0296 D1）：observed = 直接证据；
     # inferred = 规则推断（如坐标域识别 CRS）；unknown = 无证据（绝不虚构）。
     # 字段级置信仍在 FieldEntry（role_confidence 等）—— 本字段是维度级
     # 汇总，不是替代。不入指纹：证据分级变化不改变语义身份（同 license

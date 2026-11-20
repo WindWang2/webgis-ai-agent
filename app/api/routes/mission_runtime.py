@@ -112,6 +112,8 @@ def create_mission(
     )
     svc = get_mission_runtime()
     org_id = _org(user)
+    if not org_id:
+        raise HTTPException(status_code=403, detail="org_context_required")
     try:
         quota = svc.effective_quota(org_id, body.quota)
     except Exception as exc:

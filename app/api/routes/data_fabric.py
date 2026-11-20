@@ -186,9 +186,19 @@ def _require_source_manage(
     role = (user or {}).get("role") or "viewer"
     if user_id is not None and s.owner_id == user_id:
         return
-    if role == "admin":
-        return
     is_global = s.org_id is None and s.owner_id is None
+    if role == "admin":
+        caller_org = (user or {}).get("org_id")
+        if is_global and caller_org not in (None, ""):
+            raise HTTPException(
+                status_code=403,
+                detail="Global data sources require a platform operator",
+            )
+        if not is_global and s.org_id is not None and caller_org not in (None, "") and s.org_id != caller_org:
+            raise HTTPException(
+                status_code=403, detail="Insufficient privileges for this data source"
+            )
+        return
     if not is_global and not destructive and role == "editor":
         return
     raise HTTPException(

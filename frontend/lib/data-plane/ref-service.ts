@@ -94,6 +94,9 @@ export const fetchRefViaApi: RefFetchImpl = async (req, signal) => {
       ownerToken: req.ownerToken ?? null,
       timeoutMs: REF_FETCH_TIMEOUT_MS,
       label: 'Data plane ref fetch error',
+      // H1/#2144：调度器从缓存注入 etag —— 必须回传 If-None-Match，否则
+      // 304 分支 / etag304 计数 / 「ETag 条件请求」承诺全是死代码。
+      headers: req.etag ? { 'If-None-Match': req.etag } : undefined,
       onResponse: (response) => {
         const h = response.headers?.get?.('etag');
         if (h) etag = h;

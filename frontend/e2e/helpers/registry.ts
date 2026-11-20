@@ -3,7 +3,7 @@
  *
  * The canonical index of user journeys this suite protects. Parallel lines
  * (D–J) extend the suite by:
- *   1. adding `frontend/e2e/journeys/jN-<name>.journey.ts` (dual-mode where a
+ *   1. adding `frontend/e2e/journeys/<id>-<name>.journey.ts` (dual-mode where a
  *      backend can represent the surface, mock-only otherwise),
  *   2. registering it here (id, file, smoke flag, modes, owner line),
  *   3. if the journey should join the PR smoke gate, tagging it `@smoke`.
@@ -121,6 +121,102 @@ export const JOURNEYS: JourneyEntry[] = [
     smoke: false,
     modes: ['mock'],
     owner: 'situated-agent-workbench-vnext',
+  },
+  {
+    id: 'j13',
+    file: 'journeys/j13-brief-delivery.journey.ts',
+    title: '证据化地图简报：草稿→编辑/证据→预检→冻结→私有交付→分享',
+    smoke: true,
+    modes: ['mock', 'real'],
+    owner: 'goal-g11-evidence-map-briefs',
+  },
+  {
+    id: 'j14',
+    file: 'journeys/j14-project-data-refresh.journey.ts',
+    title: '项目数据刷新：检查→预览→候选→采纳/回退（真实认证）',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g10-project-data-refresh',
+  },
+  {
+    id: 'j15',
+    file: 'journeys/j15-pi-mapspec-stub.journey.ts',
+    title: 'Pi stub 对话提交 MapSpec：revision 递增→图层与图例可见',
+    smoke: false,
+    modes: ['mock', 'real'],
+    owner: 'pi-only-engine',
+  },
+  {
+    id: 'j16',
+    file: 'journeys/j16-frame-product.journey.ts',
+    title: '多画幅产品：恢复→标题 CAS 修改→激活画幅',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'g15-multiframe-cartography',
+  },
+  {
+    id: 'j17',
+    file: 'journeys/j17-goal-satisfaction.journey.ts',
+    title: '任务完成语义卡：task_complete.goal_satisfaction 逐需求渲染',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'g28-evidence-task-acceptance',
+  },
+  {
+    id: 'j18',
+    file: 'journeys/j18-frame-interactive.journey.ts',
+    title: '多画幅交互运行时：真实地图网格→激活CAS→键盘→预算→刷新恢复',
+    smoke: false,
+    modes: ['mock', 'real'],
+    owner: 'g25-interactive-frame-runtime',
+  },
+  {
+    id: 'j22',
+    file: 'journeys/j22-restore-continuity.journey.ts',
+    title: '恢复连续性：刷新恢复保留约束→只改第二幅标题（隐藏层/手动标注不动）',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'g22-pi-state-continuity',
+  },
+  {
+    id: 'j23',
+    file: 'journeys/j23-g37-session-model.journey.ts',
+    title: '会话模型运行配置：目录选择→实际生效→用量入账→预算拒绝',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g37-session-model-runtime',
+  },
+  {
+    id: 'j25',
+    file: 'journeys/j25-g45-coordinate-operations.journey.ts',
+    title: '坐标操作与重投影：上传声明CRS→候选/锁定/预览→执行→刷新恢复→GPKG下载',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g45-coordinate-operations',
+  },
+  {
+    id: 'j24',
+    file: 'journeys/j24-g44-field-contracts.journey.ts',
+    title: '业务字段合同：作者激活→面板绑定→结构化表单→刷新持久',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g44-field-contracts',
+  },
+  {
+    id: 'j42',
+    file: 'journeys/j42-goal-repair-panel.journey.ts',
+    title: '有界目标补全：预览→确认损失→启动→回执→终验对照',
+    smoke: false,
+    modes: ['mock'],
+    owner: 'g42-goal-repair',
+  },
+  {
+    id: 'g48',
+    file: 'journeys/g48-georeferencing.journey.ts',
+    title: '控制点影像配准：上传→求解→预览→COG→绑定/下载→刷新恢复',
+    smoke: false,
+    modes: ['real'],
+    owner: 'g48-georeferencing',
   },
 ];
 

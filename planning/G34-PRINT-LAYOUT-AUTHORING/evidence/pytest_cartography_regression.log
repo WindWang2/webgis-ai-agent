@@ -1,0 +1,198 @@
+........................................................................ [  2%]
+........................................................................ [  4%]
+........................................................................ [  6%]
+........................................................................ [  8%]
+........................................................................ [ 10%]
+........................................................................ [ 12%]
+........................................................................ [ 14%]
+........................................................................ [ 16%]
+........................................................................ [ 18%]
+........................................................................ [ 20%]
+....s..............E
+==================================== ERRORS ====================================
+__ ERROR at teardown of test_undo_refused_when_user_edited_after_agent_commit __
+
+    @pytest.fixture
+    async def sid():
+        session_id = f"agent-undo-{uuid.uuid4().hex[:8]}"
+        await session_data_manager.clear_session(session_id)
+        yield session_id
+>       await session_data_manager.clear_session(session_id)
+
+tests/cartography/test_agent_commit_undo.py:32: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/session_data.py:1026: in clear_session
+    await purge_session_disk_state(session_id)
+app/services/mapspec/store.py:598: in purge_session_disk_state
+    await mapspec_store_instance.clear_session_files(session_id)
+app/services/mapspec/store.py:245: in clear_session_files
+    await asyncio.to_thread(_rmtree)
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/asyncio/threads.py:26: in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/kevin/.local/share/uv/python/cpython-3.13.17-linux-x86_64-gnu/lib/python3.13/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/mapspec/store.py:241: in _rmtree
+    shutil.rmtree(session_dir)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:1209: in _safe_shutil_rmtree
+    _try_trash(abs_path, recursive=True)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:989: in _try_trash
+    _check_bulk_delete_guard(abs_path)
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:873: in _check_bulk_delete_guard
+    _exit_bulk_guard_control(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = '[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":67,"threshold":50,"scope":"turn","targets":["/home/kevin/pr...webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/agent-undo-46cf0108"],"targetCount":1}'
+
+    def _exit_bulk_guard_control(message):
+        try:
+            sys.stderr.write(message)
+            if not message.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+        finally:
+>           raise SystemExit(1)
+E           SystemExit: 1
+
+/opt/WorkBuddy/resources/app.asar.unpacked/cli/vendor/shim/sitecustomize.py:848: SystemExit
+--------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":67,"threshold":50,"scope":"turn","targets":["/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/data/.webgis-agent/agent-undo-46cf0108"],"targetCount":1}
+=============================== warnings summary ===============================
+tests/cartography/test_frame_product_benchmarks.py:24
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_frame_product_benchmarks.py:24: PytestUnknownMarkWarning: Unknown pytest.mark.slow - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    pytestmark = [pytest.mark.cartography, pytest.mark.slow]
+
+tests/cartography/test_frame_product_publication.py:224
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_frame_product_publication.py:224: PytestUnknownMarkWarning: Unknown pytest.mark.slow - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.slow
+
+app/schemas/lakehouse_schema.py:16
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:16: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: List[float] = Field(min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:16
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:16: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: List[float] = Field(min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:30
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:30: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time_sources: List[CubeTimeSource] = Field(min_items=1, max_items=512)
+
+app/schemas/lakehouse_schema.py:30
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:30: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time_sources: List[CubeTimeSource] = Field(min_items=1, max_items=512)
+
+app/schemas/lakehouse_schema.py:36
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:36: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:36
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:36: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:37
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:37: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    y: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:37
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:37: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    y: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:38
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:38: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    x: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:38
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:38: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    x: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:52
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:52: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    updates: List[CubeRevisionUpdate] = Field(min_items=1, max_items=64)
+
+app/schemas/lakehouse_schema.py:52
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:52: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    updates: List[CubeRevisionUpdate] = Field(min_items=1, max_items=64)
+
+app/schemas/lakehouse_schema.py:74
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:74: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    sources: List[RSCubeSource] = Field(min_items=1, max_items=512)
+
+app/schemas/lakehouse_schema.py:74
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:74: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    sources: List[RSCubeSource] = Field(min_items=1, max_items=512)
+
+app/schemas/lakehouse_schema.py:82
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:82: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time: Optional[List[str]] = Field(default=None, max_items=64)
+
+app/schemas/lakehouse_schema.py:83
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:83: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    band: Optional[List[str]] = Field(default=None, max_items=64)
+
+app/schemas/lakehouse_schema.py:84
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:84: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    polarization: Optional[List[str]] = Field(default=None, max_items=16)
+
+app/schemas/lakehouse_schema.py:85
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:85: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    vertical: Optional[List[str]] = Field(default=None, max_items=64)
+
+app/schemas/lakehouse_schema.py:87
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:87: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    model: Optional[List[str]] = Field(default=None, max_items=16)
+
+app/schemas/lakehouse_schema.py:88
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:88: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    scenario: Optional[List[str]] = Field(default=None, max_items=16)
+
+app/schemas/lakehouse_schema.py:89
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:89: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: Optional[List[float]] = Field(default=None, min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:89
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:89: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: Optional[List[float]] = Field(default=None, min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:100
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:100: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    object_ids: List[str] = Field(min_items=1, max_items=200)
+
+app/schemas/lakehouse_schema.py:100
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:100: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    object_ids: List[str] = Field(min_items=1, max_items=200)
+
+app/schemas/lakehouse_schema.py:101
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:101: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    tags: Optional[List[str]] = Field(default=None, max_items=32)
+
+app/schemas/lakehouse_schema.py:106
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:106: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    object_ids: List[str] = Field(min_items=1, max_items=200)
+
+app/schemas/lakehouse_schema.py:106
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:106: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    object_ids: List[str] = Field(min_items=1, max_items=200)
+
+app/schemas/lakehouse_schema.py:113
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:113: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: Optional[List[float]] = Field(default=None, min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:113
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:113: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: Optional[List[float]] = Field(default=None, min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:116
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:116: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    tags: Optional[List[str]] = Field(default=None, max_items=16)
+
+tests/cartography/test_render_diagnostics_contract.py:22
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_render_diagnostics_contract.py:22: PytestUnknownMarkWarning: Unknown pytest.mark.unit - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    pytestmark = [pytest.mark.unit, pytest.mark.cartography]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR tests/cartography/test_agent_commit_undo.py::test_undo_refused_when_user_edited_after_agent_commit
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+738 passed, 1 skipped, 33 warnings, 1 error in 141.23s (0:02:21)

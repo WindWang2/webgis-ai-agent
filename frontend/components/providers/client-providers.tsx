@@ -7,7 +7,7 @@ import { MapActionProvider } from "@/lib/contexts/map-action-context"
 import { ToastContainer } from "@/components/ui/toast"
 import { SystemMessageBridge } from "@/components/providers/system-message-bridge"
 import { I18nProvider } from "@/lib/i18n/i18n-provider"
-import { enableHudPersistWrites, useHudStore } from "@/lib/store/useHudStore"
+import { rehydrateHudStore } from "@/lib/store/useHudStore"
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -48,9 +48,7 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, ErrorBounda
 
 export function ClientProviders({ children }: { children: React.ReactNode }) {
   useEffect(() => {
-    void Promise.resolve(useHudStore.persist.rehydrate()).finally(() => {
-      enableHudPersistWrites();
-    });
+    void rehydrateHudStore();
   }, []);
   return (
     // MotionConfig reducedMotion="user"：globals.css 的 reduced-motion 全局样式

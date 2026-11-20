@@ -38,6 +38,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -47,6 +48,60 @@ from app.models.project import Artifact, WorkflowRun
 from app.services.provenance.fingerprint import canonical_dumps
 
 logger = logging.getLogger(__name__)
+
+_QUOTA_LOCKS: dict[str, threading.Lock] = {}
+_QUOTA_GUARD = threading.Lock()
+
+
+def _quota_lock(project_id: str) -> threading.Lock:
+    with _QUOTA_GUARD:
+        lock = _QUOTA_LOCKS.get(project_id)
+        if lock is None:
+            lock = threading.Lock()
+            _QUOTA_LOCKS[project_id] = lock
+        return lock
+
+
+def _quota_checked_store(db, project_id, incoming, artifact_id, data):
+    """Check the project quota and store the bytes under one lock."""
+    from app.services.data_lifecycle.quota import check_quota
+
+    with _quota_lock(str(project_id or "")):
+        decision = check_quota(
+            db, project_id, incoming, artifact_id=artifact_id,
+        )
+        if not decision.allowed:
+            return decision, None
+        try:
+            stored = _materialize_binary_bytes(data)
+        except Exception:  # noqa: BLE001 — caller maps an empty store to unavailable
+            logger.warning(
+                "[artifact_promotion] binary materialization failed for %s",
+                artifact_id, exc_info=True,
+            )
+            return decision, None
+        return decision, stored
+
+
+def _quota_checked_json(db, project_id, incoming, artifact_id, content_key, blob):
+    """Check quota and write the JSON blob under the same project lock."""
+    from app.services.data_lifecycle.quota import check_quota
+
+    with _quota_lock(str(project_id or "")):
+        decision = check_quota(
+            db, project_id, incoming, artifact_id=artifact_id,
+        )
+        if not decision.allowed:
+            return decision, None
+        try:
+            location = materialize_blob(content_key, blob)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "[artifact_promotion] json materialization failed for %s",
+                artifact_id, exc_info=True,
+            )
+            return decision, None
+        return decision, location
 
 #: Content-addressed store root (relative paths resolve under DATA_DIR).
 _DEFAULT_STORE_DIRNAME = "project_artifacts"
@@ -286,7 +341,6 @@ async def _promote_raster_artifact(
     per-project quota gates the put (dedup hits are free — no new bytes).
     """
     from app.services.artifact_registry import raster_png_path
-    from app.services.data_lifecycle.quota import check_quota
     from app.services.durable_blob_store import get_filesystem_blob_store
 
     path = raster_png_path(session_id, str(art.storage_ref or ""))
@@ -314,11 +368,9 @@ async def _promote_raster_artifact(
     # writes no new bytes and is never charged; a fresh put over an exhausted
     # quota is refused honestly — the artifact row survives metadata-only.
     incoming = 0 if get_filesystem_blob_store().exists(digest) else len(data)
-    # round-1 review PERF MAJOR-1: check_quota 是 sync DB 聚合 —— 与本函数
-    # 其余 DB/IO 步骤同纪律卸载到 worker 线程，不占事件循环。
-    decision = await asyncio.to_thread(
-        check_quota, db, project_id or run.project_id, incoming,
-        artifact_id=art.id,
+    decision, stored = await asyncio.to_thread(
+        _quota_checked_store, db, project_id or run.project_id, incoming,
+        art.id, data,
     )
     if not decision.allowed:
         quota_meta = decision.to_exception().to_metadata()
@@ -328,15 +380,10 @@ async def _promote_raster_artifact(
         entry["status"] = meta["content_status"]
         entry["quota"] = quota_meta
         return
-    try:
-        digest, location, byte_size = await asyncio.to_thread(
-            _materialize_binary_bytes, data
-        )
-    except Exception as e:  # noqa: BLE001 — IO failure is disclosed, not fatal
-        logger.warning(
-            "[artifact_promotion] binary materialization failed for %s: %s", art.id, e
-        )
+    if stored is None:
         digest, location, byte_size = "", None, 0
+    else:
+        digest, location, byte_size = stored
     if not digest or not location:
         meta["content_status"] = "store_unavailable"
         art.metadata_json = meta
@@ -446,7 +493,6 @@ async def promote_run_artifacts(
     """
     from app.services.artifact_registry import is_raster_ref
     from app.services.artifact_revisions import record_revision
-    from app.services.data_lifecycle.quota import check_quota
     from app.services.durable_blob_store import get_filesystem_blob_store
     from app.services.session_data import session_data_manager
 
@@ -532,9 +578,9 @@ async def promote_run_artifacts(
                 if content_key and get_filesystem_blob_store().exists(content_key)
                 else len(blob.encode("utf-8"))
             )
-            # round-1 review PERF MAJOR-1: sync DB 聚合 → worker 线程（同上）。
-            decision = await asyncio.to_thread(
-                check_quota, db, project_id, incoming, artifact_id=art.id
+            decision, location = await asyncio.to_thread(
+                _quota_checked_json, db, project_id, incoming, art.id,
+                content_key, blob,
             )
             if not decision.allowed:
                 quota_meta = decision.to_exception().to_metadata()
@@ -548,7 +594,6 @@ async def promote_run_artifacts(
                 entry["quota"] = quota_meta
                 report.append(entry)
                 continue
-            location = await asyncio.to_thread(materialize_blob, content_key, blob)
         summary = await asyncio.to_thread(_schema_summary, payload)
         if location and payload_digest:
             meta["content_status"] = "promoted"

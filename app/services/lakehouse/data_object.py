@@ -182,7 +182,12 @@ def build_object_manifest(
     # 推理/评估 JSON 产物（detections/instance GeoJSON/评估 manifest）。
     # "arrow_ipc"（ADR-0130 §6）：Arrow IPC 列式向量产物（record batch
     # chunk 粒度局部读 —— adapter 见 lakehouse/arrow_adapter）。
-    if kind not in (*DATA_OBJECT_KINDS, "modelops_artifact", "arrow_ipc"):
+    # "data_delivery"（G18）：数据交付包（多文件成员 + manifest/receipt；
+    # 消费方为交付下载/幂等复用，dr/orphan 扫描面不变 —— 不入 DATA_OBJECT_KINDS）。
+    # "data_join"（G38）：数据关联派生成果终态包（GeoJSON/rows 成员 +
+    # manifest/receipt；消费方为结果分页/幂等复用，dr/orphan 扫描面不变）。
+    if kind not in (*DATA_OBJECT_KINDS, "modelops_artifact", "arrow_ipc",
+                    "data_delivery", "data_join", "coordinate_operation"):
         raise DataObjectError(f"unknown data object kind: {kind!r}")
     scope = dict(owner_scope)
     if not scope or set(scope) - {"session_id", "project_id"}:
@@ -341,18 +346,21 @@ def publish_data_object(
     from pathlib import Path as _Path
 
     streamed = getattr(store, "put_blob_from_path", None)
-    for rel_path, digest, _size in entries:
-        src = source_files[rel_path]
-        if isinstance(src, bytes):
-            store.put_blob(digest, src, "binary")
-        elif streamed is not None:
-            streamed(digest, _Path(src), "binary")
-        else:
-            store.put_blob(digest, Path(src).read_bytes(), "binary")
+    from app.services.lakehouse.lakehouse_gc import gc_mutation_lock
 
-    blob = canonical_dumps(manifest).encode("utf-8")
-    manifest_id = _digest_bytes(blob)
-    result = store.put_blob(manifest_id, blob, "json")
+    with gc_mutation_lock():
+        for rel_path, digest, _size in entries:
+            src = source_files[rel_path]
+            if isinstance(src, bytes):
+                store.put_blob(digest, src, "binary")
+            elif streamed is not None:
+                streamed(digest, _Path(src), "binary")
+            else:
+                store.put_blob(digest, Path(src).read_bytes(), "binary")
+
+        blob = canonical_dumps(manifest).encode("utf-8")
+        manifest_id = _digest_bytes(blob)
+        result = store.put_blob(manifest_id, blob, "json")
     return DataObjectIdentity(
         data_object_id=manifest_id,
         manifest_location=result.location,

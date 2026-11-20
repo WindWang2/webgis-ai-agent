@@ -18,7 +18,7 @@ celery_app = Celery(
 # V9 data-lifecycle：数据质量评估 + GC 计划执行 durable job（P1/P5）。
 # ADR-0192：时空动态仿真推演 durable job（hydro_diffusion / traffic_propagation）。
 include=["app.services.spatial_tasks", "app.tasks.explorer.task_chain", "app.services.geocompute.tasks",
-         "app.services.data_quality.jobs", "app.services.data_lifecycle.jobs",
+         "app.services.data_quality.jobs", "app.services.topology_workbench.jobs", "app.services.data_lifecycle.jobs",
          "app.services.simulation.tasks", "app.services.atlas_batch.tasks"]
 )
 

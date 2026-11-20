@@ -93,7 +93,8 @@
         "ids_truncated",
         "layer_id",
         "matched_count",
-        "selected_ids"
+        "selected_ids",
+        "selection_handle"
       ],
       "sensitivity": "limited",
       "state_changing": false

@@ -170,6 +170,29 @@ class TestProxyService:
         assert r1.etag != r2.etag
         df_tile_cache.invalidate_item("ogc-tiles:admin:WebMercatorQuad")
 
+    def test_catalog_synced_item_uses_name_as_dataset_id(self, patched_safe_sessions, ogc_fake_server):
+        """#2231：目录同步后 item.id = ``cat_<source>_<name>`` 前缀形，
+        adapter 的 dataset_id 必须取 item.name（``cid:tms``），否则按错误
+        id 查询 → 全部瓦片请求失败。"""
+        url = ogc_fake_server.add_ogc_tiles()
+        adapter = _adapter(patched_safe_sessions, ogc_fake_server, url)
+        proxy = OgcTilesProxyService()
+        proxy._resolve_governed_adapter = lambda ds_model: adapter
+        ds = SimpleNamespace(org_id=None, owner_id=None, source_type="ogc_api_tiles")
+        z, x, y = VALID_TILE
+        import asyncio
+
+        # DataFabricDataset 同步落库后的真实形状（manager.sync_catalog）。
+        item = SimpleNamespace(
+            id="cat_src1_admin:WebMercatorQuad",
+            name="admin:WebMercatorQuad",
+            fingerprint="fp-cat",
+        )
+        r = asyncio.run(proxy.serve_tile(item, ds, z, x, y))
+        assert r.body == TILE_MVT_BYTES, "must resolve tileset via item.name, not prefixed item.id"
+        assert r.cache_state == "miss"
+        df_tile_cache.invalidate_item(f"ogc-tiles:{item.id}")
+
 
 class TestBuildMapspecSource:
     def test_vector_tileset(self, patched_safe_sessions, ogc_fake_server):

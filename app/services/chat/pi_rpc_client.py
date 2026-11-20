@@ -31,9 +31,21 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from app.agent_pi_bridge import PiRpcError
+
+
+class IssuedRequest(NamedTuple):
+    """G22-P1：``PiRpcClient.issue`` 的产物 —— 已写出、待收响应的请求句柄。
+
+    ``id`` 是 pending 表键；``future`` 由 ``_handle_response`` 解。调用方经
+    ``collect`` 收响应（超时/F19 清理语义与 ``request()`` 一致）。
+    """
+
+    id: str
+    command: str
+    future: "asyncio.Future[Any]"
 
 
 def _write_agent_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
@@ -115,6 +127,31 @@ def _env_float(name: str, default: float) -> float:
 PI_RPC_TIMEOUT = _env_float("PI_RPC_TIMEOUT", 300.0)
 PI_STARTUP_READY_TIMEOUT = _env_float("PI_STARTUP_READY_TIMEOUT", 10.0)
 
+# ADR-0288（W07）/ C14：v1.5.1 停机语义 —— stdin EOF 触发 vendor 有序
+# shutdown()（dispose 等 tool settlement + credential writes，**可合法耗时
+# 数秒**）；首 SIGTERM 同为有序清理；**第二**信号才立即强退。宿主侧对应：
+# EOF → 有界等待（本值，默认 8s）→ 单次 SIGTERM → 有界等待 → SIGKILL。
+# 我们绝不在窗口内重复发信号（会截断 vendor 清理）。
+PI_GRACEFUL_STOP_TIMEOUT = _env_float("PI_GRACEFUL_STOP_TIMEOUT_S", 8.0)
+#: SIGTERM 后的等待窗（终止信号已发，vendor 此刻要么已清理完要么卡死）。
+PI_TERM_STOP_TIMEOUT = _env_float("PI_TERM_STOP_TIMEOUT_S", 2.0)
+
+
+def _drain_and_close_stdin(proc: subprocess.Popen) -> None:
+    """Close the child's stdin — v1.5.1 rpc-mode treats EOF as an orderly
+    shutdown request (onInputEnd → shutdown()). Safe when already closed.
+
+    轻量进程 double（测试桩）可能没有 ``stdin`` 属性 —— 按缺席处理
+    （EOF 无从送达），有序停机阶梯的其余级（SIGTERM/SIGKILL/收尸）
+    不受影响，真实 Popen 的清理语义原样保留。
+    """
+    try:
+        stdin = getattr(proc, "stdin", None)
+        if stdin is not None and not stdin.closed:
+            stdin.close()
+    except (BrokenPipeError, OSError):
+        pass  # child already gone / pipe torn down — EOF already delivered
+
 
 
 # Review F16: environment allowlist for the Pi subprocess.
@@ -171,9 +208,29 @@ class PiRpcClient:
         self._pending_requests: dict[str, asyncio.Future] = {}
         self._event_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_EVENT_QUEUE_SIZE)
         self._request_counter = 0
+        # G29（WP02）：extension_ui_request sink。stdout 读到原生 UI 请求时
+        # 回调（sync，绝不能阻塞读循环）。None = 无人消费（丢弃并告警）。
+        self._ui_request_sink = None
+        # G29（WP02）：stdin 单行写锁。issue()（RPC 命令）与 send_ui_response()
+        # （原生 UI 单向回答）都经 executor 写 stdin；无锁时两段 write+flush
+        # 可交错撕裂 JSON 行。answer 与 steer/abort 并发是 G29 的常态路径。
+        self._stdin_write_lock = asyncio.Lock()
         # PI-03（ADR-0286 D4）：本次 spawn 的 dump registry_generation（空 =
         # v2 dump / 未锚定 —— bridge 的代漂移检测 fail-open 不回收）。
         self.spawn_surface_generation: str = ""
+        # ADR-0288（W08，#2061）：本次 spawn 的 LLM 配置代际（空 = 解析失败 /
+        # 未锚定 —— 配置换代回收 fail-open 不触发）。
+        self.spawn_config_generation: str = ""
+        # G36（ADR-0291）：本次 spawn 锚定的模型 id 与其目录是否声明 image
+        # input（视觉能力投影锚点；描述符此后换代 → 送图前拒绝，V11）。
+        self.spawn_model_id: str = ""
+        self.spawn_declared_image_input: bool = False
+        # G37：worker 运行代。每次 start()（含 respawn）递增并重铸
+        # runtime_epoch —— receipt/账本按代归属；bridge 以 spawn_epoch 变化
+        # 判定「已应用模型状态」必须重验证（new_session/respawn 后 vendor
+        # 模型回到 settings 默认）。
+        self.spawn_epoch: int = 0
+        self.runtime_epoch: str = ""
         self._surface_dump_path: Optional[Path] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
@@ -225,6 +282,15 @@ class PiRpcClient:
         """The raw AgentSessionEvent queue (consumed by the SSE mapper)."""
         return self._event_queue
 
+    def set_ui_request_sink(self, sink) -> None:
+        """G29（WP02）：注册 extension_ui_request 消费者（交互服务）。
+
+        sink(obj: dict) -> None —— 同步回调，在读循环内执行：只允许字典登记
+        与队列投递，任何 I/O/await 由消费方自己的任务承担。坏行/未知方法由
+        协议层（pi_ui_protocol）抛 UiProtocolError，读循环捕获记日志继续。
+        """
+        self._ui_request_sink = sink
+
     def is_alive(self) -> bool:
         """Check if the Pi child process is running and healthy.
 
@@ -274,6 +340,14 @@ class PiRpcClient:
         # （reader finally 里与 flag 一起 set 的 event，这里与 flag 一起 clear）。
         self._process_died = False
         self._process_died_event.clear()
+        # G36（ADR-0291）：spawn 代计数（vision gate 的 get_state 缓存锚点；
+        # 每次 respawn 自增，目录核对按新代重做）。
+        # G37：新 spawn = 新运行代（respawn 后 vendor 会话/模型全部回到
+        # spawn 快照，账本按新代归属）。
+        import uuid as _uuid
+
+        self.spawn_epoch += 1
+        self.runtime_epoch = f"{os.getpid()}-{_uuid.uuid4().hex[:8]}-e{self.spawn_epoch}"
 
         # #1438：spawn 的全部阻塞步骤（目录/配置文件写盘、native surface
         # dump、subprocess.Popen 的 fork）整体 offload 到 worker 线程 ——
@@ -281,9 +355,14 @@ class PiRpcClient:
         # 会停摆事件循环上所有并发会话的流。
         await asyncio.to_thread(self._spawn_process)
 
-        # Start reader tasks for stdout and stderr to avoid OS pipe deadlock
-        self._reader_task = asyncio.create_task(self._read_responses())
-        self._stderr_task = asyncio.create_task(self._read_stderr())
+        # Start reader tasks for stdout and stderr to avoid OS pipe deadlock.
+        # G37（世代钉扎）：reader 绑定**本次 spawn 的进程对象**。外部 kill 后
+        # respawn 换代时，旧 reader 的 finally 若无守卫会把全局 ``_process_died``
+        # 翻真、fail 掉新代的 pending —— 新进程被旧尸体毒死（本任务 M06 旅程
+        # 实测暴露的既有竞态）。
+        _proc = self._process
+        self._reader_task = asyncio.create_task(self._read_responses(_proc))
+        self._stderr_task = asyncio.create_task(self._read_stderr(_proc))
 
         # Yield to let the reader task start (avoid race where _send_request writes
         # to stdin before the reader is ready to consume the response).
@@ -363,22 +442,68 @@ class PiRpcClient:
             env["WEBGIS_API_BASE"] = (
                 f"http://127.0.0.1:{port}" if port else "http://127.0.0.1:18000"
             )
-        # audit4 #987: 后端 LLM 凭证映射进 Pi 子进程。仓内 models.json 指向
-        # 同一套 LLM_BASE_URL / LLM_MODEL，不读用户 ~/.pi。
+        # audit4 #987 → ADR-0288（W08，#2061）：后端 LLM 凭证映射进 Pi 子进程。
+        # 解析只走 ``model_config.resolve_llm_config``（Settings ⊕ 运行时覆盖
+        # 的**单一解析点**）—— 此前直读 Settings 导致 /config/llm 更新后
+        # 新 spawn 的 Pi 仍用旧配置（issue #2061：返回成功而对话用旧模型）。
+        # 本次 spawn 的配置代际一并锚定（bridge 的代漂移回收检测消费）。
         llm_base = ""
         llm_model = ""
         try:
-            from app.core.config import settings as _settings
-            llm_base = str(getattr(_settings, "LLM_BASE_URL", "") or "")
-            llm_model = str(getattr(_settings, "LLM_MODEL", "") or "")
-            if not env.get("OPENAI_API_KEY"):
-                _key = getattr(_settings, "LLM_API_KEY", "")
-                if _key and "your-api-key" not in _key:
-                    env["OPENAI_API_KEY"] = _key
+            from app.services.chat.model_config import (
+                config_generation,
+                resolve_llm_config,
+            )
+
+            _cfg = resolve_llm_config()
+            llm_base = str(_cfg.base_url or "")
+            llm_model = str(_cfg.model or "")
+            # review-P1（W08）：解析结果（runtime override > Settings，且
+            # Settings.LLM_API_KEY 本身可源自 env）是**唯一权威** —— 必须覆盖
+            # 继承的 OPENAI_API_KEY。旧逻辑「env 已有则保留」会让 /config/llm
+            # 更新后的新 key 被继承的旧 key 压过，而 generation 却哈希新 key
+            # → 期望/生效对账失真。解析为空则保留 env 现状（诚实未配置）。
+            _key = str(_cfg.api_key or "")
+            if _key and "your-api-key" not in _key:
+                env["OPENAI_API_KEY"] = _key
+            self.spawn_config_generation = config_generation()
         except Exception:  # noqa: BLE001 — env 映射是尽力而为，绝不阻断 spawn
-            pass
+            self.spawn_config_generation = ""
 
         if llm_base and llm_model:
+            # G36（ADR-0291）：视觉能力投影 —— 管理员描述符确证 vision=True
+            # 时给模型条目加性补 input/inputLimits（Pi 目录省略 input 默认
+            # text-only）。spawn 锚点记录声明结果：此后描述符换代 → 与锚点
+            # 不一致 → 送图前拒绝（V11），文本不受影响。
+            from app.services.visual_context.profile import (
+                model_catalog_entry,
+                model_entry_declares_image,
+            )
+
+            # G37（WP04）：原生目录投影 —— models.json 写**管理员允许目录**
+            # 全部模型（基础模型在前，settings.json default 仍指基础模型）。
+            # 共享文件只含管理员共同允许项 + $OPENAI_API_KEY 引用（无租户
+            # 数据）；内容由部署配置/单一解析点决定，worker 并发 spawn 写
+            # 同内容（原子替换）天然收敛。会话级选择经 turn 期 set_model，
+            # 绝不重写公共 defaults 实现个性化。
+            catalog_model_ids = [llm_model]
+            try:
+                from app.services.chat.model_runtime import session_catalog
+
+                catalog_model_ids = [
+                    item.item_id for item in session_catalog.build_catalog()
+                ] or [llm_model]
+            except Exception:  # noqa: BLE001 — 目录投影失败退回单模型（既有行为）
+                logger.debug("[PiRpcClient] session catalog projection fell back to base model", exc_info=True)
+            # G36 × G37：视觉投影必须覆盖目录中的每一项 —— 会话选择任一
+            # vision 模型时，Pi 侧目录也必须声明 image input；非 vision 项
+            # 保持 Pi 默认 text-only。
+            _model_entries = [
+                model_catalog_entry(mid, mid, True) for mid in catalog_model_ids
+            ]
+            _model_entry = _model_entries[0]
+            self.spawn_model_id = llm_model
+            self.spawn_declared_image_input = model_entry_declares_image(_model_entry)
             _write_agent_text(PI_AGENT_DIR / "models.json",
                 json.dumps(
                     {
@@ -391,9 +516,7 @@ class PiRpcClient:
                                     "supportsDeveloperRole": False,
                                     "supportsReasoningEffort": False,
                                 },
-                                "models": [
-                                    {"id": llm_model, "name": llm_model, "reasoning": True}
-                                ],
+                                "models": _model_entries,
                             }
                         }
                     },
@@ -469,7 +592,14 @@ class PiRpcClient:
                 await asyncio.sleep(0.2)
 
     async def stop(self) -> None:
-        """Stop the Pi subprocess."""
+        """Stop the Pi subprocess (ADR-0288 / W07, vendor C14).
+
+        升序收敛，窗口分开记录：stdin EOF（vendor 有序 shutdown：dispose 等
+        tool settlement + credential writes）→ ``PI_GRACEFUL_STOP_TIMEOUT``（默
+        认 8s）内等自然退出 → 单次 SIGTERM → ``PI_TERM_STOP_TIMEOUT``（2s）→
+        SIGKILL → 收尸。绝不双发信号（vendor 语义：第二信号立即强退、截断
+        清理）；SIGTERM 只在 EOF 窗超时后才发（此刻清理要么完成要么卡死）。
+        """
         proc = self._process
         if proc is None:
             return
@@ -480,17 +610,40 @@ class PiRpcClient:
         # skipped reader/stderr task reclamation. Work on a local handle.
         try:
             proc = self._process
-            proc.terminate()
-            await asyncio.sleep(0.5)
-            if proc.poll() is None:
-                proc.kill()
-                # #810: SIGKILL 后必须 wait 收尸 —— 否则 node 子进程以 defunct
-                # 僵尸态驻留到解释器退出（懒回收依赖下一次 Popen 创建，而
-                # 单例桥关闭后不会再有）。每个 lifespan 周期泄一个僵尸。
+            _t0 = time.monotonic()
+            # 1) 有序：stdin EOF → vendor shutdown()（dispose 可合法耗时数秒）
+            _drain_and_close_stdin(proc)
+            try:
+                # proc.wait 是阻塞调用 —— offload 到 worker 线程，绝不冻结
+                # 事件循环上其他并发会话（#1438 同款纪律）。
+                await asyncio.to_thread(proc.wait, timeout=PI_GRACEFUL_STOP_TIMEOUT)
+                logger.info(
+                    "[PiRpcClient] orderly stop via stdin EOF after %.2fs",
+                    time.monotonic() - _t0,
+                )
+            except subprocess.TimeoutExpired:
+                # 2) EOF 窗超时：单次 SIGTERM（vendor 首信号=有序、第二=强退；
+                #    我们只发一次，绝不截断清理）。
+                proc.terminate()
                 try:
-                    proc.wait(timeout=2)
-                except (ProcessLookupError, subprocess.TimeoutExpired):
-                    pass
+                    await asyncio.to_thread(proc.wait, timeout=PI_TERM_STOP_TIMEOUT)
+                    logger.warning(
+                        "[PiRpcClient] SIGTERM stop after EOF window (%.2fs); "
+                        "orderly cleanup did not finish in %ss",
+                        time.monotonic() - _t0, PI_GRACEFUL_STOP_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired:
+                    # 3) 强制：SIGKILL + 收尸（#810：不留 defunct 僵尸）。
+                    proc.kill()
+                    try:
+                        await asyncio.to_thread(proc.wait, timeout=2)
+                    except (ProcessLookupError, subprocess.TimeoutExpired):
+                        pass
+                    logger.error(
+                        "[PiRpcClient] SIGKILL stop after %.2fs (EOF+SIGTERM "
+                        "windows both expired)",
+                        time.monotonic() - _t0,
+                    )
         finally:
             if self._process is proc:
                 self._process = None
@@ -511,11 +664,16 @@ class PiRpcClient:
                 pass
             self._stderr_task = None
 
-    async def _read_stderr(self) -> None:
-        """Read and log stderr lines from Pi subprocess to prevent OS pipe deadlock."""
+    async def _read_stderr(self, proc: Optional[subprocess.Popen] = None) -> None:
+        """Read and log stderr lines from Pi subprocess to prevent OS pipe deadlock.
+
+        G37（世代钉扎）：与 _read_responses 同款 —— 只读自己代际的 stderr。
+        """
+        if proc is None:
+            proc = self._process
         try:
-            while self._process and self._process.stderr:
-                line = await asyncio.get_running_loop().run_in_executor(None, self._process.stderr.readline)
+            while proc and proc.stderr:
+                line = await asyncio.get_running_loop().run_in_executor(None, proc.stderr.readline)
                 if not line:
                     break
                 line = line.strip()
@@ -558,21 +716,28 @@ class PiRpcClient:
             self._event_queue.put_nowait(item)
         self._event_queue.put_nowait(event)
 
-    async def _read_responses(self) -> None:
+    async def _read_responses(self, proc: Optional[subprocess.Popen] = None) -> None:
         """Read responses and events from Pi stdout.
 
         审计 AGENT-05：之前 Pi 进程退出时 readline 返回 ""，循环 break 但
         所有 _pending_requests 的 future 永远不会被 resolve -> 调用方挂 300s。
         现在退出时主动 fail 所有 pending 请求。
+
+        G37（世代钉扎）：``proc`` 是本 reader 所属的进程对象（start() 传入）。
+        respawn 换代后旧 reader 只忠于自己的进程 —— 既不读新进程的 stdout
+        （偷走新 reader 的事件），finally 也不把新代标记死亡/fail 新代的
+        pending（守卫 ``self._process is proc``）。
         """
+        if proc is None:  # 兼容旧调用形态：默认当前进程
+            proc = self._process
         try:
-            while self._process and self._process.stdout:
+            while proc and proc.stdout:
                 # Bounded read: cap a single line at MAX_STDOUT_LINE_BYTES so
                 # a runaway Pi payload can't OOM the reader thread. readline()
                 # has no length limit; we approximate one by reading in chunks
                 # and bailing if no newline appears within the budget.
                 line = await asyncio.get_running_loop().run_in_executor(
-                    None, self._readline_bounded
+                    None, self._readline_bounded, proc
                 )
                 if line is None:
                     # Line exceeded the budget without a newline. Drop it and
@@ -584,8 +749,8 @@ class PiRpcClient:
                         MAX_STDOUT_LINE_BYTES,
                     )
                     self._fail_all_pending("Pi response exceeded stdout byte budget")
-                    if self._process is not None:
-                        self._process.terminate()
+                    if proc is not None:
+                        proc.terminate()
                     break
                 if not line:
                     break
@@ -594,8 +759,27 @@ class PiRpcClient:
                     continue
                 try:
                     obj = json.loads(line)
+                    # G29（WP02）：原生 extension_ui_request（有 type + id，落在
+                    # 旧两分支之外被静默丢弃）→ 交给交互 sink；无人注册时告警
+                    # 丢弃（dialog 请求由 vendor timeout/abort 兜底，不悬挂）。
+                    if obj.get("type") == "extension_ui_request":
+                        sink = self._ui_request_sink
+                        if sink is None:
+                            logger.warning(
+                                "[PiRpcClient] extension_ui_request dropped (no sink; "
+                                "method=%s id=%s)",
+                                obj.get("method"), obj.get("id"),
+                            )
+                        else:
+                            try:
+                                sink(obj)
+                            except Exception:  # noqa: BLE001 — sink 故障不毒化读循环
+                                logger.exception(
+                                    "[PiRpcClient] ui request sink failed (id=%s)",
+                                    obj.get("id"),
+                                )
                     # Request response: has "type": "response" and "id"
-                    if obj.get("type") == "response" and obj.get("id"):
+                    elif obj.get("type") == "response" and obj.get("id"):
                         await self._handle_response(obj)
                     # AgentSessionEvent: has "type" but no "id"
                     elif "type" in obj and "id" not in obj:
@@ -607,6 +791,16 @@ class PiRpcClient:
         except Exception as e:
             logger.error(f"[PiRpcClient] Reader task crashed: {e}", exc_info=True)
         finally:
+            # G37（世代守卫）：本 reader 只在「它读的进程仍是当前进程」时才
+            # 应用死亡语义。旧代 reader（respawn 已换代 / stop() / is_alive()
+            # 已先行清场）不翻全局死亡旗、不清引用、不动新代的 pending ——
+            # 各先行路径自身已对旧代完成清算。
+            if self._process is not proc:
+                logger.info(
+                    "[PiRpcClient] stale reader of a replaced Pi generation "
+                    "exited (no cross-generation effects)"
+                )
+                return
             # Pi 进程退出 / reader 异常 -> fail 所有 pending 请求，避免 300s 挂起
             self._fail_all_pending("Pi process exited or reader stopped")
             # 标记为不可用（flag + 可等待的 asyncio.Event 同步翻转，让正在
@@ -670,7 +864,7 @@ class PiRpcClient:
         """Snapshot of currently pending request ids (abort-scoping)."""
         return set(self._pending_requests.keys())
 
-    def _readline_bounded(self) -> Optional[bytes]:
+    def _readline_bounded(self, proc: Optional[subprocess.Popen] = None) -> Optional[bytes]:
         """Read one line from Pi stdout, capped at MAX_STDOUT_LINE_BYTES.
 
         Returns the line (bytes, including newline) on success, b"" on EOF,
@@ -682,8 +876,14 @@ class PiRpcClient:
         event loop. Production buffered pipes use one size-bounded readline;
         minimal legacy pipe adapters retain the bounded read(1) compatibility
         path. Neither buffers an entire unbounded malformed line.
+
+        G37（世代钉扎）：reader 显式传入**自己代际的进程对象**；缺省（旧
+        测试/兼容调用形态）回落 self._process —— respawn 换代后旧 reader
+        不得偷读新进程的 stdout（会抢走新 reader 的事件流）。
         """
-        stdout = self._process.stdout
+        if proc is None:
+            proc = self._process
+        stdout = proc.stdout if proc is not None else None
         if stdout is None:
             return b""
         import io
@@ -719,6 +919,19 @@ class PiRpcClient:
         会卡住事件循环（所有并发协程被冻结）。现在用 run_in_executor 把
         write+flush 放到线程池，不阻塞事件循环。
         """
+        issued = await self.issue(command, data)
+        return await self.collect(issued, command)
+
+    async def issue(self, command: str, data: Optional[dict] = None) -> "IssuedRequest":
+        """G22-P1：request() 的**写相位** —— 只把命令字节写到 stdin 并登记
+        pending future，不等待响应。
+
+        供 turn 控制面（clear_queue/abort）在宿主 turn 交接门内完成「校验 +
+        写出」原子段：写出完成后才释放门，使 turn N 的控制 RPC 字节严格
+        先于 turn N+1 的 prompt 字节到达 vendor（单 stdin 流有序）。调用方
+        **必须**最终 await ``collect``（或取消 future），否则泄漏 pending 表
+        项（F19 语义由 collect 承担）。
+        """
         if self._process is None or self._process.stdin is None:
             raise PiRpcError("Pi process not started")
 
@@ -735,36 +948,83 @@ class PiRpcClient:
         future = asyncio.get_running_loop().create_future()
         self._pending_requests[request_id] = future
 
+        line = json.dumps(request) + "\n"
+        # #810: 在 executor 跳转前捕获本地句柄 —— stop() 可能在循环侧
+        # 校验之后、线程执行之前把 self._process 置 None，线程里再读
+        # self._process.stdin 会抛裸 AttributeError 而非 PiRpcError。
+        proc = self._process
+
+        async def _write_line_locked() -> None:
+            # G29（WP02）：与 send_ui_response 共用 _stdin_write_lock，保证
+            # 单行 write+flush 原子（并发 steer/abort/回答不撕裂 JSON 行）。
+            async with self._stdin_write_lock:
+                await self._write_stdin_line(proc, line)
+
         try:
-            line = json.dumps(request) + "\n"
-            # #810: 在 executor 跳转前捕获本地句柄 —— stop() 可能在循环侧
-            # 校验之后、线程执行之前把 self._process 置 None，线程里再读
-            # self._process.stdin 会抛裸 AttributeError 而非 PiRpcError。
-            proc = self._process
-
-            def _write_and_flush():
-                stdin = proc.stdin if proc is not None else None
-                if stdin is None:
-                    # stop() 并发清场 —— 分类为 PiRpcError 而非 AttributeError
-                    raise BrokenPipeError("Pi process stopped concurrently")
-                # Binary Popen (production) needs bytes; a text pipe keeps str.
-                payload = line if getattr(stdin, "encoding", None) else line.encode("utf-8")
-                stdin.write(payload)
-                stdin.flush()
-
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _write_and_flush)
-            result = await asyncio.wait_for(future, timeout=PI_RPC_TIMEOUT)
-            return result
-        except asyncio.TimeoutError:
-            raise PiRpcError(f"Pi request timeout: {command}")
+            await _write_line_locked()
         except (BrokenPipeError, OSError) as e:
-            raise PiRpcError(f"Pi pipe error: {e}")
-        finally:
-            # F19: pop unconditionally, not just on TimeoutError/pipe errors.
-            # A caller cancellation (CancelledError) previously leaked the
-            # registry entry — one dead future per cancelled request, and a
-            # late response for that id would resolve a future nobody awaits.
-            # Idempotent: the normal response path already popped the entry
-            # in _handle_response, so this is a no-op there.
+            # 写失败：立刻回收 pending 项（无响应会来解它）。
             self._pending_requests.pop(request_id, None)
+            future.cancel()
+            raise PiRpcError(f"Pi pipe error: {e}")
+        except BaseException:
+            # F19 对齐（review 修复轮 P3）：写相位等待中被取消（executor
+            # 跳转处 CancelledError）也要回收 pending 项——旧 request() 的
+            # finally 无条件 pop；写已落地时响应方对 pop 后的 id 静默忽略，
+            # pop 幂等无害。
+            self._pending_requests.pop(request_id, None)
+            raise
+        return IssuedRequest(id=request_id, command=command, future=future)
+
+    async def collect(self, issued: "IssuedRequest", command: Optional[str] = None) -> Any:
+        """G22-P1：request() 的**响应相位** —— 等待 ``issue`` 的响应并保持
+        ``request()`` 的异常/清理语义（超时→PiRpcError；F19 无条件弹表）。"""
+        cmd = command or issued.command
+        try:
+            return await asyncio.wait_for(issued.future, timeout=PI_RPC_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise PiRpcError(f"Pi request timeout: {cmd}")
+        finally:
+            # F19: pop unconditionally（幂等：_handle_response 成功路径已弹）。
+            self._pending_requests.pop(issued.id, None)
+
+    @staticmethod
+    async def _write_stdin_line(proc: Optional[subprocess.Popen], line: str) -> None:
+        """单行写出（executor 内执行 write+flush，#1438 纪律：不冻事件循环）。
+
+        G29（WP02）：issue() 与 send_ui_response() 的共享写原语 —— 调用方必须
+        持有 ``_stdin_write_lock`` 保证整行原子。本地 ``proc`` 句柄由调用方在
+        锁外捕获（stop() 并发清场分类为 BrokenPipeError）。
+        """
+
+        def _write_and_flush():
+            stdin = proc.stdin if proc is not None else None
+            if stdin is None:
+                # stop() 并发清场 —— 分类为 PiRpcError 而非 AttributeError
+                raise BrokenPipeError("Pi process stopped concurrently")
+            # Binary Popen (production) needs bytes; a text pipe keeps str.
+            payload = line if getattr(stdin, "encoding", None) else line.encode("utf-8")
+            stdin.write(payload)
+            stdin.flush()
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _write_and_flush)
+
+    async def send_ui_response(self, response: dict) -> None:
+        """G29（WP02）：单向写出 ``extension_ui_response``（原生 UI 子协议）。
+
+        与 :meth:`issue` 的关键差异：**不登记 pending future、不等待回执** ——
+        vendor 对 extension_ui_response 没有任何 RPC receipt（rpc-mode.ts
+        ``handleInputLine`` 命中 pending 即 resolve 并 return）。调用方据此把
+        状态记为「已写出」，续接观察来自扩展 resolve 回调或后续业务事件，
+        绝不在这里伪造「上游已确认」。
+        """
+        if self._process is None or self._process.stdin is None:
+            raise PiRpcError("Pi process not started")
+        line = json.dumps(response) + "\n"
+        proc = self._process
+        async with self._stdin_write_lock:
+            try:
+                await self._write_stdin_line(proc, line)
+            except (BrokenPipeError, OSError) as e:
+                raise PiRpcError(f"Pi pipe error (ui response): {e}")

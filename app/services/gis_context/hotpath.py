@@ -145,7 +145,7 @@ def _load_and_maybe_purge(
                 goal_revision = 0
             state_val = rec.state.value if hasattr(rec.state, "value") else str(rec.state)
             if is_terminal(state_val):
-                store.purge(mission_id)
+                store.purge(mission_id, org_id=org_id)
                 return None, "mission_terminal", goal_revision
     except Exception:  # noqa: BLE001 — mission lookup is a guard, not a gate
         pass
@@ -209,12 +209,16 @@ def _fetch_reuse_candidates(
             wc, dataset_fingerprints=fp_arg, limit=limit,
         )
         with SessionLocal() as db:
-            return find_reuse_candidates(
+            found = find_reuse_candidates(
                 db,
                 org_id=wc.org_id,
                 project_id=project_id,
                 query=query,
             )
+            # Lazy demotions are writes. The session close rolls them back
+            # unless this caller commits (retrieval documents caller-commit).
+            db.commit()
+            return found
     except Exception:  # noqa: BLE001 — reuse hints are additive
         return []
 
@@ -675,10 +679,9 @@ async def bind_session_mission(
         # Covers unknown mission, foreign-org mission (invisible) and
         # terminal mission (purged on load) — one honest code each.
         return False, (miss or "no_context")
-    # Tool-shaped callers pass no project: the mission's own record is the
-    # server-side project attribution (never model-supplied). Callers that
-    # DO pass a project (chat path) are still gated against it.
-    project = str(project_id or "").strip() or str(wc.project_id or "")
+    # Do not substitute wc.project_id. That self-compare lets a caller who
+    # omitted project_id pass a cross-project mission gate.
+    project = str(project_id or "").strip()
     if not scope_renderable(wc, org_id=org, project_id=project):
         return False, "scope_mismatch"
     persisted = await _persist_binding(sid, mid, org)
@@ -804,10 +807,7 @@ async def request_revalidation(
     if wc is None:
         out["reason"] = miss or "no_context"
         return out
-    # Tool-shaped callers pass no project: the mission's own record is the
-    # server-side project attribution (never model-supplied). Callers that
-    # DO pass a project (chat path) are still gated against it.
-    project = str(project_id or "").strip() or str(wc.project_id or "")
+    project = str(project_id or "").strip()
     if not scope_renderable(wc, org_id=org, project_id=project):
         out["reason"] = "scope_mismatch"
         return out

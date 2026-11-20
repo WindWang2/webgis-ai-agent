@@ -88,6 +88,11 @@ export function EditProposalCard({ proposal, disabled, onDecide }: EditProposalC
     repair_geometry: t('chat.editProposal.opRepairGeometry'),
     move_by: t('chat.editProposal.opMoveBy'),
     snap_to_ref: t('chat.editProposal.opSnapToRef'),
+    create_features: t('chat.editProposal.opCreateFeatures'),
+    delete_features: t('chat.editProposal.opDeleteFeatures'),
+    replace_geometry: t('chat.editProposal.opReplaceGeometry'),
+    split_feature: t('chat.editProposal.opSplitFeature'),
+    merge_features: t('chat.editProposal.opMergeFeatures'),
   };
   const terminal = ['applied', 'rejected', 'stale', 'conflicted', 'expired'].includes(proposal.status);
   const busy = proposal.status === 'approving';

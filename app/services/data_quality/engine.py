@@ -42,6 +42,9 @@ logger = logging.getLogger(__name__)
 _MAX_RESULT_ROWS = 64
 #: 同步路径默认扫描上限（大数据集应走 durable job 路径）。
 _DEFAULT_MAX_SCAN = 20000
+#: 整次评估与单规则时间预算。超时规则标 skipped（reason=budget），不无限跑。
+_DEFAULT_EVAL_DEADLINE_S = 120.0
+_DEFAULT_RULE_BUDGET_S = 30.0
 
 _OVERALL_RANK = {"fail": 2, "warn": 1, "pass": 0}
 
@@ -85,26 +88,45 @@ def _applies_to_kind(spec: RuleSpec, kind: str) -> bool:
     return kind in ("vector", "table")
 
 
+def _skipped_budget(spec: RuleSpec) -> Dict[str, Any]:
+    return {
+        "rule_id": spec.rule_id, "rule_type": spec.rule_type,
+        "severity": spec.severity, "status": "skipped",
+        "message": "reason=budget", "affected_count": 0,
+        "metric": {"reason": "budget"}, "autofixable": False, "fix_operations": [],
+        "duration_ms": 0,
+    }
+
+
 def evaluate_payload(
     payload: Dict[str, Any],
     rule_defs: Optional[List[Any]] = None,
     *,
     max_scan: int = _DEFAULT_MAX_SCAN,
+    deadline_s: float = _DEFAULT_EVAL_DEADLINE_S,
+    rule_budget_s: float = _DEFAULT_RULE_BUDGET_S,
 ) -> Dict[str, Any]:
     """纯内存评估 → 有界报告 dict（不落库；持久化见 :func:`persist_report`）。
 
     ``rule_defs`` 缺席 = 内置默认规则集；dict/YAML 节点经 parse_rule_defs。
+    整次 ``deadline_s`` 与每规则 ``rule_budget_s`` 到期后，剩余/当前规则标
+    ``skipped``（``reason=budget``），不再继续空转。
     """
     specs: List[RuleSpec] = (
         parse_rule_defs(rule_defs) if rule_defs else list(DEFAULT_RULES)
     )
     kind, features, raster_stats, crs = _extract_inputs(payload)
     started = time.perf_counter()
+    eval_deadline = time.monotonic() + max(0.0, float(deadline_s))
+    force_budget = float(deadline_s) <= 0.0
     results: List[Dict[str, Any]] = []
     diagnostics: List[str] = []
 
     for spec in specs:
         if not spec.enabled:
+            continue
+        if force_budget or time.monotonic() >= eval_deadline:
+            results.append(_skipped_budget(spec))
             continue
         if not _applies_to_kind(spec, kind):
             results.append({
@@ -119,9 +141,11 @@ def evaluate_payload(
         if fn is None:  # 词表与注册表漂移防御（import 期另有 assert 兜底）
             diagnostics.append(f"no_impl:{spec.rule_type}")
             continue
+        rule_deadline = min(eval_deadline, time.monotonic() + max(0.0, float(rule_budget_s)))
         ctx = RuleEvalContext(
             kind=kind, features=features, raster_stats=raster_stats,
             crs=crs, params=dict(spec.params), max_scan=max_scan,
+            deadline_monotonic=rule_deadline,
         )
         t0 = time.perf_counter()
         try:
@@ -281,8 +305,8 @@ def run_quality_evaluate(
 ) -> Dict[str, Any]:
     """大数据集评估执行体：session ref 载荷 → 评估 → 落库 → job 回写。
 
-    - **恢复语义**：入口先查同 (session, ref, ruleset) 的 completed 报告，
-      命中则复用（幂等，worker 重试不重复评估）；
+    - **恢复语义**：同 (session, ref, ruleset, 载荷指纹) 的 completed 报告
+      才复用（幂等，worker 重试不重复评估；载荷被覆盖则重评）；
     - 载荷不可读 → 落 failed 报告行（status=failed）+ job 置失败；
     - job 回写经 DurableJobStore（progress/result_ref），但 store 异常
       不吞评估结果 —— 报告已落库，job 状态由 stale 清扫兜底。
@@ -319,28 +343,6 @@ def run_quality_evaluate(
         if job_id:
             _mark_job_failed(job_id, "payload unreadable: session not owned")
         return {"status": "failed", "report_id": report_id}
-
-    with SessionLocal() as db:
-        existing = db.execute(
-            select(QualityReport)
-            .where(
-                QualityReport.session_id == (str(session_id)[:255] if session_id else None),
-                QualityReport.target_ref == str(ref)[:255],
-                QualityReport.ruleset_digest == ruleset,
-                QualityReport.status == "completed",
-            )
-            .order_by(QualityReport.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        if existing is not None:
-            dq_metrics.observe_reuse()
-            if job_id:
-                _mark_job_completed(job_id, existing.id, existing.overall_status)
-            return {
-                "status": "completed", "reused": True,
-                "report_id": existing.id,
-                "overall_status": existing.overall_status,
-            }
 
     from app.core.async_runner import run_sync
 
@@ -398,6 +400,35 @@ def run_quality_evaluate(
         payload = payload_raw
     else:
         payload = {"geojson": payload_raw}
+    # 复用必须比对载荷指纹：同一 ref 可被 overwrite，alias 也可改指向。
+    # 指纹不一致则重评，避免把旧数据的质量报告交还给新载荷。
+    try:
+        identity = _payload_fingerprint(payload)
+    except Exception:  # noqa: BLE001 - 指纹失败 = 不可复用（宁可重评）
+        identity = ""
+    if identity:
+        with SessionLocal() as db:
+            existing = db.execute(
+                select(QualityReport)
+                .where(
+                    QualityReport.session_id == (str(session_id)[:255] if session_id else None),
+                    QualityReport.target_ref == str(ref)[:255],
+                    QualityReport.ruleset_digest == ruleset,
+                    QualityReport.dataset_identity == identity[:128],
+                    QualityReport.status == "completed",
+                )
+                .order_by(QualityReport.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if existing is not None:
+                dq_metrics.observe_reuse()
+                if job_id:
+                    _mark_job_completed(job_id, existing.id, existing.overall_status)
+                return {
+                    "status": "completed", "reused": True,
+                    "report_id": existing.id,
+                    "overall_status": existing.overall_status,
+                }
     try:
         report = evaluate_payload(payload, rule_defs, max_scan=max_scan)
     except Exception as exc:  # noqa: BLE001 — 评估器自身异常也落 failed 报告

@@ -101,6 +101,22 @@ def _bounded_canvas(raw: Any) -> Optional[dict[str, int]]:
     return {"width": vals[0], "height": vals[1]}
 
 
+class ChatAttachmentRef(BaseModel):
+    """G36（ADR-0291）：聊天附件引用 —— 只携 evidence ref，不携字节。
+
+    bytes 仅经受权 intake 端点（multipart）进入 blob store；本 DTO 是
+    ChatRequest 的加性字段（256KB 整闸不受影响）。服务端在 turn 发送时
+    复验归属/存在/约束（bridge ``_resolve_turn_images``）。
+    """
+
+    evidence_id: str = Field(..., pattern=r"^vev-[0-9a-f]{16}$")
+    purpose: str = Field(
+        "context",
+        max_length=32,
+        description="用途标记（context/verify_reference 等；回执披露用）",
+    )
+
+
 class ChatRequest(BaseModel):
     """聊天请求。"""
 
@@ -149,6 +165,10 @@ class ChatRequest(BaseModel):
     # /canvas-actions 同源同 ingest，服务端内容寻重防双计）。None = 旧
     # 客户端 / 本轮无画布动作。
     canvas_actions: Optional[CanvasActionsEnvelopeDTO] = None
+    # G36（ADR-0291）：受权视觉证据 refs（当前图/局部/参考图）。ref-only
+    # 线格式 —— bytes 不进请求体；发送时服务端复验归属与约束。
+    attachments: list[ChatAttachmentRef] = Field(
+        default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def _cap_map_state_size(self):
@@ -217,6 +237,9 @@ class ChatResponse(BaseModel):
     content: str
     # SEC-08：新建匿名会话时由服务端签发，前端需存储并在后续请求头里回传。
     owner_token: Optional[str] = None
+    # G43（ADR-0295）：本轮上下文装配回执摘要（有界；完整回执按
+    # session+turn 查询 context-receipts 端点）。None = 无回执（legacy）。
+    turn_receipt: Optional[dict] = None
 
 
 class MapStatePushRequest(BaseModel):
@@ -295,6 +318,51 @@ class CartographicRuntimeObservationRequest(BaseModel):
     # scene3d/status.ts 同源；非法载荷 → None 按证据缺席（诚实降级，
     # 绝不 422 整个观察）。
     scene3d_assets: Optional[list[dict[str, Any]]] = None
+    # G25 逐画幅真实观察（增维不换通道 —— 与 scene3d_assets 同款纪律）：
+    # 浏览器多画幅运行时按 frame_id 上报每帧模式/落定 revision/快照指纹。
+    # 词表 = OBSERVATION_MODES 去掉 export_verified（浏览器绝不冒充导出
+    # 验证）；非法载荷 → None 按证据缺席（不 422 整个观察）。
+    frames: Optional[list[dict[str, Any]]] = None
+
+    @field_validator("frames", mode="before")
+    @classmethod
+    def _normalize_observation_frames(cls, value: Any) -> Any:
+        # 与 canvas/scene3d_assets 同款：非 list/超界/词表外 mode/非法形状
+        # → None（证据缺席）；合法条目只保留封闭投影（多余键不透传）。
+        # 整批 ≤16（MAX_PLAN_FRAMES=12 之上留余量，取**最新** 16 条）。
+        if not isinstance(value, list):
+            return None
+        allowed_modes = {
+            "live_observed", "snapshot", "not_observed", "stale_observation",
+        }
+        out: list[dict[str, Any]] = []
+        for entry in value[-16:]:
+            if not isinstance(entry, dict):
+                continue
+            frame_id = entry.get("frame_id")
+            mode = entry.get("mode")
+            if not isinstance(frame_id, str) or not frame_id:
+                continue
+            if not isinstance(mode, str) or mode not in allowed_modes:
+                continue
+            item: dict[str, Any] = {
+                "frame_id": frame_id[:64],
+                "mode": mode,
+            }
+            revision = entry.get("mapspec_revision")
+            if isinstance(revision, int) and not isinstance(revision, bool) and revision >= 0:
+                item["mapspec_revision"] = revision
+            content_revision = entry.get("content_revision")
+            if isinstance(content_revision, int) and not isinstance(content_revision, bool):
+                item["content_revision"] = content_revision
+            fingerprint = entry.get("fingerprint")
+            if isinstance(fingerprint, str) and fingerprint:
+                item["fingerprint"] = fingerprint[:96]
+            source_error = entry.get("source_error")
+            if isinstance(source_error, str) and source_error:
+                item["source_error"] = source_error[:160]
+            out.append(item)
+        return out or None
 
     @field_validator("canvas", mode="before")
     @classmethod
@@ -549,6 +617,12 @@ class SessionMessage(BaseModel):
     role: str
     content: str
     timestamp: float
+    # G36（ADR-0291）：用户消息的视觉附件元数据（恢复渲染缩略图/来源用；
+    # 缺席 = 无附件 —— 旧消息零改动）。
+    attachments: Optional[list[dict]] = None
+    # G43（ADR-0295）：用户消息的本轮上下文回执摘要（缺席 = 无回执 ——
+    # legacy/早于本功能的 turn，UI 显示 coverage limited）。
+    context_receipt: Optional[dict] = None
 
 
 class SessionDetailResponse(BaseModel):

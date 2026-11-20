@@ -90,10 +90,10 @@ describe('ComparisonView · 渲染门', () => {
     const divider = screen.getByTestId('comparison-divider');
     expect(divider).toHaveAttribute('role', 'slider');
     expect(divider).toHaveAttribute('aria-valuenow', '0.4');
-    // jsdom 的 toHaveStyle 会做 0→0px 归一化差异，这里直接断言内联 clip-path。
-    expect(screen.getByTestId('comparison-secondary-map').style.clipPath).toBe(
-      'inset(0 0 0 40%)',
-    );
+    // Compare CSS values through CSSOM: jsdom normalizes unitless zero to 0px.
+    expect(screen.getByTestId('comparison-secondary-map')).toHaveStyle({
+      clipPath: 'inset(0 0 0 40%)',
+    });
     // 副图拿到的底图样式与主图同源（样式 parity 契约）
     expect(rmg.lastProps?.mapStyle).toEqual(STUB_STYLE);
   });
@@ -108,13 +108,16 @@ describe('ComparisonView · 分割把手', () => {
     const divider = screen.getByTestId('comparison-divider');
     fireEvent.keyDown(divider, { key: 'ArrowRight' });
     expect(useHudStore.getState().comparison.position).toBeCloseTo(0.52, 10);
+    expect(screen.getByTestId('comparison-secondary-map')).toHaveStyle({ clipPath: 'inset(0 0 0 52%)' });
     fireEvent.keyDown(divider, { key: 'ArrowLeft' });
     expect(useHudStore.getState().comparison.position).toBeCloseTo(0.5, 10);
     // 两端键：Home/End 直接到边界
     fireEvent.keyDown(divider, { key: 'End' });
     expect(useHudStore.getState().comparison.position).toBe(1);
+    expect(screen.getByTestId('comparison-secondary-map')).toHaveStyle({ clipPath: 'inset(0 0 0 100%)' });
     fireEvent.keyDown(divider, { key: 'Home' });
     expect(useHudStore.getState().comparison.position).toBe(0);
+    expect(screen.getByTestId('comparison-secondary-map')).toHaveStyle({ clipPath: 'inset(0 0 0 0%)' });
   });
 });
 
@@ -167,9 +170,9 @@ describe('ComparisonView · kind 切换（W6 真双面板）', () => {
     render(<ComparisonView primaryMapRef={primaryRef} mapStyle={STUB_STYLE} />);
 
     expect(screen.getByTestId('comparison-divider')).toBeInTheDocument();
-    expect(screen.getByTestId('comparison-secondary-map').style.clipPath).toBe(
-      'inset(0 0 0 40%)',
-    );
+    expect(screen.getByTestId('comparison-secondary-map')).toHaveStyle({
+      clipPath: 'inset(0 0 0 40%)',
+    });
   });
 });
 

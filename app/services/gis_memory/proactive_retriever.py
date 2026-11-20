@@ -305,6 +305,7 @@ class ProactiveRetriever:
         self._db_factory = db_factory
         self._staleness_s = float(staleness_s)
         self._last_sync: Dict[tuple, float] = {}
+        self._last_sync_cap = 1024
         self._lock = threading.RLock()
 
     # ── 配置与生命周期 ────────────────────────────────────────────
@@ -391,6 +392,11 @@ class ProactiveRetriever:
                 loaded += self._load_scope(db, org_id, SCOPE_USER, user_id)
             with self._lock:
                 self._last_sync[(org_id, session_id, project_id, user_id)] = time.monotonic()
+                overflow = len(self._last_sync) - self._last_sync_cap
+                if overflow > 0:
+                    oldest = sorted(self._last_sync, key=self._last_sync.get)[:overflow]
+                    for key in oldest:
+                        self._last_sync.pop(key, None)
             return loaded
         except Exception as exc:  # noqa: BLE001 — 同步失败降级用现有索引
             logger.debug("[GISMemory] sync_org failed org=%s: %s", org_id, exc)

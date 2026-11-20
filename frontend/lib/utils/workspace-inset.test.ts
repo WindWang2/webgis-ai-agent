@@ -4,7 +4,10 @@ import {
   PANEL_GAP,
   MAP_INSET_MAX_VIEWPORT_RATIO,
   mapInsetLeft,
+  mapInsetLeftStyle,
   mapChromeLeft,
+  effectivePanelWidth,
+  PANEL_WIDE_MAX,
 } from './workspace-inset';
 
 /**
@@ -22,6 +25,19 @@ describe('workspace-inset', () => {
   it('mapChromeLeft: 展开时容器已避开面板只需呼吸间距，收起时避开 rail', () => {
     expect(mapChromeLeft(true)).toBe(16);
     expect(mapChromeLeft(false)).toBe(RAIL_W + PANEL_GAP); // 60
+  });
+
+  it('mapChromeLeft: mobile 档 rail 在底部，收起时只留间距', () => {
+    expect(mapChromeLeft(false, { railVisible: false })).toBe(PANEL_GAP);
+    expect(mapChromeLeft(true, { railVisible: false })).toBe(16);
+  });
+
+  it('effectivePanelWidth: 宽视图占约半屏（上限 760），且不窄于常规宽度', () => {
+    expect(effectivePanelWidth(330, false, 1440)).toBe(330);
+    expect(effectivePanelWidth(330, true, 1440)).toBe(1440 * 0.5 - RAIL_W - PANEL_GAP); // 660：与 mapInsetLeft 的 50% 上限恰好对齐
+    expect(effectivePanelWidth(330, true, 1920)).toBe(PANEL_WIDE_MAX); // 760 封顶
+    expect(effectivePanelWidth(420, true, 900)).toBe(420); // 窄视口退化为常规
+    expect(effectivePanelWidth(330, true, 0)).toBe(330); // SSR 无视口
   });
 });
 
@@ -65,5 +81,13 @@ describe('workspace-inset — narrow viewport clamp (#999)', () => {
   it('收起时恒为 0（窄视口也一样）', () => {
     setViewportWidth(375);
     expect(mapInsetLeft(false, 420)).toBe(0);
+  });
+});
+
+
+describe('SSR-safe CSS inset', () => {
+  it('keeps a viewport clamp in CSS instead of reading window while rendering', () => {
+    expect(mapInsetLeftStyle(true, 330)).toBe('min(390px, 50vw)');
+    expect(mapInsetLeftStyle(false, 330)).toBe('0px');
   });
 });

@@ -1,0 +1,132 @@
+# G19-TYPED-FIELD-COMPUTE：类型化字段计算与可复现派生属性工作台
+
+## 问题与用户获得的行为
+
+当前 master 已有属性编辑、数据准备、联邦连接、过滤与统计，但用户想把「人口 / 面积平方千米」「两年变化率」「按条件形成类别」「统一行政区代码」「按明确时区提取月份」变成**可复用、可查询、可制图**的新列时，只能下载到外部表格软件再传回，或把整表交给模型。
+
+本 PR 提供一条完整闭环：
+
+| 步骤 | 用户/模型可做的事 |
+|---|---|
+| 发现 | 数据准备 tab 内的「字段计算」面板与 4 个 `field_compute_*` Pi 工具；`catalog` 列出函数集/范围/预算 |
+| 构造 | 选来源 ref → 字段搜索 → 写 `{中文 字段名}` 安全公式（或提交 IR）→ 声明单位/时区/作用范围/错误策略 |
+| 预览 | 采样 before/after、依赖字段、输入/输出类型、单位与量纲、派生量分子分母、null/error 计数与有限示例、预算预估；明确标注 sample/estimate |
+| 确认 | generation 失效 + 迟到响应丢弃；确认绑定 `confirmation.params_fingerprint` |
+| 生成 | 全量派生 → 新 `ref:fc-*` → 收据/谱系/artifact 登记 → 结果表 → 加载到地图/后续分级图 |
+| 找回 | 默认 `session_ref`（如实披露生命周期）；显式 `project_id` 时写真实磁盘项目清单，可重开找回公式与来源 |
+
+**结果**：原件属性/几何不变；输入版本、schema、scope、AST/函数集版本、单位/时区/错误策略共同锚定计划指纹；预览与全量共用同一解释器；刷新后 `output_ref` 可读、字段可用于既有制图工具。
+
+## 实现边界（明确不做）
+
+- **不是**任意 Python/JS/SQL 执行器：只有 6 类闭合 IR 节点、28 个白名单函数；无 `eval`/`exec`/import/文件/网络/属性反射/系统时钟/随机数。
+- **不改** `data_preparation` 既有 6 个步模型、executor、收据、7 个 API 端点；不改 MapSpec schema、Pi runtime/bridge、ToolRegistry、G13 资格政策、全局 UI 主题/布局/面板宽度。
+- **不接管** G14 原件编辑/undo journal、G17 导入协议、G18 下载器、G15/G16/G20/G21 的 schema 子模型、G09 批量分析、#2022 自动刷新、#2032 UI 重设计。
+- **不占用 ADR 数字编号**（仓库已有 0286/0287 重号，且与并行 PR 冲突）：契约登记在 `planning/G19-TYPED-FIELD-COMPUTE/INTERFACES.md` + 域模块 docstring。
+
+## 关键设计
+
+| 面 | 做法 |
+|---|---|
+| 类型与缺失 | bool 不是整数、空串不是 0、null 不隐式变值；除零/溢出/非有限为行级 error；`abort`/`null` 策略显式 |
+| 科学语义 | 字段名只是提示；单位必须 user-declared；加减同量纲同标尺，乘除保留分子/分母证据；`percent`↔`fraction` 数值标尺与物理倍率显式区分 |
+| 几何 | 复用 `crs_safety.classify_crs` + `pyproj.Geod` / shapely；3857 与 assumed/unknown CRS 阻断，但**不影响同一计划里不依赖几何的列**；洞/多部件/跨经线披露 |
+| 作用范围 | `all_rows` / 受限 `predicate` / 可靠 `selection`（完整+revision+稳定唯一 ID）；截断/过期一律拒；范围计算保留全体行，`subset_export` 是独立显式操作 |
+| 版本锚 | 一次性冻结一致快照，所有批次只读它；发布前二次核对内容+schema，变化即 `SNAPSHOT_CHANGED` 中止且不发布；`STALE_PLAN` 拒绝旧计划 |
+| 原子登记 | compute→write→register→publish；收据落盘是 ready 必要条件；取消/写入失败不发布半成品；幂等键含内容锚 |
+| 精度 | 大整数字面量编译期拒；数据中的大整数以文本写出并披露 `bigint_as_string`，不静默舍入 |
+| 生成物 | 用户帮助文档由 `function_help()` + `contracts` + `CANONICAL_UNITS` 经域内 `gen_help.py` 生成，不是手写清单 |
+
+## 共享文件接线（全部纯新增行，无格式化/重命名）
+
+`app/main.py`（+2）、`app/tools/__init__.py`（+1）、`frontend/lib/i18n/messages.ts`（+5）、`frontend/components/sidebar/data-sources-tab.tsx`（+2）、`scripts/generate_endpoint_scope_matrix.py`（+1 条 `DOMAIN_RULES`）。生成物 `tests/quality/snapshots/openapi.json`、`docs/api-docs.md`、`docs/dev/endpoint-scope-matrix.csv` 按本分支当前版本独立完成并随 PR 提交，不留给用户/合并者。与并行 PR 的唯一潜在冲突段是 `data-sources-tab.tsx` 的 prepare panel 内部挂载行。
+
+## 已执行的验证（如实区分四类）
+
+**✅ 本地通过**
+
+| 项 | 结果 |
+|---|---|
+| `pytest tests/data/test_field_compute_v1.py -q --no-cov` | **44 passed** |
+| `pytest tests/data/test_field_compute_review_v1.py -q --no-cov` | **25 passed**（三轮独立评审修复的针对性回归） |
+| `pytest tests/data/test_field_compute_api_v1.py -q --no-cov` | **8 passed**（真实 ASGI 路由 + 鉴权 + cancel 端点） |
+| `pytest tests/unit/test_field_compute_tools_v1.py -q --no-cov` | **6 passed**（真实 `ToolRegistry.dispatch`） |
+| 四份合并复跑 | **83 passed（47.71s）= 44 + 25 + 8 + 6** |
+| `pytest tests/quality/test_api_compatibility.py tests/test_api_docs_drift.py tests/test_endpoint_scope_matrix.py -q --no-cov` | **23 passed**（刷新生成物 + schema 消歧修复后） |
+| `vitest run <组件 + 错误解析 + i18n 门禁> --pool=threads --maxWorkers=1` | **21 passed**（组件 8 + 错误解析 3 + i18n 键完整性 10） |
+| `ruff check`（全部新增/改动 Python） | All checks passed |
+| `git diff --check` / `git diff --cached --check` | 通过 |
+| `tsc --noEmit` / `eslint <新增前端文件>` | 新增文件 0 类型错误 / 0 警告（8 个既有 `scene3d/*` 错误隔离） |
+| i18n zh/en `fieldCompute.json` | 143 / 143 键一致 |
+| 21 个用户与故障场景 | 见 `planning/G19-TYPED-FIELD-COMPUTE/TEST_MATRIX.md`（UI 单列等边界如实声明） |
+
+**⚠️ 既有失败（干净 base `8167052` 可复现，位于未改动文件）**
+- `tests/data/test_preparation_plan_v1.py`：24 passed / 9 failed —— `dataset_semantics/store.py:252` 写 `dsd-v1:<sha>.json`，Windows 冒号非法（WinError 123）。
+- `tsc --noEmit`：8 个错误全部在 `lib/map-kit/scene3d/*`（缺 `three` 依赖 / implicit any）。
+- 本 PR 的 descriptor/provenance/artifact 登记一律 additive，失败以 `descriptor_minted=false` + `degraded` 如实披露；**成功路径不以该写入成功为必要条件**。不删测试、不放宽容差、不改 golden。
+
+**🚧 环境阻塞 / 未运行**
+- 真实 Pi 进程 + stub LLM 全链路 → MapSpec mutation → 浏览器渲染回执：本环境无 Node extension/runtime 与渲染服务；已用真实 `ToolRegistry.dispatch` 覆盖「工具→服务→成果→既有分类引擎」的数据面闭环，MapSpec/渲染保持 `not_evaluated`，不伪造。
+- 前端全量构建 / 全量 Vitest / Playwright 浏览器旅程：资源纪律与同机 4 个 worktree 并行下未运行；只跑定向组件测试与静态检查。
+- 有界基准已真实执行：Windows AMD64 / Python 3.13.9，5,000 行 × 3 列、batch 2,000，耗时 **1.008s**、`tracemalloc` 峰值 **1.81 MiB**（仅解释器执行期新增分配，不含输入构造与冻结深拷贝）；**万行级基准未跑**，不据此承诺 10 万/千万行能力。
+- **线上 CI：按授权不等待、不轮询；未关闭或降低任何门禁。**
+
+## 独立评审（review → fix → rereview）
+
+独立 reviewer（未参与核心实现、非前端实现者）冷读完整 diff 后判定「当前不可进入 PR」，列出 **4 个 P1 + 9 个影响验收的 P2**。全部按最小集合修复并补回归，详见 `planning/G19-TYPED-FIELD-COMPUTE/REVIEW.md`：`tests/data/test_field_compute_review_v1.py` 12 项针对性回归全部通过。
+
+关键修复：① 契约模型加 `FieldCompute` 前缀，重生成三份生成物并验证既有 OpenAPI 短名/`$ref` 零变化；② 项目保存失败降级 `persistence` 并如实披露；③ 发布顺序改为「收据草稿闸门 → store → 登记 → 已发布收据」，收据落盘失败时零可见半成品；④ `datetime_part` 用表达式自带时区；⑤ 幂等命中补做项目保存；⑥ `computed_rows` 真实统计；⑦ abort 下几何阻断只降级该列；⑧ 新增服务端 cancel 端点并联动前端、入图失败移除占位图层；⑨ 稳定键收据/manifest 不截断、弱引用锁、UI 单列声明；另修 owner 语义、错误信封解析、组件夹具与 lint。
+
+### 第二轮复审（两位独立 reviewer 冷读 `031da7e5c`）
+
+| Reviewer | 结论 |
+|---|---|
+| 第一轮同一 reviewer | 10/13 彻底修复、2 项部分修复、1 项以如实声明达成；新发现 **1 个 P1**（最终已发布收据 upsert 失败仍有可见半成品，且稳定键写失败时 ring 里 `published=True` 会被幂等命中「未发布」成果）+ **2 个 P2**（cancel 端点未包 typed 映射返回 500；项目升级残留 `PROJECT_SAVE_FAILED`） |
+| 全新冷读 reviewer | 13/13 全部清零（逐条 `file:line` + OpenAPI `$ref` 递归比对）；新发现 **1 个 P2**（`_CANCEL_REQUESTS` 无界 `set`，对非执行中计划取消会永久残留键并让后续重提首批 `CANCELLED`） |
+
+已全部修复（本轮 commit）：
+
+1. **发布面探测**：`probe_publish()` 在草稿闸门同时探测 `field_compute/` 与 `by_key/`（mkdtemp + fsync + remove），把稳定键失败面提前到 store 与任何登记之前。
+2. **写入顺序 + 回滚**：稳定键先写、ring 后写，ring 失败即删刚写的稳定键；最终 upsert 失败时 `delete_ref` 撤销 session ref、撤销项目清单条目，回滚不完整则在错误 detail 列出残留码。⇒ 「未发布成果」既不可读、也不能被幂等命中。
+3. **升级清理**：项目升级成功清除 `PROJECT_SAVE_FAILED` 并检查收据写回结果，UI 不再自相矛盾。
+4. **取消语义**：`_ACTIVE_EXEC` 在取锁前登记、`finally` 清理；`request_cancel` 仅对执行中计划返回 True；`_CANCEL_REQUESTS` 改为带 TTL 的字典；cancel 端点包 `_raise_typed`（不存在计划 → typed 404），并补真实 ASGI 覆盖。
+5. **状态机对齐**：`cancelled` 在 preview/execute 都是可恢复态。
+6. **前端**：合法空 `FeatureCollection` 不再报加载成功；取消结果三态（已请求 / 服务端无活跃执行 / 未确认）分别用不同文案，不再无条件宣称已服务端取消。
+
+### 第三轮复审（全新 reviewer 冷读 `9461505c9`）
+
+4 个遗留项中 3 项判定已修（发布原子性、cancel typed 404、升级清理），另发现 **3 个功能性 P2 + 2 项证据映射偏差**：
+
+| 发现 | 修复 |
+|---|---|
+| `_execute_locked` 内层 `finally` 无条件 pop 取消键：排队执行时先完成者会清掉取消 | 改为「仅当本次是最后一个活跃执行才 pop」；补两并发任务都必须 `CANCELLED` 的回归 |
+| `_maybe_upgrade_project` 失败分支不再追加 `PROJECT_SAVE_FAILED` | 恢复追加（去重），`session_ref` 与降级标记一致；补回归 |
+| 最终 upsert 失败未删除稳定键；ring 失败删键失败无人重试/披露 | 新增 `receipt.drop_published()` 由 service 回滚调用，失败写入 `STABLE_KEY_ROLLBACK_FAILED` residual 码；`_prune_cancel_requests` 不再裁剪有活跃执行的 key；补 receipt 层与 residual 两项回归 |
+| 证据映射：行 2 的测试没走 `_append_receipt_sync` 真实逻辑；行 8 的组件测试未覆盖空集合/取消三态 | 新增 receipt 层 ring 失败测试；组件测试新增「空 FeatureCollection 不报成功」「`cancelled=false` → `cancelNoActive`」两项 |
+
+**如实更正**：原表述「任一次写入失败都不会留下已发布副本」已改为「尽力回滚；删除失败以 residual 码披露」。additive 登记（descriptor/provenance/artifact）在发布失败后**不删除**（registry 无删除 API），它们指向已删除 ref，不构成可读成果；这是已知限制，不声称「完全无痕」。
+
+### 第四轮复审（全新 reviewer 冷读 `9461505c9..2efb7fe03`）
+
+**结论：4 项全部已修复、无阻塞，可以进入 PR。** 另给 3 条 P3 建议，已全部落实：
+
+1. 幂等短路前先 `_check_cancel`：排队执行期间用户已取消时，不能因为「成果已存在」把本次提交判成功（service.py `_execute_locked`）。
+2. 升级失败降级回写台账：`_maybe_upgrade_project` 失败路径也 `append_receipt`，重开/查询能看到 `PROJECT_SAVE_FAILED`（不再只在本次响应里）。
+3. 测试证据加固：`drop_published` 增成功删除路径用例（同时撤 ring 记录，否则 fallback 仍命中）；ring 失败用例在抛错前断言稳定键已存在（防止「实现根本不写键」的假通过）；组件取消用例改 `waitFor`。
+
+## 与其他 PR 的关系
+
+- 开放 `#2032`（UI 重设计）：只在 prepare panel 内加一行挂载，不动主题/布局/侧栏/面板宽度；冲突段已在 `INTERFACES.md §2` 列出。
+- 开放 `#2022`（G10 刷新）：不做自动刷新；提交前版本重核与 `SNAPSHOT_CHANGED` 是独立的计算一致性语义。
+- 开放 `#2021`（G11 简报）与 dependabot：不碰。
+- **并行 PR `#2073`（G13）与 `#2075`（G14）**：用 `gh api pulls/<n>/files` 分页核查 changed files，与我的 9 个共享接线/生成物文件**零重叠**（`#2075` 54 个文件全部在 `feature_edit/*` 与 `feature_edits` 路由/schema 内），无需冲突处理；G13/G14 的领地本 PR 不触碰。
+- **共享生成物是真实的跨 PR 冲突面**：`tests/quality/snapshots/openapi.json` / `docs/api-docs.md` / `docs/dev/endpoint-scope-matrix.csv` 会随各 PR 端点新增而各自刷新，合入顺序不同需按主干重生成；本 PR 只保证自己的新增段与既有段零改写（已用三版本结构化比对验证）。
+- G12–G18 / G20–G21：按 `INTERFACES.md §5` 让出所有权；本 PR 基于 `origin/master @8167052`，PR 前再次 fetch 确认主干未前进（`0 behind`，分支领先 9 commits）。相关 3 个开放 PR（#2021/#2022/#2032）无正式 review submission / inline comments。
+
+## 迁移与回退
+
+纯新增域 + additive 接线，无数据迁移、无 schema 变更、无破坏性 API 变更（OpenAPI 为 additive 新端点）。回退 = revert 本 PR 的全部 commit；已生成的 `ref:fc-*` 为会话内数据，不依赖数据库迁移。
+
+## 交付清单
+
+`PR_HANDOFF.md`（函数集版本、支持形态与规模、共享接线、G12–G21 兼容、验收/评审记录、PR URL）、`TEST_MATRIX.md`、`REVIEW.md`、`LOOP_LEDGER.md`、`BASELINE.md`、`DEDUP_MATRIX.md`、`PLAN.md`、`INTERFACES.md`、`docs/field-compute-contract.md`（契约驱动用户帮助）。

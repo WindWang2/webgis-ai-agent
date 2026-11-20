@@ -153,7 +153,18 @@ def consolidate_session_sync(
             continue
         if source not in PROMOTABLE_EVIDENCE:
             continue
-        if _hit_count(retriever, org_id, record) < MIN_HITS:
+        hits = _hit_count(retriever, org_id, record)
+        if hits:
+            row = db.get(_memory_model(), record.id)
+            stored = 0
+            if row is not None and isinstance(row.value, dict):
+                try:
+                    stored = int(row.value.get("hit_count", 0) or 0)
+                except (TypeError, ValueError):
+                    stored = 0
+            if row is not None and hits > stored:
+                row.value = {**(row.value or {}), "hit_count": int(hits)}
+        if hits < MIN_HITS:
             continue
         target_scope = _target_scope(record.kind)
         if target_scope == SCOPE_USER:

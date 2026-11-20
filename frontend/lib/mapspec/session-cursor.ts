@@ -3,6 +3,7 @@
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
 import type { PendingPresentation } from '@/lib/mapspec/live-spec';
 import { resetRefSourceCache } from '@/lib/mapspec/ref-source-resolver';
+import { resetLayerPresentationRevisions } from '@/lib/collab/presentation-revision';
 
 let sessionId: string | undefined;
 let revision = 0;
@@ -20,12 +21,20 @@ let pendingOpSeq = 0;
 let pendingMeta: Record<string, { mutationId?: string; gen?: number }> = {};
 const listeners = new Set<() => void>();
 
+/** G16：spec 快照版本号（toolbar 等消费 useSyncExternalStore 的响应源；
+// 发布点 bump —— 与 listeners 通知同一原子面）。 */
+let specSnapshotVersion = 0;
+export function getSpecSnapshotVersion(): number {
+  return specSnapshotVersion;
+}
+
 function curRevision(): number {
   return revision;
 }
 
 function emit(): void {
   generation += 1;
+  specSnapshotVersion += 1;
   listeners.forEach((listener) => listener());
 }
 
@@ -44,6 +53,15 @@ export function resetLiveState(): void {
     .catch(() => { /* best-effort */ });
   void import('../selection/selection-store')
     .then((m) => m.resetSelectionStore())
+    .catch(() => { /* best-effort */ });
+  // G46：联合探索活动过滤（作者条件 + 绑定源）同属会话内 transient 态 ——
+  // 切换会话清空（迟到 preview 响应被 epoch 拦截，不写新会话）。
+  void import('../linked-exploration/condition-store')
+    .then((m) => m.resetExplorationStore())
+    .catch(() => { /* best-effort */ });
+  // G46：共享 preview 回执缓存同属会话内态（不跨会话残留旧统计）
+  void import('../linked-exploration/preview-store')
+    .then((m) => m.setPreviewData(null))
     .catch(() => { /* best-effort */ });
   // Runtime V4：视口空间上下文同属会话内 transient 态（extent_change 载荷
   // 不跨会话泄漏；epoch bump 使挂起的 debounce 结算失效）。
@@ -96,6 +114,7 @@ export function setMapSpecSessionCursor(
   // （重挂注册表不清会让新会话的 style 切换复活旧会话的命令层）。
   // 同 id 重设（重连/重水合）不清 —— 账本仍描述当前地图的真实挂载。
   if (sessionId !== nextId) {
+    resetLayerPresentationRevisions();
     void import('../map-kit/custom-overlay-registry')
       .then((m) => m.clearCustomOverlayRegistry())
       .catch(() => { /* best-effort */ });

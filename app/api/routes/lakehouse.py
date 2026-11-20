@@ -262,13 +262,19 @@ async def revise_lakehouse_cube(
     )
 
     try:
-        return await revise_session_cube(
+        result = await revise_session_cube(
             session_id, req.ref,
             updates=[u.model_dump() for u in req.updates],
             title=req.title,
         )
     except CubeServiceError as e:
         raise _http_from(e, not_found_codes=("CUBE_REF_MISSING",))
+    # #2141：修订响应同样过 cube JSON 响应闸（1M cells / 32MiB → 413），
+    # 与窗口端点同一闸门 —— 预览不得绕过 bounded JSON 面。
+    try:
+        return await asyncio.to_thread(cube_json_response, result, "first_step_preview")
+    except CubeResponseTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
 
 
 @router.post("/lakehouse/objects/{data_object_id}/verify")
@@ -613,10 +619,13 @@ async def plan_lakehouse_gc(
 ) -> Dict[str, Any]:
     """GC dry-run 计划（只读；plan token + 确定性候选清单）。
 
+    组织管理员不能扫全局对象库。没有 org 的管理员才是这个控制面。
     **admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，
     会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、
     plan 响应也会枚举全局孤儿 id（跨租户泄漏）。
     """
+    if _admin.get("org_id") not in (None, ""):
+        raise HTTPException(status_code=403, detail="org admins cannot run global lakehouse GC")
     _ = await verify_session_owner(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
@@ -646,6 +655,8 @@ async def execute_lakehouse_gc(
 
     token 重验；漂移 → 409 语义 typed 拒绝。
     """
+    if _admin.get("org_id") not in (None, ""):
+        raise HTTPException(status_code=403, detail="org admins cannot run global lakehouse GC")
     _ = await verify_session_owner(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,

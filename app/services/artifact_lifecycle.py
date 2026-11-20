@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import AbstractSet, Any, Dict, Optional
 
 from app.core.config import settings
 
@@ -218,6 +219,9 @@ def _promotion_blob_protection(
     snapshot_locations: set = frozenset(),
     snapshot_shas: set = frozenset(),
     protection_scan_truncated: bool = False,
+    lakehouse_shas: set = frozenset(),
+    symbol_version_blob_keys: AbstractSet[str] = frozenset(),
+    georef_blob_keys: AbstractSet[str] = frozenset(),
 ) -> Optional[str]:
     """共享保护判定（plan 与 execute 都调用）：返回保护原因；None = 可删。
 
@@ -238,20 +242,83 @@ def _promotion_blob_protection(
     revision 行 / Artifact head 指针），否则宽限期后按未引用内容回收
     （与 raster 磁盘工件的会话生存期语义一致，"durable" 披露以响应的
     ``durable`` 字段为准）。
+
+    域侧持有面（第六/七条，R 审计 round-2）：G40 资产版本行（版本行在场
+    = 引用保护，catalog.py 头注）与 G48 georeferencing 会话 refcount
+    sidecar 点名的 ``georefbin-*`` blob —— 两者都不落 ``artifact_revisions``
+    账面，没有这两条会被 promotion GC / quota retention 当未引用内容回收。
     """
     if key in pinned_shas:
         return "pinned"
+    if key in symbol_version_blob_keys:
+        return "cartographic symbol asset version row"
+    if key in georef_blob_keys:
+        return "georeferencing session refcount"
     if refcounts_by_location.get(location, 0) > 0:
         return "referenced by artifact_revisions"
     if refcounts_by_sha.get(key, 0) > 0:
         return "referenced by artifact_revisions (sha)"
     if location in artifact_locations:
         return "head pointer (Artifact.metadata_json.content_location)"
+    # Lakehouse roots include artifact revision/head references too. Preserve
+    # their specific diagnostic above; the union still protects every root.
+    if key in lakehouse_shas:
+        return "lakehouse catalog, dataset registry, or content blob"
     if location in snapshot_locations or key in snapshot_shas:
         return "workspace snapshot manifest pointer"
     if mtime > now - grace_hours * 3600.0:
         return "grace period"
     return None
+
+
+def _symbol_version_blob_keys(db) -> set:
+    """G40 资产版本行在场的 CAS blob 键（版本行在场 = 引用保护）。"""
+    from sqlalchemy import select
+
+    from app.models.cartographic_symbol_asset import CartographicSymbolAssetVersion
+
+    rows = db.execute(select(CartographicSymbolAssetVersion.blob_key)).all()
+    return {str(k) for (k,) in rows if k}
+
+
+def _georef_live_blob_keys() -> "tuple[set, bool]":
+    """(受保护 ``georefbin-*`` 键集合, `_refs/` 扫描是否截断) — G48 会话保护面。"""
+    from app.services.georeferencing.refs import iter_live_blob_keys_with_status
+
+    keys, truncated = iter_live_blob_keys_with_status()
+    return {str(k) for k in keys}, bool(truncated)
+
+
+def _lakehouse_protected_blob_keys(store) -> set:
+    """晋升库和 Lakehouse 共用 blob 根。保护 catalog/registry 根，以及这些
+    manifest 点名的 content blob。只保护根 id 会在宽限期后删掉内容。
+    """
+    from app.services.lakehouse.lakehouse_gc import _protected_references
+
+    roots = {
+        str(key) for key in _protected_references()
+        if isinstance(key, str) and len(key) == 64
+    }
+    protected = set(roots)
+    for key in roots:
+        raw = store.get_blob(key)
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, UnicodeDecodeError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        for blob in parsed.get("content_blobs") or []:
+            sha = ""
+            if isinstance(blob, dict):
+                sha = str(blob.get("sha256") or "")
+            elif isinstance(blob, str):
+                sha = blob
+            if len(sha) == 64:
+                protected.add(sha)
+    return protected
 
 
 def _promotion_gc_snapshot(db, locations):
@@ -274,6 +341,8 @@ def _promotion_gc_snapshot(db, locations):
         workspace_snapshot_protected_pointers,
     )
 
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
     ref_by_loc = referencing_counts(db, locations)
     sha_rows = db.execute(
         select(
@@ -284,6 +353,33 @@ def _promotion_gc_snapshot(db, locations):
     snap_locations, snap_shas, snap_truncated = (
         workspace_snapshot_protected_pointers()
     )
+    try:
+        lakehouse_shas = _lakehouse_protected_blob_keys(get_filesystem_blob_store())
+    except Exception:
+        logger.exception(
+            "[artifact-lifecycle] lakehouse protection scan failed; "
+            "skipping promotion blob deletes this cycle"
+        )
+        lakehouse_shas = set()
+        snap_truncated = True
+    try:
+        symbol_blob_keys = _symbol_version_blob_keys(db)
+    except Exception:
+        logger.exception(
+            "[artifact-lifecycle] symbol version protection scan failed; "
+            "skipping promotion blob deletes this cycle"
+        )
+        symbol_blob_keys = set()
+        snap_truncated = True
+    try:
+        georef_blob_keys, georef_scan_truncated = _georef_live_blob_keys()
+    except Exception:
+        logger.exception(
+            "[artifact-lifecycle] georef protection scan failed; "
+            "skipping promotion blob deletes this cycle"
+        )
+        georef_blob_keys = set()
+        georef_scan_truncated = True
     return {
         "refcounts_by_location": ref_by_loc,
         "refcounts_by_sha": ref_by_sha,
@@ -291,7 +387,10 @@ def _promotion_gc_snapshot(db, locations):
         "pinned_shas": set(pinned_content_sha256s(db)),
         "snapshot_locations": snap_locations,
         "snapshot_shas": snap_shas,
-        "protection_scan_truncated": snap_truncated,
+        "protection_scan_truncated": snap_truncated or georef_scan_truncated,
+        "lakehouse_shas": lakehouse_shas,
+        "symbol_version_blob_keys": symbol_blob_keys,
+        "georef_blob_keys": georef_blob_keys,
     }
 
 

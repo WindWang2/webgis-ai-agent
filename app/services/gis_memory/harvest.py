@@ -43,7 +43,7 @@ from app.services.gis_memory.queries import (
     MEMORY_USER_STATE_KEY,
 )
 from app.services.gis_memory.sanitizer import sanitize_subject
-from app.services.gis_memory.store import safe_record_memory, sweep_expired
+from app.services.gis_memory.store import sweep_expired
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,18 @@ def _harvest_sync(
     SessionLocal = _get_session_local()
     written = 0
     with SessionLocal() as db:
+        def _write(req) -> bool:
+            try:
+                with db.begin_nested():
+                    from app.services.gis_memory.store import record_memory
+                    return record_memory(db, req) is not None
+            except Exception as exc:  # noqa: BLE001 — one row must not poison the session
+                logger.warning(
+                    "[GISMemory] harvest write rolled back kind=%s: %s",
+                    getattr(req, "kind", ""), exc,
+                )
+                return False
+
         try:
             # 1) pending 候选（已在工具侧构造完整请求，仅缺 org/user 烙印）
             for req in pending_reqs:
@@ -102,7 +114,7 @@ def _harvest_sync(
                     ttl_s=req.ttl_s,
                     fingerprint=req.fingerprint,
                 )
-                if safe_record_memory(db, stamped):
+                if _write( stamped):
                     written += 1
 
             # 2) 数据集语义 / 字段角色 / CRS（session 剖面收割）
@@ -147,7 +159,7 @@ def _harvest_sync(
                 if crs:
                     semantic_value["crs"] = str(crs)[:64]
                 if len(semantic_value) > 1:
-                    if safe_record_memory(db, MemoryWriteRequest(
+                    if _write( MemoryWriteRequest(
                         kind=KIND_DATASET_SEMANTICS,
                         scope=SCOPE_SESSION, scope_id=session_id,
                         subject=subject, value=semantic_value,
@@ -178,7 +190,7 @@ def _harvest_sync(
                         if version_token:
                             role_value["version_token"] = str(version_token)[:96]
                         if role_value:
-                            if safe_record_memory(db, MemoryWriteRequest(
+                            if _write( MemoryWriteRequest(
                                 kind=KIND_FIELD_ROLE,
                                 scope=SCOPE_SESSION, scope_id=session_id,
                                 subject=subject, value=role_value,
@@ -193,7 +205,7 @@ def _harvest_sync(
                     except Exception:  # noqa: BLE001 — 角色推导缺席不阻断
                         pass
                 if crs:
-                    if safe_record_memory(db, MemoryWriteRequest(
+                    if _write( MemoryWriteRequest(
                         kind=KIND_CRS_RESOLUTION,
                         scope=SCOPE_SESSION, scope_id=session_id,
                         subject=subject,
@@ -211,9 +223,10 @@ def _harvest_sync(
                 try:
                     from app.services.gis_memory.store import invalidate_for_dataset
 
-                    invalidate_for_dataset(
-                        db, org_id=org_id, dataset_key=key, version_token=token
-                    )
+                    with db.begin_nested():
+                        invalidate_for_dataset(
+                            db, org_id=org_id, dataset_key=key, version_token=token
+                        )
                 except Exception:  # noqa: BLE001 — 失效对账不阻断收割
                     pass
 
@@ -221,7 +234,7 @@ def _harvest_sync(
             for aid, rec in artifact_ledger[:3]:
                 if not isinstance(rec, dict):
                     continue
-                if safe_record_memory(db, MemoryWriteRequest(
+                if _write( MemoryWriteRequest(
                     kind=KIND_ANALYSIS_ARTIFACT,
                     scope=SCOPE_SESSION, scope_id=session_id,
                     subject=sanitize_subject(str(aid)[:200]),
@@ -243,7 +256,7 @@ def _harvest_sync(
                 subject = sanitize_subject(str(decision.get("subject", ""))[:200])
                 if not subject:
                     continue
-                if safe_record_memory(db, MemoryWriteRequest(
+                if _write( MemoryWriteRequest(
                     kind="product_decision",
                     scope=SCOPE_PROJECT if project_id else SCOPE_SESSION,
                     scope_id=project_id or session_id,
@@ -300,6 +313,8 @@ async def harvest_spatial_memory(
                 session_id,
             )
         return empty
+    pending_reqs: list = []
+    drained = False
     try:
         from app.services.mapspec.store import mapspec_store_instance
         from app.services.session_data import session_data_manager
@@ -311,6 +326,7 @@ async def harvest_spatial_memory(
         # review F14：pending 排空移到 state/mapspec 读取之后——普通失败
         # （DB 抖动/存储抖动）不再丢候选，下一 turn 重试。
         pending_reqs = pending_memory_buffer.drain(session_id)
+        drained = True
         # 3a) 租户桥烙印（工具侧零 SQL 读取的依据）
         try:
             await session_data_manager.set_map_state(
@@ -344,6 +360,9 @@ async def harvest_spatial_memory(
             "swept": int(result.get("swept", 0)),
         }
     except Exception as exc:  # noqa: BLE001 — best-effort by contract
+        if drained:
+            for req in pending_reqs:
+                pending_memory_buffer.offer(session_id, req)
         logger.warning(
             "[GISMemory] harvest skipped session=%s: %s", session_id, exc
         )

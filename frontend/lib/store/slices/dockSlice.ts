@@ -73,9 +73,26 @@ export interface DockSlice {
 export const RIGHT_DOCK_DEFAULT_WIDTH = 340;
 export const BOTTOM_DOCK_DEFAULT_HEIGHT = 300;
 export const RIGHT_DOCK_MIN_WIDTH = 260;
+/** Floor so existing layouts stay valid; wide viewports may go higher. */
 export const RIGHT_DOCK_MAX_WIDTH = 560;
 export const BOTTOM_DOCK_MIN_HEIGHT = 160;
 export const BOTTOM_DOCK_MAX_HEIGHT = 560;
+
+export function rightDockWidthLimit(viewportWidth?: number): { min: number; max: number } {
+  const viewport = viewportWidth ?? (typeof window === 'undefined' ? 1280 : window.innerWidth);
+  const proportional = Math.floor(viewport * 0.45);
+  const room = Math.max(RIGHT_DOCK_MIN_WIDTH, viewport - 280);
+  const max = Math.max(RIGHT_DOCK_MAX_WIDTH, Math.min(proportional, room));
+  return { min: RIGHT_DOCK_MIN_WIDTH, max: Math.max(RIGHT_DOCK_MIN_WIDTH, max) };
+}
+
+export function bottomDockHeightLimit(viewportHeight?: number): { min: number; max: number } {
+  const viewport = viewportHeight ?? (typeof window === 'undefined' ? 800 : window.innerHeight);
+  const proportional = Math.floor(viewport * 0.5);
+  const room = Math.max(BOTTOM_DOCK_MIN_HEIGHT, viewport - 160);
+  const max = Math.max(BOTTOM_DOCK_MAX_HEIGHT, Math.min(proportional, room));
+  return { min: BOTTOM_DOCK_MIN_HEIGHT, max: Math.max(BOTTOM_DOCK_MIN_HEIGHT, max) };
+}
 
 const EMPTY_REGION: DockRegionState = { open: false, panels: [], activePanel: null };
 
@@ -89,10 +106,14 @@ export const createDockSlice: StateCreator<HudState, [], [], DockSlice> = (set, 
   rightDockWidth: RIGHT_DOCK_DEFAULT_WIDTH,
   bottomDockHeight: BOTTOM_DOCK_DEFAULT_HEIGHT,
 
-  setRightDockWidth: (width) =>
-    set({ rightDockWidth: clamp(width, RIGHT_DOCK_MIN_WIDTH, RIGHT_DOCK_MAX_WIDTH) }),
-  setBottomDockHeight: (height) =>
-    set({ bottomDockHeight: clamp(height, BOTTOM_DOCK_MIN_HEIGHT, BOTTOM_DOCK_MAX_HEIGHT) }),
+  setRightDockWidth: (width) => {
+    const { min, max } = rightDockWidthLimit();
+    set({ rightDockWidth: clamp(width, min, max) });
+  },
+  setBottomDockHeight: (height) => {
+    const { min, max } = bottomDockHeightLimit();
+    set({ bottomDockHeight: clamp(height, min, max) });
+  },
   resetDockSizes: () =>
     set({ rightDockWidth: RIGHT_DOCK_DEFAULT_WIDTH, bottomDockHeight: BOTTOM_DOCK_DEFAULT_HEIGHT }),
 

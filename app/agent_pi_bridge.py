@@ -30,6 +30,7 @@ import sys
 import time
 import uuid
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Optional
 
@@ -195,6 +196,10 @@ class PiToolResponse(BaseModel):
 class PiRpcError(Exception):
     """Error from Pi RPC."""
     pass
+
+
+class PiTurnContextUnavailable(PiRpcError):
+    """A verified callback has no matching local turn caller authority."""
 
 
 # ── Tool registry (injected at startup, shared by bridge + route) ──
@@ -414,6 +419,10 @@ def _slim_pi_details_payload(result: Any) -> Any:
     details_payload: Any = getattr(result, "raw_result", result)
     if isinstance(details_payload, dict):
         details_payload = dict(details_payload)
+        # G36（ADR-0291）：result_images 的字节走原生 content 通道
+        # （abi_tool_response 窄投影）——details 不重复携带 base64。
+        if "result_images" in details_payload:
+            details_payload.pop("result_images", None)
         # Raster data URL is not needed — frontend mounts via result_ref / imageRef
         if "image" in details_payload and isinstance(details_payload.get("image"), str):
             img = details_payload["image"]
@@ -437,7 +446,7 @@ def _slim_pi_details_payload(result: Any) -> Any:
             encoded = _json.dumps(details_payload, ensure_ascii=False)
             if len(encoded.encode("utf-8")) > 65536:
                 # Keep only essential keys
-                keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id", "design_candidates")}
+                keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id", "design_candidates", "webgis_interaction_request")}
                 # Scope uncertainty must survive the details overflow path,
                 # just as it survives the model content formatter.
                 from app.services.llm_result_formatter import scope_disclosure_metadata
@@ -476,7 +485,7 @@ def _record_cancelled_tracker_step(request, tool_name: str, arguments: dict) -> 
         logger.debug("[PiBridge] cancelled tracker step record failed", exc_info=True)
 
 
-async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
+async def dispatch_tool(request: PiToolRequest, *, _strict_turn_scope: bool = False) -> PiToolResponse:
     """Dispatch a GIS tool call via ToolDispatchService, cache the result for the SSE adapter.
 
     Pi 边界安全检查（工具存在性、tier>=3 拒绝）保留在此处--它们是 Pi 路径特有的
@@ -485,6 +494,13 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     HTTP 回调适配器：把 service 返回的 llm_payload 翻译成 PiToolResponse.content。
     结果按 (session_id, toolCallId) 缓存，供 SSE 适配器读取并发携带 geojson_ref 的 step_result。
+
+    ``_strict_turn_scope``：HTTP 路由（pi_tools）置 True —— verified turn 无
+    本地活跃入口时抛 :class:`PiTurnContextUnavailable`（路由映射 409
+    TURN_NOT_LOCAL：多 pod 亲和冲突，绝不自动重放）。直连 in-process
+    调用保持 #993 审计语义：迟到回调（verified turn 已非本地活跃 turn）
+    不借用后继 turn 身份，回落 legacy 无上下文路径，由下游 tracker/evidence
+    守卫丢弃迟到 step 并 warning。
     """
     registry = get_tool_registry()
     tool_name = normalize_tool_name(request.name)
@@ -500,19 +516,43 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         _verified_turn = str(getattr(request, "verifiedTurnId", "") or "")
     except Exception:  # noqa: BLE001
         _verified_turn = ""
+    # Only the authenticated adapter's verified (session, turn) pair can
+    # recover caller authority. Capture the entry once before any await: a
+    # delayed callback must never borrow a successor turn's identity.
+    trusted_entry = None
     if _verified_turn:
-        try:
-            from app.lib.runtime import context as rt_ctx
-
-            _turn_binding = rt_ctx.bind_runtime_context(
-                turn_id=_verified_turn, session_id=session_id,
+        _candidate = get_active_turn_entry(session_id)
+        if _candidate is not None and _candidate.turn_id == _verified_turn:
+            trusted_entry = _candidate
+        if trusted_entry is None and _strict_turn_scope:
+            raise PiTurnContextUnavailable(
+                "Pi callback has no matching local active turn"
             )
-        except Exception:  # noqa: BLE001 — 绑定失败按无上下文降级
+        # #993（非 strict 的直连路径）：verified turn 已非本地活跃 turn =
+        # 迟到回调。trusted_entry 保持 None（绝不借用后继 turn 身份），
+        # 回落 legacy 无上下文路径；tracker/evidence 守卫丢弃迟到记录。
+        if trusted_entry is not None:
+            try:
+                from app.lib.runtime import context as rt_ctx
+
+                _turn_binding = rt_ctx.bind_runtime_context(
+                    turn_id=_verified_turn, session_id=session_id,
+                )
+            except Exception:  # noqa: BLE001 — 绑定失败按无上下文降级
+                _turn_binding = None
+        else:
             _turn_binding = None
     else:
         _turn_binding = None
+    # G29（WP05）：绑定 toolCallId（工具体内 mint_envelope 读取，铸封套用）。
+    from app.services.chat.pi_interaction_envelope import bind_tool_call_id
+
     try:
-        return await _dispatch_tool_bound(request, registry, tool_name, arguments, session_id)
+        with bind_tool_call_id(request.toolCallId):
+            return await _dispatch_tool_bound(
+                request, registry, tool_name, arguments, session_id,
+                trusted_entry=trusted_entry,
+            )
     finally:
         if _turn_binding is not None:
             try:
@@ -527,6 +567,8 @@ async def _dispatch_tool_bound(
     tool_name: str,
     arguments: dict,
     session_id: str,
+    *,
+    trusted_entry: Optional["_ActiveTurnEntry"] = None,
 ) -> "PiToolResponse":
     """dispatch_tool 的主体（turn 上下文已绑定后进入）。"""
     # The HTTP route verifies a signed turn token and writes its immutable sid
@@ -573,9 +615,9 @@ async def _dispatch_tool_bound(
     tool_name = normalize_tool_name(resolved.name)
     arguments = dict(resolved.arguments)
 
-    # ADR-0224：turn SurfaceReceipt 对照（fingerprint echo + opt-in 面成员
-    # 硬校验）——语义与故障模型见 pi_bridge_surface_gate.stale_surface_gate。
-    stale = stale_surface_gate(request, session_id, tool_name, _proxied)
+    # ADR-0224：turn SurfaceReceipt 对照（fingerprint echo + 面成员硬校验 +
+    # ADR-0288 发现 grant）——语义与故障模型见 pi_bridge_surface_gate.stale_surface_gate。
+    stale = stale_surface_gate(request, session_id, tool_name, _proxied, registry)
     if stale is not None:
         return stale
 
@@ -756,19 +798,33 @@ async def _dispatch_tool_bound(
         and request.sessionId != active_session
     ):
         turn_id, run_id = None, None
+    if trusted_entry is not None:
+        turn_id, run_id = trusted_entry.turn_id, trusted_entry.run_id
+    caller = trusted_entry.caller if trusted_entry is not None else _PiCallerIdentity()
     rt_ev = TURN_EVIDENCE.get(turn_id)
 
     with contextlib.ExitStack() as _rt_stack:
         _rt_stack.enter_context(rt_ctx.bind_runtime_context(
             turn_id=turn_id, run_id=run_id, session_id=request.sessionId
         ))
+        from app.services.provenance.context import (
+            ToolExecutionContext, reset_tool_execution_context, set_tool_execution_context,
+        )
+
+        # Bind even the anonymous/legacy case to mask unrelated inherited
+        # workflow context; ExitStack restores it on success, error or cancel.
+        _identity_token = set_tool_execution_context(ToolExecutionContext(
+            user_id=caller.user_id, org_id=caller.org_id,
+            project_id=caller.project_id, session_id=session_id, run_id=run_id,
+        ))
+        _rt_stack.callback(reset_tool_execution_context, _identity_token)
         if rt_ev is not None:
             _rt_stack.enter_context(bind_turn_evidence(rt_ev))
         t0 = time.monotonic()
         try:
             # V5-B: resolve the turn's cancellation token by SESSION from the
             # active-turn table (pool-safe).
-            _entry = get_active_turn_entry(session_id) if session_id else None
+            _entry = trusted_entry or (get_active_turn_entry(session_id) if session_id else None)
             if _entry is not None:
                 dispatch_token = _entry.token
             else:
@@ -783,8 +839,10 @@ async def _dispatch_tool_bound(
 
             _job_origin = JobOrigin(
                 session_id=session_id or None,
-                owner_id=None,
-                owner_token=None,
+                owner_id=caller.user_id,
+                owner_token=caller.owner_token,
+                org_id=caller.org_id,
+                project_id=caller.project_id,
                 run_id=run_id,
                 turn_id=turn_id,
                 agent_task_id=None,
@@ -801,6 +859,20 @@ async def _dispatch_tool_bound(
                         result.background_job_ids = list(_job_origin.created_job_ids)
                     except Exception:  # noqa: BLE001 — 披露是增值，不阻断
                         pass
+                    if session_id:
+                        try:
+                            from app.services.harness_kernel import get_runtime
+
+                            await get_runtime(session_id).note_background_continuation(
+                                tool_name=tool_name,
+                                turn_id=turn_id or "",
+                                host="pi",
+                            )
+                        except Exception:  # noqa: BLE001 — 标记失败不阻断工具结果
+                            logger.debug(
+                                "[PiBridge] background continuation mark failed session=%s tool=%s",
+                                session_id, tool_name, exc_info=True,
+                            )
         except OperationCancelled:
             # audit #821: 协作取消 ≠ 工具故障（ADR-0052 / legacy tool_pipeline 同义）
             # —— 记 cancelled 证据并返回结构化取消响应，而不是落入 catch-all
@@ -1134,6 +1206,16 @@ def _hard_stop_pi_turn_for_no_progress(session_id: str) -> None:
 # The module-level aliases below stay as the single-active-turn view for
 # back-compat readers; with pool size 1 exactly one table entry exists and
 # behavior is byte-identical to the pre-V5 singleton.
+@dataclass(frozen=True)
+class _PiCallerIdentity:
+    """Server-only turn authority; never serialized to Pi or derived from tools."""
+
+    user_id: Optional[str] = None
+    owner_token: Optional[str] = field(default=None, repr=False)
+    org_id: Optional[int | str] = None
+    project_id: Optional[str] = None
+
+
 class _ActiveTurnEntry:
     """Per-session in-flight turn identity (V5-B).
 
@@ -1142,7 +1224,7 @@ class _ActiveTurnEntry:
     the worker whose subprocess owns the turn (abort RPC routing).
     """
 
-    __slots__ = ("session_id", "turn_id", "run_id", "token", "bridge", "context")
+    __slots__ = ("session_id", "turn_id", "run_id", "token", "bridge", "context", "caller")
 
     def __init__(
         self,
@@ -1152,6 +1234,7 @@ class _ActiveTurnEntry:
         bridge: Optional["PiBridge"] = None,
         run_id: Optional[str] = None,
         context: Optional[tuple[str, str]] = None,
+        caller: Optional[_PiCallerIdentity] = None,
     ) -> None:
         self.session_id = session_id
         self.turn_id = turn_id
@@ -1159,6 +1242,7 @@ class _ActiveTurnEntry:
         self.token = token
         self.bridge = bridge
         self.context = context  # (session_id, turn_id) capability pair
+        self.caller = caller or _PiCallerIdentity()
 
 
 _active_turns: dict[str, _ActiveTurnEntry] = {}
@@ -1170,6 +1254,7 @@ async def register_active_pi_turn(
     token: Optional[CancellationToken] = None,
     bridge: Optional["PiBridge"] = None,
     run_id: Optional[str] = None,
+    caller: Optional[_PiCallerIdentity] = None,
 ) -> None:
     """Register active turn in local process memory and Redis (if available)."""
     entry = _ActiveTurnEntry(
@@ -1179,10 +1264,37 @@ async def register_active_pi_turn(
         bridge=bridge,
         run_id=run_id,
         context=(session_id, turn_id),
+        caller=caller,
     )
-    _active_turns[session_id] = entry
+    # G22-P1：本地登记变更与控制面 RPC 的「校验+写出」共用同一交接门
+    # （bridge._control_gate）—— 后继 turn 的登记严格晚于前一 turn 迟到
+    # abort 的写出（写出在门内完成），从而 vendor 单 stdin 流上「旧控制
+    # RPC 字节 < 新 turn prompt 字节」有序，取消绝不命中后继 turn 的 run。
+    # 门等待有界：wedged 写持有的极端场景下登记降级为无门写入（字典写
+    # 本身 GIL 原子），并告警披露。
     if bridge is not None:
-        bridge._current_turn = entry
+        gate = getattr(bridge, "_control_gate", None)
+        if gate is not None:
+            try:
+                await asyncio.wait_for(gate.acquire(), timeout=5.0)
+            except asyncio.TimeoutError:
+                gate = None
+                logger.warning(
+                    "[PiBridge] control gate busy at turn registration "
+                    "(session=%s turn=%s); registering ungated",
+                    session_id, turn_id,
+                )
+            try:
+                _active_turns[session_id] = entry
+                bridge._current_turn = entry
+            finally:
+                if gate is not None:
+                    gate.release()
+        else:
+            _active_turns[session_id] = entry
+            bridge._current_turn = entry
+    else:
+        _active_turns[session_id] = entry
     from app.services.chat.pi_turn_context import pi_turn_registry
     await pi_turn_registry.register_turn(session_id, turn_id)
 
@@ -1191,9 +1303,33 @@ async def unregister_active_pi_turn(session_id: str, turn_id: str) -> bool:
     """Unregister active turn in local memory and Redis (if owned)."""
     entry = _active_turns.get(session_id)
     if entry is not None and entry.turn_id == turn_id:
-        _active_turns.pop(session_id, None)
-        if entry.bridge is not None and entry.bridge._current_turn is entry:
-            entry.bridge._current_turn = None
+        # G22-P1：与登记同款交接门（有界；超时降级 —— pop 的身份翻转语义
+        # 使迟到 abort 的写前校验必然拒绝，无门 pop 也不破坏隔离）。
+        gate = getattr(entry.bridge, "_control_gate", None) if entry.bridge else None
+        popped = False
+        if gate is not None:
+            try:
+                await asyncio.wait_for(gate.acquire(), timeout=5.0)
+            except asyncio.TimeoutError:
+                gate = None
+                logger.warning(
+                    "[PiBridge] control gate busy at turn unregister "
+                    "(session=%s turn=%s); unregistering ungated",
+                    session_id, turn_id,
+                )
+            try:
+                if _active_turns.get(session_id) is entry:
+                    _active_turns.pop(session_id, None)
+                    popped = True
+                    if entry.bridge is not None and entry.bridge._current_turn is entry:
+                        entry.bridge._current_turn = None
+            finally:
+                if gate is not None:
+                    gate.release()
+        if not popped and _active_turns.get(session_id) is entry:
+            _active_turns.pop(session_id, None)
+            if entry.bridge is not None and entry.bridge._current_turn is entry:
+                entry.bridge._current_turn = None
     from app.services.chat.pi_turn_context import pi_turn_registry
     return await pi_turn_registry.unregister_turn(session_id, turn_id)
 
@@ -1436,6 +1572,18 @@ class PiBridge:
     # GIS session last bound to this worker's in-memory Pi AgentSession.
     # Vendor ``prompt`` ignores sessionId; a change must ``new_session`` first.
     _bound_gis_session_id: Optional[str] = None
+    # G22-P1: turn 交接门 —— 控制面 RPC（clear_queue/abort）的「身份校验 +
+    # stdin 写出」原子段与本 worker turn teardown 的「快照 + 交接」互斥。
+    # 同会话后继 turn 不改变 ``_active_turn_sid``（CONC-F1 既有语义），sid
+    # 比对挡不住「旧 turn 的迟到取消命中新 turn」（G12 review P2-1 残留）；
+    # 本门 + turn 身份（entry 对象同一性）校验补齐该窗口。class-level 默认
+    # 供 ``__new__`` 测试路径读 None。
+    _control_gate: Optional[asyncio.Lock] = None
+    # G22-P1: 本 worker 在飞控制 RPC 的响应 future 集合（写相位已完成）。
+    # teardown 在交接前有界等待其响应清空（_drain_control_rpcs：vendor 并发
+    # 分发下，abort 响应落定 = vendor 侧处理完成）；done-callback
+    # 自动丢弃，集合天然有界（并发 abort 数量级）。
+    _inflight_control: Optional[set] = None
 
     def __init__(
         self,
@@ -1462,6 +1610,22 @@ class PiBridge:
         self._respawn_lock = asyncio.Lock()
         self._active_turn_sid: Optional[str] = None
         self._current_turn: Optional[_ActiveTurnEntry] = None
+        # G22-P1：见类属性注释（turn 交接门 + 在飞控制 RPC 台账）。
+        self._control_gate = asyncio.Lock()
+        self._inflight_control: set = set()
+        # G29（WP03）：原生 extension_ui_request 的交互 sink —— 归属取本
+        # worker 的 _current_turn（已验证身份），绝不从请求文字猜测。注入
+        # rpc 与 bridge 引用；服务自身无 I/O（登记 + 队列投递）。
+        try:
+            from app.services.chat.pi_runtime_interaction import (
+                get_interaction_service,
+            )
+
+            self._rpc.set_ui_request_sink(
+                get_interaction_service().make_sink(self._rpc, self)
+            )
+        except Exception:  # noqa: BLE001 — 测试注入的 mock rpc 可能无该入口
+            logger.debug("[PiBridge] ui request sink attach skipped", exc_info=True)
         # #1108: explicit lock ownership. ``_lock_lease`` names the turn that
         # currently owns ``_lock``; release is owner-checked and idempotent so
         # one turn can never release another turn's acquisition (INV-P2) and
@@ -1471,6 +1635,16 @@ class PiBridge:
         self._respawn_backoff_s: float = 1.0
         self._consecutive_respawn_failures: int = 0
         self._bound_gis_session_id = None
+        # G37（WP05）：当前 vendor 会话上已应用并经 get_state 回读验证的
+        # 模型状态 (bound_session_id, provider, model_id, spawn_epoch)。
+        # new_session / respawn / 换会话后置 None —— Pi 会话模型回到
+        # settings 默认，必须重应用重回读（M05/M06），绝不跨会话继承。
+        self._vendor_model_state: Optional[tuple[str, str, str, int]] = None
+
+    @property
+    def rpc(self) -> "PiRpcClient":
+        """G29：受控的 RPC 客户端访问（交互回答 / steer 经由，不绕过门禁）。"""
+        return self._rpc
 
     async def _isolate_vendor_session(self, turn_sid: str) -> None:
         """Reset the vendored AgentSession when the GIS session changes.
@@ -1489,6 +1663,252 @@ class PiBridge:
             await self._rpc.request("new_session", {})
             await self._drain_stale_events()
         self._bound_gis_session_id = turn_sid
+        # G37：new_session 后 vendor 模型回到 settings 默认 —— 已应用状态
+        # 作废，下一 turn 必须重应用并回读验证。
+        self._vendor_model_state = None
+
+    async def _apply_session_model_for_turn(
+        self,
+        turn_sid: str,
+        turn_id: str,
+        run_id: str,
+        bound_message: str,
+    ):
+        """G37（WP05/WP07/WP10）：turn 期模型应用 + 预算 admission。
+
+        在 ``_isolate_vendor_session`` 之后、``prompt`` 字节发出之前调用。
+        成功 → 更新 worker 级已应用跟踪并返回 ``ModelApplicationResult``；
+        失败（目录撤销/能力门/预算/set_model/回读不匹配）→ 返回失败结果，
+        调用方必须拒绝发出 prompt（不假成功、不静默换模型）。
+
+        基础设施降级（DB 不可达）：无法验证 preference/admission → 以
+        ``degraded_inherit`` 状态继续（worker 默认 = 管理员基础模型，绝非
+        静默选用别的模型），receipt/账本无法持久（面显示 incomplete）。
+        增值面失败绝不阻断既有 mock/测试路径的 turn。
+        """
+        from app.services.chat.model_runtime.session_model_service import (
+            ModelApplicationResult,
+            apply_session_model,
+        )
+        from sqlalchemy.exc import SQLAlchemyError
+
+        rpc_epoch = getattr(self._rpc, "spawn_epoch", 0)
+        state = self._vendor_model_state
+        force = (
+            state is None
+            or state[0] != turn_sid
+            or state[3] != rpc_epoch
+        )
+        try:
+            from app.core.database import async_db_session
+
+            async with async_db_session() as db:
+                result = await apply_session_model(
+                    self._rpc, db,
+                    session_id=turn_sid, turn_id=turn_id,
+                    bound_message=bound_message, force_apply=force,
+                )
+        except SQLAlchemyError as exc:
+            # review-P2 修复：**仅** DB 基础设施故障才降级（preference/
+            # admission 读不到 → worker 默认 = 管理员基础模型，绝非静默选
+            # 用别的模型；receipt 无法持久 → 面 incomplete）。其余异常一律
+            # 上抛走既有诚实失败路径，绝不吞成降级。
+            logger.warning(
+                "[PiBridge] session model application degraded (db unavailable; "
+                "session=%s turn=%s): %s",
+                turn_sid, turn_id, exc,
+            )
+            result = ModelApplicationResult(
+                ok=True, status="degraded_inherit",
+                reason_detail=(
+                    "session preference store unavailable; running on the "
+                    "worker default model (administered base model)"
+                ),
+                mode="inherit",
+            )
+            return result
+
+        if result.ok:
+            self._vendor_model_state = (
+                turn_sid,
+                result.effective_provider or "",
+                result.effective_model or "",
+                rpc_epoch,
+            )
+        return result
+
+    def _persist_turn_runtime_receipt(
+        self,
+        result,
+        *,
+        collector,
+    ) -> None:
+        """G37（WP07/WP08）：回执 + usage 落盘（fire-and-forget，绝不阻塞流）。
+
+        幂等（turn_id upsert + (turn_id, call_seq) 冲突跳过）；失败时
+        collector.write_failures 置位 → 汇总 complete=False → 面 incomplete。
+        """
+        try:
+            from app.services.chat.model_runtime.usage_ledger import (
+                spawn_persist_task,
+            )
+
+            spawn_persist_task(
+                collector,
+                runtime_epoch=str(getattr(self._rpc, "runtime_epoch", "") or ""),
+                catalog_generation=result.catalog_generation,
+                config_generation=result.config_generation,
+                preference_revision=result.preference_revision,
+                mode=result.mode,
+                requested_model=result.requested_model,
+                thinking_requested=result.thinking_requested,
+                effective_provider=result.effective_provider,
+                effective_model=result.effective_model,
+                thinking_effective=result.thinking_effective,
+                status=result.status,
+                failure_reason=(result.reason_detail or None) if not result.ok else None,
+                finalize=True,
+            )
+        except Exception:  # noqa: BLE001 — 回执落盘是增值面
+            collector.write_failures += 1
+            logger.debug(
+                "[PiBridge] turn runtime receipt persist failed turn=%s",
+                collector.turn_id, exc_info=True,
+            )
+
+    async def _resolve_turn_images(
+        self,
+        turn_sid: str,
+        attachments: Optional[List[Dict[str, Any]]],
+        *,
+        allow_regeneration: bool = True,
+        turn_id: str = "",
+        run_id: str = "",
+        bound_message: str = "",
+    ) -> Dict[str, Any]:
+        """G36（ADR-0291）：turn 时刻解析附件 → 原生 images + 回执。
+
+        调用点在 turn lease 内、prompt 发送前（两条 prompt 路径同款；
+        **无附件时也调用** —— V33 预检不依赖本轮是否带图）：
+
+        1. **V33 预检**：本 vendor 会话 transcript 里已送 pixels 的证据是否
+           全部仍获准（在场 + 未撤销 + 引用活着）。失效 → 强制 vendor 换代
+           （new_session + 台账换代 —— transcript 重建，旧 pixels 不再参与
+           请求；GIS 状态权威在宿主，由既有 per-turn 上下文装配重建）；
+           换代失败 → 阻断本次图片发送（宁可不送，不重送已撤图片）。
+           ``allow_regeneration=False``（steer 侧）：在飞 turn 持 turn 锁消费
+           事件流，中途换代/排空会偷走活事件 —— 只阻断图片，换代留给下一
+           turn 边界（预检在彼时必然再跑）。
+        1b. **#2213**：换代把 vendor 会话模型打回 spawn 默认 —— 复位
+           ``_vendor_model_state``、失效 ``_vision_gate`` 运行时缓存，并在
+           提供 turn 上下文（两条 prompt 路径）时立即重放
+           ``_apply_session_model_for_turn``；重放失败 raise（绝不静默回退
+           defaultModel 而 SSE/账本仍声称显式模型）。
+        2. **能力门（WP08 / #2212）**：按**活动模型**裁决 —— turn 期已
+           ``set_model`` 应用的会话模型优先于 spawn 基模型锚点；运行时
+           state 按 (epoch, 模型) 缓存，同 epoch 换模型必然重读。
+        3. **解析（WP06）**：会话归属/tombstone/blob sha/预算逐图裁决。
+
+        返回 ``{"images": [...], "receipts": [...], "blocked_reason": str,
+        "regenerated": bool}``。
+        """
+        from app.services.visual_context.profile import VisionGate
+        from app.services.visual_context.resolver import (
+            get_sent_image_ledger,
+            resolve_attachments,
+        )
+
+        if not getattr(self, "_vision_gate", None):
+            self._vision_gate = VisionGate()
+        ledger = get_sent_image_ledger()
+        blocked_reason = ""
+        regenerated = False
+        # ── V33：已送 pixels 复验（每 turn；空台账零成本早退）──
+        if turn_sid:
+            try:
+                revoked = await ledger.find_revoked(turn_sid)
+            except Exception:  # noqa: BLE001 — 台账复验失败按阻断图片处理
+                logger.warning(
+                    "[PiBridge] sent-image ledger check failed session=%s",
+                    turn_sid[:24], exc_info=True)
+                revoked = None
+            if revoked is None:
+                # 索引瞬态不可用 ≠ 已撤销：只阻断图片，绝不换代（review P2#10
+                # —— 隐私安全但不毁灭对话记忆）。
+                blocked_reason = "ledger_check_failed"
+            elif revoked:
+                if allow_regeneration:
+                    # vendor 换代：transcript 清空 → 旧 pixels 不再参与请求。
+                    try:
+                        await self._rpc.request("new_session", {})
+                        await self._drain_stale_events()
+                        ledger.bump(turn_sid)
+                    except Exception:  # noqa: BLE001 — 换代失败 → 阻断图片
+                        logger.warning(
+                            "[PiBridge] vendor session regen failed; blocking "
+                            "images session=%s", turn_sid[:24], exc_info=True)
+                        blocked_reason = "revoked_history_regeneration_failed"
+                    else:
+                        regenerated = True
+                        logger.info(
+                            "[PiBridge] vendor session regenerated for revoked "
+                            "images session=%s revoked=%d",
+                            turn_sid[:24], len(revoked))
+                        # #2213：new_session 后 Pi 会话模型回到 spawn 默认 ——
+                        # 已应用状态作废（下一 turn 预检据此强制重应用），
+                        # vision 运行时缓存同样失效（旧 state 会把过期能力
+                        # 放行给新默认模型）。
+                        self._vendor_model_state = None
+                        self._vision_gate.invalidate_runtime_cache()
+                else:
+                    blocked_reason = "revoked_history_pending_regeneration"
+        # ── #2213 重放：换代后本 turn 的 prompt 仍须落在会话目标模型上 ──
+        if regenerated and turn_id:
+            _reapply = await self._apply_session_model_for_turn(
+                turn_sid, turn_id, run_id, bound_message)
+            if not _reapply.ok:
+                raise PiRpcError(
+                    _reapply.reason_detail
+                    or "session model re-apply after image-revocation "
+                       "regeneration failed"
+                )
+        # ── 能力门 ──
+        allowed, gate_reason = True, ""
+        if attachments and not blocked_reason:
+            from app.services.visual_context.profile import resolve_active_model
+
+            rpc_epoch = getattr(self._rpc, "spawn_epoch", 0)
+            # __new__ 测试路径可能没有 __init__ 的实例属性 —— 按缺席处理。
+            active_model_id, spawn_anchor_applies = resolve_active_model(
+                getattr(self, "_vendor_model_state", None),
+                turn_sid, rpc_epoch,
+                str(getattr(self._rpc, "spawn_model_id", "") or ""),
+            )
+            try:
+                allowed, gate_reason = await self._vision_gate.check(
+                    model_id=active_model_id,
+                    spawn_declared_image_input=bool(
+                        getattr(self._rpc, "spawn_declared_image_input", False)),
+                    rpc=self._rpc,
+                    spawn_epoch=rpc_epoch,
+                    spawn_anchor_applies=spawn_anchor_applies,
+                )
+            except Exception:  # noqa: BLE001 — 门失败 = 不送图
+                allowed, gate_reason = False, "runtime_state_unavailable"
+        # ── 解析 ──
+        outcome = await resolve_attachments(
+            turn_sid, attachments,
+            images_allowed=allowed and not blocked_reason,
+            allowed_reason=gate_reason or blocked_reason,
+        )
+        if outcome.any_sent and turn_sid:
+            ledger.record(turn_sid, outcome.receipts)
+        return {
+            "images": outcome.images,
+            "receipts": [r.to_dict() for r in outcome.receipts],
+            "blocked_reason": blocked_reason,
+            "regenerated": regenerated,
+        }
 
     async def _acquire_turn_lease(self, turn_id: str, session_id: Optional[str], *, owner: Optional[asyncio.Task] = None) -> "_TurnLease":
         """Acquire the turn lock and bind it to an explicit ownership lease.
@@ -1531,6 +1951,41 @@ class PiBridge:
             lease.writer.release()
         self._lock_lease = None
         self._lock.release()
+
+
+    async def _drain_control_rpcs(self, *, timeout_s: float = 5.0) -> None:
+        """G22-P1（review 修复轮 P2）：turn 交接前有界排空在飞控制 RPC 响应。
+
+        vendor rpc 模式对 stdin 行是**并发分发**（prompt 分支 fire-and-forget、
+        abort 分支 ``await session.abort()``）——交接门只保证**字节序**；
+        abort **响应**落定 = vendor 侧 abort 处理完成。teardown 在 unregister
+        （后继 turn 准入的前提）前有界等待这些响应，把「后继 run 在旧 abort
+        效果落地前启动」的 vendor 内竞态窗口压到响应超时残余（超时放行 +
+        告警，绝不阻断交接；残余记录于 ADR D1）。
+        """
+        inflight = self._inflight_control
+        if not inflight:
+            return
+        pending = [f for f in list(inflight) if not f.done()]
+        if not pending:
+            return
+        try:
+            _done, still = await asyncio.wait(pending, timeout=timeout_s)
+            if still:
+                for f in still:
+                    # 移出追踪集：teardown 常有内外两层 finally 各调一次
+                    # drain——滞留 future 若留在集合里会把有界时间翻倍。
+                    # 移出后响应仍会解 future（collect 自带超时），只是后续
+                    # drain 不再等待它。
+                    inflight.discard(f)
+                logger.warning(
+                    "[PiBridge] %d control RPC response(s) still pending at "
+                    "turn teardown (bounded %.1fs elapsed); handing off — "
+                    "vendor-side residual race documented in ADR D1",
+                    len(still), timeout_s,
+                )
+        except Exception as exc:  # noqa: BLE001 — 排空绝不阻断交接
+            logger.debug("[PiBridge] control drain failed: %s", exc)
 
     async def _safe_unregister_active_pi_turn(self, session_id: str, turn_id: str, *, lease: Optional[_TurnLease] = None) -> None:
         """Best-effort active-turn unregister, hardened against cancellation.
@@ -1849,23 +2304,22 @@ class PiBridge:
             return False
         return bool(current) and current != spawned
 
-    async def recycle_if_surface_stale(self) -> bool:
-        """PI-03（ADR-0286 D4）：代漂移 → turn 边界回收 worker。
+    async def _recycle_worker(self, *, stale, reason: str) -> bool:
+        """turn 边界回收 worker 的共享骨架（PI-03 ADR-0286 D4；ADR-0288
+        W08 起供 surface / config 两种代漂移共用）。
 
-        无在飞 turn 时 stop+start（下一次 spawn 重建 dump，新工具对下一
-        turn 可见——进程不重启）；有在飞 turn 时延迟（本 turn 用旧面跑完，
+        无在飞 turn 时 stop+start（下一次 spawn 重建 dump/models.json，新
+        世代对下一 turn 生效）；有在飞 turn 时延迟（本 turn 用旧代跑完，
         绝不杀活 turn）。返回 True 表示执行了回收。
         """
-        if not self.surface_generation_stale():
-            return False
         async with self._respawn_lock:
-            if not self.surface_generation_stale():  # 双检：并发下他人已回收
+            if not stale():  # 双检：并发下他人已回收
                 return False
             if self._active_turn_sid is not None or self._lock.locked():
                 logger.info(
-                    "[PiBridge] Deferring surface recycle: a turn is still "
+                    "[PiBridge] Deferring %s recycle: a turn is still "
                     "running on the stale-generation worker (session=%s)",
-                    self._active_turn_sid,
+                    reason, self._active_turn_sid,
                 )
                 return False
             # review P1-2：活 turn 检查与 stop() 之间存在 check-then-act 竞窗
@@ -1878,32 +2332,73 @@ class PiBridge:
                 await asyncio.wait_for(self._lock.acquire(), timeout=1.0)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 logger.info(
-                    "[PiBridge] Deferring surface recycle: turn lock busy "
+                    "[PiBridge] Deferring %s recycle: turn lock busy "
                     "(a turn is starting or running)",
+                    reason,
                 )
                 return False
             try:
                 if self._active_turn_sid is not None:
                     return False  # 双检：临界区内再确认（锁内新 turn 不会出现）
                 logger.info(
-                    "[PiBridge] Recycling Pi worker for surface generation drift "
-                    "(registry tools changed since spawn)",
+                    "[PiBridge] Recycling Pi worker for %s drift", reason,
                 )
                 try:
                     await self.stop()
                     await self.start()
                 except Exception:  # noqa: BLE001 — 回收失败留给既有 lazy respawn 兜底
-                    logger.exception("[PiBridge] surface recycle failed; lazy respawn will retry")
+                    logger.exception("[PiBridge] %s recycle failed; lazy respawn will retry", reason)
                     return False
             finally:
                 self._lock.release()
             try:
                 from app.services.chat.pi_surface_metrics import record_surface_recycle
 
-                record_surface_recycle("registry_generation_drift")
+                record_surface_recycle(reason)
             except Exception:  # noqa: BLE001
-                logger.debug("[PiBridge] surface recycle metric record failed", exc_info=True)
+                logger.debug("[PiBridge] recycle metric record failed", exc_info=True)
             return True
+
+    async def recycle_if_surface_stale(self) -> bool:
+        """PI-03（ADR-0286 D4）：registry 代漂移 → turn 边界回收 worker。"""
+        if not self.surface_generation_stale():
+            return False
+        return await self._recycle_worker(
+            stale=self.surface_generation_stale,
+            reason="registry_generation_drift",
+        )
+
+    def config_generation_stale(self) -> bool:
+        """ADR-0288（W08，#2061）：LLM 配置代漂移检测。
+
+        本次 spawn 锚定的 ``spawn_config_generation`` 与当前解析点
+        （``model_config.config_generation``，Settings ⊕ 运行时覆盖）不一致
+        → 已运行 worker 用的还是旧模型/端点/密钥。fail-open：任一侧无代际
+        事实（解析失败 / 旧 worker）→ False（不回收）。
+        """
+        spawned = getattr(self._rpc, "spawn_config_generation", None)
+        if not spawned:
+            return False
+        try:
+            from app.services.chat.model_config import config_generation
+
+            current = config_generation()
+        except Exception:  # noqa: BLE001 — 观测面绝不阻断
+            return False
+        return bool(current) and current != spawned
+
+    async def recycle_if_config_stale(self) -> bool:
+        """ADR-0288（W08，#2061）：配置代漂移 → turn 边界换代 worker。
+
+        新 turn 用确认过的新配置；当前在飞 turn 不切半套（延迟回收）。
+        返回 True 表示执行了换代。
+        """
+        if not self.config_generation_stale():
+            return False
+        return await self._recycle_worker(
+            stale=self.config_generation_stale,
+            reason="config_generation_drift",
+        )
 
     async def start(self) -> None:
         """Start the Pi subprocess (delegates to the RPC client)."""
@@ -1981,62 +2476,124 @@ class PiBridge:
         # futures belong to the NEW turn; sid equality alone would kill it.
         # V5-B: resolve token from session table or instance turn state.
         if _entry is not None:
+            target_entry = _entry
             abort_token = _entry.token
         elif self._current_turn is not None and (
             session_id is None or self._current_turn.session_id == session_id
         ):
+            target_entry = self._current_turn
             abort_token = self._current_turn.token
         else:
+            target_entry = None
             abort_token = None
         abort_pending_ids = self._rpc.pending_request_ids()
-        result = await self._rpc.request("abort")
-        # P1 (TOCTOU) / R2-5: the active sid above was read lock-free BEFORE
-        # the abort RPC was awaited. In that gap the matching turn can end and
-        # a DIFFERENT session's turn start (notably when a shielded
-        # abort-on-disconnect outlives its turn's finally). In that case the
-        # abort RPC itself has already flown — nothing can un-send it — but we
-        # must NOT also ignite the NEW turn's token or fail its pending
-        # futures, so skip both global effects and log the flip.
-        active_after = self._active_turn_sid
-        if (
-            session_id is not None
-            and active_after is not None
-            and active_after != session_id
-        ):
+
+        # G22-P1（清偿 G12 review P2-1 残留）：turn 身份交接门。
+        # clear_queue/abort 是 worker 级全局操作（vendor 无 turn-scoped 命
+        # 令），而同会话后继 turn 不改 ``_active_turn_sid`` —— 仅比对 sid 的
+        # 前置守卫挡不住「旧 turn 的迟到取消命中同会话下一 turn」。本门把
+        # 「目标身份校验 + stdin 写出」做成原子段：
+        #   * 门内以**目标 entry 对象同一性**复核（session 表或 _current_turn
+        #     仍解析到同一 entry；None→None = 无在飞 turn 的 legacy 清场），
+        #     翻转（后继 turn 已交接）→ 整体跳过 RPC 写，绝不清错队列/误杀。
+        #   * 写出（issue）完成才释放门；teardown 的交接快照
+        #     同样取门；teardown 另以 _drain_control_rpcs 有界等待响应，
+        #     因此 turn N 的控制 RPC 字节
+        #     严格先于 turn N+1 的 prompt 字节到达 vendor（单 stdin 有序）。
+        # ADR-0288（W07 / vendor C14）：用户级完全停止 = 先清 steer/follow-up
+        # 队列再 abort（上游 Esc 语义）；clear_queue 失败绝不阻断 abort。
+        def _resolve_current_entry() -> Optional["_ActiveTurnEntry"]:
+            if session_id is not None:
+                return get_active_turn_entry(session_id)
+            return self._current_turn
+
+        clear_issued = None
+        abort_issued = None
+        inflight = self._inflight_control
+        if inflight is None:  # __new__ 测试路径防御
+            inflight = set()
+            self._inflight_control = inflight
+        if self._control_gate is None:
+            self._control_gate = asyncio.Lock()
+        # G22 修复轮（review P3）：门获取有界 —— wedged 控制写持门时，
+        # 后续 abort **整体跳过**（fail-safe：发不出就绝不发，宁可不取消
+        # 也不冒险命中后继 turn），而不是无限挂起。
+        try:
+            await asyncio.wait_for(self._control_gate.acquire(), timeout=5.0)
+        except asyncio.TimeoutError:
             logger.warning(
-                "[PiBridge] abort(session_id=%s) TOCTOU: the active turn "
-                "flipped %s -> %s while the abort RPC was in flight; skipping "
-                "token-cancel/fail_all_pending so the new turn is not killed",
-                session_id, active, active_after,
+                "[PiBridge] abort(session_id=%s) skipped: control gate busy "
+                ">5s (wedged control write?); fail-safe skip — never risk "
+                "hitting a successor turn",
+                session_id,
             )
-            return result or {}
-        # F24: ignite the SNAPSHOT turn's cancellation token so checkpoint()-
-        # cooperative tool dispatches (HTTP callback path) stop promptly too,
-        # not just the Pi subprocess. CONC-F1: cancel only the token the abort
-        # was AIMED at — if a same-session successor turn replaced it, the
-        # current token belongs to the new turn and must not be ignited
-        # (cancelling the stale snapshot token is correct and harmless: its
-        # turn is already gone).
+            return {}
+        try:
+            if _resolve_current_entry() is not target_entry:
+                logger.info(
+                    "[PiBridge] abort(session_id=%s) skipped: target turn was "
+                    "handed off before the control RPCs were written; not "
+                    "clearing/aborting a successor turn's run or queue",
+                    session_id,
+                )
+                return {}
+            try:
+                clear_issued = await self._rpc.issue("clear_queue", {})
+                inflight.add(clear_issued.future)
+                clear_issued.future.add_done_callback(inflight.discard)
+            except Exception as exc:  # noqa: BLE001 — 清队尽力而为
+                logger.debug(
+                    "[PiBridge] clear_queue issue failed (session=%s): %s",
+                    session_id, exc,
+                )
+            abort_issued = await self._rpc.issue("abort")
+            inflight.add(abort_issued.future)
+            abort_issued.future.add_done_callback(inflight.discard)
+        finally:
+            self._control_gate.release()
+        # 写相位已全部完成（门已释放）；以下只收响应 —— 慢响应不得拖住
+        # teardown 的交接门（teardown 有界等待这些 future，见
+        # 见 _drain_control_rpcs 与 _control_gate 注释）。
+        if clear_issued is not None:
+            try:
+                await self._rpc.collect(clear_issued)
+            except Exception as exc:  # noqa: BLE001 — 清队尽力而为
+                logger.debug(
+                    "[PiBridge] clear_queue response failed (session=%s): %s",
+                    session_id, exc,
+                )
+        result = await self._rpc.collect(abort_issued)
+        # P1 (TOCTOU) / R2-5 / G22-P1：写后身份对账。若目标 turn 在响应等待
+        # 期间被交接（后继 turn 已注册），RPC 字节已飞出（无法撤回）且严格
+        # 先于后继 turn 的 prompt 字节（门序保证）；此处只做**快照作用域**
+        # 的本地效果 —— 点燃快照 token（F24；旧 turn 的 token，取消无害且
+        # 正确）、记录 abort 来源（F03；按目标 turn id）、失败快照 pending
+        # ids（CONC-F1；后继 turn 的新请求不在快照内）—— 均不可能伤及
+        # 后继 turn，因此翻转时不再整体早退（旧实现的早退会丢失 F03 诚实
+        # 终态记录），仅告警披露。
+        if _resolve_current_entry() is not target_entry:
+            _current_entry = _resolve_current_entry()
+            logger.warning(
+                "[PiBridge] abort(session_id=%s): TOCTOU — target turn %s "
+                "(session=%s) was handed off while the abort RPC response was "
+                "pending; the session table now resolves to turn=%s "
+                "(session=%s); applying snapshot-scoped effects only "
+                "(token/source/pending-ids)",
+                session_id,
+                getattr(target_entry, "turn_id", None) or "None",
+                getattr(target_entry, "session_id", None) or "None",
+                getattr(_current_entry, "turn_id", None) or "None",
+                getattr(_current_entry, "session_id", None) or "None",
+            )
         if abort_token is not None:
             abort_token.cancel("abort requested")
         # F03: remember WHO ordered this stop so the settle seam records the
         # honest terminal (user → cancelled / system|policy → aborted) even
         # though the vendor will answer the abort with a clean agent_settled.
-        # review P3-4：fallback 与上方 token 解析同款会话守卫 —— 决不给
-        # 别的会话的 turn 记结算来源（否则会把外来 turn 的终态翻转）。
-        _abort_turn_id = getattr(_entry, "turn_id", "")
-        if not _abort_turn_id and self._current_turn is not None and (
-            session_id is None or self._current_turn.session_id == session_id
-        ):
-            _abort_turn_id = self._current_turn.turn_id
-        record_turn_abort_source(_abort_turn_id, source)
-        current_token = self._current_turn.token if self._current_turn else None
-        if current_token is not abort_token and current_token is not None:
-            logger.warning(
-                "[PiBridge] abort TOCTOU: active turn token was replaced while "
-                "the abort RPC was in flight; cancelled only the stale snapshot "
-                "token and failed only the snapshot futures"
-            )
+        # G22-P1：无目标 turn（legacy 清场路径）时不记录 —— 空 turn id 无
+        # 结算窗口可归属，只会污染来源台账。
+        if target_entry is not None:
+            record_turn_abort_source(target_entry.turn_id, source)
         # Cancel pending futures from the SNAPSHOT only (CONC-F1): failing
         # everything would kill a successor turn's freshly registered prompt.
         self._rpc.fail_pending_ids(abort_pending_ids, "abort requested")
@@ -2124,7 +2681,9 @@ class PiBridge:
         context_org_id: str = "",
         context_project_id: str = "",
         context_user_id: str = "",
+        context_owner_token: Optional[str] = None,
         context_query_text: str = "",
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> dict:
         """Send a prompt to Pi agent (non-streaming).
 
@@ -2153,7 +2712,11 @@ class PiBridge:
         # #1678：与 app/services/chat/pi_rpc_client.py 对齐，从 core 取共享密钥
         # （原从 api/routes/pi_tools 反向 import，违反 ADR-0216 §6.5）。
         from app.core.bridge_secret import get_bridge_secret
-        from app.services.chat.pi_turn_context import bind_turn_prompt, issue_turn_token
+        from app.services.chat.pi_turn_context import (
+            bind_turn_prompt_with_receipt,
+            issue_turn_token,
+        )
+        from app.services.chat import turn_receipt_lifecycle as turn_receipt_lc
 
         turn_id = _mint_turn_id()
         turn_token = issue_turn_token(get_bridge_secret(), turn_sid, turn_id)
@@ -2161,7 +2724,10 @@ class PiBridge:
         if turn_sid:
             data["sessionId"] = turn_sid
 
-        # Runtime observability: prompt() now mints a real turn_id (previously)
+        # G43（ADR-0295）：非流式 turn 的上下文回执（装配捕获 + 落盘读模型）。
+        _ns_turn_receipt = None
+        _ns_receipt_read = None
+        # Runtime observability: prompt() now mints a real turn_id (previously
         # its cancellation token carried the *session* id as job_id, so the
         # non-stream path had no turn identity). run_id is a first-class turn
         # handle (the prior "run_id == session_id" reuse is retired here).
@@ -2174,6 +2740,8 @@ class PiBridge:
             turn_id=turn_id,
             run_id=run_id,
         )
+        # G36：非流式路径的附件回执（随返回值披露，不进 RPC wire）。
+        _attachment_receipts: List[Dict[str, Any]] = []
 
         # Hold the lock across send + drain so turns are strictly serial on the
         # singleton bridge. Pi processes one prompt at a time, so this matches
@@ -2219,6 +2787,17 @@ class PiBridge:
                 # 方向 09（parity D2/D7）：非流式 turn 收口的完成度负载
                 # （settle 管线产出，finally 的轨迹录制使用 —— 与流式对齐）。
                 _turn_map_product = None
+                # G37（WP05/WP08）：非流式同款 —— 模型应用结果 + usage 采集器。
+                _ns_model_result = None
+                _ns_usage_collector = None
+                try:
+                    from app.services.chat.model_runtime.usage_ledger import (
+                        TurnUsageCollector,
+                    )
+
+                    _ns_usage_collector = TurnUsageCollector(turn_sid, turn_id, run_id)
+                except Exception:  # noqa: BLE001
+                    _ns_usage_collector = None
                 try:
                     # F5/F24: publish the active turn's identity + cancellation token
                     # while the lock is held — abort() reads the sid for session
@@ -2233,7 +2812,13 @@ class PiBridge:
                     # the table, not the singleton slot).
                     _turn_token = CancellationToken(job_id=turn_id)
                     await register_active_pi_turn(
-                        turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
+                        turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id,
+                        caller=_PiCallerIdentity(
+                            user_id=context_user_id or None,
+                            owner_token=context_owner_token,
+                            org_id=context_org_id or None,
+                            project_id=context_project_id or None,
+                        ),
                     )
                     # ADR-0180（Harness Kernel）：非流式 turn 同样记账（与
                     # stream_prompt 同语义；best-effort 绝不阻断）。
@@ -2266,7 +2851,8 @@ class PiBridge:
                     # Drop any residual events from a prior turn before sending, so they
                     # cannot be attributed to this turn.
                     await self._drain_stale_events()
-                    data["message"] = await bind_turn_prompt(
+                    # G43（ADR-0295）：非流式同款 receipt 捕获 + 落盘。
+                    _ns_prompt_message, _ns_turn_receipt = await bind_turn_prompt_with_receipt(
                         message, turn_token, turn_sid, cartography_context or "",
                         env_block=env_block or "",
                         turn_id=turn_id,
@@ -2275,9 +2861,72 @@ class PiBridge:
                         user_id=context_user_id or "",
                         query_text=context_query_text or "",
                     )
+                    data["message"] = _ns_prompt_message
+                    _ns_receipt_read = await turn_receipt_lc.persist_assembly_receipt(
+                        _ns_turn_receipt,
+                        session_id=turn_sid, turn_id=turn_id, run_id=run_id,
+                        org_id=context_org_id or "",
+                        project_id=context_project_id or "",
+                        user_id=context_user_id or "",
+                    )
                     try:
                         await self._isolate_vendor_session(turn_sid)
+                        # G37（WP05/WP10）：非流式同款 —— 模型应用 + 预算
+                        # admission 在 prompt 字节之前；失败 raise（本路径的
+                        # 错误面是异常而非 SSE）。
+                        _ns_model_result = await self._apply_session_model_for_turn(
+                            turn_sid, turn_id, run_id, str(data.get("message") or ""),
+                        )
+                        if not _ns_model_result.ok:
+                            send_failed = True
+                            # G43（C18）：装配后未发出 —— 如实 not_sent
+                            #（刷新读模型，返回值披露真实状态）。
+                            _ns_receipt_read = (
+                                await turn_receipt_lc.mark_not_sent(
+                                    turn_id,
+                                    reason=(
+                                        "model_budget_rejected"
+                                        if _ns_model_result.status == "budget_rejected"
+                                        else "model_apply_error"
+                                    ),
+                                    session_id=turn_sid,
+                                )
+                            ) or _ns_receipt_read
+                            rt_ev.settle(
+                                Outcome.FAILED,
+                                failure_class=(
+                                    "session_budget_exceeded"
+                                    if _ns_model_result.status == "budget_rejected"
+                                    else "model_apply_error"
+                                ),
+                                detail=(_ns_model_result.reason_detail or "")[:200],
+                            )
+                            raise PiRpcError(
+                                _ns_model_result.reason_detail
+                                or "session model runtime refused this turn"
+                            )
+                        # G36（ADR-0291）：与 stream_prompt 同款图片解析
+                        # （lease 内、prompt 字节前；V33 预检**每 turn 执行**
+                        # —— 撤销后的纯文本 turn 同样换代；回执随返回值
+                        # 披露，不进 RPC wire —— Pi 只收 message/images）。
+                        _img_outcome = await self._resolve_turn_images(
+                            turn_sid, attachments,
+                            turn_id=turn_id, run_id=run_id,
+                            bound_message=str(data.get("message") or ""),
+                        )
+                        if _img_outcome["images"]:
+                            data["images"] = _img_outcome["images"]
+                        _attachment_receipts.extend(_img_outcome["receipts"])
                         prompt_resp = await self._rpc.request("prompt", data)
+                        # G43：RPC 已返回 —— 记录真实 disposition（started/
+                        # queued/handled；handled ≠ provider 消费）。
+                        _ns_receipt_read = await turn_receipt_lc.mark_submitted(
+                            turn_id,
+                            disposition=str(
+                                (prompt_resp or {}).get("disposition") or "started"
+                            )[:16],
+                            session_id=turn_sid,
+                        ) or _ns_receipt_read
                     except PiRpcError as send_exc:
                         # #790 (B-6 parity with stream_prompt's ``send_failed``): the
                         # prompt RPC itself raised. Pi may already have started the
@@ -2285,6 +2934,11 @@ class PiBridge:
                         # a retry duplicates side effects while this caller already
                         # returned an error.
                         send_failed = True
+                        # G43（C21）：RPC 异常 —— 诚实 unknown（刷新读模型）。
+                        _ns_receipt_read = (
+                            await turn_receipt_lc.mark_unknown(
+                                turn_id, session_id=turn_sid)
+                        ) or _ns_receipt_read
                         rt_ev.settle(
                             Outcome.FAILED,
                             failure_class="pi_send_error",
@@ -2331,6 +2985,20 @@ class PiBridge:
                     process_died_event = getattr(self._rpc, "process_died_event", None)
                     if not isinstance(process_died_event, asyncio.Event):
                         process_died_event = asyncio.Event()
+                    # G29（WP07）：非流式 drain 同款等待用户记账（见 stream_prompt）。
+                    _ns_wait_accredited = 0.0
+                    _ns_isvc = None
+                    _ns_max_wait = 900.0
+                    try:
+                        from app.services.chat.pi_runtime_interaction import (
+                            PI_INTERACTION_MAX_WAIT_S as _ns_max_wait_env,
+                            get_interaction_service as _ns_get_isvc,
+                        )
+
+                        _ns_isvc = _ns_get_isvc()
+                        _ns_max_wait = _ns_max_wait_env
+                    except Exception:  # noqa: BLE001 — 记账面失败 = 不豁免
+                        _ns_isvc = None
                     while True:
                         # #786: keep draining while events keep arriving. A single
                         # expired wait is NOT a turn failure — declare a stall only
@@ -2338,8 +3006,21 @@ class PiBridge:
                         # budget (PI_EVENT_STREAM_TIMEOUT) or the bounded total-turn
                         # deadline, mirroring stream_prompt's silence accumulation.
                         now = time.monotonic()
+                        if _ns_isvc is not None:
+                            await _ns_isvc.flush_deferred_writes()
+                            if _ns_isvc.waiting_for_user(turn_id):
+                                _ns_wait_accredited = min(
+                                    _ns_wait_accredited + PI_EVENT_DRAIN_TIMEOUT,
+                                    _ns_max_wait,
+                                )
+                                _ns_isvc.expire_due(turn_sid or "")
+                                last_event_at = now  # 等待用户不算静默
                         remaining_stall = PI_EVENT_STREAM_TIMEOUT - (now - last_event_at)
-                        remaining_total = PI_TURN_TOTAL_TIMEOUT - (now - drain_started)
+                        remaining_total = (
+                            PI_TURN_TOTAL_TIMEOUT
+                            - (now - drain_started)
+                            + _ns_wait_accredited
+                        )
                         wait_budget = min(
                             PI_EVENT_DRAIN_TIMEOUT, remaining_stall, remaining_total
                         )
@@ -2367,6 +3048,24 @@ class PiBridge:
                                 # 首个真实 Pi 事件（first_event/TTFT-proxy）。
                                 rt_ev.mark_first_event()
                                 event_type = event.get("type")
+                                # G29（WP03）：真实业务事件到达 → 交互续接观察。
+                                if _ns_isvc is not None and event_type not in (
+                                    "extension_ui_request",
+                                    "extension_ui_update",
+                                    "extension_ui_fire",
+                                ):
+                                    _ns_isvc.observe_turn_activity(
+                                        turn_id, f"event:{event_type}",
+                                    )
+                                # G37（WP08）：非流式 drain 同款 usage 采集。
+                                if _ns_usage_collector is not None:
+                                    try:
+                                        _ns_usage_collector.observe(event)
+                                    except Exception:  # noqa: BLE001
+                                        logger.debug(
+                                            "[PiBridge] usage observe failed turn=%s",
+                                            turn_id, exc_info=True,
+                                        )
                                 # PI-01（ADR-0286）：tool_execution_start/end 驱动
                                 # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
                                 _phase.observe_tool_event(event_type)
@@ -2388,14 +3087,15 @@ class PiBridge:
                                         final_text = text
                             else:
                                 # 超时且两任务都未完成 —— 连续静默/总预算检查
+                                _elapsed_ns = time.monotonic() - drain_started - _ns_wait_accredited
                                 if (
                                     time.monotonic() - last_event_at >= PI_EVENT_STREAM_TIMEOUT
-                                    or time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
+                                    or _elapsed_ns >= PI_TURN_TOTAL_TIMEOUT
                                 ):
                                     timed_out = True
                                     timeout_reason = (
                                         "total"
-                                        if time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
+                                        if _elapsed_ns >= PI_TURN_TOTAL_TIMEOUT
                                         else "stall"
                                     )
                                     break
@@ -2499,6 +3199,23 @@ class PiBridge:
                         except Exception as e:  # noqa: BLE001
                             logger.warning("[PiBridge] abort-on-failed-turn (turn=%s): %s", turn_sid, e)
                     _cleanup_turn_state(turn_sid)
+                    # G37（WP07/WP08）：非流式同款回执/账本收口（幂等）。
+                    if _ns_model_result is not None and _ns_usage_collector is not None:
+                        self._persist_turn_runtime_receipt(
+                            _ns_model_result, collector=_ns_usage_collector,
+                        )
+                    # G29（WP10）：非流式 turn teardown 同款交互失效（见 stream_prompt）。
+                    try:
+                        from app.services.chat.pi_runtime_interaction import (
+                            get_interaction_service as _gis_ns,
+                        )
+
+                        _gis_ns().invalidate_turn(turn_sid, turn_id, "turn-teardown")
+                    except Exception:  # noqa: BLE001 — 失效面绝不阻断 teardown
+                        logger.debug(
+                            "[PiBridge] interaction invalidate at non-stream teardown failed",
+                            exc_info=True,
+                        )
                     # Clear the active-turn markers before releasing the lock.
                     self._active_turn_sid = None
                     # F03（ADR-0259-f03 D1）：单结算 seam —— abort 来源消费、
@@ -2552,6 +3269,7 @@ class PiBridge:
                     # CancelledError during Redis I/O can no longer skip the
                     # release. The outer finally's backstop release is a no-op then.
                     self._release_turn_lease(lease)
+                    await self._drain_control_rpcs()
                     await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                     rt_ev.mark_ended()
                     _turn_summary = emit_turn_summary(rt_ev)
@@ -2583,6 +3301,20 @@ class PiBridge:
                     except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
                         pass
                     TURN_EVIDENCE.remove(turn_id)
+                    # G43（ADR-0295）：turn 终态独立入账（completed/failed/
+                    # cancelled 与提交状态正交；进程死亡补 unknown —— 单调
+                    # 状态机不会改写已确证的 submitted/not_sent）。
+                    try:
+                        await turn_receipt_lc.mark_turn_outcome(
+                            turn_id,
+                            outcome=await turn_receipt_lc.outcome_for_rt_ev(
+                                rt_ev.outcome.outcome if rt_ev.outcome else Outcome.FAILED
+                            ),
+                        )
+                        if process_died:
+                            await turn_receipt_lc.mark_unknown(turn_id)
+                    except Exception:  # noqa: BLE001 — 回执面绝不阻断收口
+                        pass
         finally:
             # #1108 INV-P1: backstop — whatever happened above (including a
             # cancellation delivered inside the inner finally before its own
@@ -2592,13 +3324,20 @@ class PiBridge:
             if self._current_turn is not None and self._current_turn.turn_id == turn_id:
                 self._current_turn = None
             self._release_turn_lease(lease)
+            await self._drain_control_rpcs()
             await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
             TURN_EVIDENCE.remove(turn_id)
             _cleanup_turn_state(turn_sid)
 
+        # G43（ADR-0295）：随返回值披露有界回执摘要（路由持久化/展示用）。
         return {
             "sessionId": turn_sid,
             "content": final_text,
+            "attachment_receipts": _attachment_receipts,
+            "turn_receipt": turn_receipt_lc.sse_payload(
+                _ns_receipt_read, session_id=turn_sid, turn_id=turn_id,
+                fallback=_ns_turn_receipt,
+            ),
         }
 
     async def stream_prompt(
@@ -2612,7 +3351,9 @@ class PiBridge:
         context_org_id: str = "",
         context_project_id: str = "",
         context_user_id: str = "",
+        context_owner_token: Optional[str] = None,
         context_query_text: str = "",
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a prompt to Pi agent, yielding SSE events.
 
@@ -2626,6 +3367,8 @@ class PiBridge:
                 "completed"} (audit #818: lets the route persist the turn
                 transcript without re-parsing SSE strings). May be sync or
                 async.
+            attachments: G36 受权视觉证据 refs（[{evidence_id}]）；lease 内
+                解析为原生 images（能力门/预算/台账见 _resolve_turn_images）。
 
         Yields:
             SSE-formatted event strings
@@ -2636,6 +3379,9 @@ class PiBridge:
         # owns this turn — not bridge instance state a prior turn could have
         # overwritten.
         turn_sid = session_id or ""
+        # G36：本 turn 附件回执（SSE 已逐条披露；此处随 on_turn_result 交路由
+        # 持久化 status/reason —— 刷新恢复不把 refused 显示成 sent）。
+        _turn_attachment_receipts: List[Dict[str, Any]] = []
 
         def lookup_result(tool_call_id: str, _sid: str = turn_sid) -> Optional[ToolDispatchResult]:
             return get_cached_dispatch_result(tool_call_id, _sid)
@@ -2643,13 +3389,22 @@ class PiBridge:
         # #1678：与 app/services/chat/pi_rpc_client.py 对齐，从 core 取共享密钥
         # （原从 api/routes/pi_tools 反向 import，违反 ADR-0216 §6.5）。
         from app.core.bridge_secret import get_bridge_secret
-        from app.services.chat.pi_turn_context import bind_turn_prompt, issue_turn_token
+        from app.services.chat.pi_turn_context import (
+            bind_turn_prompt_with_receipt,
+            issue_turn_token,
+        )
+        from app.services.chat import turn_receipt_lifecycle as turn_receipt_lc
 
         turn_id = _mint_turn_id()
         turn_token = issue_turn_token(get_bridge_secret(), turn_sid, turn_id)
         data: dict[str, Any] = {}
         if turn_sid:
             data["sessionId"] = turn_sid
+
+        # G43（ADR-0295）：本 turn 的上下文回执（装配捕获 + 落盘读模型；落盘
+        # 失败保持 None —— SSE/读模型如实 unknown，绝不伪造）。
+        _turn_ctx_receipt = None
+        _turn_receipt_read = None
 
         # V3: 每个 Pi turn 铸一个 turn_id，显式透传给 harness 记录与 SSE 负载
         # （绝不用全局 set_correlation —— 单例 harness 跨 session 累积会互相污染）。
@@ -2756,6 +3511,19 @@ class PiBridge:
                 # 显式捕获置位后 re-raise，finally 的单结算 seam 记 failed。
                 unclassified_error = False
                 _error_detail = ""
+                # G37（WP05/WP08）：本 turn 的模型应用结果与 usage 采集器 ——
+                # 与其他 flags 同点初始化，早退路径的 finally 也有诚实缺省。
+                _model_result = None
+                _model_status_pending = None
+                _usage_collector = None
+                try:
+                    from app.services.chat.model_runtime.usage_ledger import (
+                        TurnUsageCollector,
+                    )
+
+                    _usage_collector = TurnUsageCollector(turn_sid, turn_id, run_id)
+                except Exception:  # noqa: BLE001 — 采集器缺席 = 不入账（不阻断）
+                    _usage_collector = None
                 # F03（单结算 seam）：clean agent_settled 的投影管线在事件循环
                 # 内已跑过时置位，seam 不再重复（幂等去重）。
                 _projections_settled = False
@@ -2772,7 +3540,13 @@ class PiBridge:
                 # V5-B: token minted first, registered WITH the session table.
                 _turn_token = CancellationToken(job_id=turn_id)
                 await register_active_pi_turn(
-                    turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
+                    turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id,
+                    caller=_PiCallerIdentity(
+                        user_id=context_user_id or None,
+                        owner_token=context_owner_token,
+                        org_id=context_org_id or None,
+                        project_id=context_project_id or None,
+                    ),
                 )
                 # ADR-0180（Harness Kernel）：turn 开始 → GIS 会话运行时记账
                 # （turn 台账 + 上一 turn 中断检测 + resume 计数）。增值披露，
@@ -2807,7 +3581,9 @@ class PiBridge:
                     # Drop residual events from a prior turn so they can't be dequeued
                     # and attributed to this session.
                     await self._drain_stale_events()
-                    data["message"] = await bind_turn_prompt(
+                    # G43（ADR-0295）：伴随 receipt 捕获（窄适配 —— 只把生产
+                    # 装配的 receipt 交给本 turn 生命周期，不二次装配）。
+                    _prompt_message, _turn_ctx_receipt = await bind_turn_prompt_with_receipt(
                         message, turn_token, turn_sid, cartography_context or "",
                         env_block=env_block or "",
                         turn_id=turn_id,
@@ -2816,14 +3592,123 @@ class PiBridge:
                         user_id=context_user_id or "",
                         query_text=context_query_text or "",
                     )
+                    data["message"] = _prompt_message
+                    _turn_receipt_read = await turn_receipt_lc.persist_assembly_receipt(
+                        _turn_ctx_receipt,
+                        session_id=turn_sid, turn_id=turn_id, run_id=run_id,
+                        org_id=context_org_id or "",
+                        project_id=context_project_id or "",
+                        user_id=context_user_id or "",
+                    )
 
                     # Send prompt command
                     try:
                         await self._isolate_vendor_session(turn_sid)
+                        # G37（WP05/WP10）：turn 期模型应用 + 预算 admission。
+                        # 必须在 isolate 之后（模型属于当前 vendor 会话）、
+                        # prompt 字节之前（预算拒绝时 stub/供应商请求计数
+                        # 不得增加，M30）。失败 → prompt 不发出，绝不假成功。
+                        _model_result = await self._apply_session_model_for_turn(
+                            turn_sid, turn_id, run_id, str(data.get("message") or ""),
+                        )
+                        if not _model_result.ok:
+                            send_failed = True
+                            _model_failure_class = (
+                                "session_budget_exceeded"
+                                if _model_result.status == "budget_rejected"
+                                else "model_apply_error"
+                            )
+                            rt_ev.settle(
+                                Outcome.FAILED,
+                                failure_class=_model_failure_class,
+                                detail=(_model_result.reason_detail or "")[:200],
+                            )
+                            # G43（C18）：装配后、发出前被拒 —— 回执如实
+                            # not_sent，零假发送状态。刷新读模型（review P2：
+                            # 后续 on_turn_result 的消息摘要不得停留在
+                            # assembled）。
+                            _turn_receipt_read = (
+                                await turn_receipt_lc.mark_not_sent(
+                                    turn_id,
+                                    reason=(
+                                        "model_budget_rejected"
+                                        if _model_result.status == "budget_rejected"
+                                        else "model_apply_error"
+                                    ),
+                                    session_id=turn_sid,
+                                )
+                            ) or _turn_receipt_read
+                            yield sse_event("model_status", _model_result.sse_payload(turn_sid, turn_id))
+                            yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
+                                _turn_receipt_read, session_id=turn_sid,
+                                turn_id=turn_id, fallback=_turn_ctx_receipt,
+                                status_override="not_sent",
+                            ))
+                            yield sse_event("task_error", {
+                                "task_id": turn_sid,
+                                "session_id": turn_sid,
+                                "turn_id": turn_id,
+                                "error": (
+                                    _model_result.reason_detail
+                                    or "session model runtime refused this turn"
+                                )[:500],
+                                "error_class": error_class_for_turn_failure(
+                                    _model_failure_class
+                                ),
+                            })
+                            yield sse_event("done", {"session_id": turn_sid})
+                            return
+                        # model_status 在 prompt 接受后、task_start 之后发射
+                        # （保持既有 SSE 首事件契约：task_start 仍是流的首个
+                        # 结构事件；model_status 是加性第二事件）。
+                        _model_status_pending = _model_result.sse_payload(turn_sid, turn_id)
+                        # G36（ADR-0291）：受权附件 → 原生 images（lease 内，
+                        # prompt 字节之前；V33 预检**每 turn 执行** —— 撤销
+                        # 后的纯文本 turn 同样触发换代，旧 pixels 不随
+                        # transcript 续送；逐附件回执向 SSE 披露）。
+                        _img_outcome = await self._resolve_turn_images(
+                            turn_sid, attachments,
+                            turn_id=turn_id, run_id=run_id,
+                            bound_message=str(data.get("message") or ""),
+                        )
+                        if _img_outcome["images"]:
+                            data["images"] = _img_outcome["images"]
+                        _turn_attachment_receipts.extend(_img_outcome["receipts"])
+                        for _receipt in _img_outcome["receipts"]:
+                            try:
+                                _ev = sse_event("attachment_receipt", {
+                                    "session_id": turn_sid,
+                                    "turn_id": turn_id,
+                                    "attachment": _receipt,
+                                })
+                                yield _ev
+                            except Exception:  # noqa: BLE001 — 披露面绝不阻断
+                                pass
                         prompt_resp = await self._rpc.request("prompt", data)
+                        # G43：RPC 已返回 —— 记录真实 disposition（started/
+                        # queued/handled；handled ≠ provider 消费，queued ≠
+                        # 已运行 —— C19/C20 的诚实面）。
+                        _turn_receipt_read = await turn_receipt_lc.mark_submitted(
+                            turn_id,
+                            disposition=str(
+                                (prompt_resp or {}).get("disposition") or "started"
+                            )[:16],
+                            session_id=turn_sid,
+                        ) or _turn_receipt_read
                     except PiRpcError as e:
                         logger.error(f"[PiBridge] stream_prompt send failed: {e}")
                         send_failed = True
+                        # G43（C21）：RPC 异常 —— 可能已部分启动，诚实 unknown
+                        #（绝不复制上一 turn 的成功回执；刷新读模型 —— review P2）。
+                        _turn_receipt_read = (
+                            await turn_receipt_lc.mark_unknown(
+                                turn_id, session_id=turn_sid)
+                        ) or _turn_receipt_read
+                        yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
+                            _turn_receipt_read, session_id=turn_sid,
+                            turn_id=turn_id, fallback=_turn_ctx_receipt,
+                            status_override="unknown",
+                        ))
                         # INV-7 + errors.py 红线：error 事件携带 error_class；文案
                         # 固定短语，原始 PiRpcError 文本只进日志（不内插进 SSE）。
                         yield sse_event("task_error", {
@@ -2852,6 +3737,13 @@ class PiBridge:
                             failure_class="pi_prompt_handled",
                             detail="prompt consumed by an input handler; no agent run started",
                         )
+                        # G43（C19）：handled ≠ provider 已收到/已运行 —— 回执
+                        # 提交状态 + disposition 如实分列。
+                        yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
+                            _turn_receipt_read, session_id=turn_sid,
+                            turn_id=turn_id, fallback=_turn_ctx_receipt,
+                            status_override="submitted",
+                        ))
                         yield sse_event("task_error", {
                             "task_id": turn_sid,
                             "session_id": turn_sid,
@@ -2883,6 +3775,25 @@ class PiBridge:
                         # 由 /health.agent_runtime_mode 与降级日志披露）。
                         "runtime_mode": "native",
                     })
+
+                    # G37（WP07）：turn 期模型应用回执（成功路径 —— task_start
+                    # 之后的加性事件；失败路径在 prompt 前已 model_status +
+                    # task_error + done 提前收口）。
+                    if _model_status_pending is not None:
+                        yield sse_event("model_status", _model_status_pending)
+                        _model_status_pending = None
+
+                    # G43（ADR-0295）：本轮上下文装配回执（task_start 之后的
+                    # 加性事件；保持既有 SSE 首事件契约 —— task_start 仍为首
+                    # 个结构事件）。payload 有界：digest/计数/disposition，
+                    # 无全文/秘密。
+                    try:
+                        yield sse_event("turn_context_receipt", turn_receipt_lc.sse_payload(
+                            _turn_receipt_read, session_id=turn_sid,
+                            turn_id=turn_id, fallback=_turn_ctx_receipt,
+                        ))
+                    except Exception:  # noqa: BLE001 — 披露面绝不阻断
+                        pass
 
                     # G: watch the subprocess death signal alongside the event queue so
                     # a mid-stream Pi crash ends the turn promptly (error + done +
@@ -2916,6 +3827,21 @@ class PiBridge:
                     # 停止去重（正常 turn 的工具步数远低于该界）。
                     _seen_tool_end_ids: set = set()
                     _tool_end_dedup_overflow = False
+                    # G29（WP07）：等待用户的可信等待记账 —— ctx.ui dialog 挂起时
+                    # vendor 不发任何事件，连续静默不得误判 stall；整 turn 预算
+                    # 按记账额度展宽（总量仍有 PI_INTERACTION_MAX_WAIT_S 帽，
+                    # 由交互服务的 deadline 承担）。
+                    _wait_accredited_s = 0.0
+                    _interaction_service = None
+                    try:
+                        from app.services.chat.pi_runtime_interaction import (
+                            PI_INTERACTION_MAX_WAIT_S as _MAX_USER_WAIT_S,
+                            get_interaction_service as _get_isvc,
+                        )
+
+                        _interaction_service = _get_isvc()
+                    except Exception:  # noqa: BLE001 — 记账面失败 = 不豁免（保守）
+                        _MAX_USER_WAIT_S = 900.0
                     get_task = asyncio.ensure_future(self._rpc.events.get())
                     died_task = asyncio.ensure_future(process_died_event.wait())
                     pending = {get_task, died_task}
@@ -2925,11 +3851,30 @@ class PiBridge:
                                 pending, timeout=PI_HEARTBEAT_INTERVAL,
                                 return_when=asyncio.FIRST_COMPLETED,
                             )
+                            _waiting_user = (
+                                _interaction_service is not None
+                                and _interaction_service.waiting_for_user(turn_id)
+                            )
+                            if _interaction_service is not None:
+                                # G29：冲刷 sink 排队的单向写出（上限拒收等）。
+                                await _interaction_service.flush_deferred_writes()
+                            if _waiting_user:
+                                # 等待用户（或答案已写出待续接）：可信等待，
+                                # 不累计 stall；总预算按心跳粒度记账展宽。
+                                _wait_accredited_s = min(
+                                    _wait_accredited_s + PI_HEARTBEAT_INTERVAL,
+                                    _MAX_USER_WAIT_S,
+                                )
+                                # 惰性过期处理（原生 timeout 到点标记 timed_out）。
+                                _interaction_service.expire_due(turn_sid)
                             # #982: the total-budget check runs EVERY iteration, not
                             # only in the silence branch — a steady drip of events
                             # (each resetting silence_seconds) must not exempt a turn
                             # from the whole-turn deadline.
-                            if time.monotonic() - turn_started >= PI_TURN_TOTAL_TIMEOUT:
+                            if (
+                                time.monotonic() - turn_started - _wait_accredited_s
+                                >= PI_TURN_TOTAL_TIMEOUT
+                            ):
                                 timed_out = True
                                 timeout_reason = "total"
                                 break
@@ -2943,6 +3888,29 @@ class PiBridge:
                                 event = get_task.result()
                                 silence_seconds = 0.0
                                 rt_ev.mark_first_event()
+                                # G29（WP03）：真实业务事件到达 = 当前任务在继续
+                                # —— answer_written 的交互按证据标 resolved。
+                                if _interaction_service is not None:
+                                    _evt_type = str(event.get("type") or "")
+                                    if _evt_type not in (
+                                        "extension_ui_request",
+                                        "extension_ui_update",
+                                        "extension_ui_fire",
+                                    ):
+                                        _interaction_service.observe_turn_activity(
+                                            turn_id, f"event:{_evt_type}",
+                                        )
+                                # G37（WP08）：原生 message_end 终态 usage →
+                                # 采集器（assistant 主链 + toolResult nested，
+                                # 各记一次；账本落盘在 turn 收口 finally）。
+                                if _usage_collector is not None:
+                                    try:
+                                        _usage_collector.observe(event)
+                                    except Exception:  # noqa: BLE001 — 记账绝不打断流
+                                        logger.debug(
+                                            "[PiBridge] usage observe failed turn=%s",
+                                            turn_id, exc_info=True,
+                                        )
                                 # PI-01（ADR-0286）：tool_execution_start/end 驱动
                                 # TOOL_WAIT⇀RUNNING（仅在相应相位起作用）。
                                 _phase.observe_tool_event(str(event.get("type") or ""))
@@ -3102,6 +4070,12 @@ class PiBridge:
                             else:
                                 # Neither an event nor a death within one heartbeat
                                 # interval -> accumulate silence, keepalive.
+                                if _waiting_user:
+                                    # G29（WP07）：等待用户是可观察宿主状态，不是
+                                    # 工具停滞 —— 心跳继续，stall 不累计（等待总量
+                                    # 由交互 deadline 与 _wait_accredited_s 帽约束）。
+                                    yield ": keepalive\n\n"
+                                    continue
                                 silence_seconds += PI_HEARTBEAT_INTERVAL
                                 if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
                                     # True stall: no Pi event for the whole stall budget.
@@ -3206,6 +4180,27 @@ class PiBridge:
                     # the next turn. (On a normal agent_settled the queue is already
                     # empty; this is a no-op there.)
                     await self._drain_remaining_turn_events()
+                    # G29（WP10）：turn teardown —— 该 turn 仍 pending/待观察的
+                    # 交互一律失效（旧卡片终止，绝不把旧回答注入后继 turn）。
+                    try:
+                        from app.services.chat.pi_runtime_interaction import (
+                            get_interaction_service as _gis,
+                        )
+
+                        _invalidated = _gis().invalidate_turn(
+                            turn_sid, turn_id, "turn-teardown",
+                        )
+                        if _invalidated:
+                            logger.info(
+                                "[PiBridge] invalidated %d pending interaction(s) "
+                                "at turn teardown (turn=%s)",
+                                _invalidated, turn_id,
+                            )
+                    except Exception:  # noqa: BLE001 — 失效面绝不阻断 teardown
+                        logger.debug(
+                            "[PiBridge] interaction invalidate at teardown failed",
+                            exc_info=True,
+                        )
                     # NB: _drain_remaining_turn_events contains no suspension
                     # points (get_nowait loop only), so a re-delivered
                     # cancellation cannot interrupt it mid-cleanup (#1108).
@@ -3214,6 +4209,14 @@ class PiBridge:
                     # results (written by the HTTP callback, never consumed after a
                     # disconnect). Without this they accumulate across sessions.
                     _cleanup_turn_state(turn_sid)
+                    # G37（WP07/WP08）：turn 运行回执 + usage 账本收口（幂等
+                    # 落盘；所有退出路径 —— clean/超时/取消/断连/应用失败 ——
+                    # 都经过此处一次）。落盘失败 → complete=False → 面
+                    # incomplete（M32），绝不伪造零值。
+                    if _model_result is not None and _usage_collector is not None:
+                        self._persist_turn_runtime_receipt(
+                            _model_result, collector=_usage_collector,
+                        )
                     # Clear the active-turn markers AFTER the abort above (abort reads
                     # them to cancel the token) and before releasing the lock.
                     self._active_turn_sid = None
@@ -3247,6 +4250,7 @@ class PiBridge:
                     # CancelledError during Redis I/O can no longer skip the
                     # release and hang every session on the singleton bridge.
                     self._release_turn_lease(lease)
+                    await self._drain_control_rpcs()
                     await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                     # Runtime observability: settle turn outcome from the SAME
                     # status the seam recorded（F03：诊断面与权威终态不再各有
@@ -3309,6 +4313,20 @@ class PiBridge:
                     except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
                         pass
                     TURN_EVIDENCE.remove(turn_id)
+                    # G43（ADR-0295）：turn 终态独立入账（completed/failed/
+                    # cancelled 与提交状态正交；进程死亡补 unknown —— 单调
+                    # 状态机不会改写已确证的 submitted/not_sent）。
+                    try:
+                        await turn_receipt_lc.mark_turn_outcome(
+                            turn_id,
+                            outcome=await turn_receipt_lc.outcome_for_rt_ev(
+                                rt_ev.outcome.outcome if rt_ev.outcome else Outcome.FAILED
+                            ),
+                        )
+                        if process_died:
+                            await turn_receipt_lc.mark_unknown(turn_id)
+                    except Exception:  # noqa: BLE001 — 回执面绝不阻断收口
+                        pass
                     # F03：tracker 结算已收敛进单结算 seam（kernel end_turn
                     # 同一实现；cancelled→cancel、failed/aborted/interrupted→fail、其余
                     # →complete），此处不再重复第二份 finally 记账。
@@ -3322,6 +4340,15 @@ class PiBridge:
                                 "turn_id": turn_id,
                                 "final_text": _turn_final_text,
                                 "completed": rt_ev.outcome.outcome == Outcome.SUCCEEDED,
+                                # G36（ADR-0291）：逐附件送模回执（含拒绝
+                                # reason；路由据此持久化真实 status）。
+                                "attachment_receipts": list(_turn_attachment_receipts),
+                                # G43（ADR-0295）：本轮上下文回执（路由把摘要
+                                # 关联到用户消息；turn_outcome 独立入账）。
+                                "turn_receipt": turn_receipt_lc.sse_payload(
+                                    _turn_receipt_read, session_id=turn_sid,
+                                    turn_id=turn_id, fallback=_turn_ctx_receipt,
+                                ),
                             }
                             _r = on_turn_result(_res)
                             if asyncio.iscoroutine(_r):
@@ -3350,6 +4377,7 @@ class PiBridge:
                 # is turn-id-checked (no-op for a successor's entry) and
                 # idempotent on the normal path where the inner finally
                 # already unregistered.
+                await self._drain_control_rpcs()
                 await self._safe_unregister_active_pi_turn(turn_sid, turn_id, lease=lease)
                 TURN_EVIDENCE.remove(turn_id)
                 _cleanup_turn_state(turn_sid)

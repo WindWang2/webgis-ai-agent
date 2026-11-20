@@ -226,13 +226,21 @@ def project_schema_for_pi(
         findings[FINDING_PASSTHROUGH_KEY_STRIPPED] = (
             findings.get(FINDING_PASSTHROUGH_KEY_STRIPPED, 0) + 1
         )
+    extra = projected.get("additionalProperties", False)
+    # extra="allow" models publish additionalProperties true (or a schema).
+    # Forcing false rejects arguments the tool actually accepts.
+    if extra is True or isinstance(extra, dict):
+        additional: Any = extra
+        findings[FINDING_ADDITIONAL_PROPERTIES_PINNED] = 0
+    else:
+        additional = False
+        findings[FINDING_ADDITIONAL_PROPERTIES_PINNED] = 1
     out: Dict[str, Any] = {
         "type": "object",
         "properties": properties,
         "required": required,
-        "additionalProperties": False,
+        "additionalProperties": additional,
     }
-    findings[FINDING_ADDITIONAL_PROPERTIES_PINNED] = 1
     if "$defs" in projected:
         out["$defs"] = projected["$defs"]
         findings[FINDING_REFS_RETAINED] = findings.get(FINDING_REFS_RETAINED, 0) + 1

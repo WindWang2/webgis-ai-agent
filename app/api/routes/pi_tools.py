@@ -13,12 +13,11 @@
 """
 from __future__ import annotations
 
-import hmac
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
-from app.agent_pi_bridge import PiToolRequest, PiToolResponse, dispatch_tool
+from app.agent_pi_bridge import PiToolRequest, PiToolResponse, PiTurnContextUnavailable, dispatch_tool
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +37,12 @@ async def verify_bridge_secret(
 ) -> None:
     """FastAPI 依赖：校验请求方持有共享密钥。
 
-    用 hmac.compare_digest 防时序侧信道。
+    用常量时间比较防时序侧信道（非 ASCII 头 fail-closed 为 401，不 500）。
     """
     secret = get_bridge_secret()
-    if not x_pi_bridge_secret or not hmac.compare_digest(x_pi_bridge_secret, secret):
+    from app.core.signing import hmac_equals
+
+    if not x_pi_bridge_secret or not hmac_equals(x_pi_bridge_secret, secret):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing bridge secret",
@@ -89,4 +90,21 @@ async def execute_tool(
         )
     request.sessionId = session_id
     request.verifiedTurnId = turn_id
-    return await dispatch_tool(request)
+    try:
+        return await dispatch_tool(request, _strict_turn_scope=True)
+    except PiTurnContextUnavailable:
+        # Redis liveness is not local caller authority. This is an affinity/
+        # turn-state conflict, not transient overload or permission to replay.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "Pi turn context has no matching local caller scope",
+                "code": "TURN_NOT_LOCAL",
+                "retryable": False,
+                "guidance": (
+                    "Ensure session affinity routes to the original worker and re-synchronize turn state. "
+                    "No tool was dispatched; do not automatically replay this callback or substitute "
+                    "a successor turn token."
+                ),
+            },
+        ) from None

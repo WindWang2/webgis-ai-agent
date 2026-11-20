@@ -358,7 +358,11 @@ export type SymbolLawEventKind =
   | "representation-heatmap-degraded"
   // #1645（#1597 依赖）：styleSpecReady 的私有字段 style._loaded 缺席
   // 兜底披露（MapLibre 大版移除/改名 → 静默回退 isStyleLoaded 的可观测化）。
-  | "style-spec-ready-fallback";
+  | "style-spec-ready-fallback"
+  // G40：符号资产绑定链证据面（缺席/类别降级/合同披露）。
+  | "symbol-asset-unavailable"
+  | "symbol-asset-category-degraded"
+  | "symbol-asset-disclosure";
 
 export interface SymbolLawEvent {
   kind: SymbolLawEventKind;

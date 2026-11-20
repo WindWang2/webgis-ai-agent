@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from pathlib import Path
 
 from app.tools._utils import std_error_response
@@ -40,7 +41,7 @@ def register_raster_cog_tools(registry: ToolRegistry):
           ),
           param_descriptions={
               "raster_path": "输入栅格路径（./data 下的 GeoTIFF）",
-              "out_dir": "输出目录（默认 ./data/cog，必须也在 ./data 下）",
+              "out_dir": "输出目录（默认 ./data/cog；可传 ./data 内相对路径），",
           },
           side_effect="deterministic_compute",
           deterministic=True,
@@ -54,12 +55,22 @@ def register_raster_cog_tools(registry: ToolRegistry):
           failure_modes=("file_not_found", "invalid_format", "conversion_failed"),
           )
     async def convert_raster_to_cog(
-        raster_path: str, out_dir: str = "data/cog", session_id: str = "",
+        raster_path: str, out_dir: str = "cog", session_id: str = "",
     ) -> dict:
         try:
             src = validate_data_path(raster_path)
+            # #2156 P3：validate_data_path 会把相对 out_dir 拼到 ./data 下，
+            # 默认 "data/cog" 与描述让 LLM 传 "./data/..." 都会落到
+            # ./data/data/... 双前缀。剥掉相对路径的 data/ 前缀（绝对路径
+            # 不受影响），默认 "cog" → ./data/cog。
+            _norm_out = out_dir
+            while True:
+                _stripped = re.sub(r"^(\./|data/)", "", _norm_out)
+                if _stripped == _norm_out:
+                    break
+                _norm_out = _stripped
             # GIS-08: Isolate output directory by session_id to prevent multi-tenant file collision
-            effective_out_dir = str(Path(out_dir) / session_id) if session_id else out_dir
+            effective_out_dir = str(Path(_norm_out) / session_id) if session_id else _norm_out
             dst = validate_data_path(effective_out_dir)
         except ValueError as e:
             return std_error_response(

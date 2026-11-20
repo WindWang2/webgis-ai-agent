@@ -289,9 +289,16 @@ class TurnResumeRegistry:
             else:
                 buffers.popleft()
         while len(self._order) > self._max_sessions:
-            oldest = self._order.popleft()
-            if oldest in self._buffers:
-                del self._buffers[oldest]
+            victim = None
+            for sid in self._order:
+                bufs = self._buffers.get(sid) or ()
+                if bufs and all(getattr(b, "ended", False) for b in bufs):
+                    victim = sid
+                    break
+            if victim is None:
+                victim = self._order[0]
+            self._order.remove(victim)
+            self._buffers.pop(victim, None)
 
     def get(self, session_id: str) -> Optional[TurnEventBuffer]:
         """Most recently registered buffer for the key (introspection/tests)."""

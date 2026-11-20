@@ -42,6 +42,7 @@ import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useT } from '@/lib/i18n/useT';
+import { useHydrated } from '@/lib/hooks/use-hydrated';
 import { LayoutDashboard } from 'lucide-react';
 import type { LeftTab } from '@/lib/store/hud-types';
 import {
@@ -100,7 +101,10 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
   const t = useT('layout');
   const activeTab = useHudStore((s) => s.activeLeftTab);
   const setActiveTab = useHudStore((s) => s.setActiveLeftTab);
-  const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
+  // 与 TopBar 同：hydrate 前按 SSR 默认（展开）渲染，避免窄屏 hydration 分叉。
+  const hydrated = useHydrated();
+  const storeLeftPanelOpen = useHudStore((s) => s.leftPanelOpen);
+  const leftPanelOpen = hydrated ? storeLeftPanelOpen : true;
   const toggleLeftPanel = useHudStore((s) => s.toggleLeftPanel);
   const setTemplatesOpen = useHudStore((s) => s.setTemplatesOpen);
   const layerCount = useHudStore((s) => s.layers.length);
@@ -243,8 +247,12 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
               title={t('nav.modeSuffix', { name: modeLabel })}
               data-testid={`mode-${m}`}
               onClick={() => switchMode(m)}
+              // 竖排档给模式按钮加可见短标签：模式决定 rail 上出现哪些页签
+              // （分析/结果只在「分析」、制图只在「制图」），纯图标时用户找不到
+              // 这些入口。底部档空间不足，维持纯图标 + title/aria-label。
               className={clsx(
-                'touch-target relative flex h-9 w-9 items-center justify-center rounded-md transition-colors',
+                'touch-target relative flex items-center justify-center rounded-md transition-colors',
+                variant === 'bottom' ? 'h-9 w-9' : 'h-11 w-11 flex-col gap-0.5 px-0.5',
                 active
                   ? 'bg-status-accent-soft text-status-accent'
                   : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
@@ -253,10 +261,15 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
               {active && (
                 <span
                   aria-hidden
-                  className="absolute left-[-5px] top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-pill bg-status-accent-vivid"
+                  className="absolute left-[-4px] top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-pill bg-status-accent-vivid"
                 />
               )}
-              <ModeIcon size={16} strokeWidth={active ? 2.1 : 1.6} aria-hidden />
+              <ModeIcon size={variant === 'bottom' ? 16 : 15} strokeWidth={active ? 2.1 : 1.6} aria-hidden />
+              {variant !== 'bottom' && (
+                <span aria-hidden className={clsx('max-w-full truncate text-micro leading-none', active && 'font-semibold')}>
+                  {modeLabel}
+                </span>
+              )}
             </button>
           );
         })}

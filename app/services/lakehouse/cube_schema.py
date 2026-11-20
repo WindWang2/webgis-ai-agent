@@ -154,20 +154,28 @@ def validate_grid_coords(
 
 
 def check_crs(crs: str) -> Dict[str, str]:
-    """CRS 校验（rasterio 真校验优先；缺席 = EPSG 正则降级，如实披露）。"""
+    """CRS 校验（rasterio 真校验优先；缺席 = EPSG 正则降级，如实披露）。
+
+    #2143 N34：降级仅限 rasterio **缺席**（ImportError）—— 在场但拒绝
+    （如 EPSG:999999）时曾吞异常回落正则通过，伪装成降级。
+    """
     text = str(crs or "").strip()
     if not text:
         raise CubeSchemaError("crs is required for a georeferenced cube")
     try:
         from rasterio.crs import CRS
-
+    except ImportError:
+        if _EPSG_RE.match(text):
+            return {"crs": text.upper(), "crs_checked": "regex"}
+        raise CubeSchemaError(f"invalid CRS: {text[:64]!r}")
+    try:
         CRS.from_user_input(text)
-        return {"crs": text, "crs_checked": "rasterio"}
-    except Exception:  # noqa: BLE001 — rasterio 缺席或拒绝 → 降级校验
-        pass
-    if _EPSG_RE.match(text):
-        return {"crs": text.upper(), "crs_checked": "regex"}
-    raise CubeSchemaError(f"invalid CRS: {text[:64]!r}")
+    except Exception as e:
+        raise CubeSchemaError(
+            f"invalid CRS: {text[:64]!r} (rasterio rejected: "
+            f"{type(e).__name__})"
+        ) from e
+    return {"crs": text, "crs_checked": "rasterio"}
 
 
 def resolve_cube_schema_version(dims: Sequence[str]) -> int:
@@ -231,8 +239,10 @@ def validate_labeled_schema(
         raise CubeSchemaError(
             f"shape {shape_t} rank != dims {dims} rank"
         )
-    if any(v < 0 for v in shape_t):
-        raise CubeSchemaError(f"negative dim in shape {shape_t}")
+    # #2143 N35：0 长度维度曾直通到 coords_summary 的 coords[d][0] 裸
+    # IndexError（非 CubeSchemaError）；空 cube 不是合法 labeled 产物。
+    if any(v <= 0 for v in shape_t):
+        raise CubeSchemaError(f"zero-length dim in shape {shape_t}")
 
     if not str(dtype):
         raise CubeSchemaError("dtype is required")

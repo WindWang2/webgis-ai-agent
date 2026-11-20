@@ -2,6 +2,7 @@
 PostgreSQL + PostGIS 数据库模型
 B011 Fix: 使用统一的 Base 单例，避免重复定义冲突
 """
+import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Boolean, BigInteger, ForeignKey, Index, UniqueConstraint, JSON, CheckConstraint
@@ -240,6 +241,13 @@ class Message(Base):
     tool_calls = Column(JSON, nullable=True)  # FC tool calls
     tool_call_id = Column(String(255), nullable=True)
     tool_result = Column(JSON, nullable=True)  # tool execution result
+    # G36（ADR-0291）：用户消息的视觉附件元数据（evidence refs + 回执摘要；
+    # 只存有界元数据，绝不存 base64）。NULL = 无附件（存量行零改动）。
+    attachments = Column(JSON, nullable=True)
+    # G43（ADR-0295）：用户消息的本轮上下文装配回执摘要（receipt_id/turn_id/
+    # digest/status/计数 —— 完整回执按 session+turn 查询 turn_context_receipts）。
+    # NULL = 无回执（legacy 会话/早于本功能的 turn，UI 显示 coverage limited）。
+    context_receipt = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     conversation = relationship("Conversation", back_populates="messages")
@@ -743,6 +751,37 @@ class RefreshTokenFamily(Base):
 # ═══════════════════════════════════════════════════════════════════════
 
 
+class SkillJobPreset(Base):
+    """G30 技能作业参数预设 —— 可复用配置引用（不是第二方法市场）。
+
+    预设只保存：所选技能 id+版本+digest、参数值、数据绑定的**角色模板**
+    （上次的 ref 仅作重绑定提示）。不复制原始私有数据、凭据、一次性下载
+    地址；重用 = 重新绑定授权 refs + 重新 prepare + 重新资格校验（无任何
+    缓存授权）。可见性随 org/project 归属（列表按请求者 org 过滤）。
+    """
+    __tablename__ = "skill_job_presets"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
+    creator_id = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    project_id = Column(String(255), nullable=True, default="", index=True)
+    session_id = Column(String(255), nullable=True, default="")
+    name = Column(String(120), nullable=False)
+    description = Column(String(400), nullable=True, default="")
+    skill_id = Column(String(80), nullable=False)
+    skill_version = Column(String(16), nullable=False)
+    skill_digest = Column(String(64), nullable=False, default="")
+    params = Column(JSON, nullable=False, default=dict)
+    bindings_template = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_skill_preset_org_project", "org_id", "project_id"),
+    )
+
+
 class WorkflowPackageRow(Base):
     """durable WorkflowPackage registry（semver 发布态）。"""
     __tablename__ = "workflow_packages"
@@ -855,7 +894,9 @@ class WorkflowInstanceNodeRow(Base):
     heartbeat_at = Column(DateTime, nullable=True)
     cancel_requested = Column(Boolean, nullable=False, default=False)
     next_ready_at = Column(DateTime, nullable=True)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False,
+                        default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))  # 对齐 0034 迁移（#2209）
 
     __table_args__ = (
         UniqueConstraint("instance_id", "node_id", name="uq_wf_node_inst_node"),
@@ -965,6 +1006,229 @@ class WorkflowNodeReuseRow(Base):
     )
 
 
+# ── G37（会话模型运行配置）──────────────────────────────────────────
+
+class ChatSessionModelPref(Base):
+    """会话级模型 preference（G37 WP03）。
+
+    键 = 既有 Conversation id（不引入第三个 session id 空间）；owner 校验
+    在路由层（与 conversation 同一归属）。``revision`` 支撑 CAS —— 两个
+    标签并发选择时以 expected_revision 原子竞争，失败方拿到明确冲突。
+    ``mode='inherit'`` 表示继承管理员基础配置（此时 item/thinking 为空）。
+    不保存任何凭证；thinking_level 只存用户请求档（实际生效以 turn 回执
+    的 get_state 回读为准）。
+    """
+    __tablename__ = "chat_session_model_prefs"
+
+    conversation_id = Column(
+        String(255), ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
+    )
+    mode = Column(String(16), nullable=False, default="inherit")
+    catalog_item_id = Column(String(160), nullable=True)
+    thinking_level = Column(String(16), nullable=True)
+    # 用户自设会话 token 上限（input+output 累计，宿主账本口径）；NULL =
+    # 未自设（回退 admin 默认）。写入路由钳制 ≤ settings.SESSION_MODEL_TOKEN_CAP_MAX。
+    session_token_cap = Column(BigInteger, nullable=True)
+    revision = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐 g3701 迁移（#2209）
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=True,  # 对齐 g3701 迁移（#2209）
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('inherit', 'explicit')", name="ck_csmp_mode"
+        ),
+        CheckConstraint("revision >= 1", name="ck_csmp_revision"),
+    )
+
+
+class ChatTurnRuntime(Base):
+    """每个 Pi turn 的模型运行回执 + 用量汇总（G37 WP07/WP08）。
+
+    ``turn_id`` 唯一；requested/effective 分列（set_model 请求 vs get_state
+    回读）；``response_model`` 是供应商可选上报的物理模型（缺席≠失败）。
+    用量列为账本聚合（明细在 ChatUsageRecord）；``complete`` 仅在
+    agent_settled 边界 finalize 后为真 —— 持久化失败/中断缺口保持 False，
+    UI 如实显示 incomplete。不含 key/原始请求头/完整 prompt。
+    """
+    __tablename__ = "chat_turn_runtime"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    session_id = Column(String(255), nullable=False)
+    turn_id = Column(String(64), nullable=False, unique=True)
+    run_id = Column(String(64), nullable=True)
+    runtime_epoch = Column(String(64), nullable=False, default="")
+    catalog_generation = Column(String(32), nullable=False, default="")
+    config_generation = Column(String(32), nullable=False, default="")
+    preference_revision = Column(Integer, nullable=True)
+    mode = Column(String(16), nullable=False, default="inherit")
+    requested_model = Column(String(160), nullable=False, default="")
+    thinking_requested = Column(String(16), nullable=True)
+    effective_provider = Column(String(64), nullable=True)
+    effective_model = Column(String(160), nullable=True)
+    thinking_effective = Column(String(16), nullable=True)
+    response_model = Column(String(160), nullable=True)
+    # applied | inherit_default | degraded_inherit | failed | budget_rejected
+    status = Column(String(24), nullable=False, default="pending")
+    failure_reason = Column(String(255), nullable=True)
+    tokens_input = Column(BigInteger, nullable=False, default=0)
+    tokens_output = Column(BigInteger, nullable=False, default=0)
+    tokens_cache_read = Column(BigInteger, nullable=False, default=0)
+    tokens_cache_write = Column(BigInteger, nullable=False, default=0)
+    tokens_total = Column(BigInteger, nullable=False, default=0)
+    cost_total = Column(BigInteger, nullable=True)   # micro-USD（1e-6 USD）整数
+    cost_source = Column(String(16), nullable=False, default="unknown")  # provider|estimated|unknown|mixed
+    records_expected = Column(Integer, nullable=False, default=0)
+    records_written = Column(Integer, nullable=False, default=0)
+    complete = Column(Boolean, nullable=False, default=False)
+    applied_at = Column(DateTime, nullable=True)
+    settled_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐 g3701 迁移（#2209）
+
+    __table_args__ = (
+        # 与迁移 g3701 同名索引（create_all/alembic 两侧一致）
+        Index("idx_ctr_session_created", "session_id", "created_at"),
+        CheckConstraint(
+            "status IN ('pending', 'applied', 'inherit_default', 'degraded_inherit', "
+            "'failed', 'budget_rejected')",
+            name="ck_ctr_status",
+        ),
+    )
+
+
+class ChatUsageRecord(Base):
+    """单次原生 message_end 的终态 usage 记录（G37 WP08/WP09）。
+
+    ``(turn_id, call_seq)`` 唯一 —— 宿主事件重放/重复回调不重复计费；两
+    次文字完全相同的真实调用是两个 call_seq（内容 hash 不作唯一性）。
+    ``kind='tool_result'`` 是原生已合计的 nested usage（只计一次，绝不与
+    父 assistant 再相加）。usage_json 有界（token 分项），不含工具输出。
+    """
+    __tablename__ = "chat_usage_records"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    session_id = Column(String(255), nullable=False)
+    turn_id = Column(String(64), nullable=False)
+    call_seq = Column(Integer, nullable=False)
+    kind = Column(String(16), nullable=False)
+    provider = Column(String(64), nullable=True)
+    model = Column(String(160), nullable=True)
+    response_model = Column(String(160), nullable=True)
+    usage_json = Column(JSON, nullable=False, default=dict)
+    cost_total = Column(BigInteger, nullable=True)   # micro-USD 整数；NULL = 无价格事实
+    cost_from_provider = Column(Boolean, nullable=True)
+    stop_reason = Column(String(24), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐 g3701 迁移（#2209）
+
+    __table_args__ = (
+        UniqueConstraint("turn_id", "call_seq", name="uq_cur_turn_seq"),
+        # 与迁移 g3701 同名索引（create_all/alembic 两侧一致）
+        Index("idx_cur_session", "session_id"),
+        Index("idx_cur_turn", "turn_id"),
+        CheckConstraint(
+            "kind IN ('assistant', 'tool_result', 'other')", name="ck_cur_kind"
+        ),
+    )
+
+
+class TurnContextReceiptRow(Base):
+    """每个 Pi turn 的实际上下文装配回执（G43，ADR-0295）。
+
+    ``turn_id`` 唯一 —— 重复事件/迟到回执按 turn 幂等归属，绝不串轮。
+    状态语义（诚实面，绝不伪造已发送）：
+    - ``assembled``：typed 装配完成（legacy 回退路径 mode=legacy 时也立行，
+      coverage 有限如实标注）；
+    - ``not_sent``：装配后未发出（模型/预算门拒绝、发送前异常），reason 记
+      闭集码；
+    - ``submitted``：prompt RPC 已返回，disposition ∈ started/queued/handled
+      独立记录（handled ≠ provider 消费；queued ≠ 已运行）；
+    - ``unknown``：进程中断/socket 写失败/回执落盘失败等无法确证的状态。
+    ``turn_outcome`` 独立记录 turn 终态（completed/failed/cancelled）。
+    payload 只存有界投影（指纹/计数/源去向），绝无全文、秘密、图片字节。
+    """
+    __tablename__ = "turn_context_receipts"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    session_id = Column(String(255), nullable=False)
+    turn_id = Column(String(64), nullable=False, unique=True)
+    run_id = Column(String(64), nullable=True)
+    org_id = Column(String(64), nullable=False, default="")
+    project_id = Column(String(255), nullable=False, default="")
+    user_id = Column(String(255), nullable=False, default="")
+    assembly_mode = Column(String(16), nullable=False, default="typed")  # typed / legacy / unknown
+    policy_version = Column(Integer, nullable=False, default=0)         # 冻结的本轮策略 CAS 版本
+    digest = Column(String(64), nullable=False, default="")
+    # assembled | not_sent | submitted | unknown
+    status = Column(String(16), nullable=False, default="assembled")
+    not_sent_reason = Column(String(48), nullable=True)   # model_budget_rejected / model_apply_error / pi_send_error / image_gate_rejected
+    disposition = Column(String(16), nullable=True)       # started / queued / handled
+    turn_outcome = Column(String(16), nullable=True)      # completed / failed / cancelled
+    user_message_id = Column(Integer, nullable=True)      # 关联用户消息（C04 历史读取）
+    payload = Column(JSON, nullable=False, default=dict)  # 有界回执投影（as_bounded_dict）
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐迁移（#2209 漂移簇同形）
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=True,  # 对齐迁移（#2209 漂移簇同形）
+    )
+
+    __table_args__ = (
+        Index("idx_tcr_session_created", "session_id", "created_at"),
+        CheckConstraint(
+            "status IN ('assembled', 'not_sent', 'submitted', 'unknown')",
+            name="ck_tcr_status",
+        ),
+        CheckConstraint(
+            "disposition IN ('started', 'queued', 'handled')",
+            name="ck_tcr_disposition",
+        ),
+        CheckConstraint(
+            "turn_outcome IN ('completed', 'failed', 'cancelled')",
+            name="ck_tcr_turn_outcome",
+        ),
+    )
+
+
+class SessionSourcePolicyRow(Base):
+    """会话级可选资料选择策略（G43；policy_version 为 CAS 令牌）。
+
+    只存服务端铸造的源 id（pk:/cm:/gm:block），绝不存源正文。默认无行 =
+    auto（全部可选资料按既有 builder 语义装配）。
+    """
+    __tablename__ = "session_source_policies"
+
+    session_id = Column(String(255), primary_key=True)
+    org_id = Column(String(64), nullable=False, default="")
+    project_id = Column(String(255), nullable=False, default="")
+    user_id = Column(String(255), nullable=False, default="")
+    mode = Column(String(16), nullable=False, default="auto")   # auto | explicit
+    preferred = Column(JSON, nullable=False, default=list)
+    excluded = Column(JSON, nullable=False, default=list)
+    policy_version = Column(Integer, nullable=False, default=1)
+    updated_by_user_id = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        nullable=True)  # 对齐迁移（#2209 漂移簇同形）
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=True,  # 对齐迁移（#2209 漂移簇同形）
+    )
+
+    __table_args__ = (
+        CheckConstraint("mode IN ('auto', 'explicit')", name="ck_ssp_mode"),
+    )
+
+
 __all__ = [
     "Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission",
     "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult",
@@ -973,5 +1237,7 @@ __all__ = [
     "GeoComputeArtifact", "GeoComputeTaskQuarantine", "OrgQuota", "AuditEvent",
     "RefreshTokenFamily", "WorkflowPackageRow", "WorkflowInstanceRow",
     "WorkflowInstanceNodeRow", "WorkflowEventRow", "WorkflowWorkerRow",
-    "WorkflowNodeReuseRow", "get_init_sql",
+    "WorkflowNodeReuseRow", "ChatSessionModelPref", "ChatTurnRuntime",
+    "ChatUsageRecord", "TurnContextReceiptRow", "SessionSourcePolicyRow",
+    "get_init_sql",
 ]

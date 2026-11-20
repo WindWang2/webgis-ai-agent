@@ -106,9 +106,10 @@ def test_large_closed_polygon_is_not_reported_unclosed():
     result = rule_geometry_validity(RuleEvalContext(features=[{
         "type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring]},
     }]))
-    assert result.status != "fail"
+    assert result.status == "pass"
     assert result.metric["unclosed"] == 0
-    assert result.metric["rings_skipped_over_cap"] == 1
+    assert result.metric["rings_skipped_over_cap"] == 0
+    assert result.metric["self_intersected"] == 0
 
 
 @pytest.mark.asyncio

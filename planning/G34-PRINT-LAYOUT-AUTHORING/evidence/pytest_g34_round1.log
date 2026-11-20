@@ -1,0 +1,265 @@
+...FFF.FF.F.FF..F.......F..                                              [100%]
+=================================== FAILURES ===================================
+______________ test_t04_title_mm_geometry_oracle_in_real_svg[96] _______________
+
+dpi = 96
+
+    @pytest.mark.parametrize("dpi", [96, 150, 300])
+    def test_t04_title_mm_geometry_oracle_in_real_svg(dpi):
+        doc = _mapspec()
+        comp = _compile(doc, dpi=dpi)
+        root = ET.fromstring(comp.svg)  # 真实 XML 可解析（不是字符串拼接假象）
+        assert root.tag.endswith("svg")
+        attrs = _g34_attrs(comp.svg, "title")
+        assert attrs, "exporter did not consume the authored component frame"
+        assert float(attrs["data-g34-x-mm"]) == pytest.approx(15.0, abs=0.01)
+        assert float(attrs["data-g34-width-mm"]) == pytest.approx(180.0, abs=0.01)
+        # 真实 <text> 的 x 也必须落在 15mm 换算出的 user unit 上（居中锚点）
+        texts = [e for e in root.iter() if e.tag.endswith("text")
+                 and e.get("data-g34-line") is not None]
+        assert texts, "authored text lines were not really drawn"
+        expected_center = mm_to_canvas_units(15 + 180 / 2, dpi)
+        for el in texts:
+>           assert float(el.get("x")) == pytest.approx(expected_center, abs=0.5)
+E           assert 80.0 == 560.0 ± 0.5
+E             
+E             comparison failed
+E             Obtained: 80.0
+E             Expected: 560.0 ± 0.5
+
+tests/cartography/test_g34_print_layout_authoring.py:235: AssertionError
+______________ test_t04_title_mm_geometry_oracle_in_real_svg[150] ______________
+
+dpi = 150
+
+    @pytest.mark.parametrize("dpi", [96, 150, 300])
+    def test_t04_title_mm_geometry_oracle_in_real_svg(dpi):
+        doc = _mapspec()
+        comp = _compile(doc, dpi=dpi)
+        root = ET.fromstring(comp.svg)  # 真实 XML 可解析（不是字符串拼接假象）
+        assert root.tag.endswith("svg")
+        attrs = _g34_attrs(comp.svg, "title")
+        assert attrs, "exporter did not consume the authored component frame"
+        assert float(attrs["data-g34-x-mm"]) == pytest.approx(15.0, abs=0.01)
+        assert float(attrs["data-g34-width-mm"]) == pytest.approx(180.0, abs=0.01)
+        # 真实 <text> 的 x 也必须落在 15mm 换算出的 user unit 上（居中锚点）
+        texts = [e for e in root.iter() if e.tag.endswith("text")
+                 and e.get("data-g34-line") is not None]
+        assert texts, "authored text lines were not really drawn"
+        expected_center = mm_to_canvas_units(15 + 180 / 2, dpi)
+        for el in texts:
+>           assert float(el.get("x")) == pytest.approx(expected_center, abs=0.5)
+E           assert 125.0 == 875.0000000000001 ± 0.5
+E             
+E             comparison failed
+E             Obtained: 125.0
+E             Expected: 875.0000000000001 ± 0.5
+
+tests/cartography/test_g34_print_layout_authoring.py:235: AssertionError
+______________ test_t04_title_mm_geometry_oracle_in_real_svg[300] ______________
+
+dpi = 300
+
+    @pytest.mark.parametrize("dpi", [96, 150, 300])
+    def test_t04_title_mm_geometry_oracle_in_real_svg(dpi):
+        doc = _mapspec()
+        comp = _compile(doc, dpi=dpi)
+        root = ET.fromstring(comp.svg)  # 真实 XML 可解析（不是字符串拼接假象）
+        assert root.tag.endswith("svg")
+        attrs = _g34_attrs(comp.svg, "title")
+        assert attrs, "exporter did not consume the authored component frame"
+        assert float(attrs["data-g34-x-mm"]) == pytest.approx(15.0, abs=0.01)
+        assert float(attrs["data-g34-width-mm"]) == pytest.approx(180.0, abs=0.01)
+        # 真实 <text> 的 x 也必须落在 15mm 换算出的 user unit 上（居中锚点）
+        texts = [e for e in root.iter() if e.tag.endswith("text")
+                 and e.get("data-g34-line") is not None]
+        assert texts, "authored text lines were not really drawn"
+        expected_center = mm_to_canvas_units(15 + 180 / 2, dpi)
+        for el in texts:
+>           assert float(el.get("x")) == pytest.approx(expected_center, abs=0.5)
+E           assert 250.0 == 1750.0000000000002 ± 0.5
+E             
+E             comparison failed
+E             Obtained: 250.0
+E             Expected: 1750.0000000000002 ± 0.5
+
+tests/cartography/test_g34_print_layout_authoring.py:235: AssertionError
+______________ test_t06_pdf_page_mm_text_layer_and_authored_font _______________
+
+    def test_t06_pdf_page_mm_text_layer_and_authored_font():
+        pytest.importorskip("pypdf")
+        import io
+    
+        import pypdf
+    
+        from app.services.print_layout_authoring.service import _svg_to_pdf
+    
+        doc = _mapspec()
+        comp = _compile(doc, dpi=300)
+        pdf = _svg_to_pdf(comp.svg, 297.0, 210.0, "G34 oracle")
+        reader = pypdf.PdfReader(io.BytesIO(pdf))
+        assert len(reader.pages) == 1
+        box = reader.pages[0].mediabox
+        assert float(box.width) == pytest.approx(297 / 25.4 * 72, abs=1.5)
+        assert float(box.height) == pytest.approx(210 / 25.4 * 72, abs=1.5)
+        text = reader.pages[0].extract_text() or ""
+        assert "遂宁市" in text, "authored title text missing from real PDF text layer"
+        # 作者字体写在 SVG presentation attribute 上，未被全局 CSS 静默覆盖
+        assert 'font-family="Noto Sans SC Embedded"' in comp.svg
+        from app.services.publication_export import (
+            _cjk_font_face_css, _svg_to_page_html, assemble_pages_pdf,
+        )
+        single = _svg_to_page_html(comp.svg, 297.0, 210.0)
+        multi = assemble_pages_pdf  # 调用在下方构造 DiagnosticSink 后执行
+>       assert 'svg text:not([font-family])' in single
+E       assert 'svg text:not([font-family])' in '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n\n@page { size: 297.0mm 210.0mm; margin: 0; }\nhtml, bo... letter-spacing="0" fill="#1e293b" data-g34-line="2">Supercalifragilisticexpialidocious</text></g></svg></body></html>'
+
+tests/cartography/test_g34_print_layout_authoring.py:282: AssertionError
+____________ test_t07_long_cjk_latin_wrap_real_lines_no_truncation _____________
+
+    def test_t07_long_cjk_latin_wrap_real_lines_no_truncation():
+        r = wrap_text(
+            LONG_TITLE, font_id="noto-sans-sc-embedded", size_pt=12,
+            box_width_mm=60, box_height_mm=8, overflow_policy="expand")
+        assert len(r["lines"]) >= 3
+        assert r["truncated"] is False
+        joined = "".join(r["lines"])
+        # 不截字：所有非空白字符都还在
+        assert "Supercalifragilisticexpialidocious" in joined.replace(" ", "") or all(
+            ch in joined for ch in "Supercalifragilisticexpialidocious")
+        assert "遂宁市" in joined
+        assert r["overflow"] is True and r["status"] == "expanded"
+        assert r["used_width_pt"] > 0
+        assert r["line_widths_pt"]
+        # 产物里逐行 <text> 与 lines 一致
+        svg = _compile(_mapspec(), dpi=300).svg
+>       assert int(_g34_attrs(svg, "title")["data-g34-lines"]) == len(
+            _compile(_mapspec(), dpi=300).print_layout_receipt["text"][0]["lines"])
+E       AssertionError: assert 2 == 1
+E        +  where 2 = int('2')
+E        +  and   1 = len(['〔数据缺失〕'])
+
+tests/cartography/test_g34_print_layout_authoring.py:310: AssertionError
+______ test_t09_legend_two_columns_complete_with_nodata_and_out_of_range _______
+
+    def test_t09_legend_two_columns_complete_with_nodata_and_out_of_range():
+        content = read_legend_content(_mapspec(), "legend")
+>       assert content["entries_total"] == 17  # 14 类 + nodata + out_of_range + 二级层条目? (见下)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       assert 16 == 17
+
+tests/cartography/test_g34_print_layout_authoring.py:333: AssertionError
+_________ test_t11_proportional_symbols_share_one_scale_across_columns _________
+
+    def test_t11_proportional_symbols_share_one_scale_across_columns():
+        content = read_legend_content(_mapspec(), "legend")
+        lay = {"columns": 3, "column_gap_mm": 4, "row_gap_mm": 1.5,
+               "swatch_mm": 4, "symbol_mm": 6, "continuation": "expand"}
+        plan = layout_legend(content, lay, {"width": 180, "height": 40},
+                             {"size_pt": 9}, 300)
+        radii = [s["radius_mm"] for s in plan["proportional"]]
+        assert len(radii) == 3
+        # area ∝ value ⇒ r ∝ sqrt(value)：1 : 10 : 100 → 1 : √10 : 10
+        assert radii[1] / radii[0] == pytest.approx(10 ** 0.5, rel=1e-6)
+        assert radii[2] / radii[0] == pytest.approx(10.0, rel=1e-6)
+        svg = _compile(_mapspec(), dpi=300).svg
+        values = [float(v) for v in re.findall(r'data-g34-symbol-value="([\d.]+)"', svg)]
+        drawn = [float(v) for v in re.findall(r'data-g34-radius-mm="([\d.]+)"', svg)]
+        assert len(values) == 3 and len(drawn) == 3
+>       assert drawn[1] / drawn[0] == pytest.approx(10 ** 0.5, rel=1e-3)
+E       assert 3.1666666666666665 == 3.16227766016...5 ± 0.00316228
+E         
+E         comparison failed
+E         Obtained: 3.1666666666666665
+E         Expected: 3.1622776601683795 ± 0.00316228
+
+tests/cartography/test_g34_print_layout_authoring.py:391: AssertionError
+________ test_t12_map_slot_contain_crop_uniform_scale_effective_extent _________
+
+    def test_t12_map_slot_contain_crop_uniform_scale_effective_extent():
+        bounds = [104.0, 30.0, 106.0, 31.0]
+        rect = {"x": 0.0, "y": 0.0, "width": 1000.0, "height": 100.0}  # 长窄框
+        contain = build_map_projection(bounds, rect, "contain")
+        crop = build_map_projection(bounds, rect, "crop")
+        assert contain["uniform_scale"] and not contain["non_uniform_stretch"]
+>       assert contain["sx"] == contain["sy"] * (contain["sy"] / contain["sy"])  # 存在且有限
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       assert 28647.88975654116 == (4936.665296113352 * (4936.665296113352 / 4936.665296113352))
+
+tests/cartography/test_g34_print_layout_authoring.py:402: AssertionError
+_______ test_t15_three_page_atlas_reorder_disable_keeps_binding_and_toc ________
+
+    def test_t15_three_page_atlas_reorder_disable_keeps_binding_and_toc():
+        doc = _mapspec()
+        doc["layout"]["frames"] = [
+            {"id": f"f{i}", "title": f"页{i}", "enabled": True,
+             "pageSize": {"profile": "a4_landscape"}} for i in (1, 2, 3)
+        ]
+        plan = doc["layout"]["print_layout"]
+        synced = sync_pages(plan, doc)
+        plan = synced["plan"]
+        assert synced["planner_page_count"] == 3
+        before = {p["page_id"]: p["binding_digest"] for p in plan["atlas"]["pages"]}
+        # 重排 + 关闭一页（只改 order/enabled，不动 digest）
+        result = operations.apply_operations(plan, [{"op": "set_pages", "pages": [
+            {"page_id": "f3", "order": 0, "title": "重排后的第三页"},
+            {"page_id": "f1", "order": 1, "enabled": False},
+            {"page_id": "f2", "order": 2},
+        ]}])
+        assert result["ok"], result["issues"]
+        after = {p["page_id"]: p["binding_digest"] for p in result["plan"]["atlas"]["pages"]}
+        assert before == after, "排序后页绑定不得串页"
+        toc = page_numbering(result["plan"])["toc"]
+        assert page_numbering(result["plan"])["page_count"] == 2
+        assert [r["page_id"] for r in toc] == ["f3", "f2"]
+        assert toc[0]["title"] == "重排后的第三页"
+        assert toc[0]["page_number"] == 1 and toc[1]["page_number"] == 2
+        # plan fingerpint 参与页缓存（planner 侧）
+        from app.services.atlas_batch.planner import plan_atlas_binding
+        from app.lib.cartography.atlas_job_spec import AtlasJobSpec, AtlasPolicy
+    
+>       spec = AtlasJobSpec(atlas=AtlasPolicy(driver="frames", page_budget=20))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for AtlasJobSpec
+E       session_id
+E         Field required [type=missing, input_value={'atlas': AtlasPolicy(dri...=False, atlas_title='')}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.13/v/missing
+
+tests/cartography/test_g34_print_layout_authoring.py:485: ValidationError
+________________ test_t24_atomic_align_distribute_lock_and_undo ________________
+
+    def test_t24_atomic_align_distribute_lock_and_undo():
+        plan = empty_print_layout()
+        # 三个可动组件
+        for c in plan["components"]:
+            if c["id"] == "legend":
+                c["frame"] = {"x": 30, "y": 186, "width": 110, "height": 14}
+            if c["id"] == "scale":
+                c["frame"] = {"x": 60, "y": 186, "width": 72, "height": 12}
+            if c["id"] == "attribution":
+                c["frame"] = {"x": 90, "y": 198, "width": 180, "height": 5}
+        ids = ["legend", "scale", "attribution"]
+        before = {c["id"]: dict(c["frame"]) for c in plan["components"]}
+        aligned = operations.apply_operations(plan, [
+            {"op": "align", "component_ids": ids, "edge": "left"},
+            {"op": "distribute", "component_ids": ids, "axis": "x"},
+        ])
+        assert aligned["ok"], aligned["issues"]
+        assert len(aligned["changes"]) == 2
+        after = {c["id"]: dict(c["frame"]) for c in aligned["plan"]["components"]}
+>       assert after["legend"]["x"] != before["legend"]["x"]
+E       assert 30.0 != 30
+
+tests/cartography/test_g34_print_layout_authoring.py:628: AssertionError
+=========================== short test summary info ============================
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t04_title_mm_geometry_oracle_in_real_svg[96]
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t04_title_mm_geometry_oracle_in_real_svg[150]
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t04_title_mm_geometry_oracle_in_real_svg[300]
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t06_pdf_page_mm_text_layer_and_authored_font
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t07_long_cjk_latin_wrap_real_lines_no_truncation
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t09_legend_two_columns_complete_with_nodata_and_out_of_range
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t11_proportional_symbols_share_one_scale_across_columns
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t12_map_slot_contain_crop_uniform_scale_effective_extent
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t15_three_page_atlas_reorder_disable_keeps_binding_and_toc
+FAILED tests/cartography/test_g34_print_layout_authoring.py::test_t24_atomic_align_distribute_lock_and_undo
+10 failed, 17 passed in 7.20s

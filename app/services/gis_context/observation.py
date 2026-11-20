@@ -96,6 +96,7 @@ class ObservedUserEdit:
 class SessionObservation:
     aoi_bbox: Optional[List[float]] = None
     aoi_name: str = ""
+    aoi_is_viewport: bool = False
     time_period: str = ""
     crs: str = ""
     measure_field: str = ""
@@ -324,10 +325,14 @@ def observe_session(
     mapspec = mapspec if isinstance(mapspec, dict) else {}
     obs = SessionObservation()
 
-    # AOI: frontend-observed bounds → derived viewport bbox → snapshot.
-    obs.aoi_bbox = _bounds_of(state.get("viewport"))
+    # An explicit analysis extent invalidates conclusions. The map viewport
+    # moves on every pan and must not.
+    obs.aoi_bbox = _bounds_of(state.get("analysis_aoi") or state.get("aoi"))
     if obs.aoi_bbox is None:
-        obs.aoi_bbox = _derive_viewport_bbox(mapspec)
+        obs.aoi_bbox = _bounds_of(state.get("viewport"))
+        if obs.aoi_bbox is None:
+            obs.aoi_bbox = _derive_viewport_bbox(mapspec)
+        obs.aoi_is_viewport = obs.aoi_bbox is not None
 
     obs.crs = _source_crs(mapspec)
 
@@ -412,10 +417,10 @@ def diff_against(
     established: List[str] = []
     basis = wc.basis
 
-    if obs.aoi_bbox is not None:
+    if obs.aoi_bbox is not None and not obs.aoi_is_viewport:
         if basis.aoi_bbox is not None:
             if not _bbox_close(obs.aoi_bbox, basis.aoi_bbox):
-                changes.append(ContextChange(kind="AOI_CHANGED", detail="view_bounds_drift"))
+                changes.append(ContextChange(kind="AOI_CHANGED", detail="analysis_extent_drift"))
         else:
             established.append("aoi")
     for ds in obs.datasets:

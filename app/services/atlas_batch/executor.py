@@ -426,7 +426,15 @@ def execute_atlas_job(
         for retry in range(_ASSEMBLE_BUSY_RETRIES):
             _checkpoint()
             try:
-                pdf_bytes = assemble_pages_pdf(page_specs, title=spec.title, sink=sink)
+                # G34：作者计划在场 → 强制内嵌所选字体（PDF 面同样不静默覆盖）。
+                _exec_layout = document.get("layout") if isinstance(document, dict) else None
+                _g34_active = bool(
+                    isinstance(_exec_layout, dict)
+                    and isinstance(_exec_layout.get("print_layout"), dict)
+                    and _exec_layout.get("print_layout"))
+                pdf_bytes = assemble_pages_pdf(
+                    page_specs, title=spec.title, sink=sink,
+                    print_layout_active=_g34_active)
                 break
             except PublicationBusyError as ex:
                 last_busy = ex

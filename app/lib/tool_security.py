@@ -18,7 +18,10 @@ from __future__ import annotations
 import os
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Dict, Optional, Protocol
+
+from app.lib.redaction import SECRET_TOKEN_PREFIXES
 
 #: presence 面的有界预算（声明面最大凭证/权限条目数；超出截断披露）。
 MAX_CREDENTIAL_ENTRIES = 64
@@ -54,6 +57,17 @@ class CredentialPresence:
             "source": self.source[:32],
         }
 
+    def is_expired(self, *, now: Optional[datetime] = None) -> bool:
+        """过期判定（#2139 F1：expires_at 现在有了执行面）。
+
+        未声明或不可解析 → **不过期**（不断言、不猜）；naive 时刻按 UTC
+        解释（与 report 分享面的口径一致）。
+        """
+        dt = _parse_iso_expiry(self.expires_at)
+        if dt is None:
+            return False
+        return dt <= (now or datetime.now(timezone.utc))
+
 
 class CredentialPresenceProvider(Protocol):
     """presence-only provider 契约（实现方绝不抛、绝不返回 secret）。"""
@@ -69,11 +83,23 @@ def _env_truthy(name: str, default: str) -> bool:
 
 
 #: 已知 secret 前缀（启发式：操作员误把 secret 放进 presence 槽位时拒收，
-#: 防止值面流入资格解释面 —— review P3）。
-_SECRET_LIKE_PREFIXES = (
-    "sk-", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-", "AKIA",
-    "glpat-", "shpat_", "sq0atp-", "-----BEGIN",
-)
+#: 防止值面流入资格解释面 —— review P3）。**与 redaction.SECRET_TOKEN_PREFIXES
+#: 共享同一词表**（#2139 F3：scrub 拒收两处不得漂移）。
+_SECRET_LIKE_PREFIXES = SECRET_TOKEN_PREFIXES
+
+
+def _parse_iso_expiry(raw: str) -> Optional[datetime]:
+    """ISO-8601 过期时间解析（容忍 ``Z``；naive 按 UTC）。不可解析 → None。"""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _looks_like_secret(value: str) -> bool:
@@ -115,8 +141,22 @@ class EnvCredentialPresenceProvider:
             if len(self._presences) >= MAX_CREDENTIAL_ENTRIES:
                 break
             kind = (parts[1].strip() if len(parts) > 1 else "")[:32]
-            expires_at = (parts[2].strip() if len(parts) > 2 else "")[:32]
-            owner_scope = (parts[3].strip() if len(parts) > 3 else "")[:64]
+            # ISO-8601 过期时间自身含 ':'（"2026-12-01T00:00:00Z"）——
+            # 从右归并：取「能整段解析为 ISO 时刻」的最长前缀为 expires_at，
+            # 其余为 owner_scope（#2139 F1：parts[2] 直取会把时间截成
+            # "2026-12-01T00"、碎片混进 owner_scope）。整段不可解析时
+            # 退回旧口径（parts[2] = expiry，其余 = scope）。
+            expiry_raw, scope_raw = "", ""
+            if len(parts) > 2:
+                for k in range(len(parts), 2, -1):
+                    cand = ":".join(parts[2:k])
+                    if _parse_iso_expiry(cand) is not None:
+                        expiry_raw, scope_raw = cand, ":".join(parts[k:])
+                        break
+                else:
+                    expiry_raw, scope_raw = parts[2], ":".join(parts[3:])
+            expires_at = expiry_raw.strip()[:32]
+            owner_scope = scope_raw.strip()[:64]
             if _looks_like_secret(cid) or _looks_like_secret(kind) \
                     or _looks_like_secret(expires_at) \
                     or _looks_like_secret(owner_scope):
@@ -204,8 +244,21 @@ def presence_fingerprint(presences: Dict[str, CredentialPresence]) -> str:
 def credentials_present_map(
     presences: Dict[str, CredentialPresence],
 ) -> Dict[str, bool]:
-    """QualificationContext.credentials_present 形态（id→bool，≤8 有界）。"""
-    return {cid: True for cid in list(sorted(presences.keys()))[:8]}
+    """QualificationContext.credentials_present 形态（id→bool，≤8 有界）。
+
+    过期凭证不计入 presence（#2139 F1 执行面：expires_at 已声明且过期 →
+    资格面视为缺失，过期凭证不得充当 requires_credentials 的在场证据）；
+    未声明/不可解析 expires_at → 保持在场（不断言）。
+    """
+    out: Dict[str, bool] = {}
+    for cid in sorted(presences.keys()):
+        presence = presences[cid]
+        if isinstance(presence, CredentialPresence) and presence.is_expired():
+            continue
+        out[cid] = True
+        if len(out) >= 8:
+            break
+    return out
 
 
 __all__ = [

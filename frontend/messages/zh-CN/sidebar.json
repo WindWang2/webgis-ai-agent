@@ -253,7 +253,9 @@
     "atlasPdf": "下载 PDF",
     "atlasManifest": "来源清单",
     "atlasDownloadPdf": "下载图册 PDF：{name}",
-    "atlasDownloadManifest": "下载可复现来源清单：{name}"
+    "atlasDownloadManifest": "下载可复现来源清单：{name}",
+    "importMembers": "导入成员（逐成员状态）",
+    "importRejected": "拒绝 {p0} 行"
   },
   "studio": {
     "decoration": {
@@ -388,7 +390,8 @@
     "groupByAria": "分组字段（group by）",
     "noGroup": "不分组",
     "statsModeHint": "result_mode 将切换为 statistics（仅返回聚合结果，不传输 geometry）",
-    "aggFieldRequired": "请选择聚合字段后再运行或解释查询。"
+    "aggFieldRequired": "请选择聚合字段后再运行或解释查询。",
+    "deliver": "交付数据"
   },
   "explain": {
     "queryFingerprint": "查询指纹",
@@ -629,6 +632,30 @@
     "retryAria": "重试上一条指令",
     "retryLast": "重试上一条",
     "inputAria": "输入空间分析指令",
+    "visualAttach": {
+      "attachAria": "附图",
+      "attachMenu": "附加视觉证据",
+      "attachMap": "当前地图视口",
+      "attachMapHint": "采集地图画布（不含页面图例）",
+      "attachRegion": "框选局部",
+      "attachRegionHint": "在当前地图截图上拖选矩形",
+      "attachReference": "上传参考图",
+      "attachReferenceHint": "PNG / JPEG 静态图片",
+      "mapUnavailable": "地图尚未就绪，无法采集",
+      "uploading": "上传中…",
+      "uploadFailed": "附图失败",
+      "draftFull": "最多 4 张附图",
+      "regionTitle": "框选地图局部",
+      "regionConfirm": "附加所选局部",
+      "regionCancel": "取消",
+      "regionDragHint": "在图上拖动选择矩形（可重选）",
+      "chipViewport": "地图视口",
+      "chipRegion": "局部",
+      "chipReference": "参考图",
+      "chipRemove": "移除附图",
+      "receiptSent": "已送模型",
+      "receiptRefused": "未送"
+    },
     "inputPlaceholder": "输入空间分析指令...",
     "stopAria": "停止生成",
     "stopTitle": "停止生成",

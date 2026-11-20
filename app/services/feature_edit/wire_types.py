@@ -39,6 +39,25 @@ class FeatureDelta(TypedDict):
     # Geometry dictionaries originate at the Shapely / raw GeoJSON boundary.
     geometry_before: NotRequired[GeoJSONGeometry | None]
     geometry_after: NotRequired[GeoJSONGeometry | None]
+    # G14 结构性语义：presence 声明要素出生/消失（缺省 = 修改，旧 entry 兼容）。
+    # created：feature_after 携带完整要素（含 _wfid 的 properties + geometry），
+    #   undo = 移除该 wfid；removed：feature_before 携带完整快照，undo = 原样
+    #   复活（同 wfid、同字段、同几何）。
+    presence: NotRequired[Literal["created", "removed"]]
+    feature_before: NotRequired[dict | None]
+    feature_after: NotRequired[dict | None]
+    # removed 记录要素在操作前列表中的位置；其逆（created）按该位置重插 ——
+    # undo 恢复的不仅是内容还有次序（载荷指纹含列表序，位置漂移会让链
+    # 完整性断言诚实失败）。created 的原生新要素（split/merge 子）无 index，
+    # 按推导顺序追加。
+    index: NotRequired[int]
+
+
+class LineageEvent(TypedDict):
+    kind: Literal["split", "merge"]
+    parent_wfids: list[str]
+    child_wfids: list[str]
+    seq: int
 
 
 RenameField = TypedDict(
@@ -93,6 +112,8 @@ class JournalEntry(TypedDict, total=False):
     content_revision_before: int | None
     content_revision_after: int | None
     created_at: float | None
+    # G14：结构性操作的血缘投影（可选；旧 entry 无此键 = 无血缘事实）。
+    lineage: list[LineageEvent]
 
 
 class EditJournal(TypedDict):
@@ -111,6 +132,7 @@ class DeltaPreview(TypedDict):
     wfid: str | None
     fields: NotRequired[dict[str, FieldChange]]
     geometry: NotRequired[GeometryPreview]
+    presence: NotRequired[Literal["created", "removed"]]
 
 
 class EditReceipt(TypedDict, total=False):
@@ -129,6 +151,10 @@ class EditReceipt(TypedDict, total=False):
     mapspec_revision: int | None
     no_changes: bool
     plan_id: str
+    # G14 结构性投影：本 entry 出生/退役的稳定身份（选择/标注/分析失效面）。
+    created_wfids: list[str]
+    retired_wfids: list[str]
+    lineage_events: list[LineageEvent]
 
 
 class JournalHead(TypedDict):

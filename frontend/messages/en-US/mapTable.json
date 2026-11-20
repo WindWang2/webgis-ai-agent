@@ -20,6 +20,10 @@
     "serverMode": "Server-paged",
     "sortServerTitle": "Sort by {column} (server)",
     "locateTitle": "Locate on map",
-    "emptyPage": "No features under the current conditions"
+    "emptyPage": "No features under the current conditions",
+    "selectionView": "Selection",
+    "selectionCountSuffix": " · {count} selected (server-verified)",
+    "selectionCountUnknown": " · selected (total unknown — over exact-count limit)",
+    "selectionStale": "Data updated — selection expired; brush again"
   }
 }

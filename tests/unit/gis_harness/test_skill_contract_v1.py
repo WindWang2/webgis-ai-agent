@@ -37,7 +37,9 @@ def _minimal_skill(**overrides) -> SkillContract:
 
 class TestContractBasics:
     def test_schema_version(self):
-        assert SKILL_SCHEMA_VERSION == 1
+        # v2（G30）：additive parameters/role_bindings/execution；旧 YAML 不写
+        # 这些字段时装载与校验行为不变（guidance_only）。
+        assert SKILL_SCHEMA_VERSION == 2
 
     def test_minimal_contract_roundtrip(self):
         skill = _minimal_skill()

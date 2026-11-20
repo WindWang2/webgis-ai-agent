@@ -46,7 +46,11 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
             "service_type": "显式协议（'ogc_api_tiles'|'ogc_api_coverages'；缺省自动探测）",
             "session_id": "会话 ID（目录发现归属）",
         },
-        execution_policy=ToolExecutionPolicy.ASYNC,
+        # #2147：probe/list/describe 是同步远程 HTTP（requests，单协议最多
+        # probe+list+10×describe、timeout=15s）。纯同步 + THREAD 策略让注册表
+        # 卸载到工作线程 —— 旧 async def + ASYNC 策略把这些串行阻塞调用钉在
+        # 事件循环上，一次检查即可冻结所有 SSE 流。
+        execution_policy=ToolExecutionPolicy.THREAD,
         side_effect="cacheable_read",
         network=True,
         deterministic=False,
@@ -58,7 +62,7 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
         result_size_policy="inline_small",
         failure_modes=["network_error", "timeout", "unsupported_service"],
     )
-    async def inspect_data_service(
+    def inspect_data_service(
         url: str,
         session_id: str = "default",
         service_type: Optional[str] = None,
@@ -155,7 +159,6 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         tier=2, domains=["dataset"], name="read_coverage_subset",
-        capabilities=["dataset_ingest"],  # CapabilityRegistry 既有项
         description=(
             "OGC API - Coverages 受控 subset 读取：按服务声明的轴（bbox 仅在可识别"
             "经纬轴时接受）与预算（max_cells/响应字节帽）读取 coverage 子集并物化"
@@ -205,12 +208,17 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
             CoverageReadError,
             read_coverage_subset as _read,
         )
+        from app.services.data_fabric.errors import DataFabricError
 
-        adapter = OGCCoveragesAdapter(ConnectionProfile(
-            id="coverage-read", source_type="ogc_api_coverages",
-            endpoint_url=url, name="coverage read",
-        ))
         try:
+            # #2148：适配器构造（含 SSRF validate_url → DataFabricError）必须
+            # 在 try 内 —— 旧实现放在外面，SSRF 拒绝以裸异常穿出类型化回执；
+            # subset 标量值的 tuple() 转换同样在 try 内（标量 → typed 校验
+            # 错误，而不是裸 TypeError）。
+            adapter = OGCCoveragesAdapter(ConnectionProfile(
+                id="coverage-read", source_type="ogc_api_coverages",
+                endpoint_url=url, name="coverage read",
+            ))
             result = await _read(
                 adapter, dataset_id,
                 session_id=session_id,
@@ -219,6 +227,24 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
                 bands=bands,
                 max_cells=int(max_cells),
             )
+        except DataFabricError as e:
+            # SSRF 拒绝/连接剖面非法 → typed 回执（与 inspect_data_service
+            # 的 R2 N4a 修法同口径），不裸穿。
+            return {
+                "status": "error",
+                "error_type": getattr(e, "code", None) or "data_fabric_error",
+                "error": str(e)[:300],
+                "details": getattr(e, "details", None),
+                "ref": None,
+            }
+        except (TypeError, ValueError) as e:
+            return {
+                "status": "error",
+                "error_type": "invalid_args",
+                "error": f"subsets/bbox 形态非法: {e}"[:300],
+                "details": None,
+                "ref": None,
+            }
         except CoverageReadError as e:
             return {
                 "status": "error",
@@ -233,7 +259,6 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         tier=2, domains=["dataset"], name="materialize_remote_raster_asset",
-        capabilities=["dataset_ingest"],  # CapabilityRegistry 既有项
         description=(
             "远程 COG/GeoTIFF 资产受控物化：SSRF 门 → 头读预检 → AOI/bands/"
             "overview 显式窗口读（请求/字节预算 + 可取消）→ 本地 COG ref"
@@ -286,7 +311,7 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
                 bands=bands,
                 bbox=bbox,
                 overview_level=overview_level,
-                max_output_bytes=int(max_output_bytes),
+                max_output_bytes=max_output_bytes,
             )
         except CogMaterializationError as e:
             return {

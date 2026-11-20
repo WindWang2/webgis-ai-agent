@@ -1,0 +1,74 @@
+{
+  "panel": {
+    "title": "联合探索工作台",
+    "subtitle": "多图联合筛选 · 同一源版本 · 命名视图",
+    "source": "探索源",
+    "selectSource": "选择矢量图层…",
+    "anchor": "源锚 rev{rev} · {count} 要素",
+    "inspecting": "正在冻结源与字段画像…",
+    "kindCategory": "分类条形图",
+    "kindRange": "数值区间图"
+  },
+  "charts": {
+    "section": "图表实例",
+    "field": "字段",
+    "selectField": "选择字段…",
+    "kind": "图表种类",
+    "aggregation": "聚合",
+    "valueField": "值字段",
+    "selectValueField": "值字段…",
+    "add": "添加图表",
+    "remove": "移除",
+    "fieldOption": "{name}（{type}）"
+  },
+  "conditions": {
+    "section": "活动条件",
+    "empty": "暂无条件 —— 在图表上点击类别或区间桶",
+    "clearChart": "清空该图条件",
+    "clearAll": "清空全部条件",
+    "remove": "移除条件 {id}"
+  },
+  "preview": {
+    "loading": "组合求值中…",
+    "idle": "绑定源并添加图表后开始联合探索",
+    "matchLine": "匹配 {matched} / 共 {total} 要素",
+    "countInexact": "（计数超精确上限，非精确）",
+    "digest": "条件摘要 {digest}",
+    "facetMatched": "排除自身条件后 {n}",
+    "fullMatched": "全部条件后 {n}",
+    "truncated": "已截断",
+    "facetNote": "图内统计为“其它条件下的可选项”口径（排除本图自身条件）；匹配总数为全部条件口径",
+    "chartStatLine": "{field}：排除自身条件后 {facet} · 全部条件后 {full}"
+  },
+  "table": {
+    "section": "匹配集结果表",
+    "loading": "读取匹配集…",
+    "error": "读取失败（可能条件 JSON 超限或源已更新）",
+    "empty": "空集 —— 0 个匹配（不回退全量）",
+    "total": "服务端总数 {n}",
+    "more": "加载更多"
+  },
+  "views": {
+    "section": "命名视图",
+    "titlePlaceholder": "视图标题…",
+    "save": "保存视图",
+    "saved": "视图已保存（源锚已核对）",
+    "open": "重开",
+    "apply": "应用到地图",
+    "applied": "已写入 {count} 个图表组件到 MapSpec",
+    "reopened": "视图已重开（同代重放完成）",
+    "needTitleAndPlan": "需要标题与已绑定的源",
+    "stalePrompt": "源已更新 —— 视图保留原锚，请重新预览/重新绑定后再保存",
+    "staleReason": "视图过期（{code}）：{msg}"
+  },
+  "chart": {
+    "facetScope": "其它条件下",
+    "noData": "等待组合 preview…",
+    "truncatedNote": "类别超上限已并入 other（溢出值集见面板）",
+    "otherNotFilterable": "溢出值超预算，不可筛选",
+    "otherOverflow": "other（不可筛选）"
+  },
+  "commands": {
+    "openPanel": "打开联合探索工作台"
+  }
+}

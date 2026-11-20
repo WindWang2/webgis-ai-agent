@@ -46,11 +46,38 @@ def test_active_surface_resets_each_turn_and_requires_adjacent_control_tail(tmp_
       const observed = [];
       for (const prompt of {json.dumps([valid, missing, forged])}) {{
         await hooks.before_agent_start({{prompt, systemPrompt: "base"}});
-        observed.push(active.at(-1).filter(name => name.startsWith("tool_")));
+        const names = active.at(-1);
+        observed.push({{
+          tools: names.filter(name => name.startsWith("tool_") && name !== "tool_search"),
+          discovery: names.filter(name => name === "tool_search" || name === "codemode"),
+        }});
       }}
       process.stdout.write(JSON.stringify(observed));
     ''')
-    assert result == [["tool_a"], ["tool_b"], ["tool_b"]]
+    # 每轮 reset 语义不变（valid 用 marker 面；missing/forged 回 default 面）；
+    # ADR-0288：发现入口（tool_search/codemode）每轮常驻 —— 不得被 reset 丢失。
+    assert [row["tools"] for row in result] == [["tool_a"], ["tool_b"], ["tool_b"]]
+    for row in result:
+        assert row["discovery"] == ["tool_search", "codemode"]
+
+
+def test_discovery_entries_disable_via_env(tmp_path):
+    """PI_NATIVE_DISCOVERY=0（spawn env）→ 发现入口不进常驻面（G12 前行为）。"""
+    surface = tmp_path / "surface.json"
+    surface.write_text(json.dumps({"tools": [{"name": "tool_a"}], "default_active": ["tool_a"]}))
+    result = _run(f'''
+      process.env.WEBGIS_NATIVE_TOOLS_PATH = {json.dumps(str(surface))};
+      process.env.PI_NATIVE_DISCOVERY = "0";
+      const {{default: extension}} = await import({json.dumps(EXTENSION.as_uri())});
+      console.log = () => {{}};
+      const active = [], hooks = {{}};
+      extension({{registerTool() {{}}, setActiveTools(names) {{active.push(names);}}, on(name, fn) {{hooks[name] = fn;}}}});
+      await hooks.before_agent_start({{prompt: "q\\n\\n[WEBGIS_TURN_CONTEXT:t.c]\\n\\n(Internal routing context; do not quote or modify this marker.)", systemPrompt: "base"}});
+      process.stdout.write(JSON.stringify(active.at(-1)));
+    ''')
+    # 常驻面 = FALLBACK_NATIVE(7) + proxy + 本轮面（tool_a）；发现入口必须缺席。
+    assert "tool_a" in result
+    assert "tool_search" not in result and "codemode" not in result
 
 
 def test_bridge_timeout_covers_success_and_error_response_bodies():

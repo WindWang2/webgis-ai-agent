@@ -109,7 +109,7 @@ class LakehouseDatasetVersion(Base):
     id = Column(String(36), primary_key=True, default=_uuid)
     dataset_row_id = Column(
         String(36),
-        ForeignKey("lakehouse_datasets.id"),
+        ForeignKey("lakehouse_datasets.id", ondelete="CASCADE"),  # #2209：随 dataset 行级联清理
         nullable=False,
     )
     #: ADR-0139 租户作用域——随 dataset 行传播（commit_version 写入侧取）。
@@ -173,7 +173,7 @@ class LakehouseDatasetRef(Base):
     id = Column(String(36), primary_key=True, default=_uuid)
     dataset_row_id = Column(
         String(36),
-        ForeignKey("lakehouse_datasets.id"),
+        ForeignKey("lakehouse_datasets.id", ondelete="CASCADE"),  # #2209：随 dataset 行级联清理
         nullable=False,
     )
     #: ADR-0139 租户作用域——随 dataset 行传播（branch/tag 创建侧取）。

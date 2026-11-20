@@ -3,15 +3,15 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`46958214300615db…`
+- 内容指纹：`b472f91efc3bd610…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 397 | 390 | 7 |
-| algorithms | 253 | 193 | 1 |
-| capabilities | 174 | 122 | 0 |
+| tools | 507 | 480 | 64 |
+| algorithms | 257 | 195 | 1 |
+| capabilities | 195 | 129 | 0 |
 | artifact_types | 23 | 23 | 0 |
 | recipes | 166 | 166（conformance 由 workflow 闸保护） | 0 |
 
@@ -20,23 +20,25 @@
 | field | coverage | threshold | status |
 |---|---|---|---|
 | side_effect | 100% | 95% | PASS（缺 0） |
-| tags | 100% | 95% | PASS（缺 0） |
+| tags | 99% | 95% | PASS（缺 7） |
 | latency_class | 100% | 95% | PASS（缺 0） |
 | memory_class | 100% | 95% | PASS（缺 0） |
-| capabilities | 100% | 95% | PASS（缺 0） |
+| capabilities | 93% | 95% | FAIL（缺 33） |
 
-**gate: PASS**（`total=397`）
+**gate: FAIL**（`total=507`）
 
 ## 行为化覆盖与 findings 棘轮（Quality V2）
 
-- 工具行为证据：dispatch **206** / mention 184 / none 7（dispatch 覆盖率 52%）
-- findings 棘轮：**PASS**（dispatch 下限 163，当前 206；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
+- 工具行为证据：dispatch **258** / mention 222 / none 27（dispatch 覆盖率 51%）
+- findings 棘轮：**FAIL**（dispatch 下限 163，当前 258；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
+  - 违规：`TOOL_DESCRIPTOR_INCOMPLETE` 当前 37 > 基线 0
+  - 违规：`TOOL_UNTESTED` 当前 27 > 基线 8
 
 ## Findings（派生线索，非缺陷判定）
 
 > 静态引用 ≠ 行为覆盖。findings 只回答"哪里没有任何测试证据"，修复优先级需结合 02-coverage-risk-map 的风险分级。
 
-### TOOL_UNTESTED（7）
+### TOOL_UNTESTED（27）
 
 - `habitat_suitability_analysis`（medium）— registered tool without any static test reference
 - `modelops_model_history`（medium）— registered tool without any static test reference
@@ -44,15 +46,71 @@
 - `sample_random_points`（medium）— registered tool without any static test reference
 - `sample_stratified_points`（medium）— registered tool without any static test reference
 - `sample_systematic_grid`（medium）— registered tool without any static test reference
+- `topology_repair_preview`（medium）— registered tool without any static test reference
 - `ts_smooth_gapfill`（medium）— registered tool without any static test reference
+- `vector_change_proposal_rebase_preview`（medium）— registered tool without any static test reference
+- `webgis_apply_scale_portrayal`（medium）— registered tool without any static test reference
+- `webgis_field_contract_assess`（medium）— registered tool without any static test reference
+- `webgis_field_contract_draft`（medium）— registered tool without any static test reference
+- `webgis_field_contract_inspect`（medium）— registered tool without any static test reference
+- `webgis_field_contract_result`（medium）— registered tool without any static test reference
+- `webgis_inspect_scale_portrayal`（medium）— registered tool without any static test reference
+- `webgis_model_catalog`（medium）— registered tool without any static test reference
+- `webgis_print_layout_capabilities`（medium）— registered tool without any static test reference
+- `webgis_print_layout_export`（medium）— registered tool without any static test reference
+- `webgis_print_layout_inspect`（medium）— registered tool without any static test reference
+- `webgis_print_layout_pages`（medium）— registered tool without any static test reference
+- `webgis_print_layout_preview`（medium）— registered tool without any static test reference
+- `webgis_print_layout_propose`（medium）— registered tool without any static test reference
+- `webgis_session_budget_status`（medium）— registered tool without any static test reference
+- `webgis_session_model_status`（medium）— registered tool without any static test reference
+- `webgis_symbol_asset_create`（medium）— registered tool without any static test reference
+- `webgis_symbol_layer_inspect`（medium）— registered tool without any static test reference
+- `webgis_symbol_layer_preview`（medium）— registered tool without any static test reference
 
 ### TOOL_DESTRUCTIVE_UNTESTED（0）
 
 （无）
 
-### TOOL_DESCRIPTOR_INCOMPLETE（0）
+### TOOL_DESCRIPTOR_INCOMPLETE（37）
 
-（无）
+- `nearest_facility`（low）— missing descriptor fields: capabilities
+- `vector_change_proposal_create`（low）— missing descriptor fields: tags
+- `vector_change_proposal_diff`（low）— missing descriptor fields: tags
+- `vector_change_proposal_list`（low）— missing descriptor fields: tags
+- `vector_change_proposal_rebase_preview`（low）— missing descriptor fields: tags
+- `webgis_map_export`（low）— missing descriptor fields: capabilities
+- `webgis_model_catalog`（low）— missing descriptor fields: tags,capabilities
+- `webgis_print_layout_apply`（low）— missing descriptor fields: capabilities
+- `webgis_print_layout_capabilities`（low）— missing descriptor fields: capabilities
+- `webgis_print_layout_export`（low）— missing descriptor fields: capabilities
+- `webgis_print_layout_inspect`（low）— missing descriptor fields: capabilities
+- `webgis_print_layout_pages`（low）— missing descriptor fields: capabilities
+- `webgis_print_layout_preview`（low）— missing descriptor fields: capabilities
+- `webgis_print_layout_propose`（low）— missing descriptor fields: capabilities
+- `webgis_raster_expression_apply`（low）— missing descriptor fields: capabilities
+- `webgis_raster_expression_describe`（low）— missing descriptor fields: capabilities
+- `webgis_raster_expression_export`（low）— missing descriptor fields: capabilities
+- `webgis_raster_expression_probe`（low）— missing descriptor fields: capabilities
+- `webgis_raster_sampling_execute`（low）— missing descriptor fields: capabilities
+- `webgis_raster_sampling_plan`（low）— missing descriptor fields: capabilities
+- `webgis_raster_sampling_preview`（low）— missing descriptor fields: capabilities
+- `webgis_raster_sampling_results`（low）— missing descriptor fields: capabilities
+- `webgis_raster_sampling_status`（low）— missing descriptor fields: capabilities
+- `webgis_session_budget_status`（low）— missing descriptor fields: tags,capabilities
+- `webgis_session_model_status`（low）— missing descriptor fields: tags,capabilities
+- `webgis_symbol_asset_create`（low）— missing descriptor fields: capabilities
+- `webgis_symbol_asset_list`（low）— missing descriptor fields: capabilities
+- `webgis_symbol_layer_apply`（low）— missing descriptor fields: capabilities
+- `webgis_symbol_layer_inspect`（low）— missing descriptor fields: capabilities
+- `webgis_symbol_layer_preview`（low）— missing descriptor fields: capabilities
+- `webgis_symbol_layer_unbind`（low）— missing descriptor fields: capabilities
+- `webgis_temporal_media_cancel`（low）— missing descriptor fields: capabilities
+- `webgis_temporal_media_capabilities`（low）— missing descriptor fields: capabilities
+- `webgis_temporal_media_plan`（low）— missing descriptor fields: capabilities
+- `webgis_temporal_media_result`（low）— missing descriptor fields: capabilities
+- `webgis_temporal_media_status`（low）— missing descriptor fields: capabilities
+- `webgis_temporal_media_submit`（low）— missing descriptor fields: capabilities
 
 ### CAPABILITY_NO_PRODUCER（0）
 

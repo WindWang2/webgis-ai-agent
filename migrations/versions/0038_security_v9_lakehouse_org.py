@@ -113,8 +113,19 @@ def _owner_backfill_sql(table: str) -> None:
     _exec_update_batched(table, f"org_id = {DEFAULT_ORG_EXPR}", "org_id IS NULL")
 
 
+def _column_exists(table: str, column: str) -> bool:
+    """inspect 守卫：#2207 —— 幂等/可重试（同 0036/0037）。半途失败后重试
+    若再 add_column 即 DuplicateColumn；列已存在则跳过。"""
+    insp = sa.inspect(op.get_bind())
+    if table not in set(insp.get_table_names()):
+        return False
+    return any(c.get("name") == column for c in insp.get_columns(table))
+
+
 def upgrade() -> None:
     for table in TENANT_TABLES:
+        if _column_exists(table, 'org_id'):
+            continue  # 重试幂等（#2207）：列已落库则跳过
         op.add_column(table, sa.Column('org_id', sa.String(length=255), nullable=True))
 
     _owner_backfill_sql('lakehouse_datasets')

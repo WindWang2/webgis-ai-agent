@@ -3046,7 +3046,7 @@ def f29_03_nearest_hospital_network_distance() -> ScenarioContract:
             _exp("f29-03-summary", Face.METHOD, "analysis_workflow",
                  "analysis_workflow.steps.accessibility_summary",
                  value="satisfied",
-                 note="区均网络成本（numerator=Σtotal_cost/count——均值非伪装率）"),
+                 note="区均网络距离（numerator=Σtotal_distance_m/count，米；不是行程秒）"),
         ],
         not_evaluated=_F29_NOT_EVALUATED,
         tags=["analysis_workflow", "network", "closest-facility", "adr-0284"],

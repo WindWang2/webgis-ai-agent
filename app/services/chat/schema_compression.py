@@ -8,11 +8,10 @@
 - 参数描述同理有界化；
 - pydantic 序列化噪音字段剥离（additionalProperties / $defs / title /
   default 展示形态不参与模型行为判定的可省字段按级别剥离）；
-- 超 long enum 只保留前 N 项 + 「…共 N 项」提示（enum 是校验约束，不能
-  乱删 —— 但 200 项的 enum 对模型是有害噪音，截断必须同时改写 description
-  提示完整列表可经 list_available_tools 获取……不：enum 截断会改变校验
-  语义 —— 因此本层**只**在 schema 附带 enum 时截断展示并在缺失项处保留
-  计数提示；registry 校验仍按完整 enum 执行）。
+- 超 long enum **整体移除**（截断的 enum 会把合法值变成校验非法 ——
+  #2062 P3 修复），改为在参数 description 附真实前 N 项 examples +
+  「N more valid values exist server-side」计数提示；registry 校验仍按
+  完整 enum 执行，展示层不伪造、不截断校验约束。
 
 级别：
 - none   原样（注册 schema 本身）；
@@ -95,9 +94,14 @@ def compress_schema(
                 enum = pval.get("enum")
                 if isinstance(enum, list) and len(enum) > _ENUM_MAX_ITEMS:
                     shrunk, omitted = _shrink_enum(enum)
-                    pval["enum"] = shrunk
+                    # Keeping a truncated `enum` forbids the omitted legal values.
+                    pval.pop("enum", None)
                     if omitted:
-                        note = f"(enum truncated; {omitted} more valid values exist server-side)"
+                        examples = ", ".join(str(v) for v in shrunk[:_ENUM_MAX_ITEMS])
+                        note = (
+                            f"(examples: {examples}; {omitted} more valid values "
+                            "exist server-side)"
+                        )
                         existing = pval.get("description")
                         pval["description"] = (
                             f"{existing} {note}" if isinstance(existing, str) else note
@@ -105,8 +109,8 @@ def compress_schema(
                 # pydantic 序列化噪音
                 for noise in ("additionalProperties",):
                     pval.pop(noise, None)
-                # review R1 minor：$defs 仅在无残留 $ref 时可剥，否则跳过该级
-                if "$defs" in pval and "$ref" not in pval:
+                # $defs 仅在子树没有 $ref 时可剥，否则会留下悬空引用。
+                if "$defs" in pval and "$ref" not in json.dumps(pval, default=str):
                     pval.pop("$defs", None)
                 if "allOf" in pval and len(pval) == 1 and isinstance(pval["allOf"], list):
                     # pydantic v2 $ref-free 单元素 allOf 常见于 Any/约束透传

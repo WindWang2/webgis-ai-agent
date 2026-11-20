@@ -182,7 +182,7 @@ def _legend_digest_and_classification(
 
 def _page_fingerprint(
     binding_fields: Dict[str, Any], *, spec: AtlasJobSpec, ir_fingerprint: str,
-    structural_fingerprint: str,
+    structural_fingerprint: str, print_layout_digest: str = "",
 ) -> str:
     projection = {
         "binding": binding_fields,
@@ -190,6 +190,9 @@ def _page_fingerprint(
         "atlas_title": spec.atlas.atlas_title,
         "target_dpi": spec.target_dpi,
         "ir_fingerprint": ir_fingerprint,
+        # G34：纸面作者计划（含页级覆写）必须参与页缓存指纹，否则
+        # executor 的按 fingerprint 缓存会把 A 页的整饰复用到 B 页。
+        "print_layout_digest": print_layout_digest,
         # R1-P1：页有效文档的结构指纹（layers/paint/thresholds/view/scene/
         # scenario_mode + 源描述符与 feature_count —— 同步链 C14 review P2
         # 同款投影）。样式/阈值/视角变化必须轮换页指纹，否则缓存误命中。
@@ -249,6 +252,10 @@ def plan_atlas_binding(spec: AtlasJobSpec, document: Dict[str, Any]) -> AtlasPla
         frames_lookup, _ = enabled_frames(document, cap=spec.atlas.page_budget)
 
     ir_fp = pub_ir.ir_fingerprint()
+    # G34：layout.print_layout 的确定性摘要（含每页 overrides / 模板版本）。
+    _pl = (document.get("layout") or {}).get("print_layout") \
+        if isinstance(document.get("layout"), dict) else None
+    _pl_digest = digest_of(_pl)[:40] if isinstance(_pl, dict) and _pl else ""
     bindings: List[AtlasPageBinding] = []
     for page in pub_ir.pages:
         effective = _page_effective_doc(document, page, frames_lookup)
@@ -288,7 +295,8 @@ def plan_atlas_binding(spec: AtlasJobSpec, document: Dict[str, Any]) -> AtlasPla
             classification=classification,
             fingerprint=_page_fingerprint(
                 binding_fields, spec=spec, ir_fingerprint=ir_fp,
-                structural_fingerprint=_effective_structural_fingerprint(effective)),
+                structural_fingerprint=_effective_structural_fingerprint(effective),
+                print_layout_digest=_pl_digest),
         ))
     return AtlasPlan(ir=pub_ir, bindings=bindings)
 

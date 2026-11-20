@@ -1,0 +1,555 @@
+"""G30 技能作业 API —— 工作台（UI）与 Pi @tool 共享同一业务契约。
+
+端点（全部 owner-scoped；会话可凭已验证的匿名能力或登录身份访问，
+目录和预设保留账号认证；job 另校验 creator/org/project，拒绝能力越权）：
+
+- ``GET  /api/v1/skill-jobs/catalog``               分类型目录（runnable/…）
+- ``GET  /api/v1/skill-jobs/skills/{skill_id}``     单技能详情（参数 schema/绑定需求）
+- ``POST /api/v1/skill-jobs/prepare``               零副作用 prepared call + 预览
+- ``POST /api/v1/skill-jobs/start``                 启动运行（幂等；busy 会话 409）
+- ``GET  /api/v1/skill-jobs/runs``                  会话运行列表（刷新回看）
+- ``GET  /api/v1/skill-jobs/runs/{job_id}``         单运行视图（含 run 记录）
+- ``POST /api/v1/skill-jobs/runs/{job_id}/cancel``  经既有 durable 取消面
+- 预设：``GET/POST /api/v1/skill-jobs/presets``、
+  ``GET/PUT/DELETE /api/v1/skill-jobs/presets/{id}``、
+  ``POST /api/v1/skill-jobs/presets/{id}/prepare``（重用=重新绑定+重新校验）
+
+生命周期：UI start 在会话有活跃 agent turn 时返回 409 SESSION_BUSY（不自
+等待、不另起执行权威）；空闲会话按 durable job 生命周期启动。取消/重试经
+统一任务中心既有端点（/tasks/jobs/*）同样可用 —— 这里只做本域薄包装。
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import and_, or_, select
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import (
+    actor_ids, auth_bypass_enabled, get_current_user, get_owner_token, security,
+)
+from app.core.database import get_async_db
+from app.schemas.skill_jobs_schema import (
+    SkillJobCancelResponse,
+    SkillJobPresetDeleteResponse,
+    SkillJobPresetPrepareResponse,
+    SkillJobPresetView,
+    SkillJobPrepareResponse,
+    SkillJobRunView,
+    SkillJobRunsListResponse,
+    SkillJobSkillDetailResponse,
+    SkillJobsCatalogResponse,
+    SkillJobPresetsListResponse,
+)
+from app.services.auth_history_bridge import verify_session_owner
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/skill-jobs", tags=["skill-jobs"])
+
+
+# ── 请求/响应模型 ─────────────────────────────────────────────────────
+
+class PrepareRequest(BaseModel):
+    session_id: str = Field(..., max_length=255)
+    skill_id: str = Field(..., max_length=80)
+    skill_version: str = Field("", max_length=16)
+    params: Dict[str, Any] = Field(default_factory=dict)
+    bindings: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class StartRequest(BaseModel):
+    prepared_id: str = Field(..., max_length=64)
+    session_id: str = Field(..., max_length=255)
+    wait_timeout_s: int = Field(
+        0, description="有界等待秒数（0=后台运行+轮询；>0 时同步等待至完成/超时）")
+
+
+class PresetRequest(BaseModel):
+    name: str = Field(..., max_length=120)
+    description: str = Field("", max_length=400)
+    skill_id: str = Field(..., max_length=80)
+    skill_version: str = Field("", max_length=16)
+    params: Dict[str, Any] = Field(default_factory=dict)
+    bindings_template: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PresetPrepareRequest(BaseModel):
+    """预设重用：显式新 bindings（refs 重新授权）+ 可覆盖参数。"""
+    session_id: str = Field(..., max_length=255)
+    bindings: List[Dict[str, Any]] = Field(default_factory=list)
+    params_override: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _org_of(user: Dict[str, Any]) -> Optional[int]:
+    org = user.get("org_id") or user.get("organization_id")
+    try:
+        return int(org) if org is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _typed_error(e: Exception) -> HTTPException:
+    code = getattr(e, "code", "")
+    message = str(getattr(e, "message", e))[:300]
+    detail = getattr(e, "detail", None) or {}
+    status_code = 400
+    if code == "SESSION_BUSY":
+        status_code = 409
+    elif code in ("PREPARED_EXPIRED", "PREPARED_SESSION_MISMATCH"):
+        status_code = 410
+    elif code == "REF_NOT_FOUND":
+        status_code = 404
+    elif code == "SKILL_NOT_FOUND":
+        status_code = 404
+    elif code in ("SKILL_GUIDANCE_ONLY", "SKILL_DEPRECATED"):
+        status_code = 422
+    return HTTPException(status_code=status_code,
+                         detail={"code": str(code or "SKILL_JOB_ERROR"),
+                                 "message": message, "detail": detail})
+
+
+# ── 目录与详情 ────────────────────────────────────────────────────────
+
+@router.get("/catalog", response_model=SkillJobsCatalogResponse)
+async def get_catalog(
+    domain: str = Query("", max_length=40),
+    _user: Dict[str, Any] = Depends(get_current_user),
+):
+    """分类型目录：GIS 技能（版本/摘要/runnability）+ md 指南 + 扩展 candidate。"""
+    from app.services.gis_harness.skill_jobs.catalog_views import build_catalog
+
+    return build_catalog(domain=domain)
+
+
+@router.get("/skills/{skill_id}", response_model=SkillJobSkillDetailResponse)
+async def get_skill_detail(
+    skill_id: str,
+    _user: Dict[str, Any] = Depends(get_current_user),
+):
+    """单技能详情（完整参数 schema + 绑定需求 + 过程步骤摘要；有界）。"""
+    from app.services.gis_harness.skill_jobs.catalog_views import gis_skill_entry
+    from app.services.gis_harness.skills.loader import get_skill_library
+
+    skill = get_skill_library().get(skill_id)
+    if skill is None:
+        raise HTTPException(404, detail={"code": "SKILL_NOT_FOUND",
+                                         "message": f"skill {skill_id!r} 不存在"})
+    entry = gis_skill_entry(skill)
+    entry["completion_evidence"] = list(skill.completion_evidence)
+    entry["quality_obligations"] = [
+        {"obligation_id": o.obligation_id, "kind": o.obligation_kind,
+         "description": (o.description or "")[:160]}
+        for o in skill.quality_obligations[:8]
+    ]
+    return entry
+
+
+# ── prepare / start / 运行视图 ────────────────────────────────────────
+
+async def _session_caller(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> Dict[str, Any]:
+    """Absent Bearer may prove an anonymous session capability at the route guard.
+
+    Supplied invalid/revoked credentials never silently downgrade to anonymous.
+    Account-level catalog/preset dependencies deliberately remain authenticated.
+    """
+    if credentials is not None or request.headers.get("authorization") or auth_bypass_enabled():
+        return await get_current_user(credentials)
+    return {}
+
+
+def _job_scope(user: Dict[str, Any], owner_token: Optional[str]):
+    """A capability grants only unbound anonymous jobs, never account/org/project jobs."""
+    from app.models.db_model import AnalysisTask, Conversation
+
+    uid, org = actor_ids(user)
+    anonymous = and_(
+        AnalysisTask.creator_id.is_(None), AnalysisTask.org_id.is_(None),
+        or_(AnalysisTask.project_id.is_(None), AnalysisTask.project_id == ""),
+        AnalysisTask.owner_token == owner_token if owner_token else False,
+    )
+    if not uid:
+        return anonymous
+    # Preserve pre-#2198 rows whose creator was accidentally omitted, but only
+    # through a user-bound session. An anonymous capability is not this proof.
+    legacy_owned_session = select(Conversation.id).where(
+        Conversation.id == AnalysisTask.session_id, Conversation.user_id == uid,
+    ).exists()
+    return or_(anonymous, and_(
+        or_(AnalysisTask.creator_id == uid, and_(
+            AnalysisTask.creator_id.is_(None), legacy_owned_session,
+        )),
+        or_(AnalysisTask.org_id.is_(None), AnalysisTask.org_id == org),
+    ))
+
+
+async def _authorize_job(db: AsyncSession, job_id: int, user: Dict[str, Any], owner_token: Optional[str]):
+    from app.models.db_model import AnalysisTask
+    from app.services.project_service import ProjectService
+
+    row = (await db.execute(select(AnalysisTask).where(
+        AnalysisTask.id == job_id, AnalysisTask.job_kind == "skill_job",
+        _job_scope(user, owner_token),
+    ))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    if row.project_id:
+        uid, org = actor_ids(user)
+        project = await db.run_sync(lambda session: ProjectService.get_project_with_auth(
+            session, row.project_id, user_id=uid, org_id=org,
+        ))
+        if project is None:
+            raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    return row
+
+
+async def _authorize_session(
+    db: AsyncSession, session_id: str,
+    user: Dict[str, Any], owner_token: Optional[str],
+) -> None:
+    await verify_session_owner(db, session_id,
+                               user_id=actor_ids(user)[0] or "",
+                               owner_token=owner_token)
+
+
+@router.post("/prepare", response_model=SkillJobPrepareResponse)
+async def prepare(
+    req: PrepareRequest,
+    user: Dict[str, Any] = Depends(_session_caller),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """零业务副作用 prepared call（typed 拒绝带 code）。"""
+    await _authorize_session(db, req.session_id, user, owner_token)
+    from app.services.gis_harness.skill_jobs.prepare import prepare_skill_job
+    from app.services.gis_harness.skill_jobs.store import prepared_store
+
+    try:
+        result = await prepare_skill_job(
+            session_id=req.session_id, skill_id=req.skill_id,
+            skill_version=req.skill_version, params=req.params,
+            bindings=req.bindings)
+    except Exception as e:  # noqa: BLE001 — typed 拒绝统一形态
+        raise _typed_error(e) from e
+    prepared_store.put(result.prepared, result.inline_payloads)
+    return {
+        "prepared_id": result.prepared.prepared_id,
+        "skill": {"id": result.prepared.skill_id,
+                  "version": result.prepared.skill_version,
+                  "digest": result.prepared.skill_digest[:16]},
+        "idempotency_key": result.prepared.idempotency_key,
+        "preview": result.prepared.preview,
+    }
+
+
+@router.post("/start", response_model=SkillJobRunView)
+async def start(
+    req: StartRequest,
+    user: Dict[str, Any] = Depends(_session_caller),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """启动运行（幂等；活跃 agent turn → 409 SESSION_BUSY）。"""
+    await _authorize_session(db, req.session_id, user, owner_token)
+    from app.services.gis_harness.skill_jobs.runner import (
+        SkillJobOwner,
+        start_skill_job,
+    )
+    from app.services.gis_harness.skill_jobs.store import prepared_store
+
+    # 会话不符不消费（归属错误不烧掉执行意图；与过期同形 410 不泄露归属）
+    entry = prepared_store.pop(req.prepared_id, session_id=req.session_id)
+    if entry is None:
+        raise HTTPException(410, detail={
+            "code": "PREPARED_EXPIRED",
+            "message": "prepared_id 不存在/已过期/已被消费/归属另一会话 —— 重新 prepare"})
+    prepared, inline_payloads = entry
+    owner = SkillJobOwner(
+        session_id=req.session_id,
+        user_id=actor_ids(user)[0] or "",
+        org_id=_org_of(user),
+        project_id=str(user.get("project_id") or ""),
+        owner_token=owner_token or "",
+    )
+    try:
+        # UI 入口：默认后台运行 + 轮询；调用方可显式有界等待。busy 会话 409。
+        view = await start_skill_job(
+            prepared, inline_payloads, owner=owner,
+            wait_timeout_s=float(max(0, min(req.wait_timeout_s, 120))),
+            session_busy_check=True)
+    except Exception as e:  # noqa: BLE001
+        raise _typed_error(e) from e
+    return view
+
+
+@router.get("/runs", response_model=SkillJobRunsListResponse)
+async def list_runs(
+    session_id: str = Query(..., max_length=255),
+    limit: int = Query(20, ge=1, le=50),
+    user: Dict[str, Any] = Depends(_session_caller),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """会话的技能作业运行列表（刷新回看权威：durable job 行）。"""
+    await _authorize_session(db, session_id, user, owner_token)
+    from app.models.db_model import AnalysisTask
+    from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
+
+    # Apply principal scope before LIMIT so other principals cannot crowd out
+    # the caller's jobs in a mixed authenticated/anonymous session.
+    ids = (await db.execute(select(AnalysisTask.id).where(
+        AnalysisTask.session_id == session_id, AnalysisTask.job_kind == "skill_job",
+        _job_scope(user, owner_token),
+    ).order_by(AnalysisTask.created_at.desc()).limit(limit))).scalars().all()
+    runs = []
+    for jid in ids:
+        try:
+            await _authorize_job(db, jid, user, owner_token)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            continue
+        view = await get_skill_job_view(jid)
+        if view is not None:
+            runs.append(view)
+    return {"runs": runs}
+
+
+@router.get("/runs/{job_id}", response_model=SkillJobRunView)
+async def get_run(
+    job_id: int,
+    session_id: str = Query("", max_length=255),
+    user: Dict[str, Any] = Depends(_session_caller),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """单运行视图（含步骤/产物 refs/证据覆盖）。
+
+    review P1-2：单读必须归属验证 —— 无 session_id 的裸 id 读不再放行
+    （与任务中心 get_for_owner 同规则：枚举整数 id 不得成为旁路）。
+    """
+    from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
+
+    await _authorize_job(db, job_id, user, owner_token)
+    view = await get_skill_job_view(job_id)
+    if view is None:
+        raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    row_session = str(view.get("session_id") or "")
+    if not row_session:
+        # 无会话归属的行（防御：技能作业恒有 session）按不可见处理
+        raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    if session_id and session_id != row_session:
+        raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    await _authorize_session(db, row_session, user, owner_token)
+    return view
+
+
+@router.post("/runs/{job_id}/cancel", response_model=SkillJobCancelResponse)
+async def cancel_run(
+    job_id: int,
+    session_id: str = Query(..., max_length=255),
+    user: Dict[str, Any] = Depends(_session_caller),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """取消（既有 durable 两阶段取消；已提交合法结果不虚假回滚）。"""
+    from app.services.gis_harness.skill_jobs.runner import get_skill_job_view
+
+    await _authorize_job(db, job_id, user, owner_token)
+    view = await get_skill_job_view(job_id)
+    if view is None or view.get("session_id") != session_id:
+        raise HTTPException(404, detail={"code": "JOB_NOT_FOUND"})
+    await _authorize_session(db, session_id, user, owner_token)
+    if not view.get("cancellable"):
+        return {"job_id": str(job_id), "status": view.get("status"),
+                "cancelled": False,
+                "message": "运行不在可取消状态（终态不可取消）"}
+
+    import asyncio
+
+    from app.core.database import SessionLocal
+    from app.services.jobs.store import DurableJobStore
+
+    def _request_cancel() -> bool:
+        with SessionLocal() as sdb:
+            requested, _status = DurableJobStore.request_cancel_sync(sdb, job_id)
+            sdb.commit()
+            return bool(requested)
+
+    # #2204：同步 SessionLocal 事务卸载到工作线程（返回值经 to_thread 带回）。
+    requested = await asyncio.to_thread(_request_cancel)
+    # review P2-11：与任务中心同款 —— DB 取消事实 + 进程内取消令牌双发，
+    # 在飞执行体立即在步间检查点收敛（不等看门狗轮询）。
+    if requested:
+        try:
+            from app.lib.cancellation import registry as cancellation_registry
+
+            cancellation_registry.cancel(job_id, "cancelled by user")
+        except Exception:  # noqa: BLE001 — 令牌缺席=跨副本取消，看门狗兜底
+            pass
+    return {"job_id": str(job_id), "cancel_requested": bool(requested)}
+
+
+# ── 预设 ──────────────────────────────────────────────────────────────
+
+@router.get("/presets", response_model=SkillJobPresetsListResponse)
+async def list_presets_ep(
+    project_id: str = Query("", max_length=255),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    import asyncio
+
+    from app.services.gis_harness.skill_jobs.presets import list_presets
+
+    # #2204：预设面是同步 SessionLocal 存储，卸载到工作线程。
+    presets = await asyncio.to_thread(
+        list_presets, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or "", project_id=project_id)
+    return {"presets": presets}
+
+
+@router.post("/presets", response_model=SkillJobPresetView)
+async def create_preset_ep(
+    req: PresetRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    import asyncio
+
+    from app.services.gis_harness.skill_jobs.presets import PresetPayload, save_preset
+
+    try:
+        return await asyncio.to_thread(
+            save_preset,
+            PresetPayload(
+                name=req.name, description=req.description,
+                skill_id=req.skill_id, skill_version=req.skill_version,
+                params=req.params, bindings_template=req.bindings_template),
+            org_id=_org_of(user), creator_id=actor_ids(user)[0] or "",
+            project_id=str(user.get("project_id") or ""))
+    except ValueError as e:
+        raise HTTPException(422, detail={"code": "PRESET_INVALID",
+                                         "message": str(e)[:200]}) from e
+
+
+@router.get("/presets/{preset_id}", response_model=SkillJobPresetView)
+async def get_preset_ep(
+    preset_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    import asyncio
+
+    from app.services.gis_harness.skill_jobs.presets import get_preset
+
+    preset = await asyncio.to_thread(
+        get_preset, preset_id, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or "")
+    if preset is None:
+        raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
+    return preset
+
+
+@router.put("/presets/{preset_id}", response_model=SkillJobPresetView)
+async def update_preset_ep(
+    preset_id: str,
+    req: PresetRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    import asyncio
+
+    from app.services.gis_harness.skill_jobs.presets import PresetPayload, save_preset
+
+    try:
+        return await asyncio.to_thread(
+            save_preset,
+            PresetPayload(
+                name=req.name, description=req.description,
+                skill_id=req.skill_id, skill_version=req.skill_version,
+                params=req.params, bindings_template=req.bindings_template),
+            org_id=_org_of(user), creator_id=actor_ids(user)[0] or "",
+            preset_id=preset_id)
+    except ValueError as e:
+        if str(e) == "preset not found":
+            raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"}) from e
+        raise HTTPException(422, detail={"code": "PRESET_INVALID",
+                                         "message": str(e)[:200]}) from e
+
+
+@router.delete("/presets/{preset_id}", response_model=SkillJobPresetDeleteResponse)
+async def delete_preset_ep(
+    preset_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    import asyncio
+
+    from app.services.gis_harness.skill_jobs.presets import delete_preset
+
+    if not await asyncio.to_thread(
+        delete_preset, preset_id, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or ""):
+        raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
+    return {"deleted": True}
+
+
+@router.post("/presets/{preset_id}/prepare", response_model=SkillJobPresetPrepareResponse)
+async def preset_prepare_ep(
+    preset_id: str,
+    req: PresetPrepareRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """预设重用 = 显式新绑定 + 参数覆盖 → 重新 prepare（不携带任何授权）。
+
+    预设里的旧 ref 只作「沿用哪些输入」的提示；ref 过期/不可见 →
+    REF_NOT_FOUND，要求重新绑定（不泄露他人数据）。
+    """
+    await _authorize_session(db, req.session_id, user, owner_token)
+    from app.services.gis_harness.skill_jobs.presets import get_preset, get_preset_raw
+    from app.services.gis_harness.skill_jobs.prepare import prepare_skill_job
+    from app.services.gis_harness.skill_jobs.store import prepared_store
+
+    import asyncio
+
+    # review P1-4：重用路径读原始行 —— 有界视图会截断 >64 字符参数。
+    # #2204：预设读是同步 SessionLocal，串行卸载到工作线程（保持先 raw 后
+    # 视图的调用顺序与 404 语义）。
+    preset_raw = await asyncio.to_thread(
+        get_preset_raw, preset_id, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or "")
+    if preset_raw is None:
+        raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
+    preset = await asyncio.to_thread(
+        get_preset, preset_id, org_id=_org_of(user),
+        creator_id=actor_ids(user)[0] or "")
+    if preset is None:  # raw 与视图两次读之间被并发删除（R2 nit-2）
+        raise HTTPException(404, detail={"code": "PRESET_NOT_FOUND"})
+    params = dict(preset_raw.get("params") or {})
+    params.update(req.params_override)
+    # 参数来源标注：预设继承的参数 = preset；覆盖值 = user
+    param_sources = {k: "preset" for k in (preset_raw.get("params") or {}).keys()}
+    param_sources.update({k: "user" for k in req.params_override.keys()})
+    try:
+        result = await prepare_skill_job(
+            session_id=req.session_id, skill_id=preset["skill_id"],
+            skill_version=preset.get("skill_version") or "",
+            params=params, bindings=req.bindings,
+            param_sources=param_sources)
+    except Exception as e:  # noqa: BLE001
+        raise _typed_error(e) from e
+    prepared_store.put(result.prepared, result.inline_payloads)
+    return {
+        "prepared_id": result.prepared.prepared_id,
+        "preset": {"id": preset_id, "name": preset.get("name"),
+                   "skill_version": preset.get("skill_version")},
+        "skill": {"id": result.prepared.skill_id,
+                  "version": result.prepared.skill_version,
+                  "digest": result.prepared.skill_digest[:16]},
+        "preview": result.prepared.preview,
+        "param_sources": [p.model_dump() for p in result.prepared.params],
+    }

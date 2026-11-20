@@ -43,7 +43,11 @@ def _extract_error_text(result: Any) -> str:
     if isinstance(result, dict):
         content = result.get("content", [])
         if isinstance(content, list) and content:
-            raw = content[0].get("text", str(result))
+            first = content[0]
+            if isinstance(first, dict):
+                raw = first.get("text", str(result))
+            else:
+                raw = str(first)
         else:
             raw = result.get("message", str(result))
     else:
@@ -101,12 +105,20 @@ def _extract_text_from_event(event: dict) -> str:
 
 
 def _base_step_payload(event: dict, session_id: str, extra: dict) -> dict:
-    """Build base SSE payload with common fields shared across step events."""
+    """Build base SSE payload with common fields shared across step events.
+
+    ADR-0288（W06）：嵌套调用事件（vendor C13）携带 ``parentToolCallId`` ——
+    投影为加性 ``parent_tool_call_id`` 字段；顶层调用无该字段（旧消费者零
+    漂移），前端据它把子步骤挂到父工具行下。
+    """
     base = {
         "task_id": session_id,
         "step_id": event.get("toolCallId", ""),
         "session_id": session_id,
     }
+    parent = event.get("parentToolCallId")
+    if parent:
+        base["parent_tool_call_id"] = str(parent)
     base.update(extra)
     return base
 
@@ -376,6 +388,44 @@ def _handle_compaction_end(event: dict, session_id: str, cache_lookup: Optional[
     })
 
 
+def _handle_extension_ui_request(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """G29：原生 dialog 请求 → ``pi_interaction`` 卡片投影。
+
+    纯翻译：卡片负载由交互服务在 sink 侧富化进 ``_webgis_interaction``
+    （宿主交互 id / turn 归属 / 选项表 / deadline），本层不加状态。事件
+    经 rpc.events 队列进入本循环 → 自动落入 TurnResumeRegistry ring，
+    断线重连可重放（WP10）。
+    """
+    payload = event.get("_webgis_interaction")
+    if not isinstance(payload, dict):
+        return None
+    return sse_event("pi_interaction", payload)
+
+
+def _handle_extension_ui_update(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """G29：卡片状态更新（answered/cancelled/timed_out/invalidated/resolved）。"""
+    payload = event.get("_webgis_interaction")
+    if not isinstance(payload, dict):
+        return None
+    return sse_event("pi_interaction_update", payload)
+
+
+def _handle_extension_ui_fire(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """G29：fire-and-forget 只读投影（notify/status/widget/title/editor 建议）。"""
+    payload = event.get("_webgis_fire")
+    if not isinstance(payload, dict):
+        return None
+    return sse_event("pi_ui", payload)
+
+
+def _handle_pi_turn_message(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """G29：运行中追加指令的接纳回执（steer/follow_up disposition）。"""
+    payload = event.get("_webgis_steer")
+    if not isinstance(payload, dict):
+        return None
+    return sse_event("pi_turn_message", payload)
+
+
 _EVENT_HANDLERS: dict[str, Callable[..., Optional[str]]] = {
     "message_update": _handle_message_update,
     "tool_execution_start": _handle_tool_execution_start,
@@ -386,6 +436,11 @@ _EVENT_HANDLERS: dict[str, Callable[..., Optional[str]]] = {
     "auto_retry_end": _handle_auto_retry_end,
     "compaction_start": _handle_compaction_start,
     "compaction_end": _handle_compaction_end,
+    # G29：原生 UI 子协议合成事件（sink 侧富化，本层纯翻译）。
+    "extension_ui_request": _handle_extension_ui_request,
+    "extension_ui_update": _handle_extension_ui_update,
+    "extension_ui_fire": _handle_extension_ui_fire,
+    "pi_steer_disposition": _handle_pi_turn_message,
 }
 
 

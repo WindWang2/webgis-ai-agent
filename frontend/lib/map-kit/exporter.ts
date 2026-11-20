@@ -42,7 +42,10 @@ import { getComparisonExport } from '@/lib/map/comparison-export-registry';
 import { sceneEvidenceSnapshot, tileMissDetail, tileMissSnapshot } from '@/lib/mapspec-runtime/adapter';
 import { metersPerPixelAt } from './meters-per-pixel';
 import type { ExportFrame, FrameLayout } from './frame-composer';
-import { specFramesToExportFrames } from './spec-frames';
+import {
+  productFramesToExportFrames,
+  specFramesToExportFrames,
+} from './spec-frames';
 import {
   enterHighDpiRender,
   MapIdleTimeoutError,
@@ -254,9 +257,12 @@ export function composeLayout(
   const dark_mode = theme === 'dark';
   const layoutStyle = resolveStyle(theme, options.style);
   const dpiMultiplier = dpi / 96;
-  // #802: 每逻辑像素的真实设备像素数 —— 未显式提供时回退 dpi/96（旧语义）
+  // #802/#2144 H10：每逻辑像素的真实设备像素数 —— 未显式提供时回退 dpi/96
+  // （旧语义）。chrome 字号/边距必须按**真实设备像素比**缩放：HiDPI 默认
+  // 导出时画布是 css·dpr，而 scalePx 曾按 dpi/96（=1）—— 标题/图例相对
+  // 地图缩小一半。
   const pxPerLogical = pixelsPerLogicalPx ?? dpiMultiplier;
-  const scalePx = (val: number) => val * dpiMultiplier;
+  const scalePx = (val: number) => val * pxPerLogical;
   const targetW = canvas.width;
   const targetH = canvas.height;
   const marginX = scalePx(layoutStyle.marginPx);
@@ -832,7 +838,9 @@ function _drawLegend(
   if (opts.legendSpec) {
     const spec = opts.legendSpec;
     if (spec.type === 'continuous') {
-      drawChromeColorbar({ ...ld, darkMode: ld.dark_mode, style: resolveStyle(ld.dark_mode ? 'dark' : 'light') }, { kind: 'colorbar', anchor: 'bottom-right', legendSpec: { ...spec, palette_colors: spec.palette_colors || COLOR_PALETTES[spec.palette] || COLOR_PALETTES.YlOrRd } }, { marginX: 56, marginY: 56 });
+      // H11/#2144：margin 经 scalePx（与同函数其余图例框同口径）—— 此前
+      // 恒定 56，dpi>96 时色条贴边且与离散图例框错位重叠。
+      drawChromeColorbar({ ...ld, darkMode: ld.dark_mode, style: resolveStyle(ld.dark_mode ? 'dark' : 'light') }, { kind: 'colorbar', anchor: 'bottom-right', legendSpec: { ...spec, palette_colors: spec.palette_colors || COLOR_PALETTES[spec.palette] || COLOR_PALETTES.YlOrRd } }, { marginX: ld.scalePx(56), marginY: ld.scalePx(56) });
       yOffset += ld.scalePx(96);
     } else if (spec.type === 'graduated' || spec.type === 'divergent') {
       const colors = spec.palette_colors || COLOR_PALETTES[spec.palette] || COLOR_PALETTES['YlOrRd'];
@@ -1613,10 +1621,18 @@ async function runFrameExport(
     dpi: number;
     showWatermark: boolean;
     showMetadata: boolean;
+    /** G15：产品在场时客户端 canvas 不可等价承载的语义（如实披露）。 */
+    productLimitations?: string[];
   },
 ): Promise<ExportOutcome> {
   const { map, getHudState } = deps;
   const { composeFrames, composeGridCanvas } = await import('./frame-composer');
+  const productDegradations = (ctx.productLimitations ?? []).length
+    ? [{
+        code: 'layer_filter_unsupported' as const,
+        detail: `frame_product client export: ${(ctx.productLimitations ?? []).join(', ')}`,
+      }]
+    : [];
   // review-r1（死码修复）：容器语义决定单帧跳过码 —— pdf→pages（atlas）发
   // atlas_page_skipped；png/svg→grid（small-multiple）发
   // small_multiple_panel_skipped。词表两码各有真实发射路径（ADR-0118 D1）。
@@ -1636,6 +1652,7 @@ async function runFrameExport(
     throw new Error('多帧导出失败：所有帧均未完成（地图在预算内未就绪）');
   }
   const fmt = fmtEarlyFrame;
+  composed.degradations = [...productDegradations, ...composed.degradations];
   const degradationNote = formatDegradationNote(composed.degradations);
   // review-r2：成功消息必须注明跳过帧数（此前「N 帧成功」不提跳过 —— 跳过
   // 信息只藏在降级清单里，清单超 8 条时还会被截断）。review-r1：两种容器
@@ -1880,6 +1897,8 @@ async function runExportInternal(
   // V6（W9）：spec 级 frames 适配 —— 请求未显式给 frames 时，committed spec
   // 的 layout.frames（spec 级 atlas）经 spec-frames 适配层参与导出。
   let specLevelFrames: ExportFrame[] = [];
+  // G15：产品在场时客户端 canvas 导出的如实限制（不返回近似图冒充原样）。
+  let productLimitations: string[] = [];
   try {
     const { getCommittedMapSpec } = await import('@/lib/mapspec/session-cursor');
     const committed = getCommittedMapSpec();
@@ -1889,10 +1908,22 @@ async function runExportInternal(
     );
     layoutOpts = (exportLayoutComp?.options ?? {}) as Record<string, unknown>;
     if (!Array.isArray(req.frames) || req.frames.length === 0) {
-      const adapted = specFramesToExportFrames(
-        (committed?.layout as { frames?: never[] } | undefined)?.frames,
-      );
-      specLevelFrames = adapted.frames;
+      const product = (committed as unknown as {
+        frame_product?: { enabled?: boolean };
+      })?.frame_product;
+      if (product && product.enabled !== false) {
+        // 产品画幅投影：where 过滤/范围/标题真实承载。
+        const adapted = productFramesToExportFrames(
+          committed as Parameters<typeof productFramesToExportFrames>[0],
+        );
+        specLevelFrames = adapted.frames;
+        productLimitations = adapted.limitations;
+      } else {
+        const adapted = specFramesToExportFrames(
+          (committed?.layout as { frames?: never[] } | undefined)?.frames,
+        );
+        specLevelFrames = adapted.frames;
+      }
     }
   } catch {
     /* spec 面缺席 → 内置默认 */
@@ -2088,6 +2119,7 @@ async function runExportInternal(
       Array.isArray(req.frames) && req.frames.length > 0 ? req.frames : specLevelFrames;
     if (effectiveFrames.length > 0) {
       return await runFrameExport(deps, req, effectiveFrames, {
+        productLimitations,
         title: effTitle,
         subtitle: effSubtitle,
         author,
@@ -2222,7 +2254,9 @@ async function runExportInternal(
     MapExporterEngine.composeLayout(exportCanvas, effTitle, effSubtitle, {
       dpi,
       theme,
-      // #802: 按真实画布设备像素比换算（dpi 参数仍驱动布局字号/边距缩放）
+      // #802/#2144 H10：按真实画布设备像素比换算 chrome 缩放（HiDPI 默认
+      // 导出时字号/边距不再相对地图缩小一半）；未提供真实比值时 composeLayout
+      // 回退 dpi/96。
       pixelsPerLogicalPx: canvasDpr,
       // W6：PDF 矢量文本层时画布不画标题（单一事实源 —— PDF 头部 doc.text）
       skipTitle: pdfSkipCanvasTitle,

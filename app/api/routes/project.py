@@ -4,6 +4,7 @@ Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpo
 import asyncio
 from app.core.async_runner import run_sync
 import logging
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -130,6 +131,22 @@ async def _get_project_with_auth_offloaded(
     def _worker() -> Optional[Project]:
         with SessionLocal() as thread_db:
             return ProjectService.get_project_with_auth(
+                db=thread_db, project_id=project_id,
+                user_id=user_id, org_id=org_id,
+            )
+
+    return await asyncio.to_thread(_worker)
+
+
+async def _get_project_for_write_offloaded(
+    project_id: str,
+    user_id: Optional[str] = None,
+    org_id: Optional[int] = None,
+) -> Optional[Project]:
+    """写路径的属主/editor 校验，同样卸到工作线程（与读校验同因：#565）。"""
+    def _worker() -> Optional[Project]:
+        with SessionLocal() as thread_db:
+            return ProjectService.get_project_for_write(
                 db=thread_db, project_id=project_id,
                 user_id=user_id, org_id=org_id,
             )
@@ -390,7 +407,7 @@ async def run_workflow(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
-    project = await _get_project_with_auth_offloaded(
+    project = await _get_project_for_write_offloaded(
         project_id=project_id, user_id=user_id, org_id=org_id
     )
     if not project:
@@ -551,7 +568,7 @@ async def replay_run(
     Re-authorizes project ownership (INV-AUTH1): replay cannot bypass access.
     """
     user_id, org_id = actor_ids(user)
-    project = await _get_project_with_auth_offloaded(
+    project = await _get_project_for_write_offloaded(
         project_id=project_id, user_id=user_id, org_id=org_id
     )
     if not project:
@@ -587,7 +604,7 @@ async def resume_run(
     preconditions fail unless ``allow_rerun=True``.
     """
     user_id, org_id = actor_ids(user)
-    project = await _get_project_with_auth_offloaded(
+    project = await _get_project_for_write_offloaded(
         project_id=project_id, user_id=user_id, org_id=org_id
     )
     if not project:
@@ -624,7 +641,7 @@ async def rerun_from_step(
     resolution.
     """
     user_id, org_id = actor_ids(user)
-    project = await _get_project_with_auth_offloaded(
+    project = await _get_project_for_write_offloaded(
         project_id=project_id, user_id=user_id, org_id=org_id
     )
     if not project:
@@ -679,7 +696,7 @@ def _promote_run_artifacts_sync(
     any ``db.*`` call inside an async def body, including nested sync helpers.
     """
     with SessionLocal() as db:
-        project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+        project = ProjectService.get_project_for_write(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
         if not project:
             return {"__http_error__": (404, "Project not found")}
         run = db.execute(
@@ -831,7 +848,7 @@ def record_map_product_version(
 ):
     """Record one Map Product version (diff vs previous computed when omitted)."""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = ProjectService.get_project_for_write(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     # #1741：绑定的 run 存在性显式校验（数据驱动 404）——服务层 record_version
@@ -927,37 +944,34 @@ async def restore_map_product_version(
     input-drift disclosure) — never a silent in-place resurrection.
     """
     user_id, org_id = actor_ids(user)
-    # #1215（audit3 D-4）：async handler 内的同步 SQLAlchemy 调用一律经
-    # to_thread 卸载（CORE-02 同型残留 —— 内联调用会阻塞事件循环，冻结
-    # 并发 SSE/WS 流）。
-    project = await asyncio.to_thread(
-        ProjectService.get_project_with_auth, db=db, project_id=project_id,
-        user_id=user_id, org_id=org_id)
+    # 写校验和版本读取都在工作线程里用新的 Session。请求级 Session 不跨线程。
+    project = await _get_project_for_write_offloaded(
+        project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if req.mode == "style_only":
         # SEC-08：会话所有权校验（review C1）—— restore 是对活会话的
         # MapSpec 突变，绝不允许指向他人会话。
         await _verify_session_access(req.session_id, user, owner_token)
-        # #1741：版本存在性显式校验（数据驱动 404）——与下方 full 分支的
-        # get_version 预查同形；服务层余下 ValueError 是恢复前置冲突
-        # （无快照 / 突变被拒）。
-        version_row = await asyncio.to_thread(
-            MapProductService.get_version, db, project_id, version_no)
-        if version_row is None:
-            raise HTTPException(
-                status_code=404, detail=f"map product version not found: {version_no}")
         try:
             return await MapProductService.restore_style_to_session(
-                db, project_id, version_no,
+                None, project_id, version_no,
                 session_id=req.session_id,
                 actor=str(user.get("user_id") or "user"),
             )
         except ValueError as e:
             raise _engine_conflict(e)
-    # full restore = rerun the bound run from scratch (fresh artifacts).
-    row = await asyncio.to_thread(
-        MapProductService.get_version, db, project_id, version_no)
+
+    def _load_full_version():
+        with SessionLocal() as owned:
+            loaded = MapProductService.get_version(owned, project_id, version_no)
+            if loaded is None:
+                return None
+            return SimpleNamespace(
+                workflow_run_id=loaded.workflow_run_id,
+            )
+
+    row = await asyncio.to_thread(_load_full_version)
     if row is None:
         raise HTTPException(status_code=404, detail="Map product version not found")
     if not row.workflow_run_id:
@@ -989,28 +1003,32 @@ async def restore_map_product_version(
     # #1215：record/maybe_auto_record_version 同步 DB 写经 to_thread。
     if str(run.status) != "completed":
         raise HTTPException(status_code=409, detail="Workflow replay did not complete; no restored version recorded")
-    if str(run.status) != "completed":
-        raise HTTPException(status_code=409, detail="Workflow replay did not complete; no new version recorded")
-    new_row = await asyncio.to_thread(
-        MapProductService.maybe_auto_record_version,
-        db, run, label=f"restore-full from V{version_no}")
-    if new_row is not None:
-        new_row.lineage_kind = "restore"
-        new_row.parent_version_no = version_no
-        await asyncio.to_thread(db.commit)
-    else:
-        new_row = await asyncio.to_thread(
-            MapProductService.record_version,
-            db, project_id,
-            # WorkflowRun.id 是 legacy Column[str] 声明（运行时即 str）——
-            # cast 桥接类型，运行时零开销。
-            workflow_run_id=cast("str", run.id),
-            label=f"restore-full from V{version_no}",
-            actor=str(user.get("user_id") or "user"),
-            parent_version_no=version_no,
-            lineage_kind="restore",
-        )
-    return {"restored_version_no": new_row.version_no, "source_version_no": version_no,
+
+    def _record_full():
+        with SessionLocal() as owned:
+            fresh = owned.get(WorkflowRun, run.id)
+            created = None
+            if fresh is not None:
+                created = MapProductService.maybe_auto_record_version(
+                    owned, fresh, label=f"restore-full from V{version_no}")
+            if created is not None:
+                created.lineage_kind = "restore"
+                created.parent_version_no = version_no
+                owned.commit()
+                owned.refresh(created)
+            else:
+                created = MapProductService.record_version(
+                    owned, project_id,
+                    workflow_run_id=cast("str", run.id),
+                    label=f"restore-full from V{version_no}",
+                    actor=str(user.get("user_id") or "user"),
+                    parent_version_no=version_no,
+                    lineage_kind="restore",
+                )
+            return created.version_no
+
+    restored_version_no = await asyncio.to_thread(_record_full)
+    return {"restored_version_no": restored_version_no, "source_version_no": version_no,
             "mode": "full", "run_id": run.id}
 
 
@@ -1029,7 +1047,7 @@ def fork_map_product_version(
     Git-style mutable pointer.
     """
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = ProjectService.get_project_for_write(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     try:
@@ -1053,7 +1071,7 @@ def merge_map_product_versions(
     with an analysis-only change. Both sides moving the same dimension is a
     structural conflict and is refused honestly — no silent pick-a-winner."""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = ProjectService.get_project_for_write(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     # #1741：两侧版本存在性显式校验（数据驱动 404，缺失侧带版本号）——
@@ -1087,7 +1105,7 @@ async def rerun_map_product_version(
     user_id, org_id = actor_ids(user)
     # #1215：同 restore —— async handler 的同步 DB 调用经 to_thread。
     project = await asyncio.to_thread(
-        ProjectService.get_project_with_auth, db=db, project_id=project_id,
+        ProjectService.get_project_for_write, db=db, project_id=project_id,
         user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -1176,7 +1194,7 @@ def audit_spatial_quality(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = ProjectService.get_project_for_write(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1198,7 +1216,7 @@ def repair_spatial_dataset(
     owner_token: Optional[str] = Depends(get_owner_token),
 ):
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = ProjectService.get_project_for_write(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1282,7 +1300,7 @@ def repair_spatial_dataset(
         db.rollback()
         logger.warning("[repair route] lineage persistence failed: %s", exc)
         lineage_status = "error"
-        lineage_error = str(exc)[:200]
+        lineage_error = "lineage persistence failed"
 
     # Fetch-on-Demand: trim the repaired geometry out of the inline response.
     from app.tools._utils import trim_features
@@ -1617,7 +1635,7 @@ def execute_project_data_gc(
             detail="confirm=true is required to execute data GC (dry-run first)",
         )
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(
+    project = ProjectService.get_project_for_write(
         db=db, project_id=project_id, user_id=user_id, org_id=org_id
     )
     if not project:
@@ -1726,7 +1744,7 @@ def retire_carto_fact(
 ):
     """撤销一条事实（软删 retired）——用户改主意 / 方案弃用。"""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(
+    project = ProjectService.get_project_for_write(
         db=db, project_id=project_id, user_id=user_id, org_id=org_id,
     )
     if not project:
@@ -1753,7 +1771,7 @@ def activate_carto_fact(
     动作。激活清除分歧与环境事件标记并刷新验证时间。
     """
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(
+    project = ProjectService.get_project_for_write(
         db=db, project_id=project_id, user_id=user_id, org_id=org_id,
     )
     if not project:
@@ -1791,7 +1809,7 @@ async def save_workspace_snapshot(
     session purge/TTL sweeps.
     """
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_for_write, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(req.session_id, user, owner_token)
@@ -1896,7 +1914,7 @@ async def restore_workspace_snapshot(
     (digest-verified read before write; failures degrade honestly to
     ``expired`` + ``degraded`` — dead refs are never marked valid)."""
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_for_write, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(req.session_id, user, owner_token)
@@ -1929,7 +1947,7 @@ async def clone_workspace_snapshot(
     disclosed by verify, never fabricated). BOTH sessions must belong to
     the caller — the source gate is 404 without existence leak."""
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_for_write, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(req.source_session_id, user, owner_token)
@@ -1961,7 +1979,7 @@ async def delete_workspace_snapshot(
     sweep). Snapshots created by another user within the project are
     refused at the service layer."""
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_for_write, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(session_id, user, owner_token)

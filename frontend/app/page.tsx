@@ -19,12 +19,22 @@ import { useChatStore } from '@/lib/store/useChatStore';
 import { deleteSession } from '@/lib/api/chat';
 import { describeApiError } from '@/lib/api/transport';
 import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
-import { mapInsetLeft, mapChromeLeft } from '@/lib/utils/workspace-inset';
+import { mapInsetLeftStyle, mapChromeLeft, effectivePanelWidth } from '@/lib/utils/workspace-inset';
+// #2140 F5：壳层度量单一来源（与 globals.css --topH/--stH 同源）。
+import {
+  TOP_BAR_HEIGHT_PX,
+  STATUS_BAR_HEIGHT_PX,
+  MAP_CHROME_BOTTOM_HUD_OPEN_PX,
+  MAP_CHROME_BOTTOM_IDLE_PX,
+} from '@/lib/layout/shell-metrics';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
 import { useRegisterCommands } from '@/lib/commands/registry';
 import { CommandPaletteRoot } from '@/components/command/command-palette-root';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
+import { useDataJoinStore } from '@/lib/hooks/use-data-join';
+import { useLinkedExplorationStore } from '@/lib/hooks/use-linked-exploration';
+import { useCoordinateOperationsStore } from '@/lib/hooks/use-coordinate-operations';
 import { useSearchDrawerStore } from '@/lib/hooks/use-search-drawer';
 import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
 import { UndoFlash, UndoHistoryPanel } from '@/components/workbench/undo-history-panel';
@@ -51,6 +61,11 @@ const SettingsPanel = dynamic(() => import('@/components/settings/settings-panel
 const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m => ({ default: m.ExportMask })), { ssr: false });
 const TemplateGalleryV2 = dynamic(() => import('@/components/drawers/template-gallery-v2').then(m => ({ default: m.TemplateGalleryV2 })), { ssr: false });
 const QueryConsole = dynamic(() => import('@/components/console/query-console').then(m => ({ default: m.QueryConsole })), { ssr: false });
+const DataJoinPanel = dynamic(() => import('@/components/sidebar/data-join/data-join-panel').then(m => ({ default: m.DataJoinPanel })), { ssr: false });
+const LinkedExplorationMount = dynamic(() => import('@/components/linked-exploration/exploration-panel'), { ssr: false });
+const CoordinateOperationsPanel = dynamic(() => import('@/components/sidebar/coordinate-operations/coordinate-operations-panel').then(m => ({ default: m.CoordinateOperationsPanel })), { ssr: false });
+// G44：业务字段合同工作台（声明/评估/激活/批量填值）——与 DataJoinPanel 同款挂载
+const FieldContractsPanel = dynamic(() => import('@/components/sidebar/field-contracts/field-contracts-panel').then(m => ({ default: m.FieldContractsPanel })), { ssr: false });
 const SearchDrawer = dynamic(() => import('@/components/search/search-drawer').then(m => ({ default: m.SearchDrawer })), { ssr: false });
 
 const MapPanel = dynamic(
@@ -128,6 +143,7 @@ export default function Home() {
   const templatesOpen = useHudStore((s) => s.templatesOpen);
   const setTemplatesOpen = useHudStore((s) => s.setTemplatesOpen);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
+  const panelExpanded = useHudStore((s) => s.panelExpanded);
   // 地图 inset 只在 desktop 档推挤地图（thin 覆盖、mobile 全屏优先）
   const insetOpen = layoutMode === 'desktop' && leftPanelOpen;
 
@@ -299,6 +315,27 @@ export default function Home() {
         run: () => useQueryConsoleStore.getState().openWith(),
       },
       {
+        id: 'tools.dataJoin',
+        title: tCmd('dataJoin'),
+        group: tCmd('group.tools'),
+        keywords: 'join relate enrich guanlian fuji attribute spatial',
+        run: () => useDataJoinStore.getState().openWith(),
+      },
+      {
+        id: 'tools.linkedExploration',
+        title: tCmd('linkedExploration'),
+        group: tCmd('group.tools'),
+        keywords: 'explore filter linked charts lianhe tansuo shaixuan',
+        run: () => useLinkedExplorationStore.getState().openWith(),
+      },
+      {
+        id: 'tools.coordinateOperations',
+        title: tCmd('coordinateOperations'),
+        group: tCmd('group.tools'),
+        keywords: 'crs reproject transform zuobiao toushi epsg proj',
+        run: () => useCoordinateOperationsStore.getState().openWith(),
+      },
+      {
         id: 'session.new',
         title: tCmd('newSession'),
         group: tCmd('group.session'),
@@ -398,16 +435,21 @@ export default function Home() {
           flex: 1,
           position: 'relative',
           overflow: 'hidden',
-          marginTop: 42,
-          marginBottom: 24,
+          marginTop: TOP_BAR_HEIGHT_PX,
+          marginBottom: STATUS_BAR_HEIGHT_PX,
           // UI V4：地图 chrome（图例等）的水平避让偏移。地图容器真实收缩后
           // （见下方 wrapper），展开时 chrome 只需呼吸间距；收起时避开 rail。
-          ['--map-chrome-left' as string]: `${mapChromeLeft(leftPanelOpen)}px`,
-          // UI V4：地图 chrome 的底部基线。workspace 已经预留 24px 状态条，
-          // HUD 展开到 210px 时需要再抬 186px。所有底部 chrome（读数条、比例尺、
+          // 只有面板真实推挤地图（desktop 档展开）时 chrome 才只需呼吸间距；
+          // thin 覆盖档/收起时避开竖排 rail，mobile 档 rail 在底部。
+          ['--map-chrome-left' as string]: `${mapChromeLeft(insetOpen, { railVisible: !isMobile })}px`,
+          // UI V4：地图 chrome 的底部基线。workspace 已经预留状态条
+          // （STATUS_BAR_HEIGHT_PX），HUD 展开到 210px 时需要再抬
+          // MAP_CHROME_BOTTOM_HUD_OPEN_PX。所有底部 chrome（读数条、比例尺、
           // 热力图例、专题图例）都从这一个变量堆叠，因此不会互相压盖 ——
           // 审计发现浮动图例与专题图例此前固定在同一 left/bottom 上必然重叠。
-          ['--map-chrome-bottom' as string]: hudOpen ? '196px' : '10px',
+          ['--map-chrome-bottom' as string]: hudOpen
+            ? `${MAP_CHROME_BOTTOM_HUD_OPEN_PX}px`
+            : `${MAP_CHROME_BOTTOM_IDLE_PX}px`,
         }}
       >
         {/* Map Panel — 左栏展开时容器真实收缩（ContextPanel 不再悬浮遮挡）：
@@ -423,7 +465,7 @@ export default function Home() {
             top: 0,
             bottom: 0,
             right: 0,
-            left: mapInsetLeft(insetOpen, sidebarWidth),
+            left: mapInsetLeftStyle(insetOpen, effectivePanelWidth(sidebarWidth, panelExpanded)),
             transition: 'left 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
           }}
         >
@@ -441,7 +483,12 @@ export default function Home() {
             <MemoSpatialCrosshair />
             {/* ADR-0285 D5：情境状态条（服务端 situation/turn-chain 投影，
                 刷新/重连即时恢复；不依赖 localStorage）。 */}
-            <div className='pointer-events-none absolute left-2 top-2 z-20'>
+            {/* 左缘与图例列同源（--map-chrome-left）：面板收起时地图容器从 0 起，
+                旧的 left-2 让情境条被竖排 rail 盖住一半。 */}
+            <div
+              className='pointer-events-none absolute top-3 z-20'
+              style={{ left: 'var(--map-chrome-left, 12px)' }}
+            >
               <SituationStatusBar />
             </div>
             {/* Workspace V2：停靠面板宿主（右/下 dock；面板实例从 chrome
@@ -541,6 +588,10 @@ export default function Home() {
 
       {/* ADR-0147：高级查询控制台（data-fabric query 契约消费面） */}
       <QueryConsole sessionId={sessionId} ownerToken={activeSessionToken} />
+      <DataJoinPanel sessionId={sessionId} ownerToken={activeSessionToken} />
+      <LinkedExplorationMount sessionId={sessionId} ownerToken={activeSessionToken} />
+        <CoordinateOperationsPanel sessionId={sessionId} ownerToken={activeSessionToken} />
+      <FieldContractsPanel sessionId={sessionId} ownerToken={activeSessionToken} />
 
       {/* ADR-0147：跨会话搜索（本地索引 + 跳转恢复；handleSelectSession 内含抽屉关闭语义） */}
       <SearchDrawer onSelectSession={handleSelectSession} />

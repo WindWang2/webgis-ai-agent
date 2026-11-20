@@ -58,6 +58,38 @@ async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+describe('useCartographicObservation map error rebind', () => {
+  it('moves the error listener when getMap() returns a new instance', () => {
+    vi.mocked(apiFetch).mockResolvedValue({});
+    const map1 = { on: vi.fn(), off: vi.fn() };
+    const map2 = { on: vi.fn(), off: vi.fn() };
+    let current: typeof map1 | null = map1;
+    const runtimeRef = { current: null as MapSpecRuntime | null };
+    const hook = renderHook(() => useCartographicObservation({
+      runtimeRef,
+      sessionId: 'sid-rebind',
+      ownerToken: null,
+      dispatchAction: vi.fn(),
+      getMap: () => current,
+    }));
+    const issue = (fp: string) => hook.result.current({
+      map: { getStyle: () => ({ layers: [] }) } as never,
+      spec: { layers: [] } as never,
+      layers: [makeLayer(fp)],
+    });
+    issue('fp-1');
+    expect(map1.on).toHaveBeenCalledWith('error', expect.any(Function));
+    const handler = map1.on.mock.calls[0][1];
+    current = map2;
+    issue('fp-2');
+    expect(map1.off).toHaveBeenCalledWith('error', handler);
+    expect(map2.on).toHaveBeenCalledWith('error', expect.any(Function));
+    current = map2;
+    issue('fp-3');
+    expect(map2.on).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('useCartographicObservation repair budget (FE-P2-3)', () => {
   beforeEach(() => {
     vi.mocked(apiFetch).mockReset();

@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：134/253 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：135/256 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
@@ -75,6 +75,7 @@
 | `point_pattern.space_time_k` | — | — | — | — | — | — | high/medium | THREAD |
 | `raster.algebra` | — | — | — | — | — | — | high/medium | THREAD |
 | `raster.resample.grid` | — | — | — | — | — | — | high/medium | THREAD |
+| `raster.zonal.quantile_conditional` | O(zones × pixels_in_zone) 掩膜 + O(n log n) 分位数排序 | — | 192B/feat | — | — | — | medium/medium | THREAD |
 | `remote.change.raster` | — | — | — | — | — | — | high/medium | THREAD |
 | `remote.ica` | — | — | — | sklearn_fastica(scikit-learn,[1,16777216]) | — | — | high/high | THREAD |
 | `remote.mad_change` | — | — | — | windowed_rasterio(rasterio,[1,250000000]) | — | — | high/high | THREAD |

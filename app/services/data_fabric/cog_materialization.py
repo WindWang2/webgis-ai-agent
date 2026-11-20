@@ -20,7 +20,7 @@
   provenance/回执；密钥不落盘。
 
 reason code 封闭：``budget_exceeded`` / ``ssrf_blocked`` / ``unreachable`` /
-``not_a_raster`` / ``cancelled``。
+``not_a_raster`` / ``cancelled`` / ``aoi_outside``。
 """
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ RC_SSRF_BLOCKED = "ssrf_blocked"
 RC_UNREACHABLE = "unreachable"
 RC_NOT_A_RASTER = "not_a_raster"
 RC_CANCELLED = "cancelled"
+RC_AOI_OUTSIDE = "aoi_outside"
 
 #: 默认物化预算（窗口读输出 + 单请求会话上限；低于 geo_raster 全局红线）。
 DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024 * 1024
@@ -89,6 +90,36 @@ def redact_signed_url(url: str) -> str:
 
 
 from app.services.data_fabric.errors import DataFabricError
+
+
+def clip_raster_window(window: Any, width: int, height: int) -> tuple:
+    """Intersect ``window`` with the raster. A disjoint AOI is an error.
+
+    Clamping ``col_off`` into range without shrinking width reads an edge
+    strip (or shifts a partial window) that is not the requested AOI.
+    """
+    from rasterio.errors import WindowError
+    from rasterio.windows import Window
+
+    try:
+        clipped = window.intersection(Window(0, 0, width, height))
+    except WindowError as exc:
+        raise CogMaterializationError(
+            "AOI does not intersect the raster extent",
+            reason_code=RC_AOI_OUTSIDE,
+            details={"full_raster": [int(width), int(height)]},
+        ) from exc
+    col = int(clipped.col_off)
+    row = int(clipped.row_off)
+    w = int(clipped.width)
+    h = int(clipped.height)
+    if w < 1 or h < 1:
+        raise CogMaterializationError(
+            "AOI does not intersect the raster extent",
+            reason_code=RC_AOI_OUTSIDE,
+            details={"full_raster": [int(width), int(height)]},
+        )
+    return col, row, w, h
 
 
 class CogMaterializationError(DataFabricError):
@@ -182,10 +213,17 @@ async def discover_stac_cog_assets(
 # ── preview / validate：头读 + 结构 advisory（不搬像元） ──────────────────
 
 def _remote_vsi_href(href: str) -> str:
-    """http(s) → /vsicurl 形（GDAL 显式远端语义；本地路径原样）。"""
-    if href.startswith(("http://", "https://")):
-        return f"/vsicurl/{href}"
-    return href
+    """http(s) → /vsicurl。本地路径、file://、/vsizip/ 一律拒绝。
+
+    ``validate_remote_href`` 对没有远程目标的 URI 按设计原样放行，所以
+    远程物化入口不能依赖它来挡住本机栅格。
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse((href or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("remote raster href must use http or https")
+    return f"/vsicurl/{href}"
 
 
 def preview_remote_cog(href: str) -> Dict[str, Any]:
@@ -241,9 +279,9 @@ def preview_remote_cog(href: str) -> Dict[str, Any]:
         raise
     except Exception as e:  # noqa: BLE001
         raise CogMaterializationError(
-            f"remote raster open failed: {e}",
+            "remote raster open failed",
             reason_code=RC_NOT_A_RASTER,
-            details={"href": redact_signed_url(href)},
+            details={"href": redact_signed_url(href), "error_type": type(e).__name__},
         ) from e
 
 
@@ -263,11 +301,20 @@ async def materialize_remote_cog_asset(
 ) -> Dict[str, Any]:
     """远程 COG → 窗口读（预算/重试/取消）→ 本地 COG ref。
 
+    ``max_output_bytes`` 钳到 ``DEFAULT_MAX_OUTPUT_BYTES``。调用方（含 LLM 工具）
+    不能把预算抬过全局红线。
+
     ``bbox``：EPSG:4326（agent 面）；内部 transform_bounds 到栅格 CRS。
     ``overview_level``：0=全分辨率；N=全分辨率窗口读后按 2^N nearest
     抽样（**不**读取服务端 overview 层 —— wire 成本仍按全窗发生，预算门
     同口径估算；标注 decimated=True）。
     """
+    try:
+        requested_bytes = int(max_output_bytes)
+    except (TypeError, ValueError):
+        requested_bytes = DEFAULT_MAX_OUTPUT_BYTES
+    max_output_bytes = max(1, min(requested_bytes, DEFAULT_MAX_OUTPUT_BYTES))
+
     from app.lib.geo_raster.remote import RemoteReadBudgetExceeded
     from rasterio.windows import from_bounds
 
@@ -322,10 +369,7 @@ async def materialize_remote_cog_asset(
                     b4326 = transform_bounds("EPSG:4326", ds.crs, *bbox, densify_pts=21)
                     window = from_bounds(*b4326, transform=ds.transform)
                     window = window.round_lengths(op="floor").round_offsets(op="floor")
-                    w = max(1, min(ds.width, int(window.width)))
-                    h = max(1, min(ds.height, int(window.height)))
-                    col = max(0, min(ds.width - w, int(window.col_off)))
-                    row = max(0, min(ds.height - h, int(window.row_off)))
+                    col, row, w, h = clip_raster_window(window, ds.width, ds.height)
                 else:
                     col, row, w, h = 0, 0, ds.width, ds.height
 
@@ -448,9 +492,9 @@ async def materialize_remote_cog_asset(
                     reason_code=RC_CANCELLED,
                 ) from e
             raise CogMaterializationError(
-                f"remote window read failed: {e}",
+                "remote window read failed",
                 reason_code=RC_UNREACHABLE,
-                details={"href": redact_signed_url(href)},
+                details={"href": redact_signed_url(href), "error_type": type(e).__name__},
             ) from e
 
         from app.lib.geo_raster.cog import write_cog
@@ -492,9 +536,15 @@ def _params_fingerprint(
     bbox: Optional[Sequence[float]],
     overview_level: int,
 ) -> str:
-    """(href+params) 规范指纹 —— 同参重试幂等键（内容身份另由 sha256 担当）。"""
+    """(href+params) 规范指纹 —— 同参重试幂等键（内容身份另由 sha256 担当）。
+
+    签名 query 轮换不得改变幂等键：去掉签名 query 后再指纹。
+    """
+    fp_href = redact_signed_url(href)
+    if "?<redacted>" in fp_href:
+        fp_href = fp_href.split("?", 1)[0]
     payload = {
-        "href": href,
+        "href": fp_href,
         "bands": list(bands) if bands else None,
         "bbox": list(bbox) if bbox else None,
         "overview_level": int(overview_level),
@@ -511,9 +561,11 @@ __all__ = [
     "extract_cog_assets",
     "materialize_remote_cog_asset",
     "preview_remote_cog",
+    "RC_AOI_OUTSIDE",
     "RC_BUDGET_EXCEEDED",
     "RC_CANCELLED",
     "RC_NOT_A_RASTER",
     "RC_SSRF_BLOCKED",
     "RC_UNREACHABLE",
+    "clip_raster_window",
 ]

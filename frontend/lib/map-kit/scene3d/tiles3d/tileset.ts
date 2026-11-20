@@ -314,9 +314,16 @@ function boxToEnuSphere(
     { x: box[9], y: box[10], z: box[11] },
   ];
   const scale = maxAxisScale(localToEnu);
-  let maxR = 0;
-  for (const a of axes) maxR = Math.max(maxR, Math.hypot(a.x, a.y, a.z));
-  return { cx: center.x, cy: center.y, cz: center.z, radiusM: Math.max(maxR * scale, 1) };
+  // H14/#2144：OBB 外接球半径取**正交半轴的 corner 距离**
+  // (√(|a1|²+|a2|²+|a3|²)) —— 单轴最大长度会把立方 tile 半径低估至
+  // 1/√3，视锥剔除（scheduler frustum test）误杀边缘可见 tile、SSE 距离
+  // 偏大。
+  const cornerR = Math.hypot(
+    Math.hypot(axes[0].x, axes[0].y, axes[0].z),
+    Math.hypot(axes[1].x, axes[1].y, axes[1].z),
+    Math.hypot(axes[2].x, axes[2].y, axes[2].z),
+  );
+  return { cx: center.x, cy: center.y, cz: center.z, radiusM: Math.max(cornerR * scale, 1) };
 }
 
 function maxAxisScale(m: Mat4): number {

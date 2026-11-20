@@ -10,6 +10,7 @@ Verifies:
 import asyncio
 from contextlib import asynccontextmanager, nullcontext
 from importlib import import_module
+from types import SimpleNamespace
 
 import pytest
 from app.agent_pi_bridge import (
@@ -48,6 +49,17 @@ class MockRpcClient:
             await self.events.put({"type": "agent_settled"})
             return {"status": "ok"}
         return {}
+
+    async def issue(self, command: str, data: dict = None):
+        """G22-P1 写相位 mock：控制面命令（clear_queue/abort）立即落笔。"""
+        if command == "abort":
+            self.aborted = True
+        future = asyncio.get_running_loop().create_future()
+        future.set_result({"status": "aborted"} if command == "abort" else {})
+        return SimpleNamespace(id=f"mock-{command}", command=command, future=future)
+
+    async def collect(self, issued, command: str = None) -> dict:
+        return await issued.future
 
 
 @pytest.mark.asyncio

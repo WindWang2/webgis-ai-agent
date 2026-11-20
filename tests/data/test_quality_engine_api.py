@@ -250,6 +250,23 @@ def test_submit_foreign_session_is_404():
     assert res.status_code == 404
 
 
+def test_run_quality_evaluate_does_not_reuse_overwritten_ref():
+    """同一 ref 被 overwrite 后不得交还旧载荷的质量报告。"""
+    session_id = "dq-overwrite-session"
+    _ensure_session(session_id, user_id="dq-owner")
+    import asyncio
+
+    ref_id = asyncio.run(session_data_manager.store(session_id, _BAD_FC, prefix="dq"))
+    first = run_quality_evaluate(0, session_id=session_id, ref=ref_id, created_by="dq-owner")
+    assert first["status"] == "completed" and not first["reused"]
+    changed = copy.deepcopy(_BAD_FC)
+    changed["features"][0]["properties"]["id"] = "changed-payload"
+    assert asyncio.run(session_data_manager.overwrite(session_id, ref_id, changed))
+    second = run_quality_evaluate(0, session_id=session_id, ref=ref_id, created_by="dq-owner")
+    assert second["status"] == "completed" and not second["reused"]
+    assert second["report_id"] != first["report_id"]
+
+
 def test_run_quality_evaluate_reuses_completed_report():
     session_id = "dq-reuse-session"
     _ensure_session(session_id, user_id="dq-owner")

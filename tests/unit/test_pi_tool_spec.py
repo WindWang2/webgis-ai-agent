@@ -238,7 +238,7 @@ def test_destructive_low_tier_tool_excluded_from_surface(abi_on):
 # Dump v3 形状 / kill switch
 # ---------------------------------------------------------------------------
 
-def test_dump_v3_shape_and_v2_keys(registry, abi_on):
+def test_dump_v3_shape_and_v2_keys(registry, abi_on):  # v4 since ADR-0288; name kept for blame continuity
     from app.services.chat.pi_native_surface import (
         EXECUTE_PROXY_NAME,
         NATIVE_TOOL_NAMES,
@@ -246,7 +246,7 @@ def test_dump_v3_shape_and_v2_keys(registry, abi_on):
     )
 
     payload = pi_surface_for_spawn(registry)
-    assert payload["version"] == 3
+    assert payload["version"] == 4
     # v2 键保留（扩展 v2 解析继续工作）
     assert isinstance(payload["tools"], list) and payload["tools"]
     assert payload["default_active"] == list(NATIVE_TOOL_NAMES)

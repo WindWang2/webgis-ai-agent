@@ -9,10 +9,10 @@
 | 5 (M3) | display auto 静默 = 「渲染已发生」冒充闭环 | FinalAcceptanceLine + auto 复查 + i18n | waitFor 挂 fake timers → 移除冗余断言；eslint waitFor 未用 → 清 | harness-cards 8 绿 | 通过 (af6bdbe) |
 | 6 (M3) | 面板手动快照 | invalidations 订阅 + 防抖 + 会话复核 | — | agent 13 绿 | 通过 (af554bf) |
 | 7 (M3) | recharts 无键盘路径 | 原生 select 同链 + i18n + chart 选择态反映 | — | panel-ir-emit+chart 10 绿 | 通过 (3c7d805) |
-| 8 (M2/M6) | 金标缺失（新语义无回放钉扎） | 4 金标语料 + ADR-0287 + 三契约文档 + planning 五件套 | — | replay 29 绿；后端全域 3488 passed 4 skipped | 通过（本 commit） |
+| 8 (M2/M6) | 金标缺失（新语义无回放钉扎） | 4 金标语料 + ADR-0297 + 三契约文档 + planning 五件套 | — | replay 29 绿；后端全域 3488 passed 4 skipped | 通过（本 commit） |
 
 ## 遗留与边界
 
 - e2e 真浏览器档未跑（无凭证环境；mock 档回归）。
 - display required 模式端到端（env 翻转）不在默认环境；组件级覆盖。
-- 视口史代（"上一张图"）、服务端 map-op redo：记录为后续（ADR-0287）。
+- 视口史代（"上一张图"）、服务端 map-op redo：记录为后续（ADR-0297）。

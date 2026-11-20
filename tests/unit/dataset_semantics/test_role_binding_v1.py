@@ -328,6 +328,11 @@ async def test_collect_session_evidence_sorted_and_bounded(sem_store):
     # 有界：max_refs=1 只读第一个（排序后）。
     only_first = await collect_session_evidence(sid, max_refs=1)
     assert [r.ref_id for r in only_first] == [ref_aaa]
+    assert only_first.truncated_refs == 1
+    # 显式 preferred 不因字典序落在截断之外而被丢掉。
+    preferred = await collect_session_evidence(sid, max_refs=1, preferred_refs=[ref_zzz])
+    assert [r.ref_id for r in preferred] == [ref_zzz]
+    assert preferred.truncated_refs == 1
 
 
 async def test_collect_session_evidence_missing_descriptor(sem_store):

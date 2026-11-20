@@ -45,6 +45,17 @@ describe('parseTileset', () => {
     expect(ts.root.contentUri).toBe('https://cdn.example.org/a/b/root.glb');
   });
 
+  it('#2144 H14：box 包围球半径取正交半轴外接球（立方 100 → 100√3，非 100）', () => {
+    const doc = buildTilesetFixture() as {
+      root: { boundingVolume: Record<string, unknown> };
+    };
+    // 正交半轴各 100：外接球半径 = √(100²+100²+100²) = 100√3 ≈ 173.2。
+    // 旧实现取单轴最大长度（100）—— 低估 1/√3，视锥剔除误杀边缘可见 tile。
+    doc.root.boundingVolume = { box: [0, 0, 0, 100, 0, 0, 0, 100, 0, 0, 0, 100] };
+    const ts = parseTileset(doc, OPTS);
+    expect(ts.root.sphereEnu.radiusM).toBeCloseTo(100 * Math.sqrt(3), 3);
+  });
+
   it('rejects policy-violating content URIs (resolveUri null)', () => {
     const ts0 = buildTilesetFixture() as { root: { content: { uri: string } } };
     void ts0;

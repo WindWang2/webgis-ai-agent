@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import os
+import re
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator, Literal, Optional, Type, List, Tuple, Union, get_args, get_origin, Annotated
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model, ValidationError
@@ -285,6 +286,27 @@ from app.lib.json_size import (  # noqa: F401
 
 
 _ALIAS_LOOKUP_MAX_DISTINCT = 1024
+
+# #2150：aiohttp ClientResponseError / requests HTTPError 的 str() 携带完整
+# URL（含 amap key= / baidu ak= / tianditu tk= query），回执进 LLM 上下文
+# = 把地图服务密钥回传给模型。错误文本进回执前剥离所有 http(s) URL 的
+# query（保留 scheme://host/path 以便定位）。只作用于回执文本，不改日志。
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>)]+")
+
+
+def _redact_error_text_for_llm(text: str) -> str:
+    """剥离错误文本中所有 URL 的 query 部分（含 fragment）。"""
+    if not isinstance(text, str) or "http" not in text:
+        return text
+    def _strip(m: "re.Match[str]") -> str:
+        url = m.group(0)
+        for sep in ("?", "#"):
+            idx = url.find(sep)
+            if idx != -1:
+                url = url[:idx]
+        return url
+    return _URL_IN_TEXT_RE.sub(_strip, text)
+
 
 
 # ---------------------------------------------------------------------------
@@ -869,6 +891,10 @@ class ToolRegistry:
         """扩展平台投影（ADR-0243）：注册前碰撞检查用；只读。"""
         return name in self._tools
 
+    def get(self, name: str) -> Optional[Callable]:
+        """已注册实现；不存在返回 None。停用回滚用它确认仍是本扩展的投影。"""
+        return self._tools.get(name)
+
     def tool_names(self) -> list[str]:
         """扩展平台投影（ADR-0243）：引用存在性检查用；确定性排序。"""
         return sorted(self._tools.keys())
@@ -1189,6 +1215,20 @@ class ToolRegistry:
             actual_mode = "ASYNC"
         else:
             actual_mode = "THREAD"
+        # #2156 P3：dispatch 的 session_id 是可信服务端上下文。HTTP 链路在
+        # 路由层已 bind RuntimeContext，但子代理 / harness / Celery 适配器等
+        # 内部调用方直接 dispatch(session_id=...) —— 未绑上下文时补绑，使
+        # _resolve_session_id 的会话所有权校验对「带可信会话的正常调用」
+        # 放行；裸调工具函数且携带 LLM 提供的 id 仍 fail closed。
+        _rt_cm = None
+        if session_id is not None:
+            from app.lib.runtime.context import (
+                bind_runtime_context as _bind_rt,
+                current_runtime_context as _cur_rt,
+            )
+            if getattr(_cur_rt(), "session_id", None) is None:
+                _rt_cm = _bind_rt(session_id=session_id)
+                _rt_cm.__enter__()
         try:
             result = await self._dispatch_impl(name, arguments, session_id)
         except Exception as e:  # noqa: BLE001
@@ -1196,6 +1236,8 @@ class ToolRegistry:
             active_exc = e
             raise
         finally:
+            if _rt_cm is not None:
+                _rt_cm.__exit__(None, None, None)
             duration_ms = int((_time.perf_counter() - start) * 1000)
             # #529: {"error": <str>} normal-return failures must be classified
             # as errors in the metrics row too (not silently "no error class").
@@ -1415,8 +1457,11 @@ class ToolRegistry:
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError:
+                # #2156 P3：原始参数串不回显全文（MB 级载荷会灌进 LLM 上下文），
+                # 只留可诊断头部。
+                _raw_head = str(arguments)[:200]
                 return std_error_response(
-                    f"工具参数 JSON 格式错误: {arguments}",
+                    f"工具参数 JSON 格式错误: {_raw_head}",
                     code="VALIDATION_ERROR",
                     error_type="JSONDecodeError",
                 )
@@ -1468,11 +1513,35 @@ class ToolRegistry:
                 # would inline full FeatureCollections into tool arguments.
                 if name == "webgis_map_product":
                     skip_keys.update({"primary_ref", "overlay_refs"})
+                # G15 frame_product_update 的 patch 是 MapSpec 产品契约载荷
+                # （嵌套 data.ref/where/time_window 是声明，不是数据请求）——
+                # 与 webgis_map_product 同门：工具自身经 session_data 解析。
+                if name == "frame_product_update":
+                    skip_keys.update({"ref", "where", "time_window"})
                 # 显示收尾钩子的 show_refs 是引用列表（ref/别名/名称混合）——
                 # 工具自身经 resolve_layer_ref 逐个解析；transparent resolution
                 # 会把列表里的 ref: 元素解成整个 FeatureCollection 载荷。
                 if name == "finalize_display":
                     skip_keys.add("show_refs")
+                # G30 技能作业：bindings 是「角色 → ref 身份」声明（prepare 服务
+                # 自行解析 ref 并抽取绑定事实/内容 digest —— 透明解引用会把
+                # ref 展开成整份 FeatureCollection，破坏身份与幂等键语义）。
+                if name == "gis_skill_job_prepare":
+                    skip_keys.add("bindings")
+                # G38 数据关联：source/plan 内嵌的 ref 是「源锚身份」声明
+                # （service 经 G18 resolver 解析+鉴权，指纹入幂等键）——
+                # 透明解引用会把 ref 展开成整份 FeatureCollection/rows，
+                # 破坏源身份与计划 digest 语义。
+                if name in ("webgis_data_join_describe",
+                            "webgis_data_join_plan_upsert"):
+                    skip_keys.update({"source", "plan"})
+                # G18 数据交付：spec.source.ref 是「源锚身份」声明（service
+                # 经 G18 resolver 解析+鉴权，源指纹入幂等键）—— 与 G38 同门；
+                # 透明解引用会把嵌套 ref 展开成整份 FeatureCollection，破坏
+                # DeliverySpec 校验与幂等键语义（G42 goal repair 经派发执行
+                # run_delivery 时同样命中）。
+                if name in ("preview_data_delivery", "submit_data_delivery"):
+                    skip_keys.add("spec")
                 # Pi 兼容（V4）：capture_ref_of 注入面 —— 记录源参数的原始
                 # ref 游标（解引用后注入声明字段，工具由此知道数据来源）。
                 capture_fields = self._declared_cursor_capture_fields(model)
@@ -1794,7 +1863,7 @@ class ToolRegistry:
         except Exception as e:
             logger.exception(f"Tool execution failed: {name}")
             return std_error_response(
-                str(e),
+                _redact_error_text_for_llm(str(e)),
                 code="TOOL_ERROR",
                 error_type=type(e).__name__,
                 correction_hint="An unexpected error occurred during tool execution. Please review the error message and parameters."
@@ -1872,12 +1941,17 @@ class ToolRegistry:
             return _CELERY_FALLBACK
         try:
             return await asyncio.to_thread(task.get, timeout=timeout)
-        except Exception as exc:
-            # 投递成功后的任何失败（task.get 超时、结果后端抖动、worker 失联）：
-            # 任务可能仍在 worker 上执行（acks_late）。绝不能回落 THREAD 原地
-            # 重算 —— 同一工具并发双跑、写型副作用重复、API 进程内存被本应
-            # 隔离的重计算击穿（恰是 #1388 想解决的问题）。revoke 并诚实失败
-            # （与 spatial.py heatmap 的 Celery 纪律同口径）。
+        except (Exception, asyncio.CancelledError) as exc:
+            # 投递成功后的任何失败（task.get 超时、结果后端抖动、worker 失联），
+            # 以及外层 asyncio.timeout/调用方取消注入的 CancelledError（#2149：
+            # 外层 timeout 与 task.get 共用预算但起点更早，会先注入
+            # CancelledError；`except Exception` 捕不到 BaseException 系的它，
+            # 导致已投递任务永不 revoke）——任务可能仍在 worker 上执行
+            # （acks_late）。绝不能回落 THREAD 原地重算 —— 同一工具并发双跑、
+            # 写型副作用重复、API 进程内存被本应隔离的重计算击穿（恰是
+            # #1388 想解决的问题）。revoke 并诚实失败（与 spatial.py
+            # heatmap 的 Celery 纪律同口径）。CancelledError 捕获后必须
+            # 重抛，不吞掉取消语义。
             if task is not None:
                 try:
                     task.revoke(terminate=True)
@@ -1886,6 +1960,8 @@ class ToolRegistry:
                         "[registry] revoke failed for task %s: %s",
                         getattr(task, "id", None), revoke_exc,
                     )
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             logger.error(
                 "[registry] CELERY execution failed for %s (%s: %s) — no THREAD fallback",
                 name, type(exc).__name__, exc,

@@ -169,8 +169,11 @@ def test_scope_visibility_matrix(db):
     assert svc.asset_visible(a3, "u2", 2) is True
     assert svc.asset_visible(a3, "u9", 2, project_ids=["proj-1"]) is True
     assert svc.asset_visible(a3, "u9", 2, project_ids=[]) is False
-    # admin 全见
-    assert svc.asset_visible(a1, "uX", 99, role="admin") is True
+    # admin 只见本组织，不跨租户
+    assert svc.asset_visible(a2, "uX", 2, role="admin") is True
+    assert svc.asset_visible(a1, "uX", 99, role="admin") is False
+    assert svc.can_write_asset(a2, "uX", role="admin", org_id=2) is True
+    assert svc.can_write_asset(a1, "uX", role="admin", org_id=99) is False
 
 
 def test_idor_not_found_not_403(db):

@@ -17,7 +17,7 @@
   chart categories 截 8 + bbox 谓词不进 IR）→ **全清偿**。
 - P1：SW-04 undo 覆盖面 / SW-09 display auto 静默 → **清偿**。
 - P2：SW-05 面板实时 / SW-08 chart 键盘 → **清偿**。
-- 明确不做（记录于 ADR-0287 Consequences）：display 默认模式翻转（部署
+- 明确不做（记录于 ADR-0297 Consequences）：display 默认模式翻转（部署
   级决策）、视口史代、服务端 map-op redo、SW-01 面板大改版。
 
 ## 轮次执行记录
@@ -31,7 +31,7 @@
 | M3 | SW-09：FinalAcceptanceLine 终验收口披露 | af6bdbe2e | 8 绿（含 3 新） |
 | M3 | SW-05：AgentRunPanel 事件驱动刷新 | af554bf9a | 13 绿（含 2 新） |
 | M3 | SW-08：chart 键盘选择器同链 | 3c7d805c6 | 10 绿（含 1 新） |
-| M2/M6 | ADR-0287 + 4 回放金标语料 + 三契约文档 | （本 commit） | replay 29 绿 |
+| M2/M6 | ADR-0297 + 4 回放金标语料 + 三契约文档 | （本 commit） | replay 29 绿 |
 
 ## Oracle 表（验收时逐项打勾）
 

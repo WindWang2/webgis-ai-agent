@@ -110,7 +110,7 @@ def test_calculator_constant_path(aligned_rasters):
 
 
 def test_calculator_nodata_promotion(aligned_rasters):
-    """A no-nodata source gets out_nodata=0; division-by-zero handled."""
+    """A no-nodata source gets out_nodata=NaN (#2133); div-by-zero handled."""
     base = os.path.join(os.path.dirname(__file__), "..", "..", "data")
     pa = _write_raster(os.path.join(base, f"test_calc_nn_{uuid.uuid4().hex[:8]}.tif"),
                        np.ones((64, 64), dtype=np.float32))
@@ -122,17 +122,24 @@ def test_calculator_nodata_promotion(aligned_rasters):
             a = src.read(1)
         with rasterio.open(pb) as src:
             b = src.read(1)
-        expected = _reference_calculator(a, b, 0, None, None, "A / B")
+        expected = _reference_calculator(a, b, np.nan, None, None, "A / B")
         with rasterio.open(result["output_path"]) as out:
             np.testing.assert_array_equal(out.read(1), expected)
-        # division by zero → out_nodata (0), so nothing is valid
+            # 输出声明 NaN nodata（#2133：合法零值不被吞）
+            assert out.nodata is not None and np.isnan(out.nodata)
+        # division by zero → out_nodata (NaN), so nothing is valid
         assert result["pixel_count"] == 0
+        assert result["quality_evidence"].get("nodata_disclosure")
     finally:
-        for p in (pa, pb, pa[:-4] + "_calc.tif"):
+        for p in (pa, pb):
             try:
                 os.unlink(p)
             except OSError:
                 pass
+        try:
+            os.unlink(result["output_path"])
+        except OSError:
+            pass
 
 
 def test_calculator_where_expression(aligned_rasters):
@@ -141,3 +148,18 @@ def test_calculator_where_expression(aligned_rasters):
     expected = _reference_calculator(a, b, -9999, -9999, -9999, "where(A > 10, A, B)")
     with rasterio.open(result["output_path"]) as out:
         np.testing.assert_array_equal(out.read(1), expected)
+
+
+def test_calculator_fractional_constant_not_truncated_for_integer_a(tmp_path):
+    """#2131: 整型 A + 小数常量——B 常量面不得继承 A 的整型 dtype。"""
+    data_a = np.arange(64, dtype=np.uint16).reshape(8, 8) + 100
+    pa = str(tmp_path / "u16.tif")
+    _write_raster(pa, data_a)
+    for expr in ("A * B", "A / B"):
+        result = raster_calculator(pa, expression=expr, constant=0.5)
+        with rasterio.open(result["output_path"]) as out:
+            got = out.read(1)
+        a = data_a.astype(np.float64)
+        expected = a * 0.5 if expr == "A * B" else a / 0.5
+        # 修复前：full_like(uint16, 0.5) → B 全 0 → 乘得全 0 / 除得 inf→nodata
+        np.testing.assert_allclose(got, expected, rtol=1e-12)

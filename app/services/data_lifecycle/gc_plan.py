@@ -86,8 +86,6 @@ def create_gc_plan(
     ``owner_scopes`` 非 None 时评估/候选树只含该作用域对象（路由层对
     非 admin 传自己的 scope，防跨 owner 路径进 plan_tree）。
     """
-    from app.models.data_lifecycle import LifecyclePolicy
-
     now = now or datetime.now(timezone.utc)
     if not kinds:
         # DATA-09：默认 kinds 必须剔除 observe-only 类 —— 此前默认列表含
@@ -103,7 +101,7 @@ def create_gc_plan(
                 f"kind '{k}' 在 V9 只支持 observe（真实删除走 lakehouse 自有 GC 保护面）"
             )
 
-    summary = assess(db, persist=True, now=now, owner_scopes=owner_scopes)
+    summary = assess(db, persist=True, now=now, owner_scopes=owner_scopes, org_id=org_id)
     tree_objects: List[Dict[str, Any]] = []
     total_bytes = 0
     total_count = 0
@@ -156,9 +154,11 @@ def create_gc_plan(
     if existing is not None:
         return existing
 
-    policy_rows = db.query(LifecyclePolicy).filter(
-        LifecyclePolicy.kind.in_([k for k in kinds if k not in OBSERVE_ONLY_KINDS])
-    ).all()
+    from app.services.data_lifecycle.policy import policies_for_kinds
+
+    policy_rows = policies_for_kinds(
+        db, [k for k in kinds if k not in OBSERVE_ONLY_KINDS], org_id,
+    )
     staging_hours = max(
         (int(p.staging_hours or 0) for p in policy_rows if p.action != "observe"),
         default=72,
@@ -312,7 +312,7 @@ def _execute_plan_locked(db: Any, plan: GcPlan, *, actor: Optional[str] = None,
                                "mode": "already_staged", "bytes": staged_path.stat().st_size})
             else:
                 path = _resolve_file_path(kind, object_id, lane=entry.get("lane")) if kind != "worker_cache" else None
-                eligible, reason = candidate_still_cold(db, entry, path)
+                eligible, reason = candidate_still_cold(db, entry, path, org_id=plan.org_id)
                 if not eligible:
                     skipped.append({"kind": kind, "object_id": object_id, "reason": reason})
                 elif kind in ("cog_output", "artifact_cache", "fabric_materialization"):

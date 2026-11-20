@@ -53,12 +53,25 @@ def app(tmp_path):
 class TestChatErrorSanitization:
     """Chat endpoint must return generic error, not str(e)."""
 
-    @patch("app.api.routes.chat.get_engine")
-    def test_chat_exception_hides_internal_details(self, mock_get_engine, app):
-        """When chat raises, 500 detail must NOT contain the exception message."""
-        mock_engine = MagicMock()
-        mock_engine.chat.side_effect = RuntimeError("secret DB connection string: postgres://admin:pw@db")
-        mock_get_engine.return_value = mock_engine
+    def test_chat_exception_hides_internal_details(self, app, monkeypatch):
+        """When chat raises, 500 detail must NOT contain the exception message.
+
+        Pi cutover（#1037+）：非流式路径经 Pi turn bridge（``turn_bridge.prompt``），
+        不再经 ``ChatEngine.chat`` —— mock 桥可用 + prompt 抛错，走与生产一致的
+        异常出口（路由 catch-all → 泛化 500）。
+        """
+        from unittest.mock import AsyncMock
+
+        async def _available(_sid=None):
+            return True
+
+        monkeypatch.setattr(
+            "app.api.routes.chat._ensure_pi_bridge_available", _available)
+        bridge = MagicMock()
+        bridge.prompt = AsyncMock(side_effect=RuntimeError(
+            "secret DB connection string: postgres://admin:pw@db"))
+        monkeypatch.setattr(
+            "app.api.routes.chat._pi_turn_bridge", lambda _sid: bridge)
 
         client = TestClient(app)
         resp = client.post("/api/v1/chat/completions", json={

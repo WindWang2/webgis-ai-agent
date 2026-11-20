@@ -21,6 +21,12 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _activity_timestamp(stat: os.stat_result) -> datetime:
+    """mtime 忽略读取。取 max(mtime, atime)，仍被读的旧文件不单凭写入时间变冷。"""
+    observed = max(float(stat.st_mtime), float(getattr(stat, "st_atime", stat.st_mtime)))
+    return datetime.fromtimestamp(observed, tz=timezone.utc)
+
 #: 单机制枚举硬帽（防御无限目录/表）。
 MAX_OBJECTS_PER_KIND = 1000
 _MAX_INFO_ENTRIES = 16
@@ -201,7 +207,7 @@ def enumerate_fabric(limit: int = MAX_OBJECTS_PER_KIND) -> AdapterReport:
                                  if is_fabric and path.parent.parent != root
                                  else path.parent.name)[:120],
                     byte_size=int(stat.st_size),
-                    last_used_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                    last_used_at=_activity_timestamp(stat),
                     info={"lane": "spill" if root_kind == "spill" else "data"},
                 ))
             if seen >= limit or visited > traversal_cap:
@@ -235,7 +241,10 @@ def enumerate_artifacts(limit: int = MAX_OBJECTS_PER_KIND) -> AdapterReport:
                     kind="artifact_cache",
                     object_id=path.name[:255],
                     byte_size=int(stat.st_size),
-                    last_used_at=datetime.fromtimestamp(max(stat.st_mtime, path.with_suffix(".meta").stat().st_mtime if path.with_suffix(".meta").exists() else stat.st_mtime), tz=timezone.utc),
+                    last_used_at=_activity_timestamp(stat) if not path.with_suffix(".meta").exists() else max(
+                        _activity_timestamp(stat),
+                        _activity_timestamp(path.with_suffix(".meta").stat()),
+                    ),
                     info={"has_meta": path.with_suffix(".meta").exists()},
                 ))
     except Exception as exc:  # noqa: BLE001
@@ -273,7 +282,7 @@ def enumerate_cog(limit: int = MAX_OBJECTS_PER_KIND) -> AdapterReport:
                     object_id=path.relative_to(root).as_posix()[:255],  # POSIX 斜杠：跨平台稳定自然键
                     owner_scope=f"session:{session_dir}" if session_dir else "",
                     byte_size=int(stat.st_size),
-                    last_used_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                    last_used_at=_activity_timestamp(stat),
                     info={},
                 ))
     except Exception as exc:  # noqa: BLE001

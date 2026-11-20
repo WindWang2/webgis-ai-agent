@@ -13,6 +13,8 @@ export interface LegendStackEntry {
   onFilterChange?: (ranges: number[][]) => void;
   /** 聚焦高亮(map-panel 的 focusLayerId 呼应) */
   flashing?: boolean;
+  /** G40：同层符号资产绑定（类别 swatch 同语义消费；缺席 = 纯色块不变） */
+  symbolAsset?: Record<string, unknown> | null;
 }
 
 /**
@@ -70,7 +72,7 @@ export function LegendStack({ entries }: { entries: LegendStackEntry[] }) {
               <span className="truncate">{entry.name}</span>
             </button>
             {expanded && (
-              <ThematicLegend spec={entry.legendSpec} onFilterChange={entry.onFilterChange} />
+              <ThematicLegend spec={entry.legendSpec} onFilterChange={entry.onFilterChange} symbolAsset={entry.symbolAsset} />
             )}
           </div>
         );

@@ -385,7 +385,8 @@ class GISWorkingContext(BaseModel):
         append is idempotent on it — the same delivery replayed on any
         replica converges to one record (ADR-0215 D6). Without ``op_id``
         the legacy behavior holds (append with the next per-copy seq).
-        Returns False when the bound is hit.
+        Returns False only for an idempotent no-op that was not recorded.
+        At the bound, the oldest edit is evicted so a new edit is not dropped.
         """
         oid = str(op_id or "")[:64]
         if oid and any(e.op_id == oid for e in self.user_edits):
@@ -399,7 +400,7 @@ class GISWorkingContext(BaseModel):
         if not oid and any(e.key() == edit.key() for e in self.user_edits):
             return True
         if len(self.user_edits) >= MAX_USER_EDITS:
-            return False
+            self.user_edits = self.user_edits[-(MAX_USER_EDITS - 1):]
         self.user_edits.append(edit)
         return True
 
@@ -503,13 +504,28 @@ class GISWorkingContext(BaseModel):
         """Bounded JSON payload for the store row; raises ValueError when
         the serialized form exceeds the byte budget (fail-closed size gate).
         """
-        data = self.model_dump(mode="json", exclude_none=True)
         import json
 
-        raw = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-        if len(raw.encode("utf-8")) > MAX_PAYLOAD_BYTES:
-            raise ValueError("working_context_payload_over_budget")
-        return data
+        rings = (
+            "user_edits", "revalidations", "facts", "derived_findings",
+            "findings", "accepted_assumptions", "rejected_alternatives",
+            "unresolved_constraints",
+        )
+        for _ in range(64):
+            data = self.model_dump(mode="json", exclude_none=True)
+            raw = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+            if len(raw.encode("utf-8")) <= MAX_PAYLOAD_BYTES:
+                return data
+            trimmed = False
+            for name in rings:
+                rows = getattr(self, name, None)
+                if rows:
+                    del rows[0]
+                    trimmed = True
+                    break
+            if not trimmed:
+                break
+        raise ValueError("working_context_payload_over_budget")
 
     @classmethod
     def from_payload(cls, data: Dict[str, Any]) -> "GISWorkingContext":

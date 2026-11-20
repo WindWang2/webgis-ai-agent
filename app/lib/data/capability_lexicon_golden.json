@@ -88,12 +88,12 @@
     {
       "query": "把行程秒数当成米来算缓冲距离 / seconds mistaken as meters",
       "expect_tool": "network_service_coverage_consistency",
-      "expect_status": "available_unverified",
+      "expect_status": "native_verified",
       "forbid_tools": [
         "buffer_analysis",
         "measure_distance"
       ],
-      "note": "CAP-O06 硬负例：秒/米绝不混合；米制工具全部抑制，只保留显式时间量纲工具；该新原语未挂算法链，诚实标 available_unverified（ADR-0287 D3）"
+      "note": "CAP-O06 硬负例：秒/米绝不混合；米制工具全部抑制，只保留显式时间量纲工具；G13 起原语已挂算法链（network.service_coverage.consistency），planner 面 algorithm_backed，八面 pass → native_verified（对拍真值随绑定更新）"
     }
   ]
 }

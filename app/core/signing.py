@@ -57,6 +57,21 @@ def signed_raster_query(path: str, ttl_seconds: int = RASTER_URL_TTL_S) -> str:
     return f"exp={exp}&sig={sig}"
 
 
+def hmac_equals(left: object, right: object) -> bool:
+    """常量时间比较。非 ASCII / 非字符串输入返回 False，不抛 TypeError。
+
+    ``hmac.compare_digest`` 对含非 ASCII 的 ``str`` 直接 TypeError（HTTP
+    头按 latin-1 解码后可以带这类字符）——调用方会把它变成 500 而不是
+    401/False。双方先变成 bytes 再比。
+    """
+    try:
+        left_b = left if isinstance(left, (bytes, bytearray)) else str(left).encode("utf-8")
+        right_b = right if isinstance(right, (bytes, bytearray)) else str(right).encode("utf-8")
+        return hmac.compare_digest(left_b, right_b)
+    except (TypeError, UnicodeError, AttributeError):
+        return False
+
+
 def verify_signature(path: str, exp: int | str, sig: str) -> bool:
     """常量时间比较；过期或签名错均返回 False。"""
     try:
@@ -66,21 +81,57 @@ def verify_signature(path: str, exp: int | str, sig: str) -> bool:
     if exp_int < int(time.time()):
         return False
     expected = make_signature(path, exp_int)
-    return hmac.compare_digest(expected, sig or "")
+    return hmac_equals(expected, sig or "")
 
 
-def terrain_capability_path(session_id: str, ref_id: str) -> str:
+def terrain_owner_binding(owner_token: object | None) -> str:
+    """Stable binding for the session's current anonymous credential.
+
+    Empty when the session has no owner token (authenticated sessions).
+    ``OwnerTokenDigest`` is already the stored verifier; raw tokens are hashed
+    the same way so issue and verify agree. Rotate changes the stored value,
+    so previously issued signatures stop verifying.
+    """
+    if not owner_token:
+        return ""
+    from app.core.owner_tokens import owner_token_digest
+
+    try:
+        return owner_token_digest(str(owner_token))
+    except UnicodeError:
+        return ""
+
+
+def terrain_capability_path(
+    session_id: str, ref_id: str, *, owner_token: object | None = None,
+) -> str:
     """Resource-bound capability, independent of any tile coordinate."""
-    return f"terrain:{session_id}:{ref_id}"
+    base = f"terrain:{session_id}:{ref_id}"
+    binding = terrain_owner_binding(owner_token)
+    if not binding:
+        return base
+    return f"{base}:{binding}"
 
 
-def signed_terrain_query(session_id: str, ref_id: str) -> str:
+def signed_terrain_query(
+    session_id: str,
+    ref_id: str,
+    *,
+    owner_token: object | None = None,
+    max_exp: int | None = None,
+) -> str:
     """Read capability for one ref, valid for nine to ten minutes.
 
     Minute issuance windows keep TileJSON bytes/ETags stable across adjacent
-    requests without extending the ten-minute authority lifetime.
+    requests. ``max_exp`` caps a reissue at the caller's incoming capability
+    so a leaked URL cannot mint a later expiry. ``owner_token`` binds the
+    signature to the current credential (rotate invalidates it).
     """
     from urllib.parse import urlencode
     exp = (int(time.time()) // 60) * 60 + 600
-    sig = make_signature(terrain_capability_path(session_id, ref_id), exp)
+    if max_exp is not None:
+        exp = min(exp, int(max_exp))
+    sig = make_signature(
+        terrain_capability_path(session_id, ref_id, owner_token=owner_token), exp,
+    )
     return "?" + urlencode({"session_id": session_id, "exp": exp, "sig": sig})

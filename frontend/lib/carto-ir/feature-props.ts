@@ -28,8 +28,9 @@ export interface FeatureLike {
 
 /**
  * 字段名词表：要素标识字段的既有事实缺省。顺序与 layer-data
- * FEATURE_ID_KEYS / use-feature-selection 既有裁决一致（`id` 优先，
- * OBJECTID 为 ESRI 导出链回退）。
+ * FEATURE_ID_KEYS / use-feature-selection 既有裁决一致（G14 起 `_wfid`
+ * 最优先 —— 已编辑数据集的稳定身份；未物化层无该键，`id` 次之，OBJECTID
+ * 为 ESRI 导出链回退）。
  */
 export const FEATURE_ID_FIELDS = FEATURE_ID_KEYS;
 

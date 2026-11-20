@@ -73,7 +73,7 @@ interaction 快照 + 选择史 + claimed scope。
 - 部分取消（带 id 的 deselect）从当前代移除 id——这是**用户显式决策**，
   与摄入截断（静默）以摄入层披露标记区分，不用计数推断。
 - 视口史代（"上一张图"）**不在本契约**（viewport_settled 只留最新；
-  留待后续，见 ADR-0287 Consequences）。
+  留待后续，见 ADR-0297 Consequences）。
 
 ## 3. 直接操作 ↔ Agent 意图同义（SW-03）
 

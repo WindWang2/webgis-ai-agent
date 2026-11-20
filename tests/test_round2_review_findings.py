@@ -146,8 +146,10 @@ def test_A2_upload_tools_deny_foreign_session_via_runtime_context():
         result = list_uploaded_data(session_id="victim-session")
     assert result["count"] == 0  # did not attempt to read victim uploads
 
-    # Without a runtime context, the provided id passes through (back-compat).
-    assert _resolve_session_id("any") == "any"
+    # #2156 P3：无 runtime context 时 fail closed（旧 back-compat 直通会把
+    # 注入的 session_id 交给未绑定上下文的执行路径 —— Celery 路由同步工具、
+    # 子代理、harness_runner，读取他人会话上传/快照）。
+    assert _resolve_session_id("any") is None
 
 
 # ── E-2/E-5: MVT projection poles + NaN/Inf vertex robustness ─────────────────

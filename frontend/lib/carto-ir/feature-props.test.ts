@@ -18,7 +18,9 @@ import {
 
 describe("FEATURE_ID_FIELDS 词表", () => {
   it("裁决顺序锁定（词表顺序即优先级）", () => {
-    expect(FEATURE_ID_FIELDS).toEqual(["id", "OBJECTID", "fid", "FID", "osm_id", "@id", "featureId", "feature_id"]);
+    // G14：_wfid 最优先（已编辑数据集的稳定身份，与后端 ADR-0277「物化后
+    // 一律 WFID 寻址」对齐）；未物化层无该键，其余裁决序不变。
+    expect(FEATURE_ID_FIELDS).toEqual(["_wfid", "id", "OBJECTID", "fid", "FID", "osm_id", "@id", "featureId", "feature_id"]);
   });
 });
 

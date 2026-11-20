@@ -29,13 +29,30 @@ from app.tools._utils import db_session
 logger = logging.getLogger(__name__)
 
 
-def build_execution_key(task_type: str, session_id: Optional[str], params: dict[str, Any]) -> str:
-    """稳定的幂等键：(task_type, session, 规范化参数) 的摘要。
+def build_execution_key(
+    task_type: str,
+    session_id: Optional[str],
+    params: dict[str, Any],
+    *,
+    owner_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+) -> str:
+    """稳定的幂等键：(task_type, session, owner, org, 规范化参数) 的摘要。
 
     只用于 durable/background 提交 —— 不给所有工具硬编码 hash（规范 §16）。
-    参数用 sort_keys 序列化，保证 dict 顺序不影响键。
+    参数用 sort_keys 序列化，保证 dict 顺序不影响键。owner/org 进摘要，
+    避免无 session 时两个租户的相同参数撞上全局唯一的 idempotency_key。
     """
-    payload = json.dumps(params, sort_keys=True, ensure_ascii=False, default=str)
+    payload = json.dumps(
+        {
+            "params": params,
+            "owner_id": str(owner_id or ""),
+            "org_id": str(org_id or ""),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
     return f"{task_type}:{session_id or '-'}:{digest}"
 
@@ -74,7 +91,14 @@ def submit_durable_job(
     origin = current_origin()
     effective_session = session_id or (origin.session_id if origin else None)
     idem_key = (
-        build_execution_key(task_type, effective_session, params) if idempotent else None
+        build_execution_key(
+            task_type,
+            effective_session,
+            params,
+            owner_id=(origin.owner_id if origin else None),
+            org_id=(origin.org_id if origin else None),
+        )
+        if idempotent else None
     )
 
     if task_type == "geocompute_node":

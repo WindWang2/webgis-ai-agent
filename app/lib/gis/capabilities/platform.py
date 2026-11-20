@@ -46,6 +46,16 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         "坐标位置要素探查。",
     ),
     _cap(
+        "cartography_scale_portrayal_inspect", "多尺度表达检查（只读）",
+        "G27 尺度表达策略的只读检查面：图层当前有效尺度/档位/隐藏原因/用户覆盖"
+        "与 typed 诊断披露（inspect，不写 MapSpec）。",
+    ),
+    _cap(
+        "cartography_scale_portrayal_apply", "多尺度表达策略应用",
+        "G27 尺度表达策略的受控写入面：经预览确认的 scale portrayal 策略局部"
+        "应用（apply，走既有 MapSpec CAS/undo 写路径）。",
+    ),
+    _cap(
         "thematic_cartography", "专题制图与样式",
         "专题制图工具面：分层设色/3D 挤出专题图、单色样式注入、制图模板套用与组合、"
         "MapSpec 图层/版面/组件的编写与局部突变、浮动图表控制。",
@@ -92,6 +102,12 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         "report_charting", "报告与图表",
         "会话产出的报告与可视化：统计图表生成（可附着地图浮动面板）、PDF/HTML/Markdown "
         "分析报告、自然资源监测标准化报告。",
+    ),
+    _cap(
+        "evidence_map_brief", "证据化地图简报",
+        "会话分析产出的证据化简报面：从真实产物生成可编辑草稿（每个数值绑定来源/字段/"
+        "口径）、指标证据核对、块级编辑与锁定、发布预检、不可变冻结版本与私有离线交付"
+        "（G11/ADR-0298）。",
     ),
     _cap(
         "dataset_profiling_quality", "数据画像与质量",

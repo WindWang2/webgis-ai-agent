@@ -34,7 +34,11 @@ from app.services.gis_harness.skills.semantics import (
 )
 
 #: 契约版本：结构或语义变化必须提升（进入指纹）。
-SKILL_SCHEMA_VERSION = 1
+#: v2（G30，加性）：新增 ``parameters`` / ``role_bindings`` / ``execution``
+#: 三个可选字段 —— 声明式可执行薄配置（typed 参数 + 数据角色绑定 + 过程
+#: 步骤到既有生产工具的映射）。旧 YAML 不写这些字段时行为与 v1 逐位一致
+#: （可执行面缺席 = guidance_only，不改变知识咨询/规划投影语义）。
+SKILL_SCHEMA_VERSION = 2
 
 #: Skill 域词表（pack 内的领域分组；与 ontology domain 对齐的超集）。
 SKILL_DOMAINS = (
@@ -55,6 +59,30 @@ SKILL_PACKS = ("core", "induced")
 
 #: 几何类别词表（对齐 ontology geometry expectations）。
 GEOMETRY_KINDS = ("point", "line", "polygon", "raster", "table", "network", "unknown")
+
+# ── G30 可执行参数面词表（closed vocabularies；schema v2）───────────────
+
+#: 参数类型词表。``field_ref`` 表示参数引用某个数据角色绑定中的真实字段
+#: 身份（prepare 期对绑定数据事实核对存在性与期望类型，重命名/删除后
+#: 重新核对，显示名/别名不能替代稳定字段名）。
+SKILL_PARAMETER_TYPES = ("number", "string", "enum", "boolean", "field_ref")
+
+#: ``field_ref`` 期望的字段值类型（有界采样证据；unknown ≠ 不满足）。
+SKILL_FIELD_EXPECTS = ("numeric", "categorical", "any", "")
+
+#: number 参数的量纲词表（canonical code；对齐 measurement.CANONICAL_UNITS
+#: 语义但只收可执行校验必需的最小集合，空 = dimensionless/不约束）。
+SKILL_PARAM_UNITS = ("", "m", "km", "m2", "km2", "persons", "persons_per_km2",
+                     "percent", "count", "year", "hour", "degree")
+
+#: 执行结果类型词表（决定完成证据的分型验收语义：report=可回读报告、
+#: map=MapSpec 图层落图+图例、dataset=数据产物 ref）。
+SKILL_RESULT_KINDS = ("report", "map", "dataset")
+
+#: argument_map 表达式词表：``role:<name>``（数据角色绑定的已解析数据）、
+#: ``param:<name>``（typed 参数值；缺席即省略该工具实参）、
+#: ``const:<json>``（字面常量）。闭词表 —— 不接受表达式求值。
+SKILL_ARG_EXPR_KINDS = ("role", "param", "const")
 
 
 class CapabilityRequirement(SkillAssetModel):
@@ -111,6 +139,76 @@ class SkillExample(SkillAssetModel):
     notes: str = ""
 
 
+# ── G30 可执行薄配置（schema v2；全部可选字段，缺席 = guidance_only）───
+
+class SkillParameterSpec(SkillAssetModel):
+    """typed 可执行参数声明（prepare 期校验；来源在绑定时记录 provenance）。
+
+    默认值只是「技能声明的缺省」，不是用户决定 —— prepare 输出中参数
+    provenance 必须区分 user / skill_default / preset / derived。
+    """
+    name: str
+    label: str = ""
+    type: str                                  # ⊆ SKILL_PARAMETER_TYPES
+    required: bool = False
+    description: str = ""
+    role: str = ""                             # type=field_ref 时必填：字段取自哪个角色绑定
+    expects: str = "any"                       # ⊆ SKILL_FIELD_EXPECTS（field_ref）
+    unit: str = ""                             # ⊆ SKILL_PARAM_UNITS（number）
+    default: Optional[Any] = None              # 缺省值（来源=skill_default）
+    enum_values: List[str] = Field(default_factory=list, max_length=16)  # type=enum
+    min_value: Optional[float] = None          # number 范围（闭区间）
+    max_value: Optional[float] = None
+    max_length: int = 0                        # string 上界（0=不约束）
+    required_if_param: str = ""                # 条件必填：另一参数名（须已声明）
+    required_if_in: List[str] = Field(default_factory=list, max_length=8)  # 且其取值 ∈ 此集合
+
+
+class SkillRoleBindingSpec(SkillAssetModel):
+    """数据角色绑定需求：本技能可执行时该角色必须能绑定的数据事实。
+
+    这是 required_situation 之外的**执行面**约束（prepare 逐条核对绑定
+    数据的真实事实，unknown ≠ 不满足，但可执行路径要求事实可证）。
+    """
+    role: str                                  # ⊆ input_roles
+    required: bool = True
+    geometry_kinds: List[str] = Field(default_factory=list)  # ⊆ GEOMETRY_KINDS（空=不约束）
+    min_features: int = 0
+    description: str = ""
+
+
+class SkillExecutionStepSpec(SkillAssetModel):
+    """procedure step → 既有生产工具的具体调用映射（声明式）。
+
+    ``argument_map``：工具形参名 → 绑定表达式。值可以是：
+
+    - 字符串表达式（``role:<name>`` / ``param:<name>`` / ``const:<json>``）；
+    - 嵌套 JSON 对象/数组：**叶子**位置允许字符串表达式，其余为字面量
+      （递归解析；``param:`` 叶子缺席时该叶子整体省略）—— 供需要结构化
+      规范实参的工具（如 MapSpec layer 对象）声明映射。
+
+    闭词表、不求值：字符串叶子**仅当**以 ``role:`` / ``param:`` / ``const:``
+    前缀开头时视为表达式，其余一律字面量；不接受 YAML 之外的任何表达式
+    语法。工具存在性与 capability 归属在 prepare 期对 ToolRegistry /
+    AlgorithmRegistry 现场核对 —— 契约装载不依赖工具注册表。
+    """
+    step_id: str                               # ⊆ procedure.steps
+    tool: str                                  # ToolRegistry 工具名
+    argument_map: Dict[str, Any] = Field(default_factory=dict)
+    produces_evidence: List[str] = Field(default_factory=list)  # 该步产物满足的证据种类
+    required: bool = True
+
+
+class SkillExecutionSpec(SkillAssetModel):
+    """技能的可执行映射（G30）：过程步骤 → 注册表既有工具调用序列。
+
+    红线：这里只有**映射**没有调度 —— 运行仍经 ToolDispatchService 同一
+    owner/scope/side-effect 闸；SessionPlan 仍是步骤状态唯一真相。
+    """
+    steps: List[SkillExecutionStepSpec] = Field(default_factory=list, max_length=8)
+    result_kind: str = "report"                # ⊆ SKILL_RESULT_KINDS
+
+
 class SkillContract(SkillAssetModel):
     """GIS 领域技能契约（versioned；技能是审定资产，修改走 code review）。"""
     schema_version: int = SKILL_SCHEMA_VERSION
@@ -161,6 +259,11 @@ class SkillContract(SkillAssetModel):
     examples: List[SkillExample] = Field(default_factory=list, max_length=8)
     guidance: str = ""                     # ≤240 字有界模型提示（prompt 化红线）
     source_doc: str = ""                   # 方法出处（provenance 审计面）
+
+    # ── G30 可执行薄配置（schema v2 加性；缺席 = guidance_only）────────
+    parameters: List[SkillParameterSpec] = Field(default_factory=list, max_length=16)
+    role_bindings: List[SkillRoleBindingSpec] = Field(default_factory=list, max_length=6)
+    execution: Optional[SkillExecutionSpec] = None
 
     # ── 契约自检（结构 + 词汇；registry_validation 与 loader 共用）────
     def validate_contract(
@@ -282,6 +385,9 @@ class SkillContract(SkillAssetModel):
             if pol.downgrade_class == "not_allowed" and not pol.blocks_completion:
                 violations.append(f"{tag}.fallback_policy: not_allowed 必须 blocks_completion")
 
+        # ── G30 可执行薄配置校验（schema v2）──────────────────────────
+        violations.extend(self._validate_execution_specs())
+
         # 完成证据与 IR 证据节点一致（completion_evidence ⊆ IR 证据种类 ∪ 义务证据）
         known_evidence = set(self.procedure.all_evidence_kinds()) | {
             o.evidence_kind for o in self.quality_obligations if o.evidence_kind}
@@ -300,6 +406,135 @@ class SkillContract(SkillAssetModel):
         if required_only:
             reqs = [r for r in reqs if r.criticality == "required"]
         return sorted({r.capability_id for r in reqs})
+
+    def _validate_execution_specs(self) -> List[str]:
+        """G30 parameters/role_bindings/execution 结构与词汇校验（纯语法面）。
+
+        工具存在性/capability 归属属 prepare 期现场核对（契约装载不依赖
+        ToolRegistry）；此处只保证：词表闭包、引用闭包（step/role/param
+        悬空必须在装载期红掉，不能运行期静默跳过）。
+        """
+        import json as _json
+        violations: List[str] = []
+        tag = f"skill[{self.id}]"
+
+        # parameters：唯一名、类型词表、enum/field_ref/number 约束形状
+        param_names = [p.name for p in self.parameters]
+        if len(param_names) != len(set(param_names)):
+            violations.append(f"{tag}: duplicate parameter names")
+        for p in self.parameters:
+            ptag = f"{tag}.param[{p.name}]"
+            if p.type not in SKILL_PARAMETER_TYPES:
+                violations.append(f"{ptag}: unknown type {p.type}")
+            if p.type == "enum" and not p.enum_values:
+                violations.append(f"{ptag}: enum 参数需要 enum_values")
+            if p.type == "field_ref":
+                if not p.role:
+                    violations.append(f"{ptag}: field_ref 需要 role")
+                elif p.role not in self.input_roles:
+                    violations.append(f"{ptag}: field_ref role {p.role} 不在 input_roles")
+                if p.expects not in SKILL_FIELD_EXPECTS:
+                    violations.append(f"{ptag}: unknown expects {p.expects}")
+            if p.type == "number":
+                if p.unit not in SKILL_PARAM_UNITS:
+                    violations.append(f"{ptag}: unknown unit {p.unit!r}")
+                if p.min_value is not None and p.max_value is not None \
+                        and p.min_value > p.max_value:
+                    violations.append(f"{ptag}: min_value > max_value")
+                if p.default is not None and (
+                        isinstance(p.default, bool)
+                        or not isinstance(p.default, (int, float))):
+                    violations.append(f"{ptag}: number 参数 default 必须是数值")
+            if p.type == "string" and p.max_length < 0:
+                violations.append(f"{ptag}: max_length 不能为负")
+            if p.required_if_param:
+                if p.required_if_param == p.name:
+                    violations.append(f"{ptag}: required_if_param 不能指向自身")
+                elif p.required_if_param not in param_names:
+                    violations.append(
+                        f"{ptag}: required_if_param {p.required_if_param} 未声明")
+                elif not p.required_if_in:
+                    violations.append(f"{ptag}: required_if_in 不能为空")
+
+        # role_bindings：角色引用闭包 + 几何词表
+        known_roles = set(self.input_roles)
+        rb_roles = [rb.role for rb in self.role_bindings]
+        if len(rb_roles) != len(set(rb_roles)):
+            violations.append(f"{tag}: duplicate role_bindings")
+        for rb in self.role_bindings:
+            if rb.role not in known_roles:
+                violations.append(
+                    f"{tag}.role_binding[{rb.role}]: 不在 input_roles")
+            for g in rb.geometry_kinds:
+                if g not in GEOMETRY_KINDS:
+                    violations.append(
+                        f"{tag}.role_binding[{rb.role}]: unknown geometry {g}")
+
+        # execution：step 引用闭包、argument_map 表达式闭词表（递归叶子）、
+        # param/role 引用存在性、result_kind 词表
+        if self.execution is not None:
+            ex = self.execution
+            if ex.result_kind not in SKILL_RESULT_KINDS:
+                violations.append(f"{tag}.execution: unknown result_kind {ex.result_kind}")
+            if not ex.steps:
+                violations.append(f"{tag}.execution: 至少一个 step 映射")
+            step_ids = {s.step_id for s in self.procedure.steps}
+            seen_steps: set = set()
+
+            def _check_expr(stag: str, arg: str, expr: Any, path: str) -> None:
+                if isinstance(expr, dict):
+                    for k, v in expr.items():
+                        _check_expr(stag, arg, v, f"{path}.{k}")
+                    return
+                if isinstance(expr, list):
+                    for i, v in enumerate(expr):
+                        _check_expr(stag, arg, v, f"{path}[{i}]")
+                    return
+                if not isinstance(expr, str):
+                    return  # 嵌套字面量（number/bool/null 由 JSON 语义承载）
+                if not any(expr.startswith(f"{k}:") for k in SKILL_ARG_EXPR_KINDS):
+                    return  # 非前缀字符串 = 字面量（闭词表只在显式前缀上生效）
+                kind, _, value = expr.partition(":")
+                if not value:
+                    violations.append(
+                        f"{stag}.arg[{arg}]{path}: 非法表达式 {expr!r}"
+                        "（词表 role:/param:/const:）")
+                    return
+                if kind == "role" and value not in known_roles:
+                    violations.append(
+                        f"{stag}.arg[{arg}]{path}: role:{value} 不在 input_roles")
+                if kind == "param" and value not in param_names:
+                    violations.append(
+                        f"{stag}.arg[{arg}]{path}: param:{value} 未声明")
+                if kind == "const":
+                    try:
+                        _json.loads(value)
+                    except (TypeError, ValueError):
+                        violations.append(
+                            f"{stag}.arg[{arg}]{path}: const:{value!r} 不是 JSON 字面量")
+
+            for st in ex.steps:
+                stag = f"{tag}.execution[{st.step_id}]"
+                if st.step_id in seen_steps:
+                    violations.append(f"{stag}: 重复 step 映射")
+                seen_steps.add(st.step_id)
+                if st.step_id not in step_ids:
+                    violations.append(f"{stag}: 不在 procedure.steps（悬空映射）")
+                if not st.tool:
+                    violations.append(f"{stag}: 缺 tool")
+                for arg, expr in st.argument_map.items():
+                    _check_expr(stag, arg, expr, "")
+
+        return violations
+
+    def is_runnable_asset(self) -> bool:
+        """可执行资产判定：有 execution 映射且未被弃用（guidance_only 反面）。
+
+        注意这只是**资产形状**判定 —— 运行资格还受 pack/tier/能力可用性/
+        数据事实约束（prepare 期裁决），此处不越权。
+        """
+        return self.execution is not None and bool(self.execution.steps) \
+            and not self.deprecated
 
     def to_card_dict(self) -> Dict[str, Any]:
         """SkillCard 投影（S17/S19 渐进披露第一层；有界）。"""
@@ -325,6 +560,8 @@ class SkillContract(SkillAssetModel):
             ],
             "step_count": len(self.procedure.steps),
             "ontology_tasks": list(self.ontology_tasks)[:6],
+            # G30：可执行资产形状标记（guidance_only 的反面；运行资格仍在 prepare）
+            "runnable": self.is_runnable_asset(),
         }
 
     def to_detail_dict(self) -> Dict[str, Any]:
@@ -347,10 +584,19 @@ __all__ = [
     "SKILL_DOMAINS",
     "SKILL_PACKS",
     "GEOMETRY_KINDS",
+    "SKILL_PARAMETER_TYPES",
+    "SKILL_FIELD_EXPECTS",
+    "SKILL_PARAM_UNITS",
+    "SKILL_RESULT_KINDS",
+    "SKILL_ARG_EXPR_KINDS",
     "CapabilityRequirement",
     "SituationRequirement",
     "QualityObligation",
     "SkillFallbackPolicy",
     "SkillExample",
+    "SkillParameterSpec",
+    "SkillRoleBindingSpec",
+    "SkillExecutionStepSpec",
+    "SkillExecutionSpec",
     "SkillContract",
 ]

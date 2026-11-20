@@ -32,9 +32,11 @@ export function ChapterArtifact({ ref: artifactRef }: { ref: string }): React.Re
         if (alive) setChart(data);
       }).catch(() => { if (alive) setChart(null); });
     } else {
+      // #2160：与 chart 分支同构的失败降级 —— 500/断网/abort 必须落 error 终态，
+      // 否则 table 永远 undefined → 卡片永久「产物加载中…」+ 未处理 rejection。
       void loadTableArtifact(artifactRef).then((data) => {
         if (alive) setTable(data);
-      });
+      }).catch(() => { if (alive) setTable(null); });
     }
     return () => {
       alive = false;

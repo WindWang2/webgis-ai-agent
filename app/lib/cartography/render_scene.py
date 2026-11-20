@@ -257,6 +257,13 @@ def derive_legend_items(legend_spec: Any) -> Optional[Dict[str, Any]]:
         unit = spec.get("unit")
         if isinstance(unit, str) and unit.strip():
             model["unit"] = unit.strip()
+        # G26（P4）：G20 legend 的 notes（constant/all-nodata/approximate/
+        # unit_unknown）透传到模型 —— 图例卡脚注行消费；缺席不添加键。
+        notes = spec.get("notes")
+        if isinstance(notes, list) and notes:
+            kept = [str(n) for n in notes if str(n).strip()][:3]
+            if kept:
+                model["notes"] = kept
         return model
 
     legacy = spec.get("entries")
@@ -274,6 +281,37 @@ def derive_legend_items(legend_spec: Any) -> Optional[Dict[str, Any]]:
     spec_type = spec.get("type")
     if spec_type == "bivariate":
         return _finish("bivariate", allow_empty=True)
+
+    # G26（P4）：G20 RGB 复合图例（raster_expression.v1）—— 通道条目（band
+    # 标签 + 冻结 stretch + unit 状态）；**不造连续物理量色标**（通道组合
+    # 不是单一物理量）。此前该类型落空 → RGB 层无图例卡。
+    if spec_type == "raster_rgb":
+        channel_colors = {"R": "#dc2626", "G": "#16a34a", "B": "#2563eb"}
+        for ch in spec.get("channels") or []:
+            if not isinstance(ch, dict):
+                continue
+            channel = str(ch.get("channel") or "?")
+            band_label = str(ch.get("band_label") or f"band {ch.get('band', '?')}")
+            lo, hi = ch.get("min"), ch.get("max")
+            span = ""
+            if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) \
+                    and not isinstance(lo, bool) and not isinstance(hi, bool):
+                span = f" [{format_legend_value(lo)} – {format_legend_value(hi)}]"
+            unit_status = str(ch.get("unit_status") or "unknown")
+            unit_note = f"单位：{ch['unit']}" if ch.get("unit") else "单位未声明"
+            entries.append({
+                "label": f"{channel} ← {band_label}{span}（{unit_note}）"
+                         if unit_status == "declared" else
+                         f"{channel} ← {band_label}{span}（单位未知）",
+                "color": channel_colors.get(channel, "#64748b"),
+                "kind": "class",
+            })
+        model = _finish("categorical")
+        if model is not None and not (isinstance(spec.get("title"), str)
+                                      and spec.get("title")) \
+                and not (isinstance(spec.get("field"), str) and spec.get("field")):
+            model["title"] = "RGB 波段复合"
+        return model
 
     if spec_type == "categorical":
         for c in spec.get("categories") or []:

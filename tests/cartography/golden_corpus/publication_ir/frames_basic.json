@@ -129,6 +129,7 @@
         "filter_property": "",
         "filter_value": "",
         "frame_index": 0,
+        "frame_slots": null,
         "page_count": 2,
         "page_id": "f1",
         "page_number": 1,
@@ -138,6 +139,7 @@
           "profile": "a4_landscape",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "总览"
       },
@@ -265,6 +267,7 @@
         "filter_property": "",
         "filter_value": "",
         "frame_index": 1,
+        "frame_slots": null,
         "page_count": 2,
         "page_id": "f2",
         "page_number": 2,
@@ -274,6 +277,7 @@
           "profile": "",
           "width_mm": 200.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "放大"
       }

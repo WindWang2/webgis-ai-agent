@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import re
 import threading
 from dataclasses import dataclass, field
@@ -814,8 +815,10 @@ def default_semantic_spec() -> str:
     return _EMBEDDING_SPEC
 
 
+_EMBED_FAIL_BACKOFF_S = 60.0
 _embed_state: Dict[str, Any] = {"index": None, "fingerprint": None,
-                                "model_failed": False}
+                                "model_failed": False,
+                                "model_failed_until": 0.0}
 
 
 def _descriptor_corpus_text(desc: Any) -> str:
@@ -852,7 +855,9 @@ def _embedding_retriever_locked(
     if not (query or "").strip() or top_k <= 0:
         return []
     if _embed_state["model_failed"]:
-        raise RuntimeError("embedding model unavailable (memoized failure)")
+        if time.monotonic() < float(_embed_state.get("model_failed_until") or 0.0):
+            raise RuntimeError("embedding model unavailable (memoized failure)")
+        _embed_state["model_failed"] = False
     try:
         import numpy as np
 
@@ -878,6 +883,7 @@ def _embedding_retriever_locked(
             _embed_state["model"] = model
     except Exception:  # noqa: BLE001 — 模型加载失败记忆化（指纹失败不毒化）
         _embed_state["model_failed"] = True
+        _embed_state["model_failed_until"] = time.monotonic() + _EMBED_FAIL_BACKOFF_S
         raise RuntimeError("embedding model load failed") from None
 
     if _embed_state["fingerprint"] != fingerprint or _embed_state["index"] is None:

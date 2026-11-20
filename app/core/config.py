@@ -121,6 +121,14 @@ class Settings(BaseSettings):
         """判断是否为生产环境"""
         return self.ENV.lower() == "production"
 
+    def is_deployed_environment(self) -> bool:
+        """多副本部署面（production 与 staging）。
+
+        这两类环境不能靠进程内随机 JWT，也不能打开 AUTH_DISABLED。
+        development/test 仍允许，避免本地与 pytest 无法启动。
+        """
+        return self.ENV.lower() in {"production", "staging"}
+
     # JWT
     JWT_SECRET_KEY: str = ""
     # audit ISSUE-005（#1377）：legacy token（无 type/ver claim）的 sunset
@@ -197,6 +205,17 @@ class Settings(BaseSettings):
     LLM_CONTEXT_WINDOW: Optional[int] = None
     # 标题/摘要等辅助任务的廉价模型；空回退 LLM_MODEL
     LLM_TITLE_MODEL: str = ""
+    # ── G37（会话模型运行配置）──────────────────────────────────────
+    # 管理员在**当前已授权 OpenAI 兼容端点**上额外放开的模型 id（逗号分
+    # 隔）。基础模型（LLM_MODEL / 运行时 override 解析结果）恒在目录内；
+    # 目录项与基础模型共用同一服务器端凭证 —— 不开放任意 URL/API key。
+    # 生产改配走部署环境（与 /config/llm 的生产限制同一纪律）。
+    SESSION_MODEL_CATALOG_EXTRA: str = ""
+    # 会话级 token 预算上限（input+output 累计，宿主账本口径）：
+    # 0 = 不启用预算控制。MAX = admin 允许用户自设的上限（0 = 用户不可
+    # 自设）；DEFAULT = 新会话默认上限（0 = 默认无限制）。
+    SESSION_MODEL_TOKEN_CAP_MAX: int = 0
+    SESSION_MODEL_TOKEN_CAP_DEFAULT: int = 0
 
     # AC-01（ADR-0150）：意图语义解析的证据加权置信度与澄清策略。
     # 权重四分量（task_evidence/slot_completeness/entity_quality/
@@ -464,11 +483,12 @@ class Settings(BaseSettings):
         if not self.JWT_SECRET_KEY or _looks_like_placeholder_secret(
             self.JWT_SECRET_KEY
         ):
-            if self.is_production():
+            if self.is_deployed_environment():
                 raise RuntimeError(
-                    "JWT_SECRET_KEY is required in production and must not be "
-                    "a template placeholder (change_me_*). Set a real random "
-                    "secret via the JWT_SECRET_KEY environment variable."
+                    "JWT_SECRET_KEY is required in production and staging and "
+                    "must not be a template placeholder (change_me_*). Set a "
+                    "real random secret via the JWT_SECRET_KEY environment "
+                    "variable."
                 )
             self.JWT_SECRET_KEY = secrets.token_urlsafe(32)
             warnings.warn(
@@ -477,11 +497,11 @@ class Settings(BaseSettings):
                 stacklevel=2,
             )
             logger.warning("JWT_SECRET_KEY not set, generated random secret for this session")
-        elif self.is_production() and len(self.JWT_SECRET_KEY) < _MIN_SECRET_LEN:
+        elif self.is_deployed_environment() and len(self.JWT_SECRET_KEY) < _MIN_SECRET_LEN:
             # issue #1673（SEC-01）：低熵 JWT 密钥 = 全站认证可伪造（HS256
             # 可离线爆破后直接签发 admin token），生产启动即拒绝。
             raise RuntimeError(
-                f"JWT_SECRET_KEY must be >= {_MIN_SECRET_LEN} chars in production "
+                f"JWT_SECRET_KEY must be >= {_MIN_SECRET_LEN} chars in production/staging "
                 f"(got {len(self.JWT_SECRET_KEY)}). Generate with: "
                 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
             )
@@ -566,11 +586,11 @@ class Settings(BaseSettings):
         """审计 #756：AUTH_DISABLED=true 是完整认证旁路（含 require_admin），
         必须像 JWT_SECRET_KEY / CORS['*'] / SQLite-in-prod 一样 fail-loud。
         一个从本地测试复制到生产的 .env 不应静默打开所有端点。"""
-        if self.is_production() and self.AUTH_DISABLED:
+        if self.is_deployed_environment() and self.AUTH_DISABLED:
             raise RuntimeError(
-                "AUTH_DISABLED=true is not allowed in production — it disables all "
-                "authentication including admin endpoints. Remove it from the "
-                "environment."
+                "AUTH_DISABLED=true is not allowed in production or staging — it "
+                "disables all authentication including admin endpoints. Remove it "
+                "from the environment."
             )
         return self
 

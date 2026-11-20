@@ -1,0 +1,125 @@
+{
+  "title": "Topology workbench",
+  "subtitle": "Cross-layer constraints: declare → check → locate → exception → repair → recheck",
+  "refresh": "Refresh",
+  "noAuth": "The topology workbench requires sign-in (rulesets/runs are owner-scoped).",
+  "rulesets": {
+    "section": "Rulesets",
+    "empty": "No rulesets yet. Create one to declare cross-layer constraints (e.g. parcels must cover the admin zone excluding lakes).",
+    "create": "Create ruleset",
+    "name": "Name",
+    "namePlaceholder": "e.g. Parcel topology constraints",
+    "addRule": "Add rule",
+    "removeRule": "Remove",
+    "ruleType": "Rule type",
+    "ruleId": "Rule ID",
+    "severity": "Severity",
+    "params": "Params",
+    "tip": "Param semantics: tolerance_m is linear meters; *_threshold_m2 is square meters — never interchangeable.",
+    "version": "v{version}",
+    "rules": "{count} rules"
+  },
+  "ruleTypes": {
+    "polygons_no_overlap": "No overlap (same layer)",
+    "area_coverage": "AOI coverage (with exclusions)",
+    "objects_covered_by_target": "Objects covered by target",
+    "cross_layer_no_overlap": "No overlap (cross layer)",
+    "line_endpoints_connected": "Line endpoints connected"
+  },
+  "runs": {
+    "section": "Runs",
+    "start": "Start check",
+    "empty": "No runs for this ruleset yet.",
+    "selectRuleset": "Select ruleset",
+    "bindingRole": "Role binding",
+    "bindings": "Source bindings (role → data)",
+    "bindingHint": "coverage/aoi/target/connectors must bind complete sources; checked-style roles may carry a scope. Session refs look like ref:…",
+    "status": {
+      "pending": "Queued",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "findingsTotal": "{count} findings",
+    "openCount": "{count} open",
+    "computationCrs": "Computation CRS: {crs}",
+    "allUnknown": "Note: all rules are blocked/unknown — this must not be read as all-pass.",
+    "budgetTruncated": "Note: some rules hit budget caps (partial); counts are partial results.",
+    "failed": "Run failed: {message}",
+    "recheck": "Recheck",
+    "rechecking": "Rechecking…",
+    "recheckDone": "Recheck done: {resolved} resolved / {persisted} persist / new run has {total} findings",
+    "recheckOf": "Recheck of {runId}"
+  },
+  "ruleResult": {
+    "applicable": "applicable",
+    "blocked": "blocked",
+    "full": "full",
+    "partial": "partial",
+    "violations_found": "violations found",
+    "no_violations": "no violations",
+    "unknown": "unknown",
+    "examined": "{count} examined"
+  },
+  "findings": {
+    "section": "Findings",
+    "empty": "No findings for this run (or filters match nothing).",
+    "filterSeverity": "Severity",
+    "filterStatus": "Status",
+    "all": "All",
+    "prev": "Previous",
+    "next": "Next",
+    "page": "{offset}–{end} of {total} total",
+    "countNote": "Total is the full count (not the current page).",
+    "status": {
+      "open": "Open",
+      "accepted_exception": "Accepted exception",
+      "resolved": "Resolved by recheck",
+      "dismissed": "Dismissed"
+    },
+    "severity": {
+      "info": "Info",
+      "warn": "Warning",
+      "error": "Error"
+    },
+    "locate": "Locate",
+    "detail": "Detail",
+    "metric": "measured {value} {unit} (threshold {threshold}, {method})",
+    "witness": "Problem geometry (witness)",
+    "witnessUnavailable": "Witness evidence unreadable: {reason}",
+    "stale": "Stale locator: source changed ({reason}) — rerun the check.",
+    "locators": "Involved objects",
+    "locatorRole": "{role} · {value}"
+  },
+  "exception": {
+    "accept": "Accept as exception",
+    "reasonLabel": "Exception reason (required; archived with the anchor)",
+    "reasonPlaceholder": "e.g. lake is a planned water reserve; the coverage gap is legal",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "accepted": "Exception recorded (processing state only — the detected fact is unchanged).",
+    "revoke": "Revoke exception",
+    "revoked": "Exception revoked; the finding is open again.",
+    "note": "Exceptions are user decisions; source or rule changes invalidate them (re-validation required)."
+  },
+  "repair": {
+    "section": "Repair",
+    "candidates": "Repair candidates",
+    "noCandidates": "No deterministic repair for this finding — fix manually in the editor, then recheck.",
+    "ownership": "This repair needs an ownership choice (who keeps the gap/overlap) — not auto-decided.",
+    "previewUnavailable": "Candidate not auto-previewable ({reason}).",
+    "preview": "Build G14 preview",
+    "committable": "Preview committable: approve it in the map edit proposal card (G14 CAS/undo chain inherited).",
+    "notCommittable": "Preview failed validation (see findings) — adjust and retry.",
+    "note": "A suggestion is not a fix: commit needs approval; after repair, recheck that evidence is gone."
+  },
+  "errors": {
+    "load": "Load failed: {message}",
+    "scopeNotAllowed": "This role requires a complete source (partial selections create false gaps) — bind the full dataset.",
+    "sourceChanged": "Source changed after submission — restart the check.",
+    "budget": "Over budget cap — narrow the check scope.",
+    "region": "Region unsupported (antimeridian/polar/too large) — narrow the extent.",
+    "generic": "Operation failed: {message}"
+  }
+}

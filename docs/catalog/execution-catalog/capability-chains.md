@@ -741,11 +741,12 @@
 ## service_area（网络服务区）
 - status: native；version: 1.0
 - input: poi_feature_set, point_feature_set
-- output: service_area
+- output: service_area, stats_table
 - algorithm `network.isochrone`（priority=10；scientific=EXPERIMENTAL）→ tools: isochrone_analysis
 - algorithm `network.isochrone.local`（priority=30；scientific=VALIDATED）→ tools: isochrone_network
 - algorithm `network.service_area.multi`（priority=25；scientific=VALIDATED）→ tools: network_service_area
 - algorithm `network.service_area.simple`（priority=20；scientific=EXPERIMENTAL）→ tools: service_area_simple
+- algorithm `network.service_coverage.consistency`（priority=15；scientific=VALIDATED）→ tools: network_service_coverage_consistency
 
 ## shortest_path（最短路径）
 - status: native；version: 1.0
@@ -1091,5 +1092,6 @@
 - status: native；version: 1.0
 - input: polygon_feature_set, raster_surface
 - output: stats_table
+- algorithm `raster.zonal.quantile_conditional`（priority=18；scientific=VALIDATED）→ tools: conditional_quantile_zonal_stats
 - algorithm `remote.zonal_stats`（priority=20；scientific=VALIDATED）→ tools: zonal_stats
 

@@ -15,7 +15,9 @@
       "drawLine": "Draw line",
       "drawPolygon": "Draw polygon",
       "editVertices": "Edit vertices",
-      "deleteFeature": "Delete feature"
+      "deleteFeature": "Delete feature",
+      "splitFeature": "Split feature",
+      "georefPickMap": "Georef GCP map pick"
     },
     "currentExecution": "Current execution",
     "graphHeading": "Intent & execution chain",

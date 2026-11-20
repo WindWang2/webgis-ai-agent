@@ -61,9 +61,22 @@ import {
 } from "../carto-ir/representation";
 import { checkMapSpecVersion } from "../carto-ir/version";
 import { checkBivariateLayer } from "../carto-ir/bivariate";
+// G20：数值栅格源 → 每层独立的 XYZ 瓦片源（相对导入，headless CLI 同款纪律）
+import {
+  buildNumericRasterTileUrl,
+  numericRasterSourceId,
+} from "../raster-authoring/tile-url";
 // #1747：heatmap 表达窗子层的安全 paint 与 live runtime 单一实现
 // （此前只发 heatmap-radius，原生 heatmap-color 色带在导出里掉落）。
 import { heatmapOnlyPaint } from "./heatmap-paint";
+import {
+  normalizePointParams,
+  normalizeTextureParams,
+  pointImageId,
+  patternImageId,
+  type SymbolAssetBinding,
+} from "@/lib/cartographic-assets/contracts";
+import { categoryIconExpression } from "@/lib/cartographic-assets/live-project";
 
 /**
  * AC-06：headless 编译器可识别的源类型白名单。白名单外的类型此前静默降级
@@ -71,7 +84,9 @@ import { heatmapOnlyPaint } from "./heatmap-paint";
  * validateMapSpec 产 UNKNOWN_SOURCE_TYPE 编译错误 + evidence，编译产物
  * 不再输出占位空源。
  */
-const KNOWN_SOURCE_TYPES = new Set(["raster", "geojson", "vector", "raster-dem"]);
+const KNOWN_SOURCE_TYPES = new Set([
+  "raster", "geojson", "vector", "raster-dem", "numeric_raster",
+]);
 
 /**
  * #1007：style 级 glyphs 模板进配置。缺省保留公共 demotiles 源；内网/
@@ -146,9 +161,17 @@ export function compileStyleMethod(
       for (const [stopVal, outputVal] of stops) {
         flattenedStops.push(stopVal, outputVal);
       }
-      const interpExpr = asExpression([
+      const baseExpr = asExpression([
         "interpolate", interpolationExpr, fieldExpr, ...flattenedStops,
       ]);
+      // G33：输出变换（"sqrt"）—— 比例圆符号「面积∝数值」：stops 携带
+      // r²（面积线性于数值），输出取 √ 得半径。数值输出恒非负，sqrt 无
+      // 错误分支；与导出端 _resolve_paint_value 同口径。
+      const interpExpr: unknown =
+        m.output_transform === "sqrt"
+          ? asExpression(["sqrt", baseExpr])
+          : baseExpr;
+      // G33 输出变换分支的返回类型与既有分支一致（MapLibrePaintValue）。
       // H02 §B：nodata guard —— 与 live withNoDataGuard 同形状
       // （["case", ["==", ["get", field], null], nodata, thematic]）。
       if (m.field !== "zoom" && typeof m.nodata === "string" && m.nodata) {
@@ -156,7 +179,7 @@ export function compileStyleMethod(
           "case", ["==", ["get", m.field], null], m.nodata, interpExpr,
         ]);
       }
-      return interpExpr;
+      return interpExpr as MapLibrePaintValue;
     }
 
     case "step": {
@@ -231,6 +254,14 @@ export function validateMapSpec(
         message: `Source "${sourceId}" has unknown type "${source.type}". Headless compilation refuses to emit a silent empty placeholder.`,
       });
       recordSymbolLawEvidence("unknown-source-type", { sourceType: source.type }, sourceId);
+    }
+    if (source.type === "numeric_raster") {
+      // 诚实披露：headless 编译产物只承载会话占位符，离线静态渲染必须由
+      // POST /api/v1/raster-authoring/export 生成嵌入位图，不能假装可渲染。
+      warnings.push(
+        `Source "${sourceId}" is a numeric raster; headless style.json carries a session placeholder. ` +
+        `Use the raster-expression export endpoint for an offline, self-contained snapshot.`,
+      );
     }
   }
 
@@ -386,6 +417,94 @@ function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
   };
 }
 
+// ─── G40：符号资产静态投影（无 IO —— 只算 image 引用与层补丁） ─────────
+
+function g4_detail(s: string): string {
+  return s.slice(0, 160);
+}
+
+interface G40StaticProjection {
+  typeOverride?: "symbol";
+  layout: Record<string, unknown>;
+  paint: Record<string, unknown>;
+  removePaintKeys: string[];
+  imageId?: string;
+  mainFilterExtra?: unknown;
+  sublayers?: Array<{ suffix: string; filter: unknown; imageId: string }>;
+  disclosures: string[];
+  failure?: { code: string; message: string };
+}
+
+export function projectBindingStatic(
+  binding: Record<string, any>, _layerId: string,
+): G40StaticProjection {
+  if (binding.declutter !== undefined && binding.declutter !== false) {
+    return {
+      layout: {}, paint: {}, removePaintKeys: [], disclosures: [],
+      failure: {
+        code: "UNSUPPORTED_DECLUTTER",
+        message: "declutter 组合未实现（默认 icon-allow-overlap=true 如实重叠）",
+      },
+    };
+  }
+  const disclosures: string[] = [];
+  if (binding.kind === "point_symbol") {
+    const params = normalizePointParams(binding.params ?? {});
+    const mainId = pointImageId(binding.content_digest, params as unknown as Record<string, unknown>);
+    const cb = binding.category_binding;
+    return {
+      typeOverride: "symbol",
+      layout: {
+        "icon-image": cb ? categoryIconExpression(cb, binding as unknown as SymbolAssetBinding) : mainId,
+        "icon-anchor": params.anchor,
+        "icon-rotate": params.rotation_deg,
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+        "icon-rotation-alignment": "viewport",
+      },
+      paint: params.opacity < 1 ? { "icon-opacity": params.opacity } : {},
+      removePaintKeys: ["circle-color", "circle-radius", "circle-opacity",
+                        "circle-stroke-color", "circle-stroke-width"],
+      imageId: mainId,
+      disclosures,
+    };
+  }
+  // area_texture
+  const params = normalizeTextureParams(binding.params ?? {});
+  const mainId = patternImageId(binding.content_digest, params as unknown as Record<string, unknown>);
+  const cb = binding.category_binding;
+  const sublayers: Array<{ suffix: string; filter: unknown; imageId: string }> = [];
+  let mainPatternId = mainId;
+  let mainFilterExtra: unknown;
+  if (cb && Array.isArray(cb.map) && cb.map.length > 0) {
+    const rules = cb.map.slice(0, 16);
+    if (cb.map.length > 16) {
+      disclosures.push(`类别纹理规则 ${cb.map.length} 条超子层帽 16，超出部分不编译（披露）`);
+    }
+    for (const rule of rules) {
+      const rid = patternImageId(rule.content_digest, (rule.params ?? {}) as Record<string, unknown>);
+      sublayers.push({
+        suffix: `__texcat_${String(rule.key).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+        filter: ["==", ["get", cb.field], rule.key],
+        imageId: rid,
+      });
+    }
+    mainFilterExtra = ["!", ["in", ["get", cb.field], ["literal", cb.map.map((r: any) => r.key)]]];
+    if (cb.other_mode === "fallback_asset" && cb.other_content_digest) {
+      mainPatternId = patternImageId(cb.other_content_digest, (cb.other_params ?? {}) as Record<string, unknown>);
+    }
+  }
+  return {
+    layout: {},
+    paint: { "fill-pattern": mainPatternId },
+    removePaintKeys: ["fill-color", "fill-translate", "fill-translate-anchor"],
+    imageId: mainId,
+    mainFilterExtra,
+    sublayers,
+    disclosures,
+  };
+}
+
 export function compileMapSpec(
   spec: MapSpec,
   profile?: SpatialMetaProfile
@@ -510,6 +629,24 @@ export function compileMapSpec(
       // validateMapSpec 报告（UNKNOWN_SOURCE_TYPE），这里直接跳过。
       continue;
     }
+    if (source.type === "numeric_raster") {
+      // G20：数值栅格不给原始 source 建 MapLibre 源 —— 每个消费它的层各建
+      // 一个派生 raster source（style_id 不同则瓦片 URL / 缓存身份不同）。
+      // 旧 `type:"raster"` 烘焙 PNG 分支逐字保留在下方。
+      for (const layer of spec.layers || []) {
+        if (layer.source !== key || layer.type !== "raster") continue;
+        const styleId = layer.raster_style?.style_id;
+        if (!styleId) continue;
+        sources[numericRasterSourceId(key, layer.id)] = {
+          type: "raster",
+          tiles: [buildNumericRasterTileUrl(source.refId, layer.id, styleId)],
+          tileSize: 256,
+          minzoom: 0,
+          maxzoom: 20,
+        } as SourceSpecification;
+      }
+      continue;
+    }
     if (source.type === "raster") {
       // Raster source (ADR-0011) → MapLibre `image` source. The colormap is
       // baked into the PNG at render time; the source carries the image URL +
@@ -575,6 +712,7 @@ export function compileMapSpec(
   }
 
   const compiledLayers: CompiledLayer[] = [];
+  const symbolAssetRefs: Array<{ layerId: string; imageId: string; kind: string }> = [];
   const legends: LegendDef[] = [];
   let labelLayerCount = 0;
   // review P2-3：layout 透传存活的 text-field 也需要 style 级 glyphs。
@@ -599,7 +737,7 @@ export function compileMapSpec(
     const planMainMode = planEffective
       ? (rawWindowsOf(repPlan!)[0] ?? repPlan!.windows[0]).mode
       : null;
-    const layerType = planEffective && planMainMode === "visual_heatmap" && layer.type === "circle"
+    let layerType = planEffective && planMainMode === "visual_heatmap" && layer.type === "circle"
       ? "heatmap"
       : layer.type === "circle" && presentation?.mode === "heatmap" ? "heatmap" : layer.type;
     // C11 v1.5：显隐/zoom 单一裁决面（与 live 路径 addLayerSafe 同源）。
@@ -625,11 +763,64 @@ export function compileMapSpec(
       paint: {},
       ...(layer.filter ? { filter: layer.filter } : {}),
     };
+    // G20：数值栅格层引用派生 source（每层独立瓦片 URL）；透明度已在
+    // 服务端瓦片应用一次，不再叠加 MapLibre raster-opacity。
+    if (srcDef?.type === "numeric_raster" && layer.raster_style?.style_id) {
+      maplibreLayer.source = numericRasterSourceId(layer.source, layer.id);
+    }
     // Vector source layers require `source-layer` in MapLibre. MapSpecLayer
     // carries an optional `sourceLayer` passthrough; default to "data" (the
     // encoder's layer name in mvt.py).
     if (srcDef?.type === "vector") {
       maplibreLayer["source-layer"] = layer.sourceLayer ?? "data";
+    }
+    // G40：符号资产绑定投影（与 live MapSpecRuntime 同一合同：点符号 →
+    // symbol/icon-*；面纹理 → fill-pattern；碰撞合同 icon-allow-overlap）。
+    // 静态编译不解析资产内容 —— 输出 image 引用 + 收集到
+    // compiledStyle.symbolAssets 清单（消费方负责注册；与后端 SVG 编译
+    // 的 symbol_assets 注入面对齐）。
+    const g40Binding = (layer as any).symbol_asset;
+    let g40PaintExtra: Record<string, unknown> = {};
+    let g40LayoutExtra: Record<string, unknown> = {};
+    let g40PaintRemove: string[] = [];
+    let g40MainFilterExtra: unknown;
+    const g40SublayerDefs: any[] = [];
+    if (g40Binding && typeof g40Binding === "object") {
+      const g40 = projectBindingStatic(g40Binding as Record<string, any>, layer.id);
+      if (g40.failure) {
+        recordSymbolLawEvidence("symbol-asset-unavailable", {
+          reason: g40.failure.code,
+          detail: g4_detail(g40.failure.message),
+        }, layer.id);
+        continue;
+      }
+      if (g40.typeOverride) {
+        maplibreLayer.type = g40.typeOverride;
+        layerType = g40.typeOverride;
+      }
+      g40LayoutExtra = g40.layout;
+      g40PaintExtra = g40.paint;
+      g40PaintRemove = g40.removePaintKeys;
+      g40MainFilterExtra = g40.mainFilterExtra;
+      for (const sub of g40.sublayers ?? []) {
+        g40SublayerDefs.push({
+          id: `${layer.id}${sub.suffix}`,
+          type: "fill",
+          source: layer.source,
+          filter: sub.filter,
+          paint: { "fill-pattern": sub.imageId },
+          layout: maplibreLayer.layout,
+        });
+        symbolAssetRefs.push({ layerId: layer.id, imageId: sub.imageId, kind: "area_texture" });
+      }
+      if (g40.imageId) {
+        symbolAssetRefs.push({
+          layerId: layer.id, imageId: g40.imageId, kind: g40Binding.kind,
+        });
+      }
+      for (const note of g40.disclosures) {
+        recordSymbolLawEvidence("symbol-asset-disclosure", { detail: g4_detail(note) }, layer.id);
+      }
     }
 
     // C11 v1.5 结构门 ∩ v1.6 表达窗门（合成的空窗 = 层在该表达下不
@@ -882,7 +1073,8 @@ export function compileMapSpec(
         // Raster layer (ADR-0011): colors are baked into the source image; the
         // only paint property is opacity. A raster layer references its
         // (already-emitted) `image` source by id.
-        if (layer.paint.opacity !== undefined)
+        // G20：数值栅格的 opacity 在服务端瓦片应用一次；此处跳过以免双重衰减。
+        if (srcDef?.type !== "numeric_raster" && layer.paint.opacity !== undefined)
           maplibreLayer.paint["raster-opacity"] = compileStyleMethod(layer.paint.opacity);
       } else if (layerType === "fill-extrusion") {
         // ADR-0095: First-class 3D extrusion paint compiling
@@ -1160,7 +1352,25 @@ export function compileMapSpec(
       }
     }
 
+    // G40：绑定 paint/layout/filter 补丁（在全部既有 paint 分支后应用 ——
+    // 资产表达优先于 canonical circle/fill 键，键删除防幽灵残留）。
+    if (g40Binding && typeof g40Binding === "object") {
+      for (const key of g40PaintRemove) delete maplibreLayer.paint[key];
+      Object.assign(maplibreLayer.paint, g40PaintExtra);
+      Object.assign(maplibreLayer.layout, g40LayoutExtra);
+      if (g40MainFilterExtra !== undefined) {
+        maplibreLayer.filter = (maplibreLayer.filter
+          ? ["all", maplibreLayer.filter, g40MainFilterExtra]
+          : g40MainFilterExtra) as typeof maplibreLayer.filter;
+      }
+    }
     compiledLayers.push(maplibreLayer);
+    for (const sub of g40SublayerDefs) {
+      const subAny = sub as any;
+      if (maplibreLayer.minzoom !== undefined) subAny.minzoom = maplibreLayer.minzoom;
+      if (maplibreLayer.maxzoom !== undefined) subAny.maxzoom = maplibreLayer.maxzoom;
+      compiledLayers.push(sub);
+    }
 
     const legend = extractLegendForLayer(layer);
     if (legend) {
@@ -1277,6 +1487,9 @@ export function compileMapSpec(
     html,
     legend: legends,
     report,
+    ...(symbolAssetRefs.length
+      ? { symbolAssets: symbolAssetRefs }
+      : {}),
   };
 }
 

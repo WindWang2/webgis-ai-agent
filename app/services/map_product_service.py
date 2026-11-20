@@ -420,7 +420,39 @@ class MapProductService:
         RestoreStyleIntent（apply_mutation 的锁/CAS/校验/回滚事务）。
         """
         import asyncio
-        row = await asyncio.to_thread(MapProductService.get_version, db, project_id, version_no)
+        from types import SimpleNamespace
+
+        from app.core.database import SessionLocal
+
+        def _load_style_source() -> Any:
+            # The request session stays on its own thread. This worker opens
+            # a fresh session so the read is not a cross-thread Session.
+            with SessionLocal() as owned:
+                loaded = MapProductService.get_version(owned, project_id, version_no)
+                if loaded is None:
+                    return None
+                restore_run_id = loaded.workflow_run_id
+                if restore_run_id is not None:
+                    from app.models.project import WorkflowRun
+
+                    alive = owned.execute(select(WorkflowRun.id).where(
+                        WorkflowRun.id == restore_run_id,
+                        WorkflowRun.project_id == project_id,
+                    )).scalar_one_or_none()
+                    if alive is None:
+                        restore_run_id = None
+                return SimpleNamespace(
+                    mapspec_snapshot=loaded.mapspec_snapshot,
+                    workflow_run_id=restore_run_id,
+                    mapspec_fingerprint=loaded.mapspec_fingerprint,
+                    recipe_id=loaded.recipe_id,
+                    input_dataset_fingerprints=dict(loaded.input_dataset_fingerprints or {}),
+                    compute_plan=list(loaded.compute_plan or []),
+                    artifact_ids=list(loaded.artifact_ids or []),
+                    output_fingerprints=list(loaded.output_fingerprints or []),
+                )
+
+        row = await asyncio.to_thread(_load_style_source)
         if row is None:
             raise ValueError(f"map product version not found: {version_no}")
         if not (isinstance(row.mapspec_snapshot, dict) and row.mapspec_snapshot):
@@ -434,20 +466,7 @@ class MapProductService:
             RestoreStyleIntent,
         )
 
-        # review M-Adv3：悬空 run 绑定（workflow 级联删除 run）会让恢复在
-        # 「会话已变、账本未记」的不诚实点失败 —— 先探测，悬空则恢复行不
-        # 绑 run（计算身份仍从来源版本行继承，append-only 语义不变）。
         restore_run_id = row.workflow_run_id
-        if restore_run_id is not None:
-            from app.models.project import WorkflowRun
-
-            def _run_alive() -> Any:
-                return db.execute(select(WorkflowRun.id).where(
-                    WorkflowRun.id == restore_run_id, WorkflowRun.project_id == project_id,
-                )).scalar_one_or_none()
-            run_alive = await asyncio.to_thread(_run_alive)
-            if run_alive is None:
-                restore_run_id = None
 
         engine = MapSpecLifecycleEngine()
         # 方向 8（U6）：restore 经门面 —— origin=system 归 SYSTEM_DEFAULT
@@ -474,23 +493,32 @@ class MapProductService:
             if getattr(result, "mapspec", None)
             else _copy.deepcopy(row.mapspec_snapshot or {})
         )
-        new_row = await asyncio.to_thread(MapProductService.record_version,
-            db,
-            project_id,
-            workflow_run_id=restore_run_id,
-            mapspec_fingerprint=result.mapspec_fingerprint or row.mapspec_fingerprint,
-            mapspec_revision=getattr(result, "mutation_revision", None),
-            recipe_id=row.recipe_id,
-            input_dataset_fingerprints=row.input_dataset_fingerprints,
-            run_manifest={"steps": _project_steps({"steps": list(row.compute_plan or [])}, include_args=True)},
-            mapspec_snapshot=restored_snapshot,
-            artifact_ids=list(row.artifact_ids or []),
-            artifact_fingerprints=list(row.output_fingerprints or []),
-            label=f"restore-style from V{version_no}",
-            actor=actor or "user",
-            parent_version_no=version_no,
-            lineage_kind="restore",
-        )
+        def _record_restore():
+            with SessionLocal() as owned:
+                created = MapProductService.record_version(
+                    owned,
+                    project_id,
+                    workflow_run_id=restore_run_id,
+                    mapspec_fingerprint=result.mapspec_fingerprint or row.mapspec_fingerprint,
+                    mapspec_revision=getattr(result, "mutation_revision", None),
+                    recipe_id=row.recipe_id,
+                    input_dataset_fingerprints=row.input_dataset_fingerprints,
+                    run_manifest={"steps": _project_steps({"steps": list(row.compute_plan or [])}, include_args=True)},
+                    mapspec_snapshot=restored_snapshot,
+                    artifact_ids=list(row.artifact_ids or []),
+                    artifact_fingerprints=list(row.output_fingerprints or []),
+                    label=f"restore-style from V{version_no}",
+                    actor=actor or "user",
+                    parent_version_no=version_no,
+                    lineage_kind="restore",
+                )
+                return SimpleNamespace(
+                    version_no=created.version_no,
+                    input_dataset_fingerprints=dict(created.input_dataset_fingerprints or {}),
+                    compute_plan=list(created.compute_plan or []),
+                )
+
+        new_row = await asyncio.to_thread(_record_restore)
         return {
             "restored_version_no": new_row.version_no,
             "source_version_no": version_no,

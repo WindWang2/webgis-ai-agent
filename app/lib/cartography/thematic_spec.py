@@ -245,9 +245,11 @@ def build_graduated_spec(
     breaks = classify_values(classify_input, method, k)
     if not breaks:
         return None
-    # #618-19: 全等数值列（常量字段）在 n>k 时 classify 返回单断点 [v]，与
-    # n≤k 分支的 [v, v] 形状不一致 —— 归一化为 [v, v] 产出合法的单级 graduated
-    # spec（此前 create_thematic_map 对常量字段静默 style:None）。
+    # #618-19 家族补齐（G33）：任何方法在（近）常数域上都可能产出**重复**
+    # 断点（equal_interval 的 linspace 全等、std_dev/head_tail 的 [lo,hi]
+    # 全等）——重复断点在 MapSpec 校验（NON_INCREASING_STOPS）必被拒绝。
+    # 去重后统一归一化为 [v, v] 单级合同：不报出不存在的多类分布。
+    breaks = sorted(set(breaks))
     if len(breaks) == 1:
         breaks = [breaks[0], breaks[0]]
     if len(breaks) < 2:
@@ -304,6 +306,78 @@ def build_graduated_spec(
     return spec
 
 
+def build_graduated_spec_from_breaks(
+    field: str,
+    breaks: Sequence[float],
+    palette: str,
+    *,
+    min_val: Optional[float] = None,
+    max_val: Optional[float] = None,
+    labels: Optional[Sequence[str]] = None,
+    class_colors: Optional[Sequence[str]] = None,
+    invert: bool = False,
+    nodata: Optional[Dict[str, str]] = None,
+    unit: Optional[str] = None,
+    title: Optional[str] = None,
+    method: str = "manual",
+    why: str = "",
+) -> Optional[Dict[str, Any]]:
+    """G33：从**人工断点**构建 graduated ``legend_spec``（不重新分类）。
+
+    与 ``build_graduated_spec`` 同一合同形状（breaks/palette_colors/labels/
+    nodata/v2 溯源字段），但断点由作者精确给定——服务端调用前必须已验证
+    严格递增；本函数防御性再验（非有限/长度<2 → None，调用方拒绝）。
+    颜色经同一 ``resolve_thematic_colors``（类中点采样）解析；``invert``
+    反转色序；``class_colors`` 按索引覆盖；``labels`` 缺省自动区间标签。
+
+    ``method`` 记录真实来源（人工编辑传 "manual"），``why`` 携带作者证据
+    ——「人工断点」提交后不得残留「自动 Jenks」的裁决证据（G33 §三.2）。
+    """
+    valid = [b for b in breaks or [] if is_finite_number(b)]
+    if len(valid) != len(breaks or []) or len(valid) < 2:
+        return None
+    for i in range(1, len(valid)):
+        if not valid[i - 1] < valid[i]:
+            return None
+    bs = [float(b) for b in valid]
+    lo = float(min_val) if is_finite_number(min_val) else bs[0]
+    hi = float(max_val) if is_finite_number(max_val) else bs[-1]
+    colors = resolve_thematic_colors(palette, len(bs) - 1, bs, lo, hi)
+    if invert:
+        colors = list(reversed(colors))
+    if class_colors:
+        for i, c in enumerate(class_colors):
+            if i < len(colors) and isinstance(c, str) and c:
+                colors[i] = c
+    if len(colors) != len(bs) - 1:
+        # 防御：色数与类数不一致时拒绝（调用方报 INVALID），不悄悄截断。
+        return None
+    final_labels = [
+        (labels[i] if labels and i < len(labels) and labels[i] else _graduated_label(bs[i], bs[i + 1]))
+        for i in range(len(bs) - 1)
+    ]
+    spec: Dict[str, Any] = {
+        "type": GRADUATED,
+        "field": field,
+        "breaks": bs,
+        "palette": palette,
+        "palette_colors": colors,
+        "method": method,
+        "labels": final_labels,
+        "nodata": nodata if nodata is not None else dict(NODATA_DEFAULT),
+    }
+    if unit is not None:
+        spec["unit"] = unit
+    if title is not None:
+        spec["title"] = title
+    spec["k"] = len(bs) - 1
+    spec["palette_id"] = palette
+    spec["clip_policy"] = "none"
+    spec["why"] = why
+    spec["nodata_label"] = spec["nodata"].get("label", "No data")
+    return spec
+
+
 def build_categorical_spec(
     field: str,
     categories: Sequence[Dict[str, str]],
@@ -311,21 +385,30 @@ def build_categorical_spec(
     palette: Optional[str] = None,
     nodata: Optional[Dict[str, str]] = None,
     title: Optional[str] = None,
+    default: Optional[Dict[str, str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build a categorical ``legend_spec`` from explicit ``{key,color,label}`` entries.
 
     LISA and other categorical emitters already know their category set; this
     normalizes them into the canonical shape with a stable field identity and
     per-category labels. Returns ``None`` when no valid categories are given.
+
+    G33（加性）：条目可携带 ``key_type``（"number"|"string"|"bool"——源值的
+    原始类型，paint match 据此发**类型化** case，数值 1 与文本 "1" 不再在
+    live 端静默失配）；``default``（``{color,label}``）显式声明未列出值的
+    颜色与图例文本（other 桶）。两者缺省时行为与历史逐字节一致。
     """
-    cats: List[Dict[str, str]] = []
+    cats: List[Dict[str, Any]] = []
     for c in categories or []:
         if isinstance(c, dict) and c.get("key") is not None and c.get("color"):
-            cats.append({
+            entry: Dict[str, Any] = {
                 "key": str(c["key"]),
                 "color": str(c["color"]),
                 "label": str(c.get("label") or c["key"]),
-            })
+            }
+            if c.get("key_type") in ("number", "string", "bool"):
+                entry["key_type"] = c["key_type"]
+            cats.append(entry)
         elif isinstance(c, (list, tuple)) and len(c) >= 2:
             cats.append({"key": str(c[0]), "color": str(c[1]), "label": str(c[2] if len(c) > 2 else c[0])})
     if not cats:
@@ -342,6 +425,8 @@ def build_categorical_spec(
         spec["nodata"] = nodata
     if title is not None:
         spec["title"] = title
+    if isinstance(default, dict) and default.get("color"):
+        spec["default"] = {"color": str(default["color"]), "label": str(default.get("label") or "Other")}
     return spec
 
 
@@ -552,6 +637,12 @@ def _graduated_to_step(legend_spec: Dict[str, Any], warnings: List[str]) -> Tupl
         for i in range(1, len(breaks) - 1):
             color_i = palette_colors[i] if i < len(palette_colors) else palette_colors[-1]
             stops.append([float(breaks[i]), color_i])
+        # G33（#618-19 家族补齐）：单级退化域（[v, v]，常数字段）没有内部
+        # 阈值——发一个哨兵 stop（阈值=类边界，同色），满足 MapSpec 校验的
+        # step 最少 1 stop，同时保留 nodata guard 键（live 端 case 包装）。
+        # 语义不变：全域一类一色。
+        if not stops:
+            stops = [[float(breaks[0]), default_color]]
         method: Dict[str, Any] = {
             "method": "step", "field": field, "default": default_color, "stops": stops,
         }
@@ -604,12 +695,29 @@ def _categorical_to_match(
                 key = cat.get("key")
                 color = cat.get("color")
                 if key is not None and color:
+                    # G33：key_type 声明源值原始类型时发**类型化** case
+                    #（MapLibre match 是严格类型比较——数值字段的字符串键在
+                    # live 端从不命中，静默落到 default）。缺省行为不变。
+                    key_type = cat.get("key_type")
+                    if key_type == "number":
+                        try:
+                            num = float(key)
+                            key = int(num) if num.is_integer() else num
+                        except (TypeError, ValueError):
+                            pass
+                    elif key_type == "bool":
+                        key = str(key).lower() == "true"
                     cases.append([key, color])
             elif isinstance(cat, (list, tuple)) and len(cat) >= 2:
                 cases.append([cat[0], cat[1]])
         if cases:
-            # Spec contract: default = last category color (legend_spec.default ignored).
+            # Spec contract: default = last category color. G33（加性）：显式
+            # legend_spec.default（other 桶）优先——作者声明过未列出值的语义
+            # 时不得静默借用末类颜色。
             default_color = cases[-1][1] or fallback_color
+            explicit = legend_spec.get("default")
+            if isinstance(explicit, dict) and explicit.get("color"):
+                default_color = str(explicit["color"])
             return {"method": "match", "field": field, "cases": cases, "default": default_color}, warnings
         warnings.append("categorical_legend_invalid: no valid category entries")
         return None, warnings
@@ -743,11 +851,15 @@ def normalize_legend_spec(legend_spec: Any) -> Optional[Dict[str, Any]]:
         cats = []
         for c in (spec.get("categories") or []):
             if isinstance(c, dict) and c.get("key") is not None and c.get("color"):
-                cats.append({
+                entry = {
                     "key": str(c["key"]),
                     "color": str(c["color"]),
                     "label": str(c.get("label") or c["key"]),
-                })
+                }
+                # G33：类型化类别键在归一化中保留（paint match 类型化依赖）。
+                if c.get("key_type") in ("number", "string", "bool"):
+                    entry["key_type"] = c["key_type"]
+                cats.append(entry)
         spec["categories"] = cats
         if not spec.get("field"):
             spec["field"] = ""
@@ -797,6 +909,7 @@ __all__ = [
     "finite_numbers",
     "resolve_thematic_colors",
     "build_graduated_spec",
+    "build_graduated_spec_from_breaks",
     "build_categorical_spec",
     "build_continuous_spec",
     "build_divergent_spec",

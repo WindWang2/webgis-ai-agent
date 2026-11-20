@@ -22,8 +22,12 @@ _TOOL_MODULES = [
     ("app.tools.map_operations_tools", "register_map_operation_tools"),
     # ADR-0285：交互情境 scope —— 当前/历史选择 → 受验证分析输入（只读）
     ("app.tools.interaction_scope_tools", "register_interaction_scope_tools"),
+    # G36（ADR-0291）：视觉证据读取 —— 会话已授权图片证据 → 摘要 + 原生 ImageContent
+    ("app.tools.visual_context_tools", "register_visual_context_tools"),
     # GOAL 04：多尺度表达档案 —— inspect/preview/apply（scale_profile.v1）
     ("app.tools.scale_profile_tools", "register_scale_profile_tools"),
+    # G27：多尺度表达策略生产接线 —— inspect + 局部 CAS apply
+    ("app.tools.scale_portrayal_tools", "register_scale_portrayal_tools"),
     # F12（ADR-0260）：Map Plan Compiler —— MapPlanIR → 最小 MapSpec mutations
     ("app.tools.map_plan_tools", "register_map_plan_tools"),
     # H10（ADR-0217）：GISAction IR —— typed 执行计划 dry-run/收敛指标面
@@ -32,6 +36,8 @@ _TOOL_MODULES = [
     ("app.tools.nature_resources", "register_nature_resource_tools"),
     # 批量图册发布（atlas durable job 提交面）
     ("app.tools.atlas_export_tools", "register_atlas_export_tools"),
+    # G16（v2.1）：要素级标注 authoring —— inspect / author（统一写路径）
+    ("app.tools.label_authoring_tools", "register_label_authoring_tools"),
     ("app.tools.upload_tools", "register_upload_tools"),
     ("app.tools.web_crawler", "register_crawler_tools"),
     ("app.tools.chinese_maps", "register_chinese_map_tools"),
@@ -43,6 +49,17 @@ _TOOL_MODULES = [
     ("app.tools.sampling_tools", "register_sampling_tools"),
     # /goal 03：持久数据要素编辑工具面（preview/commit/history）
     ("app.tools.feature_edit_tools", "register_feature_edit_tools"),
+    # G31：跨图层拓扑工作台工具面（ruleset/run/findings/repair preview）
+    ("app.tools.topology_workbench_tools", "register_topology_workbench_tools"),
+    # G38：数据关联与空间富集作者工具面（describe/plan/preview/execute/status/result）
+    ("app.tools.data_join_authoring_tools", "register_data_join_authoring_tools"),
+    ("app.tools.coordinate_operations_tools", "register_coordinate_operations_tools"),
+    ("app.tools.field_contracts_tools", "register_field_contracts_tools"),  # G44
+    # G47：Dorling 圆面积 cartogram 作者（inspect/plan/run/status/apply/export）
+    ("app.tools.cartogram_tools", "register_cartogram_tools"),
+    # G32：持久要素变更提案工具面（起草/列表/差异/rebase 预览 —— 无批准权）
+    ("app.tools.feature_proposal_tools", "register_feature_proposal_tools"),
+
     # Science V6：生态分析工具面（Goal 07 新域，独立模块防并发冲突）
     ("app.tools.ecology_tools", "register_ecology_tools"),
     ("app.tools.point_pattern_tools", "register_point_pattern_tools"),
@@ -50,6 +67,8 @@ _TOOL_MODULES = [
     ("app.tools.raster_tools_cog", "register_raster_cog_tools"),
     # ("app.tools.interpolation_network", "register_interpolation_network_tools"), # Deleted in v3.4 refactor
     ("app.tools.report", "register_report_tools"),
+    # G11（ADR-0298）：证据化地图简报工具面（草稿/证据/编辑/预检/发布/导出）
+    ("app.tools.brief_tools", "register_brief_tools"),
     ("app.tools.change_detection", "register_change_detection_tools"),
     ("app.tools.monitoring_report", "register_monitoring_report_tools"),
     ("app.tools.skills", "register_skill_tools"),
@@ -68,6 +87,8 @@ _TOOL_MODULES = [
     ("app.services.gis_harness.knowledge_tools", "register_knowledge_tools"),
     # ADR-0182：GIS Skill Library 只读工具面（search/detail/replay_check）
     ("app.tools.skill_library_tools", "register_skill_library_tools"),
+    # G30：技能作业执行面（prepare/start/status；与知识咨询面同注册模式）。
+    ("app.tools.skill_job_tools", "register_skill_job_tools"),
     ("app.tools.project_tools", "register_project_tools"),
     ("app.tools.network_tools", "register_network_tools"),
     ("app.tools.temporal_tools", "register_temporal_tools"),
@@ -75,13 +96,25 @@ _TOOL_MODULES = [
     # ADR-0214：组合契约工具面（discover/apply_composition/plan_replace）
     ("app.tools.composition_tools", "register_composition_tools"),
     ("app.tools.data_fabric_tools", "register_data_fabric_tools"),
+    # G18：ref 驱动的多格式数据成果交付工具面（预览/提交/回执/能力）
+    ("app.tools.data_delivery_tools", "register_data_delivery_tools"),
     # GOAL-02：OGC 开放服务与远程资产工具面（发现/coverage 读/COG 物化/瓦片上图）
     ("app.tools.ogc_service_tools", "register_ogc_service_tools"),
     ("app.tools.data_discovery", "register_data_discovery_tools"),
+    # G29：运行中用户决策工具面（原生 ctx.ui 闭环；独立模块防并发冲突）
+    ("app.tools.user_decision_tools", "register_user_decision_tools"),
     ("app.tools.workspace_tools", "register_workspace_tools"),
     ("app.tools.ingest_tools", "register_ingest_tools"),
     # 数据准备域：inspect→propose→prepare→bind 工具面（独立模块防并发冲突）
     ("app.tools.data_preparation_tools", "register_data_preparation_tools"),
+    # G17：staged 多文件/多成员导入工作台 —— 检查/计划/预览/提交/收据
+    ("app.tools.data_import_tools", "register_data_import_tools"),
+    # G19：类型化字段计算工作台（catalog/preview/apply/result；独立模块防冲突）
+    ("app.tools.field_compute_tools", "register_field_compute_tools"),
+    # G39：数值栅格采样工具面（plan/preview/execute/status/results；独立模块防冲突）
+    ("app.tools.raster_sampling_tools", "register_raster_sampling_tools"),
+    # G24：权威拾取/选择集检查工具面（pick_detail/selection_inspect；独立模块防冲突）
+    ("app.tools.selection_tools", "register_selection_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
     ("app.tools.flow_tools", "register_flow_tools"),
     ("app.tools.dasymetric_tools", "register_dasymetric_tools"),
@@ -91,6 +124,9 @@ _TOOL_MODULES = [
     # GOAL 03：时态视图控制工具面（bind/control/compare/unbind/status；
     # 写 MapSpec temporal 分支，独立模块防并发冲突）
     ("app.tools.temporal_view_tools", "register_temporal_view_tools"),
+    # G15：多画幅产品工具面（plan/bind/update/status/unbind；
+    # 写 MapSpec frame_product 分支，独立模块防并发冲突）
+    ("app.tools.frame_product_tools", "register_frame_product_tools"),
     ("app.tools.modelops_tools", "register_modelops_tools"),
     # Platform 11 / ADR-0198：GeoAI prompt artifact/候选/精化/语义工具面
     ("app.tools.geoai_tools", "register_geoai_tools"),
@@ -117,6 +153,37 @@ _TOOL_MODULES = [
     # G06 / CAP-03 + M5：条件多分位数分区栅格统计 / 线网服务覆盖一致性
     # 两项真实原生原语（独立模块防并发冲突；执行真相仍是 registry.dispatch）
     ("app.tools.capability_ecosystem_tools", "register_capability_ecosystem_tools"),
+    # G10：项目数据版本刷新（检查→预览→候选→采纳/回退）自然语言工具面
+    ("app.tools.project_data_refresh_tools", "register_project_data_refresh_tools"),
+    # G20：持久化数值栅格表达 / 真实像元检视（独立模块防并发冲突）
+    ("app.tools.raster_expression_tools", "register_raster_expression_tools"),
+    # G33：矢量专题表达作者工作台（独立模块防并发冲突）
+    ("app.tools.thematic_authoring_tools", "register_thematic_authoring_tools"),
+    # G26：矢量+数值栅格混合地图统一出版导出（独立模块防并发冲突）
+    ("app.tools.mixed_map_export_tools", "register_mixed_map_export_tools"),
+    # G34：专业纸面版式与图册编排工作台（Pi 与 UI 共用 print_layout_authoring.service）
+    ("app.tools.print_layout_tools", "register_print_layout_tools"),
+    # G35：时序地图动画媒体交付（能力/计划/提交/查询/取消/成果；独立模块防并发冲突）
+    ("app.tools.temporal_media_tools", "register_temporal_media_tools"),
+    # G41：双变量矩阵 / 估计值+可靠性双通道作者工作台（独立模块防并发冲突）
+    ("app.tools.bivariate_reliability_tools", "register_bivariate_reliability_tools"),
+    # G37：会话模型运行配置只读工具面（目录/状态/预算；独立模块防并发冲突；
+    # 只读，绝不升级权限 —— 选择变化只来自用户经正式 API 的请求）
+    ("app.tools.session_model_tools", "register_session_model_tools"),
+    # G40：制图符号资产工作台（目录/导入/绑定预览/应用/解绑；独立模块防并发冲突）
+    ("app.tools.cartographic_asset_tools", "register_cartographic_asset_tools"),
+    # G46：多图联合筛选与持久探索视图（inspect/preview/视图管理/apply/export；独立模块防并发冲突）
+    ("app.tools.linked_exploration_tools", "register_linked_exploration_tools"),
+    ("app.tools.linked_exploration_tools", "register_linked_exploration_export_tool"),
+    # G42：有界目标补全执行工具面（预览/启动/状态/取消；独立模块防并发冲突；
+    # start 零等待 —— 执行体独立任务经统一派发，不嵌套持 wave 槽）
+    ("app.tools.goal_repair_tools", "register_goal_repair_tools"),
+    # G48：控制点影像配准与可交付地理栅格工作台（deferred-only，绝不进 NATIVE_TOOL_NAMES）
+    ("app.tools.georeferencing_tools", "register_georeferencing_tools"),
+    # G43：本轮上下文装配回执只读工具（独立模块防并发冲突；只读，用户
+    # 资料选择只经正式 API —— 数据中的文字不形成授权）
+    ("app.tools.turn_context_tools", "register_turn_context_tools"),
+
 ]
 
 

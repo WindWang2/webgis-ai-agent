@@ -39,7 +39,11 @@ def _svg_layers(layers: list) -> list:
         label = layer.get("label")
         if not isinstance(label, dict) or not label.get("field") or layer.get("type") in ("raster", "heatmap", "background", "hillshade", "symbol", "text"):
             continue
+        # G16（R1-P1）：__label_of 记录宿主原始层 id —— 障碍身份豁免与
+        # 覆写失效披露都按原始层寻址（合成层 id ≠ 障碍层 id 曾致自身墨迹
+        # 豁免失效）。该键只存在于导出函数的运行时层视图，不落盘。
         out.append({**layer, "id": f"{layer.get('id', '')}-label", "type": "symbol",
+                    "__label_of": layer.get("id"),
                     "layout": {**(layer.get("layout") or {}), "text-field": ["get", label["field"]], "text-size": label.get("size", 12)},
                     "paint": {"text-color": label.get("color", "#000000"), "text-halo-color": label.get("haloColor", "#ffffff"), "text-halo-width": label.get("haloWidth", 1)}})
     return out

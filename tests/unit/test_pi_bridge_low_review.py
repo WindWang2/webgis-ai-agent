@@ -233,6 +233,15 @@ async def test_stream_writer_loss_targets_consumer_and_aborts_rpc(turn_host, mon
             started.set()
         return {}
     rpc.request = AsyncMock(side_effect=request)
+
+    # G22-P1：控制面（clear_queue/abort）经写相位 issue 拆分。
+    async def _issue(command, data=None):
+        fut = asyncio.get_running_loop().create_future()
+        fut.set_result({})
+        return SimpleNamespace(id=f"i-{command}", command=command, future=fut)
+
+    rpc.issue = AsyncMock(side_effect=_issue)
+    rpc.collect = AsyncMock(return_value={})
     async def consume():
         return [event async for event in bridge.PiBridge(rpc=rpc).stream_prompt("goal", session_id="low-session")]
     task = asyncio.create_task(consume())
@@ -240,7 +249,7 @@ async def test_stream_writer_loss_targets_consumer_and_aborts_rpc(turn_host, mon
     lock.lost = True
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 1)
-    assert any(call.args[0] == "abort" for call in rpc.request.call_args_list)
+    assert any(call.args[0] == "abort" for call in rpc.issue.call_args_list)
     turn_id = turn_host.await_args.args[1]
     assert bridge.pop_turn_abort_source(turn_id) == "policy"
     lock.release.assert_called_once()
@@ -376,3 +385,70 @@ async def test_old_outer_cleanup_preserves_successor_abort_routing(turn_host, mo
     finally:
         new.cancel()
         await asyncio.gather(new, return_exceptions=True)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.asyncio
+async def test_receipt_scheduler_failure_preserves_terminal_settlement(
+    turn_host, monkeypatch, streaming,
+):
+    """#2214: optional receipt failure cannot interrupt either teardown path."""
+    import app.services.chat.model_runtime.usage_ledger as ledger
+    import app.services.chat.pi_surface_metrics as metrics
+
+    persist = MagicMock(side_effect=RuntimeError("receipt backend unavailable"))
+    monkeypatch.setattr(ledger, "spawn_persist_task", persist)
+    summary = MagicMock(wraps=bridge.emit_turn_summary)
+    monkeypatch.setattr(bridge, "emit_turn_summary", summary)
+    accounting = MagicMock()
+    # maybe_record_turn is imported lazily at the terminal accounting seam.
+    import app.lib.harness.replay.recorder as recorder
+    monkeypatch.setattr(recorder, "maybe_record_turn", accounting)
+    monkeypatch.setattr(metrics, "record_timing", MagicMock())
+    rpc = _rpc([{"type": "agent_end", "messages": []}, {"type": "agent_settled"}])
+    pi = bridge.PiBridge(rpc=rpc)
+    sink = MagicMock()
+    if streaming:
+        frames = [frame async for frame in pi.stream_prompt(
+            "goal", session_id="low-session", on_turn_result=sink,
+        )]
+        assert frames
+        sink.assert_called_once()
+    else:
+        result = await pi.prompt("goal", session_id="low-session")
+        assert result["sessionId"] == "low-session"
+    persist.assert_called_once()
+    collector = persist.call_args.args[0]
+    assert collector.write_failures >= 1
+    pi._settle_turn_outcome.assert_awaited_once()
+    summary.assert_called_once()
+    accounting.assert_called_once()
+    turn_host.assert_awaited_once()
+    assert pi._lock_lease is None
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.asyncio
+async def test_turn_entry_captures_server_caller_scope(turn_host, streaming):
+    """#2210: both real bridge entrypoints retain the authenticated route scope."""
+    rpc = _rpc([{"type": "agent_settled"}])
+    pi = bridge.PiBridge(rpc=rpc)
+    kwargs = dict(session_id="low-session", context_user_id="real-user",
+                  context_org_id="17", context_project_id="real-project",
+                  context_owner_token="anonymous-capability")
+    if streaming:
+        _ = [frame async for frame in pi.stream_prompt("goal", **kwargs)]
+    else:
+        await pi.prompt("goal", **kwargs)
+    registration = bridge.register_active_pi_turn.await_args
+    caller = registration.kwargs["caller"]
+    assert registration.args[0] == "low-session"
+    assert caller.user_id == "real-user"
+    assert caller.org_id == "17"
+    assert caller.project_id == "real-project"
+    assert caller.owner_token == "anonymous-capability"
+    assert "anonymous-capability" not in repr(caller)
+    from dataclasses import FrozenInstanceError
+    with pytest.raises(FrozenInstanceError):
+        caller.user_id = "forged"
+    assert "anonymous-capability" not in str(rpc.request.call_args_list)

@@ -388,6 +388,7 @@
 | webgis_preview_scale_representation | 1.0#cv1 | stable | cacheable_read | medium | heavy | large | cartography_scale_preview |
 | webgis_product_edit | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |
 | webgis_project_init | 1.0#cv1 | stable | state_mutation | fast | light | small | map_export_publishing |
+| webgis_requirement_compile | 1.0#cv1 | stable | deterministic_compute | fast | light | small | plan_workflow_orchestration |
 | webgis_rollback | 1.0#cv1 | stable | state_mutation | medium | medium | medium | workspace_snapshot |
 | webgis_runtime_validate | 1.0#cv1 | stable | artifact_creation | slow | medium | medium | map_export_publishing |
 | webgis_save_composition_template | 1.0#cv1 | stable | state_mutation | fast | light | small | thematic_cartography |

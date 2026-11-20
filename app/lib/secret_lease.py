@@ -138,7 +138,10 @@ class EnvSecretProvider:
     """
 
     def __init__(self, env: Optional[Dict[str, str]] = None):
-        self._env = env  # None = 真 os.environ(测试注入 dict)
+        # None = 真 os.environ；显式注入（含空 dict）必须严格使用注入面 —
+        # ``self._env or os.environ`` 会让空 dict 静默回落真环境（#2139 F2：
+        # 测试/隔离部署注入空环境时期望 typed miss，却读到宿主 secret）。
+        self._env = env
 
     def resolve_material(self, credential_id: str) -> Optional[str]:
         cid = str(credential_id or "").strip()[:_STR_MAX]
@@ -148,7 +151,7 @@ class EnvSecretProvider:
             ch if ch.isalnum() else "_" for ch in cid
         ).upper()
         try:
-            raw = (self._env or os.environ).get(var, "")
+            raw = (os.environ if self._env is None else self._env).get(var, "")
         except Exception:  # noqa: BLE001 — 读取失败 = typed miss
             return None
         return raw or None
@@ -343,7 +346,12 @@ def resolve_secret_lease(credential_id: str) -> Optional[str]:
     绝不进日志/trace/SSE/evidence/返回 payload —— 调用方违约由既有 redaction
     scrub 兜底 + 审计追责;本函数自身零日志零投影。
     """
+    manager = get_secret_lease_manager()
     for lease in _current_leases.get():
         if lease.credential_id == str(credential_id or "").strip()[:_STR_MAX]:
-            return get_secret_lease_manager().resolve(lease)
+            # 首个命中可能已过期/被吊销 —— 继续找后续同凭证的有效租约
+            # （#2139 F2：不得因旧租约挡掉新租约）。
+            material = manager.resolve(lease)
+            if material is not None:
+                return material
     return None

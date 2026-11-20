@@ -210,7 +210,15 @@ class SkillPolicy:
             )
 
         selection = self._trusted.resolve(facts, packs=TRUSTED_PACKS)
-        decision = self._decide_trusted(selection, facts, sig, prefer_execute=prefer_execute)
+        # G30：用户显式选择（chat.skill_name / 工作台）优先于意图模糊匹配
+        # —— 只消除「用哪个方法」的歧义；弃用/隔离/eligibility 硬门照常。
+        explicit = str(getattr(facts, "explicit_skill_id", "") or "").strip()
+        if explicit:
+            decision = self._decide_explicit(explicit, facts, sig,
+                                              prefer_execute=prefer_execute)
+        else:
+            decision = self._decide_trusted(selection, facts, sig,
+                                            prefer_execute=prefer_execute)
 
         if allow_shadow and self._shadow is not None:
             shadow = self._pick_shadow(facts, exclude=decision.selected_skill)
@@ -221,6 +229,88 @@ class SkillPolicy:
                     decision.reasons.append("shadow_candidate")
 
         return decision
+
+    def _decide_explicit(
+        self,
+        skill_id: str,
+        facts: "SelectionFacts",
+        sig: str,
+        *,
+        prefer_execute: bool,
+    ) -> SkillPolicyDecision:
+        """显式选择的策略裁决（G30）。
+
+        显式选择只消除选择歧义：confidence=1.0 只描述「用户选了它」，
+        不代表科学适用性；eligibility 由 resolver 事实门照常裁决，
+        弃用→fallback（披露替代）、隔离→blocked、core 之外→guide。
+        """
+        skill = self._trusted.get(skill_id)
+        if skill is None:
+            return SkillPolicyDecision(
+                mode="none",
+                situation_signature=sig,
+                reasons=["explicit_selection_not_in_trusted_library"],
+                fallback_reason="explicit_skill_not_found",
+                rejected_codes=["EXPLICIT_SKILL_NOT_FOUND"],
+                matched_signals=["explicit_user_selection"],
+            )
+        if skill.id in self._quarantine:
+            return SkillPolicyDecision(
+                mode="blocked",
+                selected_skill=skill.id,
+                skill_version=skill.version,
+                trust_tier="quarantined",
+                confidence=1.0,
+                confidence_band="high",
+                eligibility_ok=False,
+                situation_signature=sig,
+                reasons=["explicit_selection", "quarantined"],
+                fallback_reason="skill_quarantined",
+                rejected_codes=["QUARANTINED"],
+                matched_signals=["explicit_user_selection"],
+            )
+        tier = trust_tier_for(skill)
+        if skill.deprecated:
+            return SkillPolicyDecision(
+                mode="fallback",
+                selected_skill=skill.id,
+                skill_version=skill.version,
+                trust_tier="deprecated",
+                confidence=1.0,
+                confidence_band="high",
+                eligibility_ok=True,
+                situation_signature=sig,
+                reasons=["explicit_selection", "deprecated"],
+                fallback_reason=(
+                    f"skill_deprecated; alternative={skill.deprecated_by}"),
+                rejected_codes=["DEPRECATED"],
+                matched_signals=["explicit_user_selection"],
+            )
+        # eligibility：unknown ≠ 不满足（既有红线）；不满足时如实 fallback
+        try:
+            rejection = self._trusted.check_eligibility(skill, facts)
+            eligibility_ok = rejection is None
+            unmet = list(getattr(rejection, "reason_codes", []) or [])[:6] \
+                if rejection is not None else []
+        except Exception:  # noqa: BLE001 — 资格判定缺席不越权拒绝
+            eligibility_ok, unmet = True, []
+        mode: SkillPolicyMode = "guide"
+        if prefer_execute and eligibility_ok and skill.is_runnable_asset():
+            mode = "execute_guided"
+        reasons = ["explicit_selection", "eligible" if eligibility_ok else "ineligible"]
+        return SkillPolicyDecision(
+            mode=mode,
+            selected_skill=skill.id,
+            skill_version=skill.version,
+            trust_tier=tier,
+            confidence=1.0,
+            confidence_band="high",
+            eligibility_ok=eligibility_ok,
+            situation_signature=sig,
+            reasons=reasons,
+            rejected_codes=[f"ELIGIBILITY:{u}" for u in unmet] if unmet else [],
+            matched_signals=["explicit_user_selection"],
+        )
 
     def _decide_trusted(
         self,

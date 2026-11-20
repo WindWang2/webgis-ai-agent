@@ -142,8 +142,10 @@ def test_calculator_undeclared_nan_becomes_nodata(_data_dir):
     assert stats["pixel_count"] == 3
     with rasterio.open(stats["output_path"]) as out:
         arr = out.read(1)
-    # The NaN position is the output nodata (0 by default), not a computed value.
-    assert arr[0, 1] == 0
+    # The NaN position is the output nodata (NaN by default since #2133),
+    # not a computed value.
+    assert np.isnan(arr[0, 1])
+    assert np.isnan(out.nodata)
 
 
 def test_calculator_unaligned_nodata_footprint(_data_dir):
@@ -169,3 +171,76 @@ def test_calculator_unaligned_nodata_footprint(_data_dir):
             arr = out.read(1)
             assert arr[0, 0] == 15.0
             assert arr[9, 9] == out.nodata
+
+
+# ── #2132 / #2133 回归 ───────────────────────────────────────────────
+
+def test_calculator_output_names_unique_per_expression(_data_dir):
+    """#2132: 同一输入不同 expression 不得覆盖彼此产物。"""
+    a = np.arange(16, dtype=np.float32).reshape(4, 4) + 1.0
+    pa = _write_raster(os.path.join(_data_dir, "uniq_calc.tif"), a)
+    r1 = raster_calculator(pa, expression="A * 2", constant=0)
+    r2 = raster_calculator(pa, expression="A + 100", constant=0)
+    assert r1["output_path"] != r2["output_path"]
+    with rasterio.open(r1["output_path"]) as out:
+        np.testing.assert_array_equal(out.read(1), a * 2)
+    with rasterio.open(r2["output_path"]) as out:
+        np.testing.assert_array_equal(out.read(1), a + 100)
+
+
+def test_reclassify_output_names_unique_per_scheme(_data_dir):
+    """#2132: 同一输入不同 scheme 不得覆盖彼此产物。"""
+    from app.lib.geo_analysis.raster_math import reclassify
+    a = np.array([[1, 2], [3, 4]], dtype=np.float32)
+    pa = _write_raster(os.path.join(_data_dir, "uniq_recl.tif"), a)
+    s1 = [{"min": 1, "max": 2, "value": 10}, {"min": 3, "max": 4, "value": 20}]
+    s2 = [{"min": 1, "max": 4, "value": 99}]
+    r1 = reclassify(pa, s1)
+    r2 = reclassify(pa, s2)
+    assert r1["output_path"] != r2["output_path"]
+    with rasterio.open(r1["output_path"]) as out:
+        assert out.read(1)[0, 0] == 10
+    with rasterio.open(r2["output_path"]) as out:
+        assert out.read(1)[0, 0] == 99
+
+
+def test_resample_output_names_unique_per_resolution(_data_dir):
+    """#2132: 同一输入不同分辨率不得覆盖彼此产物。"""
+    a = np.arange(64, dtype=np.float32).reshape(8, 8)
+    pa = _write_raster(os.path.join(_data_dir, "uniq_resamp.tif"), a)
+    from app.lib.geo_analysis.raster_math import resample_raster
+    r1 = resample_raster(pa, target_resolution=2.0)
+    r2 = resample_raster(pa, target_resolution=4.0)
+    assert r1["output_path"] != r2["output_path"]
+    assert r1["new_shape"] != r2["new_shape"]
+
+
+def test_calculator_legal_zero_results_survive(_data_dir):
+    """#2133: 无 nodata 源默认 out_nodata=NaN——A−B 相等的合法零值不被吞。"""
+    a = np.array([[5.0, 3.0], [3.0, 5.0]], dtype=np.float32)
+    pa = _write_raster(os.path.join(_data_dir, "zeros.tif"), a)  # nodata=None
+    stats = raster_calculator(pa, expression="A - B", constant=3.0)
+    with rasterio.open(stats["output_path"]) as out:
+        arr = out.read(1)
+        assert out.nodata is not None and np.isnan(out.nodata)
+    # (0,1) 与 (1,0) 的合法零值结果是有效像元，不是 nodata
+    assert arr[0, 1] == 0.0 and arr[1, 0] == 0.0
+    assert stats["pixel_count"] == 4
+
+
+def test_reclassify_zero_class_survives_and_sentinel_disclosed(_data_dir):
+    """#2133: value=0 类别在无 nodata 源上不被当 nodata；哨兵选择进披露。"""
+    from app.lib.geo_analysis.raster_math import reclassify
+    a = np.array([[1, 2], [3, 99]], dtype=np.float32)
+    pa = _write_raster(os.path.join(_data_dir, "recl_zero.tif"), a)
+    scheme = [{"min": 1, "max": 1, "value": 0}, {"min": 3, "max": 3, "value": 1}]
+    result = reclassify(pa, scheme)
+    with rasterio.open(result["output_path"]) as out:
+        arr = out.read(1)
+        nd = out.nodata
+    # (0,0) 判进 value=0 类，保持有效 0（修复前：默认 nodata=0 会吞掉它）
+    assert arr[0, 0] == 0
+    # 未匹配像元 (1,1) 写成哨兵而不是 0
+    assert arr[1, 1] == nd
+    assert nd != 0
+    assert "nodata_disclosure" in result

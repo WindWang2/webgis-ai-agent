@@ -54,6 +54,13 @@ class LRUCache(OrderedDict):
                 oldest = next(iter(self))
                 del self[oldest]
 
+    def get(self, key, default=None):
+        with self._lock:
+            if key not in self:
+                return default
+            self.move_to_end(key)
+            return super().__getitem__(key)
+
     def __contains__(self, key):
         with self._lock:
             return super().__contains__(key)

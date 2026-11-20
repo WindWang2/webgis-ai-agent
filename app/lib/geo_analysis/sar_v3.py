@@ -166,6 +166,17 @@ def _horn_gradient(dem: np.ndarray, cell_size: float) -> Tuple[np.ndarray, np.nd
     return gx, gy
 
 
+def _gradient_reliable(valid_dem: np.ndarray) -> np.ndarray:
+    """Horn 3×3 梯度可信掩膜：自身与 8 邻域全部有效（#2236）。
+
+    邻域含 nodata/NaN 的像元，其坡度/坡向被悬崖差分外推为伪值，
+    必须连同 nodata 本体一起判为无效（披露口径："1 像元梯度裙边"）。
+    """
+    neighborhood = uniform_filter(valid_dem.astype(float), size=3,
+                                  mode="reflect")
+    return valid_dem & (neighborhood >= 1.0 - 1e-9)
+
+
 def _terrain_geometry(
     dem: np.ndarray,
     cell_size: float,
@@ -424,13 +435,19 @@ def coherence_estimate(
             correction_hint="检查 nodata 设置或两历元输入")
     valid_f = valid.astype(float)
 
+    # 无效样本先置 0 再进窗均值：NaN/Inf × 0 仍是 NaN，会毒化整个窗口
+    # （#2236）。n_pairs 仍按公共有效对计数，分子分母口径一致。
     cross = comp_a * np.conj(comp_b)
-    num_re = uniform_filter(cross.real * valid_f, size=w, mode="reflect")
-    num_im = uniform_filter(cross.imag * valid_f, size=w, mode="reflect")
-    pow_a = uniform_filter((comp_a.real ** 2 + comp_a.imag ** 2) * valid_f,
-                           size=w, mode="reflect")
-    pow_b = uniform_filter((comp_b.real ** 2 + comp_b.imag ** 2) * valid_f,
-                           size=w, mode="reflect")
+    num_re = uniform_filter(np.where(valid, cross.real, 0.0),
+                            size=w, mode="reflect")
+    num_im = uniform_filter(np.where(valid, cross.imag, 0.0),
+                            size=w, mode="reflect")
+    pow_a = uniform_filter(
+        np.where(valid, comp_a.real ** 2 + comp_a.imag ** 2, 0.0),
+        size=w, mode="reflect")
+    pow_b = uniform_filter(
+        np.where(valid, comp_b.real ** 2 + comp_b.imag ** 2, 0.0),
+        size=w, mode="reflect")
     with np.errstate(divide="ignore", invalid="ignore"):
         denom = np.sqrt(pow_a * pow_b)
         gamma = np.hypot(num_re, num_im) / np.where(denom > 0, denom, np.nan)
@@ -533,17 +550,21 @@ def radiometric_terrain_correction(
 
     geom = _terrain_geometry(dem_p, cs, np.deg2rad(theta), np.deg2rad(az))
     cos_tl = geom["cos_tl"]
+    geom_ok = _gradient_reliable(valid_dem)
     # 无效几何 = 阴影（cosθl ≤ 0）∪ 叠掩（面坡且 α > θi——cos 无符号公式
     # 对 α−θi 为偶函数，须显式剔除，否则把叠掩当合法小角放大）。
     layover_mask = geom["facing"] & (geom["slope"] > np.deg2rad(theta))
     with np.errstate(divide="ignore", invalid="ignore"):
         gamma_flat = np.where(
-            valid_sig & valid_dem & (cos_tl > 0) & np.isfinite(cos_tl)
+            valid_sig & geom_ok & (cos_tl > 0) & np.isfinite(cos_tl)
             & ~layover_mask,
             sig * np.cos(np.deg2rad(theta)) / np.where(cos_tl > 0, cos_tl, 1.0),
             np.nan)
 
-    both_valid = valid_sig & valid_dem
+    both_valid = valid_sig & geom_ok
+    local_incidence = np.rad2deg(
+        np.arccos(np.clip(cos_tl, -1.0, 1.0)))
+    local_incidence = np.where(geom_ok, local_incidence, np.nan)
     invalid_geom = int(np.sum(both_valid & (
         ~(np.isfinite(cos_tl) & (cos_tl > 0)) | layover_mask)))
     disclosure = (
@@ -567,7 +588,7 @@ def radiometric_terrain_correction(
     }
     return {
         "array": np.asarray(gamma_flat, dtype=float),
-        "local_incidence_deg": np.rad2deg(np.arccos(np.clip(cos_tl, -1.0, 1.0))),
+        "local_incidence_deg": np.asarray(local_incidence, dtype=float),
         "meta": meta,
     }
 
@@ -607,7 +628,8 @@ def layover_shadow_mask(
     geom = _terrain_geometry(dem_p, cs, theta_rad, np.deg2rad(az))
     cos_tl = geom["cos_tl"]
 
-    finite_geom = valid_dem & theta_valid & np.isfinite(cos_tl)
+    finite_geom = valid_dem & _gradient_reliable(valid_dem) \
+        & theta_valid & np.isfinite(cos_tl)
     facing = geom["facing"]
     shadow = finite_geom & (cos_tl <= 0)
     layover = finite_geom & ~shadow & facing & (geom["slope"] > theta_rad)

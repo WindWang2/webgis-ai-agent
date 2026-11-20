@@ -26,6 +26,8 @@ function isProtectedPath(path: string): boolean {
   if (path.startsWith('/api/v1/export/download/')) return true;
   // /api/v1/reports/{id}/download
   if (/^\/api\/v1\/reports\/[^/]+\/download$/.test(path)) return true;
+  // /api/v1/georeferencing/artifacts/{id}/download
+  if (/^\/api\/v1\/georeferencing\/artifacts\/[^/]+\/download$/.test(path)) return true;
   return false;
 }
 
@@ -46,7 +48,11 @@ export function filenameFromUrl(url: string): string {
   const path = toApiPath(cleaned);
   const segments = path.split('/').filter(Boolean);
   const last = segments[segments.length - 1] ?? 'download';
-  return decodeURIComponent(last);
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
 }
 
 /**

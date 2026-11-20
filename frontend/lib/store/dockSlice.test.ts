@@ -1,5 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { bottomDockHeightLimit, rightDockWidthLimit } from '@/lib/store/slices/dockSlice';
+import { sidebarWidthLimit } from '@/lib/store/slices/uiSlice';
 
 /**
  * Dock slice（Workspace V2 / Goal C5）—— 工作区停靠模型。
@@ -94,6 +96,24 @@ describe('dockSlice', () => {
     expect(s.dockPlacements['chart-a']).toBeUndefined();
     expect(s.dockPlacements['chart-b']).toBeUndefined();
     expect(s.rightDock.panels).toEqual([]);
+  });
+
+  it('dock and sidebar caps grow with a wide viewport', () => {
+    const width = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+    const height = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 2400 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1600 });
+    useHudStore.getState().setRightDockWidth(2000);
+    useHudStore.getState().setBottomDockHeight(2000);
+    useHudStore.getState().setSidebarWidth(2000);
+    expect(useHudStore.getState().rightDockWidth).toBe(rightDockWidthLimit().max);
+    expect(useHudStore.getState().rightDockWidth).toBeGreaterThan(560);
+    expect(useHudStore.getState().bottomDockHeight).toBe(bottomDockHeightLimit().max);
+    expect(useHudStore.getState().bottomDockHeight).toBeGreaterThan(560);
+    expect(useHudStore.getState().sidebarWidth).toBe(sidebarWidthLimit().max);
+    expect(useHudStore.getState().sidebarWidth).toBeGreaterThan(420);
+    if (width) Object.defineProperty(window, 'innerWidth', width);
+    if (height) Object.defineProperty(window, 'innerHeight', height);
   });
 
   it('dock sizes clamp, persist in the slice and reset', () => {

@@ -168,6 +168,12 @@ def _output_fingerprint(payload: dict[str, Any]) -> str:
     return "fp:" + hashlib.sha256(canonical_dumps(projection).encode("utf-8")).hexdigest()[:16]
 
 
+def cache_owner_isolated(owner_scope: Optional[str]) -> bool:
+    """共享字面量 ``anonymous`` 不能当复用键：无 uid、无 session 的调用者
+    会跨租户命中同一行，result_ref 指向别人的会话。"""
+    return bool(owner_scope) and owner_scope != "anonymous"
+
+
 def owner_scope_for(
     caller: Optional[dict[str, Any]], session_id: Optional[str] = None
 ) -> str:
@@ -1097,7 +1103,7 @@ class GeoExecutionEngine:
         # 复用：语义指纹命中 + owner 域隔离 + 策略允许 → 校验 checkpoint
         # 上游一致性后跳过执行（ADR-0101 D4）。
         # owner_scope 使不同用户/会话即使指纹相同也绝不共享缓存条目（SEC）。
-        if node.reuse == NodeReusePolicy.ALLOW:
+        if node.reuse == NodeReusePolicy.ALLOW and cache_owner_isolated(owner_scope):
             cached = self._store.get(reuse_key, owner_scope=owner_scope, run_id=run.run_id)
             if cached is not None and _SIZE_KEY in cached:
                 stale = self._checkpoint_stale(node, cached, outputs_fp)
@@ -1149,14 +1155,15 @@ class GeoExecutionEngine:
                 outputs[node.node_id] = payload
                 out_fp = _output_fingerprint(payload)
                 outputs_fp[node.node_id] = out_fp
-                self._store.put(reuse_key, {
-                    _NODE_FP_KEY: node.semantic_fingerprint(),
-                    _OUT_FP_KEY: out_fp,
-                    _UPSTREAM_KEY: {
-                        s: outputs_fp[s] for s in node.inputs if s in outputs_fp
-                    },
-                    **payload,
-                }, owner_scope=owner_scope, run_id=run.run_id)
+                if cache_owner_isolated(owner_scope):
+                    self._store.put(reuse_key, {
+                        _NODE_FP_KEY: node.semantic_fingerprint(),
+                        _OUT_FP_KEY: out_fp,
+                        _UPSTREAM_KEY: {
+                            s: outputs_fp[s] for s in node.inputs if s in outputs_fp
+                        },
+                        **payload,
+                    }, owner_scope=owner_scope, run_id=run.run_id)
                 self._governor_charge(
                     governor, gov_path, node, payload, charge_ledger
                 )
@@ -2181,6 +2188,8 @@ class GeoExecutionEngine:
         ``upstream_changed:<nodes>`` / ``result_ref_unresolvable``。无条目
         不是「跳过」（没有可复用物），不打证据。
         """
+        if not cache_owner_isolated(owner_scope):
+            return False
         node_fp = node.semantic_fingerprint()
         reuse_key = graph.checkpoint_reuse_key(node, owner_scope)
         cached = self._store.get(reuse_key, owner_scope=owner_scope, run_id=run.run_id)
@@ -2310,6 +2319,8 @@ class GeoExecutionEngine:
         node_fp = node.semantic_fingerprint()
         out_fp = outputs_fp.get(node.node_id) or _output_fingerprint(payload)
         outputs_fp[node.node_id] = out_fp
+        if not cache_owner_isolated(owner_scope):
+            return
         upstream = {s: outputs_fp[s] for s in node.inputs if s in outputs_fp}
         try:
             self._store.put(

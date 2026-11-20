@@ -38,6 +38,7 @@ import {
   type WorkflowSummary,
 } from '@/lib/api/project';
 import { ApiTimeoutError } from '@/lib/api/transport';
+import { t } from '@/lib/i18n/t';
 import { isAbortError, isActiveRunStatus, parseApiErrorDetail } from '@/lib/workflow/recovery';
 
 export const RUN_POLL_INTERVAL_MS = 3000;
@@ -175,7 +176,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
       })
       .catch((err: unknown) => {
         if (ac.signal.aborted || isAbortError(err) || gen !== listGen.current) return;
-        setError(parseApiErrorDetail(err, '加载项目列表失败'));
+        setError(parseApiErrorDetail(err, t('workbench.wfErrLoadProjects')));
       })
       .finally(() => {
         if (gen === listGen.current) setLoading(false);
@@ -207,7 +208,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
       })
       .catch((err: unknown) => {
         if (ac.signal.aborted || isAbortError(err) || gen !== detailGen.current) return;
-        setError(parseApiErrorDetail(err, '加载项目详情失败'));
+        setError(parseApiErrorDetail(err, t('workbench.wfErrLoadProject')));
       });
     return () => ac.abort();
   }, [selectedProjectId]);
@@ -245,7 +246,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
       })
       .catch((err: unknown) => {
         if (ac.signal.aborted || isAbortError(err) || gen !== workflowGen.current) return;
-        setError(parseApiErrorDetail(err, '加载运行列表失败'));
+        setError(parseApiErrorDetail(err, t('workbench.wfErrLoadRuns')));
       })
       .finally(() => {
         if (gen === workflowGen.current && mounted.current) setDetailLoading(false);
@@ -289,7 +290,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
     void loadRunDetail(selectedProjectId, selectedRunId, ac.signal, gen)
       .catch((err: unknown) => {
         if (ac.signal.aborted || isAbortError(err) || gen !== runGen.current) return;
-        setError(parseApiErrorDetail(err, '加载运行详情失败'));
+        setError(parseApiErrorDetail(err, t('workbench.wfErrLoadRun')));
       })
       .finally(() => {
         if (gen === runGen.current && mounted.current) setDetailLoading(false);
@@ -315,7 +316,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
       void loadRunDetail(selectedProjectId, selectedRunId, ac.signal, gen)
         .catch((err: unknown) => {
           if (ac.signal.aborted || isAbortError(err) || gen !== runGen.current) return;
-          setError(parseApiErrorDetail(err, '刷新运行状态失败'));
+          setError(parseApiErrorDetail(err, t('workbench.wfErrRefreshRun')));
         })
         .finally(() => {
           setPollTick((tick) => tick + 1);
@@ -348,7 +349,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
       void loadRunDetail(selectedProjectId, selectedRunId, ac.signal, gen)
         .catch((err: unknown) => {
           if (ac.signal.aborted || isAbortError(err) || gen !== runGen.current) return;
-          setError(parseApiErrorDetail(err, '刷新运行状态失败'));
+          setError(parseApiErrorDetail(err, t('workbench.wfErrRefreshRun')));
         })
         .finally(() => {
           setPollTick((tick) => tick + 1);
@@ -395,16 +396,29 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
       const gen = runGen.current;
       const projectId = selectedProjectId;
       const runId = selectedRunId;
+      const dropLoading = () => {
+        setLineageByArtifact((prev) => {
+          if (prev[artifactId] !== 'loading') return prev;
+          const next = { ...prev };
+          delete next[artifactId];
+          return next;
+        });
+      };
       setLineageByArtifact((prev) => ({ ...prev, [artifactId]: 'loading' }));
       try {
         const graph = await fetchArtifactLineage(artifactId, { signal: ac.signal });
-        if (!mounted.current || gen !== runGen.current || selectedProjectId !== projectId || selectedRunId !== runId) {
+        if (!mounted.current || gen !== runGen.current || selectedProjectId !== projectId || selectedRunId !== runId || ac.signal.aborted) {
+          if (mounted.current) dropLoading();
           return;
         }
         const empty = (graph.parents?.length ?? 0) === 0 && (graph.consumers?.length ?? 0) === 0;
         setLineageByArtifact((prev) => ({ ...prev, [artifactId]: empty ? 'empty' : graph }));
       } catch (err: unknown) {
-        if (ac.signal.aborted || isAbortError(err) || gen !== runGen.current) return;
+        if (!mounted.current) return;
+        if (ac.signal.aborted || isAbortError(err) || gen !== runGen.current) {
+          dropLoading();
+          return;
+        }
         setLineageByArtifact((prev) => ({ ...prev, [artifactId]: 'error' }));
       }
     },
@@ -414,7 +428,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
   const openCompare = useCallback(async () => {
     if (!selectedProjectId || !selectedRunId || !comparePeerId) return;
     if (comparePeerId === selectedRunId) {
-      setCompareError('请选择另一次运行进行对比');
+      setCompareError(t('workbench.wfErrCompareSame'));
       return;
     }
     compareAbort.current?.abort();
@@ -435,7 +449,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
       setView('compare');
     } catch (err: unknown) {
       if (ac.signal.aborted || isAbortError(err) || gen !== runGen.current) return;
-      setCompareError(parseApiErrorDetail(err, '对比失败'));
+      setCompareError(parseApiErrorDetail(err, t('workbench.wfErrCompare')));
     } finally {
       if (gen === runGen.current && mounted.current) setCompareBusy(false);
     }
@@ -459,7 +473,7 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
       setRunsHasMore(page.has_more);
     } catch (err: unknown) {
       if (isAbortError(err) || gen !== workflowGen.current) return;
-      setError(parseApiErrorDetail(err, '加载更多运行失败'));
+      setError(parseApiErrorDetail(err, t('workbench.wfErrLoadMoreRuns')));
     }
   }, [selectedProjectId, selectedWorkflowId, runsHasMore, runs.length]);
 
@@ -511,8 +525,8 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
         if (isAbortError(err)) return { ok: false, error: null };
         const timedOut = err instanceof ApiTimeoutError;
         const message = timedOut
-          ? '请求超时，已刷新运行列表（后端可能已创建新运行）'
-          : parseApiErrorDetail(err, '操作被后端拒绝');
+          ? t('workbench.wfErrTimeout')
+          : parseApiErrorDetail(err, t('workbench.wfErrRejected'));
         const stillSameProject =
           epoch === actionEpoch.current && selectedProjectIdRef.current === sourceProjectId;
         if (stillSameProject) {

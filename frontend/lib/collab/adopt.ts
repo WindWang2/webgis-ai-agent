@@ -37,6 +37,10 @@ import {
   startCollabClient,
   stopCollabClient,
 } from './client';
+import {
+  noteLayerPresentationRevision,
+  shouldAdoptLayerPresentation,
+} from './presentation-revision';
 
 /** 远端 doc/delta 事件落地（revision 单调门控在 persistence 基线侧）。 */
 function adoptRemoteDoc(doc: unknown, revision: number): boolean {
@@ -55,6 +59,8 @@ function adoptRemotePresentation(
   const visible = typeof data.visible === 'boolean' ? data.visible : undefined;
   const opacity = typeof data.opacity === 'number' ? data.opacity : undefined;
   if (visible === undefined && opacity === undefined) return false;
+  if (!shouldAdoptLayerPresentation(layerId, revision)) return false;
+  noteLayerPresentationRevision(layerId, revision);
   setMapSpecRevision(revision);
 
   // 1) HUD 行回灌（source:'server' 保认证标签语义；无 op 才跳过）。

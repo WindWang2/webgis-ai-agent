@@ -47,17 +47,27 @@ _LAYER_NAME = "data"
 
 
 def _chain_stable_id(feature: Any) -> Optional[str]:
-    """FEATURE_ID_KEYS 链（顶层 id 优先）→ 稳定 id；无 → None。
+    """FEATURE_ID_KEYS 链 → 稳定 id；无 → None。
 
     与 feature_pages.resolve_feature_stable_id / layer.py::_find_feature_by_id
     同链同语义（常量取自 feature_pages 单一真相，避免三处漂移）。
+    G24/P0：``properties._wfid`` 先于顶层 id（G14 物化后 WFID 是唯一跨
+    revision 稳定寻址键；前端拾取链同序）。feature_id_index 因此能按
+    wfid 命中已编辑数据集。瓦片字节影响面（有意为之，正确性优先）：
+    仅物化后**原本无其它链内 id** 的要素（编辑创建件）不再编码 field-1
+    位置 id —— 其瓦片寻址改走 properties._wfid（跨 revision 稳定，优于
+    位置 id）；其余数据集字节不变（ETag 内容寻址自然失效）。
     """
     if not isinstance(feature, dict):
         return None
+    props = feature.get("properties")
+    if isinstance(props, dict):
+        wfid = props.get("_wfid")
+        if isinstance(wfid, (str, int)) and not isinstance(wfid, bool):
+            return str(wfid)
     top = feature.get("id")
     if isinstance(top, (str, int)) and not isinstance(top, bool):
         return str(top)
-    props = feature.get("properties")
     if isinstance(props, dict):
         for key in FEATURE_ID_KEYS:
             value = props.get(key)
@@ -228,8 +238,14 @@ def _encode_value(v: Any) -> Optional[bytes]:
     if isinstance(v, bool):
         return _field(_VAL_BOOL, _VARINT) + _varint(1 if v else 0)
     if isinstance(v, int) and not isinstance(v, bool):
-        if v < -(1 << 63) or v >= (1 << 63):
-            return _encode_value(str(v))  # preserve identifier precision safely
+        # G24/P0（A06）：MVT int_value 是 64 位，但浏览器侧（MapLibre → JS
+        # Number）varint 解码在 |v| > 2^53 时静默丢精度 —— 拾取到的 id 与
+        # 权威 id 不再相等（点选/框选把别的要素当命中）。凡超出 JS
+        # Number.MAX_SAFE_INTEGER 的整数一律以字符串下行：id 链两侧都是
+        # str() 比较（_find_feature_by_id / _chain_stable_id），字符串往返
+        # 精确；代价是这些数据集的瓦片字节变化（ETag 内容寻址，自然失效）。
+        if v < -(1 << 53) + 1 or v > (1 << 53) - 1:
+            return _encode_value(str(v))
         # GIS-P3-1: int_value is sint64 — emit the FULL 64-bit value. The old
         # 32-bit wrap silently corrupted real-world IDs > 2^31 (OSM ids,
         # int64 keys): 2**31 → -2**31, 2**32+5 → 5. Negatives go through the

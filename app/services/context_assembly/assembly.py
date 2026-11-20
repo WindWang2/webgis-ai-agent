@@ -35,6 +35,7 @@ from app.services.context_assembly.allocator import (
 from app.services.context_assembly.contract import (
     INLINE_JOIN_DOMAINS,
     UNTOUCHABLE_DOMAINS,
+    ContextAssemblyRejected,
     ContextDomain,
     ContextItem,
     SharedTurnFacts,
@@ -53,6 +54,7 @@ from app.services.context_assembly.flags import (
 from app.services.context_assembly.providers import build_default_providers
 from app.services.context_assembly.receipt import (
     ContextAssemblyReceipt,
+    SourceDecisionLine,
     build_item_lines,
 )
 
@@ -92,6 +94,76 @@ async def fetch_shared_facts(req: TurnContextRequest) -> SharedTurnFacts:
     facts.map_state = state if isinstance(state, dict) else {}
     facts.mapspec = mapspec if isinstance(mapspec, dict) else None
 
+    # G22-P2（GIS 状态恢复目录）：durable jobs + 失效 source refs —— 与
+    # plan 读取并行；失败 → fetch_errors（provider 视为缺席，不虚构）。
+    async def _durable_jobs():
+        if not req.session_id:
+            return None
+        try:
+            from sqlalchemy import select
+
+            from app.core.database import AsyncSessionLocal
+            from app.models.db_model import AnalysisTask
+            from app.services.jobs.lifecycle import ACTIVE_STATUSES
+
+            async with AsyncSessionLocal() as db:
+                stmt = (
+                    select(AnalysisTask)
+                    .where(
+                        AnalysisTask.session_id == req.session_id,
+                        AnalysisTask.status.in_(
+                            [s.value for s in ACTIVE_STATUSES]),
+                    )
+                    .order_by(AnalysisTask.created_at.desc())
+                    .limit(8)
+                )
+                rows = list((await db.execute(stmt)).scalars().all())
+                return [
+                    {"id": str(row.id)[:16], "status": str(row.status)}
+                    for row in rows
+                ]
+        except Exception as exc:  # noqa: BLE001
+            facts.fetch_errors["durable_jobs"] = type(exc).__name__
+            return None
+
+    def _source_ref_invalid(mapspec_dict):
+        """mapspec source → session ref 指针存在性核对（仅 ref 型指针）。
+
+        url 型指针不走 session ref 生命周期，不在此判定（消费方按自身
+        超时/SSRF 语义披露）。失败 = None（不虚构失效，也不虚构有效）。
+        """
+        sources = (mapspec_dict or {}).get("sources")
+        if not isinstance(sources, dict) or not sources or not req.session_id:
+            return None
+        try:
+            from app.services.session_data import session_data_manager
+
+            invalid: list = []
+            for source_id, source in sources.items():
+                if not isinstance(source, dict):
+                    continue
+                ref = source.get("refId") or source.get("ref_id") or ""
+                if not ref or not isinstance(ref, str):
+                    continue
+                if not session_data_manager.has(req.session_id, ref):
+                    invalid.append(
+                        {"source": str(source_id)[:32], "ref": ref[:32]}
+                    )
+                if len(invalid) >= 8:
+                    break
+            return invalid
+        except Exception as exc:  # noqa: BLE001
+            facts.fetch_errors["invalid_source_refs"] = type(exc).__name__
+            return None
+
+    jobs, invalid_refs = await asyncio.gather(
+        _durable_jobs(),
+        asyncio.get_running_loop().run_in_executor(
+            None, _source_ref_invalid, facts.mapspec),
+    )
+    facts.durable_jobs = jobs
+    facts.invalid_source_refs = invalid_refs
+
     if req.session_id:
         try:
             from app.services.session_plan import (
@@ -105,6 +177,16 @@ async def fetch_shared_facts(req: TurnContextRequest) -> SharedTurnFacts:
             facts.fetch_errors["plan"] = type(exc).__name__
         if facts.plan is not None:
             facts.source_session_id = str(getattr(facts.plan, "session_id", "") or "")
+        if not facts.source_session_id and req.session_id:
+            # Plan load failed (or the envelope has no session id). Derived
+            # items keyed on source_session_id would otherwise be scope-gated
+            # out of the prompt with an empty scope id.
+            facts.source_session_id = req.session_id
+        if req.session_id and facts.plan is not None:
+            # #2216: the execution-state projection needs the plan, not the
+            # source_session_id fallback — building it only inside the
+            # fallback branch meant every turn with a live SessionPlan got
+            # harness_context=None and HarnessStateProvider stayed dark.
             try:
                 from app.services.harness_kernel.context import build_turn_context
 
@@ -113,6 +195,16 @@ async def fetch_shared_facts(req: TurnContextRequest) -> SharedTurnFacts:
                 )
             except Exception as exc:  # noqa: BLE001
                 facts.fetch_errors["harness_context"] = type(exc).__name__
+        # G43（ADR-0295）：本 turn 冻结的会话可选资料策略（单次 I/O；缺席/
+        # 读失败 = auto —— 行为与 pre-G43 字节等价，绝不因策略面故障阻断
+        # turn）。
+        try:
+            from app.services.turn_context_store import load_policy
+
+            facts.source_policy = await load_policy(req.session_id)
+        except Exception as exc:  # noqa: BLE001
+            facts.fetch_errors["source_policy"] = type(exc).__name__
+            facts.source_policy = None
     return facts
 
 
@@ -147,12 +239,14 @@ def _scope_gate(
 
 async def _collect_wave(
     req, facts, *, skip_cartography: bool = False
-) -> Tuple[List[ContextItem], Dict[str, str]]:
+) -> Tuple[List[ContextItem], Dict[str, str], List[dict]]:
     """Bounded-parallel wave-A collection.
 
     ``skip_cartography`` (F04 compat): when a caller explicitly injected a
     prebuilt cartography block, the derived cartography providers yield so
     the explicit input wins exactly once (no double injection).
+
+    G43：同时聚合可选资料 provider 的 ``source_refs``（receipt 源粒度输入）。
     """
     sem = asyncio.Semaphore(provider_parallelism())
     budget_s = provider_latency_budget_s()
@@ -174,6 +268,7 @@ async def _collect_wave(
     )
     items: List[ContextItem] = []
     skipped: Dict[str, str] = {}
+    source_refs: List[dict] = []
     if skip_cartography:
         skipped["cartography_derived"] = "caller_injected_block"
     for provider, report in zip(providers, reports):
@@ -183,7 +278,8 @@ async def _collect_wave(
         if report.skipped_reason:
             skipped[provider.provider_id] = report.skipped_reason
         items.extend(report.items)
-    return items, skipped
+        source_refs.extend(getattr(report, "source_refs", None) or [])
+    return items, skipped, source_refs
 
 
 async def assemble_turn_context(
@@ -204,6 +300,22 @@ async def assemble_turn_context(
     if facts is None:
         facts = await fetch_shared_facts(req)
 
+    # G43（ADR-0295，C39/C40）：显式策略下，不可拆来源的 opaque caller
+    # 预拼制图块不可信 —— 无法证明块内不含被用户排除的可选资料时，typed
+    # 路径明确拒绝（绝不字符串删段猜测来源；无显式策略的旧路径保持字节
+    # 兼容注入）。拒绝对调用方是 ContextAssemblyRejected（不回落 legacy
+    # 重新注入）。
+    _policy = getattr(facts, "source_policy", None)
+    _policy_explicit = bool(
+        _policy is not None and getattr(_policy, "is_explicit", False)
+    )
+    legacy_carto_pre = (req.legacy_cartography_block or "").strip()
+    if _policy_explicit and legacy_carto_pre:
+        raise ContextAssemblyRejected(
+            "explicit source policy cannot be honored with an opaque "
+            "caller-injected cartography block"
+        )
+
     # user message — identity, not context: built by the orchestrator itself,
     # neutralized against control-marker smuggling (legacy semantics) and
     # never altered further (untouchable in the allocator).
@@ -220,8 +332,8 @@ async def assemble_turn_context(
 
     # waves A + B (card yields to wave-A budget, same as legacy accounting);
     # explicit caller-injected cartography block suppresses the derived ones
-    legacy_carto = (req.legacy_cartography_block or "").strip()
-    wave_items, skipped = await _collect_wave(
+    legacy_carto = legacy_carto_pre
+    wave_items, skipped, source_refs = await _collect_wave(
         req, facts, skip_cartography=bool(legacy_carto)
     )
     items.extend(wave_items)
@@ -279,7 +391,6 @@ async def assemble_turn_context(
         max_output_tokens=max_output_tokens or _max_output_tokens(),
         enforce=_enforce_budget(),
     )
-    from app.services.context_assembly.contract import ContextAssemblyRejected
     if allocation.over_budget:
         raise ContextAssemblyRejected("non-droppable user/control context exceeds the global hard cap")
     final_items = allocation.items
@@ -317,9 +428,33 @@ async def assemble_turn_context(
         dedupe_dropped=deduped.dropped,
         scope_denied=denied,
     )
+    # G43：源粒度行 —— 只记录渲染时刻捕获的事实（含真实权威版本，仅有
+    # version_token 的来源标注；无权威版本来源留空，不用内容指纹冒充）。
+    item_ids_by_domain: Dict[str, str] = {}
+    for item in final_items:
+        item_ids_by_domain.setdefault(str(item.domain.value), item.item_id)
+    domain_for_ref = {
+        "project_knowledge_entry": ("project_knowledge", "knowledge:card"),
+        "carto_memory_fact": ("cartography_memory", "carto:memory"),
+        "gis_memory_block": ("gis_memory", "memory:gis"),
+    }
+    source_lines = []
+    for ref in source_refs:
+        kind = str(ref.get("kind", ""))
+        _, default_item = domain_for_ref.get(kind, ("", ""))
+        source_lines.append(SourceDecisionLine(
+            source_id=str(ref.get("source_id", ""))[:80],
+            kind=kind[:40],
+            decision=str(ref.get("decision", "included"))[:32],
+            item_id=str(ref.get("item_id", "") or default_item)[:96],
+            version_token=str(ref.get("version_token", ""))[:40],
+            label=str(ref.get("label", ""))[:64],
+        ))
     receipt = ContextAssemblyReceipt(
         session_id=req.session_id, turn_id=req.turn_id, mode="typed",
-        decision_lines=lines, skipped_providers=skipped,
+        decision_lines=lines, source_lines=source_lines[:96],
+        policy_version=int(getattr(_policy, "policy_version", 0) or 0),
+        skipped_providers=skipped,
         planned_tokens=planned,
         actual_tokens=estimate_message_tokens(message),
         pool_usage={pool: sum(item.est_tokens for item in final_items if domain_pool(item.domain).name == pool) for pool in allocation.pool_usage},

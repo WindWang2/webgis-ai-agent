@@ -718,7 +718,9 @@ class RedisSessionStore(BaseSessionStore):
                 async with self._r.pipeline(transaction=True) as pipe:
                     await pipe.watch(data_key)
                     if not await pipe.exists(data_key):
-                        pipe.reset()
+                        # #2203：pipe.reset() 是协程必须 await；data key 在
+                        # GET→WATCH 窗口内被逐出，已取到的 data 仍然有效，原样返回。
+                        await pipe.reset()
                         return data
                     pipe.multi()
                     pipe.expire(data_key, DATA_TTL)
@@ -774,14 +776,19 @@ class RedisSessionStore(BaseSessionStore):
                     # makes the check-and-bump atomic.
                     await pipe.watch(data_key)
                     if not await pipe.exists(data_key):
-                        pipe.reset()
-                        return
-                    pipe.multi()
-                    pipe.expire(data_key, DATA_TTL)
-                    pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
-                    pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
-                    self._refresh_session_ttl(pipe, session_id)
-                    await pipe.execute()
+                        # #2203：pipe.reset() 是协程必须 await；data key 在
+                        # GET→WATCH 窗口内被逐出 —— 不得继续 multi/execute（zadd
+                        # 会重建 CONC-F6 防的悬空 refs_order 成员），也不得返
+                        # 回 None 假性 cache-miss：:758 已取到有效 raw，复位管
+                        # 线后落到下方照常解码返回。
+                        await pipe.reset()
+                    else:
+                        pipe.multi()
+                        pipe.expire(data_key, DATA_TTL)
+                        pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
+                        pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
+                        self._refresh_session_ttl(pipe, session_id)
+                        await pipe.execute()
             except aioredis.WatchError:
                 pass  # key changed under us — skip the refresh, data returned below
             except aioredis.RedisError as e:
@@ -1163,10 +1170,16 @@ class RedisSessionStore(BaseSessionStore):
             return None
         if v is None:
             return None
+        # #2203：_started_at / _<key>_updated_at 是裸 ISO 字符串（非 JSON，
+        # BUG-09），必须与 get_map_state 的逐字段语义一致走容忍解码器；
+        # 其余字段 JSON 失败时返回 None（docstring 契约：不可解析即 miss），
+        # 绝不把 decode_responses=False 下的原始 bytes 漏给调用方。
+        if field == "_started_at" or field.endswith("_updated_at"):
+            return self._decode_started_at(v)
         try:
             return json.loads(v)
-        except (json.JSONDecodeError, TypeError):
-            return v
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
 
     async def get_map_spec_fingerprint(self, session_id: str) -> Optional[str]:
         """#687：定向读 mapspec 指纹字段（O(1)，不触发全字段冷解析/L1）。
@@ -1726,6 +1739,13 @@ return results
             await purge_session_disk_state(session_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("Session %s: disk state purge failed: %s", session_id, e)
+        try:
+            import asyncio
+            from app.services.georeferencing.refs import purge_session_georef_state
+
+            await asyncio.to_thread(purge_session_georef_state, session_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Session %s: georef state purge failed: %s", session_id, e)
 
     async def is_session_active(self, session_id: str) -> bool:
         """会话是否仍在 active 集（供磁盘清扫判断存活性）。

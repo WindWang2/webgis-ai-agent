@@ -8,6 +8,7 @@ import type { Map as MaplibreMap } from 'maplibre-gl';
 import {
   ArrowDown,
   ArrowUp,
+  ClipboardCheck,
   Eye,
   EyeOff,
   FileDown,
@@ -71,10 +72,24 @@ import {
 } from '@/lib/api/storymap';
 import { StoryNarrator } from '@/components/story/story-narrator';
 import { StoryDashboard } from '@/components/story/story-dashboard';
+// G11（ADR-0298）：证据化地图简报 —— 草稿/编辑/证据/预检/发布/分享面板
+import { BriefPanel } from '@/components/story/brief-panel';
 
 /** 播放模式下逐章节推进的间隔（ms）；PDF 逐章定位等待同源。 */
 const PLAY_INTERVAL_MS = 2500;
 const PDF_SETTLE_MS = 900;
+
+/** 叙事列/看板像素契约（#2140 F4）：宽度与看板偏移必须同源，改一处不致漂移。 */
+const NARRATIVE_SPLIT_CLASS = 'w-[400px] xl:w-[500px]';
+const NARRATIVE_IMMERSIVE_CLASS = 'w-[400px] xl:w-[440px]';
+const DASHBOARD_RIGHT_CLASS = 'right-[calc(400px+1rem)] xl:right-[calc(440px+1rem)]';
+
+/** 移动端（≤767px）降级：叙事列/看板/简报占满宽度的底部浮层（#2162）。 */
+const NARRATIVE_MOBILE_CLASS =
+  'max-md:absolute max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:h-[58dvh] max-md:w-full max-md:rounded-t-2xl max-md:border-t max-md:shadow-[0_-12px_40px_rgba(0,0,0,0.45)]';
+const MAP_MOBILE_CLASS = 'max-md:absolute max-md:inset-0';
+const DASHBOARD_MOBILE_CLASS =
+  'max-md:left-2 max-md:right-2 max-md:w-auto max-md:bottom-[calc(58dvh+0.75rem)] max-md:max-h-[30dvh]';
 
 interface StoryMessage {
   role: 'user' | 'assistant' | 'system' | string;
@@ -111,8 +126,11 @@ export function StoryView(): React.ReactElement {
 
   // ADR-0196：后端编排 spec（null = 本地派生兜底）与排版模式
   const [storySpec, setStorySpec] = useState<StoryMapSpecDto | null>(null);
+  const [briefPanelOpen, setBriefPanelOpen] = useState(false);
   const [immersive, setImmersive] = useState(false);
   const [bundleExporting, setBundleExporting] = useState(false);
+  // #2158：分享卡 pending 防重入（状态化 —— 按钮 disabled 需要响应式）。
+  const [shareCardPending, setShareCardPending] = useState(false);
 
   // 播放器
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -121,8 +139,14 @@ export function StoryView(): React.ReactElement {
   const [takeoverPaused, setTakeoverPaused] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<string | null>(null);
   const [mapFade, setMapFade] = useState(false);
+  // #2158：统一导出互斥 —— PDF/离线包/资产保存任一在途，播放/seek/分享卡/
+  // 排版切换一律禁用（导出逐章 setActiveId 与用户导航互相抢相机的根因）。
+  const exportInFlight = Boolean(pdfProgress) || bundleExporting || shareCardPending;
 
   const containerRef = useRef<HTMLDivElement>(null);
+  // #2158：关闭编排 / 取消重命名后焦点归还触发按钮（否则落到 body）。
+  const orchToggleRef = useRef<HTMLButtonElement>(null);
+  const renameTriggerRef = useRef<HTMLButtonElement | null>(null);
   const sessionIdRef = useRef<string | null>(sessionId);
   sessionIdRef.current = sessionId;
   // 用户是否已主动导航（seek/播放）；spec 迟到落位不得覆盖用户选择
@@ -395,12 +419,14 @@ export function StoryView(): React.ReactElement {
           }
           if (!specApplied && !controller.signal.aborted) {
             try {
+              // #2140 F2：匿名会话的 spec 编译同样需要 owner token（与会话/
+              // 资产读取同凭证面）——此前缺省导致匿名会话编译 401 被静默吞掉。
               const spec = await compileStorySpec(
                 {
                   session_id: sessionId,
                   messages: msgs.map((m) => ({ role: m.role, content: m.content })),
                 },
-                { signal: controller.signal },
+                { signal: controller.signal, ownerToken },
               );
               if (!controller.signal.aborted && isValidStorySpecDto(spec)) {
                 setStorySpec(spec);
@@ -474,6 +500,8 @@ export function StoryView(): React.ReactElement {
       useToastStore.getState().addToast(t('mapNotReadyShareCard'), 'error');
       return;
     }
+    if (shareCardPending) return; // #2158：idempotent pending 防重入
+    setShareCardPending(true);
     try {
       const blob = await composeShareCard(map, {
         title: activeChapter?.title ?? 'StoryMap',
@@ -484,8 +512,10 @@ export function StoryView(): React.ReactElement {
     } catch (err) {
       devOnly.error('share card failed:', err);
       useToastStore.getState().addToast(describeApiError(err, t('shareCardFailed')), 'error');
+    } finally {
+      setShareCardPending(false);
     }
-  }, [getMapInstance, activeChapter, activePos, visibleChapters.length, t]);
+  }, [getMapInstance, activeChapter, activePos, visibleChapters.length, t, shareCardPending]);
   // G3D05：用户接管相机 → 暂停自动播放（Pause & Resume，用户控制优先）。
   // 手势判定用 dragstart/pitchstart/rotatestart（非程序化 easeTo）。
   useEffect(() => {
@@ -522,6 +552,7 @@ export function StoryView(): React.ReactElement {
   }, [playing]);
 
   const handleNarrativePdf = useCallback(async () => {
+    if (exportInFlight) return; // #2158：统一导出互斥，防重入
     const map = getMapInstance();
     if (!map) {
       useToastStore.getState().addToast(t('mapNotReadyPdf'), 'error');
@@ -565,11 +596,11 @@ export function StoryView(): React.ReactElement {
     } finally {
       if (sessionIdRef.current === sid) setPdfProgress(null);
     }
-  }, [getMapInstance, specView, specChapters, visibleChapters, t]);
+  }, [getMapInstance, specView, specChapters, visibleChapters, t, exportInFlight]);
 
   // ADR-0196：一键导出自包含离线交互专报（后端脱敏打包 → HTML 单文件）
   const handleExportBundle = useCallback(async () => {
-    if (!storySpec) return;
+    if (!storySpec || exportInFlight) return;
     const sid = sessionIdRef.current;
     setBundleExporting(true);
     try {
@@ -584,12 +615,12 @@ export function StoryView(): React.ReactElement {
       } finally {
         setBundleExporting(false);
       }
-    }, [storySpec, t]);
+    }, [storySpec, t, exportInFlight]);
 
   // G3D05（ADR-0275 D6）：保存会话 StoryMap 资产（可恢复项目资产；
   // POST /storymap/sessions/{id}/spec，revision 单调 +1）。
   const handleSaveAsset = useCallback(async () => {
-    if (!storySpec) return;
+    if (!storySpec || exportInFlight) return;
     const sid = sessionIdRef.current;
     if (!sid) {
       useToastStore.getState().addToast(t('assetSaveNoSession'), 'warning');
@@ -608,13 +639,14 @@ export function StoryView(): React.ReactElement {
     } finally {
       setBundleExporting(false);
     }
-  }, [storySpec, t]);
+  }, [storySpec, t, exportInFlight]);
 
   if (loading) {
     return (
       <div className="h-screen w-screen bg-surface-canvas flex items-center justify-center text-status-info font-mono relative">
         <div className="absolute inset-0 z-[1] opacity-[0.015] bg-grid-agent bg-[size:60px_60px]"></div>
-        <div className="animate-pulse">Loading StoryMap CNS...</div>
+        {/* #2140 F3：加载文案走 i18n（此前硬编码英文）。 */}
+        <div className="animate-pulse" role="status">{t('storyLoading')}</div>
       </div>
     );
   }
@@ -624,14 +656,16 @@ export function StoryView(): React.ReactElement {
       <div className="absolute inset-0 pointer-events-none z-[1] opacity-[0.015] bg-grid-agent bg-[size:60px_60px]" />
 
       {/* Narrative Panel (Left) — ADR-0196 双排版：split 左图右文 / immersive 全屏地图 + 右浮叙事列。
-          position 必须整体进分支：relative 与 absolute 同类并存时 CSS 声明序判 relative 胜（Tailwind 顺序）。 */}
+          position 必须整体进分支：relative 与 absolute 同类并存时 CSS 声明序判 relative 胜（Tailwind 顺序）。
+          #2162：≤767px 降级为占满宽度的底部浮层（max-md 变体覆盖基准类），immersive 的固定
+          right offset 不再把手机面板推出视口。宽度契约见模块顶部常量（#2140 F4 同源）。 */}
       <div
         ref={containerRef}
         data-testid="story-narrative-panel"
-        className={`z-20 bg-surface-panel border-edge-subtle flex flex-col ${
+        className={`z-20 bg-surface-panel border-edge-subtle flex flex-col ${NARRATIVE_MOBILE_CLASS} ${
           immersive
-            ? 'absolute right-0 top-0 h-full w-[400px] xl:w-[440px] border-l bg-surface-panel/90 backdrop-blur-sm'
-            : 'relative w-[400px] xl:w-[500px] h-full border-r'
+            ? `absolute right-0 top-0 h-full ${NARRATIVE_IMMERSIVE_CLASS} border-l bg-surface-panel/90 backdrop-blur-sm max-md:border-l-0`
+            : `relative ${NARRATIVE_SPLIT_CLASS} h-full border-r max-md:border-r-0`
         }`}
       >
         <div className="sticky top-0 p-4 bg-surface-panel border-b border-edge-subtle z-10">
@@ -649,12 +683,13 @@ export function StoryView(): React.ReactElement {
                 </span>
               ) : null}
             </div>
-            <div className="flex gap-1">
+            {/* #2162：窄屏允许换行 —— 7 个图标按钮不再被 overflow-hidden 裁掉。 */}
+            <div className="flex flex-wrap justify-end gap-1">
               <button
                 aria-label={t('share')}
                 title={t('shareTitle')}
                 onClick={handleShare}
-                className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info"
+                className="touch-target rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info"
               >
                 <Share2 className="h-4 w-4" />
               </button>
@@ -662,7 +697,8 @@ export function StoryView(): React.ReactElement {
                 aria-label={t('shareCardAria')}
                 title={t('shareCardTitle')}
                 onClick={() => void handleShareCard()}
-                className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info"
+                disabled={exportInFlight}
+                className="touch-target rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
               >
                 <ImageDown className="h-4 w-4" />
               </button>
@@ -670,8 +706,8 @@ export function StoryView(): React.ReactElement {
                 aria-label={t('exportPdfAria')}
                 title={t('exportPdfTitle')}
                 onClick={() => void handleNarrativePdf()}
-                disabled={Boolean(pdfProgress)}
-                className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
+                disabled={exportInFlight}
+                className="touch-target rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
               >
                 <FileDown className="h-4 w-4" />
               </button>
@@ -681,8 +717,8 @@ export function StoryView(): React.ReactElement {
                     aria-label={t('saveAsset')}
                     title={t('saveAssetTitle')}
                     onClick={() => void handleSaveAsset()}
-                    disabled={bundleExporting || Boolean(pdfProgress)}
-                    className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
+                    disabled={exportInFlight}
+                    className="touch-target rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
                   >
                     <Save className="h-4 w-4" />
                   </button>
@@ -690,8 +726,8 @@ export function StoryView(): React.ReactElement {
                     aria-label={t('exportBundle')}
                     title={t('exportBundleTitle')}
                     onClick={() => void handleExportBundle()}
-                    disabled={bundleExporting || Boolean(pdfProgress)}
-                    className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
+                    disabled={exportInFlight}
+                    className="touch-target rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40"
                   >
                     <HardDriveDownload className="h-4 w-4" />
                   </button>
@@ -702,19 +738,35 @@ export function StoryView(): React.ReactElement {
                 title={t('immersiveTitle')}
                 aria-pressed={immersive}
                 onClick={() => setImmersive((v) => !v)}
-                className={`rounded-md p-2 transition-colors hover:bg-surface-hover ${
+                disabled={exportInFlight}
+                className={`touch-target rounded-md p-2 transition-colors hover:bg-surface-hover disabled:opacity-40 ${
                   immersive ? 'text-status-info' : 'text-ink-muted hover:text-status-info'
                 }`}
               >
                 {immersive ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
               </button>
+              {/* G11：证据化地图简报（草稿/编辑/证据/预检/发布/分享） */}
+              <button
+                aria-label={t('briefPanelAria')}
+                title={t('briefPanelTitleBtn')}
+                aria-pressed={briefPanelOpen}
+                data-testid="brief-panel-toggle"
+                onClick={() => setBriefPanelOpen((v) => !v)}
+                disabled={exportInFlight}
+                className={`touch-target rounded-md p-2 transition-colors hover:bg-surface-hover disabled:opacity-40 ${
+                  briefPanelOpen ? 'text-status-info' : 'text-ink-muted hover:text-status-info'
+                }`}
+              >
+                <ClipboardCheck className="h-4 w-4" />
+              </button>
               {!specView ? (
                 <button
+                  ref={orchToggleRef}
                   aria-label={t('orchAria')}
                   title={t('orchTitle')}
                   aria-expanded={orchPanelOpen}
                   onClick={() => setOrchPanelOpen((v) => !v)}
-                  className={`rounded-md p-2 transition-colors hover:bg-surface-hover ${
+                  className={`touch-target rounded-md p-2 transition-colors hover:bg-surface-hover ${
                     orchPanelOpen ? 'text-status-info' : 'text-ink-muted hover:text-status-info'
                   }`}
                 >
@@ -732,6 +784,7 @@ export function StoryView(): React.ReactElement {
                 : visibleChapters.map((c) => c.title)
             }
             playing={playing}
+            disabled={exportInFlight}
             onSeek={(pos) => {
               setPlaying(false);
               seek(pos);
@@ -749,6 +802,12 @@ export function StoryView(): React.ReactElement {
           {pdfProgress ? (
             <p role="status" className="px-1 pb-1 text-caption text-status-info" data-testid="story-pdf-progress">
               {pdfProgress}
+            </p>
+          ) : null}
+          {/* #2158：bundle/save 在途同样要有 live-region 忙碌反馈。 */}
+          {!pdfProgress && bundleExporting ? (
+            <p role="status" className="px-1 pb-1 text-caption text-status-info" data-testid="story-export-status">
+              {t('exportBusy')}
             </p>
           ) : null}
           {takeoverPaused && !playing ? (
@@ -776,13 +835,18 @@ export function StoryView(): React.ReactElement {
               <button
                 type="button"
                 aria-label={t('orchCloseAria')}
-                onClick={() => setOrchPanelOpen(false)}
-                className="rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink"
+                onClick={() => {
+                  setOrchPanelOpen(false);
+                  // #2158：关闭后焦点归还触发按钮（被卸载节点不落到 body）。
+                  orchToggleRef.current?.focus();
+                }}
+                className="touch-target rounded-sm p-1 text-ink-muted hover:bg-surface-hover hover:text-ink"
               >
                 <X size={13} aria-hidden />
               </button>
             </div>
-            <ul className="space-y-1">
+            {/* #2158：长列表（48 章）独立滚动区 —— 不再被根容器 overflow-hidden 裁掉。 */}
+            <ul className="max-h-[38vh] space-y-1 overflow-y-auto pr-1" data-testid="story-orchestration-list">
               {chapters.map((ch, index) => (
                 <li key={ch.id} className="flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-surface-hover">
                   {renamingId === ch.id ? (
@@ -795,10 +859,16 @@ export function StoryView(): React.ReactElement {
                         const title = e.target.value.trim() || ch.title;
                         mutateChapters((list) => list.map((c) => (c.id === ch.id ? { ...c, title } : c)));
                         setRenamingId(null);
+                        renameTriggerRef.current?.focus();
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                        if (e.key === 'Escape') setRenamingId(null);
+                        if (e.key === 'Escape') {
+                          // #2158：Escape 取消重命名 = 无提交，焦点回触发按钮。
+                          e.stopPropagation();
+                          setRenamingId(null);
+                          renameTriggerRef.current?.focus();
+                        }
                       }}
                     />
                   ) : (
@@ -809,7 +879,8 @@ export function StoryView(): React.ReactElement {
                   <button
                     type="button"
                     aria-label={t('renameChapterAria', { title: ch.title })}
-                    onClick={() => {
+                    onClick={(e) => {
+                      renameTriggerRef.current = e.currentTarget;
                       setRenamingId(ch.id);
                       // jsx-a11y/no-autofocus：重命名渲染后手动聚焦等价物
                       requestAnimationFrame(() => {
@@ -818,7 +889,7 @@ export function StoryView(): React.ReactElement {
                           ?.focus();
                       });
                     }}
-                    className="rounded-sm p-1 text-ink-muted hover:text-ink"
+                    className="touch-target rounded-sm p-1 text-ink-muted hover:text-ink"
                   >
                     <Pencil size={12} aria-hidden />
                   </button>
@@ -826,7 +897,7 @@ export function StoryView(): React.ReactElement {
                     type="button"
                     aria-label={ch.visible ? t('hideChapterAria', { title: ch.title }) : t('showChapterAria', { title: ch.title })}
                     onClick={() => mutateChapters((list) => list.map((c) => (c.id === ch.id ? { ...c, visible: !c.visible } : c)))}
-                    className="rounded-sm p-1 text-ink-muted hover:text-ink"
+                    className="touch-target rounded-sm p-1 text-ink-muted hover:text-ink"
                   >
                     {ch.visible ? <Eye size={12} aria-hidden /> : <EyeOff size={12} aria-hidden />}
                   </button>
@@ -841,7 +912,7 @@ export function StoryView(): React.ReactElement {
                         return next;
                       })
                     }
-                    className="rounded-sm p-1 text-ink-muted hover:text-ink disabled:opacity-30"
+                    className="touch-target rounded-sm p-1 text-ink-muted hover:text-ink disabled:opacity-30"
                   >
                     <ArrowUp size={12} aria-hidden />
                   </button>
@@ -856,7 +927,7 @@ export function StoryView(): React.ReactElement {
                         return next;
                       })
                     }
-                    className="rounded-sm p-1 text-ink-muted hover:text-ink disabled:opacity-30"
+                    className="touch-target rounded-sm p-1 text-ink-muted hover:text-ink disabled:opacity-30"
                   >
                     <ArrowDown size={12} aria-hidden />
                   </button>
@@ -886,12 +957,14 @@ export function StoryView(): React.ReactElement {
                 const renamed = derived[ch.messageIndex]?.title !== ch.title;
                 return (
                   <div key={ch.id}>
+                    {/* #2158：非活跃正文不再降 opacity（文字对比同步跌破 AA），
+                        用户消息用独立文字色 + 边框表达弱化。 */}
                     <article
                       data-story-chapter={ch.id}
                       data-story-active={isActive ? 'true' : undefined}
                       data-story-message
                       className={`prose prose-agent prose-headings:text-status-info prose-a:text-status-info max-w-none transition-opacity duration-700
-                        ${ch.role === 'user' ? 'opacity-70 border-l-2 border-edge-subtle pl-4 italic text-body' : 'opacity-100'}
+                        ${ch.role === 'user' ? 'border-l-2 border-edge-subtle pl-4 italic text-body text-ink-muted' : ''}
                         ${isActive ? 'story-message-active' : 'story-message-idle'}`}
                     >
                       {renamed ? (
@@ -931,7 +1004,7 @@ export function StoryView(): React.ReactElement {
       {/* Map Panel (Right) — 章节缓动：容器透明度过渡；reduced-motion 直接跳切。
           immersive 排版：地图铺满全屏（position 进分支，避免 relative/absolute 并存被 CSS 序判负）。 */}
       <div
-        className={`flex-1 h-full z-0 shadow-[-20px_0_40px_rgba(0,0,0,0.8)] ${
+        className={`flex-1 h-full z-0 shadow-[-20px_0_40px_rgba(0,0,0,0.8)] ${MAP_MOBILE_CLASS} ${
           immersive ? 'absolute inset-0' : 'relative'
         } ${reducedMotion ? '' : 'transition-opacity duration-500'} ${
           mapFade && !reducedMotion ? 'opacity-70' : 'opacity-100'
@@ -945,14 +1018,26 @@ export function StoryView(): React.ReactElement {
         {specView ? (
           <div
             data-testid="story-dashboard-mount"
-            className={`absolute bottom-4 z-20 w-[320px] max-h-[52%] overflow-y-auto pointer-events-auto ${
-              immersive ? 'right-[calc(400px+1rem)] xl:right-[calc(440px+1rem)]' : 'right-4'
+            className={`absolute bottom-4 z-20 w-[320px] max-h-[52%] overflow-y-auto pointer-events-auto ${DASHBOARD_MOBILE_CLASS} ${
+              immersive ? DASHBOARD_RIGHT_CLASS : 'right-4 max-md:right-2'
             }`}
           >
             <StoryDashboard widgets={specWidgets} highlightedIds={activeWidgetIds} />
           </div>
         ) : null}
       </div>
+
+      {/* G11：证据化地图简报抽屉（右侧；与叙事列/地图独立的数据面）。
+          #2162：窄屏占满宽度（w-[360px] 固定抽屉会覆盖手机整屏）。 */}
+      {briefPanelOpen && sessionIdRef.current ? (
+        <div className="absolute inset-y-0 right-0 z-40 w-[360px] max-w-[100vw] xl:w-[400px] border-l border-edge-subtle bg-surface-panel shadow-[-20px_0_40px_rgba(0,0,0,0.5)]">
+          <BriefPanel
+            sessionId={sessionIdRef.current}
+            onRequestOwnerToken={requestStoryOwnerToken}
+            onClose={() => setBriefPanelOpen(false)}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

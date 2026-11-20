@@ -253,8 +253,24 @@ async def webgis_map_intent(
             build_hotpath_pi_context,
             set_skill_bundle,
         )
+        # G30：chat.skill_name 显式选择（turn 端解析后存 session ctx）——
+        # 计划缝尊重用户选择（policy 内仍裁决 eligibility/弃用/隔离）。
+        _explicit_skill_id = ""
+        try:
+            from app.lib.runtime.context import current_runtime_context
+            from app.services.gis_harness.hotpath_convergence.session_ctx import (
+                peek_explicit_skill,
+            )
+            _rt_es = current_runtime_context()
+            _sid_es = str(getattr(_rt_es, "session_id", "") or "") if _rt_es else ""
+            _sel = peek_explicit_skill(_sid_es) if _sid_es else None
+            if _sel and _sel.get("skill_id"):
+                _explicit_skill_id = str(_sel["skill_id"])[:80]
+        except Exception:  # noqa: BLE001 — 增值信号不阻断
+            logger.debug("[map_intent] explicit skill peek skipped", exc_info=True)
         _inputs, _bundle = bind_skill_guidance_at_plan_seam(
             intent, situation=situation,
+            explicit_skill_id=_explicit_skill_id,
         )
         skill_guidance = dict(_inputs.get("skill_guidance") or {})
         if _bundle is not None:

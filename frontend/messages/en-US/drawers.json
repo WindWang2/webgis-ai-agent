@@ -73,6 +73,8 @@
     "roleAssistant": "Answer",
     "openSession": "Open history session",
     "currentLayer": "Current workspace layer",
-    "locatedLayer": "Located in layers panel: {name}"
+    "locatedLayer": "Located in layers panel: {name}",
+    "currentWorkspace": "Current workspace",
+    "artifactLocated": "{ref} (in message {index})"
   }
 }

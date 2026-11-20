@@ -64,6 +64,19 @@ describe('selection store V4', () => {
     expect(sel?.id_field).toBe('OBJECTID');
   });
 
+  it('does not compile a truncated bbox brush into an id filter', () => {
+    publishSelection('brush', {
+      source: 'map',
+      layer_id: 'l1',
+      selected_ids: ['a', 'b'],
+      id_field: 'fid',
+      matched_count: 300,
+      predicate: { kind: 'bbox', bbox: [104, 30.6, 104.1, 30.7] },
+    });
+    expect(getSelectionIdFilterExpression('l1')).toBeNull();
+    expect(getSelectionIdFilter('l1')).toEqual({ field: 'fid', ids: ['a', 'b'] });
+  });
+
   it('compiles id filter expressions ($id vs property field)', () => {
     publishSelection('brush', {
       source: 'map', layer_id: 'l1', selected_ids: ['a', 'b'], id_field: '$id',

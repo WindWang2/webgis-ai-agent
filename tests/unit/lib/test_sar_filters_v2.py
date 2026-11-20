@@ -329,7 +329,7 @@ def test_sar_tools_schema_and_evidence():
     # 证据块挂载 + backend_selection 诊断（默认路径诚实记录）
     img = np.random.RandomState(3).gamma(4.0, 25.0, size=(6, 6)).tolist()
     speckle_fn = registry._tools["sar_speckle_filter"]
-    payload = asyncio.run(speckle_fn(img, filter="lee", window="3"))
+    payload = speckle_fn(img, filter="lee", window="3")
     assert payload["success"] is True
     ev = payload["scientific_evidence"]
     assert ev["algorithm"] == "sar.speckle_filter"
@@ -347,7 +347,7 @@ def test_sar_tools_schema_and_evidence():
     # 合成工具证据块
     stack = [[[1.0, 2.0], [3.0, 4.0]], [[3.0, 4.0], [5.0, 6.0]]]
     comp_fn = registry._tools["sar_temporal_composite"]
-    comp = asyncio.run(comp_fn(stack, method="median"))
+    comp = comp_fn(stack, method="median")
     assert comp["scientific_evidence"]["algorithm"] == "sar.temporal_composite"
 
 
@@ -397,3 +397,43 @@ def test_a6_registry_validate_and_parity():
         assert algo is not None and algo.runtime_status == "native", algo_id
         assert algo.scientific_status == "VALIDATED", algo_id
         assert algo.parameter_contract_ref, algo_id
+
+
+@pytest.mark.parametrize("method", sar_filter.SPECKLE_FILTER_METHODS)
+@pytest.mark.parametrize("window", sar_filter.SPECKLE_WINDOW_SIZES)
+def test_speckle_restores_input_invalid_mask(method, window):
+    """#2235: filtering is not gap filling, including finite nodata sentinels."""
+    image = np.full((11, 11), 8.0)
+    image[4, 4] = -9999
+    image[5, 5] = np.nan
+    image[6, 6] = np.inf
+    original = image.copy()
+    result = speckle_filter(image, method, window=window, enl=4, nodata=-9999)
+    valid = np.isfinite(image) & (image != -9999)
+    np.testing.assert_array_equal(np.isnan(result["array"]), ~valid)
+    np.testing.assert_allclose(result["array"][valid], 8.0, atol=1e-12)
+    np.testing.assert_array_equal(image, original)
+
+
+@pytest.mark.parametrize("method", sar_filter.SPECKLE_FILTER_METHODS)
+def test_speckle_zero_valid_windows_stay_finite_zero(method):
+    """Zero intensity is a valid homogeneous observation, not missing data."""
+    image = np.zeros((9, 9))
+    image[0, 0] = -9999
+    result = speckle_filter(image, method, enl=4, nodata=-9999)
+    assert np.isnan(result["array"][0, 0])
+    np.testing.assert_array_equal(result["array"][image == 0], 0.0)
+    if method == "gamma_map":
+        assert result["meta"]["iterations_used"] == 0
+
+
+@pytest.mark.parametrize("method", sar_filter.SPECKLE_FILTER_METHODS)
+def test_speckle_all_invalid_with_explicit_enl(method):
+    result = speckle_filter(np.full((5, 5), -9999.0), method, enl=4, nodata=-9999)
+    assert np.isnan(result["array"]).all()
+
+
+def test_gamma_map_all_zero_scene_is_homogeneous():
+    result = speckle_filter(np.zeros((7, 7)), "gamma_map", enl=4)
+    np.testing.assert_array_equal(result["array"], np.zeros((7, 7)))
+    assert result["meta"]["iterations_used"] == 0

@@ -20,6 +20,7 @@ import {
   type TableModel,
 } from '@/lib/map-components/table-data';
 import { usePagedLayerTable, type PagedTableSort } from '@/lib/map-components/paged-table-data';
+import { useSelectionHandleTable } from '@/lib/map-components/selection-table-data';
 import {
   clearSelection,
   getSelection,
@@ -135,6 +136,25 @@ function PagedTableBody({
     return new Set(selection.selected_ids);
   }, [selection, selectionMatchesLayer]);
 
+  /* G24/P4：选中集视图 —— 框选/条件选择带服务端 handle 时可切到「全集分
+   * 页」（A11/A13：计数如实，前 50 ids 只是高亮样本不是全集）。 */
+  const selectionHandleForLayer = selectionMatchesLayer && selection?.handle ? selection.handle : '';
+  const selTable = useSelectionHandleTable({ layer, handle: selectionHandleForLayer });
+  const [selectionView, setSelectionView] = useState(false);
+  useEffect(() => {
+    if (!selectionHandleForLayer) setSelectionView(false);
+  }, [selectionHandleForLayer]);
+  const selectionViewActive = selectionView && !!selectionHandleForLayer;
+  const view = selectionViewActive ? {
+    status: selTable.status === 'stale' ? ('error' as const) : selTable.status,
+    rows: selTable.rows,
+    columns: selTable.columns,
+    nextCursor: selTable.nextCursor,
+    loadingMore: selTable.loadingMore,
+    loadMore: selTable.loadMore,
+    error: selTable.status === 'stale' ? ({ kind: 'stale' } as { kind: 'stale' }) : (selTable.status === 'error' ? ({ kind: 'network' } as { kind: 'network' }) : null),
+  } : table;
+
   useEffect(() => {
     return () => {
       const sel = getSelection();
@@ -167,14 +187,14 @@ function PagedTableBody({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const total = table.rows.length;
+  const total = view.rows.length;
   const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const end = Math.min(total, Math.ceil((scrollTop + viewH) / ROW_HEIGHT) + OVERSCAN);
-  const slice = table.rows.slice(start, end);
+  const slice = view.rows.slice(start, end);
   const columns = preferredColumns?.length
-    ? preferredColumns.filter((c) => table.columns.includes(c)).concat(
-        table.columns.filter((c) => !preferredColumns!.includes(c)))
-    : table.columns;
+    ? preferredColumns.filter((c) => view.columns.includes(c)).concat(
+        view.columns.filter((c) => !preferredColumns!.includes(c)))
+    : view.columns;
 
   // map→table：选中行滚动定位（inline 体同款语义）。
   const lastScrollSelRef = useRef<number>(-1);
@@ -210,13 +230,19 @@ function PagedTableBody({
     emitTableSelectionChanged({ layerId, featureId: rowId });
   };
 
-  const matchedText = table.totalMatching != null
-    ? tp('paged.matchedSuffix', { matched: table.totalMatching })
-    : (filterText.trim() || viewportOnly ? tp('paged.matchedUnknown') : '');
-  const totalText = table.featureCount != null ? tp('paged.totalSuffix', { total: table.featureCount }) : '';
+  const matchedText = selectionViewActive
+    ? (selTable.countExact && selTable.count != null
+        ? tp('paged.selectionCountSuffix', { count: selTable.count })
+        : tp('paged.selectionCountUnknown'))
+    : (table.totalMatching != null
+        ? tp('paged.matchedSuffix', { matched: table.totalMatching })
+        : (filterText.trim() || viewportOnly ? tp('paged.matchedUnknown') : ''));
+  const totalText = selectionViewActive
+    ? ''
+    : (table.featureCount != null ? tp('paged.totalSuffix', { total: table.featureCount }) : '');
 
   return (
-    <div className="flex h-full min-h-40 flex-col gap-1" data-testid="table-panel-paged" data-paged-status={table.status}>
+    <div className="flex h-full min-h-40 flex-col gap-1" data-testid="table-panel-paged" data-paged-status={view.status}>
       {/* 工具条：搜索（服务端 or-contains 下推）+ 视口窗口 + 计数披露 */}
       <div className="flex items-center gap-1.5">
         <input
@@ -238,36 +264,52 @@ function PagedTableBody({
         >
           {t('map.table.viewport')}
         </button>
+        {selectionHandleForLayer ? (
+          <button
+            type="button"
+            aria-pressed={selectionViewActive}
+            data-testid="table-panel-selection-view-toggle"
+            title={tp('paged.selectionView')}
+            onClick={() => setSelectionView((v) => !v)}
+            className={`h-6 shrink-0 rounded-xs border border-map-chrome-border px-1.5 text-caption ${
+              selectionViewActive ? 'bg-status-accent-soft text-status-accent' : 'text-map-chrome-ink-muted'
+            }`}
+          >
+            {tp('paged.selectionView')}
+          </button>
+        ) : null}
         <span className="shrink-0 text-caption tabular-nums text-map-chrome-ink-muted" data-testid="table-panel-count">
-          {tp('paged.countLine', { shown: table.rows.length, matched: matchedText, total: totalText })}
+          {tp('paged.countLine', { shown: view.rows.length, matched: matchedText, total: totalText })}
         </span>
       </div>
-      {table.error != null ? (
+      {view.error != null ? (
         <div role="alert" className="flex flex-col gap-1 rounded-xs border border-status-danger/40 bg-status-danger-soft/30 px-2 py-1.5 text-caption" data-testid="table-panel-paged-error">
-          {table.error.kind === 'conflict' ? (
+          {view.error.kind === 'stale' ? (
+            <span data-testid="table-panel-selection-stale">{tp('paged.selectionStale')}</span>
+          ) : view.error.kind === 'conflict' ? (
             <>
-              <span>{tp('paged.conflictTitle', { revision: table.error.currentRevision ?? '?' })}</span>
+              <span>{tp('paged.conflictTitle', { revision: (view.error as { currentRevision?: number | null }).currentRevision ?? '?' })}</span>
               <button type="button" onClick={table.reload} className="self-start rounded-xs border border-map-chrome-border px-2 py-0.5">
                 {tp('paged.conflictReload')}
               </button>
             </>
-          ) : table.error.kind === 'rate' ? (
+          ) : view.error.kind === 'rate' ? (
             <span>{tp('paged.rateLimited')}</span>
-          ) : table.error.kind === 'forbidden' ? (
+          ) : view.error.kind === 'forbidden' ? (
             <span>{tp('paged.forbidden')}</span>
-          ) : table.error.kind === 'notfound' ? (
+          ) : view.error.kind === 'notfound' ? (
             <span>{tp('paged.notFound')}</span>
           ) : (
             <>
               <span>{tp('paged.networkError')}</span>
-              <button type="button" onClick={table.reload} className="self-start rounded-xs border border-map-chrome-border px-2 py-0.5">
+              <button type="button" onClick={selectionViewActive ? selTable.reload : table.reload} className="self-start rounded-xs border border-map-chrome-border px-2 py-0.5">
                 {tp('paged.retry')}
               </button>
             </>
           )}
         </div>
       ) : null}
-      {table.status === 'loading' && total === 0 ? (
+      {view.status === 'loading' && total === 0 ? (
         <div className="flex h-full min-h-16 items-center justify-center text-caption text-map-chrome-ink-muted" role="status">
           {t('map.table.loading')}
         </div>
@@ -281,7 +323,15 @@ function PagedTableBody({
               table/rowgroup（R3 评审），行可聚焦可键盘选择。 */}
           <div className="flex flex-col" role="table">
           <div className="flex shrink-0 border-b border-map-chrome-border" role="rowgroup">
-            {columns.map((col) => (
+            {columns.map((col) =>
+              selectionViewActive ? (
+                <span
+                  key={col}
+                  className="min-w-0 flex-1 truncate px-1.5 py-1 text-left text-caption font-semibold text-map-chrome-ink"
+                >
+                  {col}
+                </span>
+              ) : (
               <button
                 key={col}
                 type="button"
@@ -295,7 +345,7 @@ function PagedTableBody({
                 {col}
                 {sortKey?.column === col ? (sortKey.dir === 1 ? ' ▲' : ' ▼') : ''}
               </button>
-            ))}
+              ))}
           </div>
           <div
             ref={scrollRef}
@@ -344,18 +394,18 @@ function PagedTableBody({
             </div>
           </div>
           </div>
-          {table.nextCursor && (
+          {view.nextCursor && (
             <button
               type="button"
-              onClick={table.loadMore}
-              disabled={table.loadingMore}
+              onClick={view.loadMore}
+              disabled={view.loadingMore}
               data-testid="table-panel-load-more"
               className="shrink-0 rounded-xs border border-map-chrome-border px-2 py-1 text-caption text-map-chrome-ink disabled:opacity-60"
             >
-              {table.loadingMore ? tp('paged.loadingMore') : tp('paged.loadMore')}
+              {view.loadingMore ? tp('paged.loadingMore') : tp('paged.loadMore')}
             </button>
           )}
-          {table.truncated && (
+          {!selectionViewActive && table.truncated && (
             <div className="shrink-0 text-caption text-map-chrome-ink-muted">{tp('paged.truncatedPage')}</div>
           )}
           {table.idMode === 'positional' && (

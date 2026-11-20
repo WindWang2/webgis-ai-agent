@@ -69,6 +69,20 @@ describe('enterHighDpiRender（ADR-0157 P1）', () => {
     expect(calls.setPixelRatio).toEqual([]);
   });
 
+  it('#2144 H10：Retina（dpr=2）上 dpi=150 不降级（max(原生, dpi/96)）', async () => {
+    const { map, calls } = makeMap({ pixelRatio: 2 });
+    const r = await enterHighDpiRender(map, 150);
+    expect(r.mode).toBe('skipped'); // 原生 2 已优于请求 1.56 —— 替换式降比率是退步
+    expect(calls.setPixelRatio).toEqual([]);
+  });
+
+  it('#2144 H10：目标比率不低于原生（dpr=2, dpi=288 → 3 而非 1.5× 覆盖）', async () => {
+    const { map, calls } = makeMap({ pixelRatio: 2 });
+    const r = await enterHighDpiRender(map, 288, 100);
+    expect(r.mode).toBe('rerendered');
+    expect(calls.setPixelRatio).toEqual([3]);
+  });
+
   it('高 DPI + idle 正常 → rerendered（矢量细节真重渲染路径）', async () => {
     const { map, calls } = makeMap({ pixelRatio: 1 });
     const r = await enterHighDpiRender(map, 300, 100);

@@ -55,6 +55,10 @@ class SelectionFacts(BaseModel):
     has_dem: Optional[bool] = None
     # 已经绑定 / 在场的数据集引用（角色 → ref），用于角色可满足性判断
     bound_roles: Dict[str, str] = Field(default_factory=dict)
+    # G30：用户显式选择的技能 id（chat.skill_name / 工作台选择解析结果）。
+    # 非空时 policy 跳过「猜哪个方法」的模糊匹配，但 eligibility/弃用/
+    # 隔离等硬门照常裁决 —— 显式选择不是执行许可。
+    explicit_skill_id: str = ""
 
     @classmethod
     def from_intent(cls, intent: Any) -> "SelectionFacts":

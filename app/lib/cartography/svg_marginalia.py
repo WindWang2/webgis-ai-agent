@@ -122,10 +122,13 @@ def meters_per_pixel(bounds: List[float], canvas_width: float) -> Optional[float
 
     ``mpp = (lng_span/360) × C × cos(lat_center) / canvas_px`` —— cos 修正
     抵消 Mercator 随纬度的放大（比例尺"投影感知"的核心项）。
+    跨反子午线 bounds（e<w）按 e+=360 归一化（F4：不再静默返回 None）。
     """
     try:
         w, s, e, n = bounds
         lng_span = float(e) - float(w)
+        if lng_span <= 0:
+            lng_span += 360.0
         if lng_span <= 0 or canvas_width <= 0:
             return None
         center_lat_rad = math.radians((float(s) + float(n)) / 2.0)
@@ -181,7 +184,11 @@ def render_legend_box(x: float, y: float, legend: Dict[str, Any], *,
     padding = 12.0
     unit = str(legend.get("unit") or "").strip()
     unit_dy = 15.0 if unit else 0.0  # review P3-4:降部字母余量
-    height = padding * 2 + 18.0 + unit_dy + len(shown) * item_h
+    # G26（P4）：notes 脚注行（constant/all-nodata/approximate 等诚实说明；
+    # ≤2 条；缺席时输出与历史逐字节一致）。
+    notes = [str(n) for n in (legend.get("notes") or []) if str(n).strip()][:2]
+    notes_dy = 14.0 * len(notes) if notes else 0.0
+    height = padding * 2 + 18.0 + unit_dy + len(shown) * item_h + notes_dy
     title = legend.get("title") or "图例"
     parts = [
         f'<rect x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(width)}" height="{_fmt(height)}" fill="rgba(255, 255, 255, 0.9)" stroke="#cbd5e1" stroke-width="1" rx="6" />',
@@ -203,7 +210,344 @@ def render_legend_box(x: float, y: float, legend: Dict[str, Any], *,
             f'<text x="{_fmt(x + padding + 24)}" y="{_fmt(iy)}" font-family="sans-serif" '
             f'font-size="11" fill="#1e293b">{escape_svg_text(e.get("label", ""))}</text>'
         )
+    for j, note in enumerate(notes):
+        ny = y + padding + 22.0 + unit_dy + len(shown) * item_h + j * 14.0
+        parts.append(
+            f'<text x="{_fmt(x + padding)}" y="{_fmt(ny)}" font-family="sans-serif" '
+            f'font-size="9" fill="#94a3b8">{escape_svg_text(note[:60])}</text>'
+        )
     return f'<g class="chrome-legend">{"".join(parts)}</g>'
+
+
+# ── G34：作者图例框（受控分栏 / 续排 / 比例符号；零 slice）─────────────────
+
+def render_legend_box_authored(
+    draw: Dict[str, Any],
+    plan: Dict[str, Any],
+) -> str:
+    """纸面作者图例 → 真实 SVG（WP06 的最终绘制消费面）。
+
+    与 ``render_legend_box`` 的关键差别：
+
+    * **零 slice**：``entries_rendered == entries_total``；容量不足由
+      ``expand`` / ``continue`` / ``block`` 三种策略处理，绝不丢尾项。
+    * 受控列数 / 列间距 / 色块与符号样本尺寸 / 行距 / 标题换行 / 图层分组 /
+      稳定顺序全部来自作者计划。
+    * 比例圆样本共享同一比例尺度（``radius_mm`` 由全表最大值一次算出），
+      不因分栏分别缩放；``data-g34-*`` 提供独立产物 oracle。
+    * 所有几何单位 = SVG viewBox user unit（由 mm→unit 单一 corpus 换算）。
+
+    仅当 G34 draw_plan 在场时调用；``render_legend_box`` 保持旧语义与字节。
+    """
+    lp = draw.get("legend")
+    if not isinstance(lp, dict) or lp.get("status") == "blocked":
+        return ""
+    entries: List[Dict[str, str]] = list(lp.get("entries") or [])
+    boxes: List[Dict[str, Any]] = list(lp.get("boxes") or [])
+    if not boxes:
+        return ""
+    comp = draw.get("box") or {}
+    x0 = float(comp.get("x") or 0.0)
+    y0 = float(comp.get("y") or 0.0)
+    frame_w = float(comp.get("width") or 0.0)
+    family = str(draw.get("font_family") or "sans-serif")
+    size = float(draw.get("font_size_units") or 10.0)
+    line_units = float(draw.get("line_units") or size * 1.35)
+    color = str(draw.get("color") or "#1e293b")
+    col_w = float(boxes[0].get("column_width_units") or frame_w)
+    col_gap = float(boxes[0].get("column_gap_units") or 0.0)
+    row_units = float(boxes[0].get("row_units") or line_units)
+    header_units = float(boxes[0].get("header_units") or line_units)
+    swatch = float(boxes[0].get("swatch_units") or size)
+    columns = max(1, int(lp.get("columns") or 1))
+    rows_per_column = max(1, int(lp.get("rows_per_column") or len(entries)))
+    notes = list(lp.get("notes") or [])
+    title_lines = list(lp.get("title_lines") or ["图例"])
+    proportional = list(lp.get("proportional") or [])
+    # G41：canonical 图例在场时由专用绘制器画完整矩阵/可靠性图例，
+    # 不用扁平色条冒充（旧图无此键 → 输出逐字节不变）。允许**多份**
+    # canonical（图例组件聚合多层）：逐份纵向排布，一份都不丢；非 canonical
+    # 层的扁平条目照旧绘制，不再被 canonical 整块吞掉（复审 P1）。
+    canonicals = [c for c in (lp.get("canonicals") or []) if isinstance(c, dict)]
+    total = int(lp.get("entries_total") or len(entries))
+    rendered = int(lp.get("entries_rendered") or 0)
+    parts: List[str] = [
+        f'<g class="chrome-print-legend" '
+        f'data-g34-id="{escape_svg_text(str(draw.get("id") or ""))}" '
+        f'data-g34-entries-total="{total}" '
+        f'data-g34-entries-rendered="{rendered}" '
+        f'data-g34-canonicals="{len(canonicals)}" '
+        f'data-g34-columns="{columns}" '
+        f'data-g34-status="{escape_svg_text(str(lp.get("status") or ""))}" '
+        f'data-g34-nodata="{"true" if lp.get("has_nodata") else "false"}" '
+        f'data-g34-out-of-range="{"true" if lp.get("has_out_of_range") else "false"}">'
+    ]
+    cursor_y = y0
+    for box in boxes:
+        start = int(box.get("entry_start") or 0)
+        count = int(box.get("entry_count") or 0)
+        height = float(box.get("height_units") or line_units)
+        parts.append(
+            f'<rect x="{_fmt(x0)}" y="{_fmt(cursor_y)}" width="{_fmt(frame_w)}" '
+            f'height="{_fmt(height)}" fill="rgba(255,255,255,0.9)" '
+            f'stroke="#cbd5e1" stroke-width="1" rx="4" '
+            f'data-g34-box="{int(box.get("box_index") or 0)}" />'
+        )
+        ty = cursor_y + size
+        for i, tl in enumerate(title_lines):
+            parts.append(
+                f'<text x="{_fmt(x0 + size * 0.5)}" y="{_fmt(ty + i * line_units)}" '
+                f'font-family="{escape_svg_text(family)}" font-size="{_fmt(size)}" '
+                f'font-weight="bold" fill="{escape_svg_text(color)}">'
+                f'{escape_svg_text(tl)}</text>'
+            )
+        header = header_units
+        if lp.get("unit"):
+            parts.append(
+                f'<text x="{_fmt(x0 + size * 0.5)}" y="{_fmt(cursor_y + header)}" '
+                f'font-family="{escape_svg_text(family)}" font-size="{_fmt(size * 0.8)}" '
+                f'fill="#64748b">{escape_svg_text("单位：" + str(lp["unit"]))}</text>'
+            )
+        first_row_y = cursor_y + header + row_units * 0.75
+        canon_top = cursor_y + header
+        if int(box.get("box_index") or 0) == 0:
+            for c in canonicals:
+                ctype = str(c.get("type") or "")
+                parts.append(render_g41_canonical_legend(
+                    c, x0 + size * 0.5, canon_top,
+                    width=max(1.0, frame_w - size), size=size, family=family,
+                    color=color, line_units=line_units))
+                lines = 7 if ctype == "bivariate" else 8
+                # 与 layout_legend 的占位推进量逐单位一致（帧高 + 半行）。
+                canon_top += lines * row_units + row_units * 0.5
+            if canonicals:
+                first_row_y = canon_top + row_units * 0.75
+        box_entries = entries[start:start + count]
+        for idx, e in enumerate(box_entries):
+            col = idx // rows_per_column
+            row = idx % rows_per_column
+            if col >= columns:
+                # 列溢出：不丢条目，追加到下一行同列（稳定顺序，零 slice）。
+                col = columns - 1
+                row += (idx // rows_per_column - columns + 1) * rows_per_column
+            ex = x0 + size * 0.5 + col * (col_w + col_gap)
+            ey = first_row_y + row * row_units
+            ecolor = str(e.get("color") or "#888888")
+            _sw = e.get("swatch") if isinstance(e.get("swatch"), dict) else None
+            _sw_svg = str(_sw.get("swatch_svg") or "") if _sw else ""
+            if _sw_svg:
+                # G40：同语义资产 swatch（规范形 + 实例参数；缩放进
+                # swatch 盒（0.8 纵横比同 rect 基线），描边框便于浅色
+                # 纹理辨识）。swatch_svg 本地盒 24×19.2。
+                _sw_scale = swatch / 24.0 if swatch > 0 else 1.0
+                parts.append(
+                    f'<g transform="translate({_fmt(ex)} {_fmt(ey - swatch * 0.8)}) '
+                    f'scale({_fmt(_sw_scale)})" '
+                    f'data-g34-entry="{start + idx}" data-g40-swatch="1">'
+                    f'{_sw_svg}'
+                    f'<rect x="0" y="0" width="{_fmt(24.0)}" '
+                    f'height="{_fmt(19.2)}" fill="none" '
+                    f'stroke="#cbd5e1" stroke-width="{_fmt(0.6 / max(_sw_scale, 0.01))}" rx="1" /></g>'
+                )
+            else:
+                parts.append(
+                    f'<rect x="{_fmt(ex)}" y="{_fmt(ey - swatch * 0.8)}" '
+                    f'width="{_fmt(swatch)}" height="{_fmt(swatch * 0.8)}" '
+                    f'fill="{escape_svg_text(ecolor)}" rx="1" '
+                    f'data-g34-entry="{start + idx}" />'
+                )
+            parts.append(
+                f'<text x="{_fmt(ex + swatch * 1.6)}" y="{_fmt(ey)}" '
+                f'font-family="{escape_svg_text(family)}" font-size="{_fmt(size * 0.92)}" '
+                f'fill="{escape_svg_text(color)}">{escape_svg_text(str(e.get("label") or ""))}</text>'
+            )
+        for j, note in enumerate(notes):
+            parts.append(
+                f'<text x="{_fmt(x0 + size * 0.5)}" '
+                f'y="{_fmt(cursor_y + height - (len(notes) - j) * line_units * 0.8)}" '
+                f'font-family="{escape_svg_text(family)}" font-size="{_fmt(size * 0.75)}" '
+                f'fill="#94a3b8">{escape_svg_text(str(note)[:80])}</text>'
+            )
+        cursor_y += height + line_units * 0.5
+    # 比例圆样本：共享尺度，一次绘制（不因列布局分别缩放）。
+    if proportional:
+        sy = cursor_y + size
+        for i, s in enumerate(proportional):
+            cx = x0 + size + float(s.get("radius_units") or 0.0) + i * (
+                float(boxes[0].get("symbol_units") or swatch) * 4.0)
+            parts.append(
+                f'<circle cx="{_fmt(cx)}" cy="{_fmt(sy + float(s.get("radius_units") or 0.0))}" '
+                f'r="{_fmt(float(s.get("radius_units") or 0.0))}" '
+                f'fill="none" stroke="{escape_svg_text(str(s.get("color") or "#334155"))}" '
+                f'stroke-width="1" data-g34-symbol-value="{_fmt(float(s.get("value") or 0.0))}" '
+                # oracle 回读需要足够精度：半径 0.3mm 用 2 位会把 √10 比例
+                # 四舍五入成 3.17（真值 3.1623）。几何坐标仍用 _fmt 口径。
+                f'data-g34-radius-mm="{float(s.get("radius_mm") or 0.0):.6f}" />'
+            )
+    parts.append("</g>")
+    return "".join(parts)
+
+
+# ── G41 canonical 双变量矩阵 / 可靠性双通道图例（SVG 绘制 adapter） ──────
+
+
+def render_g41_canonical_legend(
+    canonical: Dict[str, Any], x: float, y: float, *,
+    width: float, size: float, family: str, color: str,
+    line_units: float,
+) -> str:
+    """把 G41 canonical 图例内容画成真实 SVG 片段（服务端 SVG/PDF 共用）。
+
+    只消费 ``legend.py::build_*_legend`` 产出的同一份合同；G34 仍唯一决定
+    位置/尺寸/字体/页框。``data-g41-*`` 供独立回读 oracle 验证格子、计数、
+    单位与源版本，而不是靠黄金截图。
+    """
+    if not isinstance(canonical, dict):
+        return ""
+    ctype = str(canonical.get("type") or "")
+    if ctype not in ("bivariate", "reliability_dual_channel"):
+        return ""
+    fam = escape_svg_text(family)
+    col = escape_svg_text(color)
+
+    def _short(value: Any, limit: int) -> str:
+        """视觉宽度受限时显式标注省略；完整文本另存于 data-g41-*-full 属性
+        与 <title>，导出件不丢失关键轴名/单位/度量名（B32）。"""
+        s = str(value or "")
+        return s if len(s) <= limit else s[: max(1, limit - 1)] + "…"
+
+    title = str(canonical.get("title") or "图例")
+    source = canonical.get("source") if isinstance(canonical.get("source"), dict) else {}
+    src_line = (
+        f"源 {source.get('ref_id') or '?'} · rev {source.get('content_revision')} · "
+        f"指纹 {str(source.get('content_fingerprint') or '')[:16]} · "
+        f"计划 {source.get('plan_digest') or '?'}"
+    )
+    axes = canonical.get("axes") if isinstance(canonical.get("axes"), dict) else {}
+    row_meta = axes.get("row") if isinstance(axes.get("row"), dict) else {}
+    col_meta = axes.get("col") if isinstance(axes.get("col"), dict) else {}
+    measure = canonical.get("measure") if isinstance(canonical.get("measure"), dict) else {}
+    parts: List[str] = [
+        f'<g class="chrome-g41-canonical-legend" data-g41-type="{escape_svg_text(ctype)}" '
+        f'data-g41-schema="{escape_svg_text(str(canonical.get("schema_version") or ""))}" '
+        f'data-g41-revision="{escape_svg_text(str(source.get("content_revision") or ""))}" '
+        f'data-g41-ref="{escape_svg_text(str(source.get("ref_id") or ""))}" '
+        f'data-g41-plan="{escape_svg_text(str(source.get("plan_digest") or ""))}" '
+        f'data-g41-row-label-full="{escape_svg_text(str(row_meta.get("label") or canonical.get("label_b") or ""))}" '
+        f'data-g41-col-label-full="{escape_svg_text(str(col_meta.get("label") or canonical.get("label_a") or ""))}" '
+        f'data-g41-measure-note-full="{escape_svg_text(str(measure.get("unit_note") or ""))}" '
+        f'data-g41-visual-meaning-full="{escape_svg_text(str(measure.get("visual_meaning") or ""))}">',
+        f'<rect x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(width)}" '
+        f'height="{_fmt(line_units * (7 if ctype == "bivariate" else 8))}" '
+        f'fill="rgba(255,255,255,0.94)" stroke="#cbd5e1" stroke-width="0.8" rx="3" />',
+        f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(y + size)}" '
+        f'font-family="{fam}" font-size="{_fmt(size)}" font-weight="bold" '
+        f'fill="{col}"><title>{escape_svg_text(title)}</title>'
+        f'{escape_svg_text(_short(title, 80))}</text>',
+    ]
+    if ctype == "bivariate":
+        cells = [c for c in (canonical.get("cells") or []) if isinstance(c, dict)]
+        n = int(canonical.get("n") or 3)
+        cell = max(6.0, min(14.0, size * 1.5))
+        gx = x + size * 2.6
+        gy = y + size + line_units * 0.5
+        axes = canonical.get("axes") if isinstance(canonical.get("axes"), dict) else {}
+        row = axes.get("row") if isinstance(axes.get("row"), dict) else {}
+        caxis = axes.get("col") if isinstance(axes.get("col"), dict) else {}
+        row_label = str(row.get("label") or "B")
+        col_label = str(caxis.get("label") or "A")
+        arrow = "↓" if str(row.get("arrow") or "up") == "down" else "↑"
+        parts.append(
+            f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(gy + cell)}" '
+            f'font-family="{fam}" font-size="{_fmt(size * 0.8)}" fill="{col}">'
+            f'<title>{escape_svg_text(row_label)}</title>'
+            f'{escape_svg_text(arrow + _short(row_label, 24))}</text>')
+        for c in cells:
+            sr = int(c.get("screen_row") or 0)
+            sc = int(c.get("screen_col") or 0)
+            cx = gx + sc * (cell + 1.0)
+            cy = gy + sr * (cell + 1.0)
+            fill = escape_svg_text(str(c.get("color") or "#cccccc"))
+            count = int(c.get("count") or 0)
+            ri = c.get("row_interval") if isinstance(c.get("row_interval"), dict) else {}
+            ci = c.get("col_interval") if isinstance(c.get("col_interval"), dict) else {}
+            tip = (f"{col_label}: {ci.get('label', '?')} / "
+                   f"{row_label}: {ri.get('label', '?')} / n={count}")
+            parts.append(
+                f'<rect x="{_fmt(cx)}" y="{_fmt(cy)}" width="{_fmt(cell)}" '
+                f'height="{_fmt(cell)}" fill="{fill}" stroke="#ffffff" '
+                f'stroke-width="0.5" data-g41-cell="{int(c.get("class_index") or 0)}" '
+                f'data-g41-count="{count}" data-g41-empty="{"true" if c.get("empty") else "false"}">'
+                f'<title>{escape_svg_text(tip)}</title></rect>')
+        parts.append(
+            f'<text x="{_fmt(gx)}" y="{_fmt(gy + n * (cell + 1.0) + size * 0.85)}" '
+            f'font-family="{fam}" font-size="{_fmt(size * 0.8)}" fill="{col}">'
+            f'<title>{escape_svg_text(col_label)}</title>'
+            f'→ {escape_svg_text(_short(col_label, 32))}</text>')
+        missing = canonical.get("missing") if isinstance(canonical.get("missing"), dict) else {}
+        parts.append(
+            f'<text x="{_fmt(x + size * 0.5)}" '
+            f'y="{_fmt(y + line_units * 5.6)}" font-family="{fam}" '
+            f'font-size="{_fmt(size * 0.72)}" fill="#64748b">'
+            f'{escape_svg_text(str(missing.get("label") or "无数据"))} '
+            f'n={int(missing.get("count") or 0)} · 有效对='
+            f'{int((canonical.get("counts") or {}).get("valid_pairs") or 0)} · '
+            f'规则={escape_svg_text(str(canonical.get("boundary_rule") or ""))}</text>')
+        parts.append(
+            f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(y + line_units * 6.4)}" '
+            f'font-family="{fam}" font-size="{_fmt(size * 0.66)}" fill="#94a3b8">'
+            f'{escape_svg_text("单位 " + str(caxis.get("unit") or "未声明") + " / " + str(row.get("unit") or "未声明"))}</text>')
+    else:
+        estimate = canonical.get("estimate") if isinstance(canonical.get("estimate"), dict) else {}
+        measure = canonical.get("measure") if isinstance(canonical.get("measure"), dict) else {}
+        channel = canonical.get("channel") if isinstance(canonical.get("channel"), dict) else {}
+        sw = max(5.0, size * 0.9)
+        ey = y + size + line_units * 0.4
+        colors = [str(c) for c in (estimate.get("palette_colors") or [])][:7]
+        for i, c in enumerate(colors):
+            parts.append(
+                f'<rect x="{_fmt(x + size * 0.5 + i * (sw + 2))}" y="{_fmt(ey)}" '
+                f'width="{_fmt(sw)}" height="{_fmt(sw * 0.8)}" fill="{escape_svg_text(c)}" '
+                f'data-g41-estimate-class="{i}" />')
+        parts.append(
+            f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(ey + line_units * 0.95)}" '
+            f'font-family="{fam}" font-size="{_fmt(size * 0.72)}" fill="{col}">'
+            f'估计 {escape_svg_text(str(estimate.get("label") or "?"))} · '
+            f'单位 {escape_svg_text(str(estimate.get("unit") or "未声明"))} · '
+            f'{escape_svg_text(str(estimate.get("method") or ""))}</text>')
+        parts.append(
+            f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(ey + line_units * 1.8)}" '
+            f'font-family="{fam}" font-size="{_fmt(size * 0.72)}" fill="{col}">'
+            f'误差量 {escape_svg_text(str(measure.get("kind") or "?"))} · '
+            f'level={escape_svg_text(str(measure.get("level") or "—"))} · '
+            f'{escape_svg_text(str(measure.get("unit_note") or ""))}</text>')
+        by = ey + line_units * 2.4
+        buckets = [b for b in (canonical.get("buckets") or []) if isinstance(b, dict)]
+        bw = max(6.0, min(20.0, width / max(1, len(buckets) + 1) - 2))
+        for i, b in enumerate(buckets):
+            parts.append(
+                f'<rect x="{_fmt(x + size * 0.5 + i * (bw + 2))}" y="{_fmt(by)}" '
+                f'width="{_fmt(bw)}" height="{_fmt(size * 0.8)}" fill="#64748b" '
+                f'fill-opacity="{_fmt(min(1.0, max(0.05, float(b.get("output") or 0.5))))}" '
+                f'data-g41-bucket="{escape_svg_text(str(b.get("key") or i))}" '
+                f'data-g41-bucket-count="{int(b.get("count") or 0)}" />')
+        parts.append(
+            f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(by + line_units * 1.1)}" '
+            f'font-family="{fam}" font-size="{_fmt(size * 0.68)}" fill="#64748b">'
+            f'{escape_svg_text(str(measure.get("visual_meaning") or ""))}</text>')
+        parts.append(
+            f'<text x="{_fmt(x + size * 0.5)}" y="{_fmt(by + line_units * 1.9)}" '
+            f'font-family="{fam}" font-size="{_fmt(size * 0.68)}" fill="#64748b">'
+            f'缺失/未知 n={int((canonical.get("missing") or {}).get("count") or 0)} · '
+            f'clip={escape_svg_text(str(channel.get("clip") or ""))} · '
+            f'来源={escape_svg_text(str(measure.get("source") or ""))}</text>')
+    parts.append(
+        f'<text x="{_fmt(x + size * 0.5)}" '
+        f'y="{_fmt(y + line_units * (6.9 if ctype == "bivariate" else 7.6))}" '
+        f'font-family="{fam}" font-size="{_fmt(size * 0.6)}" fill="#94a3b8">'
+        f'{escape_svg_text(src_line[:140])}</text>')
+    parts.append("</g>")
+    return "".join(parts)
 
 
 # ── 标题块 ───────────────────────────────────────────────────────────────
@@ -251,13 +595,37 @@ def _fmt_degree(v: float, axis: str) -> str:
 
 def render_graticule(bounds: List[float], project: Callable[[Tuple[float, float]], Tuple[Any, Any]],
                      *, lines: int = 6, color: str = "#64748b") -> str:
-    """经纬网：nice-step 经纬线（Mercator 下经线直、纬线直）+ 度标注。"""
+    """经纬网：nice-step 经纬线（Mercator 下经线直、纬线直）+ 度标注。
+
+    F4（#2129）：跨反子午线 bounds（e<w）按 e+=360 归一化画（不静默缺画）；
+    project 返回值经 _fmt + 有限性守卫（projector 直出 numpy/非标量不再
+    污染属性）；度标注经度回绕到 [-180,180) 常规形。
+    """
     try:
         w, s, e, n = (float(v) for v in bounds)
     except Exception:
         return ""
+    if not all(math.isfinite(v) for v in (w, s, e, n)):
+        return ""
+    if e < w:  # 跨反子午线：归一化到同一经度世界副本
+        e += 360.0
     if e <= w or n <= s:
         return ""
+    color_s = escape_svg_text(color)
+
+    def _pt(lng: float, lat: float) -> Optional[Tuple[float, float]]:
+        try:
+            px, py = project((lng, lat))
+            fx, fy = float(px), float(py)
+        except Exception:
+            return None
+        if not (math.isfinite(fx) and math.isfinite(fy)):
+            return None
+        return fx, fy
+
+    def _wrap_lng(v: float) -> float:
+        return ((v + 180.0) % 360.0) - 180.0
+
     lng_step = _nice_step(e - w, lines)
     lat_step = _nice_step(n - s, lines)
     parts: List[str] = ['<g class="chrome-graticule">']
@@ -269,15 +637,17 @@ def render_graticule(bounds: List[float], project: Callable[[Tuple[float, float]
         lng = lng_start + i * lng_step
         if not (w < lng < e):
             continue
-        p1 = project((lng, s))
-        p2 = project((lng, n))
+        p1 = _pt(lng, s)
+        p2 = _pt(lng, n)
+        if p1 is None or p2 is None:
+            continue
         parts.append(
-            f'<line x1="{p1[0]}" y1="{p1[1]}" x2="{p2[0]}" y2="{p2[1]}" '
-            f'stroke="{escape_svg_text(color)}" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.6" />'
+            f'<line x1="{_fmt(p1[0])}" y1="{_fmt(p1[1])}" x2="{_fmt(p2[0])}" y2="{_fmt(p2[1])}" '
+            f'stroke="{color_s}" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.6" />'
         )
         parts.append(
-            f'<text x="{p2[0]}" y="{_fmt(float(p2[1]) - 4)}" font-family="sans-serif" font-size="9" '
-            f'fill="{escape_svg_text(color)}" text-anchor="middle">{escape_svg_text(_fmt_degree(lng, "lng"))}</text>'
+            f'<text x="{_fmt(p2[0])}" y="{_fmt(p2[1] - 4)}" font-family="sans-serif" font-size="9" '
+            f'fill="{color_s}" text-anchor="middle">{escape_svg_text(_fmt_degree(_wrap_lng(lng), "lng"))}</text>'
         )
     lat_start = math.ceil(s / lat_step) * lat_step
     lat_count = max(0, min(int((n - lat_start) / lat_step) + 1, 2 * lines + 2))
@@ -285,15 +655,17 @@ def render_graticule(bounds: List[float], project: Callable[[Tuple[float, float]
         lat = lat_start + j * lat_step
         if not (s < lat < n):
             continue
-        p1 = project((w, lat))
-        p2 = project((e, lat))
+        p1 = _pt(w, lat)
+        p2 = _pt(e, lat)
+        if p1 is None or p2 is None:
+            continue
         parts.append(
-            f'<line x1="{p1[0]}" y1="{p1[1]}" x2="{p2[0]}" y2="{p2[1]}" '
-            f'stroke="{escape_svg_text(color)}" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.6" />'
+            f'<line x1="{_fmt(p1[0])}" y1="{_fmt(p1[1])}" x2="{_fmt(p2[0])}" y2="{_fmt(p2[1])}" '
+            f'stroke="{color_s}" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.6" />'
         )
         parts.append(
-            f'<text x="{_fmt(float(p1[0]) + 4)}" y="{p1[1]}" font-family="sans-serif" font-size="9" '
-            f'fill="{escape_svg_text(color)}" text-anchor="start">{escape_svg_text(_fmt_degree(lat, "lat"))}</text>'
+            f'<text x="{_fmt(p1[0] + 4)}" y="{_fmt(p1[1])}" font-family="sans-serif" font-size="9" '
+            f'fill="{color_s}" text-anchor="start">{escape_svg_text(_fmt_degree(lat, "lat"))}</text>'
         )
     parts.append("</g>")
     return "".join(parts)
@@ -485,14 +857,16 @@ def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
                     width: float = PANEL_WIDTH, vertical: bool = False,
                     stepped: bool = False, title_override: str = "",
                     gradient_id: str = "chrome-cb-grad") -> str:
-    """``gradient_id``：同文档多色带时必须唯一（review P1-3 —— SVG url(#id)
-    按文档首个 id 解析，重复 id 会让第二个色带渲染第一个的渐变）。"""
     """连续色带 → chrome-colorbar（legend_spec / options 双通道的统一渲染）。
 
     - spec：``{palette_colors[], min?, max?, unit?, field?, title?, nodata?}``
       （绑定 layer 的 legend_spec 优先，组件 options 内联兜底 —— 前端
       ``el.legendSpec`` 同语义；E-5：无 palette 不绘制，缺 min/max 画裸条）。
     - 变体：vertical（方向）/ stepped（离散色阶块，与 live stepped 等分同语义）。
+    ``gradient_id``：同文档多色带时必须唯一（review P1-3 —— SVG url(#id)
+    按文档首个 id 解析，重复 id 会让第二个色带渲染第一个的渐变）。
+    F3（#2129）：vertical 变体此前几何不变（仍 (width-20)×12 横条 + 12px
+    横条纹），hi/lo 标签超出卡片；vertical 现为窄条竖几何，标签置于条右。
     """
     if not isinstance(spec, dict):
         return ""
@@ -500,7 +874,11 @@ def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
               if isinstance(c, str) and c][:COLORBAR_MAX_STOPS]
     if not colors:
         return ""
-    ramp_w, ramp_h = width - 20.0, 12.0
+    # 竖向：窄条竖几何（条宽 12，条高随卡宽）；横向：(width-20)×12 横条。
+    if vertical:
+        ramp_w, ramp_h = 12.0, max(60.0, width - 50.0)
+    else:
+        ramp_w, ramp_h = width - 20.0, 12.0
     head = 18.0
     total_h = head + ramp_h + 16.0 + (14.0 if spec.get("nodata") else 0.0)
     parts = [_panel_card(x, y, width, total_h)]
@@ -543,8 +921,9 @@ def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
         lo = f"{vmin:g}{(' ' + unit) if unit else ''}"
         hi = f"{vmax:g}{(' ' + unit) if unit else ''}"
         if vertical:
-            parts.append(_panel_text(rx + ramp_w + 2.0, ry + 8.0, hi, size=7.5))
-            parts.append(_panel_text(rx + ramp_w + 2.0, ry + ramp_h, lo, size=7.5))
+            # 竖向：hi 顶 / lo 底，紧贴条右（在卡内 —— 条右 = x+10+ramp_w）。
+            parts.append(_panel_text(rx + ramp_w + 4.0, ry + 6.0, hi, size=7.5))
+            parts.append(_panel_text(rx + ramp_w + 4.0, ry + ramp_h, lo, size=7.5))
         else:
             parts.append(_panel_text(rx, ry + ramp_h + 9.0, lo, size=7.5))
             parts.append(_panel_text(rx + ramp_w, ry + ramp_h + 9.0, hi, size=7.5,
@@ -559,10 +938,16 @@ def render_colorbar(x: float, y: float, spec: Dict[str, Any], *,
     return f'<g class="chrome-colorbar">{"".join(parts)}</g>'
 
 
-def colorbar_height(spec: Any) -> float:
-    """色带装配前高度估计（stack 布局用；与渲染几何同表）。"""
+def colorbar_height(spec: Any, *, vertical: bool = False,
+                    width: float = PANEL_WIDTH) -> float:
+    """色带装配前高度估计（stack 布局用；与渲染几何同表）。
+
+    F3（#2129）：此前硬编码 50 与实际卡片高 46 不一致 —— 现与
+    render_colorbar 同公式（head 18 + ramp + 16 + nodata 14）。
+    """
     if not isinstance(spec, dict) or not [
         c for c in (spec.get("palette_colors") or []) if isinstance(c, str)
     ]:
         return 0.0
-    return 50.0 + (14.0 if isinstance(spec.get("nodata"), dict) else 0.0)
+    ramp_h = (max(60.0, width - 50.0) if vertical else 12.0)
+    return 18.0 + ramp_h + 16.0 + (14.0 if isinstance(spec.get("nodata"), dict) else 0.0)

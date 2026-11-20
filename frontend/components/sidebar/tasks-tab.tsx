@@ -176,6 +176,30 @@ function JobCard({
         </div>
       )}
 
+      {job.kind === 'data_import' && job.member_status && job.member_status.length > 0 && (
+        <div className="mt-2 rounded-sm bg-surface-sunken px-2 py-1.5" data-testid={`import-members-${job.id}`}>
+          <div className="mb-1 text-caption text-ink-secondary">{t('sidebar.tasks.importMembers')}</div>
+          <ul className="max-h-32 space-y-0.5 overflow-y-auto">
+            {job.member_status.map((m) => (
+              <li key={m.member_key} className="flex items-center justify-between gap-2 text-caption">
+                <span className="truncate text-ink" title={m.error ?? undefined}>
+                  {m.display_name || m.member_key}
+                  {m.rejected_rows != null && m.rejected_rows > 0
+                    ? ` · ${t('sidebar.tasks.importRejected', { p0: String(m.rejected_rows) })}`
+                    : ''}
+                </span>
+                <span
+                  className={`shrink-0 ${atlasPageBadgeClass(m.status)}`}
+                  title={m.error ?? undefined}
+                >
+                  {m.status}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="mt-2 flex items-center justify-between text-meta text-ink-muted">
         <span>{t('sidebar.tasks.elapsed', { time: formatElapsed(job, now) })}</span>
         <div className="flex items-center gap-2">

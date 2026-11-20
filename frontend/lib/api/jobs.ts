@@ -25,7 +25,8 @@ export type JobKind =
   | 'analysis'
   | 'workflow'
   | 'explorer'
-  | 'atlas_export';
+  | 'atlas_export'
+  | 'georeference';
 
 /** 批量图册 job 的页级状态（additive；仅 kind=atlas_export 填充，≤21 条）。 */
 export interface AtlasPageStatusView {
@@ -34,6 +35,17 @@ export interface AtlasPageStatusView {
   page_number: number;
   status: string;
   error: string | null;
+}
+
+/** G23 数据导入 job 的成员级状态（有界安全摘要；其他 kind 为 null/缺席） */
+export interface ImportMemberStatusView {
+  member_key: string;
+  display_name: string;
+  status: string;
+  error: string | null;
+  input_rows: number | null;
+  rejected_rows: number | null;
+  output_ref: string | null;
 }
 
 export interface JobView {
@@ -59,6 +71,8 @@ export interface JobView {
   result_ref: string | null;
   /** 批量图册页级状态（有界安全摘要；其他 kind 为 null/缺席） */
   page_status?: AtlasPageStatusView[] | null;
+  /** 数据导入成员级状态（有界安全摘要；其他 kind 为 null/缺席） */
+  member_status?: ImportMemberStatusView[] | null;
   step_count: number;
   created_at: string | null;
   started_at: string | null;

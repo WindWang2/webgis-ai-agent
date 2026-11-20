@@ -106,11 +106,18 @@ def _subject_bonus(record_subject: str, ctx: MemoryQueryContext) -> tuple[float,
 
 
 def _dataset_version_ok(record_value: Dict, ctx: MemoryQueryContext) -> bool:
+    from app.services.gis_memory.sanitizer import sanitize_subject
+
     token = record_value.get("version_token")
-    subject_key = str(record_value.get("dataset_key") or "")
+    subject_key = sanitize_subject(record_value.get("dataset_key") or "")
     if not ctx.dataset_versions or not subject_key:
         return True
     current = ctx.dataset_versions.get(subject_key)
+    if current is None:
+        for raw, value in ctx.dataset_versions.items():
+            if sanitize_subject(raw) == subject_key:
+                current = value
+                break
     if current is None or token is None:
         return True
     return str(token) == str(current)

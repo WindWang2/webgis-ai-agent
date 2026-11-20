@@ -41,6 +41,12 @@ from app.services.feature_edit.journal import (
 from app.services.feature_edit.plan import derive_changes, extract_fc
 from app.services.session_data import session_data_manager
 
+
+def _declared_geometry_type(payload: Any) -> Optional[str]:
+    from app.services.feature_edit.datasets import extract_geometry_type_declaration
+
+    return extract_geometry_type_declaration(payload)
+
 logger = logging.getLogger(__name__)
 
 # 进程内 per-session 编辑锁：同波并发工具（turn 锁透传时）的 RMW 串行化。
@@ -130,11 +136,14 @@ async def _save_journal(session_id: str, journals: Dict[str, EditJournal], ref_i
 
 
 def _receipt(entry: JournalEntry, stamp_status: str = "pending", mapspec_revision: Optional[int] = None) -> EditReceipt:
-    return {
+    deltas = entry.get("deltas") or []
+    created_wfids = [d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "created"]
+    retired_wfids = [d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "removed"]
+    receipt: EditReceipt = {
         "entry_seq": entry.get("seq"),
         "kind": entry.get("kind"),
         "ref_id": entry.get("ref_id"),
-        "changed_wfids": list(dict.fromkeys(d.get("wfid") for d in entry.get("deltas") or []))[:64],
+        "changed_wfids": list(dict.fromkeys(d.get("wfid") for d in deltas))[:64],
         "schema_ops": entry.get("schema_ops") or [],
         "content_revision_after": entry.get("content_revision_after"),
         "fingerprint_after": entry.get("fingerprint_after"),
@@ -145,6 +154,12 @@ def _receipt(entry: JournalEntry, stamp_status: str = "pending", mapspec_revisio
         "stamp_status": stamp_status,
         "mapspec_revision": mapspec_revision,
     }
+    if created_wfids or retired_wfids:
+        receipt["created_wfids"] = [w for w in created_wfids if w][:64]
+        receipt["retired_wfids"] = [w for w in retired_wfids if w][:64]
+    if entry.get("lineage"):
+        receipt["lineage_events"] = entry["lineage"][:8]
+    return receipt
 
 
 def _head_summary(journal: EditJournal) -> JournalHeadSummary:
@@ -199,6 +214,14 @@ async def commit_plan(
     key = f"{idempotency_key}:{plan_id}" if idempotency_key else f"plan:{plan_id}"
 
     async with _edit_lock(session_id):
+        fresh_plans = await load_plans(session_id)
+        fresh_plan = fresh_plans.get(plan_id) if isinstance(fresh_plans, dict) else None
+        fresh_status = fresh_plan.get("status") if isinstance(fresh_plan, dict) else None
+        if fresh_status in {"rejected", "applied", "expired", "conflicted"}:
+            raise FeatureEditConflict(
+                "plan_state_invalid",
+                {"plan_id": plan_id, "status": fresh_status},
+            )
         payload, descriptor = await _load_ref(session_id, ref_id)
         journals = await _load_journals(session_id)
         journal = journals.get(ref_id) or new_journal()
@@ -225,6 +248,50 @@ async def commit_plan(
                 },
             )
 
+        # R3 P2-2 + R4：提交期只读复核（fail-closed）。envelope 标记变更会先被
+        # 指纹 CAS 拒（此处是纵深防御）；metadata-only 标记不改载荷指纹 ——
+        # 在此显式复核，闭合「预览后才被治理标记只读」的 pending 窗口。
+        if isinstance(payload, dict) and payload.get("read_only") is True:
+            raise FeatureEditBlocked("dataset_read_only_source", "source became read-only after preview")
+        try:
+            from app.services.artifact_registry import get_artifact
+
+            rec = await get_artifact(session_id, ref_id)
+            md = getattr(rec, "metadata", None)
+            if isinstance(md, dict) and md.get("read_only") is True:
+                raise FeatureEditBlocked("dataset_read_only_source", "source became read-only after preview")
+        except FeatureEditBlocked:
+            raise
+        except Exception:  # noqa: BLE001 — ledger 不可达不改变提交资格
+            pass
+
+        # ── G44：active 合同冷读复核（锁内；DB 不可读 fail-closed）────────
+        # plan 绑定的 expected_contract 与当前 active（含「无」）不一致 → 409
+        # contract_changed：预览后合同激活/修订/退役都让旧 plan 过期（F12）。
+        from app.services.field_contracts import enforcement as fc_enforcement
+
+        try:
+            enforced = await fc_enforcement.resolve_active_contract(session_id, ref_id)
+        except fc_enforcement.ContractStateUnavailable as exc:
+            raise FeatureEditBlocked(
+                "contract_state_unavailable",
+                f"field-contract state unreadable; commit blocked (fail-closed): {exc}"[:200],
+            ) from exc
+        expected_contract = plan.get("expected_contract") if isinstance(plan.get("expected_contract"), dict) else None
+        current_contract_view = enforced.plan_view() if enforced is not None else None
+        if (expected_contract or {}).get("digest") != (current_contract_view or {}).get("digest"):
+            await _mark_plan_status_unlocked(session_id, plan_id, "conflicted")
+            raise FeatureEditConflict(
+                "contract_changed",
+                {
+                    "plan_id": plan_id,
+                    "expected_contract": expected_contract,
+                    "current_contract": current_contract_view,
+                    "journal": _head_summary(journal),
+                },
+            )
+        contract_fields = frozenset(enforced.declared_fields()) if enforced is not None else None
+
         # 重新求值（与 preview 同一纯函数路径；载荷在锁内冷读，指纹已验）。
         fc = extract_fc(payload)
         if fc is None:
@@ -237,8 +304,12 @@ async def commit_plan(
         for target_ref in _prefetch_target_refs(plan.get("ops") or []):
             target_payload, _ = await _load_ref(session_id, target_ref)
             target_payloads[target_ref] = target_payload
-        deltas, schema_ops, derive_findings, _ = derive_changes(
-            fc, plan.get("ops") or [], plan.get("target_wfids") or [], target_payloads
+        derive_targets = plan.get("target_wfids_ordered") or plan.get("target_wfids") or []
+        deltas, schema_ops, derive_findings, _, lineage_events = derive_changes(
+            fc, plan.get("ops") or [], derive_targets, target_payloads,
+            plan_seed=plan_id,
+            geometry_type=_declared_geometry_type(payload),
+            contract_fields=contract_fields,
         )
         if derive_findings:
             # 数据在预览后仍变了内容形态（同指纹不应发生——防御面）。
@@ -254,6 +325,47 @@ async def commit_plan(
             new_payload: Any = {**payload, "geojson": new_fc}
         else:
             new_payload = new_fc
+
+        # ── G44：提交锁内候选态合同门禁（写入前最后一道；与预览同内核）──
+        if enforced is not None:
+            changed_wfids = {
+                str(d.get("wfid"))
+                for d in deltas
+                if isinstance(d, dict) and d.get("wfid")
+            } | set(plan.get("target_wfids") or [])
+            contract_findings = fc_enforcement.validate_candidate_fc(
+                new_fc, enforced,
+                changed_wfids=changed_wfids, schema_changed=bool(schema_ops),
+            )
+            if contract_findings:
+                raise FeatureEditBlocked(
+                    "contract_violation",
+                    "commit blocked: candidate state violates the active field contract",
+                    {
+                        "contract": enforced.plan_view(),
+                        "findings": fc_enforcement.candidate_findings_projection(
+                            contract_findings
+                        ),
+                    },
+                )
+
+        # G14/WP06：提交期拓扑复核（预览已查；指纹 CAS 后仍复核 = 防御面，
+        # 规则声明随载荷走 —— envelope 变化即数据变化，由上方 CAS 拒绝）。
+        from app.services.feature_edit.topology import check_topology, extract_topology_declaration
+
+        topology_declaration = extract_topology_declaration(payload)
+        if topology_declaration.get("rules") and deltas:
+            affected = list(
+                set(plan.get("target_wfids") or [])
+                | {d.get("wfid") for d in deltas if isinstance(d, dict) and d.get("presence") == "created"}
+            )
+            topo_findings = check_topology(new_fc, [w for w in affected if w], topology_declaration)
+            if topo_findings:
+                raise FeatureEditBlocked(
+                    "topology_violation",
+                    "edit violates the dataset's declared topology rules",
+                    {"findings": topo_findings[:8]},
+                )
 
         fp_after = compute_payload_fingerprint(new_payload)
         # 链指纹定义在「物化后空间」：物化是一次性数据集身份升级（首次编辑
@@ -323,6 +435,8 @@ async def commit_plan(
             "content_revision_after": current_revision,  # overwrite 后更新
             "created_at": time.time(),
         }
+        if lineage_events:
+            entry["lineage"] = lineage_events[:8]
         journals[ref_id] = append_entry(journal, entry)
         ok = await session_data_manager.overwrite(session_id, ref_id, new_payload)
         if not ok:
@@ -343,6 +457,11 @@ async def commit_plan(
                 session_id, ref_id, revision_after,
             )
         _pending_receipt_entry = entry
+        # 还在编辑锁内就把 plan 标成 applied，避免并发 reject 在销账前覆盖。
+        await _mark_plan_status_unlocked(
+            session_id, plan_id, "applied",
+            extra={"entry_seq": entry.get("seq"), "applied_at": time.time()},
+        )
 
     # ── 销账（锁内完成主体；receipt 在盖章后回写 plan，供幂等重放回放） ──
     entry = _pending_receipt_entry
@@ -498,6 +617,44 @@ async def _apply_inverse_locked(
         new_payload: Any = {**payload, "geojson": new_fc}
     else:
         new_payload = new_fc
+
+    # ── G44：恢复态同样受当前 active 合同约束（F23）──────────────────────
+    # 违反 → typed 阻断（journal 未动、历史不改写）；合法 undo/redo 照常恢复。
+    # 处理路径：先修数据（新编辑）或 owner 修订/退役合同，再重试 undo。
+    from app.services.field_contracts import enforcement as fc_enforcement
+
+    try:
+        enforced = await fc_enforcement.resolve_active_contract(session_id, ref_id)
+    except fc_enforcement.ContractStateUnavailable as exc:
+        raise FeatureEditBlocked(
+            "contract_state_unavailable",
+            f"field-contract state unreadable; {kind} blocked (fail-closed): {exc}"[:200],
+        ) from exc
+    if enforced is not None:
+        changed_wfids = {
+            str(d.get("wfid"))
+            for d in effect_entry.get("deltas") or []
+            if isinstance(d, dict) and d.get("wfid")
+        }
+        restored_findings = fc_enforcement.validate_candidate_fc(
+            new_fc, enforced,
+            changed_wfids=changed_wfids,
+            schema_changed=bool(effect_entry.get("schema_ops")),
+        )
+        if restored_findings:
+            raise FeatureEditBlocked(
+                "contract_violation",
+                f"{kind} would restore a state that violates the active field contract "
+                "(history is preserved; fix the data via a new edit or revise/retire "
+                "the contract, then retry)",
+                {
+                    "kind": kind,
+                    "contract": enforced.plan_view(),
+                    "findings": fc_enforcement.candidate_findings_projection(
+                        restored_findings
+                    ),
+                },
+            )
     fp_after = compute_payload_fingerprint(new_payload)
     expected_after = effect_entry.get("fingerprint_after")
     if expected_after and fp_after != expected_after:
@@ -583,6 +740,27 @@ async def _mark_plan_status(
     # 的进程锁段），asyncio.Lock 不可重入 —— 内部路径改调未锁变体。
     async with _process_lock(session_id):
         await _mark_plan_status_unlocked(session_id, plan_id, status, extra)
+
+
+async def transition_plan_status(
+    session_id: str,
+    plan_id: str,
+    *,
+    allowed: tuple[str, ...],
+    status: str,
+) -> Optional[str]:
+    """锁内 CAS：只有当前状态属于 ``allowed`` 才改写。返回观察到的状态。"""
+    async with _process_lock(session_id):
+        plans = await load_plans(session_id)
+        plan = plans.get(plan_id)
+        if not isinstance(plan, dict):
+            return None
+        current = str(plan.get("status") or "")
+        if current not in allowed:
+            return current
+        plans[plan_id] = {**plan, "status": status}
+        await session_data_manager.set_map_state_fields(session_id, {PLANS_STATE_KEY: plans})
+        return status
 
 
 async def _mark_plan_status_unlocked(

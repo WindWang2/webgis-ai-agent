@@ -79,6 +79,134 @@ class RankedCandidate:
         }
 
 
+# ── G13 / WP04：候选可用性投影的共享判定 ────────────────────────────
+# DynamicToolSurface.select（生产候选阶段）与 rerank_candidates（独立纯
+# 函数/CLI/评测）消费同一套硬规则，杜绝两处判定漂移：
+#   1. 不可用状态（declared_only / temporarily_unavailable / forbidden）
+#      硬抑制，无论检索分多高；
+#   2. 时间量纲语境 × 米制距离工具名 → UNIT_DIMENSION_CONFLICT 硬抑制；
+#   3. native_verified 加权 / available_unverified 降权**但保留可见**
+#      （未达最高验证状态 ≠ 不可用，不许全部隐藏）。
+# 快照缺席的策略由调用方决定：独立 rerank 沿用「缺席=抑制」（G06 语义，
+# hallucinated 与 declared_only 同归抑制面）；生产 selector 传
+# unknown_policy="keep"（快照可能落后于刚注册的工具，registry 存在性/
+# 合同闸仍后置，dispatch 是唯一执行权威）。
+
+VERDICT_SUPPRESS = "suppress"
+VERDICT_KEEP = "keep"
+
+#: selector 用的确定性微调分（与 rerank_candidates 步骤 4 同值）。
+BOOST_NATIVE_VERIFIED = 0.35
+PENALTY_AVAILABLE_UNVERIFIED = -0.20
+
+
+@dataclass(frozen=True)
+class CandidateAvailabilityVerdict:
+    """单个候选的可用性判定（只读、可解释）。"""
+
+    tool: str
+    status: str = ""            # 快照状态；缺席时为 ""
+    action: str = VERDICT_KEEP  # keep | suppress
+    reason: str = ""            # 稳定理由 token（抑制原因 / 调分原因）
+    score_delta: float = 0.0    # keep 时的确定性调分（suppress 恒 0）
+    unverified_reasons: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tool": self.tool,
+            "status": self.status,
+            "action": self.action,
+            "reason": self.reason,
+            "score_delta": round(self.score_delta, 4),
+            "unverified_reasons": list(self.unverified_reasons[:2]),
+        }
+
+
+def _time_context(query: str, method_constraints: Sequence[str]) -> bool:
+    q = str(query or "").lower()
+    if any(t in q for t in _TIME_TERMS):
+        return True
+    return any(
+        str(c).lower() in ("seconds", "s", "time", "travel_time")
+        for c in method_constraints)
+
+
+def classify_candidates_availability(
+    snapshot: CapabilityAvailabilitySnapshot,
+    names: Sequence[str],
+    *,
+    query: str = "",
+    method_constraints: Sequence[str] = (),
+    unknown_policy: str = "suppress",
+    legal_names: Optional[set[str]] = None,
+) -> dict[str, CandidateAvailabilityVerdict]:
+    """对候选名单做逐工具可用性判定（纯函数、有界、确定性）。
+
+    ``unknown_policy="suppress"``：快照/合法名集合里缺席 → 抑制
+    （hallucinated 或 declared_only —— rerank_candidates 既有语义；
+    hallucinated 判定只在此策略下应用）。
+    ``unknown_policy="keep"``：缺席 → 保留零贡献，**不做** hallucinated
+    判定（生产 selector 的 fail-open 语义：候选名单来自活注册表检索，
+    快照可能落后于刚注册的工具；registry 存在性/合同闸后置，dispatch
+    是唯一执行权威）。
+    ``legal_names`` 显式给出合法工具名集合（suppress 策略的
+    hallucinated 判定）；缺省用快照 records 的 tool_id 集。
+    """
+    status_by_tool = {r.tool_id: r for r in snapshot.records if r.tool_id}
+    legal = legal_names if legal_names is not None else set(status_by_tool)
+    time_ctx = _time_context(query, method_constraints)
+
+    out: dict[str, CandidateAvailabilityVerdict] = {}
+    for name in names:
+        name = str(name)
+        if unknown_policy == VERDICT_SUPPRESS and legal and name not in legal:
+            out[name] = CandidateAvailabilityVerdict(
+                tool=name, status="", action=VERDICT_SUPPRESS,
+                reason="hallucinated_tool_name")
+            continue
+        rec = status_by_tool.get(name)
+        if rec is None:
+            if unknown_policy == VERDICT_SUPPRESS:
+                out[name] = CandidateAvailabilityVerdict(
+                    tool=name, status="declared_only",
+                    action=VERDICT_SUPPRESS,
+                    reason="availability_declared_only")
+            else:
+                out[name] = CandidateAvailabilityVerdict(
+                    tool=name, status="", action=VERDICT_KEEP,
+                    reason="availability_not_in_snapshot")
+            continue
+        status = rec.availability_status
+        if status not in AVAILABILITY_STATUS_VOCABULARY:
+            status = "available_unverified"
+        if status in _BLOCKED_STATUSES:
+            out[name] = CandidateAvailabilityVerdict(
+                tool=name, status=status, action=VERDICT_SUPPRESS,
+                reason=f"availability_{status}",
+                unverified_reasons=tuple(rec.unverified_reasons))
+            continue
+        if time_ctx and any(tok in name.lower() for tok in _METRIC_TOOL_TOKENS):
+            out[name] = CandidateAvailabilityVerdict(
+                tool=name, status=status, action=VERDICT_SUPPRESS,
+                reason="UNIT_DIMENSION_CONFLICT",
+                unverified_reasons=tuple(rec.unverified_reasons))
+            continue
+        if status == "native_verified":
+            out[name] = CandidateAvailabilityVerdict(
+                tool=name, status=status, action=VERDICT_KEEP,
+                reason="native_verified",
+                score_delta=BOOST_NATIVE_VERIFIED)
+        else:
+            # available_unverified：降权但保留可见 —— 缺算法链/证据不全
+            # 不等于不可用（任务书 WP04：不许全部隐藏）。
+            out[name] = CandidateAvailabilityVerdict(
+                tool=name, status=status, action=VERDICT_KEEP,
+                reason="available_unverified_downweighted",
+                score_delta=PENALTY_AVAILABLE_UNVERIFIED,
+                unverified_reasons=tuple(rec.unverified_reasons))
+    return out
+
+
 @dataclass(frozen=True)
 class RerankResult:
     candidates: tuple[RankedCandidate, ...]
@@ -166,52 +294,47 @@ def rerank_candidates(
 
     # 先对输入做硬上界切片，再物化（islice 对生成器也有效）。
     bounded_input = islice(iter(candidates), _MAX_INPUT_CANDIDATES)
+    deduped: list[tuple[str, float]] = []
     for name, base_score in _normalized(bounded_input):
         if name in seen:
             continue
         seen.add(name)
+        deduped.append((name, base_score))
 
-        # 1) hallucinated 工具名：不在 registry / 快照里，直接拒绝。
-        if legal and name not in legal:
-            suppressed.append((name, "hallucinated_tool_name"))
-            diagnostics.append(f"hallucinated_tool_rejected:{name}")
+    # 硬规则（hallucinated / 不可用 / 量纲冲突）与 keep 调分统一走共享
+    # 判定（G13 / WP04）—— 与生产 selector 同一套规则，零漂移。
+    verdicts = classify_candidates_availability(
+        snapshot, [n for n, _ in deduped],
+        query=query, method_constraints=method_constraints,
+        unknown_policy=VERDICT_SUPPRESS, legal_names=legal or None)
+
+    for name, base_score in deduped:
+        verdict = verdicts[name]
+        if verdict.action == VERDICT_SUPPRESS:
+            suppressed.append((name, verdict.reason))
+            if verdict.reason == "hallucinated_tool_name":
+                diagnostics.append(f"hallucinated_tool_rejected:{name}")
+            else:
+                diagnostics.append(
+                    f"unavailable_tool_suppressed:{name}:{verdict.status}")
+                if verdict.reason == "UNIT_DIMENSION_CONFLICT":
+                    diagnostics.append(
+                        "UNIT_DIMENSION_CONFLICT: 时间量纲(秒)语境下"
+                        "米制距离工具不可激活（秒≠米）")
             continue
 
+        status = verdict.status
         rec = status_by_tool.get(name)
-        status = rec.availability_status if rec else "declared_only"
-        if status not in AVAILABILITY_STATUS_VOCABULARY:
-            status = "available_unverified"
-
-        # 2) 不可用工具硬过滤，无论相似度多高。
-        if status in _BLOCKED_STATUSES or rec is None:
-            suppressed.append((name, f"availability_{status}"))
-            diagnostics.append(f"unavailable_tool_suppressed:{name}:{status}")
-            continue
-
-        # 3) 严格量纲约束：秒语境下米制距离工具不可被抬为首选。
-        is_metric = any(tok in name.lower() for tok in _METRIC_TOOL_TOKENS)
-        if time_context and is_metric:
-            suppressed.append((name, "UNIT_DIMENSION_CONFLICT"))
-            diagnostics.append(
-                "UNIT_DIMENSION_CONFLICT: 时间量纲(秒)语境下"
-                "米制距离工具不可激活（秒≠米）")
-            continue
         if time_context:
             diagnostics.append(
                 "time_dimension_context: 仅接受显式时间量纲工具，"
                 "距离类候选须先做量纲声明")
 
         # 4) 输入类型 / 科学方法约束感知（只读降权 + 显式披露）。
-        reasons: list[str] = []
-        score = float(base_score)
-        if status == "native_verified":
-            score += 0.35
-            reasons.append("native_verified")
-        else:
-            score -= 0.20
-            reasons.append("available_unverified_downweighted")
-            if rec and rec.unverified_reasons:
-                reasons.extend(list(rec.unverified_reasons)[:2])
+        reasons: list[str] = [verdict.reason]
+        score = float(base_score) + verdict.score_delta
+        if status != "native_verified" and rec and rec.unverified_reasons:
+            reasons.extend(list(rec.unverified_reasons)[:2])
 
         if input_types and rec is not None:
             declared = set(rec.input_artifacts)

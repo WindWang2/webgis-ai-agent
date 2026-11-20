@@ -300,6 +300,27 @@ class TestSubagentDispatcherRuntime:
         assert receipt.summary == "subagent done"
         assert receipt.wall_time_s >= 0.0
         assert fake_subagent.instances[0].session_id == "s1"
+        # data_hunter 必须落到已注册的 data_scout，不能以 role=None 跑 adhoc。
+        assert fake_subagent.instances[0].calls[0]["role"] == "data_scout"
+
+    async def test_compute_specialist_dispatches_geocompute(self, fake_subagent):
+        await SubagentDispatcherRuntime().execute(
+            _assignment(role=SwarmSpecialistRole.COMPUTE_SPECIALIST)
+        )
+        assert fake_subagent.instances[0].calls[0]["role"] == "geocompute"
+
+    async def test_unresolved_role_fails_closed_without_dispatch(
+        self, fake_subagent, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "app.services.agent_swarm.dispatcher._SWARM_ROLE_TO_SUBAGENT",
+            {},
+        )
+        receipt = await SubagentDispatcherRuntime().execute(_assignment())
+        assert receipt.status == SwarmReceiptStatus.FAILED
+        assert receipt.error_code == SwarmErrorCode.NON_RETRYABLE
+        assert "unresolved" in receipt.error
+        assert fake_subagent.instances == []
 
     async def test_task_text_carries_bounded_projection(self, fake_subagent):
         assignment = _assignment()
@@ -358,7 +379,7 @@ class TestSubagentDispatcherRuntime:
 
 
 class TestRoleResolution:
-    """角色名解析：注册角色透传，未知角色降级无角色委派。"""
+    """角色名解析：swarm 标签映射到已注册角色档，缺失则拒绝。"""
 
     def test_registered_specialist_role_resolves(self):
         from app.services.agent_swarm.registry import ensure_subagent_roles_registered
@@ -368,8 +389,28 @@ class TestRoleResolution:
             "cartography_specialist"
         )
 
-    def test_unregistered_role_degrades_to_none(self):
-        assert _role_name(SwarmSpecialistRole.DATA_HUNTER) is None
+    def test_data_and_compute_roles_map_onto_registered_constraints(self):
+        from app.services.subagent_roles import get_subagent_role
+
+        hunter = get_subagent_role(_role_name(SwarmSpecialistRole.DATA_HUNTER))
+        compute = get_subagent_role(
+            _role_name(SwarmSpecialistRole.COMPUTE_SPECIALIST)
+        )
+        assert hunter.name == "data_scout"
+        assert hunter.allow_mutation is False
+        assert hunter.max_tool_calls == 24
+        assert compute.name == "geocompute"
+        assert compute.allow_mutation is False
+        assert compute.max_tool_calls == 24
+        assert _role_name(SwarmSpecialistRole.AUDIT_JUDGE) == "audit_judge"
+
+    def test_unmapped_role_refuses_instead_of_none(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.services.agent_swarm.dispatcher._SWARM_ROLE_TO_SUBAGENT",
+            {},
+        )
+        with pytest.raises(ValueError, match="unmapped swarm specialist role"):
+            _role_name(SwarmSpecialistRole.DATA_HUNTER)
 
     def test_compose_task_text_bounded(self):
         assignment = _assignment()

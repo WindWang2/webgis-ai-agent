@@ -423,16 +423,24 @@ def _extract_fc(data) -> Optional[dict]:
 
 
 def _find_feature_by_id(fc: dict, feature_id: str) -> Optional[dict]:
-    """Lookup one feature by id property; checks feature.id and common properties keys."""
+    """Lookup one feature by id property; checks feature.id and common properties keys.
+
+    G24/P0：``properties._wfid`` 先于顶层 id（与 _chain_stable_id /
+    前端 featureIdFromProperties 同序 —— G14 物化后 WFID 是权威寻址键）。
+    """
     fid_str = str(feature_id)
     for feature in fc.get("features", []):
         if not isinstance(feature, dict):
             continue
+        props = feature.get("properties") or {}
+        if isinstance(props, dict):
+            wfid = props.get("_wfid")
+            if wfid is not None and str(wfid) == fid_str:
+                return feature
         # direct feature.id
         fid = feature.get("id")
         if fid is not None and str(fid) == fid_str:
             return feature
-        props = feature.get("properties") or {}
         if isinstance(props, dict):
             for key in ("id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id"):
                 if key in props and props[key] is not None and str(props[key]) == fid_str:
@@ -1035,14 +1043,49 @@ async def _require_owned_session_qtoken(
     头优先，query 兜底；ref_id+session_id+token 共同构成能力令牌。
     """
     if exp is not None and sig:
-        from sqlalchemy import select
         from app.core.signing import terrain_capability_path, verify_signature
         ref = str(request.path_params.get("ref_id") or "")
-        if ref and verify_signature(terrain_capability_path(session_id, ref), exp, sig):
-            result = await db.execute(select(Conversation).where(Conversation.id == session_id))
-            conv = result.scalar_one_or_none()
-            if conv is not None:
-                return conv
+        presented = owner_token or token
+        conv = None
+        if ref and presented:
+            # 调用方呈交了 live 凭证：以该凭证摘要做 binding 直接验签（与
+            # 签名侧 signed_terrain_query(owner_token=...) 同源入参）。验签
+            # 失败即落入下方活凭证重检（verify_session_owner 是权威）——
+            # 此路径零 Conversation 读（#2123 基线残余）。
+            if verify_signature(
+                terrain_capability_path(session_id, ref, owner_token=presented),
+                exp,
+                sig,
+            ):
+                try:
+                    from sqlalchemy import select
+                    result = await db.execute(select(Conversation).where(Conversation.id == session_id))
+                    conv = result.scalar_one_or_none()
+                except Exception:  # noqa: BLE001 — 快速路径 best-effort，失败即落入活凭证重检
+                    conv = None
+        elif ref:
+            # 纯签名 URL（MapLibre 瓦片取数无法附带 token/自定义头）：binding
+            # 取库内存储的 owner_token 摘要（签名侧同源入参）。快速路径
+            # best-effort：读取或验签的任何失败都落入下方活凭证重检
+            # （authoritative，fail-closed），绝不因快速路径故障改变裁决。
+            try:
+                from sqlalchemy import select
+                result = await db.execute(select(Conversation).where(Conversation.id == session_id))
+                stored = result.scalar_one_or_none()
+            except Exception:  # noqa: BLE001 — 同上：快速路径故障 ≠ 授权/拒绝裁决
+                stored = None
+            if stored is not None and verify_signature(
+                terrain_capability_path(session_id, ref, owner_token=stored.owner_token),
+                exp,
+                sig,
+            ):
+                conv = stored
+        if conv is not None:
+            try:
+                request.state.terrain_capability_exp = int(exp)
+            except (TypeError, ValueError):
+                request.state.terrain_capability_exp = None
+            return conv
         # A persistent MapLibre source can outlive its short signed URL. An
         # expired capability grants nothing, but does not invalidate a caller's
         # independently supplied live user/session credential.
@@ -1122,6 +1165,7 @@ async def get_terrain_tile(
 
 @router.get("/layers/data/{ref_id}/terrain-tiles.json", tags=["图层数据"])
 async def get_terrain_tilejson(
+    request: Request,
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
     # A8（评审）：与 terrain-tiles 瓦片路由的 token Query 边界对齐（超长串
@@ -1199,8 +1243,14 @@ async def get_terrain_tilejson(
         maxzoom = native_zoom_for_gsd(gsd_m, tuple(bounds))
 
     from app.core.signing import signed_terrain_query
+    # 用签名 capability 进来的请求不能把 exp 续到原 URL 之后，否则泄露的
+    # tiles URL 可以每 10 分钟自我续期。活的用户/owner_token 认证不受此限。
+    cap_exp = getattr(getattr(request, "state", None), "terrain_capability_exp", None)
     tiles_url = (f"/api/v1/layers/data/{ref_id}/terrain-tiles/{{z}}/{{x}}/{{y}}.png"
-                 + signed_terrain_query(session_id, ref_id))
+                 + signed_terrain_query(
+                     session_id, ref_id,
+                     owner_token=_conv.owner_token, max_exp=cap_exp,
+                 ))
 
     synthetic = bool(receipt_data.get("synthetic")) if isinstance(receipt_data, dict) else False
     attribution = "User-provided elevation data (session-owned)"
@@ -1379,7 +1429,9 @@ async def list_terrain_sources(
             )
         # Publish a short-lived, ref-bound capability; never embed the owner credential.
         from app.core.signing import signed_terrain_query
-        _auth_qs = signed_terrain_query(session_id, ref_id)
+        _auth_qs = signed_terrain_query(
+            session_id, ref_id, owner_token=_conv.owner_token,
+        )
         session_entries.append(SessionTerrainSourceEntry(
             ref_id=ref_id,
             name=str(payload.get("name") or ref_id),

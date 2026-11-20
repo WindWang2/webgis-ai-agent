@@ -123,7 +123,8 @@ export async function composeFrames(
     if (frame.projection === 'cartogram') {
       degradations.push({
         code: 'cartogram_unsupported',
-        detail: `帧「${title}」：cartogram 投影不支持，按未变形几何渲染`,
+        detail: `帧「${title}」：面域变形 cartogram 投影不支持，按未变形几何渲染`
+          + '（圆面积 / Dorling 变形走 cartogram 作者链路，不经该投影）',
       });
     }
 

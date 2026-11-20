@@ -73,6 +73,10 @@ def record_result(
     """
     if not owner_scope or not node_fingerprint or not result_ref or not session_id:
         return False
+    # 无身份调用方共享字面量 "anonymous"。写入会让下一个匿名调用者
+    # 复用别人的 result_ref/session_id。这类 scope 不进跨进程索引。
+    if owner_scope == "anonymous":
+        return False
     try:
         with session_factory() as db:
             from app.models.db_model import Conversation, User, GeoComputeNodeResult
@@ -125,7 +129,7 @@ def find_result(owner_scope: str, node_fingerprint: str) -> Optional[dict[str, A
     可能返回陈旧条目（错行被复用）。id 作为 created_at 同秒时的确定性
     决胜（与 _prune_owner 同一排序口径）。
     """
-    if not owner_scope or not node_fingerprint:
+    if not owner_scope or not node_fingerprint or owner_scope == "anonymous":
         return None
     try:
         with session_factory() as db:

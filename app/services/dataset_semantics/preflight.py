@@ -483,7 +483,7 @@ def preflight_task_scope_check(
     items: List[Tuple[str, Any]],
     task_scope: Any,
 ) -> Tuple[str, List[PreflightGap], Dict[str, Any]]:
-    """任务范围一致性判据（G03 GD-05 / ADR-0286 D6；确定性纯函数）。
+    """任务范围一致性判据（G03 GD-05 / ADR-0296 D6；确定性纯函数）。
 
     ``task_scope``：``{place?, bbox?}``（声明了范围才检查——向后兼容）。
     判定：dataset bbox 与任务 bbox 不相交 → SCOPE_MISMATCH（数据与任务

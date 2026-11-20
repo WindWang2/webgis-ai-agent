@@ -123,7 +123,7 @@ class MissionRuntimeService:
         rec = self.store.transition(
             mission_id, to_state=C.MissionState.CANCELLED.value,
             lease_epoch=epoch, owner=worker_id)
-        self._purge_working_context(mission_id)
+        self._purge_working_context(mission_id, org_id=org_id)
         return rec
 
     def complete(
@@ -136,10 +136,10 @@ class MissionRuntimeService:
         rec = self.store.transition(
             mission_id, to_state=C.MissionState.COMPLETE.value,
             lease_epoch=epoch, owner=worker_id)
-        self._purge_working_context(mission_id)
+        self._purge_working_context(mission_id, org_id=org_id)
         return rec
 
-    def _purge_working_context(self, mission_id: str) -> None:
+    def _purge_working_context(self, mission_id: str, *, org_id: Optional[str] = None) -> None:
         """ADR-0205 D7 hygiene: drop the mission working context on terminal
         transitions. Lazy purge on load remains authoritative (missions can
         terminate in workers that skip this path); this just avoids leaving
@@ -147,7 +147,7 @@ class MissionRuntimeService:
         try:
             from app.services.gis_context.store import WorkingContextStore
 
-            WorkingContextStore().purge(mission_id)
+            WorkingContextStore().purge(mission_id, org_id=str(org_id or ""))
         except Exception:  # noqa: BLE001 — hygiene is best-effort
             logger.debug(
                 "[mission_runtime] working-context purge failed for %s", mission_id

@@ -1,0 +1,213 @@
+........................................................................ [  2%]
+........................................................................ [  4%]
+........................................................................ [  6%]
+........................................................................ [  8%]
+........................................................................ [ 10%]
+........................................................................ [ 12%]
+........................................................................ [ 14%]
+........................................................................ [ 16%]
+........................................................................ [ 18%]
+........................................................................ [ 20%]
+....s................................................................... [ 22%]
+..................F..................................................... [ 24%]
+........................................................................ [ 26%]
+........................................................................ [ 28%]
+........................................................................ [ 30%]
+........................................................................ [ 32%]
+........................................................................ [ 34%]
+........................................................................ [ 36%]
+........................................................................ [ 38%]
+....................................................................s... [ 40%]
+........................................................................ [ 42%]
+........................................................................ [ 44%]
+........................................................................ [ 46%]
+......................xxx............................................... [ 48%]
+........................................................................ [ 50%]
+........................................................................ [ 52%]
+........................................................................ [ 54%]
+........................................................................ [ 56%]
+........................................................................ [ 58%]
+........................................................................ [ 60%]
+...........................................................s............ [ 62%]
+........................................................................ [ 64%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 70%]
+........................................................................ [ 72%]
+........................................................................ [ 74%]
+........................................................................ [ 76%]
+........................................................................ [ 78%]
+........................................................................ [ 80%]
+........................................................................ [ 82%]
+........................................................................ [ 84%]
+........................................................................ [ 86%]
+........................................................................ [ 88%]
+........................................................................ [ 90%]
+........................................................................ [ 92%]
+........................................................................ [ 94%]
+........................................................................ [ 96%]
+........................................................................ [ 98%]
+.......................................................                  [100%]
+=================================== FAILURES ===================================
+_ TestCorpusParse.test_corpus_spec_parses_valid_at_latest[scale_portrayal_cases] _
+
+self = <test_carto_ir_corpus_v1.TestCorpusParse object at 0x7f2e079bd9d0>
+path = PosixPath('/home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/carto_ir_corpus/scale_portrayal_cases.json')
+
+    @pytest.mark.parametrize("path", CORPUS_FILES, ids=[p.stem for p in CORPUS_FILES])
+    def test_corpus_spec_parses_valid_at_latest(self, path: Path):
+        fixture = json.loads(path.read_text(encoding="utf-8"))
+>       result = ms.parse_mapspec(fixture["spec"])
+                                  ^^^^^^^^^^^^^^^
+E       KeyError: 'spec'
+
+tests/cartography/test_carto_ir_corpus_v1.py:67: KeyError
+=============================== warnings summary ===============================
+tests/cartography/test_frame_product_benchmarks.py:24
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_frame_product_benchmarks.py:24: PytestUnknownMarkWarning: Unknown pytest.mark.slow - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    pytestmark = [pytest.mark.cartography, pytest.mark.slow]
+
+tests/cartography/test_frame_product_publication.py:224
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_frame_product_publication.py:224: PytestUnknownMarkWarning: Unknown pytest.mark.slow - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.slow
+
+app/schemas/lakehouse_schema.py:16
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:16: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: List[float] = Field(min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:16
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:16: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: List[float] = Field(min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:30
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:30: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time_sources: List[CubeTimeSource] = Field(min_items=1, max_items=512)
+
+app/schemas/lakehouse_schema.py:30
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:30: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time_sources: List[CubeTimeSource] = Field(min_items=1, max_items=512)
+
+app/schemas/lakehouse_schema.py:36
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:36: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:36
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:36: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:37
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:37: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    y: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:37
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:37: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    y: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:38
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:38: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    x: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:38
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:38: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    x: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
+
+app/schemas/lakehouse_schema.py:52
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:52: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    updates: List[CubeRevisionUpdate] = Field(min_items=1, max_items=64)
+
+app/schemas/lakehouse_schema.py:52
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:52: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    updates: List[CubeRevisionUpdate] = Field(min_items=1, max_items=64)
+
+app/schemas/lakehouse_schema.py:74
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:74: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    sources: List[RSCubeSource] = Field(min_items=1, max_items=512)
+
+app/schemas/lakehouse_schema.py:74
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:74: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    sources: List[RSCubeSource] = Field(min_items=1, max_items=512)
+
+app/schemas/lakehouse_schema.py:82
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:82: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    time: Optional[List[str]] = Field(default=None, max_items=64)
+
+app/schemas/lakehouse_schema.py:83
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:83: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    band: Optional[List[str]] = Field(default=None, max_items=64)
+
+app/schemas/lakehouse_schema.py:84
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:84: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    polarization: Optional[List[str]] = Field(default=None, max_items=16)
+
+app/schemas/lakehouse_schema.py:85
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:85: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    vertical: Optional[List[str]] = Field(default=None, max_items=64)
+
+app/schemas/lakehouse_schema.py:87
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:87: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    model: Optional[List[str]] = Field(default=None, max_items=16)
+
+app/schemas/lakehouse_schema.py:88
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:88: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    scenario: Optional[List[str]] = Field(default=None, max_items=16)
+
+app/schemas/lakehouse_schema.py:89
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:89: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: Optional[List[float]] = Field(default=None, min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:89
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:89: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: Optional[List[float]] = Field(default=None, min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:100
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:100: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    object_ids: List[str] = Field(min_items=1, max_items=200)
+
+app/schemas/lakehouse_schema.py:100
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:100: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    object_ids: List[str] = Field(min_items=1, max_items=200)
+
+app/schemas/lakehouse_schema.py:101
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:101: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    tags: Optional[List[str]] = Field(default=None, max_items=32)
+
+app/schemas/lakehouse_schema.py:106
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:106: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    object_ids: List[str] = Field(min_items=1, max_items=200)
+
+app/schemas/lakehouse_schema.py:106
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:106: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    object_ids: List[str] = Field(min_items=1, max_items=200)
+
+app/schemas/lakehouse_schema.py:113
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:113: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: Optional[List[float]] = Field(default=None, min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:113
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:113: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    bbox: Optional[List[float]] = Field(default=None, min_items=4, max_items=4)
+
+app/schemas/lakehouse_schema.py:116
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/app/schemas/lakehouse_schema.py:116: PydanticDeprecatedSince20: `max_items` is deprecated and will be removed, use `max_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    tags: Optional[List[str]] = Field(default=None, max_items=16)
+
+tests/cartography/test_render_diagnostics_contract.py:22
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_render_diagnostics_contract.py:22: PytestUnknownMarkWarning: Unknown pytest.mark.unit - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    pytestmark = [pytest.mark.unit, pytest.mark.cartography]
+
+tests/cartography/test_frame_product_export_artifacts.py::TestPdfReal::test_pdf_rasterized_to_png_real
+tests/cartography/test_frame_product_export_artifacts.py::TestPdfReal::test_pdf_rasterized_to_png_real
+tests/cartography/test_frame_product_export_artifacts.py::TestPdfReal::test_pdf_rasterized_to_png_real
+tests/cartography/test_frame_product_export_artifacts.py::TestPdfReal::test_pdf_rasterized_to_png_real
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_frame_product_export_artifacts.py:191: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+    data = list(box.getdata())
+
+tests/cartography/test_synthetic_dem_mapspec_e2e.py::TestContractE2E::test_data_plane_bytes_decode_to_elevation
+tests/cartography/test_synthetic_dem_mapspec_e2e.py::TestContractE2E::test_perf_budget_smoke
+  /home/kevin/projects/webgis/webgis-ai-agent/.venv/lib/python3.13/site-packages/rasterio/windows.py:729: RasterioDeprecationWarning: round_shape is deprecated and will be removed in Rasterio 2.0.0.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/cartography/test_carto_ir_corpus_v1.py::TestCorpusParse::test_corpus_spec_parses_valid_at_latest[scale_portrayal_cases]
+1 failed, 3576 passed, 3 skipped, 3 xfailed, 39 warnings in 383.17s (0:06:23)

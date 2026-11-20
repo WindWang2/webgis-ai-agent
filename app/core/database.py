@@ -68,7 +68,26 @@ def get_engine():
             "pool_recycle": 3600,
         })
 
-    return create_engine(**engine_kwargs)
+    engine = create_engine(**engine_kwargs)
+
+    if is_sqlite:
+        # G44（dev/test lane 可靠性）：journal 模式切 WAL —— 读写不再互斥，
+        # 请求内审计/任务心跳等短写事务与领域并发写（如 field_contracts 的
+        # 后台评估）在 sqlite lane 下排队而非互相打 locked。仅 sqlite 生效，
+        # 生产 Postgres 路径零改动。
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_wal(dbapi_connection, _record):  # noqa: ANN001
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.close()
+            except Exception:  # noqa: BLE001 — PRAGMA 失败不阻断连接
+                pass
+
+    return engine
 
 
 Engine = get_engine()
@@ -93,6 +112,19 @@ def _to_async_url(url: str) -> str:
     return url
 
 
+def async_engine_uses_null_pool(database_url: str, env: str) -> bool:
+    """sqlite 与 development/test 用 NullPool；production/staging 用 QueuePool。
+
+    TestClient 在 threadpool 跑 async 路由，QueuePool 会把同一个 asyncpg
+    连接并发派给多个 session。staging 是多 worker 部署面，NullPool 会让
+    每个请求新建连接，和同步池叠加后容易打满 Postgres max_connections。
+    """
+    url = _to_async_url(database_url)
+    if url.startswith("sqlite+aiosqlite"):
+        return True
+    return env.lower() not in {"production", "staging"}
+
+
 AsyncEngine = None  # type: ignore[misc,assignment]
 AsyncSessionLocal = None  # type: ignore[misc,assignment]
 if process_role() != "worker":
@@ -102,14 +134,19 @@ if process_role() != "worker":
 
         _async_url = _to_async_url(settings.DATABASE_URL)
         _async_kwargs: dict = {"pool_pre_ping": True}
-        if _async_url.startswith("sqlite+aiosqlite"):
+        if async_engine_uses_null_pool(settings.DATABASE_URL, settings.ENV) and _async_url.startswith("sqlite+aiosqlite"):
             # aiosqlite 在默认 QueuePool 下跨 asyncio loop 会泄露 WorkerThread 导致 pytest 挂起。
             # NullPool 确保 Session 关闭时立即销毁 aiosqlite 连接与后台线程。
             _async_kwargs["poolclass"] = NullPool
-            _async_kwargs["connect_args"] = {"check_same_thread": False}
-        elif settings.is_production():
+            # G42：busy timeout 与同步侧 get_engine 的 V7 对称 —— sync/async
+            # 双引擎并发写同一 sqlite 文件时（durable job runner + 终验/
+            # 章节写），异步侧默认 5s 等待会抛 database is locked；30s 让
+            # 短事务排队而非失败（语义与同步侧注释一致）。
+            _async_kwargs["connect_args"] = {
+                "check_same_thread": False, "timeout": 30}
+        elif not async_engine_uses_null_pool(settings.DATABASE_URL, settings.ENV):
             _async_kwargs["connect_args"] = {"server_settings": {"timezone": "UTC"}}
-            # 生产环境用 QueuePool 复用连接（asyncpg 连接池在长生命周期下高效）。
+            # production/staging 用 QueuePool 复用连接（asyncpg 长生命周期高效）。
             _async_kwargs.update(
                 pool_size=10,
                 max_overflow=20,

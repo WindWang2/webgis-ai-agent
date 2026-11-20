@@ -37,6 +37,14 @@ MAX_RUNTIME_SNAPSHOTS_PER_PROJECT = 25
 _PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _SNAPSHOT_ID_RE = re.compile(r"^prs-[A-Za-z0-9_-]{1,64}$")
 
+
+def _schema_version_of(data: Dict[str, Any]) -> Optional[int]:
+    """Parse schema_version. Non-integers are corrupt rows, not HTTP 500s."""
+    try:
+        return int(data.get("schema_version") or 1)
+    except (TypeError, ValueError):
+        return None
+
 #: resume lease TTL（同 snapshot 并发 resume 的 fail-fast 窗口）。
 RESUME_LEASE_TTL_SECONDS = 300
 
@@ -211,6 +219,9 @@ class ProjectRuntimeStore:
                 data = _read_json_sync(f)
                 if not isinstance(data, dict):
                     continue
+                schema_version = _schema_version_of(data)
+                if schema_version is None:
+                    continue
                 out.append({
                     "snapshot_id": str(data.get("snapshot_id") or f.stem),
                     "label": str(data.get("label") or ""),
@@ -219,7 +230,7 @@ class ProjectRuntimeStore:
                     "session_id": str(data.get("session_id") or ""),
                     "sources": len(data.get("source_bindings") or []),
                     "datasets": len(data.get("datasets") or []),
-                    "schema_version": int(data.get("schema_version") or 1),
+                    "schema_version": schema_version,
                     "workspace_snapshot_id": str(
                         data.get("workspace_snapshot_id") or ""),
                 })
@@ -297,6 +308,10 @@ class ProjectRuntimeStore:
         with self._lease_guard:
             fd = self._lease_fds.pop(str(lease), None)
         if fd is not None:
+            try:
+                os.unlink(lease)
+            except OSError:
+                pass
             os.close(fd)
 
 

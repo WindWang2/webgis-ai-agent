@@ -1,0 +1,105 @@
+{
+  "name": "authoring_pinned_hidden_auto",
+  "viewport": [
+    0,
+    0,
+    200,
+    200
+  ],
+  "labels": [
+    {
+      "id": "P1",
+      "text": "重点学校一",
+      "kind": "point",
+      "x": 100,
+      "y": 100,
+      "angle": 0.0,
+      "font_size": 12,
+      "priority": 5,
+      "pinned": true,
+      "offset_em": [
+        1.0,
+        -1.0
+      ],
+      "layer_id": "schools",
+      "feature_id": "s1"
+    },
+    {
+      "id": "H1",
+      "text": "重复名称",
+      "kind": "point",
+      "x": 40,
+      "y": 40,
+      "angle": 0.0,
+      "font_size": 12,
+      "priority": 0,
+      "hidden": true
+    },
+    {
+      "id": "A1",
+      "text": "普通点",
+      "kind": "point",
+      "x": 100,
+      "y": 92,
+      "angle": 0.0,
+      "font_size": 12,
+      "priority": 1
+    },
+    {
+      "id": "A2",
+      "text": "另一",
+      "kind": "point",
+      "x": 30,
+      "y": 150,
+      "angle": 0.0,
+      "font_size": 12,
+      "priority": 2
+    }
+  ],
+  "expected": {
+    "placements": [
+      {
+        "id": "H1",
+        "x": 40,
+        "y": 40,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "hidden_by_user"
+      },
+      {
+        "id": "P1",
+        "x": 82.0,
+        "y": 80.8,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": "",
+        "pinned": true
+      },
+      {
+        "id": "A1",
+        "x": 109.0,
+        "y": 101.0,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      },
+      {
+        "id": "A2",
+        "x": 39.0,
+        "y": 159.0,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      }
+    ],
+    "stats": {
+      "total": 4,
+      "placed": 3,
+      "suppressed": 1,
+      "collisions": 0,
+      "hidden_by_user": 1,
+      "pinned_placed": 1
+    },
+    "budgetExceeded": false
+  }
+}

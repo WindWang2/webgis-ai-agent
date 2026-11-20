@@ -108,3 +108,23 @@ def test_smooth_gapfill_adversarial_inputs():
         smooth_gapfill(np.arange(30.0), fill="kriging")
     with pytest.raises(InsufficientSamples, match="window_length"):
         smooth_gapfill(np.arange(6.0), window_length=9, polyorder=2)
+
+
+def test_savgol_fill_none_with_gaps_does_not_crash_and_bleeds_nan():
+    """#2239: savgol + fill="none" + 任意 NaN 不得 ValueError；缺口窗口 NaN。"""
+    values = np.array([1.0, 2.0, np.nan, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+    smoothed, filled_mask, meta = smooth_gapfill(
+        values, method="savgol", window_length=3, polyorder=1, fill="none")
+    assert meta["nan_window_bleed"] is True
+    # 缺口位置与其窗口覆盖位置为 NaN（savgol 半宽 1）
+    assert np.isnan(smoothed[2])
+    assert np.isnan(smoothed[1]) and np.isnan(smoothed[3])
+    # 远离缺口的像元为有限平滑值
+    assert np.isfinite(smoothed[0])
+    assert np.isfinite(smoothed[5:]).all()
+    # 无缺口参考（fill=none 全有限输入）同样路径不炸
+    smoothed2, _, meta2 = smooth_gapfill(
+        np.arange(10, dtype=float), method="savgol", window_length=3,
+        polyorder=1, fill="none")
+    assert np.isfinite(smoothed2).all()
+    assert meta2["nan_window_bleed"] is False

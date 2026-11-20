@@ -29,7 +29,9 @@ def plan_guard(db: Any, plan_id: str, staging_root: Path) -> Iterator[None]:
     digest = hashlib.sha256(str(plan_id).encode()).digest()
     lock_root = staging_root / '.locks'
     lock_root.mkdir(parents=True, exist_ok=True)
-    lock_path = lock_root / f'{int.from_bytes(digest[:2], "big") % 256}.lock'
+    # 完整 plan 哈希做文件名。前两字节 % 256 只有 256 个桶，不同计划会互相
+    # 误报 live executor（fail-closed，但会把无关计划锁死）。
+    lock_path = lock_root / f"{digest.hex()}.lock"
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
     connection = None
     acquired = False

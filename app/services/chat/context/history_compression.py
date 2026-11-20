@@ -63,16 +63,25 @@ def _message_tokens(msg: dict) -> int:
     return total + 4
 
 
+def _is_real_user_turn(msg: dict) -> bool:
+    """Synthetic MiniMax XML tool carriers are not a new user turn."""
+    if msg.get("role") != "user":
+        return False
+    content = msg.get("content")
+    text = content if isinstance(content, str) else ""
+    return not text.startswith("[工具执行结果]")
+
+
 def _group_into_turns(messages: list[dict]) -> list[list[dict]]:
-    """把消息序列按 user 开头切成"轮次"。
+    """把消息序列按真实 user 开头切成"轮次"。
 
     一轮 = 一个 user 消息 + 后面紧跟的所有 assistant/tool 消息，直到下一个 user。
+    ``[工具执行结果]`` 载体仍算在当前轮内，避免预算紧张时先丢掉真实用户问题。
     """
     turns: list[list[dict]] = []
     current: list[dict] = []
     for msg in messages:
-        role = msg.get("role")
-        if role == "user" and current:
+        if _is_real_user_turn(msg) and current:
             turns.append(current)
             current = [msg]
         else:

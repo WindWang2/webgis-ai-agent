@@ -1,4 +1,5 @@
 import { exportNotificationTitle } from './export-notification';
+import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
 /**
  * C14：publication vector PDF 导出运行面（前端入口 —— 路由文档化的
  * 「backend-only 待接线」交付）。
@@ -33,7 +34,7 @@ export interface VectorPdfExportRequest {
    */
   pageProfile?: string;
   atlas?: {
-    driver: 'frames' | 'category' | 'feature';
+    driver: 'frames' | 'category' | 'feature' | 'product';
     layerId?: string;
     categoryProperty?: string;
     featuresPerPage?: number;
@@ -105,24 +106,47 @@ export function vectorPdfRequestFromSettings(settings: Record<string, unknown>):
       return profile ? { pageProfile: profile } : {};
     })(),
   };
-  if (settings['atlasEnabled'] !== true) return req;
+  // G15：frame_product 在场 → 产品页（同页并置；精确语义只有后端能承载）。
+  // 检测在 atlasEnabled 门之前（review R2-B：产品绑定时即使图册开关
+  // 关闭也走产品页 —— 否则缺省路径产出 N 张无过滤整幅页且无披露）。
   const driver = settings['atlasDriver'];
-  req.atlas = {
-    driver: driver === 'category' || driver === 'feature' ? driver : 'frames',
+  let effectiveDriver: 'frames' | 'category' | 'feature' | 'product' =
+    driver === 'category' || driver === 'feature' ? driver : 'frames';
+  try {
+    const committed = getCommittedMapSpec() as
+      | { frame_product?: { enabled?: boolean } }
+      | null;
+    // R3-P3：显式 category/feature 选择是用户明确意图 —— 不被产品静默
+    // 覆写；自动路由仅在 driver 未选或 frames（缺省）时生效。
+    const productPresent =
+      !!committed?.frame_product && committed.frame_product.enabled !== false;
+    if (productPresent && driver !== 'category' && driver !== 'feature') {
+      effectiveDriver = 'product';
+    }
+  } catch {
+    /* spec 面缺席 → 既有语义 */
+  }
+  if (effectiveDriver !== 'product' && settings['atlasEnabled'] !== true) {
+    // 既有门：非产品 + 图册开关关闭 → 不携带 atlas（语义逐字节不变）。
+    return req;
+  }
+  const atlasPolicy: AtlasRequestPolicy = {
+    driver: effectiveDriver,
     includeCover: settings['atlasIncludeCover'] !== false,
   };
+  req.atlas = atlasPolicy;
   if (typeof settings['atlasLayerId'] === 'string' && settings['atlasLayerId']) {
-    req.atlas.layerId = settings['atlasLayerId'];
+    atlasPolicy.layerId = settings['atlasLayerId'];
   }
   if (
-    req.atlas.driver === 'category' &&
+    atlasPolicy.driver === 'category' &&
     typeof settings['atlasCategoryProperty'] === 'string' &&
     settings['atlasCategoryProperty']
   ) {
-    req.atlas.categoryProperty = settings['atlasCategoryProperty'];
+    atlasPolicy.categoryProperty = settings['atlasCategoryProperty'];
   }
   if (typeof settings['atlasTitle'] === 'string' && settings['atlasTitle']) {
-    req.atlas.atlasTitle = settings['atlasTitle'];
+    atlasPolicy.atlasTitle = settings['atlasTitle'];
   }
   return req;
 }
@@ -145,12 +169,14 @@ export async function runVectorPdfExport(
 ): Promise<VectorPdfExportOutcome> {
   let spec: Record<string, unknown> | null = null;
   let sessionId: string | undefined;
+  let committedSpec: Record<string, unknown> | null = null;
   try {
     const cursor = await import('@/lib/mapspec/session-cursor');
     const committedRaw = cursor.getCommittedMapSpec();
     if (!committedRaw) {
       return { ok: false, error: 'no_mapspec' };
     }
+    committedSpec = committedRaw as unknown as Record<string, unknown>;
     const { composeExportSpec } = await import('@/lib/map-kit/exporter');
     const { injectResolvedRefSources } = await import('@/lib/mapspec/ref-source-resolver');
     const hud = getHudState();
@@ -170,6 +196,13 @@ export async function runVectorPdfExport(
     sessionId = cursor.getMapSpecSessionCursor().sessionId;
   } catch {
     return { ok: false, error: 'spec_unavailable' };
+  }
+
+  // G26：committed MapSpec 含数值栅格层 → 统一混合编译路径（服务端冻结
+  // 权威修订 + 地理对齐窗口嵌入；不再把栅格层静默丢成「矢量 PDF」）。
+  // 无栅格层 → 既有 vector-pdf 载荷路径逐字节不变。
+  if (sessionId && committedSpec && hasNumericRasterLayers(committedSpec)) {
+    return await runMixedPdfExport(getHudState, sessionId, req);
   }
 
   try {
@@ -288,5 +321,115 @@ async function fallbackToRasterPdf(
       code: 'vector_pdf_unavailable',
       fellBackToRaster: true,
     };
+  }
+}
+
+// ── G26：混合地图统一编译路径（数值栅格在场时的 export_vector_pdf）──────
+
+/** committed MapSpec 是否含数值栅格层（layer.raster_style 或源 numeric_raster）。 */
+export function hasNumericRasterLayers(spec: Record<string, unknown>): boolean {
+  const layers = spec['layers'];
+  if (!Array.isArray(layers)) return false;
+  const sources = (spec['sources'] ?? {}) as Record<string, unknown>;
+  return layers.some((layer) => {
+    if (!layer || typeof layer !== 'object') return false;
+    const l = layer as Record<string, unknown>;
+    if (l['raster_style'] && typeof l['raster_style'] === 'object') return true;
+    const sid = l['source'];
+    if (typeof sid !== 'string') return false;
+    const src = sources[sid] as Record<string, unknown> | undefined;
+    return !!src && src['type'] === 'numeric_raster';
+  });
+}
+
+/**
+ * 统一混合 PDF 导出：POST /api/v1/export/mixed（服务端冻结权威 MapSpec；
+ * 栅格地理对齐嵌入 + 矢量文本可选取）。blocking 冲突如实呈现遗漏清单
+ * （不静默丢层、不把不完整标成功）。
+ */
+async function runMixedPdfExport(
+  getHudState: Parameters<typeof runVectorPdfExport>[0],
+  sessionId: string,
+  req: VectorPdfExportRequest,
+): Promise<VectorPdfExportOutcome> {
+  const { exportMixedMap, mixedExportErrorCode } = await import(
+    '@/lib/api/publication'
+  );
+  try {
+    const result = await exportMixedMap({
+      sessionId,
+      format: 'pdf',
+      ...(req.dpi ? { targetDpi: req.dpi } : {}),
+      ...(req.title ? { title: req.title } : {}),
+    });
+    getHudState().addExport({
+      id: `export-${Date.now()}`,
+      name: req.title || '未命名',
+      filename: result.filename,
+      type: 'pdf',
+      size: `${Math.max(1, Math.round(result.bytes / 1024))}KB`,
+      date: new Date().toLocaleString(),
+    });
+    const rasterNote =
+      result.raster_layers?.length
+        ? `，嵌入数值栅格 ${result.raster_layers.length} 层（地理对齐）`
+        : '';
+    const partialNote = result.partial
+      ? ` 注意：本导出为显式 partial —— 遗漏层：` +
+        (result.omitted_layers ?? [])
+          .map((o) => `${o.layer_id}（${o.reason}）`)
+          .join('、') +
+        `。请如实告知用户。`
+      : '';
+    getHudState().setPendingSystemMessage(
+      `[系统通知] 混合地图 PDF \`${exportNotificationTitle(req.title)}\` 已生成` +
+        `（矢量+数值栅格统一编译${rasterNote}）` +
+        `，文件已落盘：[下载PDF](${API_BASE}${result.url})。` +
+        (result.manifest_url
+          ? ` [导出清单](${API_BASE}${result.manifest_url})。`
+          : '') +
+        partialNote +
+        `注意展示完链接后直接结束。`,
+    );
+    return {
+      ok: true,
+      result: {
+        success: true,
+        filename: result.filename,
+        url: result.url,
+        format: 'pdf' as const,
+        vector: true,
+        pages: Number(result.renderer?.['pages'] ?? 1),
+        frames_rendered: Number(result.renderer?.['frames_rendered'] ?? 1),
+        frames_skipped: Number(result.renderer?.['frames_skipped'] ?? 0),
+        render_diagnostics: result.render_diagnostics,
+        layout_version: String(result.renderer?.['layout_version'] ?? ''),
+      },
+    };
+  } catch (err) {
+    const code = mixedExportErrorCode(err);
+    if (code === 'vector_pdf_busy') {
+      getHudState().setPendingSystemMessage(
+        '[系统通知] 混合地图渲染器占用中（服务端串行渲染槽位饱和），请稍后重试。',
+      );
+      return { ok: false, error: 'vector_pdf_busy', code };
+    }
+    if (code === 'export_blocked_incomplete') {
+      const body = (
+        err as { body?: { detail?: { omitted?: unknown } } } | null | undefined
+      )?.body?.detail as { omitted?: Array<Record<string, unknown>> } | undefined;
+      const omitted = (body?.omitted ?? [])
+        .map((o) => `${String(o['layer_id'] ?? '?')}（${String(o['reason'] ?? '')}）`)
+        .join('、');
+      getHudState().setPendingSystemMessage(
+        `[系统通知] 混合地图导出被阻止：存在无法嵌入的图层（${omitted}）。` +
+          `完整地图承诺不放宽 —— 请先处理这些图层，或明确选择 partial 导出。`,
+      );
+      return { ok: false, error: 'export_blocked_incomplete', code };
+    }
+    getHudState().setPendingSystemMessage(
+      `[系统通知] 混合地图 PDF 导出失败${code ? `（${code}）` : ''}。请向用户致歉并结束流程。`,
+    );
+    return { ok: false, error: 'export_failed', code };
   }
 }

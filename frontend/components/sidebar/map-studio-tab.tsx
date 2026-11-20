@@ -4,7 +4,7 @@ import { useState, useEffect, useId, type ReactNode } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { ExportItem, ExportSettings } from '@/lib/store/hud-types';
 import { useMapAction } from '@/lib/contexts/map-action-context';
-import { Download, Printer, History, ChevronDown, Lock } from 'lucide-react';
+import { Layers,  Download, Printer, History, ChevronDown, Lock } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
 import { downloadWithAuth } from '@/lib/api/authenticated-download';
 import { submitAtlasJob } from '@/lib/api/atlas-jobs';
@@ -17,6 +17,8 @@ import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { devOnly } from '@/lib/utils/logger';
 import { useT } from '@/lib/i18n/useT';
+import { FrameProductPanel } from '@/components/workbench/frame-product-panel';
+import { PrintLayoutPanel } from '@/components/workbench/print-layout-panel';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
 import {
   commitStudioText,
@@ -93,7 +95,7 @@ const FORMAT_LABEL: Record<ExportSettings['format'], string> = {
   'vector-pdf': 'Vector PDF',
 };
 
-type SubTab = 'layout' | 'history';
+type SubTab = 'layout' | 'frames' | 'history';
 
 /** 制图排版表单的可折叠分区（渐进式披露）。 */
 function StudioSection({
@@ -154,6 +156,8 @@ function StudioSection({
 export function MapStudioTab() {
   const t = useT();
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('layout');
+  // G34：纸面工作台只作为薄入口 + 独立模态面板，不占用 SubTab / export mode。
+  const [printLayoutOpen, setPrintLayoutOpen] = useState(false);
   const exportSettings = useHudStore((s) => s.exportSettings);
   const updateExportSettings = useHudStore((s) => s.updateExportSettings);
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
@@ -314,6 +318,18 @@ export function MapStudioTab() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* G34：纸面版式工作台薄入口。主体是独立面板（不新增 SubTab，
+          避免改变 isExportMode 语义；主地图交互与纸面编辑焦点分离）。 */}
+      {printLayoutOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
+             role="dialog" aria-modal="true"
+             aria-label={t('workbench.printLayout.title')}
+             data-testid="print-layout-modal">
+          <div className="flex h-[92vh] w-[94vw] flex-col overflow-hidden rounded-lg border border-edge-subtle bg-surface-overlay shadow-2xl">
+            <PrintLayoutPanel onClose={() => setPrintLayoutOpen(false)} />
+          </div>
+        </div>
+      )}
       {/* Segmented subtab switcher（制图排版 / 导出历史）—— PanelHeader 已提供面板标题 */}
       <div className="shrink-0 border-b border-edge-subtle bg-surface-overlay p-3 pb-2.5">
         <div
@@ -326,7 +342,9 @@ export function MapStudioTab() {
             // Review P2 修复：APG activation-on-focus —— 方向键切换后焦点跟随
             // 到新激活的 tab（roving tabindex 已随之更新）。
             setActiveSubTab((prev) => {
-              const next = prev === 'layout' ? 'history' : 'layout';
+              // G15：三子页签循环（layout → frames → history → layout）。
+              const order: SubTab[] = ['layout', 'frames', 'history'];
+              const next = order[(order.indexOf(prev) + 1) % order.length];
               setTimeout(() => document.getElementById(`map-studio-tab-${next}`)?.focus(), 0);
               return next;
             });
@@ -355,6 +373,29 @@ export function MapStudioTab() {
           >
             <Printer size={13} aria-hidden />
             <span>{t('sidebar.studio.tabLayout')}</span>
+          </button>
+          <button
+            role="tab"
+            id="map-studio-tab-frames"
+            aria-selected={activeSubTab === 'frames'}
+            aria-controls={activeSubTab === 'frames' ? 'map-studio-panel-frames' : undefined}
+            tabIndex={activeSubTab === 'frames' ? 0 : -1}
+            onClick={() => setActiveSubTab('frames')}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition-all"
+            style={{
+              backgroundColor: activeSubTab === 'frames'
+                ? 'var(--surface-raised)'
+                : 'transparent',
+              color: activeSubTab === 'frames'
+                ? 'var(--text-primary)'
+                : 'var(--text-muted)',
+              boxShadow: activeSubTab === 'frames'
+                ? '0 1px 2px var(--border-strong)'
+                : 'none',
+            }}
+          >
+            <Layers size={13} aria-hidden />
+            <span>{t('workbench.frameProduct.tabTitle')}</span>
           </button>
           <button
             role="tab"
@@ -391,13 +432,29 @@ export function MapStudioTab() {
 
       {/* Main Tab Content */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {activeSubTab === 'layout' ? (
+        {activeSubTab === 'frames' ? (
+          <div
+            role="tabpanel"
+            id="map-studio-panel-frames"
+            aria-labelledby="map-studio-tab-frames"
+          >
+            <FrameProductPanel />
+          </div>
+        ) : activeSubTab === 'layout' ? (
           <div
             role="tabpanel"
             id="map-studio-panel-layout"
             aria-labelledby="map-studio-tab-layout"
             className="p-3 space-y-2"
           >
+            <button
+              type="button"
+              className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink hover:bg-surface-raised"
+              data-testid="open-print-layout-workbench"
+              onClick={() => setPrintLayoutOpen(true)}
+            >
+              {t('workbench.printLayout.openWorkbench')}
+            </button>
             {/* 文档：图名 / 作者 / 数据来源 */}
             <StudioSection title={t('sidebar.studio.docTitle')} summary={docSummary} defaultOpen>
               <div className="space-y-3">

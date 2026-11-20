@@ -41,10 +41,16 @@ class RetryBudget:
     """进程级 + 会话级双层令牌账（线程安全）。"""
 
     def __init__(self, *, global_tokens: int = 120,
-                 session_tokens: int = 12):
+                 session_tokens: int = 12, clock=None,
+                 refill_window_s: float = 600.0):
         self._global_tokens = float(global_tokens)
         self._session_tokens = float(session_tokens)
         self._global_left = float(global_tokens)
+        self._clock = clock or time.monotonic
+        # 整池在这个窗口内回补完（默认 10 分钟）。瞬时风暴仍被容量挡住，
+        # 长时间运行的进程不会在 120 次扣费后永久拒绝所有租户。
+        self._refill_window_s = float(refill_window_s)
+        self._global_refilled_at = self._clock()
         self._sessions: Dict[str, _SessionTokens] = {}
         self._lock = threading.Lock()
         #: degrade/fallback 已发生的 (session, op) 短窗集合（互斥语义）
@@ -58,6 +64,7 @@ class RetryBudget:
                       ) -> Tuple[bool, str]:
         """该 (session, class) 是否还允许再试一次（不扣 token）。"""
         with self._lock:
+            self._refill_global_locked()
             self._gc_degraded()
             sess = self._sessions.get(session_id)
             if sess is not None and sess.cancelled:
@@ -88,6 +95,7 @@ class RetryBudget:
     def charge(self, session_id: str, retry_class: RetryClass) -> None:
         """实扣一次重试（retry_allowed=True 之后由重试执行方调用）。"""
         with self._lock:
+            self._refill_global_locked()
             sess = self._sessions.setdefault(
                 session_id, _SessionTokens(tokens=self._session_tokens))
             if not sess.cancelled:
@@ -133,6 +141,23 @@ class RetryBudget:
         """会话关闭：账目摘除（有界性）。"""
         with self._lock:
             self._sessions.pop(session_id, None)
+
+    def _refill_global_locked(self) -> None:
+        """按时间回补全局池，一次至少一枚整令牌，绝不超容量。
+
+        分数令牌不能回补：否则 charge 把池打到 0 之后，下一次检查会因为
+        几微秒的时间差重新变成「还有余额」。
+        """
+        if self._global_tokens <= 0 or self._refill_window_s <= 0:
+            return
+        now = self._clock()
+        elapsed = now - self._global_refilled_at
+        interval = self._refill_window_s / self._global_tokens
+        add = int(elapsed // interval) if interval > 0 else 0
+        if add <= 0:
+            return
+        self._global_left = min(self._global_tokens, self._global_left + add)
+        self._global_refilled_at += add * interval
 
     def refund_global(self, amount: int = 1) -> None:
         """全局池回填（校准/管理面用；绝不超初始容量）。"""

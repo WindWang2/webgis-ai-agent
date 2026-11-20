@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getAccessToken } from '@/lib/auth/tokenStore';
-import { buildTileTransformRequest } from './tile-auth';
+import { clearAuth, getAccessToken, getRefreshToken, isAccessTokenExpired, refreshAuthToken } from '@/lib/auth/tokenStore';
+import { _resetTileAuthRecoveryForTests, buildTileTransformRequest, recoverFirstPartyTileAuth } from './tile-auth';
 
 // #514 regression: MapLibre tile/image fetches are browser-native and cannot
 // carry headers, so the MVT tile endpoint (header-only require_owned_session)
@@ -9,6 +9,10 @@ import { buildTileTransformRequest } from './tile-auth';
 // X-Session-Token for anonymous — and ONLY for first-party URLs.
 vi.mock('@/lib/auth/tokenStore', () => ({
   getAccessToken: vi.fn(),
+  getRefreshToken: vi.fn(),
+  isAccessTokenExpired: vi.fn(),
+  refreshAuthToken: vi.fn(),
+  clearAuth: vi.fn(),
 }));
 
 // API_BASE is '' in production (Dockerfile build arg) and an absolute origin
@@ -31,6 +35,11 @@ beforeEach(() => {
   mockApiBase = 'http://localhost:8001';
   mockGetAccessToken.mockReset();
   mockGetAccessToken.mockReturnValue(null);
+  vi.mocked(getRefreshToken).mockReset();
+  vi.mocked(refreshAuthToken).mockReset();
+  vi.mocked(clearAuth).mockReset();
+  vi.mocked(isAccessTokenExpired).mockReset();
+  _resetTileAuthRecoveryForTests();
 });
 
 describe('buildTileTransformRequest', () => {
@@ -156,5 +165,26 @@ describe('buildTileTransformRequest', () => {
     const url = tileUrl('/api/v1/layers/data/ref:geojson-1/tiles/0/0/0.mvt?session_id=sess');
     expect(transform(url, 'Tile')).toEqual({ url });
     expect(transform(url).headers).toBeUndefined();
+  });
+});
+
+describe('recoverFirstPartyTileAuth', () => {
+  it('refreshes once on 401 and asks the caller to reload', async () => {
+    vi.mocked(getRefreshToken).mockReturnValue('ref');
+    vi.mocked(refreshAuthToken).mockResolvedValue(true);
+    const retry = vi.fn();
+    recoverFirstPartyTileAuth(401, retry);
+    recoverFirstPartyTileAuth(401, retry);
+    await vi.waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+    expect(refreshAuthToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears auth when the access token is expired and there is no refresh token', async () => {
+    vi.mocked(getRefreshToken).mockReturnValue(null);
+    vi.mocked(getAccessToken).mockReturnValue('expired');
+    vi.mocked(isAccessTokenExpired).mockReturnValue(true);
+    recoverFirstPartyTileAuth(401, vi.fn());
+    await vi.waitFor(() => expect(clearAuth).toHaveBeenCalled());
+    expect(refreshAuthToken).not.toHaveBeenCalled();
   });
 });

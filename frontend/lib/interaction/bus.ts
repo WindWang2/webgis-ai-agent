@@ -205,6 +205,10 @@ export function emitFeatureSelected(info: {
   selectedIds?: ReadonlyArray<string | number>;
   /** 真实命中数（框选 matched_count）——与 UI 反馈同源的范围披露。 */
   matchedCount?: number;
+  /** G24/P3：服务端选择集句柄（截断框选异步建柄成功后的补发事件携带 ——
+   * Agent 侧 webgis_selection_inspect 的合法获取通道；≤128 字符对齐后端
+   * IR 契约 MAX_STR_VALUE_CHARS）。 */
+  selectionHandle?: string;
 }): void {
   // review P3-2：几何摘要只用 bbox（geometry 参数从未被消费 —— 删除，
   // 调用方不再白传全量几何）。
@@ -238,6 +242,10 @@ export function emitFeatureSelected(info: {
     // SW-02：框选 bbox 谓词上行（6 位小数；服务端消费侧 _bbox4 数值校验）。
     ...(info.bbox && info.bbox.every((v) => Number.isFinite(v))
       ? { bbox: info.bbox.map((v) => Math.round(v * 1e6) / 1e6) }
+      : {}),
+    // G24/P3：选择句柄上行（服务端权威全集寻址；仅截断框选补发事件携带）。
+    ...(info.selectionHandle && info.selectionHandle.trim()
+      ? { selection_handle: info.selectionHandle.slice(0, 128) }
       : {}),
   });
 }

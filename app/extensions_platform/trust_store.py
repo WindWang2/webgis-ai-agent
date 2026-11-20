@@ -246,8 +246,15 @@ class TrustStore:
         # 直接覆盖会丢失并发写者的吊销条目——安全控制的 silent loss）。
         try:
             latest = TrustStore.load(self.source_path)
-        except ExtensionPlatformError:
-            latest = self
+        except ExtensionPlatformError as exc:
+            # 重读失败不得回落到可能陈旧的内存视图再 os.replace：那会把
+            # 磁盘上更新的发布者/吊销整份盖掉。fail closed，不写文件。
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.TRUST_STORE_UNREADABLE,
+                    "trust store reread failed; refusing to overwrite the on-disk trust root",
+                )
+            ) from exc
         if entry in latest.revoked_packages:
             object.__setattr__(self, "revoked_packages", latest.revoked_packages)
             object.__setattr__(self, "publishers", latest.publishers)

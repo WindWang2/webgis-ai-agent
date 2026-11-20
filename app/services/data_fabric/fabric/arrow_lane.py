@@ -53,7 +53,8 @@ def iter_scan_pages_arrow(
     from app.services.data_fabric.errors import QueryBudgetExceededError
 
     extras: Dict[str, Any] = {
-        "limit": int(fetch_limit),
+        # +1 so a source that honors limit still reveals one row past the window.
+        "limit": int(fetch_limit) + 1,
         "deadline_s": budget.deadline_s,
         "max_rows": budget.max_rows,
     }
@@ -91,15 +92,16 @@ def iter_scan_pages_arrow(
                     key: value for key, value in (feat.get("properties") or {}).items()
                     if key in fields
                 }}
+            if emitted + len(page) >= fetch_limit:
+                raise QueryBudgetExceededError(
+                    f"source scan exceeds {fetch_limit} join candidates; narrow the source filter",
+                    details={"hint": "narrow bbox or add filters on the source", "lane": "arrow"},
+                )
             page.append(feat)
-            if len(page) >= page_size or emitted + len(page) >= fetch_limit:
+            if len(page) >= page_size:
                 yield page
                 emitted += len(page)
                 page = []
-                if emitted >= fetch_limit:
-                    return
-        if emitted >= fetch_limit:
-            return
     if page:
         yield page
 

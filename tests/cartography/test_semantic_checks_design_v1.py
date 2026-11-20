@@ -154,3 +154,26 @@ def test_density_no_claim_no_check() -> None:
              "legend_spec": {"field": "school_count", "title": "小学数量（所）"}}
     report = evaluate_cartography_semantics(_spec([layer]))
     assert not _checks(report, "DENSITY_SEMANTICS_HONESTY")
+
+
+def test_viewport_covers_malformed_bbox_skipped_not_raised() -> None:
+    """#2229: 非数值 bbox 证据必须跳过该层（与证据缺席同语义），不得把
+    VIEWPORT_COVERS_RESULTS 打成未捕获 ValueError。"""
+    sources = {"s1": {"type": "geojson",
+                      "profile": {"bbox": ["west", "s", "e", "n"]}}}
+    layer = {"id": "ly1", "type": "circle", "source": "s1", "visible": True}
+    report = evaluate_cartography_semantics(_spec(
+        [layer], view={"center": [104.1, 30.6], "zoom": 10},
+        sources=sources))
+    assert _checks(report, "VIEWPORT_COVERS_RESULTS")[0].status == \
+        "not_evaluated"
+
+    # 混合证据：坏 bbox 层被跳过，好 bbox 层仍参与裁决。
+    mixed = {"s1": sources["s1"],
+             "s2": {"type": "geojson",
+                    "profile": {"bbox": [104.0, 30.5, 104.2, 30.7]}}}
+    layers = [layer,
+              {"id": "ly2", "type": "circle", "source": "s2", "visible": True}]
+    ok = evaluate_cartography_semantics(_spec(
+        layers, view={"center": [104.1, 30.6], "zoom": 10}, sources=mixed))
+    assert _checks(ok, "VIEWPORT_COVERS_RESULTS")[0].status == "pass"

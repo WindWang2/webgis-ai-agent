@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -223,15 +224,26 @@ def search_catalog(
     if kind:
         conds.append(LakehouseCatalogItem.kind == str(kind))
     if producer:
-        like = f"%{str(producer)[:64]}%"
+        escaped = (
+            str(producer)[:64]
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        like = f"%{escaped}%"
         conds.append(
-            LakehouseCatalogItem.producer_capability.ilike(like)
-            | LakehouseCatalogItem.producer_tool.ilike(like)
+            LakehouseCatalogItem.producer_capability.ilike(like, escape="\\")
+            | LakehouseCatalogItem.producer_tool.ilike(like, escape="\\")
         )
     if bbox is not None:
         if len(bbox) != 4:
             raise CatalogError("bbox must be [minx, miny, maxx, maxy]")
-        minx, miny, maxx, maxy = (float(v) for v in bbox)
+        try:
+            minx, miny, maxx, maxy = (float(v) for v in bbox)
+        except (TypeError, ValueError) as exc:
+            raise CatalogError("bbox values must be finite numbers") from exc
+        if not all(math.isfinite(v) for v in (minx, miny, maxx, maxy)):
+            raise CatalogError("bbox values must be finite numbers")
         conds += [
             LakehouseCatalogItem.minx.is_not(None),
             LakehouseCatalogItem.minx <= maxx,
@@ -300,11 +312,7 @@ def search_catalog(
         "total_bounded": total_bounded,
         "limit": limit,
         "offset": offset,
-        "next_offset": (
-            offset + limit
-            if raw_page_full and not total_bounded
-            else None
-        ),
+        "next_offset": (offset + limit) if raw_page_full else None,
         **({"tags_filtered": True} if wanted else {}),
     }
 

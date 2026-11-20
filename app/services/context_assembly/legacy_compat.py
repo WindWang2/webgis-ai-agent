@@ -69,6 +69,14 @@ async def build_cartography_turn_blocks(
     )
     facts.map_state = state if isinstance(state, dict) else {}
     facts.mapspec = mapspec if isinstance(mapspec, dict) else None
+    # G43（ADR-0295，C39/C40）：预拼路径与 typed 路径同语义加载会话策略
+    #（单一渲染源内的过滤对两条路径同样生效；读失败 = auto 兼容行为）。
+    try:
+        from app.services.turn_context_store import load_policy
+
+        facts.source_policy = await load_policy(req.session_id)
+    except Exception:  # noqa: BLE001 — 策略面故障不阻断 compat 路径
+        facts.source_policy = None
     pairs: List[Tuple[object, str]] = await collect_cartography_wave(req, facts)
     return {
         str(domain.value): text

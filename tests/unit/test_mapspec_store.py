@@ -512,3 +512,28 @@ async def test_save_mapspec_noop_skips_writes(clean_session):
     revs_final = sorted(rev_dir.glob("mapspec_rev_*.json"))
     assert len(revs_final) == len(revs_before) + 1
     assert mapspec_path.stat().st_mtime_ns != mtime_before
+
+
+@pytest.mark.asyncio
+async def test_discard_mapspec_clears_sidecars_and_fingerprint(clean_session):
+    """#2229: discard 后残留的 .fp/.rev sidecar 与 Redis _mapspec_fp 会让
+    后续一次无 mutation_revision 的同指纹 save 命中 no-op 快路径短路 ——
+    mapspec.json 永远不重新落盘，discard 后的首个合法提交静默丢失。"""
+    from app.services.mapspec.store import MapSpecStore
+
+    raw_store = MapSpecStore()
+    spec = {"version": "1.0", "view": {"zoom": 8}, "layers": []}
+    await raw_store.save_mapspec(clean_session, spec)
+    session_dir = raw_store.get_session_dir(clean_session)
+    assert (session_dir / "mapspec.json").exists()
+
+    await raw_store.discard_mapspec(clean_session)
+    assert not (session_dir / "mapspec.json").exists()
+    assert not (session_dir / "mapspec.json.fp").exists()
+    assert not (session_dir / "mapspec.json.rev").exists()
+
+    # discard 后的首个合法提交（无 mutation_revision、同指纹）必须真正落盘。
+    await raw_store.save_mapspec(clean_session, spec)
+    assert (session_dir / "mapspec.json").exists()
+    loaded = await raw_store.get_mapspec(clean_session)
+    assert loaded == spec

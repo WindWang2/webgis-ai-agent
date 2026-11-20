@@ -23,13 +23,15 @@ from app.core.auth import get_current_user_with_version, get_current_user_option
 from app.core.database import get_async_db
 from app.lib.cartography.pdf_renderer import RasterPdfBusyError
 from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
-from app.services import export_paths
+from app.services import export_paths, export_storage
 from app.schemas.map_schema import (
     ExportDiagnosticsResponse,
     ExportLineageInfo,
     GeoJSONExportRequest,
     GeoJSONExportResponse,
     MapExportResponse,
+    MixedMapExportRequest,
+    MixedMapExportResponse,
     PdfExportResponse,
     VectorPdfExportResponse,
     VectorPdfRequest,
@@ -73,6 +75,10 @@ _MEDIA_TYPES = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".pdf": "application/pdf",
+    # G35：时序动画核心格式 APNG / 兼容 GIF / 逐帧证据 ZIP。
+    ".apng": "image/apng",
+    ".gif": "image/gif",
+    ".zip": "application/zip",
 }
 
 # 审计 P0：导出文件所有权追踪（防止 IDOR — 任意认证用户通过猜文件名下载他人导出）
@@ -84,15 +90,14 @@ _MEDIA_TYPES = {
 # per export forever). Rereads fall back to the .owner sidecar file.
 from collections import OrderedDict as _OD
 
-_EXPORT_OWNERS: "dict[str, str]" = _OD()
-_EXPORT_OWNERS_MAX = 2048
+_EXPORT_OWNERS: "_OD[str, str]" = export_storage.EXPORT_OWNERS
+_EXPORT_OWNERS_MAX = export_storage.EXPORT_OWNERS_MAX
 
 
 def _export_owners_remember(filename: str, owner: str) -> None:
-    _EXPORT_OWNERS[filename] = owner
-    _EXPORT_OWNERS.move_to_end(filename)
-    while len(_EXPORT_OWNERS) > _EXPORT_OWNERS_MAX:
-        _EXPORT_OWNERS.popitem(last=False)
+    export_storage.remember_export_owner(
+        filename, owner, owners=_EXPORT_OWNERS, max_entries=_EXPORT_OWNERS_MAX,
+    )
 
 
 async def _export_principal(user: dict, session_id: Optional[str], token: Optional[str], db: AsyncSession) -> str:
@@ -116,18 +121,10 @@ def _export_download_url(filename: str, principal: str) -> str:
 
 
 def _set_export_owner(filename: str, user_id: str) -> None:
-    """记录文件所有权，并在 EXPORT_DIR 下持久化 .owner 侧车文件以支持多 worker 进程环境。"""
-    path = Path(_exports_dir_write()) / f"{filename}.owner"
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        with temporary.open("w", encoding="utf-8") as handle:
-            handle.write(user_id)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-    _export_owners_remember(filename, user_id)
+    """Compatibility wrapper; routes and producers share neutral persistence."""
+    export_storage.set_export_owner(
+        filename, user_id, owners=_EXPORT_OWNERS, max_entries=_EXPORT_OWNERS_MAX,
+    )
 
 
 async def _publish_export_owner(filename: str, owner: str) -> None:
@@ -140,19 +137,9 @@ async def _publish_export_owner(filename: str, owner: str) -> None:
 
 
 def _get_export_owner(filename: str) -> Optional[str]:
-    """读取文件所有者，优先从内存 _EXPORT_OWNERS 获取，没有则读取 .owner 侧车文件。"""
-    if filename in _EXPORT_OWNERS:
-        return _EXPORT_OWNERS[filename]
-    meta_path = os.path.join(_exports_dir_str(), f"{filename}.owner")
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                owner = f.read().strip()
-                _export_owners_remember(filename, owner)
-                return owner
-        except Exception:
-            pass
-    return None
+    return export_storage.get_export_owner(
+        filename, owners=_EXPORT_OWNERS, max_entries=_EXPORT_OWNERS_MAX,
+    )
 
 
 # ─── SVG sanitization (/review P1-5) ─────────────────────────────────────
@@ -509,8 +496,22 @@ def _render_pdf_to_file(
         scale_text=scale_text,
     )
     pdf_path = os.path.join(_exports_dir_write(), filename)
-    with open(pdf_path, "wb") as f:
-        f.write(pdf_bytes)
+    # 先写临时文件再 replace：渲染中断不会把半个 PDF 留在下载路径上。
+    with tempfile.NamedTemporaryFile(
+        dir=_exports_dir_write(), delete=False, suffix=".pdf",
+    ) as tmp:
+        tmp.write(pdf_bytes)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp_path = tmp.name
+    try:
+        os.replace(tmp_path, pdf_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 @router.post(
@@ -566,11 +567,11 @@ async def export_map_as_vector_pdf(
         from app.lib.cartography.mapspec_schema import MapSpecSchemaError as _MSSE
 
         _a = body.atlas
-        if _a.driver not in ("frames", "category", "feature"):
+        if _a.driver not in ("frames", "category", "feature", "product"):
             raise HTTPException(
                 status_code=400,
                 detail={"code": "atlas_policy_invalid",
-                        "message": f"atlas driver 非法: {_a.driver!r}（frames|category|feature）"},
+                        "message": f"atlas driver 非法: {_a.driver!r}（frames|category|feature|product）"},
             )
         try:
             _atlas_policy = AtlasPolicy(
@@ -716,6 +717,96 @@ async def export_map_as_vector_pdf(
     }
 
 
+@router.post("/export/mixed", tags=["地图制图"], response_model=MixedMapExportResponse)
+async def export_map_as_mixed(
+    body: MixedMapExportRequest,
+    _user: dict = Depends(get_current_user_optional_with_version),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """G26：会话权威 MapSpec → 矢量+数值栅格混合地图（PNG/SVG/PDF 统一编译）。
+
+    - 冻结一个 MapSpec 修订（``expected_revision`` CAS 可选）；栅格 ref 的
+      owner 校验在解析层执行（trusted owner token 路径与会话隔离同 G20）。
+    - ``partial_policy=blocking``（默认）：导出会遗漏图层 → 409 typed 拒绝
+      （完整地图承诺不放宽）；``allow_partial``：manifest 携带完整遗漏清单。
+    - PDF：既有 publication 链（WeasyPrint 互斥 + 图像对象 + 可提取文本）；
+      SVG：自包含 data URI；PNG：服务端 rsvg 能力探测（缺席 503 typed）。
+    - 产物 + manifest sidecar + lineage 复用既有 export 目录/所有权/签名下载。
+    """
+    from app.services.mixed_map_export import (
+        MixedMapExportError,
+        export_mixed_map,
+        persist_mixed_export,
+    )
+    from app.services.auth_history_bridge import verify_session_owner
+
+    # 会话属主校验（跨租户读守卫）：混合导出从权威 MapSpec 读全文档。
+    try:
+        await verify_session_owner(
+            db, body.session_id,
+            user_id=_user.get("user_id") or None,
+            owner_token=owner_token or None,
+        )
+    except Exception as exc:  # noqa: BLE001 - 属主校验失败 → 403（不泄漏细节）
+        raise HTTPException(status_code=403, detail={"code": "session_not_owned",
+                                                     "message": "会话不属于当前用户"}) from exc
+
+    export_owner = await _export_principal(_user, body.session_id, owner_token, db)
+    try:
+        artifact = await export_mixed_map(
+            body.session_id,
+            fmt=body.format,
+            expected_revision=body.expected_revision,
+            owner_token=owner_token,
+            target_dpi=body.target_dpi if body.target_dpi is not None else 300,
+            partial_policy=body.partial_policy,
+            title=body.title or "",
+            asset_identity={
+                "user_id": _user.get("user_id") or None,
+                "org_id": _user.get("org_id"),
+                "role": _user.get("role"),
+            } if isinstance(_user, dict) else None,
+        )
+    except MixedMapExportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message,
+                    **({"details": exc.details} if exc.details else {})},
+        )
+
+    delivered = await persist_mixed_export(
+        body.session_id, artifact, principal=export_owner,
+        user_id=_user.get("user_id"), owner_token=owner_token, db=db,
+    )
+    manifest = delivered["manifest"]
+    return {
+        "success": True,
+        "filename": delivered["filename"],
+        "url": delivered["download_url"],
+        "manifest_url": delivered["manifest_url"],
+        "format": body.format,
+        "media_type": delivered["media_type"],
+        "bytes": delivered["bytes"],
+        "mapspec_revision": manifest.get("mapspec_revision"),
+        "partial": manifest.get("partial", False),
+        "omitted_layers": manifest.get("omitted_layers", []),
+        "raster_layers": [
+            {k: p.get(k) for k in ("layer_id", "style_id", "data_revision",
+                                   "overlap", "embedded", "width", "height")}
+            for p in (manifest.get("raster_layers") or [])[:12]
+        ],
+        "renderer": manifest.get("renderer", {}),
+        "checksum": manifest.get("checksum"),
+        "render_diagnostics": manifest.get("diagnostics", []),
+        "message": (
+            "混合地图已生成（矢量 + 数值栅格统一编译）。"
+            if not manifest.get("partial")
+            else "混合地图已生成（显式 allow_partial；遗漏清单见 omitted_layers）。"
+        ),
+    }
+
+
 @router.post("/export/pdf", tags=["地图制图"], response_model=PdfExportResponse)
 async def export_map_as_pdf(
     file: UploadFile = File(...),
@@ -813,13 +904,8 @@ def download_map_export(filename: str, _user: dict = Depends(get_current_user_op
 
 
 def _persist_export_file(filename: str, content: bytes, ext: str) -> None:
-    """同步 IO：写临时文件 + 原子 replace —— 移出事件循环（#592 与 #427 的
-    _write_export_file 同款纪律：上传分支此前把 ≤50MB 的写入内联在 async def，
-    慢盘/NFS 上会冻结全部并发 SSE 流）。"""
-    with tempfile.NamedTemporaryFile(dir=_exports_dir_write(), delete=False, suffix=ext) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-    os.replace(tmp_path, os.path.join(_exports_dir_write(), filename))
+    """Compatibility wrapper; async route callsites retain thread offloading."""
+    export_storage.persist_export_file(filename, content, ext)
 
 
 def _write_export_file(filepath: str, content: bytes) -> None:

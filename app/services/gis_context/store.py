@@ -146,7 +146,7 @@ class WorkingContextStore:
                     attempt + 1, mid, type(exc).__name__,
                 )
                 if attempt + 1 >= MAX_SAVE_ATTEMPTS:
-                    return wc  # fail-open persistence, fail-closed semantics upstream
+                    raise
             except IntegrityError:
                 # Concurrent first-insert of the same PK → the other
                 # writer won the row; re-base onto it (P1-2).
@@ -187,22 +187,29 @@ class WorkingContextStore:
                 return wc
         except OperationalError as exc:
             logger.warning("[gis_context] rebase save failed for %s: %s", mid, type(exc).__name__)
-            return wc
+            raise
 
     # ── purge ───────────────────────────────────────────────────────────
 
-    def purge(self, mission_id: str) -> bool:
-        """Tombstone the row (payload dropped). Idempotent."""
+    def purge(self, mission_id: str, *, org_id: str = "") -> bool:
+        """Tombstone the row (payload dropped). Idempotent.
+
+        ``org_id`` when provided is a tenant guard: a foreign org cannot
+        tombstone a mission it does not own.
+        """
         mid = str(mission_id or "")[:64]
         if not mid:
             return False
         try:
             with self._sf() as db:
-                row = (
-                    db.query(GISWorkingContextRow)
-                    .filter(GISWorkingContextRow.mission_id == mid)
-                    .first()
+                query = db.query(GISWorkingContextRow).filter(
+                    GISWorkingContextRow.mission_id == mid,
                 )
+                if org_id:
+                    query = query.filter(
+                        GISWorkingContextRow.org_id == str(org_id),
+                    )
+                row = query.first()
                 if row is None or row.state == "purged":
                     return False
                 row.state = "purged"

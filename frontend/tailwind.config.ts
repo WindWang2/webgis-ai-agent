@@ -1,6 +1,54 @@
 import type { Config } from "tailwindcss";
 import typography from "@tailwindcss/typography";
 
+/**
+ * Token colours with opacity-modifier support.
+ *
+ * The V4 tokens are hex/rgba CSS variables, which Tailwind 3 cannot split into
+ * channels — so `bg-surface-raised/90` used to compile to *nothing* (the class
+ * was silently dropped; the audit found ~70 such call sites across 36 files,
+ * e.g. the map toolbar rendered with no background at all over imagery).
+ *
+ * Each family value stays a `var(--token)` string at rest; Tailwind calls the
+ * function with the modifier as `opacityValue`. Without a numeric modifier the
+ * output is the bare `var(--token)` — byte-identical to the previous string
+ * colours — and with one it becomes a `color-mix()` toward transparent.
+ */
+// Tailwind passes strings for `/90` modifiers but numbers internally (e.g. the
+// gradient `transparentTo` helper calls with `opacityValue: 0`).
+type ColorFn = ((opts: { opacityValue?: string | number }) => string) & { cssVar: string };
+
+export function tokenColor(cssVar: string): ColorFn {
+  const fn = (({ opacityValue }: { opacityValue?: string | number } = {}) => {
+    if (opacityValue === undefined || opacityValue === null) return `var(${cssVar})`;
+    const raw = String(opacityValue).trim();
+    if (raw.startsWith("var(") || raw === "1") {
+      return `var(${cssVar})`;
+    }
+    const pct = Math.round(Number(raw) * 1000) / 10;
+    if (!Number.isFinite(pct)) return `var(${cssVar})`;
+    return `color-mix(in srgb, var(${cssVar}) ${pct}%, transparent)`;
+  }) as ColorFn;
+  fn.cssVar = cssVar;
+  return fn;
+}
+
+/**
+ * Maps a `{ key: "var(--x)" }` family through tokenColor.
+ *
+ * Tailwind 3 resolves function colours at runtime (`({ opacityValue }) => …`)
+ * but its `Config` typing only admits strings, hence the cast at the boundary.
+ */
+function tokenFamily(family: Record<string, string>): Record<string, string> {
+  const out: Record<string, ColorFn> = {};
+  for (const [key, value] of Object.entries(family)) {
+    const m = value.match(/^var\((--[a-z0-9-]+)\)$/i);
+    if (!m) throw new Error(`token family value must be var(--x): ${key}=${value}`);
+    out[key] = tokenColor(m[1]);
+  }
+  return out as unknown as Record<string, string>;
+}
+
 const config: Config = {
   // Without this, Tailwind v3 defaults to `darkMode: 'media'` and every `dark:`
   // variant tracks the OS preference instead of the `dark` class that
@@ -19,7 +67,7 @@ const config: Config = {
            Prefer these over raw palette classes: `bg-surface-panel` survives a
            theme flip, `bg-slate-50` does not. The values live in
            app/globals.css (`:root` and `.dark`). */
-        surface: {
+        surface: tokenFamily({
           canvas: "var(--surface-canvas)",
           panel: "var(--surface-panel)",
           raised: "var(--surface-raised)",
@@ -28,20 +76,22 @@ const config: Config = {
           hover: "var(--surface-hover)",
           selected: "var(--surface-selected)",
           scrim: "var(--surface-scrim)",
-        },
-        edge: {
+          /* Zebra rows / quiet wells (`bg-surface-subtle`, previously undefined). */
+          subtle: "var(--surface-sunken)",
+        }),
+        edge: tokenFamily({
           subtle: "var(--border-subtle)",
           DEFAULT: "var(--border-default)",
           strong: "var(--border-strong)",
-        },
-        ink: {
+        }),
+        ink: tokenFamily({
           DEFAULT: "var(--text-primary)",
           secondary: "var(--text-secondary)",
           muted: "var(--text-muted)",
           disabled: "var(--text-disabled)",
           "on-accent": "var(--text-on-accent)",
-        },
-        status: {
+        }),
+        status: tokenFamily({
           accent: "var(--accent)",
           "accent-vivid": "var(--accent-vivid)",
           "accent-soft": "var(--accent-soft)",
@@ -61,13 +111,25 @@ const config: Config = {
           neutral: "var(--neutral)",
           "neutral-soft": "var(--neutral-soft)",
           "neutral-border": "var(--neutral-border)",
-        },
-        "map-chrome": {
+          /* Short aliases that call sites already reach for (`text-status-warn`,
+             `bg-status-danger-soft`, `text-status-ok` …). They never existed,
+             so those ~30 classes compiled to nothing; alias rather than churn. */
+          warn: "var(--warning)",
+          "warn-soft": "var(--warning-soft)",
+          "warn-border": "var(--warning-border)",
+          danger: "var(--critical)",
+          "danger-soft": "var(--critical-soft)",
+          "danger-border": "var(--critical-border)",
+          ok: "var(--success)",
+          "ok-soft": "var(--success-soft)",
+          "ok-border": "var(--success-border)",
+        }),
+        "map-chrome": tokenFamily({
           DEFAULT: "var(--map-chrome-bg)",
           border: "var(--map-chrome-border)",
           ink: "var(--map-chrome-text)",
           "ink-muted": "var(--map-chrome-text-muted)",
-        },
+        }),
 
         /* ── Pre-V4 aliases, kept so existing call sites keep compiling.
               They now resolve through the semantic tokens above. ── */
@@ -167,7 +229,7 @@ const config: Config = {
         chrome: "var(--map-chrome-radius)",
       },
       fontFamily: {
-        sans: ["DM Sans", "system-ui", "sans-serif"],
+        sans: ["DM Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "Fira Code", "monospace"],
       },
       boxShadow: {

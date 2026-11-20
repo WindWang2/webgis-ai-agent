@@ -34,7 +34,10 @@ export interface GeoAnalysisResult {
 // from. The optional fields below (method/labels/nodata/title) are additive and
 // produced by the canonical builders; legacy payloads omit them cleanly.
 
-export type LegendCategoryEntry = { key: string; color: string; label: string };
+export type LegendCategoryEntry = { key: string; color: string; label: string;
+  /** G33（加性）：源值原始类型（number|bool 的 match case 类型化——数值字段
+   *  的字符串键在 MapLibre 严格类型 match 下从不命中）。 */
+  key_type?: 'number' | 'string' | 'bool'; };
 export type NoDataRule = { color: string; label: string };
 
 export type GraduatedLegendSpec = {
@@ -72,6 +75,9 @@ export type CategoricalLegendSpec = {
   palette?: string;
   nodata?: NoDataRule;
   title?: string;
+  /** G33（加性）：显式 other 桶（未列出值的颜色与图例文本；缺省沿用
+   *  既有「末类颜色」合同，行为不变）。 */
+  default?: { color: string; label?: string };
 };
 
 export type DivergentLegendSpec = {
@@ -101,9 +107,27 @@ export type BivariateLegendSpec = {
   title?: string;
 };
 
+/**
+ * G41：估计值 + 有来源不确定度的双通道 canonical 图例。
+ * 内容由 app/services/bivariate_reliability_authoring/legend.py 单一产出；
+ * 索引签名允许后端加性扩展字段而不破坏前端类型收敛。
+ */
+export type ReliabilityLegendSpec = {
+  type: 'reliability_dual_channel';
+  title?: string;
+  unit?: string;
+  entries?: Array<{ label: string; color: string; kind?: string }>;
+  estimate?: { label?: string; unit?: string | null; palette_colors?: string[] };
+  measure?: { kind?: string; level?: number; unit_note?: string; visual_meaning?: string; source?: string };
+  buckets?: Array<{ key: string; label: string; output: number; count: number }>;
+  missing?: { label?: string; count?: number; policy?: string };
+  [key: string]: unknown;
+};
+
 export type LegendSpec =
   | GraduatedLegendSpec
   | ContinuousLegendSpec
   | CategoricalLegendSpec
   | DivergentLegendSpec
-  | BivariateLegendSpec;
+  | BivariateLegendSpec
+  | ReliabilityLegendSpec;

@@ -111,7 +111,7 @@ def test_medoid_tool_wrapper():
     tool_fn = registry._tools["medoid_composite"]
 
     t = _scene()
-    payload = asyncio.run(tool_fn(stack=t.tolist()))
+    payload = tool_fn(stack=t.tolist())
     assert payload["success"] is True
     assert payload["time_slices"] == 3
     assert payload["scientific_evidence"]["algorithm"] == \
@@ -122,4 +122,44 @@ def test_medoid_tool_wrapper():
     # 4M 内联守卫
     big = np.zeros((2, 1, 1500, 1400))     # 4.2M 值 > 4M
     with pytest.raises(ResourceScaleMismatch):
-        asyncio.run(tool_fn(stack=big.tolist()))
+        tool_fn(stack=big.tolist())
+
+
+
+def test_medoid_uses_l2_not_squared_l2():
+    """#2237: nearest-to-mean (3) is not the L1/one-band medoid (2)."""
+    stack = np.array([0, 1, 2, 3, 100], dtype=float).reshape(5, 1, 1, 1)
+    result = medoid_composite(stack)
+    assert result["medoid_index"][0, 0] == 2
+    assert result["array"][0, 0, 0] == 2
+
+
+def test_medoid_matches_pairwise_l2_oracle_with_invalid_slices_and_ties():
+    rng = np.random.default_rng(2237)
+    stack = rng.normal(size=(7, 3, 3, 4))
+    stack[0, 1, 0, 0] = -9999
+    stack[2, 2, 0, 1] = np.nan
+    stack[:, :, 1, 0] = np.nan
+    stack[:, :, 1, 1] = 42  # all tied: earliest slice
+    stack[2:, :, 1, 2] = np.nan  # two valid slices: earliest wins
+    stack[:-1, :, 1, 3] = np.nan  # only one valid slice
+    result = medoid_composite(stack, nodata=-9999)
+    for row in range(3):
+        for col in range(4):
+            spectra = stack[:, :, row, col]
+            indices = np.flatnonzero(
+                np.isfinite(spectra).all(axis=1) & (spectra != -9999).all(axis=1))
+            if indices.size == 0:
+                assert result["medoid_index"][row, col] == -1
+                assert np.isnan(result["array"][:, row, col]).all()
+                continue
+            distances = [sum(
+                np.linalg.norm(spectra[t] - spectra[s]) for s in indices
+            ) for t in indices]
+            expected = indices[np.argmin(distances)]
+            assert result["medoid_index"][row, col] == expected
+            np.testing.assert_array_equal(
+                result["array"][:, row, col], spectra[expected])
+    assert result["medoid_index"][1, 1] == 0
+    assert result["medoid_index"][1, 2] == 0
+    assert result["medoid_index"][1, 3] == 6

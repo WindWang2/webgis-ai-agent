@@ -81,7 +81,8 @@ class SessionPlanSwarmSink:
 
     @staticmethod
     def _upsert_progress(plan: Any, entry: SwarmAssetEntry, progress_cls: Any) -> None:
-        status_vocab = "complete"
+        degraded = str(entry.summary or "").startswith("[degraded]")
+        status_vocab = "failed" if degraded else "complete"
         for row in plan.progress:
             if row.capability == entry.capability:
                 row.status = status_vocab

@@ -104,9 +104,23 @@ def profile_fields(fc: GeoJSONFeatureCollection) -> Dict[str, FieldProfileRecord
 
 
 def validate_set_fields(
-    fields: Dict[str, Any], field_profiles: Dict[str, FieldProfileRecord]
+    fields: Dict[str, Any],
+    field_profiles: Dict[str, FieldProfileRecord],
+    *,
+    allow_new_fields: bool = False,
+    contract_fields: Optional[frozenset] = None,
 ) -> List[EditFinding]:
-    """set_fields 的词表/类型/枚举校验（返回 findings；空 = 通过）。"""
+    """set_fields 的词表/类型/枚举校验（返回 findings；空 = 通过）。
+
+    allow_new_fields=True（create_features 的属性面）：数据集尚未观测到的
+    字段名放行 —— 新要素携带新列是数据集自然生长面，不是 schema 改名；
+    已有 profile 的字段仍受类型/枚举约束。
+
+    contract_fields（G44）：active 业务字段合同声明的字段集 —— 这些字段的
+    业务取值域判断由合同接管（跳过 observed vocabulary 枚举；声明允许的新值
+    不因「未曾出现」被误拒，F02），基本标量安全（类型面/保留字/长度）保留。
+    未声明字段行为与无合同完全一致（F01）。
+    """
     findings: List[EditFinding] = []
     if not isinstance(fields, dict) or not fields:
         return [finding("invalid_op", "set_fields requires a non-empty fields map")]
@@ -122,6 +136,16 @@ def validate_set_fields(
             continue
         profile = field_profiles.get(name)
         if profile is None:
+            if allow_new_fields or (contract_fields is not None and name in contract_fields):
+                # R3 P2-8：新字段放行仍限标量 —— list/dict 值不进编辑词表
+                # （json_field_type 面），否则一旦入库就永不可经 set_fields 修改。
+                # G44：合同声明字段即使尚未在数据中出现也可写入（声明即取值域
+                # 授权；候选态统一校验管业务规则 —— 条件必填等场景依赖此路径）。
+                if json_field_type(value) == "unsupported":
+                    findings.append(
+                        finding("type_mismatch", "only scalar values are editable", field=name)
+                    )
+                continue
             findings.append(
                 finding(
                     "unknown_field",
@@ -152,7 +176,12 @@ def validate_set_fields(
                 )
                 continue
         enum_values = profile.get("enum")
-        if isinstance(enum_values, list) and isinstance(value, str) and value not in enum_values:
+        if (
+            isinstance(enum_values, list)
+            and isinstance(value, str)
+            and value not in enum_values
+            and (contract_fields is None or name not in contract_fields)
+        ):
             findings.append(
                 finding(
                     "enum_violation",

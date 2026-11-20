@@ -49,6 +49,13 @@ from app.services.gis_harness.capability_descriptors import (
 
 logger = logging.getLogger(__name__)
 
+
+def availability_rerank_enabled() -> bool:
+    """G13 / WP04 kill switch：``GIS_AVAILABILITY_RERANK=0`` 关闭可用性
+    投影（选择行为与 V7 逐位一致）。默认开启。"""
+    raw = (os.getenv("GIS_AVAILABILITY_RERANK") or "1").strip().lower()
+    return raw not in ("0", "false", "off", "no")
+
 #: 语义检索注入点：``TOOL_RETRIEVAL_SEMANTIC="module:callable"``。
 #: callable 签名 ``(registry, query: str, top_k: int) -> Sequence[RetrievalHit]``。
 #: V6 默认指向内置 embedding 检索器（懒加载 + 有界失败降级词法；
@@ -263,6 +270,10 @@ class SurfaceSelection:
     confidence: float = 1.0
     abstained: bool = False
     abstain_reason: str = ""
+    # G13 / WP04：可用性投影抑制的动态候选（核心前门永不在此列）。
+    # pi_native_surface 消费为「分布工具 re-pin 跳过集」与披露面；
+    # availability 投影关闭/快照缺席时恒为空（与 V7 行为逐位一致）。
+    availability_suppressed: List[str] = field(default_factory=list)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -277,6 +288,7 @@ class SurfaceSelection:
             "confidence": self.confidence,
             "abstained": self.abstained,
             "abstain_reason": self.abstain_reason,
+            "availability_suppressed": list(self.availability_suppressed),
         }
 
 
@@ -703,6 +715,74 @@ class DynamicToolSurface:
                 logger.debug("[ToolSurfaceV3] v7 descriptor signal failed",
                              exc_info=True)
 
+        # 6.8) G13 / WP04：可用性投影（availability rerank 生产接线）。
+        #      同代快照（缓存命中零全量编译）+ 共享硬规则分类器：
+        #      - 不可用状态（declared_only / temporarily_unavailable /
+        #        forbidden）硬抑制 —— 高相似度不可用工具不再因词法分激活；
+        #      - 时间语境 × 米制工具名 → UNIT_DIMENSION_CONFLICT 抑制；
+        #      - native_verified 加权 / available_unverified 降权但**保留**
+        #        （缺算法链 ≠ 不可用，不许全部隐藏）。
+        #      核心前门（步骤 1 直入 names）不经此阶段，恒不抑制。
+        #      快照缺席的候选保留零贡献（fail-open：结构快照可能落后于
+        #      刚注册的工具，dispatch 闸仍是唯一执行权威）。
+        #      kill switch GIS_AVAILABILITY_RERANK=0 / 任何失败 → 逐位回退
+        #      V7 行为（availability_suppressed 恒空）。
+        availability_applied = False
+        availability_trace: Optional[Dict[str, Any]] = None
+        if availability_rerank_enabled() and scores:
+            try:
+                from app.lib.gis.availability_rerank import (
+                    VERDICT_KEEP, VERDICT_SUPPRESS,
+                    classify_candidates_availability,
+                )
+                from app.lib.gis.capability_availability_cache import (
+                    get_availability_snapshot,
+                )
+
+                # 前门豁免集 = CORE 前门 ∪ Pi native 前门（R2 P3-3：两集合
+                # 不一致会让「抑制披露」与「实际激活」自相矛盾；前门可见
+                # 性是产品路径，不是可用性问题 —— 执行闸仍是权威）。
+                front_door = set(CORE_TOOL_NAMES)
+                try:
+                    from app.services.chat.pi_native_surface import (
+                        NATIVE_TOOL_NAME_SET,
+                    )
+
+                    front_door |= set(NATIVE_TOOL_NAME_SET)
+                except Exception:  # noqa: BLE001 — 惰性导入失败按 CORE 集
+                    pass
+                snap = get_availability_snapshot(registry=self.registry)
+                names_pending = [n for n in scores if n not in front_door]
+                verdicts = classify_candidates_availability(
+                    snap, names_pending, query=query,
+                    unknown_policy=VERDICT_KEEP)
+                suppressed_rows = []
+                for name in names_pending:
+                    verdict = verdicts.get(name)
+                    if verdict is None:
+                        continue
+                    if verdict.action == VERDICT_SUPPRESS:
+                        scores.pop(name, None)
+                        selection.dropped[name] = f"availability:{verdict.reason}"
+                        selection.availability_suppressed.append(name)
+                        suppressed_rows.append(verdict.to_dict())
+                    elif verdict.action == VERDICT_KEEP and verdict.score_delta:
+                        scores[name] = scores.get(name, 0.0) + verdict.score_delta
+                        selection.reasons.setdefault(name, []).append(
+                            f"availability:{verdict.reason}"
+                            f"({verdict.score_delta:+.2f})")
+                availability_trace = {
+                    "snapshot_fingerprint": snap.content_fingerprint,
+                    "registry_generation": snap.registry_generation,
+                    "suppressed": suppressed_rows[:16],
+                    "suppressed_count": len(suppressed_rows),
+                }
+                availability_applied = bool(suppressed_rows) or any(
+                    v.score_delta for v in verdicts.values())
+            except Exception:  # noqa: BLE001 — 可用性投影失败零贡献
+                logger.debug("[ToolSurfaceV3] availability projection failed;"
+                             " V7 order served", exc_info=True)
+
         # 7) contract 过滤 + 排序 + 规模控制
         candidates: List[Tuple[str, float]] = []
         for name, score in scores.items():
@@ -788,6 +868,9 @@ class DynamicToolSurface:
             selection.selection_trace["rerank"] = {
                 "tools_with_components": len(selection.score_components),
             }
+        if availability_applied and availability_trace is not None:
+            availability_trace["applied"] = True
+            selection.selection_trace["availability"] = availability_trace
         return selection
 
     # ------------------------------------------------------------------

@@ -1,7 +1,8 @@
 """User-origin MapSpec mutations — thin adapter over apply_mutation (#639/#640)."""
-from typing import Any
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.services.auth_history_bridge import require_owned_session
 from app.models.db_model import Conversation
@@ -189,3 +190,63 @@ async def get_workbench_artifact_status(
     from app.services.collab.artifact_status import build_artifact_status
 
     return await build_artifact_status(session_id)
+
+
+# ── G27：按尺度表达（UI 与 Agent 共用同一 service / 同一 CAS 链）──────────
+
+
+class ScalePortrayalApplyBody(BaseModel):
+    layer: str = Field(..., max_length=128)
+    policy: Optional[Dict[str, Any]] = None
+    mode: Literal["preview", "commit"] = "preview"
+    expected_revision: Optional[int] = Field(None, ge=0)
+    operation_id: Optional[str] = Field(None, max_length=64)
+    note: Optional[str] = Field(None, max_length=160)
+
+
+@router.get("/sessions/{session_id}/scale-portrayal")
+async def get_scale_portrayal(
+    session_id: str,
+    layer: str = Query(..., max_length=128),
+    observed_zoom: Optional[float] = Query(None, ge=0, le=24),
+    crs: str = Query("EPSG:3857", max_length=32),
+    target_dpi: float = Query(96.0, ge=1, le=600),
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict[str, Any]:
+    """只读有效策略（与 UI / Agent 同一解析面）；session 归属验权。"""
+    from app.services.gis_harness.scale_portrayal.service import (
+        ScalePortrayalError,
+        inspect_scale_portrayal,
+    )
+    try:
+        return await inspect_scale_portrayal(
+            session_id, layer,
+            observed_zoom=observed_zoom, crs=crs, target_dpi=target_dpi)
+    except ScalePortrayalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/sessions/{session_id}/scale-portrayal")
+async def apply_scale_portrayal_route(
+    session_id: str,
+    req: ScalePortrayalApplyBody,
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict[str, Any]:
+    """局部受控写：preview 零突变 / commit 走既有 CAS 与 undo 栈。"""
+    from app.services.gis_harness.scale_portrayal.service import (
+        ScalePortrayalError,
+        apply_scale_portrayal,
+    )
+    try:
+        return await apply_scale_portrayal(
+            session_id, req.layer,
+            policy=req.policy,
+            mode=req.mode,
+            expected_revision=req.expected_revision,
+            operation_id=req.operation_id,
+            note=req.note or "",
+            origin="user",
+            actor="mapspec_route",
+        )
+    except ScalePortrayalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

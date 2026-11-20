@@ -135,8 +135,9 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
     ),
     # 链③（ADR-0284 D4）：最近设施网络距离 → 行政汇总。
     # subject=需求点（incidents，如居民点/小区），facility=服务设施（医院/
-    # 消防站）；汇总 rate = Σtotal_cost / 路线数 = 区均网络成本（均值语义，
-    # aggregate_with_denominator 的 count 分母通道——不是伪装率）。
+    # 消防站）。默认阻抗是 travel_time_s，所以 total_cost 是行程秒（含转弯
+    # 罚时），不是米。区均距离必须汇总 total_distance_m。rate = Σ米 / 路线数
+    # （count 分母通道的均值，不是伪装率）。
     "network_proximity": (
         _step("nearest_facility", "network_closest_facility",
               {"network": "role:network", "incidents": "role:subject",
@@ -150,7 +151,8 @@ _STEPS: Dict[str, Tuple[AnalysisStepSpec, ...]] = {
               {"points": "step:nearest_facility", "polygons": "role:boundary"},
               capability="admin_aggregation",
               params={"denominator_kind": "count",
-                      "numerator_field": "total_cost"},
+                      "numerator_field": "total_distance_m"},
+              units={"numerator_field": "m"},
               deps=("nearest_facility",),
               outputs=("district_accessibility",)),
     ),
@@ -535,6 +537,6 @@ def visualization_hints(family: str) -> Tuple[str, ...]:
         ),
         "network_proximity": (
             "nearest_routes → flow_od_arc / line（需求点→设施路线）",
-            "district_accessibility → administrative_choropleth（区均网络成本）",
+            "district_accessibility → administrative_choropleth（区均网络距离，米）",
         ),
     }.get(family, ())

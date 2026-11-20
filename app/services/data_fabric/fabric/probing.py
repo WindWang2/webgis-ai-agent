@@ -127,14 +127,16 @@ def _probe_ogc_api(adapter: Any, cost: ProbeCost) -> Dict[str, Any]:
 
 
 def _probe_stac(adapter: Any, cost: ProbeCost) -> Dict[str, Any]:
-    """STAC：filter extension conformance（/conformance）→ cql2-text 升级。
+    """STAC：filter extension conformance（/conformance）→ cql2-json 升级。
 
     STAC filter 扩展 conformance URI 形如
     ``https://api.stacspec.org/v1.0.0-rc.3/item-search#filter``；仅当声明
     时才升级（V7 前 STAC filter 下推恒关 —— 诚实默认保持）。
+    编码固定 cql2-json（与 STACAdapter.capabilities_v2 一致 —— adapter
+    只编译 cql2-json；#2233 曾写 cql2-text 且读不存在的 adapter.url）。
     """
     overrides: Dict[str, Any] = {}
-    url = (getattr(adapter, "url", "") or "").rstrip("/")
+    url = (getattr(adapter, "endpoint", "") or getattr(adapter, "url", "") or "").rstrip("/")
     if not url:
         return overrides
     session = getattr(adapter, "session", None)
@@ -154,7 +156,7 @@ def _probe_stac(adapter: Any, cost: ProbeCost) -> Dict[str, Any]:
         conforms = [str(c) for c in (data.get("conformsTo") or [])]
         if any(c.endswith("#filter") and "stacspec.org" in c for c in conforms):
             overrides["filter_pushdown"] = True
-            overrides["filter_encoding"] = "cql2-text"
+            overrides["filter_encoding"] = "cql2-json"
     except Exception as exc:  # noqa: BLE001 - 探测失败回落默认
         logger.debug("[probing] stac conformance unavailable: %s", exc)
     return overrides

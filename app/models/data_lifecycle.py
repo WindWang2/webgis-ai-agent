@@ -29,6 +29,7 @@ from sqlalchemy import (
     JSON,
     String,
     UniqueConstraint,
+    func,
 )
 from app.core.database import Base
 
@@ -100,9 +101,9 @@ class LifecyclePolicy(Base):
     __tablename__ = "lifecycle_policies"
 
     id = Column(String(36), primary_key=True, default=_uuid_hex)
-    org_id = Column(Integer, nullable=True)  # B 线占位列
-    #: 唯一策略名（如 "default" / "cog-strict"）；同 (kind) 命名即适用
-    name = Column(String(64), nullable=False, unique=True)
+    org_id = Column(Integer, nullable=True)  # NULL = 全局默认；组织策略不改全局行
+    #: 策略名在组织内唯一（全局默认 org_id IS NULL）。
+    name = Column(String(64), nullable=False)
     kind = Column(String(32), nullable=False)
     action = Column(String(16), nullable=False, default="observe")
     #: tier 阈值（秒）：{"warm_after_s": 86400, "cold_after_s": 604800}
@@ -115,6 +116,12 @@ class LifecyclePolicy(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     __table_args__ = (
+        # #2209：UniqueConstraint(org_id, name) 对 org_id IS NULL 的全局行
+        # 不生效（PG/SQLite 唯一约束中 NULL 互不相等）——同一全局名可插入多行。
+        # 改用 COALESCE 表达式唯一索引：NULL 归一到哨兵 -1（organizations.id
+        # 自增恒正），全局默认名全局唯一，与 0106 迁移同形。
+        Index("uq_lifecycle_policy_org_name",
+              func.coalesce(org_id, -1), name, unique=True),
         CheckConstraint(
             "kind IN ('lakehouse_dataset','fabric_materialization',"
             "'artifact_cache','cog_output','worker_cache')",

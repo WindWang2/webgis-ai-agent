@@ -1,0 +1,88 @@
+{
+  "name": "authoring_own_line_exemption",
+  "viewport": [
+    0,
+    0,
+    200,
+    200
+  ],
+  "labels": [
+    {
+      "id": "OWN",
+      "text": "自身道路",
+      "kind": "line",
+      "x": 100,
+      "y": 100,
+      "angle": 0,
+      "font_size": 12,
+      "priority": 0,
+      "layer_id": "roads",
+      "feature_id": "r1"
+    },
+    {
+      "id": "OTHER",
+      "text": "邻路",
+      "kind": "line",
+      "x": 20,
+      "y": 20,
+      "angle": 0,
+      "font_size": 12,
+      "priority": 1,
+      "layer_id": "roads",
+      "feature_id": "rx"
+    }
+  ],
+  "expected": {
+    "placements": [
+      {
+        "id": "OWN",
+        "x": 100,
+        "y": 100,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      },
+      {
+        "id": "OTHER",
+        "x": 20,
+        "y": 20,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "obstacle"
+      }
+    ],
+    "stats": {
+      "total": 2,
+      "placed": 1,
+      "suppressed": 1,
+      "collisions": 0,
+      "obstacle_hits": 1,
+      "obstacles_truncated": 0
+    },
+    "budgetExceeded": false
+  },
+  "obstacles": [
+    {
+      "box": [
+        90,
+        94,
+        110,
+        106
+      ],
+      "kind": "line",
+      "layer_id": "roads",
+      "feature_id": "r1"
+    },
+    {
+      "box": [
+        10,
+        10,
+        30,
+        30
+      ],
+      "kind": "line",
+      "layer_id": "roads",
+      "feature_id": "r2"
+    }
+  ]
+}

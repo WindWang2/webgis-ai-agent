@@ -142,6 +142,7 @@
         "filter_property": "",
         "filter_value": "",
         "frame_index": null,
+        "frame_slots": null,
         "page_count": 4,
         "page_id": "cover",
         "page_number": 1,
@@ -151,6 +152,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "C14 图册"
       },
@@ -278,6 +280,7 @@
         "filter_property": "zone",
         "filter_value": "A",
         "frame_index": null,
+        "frame_slots": null,
         "page_count": 4,
         "page_id": "cat_A",
         "page_number": 2,
@@ -287,6 +290,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "A"
       },
@@ -414,6 +418,7 @@
         "filter_property": "zone",
         "filter_value": "B",
         "frame_index": null,
+        "frame_slots": null,
         "page_count": 4,
         "page_id": "cat_B",
         "page_number": 3,
@@ -423,6 +428,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "B"
       },
@@ -550,6 +556,7 @@
         "filter_property": "zone",
         "filter_value": "C",
         "frame_index": null,
+        "frame_slots": null,
         "page_count": 4,
         "page_id": "cat_C",
         "page_number": 4,
@@ -559,6 +566,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": "C"
       }

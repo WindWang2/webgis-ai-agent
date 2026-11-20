@@ -90,11 +90,21 @@ def iter_scan_pages(
         iter_scan_pages_arrow,
     )
 
-    if adapter_supports_arrow_lane(adapter) and not output_crs:
+    # V6 执行器把 where 编成 canonical dict 或原始 str。Arrow lane 的
+    # evaluate_predicate 只要 AST：dict 先还原；str 无法本地求值，回 dict lane。
+    arrow_where = where
+    use_arrow = adapter_supports_arrow_lane(adapter) and not output_crs
+    if use_arrow and isinstance(where, str):
+        use_arrow = False
+    elif use_arrow and isinstance(where, dict):
+        from app.services.data_fabric.query.predicates import predicate_from_dict
+
+        arrow_where = predicate_from_dict(where)
+    if use_arrow:
         fetched_arrow = 0
         for page in iter_scan_pages_arrow(
             adapter, dataset_id,
-            where=where, fields=fields, bbox=bbox,
+            where=arrow_where, fields=fields, bbox=bbox,
             fetch_limit=fetch_limit, budget=budget, token=token,
             page_size=page_size,
         ):
@@ -112,9 +122,12 @@ def iter_scan_pages(
 
     fetched = 0
     offset = 0
-    while offset < fetch_limit:
+    # Window+1 probe: a full window is not proof the source ended. V5
+    # ``_source_query`` raises once offset hits the limit and more rows exist.
+    probe_limit = fetch_limit + 1
+    while offset < probe_limit:
         token.check()
-        size = min(page_size, fetch_limit - offset)
+        size = min(page_size, probe_limit - offset)
         extras: SourceQueryOptions = {
             "limit": size,
             "offset": offset,
@@ -138,16 +151,32 @@ def iter_scan_pages(
             except Exception:  # noqa: BLE001 - 证据回调绝不阻断扫描
                 pass
         rows = result.features or []
-        fetched += len(rows)
-        if fetched > budget.max_rows:
+        more = bool(getattr(result, "has_more", False) or getattr(result, "truncated", False))
+        incoming = fetched + len(rows)
+        if incoming > budget.max_rows and incoming <= fetch_limit:
             raise QueryBudgetExceededError(
-                f"source scan fetched {fetched} rows (budget {budget.max_rows})",
+                f"source scan fetched {incoming} rows (budget {budget.max_rows})",
                 details={"hint": "narrow bbox or add filters on the source"},
             )
+        if incoming > fetch_limit:
+            raise QueryBudgetExceededError(
+                f"source scan exceeds {fetch_limit} join candidates; narrow the source filter",
+                details={"hint": "narrow bbox or add filters on the source"},
+            )
+        fetched += len(rows)
         yield rows
-        if len(rows) < size:
+        if not rows and more:
+            raise QueryBudgetExceededError("source returned an empty nonterminal page")
+        if len(rows) < size and not more:
             return  # 真实末页
         offset += len(rows)
+        if offset >= fetch_limit and more:
+            raise QueryBudgetExceededError(
+                f"source scan exceeds {fetch_limit} join candidates; narrow the source filter",
+                details={"hint": "narrow bbox or add filters on the source"},
+            )
+        if offset >= fetch_limit:
+            return
 
 
 def bloom_prefilter(

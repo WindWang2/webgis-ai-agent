@@ -253,7 +253,9 @@
     "atlasPdf": "Download PDF",
     "atlasManifest": "Provenance",
     "atlasDownloadPdf": "Download atlas PDF: {name}",
-    "atlasDownloadManifest": "Download reproducible provenance manifest: {name}"
+    "atlasDownloadManifest": "Download reproducible provenance manifest: {name}",
+    "importMembers": "Import members (per-member status)",
+    "importRejected": "{p0} rows rejected"
   },
   "studio": {
     "decoration": {
@@ -388,7 +390,8 @@
     "groupByAria": "Group-by field",
     "noGroup": "No grouping",
     "statsModeHint": "result_mode will switch to statistics (aggregate results only, no geometry transferred)",
-    "aggFieldRequired": "Choose an aggregate field before running or explaining the query."
+    "aggFieldRequired": "Choose an aggregate field before running or explaining the query.",
+    "deliver": "Deliver"
   },
   "explain": {
     "queryFingerprint": "Query fingerprint",
@@ -629,6 +632,30 @@
     "retryAria": "Retry last instruction",
     "retryLast": "Retry last",
     "inputAria": "Enter a spatial analysis instruction",
+    "visualAttach": {
+      "attachAria": "Attach image",
+      "attachMenu": "Attach visual evidence",
+      "attachMap": "Current map viewport",
+      "attachMapHint": "Capture the map canvas (page legend not included)",
+      "attachRegion": "Select region",
+      "attachRegionHint": "Drag a rectangle on the current map capture",
+      "attachReference": "Upload reference image",
+      "attachReferenceHint": "Static PNG / JPEG images",
+      "mapUnavailable": "Map not ready for capture",
+      "uploading": "Uploading…",
+      "uploadFailed": "Attachment failed",
+      "draftFull": "Up to 4 attachments",
+      "regionTitle": "Select map region",
+      "regionConfirm": "Attach selected region",
+      "regionCancel": "Cancel",
+      "regionDragHint": "Drag a rectangle on the image (re-selectable)",
+      "chipViewport": "Viewport",
+      "chipRegion": "Region",
+      "chipReference": "Reference",
+      "chipRemove": "Remove attachment",
+      "receiptSent": "sent",
+      "receiptRefused": "not sent"
+    },
     "inputPlaceholder": "Describe a spatial analysis…",
     "stopAria": "Stop generating",
     "stopTitle": "Stop generating",

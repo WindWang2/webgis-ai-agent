@@ -20,6 +20,10 @@
     "serverMode": "服务端分页",
     "sortServerTitle": "{column} 排序（服务端）",
     "locateTitle": "在地图上定位",
-    "emptyPage": "当前条件下没有要素"
+    "emptyPage": "当前条件下没有要素",
+    "selectionView": "选中集",
+    "selectionCountSuffix": " · 已选 {count}（服务端核实）",
+    "selectionCountUnknown": " · 已选（总数未知，服务端超精确计数上限）",
+    "selectionStale": "数据已更新，选中集已失效——请重新框选"
   }
 }

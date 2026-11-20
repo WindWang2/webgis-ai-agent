@@ -18,13 +18,14 @@
 - 信任决定生死：BLOCKED → quarantined，永不 import；
 - 依赖：required 缺失或成环 → failed（typed）；optional 缺失 → degraded。
 
-线程模型：host 方法不做内部加锁——激活只发生在启动 lifespan（单线程）
-或 CLI（单进程）。多线程并发激活不在 V1 契约内（文档明示）。
+线程模型：生命周期入口持 ``RLock``。lifespan tick 和线程池里的
+分发/API 会同时改 ``_records``。
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
@@ -201,6 +202,7 @@ class ExtensionHost:
         # V3：吊销惰性复查的信任根 mtime 基线（None = 首查强制执行）。
         self._revocation_mtime: Any = None
         self._refresh_mtime: Any = None
+        self._lifecycle = threading.RLock()
 
     # ── 构造 ─────────────────────────────────────────────────────────
     @classmethod
@@ -230,10 +232,15 @@ class ExtensionHost:
 
     # ── discover / validate ──────────────────────────────────────────
     def discover(self) -> list[ExtensionDiagnostic]:
+        with self._lifecycle:
+            return self._discover_locked()
+
+    def _discover_locked(self) -> list[ExtensionDiagnostic]:
         # V3（Round-2 M-1）：discover 前重读 trust store（文件加载实例），
         # 运行中的服务器对发布后的吊销/rotation 即时生效，而非只在
         # refresh_revocations 的周期面。
         source = getattr(self._policy.trust_store, "source_path", None)
+        reload_error: Optional[ExtensionPlatformError] = None
         if source is not None:
             from .trust_store import TrustStore
 
@@ -244,9 +251,21 @@ class ExtensionHost:
                     self._policy, "trust_store", TrustStore.load(Path(source))
                 )
             except ExtensionPlatformError as exc:
+                # 继续用已加载的信任根（发现不能因一次读失败整体中止），
+                # 但失败必须进入诊断，不能只留在日志里。
                 logger.warning("trust store reload failed at discover: %s", exc)
+                reload_error = exc
         result: DiscoveryResult = discover_extensions(list(self._policy.roots))
         diagnostics: list[ExtensionDiagnostic] = list(result.diagnostics)
+        if reload_error is not None:
+            diagnostics.append(
+                reload_error.diagnostic
+                if getattr(reload_error, "diagnostic", None) is not None
+                else ExtensionDiagnostic.warning(
+                    DiagnosticCode.TRUST_STORE_UNREADABLE,
+                    f"trust store reload failed at discover: {reload_error}",
+                )
+            )
         for failure in result.failures:
             diagnostics.extend(failure.diagnostics)
         for discovered in result.extensions:
@@ -632,6 +651,10 @@ class ExtensionHost:
 
     # ── activate ─────────────────────────────────────────────────────
     def activate(self, extension_id: str, *, override_gate: bool = False) -> list[ExtensionDiagnostic]:
+        with self._lifecycle:
+            return self._activate_locked(extension_id, override_gate=override_gate)
+
+    def _activate_locked(self, extension_id: str, *, override_gate: bool = False) -> list[ExtensionDiagnostic]:
         try:
             return self._activate_impl(extension_id, override_gate=override_gate)
         finally:
@@ -654,6 +677,27 @@ class ExtensionHost:
             ]
         if record.state is ExtensionState.QUARANTINED:
             return list(record.diagnostics)
+        # review #2145：吊销窗口收口 —— refresh_revocations 只处理 ACTIVE/
+        # DEGRADED；discover 之后被吊销的 COMPATIBLE 包在下一次 discover
+        # 之前仍可 activate。激活前对照当前信任根复查吊销面。
+        trust_store = self._policy.trust_store
+        if trust_store is not None:
+            revoked = trust_store.is_package_revoked(
+                extension_id, record.manifest.version)
+            if not revoked and record.fingerprint is not None:
+                revoked = trust_store.is_fingerprint_revoked(record.fingerprint)
+            if revoked:
+                record.state = ExtensionState.QUARANTINED
+                _metrics_safely(lambda m: m.record_quarantine("revocation"))
+                record.diagnostics.append(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.PACKAGE_REVOKED,
+                        f"extension {extension_id!r} is revoked in the trust store; "
+                        "activation refused and extension quarantined",
+                        extension_id=extension_id,
+                    )
+                )
+                return list(record.diagnostics)
         if (
             record.trust is TrustLevel.LOCAL_UNTRUSTED
             and not self._policy.allow_local_untrusted_activation
@@ -691,7 +735,14 @@ class ExtensionHost:
             self.validate_extension(extension_id)
             if record.state is ExtensionState.INCOMPATIBLE:
                 return list(record.diagnostics)
-        assert record.state is ExtensionState.COMPATIBLE, record.state
+        if record.state is not ExtensionState.COMPATIBLE:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.EXTENSION_DISABLED,
+                    f"extension {extension_id!r} is {record.state}, not compatible",
+                    extension_id=extension_id,
+                )
+            ]
 
         # V3：版本钉（运维配置；activate/upgrade/install/rollback 统一消费）。
         pin_error = self._version_pin_error(record.extension_id, record.manifest.version)
@@ -1063,6 +1114,7 @@ class ExtensionHost:
             max_cpu_seconds=execution.max_cpu_seconds,
             broker_handler=self._make_broker_handler(record.extension_id),
             isolation_backend=self._policy.isolation_backend,
+            max_output_bytes=execution.max_output_bytes,
             stream_window=min(
                 self._policy.stream_window,
                 getattr(execution, "stream_window", self._policy.stream_window),
@@ -1159,7 +1211,22 @@ class ExtensionHost:
                 kwargs.update(tier=1, domains=[], side_effect="unclassified",
                               required_permission="model_provider")
                 description = provider.description
-            proxy = self._make_worker_proxy(record, worker, projected, execution.call_timeout_s)
+            if self._tool_registry.has(projected):
+                worker.shutdown()
+                return self._fail_worker_activation(
+                    record,
+                    warnings + ledger.rollback(),
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
+                        f"tool {projected!r} already registered "
+                        "(core tools can never be shadowed)",
+                        extension_id=record.extension_id,
+                    ),
+                )
+            proxy = self._make_worker_proxy(
+                record, worker, projected, execution.call_timeout_s,
+                execution.max_output_bytes,
+            )
             try:
                 self._tool_registry.register(projected, description, proxy, **kwargs)
             except Exception as exc:  # noqa: BLE001 - 归一为投影失败
@@ -1173,7 +1240,14 @@ class ExtensionHost:
                         extension_id=record.extension_id,
                     ),
                 )
-            ledger.record("tool", projected, lambda n=projected: self._tool_registry.unregister(n))
+
+            def _undo_projected_tool(n: str = projected, owned: Any = proxy) -> bool:
+                # 只撤自己的投影。同名位置上若已是别的实现（核心工具），停用不得删掉它。
+                if self._tool_registry.get(n) is not owned:
+                    return True
+                return self._tool_registry.unregister(n)
+
+            ledger.record("tool", projected, _undo_projected_tool)
             logger.info("extension %s projected worker tool %s", record.extension_id, projected)
         # V3（ADR-0119）：worker 化声明节投影（经同一台账，失败逆序回滚）。
         try:
@@ -1483,14 +1557,18 @@ class ExtensionHost:
         return audit.snapshot()
 
     def _make_worker_proxy(
-        self, record: ExtensionRecord, worker: Any, projected: str, call_timeout_s: float
+        self, record: ExtensionRecord, worker: Any, projected: str, call_timeout_s: float,
+        max_output_bytes: int | None = None,
     ) -> Any:
         """生成宿主侧工具代理：转发到 worker，崩溃/超时触发隔离语义。"""
         host = self
 
         def _worker_proxy(**kwargs: Any) -> Any:
             try:
-                return worker.call(projected, kwargs, timeout=call_timeout_s)
+                return worker.call(
+                    projected, kwargs, timeout=call_timeout_s,
+                    max_output_bytes=max_output_bytes,
+                )
             except ExtensionPlatformError as exc:
                 if exc.diagnostic.code in (
                     DiagnosticCode.WORKER_CRASHED,
@@ -1586,6 +1664,30 @@ class ExtensionHost:
 
     # ── deactivate / unload / reload ─────────────────────────────────
     def deactivate(
+        self,
+        extension_id: str,
+        drain: bool = False,
+        drain_timeout_s: float = 10.0,
+    ) -> list[ExtensionDiagnostic]:
+        if drain:
+            # review #2145：drain 等待**不持生命周期锁** —— 持锁 sleep
+            # 会把全部生命周期操作（activate/validate/discover）一起卡住
+            # 最多 drain_timeout 秒。锁外轮询 in_flight 清零（或超时），
+            # 真正的停用裁决仍在锁内（超时 → typed DRAIN_TIMEOUT）。
+            record = self._records.get(extension_id)
+            worker = getattr(record, "worker", None) if record is not None else None
+            if worker is not None and worker.in_flight:
+                import time as _time
+
+                deadline = _time.monotonic() + max(drain_timeout_s, 0.05)
+                while worker.in_flight and _time.monotonic() < deadline:
+                    _time.sleep(0.05)
+        with self._lifecycle:
+            return self._deactivate_locked(
+                extension_id, drain=drain, drain_timeout_s=drain_timeout_s,
+            )
+
+    def _deactivate_locked(
         self,
         extension_id: str,
         drain: bool = False,
@@ -1734,6 +1836,17 @@ class ExtensionHost:
                     extension_id=extension_id,
                 )
             ]
+        if record.state is ExtensionState.QUARANTINED:
+            # review #2145：与 upgrade() 同闸 —— reload 走 unload→DISCOVERED
+            # →activate，会把被吊销/篡改/崩溃循环隔离的包**解除隔离**重新
+            # 激活。隔离的唯一出口是 re-discover（重跑完整信任门）。
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.TRUST_BLOCKED,
+                    f"extension {extension_id!r} is quarantined; re-discover instead",
+                    extension_id=extension_id,
+                )
+            ]
         was_active = record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED)
         if was_active:
             deactivate_diags = self.deactivate(extension_id)
@@ -1786,20 +1899,24 @@ class ExtensionHost:
             return diagnostics + list(record.diagnostics)
         # Round-1 审计 M1：reload 必须重跑发现期信任门（blocklist 新增、
         # allowlist 撤销都可能发生在两次操作之间）。
+        # review #2145：内容变更检查必须对照**换血前**的信任级别 —— 先
+        # 覆盖 record.trust 会把签名提权的 TRUSTED_EXTENSION 降回
+        # LOCAL_UNTRUSTED，使受信包换血后的 FINGERPRINT_CHANGED 硬拒绝
+        # 退化成一句 warning。
+        prior_trust = record.trust
         trust = resolve_trust(
             extension_id,
             allowlist=self._policy.allow,
             blocklist=self._policy.block,
             builtin_ids=self._policy.builtin_ids,
         )
-        record.trust = trust
         record.manifest = manifest
         fingerprint, fp_diag = _refingerprint(record)
         if fp_diag is None:
             content_changed = (
                 record.fingerprint is not None and fingerprint != record.fingerprint
             )
-            if content_changed and record.trust in (
+            if content_changed and prior_trust in (
                 TrustLevel.TRUSTED_BUILTIN, TrustLevel.TRUSTED_EXTENSION
             ):
                 # Round-2 审计 N-3：受信扩展内容变更必须走重新发现（重新
@@ -1822,6 +1939,7 @@ class ExtensionHost:
                     )
                 )
             record.fingerprint = fingerprint
+        record.trust = trust
         if trust is TrustLevel.BLOCKED:
             record.state = ExtensionState.QUARANTINED
             record.diagnostics = [
@@ -1832,6 +1950,32 @@ class ExtensionHost:
                 )
             ]
             return diagnostics + list(record.diagnostics)
+        # review #2145：reload 必须重跑发现期**验签/吊销门**（与 discover
+        # 同缝）——否则 allowlist 内被吊销/篡改的包在 reload 后复活。
+        record.diagnostics = []
+        record.baseline_diagnostics = ()
+        diagnostics.extend(
+            self._apply_signature_verdict(
+                record,
+                verify_pack_signature(
+                    record.path,
+                    self._policy.trusted_publishers,
+                    trust_store=self._policy.trust_store,
+                    package_id=extension_id,
+                    version=manifest.version,
+                ),
+            )
+        )
+        if record.state is ExtensionState.QUARANTINED:
+            record.baseline_diagnostics = tuple(record.diagnostics)
+            reason = (
+                "revocation"
+                if any(d.code is DiagnosticCode.PACKAGE_REVOKED for d in record.diagnostics)
+                else "trust_policy"
+            )
+            _metrics_safely(lambda metrics: metrics.record_quarantine(reason))
+            return diagnostics + list(record.diagnostics)
+        record.baseline_diagnostics = tuple(record.diagnostics)
         record.state = ExtensionState.DISCOVERED
         record.diagnostics = []
         diagnostics.extend(self.validate_extension(extension_id))
@@ -1947,6 +2091,10 @@ class ExtensionHost:
         self._notify_projection_change(extension_id, "deactivate")
 
     def refresh_revocations(self) -> list[str]:
+        with self._lifecycle:
+            return self._refresh_revocations_locked()
+
+    def _refresh_revocations_locked(self) -> list[str]:
         """惰性吊销复查：trust store 内已吊销的**激活**扩展 → 停用+隔离。
 
         由宿主周期面（health tick / install / refresh 信号 mtime 变化）

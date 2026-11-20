@@ -7,7 +7,6 @@ import { queryCommands } from './queryCommands';
 import { chartCommands } from './chartCommands';
 import { workbenchCommands } from './workbenchCommands';
 import { styleCommands } from './styleCommands';
-import { sceneCommands } from './sceneCommands';
 import { mapOperationsCommands } from './mapOperationsCommands';
 import { temporalCommands } from './temporalCommands';
 
@@ -28,6 +27,12 @@ export type { MapCommandContext, CommandValidator, CommandEntry } from './types'
  * dispatch (`map-action-handler.tsx`) lowercases `action.command` before lookup, so
  * UPPERCASE emissions from the backend are tolerated at runtime without
  * rewriting the `MapActionPayload.command` union.
+ *
+ * H8/#2144：scene 编排四命令（get_3d_capabilities/apply_scene_representation/
+ * fly_camera/run_3d_analysis）只在 viewCommands 登记（带参数校验）。此前的
+ * sceneCommands 切片以 acceptAnyParams 展开在其后，把校验定义整体覆盖 —
+ * — 畸形参数照 ack succeeded，校验器成死代码（#535 幽灵命令不变量仍成立：
+ * 四命令的 catalogue 覆盖来自 viewCommands）。
  */
 export const COMMAND_CATALOGUE = {
   ...viewCommands,
@@ -39,7 +44,6 @@ export const COMMAND_CATALOGUE = {
   ...chartCommands,
   ...workbenchCommands,
   ...styleCommands,
-  ...sceneCommands,
   ...mapOperationsCommands,
   ...temporalCommands,
 } as const;

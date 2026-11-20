@@ -1024,10 +1024,12 @@ async def _compile_data(
                 crs_values[0] if len(set(crs_values)) == 1 else sorted(set(crs_values)),
                 source="ref_descriptor.crs",
             )
-        max_rev = max(
-            (d.get("content_revision") for d in descriptors.values()),
-            default=None,
-        )
+        revisions = [
+            d.get("content_revision") for d in descriptors.values()
+            if isinstance(d.get("content_revision"), int)
+            and not isinstance(d.get("content_revision"), bool)
+        ]
+        max_rev = max(revisions) if revisions else None
         freshness_fact = (
             known(max_rev, source="ref_descriptor.content_revision")
             if isinstance(max_rev, int) else unknown(source="ref_descriptor.content_revision")

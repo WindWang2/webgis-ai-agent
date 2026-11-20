@@ -155,7 +155,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['creator_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['org_id'], ['organizations.id'], ),
+    sa.ForeignKeyConstraint(['org_id'], ['organizations.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('org_id', 'name', name='uq_layer_org_name')
     )

@@ -21,9 +21,17 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from typing import Any, Dict, List, Mapping, Optional, Set
 
 logger = logging.getLogger(__name__)
+
+_GC_LOCK = threading.Lock()
+
+
+def gc_mutation_lock() -> threading.Lock:
+    """Serializes publish and GC so a new manifest cannot appear mid-delete."""
+    return _GC_LOCK
 
 #: 扫描/批处理有界 cap。
 #: raw 对象枚举上限（≫ blob 数 —— 截断即 typed abort，绝不部分视图，
@@ -292,6 +300,10 @@ def plan_gc(
         protected_blobs = _live_blob_protection(
             manifests, set(manifests) - set(candidates), store,
         )
+        protected_blobs |= {
+            digest for digest in db_protected
+            if isinstance(digest, str) and len(digest) == 64
+        }
         for mid in candidates:
             for digest in manifests[mid].get("blobs", []):
                 if len(digest) == 64 and digest not in protected_blobs:
@@ -320,6 +332,13 @@ def plan_gc(
 
 
 def execute_gc(
+    plan: Mapping[str, Any], *, max_deletions: int = MAX_BATCH_DELETIONS,
+) -> Dict[str, Any]:
+    with _GC_LOCK:
+        return _execute_gc_locked(plan, max_deletions=max_deletions)
+
+
+def _execute_gc_locked(
     plan: Mapping[str, Any], *, max_deletions: int = MAX_BATCH_DELETIONS,
 ) -> Dict[str, Any]:
     """执行计划（重验优先 —— R0-12）：
@@ -369,6 +388,10 @@ def execute_gc(
             continue
         live_refs.update(d for d in meta.get("blobs", []) if len(d) == 64)
         live_refs.update(meta.get("children", []))
+    live_refs |= {
+        str(digest) for digest in _protected_references()
+        if isinstance(digest, str) and len(digest) == 64
+    }
     final_blob_plan = []
     for digest in plan.get("deletable_blobs", []):
         if not isinstance(digest, str) or len(digest) != 64:

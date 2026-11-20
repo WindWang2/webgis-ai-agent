@@ -31,19 +31,26 @@ import {
   LayoutDashboard,
   Activity,
   Radar,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { sidebarWidthLimit } from '@/lib/store/slices/uiSlice';
 import { useT } from '@/lib/i18n/useT';
 import type { AiStatus } from '@/lib/store/hud-types';
 import type { AgentRuntime } from '@/lib/agent-runtime';
 import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 import { PanelHeader } from '@/components/shared/panel-header';
+import { IconButton } from '@/components/shared/icon-button';
+import { effectivePanelWidth } from '@/lib/utils/workspace-inset';
 import { ChatTab } from '@/components/sidebar/chat-tab';
 import { LayersTab } from '@/components/sidebar/layers-tab';
 import { ComponentsTab } from '@/components/sidebar/components-tab';
 // U-1（#883）：恢复样式编辑面板的生产入口（editingLayerId 驱动的钻入视图）。
 import { LayerStylePanel } from '@/components/hud/layer-style-panel';
+// G20：无图层时的栅格表达首次挂载入口（局部接线，不改布局骨架）
+import { RasterAuthoringLauncher } from '@/components/hud/raster-authoring-panel';
 import { AnalysisTab } from '@/components/sidebar/analysis-tab';
 import { MapStudioTab } from '@/components/sidebar/map-studio-tab';
 import { ProjectTab } from '@/components/sidebar/project-tab';
@@ -89,6 +96,15 @@ export interface ContextPanelProps {
   ) => void;
   /** 方向 3：stale/恢复期重取 pending envelope。 */
   onClarificationRefresh?: () => void;
+  /** G29：运行中交互提交（REST 直达原生协议）。 */
+  onRuntimeInteractionSubmit?: (
+    state: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState,
+    answer: { value?: string; confirmed?: boolean; cancelled?: boolean },
+  ) => void;
+  /** G29：运行中追加指令（steer/follow_up）。 */
+  onTurnMessage?: (text: string, mode: 'adjust' | 'queue') => void;
+  /** G29：在飞 turn（追加指令入口可见性）。 */
+  turnActive?: boolean;
   agentRuntime?: AgentRuntime | null;
   /** #1048：SessionPlan 流式实时状态（useSessionPlan.view）→ ChatTab → 面板。 */
   sessionPlan?: SessionPlanViewState;
@@ -99,12 +115,13 @@ export interface ContextPanelProps {
   layoutMode?: LayoutMode;
 }
 
-const PANEL_MIN = 280;
-const PANEL_MAX = 420;
 const PANEL_DEFAULT = 320;
 const PANEL_STEP = 16;
 
-const clampWidth = (w: number) => Math.min(PANEL_MAX, Math.max(PANEL_MIN, Math.round(w)));
+const clampWidth = (w: number) => {
+  const { min, max } = sidebarWidthLimit();
+  return Math.min(max, Math.max(min, Math.round(w)));
+};
 
 /** 一次拖拽的全部可变状态：只在 ref 里演进，pointermove 不触碰 React/store。 */
 interface DragState {
@@ -150,6 +167,9 @@ export function ContextPanel({
   ownerToken,
   onPlanAction,
   onClarificationSubmit,
+  onRuntimeInteractionSubmit,
+  onTurnMessage,
+  turnActive,
   onFeatureEditDecision,
   onClarificationRefresh,
   agentRuntime,
@@ -162,6 +182,10 @@ export function ContextPanel({
   const toggleLeftPanel = useHudStore((s) => s.toggleLeftPanel);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
+  // 宽视图（数据密集页签：运维表格、驾驶舱、数据湖、结果对比）。只在
+  // desktop 档提供 —— thin/mobile 本就是覆盖/全宽 sheet。
+  const panelExpanded = useHudStore((s) => s.panelExpanded);
+  const setPanelExpanded = useHudStore((s) => s.setPanelExpanded);
   const layerCount = useHudStore((s) => s.layers.length);
   // U-1（#883）：editingLayerId 非空时图层 tab 钻入样式编辑视图。
   const editingLayerId = useHudStore((s) => s.editingLayerId);
@@ -366,6 +390,8 @@ export function ContextPanel({
     if (target && focusNeedsRestore) target.focus();
   }, [leftPanelOpen]);
 
+  const wideActive = layoutMode === 'desktop' && panelExpanded;
+
   // P5 mobile 档：面板 bottom-sheet 化（拖拽把手两档吸附 + 焦点圈闭），
   // 地图全屏优先（不推挤 inset）。tab 内容与 docked 档完全同源。
   if (layoutMode === 'mobile') {
@@ -389,6 +415,9 @@ export function ContextPanel({
                 onCancel={onCancel}
                 onPlanAction={onPlanAction}
                 onClarificationSubmit={onClarificationSubmit}
+                onRuntimeInteractionSubmit={onRuntimeInteractionSubmit}
+                onTurnMessage={onTurnMessage}
+                turnActive={turnActive}
                 onFeatureEditDecision={onFeatureEditDecision}
                 onClarificationRefresh={onClarificationRefresh}
                 sessionId={sessionId}
@@ -482,14 +511,19 @@ export function ContextPanel({
       style={{
         bottom: hudOpen ? 234 : 24,
         // 拖拽中读命令式草稿变量（pointermove 不产生重渲染）；平时读 store。
-        width: dragging ? 'var(--panel-draft-w)' : sidebarWidth,
+        width: dragging
+          ? 'var(--panel-draft-w)'
+          : wideActive
+            ? effectivePanelWidth(sidebarWidth, true)
+            : sidebarWidth,
         maxWidth: 'calc(100vw - var(--railW))',
         transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-110%)',
         visibility: leftPanelOpen ? 'visible' : 'hidden',
         transition: dragging
           ? 'none'
-          : 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.25s, bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          : 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.25s, bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
+      data-panel-wide={wideActive ? 'true' : undefined}
     >
       <PanelHeader
         icon={meta.icon}
@@ -498,6 +532,17 @@ export function ContextPanel({
         badge={badge}
         onClose={handleClose}
         id={`workspace-panel-title`}
+        actions={
+          layoutMode === 'desktop' ? (
+            <IconButton
+              label={wideActive ? t('panel.collapseWide') : t('panel.expandWide')}
+              icon={wideActive ? Minimize2 : Maximize2}
+              active={wideActive}
+              onClick={() => setPanelExpanded(!panelExpanded)}
+              data-testid="panel-wide-toggle"
+            />
+          ) : undefined
+        }
       />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -530,6 +575,8 @@ export function ContextPanel({
         {activeTab === 'layers' && (
           <PanelErrorBoundary label={t('panel.boundary.layers')}>
             {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
+            {/* 编辑某层时 layer-style-panel 已有同一入口，避免两个面板同时出现 */}
+            {!editingLayerId && <RasterAuthoringLauncher />}
           </PanelErrorBoundary>
         )}
         {activeTab === 'components' && (
@@ -601,15 +648,15 @@ export function ContextPanel({
           注意 hover/focus 着色必须用可编译的 token 类：Tailwind 3 对
           var() 颜色加 /NN 透明度修饰符会静默丢弃整个规则（旧实现的
           hover:bg-[var(--agent-accent,#16a34a)]/30 从未生效过）。 */}
-      {layoutMode === 'desktop' && (
+      {layoutMode === 'desktop' && !wideActive && (
       <div
         ref={separatorRef}
         role="separator"
         aria-orientation="vertical"
         aria-label={t('panel.resizeAria')}
         aria-valuenow={sidebarWidth}
-        aria-valuemin={PANEL_MIN}
-        aria-valuemax={PANEL_MAX}
+        aria-valuemin={sidebarWidthLimit().min}
+        aria-valuemax={sidebarWidthLimit().max}
         title={t('panel.resizeTitle')}
         tabIndex={0}
         onPointerDown={onHandlePointerDown}

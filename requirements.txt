@@ -28,7 +28,7 @@ python-multipart>=0.0.6
 # <2.1 上界一致。2.1.x（如 2.1.4）会被该上界拒绝，不写进 lock；解禁 2.1 前须
 # 先过 #1512 门禁并保留 #1592 的驱动健壮性加固。#1734：注释随 lock 重编译
 # 同步（原写 2.0.54），避免「注释宣称的现状」与 lock 实际钉版互相矛盾。
-sqlalchemy[asyncio]>=2.0.25,<2.2
+sqlalchemy[asyncio]>=2.0.25,<2.1
 alembic>=1.13.0
 
 # GIS Libraries
@@ -37,6 +37,7 @@ shapely>=2.1.2
 rasterio>=1.4.0
 rasterstats>=0.21.0
 pyogrio>=0.13.0
+openpyxl>=3.1.5  # G17 导入工作台：XLSX 工作表读取（read_only；生产可用）
 # pandas 上界 <3.0（#1512）：此前 spec 写的是 <4.0.0，resolver 选中 pandas 3.0.6，
 # 注释宣称的「保持 2.x」从未真正生效 —— Backend Tests 全量跑完后暴露 ~60 例
 # StringDtype（np.asarray 对 pandas 3 默认字符串扩展 dtype 的不兼容）与扩展平台
@@ -131,7 +132,7 @@ matplotlib>=3.8.0
 weasyprint>=70.0  # V6 ADR-0120: publication vector PDF（可选依赖，缺席时运行时诚实降级）
 # 与 requirements-dev.txt 和 requirements.lock 同步；lock 低于声明下限会使
 # `pip install -c requirements.lock -r requirements.txt` 无法解析。
-pypdf>=6.21.4  # V6 ADR-0120: PDF 结构化读取（页数/文本提取验证）
+pypdf>=7.0.1  # V6 ADR-0120: PDF 结构化读取（页数/文本提取验证）
 
 # RAG & Vector Search
 # audit ISSUE-060（#1343）：下界提到 5.6.0 —— CVE-2026-68770 本地模型加载

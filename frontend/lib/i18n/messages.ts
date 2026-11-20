@@ -25,6 +25,7 @@ import zhCommands from '@/messages/zh-CN/commands.json'
 import zhCopilot from '@/messages/zh-CN/copilot.json'
 import zhCockpit from '@/messages/zh-CN/cockpit.json'
 import zhReview from '@/messages/zh-CN/review.json'
+import zhFeatureProposals from '@/messages/zh-CN/featureProposals.json'
 import zhConsole from '@/messages/zh-CN/console.json'
 import zhExplorer from '@/messages/zh-CN/explorer.json'
 import zhWorkbench from '@/messages/zh-CN/workbench.json'
@@ -39,8 +40,20 @@ import zhTable from '@/messages/zh-CN/table.json'
 import zhModelops from '@/messages/zh-CN/modelops.json'
 import zhCompositionAssets from '@/messages/zh-CN/compositionAssets.json'
 import zhDataPreparation from '@/messages/zh-CN/dataPreparation.json'
+import zhDataImport from '@/messages/zh-CN/dataImport.json'
+import zhFieldCompute from '@/messages/zh-CN/fieldCompute.json'
+import zhRasterSampling from '@/messages/zh-CN/rasterSampling.json'
+import zhGeoreferencing from '@/messages/zh-CN/georeferencing.json'
+import zhTopology from '@/messages/zh-CN/topology.json'
 import zhMarket from '@/messages/zh-CN/market.json'
 import zhFlow from '@/messages/zh-CN/flow.json'
+import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
+import zhDataJoin from '@/messages/zh-CN/dataJoin.json'
+import zhLinkedExploration from '@/messages/zh-CN/linkedExploration.json'
+import zhCoordinateOperations from '@/messages/zh-CN/coordinateOperations.json'
+import enCoordinateOperations from '@/messages/en-US/coordinateOperations.json'
+import zhFieldContracts from '@/messages/zh-CN/fieldContracts.json'
+import zhCartogram from '@/messages/zh-CN/cartogram.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -58,6 +71,7 @@ import enCommands from '@/messages/en-US/commands.json'
 import enCopilot from '@/messages/en-US/copilot.json'
 import enCockpit from '@/messages/en-US/cockpit.json'
 import enReview from '@/messages/en-US/review.json'
+import enFeatureProposals from '@/messages/en-US/featureProposals.json'
 import enConsole from '@/messages/en-US/console.json'
 import enExplorer from '@/messages/en-US/explorer.json'
 import enWorkbench from '@/messages/en-US/workbench.json'
@@ -72,8 +86,18 @@ import enTable from '@/messages/en-US/table.json'
 import enModelops from '@/messages/en-US/modelops.json'
 import enCompositionAssets from '@/messages/en-US/compositionAssets.json'
 import enDataPreparation from '@/messages/en-US/dataPreparation.json'
+import enDataImport from '@/messages/en-US/dataImport.json'
+import enFieldCompute from '@/messages/en-US/fieldCompute.json'
+import enRasterSampling from '@/messages/en-US/rasterSampling.json'
+import enGeoreferencing from '@/messages/en-US/georeferencing.json'
+import enTopology from '@/messages/en-US/topology.json'
 import enMarket from '@/messages/en-US/market.json'
 import enFlow from '@/messages/en-US/flow.json'
+import enDataDelivery from '@/messages/en-US/dataDelivery.json'
+import enDataJoin from '@/messages/en-US/dataJoin.json'
+import enLinkedExploration from '@/messages/en-US/linkedExploration.json'
+import enFieldContracts from '@/messages/en-US/fieldContracts.json'
+import enCartogram from '@/messages/en-US/cartogram.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -94,6 +118,7 @@ export interface AppMessages {
   copilot: typeof zhCopilot
   cockpit: typeof zhCockpit
   review: typeof zhReview
+  featureProposals: typeof zhFeatureProposals
   console: typeof zhConsole
   explorer: typeof zhExplorer
   workbench: typeof zhWorkbench
@@ -110,6 +135,17 @@ export interface AppMessages {
   compositionAssets: typeof zhCompositionAssets
   dataPreparation: typeof zhDataPreparation
   flow: typeof zhFlow
+  dataDelivery: typeof zhDataDelivery
+  dataJoin: typeof zhDataJoin
+  linkedExploration: typeof zhLinkedExploration
+  coordinateOperations: typeof zhCoordinateOperations
+  fieldContracts: typeof zhFieldContracts
+  dataImport: typeof zhDataImport
+  fieldCompute: typeof zhFieldCompute
+  rasterSampling: typeof zhRasterSampling
+  georeferencing: typeof zhGeoreferencing
+  topology: typeof zhTopology
+  cartogram: typeof zhCartogram
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -127,12 +163,24 @@ export const messages: Record<AppLocale, AppMessages> = {
     drawers: zhDrawers,
     compositionAssets: zhCompositionAssets,
     dataPreparation: zhDataPreparation,
+    dataDelivery: zhDataDelivery,
+    dataJoin: zhDataJoin,
+    linkedExploration: zhLinkedExploration,
+    coordinateOperations: zhCoordinateOperations,
+    fieldContracts: zhFieldContracts,
+    cartogram: zhCartogram,
+    dataImport: zhDataImport,
+    fieldCompute: zhFieldCompute,
+    rasterSampling: zhRasterSampling,
+    georeferencing: zhGeoreferencing,
+    topology: zhTopology,
     story: zhStory,
     geoai: zhGeoai,
     commands: zhCommands,
     copilot: zhCopilot,
     cockpit: zhCockpit,
     review: zhReview,
+    featureProposals: zhFeatureProposals,
     console: zhConsole,
     explorer: zhExplorer,
     workbench: zhWorkbench,
@@ -163,12 +211,24 @@ export const messages: Record<AppLocale, AppMessages> = {
     drawers: enDrawers as unknown as AppMessages['drawers'],
     compositionAssets: enCompositionAssets as unknown as AppMessages['compositionAssets'],
     dataPreparation: enDataPreparation as unknown as AppMessages['dataPreparation'],
+    dataDelivery: enDataDelivery as unknown as AppMessages['dataDelivery'],
+    dataJoin: enDataJoin as unknown as AppMessages['dataJoin'],
+    linkedExploration: enLinkedExploration as unknown as AppMessages['linkedExploration'],
+    coordinateOperations: enCoordinateOperations as unknown as AppMessages['coordinateOperations'],
+    fieldContracts: enFieldContracts as unknown as AppMessages['fieldContracts'],
+    cartogram: enCartogram as unknown as AppMessages['cartogram'],
+    dataImport: enDataImport as unknown as AppMessages['dataImport'],
+    fieldCompute: enFieldCompute as unknown as AppMessages['fieldCompute'],
+    rasterSampling: enRasterSampling as unknown as AppMessages['rasterSampling'],
+    georeferencing: enGeoreferencing as unknown as AppMessages['georeferencing'],
+    topology: enTopology as unknown as AppMessages['topology'],
     story: enStory as unknown as AppMessages['story'],
     geoai: enGeoai as unknown as AppMessages['geoai'],
     commands: enCommands as unknown as AppMessages['commands'],
     copilot: enCopilot as unknown as AppMessages['copilot'],
     cockpit: enCockpit as unknown as AppMessages['cockpit'],
     review: enReview as unknown as AppMessages['review'],
+    featureProposals: enFeatureProposals as unknown as AppMessages['featureProposals'],
     console: enConsole as unknown as AppMessages['console'],
     explorer: enExplorer as unknown as AppMessages['explorer'],
     workbench: enWorkbench as unknown as AppMessages['workbench'],

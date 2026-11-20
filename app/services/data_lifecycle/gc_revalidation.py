@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.models.data_lifecycle import LifecycleObject, LifecyclePolicy
+from app.models.data_lifecycle import LifecycleObject
 from app.models.db_model import GeoComputeWorkerCache
 from app.services.data_lifecycle.policy import classify_tier
 
@@ -16,10 +16,13 @@ def _utc(value: object) -> datetime | None:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
-def candidate_still_cold(db: Session, entry: Mapping[str, object], path: Path | None) -> tuple[bool, str]:
+def candidate_still_cold(
+    db: Session, entry: Mapping[str, object], path: Path | None, org_id: int | None = None,
+) -> tuple[bool, str]:
+    from app.services.data_lifecycle.policy import policy_for_kind
+
     kind, object_id = str(entry.get("kind") or ""), str(entry.get("object_id") or "")
-    policy = db.query(LifecyclePolicy).filter_by(kind=kind).order_by(
-        LifecyclePolicy.enabled.desc(), LifecyclePolicy.created_at.desc()).first()
+    policy = policy_for_kind(db, kind, org_id)
     if policy is None or not policy.enabled or policy.action not in ("stage_delete", "delete"):
         return False, "policy_changed"
     row = db.query(LifecycleObject).filter_by(kind=kind, object_id=object_id).one_or_none()
@@ -39,7 +42,11 @@ def candidate_still_cold(db: Session, entry: Mapping[str, object], path: Path | 
         paths = [path, path.with_suffix(".meta")] if kind == "artifact_cache" else [path]
         for current_path in paths:
             try:
-                observations.append(datetime.fromtimestamp(current_path.stat().st_mtime, timezone.utc))
+                st = current_path.stat()
+                # 读取不更新 mtime。atime（relatime 下约每日一次）能把仍被读的
+                # 旧文件留在非 cold。noatime 时 atime==mtime，行为不变。
+                observed = max(st.st_mtime, getattr(st, "st_atime", st.st_mtime))
+                observations.append(datetime.fromtimestamp(observed, timezone.utc))
             except FileNotFoundError:
                 continue
             except OSError:

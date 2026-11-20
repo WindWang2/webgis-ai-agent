@@ -97,7 +97,7 @@ def _numeric_values(obj: Any, _depth: int = 0) -> list[float]:
 
 def parity_report(
     *, registry: Any = None, snapshot: Any = None,
-    bootstrap: bool = False, max_tools: int = 512,
+    bootstrap: bool = False, max_tools: int = 1024,
 ) -> dict[str, Any]:
     """生成跨面一致性对拍报告（只读，确定性）。"""
     if registry is None:
@@ -112,7 +112,14 @@ def parity_report(
 
             registry = collect_live_facts(bootstrap=bootstrap or True).registry
 
-    names = sorted(str(n) for n in registry.tool_names())[:max_tools]
+    all_names = sorted(str(n) for n in registry.tool_names())
+    # 报告面上限只截报告，不截真相：超出时显式披露，且 LEGACY_TOOLS
+    # 回归锚点（CAP-O14）永远纳入 —— 541 工具时 zonal_stats 等字典序
+    # 尾部工具曾被 512 上限静默截掉，导致锚点缺席误报 NAME_DRIFT。
+    names = all_names[:max_tools]
+    for legacy in LEGACY_TOOLS:
+        if legacy in all_names and legacy not in names:
+            names.append(legacy)
     try:
         schemas = registry.get_schemas()
     except Exception:  # noqa: BLE001
@@ -213,6 +220,8 @@ def parity_report(
     return {
         "schema_version": PARITY_SCHEMA_VERSION,
         "tool_count": len(tools),
+        "registry_tool_count": len(all_names),
+        "truncated": len(all_names) > len(names),
         "tools": tools,
         "entries": tools,          # 兼容消费者按 entries 读取
         "summary_probe": summary_probe,

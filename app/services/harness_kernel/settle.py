@@ -141,6 +141,8 @@ _SETTLE_FLAG = "GIS_HOST_NEUTRAL_SETTLE"
 _RECEIPT_CACHE_MAX = 256
 _TURN_LOCKS_MAX = 256
 _END_TURN_BUDGET_S = 5.0
+#: end_turn tasks that outlived the 5s budget. complete_settlement waits on them.
+_pending_end_turns: Dict[Tuple[str, str], asyncio.Future] = {}
 
 _FAILURE_DETAIL_BOUND = 200
 _FAILURE_CLASS_BOUND = 64
@@ -524,19 +526,28 @@ async def _end_turn_leg(
     try:
         from app.services.harness_kernel.runtime import get_runtime
 
-        await asyncio.wait_for(
-            asyncio.shield(_retain_cleanup(
-                get_runtime(inp.session_id).end_turn(
-                    inp.turn_id, host=inp.host, status=status,  # type: ignore[arg-type]
-                    settle_token=claim_token,
-                )
-            )),
-            timeout=_END_TURN_BUDGET_S,
+        end_task = _retain_cleanup(
+            get_runtime(inp.session_id).end_turn(
+                inp.turn_id, host=inp.host, status=status,  # type: ignore[arg-type]
+                settle_token=claim_token,
+            )
         )
-    except (asyncio.TimeoutError, asyncio.CancelledError):
-        return SettleEffectReceipt(
-            EFFECT_KERNEL_END_TURN, "failed", "shielded settle timed out or cancelled",
+        try:
+            await asyncio.wait_for(asyncio.shield(end_task), timeout=_END_TURN_BUDGET_S)
+        except asyncio.TimeoutError:
+            # end_turn keeps running. complete_settlement must wait for it —
+            # calling it now sees status still "running" and never writes
+            # settle_finished_at.
+            _pending_end_turns[(inp.session_id, inp.turn_id)] = end_task
+            return SettleEffectReceipt(
+                EFFECT_KERNEL_END_TURN, "failed", "shielded settle timed out",
+            )
+    except asyncio.CancelledError:
+        logger.warning(
+            "[HarnessSettle] kernel end_turn cancelled session=%s turn=%s",
+            inp.session_id, inp.turn_id,
         )
+        raise
     except Exception as exc:  # noqa: BLE001 — authority 腿失败必须显式可见
         logger.warning(
             "[HarnessSettle] kernel end_turn failed session=%s turn=%s: %s",
@@ -710,6 +721,19 @@ async def _settle_owned(inp: HarnessSettleInput, computed: str, recorded: str, t
     try:
         async with asyncio.timeout(SETTLE_EFFECT_BUDGET_S):
             outcome = await _settle_running(inp, computed, was_running=(recorded == "running"), claim_token=token)
+        pending = _pending_end_turns.pop((inp.session_id, inp.turn_id), None)
+        if pending is not None and not pending.done():
+            async def _finish_after_end() -> None:
+                try:
+                    await pending
+                except Exception:
+                    logger.warning(
+                        "[HarnessSettle] background end_turn failed session=%s turn=%s",
+                        inp.session_id, inp.turn_id, exc_info=True,
+                    )
+                await complete_settlement(inp.session_id, inp.turn_id, token)
+            _retain_cleanup(_finish_after_end())
+            return outcome
         if await complete_settlement(inp.session_id, inp.turn_id, token):
             return outcome
         return replace(outcome, disposition="unknown_turn", receipts=outcome.receipts + (

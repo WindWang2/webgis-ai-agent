@@ -53,6 +53,7 @@ def test_auto_checkpoint_flags_match_baseline():
         "UpsertLayerIntent",
         "PatchLayerPresentationIntent",
         "PatchLayerStyleIntent",
+        "PatchLayerLabelAuthoringIntent",
         "UpsertSourceIntent",
         "RemoveLayerIntent",
         "ReorderLayersIntent",
@@ -70,6 +71,8 @@ def test_touches_layers_flags_match_cow_baseline():
     expected = {
         "UpsertLayerIntent",
         "PatchLayerPresentationIntent",
+        # G16：标注 authoring 构造新层 dict（label.authoring 合并）。
+        "PatchLayerLabelAuthoringIntent",
         "RemoveLayerIntent",
         "ReorderLayersIntent",
         "InitProjectIntent",
@@ -92,6 +95,7 @@ def test_effect_class_matches_presentation_baseline():
     expected = {
         "PatchLayerPresentationIntent",
         "PatchLayerStyleIntent",
+        "PatchLayerLabelAuthoringIntent",
         "SetLayoutIntent",
         "PatchComponentIntent",
         "RemoveComponentIntent",
@@ -127,6 +131,7 @@ def test_op_labels_match_legacy_table():
         "RemoveLayerIntent": "移除图层",
         "ReorderLayersIntent": "调整图层顺序",
         "PatchLayerStyleIntent": "修改图层样式",
+        "PatchLayerLabelAuthoringIntent": "调整标注",
         "PatchLayerPresentationIntent": "调整显隐/透明度",
         "PatchComponentIntent": "调整组件",
         "RemoveComponentIntent": "移除组件",
@@ -183,8 +188,9 @@ def test_http_body_codec_coverage_and_roundtrip():
     body_classes = [
         v for k, v in vars(ms).items() if isinstance(v, type) and k.endswith("Body")
     ]
-    # PR-D + G21：UndoAgentCommitBody / ApplyFlowProductBody（16 → 18）
-    assert len(body_classes) == 18
+    # PR-D + G16 + G21：UndoAgentCommitBody / PatchLayerLabelAuthoringBody /
+    # ApplyFlowProductBody（合并后 Body 族总数）。
+    assert len(body_classes) == 20
     # discriminated union 的 18 成员与 codec 表完全重合（漏登记在 CI 拦截）
     assert union_members == {c.__name__ for c in body_classes}, union_members ^ {
         c.__name__ for c in body_classes

@@ -2,6 +2,7 @@
 
 import { apiFetch } from '@/lib/api/transport';
 import { getAuthUser } from '@/lib/auth/tokenStore';
+import { t } from '@/lib/i18n/t';
 
 /**
  * 跨会话搜索 —— client 侧本地索引（ADR-0147）。
@@ -196,7 +197,7 @@ function findMessageHits(
         sessionId: session.id,
         sessionTitle: session.title,
         messageIndex: doc.messageIndex,
-        snippet: `${refIdHit}（位于第 ${doc.messageIndex + 1} 条消息）`,
+        snippet: t('drawers.search.artifactLocated', { ref: refIdHit, index: doc.messageIndex + 1 }),
         ref: refIdHit,
       });
       if (out.length >= limit) break;
@@ -273,7 +274,7 @@ export function searchLocalIndex(
       layerHits.push({
         kind: 'layer',
         sessionId: 'current',
-        sessionTitle: '当前工作区',
+        sessionTitle: t('drawers.search.currentWorkspace'),
         snippet: layer.name,
         layerId: layer.id,
         layerName: layer.name,
@@ -303,7 +304,7 @@ export function normalizeSessionList(
 ): SessionMeta[] {
   return (res.sessions ?? []).map((s) => ({
     id: String(s.id),
-    title: s.title ?? '未命名会话',
+    title: s.title ?? t('drawers.history.untitled'),
     updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Number(new Date(s.updatedAt ?? 0).getTime() || 0),
   }));
 }

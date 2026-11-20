@@ -2,13 +2,16 @@
 
 import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
-import { Send, Sparkles, CheckCircle2, Square, RotateCcw } from 'lucide-react';
+import { Send, Sparkles, CheckCircle2, Square, RotateCcw, ImagePlus } from 'lucide-react';
 import type { AiStatus } from '@/lib/store/hud-types';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { ClarificationCard } from '@/components/chat/clarification-card';
+import { RuntimeInteractionCard } from '@/components/chat/runtime-interaction-card';
+import { GoalSatisfactionCard } from '@/components/chat/goal-satisfaction-card';
+import { GoalRepairPanel } from '@/components/chat/goal-repair-panel';
 import { EditProposalCard } from '@/components/chat/edit-proposal-card';
 import type { ClarificationCardState } from '@/lib/types/clarification';
 import { PlanCard } from '@/components/chat/plan-card';
@@ -25,7 +28,12 @@ import {
 } from '@/lib/agent-runtime';
 import { CitationSourcesProvider, CitationSourceList, splitCitationBlocks, type CitationSource } from '@/components/chat/citation';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
+import { RecoveryBanner } from '@/components/chat/recovery-banner';
+import { SessionModelSelector } from '@/components/chat/session-model-selector';
+import { TurnContextPanel } from '@/components/chat/turn-context-panel';
+import { TurnContextSources } from '@/components/chat/turn-context-sources';
 import { adaptChartData } from "@/lib/chart-adapter";
+import { VisualAttachBar } from '@/components/sidebar/visual-attach';
 import { useLocale, useT } from '@/lib/i18n/useT';
 
 // Bundle-slimming: react-markdown (MiniMd) and recharts (ChartRenderer) load on
@@ -112,10 +120,18 @@ interface ChatMessage {
   agentPlan?: import('@/lib/types/agent-plan').AgentPlanState;
   layerAdded?: string;
   resultId?: string;
+  /** G36（ADR-0291）：用户消息的视觉附件（乐观 chips/回执/恢复三态）。 */
+  attachments?: import('@/lib/chat/message-reducer').VisualAttachmentView[];
+  /** G43（ADR-0295）：本轮上下文装配回执摘要（SSE 回填 + 恢复）。 */
+  turnContextReceipt?: import('@/lib/api/turnContext').TurnContextReceiptSummary;
   /** 方向 3：requirement IR blocking 澄清卡片状态。 */
   clarification?: ClarificationCardState;
+  /** G28：任务完成语义卡（task_complete.goal_satisfaction）。 */
+  goalSatisfaction?: import('@/lib/types/goal-satisfaction').GoalSatisfactionView;
   /** /goal 03：要素编辑提案卡状态。 */
   featureEditProposal?: import('@/lib/types/feature-edit').FeatureEditProposalState;
+  /** G29：Pi 原生运行中交互卡片（多条并存，按 interactionId 去重）。 */
+  runtimeInteractions?: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState[];
 }
 
 /**
@@ -153,6 +169,15 @@ interface ChatTabProps {
   ) => void;
   /** 方向 3：stale/恢复期重取 pending envelope。 */
   onClarificationRefresh?: () => void;
+  /** G29：运行中交互提交（REST 直达原生协议；当前 run 自动续行）。 */
+  onRuntimeInteractionSubmit?: (
+    state: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState,
+    answer: { value?: string; confirmed?: boolean; cancelled?: boolean },
+  ) => void;
+  /** G29：运行中追加指令（adjust=下一可响应位置调整 / queue=完成后处理）。 */
+  onTurnMessage?: (text: string, mode: 'adjust' | 'queue') => void;
+  /** G29：是否有在飞 turn（追加指令入口的可见性）。 */
+  turnActive?: boolean;
   /**
    * #467: 当前会话 id —— 中途切换会话（History 抽屉 / 新会话）会把 aiStatus
    * 强制置 idle，但那是旧会话回合的中止而非完成；播报器据此抑制错误的
@@ -183,19 +208,28 @@ const ChatMessageItem = memo(function ChatMessageItem({
   message: msg,
   mounted,
   thinkingText,
+  sessionId,
+  ownerToken,
   onPlanAction,
   onClarificationSubmit,
   onFeatureEditDecision,
   onClarificationRefresh,
+  onRuntimeInteractionSubmit,
 }: {
   message: ChatMessage;
   mounted: boolean;
   thinkingText: string;
+  sessionId: string | null;
+  ownerToken?: string | null;
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
   onClarificationSubmit?: (
     state: import('@/lib/types/clarification').ClarificationCardState,
     answers: { context_key: string; value: string }[],
     waiveKeys: string[],
+  ) => void;
+  onRuntimeInteractionSubmit?: (
+    state: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState,
+    answer: { value?: string; confirmed?: boolean; cancelled?: boolean },
   ) => void;
   onFeatureEditDecision?: (
     proposal: import('@/lib/types/feature-edit').FeatureEditProposalState,
@@ -233,9 +267,45 @@ const t = useT();
             backgroundColor: 'var(--agent-accent)'
           }}
         >
+          {/* G36（ADR-0291）：用户消息附件 chips（乐观/回执/恢复三态）。 */}
+          {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
+            <div className="mb-1 flex flex-wrap gap-1" data-testid="message-attachments">
+              {(msg.attachments as import('@/lib/chat/message-reducer').VisualAttachmentView[]).map((a) => (
+                <span
+                  key={a.evidence_id}
+                  title={`${a.label ?? a.source_type}${a.status === 'refused' ? ` — ${a.reason ?? ''}` : ''}`}
+                  className="inline-flex items-center gap-1 rounded-pill bg-white/20 px-1.5 py-0.5 text-[11px]"
+                  data-testid={`message-attachment-${a.evidence_id}`}
+                >
+                  {a.thumbUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={a.thumbUrl} alt="" className="h-5 w-5 rounded-sm object-cover" />
+                  ) : (
+                    <ImagePlus size={10} aria-hidden />
+                  )}
+                  {a.source_type === 'map_viewport' && t('sidebar.chat.visualAttach.chipViewport')}
+                  {a.source_type === 'map_region' && t('sidebar.chat.visualAttach.chipRegion')}
+                  {a.source_type === 'reference_upload' && t('sidebar.chat.visualAttach.chipReference')}
+                  {a.mapspec_revision != null && <span>r{a.mapspec_revision}</span>}
+                  {a.status === 'sent' && <span aria-label={t('sidebar.chat.visualAttach.receiptSent')}>✓</span>}
+                  {a.status === 'refused' && (
+                    <span aria-label={t('sidebar.chat.visualAttach.receiptRefused')} title={a.reason}>✕</span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
           <div className="whitespace-pre-wrap">{splitCitationBlocks(msg.content).body}</div>
           <CitationSourceList sources={splitCitationBlocks(msg.content).sources} />
         </div>
+        {/* G43（ADR-0295）：本轮上下文回执（可展开；仅有回执的用户消息渲染）。 */}
+        {msg.turnContextReceipt && (
+          <TurnContextPanel
+            sessionId={sessionId}
+            ownerToken={ownerToken}
+            summary={msg.turnContextReceipt}
+          />
+        )}
       </div>
     </div>
   ) : (
@@ -334,6 +404,26 @@ const t = useT();
                 onRefresh={onClarificationRefresh}
               />
             )}
+            {(msg.runtimeInteractions ?? []).length > 0 && (
+              (msg.runtimeInteractions as import('@/lib/types/runtime-interaction').RuntimeInteractionCardState[]).map(
+                (card) => (
+                  <RuntimeInteractionCard
+                    key={card.interactionId}
+                    state={card}
+                    onSubmit={({ interactionId, answer }) => {
+                      void interactionId;
+                      onRuntimeInteractionSubmit?.(card, answer);
+                    }}
+                    onCancel={() => onRuntimeInteractionSubmit?.(card, { cancelled: true })}
+                  />
+                ),
+              )
+            )}
+            {msg.goalSatisfaction && (
+              <GoalSatisfactionCard
+                view={msg.goalSatisfaction as import('@/lib/types/goal-satisfaction').GoalSatisfactionView}
+              />
+            )}
             {msg.featureEditProposal && (
               <EditProposalCard
                 proposal={msg.featureEditProposal}
@@ -359,7 +449,7 @@ const t = useT();
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, onClarificationSubmit, onFeatureEditDecision, onClarificationRefresh, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, onClarificationSubmit, onFeatureEditDecision, onClarificationRefresh, onRuntimeInteractionSubmit, onTurnMessage, turnActive, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
 const t = useT();
   const [configuredRuntime, setConfiguredRuntime] = useState<AgentRuntime | null>(null);
   useEffect(() => {
@@ -381,6 +471,8 @@ const t = useT();
   useEffect(() => setMounted(true), []);
 
   const [input, setInput] = useState('');
+  // G29：运行中追加指令模式（turnActive 时可见；normal=停当前发新 turn 的既有语义）。
+  const [inRunMode, setInRunMode] = useState<'normal' | 'adjust' | 'queue'>('normal');
   // V9 citation 注入（ADR-0145）：知识库面板把带 [n] 引用块的文本拼入输入框
   // 草稿，由用户确认发送（chat API 的 message 是纯字符串，不静默代发）。
   const pendingInjection = useHudStore((s) => s.pendingChatInjection);
@@ -456,12 +548,22 @@ const t = useT();
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
     if (!trimmed || isBusy) return;
+    if (inRunMode !== 'normal' && turnActive && onTurnMessage) {
+      // G29：运行中追加指令 —— 不新开 turn（steer/follow_up 原生队列）。
+      onTurnMessage(trimmed, inRunMode);
+      setInput('');
+      setInRunMode('normal');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+      return;
+    }
     onSend(trimmed);
     setInput('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [input, isBusy, onSend]);
+  }, [input, isBusy, onSend, inRunMode, turnActive, onTurnMessage]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -512,6 +614,10 @@ const t = useT();
         ownerToken={ownerToken}
         refreshKey={messages.length}
       />
+      {/* G22-P6（会话恢复可读性）：恢复摘要横幅挂在 transcript 上方 —— 自水合
+          `?recovery=1`，未恢复 / 拉取失败整条隐藏（同 SessionPlanPanel 降级
+          约定），技术 id 只进 title 诊断属性。 */}
+      <RecoveryBanner sessionId={sessionId} ownerToken={ownerToken} />
       {/* Messages scroll area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !isBusy && (
@@ -546,10 +652,22 @@ const t = useT();
                 thinkingText={thinkingText}
                 onPlanAction={onPlanAction}
                 onClarificationSubmit={onClarificationSubmit}
+                onRuntimeInteractionSubmit={onRuntimeInteractionSubmit}
       onFeatureEditDecision={onFeatureEditDecision}
                 onClarificationRefresh={onClarificationRefresh}
+                sessionId={sessionId ?? null}
+                ownerToken={ownerToken}
               />
               </CitationSourcesProvider>
+              {/* G42：完成卡（非 satisfied）下的有界补全面 —— 预览/启动/取消/
+                  回执/重终验对照；attempt 状态经服务端读模型刷新可回看。 */}
+              {msg.goalSatisfaction &&
+                (msg.goalSatisfaction as import('@/lib/types/goal-satisfaction').GoalSatisfactionView).verdict !== 'satisfied' && (
+                  <GoalRepairPanel
+                    sessionId={sessionId ?? ''}
+                    active
+                  />
+                )}
             </div>
           ))}
 
@@ -572,6 +690,19 @@ const t = useT();
       {/* 不透明底 + 去掉 blur(12px)：composer 压在地图上，半透明会让输入文字
           与底图细节互相干扰，而 backdrop-filter 又是最贵的那类合成。 */}
       <div className="shrink-0 border-t border-edge-subtle bg-surface-panel">
+        {/* G37（会话模型运行配置）：目录/实际生效/用量工作台 —— 展开式
+            精简行；服务器回执不可读（新会话/权限）时整条隐藏。 */}
+        <SessionModelSelector
+          sessionId={sessionId ?? null}
+          ownerToken={ownerToken}
+          turnActive={Boolean(turnActive)}
+        />
+        {/* G43（ADR-0295）：会话可选资料工作台（优先/排除 + 预览 + CAS）——
+            与模型选择同层的会话级控制面。 */}
+        <TurnContextSources
+          sessionId={sessionId ?? null}
+          ownerToken={ownerToken}
+        />
         {/* UI V3：AI 错误在 chat 内可见（之前仅 top-bar/HUD 有指示，
             composer 静默恢复可用，用户无法感知失败） */}
         {aiStatus === 'error' && (
@@ -598,6 +729,10 @@ const t = useT();
             </InlineNotice>
           </div>
         )}
+        {/* G36（ADR-0291）：视觉附图条 —— 当前图/框选局部/参考图草稿与上传。 */}
+        <div className="px-panel">
+          <VisualAttachBar sessionId={sessionId} ownerToken={ownerToken} />
+        </div>
         <div className="flex items-end gap-2 px-panel pb-1 pt-2">
           {/* Textarea */}
           <textarea
@@ -618,6 +753,36 @@ const t = useT();
           {/* Send / Stop button —— #988：isBusy 时发送键切换为『停止』形态，
               中止进行中的 Agent 回合（后端把 SSE 断开归一为 task_cancelled），
               而不是禁用干等或整页刷新丢工作台上下文。 */}
+          {turnActive && isBusy && onTurnMessage && (
+            <div className="flex shrink-0 items-center gap-1 pr-1" data-testid="turn-message-modes">
+              <button
+                type="button"
+                onClick={() => setInRunMode(inRunMode === 'adjust' ? 'normal' : 'adjust')}
+                aria-pressed={inRunMode === 'adjust'}
+                title={t('chat.interaction.adjustHint')}
+                className={`cursor-pointer rounded-pill px-2 py-0.5 text-meta ${
+                  inRunMode === 'adjust'
+                    ? 'bg-status-accent-soft text-status-accent'
+                    : 'bg-surface-sunken text-ink-muted'
+                }`}
+              >
+                {t('chat.interaction.adjust')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setInRunMode(inRunMode === 'queue' ? 'normal' : 'queue')}
+                aria-pressed={inRunMode === 'queue'}
+                title={t('chat.interaction.queueHint')}
+                className={`cursor-pointer rounded-pill px-2 py-0.5 text-meta ${
+                  inRunMode === 'queue'
+                    ? 'bg-status-accent-soft text-status-accent'
+                    : 'bg-surface-sunken text-ink-muted'
+                }`}
+              >
+                {t('chat.interaction.queue')}
+              </button>
+            </div>
+          )}
           {isBusy ? (
             <button
               onClick={onCancel}

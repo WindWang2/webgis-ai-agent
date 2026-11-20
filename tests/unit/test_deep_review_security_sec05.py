@@ -189,4 +189,65 @@ def test_list_reports_total_is_filtered_count(session_factory):
     admin_page = dq.list_quality_reports(
         limit=None, offset=None, project_id=None, session_id=None, user=ADMIN
     )
-    assert admin_page.total == 3
+    assert admin_page.total == 0, "org-less admin is not a platform superuser"
+
+
+def test_admin_quality_reports_stay_inside_org(session_factory):
+    from sqlalchemy import select
+
+    from app.models.data_quality import QualityReport
+    from app.models.db_model import Organization, User
+
+    with session_factory() as db:
+        db.add_all([
+            Organization(id=1, name="A", slug="qa"),
+            Organization(id=2, name="B", slug="qb"),
+        ])
+        db.flush()
+        db.add_all([
+            User(id="admin-a", username="admin-a", email="admin-a@e.test",
+                 org_id=1, role="admin", is_active=True),
+            User(id="user-b", username="user-b", email="user-b@e.test",
+                 org_id=2, role="viewer", is_active=True),
+            QualityReport(created_by="user-b", org_id=2, status="completed"),
+            QualityReport(created_by="maker", org_id=1, status="completed"),
+            QualityReport(created_by="user-b", org_id=None, status="completed"),
+        ])
+        db.commit()
+        foreign_id = db.execute(
+            select(QualityReport.id).where(QualityReport.org_id == 2)
+        ).scalar_one()
+
+    admin = {"user_id": "admin-a", "role": "admin", "org_id": 1}
+    page = dq.list_quality_reports(
+        limit=None, offset=None, project_id=None, session_id=None, user=admin,
+    )
+    assert page.total == 1
+    with pytest.raises(HTTPException) as exc:
+        dq.get_quality_report(foreign_id, user=admin)
+    assert exc.value.status_code == 404
+
+    other = {"user_id": "admin-b", "role": "admin", "org_id": 2}
+    other_page = dq.list_quality_reports(
+        limit=None, offset=None, project_id=None, session_id=None, user=other,
+    )
+    assert other_page.total == 2
+
+
+def test_submit_quality_report_rejects_foreign_project(session_factory, monkeypatch):
+    foreign = _make_project(session_factory, owner_id="user-b")
+    called = {}
+
+    def _fake(**kwargs):
+        called["yes"] = True
+        return {"status": "ok"}
+
+    monkeypatch.setattr("app.services.jobs.submit.submit_durable_job", _fake)
+    with pytest.raises(HTTPException) as exc:
+        dq.submit_quality_report(
+            dq.ReportSubmitRequest(session_id="sess-a", ref="r", project_id=foreign),
+            user=USER_A,
+            owner_token=None,
+        )
+    assert exc.value.status_code == 404
+    assert called == {}

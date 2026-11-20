@@ -1,0 +1,13 @@
+== G23 双进程复现 root=/tmp/g23-repro-run3/root ==
+== B 输出 ==
+/home/kevin/projects/webgis/webgis-wt-g23-durable-ops-20261111T151520Z/.venv/lib/python3.12/site-packages/pydantic/main.py:280: UserWarning: JWT_SECRET_KEY is not set. A random secret has been generated. Set JWT_SECRET_KEY in .env for persistent sessions.
+  validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+JWT_SECRET_KEY not set, generated random secret for this session
+LLM_API_KEY is set to placeholder value 'your-api-key-here'. LLM calls will fail. Set LLM_API_KEY in .env for full functionality.
+{"role": "B", "before_b_read": {"raw_status": "committing", "raw_members": ["committing"]}, "b_view_status": "configured", "b_view_members": ["planned"], "file_after_b_read": {"status": "configured", "members": ["planned"], "rev": 5}, "false_reset_reproduced": true}
+== A 输出 ==
+/home/kevin/projects/webgis/webgis-wt-g23-durable-ops-20261111T151520Z/.venv/lib/python3.12/site-packages/pydantic/main.py:280: UserWarning: JWT_SECRET_KEY is not set. A random secret has been generated. Set JWT_SECRET_KEY in .env for persistent sessions.
+  validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+JWT_SECRET_KEY not set, generated random secret for this session
+LLM_API_KEY is set to placeholder value 'your-api-key-here'. LLM calls will fail. Set LLM_API_KEY in .env for full functionality.
+{"role": "A", "batch_id": "ib-321378bb3ad2465c8446248080f3f684", "submit_out": {"batch_id": "ib-321378bb3ad2465c8446248080f3f684", "status": "committing", "members": ["f:src-1"], "poll": "/api/v1/data-import/batches/ib-321378bb3ad2465c8446248080f3f684"}, "final_status": "completed", "member_statuses": ["completed"], "receipt_statuses": {"f:src-1": "completed"}, "summary_status": "completed"}

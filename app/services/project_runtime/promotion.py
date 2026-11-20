@@ -98,8 +98,8 @@ def _quota_remaining_bytes(db: Any, project_id: str) -> Optional[int]:
         used = int(usage.get("bytes", 0) or 0)
         return max(0, int(policy.max_bytes) - used)
     except Exception as e:  # noqa: BLE001 — quota 不可判定 = 不施加 quota 上界
-        logger.warning("[RuntimePromotion] quota lookup failed; blocking promotion: %s", e)
-        return 0
+        logger.warning("[RuntimePromotion] quota lookup failed; no quota cap: %s", e)
+        return None
 
 
 async def _existing_durable_pointer(

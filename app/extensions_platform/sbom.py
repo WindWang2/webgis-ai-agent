@@ -6,8 +6,9 @@
 
 清单内容与边界：
 - ``files``：与 ``compute_fingerprint`` 同覆盖面（排除 ``__pycache__``/
-  ``*.pyc``/``signature.json``——签名覆盖内容，SBOM 描述的正是签名所
-  覆盖的内容；signature.json 里的 signed_at 时间戳若进清单会破坏确定性），
+  ``*.pyc``/``signature.json``/``.certification.json``——签名覆盖内容之外
+  的生成物不进清单；signature.json 里的 signed_at 时间戳若进清单会破坏
+  确定性），
   每文件带字节数与 sha256，按相对路径排序；512 文件 / 8 MiB 上界沿用
   指纹边界，超界 typed 拒绝（fail closed，不出半份清单）；
 - ``python_imports``：全部 ``*.py`` AST 解析的顶层模块名，排除标准库
@@ -34,6 +35,7 @@ from typing import Any
 
 from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
 from .discovery import (
+    CERTIFICATION_FILENAME,
     FINGERPRINT_MAX_FILES,
     FINGERPRINT_MAX_TOTAL_BYTES,
     SIGNATURE_FILENAME,
@@ -62,7 +64,9 @@ def _content_files(pack_dir: Path) -> list[Path]:
     for root, dirs, names in os.walk(pack_dir):
         dirs[:] = [d for d in dirs if d != "__pycache__"]
         for name in names:
-            if name.endswith(".pyc") or name == SIGNATURE_FILENAME:
+            if name.endswith(".pyc") or name in (
+                SIGNATURE_FILENAME, CERTIFICATION_FILENAME,
+            ):
                 continue
             path = Path(root) / name
             if path.is_file() and not path.is_symlink():

@@ -58,6 +58,21 @@ WORKER_PROTOCOL_VERSION = "3.0"
 # 帧上限：必须 ≥ manifest.execution.max_output_bytes 的合法上界
 # （64 MiB）+ JSON 序列化余量。
 FRAME_MAX_BYTES = 68 * 1024 * 1024
+# JSON 信封余量（与 FRAME_MAX 相对 64MiB 输出上界的差值同阶）。
+PROTOCOL_FRAME_MARGIN = 4 * 1024 * 1024
+
+
+def read_frame_limit(max_output_bytes: int | None) -> int:
+    """宿主单帧读取上界：manifest 输出预算 + 协议余量，且不超过帧硬顶。"""
+    if max_output_bytes is None:
+        return FRAME_MAX_BYTES
+    try:
+        output = int(max_output_bytes)
+    except (TypeError, ValueError):
+        return FRAME_MAX_BYTES
+    if output < 1:
+        output = 1
+    return max(1024, min(FRAME_MAX_BYTES, output + PROTOCOL_FRAME_MARGIN))
 
 EXIT_OK = 0
 EXIT_INTERNAL_ERROR = 1

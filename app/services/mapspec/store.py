@@ -256,6 +256,12 @@ class MapSpecStore:
 
         def _unlink() -> None:
             mapspec_path.unlink(missing_ok=True)
+            # 指纹/修订 sidecar 必须一并清除：残留的 .fp 会让后续一次
+            # 无 mutation_revision 的同指纹 save 命中 no-op 快路径
+            # （sidecar_alive == fp 即短路返回），mapspec.json 永远不
+            # 会重新落盘 —— discard 后的首个合法提交静默丢失。
+            (mapspec_path.parent / _FP_SIDECAR_NAME).unlink(missing_ok=True)
+            (mapspec_path.parent / _REV_SIDECAR_NAME).unlink(missing_ok=True)
 
         await asyncio.to_thread(_unlink)
         self._invalidate_process_cache(session_id)  # audit #838
@@ -263,6 +269,11 @@ class MapSpecStore:
         await session_data_manager.set_map_state(
             session_id, "_cartographic_mutation_revision", 0
         )
+        # Redis 侧指纹同清除（鸭子类型守卫：测试替身/内存后端缺接口时
+        # 无害跳过 —— 空串永不等于真实指纹，no-op 快路径天然失效）。
+        _set_fp = getattr(session_data_manager, "set_map_spec_fingerprint", None)
+        if _set_fp is not None:
+            await _set_fp(session_id, "")
 
     async def get_mapspec(
         self,

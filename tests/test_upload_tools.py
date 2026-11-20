@@ -37,7 +37,11 @@ class TestUploadTools:
         mock_db = MagicMock()
         mock_db.query.return_value.order_by.return_value.filter.return_value = mock_db.query.return_value.order_by.return_value
         mock_db.query.return_value.order_by.return_value.limit.return_value.all.return_value = [mock_record]
-        with patch("app.tools.upload_tools.db_session") as mock_ctx:
+        # #2156 P3：_resolve_session_id 无 runtime context 时 fail closed ——
+        # 测试以已验证上下文扮演正常用户（绑定值与调用一致）。
+        from app.lib.runtime.context import bind_runtime_context
+        with patch("app.tools.upload_tools.db_session") as mock_ctx, \
+                bind_runtime_context(session_id="sess-1"):
             mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
             register_upload_tools(registry)
@@ -77,8 +81,12 @@ class TestUploadTools:
 
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = mock_record
+        # #2156 P3：无 runtime context 时 fail closed —— 测试扮演正常用户：
+        # 绑定已验证会话（与记录 session_id 一致）。
+        from app.lib.runtime.context import bind_runtime_context
         with patch("app.tools.upload_tools.db_session") as mock_ctx, \
-             patch("pathlib.Path.exists", return_value=False):
+             patch("pathlib.Path.exists", return_value=False), \
+             bind_runtime_context(session_id="sess-1"):
             mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
             register_upload_tools(registry)

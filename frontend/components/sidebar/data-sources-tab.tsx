@@ -1,10 +1,13 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
-import { Database, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Crosshair, Database, FileCheck2, FlaskConical, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare, Link2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
+import { useDataJoinStore } from '@/lib/hooks/use-data-join';
+import { useCoordinateOperationsStore } from '@/lib/hooks/use-coordinate-operations';
+import { useFieldContractsPanelStore } from '@/lib/hooks/use-field-contracts';
 import { describeApiError, isApiError } from '@/lib/api/transport';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import { useT } from '@/lib/i18n/useT';
@@ -32,6 +35,11 @@ import { PreviewModal } from './data-sources/preview-modal';
 import { DatasetInspector } from './data-sources/dataset-inspector';
 import { ExplainResultsPanel, type TypedQueryError } from './data-sources/explain-results-panel';
 import { PrepareFlow } from './data-preparation/prepare-flow';
+import { DataDeliveryDialog } from '@/components/data-delivery/delivery-dialog';
+import type { DeliverySourceRef } from '@/lib/api/data-delivery';
+import { FieldComputePanel } from './data-preparation/field-compute-panel';
+import { RasterSamplingPanel } from './raster-sampling/raster-sampling-panel';
+import { GeoreferencingWorkbenchPanel } from '../georeferencing/GeoreferencingWorkbenchPanel';
 
 // A-F-08: debounce window re-exported so consumers/tests keep importing it from
 // the tab entry point (constant itself lives with the catalog hook).
@@ -115,9 +123,17 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
   const [activeDescriptor, setActiveDescriptor] = useState<DatasetDescriptor | null>(null);
   const [previewResult, setPreviewResult] = useState<QueryResult | null>(null);
   const [materializingId, setMaterializingId] = useState<string | null>(null);
+  // G18 数据交付：物化 refs 的会话身份（物化后即可交付真实文件）
+  const [refByItem, setRefByItem] = useState<Record<string, string>>({});
+  const [deliverySource, setDeliverySource] = useState<DeliverySourceRef | null>(null);
 
   // ── V2 数据工作台状态（数据集检视器 + 查询计划/结果） ─────────────────
   const inspectedIdRef = useRef<string | null>(null);
+  /** R2 #2191：materialize 代次 —— 会话切换后旧响应不得落进新会话。 */
+  const materializeEpochRef = useRef(0);
+  useEffect(() => {
+    materializeEpochRef.current += 1;
+  }, [sessionId]);
   const [inspectedItem, setInspectedItem] = useState<CatalogItem | null>(null);
   const [inspectedDescriptor, setInspectedDescriptor] = useState<DatasetDescriptor | null>(null);
   const [loadingDescriptor, setLoadingDescriptor] = useState(false);
@@ -322,12 +338,15 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       return;
     }
     setMaterializingId(item.id);
+    // R2 #2191：跨会话代次守卫 —— 会话切换后旧响应不得把图层加进新会话。
+    const epoch = materializeEpochRef.current;
     try {
       const res = await dataFabricApi.materializeCatalogItem({
         session_id: sessionId,
         catalog_item_id: item.id,
         ownerToken,
       });
+      if (epoch !== materializeEpochRef.current) return;
 
       // Add to frontend HUD layers as a REF-BACKED layer (same shape as the
       // workspace-session restore path): the mapspec adapter skips sourceless
@@ -353,6 +372,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         style: { color: '#16a34a' },
       });
 
+      setRefByItem((prev) => ({ ...prev, [item.id]: res.ref_id }));
       addToast(t('sidebar.ds.materializeSuccess', { count: res.feature_count }), 'success');
 
       // Fetch-on-demand (#463): hydrate the layer with the stored payload so
@@ -360,6 +380,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       // carries the same session id / owner token as the materialize call.
       try {
         const geojson = await dataFabricApi.fetchRefGeoJSON(res.ref_id, sessionId, { ownerToken });
+        if (epoch !== materializeEpochRef.current) return;
         if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
           updateLayer(layerId, { source: geojson, _refId: res.ref_id });
         }
@@ -367,9 +388,11 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         // The layer exists and the ref was stored — only the immediate
         // hydration failed (transient or ownership issue). Say so instead of
         // faking success or silently leaving an invisible layer.
+        if (epoch !== materializeEpochRef.current) return;
         addToast(t('sidebar.ds.materializeHydrateFailed'), 'warning');
       }
     } catch (err) {
+      if (epoch !== materializeEpochRef.current) return;
       if (isApiError(err) && err.status === 401) {
         // The materialize route requires authentication — surface a clear
         // login-required message instead of a raw 401 toast.
@@ -378,7 +401,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         addToast(describeApiError(err, t('sidebar.ds.materializeFailed')), 'error');
       }
     } finally {
-      setMaterializingId(null);
+      if (epoch === materializeEpochRef.current) setMaterializingId(null);
     }
   };
 
@@ -418,12 +441,15 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       {/* Subtab navigation —— 完整 WAI-APG tablist（role/aria-selected/
           aria-controls/roving tabindex + 方向键与 Home/End 键盘导航）。
           V4 之前是裸 button，无任何 tab 语义，键盘用户只能 Tab 到按钮后回车。 */}
-      <div className="flex shrink-0 items-end justify-between border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2">
+      {/* 330px 默认宽下 5 个子页签 + 带文字的控制台按钮放不进一行，页签被挤成
+          逐字竖排（「空/间/目/录」）。tablist 改为可横向滚动的单行（全局
+          [role=tablist] 规则保证不换行），控制台入口收为图标按钮。 */}
+      <div className="flex shrink-0 items-end gap-1 overflow-x-auto border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2">
         <div
           role="tablist"
           aria-label={t('sidebar.ds.subtabsAria')}
           onKeyDown={onSubTabKeyDown}
-          className="flex gap-2"
+          className="flex min-w-0 flex-1 gap-2"
         >
           {renderSubTabButton('catalog', t('sidebar.ds.subtabCatalog', { count: catalogTotal }), Layers)}
           {renderSubTabButton('sources', t('sidebar.ds.subtabSources', { count: sources.length }), Database)}
@@ -436,11 +462,45 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
         <button
           type="button"
           onClick={() => useQueryConsoleStore.getState().openWith()}
-          className="mb-1 inline-flex shrink-0 items-center gap-1 rounded-md border border-edge-subtle px-2 py-1 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          className="mb-1 inline-flex h-control-md w-control-md shrink-0 items-center justify-center rounded-md border border-edge-subtle text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
           data-testid="open-query-console"
+          title={t('sidebar.ds.queryConsole')}
         >
-          <TerminalSquare size={13} aria-hidden />
-          {t('sidebar.ds.queryConsole')}
+          <TerminalSquare size={14} aria-hidden />
+          <span className="sr-only">{t('sidebar.ds.queryConsole')}</span>
+        </button>
+        {/* G38：数据关联工作台入口（两源富集作者直达；单源查询走控制台）。 */}
+        <button
+          type="button"
+          onClick={() => useDataJoinStore.getState().openWith()}
+          className="mb-1 inline-flex h-control-md w-control-md shrink-0 items-center justify-center rounded-md border border-edge-subtle text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          data-testid="open-data-join"
+          title={t('dataJoin.openPanel')}
+        >
+          <Link2 size={14} aria-hidden />
+          <span className="sr-only">{t('dataJoin.openPanel')}</span>
+        </button>
+        {/* G45：坐标操作与重投影入口（冻结操作候选审阅直达）。 */}
+        <button
+          type="button"
+          onClick={() => useCoordinateOperationsStore.getState().openWith()}
+          className="mb-1 inline-flex h-control-md w-control-md shrink-0 items-center justify-center rounded-md border border-edge-subtle text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          data-testid="open-coordinate-operations"
+          title={t('coordinateOperations.openPanel')}
+        >
+          <Crosshair size={14} aria-hidden />
+          <span className="sr-only">{t('coordinateOperations.openPanel')}</span>
+        </button>
+        {/* G44：业务字段合同工作台入口（字段声明/评估/激活/批量填值）。 */}
+        <button
+          type="button"
+          onClick={() => useFieldContractsPanelStore.getState().openWith()}
+          className="mb-1 inline-flex h-control-md w-control-md shrink-0 items-center justify-center rounded-md border border-edge-subtle text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          data-testid="open-field-contracts"
+          title={t('fieldContracts.openPanel')}
+        >
+          <FileCheck2 size={14} aria-hidden />
+          <span className="sr-only">{t('fieldContracts.openPanel')}</span>
         </button>
       </div>
 
@@ -586,6 +646,16 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
             onRunQuery={(spec) => runQuery(spec)}
             onExplain={runExplain}
             onMaterialize={handleMaterializeAndLoad}
+            onDeliver={
+              inspectedItem && sessionId && refByItem[inspectedItem.id]
+                ? () =>
+                    setDeliverySource({
+                      kind: 'session_ref' as const,
+                      session_id: sessionId ?? undefined,
+                      ref: refByItem[inspectedItem.id],
+                    })
+                : undefined
+            }
           />
         </div>
       )}
@@ -599,6 +669,9 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           className="flex min-h-0 flex-1 flex-col overflow-y-auto"
         >
           <PrepareFlow sessionId={sessionId} ownerToken={ownerToken} />
+          <FieldComputePanel sessionId={sessionId} ownerToken={ownerToken} />
+          <RasterSamplingPanel sessionId={sessionId} ownerToken={ownerToken} />
+          <GeoreferencingWorkbenchPanel sessionId={sessionId} ownerToken={ownerToken} />
         </div>
       )}
       {activeSubTab === 'explain' && (
@@ -629,6 +702,12 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
 
       {/* Preview Modal */}
       {previewResult && <PreviewModal result={previewResult} onClose={closePreview} />}
+      {/* G18 数据交付（物化 refs → 可下载文件） */}
+      <DataDeliveryDialog
+        open={deliverySource !== null}
+        onClose={() => setDeliverySource(null)}
+        source={deliverySource}
+      />
     </div>
   );
 }

@@ -12,20 +12,51 @@ import pytest
 from app.lib.cartography.label_collision import (
     MAX_LABELS_PER_EXPORT,
     CollisionLabel,
+    ObstacleBox,
     estimate_label_box,
     solve_export_labels,
 )
+
+
+def _label_from_fixture(lb: dict) -> CollisionLabel:
+    """fixture（snake_case JSON）→ CollisionLabel（authoring 键透传）。"""
+    kwargs = {k: v for k, v in lb.items() if v is not None}
+    if kwargs.get("offset_em") is not None:
+        kwargs["offset_em"] = tuple(kwargs["offset_em"])
+    return CollisionLabel(**kwargs)
+
+
+def _obstacles_from_fixture(raw: list) -> list | None:
+    """裸 [x1,y1,x2,y2] = legacy 匿名；{box,kind,layer_id,feature_id}
+    = geometry_v1 带身份障碍。"""
+    out = []
+    for ob in raw:
+        if isinstance(ob, dict):
+            out.append(ObstacleBox(
+                box=tuple(ob["box"]),
+                kind=ob.get("kind", "circle"),
+                layer_id=ob.get("layer_id"),
+                feature_id=ob.get("feature_id"),
+            ))
+        else:
+            out.append(tuple(ob))
+    return out or None
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "golden_corpus" / "label_collision"
 FIXTURES = sorted(FIXTURE_DIR.glob("*.json"))
 
 
 def _round_placements(sol) -> list:
-    return [
-        {"id": p.id, "x": round(p.x, 3), "y": round(p.y, 3), "angle": round(p.angle, 3),
-         "status": p.status, "reason": p.reason}
-        for p in sol.placements
-    ]
+    out = []
+    for p in sol.placements:
+        row = {"id": p.id, "x": round(p.x, 3), "y": round(p.y, 3),
+               "angle": round(p.angle, 3), "status": p.status, "reason": p.reason}
+        if p.pinned:
+            row["pinned"] = True
+        if p.conflict:
+            row["conflict"] = True
+        out.append(row)
+    return out
 
 
 @pytest.mark.parametrize("fixture_path", FIXTURES, ids=lambda p: p.stem)
@@ -33,9 +64,9 @@ def test_solver_matches_golden(fixture_path):
     case = json.loads(fixture_path.read_text(encoding="utf-8"))
     # W2.1（ADR-0283 D3）：fixture 可携带图元障碍盒（[x1,y1,x2,y2] 列表）；
     # 无 obstacles 键 → 不传（兼容锁定既有 6 个 fixture 的旧形态）。
-    obstacles = [tuple(ob) for ob in case.get("obstacles", [])] or None
+    obstacles = _obstacles_from_fixture(case.get("obstacles", []))
     sol = solve_export_labels(
-        [CollisionLabel(**lb) for lb in case["labels"]],
+        [_label_from_fixture(lb) for lb in case["labels"]],
         case["viewport"],
         max_labels=case.get("maxLabels", MAX_LABELS_PER_EXPORT),
         obstacles=obstacles,

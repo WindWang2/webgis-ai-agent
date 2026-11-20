@@ -1,0 +1,13 @@
+................................................s....................... [ 43%]
+........................................................................ [ 87%]
+.....................                                                    [100%]
+=============================== warnings summary ===============================
+tests/cartography/test_frame_product_export_artifacts.py::TestPdfReal::test_pdf_rasterized_to_png_real
+tests/cartography/test_frame_product_export_artifacts.py::TestPdfReal::test_pdf_rasterized_to_png_real
+tests/cartography/test_frame_product_export_artifacts.py::TestPdfReal::test_pdf_rasterized_to_png_real
+tests/cartography/test_frame_product_export_artifacts.py::TestPdfReal::test_pdf_rasterized_to_png_real
+  /home/kevin/projects/webgis/webgis-worktrees/g34-print-layout-authoring-20261112T213200Z/tests/cartography/test_frame_product_export_artifacts.py:191: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+    data = list(box.getdata())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+164 passed, 1 skipped, 4 warnings in 93.16s (0:01:33)

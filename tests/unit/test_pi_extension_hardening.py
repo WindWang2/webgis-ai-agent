@@ -8,7 +8,6 @@ Validates:
 5. NATIVE_TOOL_NAMES contract pinning Python, extension, and registry schema dump.
 """
 import json
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,6 +16,7 @@ import pytest
 from app.services.chat.pi_native_surface import (
     NATIVE_TOOL_NAMES,
     native_tools_for_pi,
+    pi_surface_for_spawn,
     write_native_tools_file,
 )
 from app.tools import init_tools
@@ -28,6 +28,17 @@ def registry():
     r = ToolRegistry()
     init_tools(r)
     return r
+
+
+# Frozen Python dispatch semantics are distinct from G29's always-active UI
+# decision tool and ADR-0288's vendor-owned model-only discovery entries.
+EXPECTED_FROZEN_NATIVE = (
+    "webgis_map_intent", "webgis_map_product", "webgis_component_update",
+    "webgis_cartography_status", "query_local_poi", "get_local_admin_boundary",
+    "list_available_tools",
+)
+EXPECTED_BASE_ACTIVE = [*EXPECTED_FROZEN_NATIVE, "webgis_user_decision", "webgis_execute"]
+EXPECTED_DEFAULT_ACTIVE = [*EXPECTED_BASE_ACTIVE, "tool_search", "codemode"]
 
 
 EXTENSION_PATH = (
@@ -257,23 +268,39 @@ def test_write_native_tools_file_atomic(tmp_path: Path):
 
 
 def test_native_tool_names_contract(registry):
-    """Item 4: NATIVE_TOOL_NAMES (Python) and FALLBACK_NATIVE (JS) and registry dump match 1:1."""
-    # Extract FALLBACK_NATIVE from index.mjs
-    mjs_text = EXTENSION_PATH.read_text(encoding="utf-8")
-    m = re.search(r"const\s+FALLBACK_NATIVE\s*=\s*\[([^\]]+)\]", mjs_text)
-    assert m, "FALLBACK_NATIVE array not found in index.mjs"
-    fallback_names = [x.strip().strip('"').strip("'") for x in m.group(1).split(",") if x.strip()]
+    """Keep the frozen Python/registry dispatch contract testable without Node."""
+    assert NATIVE_TOOL_NAMES == EXPECTED_FROZEN_NATIVE
+    assert [t["name"] for t in native_tools_for_pi(registry)] == list(EXPECTED_FROZEN_NATIVE)
 
-    assert fallback_names == list(NATIVE_TOOL_NAMES), (
-        f"FALLBACK_NATIVE in index.mjs ({fallback_names}) drifted from "
-        f"NATIVE_TOOL_NAMES in pi_native_surface.py ({list(NATIVE_TOOL_NAMES)})"
-    )
 
-    dumped_names = [t["name"] for t in native_tools_for_pi(registry)]
-    assert dumped_names == list(NATIVE_TOOL_NAMES), (
-        f"Registry schema dump ({dumped_names}) drifted from "
-        f"NATIVE_TOOL_NAMES ({list(NATIVE_TOOL_NAMES)})"
-    )
+@requires_node
+def test_native_spawn_surface_activates_g29_and_discovery(registry, tmp_path):
+    """Execute the real G29/discovery projection rather than parsing JS commas.
+
+    FALLBACK_NATIVE includes the G29 UI decision tool, distinct from the seven
+    frozen Python bridge-native dispatch names. Comments are not tool names.
+    """
+    surface = pi_surface_for_spawn(registry)
+    assert surface["default_active"] == list(EXPECTED_FROZEN_NATIVE)
+    assert "webgis_user_decision" in [tool["name"] for tool in surface["tools"]]
+    dump = tmp_path / "real-spawn-tools.json"
+    dump.write_text(json.dumps(surface), encoding="utf-8")
+    result = _run_node_script(_mock_pi_harness_script(dump, {}))
+    calls = json.loads(result.stderr.strip().splitlines()[-1])
+    assert calls["registered"] == [tool["name"] for tool in surface["tools"]] + ["webgis_execute"]
+    assert calls["setActiveTools"] == [EXPECTED_DEFAULT_ACTIVE, EXPECTED_DEFAULT_ACTIVE]
+
+
+@requires_node
+@pytest.mark.parametrize("discovery", ["0", "1"])
+def test_discovery_switch_preserves_frozen_and_user_decision_surface(tmp_path, monkeypatch, discovery):
+    monkeypatch.setenv("PI_NATIVE_DISCOVERY", discovery)
+    dump = tmp_path / "tools.json"
+    dump.write_text(json.dumps(_MINIMAL_DUMP), encoding="utf-8")
+    result = _run_node_script(_mock_pi_harness_script(dump, {}))
+    calls = json.loads(result.stderr.strip().splitlines()[-1])
+    expected = EXPECTED_DEFAULT_ACTIVE if discovery == "1" else EXPECTED_BASE_ACTIVE
+    assert calls["setActiveTools"] == [expected, expected]
 
 
 # ---------------------------------------------------------------------------
@@ -404,9 +431,10 @@ def test_extension_defers_default_surface_past_load(tmp_path: Path):
     data = json.loads(res.stderr.strip().splitlines()[-1])
     # 加载期零调用（旧实现在这里直接抛 not-initialized）
     assert data["loadPhaseActiveCalls"] == 0
-    # session_start → 默认投影（7 natives + execute proxy）
+    # session_start → frozen7 + G29 decision + proxy + discovery2 (ADR-0288).
     assert data["afterSessionStartActiveCalls"] == 1
-    assert len(data["setActiveTools"][0]) == 8
+    assert data["setActiveTools"][0] == EXPECTED_DEFAULT_ACTIVE
+    assert {"tool_search", "codemode"} <= set(data["setActiveTools"][0])
     # Each turn resets authority even after session_start initialized the runtime.
     assert data["afterFirstTurnActiveCalls"] == 2
     assert data["setActiveTools"][1] == data["setActiveTools"][0]
@@ -432,7 +460,7 @@ def test_extension_applies_default_lazily_without_session_start(tmp_path: Path):
     """
     res = _run_node_script(script)
     data = json.loads(res.stderr.strip().splitlines()[-1])
-    assert len(data) == 1 and len(data[0]) == 8
+    assert data == [EXPECTED_DEFAULT_ACTIVE]
 
 
 @requires_node
@@ -516,7 +544,4 @@ def test_before_agent_start_malformed_marker_falls_back_to_default(tmp_path: Pat
     """
     res = _run_node_script(script)
     data = json.loads(res.stderr.strip().splitlines()[-1])
-    assert len(data) == 1 and len(data[0]) == 8, (
-        "malformed marker must apply the default 8-tool projection, got "
-        f"{data}"
-    )
+    assert data == [EXPECTED_DEFAULT_ACTIVE]

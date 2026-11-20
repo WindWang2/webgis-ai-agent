@@ -32,9 +32,9 @@ def registry():
 
 
 def test_spawn_surface_v2_shape(registry):
-    """ADR-0224：默认 dump v3；v2 键保留（扩展 v2 解析兼容）。"""
+    """ADR-0224→ADR-0288：默认 dump v4；v2 键保留（扩展 v2 解析兼容）。"""
     surface = pi_surface_for_spawn(registry)
-    assert surface["version"] == 3
+    assert surface["version"] == 4
     assert surface["abi"]["version"] == 1
     names = {t["name"] for t in surface["tools"]}
     # native 完整在册
@@ -44,6 +44,69 @@ def test_spawn_surface_v2_shape(registry):
     # default-active 是冻结 native 面（Phase 1 兼容）
     assert surface["default_active"] == list(NATIVE_TOOL_NAMES)
     assert surface["execute_proxy"] == EXECUTE_PROXY_NAME
+
+
+def test_spawn_surface_v4_native_envelope(registry):
+    """ADR-0288（dump v4）：exposure/namespace/annotations 投影纪律。
+
+    - 前门 native 7 = direct；长尾超集 = deferred（tool_search 可发现）；
+    - annotations 只从 side_effect 可派生时携带（提示不是授权）；
+    - namespace 从 domains 首域派生，有界且形状稳定。
+    """
+    from app.services.chat.pi_native_surface import (
+        _native_annotations,
+        _native_namespace,
+    )
+
+    surface = pi_surface_for_spawn(registry)
+    by_name = {t["name"]: t for t in surface["tools"]}
+    for name in NATIVE_TOOL_NAMES:
+        assert by_name[name]["exposure"] == "direct", name
+    longtail = [t for t in surface["tools"] if t["name"] not in set(NATIVE_TOOL_NAMES)]
+    assert longtail, "superset must carry long-tail tools"
+    for tool in longtail:
+        assert tool["exposure"] == "deferred", tool["name"]
+    # 真实注册面上必须存在可派生的 annotations/namespace（防两侧同时为空的
+    # 假通过 —— str-Enum value 取值错误曾让整个投影静默为空）。
+    with_annotations = [t for t in surface["tools"] if t.get("annotations")]
+    assert with_annotations, "real registry must yield derivable annotations"
+    assert any(t.get("namespace") for t in surface["tools"]), \
+        "real registry must yield at least one namespace"
+    # annotations/namespace 与注册事实逐 descriptor 对拍；不可派生 → 缺席
+    for tool in surface["tools"]:
+        desc = registry.descriptor(tool["name"])
+        expected = _native_annotations(desc)
+        if expected:
+            assert tool.get("annotations") == expected, tool["name"]
+        else:
+            assert "annotations" not in tool, tool["name"]
+        ns = _native_namespace(desc)
+        if ns is not None:
+            assert tool.get("namespace") == ns, tool["name"]
+            assert ns["name"].startswith("gis.")
+            assert len(ns["name"]) <= 37  # "gis." + 32-slug bound
+
+
+def test_native_annotations_conservative_semantics():
+    """annotations 投影：UNCLASSIFIED → 全缺席；只读类 → readOnlyHint=true；
+    破坏性 → readOnlyHint=false + destructiveHint=true；幂等按 effective。"""
+    from app.tools.descriptor import SideEffectClass
+    from app.services.chat.pi_native_surface import _native_annotations
+
+    class _D:
+        def __init__(self, side_effect, idempotent=None):
+            self.side_effect = side_effect
+            self.effective_idempotent = idempotent
+
+    assert _native_annotations(_D(SideEffectClass.UNCLASSIFIED)) == {}
+    ro = _native_annotations(_D(SideEffectClass.PURE))
+    assert ro == {"readOnlyHint": True}
+    de = _native_annotations(_D(SideEffectClass.DESTRUCTIVE))
+    assert de == {"readOnlyHint": False, "destructiveHint": True}
+    mut = _native_annotations(_D(SideEffectClass.STATE_MUTATION))
+    assert mut == {"readOnlyHint": False, "destructiveHint": False}
+    idem = _native_annotations(_D(SideEffectClass.PURE, idempotent=True))
+    assert idem == {"readOnlyHint": True, "idempotentHint": True}
 
 
 def test_spawn_surface_never_contains_tier3_or_hidden(registry):
@@ -161,7 +224,7 @@ def test_spawn_dump_roundtrip_file(registry, tmp_path):
 
     path = write_surface_file(registry, tmp_path / "native-tools.json")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["version"] == 3  # ADR-0224：默认 v3（v2 键保留）
+    assert payload["version"] == 4  # ADR-0288：默认 v4（v2/v3 键保留）
     assert isinstance(payload["tools"], list) and payload["tools"]
 
 

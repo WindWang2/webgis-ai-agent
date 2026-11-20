@@ -171,7 +171,10 @@ export function VisualRepairCard(props: {
           setOpen(true)
           void buildPlan()
         }}
-        className="pointer-events-auto absolute bottom-28 left-3 z-40 flex items-center gap-1.5 rounded-md border border-edge-subtle bg-surface-raised/95 px-2.5 py-1.5 text-micro font-medium text-ink shadow-agent-md hover:bg-surface-overlay"
+        // 左上 chrome 列、情境条下方（左缘与图例列同源 --map-chrome-left）。
+        // 旧的 bottom-28 left-3 正好压在左下专题图例第一行上。
+        className="map-chrome pointer-events-auto absolute top-12 z-40 flex items-center gap-1.5 px-2.5 py-1.5 text-micro font-medium transition-colors hover:border-edge-strong hover:text-status-accent"
+        style={{ left: 'var(--map-chrome-left, 12px)' }}
       >
         <Eye className="h-3.5 w-3.5" aria-hidden />
         {t('map.visualRepair.open')}
@@ -191,7 +194,8 @@ export function VisualRepairCard(props: {
       data-testid="visual-repair-card"
       role="dialog"
       aria-label={t('map.visualRepair.proposalTitle')}
-      className="pointer-events-auto absolute bottom-28 left-3 z-40 w-80 rounded-md border border-edge-subtle bg-surface-raised p-3 text-body shadow-agent-md"
+      className="map-chrome pointer-events-auto absolute top-12 z-40 max-h-[calc(100%-64px)] w-80 max-w-[calc(100%-24px)] overflow-y-auto p-3 text-body"
+      style={{ left: 'var(--map-chrome-left, 12px)' }}
     >
       <div className="mb-2 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-caption font-semibold text-ink">

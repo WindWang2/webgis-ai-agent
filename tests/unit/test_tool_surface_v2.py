@@ -238,12 +238,20 @@ def test_compress_reduces_bytes_keeps_contract():
 
 
 def test_compress_truncates_long_enum_with_count_hint():
-    """review R1 MAJOR 回归锁：截断提示进 description，绝不伪造 enum 成员。"""
+    """review R1 MAJOR 回归锁：#2062 P3 后契约 = 超长 enum 整体移除
+   （截断的 enum 会把合法值变成校验非法），提示进 description 且只列
+    真实前 N 项 examples，绝不伪造 enum 成员。"""
     c = compress_schema(_sample_schema(), level="compact")
     method = c["function"]["parameters"]["properties"]["method"]
-    assert len(method["enum"]) <= 12
-    assert not any(str(x).startswith("…(") for x in method["enum"])
-    assert "more valid values" in method.get("description", "")
+    assert "enum" not in method, "truncated enum must be dropped, not kept"
+    desc = method.get("description", "")
+    assert "more valid values" in desc
+    assert "examples:" in desc
+    # 提示里的 examples 必须是真实成员（q0..q11），不伪造。
+    for i in range(12):
+        assert f"q{i}" in desc
+    assert "q12" not in desc, "omitted members must not appear even as examples"
+    assert not any(str(x).startswith("…(") for x in method.get("enum", ()))
 
 
 def test_compress_prefers_summary():

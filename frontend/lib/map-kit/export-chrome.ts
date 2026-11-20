@@ -799,7 +799,9 @@ export async function buildExportChrome(
           ? s.type === 'continuous' || s.type === 'divergent'
           // V4：bivariate 加入 legend 组件的类型兜底发现（与 live
           // legends.tsx legendForComponent 的 wanted 词表同源）
-          : s.type === 'graduated' || s.type === 'categorical' || s.type === 'bivariate',
+          // G41：可靠性双通道图例与 bivariate 一样走专用绘制器。
+          : s.type === 'graduated' || s.type === 'categorical'
+            || s.type === 'bivariate' || s.type === 'reliability_dual_channel',
       ) ||
       (!isColorbar ? opts.fallbackLegendSpec : undefined);
     if (!spec) {
@@ -1245,11 +1247,14 @@ export function drawChromeNorthArrow(
   ctx.arc(0, 0, d.scalePx(4), 0, 2 * Math.PI);
   ctx.fillStyle = '#1e293b';
   ctx.fill();
-  ctx.restore();
 
+  // N stays on the arrow's north tip. Drawing it after restore pins the
+  // letter to screen-up while the arrow follows bearing (live rotates the
+  // whole control, including the N).
   ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.95)' : '#1e293b';
   ctx.font = `bold ${d.scalePx(13)}px ${d.style.fontFamily}`;
-  _text(d, 'N', origin.x, origin.y - r - d.scalePx(6), 'center');
+  _text(d, 'N', 0, -r - d.scalePx(6), 'center');
+  ctx.restore();
 }
 
 /** 比例尺（anchor 槽位；nice-number 算法与 legacy 同源）。 */
@@ -1511,6 +1516,11 @@ export function drawChromeLegend(
     drawChromeBivariateLegend(d, el, opts);
     return;
   }
+  // G41：估计 + 有来源误差的双通道图例（估计色阶 + 具名误差梯度 + 缺失）。
+  if ((spec as { type?: string }).type === 'reliability_dual_channel') {
+    drawChromeReliabilityLegend(d, el, opts);
+    return;
+  }
 
   // W5：条目推导收敛至 legend-model 单源 —— canvas 侧此前忽略
   // spec.labels 且不按 palette 截断（graduated 画超界条目），现与
@@ -1567,7 +1577,20 @@ export function drawChromeBivariateLegend(
   opts: { marginX: number; marginY?: number },
 ) {
   const spec = el.legendSpec as
-    | { type?: string; colors?: string[]; n?: number; label_a?: string; label_b?: string; title?: string }
+    | {
+        type?: string; colors?: string[]; n?: number;
+        label_a?: string; label_b?: string; title?: string;
+        /** G41 canonical：屏幕序格子（颜色/计数/区间来自同一份合同）。 */
+        cells?: Array<{
+          color: string; count: number; class_index: number; empty?: boolean;
+          row_interval?: { label: string } | null;
+          col_interval?: { label: string } | null;
+        }>;
+        axes?: { row?: { arrow?: string; unit?: string | null }; col?: { unit?: string | null } };
+        counts?: { valid_pairs?: number };
+        missing?: { label?: string; count?: number };
+        boundary_rule?: string;
+      }
     | undefined;
   if (!spec || spec.type !== 'bivariate') return;
   const colors = Array.isArray(spec.colors) ? spec.colors : [];
@@ -1575,6 +1598,8 @@ export function drawChromeBivariateLegend(
   if (!Number.isFinite(nRaw)) return;
   const n = Math.min(4, Math.max(2, Math.round(nRaw)));
   if (colors.length < n * n) return;
+  const hasCells = Array.isArray(spec.cells) && spec.cells.length === n * n;
+  const canonical = hasCells ? spec.cells! : null;
 
   const { ctx } = d;
   const padding = d.scalePx(10);
@@ -1584,8 +1609,12 @@ export function drawChromeBivariateLegend(
   const axisRowH = d.scalePx(16);
   const axisColW = d.scalePx(18);
   const gridW = n * cell + (n - 1) * gap;
-  const legendW = padding * 2 + axisColW + gridW;
-  const legendH = padding * 2 + titleH + gridW + axisRowH;
+  const captionH = canonical ? d.scalePx(15) : 0;
+  // 旧 bivariate 图保持逐字节相同的面板尺寸；只有 canonical 图例需要额外宽度。
+  const legendW = canonical
+    ? Math.max(padding * 2 + axisColW + gridW, d.scalePx(190))
+    : padding * 2 + axisColW + gridW;
+  const legendH = padding * 2 + titleH + gridW + axisRowH + captionH;
 
   const origin = el.rect
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
@@ -1602,18 +1631,106 @@ export function drawChromeBivariateLegend(
     y += titleH;
   }
   const gridX = lx + padding + axisColW;
-  // 色阵（行主序：row=变量 B、col=变量 A —— 与 live grid 逐格 colors[i] 同源）
+  // 色阵：canonical 在场用屏幕序 cells（与 live / paint cases 同源），
+  // 旧图仍按 legend.colors 行主序绘制（B04 兼容，输出不变）。
   for (let r = 0; r < n; r++) {
     for (let c = 0; c < n; c++) {
-      ctx.fillStyle = colors[r * n + c];
+      const i = r * n + c;
+      ctx.fillStyle = canonical ? canonical[i].color : colors[i];
       ctx.fillRect(gridX + c * (cell + gap), y + r * (cell + gap), cell, cell);
+      if (canonical) {
+        // 每格精确联合计数（有界；不放大抽样、不伪造相关结论）。
+        ctx.fillStyle = d.darkMode ? 'rgba(15,23,42,0.85)' : 'rgba(30,41,59,0.85)';
+        ctx.font = `${d.scalePx(8)}px sans-serif`;
+        _text(d, String(canonical[i].count),
+          gridX + c * (cell + gap) + cell / 2,
+          y + r * (cell + gap) + cell / 2 + d.scalePx(3), 'center');
+      }
     }
   }
-  // 轴标：↑label_b（行，阵左侧）/ →label_a（列，阵下方）—— live 同款箭头词
+  // 轴标：↑/↓label_b（行，阵左侧）/ →label_a（列，阵下方）—— live 同款箭头词
   ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(100,116,139,0.9)';
   ctx.font = `${d.scalePx(10)}px sans-serif`;
-  _text(d, `↑${(spec.label_b ?? '').slice(0, 4)}`, gridX - d.scalePx(4), y + cell / 2 + d.scalePx(3), 'right');
+  const arrow = spec.axes?.row?.arrow === 'down' ? '↓' : '↑';
+  _text(d, `${arrow}${(spec.label_b ?? '').slice(0, 4)}`, gridX - d.scalePx(4), y + cell / 2 + d.scalePx(3), 'right');
   _text(d, `→${(spec.label_a ?? '').slice(0, 10)}`, gridX, y + gridW + d.scalePx(12), 'left');
+  if (canonical) {
+    // 总体/缺失/单位/边界规则：与 map 面、数值证据同版本同源。
+    const unitA = spec.axes?.col?.unit || '—';
+    const unitB = spec.axes?.row?.unit || '—';
+    const line = `pairs=${spec.counts?.valid_pairs ?? 0} · ${spec.missing?.label ?? 'no data'}:${spec.missing?.count ?? 0} · ${unitA}/${unitB} · ${spec.boundary_rule ?? ''}`;
+    ctx.font = `${d.scalePx(8)}px sans-serif`;
+    _text(d, line.slice(0, 80), lx + padding,
+      y + gridW + axisRowH + d.scalePx(9), 'left');
+  }
+}
+
+/**
+ * G41 可靠性双通道 canvas 图例：估计色阶 + 具名误差/区间梯度 + 缺失。
+ * 不把「透明度梯度」画成无名色条——误差量名、单位、level、方向、缺失
+ * 与来源全部来自同一 canonical 图例合同。
+ */
+export function drawChromeReliabilityLegend(
+  d: DrawCtx,
+  el: ExportChromeElement,
+  opts: { marginX: number; marginY?: number },
+) {
+  const spec = el.legendSpec as unknown as {
+    type?: string; title?: string;
+    estimate?: { label?: string; unit?: string | null; palette_colors?: string[] };
+    measure?: { kind?: string; level?: number; unit_note?: string; visual_meaning?: string; source?: string };
+    channel?: { kind?: string; clip?: string };
+    buckets?: Array<{ key: string; label: string; output: number; count: number }>;
+    missing?: { label?: string; count?: number; policy?: string };
+    counts?: Record<string, unknown>;
+  } | undefined;
+  if (!spec || spec.type !== 'reliability_dual_channel') return;
+  const { ctx } = d;
+  const padding = d.scalePx(10);
+  const lineH = d.scalePx(13);
+  const swatch = d.scalePx(12);
+  const titleH = spec.title ? d.scalePx(16) : 0;
+  const legendW = d.scalePx(210);
+  const legendH = padding * 2 + titleH + lineH * 5 + swatch * 2;
+  const origin = el.rect
+    ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
+    : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 56 });
+  const lx = origin.align === 'right' ? origin.x - legendW : origin.align === 'center' ? origin.x - legendW / 2 : origin.x;
+  const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - legendH : origin.y;
+  _chromePanel(d, lx, ly, legendW, legendH);
+  let y = ly + padding;
+  if (spec.title) {
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
+    ctx.font = `bold ${d.scalePx(11)}px sans-serif`;
+    _text(d, spec.title, lx + padding, y + d.scalePx(10), 'left');
+    y += titleH;
+  }
+  // 估计主色色阶
+  (spec.estimate?.palette_colors ?? []).slice(0, 7).forEach((c, i) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(lx + padding + i * (swatch + d.scalePx(1)), y, swatch, swatch);
+  });
+  y += swatch + lineH * 0.6;
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.82)' : '#334155';
+  ctx.font = `${d.scalePx(9)}px sans-serif`;
+  const lines = [
+    `${spec.estimate?.label ?? ''} · ${tNow('map.legends.reliabilityUnit', { unit: spec.estimate?.unit || '—' })}`,
+    tNow('map.legends.reliabilityMeasure', { kind: spec.measure?.kind ?? '—', level: spec.measure?.level ?? '—' }),
+    String(spec.measure?.unit_note ?? '').slice(0, 60),
+    String(spec.measure?.visual_meaning ?? '').slice(0, 60),
+    `${spec.missing?.label ?? ''}: ${spec.missing?.count ?? 0} · clip=${spec.channel?.clip ?? ''} · ${spec.measure?.source ?? ''}`,
+  ];
+  for (const line of lines) {
+    _text(d, line, lx + padding, y, 'left');
+    y += lineH;
+  }
+  // 有界桶梯度（输出值即真实视觉输出；缺失为独立桶）。
+  (spec.buckets ?? []).slice(0, 10).forEach((b, i) => {
+    ctx.fillStyle = d.darkMode ? 'rgba(148,163,184,0.9)' : '#64748b';
+    ctx.globalAlpha = b.output <= 1 ? b.output : 1;
+    ctx.fillRect(lx + padding + i * (swatch + d.scalePx(2)), y, swatch, swatch * 0.7);
+    ctx.globalAlpha = 1;
+  });
 }
 
 /** 署名行（anchor 槽位；此前导出完全不读 spec attribution 组件）。 */
@@ -2448,13 +2565,19 @@ export function drawChromeChartPanel(
     if (chart.type === 'bar') {
       const slotW = plotW / Math.max(n, 1);
       const barW = slotW * 0.6;
+      // H12/#2144：以 0 为基线双向绘柱 —— 旧实现 (v-minV)/span 让所有柱
+      // 从底边向上画：负值柱显示为正、0 值柱也有正高度（与 live 端 0
+      // 基线不一致，导出图表数据失真）。
+      const yAt = (v: number) => plotY + plotH - ((v - minV) / span) * plotH;
+      const yZero = Math.min(Math.max(yAt(0), plotY), plotY + plotH);
       chart.data.forEach((p, i) => {
         const v = p.value ?? 0;
-        const h = ((v - minV) / span) * plotH;
+        const yv = yAt(v);
+        const h = Math.abs(yZero - yv);
+        if (h <= 0) return; // 0 值柱无高度（不再假绘正高度）
         const bx = plotX + i * slotW + (slotW - barW) / 2;
-        const by = plotY + plotH - h;
         ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
-        ctx.fillRect(bx, by, barW, h);
+        ctx.fillRect(bx, Math.min(yZero, yv), barW, h);
       });
     } else {
       // line

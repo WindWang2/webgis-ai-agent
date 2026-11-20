@@ -185,7 +185,22 @@ describe('V4 design tokens — Tailwind exposure', () => {
   it('binds every V4 colour utility to a CSS custom property', () => {
     // Hardcoding a literal here would re-introduce a value that cannot flip
     // with the theme — the exact failure mode V4 exists to remove.
+    const inFamily = (path: string) =>
+      path.startsWith('surface') || path.startsWith('edge') || path.startsWith('ink') ||
+      path.startsWith('status') || path.startsWith('map-chrome');
     const walk = (value: unknown, path: string) => {
+      // Token colours are `tokenColor()` functions (opacity-modifier support):
+      // at rest they must still resolve to the bare CSS var, and with a
+      // modifier they must still be derived from that same var.
+      if (typeof value === 'function' && inFamily(path)) {
+        const fn = value as (o: { opacityValue?: string }) => string;
+        expect(fn({}), `${path} must reference a CSS var at rest`).toMatch(/^var\(--[a-z0-9-]+\)$/);
+        expect(fn({ opacityValue: 'var(--tw-bg-opacity)' }), `${path} must stay the bare var without a modifier`).toBe(fn({}));
+        expect(fn({ opacityValue: '0.9' }), `${path} must derive alpha from its var`).toBe(
+          `color-mix(in srgb, ${fn({})} 90%, transparent)`,
+        );
+        return;
+      }
       if (typeof value === 'string') {
         if (!path.startsWith('surface') && !path.startsWith('edge') && !path.startsWith('ink') &&
             !path.startsWith('status') && !path.startsWith('map-chrome')) return;
@@ -197,6 +212,35 @@ describe('V4 design tokens — Tailwind exposure', () => {
       }
     };
     for (const [k, v] of Object.entries(colors)) walk(v, k);
+  });
+
+  it('compiles opacity modifiers on token colours (bg-surface-raised/90 used to emit nothing)', async () => {
+    // Tailwind v4 port: the v3 PostCSS-plugin entrypoint is gone; compile the
+    // real @theme CSS through @tailwindcss/postcss with an inline source.
+    const { readFile } = await import('node:fs/promises');
+    const path = await import('node:path');
+    const postcss = (await import('postcss')).default;
+    const twPostcss = (await import('@tailwindcss/postcss')).default;
+    const appDir = path.resolve(__dirname, '../../app');
+    const themeCss = await readFile(path.join(appDir, 'tailwind-theme.css'), 'utf8');
+    const input = [
+      '@import "tailwindcss" source(none);',
+      themeCss,
+      '@source inline("bg-surface-raised/90 text-status-warn border-edge-subtle/60 bg-surface-panel from-surface-panel to-surface-raised/80");',
+    ].join('\n');
+    const out = await postcss([twPostcss()]).process(input, {
+      from: path.join(appDir, '__tw_probe__.css'),
+    });
+    const css = out.css.replace(/\s+/g, ' ');
+    // v4 derives modifier alpha via color-mix (oklab by default; v3 shim was srgb).
+    expect(css).toMatch(/color-mix\(in \w+, var\(--color-surface-raised\) 90%, transparent\)/);
+    expect(css).toMatch(/color-mix\(in \w+, var\(--color-edge-subtle\) 60%, transparent\)/);
+    expect(css).toContain('color: var(--color-status-warn)');
+    // Gradients: from-color keeps the bare var; the /80 to-color mixes alpha.
+    expect(css).toMatch(/--tw-gradient-from: var\(--color-surface-panel\)/);
+    expect(css).toMatch(/color-mix\(in \w+, var\(--color-surface-raised\) 80%, transparent\)/);
+    // No modifier -> the bare var (v4 drops v3's inert --tw-bg-opacity).
+    expect(css).toMatch(/\.bg-surface-panel \{ background-color: var\(--color-surface-panel\);? \}/);
   });
 
   it('exposes the dense type scale, control metrics and radius scale', () => {

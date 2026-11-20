@@ -25,7 +25,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from app.services.governor import metrics as gmetrics
 from app.services.governor.contract import Dimension, ResourceClass, ResourceEstimate
@@ -70,6 +70,9 @@ class AcquireTicket:
     heavy: bool = False             # 是否占用了会话 heavy 槽
     small: bool = False
     enqueued_at: float = field(default_factory=time.monotonic)
+    #: 获取时的会话闸对象。release 必须还到这把闸，不能按 session id
+    #: 再查表 —— 查表会打到驱逐后新建的闸，把信号量过度释放。
+    gate: Any = None
 
 
 class _ChannelGate:
@@ -209,7 +212,8 @@ class _SessionGate:
         self._heavy_cond = asyncio.Condition()
         self._heavy_cap = max(1, heavy_cap)
         self._heavy_in_flight = 0
-        self.holders = 0   # 当前持有量（空闲闸驱逐判定用）
+        self.holders = 0   # 当前持有量（观测）
+        self.inflight = 0  # 等待 + 持有；驱逐必须看到等待者
 
     async def acquire(self, *, heavy: bool, max_wait_s: float) -> None:
         try:
@@ -317,11 +321,14 @@ class BackpressureManager:
                 # 驱逐零持有的空闲闸
                 if len(self._session_gates) >= self._MAX_GATES:
                     idle = [sid for sid, g in self._session_gates.items()
-                            if g.holders == 0 and sid != session_id]
+                            if g.inflight == 0 and g.holders == 0
+                            and sid != session_id]
                     for sid in idle[:len(self._session_gates) - self._MAX_GATES + 1]:
                         self._session_gates.pop(sid, None)
                 gate = _SessionGate(self._session_concurrency, self._session_heavy)
                 self._session_gates[session_id] = gate
+            # 在离开锁之前计入，等待 semaphore 的任务不会被当成空闲闸逐出。
+            gate.inflight += 1
             return gate
 
     # ── 组合获取/归还：session 闸 → 通道闸（固定顺序，无死锁）─────────
@@ -339,7 +346,11 @@ class BackpressureManager:
             small = True   # 小估时任务享受 bypass 预留槽（防 heavy 队头阻塞）
         gate = await self._gate_for(session_id)
         heavy = resource_class is ResourceClass.HEAVY
-        await gate.acquire(heavy=heavy, max_wait_s=max_wait_s)
+        try:
+            await gate.acquire(heavy=heavy, max_wait_s=max_wait_s)
+        except BaseException:
+            gate.inflight = max(0, gate.inflight - 1)
+            raise
         try:
             if channel_name:
                 channel = self._channels[channel_name]
@@ -353,10 +364,11 @@ class BackpressureManager:
                     raise QueueTimeoutError("cancelled", 0.0, session_id)
             return AcquireTicket(
                 channel=channel_name, session_id=session_id,
-                heavy=heavy, small=small,
+                heavy=heavy, small=small, gate=gate,
             )
         except BaseException:
             await gate.release(heavy=heavy)
+            gate.inflight = max(0, gate.inflight - 1)
             raise
 
     async def release(self, ticket: AcquireTicket, *,
@@ -374,9 +386,10 @@ class BackpressureManager:
             gmetrics.inc_internal_error("backpressure_release_channel")
         finally:
             try:
-                gate = self._session_gates.get(ticket.session_id)
+                gate = ticket.gate or self._session_gates.get(ticket.session_id)
                 if gate is not None:
                     await gate.release(heavy=ticket.heavy)
+                    gate.inflight = max(0, gate.inflight - 1)
             except Exception:  # noqa: BLE001
                 gmetrics.inc_internal_error("backpressure_release_session")
 

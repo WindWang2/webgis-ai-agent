@@ -238,7 +238,7 @@ def build_descriptor(
         except (TypeError, ValueError):
             null_ratio_max = None
 
-    # 维度级证据三态（G03 GD-01 / ADR-0286 D1）：只按本函数可见的证据
+    # 维度级证据三态（G03 GD-01 / ADR-0296 D1）：只按本函数可见的证据
     # 标注——扫描事实 = observed；规则推断的维度由推导入口显式传入
     # ``dimension_provenance_overrides``（如坐标域识别 CRS = inferred）；
     # 其余一律 unknown，绝不虚构。

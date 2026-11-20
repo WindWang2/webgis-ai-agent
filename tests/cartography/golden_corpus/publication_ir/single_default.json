@@ -124,6 +124,7 @@
         "filter_property": "",
         "filter_value": "",
         "frame_index": null,
+        "frame_slots": null,
         "page_count": 1,
         "page_id": "main",
         "page_number": 1,
@@ -133,6 +134,7 @@
           "profile": "",
           "width_mm": 297.0
         },
+        "print_layout": {},
         "time_window": null,
         "title": ""
       }

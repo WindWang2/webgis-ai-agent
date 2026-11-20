@@ -1,0 +1,58 @@
+{
+  "constants": {
+    "dpi_divisor": 72.0,
+    "max_dpi": 600.0,
+    "min_dpi": 72.0,
+    "mm_per_inch": 25.4,
+    "pt_per_mm": 2.8346456693,
+    "px_per_mm": 4.0
+  },
+  "rows": [
+    {
+      "canvas_units_to_mm_1unit": 0.25,
+      "dpi": 72,
+      "dpi_scale": 1.0,
+      "mm_to_canvas_units_1mm": 4.0,
+      "mm_to_logical_px_1mm": 4.0,
+      "mm_to_sample_px_1mm": 2.8346456693,
+      "pt_to_canvas_units_12pt": 16.9333333333
+    },
+    {
+      "canvas_units_to_mm_1unit": 0.1875,
+      "dpi": 96,
+      "dpi_scale": 1.3333333333,
+      "mm_to_canvas_units_1mm": 5.3333333333,
+      "mm_to_logical_px_1mm": 4.0,
+      "mm_to_sample_px_1mm": 3.7795275591,
+      "pt_to_canvas_units_12pt": 22.5777777778
+    },
+    {
+      "canvas_units_to_mm_1unit": 0.12,
+      "dpi": 150,
+      "dpi_scale": 2.0833333333,
+      "mm_to_canvas_units_1mm": 8.3333333333,
+      "mm_to_logical_px_1mm": 4.0,
+      "mm_to_sample_px_1mm": 5.905511811,
+      "pt_to_canvas_units_12pt": 35.2777777778
+    },
+    {
+      "canvas_units_to_mm_1unit": 0.06,
+      "dpi": 300,
+      "dpi_scale": 4.1666666667,
+      "mm_to_canvas_units_1mm": 16.6666666667,
+      "mm_to_logical_px_1mm": 4.0,
+      "mm_to_sample_px_1mm": 11.811023622,
+      "pt_to_canvas_units_12pt": 70.5555555556
+    },
+    {
+      "canvas_units_to_mm_1unit": 0.03,
+      "dpi": 600,
+      "dpi_scale": 8.3333333333,
+      "mm_to_canvas_units_1mm": 33.3333333333,
+      "mm_to_logical_px_1mm": 4.0,
+      "mm_to_sample_px_1mm": 23.6220472441,
+      "pt_to_canvas_units_12pt": 141.1111111111
+    }
+  ],
+  "version": "print_layout_units.v1"
+}

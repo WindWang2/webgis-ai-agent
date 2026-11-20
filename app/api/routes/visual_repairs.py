@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile
@@ -279,6 +280,7 @@ async def apply_visual_repair(
         from app.services.gis_harness.visual_observation.repair_bridge import (
             defects_from_proposal,
             load_proposal,
+            save_proposal,
         )
 
         # 批准是结构门槛：缺省/False 一律拒绝（无「默认同意」语义）。
@@ -387,7 +389,19 @@ async def apply_visual_repair(
                 ).model_dump()
             reason = str(result.error_code or "apply_failed")[:48]
         if applied and not result.duplicate:
-            # 修复尝试即进展信号：重置相关指纹的 recurrence 计数（fail-open）。
+            # 突变已经落地：先把提案标成 applied，reject 不能再把它当成未应用。
+            proposal["applied"] = True
+            proposal["status"] = "applied"
+            proposal["applied_at"] = time.time()
+            try:
+                await save_proposal(session_id, proposal)
+            except Exception:  # noqa: BLE001 — 状态落盘失败必须可见
+                logger.error(
+                    "[VisualRepair] failed to persist applied proposal %s",
+                    req.proposal_id, exc_info=True,
+                )
+                reason = "applied_state_not_persisted"
+            fingerprints: list = []
             try:
                 wanted_ids = {str(x) for x in (proposal.get("finding_ids") or [])}
                 stored_findings = await _stored_visual_findings(session_id)
@@ -401,7 +415,9 @@ async def apply_visual_repair(
                     ledger = await load_ledger(session_id)
                     await save_ledger(
                         session_id, reset_fingerprints(ledger, fingerprints))
-                # C13：批准决策入账（因果链：批准 → mutation_revision）。
+            except Exception:  # noqa: BLE001 — 计数重置是披露面，不回滚已应用的修复
+                logger.warning("[VisualRepair] recurrence reset failed", exc_info=True)
+            try:
                 from app.services.gis_harness.visual_observation.repair_decisions import (
                     record_decision,
                 )
@@ -424,9 +440,13 @@ async def apply_visual_repair(
                     origin="user", revision=int(result.mutation_revision or 0),
                     finding_ids=proposal.get("finding_ids") or (),
                 )
-            except Exception:  # noqa: BLE001 — 披露面，绝不阻断回执
-                logger.debug("[VisualRepair] recurrence reset failed",
-                             exc_info=True)
+            except Exception:  # noqa: BLE001 — 决策入账失败要上报，不能静默
+                logger.error(
+                    "[VisualRepair] record_decision failed for %s",
+                    req.proposal_id, exc_info=True,
+                )
+                if not reason:
+                    reason = "decision_not_recorded"
 
         if applied:
             # visual_repair 触发复验（seam 白名单既有词的生产消费方）；heal 已

@@ -44,7 +44,7 @@ describe('C11 renderer ABI version gate', () => {
   it('forward version → 拒绝渲染（零 addLayer + lastError + 证据）', async () => {
     const map = makeMockMaplibreMap();
     const runtime = new MapSpecRuntime(map as never);
-    await runtime.reconcileAsync(specWith({}, '2.0'));
+    await runtime.reconcileAsync(specWith({}, '9.9'));
     runtime.flush();
     expect(addedLayerDefs(map)).toHaveLength(0);
     expect(lastErrorOf(runtime)).toBe('mapspec_forward_version');
@@ -58,7 +58,7 @@ describe('C11 renderer ABI version gate', () => {
     await runtime.reconcileAsync(good);
     runtime.flush();
     expect(addedLayerDefs(map)).toHaveLength(1);
-    await runtime.reconcileAsync(specWith({}, '2.0'));
+    await runtime.reconcileAsync(specWith({}, '9.9'));
     runtime.flush();
     expect(addedLayerDefs(map)).toHaveLength(1); // 拒绝，不 churn
     // last-good 被新 spec 接替：appliedSpec 前进到 1.5 spec（同 id → patch

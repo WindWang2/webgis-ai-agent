@@ -175,3 +175,24 @@ class TestAdversarialReviewFixes:
         slope = pack["features"]["sen_slope"]
         assert np.isfinite(slope[0, 0])
         assert slope[0, 0] == pytest.approx(1.0, rel=0.5)
+
+
+class TestCusumChangepointIndex:
+    """#2239: S_1（cs[0]）必须参与评估，否则变点指数偏早 1。"""
+
+    def test_late_step_change_index_exact(self):
+        t = np.arange(10, dtype=float) * 86400.0
+        # 阶跃在 slice 5 之后：最后旧制度切片 1-based = 5
+        series = np.concatenate([np.zeros(5), np.full(5, 10.0)])
+        stack = np.broadcast_to(series[:, None, None], (10, 1, 1)).copy()
+        pack = rf.temporal_feature_pack(stack, t)
+        assert pack["features"]["change_index"][0, 0] == pytest.approx(5.0)
+        assert pack["features"]["cusum_magnitude"][0, 0] > 0
+
+    def test_early_step_change_index_exact(self):
+        t = np.arange(10, dtype=float) * 86400.0
+        # 阶跃在 slice 0 之后：change_index = 1
+        series = np.concatenate([[0.0], np.full(9, 10.0)])
+        stack = np.broadcast_to(series[:, None, None], (10, 1, 1)).copy()
+        pack = rf.temporal_feature_pack(stack, t)
+        assert pack["features"]["change_index"][0, 0] == pytest.approx(1.0)

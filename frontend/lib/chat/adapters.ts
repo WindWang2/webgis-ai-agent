@@ -471,3 +471,93 @@ export type MessageOp =
 
 /** ChatStreamMessage 的图层 chip 应用（供 hook 侧类型引用）。 */
 export type ChatMessageOf = ChatStreamMessage;
+
+// ── runtime interaction adapter（G29 / 原生 ctx.ui 运行中交互） ─────────
+
+/**
+ * `pi_interaction` 事件载荷 → 卡片初始状态（fail-closed 有界校验）。
+ *
+ * 与 clarification（收口期 RequirementIR）不同：这是当前 run 正阻塞的
+ * 原生 dialog 投影；回答走 runtime-interactions REST 面，不经 LLM。
+ */
+export function runtimeInteractionCard(
+  payload: unknown,
+): import('@/lib/types/runtime-interaction').RuntimeInteractionCardState | null {
+  const data = (payload ?? {}) as Record<string, unknown>;
+  const bounded = (v: unknown, max: number): string =>
+    typeof v === 'string' ? v.slice(0, max) : '';
+  const interactionId = bounded(data.interaction_id, 40);
+  const method = bounded(data.method, 16);
+  if (!interactionId.startsWith('iax-')) return null;
+  if (!['select', 'confirm', 'input', 'editor'].includes(method)) return null;
+  const state = bounded(data.state, 24) || 'pending';
+  if (state !== 'pending') return null; // 非 pending 走 update 通道
+  const source = (data.source ?? {}) as Record<string, unknown>;
+  const card: import('@/lib/types/runtime-interaction').RuntimeInteractionCardState = {
+    interactionId,
+    sessionId: bounded(data.session_id, 64),
+    turnId: bounded(data.turn_id, 40),
+    method: method as import('@/lib/types/runtime-interaction').RuntimeInteractionMethod,
+    title: bounded(data.title, 200),
+    message: bounded(data.message, 2000) || undefined,
+    options:
+      method === 'select' && Array.isArray(data.options)
+        ? (data.options as unknown[]).filter((o): o is string => typeof o === 'string').slice(0, 12)
+        : undefined,
+    placeholder: bounded(data.placeholder, 400) || undefined,
+    prefill: bounded(data.prefill, 4000) || undefined,
+    deadlineAt: typeof data.deadline_at === 'string' ? data.deadline_at : null,
+    sourceTool: bounded(source.tool, 80) || undefined,
+    sourceToolCallId: bounded(source.tool_call_id, 80) || undefined,
+    envelopeId: bounded(source.envelope_id, 40) || undefined,
+    businessTarget: bounded((source.business as Record<string, unknown> | undefined)?.target, 40) || undefined,
+    status: 'open',
+  };
+  if (card.method === 'select' && (!card.options || card.options.length === 0)) return null;
+  return card;
+}
+
+/**
+ * `pi_interaction_update` 载荷 → 终态/中间态补丁（null = 无效载荷忽略）。
+ */
+export function runtimeInteractionUpdate(
+  payload: unknown,
+): { interactionId: string; state: string; answerDisplay?: string; answerKind?: string; evidence?: string } | null {
+  const data = (payload ?? {}) as Record<string, unknown>;
+  const bounded = (v: unknown, max: number): string =>
+    typeof v === 'string' ? v.slice(0, max) : '';
+  const interactionId = bounded(data.interaction_id, 40);
+  const state = bounded(data.state, 24);
+  if (!interactionId.startsWith('iax-') || !state) return null;
+  return {
+    interactionId,
+    state,
+    answerDisplay: bounded(data.answer_display, 200) || undefined,
+    answerKind: bounded(data.answer_kind, 16) || undefined,
+    evidence: bounded(data.resolve_evidence, 120) || undefined,
+  };
+}
+
+/**
+ * `pi_ui` fire-and-forget 投影（bounded；合并语义在服务端）。
+ */
+export function runtimeUiFire(
+  payload: unknown,
+): { kind: string; message?: string; notifyType?: string; key?: string; text?: string; lines?: string[]; title?: string } | null {
+  const data = (payload ?? {}) as Record<string, unknown>;
+  const bounded = (v: unknown, max: number): string =>
+    typeof v === 'string' ? v.slice(0, max) : '';
+  const kind = bounded(data.kind, 24);
+  if (!['notify', 'status', 'widget', 'title', 'editor_suggestion'].includes(kind)) return null;
+  return {
+    kind,
+    message: bounded(data.message, 400) || undefined,
+    notifyType: bounded(data.notify_type, 16) || undefined,
+    key: bounded(data.key, 64) || undefined,
+    text: bounded(data.text, 400) || undefined,
+    lines: Array.isArray(data.lines)
+      ? (data.lines as unknown[]).filter((l): l is string => typeof l === 'string').slice(0, 24)
+      : undefined,
+    title: bounded(data.title, 200) || undefined,
+  };
+}

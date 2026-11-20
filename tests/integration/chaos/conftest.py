@@ -102,7 +102,7 @@ def chaos_worker(chaos_stack, tmp_path):
 @pytest.fixture()
 def chaos_api(chaos_stack, tmp_path):
     """Spawn uvicorn (minimal config + deterministic LLM stub not required for
-    health/degradation paths; chat arm stays ChatEngine) on a free port."""
+    health/degradation paths only) on port 8021."""
     import uvicorn  # noqa: F401 — presence check
 
     base = "http://127.0.0.1:8021"
@@ -126,6 +126,76 @@ def chaos_api(chaos_stack, tmp_path):
     yield {"base": base, "proc": proc}
     proc.terminate()
     proc.close()
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture()
+def chaos_pi_api(chaos_stack, tmp_path):
+    """Real Pi/backend, with only the external LLM replaced by a wire stub.
+
+    Missing/broken Pi is a fixture failure, never a skip or ChatEngine fallback.
+    Keep this separate from the Redis degradation fixture, which needs no LLM.
+    """
+    import httpx
+
+    stub_port = _free_port()
+    processes: list[_Process] = []
+
+    def wait_ready(proc, url, *, pi=False):
+        deadline = time.monotonic() + 90
+        with httpx.Client(timeout=2, trust_env=False) as client:
+            while time.monotonic() < deadline:
+                if proc.proc.poll() is not None:
+                    break
+                try:
+                    response = client.get(url)
+                    if response.status_code == 200 and (
+                        not pi or response.json().get("agent_runtime") == "pi"
+                    ):
+                        return
+                except (httpx.HTTPError, ValueError):
+                    pass
+                time.sleep(0.2)
+        raise RuntimeError(
+            f"chaos process not ready at {url}:\n"
+            + proc.log_path.read_text(errors="replace")[-12000:]
+        )
+
+    try:
+        stub = _Process(
+            ["node", "frontend/e2e/tools/llm-stub.mjs"],
+            env={"STUB_PORT": str(stub_port), "STUB_FAIL_AT": "0",
+                 "STUB_DELAY_FIRST_TOKEN_MS": "10000"},
+            log=tmp_path / "llm-stub.log")
+        processes.append(stub)
+        wait_ready(stub, f"http://127.0.0.1:{stub_port}/healthz")
+        api_port = _free_port()
+        base = f"http://127.0.0.1:{api_port}"
+        data = tmp_path / "data"
+        data.mkdir()
+        api = _Process(
+            [sys.executable, "-m", "uvicorn", "app.main:app", "--host",
+             "127.0.0.1", "--port", str(api_port), "--log-level", "warning"],
+            env={"REDIS_URL": CHAOS_REDIS_URL, "USE_REDIS": "true",
+                 "PI_AUTOSTART": "true", "ENV": "development",
+                 "JWT_SECRET_KEY": "chaos-secret-key-32-chars-ok",
+                 "DATABASE_URL": f"sqlite:///{data / 'webgis.db'}",
+                 "DATA_DIR": str(data), "LLM_API_KEY": "chaos-not-real",
+                 "LLM_BASE_URL": f"http://127.0.0.1:{stub_port}/v1",
+                 "LLM_MODEL": "gpt-4o-mini"},
+            log=tmp_path / "pi-api.log")
+        processes.append(api)
+        wait_ready(api, f"{base}/api/v1/health", pi=True)
+        yield {"base": base, "proc": api}
+    finally:
+        for proc in reversed(processes):
+            proc.terminate()
+            proc.close()
 
 
 def docker_compose(action: str) -> subprocess.CompletedProcess:

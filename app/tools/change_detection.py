@@ -192,7 +192,7 @@ def register_change_detection_tools(registry: ToolRegistry):
           tags=("变化向量分析", "cva", "变化检测", "双时相", "变化幅度", "变化方向"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def detect_change_cva(
+    def detect_change_cva(
         t1_bands: Dict[str, List[List[float]]],
         t2_bands: Dict[str, List[List[float]]],
         t1_date: Optional[str] = None,
@@ -275,7 +275,7 @@ def register_change_detection_tools(registry: ToolRegistry):
           tags=("比值变化", "log_ratio", "sar", "后向散射", "双期对比", "变化检测"),
           failure_modes=("invalid_args", "memory"),
           )
-    async def detect_ratio_change(
+    def detect_ratio_change(
         a: List[List[float]],
         b: List[List[float]],
         method: str = "ratio",

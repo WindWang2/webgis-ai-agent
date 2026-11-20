@@ -85,7 +85,7 @@ export async function attachDataset(
  */
 export async function detachDataset(projectId: string, datasetId: string): Promise<DatasetDetachResponse> {
   const result = await apiFetch<DatasetDetachResponse>(
-    `${API}/${encodeURIComponent(projectId)}/datasets/${datasetId}`,
+    `${API}/${encodeURIComponent(projectId)}/datasets/${encodeURIComponent(datasetId)}`,
     { method: 'DELETE', label: 'Dataset detach error' },
   );
   invalidateCache(`${API}/${encodeURIComponent(projectId)}/datasets`);
@@ -172,11 +172,19 @@ export async function unpinArtifact(artifactId: string): Promise<ArtifactPinResp
   });
 }
 
-export async function cloneArtifact(artifactId: string): Promise<ArtifactCloneResponse> {
-  return apiFetch<ArtifactCloneResponse>(`${API}/artifacts/${encodeURIComponent(artifactId)}/clone`, {
-    method: 'POST',
-    label: 'Artifact clone error',
-  });
+export async function cloneArtifact(
+  artifactId: string,
+  projectId?: string,
+): Promise<ArtifactCloneResponse> {
+  const result = await apiFetch<ArtifactCloneResponse>(
+    `${API}/artifacts/${encodeURIComponent(artifactId)}/clone`,
+    {
+      method: 'POST',
+      label: 'Artifact clone error',
+    },
+  );
+  if (projectId) invalidateCache(`${API}/${encodeURIComponent(projectId)}/artifacts`);
+  return result;
 }
 
 // ── workspace snapshots ─────────────────────────────────────────────────────

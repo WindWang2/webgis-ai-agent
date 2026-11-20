@@ -172,7 +172,10 @@ def upsert_entry(
         )
         return None
     if apply_budget:
-        _apply_budget(db, req.org_id, req.project_id)
+        _apply_budget(
+            db, req.org_id, req.project_id,
+            protected_ids=(row.id,) if row.id is not None else (),
+        )
     return row
 
 

@@ -174,6 +174,23 @@ def _feature_value(feature: Dict[str, Any], field: Optional[str]) -> Any:
     return props.get(field) if isinstance(props, dict) else None
 
 
+def _value_is_kept(value: Any, kept_values: List[str]) -> bool:
+    """要素取值是否命中 kept_values（词表为 List[str] 契约）。
+
+    数值载体（数值 admin_level 等）按 int 规范化后比对：要素属性 2 与
+    词表 "2" 同义；2.0 与 "2" 同义。非整数值不做隐式改写。
+    """
+    if value in kept_values:
+        return True
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and float(value).is_integer()
+    ):
+        return str(int(value)) in kept_values
+    return False
+
+
 def _stable_feature_id(feature: Dict[str, Any], index: int) -> str:
     fid = feature.get("id")
     if isinstance(fid, (str, int)):
@@ -383,7 +400,7 @@ def generalize_features(
             value = _feature_value(feature, selection_policy.importance_field)
             if value is None:
                 outcomes.append("kept_unclassified")
-            elif value in selection_policy.kept_values:
+            elif _value_is_kept(value, selection_policy.kept_values):
                 outcomes.append("kept_by_importance")
             elif fid in mandatory_ids:
                 outcomes.append("kept_mandatory")
@@ -669,7 +686,7 @@ def generalize_features_multiband(
                 value = _feature_value(feature, sel.importance_field)
                 if value is None:
                     outcomes.append("kept_unclassified")
-                elif value in sel.kept_values:
+                elif _value_is_kept(value, sel.kept_values):
                     outcomes.append("kept_by_importance")
                 elif fid in mandatory_ids:
                     outcomes.append("kept_mandatory")

@@ -104,6 +104,11 @@ describe('filenameFromUrl', () => {
   it('strips query strings and decodes', () => {
     expect(filenameFromUrl(`${exportUrl('a%20b.png')}?session_id=x`)).toBe('a b.png');
   });
+
+  it('malformed percent-encoding does not throw', () => {
+    expect(() => filenameFromUrl(exportUrl('%'))).not.toThrow();
+    expect(filenameFromUrl(exportUrl('%E0%A4%A'))).toBe('%E0%A4%A');
+  });
 });
 
 describe('downloadWithAuth', () => {

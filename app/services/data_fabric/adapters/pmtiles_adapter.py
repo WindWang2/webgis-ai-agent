@@ -491,6 +491,27 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
             return entry
         return None
 
+    def _cached_root_directory(self):
+        """Header + root directory, reused for every tile of this archive."""
+        cached = getattr(self, "_pmtiles_root", None)
+        if cached is not None and cached[0] == self.endpoint:
+            return cached[1], cached[2]
+        raw = self._read_range(0, HEADER_SIZE, cap=HEADER_SIZE, what="header")
+        hdr = self._parse_header_bytes(raw)
+        sections = hdr["sections"]
+        root_buf = self._read_range(
+            sections["root_dir"]["offset"], sections["root_dir"]["length"],
+            cap=MAX_ROOT_DIR_BYTES, what="root directory",
+        )
+        entries = self._parse_directory(
+            self._decompress_dir(
+                root_buf, hdr["internal_compression"],
+                MAX_ROOT_DIR_DECOMPRESSED_BYTES,
+            )
+        )
+        self._pmtiles_root = (self.endpoint, hdr, entries)
+        return hdr, entries
+
     def read_tile_bytes(self, z: int, x: int, y: int) -> Optional[Tuple[bytes, str]]:
         """按 z/x/y 读取 tile 字节（有界 range read；V3 tile-byte serving）。
 
@@ -505,25 +526,13 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
         """
         if not self.endpoint:
             return None  # demo 模式无归档可读（F6：先于任何 I/O 诚实短路）
-        raw = self._read_range(0, HEADER_SIZE, cap=HEADER_SIZE, what="header")
-        hdr = self._parse_header_bytes(raw)
+        hdr, entries = self._cached_root_directory()
         if (hdr["min_zoom"], hdr["max_zoom"]) != (0, 0) and not (
             hdr["min_zoom"] <= z <= hdr["max_zoom"]
         ):
             return None
         tile_id = zxy_to_tile_id(z, x, y)
         sections = hdr["sections"]
-
-        root_buf = self._read_range(
-            sections["root_dir"]["offset"], sections["root_dir"]["length"],
-            cap=MAX_ROOT_DIR_BYTES, what="root directory",
-        )
-        entries = self._parse_directory(
-            self._decompress_dir(
-                root_buf, hdr["internal_compression"],
-                MAX_ROOT_DIR_DECOMPRESSED_BYTES,
-            )
-        )
         entry = self._find_entry(entries, tile_id)
         leaf_read = 0
         while entry is not None and entry[3] == 0:

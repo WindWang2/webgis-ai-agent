@@ -194,6 +194,54 @@ def test_commit_is_deterministic_and_deduped(v8_env):
         assert len(reg.list_versions(db, ds_row)) == 3
 
 
+def test_commit_rejects_non_fast_forward_parent(v8_env):
+    """Explicit parent must be the branch head. A stale parent must not
+    reset the branch (A→B→C, parent=A would otherwise orphan B and C)."""
+    from app.services.lakehouse import dataset_registry as reg
+    from app.services.lakehouse.dataset_registry import DatasetRefConflict
+
+    ds_row, _did, _ = _make_dataset()
+    objects = [_publish_content(tag) for tag in (b"a", b"b", b"c", b"d")]
+    with SessionLocal() as db:
+        row = reg.get_dataset(db, ds_row)
+        committed = []
+        for obj in objects[:3]:
+            committed.append(reg.commit_version(
+                db, row, branch="main", data_object_id=obj))
+        db.commit()
+        head_before = reg.branch_head(db, ds_row, "main")
+        assert head_before.version_id == committed[2].version_id
+        generation = head_before.generation
+        with pytest.raises(DatasetRefConflict, match="non-fast-forward"):
+            reg.commit_version(
+                db, row, branch="main", data_object_id=objects[3],
+                parent_version_id=committed[0].version_id,
+            )
+        db.rollback()
+        head = reg.branch_head(db, ds_row, "main")
+        assert head.version_id == committed[2].version_id
+        assert head.generation == generation
+        assert len(reg.list_versions(db, ds_row)) == 3
+        # parent == head still fast-forwards.
+        advanced = reg.commit_version(
+            db, row, branch="main", data_object_id=objects[3],
+            parent_version_id=committed[2].version_id,
+        )
+        db.commit()
+        assert advanced.parent_version_id == committed[2].version_id
+        assert advanced.ref_moved is True
+        assert reg.branch_head(db, ds_row, "main").version_id == advanced.version_id
+        # Replaying that commit (explicit parent is the previous head,
+        # result is already the head) stays idempotent — not a reset.
+        replay = reg.commit_version(
+            db, row, branch="main", data_object_id=objects[3],
+            parent_version_id=committed[2].version_id,
+        )
+        db.commit()
+        assert replay.version_id == advanced.version_id
+        assert replay.ref_moved is False
+
+
 def test_interrupted_commit_leaves_no_visible_version(v8_env):
     """中断注入：commit manifest 已发布 / 版本行已 flush 后崩溃 →
     分支 head 不动、无可见半成品版本；重试同 version_id 收敛。"""

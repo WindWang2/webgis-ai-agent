@@ -164,3 +164,35 @@ def test_fingerprint_deterministic_and_time_insensitive():
 def test_every_kind_has_spec_roundtrip(kind):
     spec = INTERACTION_KINDS[kind]
     assert spec.kind == kind
+
+
+def test_normalize_payload_accepts_selection_handle_g24():
+    """G24/P3（R2-5）：feature_selected 白名单新键 selection_handle ——
+    正常透传（≤128 裁剪）；畸形（非字符串）丢键不拒事件。"""
+    from app.services.gis_harness.interaction_ir.contracts import normalize_payload
+
+    out = normalize_payload("feature_selected", {
+        "layer_id": "ref:g24-ir", "selected_ids": ["wf1-a", "wf1-b"],
+        "selection_handle": "h-32-chars-aaaaaaaaaaaaaaaaaaaaaa",
+    })
+    assert out is not None
+    assert out["selection_handle"] == "h-32-chars-aaaaaaaaaaaaaaaaaaaaaa"
+
+    clipped = normalize_payload("feature_selected", {
+        "layer_id": "L", "selection_handle": "x" * 300,
+    })
+    assert clipped is not None and len(clipped["selection_handle"]) == 128
+
+    # 非字符串标量按既有通用纪律原样保留（与 feature_id 等键同语义 ——
+    # 下游工具按字符串句柄比对不会命中，无安全影响）
+    kept = normalize_payload("feature_selected", {
+        "layer_id": "L", "selection_handle": 12345,
+    })
+    assert kept is not None and kept["selection_handle"] == 12345
+
+    # 新键只进 feature_selected 白名单：其它 kind 携带时被白名单滤除
+    other = normalize_payload("aoi_drawn", {
+        "geometry_type": "Polygon", "vertex_count": 4,
+        "geometry_digest": "d1", "selection_handle": "h",
+    })
+    assert other is not None and "selection_handle" not in other

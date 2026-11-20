@@ -14,12 +14,81 @@ FlatGeobuf Data Source Adapter — V2 (ADR-0094 Wave F)
 """
 import json
 from contextlib import contextmanager
-from tempfile import TemporaryDirectory
 from typing import Iterator
 import logging
 import os
+import tempfile
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+_FGB_CACHE_LOCK = threading.Lock()
+_FGB_CACHE: dict[str, tuple[str, str]] = {}
+_FGB_CACHE_MAX = 4
+# #2233：按 URL 的下载锁 —— .partial 文件名曾是与目标文件确定对应的共享
+# 路径，并发下载互踩（半成品交错/替换竞态）。
+_FGB_DL_LOCKS_GUARD = threading.Lock()
+_FGB_DL_LOCKS: dict[str, threading.Lock] = {}
+_FGB_DL_LOCKS_MAX = 256
+
+
+def _cached_remote_flatgeobuf(session, url: str) -> str:
+    """Download a remote FlatGeobuf once per URL and validator token."""
+    validator = ""
+    try:
+        head = session.head(url, timeout=(5, 15), allow_redirects=True)
+        if getattr(head, "ok", False):
+            validator = (
+                head.headers.get("ETag")
+                or head.headers.get("Last-Modified")
+                or ""
+            )
+    except Exception:  # noqa: BLE001 — missing validator just skips the hit
+        validator = ""
+    with _FGB_CACHE_LOCK:
+        hit = _FGB_CACHE.get(url)
+        if hit and hit[0] == validator and validator and os.path.isfile(hit[1]):
+            return hit[1]
+    cap = min(_local_file_max_bytes_from_settings(), 64 * 1024 * 1024)
+    directory = os.path.join(tempfile.gettempdir(), "webgis-fgb-cache")
+    os.makedirs(directory, exist_ok=True)
+    local = os.path.join(directory, f"{hash(url) & 0xFFFFFFFF:08x}.fgb")
+    with _FGB_DL_LOCKS_GUARD:
+        if len(_FGB_DL_LOCKS) >= _FGB_DL_LOCKS_MAX:
+            _FGB_DL_LOCKS.clear()
+        dl_lock = _FGB_DL_LOCKS.setdefault(url, threading.Lock())
+    with dl_lock:
+        # 唯一 .partial 名（非确定性共享路径）+ 失败清理：并发下载不再
+        # 互踩，预算中断/网络异常也不留半成品文件。
+        response = session.get(url, stream=True, timeout=(5, 30))
+        partial: Optional[str] = None
+        try:
+            response.raise_for_status()
+            count = 0
+            fd, partial = tempfile.mkstemp(prefix=".dl-", suffix=".partial", dir=directory)
+            with os.fdopen(fd, "wb") as target:
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    count += len(chunk)
+                    if count > cap:
+                        raise QueryBudgetExceededError(
+                            "remote FlatGeobuf exceeds download byte budget"
+                        )
+                    target.write(chunk)
+            os.replace(partial, local)
+            partial = None
+        finally:
+            response.close()
+            if partial is not None:
+                try:
+                    os.unlink(partial)
+                except OSError:
+                    pass
+    with _FGB_CACHE_LOCK:
+        if len(_FGB_CACHE) >= _FGB_CACHE_MAX:
+            _FGB_CACHE.pop(next(iter(_FGB_CACHE)), None)
+        _FGB_CACHE[url] = (validator or str(os.path.getmtime(local)), local)
+    return local
+
 
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.adapters.postgis_adapter import (
@@ -166,24 +235,9 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         if not path.startswith(("http://", "https://")):
             yield path
             return
-        # GDAL has its own redirect and DNS behavior. Only hand it a bounded
-        # local copy obtained through the guarded requests transport.
-        cap = min(_local_file_max_bytes_from_settings(), 64 * 1024 * 1024)
-        with TemporaryDirectory(prefix="webgis-fgb-") as directory:
-            local = os.path.join(directory, "source.fgb")
-            response = self.session.get(path, stream=True, timeout=(5, 30))
-            try:
-                response.raise_for_status()
-                count = 0
-                with open(local, "wb") as target:
-                    for chunk in response.iter_content(chunk_size=64 * 1024):
-                        count += len(chunk)
-                        if count > cap:
-                            raise QueryBudgetExceededError("remote FlatGeobuf exceeds download byte budget")
-                        target.write(chunk)
-            finally:
-                response.close()
-            yield local
+        # One guarded local copy per (url, validator). describe/query/probe
+        # reuse it instead of downloading the whole file again.
+        yield _cached_remote_flatgeobuf(self.session, path)
 
     def probe(self) -> bool:
         """Probe FlatGeobuf file accessibility and magic signature.
@@ -578,12 +632,15 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
             rows = [{"count": int(info.get("features") or 0)}]
             rows_scanned = 0
         else:
+            # +1 sentinel: a prefix of max_rows is not a complete aggregate.
+            scan_cap = int(v2.execution.max_rows)
+            read_n = scan_cap + 1
             if pyogrio is not None:
                 gdf = pyogrio.read_dataframe(
                     path,
                     bbox=tuple(query_bbox) if query_bbox else None,
                     columns=needed or None,
-                    max_features=v2.execution.max_rows,
+                    max_features=read_n,
                     read_geometry=False,
                 )
                 prop_rows = gdf.to_dict(orient="records")
@@ -594,15 +651,20 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                     gdf = gpd.read_file(
                         path,
                         bbox=tuple(query_bbox) if query_bbox else None,
-                        rows=v2.execution.max_rows,
+                        rows=read_n,
                     )
                 except TypeError:
                     gdf = gpd.read_file(
                         path, bbox=tuple(query_bbox) if query_bbox else None,
-                    ).iloc[: v2.execution.max_rows]
+                    ).iloc[:read_n]
                 if needed:
                     gdf = gdf[[c for c in needed if c in gdf.columns]]
                 prop_rows = gdf.to_dict(orient="records")
+            if len(prop_rows) > scan_cap:
+                raise QueryBudgetExceededError(
+                    f"FlatGeobuf statistics scan exceeds max_rows ({scan_cap}); narrow the query",
+                    details={"scanned": scan_cap, "truncated": True},
+                )
             rows_scanned = len(prop_rows)
             if v2.filter is not None:
                 prop_rows = [r for r in prop_rows if evaluate_predicate(v2.filter, r)]

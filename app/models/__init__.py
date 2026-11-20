@@ -78,6 +78,23 @@ from app.models.data_quality import (  # noqa: F401 — 模型注册 + 再导出
     QualityReport,
     QualityRuleResult,
 )
+from app.models.topology_workbench import (  # noqa: F401 — 模型注册 + 再导出（G31）
+    TopologyRuleset,
+    TopologyRun,
+    TopologyFinding,
+    TopologyException,
+)
+from app.models.data_join_authoring import (  # noqa: F401 — 模型注册 + 再导出（G38）
+    DataJoinPlan,
+    DataJoinRun,
+)
+from app.models.linked_exploration import (  # noqa: F401 — 模型注册 + 再导出（G46）
+    ExplorationView,
+)
+from app.models.field_contracts import (  # noqa: F401 — 模型注册 + 再导出（G44）
+    FieldContract,
+    FieldContractAssessment,
+)
 from app.models.data_lifecycle import (  # noqa: F401 — 模型注册 + 再导出（V9）
     LifecycleObject,
     LifecyclePolicy,
@@ -90,14 +107,27 @@ from app.models.composition_template_asset import (  # noqa: F401 — 模型注�
     CompositionTemplateAsset,
     CompositionTemplateAssetVersion,
 )
+from app.models.cartographic_symbol_asset import (  # noqa: F401 — 模型注册 + 再导出（G40，#2206）
+    CartographicSymbolAsset,
+    CartographicSymbolAssetVersion,
+)
 from app.models.story_map_asset import (  # noqa: F401 — 模型注册 + 再导出（G3D05/ADR-0275）
     StoryMapAsset,
+)
+from app.models.map_brief import (  # noqa: F401 — 模型注册 + 再导出（G11/ADR-0298）
+    MapBrief,
+    MapBriefRelease,
 )
 from app.models.cartography_quality import (  # noqa: F401 — 模型注册 + 再导出（AC-10/ADR-0159）
     CartographyQualityRun,
     CartographyQualityBaseline,
     CartographyQualityWaiver,
     CartographyQualityMetric,
+)
+
+from app.models.coordinate_operations import (  # noqa: F401 — 模型注册 + 再导出（G45）
+    CoordinateOperationPlan,
+    CoordinateOperationRun,
 )
 
 __all__ = [
@@ -108,12 +138,18 @@ __all__ = [
     "AdsCostBudget",
     "QualityReport",
     "QualityRuleResult",
+    "TopologyRuleset",
+    "TopologyRun",
+    "TopologyFinding",
+    "TopologyException",
     "LifecycleObject",
     "LifecyclePolicy",
     "GcPlan",
     "TemplateVersion",
     "CompositionTemplateAsset",
     "CompositionTemplateAssetVersion",
+    "CartographicSymbolAsset",
+    "CartographicSymbolAssetVersion",
     "CartographyQualityRun",
     "CartographyQualityBaseline",
     "CartographyQualityWaiver",
