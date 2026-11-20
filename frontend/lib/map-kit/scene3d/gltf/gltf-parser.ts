@@ -271,15 +271,26 @@ export async function parseGltf(
     }
   }
 
-  // ── images（仅 bufferView 内嵌）────────────────────────────────────────
-  const textures: ParsedTexture[] = [];
+  // ── images / textures（仅 bufferView 内嵌）────────────────────────────
+  // H13/#2144：parsed.textures 按 glTF **texture** 索引对齐 —— 材质的
+  // baseColorTexture.index 是 texture 索引，须经 doc.textures[i].source
+  // 映射到 image。旧实现按 images 顺序建表、把 texture 索引当 image 索引，
+  // textures/images 顺序不一致或多 texture 共享一 image 时贴错图/无贴图。
+  const images: ParsedTexture[] = [];
   for (const img of doc.images ?? []) {
     if (typeof img.bufferView !== 'number') {
       throw new GltfParseError('unsupported_feature', 'external image URI not supported');
     }
     const bytes = sliceBufferView(buffers, doc.bufferViews, img.bufferView);
-    textures.push({ mimeType: img.mimeType ?? 'image/png', bytes: new Uint8Array(bytes) });
+    images.push({ mimeType: img.mimeType ?? 'image/png', bytes: new Uint8Array(bytes) });
   }
+  const textures: ParsedTexture[] = (doc.textures ?? []).map((t, i) => {
+    const src = t.source;
+    if (typeof src !== 'number' || src < 0 || src >= images.length) {
+      throw new GltfParseError('corrupt', `textures[${i}].source out of range (${String(src)})`);
+    }
+    return images[src];
+  });
 
   // ── materials ──────────────────────────────────────────────────────────
   const materials: ParsedMaterial[] = (doc.materials ?? []).map((m) => {
@@ -655,7 +666,8 @@ export async function parseGltf(
       vertices: totalVertices,
       meshes: meshCount,
       geometryBytes,
-      textureBytes: textures.reduce((n, t) => n + t.bytes.byteLength, 0),
+      // H13：字节账按唯一 image 计（多 texture 共享一 image 不重复计数）。
+      textureBytes: images.reduce((n, t) => n + t.bytes.byteLength, 0),
       materialCount: materials.length,
     },
     warnings,

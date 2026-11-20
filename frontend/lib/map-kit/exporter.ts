@@ -257,9 +257,12 @@ export function composeLayout(
   const dark_mode = theme === 'dark';
   const layoutStyle = resolveStyle(theme, options.style);
   const dpiMultiplier = dpi / 96;
-  // #802: 每逻辑像素的真实设备像素数 —— 未显式提供时回退 dpi/96（旧语义）
+  // #802/#2144 H10：每逻辑像素的真实设备像素数 —— 未显式提供时回退 dpi/96
+  // （旧语义）。chrome 字号/边距必须按**真实设备像素比**缩放：HiDPI 默认
+  // 导出时画布是 css·dpr，而 scalePx 曾按 dpi/96（=1）—— 标题/图例相对
+  // 地图缩小一半。
   const pxPerLogical = pixelsPerLogicalPx ?? dpiMultiplier;
-  const scalePx = (val: number) => val * dpiMultiplier;
+  const scalePx = (val: number) => val * pxPerLogical;
   const targetW = canvas.width;
   const targetH = canvas.height;
   const marginX = scalePx(layoutStyle.marginPx);
@@ -835,7 +838,9 @@ function _drawLegend(
   if (opts.legendSpec) {
     const spec = opts.legendSpec;
     if (spec.type === 'continuous') {
-      drawChromeColorbar({ ...ld, darkMode: ld.dark_mode, style: resolveStyle(ld.dark_mode ? 'dark' : 'light') }, { kind: 'colorbar', anchor: 'bottom-right', legendSpec: { ...spec, palette_colors: spec.palette_colors || COLOR_PALETTES[spec.palette] || COLOR_PALETTES.YlOrRd } }, { marginX: 56, marginY: 56 });
+      // H11/#2144：margin 经 scalePx（与同函数其余图例框同口径）—— 此前
+      // 恒定 56，dpi>96 时色条贴边且与离散图例框错位重叠。
+      drawChromeColorbar({ ...ld, darkMode: ld.dark_mode, style: resolveStyle(ld.dark_mode ? 'dark' : 'light') }, { kind: 'colorbar', anchor: 'bottom-right', legendSpec: { ...spec, palette_colors: spec.palette_colors || COLOR_PALETTES[spec.palette] || COLOR_PALETTES.YlOrRd } }, { marginX: ld.scalePx(56), marginY: ld.scalePx(56) });
       yOffset += ld.scalePx(96);
     } else if (spec.type === 'graduated' || spec.type === 'divergent') {
       const colors = spec.palette_colors || COLOR_PALETTES[spec.palette] || COLOR_PALETTES['YlOrRd'];
@@ -2249,7 +2254,9 @@ async function runExportInternal(
     MapExporterEngine.composeLayout(exportCanvas, effTitle, effSubtitle, {
       dpi,
       theme,
-      // #802: 按真实画布设备像素比换算（dpi 参数仍驱动布局字号/边距缩放）
+      // #802/#2144 H10：按真实画布设备像素比换算 chrome 缩放（HiDPI 默认
+      // 导出时字号/边距不再相对地图缩小一半）；未提供真实比值时 composeLayout
+      // 回退 dpi/96。
       pixelsPerLogicalPx: canvasDpr,
       // W6：PDF 矢量文本层时画布不画标题（单一事实源 —— PDF 头部 doc.text）
       skipTitle: pdfSkipCanvasTitle,

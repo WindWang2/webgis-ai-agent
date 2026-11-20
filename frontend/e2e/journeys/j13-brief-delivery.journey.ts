@@ -252,7 +252,7 @@ test.describe('journey-13 证据化地图简报交付', () => {
       .getByRole('button').first().click();
     await expect(drawer).not.toBeVisible();
 
-    const story = await openStory(workspace, SESSION_ID);
+    const story = await openStory(workspace);
     await openBriefPanel(story);
 
     // 1) 草稿生成（mock：GET 404 → 空态 → 点击创建）

@@ -31,14 +31,16 @@ export interface HudStateLike {
   removeLayer?: (id: string) => void;
 }
 
-/** MapLibre 子层 id 方案匹配（store `${id}__*` 与 custom `custom-${id}__*`）。 */
+/** MapLibre 子层 id 方案匹配（store `${id}__*` 与 custom `custom-${id}[-suffix]`）。 */
 export function isCustomSchemeMatch(target: string, id: string): boolean {
   const custom = `custom-${target}`;
-  // H5/#2144：'-' 分支曾把别的层误纳入本层族 —— target 'poi' 命中
-  // 'custom-poi-2'（那是 id 'poi-2' 的覆盖层，custom-${layerId} 整体是
-  // 一个 id，dash 属于名字不属于子层分隔符）→ hide/remove/opacity 误伤
-  // 同前缀图层。子层分隔符只认 '__'（与 isStoreSchemeMatch 同口径）。
-  return id === custom || id.startsWith(`${custom}__`);
+  if (id === custom || id.startsWith(`${custom}__`)) return true;
+  // H5/#2144：'-' 只作**已知子层后缀**分隔（与 renderer.SUBLAYER_RANK 同
+  // 词表，见 isKnownSublayerSuffix）—— 否则 target 'poi' 会命中
+  // 'custom-poi-2'（那是 id 'poi-2' 的覆盖层，dash 属于名字不属于子层
+  // 分隔符）→ hide/remove/opacity 误伤同前缀图层。
+  if (!id.startsWith(`${custom}-`)) return false;
+  return renderer.isKnownSublayerSuffix(id.slice(custom.length + 1));
 }
 
 export function isStoreSchemeMatch(target: string, id: string): boolean {

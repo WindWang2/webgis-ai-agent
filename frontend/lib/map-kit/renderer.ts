@@ -1214,6 +1214,16 @@ const SUBLAYER_RANK: Record<string, number> = {
   label: 70,
 };
 
+/**
+ * 已知子层 dash 后缀判别（H5/H5b/#2144：'-' 只在后缀属于子层词表时作
+ * 分隔符 —— 否则 'custom-poi-2' / 'roads-major__line' 这类「名字里带
+ * dash 的其他层」会被前缀族误收）。syncLayerZOrder 与
+ * isCustomSchemeMatch 共用同一真相。
+ */
+export function isKnownSublayerSuffix(rest: string): boolean {
+  return rest in SUBLAYER_RANK;
+}
+
 function sublayerRank(id: string): number {
   for (const [key, rank] of Object.entries(SUBLAYER_RANK)) {
     if (id.endsWith(`__${key}`) || id.endsWith(`-${key}`)) {
@@ -1256,7 +1266,7 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
         // 的子层）误收进来，期望序出现重复 id、锚定链错位。
         if (!id.startsWith(`${fullPrefix}-`)) return false;
         const rest = id.slice(fullPrefix.length + 1);
-        return rest in SUBLAYER_RANK;
+        return isKnownSublayerSuffix(rest);
       })
       .sort((a, b) => sublayerRank(b) - sublayerRank(a)); // rank 降序 = 顶在先
     desiredTopToBottom.push(...sub);
