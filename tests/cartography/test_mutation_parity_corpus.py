@@ -1036,6 +1036,15 @@ CASES = [
              "fields": {"base_revision": 40, "agent_revision": 41}},
         ],
     },
+    # ── ApplyFlowProduct（G21）───────────────────────────────────────────────
+    {
+        "name": "apply_flow_product_unknown_ref_rejected",
+        "actions": [
+            {"class": "ApplyFlowProductIntent", "origin": "user",
+             "fields": {"product_ref": "ref:flow-product-missing",
+                        "family_id": "odf_missing"}},
+        ],
+    },
     # ── RestoreStyle ─────────────────────────────────────────────────────────
     {
         "name": "restore_style_subset_skips_missing",

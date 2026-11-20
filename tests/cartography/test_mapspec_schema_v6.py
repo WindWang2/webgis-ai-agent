@@ -185,8 +185,8 @@ class TestVersioningAndMigration:
     def test_known_versions(self):
         # ADR-0193：1.3 additive（顶层 scenario_mode 推演视图协议）。
         # C11：1.5 additive（layer.visibility/bivariate/data_binding 语义层）。
-        # G16：2.0 号位留给 G15（本线恒等上船），2.1 = label authoring。
-        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "2.0", "2.1")
+        # 版本链：1.10 = G21 OD flow；2.0 号位留给 G15（恒等上船），2.1 = label authoring。
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1")
         assert LATEST_VERSION == "2.1"
         assert DEFAULT_VERSION == "1.0"
 

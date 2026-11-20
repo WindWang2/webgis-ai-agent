@@ -30,7 +30,7 @@ class TestVersionV16:
         # v1.8（GOAL 04 多尺度表达档案）起 LATEST 前移；v1.6 语义不变。
         assert ms.KNOWN_VERSIONS == (
             "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8",
-            "1.9", "2.0", "2.1")
+            "1.9", "1.10", "2.0", "2.1")
         assert ms.LATEST_VERSION == "2.1"
         assert ms.DEFAULT_VERSION == "1.0"
 

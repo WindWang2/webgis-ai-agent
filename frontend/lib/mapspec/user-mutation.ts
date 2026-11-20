@@ -621,7 +621,11 @@ export async function commitMapSpecMutation(
           method: 'POST',
           body: {
             ...body,
-            expected_revision: revision,
+            // G21 flow preview CAS：调用方（如 apply_flow_product）可显式携带
+            // 预览时刻的 expected_revision —— 缺省仍是轮到本笔时的当前游标
+            // revision（ST-P1-2 串行链语义不变）。
+            expected_revision:
+              (body.expected_revision as number | undefined) ?? revision,
             // 方向 8：调用方自带 id 时尊重，否则铸造（每笔必有幂等身份）。
             client_mutation_id:
               (body.client_mutation_id as string | undefined) ?? mutationId,

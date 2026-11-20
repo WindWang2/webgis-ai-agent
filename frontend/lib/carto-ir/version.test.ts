@@ -46,8 +46,8 @@ function deepFreeze<T>(value: T): T {
 }
 
 describe("migrateMapSpec：已知版本词表", () => {
-  it("SUPPORTED_MAPSPEC_VERSIONS 词表与契约镜像锁定到 2.1（2.0 = G15 号位；2.1 = G16 label authoring）", () => {
-    expect(SUPPORTED_MAPSPEC_VERSIONS).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "2.0", "2.1"]);
+  it("SUPPORTED_MAPSPEC_VERSIONS 词表与契约镜像锁定到 2.1（1.10 = G21 OD flow；2.0 = G15 号位；2.1 = G16 label authoring）", () => {
+    expect(SUPPORTED_MAPSPEC_VERSIONS).toEqual(["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1"]);
     expect(LATEST_SUPPORTED_MAPSPEC_VERSION).toBe("2.1");
     expect(DEFAULT_MAPSPEC_VERSION).toBe("1.0");
   });

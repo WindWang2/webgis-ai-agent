@@ -187,6 +187,12 @@ async def _handle_upsertlayer(ctx: MutationContext) -> HandlerOut:
     )
 
 
+async def _handle_applyflowproduct(ctx: MutationContext) -> HandlerOut:
+    from app.services.flow_product.mutation import apply_flow_product
+
+    return await apply_flow_product(ctx)
+
+
 async def _handle_patchlayerpresentation(ctx: MutationContext) -> HandlerOut:
     """PatchLayerPresentationIntent 分支体（逐字迁移，见模块 docstring 的适配清单）。"""
     origin = ctx.origin

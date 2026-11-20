@@ -152,6 +152,20 @@ function mergeHudSources(
   return sources;
 }
 
+export function hasUsableHudRefPayload(layer: HudToSpecInput['layers'][number]): boolean {
+  const source = layer.source as {
+    features?: unknown[];
+    tiles?: unknown[];
+    inlineData?: { features?: unknown[] };
+  } | undefined;
+  return Boolean(
+    (source?.features?.length ?? 0) > 0
+    || (source?.tiles?.length ?? 0) > 0
+    || (source?.inlineData?.features?.length ?? 0) > 0
+    || (layer.type === 'tile' && layer._tileUrl),
+  );
+}
+
 /** Live reconcile input: committed MapSpec + pending overlay. HUD is not Desired. */
 export function composeLiveMapSpec(
   committed: MapSpec | null | undefined,

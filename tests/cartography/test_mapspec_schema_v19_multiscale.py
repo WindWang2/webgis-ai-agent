@@ -37,7 +37,7 @@ class TestVersionV18:
         # G16：2.0 号位留给 G15（恒等上船），2.1 = label authoring。
         assert ms.KNOWN_VERSIONS == (
             "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8",
-            "1.9", "2.0", "2.1")
+            "1.9", "1.10", "2.0", "2.1")
         assert ms.LATEST_VERSION == "2.1"
 
     def test_v17_migrates_identity_to_latest(self):

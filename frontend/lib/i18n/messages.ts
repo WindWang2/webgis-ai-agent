@@ -46,6 +46,7 @@ import zhRasterSampling from '@/messages/zh-CN/rasterSampling.json'
 import zhGeoreferencing from '@/messages/zh-CN/georeferencing.json'
 import zhTopology from '@/messages/zh-CN/topology.json'
 import zhMarket from '@/messages/zh-CN/market.json'
+import zhFlow from '@/messages/zh-CN/flow.json'
 import zhDataDelivery from '@/messages/zh-CN/dataDelivery.json'
 import zhDataJoin from '@/messages/zh-CN/dataJoin.json'
 import zhLinkedExploration from '@/messages/zh-CN/linkedExploration.json'
@@ -91,6 +92,7 @@ import enRasterSampling from '@/messages/en-US/rasterSampling.json'
 import enGeoreferencing from '@/messages/en-US/georeferencing.json'
 import enTopology from '@/messages/en-US/topology.json'
 import enMarket from '@/messages/en-US/market.json'
+import enFlow from '@/messages/en-US/flow.json'
 import enDataDelivery from '@/messages/en-US/dataDelivery.json'
 import enDataJoin from '@/messages/en-US/dataJoin.json'
 import enLinkedExploration from '@/messages/en-US/linkedExploration.json'
@@ -132,6 +134,7 @@ export interface AppMessages {
   market: typeof zhMarket
   compositionAssets: typeof zhCompositionAssets
   dataPreparation: typeof zhDataPreparation
+  flow: typeof zhFlow
   dataDelivery: typeof zhDataDelivery
   dataJoin: typeof zhDataJoin
   linkedExploration: typeof zhLinkedExploration
@@ -191,6 +194,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     table: zhTable,
     modelops: zhModelops,
     market: zhMarket,
+    flow: zhFlow,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
@@ -238,5 +242,6 @@ export const messages: Record<AppLocale, AppMessages> = {
     table: enTable as unknown as AppMessages['table'],
     modelops: enModelops as unknown as AppMessages['modelops'],
     market: enMarket as unknown as AppMessages['market'],
+    flow: enFlow as unknown as AppMessages['flow'],
   },
 }

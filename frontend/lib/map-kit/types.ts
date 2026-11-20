@@ -63,6 +63,9 @@ export type ContinuousLegendSpec = {
   palette_colors: string[];
   nodata?: NoDataRule;
   unit?: string;
+  source_field?: string;
+  source_domain?: [number, number];
+  transform?: 'linear' | 'sqrt' | 'log1p';
 };
 
 export type CategoricalLegendSpec = {

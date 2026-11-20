@@ -12,10 +12,11 @@ interface Props {
 
 export function ContinuousLegend({ spec, kind }: Props) {
   const t = useT('map');
-  const { field, min, max, palette_colors } = spec;
+  const { field, source_field, source_domain, min, max, palette_colors } = spec;
+  const [labelMin, labelMax] = source_domain ?? [min, max];
   const gradient = `linear-gradient(to right, ${palette_colors.join(', ')})`;
   return (
-    <LegendCard field={field} kind={kind ?? t('legends.continuous')}>
+    <LegendCard field={source_field ?? field} kind={kind ?? t('legends.continuous')}>
       <div className="space-y-1">
         <div
           aria-hidden
@@ -23,8 +24,8 @@ export function ContinuousLegend({ spec, kind }: Props) {
           style={{ background: gradient }}
         />
         <div className="flex justify-between text-meta tabular-nums text-map-chrome-ink">
-          <span>{formatLegendValue(min)}</span>
-          <span>{formatLegendValue(max)}</span>
+          <span>{formatLegendValue(labelMin)}</span>
+          <span>{formatLegendValue(labelMax)}</span>
         </div>
       </div>
     </LegendCard>

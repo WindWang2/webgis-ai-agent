@@ -27,6 +27,7 @@ import {
   useStudioLayout,
   type StudioToggleKey,
 } from '@/lib/mapspec/studio-layout';
+import { FlowProductPanel } from '@/components/flow/flow-product-panel';
 
 const iconForType: Record<string, string> = {
   png: '🖼',
@@ -551,6 +552,11 @@ export function MapStudioTab() {
                   );
                 })}
               </div>
+            </StudioSection>
+
+            {/* G21 OD 流产品：功能专属面板（preview/apply/query 与 Studio 同源） */}
+            <StudioSection title={t('flow.panelTitle')} summary={t('flow.panelSummaryEmpty')}>
+              <FlowProductPanel />
             </StudioSection>
 
             {/* 页面与输出：纸张 / 方向 / DPI / 格式 */}

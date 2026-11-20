@@ -69,6 +69,15 @@ export interface ApiFetchOptions {
    * fetch (until headers); defaults to DEFAULT_TIMEOUT_MS.
    */
   timeoutMs?: number;
+  /**
+   * Forwarded to the underlying `fetch` as the request cache mode. Callers that
+   * keep their OWN payload cache (e.g. the ref-source resolver's LRU) must pass
+   * `'reload'`: the default mode lets the browser revalidate an ETagged
+   * response, and the resulting `304 Not Modified` surfaces as an ApiError —
+   * a cache hit the caller never sees would be misread as a definitive
+   * fetch failure (and tombstone the ref as "expired").
+   */
+  cache?: RequestCache;
   /** SEC-08: anonymous-session ownership token → X-Session-Token header. */
   ownerToken?: string | null;
   /** Override the auto-generated X-Request-ID (e.g. one id per turn). */
@@ -201,6 +210,7 @@ function buildRequest(
   const accessToken = options.skipAuth ? null : getAccessToken();
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
   const init: RequestInit = { method, headers };
+  if (options.cache) init.cache = options.cache;
   if (options.signal) init.signal = options.signal;
   if (options.credentials) init.credentials = options.credentials;
   if (options.rawBody !== undefined) {

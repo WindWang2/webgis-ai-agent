@@ -209,7 +209,14 @@ export type ExportDegradationCode =
   | 'pdf_cjk_font_embedded'
   /* G04（#1999）：画布打印档约束求解回执（发射器 exporter.ts —— 应用
    * solve_layout_v5 zones 后上报；词表权威 render_diagnostics.py）。 */
-  | 'constraint_layout_evaluated';
+  | 'constraint_layout_evaluated'
+  | 'flow_source_unavailable'
+  | 'flow_edge_count_mismatch'
+  | 'flow_direction_missing'
+  | 'flow_direction_unexpected'
+  | 'flow_direction_invalid'
+  | 'flow_direction_render_failed'
+  | 'flow_legend_stale';
 
 export interface ExportDegradation {
   code: ExportDegradationCode;

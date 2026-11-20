@@ -225,3 +225,111 @@ async def test_od_flow_edges_reports_skipped_rows(registry, flow_session):
     assert res["metadata"]["total_edges"] == 3
     assert res["metadata"]["skipped_rows"] == 2
     assert len(res["features"]) == 1
+
+
+async def test_custom_weight_field_uses_standard_weight_everywhere(registry, flow_session):
+    rows = {"type": "od_table", "rows": [
+        {"origin_id": "a", "destination_id": "b", "origin_lng": 104.0,
+         "origin_lat": 30.5, "destination_lng": 104.1, "destination_lat": 30.6,
+         "trips": 3},
+        {"origin_id": "b", "destination_id": "c", "origin_lng": 104.1,
+         "origin_lat": 30.6, "destination_lng": 104.2, "destination_lat": 30.7,
+         "trips": 9},
+    ]}
+    alias = await _store_od(flow_session, rows, "od-custom-trips")
+    from app.services.tool_dispatch_service import ToolDispatchService
+
+    service = ToolDispatchService(registry=registry)
+    tc = {
+        "id": "call-flow-custom-trips",
+        "function": {
+            "name": "od_flow_edges",
+            "arguments": json.dumps({"od_table_ref": alias, "weight_field": "trips", "top_n": 10}),
+        },
+    }
+    out = await service.dispatch(tc, session_id=flow_session, executed_tools=set())
+    assert out.status.value == "ok" if hasattr(out.status, "value") else out.status == "ok"
+    raw = out.raw_result
+    assert raw["legend_spec"]["field"] == "weight"
+    assert raw["legend_spec"]["source_field"] == "trips"
+    direct = await registry.dispatch(
+        "od_flow_edges",
+        {"od_table_ref": alias, "weight_field": "trips", "top_n": 10},
+        session_id=flow_session,
+    )
+    assert direct["metadata"]["weight_field"] == "weight"
+    assert direct["metadata"]["source_weight_field"] == "trips"
+
+    from app.services.mapspec.store import mapspec_store_instance
+
+    spec = await mapspec_store_instance.get_mapspec(flow_session)
+    line = next(layer for layer in spec["layers"] if layer.get("type") == "line")
+    assert line["paint"]["width"]["field"] == "weight"
+    assert line["paint"]["color"]["field"] == "weight"
+    assert line["legend_spec"]["field"] == "weight"
+
+
+async def test_flow_product_apply_and_query_through_dispatcher(registry, flow_session):
+    rows = {"type": "od_table", "rows": [
+        {"origin_id": "A", "destination_id": "B", "origin_lng": 104.0,
+         "origin_lat": 30.0, "destination_lng": 104.1, "destination_lat": 30.1, "trips": 8},
+        {"origin_id": "B", "destination_id": "A", "origin_lng": 104.1,
+         "origin_lat": 30.1, "destination_lng": 104.0, "destination_lat": 30.0, "trips": 3},
+    ]}
+    alias = await _store_od(flow_session, rows, "od-product-dispatch")
+    from app.services.tool_dispatch_service import ToolDispatchService
+
+    service = ToolDispatchService(registry=registry)
+    tc = {
+        "id": "call-flow-product-apply",
+        "function": {
+            "name": "od_flow_edges",
+            "arguments": json.dumps({
+                "od_table_ref": alias,
+                "operation": "apply",
+                "flow": {
+                    "weight_field": "trips",
+                    "weight_unit": "trips",
+                    "direction_mode": "net",
+                    "geometry": "curve",
+                    "top_n": 10,
+                },
+            }),
+        },
+    }
+    out = await service.dispatch(tc, session_id=flow_session, executed_tools=set())
+    assert out.status.value == "ok" if hasattr(out.status, "value") else out.status == "ok"
+    raw = out.raw_result
+    assert raw["operation"] == "apply"
+    assert raw["stats"]["gross"]["retained"] == 1.0
+    assert raw["stats"]["net"]["displayed_magnitude"] == 5
+    assert raw["product_ref"].startswith("ref:flow-product-")
+    assert len(raw["mapspec"]["layers"]) == 3, "no legacy auto-layer may duplicate the atomic product"
+
+    query_tc = {
+        "id": "call-flow-product-query",
+        "function": {
+            "name": "od_flow_edges",
+            "arguments": json.dumps({
+                "operation": "query",
+                "product_ref": raw["product_ref"],
+                "query_kind": "node",
+                "object_id": "A",
+                "focus_direction": "outbound",
+            }),
+        },
+    }
+    queried = await service.dispatch(query_tc, session_id=flow_session, executed_tools=set())
+    assert queried.raw_result.get("success") is not False, queried.raw_result
+    assert queried.raw_result["node"]["outbound"] == 8
+    assert queried.raw_result["edges"]["matched_count"] == 1
+
+
+async def test_legacy_origin_aggregation_returns_node_migration_error(registry, flow_session):
+    alias = await _store_od(flow_session, od_edges(20), "od-old-origin")
+    result = await registry.dispatch(
+        "od_flow_edges", {"od_table_ref": alias, "aggregate": "origin"},
+        session_id=flow_session,
+    )
+    assert result["success"] is False
+    assert "节点" in result["correction_hint"]

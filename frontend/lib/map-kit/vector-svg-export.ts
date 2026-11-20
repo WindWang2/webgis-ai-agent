@@ -34,6 +34,7 @@ import type { ExportDegradation } from './export-chrome';
 import { vectorSceneDegradeReceipt } from './scene-export-disclosure';
 import type { LegendSpec } from './types';
 import type { PublicationLayout } from '../export/layout-description';
+import { verifyFlowMapSpec, type FlowExportVerification } from '@/lib/flow/flow-export';
 
 /** 与后端 MAX_SVG_LABEL_CHARS=60 同口径：>60 code points 截为 59 + "…"。 */
 const MAX_SVG_LABEL_CHARS = 60;
@@ -58,6 +59,7 @@ export interface VectorSvgExportInput {
 export interface VectorSvgExportResult {
   svg: string;
   degradations: ExportDegradation[];
+  flow_verification?: FlowExportVerification;
 }
 
 function decodeSvgEntities(s: string): string {
@@ -250,8 +252,10 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
       },
     });
 
+    const flowVerification = verifyFlowMapSpec(input.spec, { renderedSvg: compiled });
     const degradations: ExportDegradation[] = [
       ...compilerDegradations,
+      ...flowVerification.issues.map((issue) => ({ code: issue.code, detail: `${issue.layer_id}: ${issue.detail}` })),
       { code: 'basemap_omitted_vector_svg', detail: '矢量 SVG 不含栅格底图' },
     ];
     // G3D05（ADR-0275）：三维场景的矢量降级收据 —— scene.mode∈{3d,2.5d}
@@ -420,7 +424,7 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     parts.push('</g>');
     parts.push('</svg>');
 
-    return { svg: parts.join('\n'), degradations };
+    return { svg: parts.join('\n'), degradations, flow_verification: flowVerification };
   } catch (error) {
     const raster = input.fallbackRaster?.(error);
     if (!raster) throw error;

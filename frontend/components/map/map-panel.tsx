@@ -138,7 +138,7 @@ import {
 import { MapSpecRuntime } from "@/lib/mapspec-runtime"
 // G3D01：地形挂载治理入口（air_gapped 降级 + 证据披露；见 terrain-governance.ts）。
 import { applyTerrain3D } from "@/lib/map-kit/terrain-governance"
-import { composeLiveMapSpec } from "@/lib/mapspec/live-spec"
+import { composeLiveMapSpec, hasUsableHudRefPayload } from "@/lib/mapspec/live-spec"
 import {
   injectResolvedRefSources,
   subscribeRefSources,
@@ -192,6 +192,8 @@ import {
   subscribeSelection,
   getSelectionGeneration,
 } from "@/lib/selection/selection-store"
+import { flowNodeSelectionPayload, getFlowSelectionFilters } from "@/lib/selection/flow-selection"
+import { committedLayerBbox, flowFamilyLayerIds } from "@/lib/flow/flow-product"
 // G46：联合探索活动过滤（作者条件，与 selection 分立的投影通道）
 import {
   getExploration,
@@ -359,6 +361,18 @@ export function MapPanel({
       }
       for (const key of keys) out[key] = explorationExpression
     }
+    // G21：OD flow 焦点过滤（共享 SelectionContext 的 flow 局部适配）——
+    // 与探索过滤同层叠加，键含 HUD 镜像行 id。
+    const flowFilters = getFlowSelectionFilters(selection)
+    if (flowFilters) {
+      for (const [layerId, expression] of Object.entries(flowFilters)) {
+        out[layerId] = expression
+        for (const row of useHudStore.getState().layers) {
+          if (row._mapspecLayerId === layerId) out[row.id] = expression
+        }
+      }
+    }
+    // 无 transient 选择时：探索/flow 过滤（若有）即为全部投影面。
     if (!selection) return Object.keys(out).length ? out : EMPTY_SELECTION_FILTERS
     // 两条投影通道（ADR-0091）：
     // - chart 类别选择 → filter_field/类别表达式（既有 D3 路径）；
@@ -440,7 +454,13 @@ export function MapPanel({
       devOnly.warn('[MapPanel] Fatal WebGL context error:', e)
       setWebglError(msg || 'WebGL context creation failed')
     } else {
-      devOnly.warn('[MapPanel] Non-fatal map resource/render error:', e)
+      devOnly.warn('[MapPanel] Non-fatal map resource/render error:', {
+        message: msg,
+        status,
+        type,
+        sourceId: errorObj?.sourceId ?? e?.sourceId ?? e?.source?.id,
+        url: errorObj?.url ?? e?.url,
+      })
     }
   }, [])
 
@@ -565,6 +585,8 @@ export function MapPanel({
       // Avoids O(n) coordinate scan over 100k features just to fitBounds.
       if (target._descriptor?.bbox) {
         bbox = target._descriptor.bbox as [number, number, number, number]
+      } else if (committedLayerBbox(getCommittedMapSpec(), target._mapspecLayerId)) {
+        bbox = committedLayerBbox(getCommittedMapSpec(), target._mapspecLayerId)
       } else if (src && Array.isArray(src.bbox) && src.bbox.length === 4) {
         bbox = src.bbox as [number, number, number, number]
       } else if (src && (src.type === "FeatureCollection" || src.type === "Feature")) {
@@ -934,7 +956,7 @@ export function MapPanel({
     // HUD 已挂靠的 ref 由 live-spec 的 ref_id 合并解析；解析器只兜底
     // 无 HUD 挂靠的（避免对同一份 ref 双下载）。
     const hudOwnedRefs = new Set(
-      layers.filter((l) => typeof l._refId === 'string').map((l) => l._refId as string),
+      layers.filter((l) => typeof l._refId === 'string' && hasUsableHudRefPayload(l)).map((l) => l._refId as string),
     )
     const spec = injectResolvedRefSources(
       specWithTemporal,
@@ -1273,8 +1295,21 @@ export function MapPanel({
     }
 
     // 只查询我们自己添加的 __ 子图层；底图瓦片层不应吃 click。
+    // G21：flow 产品层是后端直写的平铺 id（无 __ 子层展开），按
+    // metadata.flow_family_id 显式并入点击查询面——节点/边焦点需要真实命中。
+    // 只并入当前 live style 中确实存在的 id（补丁在飞时不查幽灵层）。
     const ids = interactiveIdsRef.current
-    if (ids.length === 0) {
+    const flowIds = flowFamilyLayerIds(getCommittedMapSpec()).filter((id) => {
+      try {
+        return typeof map.getLayer === 'function' && !!map.getLayer(id)
+      } catch {
+        return false
+      }
+    })
+    const queryIds = flowIds.length > 0
+      ? [...ids, ...flowIds.filter((id) => !ids.includes(id))]
+      : ids
+    if (queryIds.length === 0) {
       // G3D02：无交互式二维层时仍尝试 3D 拾取（资产可以是唯一图层）。
       const canvas = map.getCanvas?.()
       const hit3d = renderer.pickScene3d(
@@ -1320,7 +1355,7 @@ export function MapPanel({
     }
     let features: any[] = []
     try {
-      features = map.queryRenderedFeatures(evt.point, { layers: ids })
+      features = map.queryRenderedFeatures(evt.point, { layers: queryIds })
     } catch {
       // 会话切换/图层重挂瞬间个别 layer id 可能已失效——查询失败静默收敛，
       // 绝不让异常进入 MapLibre 的事件分发链。
@@ -1373,7 +1408,50 @@ export function MapPanel({
     // 不触发高亮图层、不触发自动聚焦。Runtime V4：shift 点选在同层追加
     // （多选），普通点击替换。
     const additive = !!(evt as any).originalEvent?.shiftKey
+    if (features.some((feature) => feature.properties?.product_ref)) {
+      features = [...features].sort((a, b) => {
+        const pa = a.properties ?? {}
+        const pb = b.properties ?? {}
+        if (Boolean(pa.product_ref) !== Boolean(pb.product_ref)) return pa.product_ref ? -1 : 1
+        // G21：节点焦点优先于穿越同一点的流边——「点选节点看流入/流出」
+        // 不能被更重的边抢走（节点圆与边线在同一点命中）。
+        const aNode = pa.flow_focus === 'node' ? 0 : 1
+        const bNode = pb.flow_focus === 'node' ? 0 : 1
+        if (aNode !== bNode) return aNode - bNode
+        const byWeight = Number(pb.weight ?? 0) - Number(pa.weight ?? 0)
+        return byWeight || String(a.id ?? pa.id ?? '').localeCompare(String(b.id ?? pb.id ?? ''))
+      })
+    }
     commitSelection(features[0], point, { additive })
+    const flowHit = features[0]
+    const flowProps = flowHit.properties ?? {}
+    const flowLayerId = String(flowHit.layer?.id ?? '')
+    // G21：节点要素没有 GeoJSON `id`（MapLibre 会给索引号），必须取
+    // properties.node_id / properties.id 作为稳定对象身份——索引号会让
+    // /flow-product/query 永远找不到对象。
+    const flowFeatureId = String(
+      (flowProps.flow_focus === 'node' ? flowProps.node_id : undefined)
+      ?? flowProps.id
+      ?? flowHit.id
+      ?? '',
+    )
+    if (flowProps.product_ref && flowProps.flow_focus === 'node') {
+      publishSelection('select', flowNodeSelectionPayload({
+        id: flowFeatureId,
+        product_ref: String(flowProps.product_ref),
+        name: flowProps.name,
+        inbound: flowProps.inbound,
+        outbound: flowProps.outbound,
+        net: flowProps.net,
+      }, flowLayerId))
+    } else if (flowProps.product_ref && flowProps.flow_focus === 'edge') {
+      publishSelection('select', {
+        source: 'map', layer_id: flowLayerId, feature_id: flowFeatureId,
+        selected_ids: [flowFeatureId], selected_categories: [], id_field: '$id',
+        artifact_ref: String(flowProps.product_ref),
+        properties: { flow_focus: 'edge', weight: flowProps.weight ?? null },
+      })
+    }
     setPoiPanel({
       x: evt.point.x,
       y: evt.point.y,

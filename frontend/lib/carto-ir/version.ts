@@ -37,6 +37,8 @@ export const SUPPORTED_MAPSPEC_VERSIONS = [
   // v1.9（GOAL 04）：representation 窗口 source 覆盖 + layer.scale_profile
   //（纯 additive）。
   "1.9",
+  // v1.10（G21）：OD flow 产品绑定（layer.flow，纯 additive）。
+  "1.10",
   // v2.0（G15 多画幅帧产物；号位由 G15 分支占用，本线恒等上船 ——
   // 与后端 _UPGRADERS 同注，任意合并顺序收敛）。
   "2.0",
@@ -212,8 +214,10 @@ const UPGRADERS: Record<string, Upgrader> = {
   // 1.9（GOAL 04）：representation 窗口 source 覆盖 + layer.scale_profile
   // 可选；缺失 = 既有语义，存量 spec 行为不变。
   "1.8->1.9": identityUpgrade,
+  // 1.10（G21）：layer.flow 可选；缺失 = 非 OD flow 图层。
+  "1.9->1.10": identityUpgrade,
   // 2.0（G15）：帧产物字段；号位由 G15 占用，本线恒等上船。
-  "1.9->2.0": identityUpgrade,
+  "1.10->2.0": identityUpgrade,
   // 2.1（G16）：要素级标注 authoring（纯 additive optional）。
   "2.0->2.1": identityUpgrade,
 };

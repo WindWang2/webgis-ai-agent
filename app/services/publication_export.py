@@ -130,6 +130,7 @@ class PageCompileOutcome:
     frame_diagnostics: List[Any] = _dc_field(default_factory=list)
     rendered_component_types: List[str] = _dc_field(default_factory=list)
     omitted_components: List[Dict[str, Any]] = _dc_field(default_factory=list)
+    flow_verification: Optional[Dict[str, Any]] = None
     #: G26：本页数值栅格嵌入回执（compiler raster_placements 透传；PDF
     #: HTML 面（<img> 层叠）与 manifest 消费。无嵌入页恒空 —— 旧形状不变）。
     raster_placements: List[Dict[str, Any]] = _dc_field(default_factory=list)
@@ -374,6 +375,7 @@ def compile_publication_page(
         rendered_component_types=[str(t) for t in (comp.rendered_component_types or [])],
         omitted_components=[dict(o) for o in (comp.omitted_components or [])
                             if isinstance(o, dict)],
+        flow_verification=getattr(comp, "flow_verification", None),
         raster_placements=[dict(p) for p in _page_placements],
         print_layout_receipt=dict(getattr(comp, "print_layout_receipt", None) or {}),
     )
@@ -490,6 +492,7 @@ class PublicationPdfResult:
     # and do not rewrite the compiled document.
     constraint_layout: ConstraintLayoutReport = _dc_field(
         default_factory=lambda: {"constraint_layout": "not_evaluated"})
+    flow_verification: Optional[Dict[str, Any]] = None
     # G26：数值栅格嵌入回执（per page × per layer；manifest/审计消费）。
     raster_layers: List[Dict[str, Any]] = _dc_field(default_factory=list)
 
@@ -1514,6 +1517,9 @@ def _render_publication_pdf(
             doc, cap=_atlas_effective.page_budget if _atlas_effective else max_frames)
 
     page_specs: List[Tuple[str, str, float, float]] = []  # (page_name, svg, w_mm, h_mm)
+    flow_verification: Dict[str, Any] = {
+        "complete": True, "evaluated": False, "issues": [], "products": [],
+    }
     rendered = 0
     skipped = 0
     _accumulated = 0
@@ -1543,6 +1549,15 @@ def _render_publication_pdf(
             skipped += 1
             sink.add(diagnostic(pcf.code, detail=pcf.detail))
             continue
+        if outcome.flow_verification is not None:
+            current_flow = outcome.flow_verification
+            if current_flow.get("evaluated"):
+                flow_verification["evaluated"] = True
+                flow_verification["complete"] = (
+                    flow_verification["complete"] and current_flow.get("complete") is True
+                )
+                flow_verification["issues"].extend(current_flow.get("issues") or [])
+                flow_verification["products"].extend(current_flow.get("products") or [])
         # G26：预算按剥离 data URI 的矢量部分累积（嵌入图独立预算）。
         _accumulated += len(
             (_strip_raster_images(outcome.svg)
@@ -1618,6 +1633,7 @@ def _render_publication_pdf(
         atlas=bool(pub_ir.atlas),
         atlas_pages=atlas_pages_summary,
         constraint_layout=layout_report,
+        flow_verification=flow_verification,
         raster_layers=raster_layers_summary,
     )
 

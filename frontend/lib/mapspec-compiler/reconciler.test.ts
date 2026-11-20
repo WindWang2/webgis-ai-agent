@@ -115,6 +115,35 @@ describe("MapSpec Reconciler (ADR-0036)", () => {
       const patch = diffSpecs(prev, next);
       expect(patch.sources).toEqual([{ id: "heat", kind: "update", next: next.sources.heat }]);
     });
+
+    it("同 content_revision 但 inlineData 后置落地仍报 update（空占位→真实载荷）", () => {
+      // G21：ref-only 源先以 HUD 空占位 inlineData 上图（revision 不变），
+      // 数据落地后若只按 revision 判等，source:update 与依赖层 recompile
+      // 会被一起跳过 —— 地图永远停在空占位。
+      const refSource = { type: "geojson", ref_id: "ref:geojson-flow-edges", content_revision: 1 } as const;
+      const prev = baseSpec({
+        sources: {
+          edges: { ...refSource, inlineData: { type: "FeatureCollection", features: [] } } as never,
+        },
+      });
+      const real = { type: "FeatureCollection", features: [{ type: "Feature", properties: { id: "e1" }, geometry: { type: "LineString", coordinates: [[104, 30], [104.1, 30.1]] } }] };
+      const next = baseSpec({
+        sources: {
+          edges: { ...refSource, inlineData: real } as never,
+        },
+      });
+      const patch = diffSpecs(prev, next);
+      expect(patch.sources).toEqual([{ id: "edges", kind: "update", next: next.sources.edges }]);
+    });
+
+    it("同 content_revision 且同 inlineData 仍静默（无谓 update 不发射）", () => {
+      const refSource = { type: "geojson", ref_id: "ref:geojson-flow-edges", content_revision: 1 } as const;
+      const fc = { type: "FeatureCollection", features: [{ type: "Feature", properties: { id: "e1" }, geometry: { type: "LineString", coordinates: [[104, 30], [104.1, 30.1]] } }] };
+      const prev = baseSpec({ sources: { edges: { ...refSource, inlineData: fc } as never } });
+      const next = baseSpec({ sources: { edges: { ...refSource, inlineData: JSON.parse(JSON.stringify(fc)) } as never } });
+      const patch = diffSpecs(prev, next);
+      expect(patch.sources).toEqual([]);
+    });
   });
 
   describe("diffSpecs — layer changes", () => {

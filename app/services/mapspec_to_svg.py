@@ -228,6 +228,7 @@ class SvgCompilation:
     #: {component_id, type, code}）。非 include_chrome 路径恒空（旧形状不变）。
     rendered_component_types: List[str] = dataclass_field(default_factory=list)
     omitted_components: List[Dict[str, str]] = dataclass_field(default_factory=list)
+    flow_verification: Optional[Dict[str, Any]] = None
     #: G26：数值栅格层的地理对齐嵌入回执（每层一条；PDF HTML 面分层层叠
     #: 与导出 manifest 消费。无栅格嵌入时恒空 —— 旧调用面形状不变）。
     raster_placements: List[Dict[str, Any]] = dataclass_field(default_factory=list)
@@ -1190,6 +1191,42 @@ def _render_chrome_groups(
     if not parts:
         return "", coverage
     return '  <g class="mapspec-chrome">\n    ' + "\n    ".join(parts) + "\n  </g>\n", coverage
+
+
+def _flow_direction_anchors(
+    geom: Dict[str, Any],
+    project: Any,
+    spacing: float,
+) -> List[Tuple[float, float, float]]:
+    gtype = geom.get("type")
+    coords = geom.get("coordinates")
+    if gtype == "LineString":
+        parts = [coords]
+    elif gtype == "MultiLineString":
+        parts = coords if isinstance(coords, list) else []
+    else:
+        parts = []
+    anchors: List[Tuple[float, float, float]] = []
+    for part in parts:
+        if not isinstance(part, list) or len(part) < 2:
+            continue
+        repeated = _line_repeat_anchors(part, project, _dpi_spacing=spacing)
+        if repeated:
+            anchors.extend(repeated)
+        else:
+            mi = len(part) // 2
+            a = part[mi - 1] if mi >= 1 else part[0]
+            b = part[mi] if mi < len(part) else part[-1]
+            ax, ay = (float(v) for v in project(a))
+            bx, by = (float(v) for v in project(b))
+            anchors.append((
+                (ax + bx) / 2.0,
+                (ay + by) / 2.0,
+                _math.degrees(_math.atan2(by - ay, bx - ax)),
+            ))
+        if len(anchors) >= 4:
+            break
+    return anchors[:4]
 
 
 def compile_mapspec_to_svg(
@@ -2314,6 +2351,8 @@ def compile_mapspec_to_svg_detailed(
                                 coord = coords
                             elif gtype == "LineString" and isinstance(coords, list) and coords:
                                 coord = coords[len(coords) // 2]
+                            elif gtype == "MultiLineString" and isinstance(coords, list) and coords and coords[0]:
+                                coord = coords[0][len(coords[0]) // 2]
                             elif gtype in ("Polygon", "MultiPolygon") and isinstance(coords, list):
                                 p_min_x, p_max_x = float("inf"), float("-inf")
                                 p_min_y, p_max_y = float("inf"), float("-inf")
@@ -2409,6 +2448,16 @@ def compile_mapspec_to_svg_detailed(
                                 halo_color = _escape_svg_attr(_resolve_paint_value(paint.get("text-halo-color") or layout.get("text-halo-color") or paint.get("haloColor") or layout.get("haloColor") or paint.get("textHaloColor"), props, "#ffffff"))
                                 halo_opacity_val = _resolve_paint_value(paint.get("text-halo-opacity") or layout.get("text-halo-opacity") or paint.get("haloOpacity") or layout.get("haloOpacity"), props, 1.0)
                                 halo_opacity = _escape_svg_attr(_fmt_num(_safe_float(halo_opacity_val, 1.0)))
+
+                            if (layer.get("metadata") or {}).get("flow_part") == "direction":
+                                _spacing = _safe_float(layout.get("symbol-spacing"), 250.0) * dpi_scale
+                                _flow_anchors = _flow_direction_anchors(geom, project, _spacing)
+                                for _ax, _ay, _angle in _flow_anchors:
+                                    _transform = f"rotate({_fmt_num(_angle)} {_fmt_num(_ax)} {_fmt_num(_ay)})"
+                                    if halo_w is not None:
+                                        elements_svg += f'<text x="{_fmt_num(_ax)}" y="{_fmt_num(_ay)}" transform="{_transform}" font-size="{font_size}" font-family="{font_family}" fill="none" stroke="{halo_color}" stroke-width="{halo_w}" stroke-opacity="{halo_opacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="{svg_text_anchor}" dominant-baseline="{svg_dominant_baseline}">{text_escaped}</text>\n'
+                                    elements_svg += f'<text x="{_fmt_num(_ax)}" y="{_fmt_num(_ay)}" transform="{_transform}" font-size="{font_size}" font-family="{font_family}" fill="{color}" fill-opacity="{opacity}" text-anchor="{svg_text_anchor}" dominant-baseline="{svg_dominant_baseline}">{text_escaped}</text>\n'
+                                continue
 
                             if collision_mode:
                                 # W6：确定性碰撞模式 —— 不内联发射，收集
@@ -2906,7 +2955,6 @@ def compile_mapspec_to_svg_detailed(
 
         if bounds_truncated and not any(item.get("code") == "features_truncated" for item in diagnostics):
             _emit_diag("features_truncated", detail=str(cap))
-
         # G34：地理图形裁剪到纸面地图槽（contain 留白 / crop 明确裁切，
         # 绝不越出纸面组件区域；clip 不改变 project 的等比语义）。
         _g34_defs = ""
@@ -2926,19 +2974,26 @@ def compile_mapspec_to_svg_detailed(
         if _symasset_defs:
             _symasset_defs_str = (
                 '<defs>' + "".join(_symasset_defs.values()) + '</defs>')
-        return SvgCompilation(
-            svg=f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}{_g34_defs}{_symasset_defs_str}
+        svg_output = f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}{_g34_defs}{_symasset_defs_str}
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers"{_g34_clip_attr}>
     {elements_svg}
   </g>
-{labels_group}{chrome_group}</svg>""",
+{labels_group}{chrome_group}</svg>"""
+        from app.services.flow_product.export import verify_flow_map_spec
+
+        flow_verification = verify_flow_map_spec(mapspec, rendered_svg=svg_output)
+        for issue in flow_verification["issues"]:
+            _emit_diag(issue["code"], issue["detail"], issue["layer_id"])
+        return SvgCompilation(
+            svg=svg_output,
             diagnostics=diagnostics,
             feature_count=feature_count,
             truncated_features=truncated_features,
             timed_out=timed_out,
             rendered_component_types=chrome_coverage.get("rendered") or [],
             omitted_components=chrome_coverage.get("omitted") or [],
+            flow_verification=flow_verification,
             raster_placements=raster_placements,
             print_layout_receipt=(_g34_draw or {}).get("_receipt") or {},
         )

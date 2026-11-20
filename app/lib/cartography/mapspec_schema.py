@@ -79,11 +79,13 @@ Number = Union[StrictInt, StrictFloat]
 #: 工件源装配）+ ``layer.scale_profile`` 开放声明（ScaleRepresentation-
 #: Profile.v1 投影，权威 = app/lib/cartography/multiscale/profile.py）。
 #: 纯 additive：缺失 = 既有 v1.6/v1.7 语义，存量 spec 行为不变）。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "2.0", "2.1")
-# 2.0 = G15 多画幅/图册帧产物（顶层 frame_product 可选；缺失 = 非多画幅
-# 产品，存量 spec 行为不变。G15 FrameProductContract.v1）。
-# 2.1 = G16 要素级标注 authoring（layer.label.authoring +
-# layout.labels.obstaclePolicy/forbiddenZones，纯 additive optional）。
+#: 版本链（并行 additive 合并后的线性序）：
+#: 1.10 = OD flow 产品绑定（layer.flow，G21；缺失 = 非 flow 图层）。
+#: 2.0 = G15 多画幅/图册帧产物（顶层 frame_product 可选；缺失 = 非多画幅
+#: 产品，存量 spec 行为不变。G15 FrameProductContract.v1）。
+#: 2.1 = G16 要素级标注 authoring（layer.label.authoring +
+#: layout.labels.obstaclePolicy/forbiddenZones，纯 additive optional）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "2.0", "2.1")
 LATEST_VERSION = "2.1"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
@@ -718,6 +720,29 @@ class MapSpecLayerRepresentation(_SpecModel):
     windows: List[MapSpecRepresentationWindow] = Field(default_factory=list)
 
 
+class MapSpecLayerFlow(_SpecModel):
+    """Session-owned OD flow product binding (v1.10 additive)."""
+
+    schema_version: Literal["od_flow.v1"]
+    product_ref: StrictStr
+    family_id: StrictStr
+    source_ref: StrictStr
+    source_revision: StrictInt
+    source_fingerprint: StrictStr
+    product_fingerprint: StrictStr
+    direction_mode: Literal["directed", "undirected-total", "net"]
+    geometry: Literal["straight", "curve"]
+    show_arrows: StrictBool
+    weight_field: StrictStr
+    source_weight_field: StrictStr
+    weight_unit: StrictStr
+    supported_modes: List[Literal["directed", "undirected-total", "net"]]
+    node_totals_scope: Literal["filtered", "thresholded"]
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    encoding: Dict[str, Any] = Field(default_factory=dict)
+    time_window: Optional[Dict[str, Any]] = None
+    filters: Dict[str, Any] = Field(default_factory=dict)
+
 class MapSpecLayerSymbolAssetCategoryRule(_SpecModel):
     """类别 → 资产映射的单条规则（typed key；S02：不字符串化合并）。"""
 
@@ -830,6 +855,8 @@ class MapSpecLayer(_SpecModel):
     #: Profile.v1 投影（to_mapspec_layer_block）。缺失 = 层无多尺度档案，
     #: 存量 spec 行为不变）。
     scale_profile: Optional[Dict[str, Any]] = None
+    #: v1.10 additive（G21）：OD flow 产品引用与统计/表达口径。
+    flow: Optional[MapSpecLayerFlow] = None
     #: G20 additive：数值栅格表达（``raster_expression.v1``）。样式在**层**上，
     #: 数据身份在 ``NumericRasterMapSpecSource`` 上 —— 同一 ref 的两个图层可
     #: 携带不同 style_id 而互不串色。旧 PNG 图层缺席该字段，行为不变。
@@ -1520,6 +1547,7 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("DataFabricMapSpecSource", DataFabricMapSpecSource),
     ("ClusterSourceConfig", ClusterSourceConfig),
     ("MapSpecLayer", MapSpecLayer),
+    ("MapSpecLayerFlow", MapSpecLayerFlow),
     ("MapSpecLayerExtrusion", MapSpecLayerExtrusion),
     ("MapSpecLayerVisibility", MapSpecLayerVisibility),
     ("MapSpecLayerBivariate", MapSpecLayerBivariate),
@@ -1664,9 +1692,11 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # layer.scale_profile 可选；缺失 = 既有语义，存量 spec 行为不变。
     # GOAL 04 多尺度制图综合）。
     ("1.8", "1.9"): lambda doc: doc,
-    # 2.0 相对 1.9 纯 additive（顶层 frame_product 可选；缺失 = 非多画幅
+    # 1.10 相对 1.9 纯 additive（layer.flow 可选；缺失 = 非 OD flow 图层）。
+    ("1.9", "1.10"): lambda doc: doc,
+    # 2.0 相对 1.10 纯 additive（顶层 frame_product 可选；缺失 = 非多画幅
     # 产品，存量 spec 行为不变。G15 FrameProductContract.v1）。
-    ("1.9", "2.0"): lambda doc: doc,
+    ("1.10", "2.0"): lambda doc: doc,
     # 2.1 相对 2.0 纯 additive（G16 要素级标注 authoring：layer.label
     # .authoring + layout.labels.obstaclePolicy/forbiddenZones；缺失 =
     # 既有自动标注语义，存量 spec 行为逐字节不变）。

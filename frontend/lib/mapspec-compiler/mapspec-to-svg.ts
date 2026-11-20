@@ -144,6 +144,36 @@ function lineRepeatAnchors(
   return positions.map((s) => anchorAt(s));
 }
 
+function flowDirectionAnchors(
+  geom: { type?: string; coordinates?: any },
+  project: (c: [number, number]) => [string, string],
+  spacing: number,
+): Array<{ x: number; y: number; angle: number }> {
+  const parts = geom.type === 'LineString' ? [geom.coordinates]
+    : geom.type === 'MultiLineString' ? geom.coordinates : [];
+  const anchors: Array<{ x: number; y: number; angle: number }> = [];
+  for (const part of parts) {
+    if (!Array.isArray(part) || part.length < 2) continue;
+    const repeated = lineRepeatAnchors(part, project, spacing);
+    if (repeated.length > 0) {
+      anchors.push(...repeated);
+    } else {
+      const mi = Math.floor(part.length / 2);
+      const a = part[mi - 1] ?? part[0];
+      const b = part[mi] ?? part[1];
+      const [ax, ay] = project(a).map(Number);
+      const [bx, by] = project(b).map(Number);
+      anchors.push({
+        x: (ax + bx) / 2,
+        y: (ay + by) / 2,
+        angle: Math.atan2(by - ay, bx - ax) * 180 / Math.PI,
+      });
+    }
+    if (anchors.length >= LINE_REPEAT_MAX_ANCHORS) break;
+  }
+  return anchors.slice(0, LINE_REPEAT_MAX_ANCHORS);
+}
+
 /** W2.2（ADR-0283 D3）：层的显式标注字段引用 —— text-field 花括号
  *  pattern（symbol/text 层；缺省 {name} 非显式、非花括号 = 字面文本）
  *  + label.field 策略声明；保序去重。与 Python
@@ -1368,6 +1398,8 @@ function compileMapSpecToSvgBody(
           coord = geom.coordinates;
         } else if (geom.type === "LineString" && geom.coordinates.length > 0) {
           coord = geom.coordinates[Math.floor(geom.coordinates.length / 2)];
+        } else if (geom.type === "MultiLineString" && geom.coordinates.length > 0 && geom.coordinates[0].length > 0) {
+          coord = geom.coordinates[0][Math.floor(geom.coordinates[0].length / 2)];
         } else if ((geom.type === "Polygon" || geom.type === "MultiPolygon") && Array.isArray(geom.coordinates)) {
           let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
           const extractRing = (ring: any) => {
@@ -1468,6 +1500,19 @@ function compileMapSpecToSvgBody(
           haloColor = escapeSvgAttr(resolvePaintValue(paint["text-halo-color"] ?? layout["text-halo-color"] ?? paint["haloColor"] ?? layout["haloColor"] ?? paint["textHaloColor"], props, "#ffffff"));
           const haloOpacityVal = resolvePaintValue(paint["text-halo-opacity"] ?? layout["text-halo-opacity"] ?? paint["haloOpacity"] ?? layout["haloOpacity"], props, 1);
           haloOpacity = escapeSvgAttr(fmtNum(Number(haloOpacityVal)));
+        }
+
+        if ((layer as { metadata?: { flow_part?: string } }).metadata?.flow_part === 'direction') {
+          const spacing = Number(layout['symbol-spacing'] ?? 250) * dpiScale;
+          const anchors = flowDirectionAnchors(geom, project, spacing);
+          for (const anchor of anchors) {
+            const transform = `rotate(${fmtNum(anchor.angle)} ${fmtNum(anchor.x)} ${fmtNum(anchor.y)})`;
+            if (haloWidth !== null) {
+              elementsSvg += `<text x="${fmtNum(anchor.x)}" y="${fmtNum(anchor.y)}" transform="${transform}" font-size="${fontSize}" font-family="${fontFamily}" fill="none" stroke="${haloColor}" stroke-width="${haloWidth}" stroke-opacity="${haloOpacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="${svgTextAnchor}" dominant-baseline="${svgDominantBaseline}">${textEscaped}</text>\n`;
+            }
+            elementsSvg += `<text x="${fmtNum(anchor.x)}" y="${fmtNum(anchor.y)}" transform="${transform}" font-size="${fontSize}" font-family="${fontFamily}" fill="${color}" fill-opacity="${opacity}" text-anchor="${svgTextAnchor}" dominant-baseline="${svgDominantBaseline}">${textEscaped}</text>\n`;
+          }
+          return;
         }
 
         if (collisionMode) {

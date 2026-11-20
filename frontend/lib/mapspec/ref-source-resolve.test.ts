@@ -174,6 +174,29 @@ describe('ref-source-resolver — 兜底拉取与注入', () => {
     expect(apiFetchMock).not.toHaveBeenCalled();
   });
 
+  it('ref 拉取绕过 HTTP 缓存再验证（cache: reload）', () => {
+    // /layers/data 带 ETag：默认缓存模式下浏览器再验证返回 304，会以
+    // ApiError 冒出并被误判为确定失败（ref 假过期、图层永不挂载）。
+    // 解析器自持 LRU，必须 reload 让服务端恒返完整载荷。
+    setMapSpecSessionCursor('s1');
+    injectResolvedRefSources(spec, { sessionId: 's1', ownerToken: null });
+    expect((apiFetchMock.mock.calls[0] as any)[1].cache).toBe('reload');
+  });
+
+  it('304 再验证命中不是确定失败：不打墓碑、下轮可重试', async () => {
+    setMapSpecSessionCursor('s1');
+    const notModified = Object.assign(new Error('Ref source resolve error: 304'), { status: 304 });
+    apiFetchMock.mockRejectedValueOnce(notModified);
+    injectResolvedRefSources(spec, { sessionId: 's1', ownerToken: null });
+    await vi.waitFor(() => expect(getRefSourcesGeneration()).toBeGreaterThan(0));
+    const { getRefSourceState } = await import('./ref-source-resolver');
+    // 无墓碑：状态保持 unresolved（不是 failed/expired）
+    expect(getRefSourceState('ref:geojson-orphan')).toBe('unresolved');
+    apiFetchMock.mockResolvedValueOnce(POI_FC);
+    injectResolvedRefSources(spec, { sessionId: 's1', ownerToken: null });
+    await vi.waitFor(() => expect(getRefSourceState('ref:geojson-orphan')).toBe('resolved'));
+  });
+
   it('超上限的 ref 放弃拉取并不再告警重复', () => {
     // 告警走 devOnly 门禁（生产静默），契约观测点在 devOnly.warn 本身
     const warnSpy = vi.spyOn(devOnly, 'warn').mockImplementation(() => {});
