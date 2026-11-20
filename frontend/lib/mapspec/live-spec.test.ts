@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
 import type { Layer } from '@/lib/types/layer';
-import { composeLiveMapSpec } from './live-spec';
+import { composeLiveMapSpec, hasUsableHudRefPayload } from './live-spec';
 
 function hudLayer(overrides: Partial<Layer> = {}): Layer {
   return {
@@ -102,5 +102,13 @@ describe('composeLiveMapSpec', () => {
       ['L1'],
     );
     expect(spec.layers).toEqual([]);
+  });
+});
+
+describe('hasUsableHudRefPayload', () => {
+  it('不把空 FeatureCollection 当成已解析 ref', () => {
+    expect(hasUsableHudRefPayload(hudLayer({ source: { type: 'FeatureCollection', features: [] } }))).toBe(false);
+    expect(hasUsableHudRefPayload(hudLayer())).toBe(true);
+    expect(hasUsableHudRefPayload(hudLayer({ type: 'tile', source: { tiles: ['https://tiles.invalid/{z}/{x}/{y}.mvt'] } }))).toBe(true);
   });
 });

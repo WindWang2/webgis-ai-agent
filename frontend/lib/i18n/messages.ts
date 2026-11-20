@@ -40,6 +40,7 @@ import zhModelops from '@/messages/zh-CN/modelops.json'
 import zhCompositionAssets from '@/messages/zh-CN/compositionAssets.json'
 import zhDataPreparation from '@/messages/zh-CN/dataPreparation.json'
 import zhMarket from '@/messages/zh-CN/market.json'
+import zhFlow from '@/messages/zh-CN/flow.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -72,6 +73,7 @@ import enModelops from '@/messages/en-US/modelops.json'
 import enCompositionAssets from '@/messages/en-US/compositionAssets.json'
 import enDataPreparation from '@/messages/en-US/dataPreparation.json'
 import enMarket from '@/messages/en-US/market.json'
+import enFlow from '@/messages/en-US/flow.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -107,6 +109,7 @@ export interface AppMessages {
   market: typeof zhMarket
   compositionAssets: typeof zhCompositionAssets
   dataPreparation: typeof zhDataPreparation
+  flow: typeof zhFlow
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -143,6 +146,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     table: zhTable,
     modelops: zhModelops,
     market: zhMarket,
+    flow: zhFlow,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
@@ -178,5 +182,6 @@ export const messages: Record<AppLocale, AppMessages> = {
     table: enTable as unknown as AppMessages['table'],
     modelops: enModelops as unknown as AppMessages['modelops'],
     market: enMarket as unknown as AppMessages['market'],
+    flow: enFlow as unknown as AppMessages['flow'],
   },
 }
