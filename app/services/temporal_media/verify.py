@@ -251,10 +251,19 @@ def verify_delivery(
                     "窗口 [{} ~ {}）".format(
                         evidence["display_window"]["start"],
                         evidence["display_window"]["end"]))
+                # 15g：编译器对文本节点做 XML 转义 —— 标签含 &<>"
+                # 时原文子串比对必失败；原文/转义双形态任一命中即通过。
+                import html as _html
+
+                label_hit = (
+                    f"时间: {expected_label}" in svg
+                    or f"时间: {_html.escape(expected_label, quote=True)}" in svg)
+                window_hit = (
+                    window_note in svg
+                    or _html.escape(window_note, quote=True) in svg)
                 check(f"digital_frame_{segment['index']}_svg",
                       "sha256:" + sha256_text(svg) == evidence["svg_sha256"]
-                      and f"时间: {expected_label}" in svg
-                      and window_note in svg,
+                      and label_hit and window_hit,
                       {"svg_bytes": len(svg), "window_note": window_note[:96]})
         oracle_ok = True
         for layer in evidence["layers"]:

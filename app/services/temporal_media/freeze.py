@@ -244,9 +244,13 @@ async def freeze_document(
         raise TemporalMediaError(
             "SOURCE_UNAVAILABLE", "session has no authoritative MapSpec",
             status_code=404)
-    frozen = build_frozen(session_id, doc, int(revision))
-
-    static_raster = frozen["layer_support"].get("static_raster_layers") or []
+    # 15e/15g：先解析静态栅格绑定（其 source_bounds 参与视口并集），
+    # 再构造冻结快照 —— 早先次序（先 build_frozen 后补绑定并重跑）对
+    # 「视口只能由栅格声明范围固定」的地图在第一遍即抛 VIEWPORT_UNFIXABLE。
+    temporal_cfg = doc.get("temporal")
+    static_raster = layer_support(doc, temporal_cfg).get("static_raster_layers") or []
+    raster_bindings: Dict[str, Any] = {}
+    unbound_raster: List[Dict[str, Any]] = []
     if static_raster:
         # 复用 G26 冻结绑定（同一背景贯穿全部帧）；解析失败不静默丢层。
         try:
@@ -256,16 +260,15 @@ async def freeze_document(
             bound = await freeze_raster_bindings(
                 session_id, doc, revision=int(revision),
                 trusted_dispatch=True, on_unresolvable="disclose")
+            raster_bindings = bound.get("bindings") or {}
+            unbound_raster = bound.get("unbound") or []
         except Exception as exc:  # noqa: BLE001 — 解析失败转为可披露的 unbound
-            bound = {"bindings": {}, "unbound": [
+            unbound_raster = [
                 {"layer_id": lid, "code": "raster_binding_failed",
-                 "message": type(exc).__name__} for lid in static_raster]}
-        frozen["raster_bindings"] = bound.get("bindings") or {}
-        frozen["unbound_raster"] = bound.get("unbound") or []
-        frozen = build_frozen(
-            session_id, doc, int(revision),
-            raster_bindings=frozen["raster_bindings"],
-            unbound_raster=frozen["unbound_raster"])
+                 "message": type(exc).__name__} for lid in static_raster]
+    frozen = build_frozen(
+        session_id, doc, int(revision),
+        raster_bindings=raster_bindings, unbound_raster=unbound_raster)
     return frozen
 
 

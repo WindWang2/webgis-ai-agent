@@ -267,8 +267,12 @@ def render_digital_frame(
     comp = _compile_svg(plan, frame_doc)
     svg = comp.svg
     if segment["time_label"]:
+        # 15g：SVG 文本节点经 _escape_svg_attr 转义 —— 标签含 &<>"
+        # 时按原文比对必假失配；转义形与原文形任一命中即通过。
         needle = f"时间: {segment['time_label']}"
-        if needle not in svg:
+        import html as _html
+
+        if needle not in svg and _html.escape(needle, quote=True) not in svg:
             raise TemporalMediaError(
                 "TIME_LABEL_MISMATCH",
                 "compiled SVG time annotation does not match this frame's "
