@@ -123,7 +123,9 @@ async def build_session_cube(
 
     # 组装 descriptor（chunk 分区走唯一权威 iter_bounded_windows 的投影）。
     band_groups: List[List[Any]] = []
-    fingerprints: Dict[str, str] = {}
+    # #2143 N28：按时间步顺序记录指纹列表 —— 按 path 为键的 dict 曾把
+    # 同一文件的多个时间步折叠，[A,A,B] 与 [A,B,B] 复用键相同。
+    fingerprint_seq: List[str] = []
     times: List[str] = []
     for time_label, path in resolved:
         times.append(time_label)
@@ -140,7 +142,7 @@ async def build_session_cube(
                 f"no chunks for time {time_label}", code="CUBE_BUILD_FAILED"
             )
         band_groups.append(descriptors)
-        fingerprints[str(path)] = await asyncio.to_thread(_raster_fingerprint, path)
+        fingerprint_seq.append(await asyncio.to_thread(_raster_fingerprint, path))
 
     # 网格一致性预检（fail-fast，错误消息带时间步 —— 写入侧还会再验一次）。
     from app.services.lakehouse.cube_store import _validate_band_groups
@@ -157,7 +159,7 @@ async def build_session_cube(
     if store_dir is None:  # 防御性
         raise CubeServiceError("unresolvable cube id")
     input_fingerprint = await asyncio.to_thread(
-        _cube_input_fingerprint, fingerprints, times, window_side,
+        _cube_input_fingerprint, fingerprint_seq, times, window_side,
     )
     try:
         await asyncio.to_thread(
@@ -228,16 +230,18 @@ async def build_session_cube(
 
 
 def _cube_input_fingerprint(
-    fingerprints: Mapping[str, str], times: Sequence[str], window_side: Optional[int],
+    fingerprint_seq: Sequence[str], times: Sequence[str], window_side: Optional[int],
 ) -> str:
-    """复用键：同输入（顺序敏感）+ 同时间轴 + 同 chunking ⇒ 同 cube 身份。"""
+    """复用键：同输入（**按时间步顺序**，#2143 N28 —— 曾按 path 为键的
+    dict 折叠重复源，[A,A,B] 与 [A,B,B] 得到同一键）+ 同时间轴 + 同
+    chunking ⇒ 同 cube 身份。"""
     from app.services.lakehouse.data_object import compute_object_reuse_fingerprint
 
     return compute_object_reuse_fingerprint(
         operation="lakehouse.cube_build",
-        operation_version="v6",
+        operation_version="v7",
         input_fingerprints={
-            str(i): fp for i, fp in enumerate(fingerprints.values())
+            str(i): fp for i, fp in enumerate(fingerprint_seq)
         },
         normalized_args={"times": list(times), "window_side": window_side},
     )
@@ -351,7 +355,6 @@ async def revise_session_cube(
     from app.services.lakehouse.cube_store import (
         fork_cube_revision,
         publish_cube,
-        read_cube_window,
     )
 
     if not isinstance(session_id, str) or not _CUBE_ID_RE.match(session_id):
@@ -364,12 +367,48 @@ async def revise_session_cube(
 
     import numpy as _np
 
-    resolved_updates: Dict[str, list] = {}
-    source_prints: Dict[str, str] = {}
-    for step in updates[:64]:
+    # #2143 N27：updates 上限曾静默截断（updates[:64]），time_index 缺省/
+    # None 被 int(None or 0)=0 静默改写第 0 时间步，band="" 未校验 ——
+    # 全部改为 fail-fast typed 拒绝（修订是生产路径，静默丢步骤 =
+    # 假绿修订）。
+    if len(updates) > 64:
+        raise CubeServiceError(
+            f"revision declares {len(updates)} updates, exceeding the "
+            "bounded budget 64 — split into multiple revisions",
+            code="CUBE_REVISION_TOO_MANY",
+        )
+    for step in updates:
         band = str(step.get("band") or "")
-        t_index = int(step.get("time_index") or 0)
-        source = str(step.get("source") or "")
+        if not band:
+            raise CubeServiceError(
+                "revision update missing 'band'",
+                code="CUBE_REVISION_INVALID",
+            )
+        if step.get("time_index") is None:
+            raise CubeServiceError(
+                f"revision update for band {band!r} missing 'time_index' "
+                "(absence silently rewrote time step 0)",
+                code="CUBE_REVISION_INVALID",
+            )
+        t_index = int(step["time_index"])
+        if t_index < 0:
+            raise CubeServiceError(
+                f"revision update for band {band!r} has negative "
+                f"time_index {t_index}",
+                code="CUBE_REVISION_INVALID",
+            )
+        if not str(step.get("source") or ""):
+            raise CubeServiceError(
+                f"revision update for band {band!r} missing 'source'",
+                code="CUBE_REVISION_INVALID",
+            )
+    resolved_updates: Dict[str, list] = {}
+    # #2143 N28：按修订步骤顺序记录（path 键 dict 曾折叠同文件多步骤）。
+    source_prints: List[str] = []
+    for step in updates:
+        band = str(step["band"])
+        t_index = int(step["time_index"])
+        source = str(step["source"])
         path = await asyncio.to_thread(_resolve_time_source, session_id, source)
         reader = await asyncio.to_thread(RasterReader.open, str(path))
         try:
@@ -386,7 +425,7 @@ async def revise_session_cube(
         resolved_updates.setdefault(band, []).append(
             (t_index, descriptors, None)
         )
-        source_prints[str(path)] = await asyncio.to_thread(_raster_fingerprint, path)
+        source_prints.append(await asyncio.to_thread(_raster_fingerprint, path))
 
     new_id = secrets.token_hex(8)
     new_ref = f"ref:cube/{new_id}"
@@ -423,7 +462,7 @@ async def revise_session_cube(
             },
             producer={"capability": "lakehouse.cube_revise",
                       "tool": "revise_session_cube"},
-            source_refs=[f"fingerprint:{d}" for d in source_prints.values()],
+            source_refs=[f"fingerprint:{d}" for d in source_prints],
         )
         durable = publication
     except Exception as e:  # noqa: BLE001 — 诚实降级
@@ -453,9 +492,25 @@ async def revise_session_cube(
     except Exception as e:  # noqa: BLE001
         logger.warning("[cube_service] revision ledger registration skipped: %s", e)
 
-    window = await asyncio.to_thread(
-        read_cube_window, new_dir, time=slice(0, 1),
-    )
+    # #2141：first_step_preview 走有界窗口读（此前 read_cube_window(time=
+    # slice(0,1)) 不限 y/x —— 首时间步全波段整幅 .tolist()，10k×10k 栅格 =
+    # 1e8 Python float（数 GB）+ JSON 编码 → OOM，且绕过窗口端点的
+    # cube_json_response/413 闸）。超单元预算的大 cube 预览诚实降级为
+    # shape 摘要（修订本身照常成功）。
+    try:
+        window = await asyncio.to_thread(
+            _read_window_bounded, new_dir, slice(0, 1), None, None,
+        )
+        preview_bands = window.get("bands") or {}
+    except CubeServiceError as e:
+        if e.code != "CUBE_WINDOW_TOO_LARGE":
+            raise
+        logger.info("[cube_service] first_step_preview skipped (budget): %s", e)
+        preview_bands = {}
+    preview_shape = {
+        band: [int(v) for v in _np.asarray(data).shape]
+        for band, data in preview_bands.items()
+    }
     return {
         "status": "success",
         "success": True,
@@ -465,10 +520,8 @@ async def revise_session_cube(
         "path": str(new_dir),
         "title": title,
         "times": prev_meta.get("times") or [],
-        "first_step_preview": {
-            band: _np.asarray(data).tolist()
-            for band, data in (window.get("bands") or {}).items()
-        },
+        "first_step_preview": preview_bands or None,
+        "preview_shape": preview_shape or None,
         **durable,
     }
 
@@ -507,24 +560,29 @@ async def read_session_labeled_window(
         raise CubeServiceError(
             f"cube not alive: {ref}", code="CUBE_REF_MISSING"
         )
-    root = open_cube(path)
-    if not (root.attrs or {}).get("labeled"):
-        raise CubeServiceError(
-            "ref is a V6 cube — use the v1 window endpoint",
-            code="CUBE_SCHEMA_V1",
-        )
     projection = await asyncio.to_thread(labeled_projection_from_store, path)
     dims = [str(d) for d in (projection.get("dims") or [])]
-    coords = {}
-    for dim in dims:
-        arr = root[dim] if dim in root else None
-        if arr is not None:
-            coords[dim] = np_.asarray(arr)
-        else:
+    # #2143 N29：open_cube + np.asarray 是 zarr 磁盘 IO —— 此前在事件循环
+    # 里同步执行；移入线程（labeled 版本闸也在此判定，错误 typed 不变）。
+    def _open_and_coords(dims_list: Sequence[str]) -> Dict[str, Any]:
+        root = open_cube(path)
+        if not (root.attrs or {}).get("labeled"):
             raise CubeServiceError(
-                f"cube dim {dim!r} has no coordinate array",
-                code="CUBE_WINDOW_INVALID",
+                "ref is a V6 cube — use the v1 window endpoint",
+                code="CUBE_SCHEMA_V1",
             )
+        out = {}
+        for dim in dims_list:
+            if dim in root:
+                out[dim] = np_.asarray(root[dim])
+            else:
+                raise CubeServiceError(
+                    f"cube dim {dim!r} has no coordinate array",
+                    code="CUBE_WINDOW_INVALID",
+                )
+        return out
+
+    coords = await asyncio.to_thread(_open_and_coords, dims)
     plan = await asyncio.to_thread(
         plan_selection,
         projection=projection,

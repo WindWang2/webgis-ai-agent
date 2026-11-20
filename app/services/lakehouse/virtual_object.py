@@ -212,6 +212,10 @@ def verify_data_object_deep(
         return "virtual_child_corrupt"
     if report["state"] == "owner_mismatch":
         return "virtual_owner_mismatch"
+    # #2143 N30：预算超支只展开了部分叶子 —— 曾只对已展开叶子校验即返回
+    # "verified"（假绿）；超支态必须如实报告。
+    if report["state"] == "budget_exceeded":
+        return "virtual_budget_exceeded"
     for leaf in report["expanded"]:
         leaf_state = verify_data_object(leaf, store=store)
         if leaf_state != "verified":

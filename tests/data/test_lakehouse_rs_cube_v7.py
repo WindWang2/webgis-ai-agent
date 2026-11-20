@@ -116,7 +116,7 @@ async def test_rs_cube_rejects_grid_mismatch(data_dir):
 async def test_rs_cube_rejects_incomplete_and_duplicates(data_dir):
     base = [{"time": "t0", "role": "optical", "band": "B02",
              "source": _write_slice(data_dir / "a.tif", 1.0)}]
-    with pytest.raises(RSCubeError, match="missing time steps"):
+    with pytest.raises(RSCubeError, match=r"missing \(time, label\) planes"):
         await build_rs_cube("sess-rs3", sources=base + [
             {"time": "t1", "role": "sar", "polarization": "VV",
              "source": _write_slice(data_dir / "b.tif", 2.0)},

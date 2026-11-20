@@ -152,7 +152,6 @@ async def build_rs_cube(
     resolved: List[Dict[str, Any]] = []
     ref_identity: Optional[Dict[str, Any]] = None
     ref_grid: Any = None
-    fingerprints: Dict[str, str] = {}
     for i, entry in enumerate(entries):
         path = await asyncio.to_thread(
             _resolve_time_source, session_id, entry["source"]
@@ -182,7 +181,14 @@ async def build_rs_cube(
                 code="RS_CUBE_GRID_MISMATCH",
             )
         resolved.append({**entry, "path": path, "grid": grid})
-        fingerprints[str(path)] = await asyncio.to_thread(_raster_fingerprint, path)
+
+    # #2143 N28/N33：按源顺序记录 (fingerprint, var, time, label) —— 按
+    # path 为键的 dict 曾折叠重复源；复用键还必须含 role/band/polarization
+    # 映射，否则同文件分配不同波段得到同一 input_fingerprint。
+    fp_entries: List[Tuple[str, str, str, str]] = []
+    for e in resolved:
+        fp = await asyncio.to_thread(_raster_fingerprint, e["path"])
+        fp_entries.append((fp, _variable_of(e), e["time"], _label_of(e)))
 
     # 轴标签（时间 = 给定顺序的身份；band/polarization 字典序稳定）。
     times: List[str] = []
@@ -206,12 +212,20 @@ async def build_rs_cube(
             )
         seen.add(key)
     for var in {v for v, _d, _l in seen}:
-        var_times = {t for v, t, _l in seen if v == var}
-        missing = [t for t in times if t not in var_times]
+        # #2142：(var, time, label) 粒度全覆盖 —— 只查 var_times 会让
+        # reflectance 的 B1(t1,t2)+B2(t1) 通过校验、(t2,B2) 平面被
+        # np.zeros 静默填 0（不是 nodata）并作为完整 cube 发布。
+        var_planes = {(t, l) for v, t, l in seen if v == var}
+        var_labels = sorted({l for _t, l in var_planes})
+        missing = [
+            (t, l) for t in times for l in var_labels
+            if (t, l) not in var_planes
+        ]
         if missing:
             raise RSCubeError(
-                f"variable {var} is missing time steps {missing[:8]} — "
-                "every time step must be present (no silent gaps)",
+                f"variable {var} is missing (time, label) planes "
+                f"{missing[:8]} — every (time, label) plane must be "
+                "present (no silent gaps)",
                 code="RS_CUBE_INCOMPLETE",
             )
 
@@ -336,7 +350,7 @@ async def build_rs_cube(
         raise RSCubeError(f"rs cube write failed: {e}") from e
 
     input_fingerprint = await asyncio.to_thread(
-        _rs_input_fingerprint, fingerprints, times,
+        _rs_input_fingerprint, fp_entries, times,
     )
     from app.services.lakehouse.cube_store import publish_cube
 
@@ -350,12 +364,17 @@ async def build_rs_cube(
                 "title": title,
                 "labeled": projection,
                 "times": times,
-                "input_fingerprints": fingerprints,
+                # #2143 N28/N33：血缘按 (fingerprint, var, time, label) 平面
+                # 记录 —— path 键 dict 曾折叠重复源/不同波段分配。
+                "input_planes": [
+                    {"fingerprint": fp, "variable": v, "time": t, "label": l}
+                    for fp, v, t, l in fp_entries
+                ],
                 "roles": sorted({e["role"] for e in resolved}),
             },
             producer={"capability": "lakehouse.rs_cube_build",
                       "tool": "build_rs_cube"},
-            source_refs=[f"fingerprint:{d}" for d in fingerprints.values()],
+            source_refs=[f"fingerprint:{fp}" for fp, _v, _t, _l in fp_entries],
             input_fingerprint=input_fingerprint,
         )
         durable = publication
@@ -407,16 +426,21 @@ async def build_rs_cube(
 
 
 def _rs_input_fingerprint(
-    fingerprints: Mapping[str, str], times: Sequence[str]
+    fp_entries: Sequence[Tuple[str, str, str, str]], times: Sequence[str]
 ) -> str:
-    """复用键：同输入（顺序敏感）+ 同时间轴 ⇒ 同 rs-cube 身份。"""
+    """复用键：同输入（**源顺序**，重复源不折叠）+ (var,time,label) 映射
+    （#2143 N28/N33 —— 同文件不同波段分配曾得到同一键）+ 同时间轴 ⇒
+    同 rs-cube 身份。"""
     from app.services.lakehouse.data_object import compute_object_reuse_fingerprint
 
     return compute_object_reuse_fingerprint(
         operation="lakehouse.rs_cube_build",
-        operation_version="v7",
+        operation_version="v8",
         input_fingerprints={
-            str(i): fp for i, fp in enumerate(fingerprints.values())
+            str(i): fp for i, (fp, _v, _t, _l) in enumerate(fp_entries)
         },
-        normalized_args={"times": list(times)},
+        normalized_args={
+            "times": list(times),
+            "planes": [[v, t, l] for _fp, v, t, l in fp_entries],
+        },
     )
