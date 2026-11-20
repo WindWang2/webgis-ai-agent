@@ -79,8 +79,14 @@ def test_every_migration_has_real_downgrade():
                 offenders.append(f"{path.name}: downgrade 为空壳且未声明 "
                                  "deliberate no-op")
     assert offenders == [], f"空 downgrade 破坏回滚证据链: {offenders}"
-    # 蓄意 no-op 是披露项不是缺陷；列出以供 release readiness 引用
-    assert len(deliberate) <= 5, "蓄意 no-op 数量异常增长，需人工复核"
+    # 蓄意 no-op 是披露项不是缺陷；列出以供 release readiness 引用。
+    # 基线 = 9：5 个既有声明（g1109 的 IDOR fail-closed 论证 + 4 个历史
+    # merge 收敛点 c0d8322aa2cb/c1e2f3a4b5c6/184068cb4249/bcf4e5b51f43）
+    # + #2123 补齐的 4 个 merge 收敛点（862bcc649f52/e8a1848dcd41/
+    # e6fe5ade5010/dc0b99ededbd —— merge revision 不含 DDL，回滚由其汇入的
+    # 分支 revision 各自承担，见各 downgrade docstring）。merge 收敛点是
+    # 结构性 no-op，只会随多头收敛事件出现；超出基线即需人工复核。
+    assert len(deliberate) <= 9, "蓄意 no-op 数量异常增长，需人工复核"
 
 
 @pytest.mark.real_services()
