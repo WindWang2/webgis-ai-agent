@@ -370,6 +370,29 @@ describe('drawChromeStatsPanel / drawChromeChartPanel — 面板导出', () => {
     expect(rects.length).toBeGreaterThanOrEqual(2); // 两条数据条
   });
 
+  it('#2144 H12：负值柱以 0 为基线向下绘；0 值柱无高度（不假绘正高度）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: {
+          type: 'bar', title: '盈亏',
+          data: [{ name: 'a', value: 4 }, { name: 'b', value: -2 }, { name: 'c', value: 0 }],
+        },
+      },
+      { marginX: 40 },
+    );
+    const bars = calls
+      .filter((c) => c.op === 'fillRect')
+      .map((c) => c.args as number[]);
+    expect(bars).toHaveLength(2); // 0 值柱不再有正高度
+    const [pos, neg] = bars;
+    // 同一 0 基线：正柱底 = 负柱顶（旧实现所有柱从底边向上画，负柱显示为正）。
+    expect(pos[1] + pos[3]).toBeCloseTo(neg[1], 6);
+    expect(pos[1]).toBeLessThan(neg[1]); // 正柱在基线上方、负柱在下方
+  });
+
   it('pie 图绘制扇形（arc 调用）', () => {
     const { ctx, calls } = mockCtx();
     drawChromeChartPanel(

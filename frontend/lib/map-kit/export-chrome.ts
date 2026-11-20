@@ -2558,13 +2558,19 @@ export function drawChromeChartPanel(
     if (chart.type === 'bar') {
       const slotW = plotW / Math.max(n, 1);
       const barW = slotW * 0.6;
+      // H12/#2144：以 0 为基线双向绘柱 —— 旧实现 (v-minV)/span 让所有柱
+      // 从底边向上画：负值柱显示为正、0 值柱也有正高度（与 live 端 0
+      // 基线不一致，导出图表数据失真）。
+      const yAt = (v: number) => plotY + plotH - ((v - minV) / span) * plotH;
+      const yZero = Math.min(Math.max(yAt(0), plotY), plotY + plotH);
       chart.data.forEach((p, i) => {
         const v = p.value ?? 0;
-        const h = ((v - minV) / span) * plotH;
+        const yv = yAt(v);
+        const h = Math.abs(yZero - yv);
+        if (h <= 0) return; // 0 值柱无高度（不再假绘正高度）
         const bx = plotX + i * slotW + (slotW - barW) / 2;
-        const by = plotY + plotH - h;
         ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
-        ctx.fillRect(bx, by, barW, h);
+        ctx.fillRect(bx, Math.min(yZero, yv), barW, h);
       });
     } else {
       // line

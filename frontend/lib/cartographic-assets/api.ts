@@ -153,7 +153,6 @@ export async function fetchDocByRef(
 /** MapSpec 层绑定 → {digest → doc}（缺席条目经 ref 拉取；失败如实 missing）。 */
 export async function resolveLayerDocs(
   layers: Array<{ symbol_asset?: unknown }>,
-  sessionId?: string,
 ): Promise<{ docs: Map<string, SymbolAssetDocument>; missing: WarmResult['missing'] }> {
   const digestByRef = new Map<string, { assetId: string; revision: number }>();
   const wanted = new Set<string>();
@@ -181,7 +180,7 @@ export async function resolveLayerDocs(
       digestByRef.set(ref.digest, { assetId: ref.assetId, revision: ref.revision });
     }
   }
-  await warmDocs([...wanted], sessionId);
+  await warmDocs([...wanted]);
   const docs = new Map<string, SymbolAssetDocument>();
   const missing: WarmResult['missing'] = [];
   for (const digest of wanted) {

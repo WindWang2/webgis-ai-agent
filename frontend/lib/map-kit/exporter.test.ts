@@ -302,6 +302,31 @@ describe('composeLayout scale bar DPR-awareness (#802)', () => {
       'T', undefined, { ...opts, dpi: 96, pixelsPerLogicalPx: 1 });
     expect(barWidthPx(ctxA)).toBeCloseTo(barWidthPx(ctxB), 6);
   });
+
+  it('#2144 H10：chrome 字号按真实设备像素比缩放（HiDPI 默认导出不再缩小一半）', () => {
+    const trackFonts = (ctx: any): string[] => {
+      const fonts: string[] = [];
+      Object.defineProperty(ctx, 'font', { get: () => '', set: (v: string) => fonts.push(v) });
+      return fonts;
+    };
+    const ctxA = makeCtx(), ctxB = makeCtx();
+    const fontsA = trackFonts(ctxA), fontsB = trackFonts(ctxB);
+    const opts = {
+      theme: 'light' as const, showScale: false,
+      mapCenter: { lat: 0, lng: 0 }, mapZoom: 10,
+    };
+    // 同一逻辑布局、画布 2×：A 的 dpr=2（Retina 默认导出），B 的 dpr=1。
+    composeLayout({ width: 2000, height: 1600, getContext: vi.fn(() => ctxA) } as any,
+      'Title', undefined, { ...opts, dpi: 96, pixelsPerLogicalPx: 2 });
+    composeLayout({ width: 1000, height: 800, getContext: vi.fn(() => ctxB) } as any,
+      'Title', undefined, { ...opts, dpi: 96, pixelsPerLogicalPx: 1 });
+    const maxPt = (fonts: string[]) =>
+      Math.max(...fonts.map((f) => parseInt(f, 10)).filter((n) => Number.isFinite(n)));
+    expect(fontsA.length).toBeGreaterThan(0);
+    expect(fontsB.length).toBeGreaterThan(0);
+    // 旧实现按 dpi/96（=1）缩放 —— 两画布字号相同（HiDPI 上相对地图缩小一半）。
+    expect(maxPt(fontsA)).toBe(maxPt(fontsB) * 2);
+  });
 });
 
 // ── #803: PDF 帧内等比适配 ───────────────────────────────────────────────

@@ -288,4 +288,20 @@ describe('syncLayerZOrder', () => {
     const m = makeMockMap({ layers: [{ id: 'custom-X-fill' }] });
     expect(() => syncLayerZOrder(m as any, 'custom-', ['Y'])).not.toThrow();
   });
+
+  it('#2144 H5b: 「roads」族不把「roads-major__line」误收为子层（期望序无重复 id）', () => {
+    const m = makeMockMap({
+      layers: [
+        { id: 'roads__fill' },
+        { id: 'roads-major__line' },
+      ],
+    });
+    syncLayerZOrder(m as any, '', ['roads', 'roads-major']);
+    // 期望顶→底：roads 族(roads__fill) 在先，roads-major 族(roads-major__line)
+    // 其后 ⇔ 底→顶 = roads-major__line, roads__fill。旧前缀碰撞下
+    // roads-major__line 会同时入两个族 → 期望序重复 id、错序/多余移动。
+    const finalOrder = m.state.layers.map((l: any) => l.id);
+    expect(finalOrder).toEqual(['roads-major__line', 'roads__fill']);
+    expect(new Set(finalOrder).size).toBe(finalOrder.length);
+  });
 });
