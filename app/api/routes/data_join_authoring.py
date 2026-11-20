@@ -276,6 +276,9 @@ async def recover(
     conv: Conversation = Depends(require_owned_session),
 ):
     """孤儿收据收敛（J21；也可由服务启动钩子触发）。"""
+    import asyncio
+
     from app.services.data_join_authoring import recovery
 
-    return recovery.recover_runs(session_id)
+    # #2204：recover_runs 是同步实现（SessionLocal/store IO），卸载到工作线程。
+    return await asyncio.to_thread(recovery.recover_runs, session_id)

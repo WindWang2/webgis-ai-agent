@@ -75,6 +75,12 @@ def _reject_default_org_bucket(user: Dict[str, Any], org: str) -> None:
         raise HTTPException(status_code=403, detail="org_membership_required")
 
 
+async def _org_async(user: Dict[str, Any]) -> str:
+    """#2204：``_org`` 打开短命 SessionLocal（同步 IO）——async 路由经
+    ``asyncio.to_thread`` 调用，事件循环零占用；同步路由继续直接用 ``_org``。"""
+    return await asyncio.to_thread(_org, user)
+
+
 def _svc():
     return get_spatial_event_service()
 
@@ -273,7 +279,7 @@ async def ingest_event(
 ) -> dict:
     if not flags.runtime_enabled():
         raise HTTPException(status_code=503, detail="spatial_event_runtime_disabled")
-    org = _org(user)
+    org = await _org_async(user)
     from app.api.routes.mission_runtime import _assert_create_bindings
 
     await asyncio.to_thread(
@@ -469,7 +475,7 @@ async def replay(
         if role != "admin":
             raise HTTPException(status_code=403, detail="admin_required")
     return await _svc().replay(
-        org_id=_org(user),
+        org_id=await _org_async(user),
         from_id=body.from_id,
         to_id=body.to_id,
         dry_run=body.dry_run,
@@ -502,7 +508,7 @@ async def stream(
 ):
     from fastapi.responses import StreamingResponse
 
-    org = _org(user)
+    org = await _org_async(user)
     ledger = _svc().ledger
     return StreamingResponse(
         _event_tail(ledger, org, after_id),
