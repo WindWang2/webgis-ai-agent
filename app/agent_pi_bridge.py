@@ -485,7 +485,7 @@ def _record_cancelled_tracker_step(request, tool_name: str, arguments: dict) -> 
         logger.debug("[PiBridge] cancelled tracker step record failed", exc_info=True)
 
 
-async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
+async def dispatch_tool(request: PiToolRequest, *, _strict_turn_scope: bool = False) -> PiToolResponse:
     """Dispatch a GIS tool call via ToolDispatchService, cache the result for the SSE adapter.
 
     Pi 边界安全检查（工具存在性、tier>=3 拒绝）保留在此处--它们是 Pi 路径特有的
@@ -494,6 +494,13 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     HTTP 回调适配器：把 service 返回的 llm_payload 翻译成 PiToolResponse.content。
     结果按 (session_id, toolCallId) 缓存，供 SSE 适配器读取并发携带 geojson_ref 的 step_result。
+
+    ``_strict_turn_scope``：HTTP 路由（pi_tools）置 True —— verified turn 无
+    本地活跃入口时抛 :class:`PiTurnContextUnavailable`（路由映射 409
+    TURN_NOT_LOCAL：多 pod 亲和冲突，绝不自动重放）。直连 in-process
+    调用保持 #993 审计语义：迟到回调（verified turn 已非本地活跃 turn）
+    不借用后继 turn 身份，回落 legacy 无上下文路径，由下游 tracker/evidence
+    守卫丢弃迟到 step 并 warning。
     """
     registry = get_tool_registry()
     tool_name = normalize_tool_name(request.name)
@@ -514,16 +521,26 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     # delayed callback must never borrow a successor turn's identity.
     trusted_entry = None
     if _verified_turn:
-        trusted_entry = get_active_turn_entry(session_id)
-        if trusted_entry is None or trusted_entry.turn_id != _verified_turn:
-            raise PiTurnContextUnavailable("Pi callback has no matching local active turn")
-        try:
-            from app.lib.runtime import context as rt_ctx
-
-            _turn_binding = rt_ctx.bind_runtime_context(
-                turn_id=_verified_turn, session_id=session_id,
+        _candidate = get_active_turn_entry(session_id)
+        if _candidate is not None and _candidate.turn_id == _verified_turn:
+            trusted_entry = _candidate
+        if trusted_entry is None and _strict_turn_scope:
+            raise PiTurnContextUnavailable(
+                "Pi callback has no matching local active turn"
             )
-        except Exception:  # noqa: BLE001 — 绑定失败按无上下文降级
+        # #993（非 strict 的直连路径）：verified turn 已非本地活跃 turn =
+        # 迟到回调。trusted_entry 保持 None（绝不借用后继 turn 身份），
+        # 回落 legacy 无上下文路径；tracker/evidence 守卫丢弃迟到记录。
+        if trusted_entry is not None:
+            try:
+                from app.lib.runtime import context as rt_ctx
+
+                _turn_binding = rt_ctx.bind_runtime_context(
+                    turn_id=_verified_turn, session_id=session_id,
+                )
+            except Exception:  # noqa: BLE001 — 绑定失败按无上下文降级
+                _turn_binding = None
+        else:
             _turn_binding = None
     else:
         _turn_binding = None
