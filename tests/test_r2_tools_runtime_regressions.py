@@ -59,7 +59,7 @@ async def test_2147_inspect_data_service_offloaded_from_event_loop():
     reg = ToolRegistry()
     register_ogc_service_tools(reg)
     meta = reg._metadata["inspect_data_service"]
-    from app.tools.descriptor import ToolExecutionPolicy
+    from app.tools.registry import ToolExecutionPolicy
     assert meta.get("execution_policy") != ToolExecutionPolicy.ASYNC, (
         "inspect_data_service 仍按 ASYNC 策略在事件循环上串行同步 HTTP（#2147）"
     )
@@ -68,10 +68,11 @@ async def test_2147_inspect_data_service_offloaded_from_event_loop():
 # ── #2149 Celery 路径：外层取消必须 revoke 已投递任务 ─────────────────────
 
 async def test_2149_celery_outer_cancel_revokes_task(monkeypatch):
-    from app.tools.registry import ToolRegistry
+    from app.tools.registry import ToolRegistry, ToolExecutionPolicy
 
     reg = ToolRegistry()
-    reg.register("t2149_probe", "probe", lambda: {"ok": True})
+    reg.register("t2149_probe", "probe", lambda: {"ok": True},
+                 execution_policy=ToolExecutionPolicy.CELERY)
 
     revoked: list = []
     blocker = threading.Event()
@@ -122,8 +123,7 @@ async def test_2154_get_execution_run_enforces_owner_scope():
             return None
 
     fake_engine = FakeEngine()
-    with patch.object(gt, "db_session", MagicMock()), \
-         patch("app.services.geocompute.executor.engine", fake_engine, create=True):
+    with patch("app.services.geocompute.executor.engine", fake_engine, create=True):
         out = fn(run_id="gexec-deadbeef")
     assert out.get("status") == "not_found"
     assert calls and calls[0] is not None, (
@@ -177,7 +177,7 @@ def _make_plan(plan_id: str, session_id: str, revision: int):
         plan_id=plan_id, session_id=session_id, revision=revision,
         mode="points",
         station_spec=StationSpec(mode="points"),
-        sources=[SourceBinding(ref_id="ref:test/1", data_revision="r1")],
+        sources=[SourceBinding(ref_id="ref:test/1", data_revision="r1", bands=[1])],
     )
 
 
@@ -274,7 +274,11 @@ def test_2220_station_rows_bilinear_row_col_and_support_offset():
     grid = MagicMock()
     grid.transform_failed = None
     grid.binding.bands = [1]
+    grid.binding.ref_id = "ref:test/1"
+    grid.binding.data_revision = "r1"
     grid.band_facts = {1: facts}
+    grid.height = 100
+    grid.width = 100
     # 站位 (col_f=7.5, row_f=5.5)，窗口 (r0..r1)=(4..5), (c0..c1)=(6..7)
     grid.grid_cols = [7.5]
     grid.grid_rows = [5.5]
@@ -288,4 +292,7 @@ def test_2220_station_rows_bilinear_row_col_and_support_offset():
     row = rows[0]
     assert (row.row, row.col) == (5, 7), f"行列互换: row={row.row} col={row.col}"
     supports = {(int(s["row"]), int(s["col"])) for s in row.support_pixels}
-    assert supports == {(4, 6), (4, 7), (5, 6), (5, 7)}, supports
+    # 站位 (row_f=5.5, col_f=7.5)：bilinear 支撑 = floor(5.0)=5..6 行 /
+    # floor(7.0)=7..8 列（全局坐标，含窗口偏移回加）。旧实现行列互换且
+    # 披露窗口局部 (0,0)..。
+    assert supports == {(5, 7), (5, 8), (6, 7), (6, 8)}, supports

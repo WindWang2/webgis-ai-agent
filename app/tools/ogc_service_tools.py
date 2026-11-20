@@ -46,7 +46,11 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
             "service_type": "显式协议（'ogc_api_tiles'|'ogc_api_coverages'；缺省自动探测）",
             "session_id": "会话 ID（目录发现归属）",
         },
-        execution_policy=ToolExecutionPolicy.ASYNC,
+        # #2147：probe/list/describe 是同步远程 HTTP（requests，单协议最多
+        # probe+list+10×describe、timeout=15s）。纯同步 + THREAD 策略让注册表
+        # 卸载到工作线程 —— 旧 async def + ASYNC 策略把这些串行阻塞调用钉在
+        # 事件循环上，一次检查即可冻结所有 SSE 流。
+        execution_policy=ToolExecutionPolicy.THREAD,
         side_effect="cacheable_read",
         network=True,
         deterministic=False,
@@ -58,7 +62,7 @@ def register_ogc_service_tools(registry: ToolRegistry) -> None:
         result_size_policy="inline_small",
         failure_modes=["network_error", "timeout", "unsupported_service"],
     )
-    async def inspect_data_service(
+    def inspect_data_service(
         url: str,
         session_id: str = "default",
         service_type: Optional[str] = None,

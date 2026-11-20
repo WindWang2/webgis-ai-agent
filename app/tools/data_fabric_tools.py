@@ -559,7 +559,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         ),
         param_descriptions={
             "dataset_id": "目标数据集/图层 ID",
-            "session_id": "用户会话 ID，默认 'default'",
+            "session_id": "用户会话 ID（registry 注入可信值；缺省 fail closed）",
             "layer_name": "本地物化图层的显示名称",
             "limit": "物化要素数量限制，默认 100",
             "offset": "分页偏移量",
@@ -584,7 +584,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     )
     async def materialize_dataset(
         dataset_id: str,
-        session_id: str = "default",
+        session_id: Optional[str] = None,
         layer_name: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
@@ -595,8 +595,25 @@ def register_data_fabric_tools(registry: ToolRegistry):
         profile_id: Optional[str] = None,
     ) -> dict:
         """数据下推查询与本地物化流水线 (生成 ref_id)"""
-        pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
-        adapter = _resolve_source_adapter(pid, session_id) if pid else None
+        # #2156 P3：旧默认 "default" 使无会话注入时全部调用方共享 owner
+        # "default"（跨会话 ref 存储/目录桶）；改为 None + fail closed。
+        if not session_id:
+            return {
+                "status": "error",
+                "error_type": "SESSION_REQUIRED",
+                "error": "materialize_dataset 需要会话上下文（session_id）",
+                "dataset_id": dataset_id,
+                "ref_id": None,
+            }
+        # #2156 P3：profile 解析 + 适配器构造（runtime resolve / legacy
+        # connection_manager / attach_prebuilt，同步 DB/适配器构造）旧实现
+        # 直接跑在事件循环上 —— 搬到 worker 线程（to_thread 不伪造可取消性）。
+        def _resolve():
+            pid = profile_id or spatial_catalog_service.get_profile_id(
+                dataset_id, owner=session_id)
+            return pid, (_resolve_source_adapter(pid, session_id) if pid else None)
+
+        pid, adapter = await asyncio.to_thread(_resolve)
 
         if not adapter:
             # Do NOT fabricate a geojson mock adapter and materialize synthetic

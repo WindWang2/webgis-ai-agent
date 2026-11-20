@@ -214,11 +214,13 @@ def test_2164_cloud_qc_default_percentile_unchanged():
     reg = ToolRegistry()
     register_rs_tools(reg)
     fn = reg._tools["cloud_qc_basic"]
-    red = [[0.1, 0.9], [0.2, 0.8]]
-    nir = [[0.2, 0.8], [0.3, 0.7]]
+    # 同质低亮度植被像元：无云（显式区别于 bright/non-vegetated 单元）
+    red = [[0.1, 0.1], [0.1, 0.1]]
+    nir = [[0.2, 0.2], [0.2, 0.2]]
     payload = fn(red=red, nir=nir)
     assert payload["success"] is True
-    assert payload["threshold_source"] == "percentile"
+    # 契约实际值：百分位来源记 p{percentile}（rs_v3 事实），显式值记 explicit
+    assert payload["threshold_source"] == "p97.5"
     assert payload["suspect_pixels"] == 0
 
 
@@ -326,6 +328,7 @@ def test_2155_change_detection_tools_are_sync_def():
 def test_2156_spatial_semantics_tool_is_sync_def():
     import inspect
     import app.tools.spatial_semantics_tools as sst
+    from app.tools.registry import ToolRegistry
 
     reg = ToolRegistry()
     sst.register_spatial_semantics_tools(reg)
