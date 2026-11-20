@@ -84,7 +84,7 @@ export function PrintLayoutPanel({ onClose }: Props) {
       dispatch({ type: 'load-failed', generation,
         error: asPrintLayoutError(err).code });
     }
-  }, []);
+  }, [state.generation]);
 
   useEffect(() => {
     abortRef.current = new AbortController();

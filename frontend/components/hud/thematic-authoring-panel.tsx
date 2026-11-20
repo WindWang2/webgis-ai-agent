@@ -144,6 +144,10 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
   }, [liveRevision]);
 
   // ── 计划组装（来源：面板草稿；校验真相在服务端） ──
+  // inspect 派生值在 callback 外先取 —— callback 内直接访问 `inspect?.current`
+  // 会让 React Compiler 按 ref.current 口径推断依赖，与手写 deps 冲突。
+  const inspectLegendField = inspect?.current.legend_spec?.field ?? '';
+  const inspectSource = inspect?.source ?? null;
   const buildPlan = useCallback((): PlanBody | null => {
     const plan: PlanBody = { mode, field: field || null };
     if (mode === 'graduated_auto') {
@@ -175,7 +179,7 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
       if (sizeEnabled) {
         plan.size_channel = {
           channel: sizeChannel,
-          field: field || inspect?.current.legend_spec?.field || '',
+          field: field || inspectLegendField || '',
           min_value: Number(sizeDomainMin),
           max_value: Number(sizeDomainMax),
           min_size: Number(sizeMin),
@@ -183,7 +187,7 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
           scaling: sizeScaling,
         };
       }
-      const anchor = inspect?.source;
+      const anchor = inspectSource;
       if (anchor?.ref_id) {
         plan.source_anchor = { ref_id: anchor.ref_id, content_revision: anchor.content_revision };
       }
@@ -191,15 +195,18 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
     return plan;
   }, [mode, field, method, k, palette, invert, breaksDraft, labelsDraft, colorsDraft,
       categories, categoryOther, center, unit, nodataColor, nodataLabel, sizeEnabled,
-      sizeChannel, sizeScaling, sizeMin, sizeMax, sizeDomainMin, sizeDomainMax, inspect]);
+      sizeChannel, sizeScaling, sizeMin, sizeMax, sizeDomainMin, sizeDomainMax,
+      inspectLegendField, inspectSource]);
 
-  const ctx = useMemo((): ThematicApiContext | null => {
+  /** 调用时现读 cursor（ownerToken 随会话创建异步补齐，不可冻结在挂载时刻）。 */
+  const getCtx = useCallback((): ThematicApiContext | null => {
     const cursor = getMapSpecSessionCursor();
     if (!cursor.sessionId) return null;
     return { sessionId: cursor.sessionId, ownerToken: cursor.ownerToken };
-  }, [liveRevision]);
+  }, []);
 
   const runPreview = useCallback(async () => {
+    const ctx = getCtx();
     if (!ctx) return;
     const plan = buildPlan();
     if (!plan) return;
@@ -223,9 +230,10 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
     } finally {
       if (epoch === epochRef.current) setBusy(false);
     }
-  }, [ctx, buildPlan, layerId]);
+  }, [getCtx, buildPlan, layerId]);
 
   const runCommit = useCallback(async () => {
+    const ctx = getCtx();
     if (!ctx) return;
     const plan = buildPlan();
     if (!plan) return;
@@ -253,7 +261,7 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
       // 释放，busy 将永久为真 —— 面板按钮此后全部禁用（R2 #2180，同 G41 修法）。
       setBusy(false);
     }
-  }, [ctx, buildPlan, layerId, reload, toast, t]);
+  }, [getCtx, buildPlan, layerId, reload, toast, t]);
 
   const cancelDraft = useCallback(() => {
     setPreview(null);
@@ -269,6 +277,8 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
   const isGraduated = mode === 'graduated_auto' || mode === 'graduated_manual';
 
   // 本地即时类计数（TS 孪生求值器；权威计数来自服务端预览回执）
+  // breaksKey：breaks 的原始值键（简单表达式依赖，等价于原 join 口径）。
+  const breaksKey = breaks.join(',');
   const localCounts = useMemo(() => {
     if (!isGraduated || breaks.length < 2) return null;
     if (!hist || !hist.counts?.length) return null; // 直方图聚合不可用 → 诚实不显示
@@ -278,8 +288,7 @@ export function ThematicAuthoringPanel({ layerId }: Props) {
       counts[assignClass(mid, breaks)] += hist.counts[i];
     }
     return counts;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isGraduated, breaks.join(','), hist]);
+  }, [isGraduated, breaksKey, hist]); // eslint-disable-line react-hooks/exhaustive-deps -- breaks 由 breaksKey 覆盖
 
   const table: ClassRow[] = preview?.class_table ?? [];
 
