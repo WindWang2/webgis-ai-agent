@@ -30,6 +30,12 @@ Every result must name exact command, revision, environment and evidence. `pendi
 | Pi journey | Natural-language create/local modify via real Pi + local stub, no od_matrix/provider | pass | `PI_JOURNEY_E2E=1 pytest tests/integration/test_pi_od_flow_journey.py` → 1 passed; `tests/unit/test_flow_product_surface.py test_pi_dynamic_surface.py test_flow_product_mapspec.py test_flow_product_service.py` with the flag → 25 passed |
 | Review | Independent review→fix→rereview closes blocking findings | pending | scheduled after PR push |
 
+## Master rebase (origin/master cc2dc6900)
+
+- Merge committed as `e048e0bf5`; merge-repair commit `42f4bf476`.
+- OD/flow/schema/registry suites after rebase: 259 passed.
+- Full `tests/cartography/`: 3677 passed, 5 failed — all 5 verified failing on clean origin/master with the same interpreter (baseline, out of scope): `test_component_variants_v3.py::test_every_descriptor_variant_has_template_entry`, `test_component_variants_v4.py::test_v4_variant_count_target`, `test_component_variants_v4.py::test_v4_bidirectional_variant_template_coverage`, `multiscale/test_importance_v1.py::test_admin_level_numeric_ordering`, `test_carto_ir_corpus_v1.py[...scale_portrayal_cases]`.
+
 ## Commands and results
 
 Backend OD regression (worktree `.venv`, Python 3.12.15, `USE_REDIS=false`, isolated sqlite under `.scratch/g21-ui`, `OMP_NUM_THREADS=1`):
