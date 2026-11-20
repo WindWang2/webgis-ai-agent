@@ -6,8 +6,9 @@ raster_math / raster_windowed / rs.band_math）：
 - ``crop_window``：按像素窗口裁剪 halo tile（tile job 的前置输入步）；
 - ``mosaic_tiles``：把 tile 结果按 **core 窗口**写回全幅输出网格 ——
   halo 裁除的 seam 语义在这里落地（core 并集 = 全幅、互不重叠 →
-  确定性 mosaic，无接缝混合决策）；tile nodata 区不覆盖已写像素
-  （first-wins 只在意外重叠时兜底）。
+  确定性 mosaic，无接缝混合决策）；输出先整幅预填 nodata 哨兵再写
+  core，意外重叠 last-wins（后写覆盖先写，含 nodata），未覆盖像素
+  保持 nodata 而不是默认 0（#2134）。
 
 全部重依赖（rasterio/numpy）惰性导入且**有界降级**：缺席 → 类型化
 ``RasterioUnavailableError``（诚实失败，绝不假装成功）。GeoCompute
@@ -56,6 +57,8 @@ def crop_window(raster_path: str, window: dict[str, int], out_path: str) -> dict
     if width <= 0 or height <= 0:
         raise ValueError(f"invalid crop window: {window}")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    from app.lib.artifacts import atomic_output
+
     with rasterio.open(raster_path) as src:
         win = Window(col_off, row_off, width, height)
         data = src.read(window=win)
@@ -66,8 +69,10 @@ def crop_window(raster_path: str, window: dict[str, int], out_path: str) -> dict
             transform=src.window_transform(win),
             compress=str(os.environ.get("WEBGIS_GEOTIFF_COMPRESS", "deflate")),
         )
-        with rasterio.open(out_path, "w", **profile) as dst:
-            dst.write(data)
+        # 原子写：失败/中断不留下看似有效的半个 GeoTIFF（#2134）
+        with atomic_output(out_path) as _tmp_out:
+            with rasterio.open(_tmp_out, "w", **profile) as dst:
+                dst.write(data)
     return {"output_path": out_path, "width": width, "height": height}
 
 
@@ -106,10 +111,13 @@ def mosaic_tiles(
 
     core 窗口由分区计划保证**互不重叠**（并集 = 全幅）→ 逐 tile 直接
     写入即确定性 mosaic（无接缝混合决策，无 dst 读回 —— 'w' 模式数据集
-    不可读）。意外重叠时后写覆盖先写（last-wins 兜底；计划不变式下
-    不可达）。
+    不可读）。意外重叠时后写覆盖先写（last-wins，含 nodata；计划不变式
+    下不可达）。dst 先按块预填 nodata 哨兵：union 之外的意外未覆盖
+    像素保持 nodata，不留下会被当成合法数据的默认 0（#2134）；整幅
+    原子写出，失败不残留半个 GeoTIFF。
     """
     _require_rasterio()
+    import numpy as np
     import rasterio
     from rasterio.transform import Affine
     from rasterio.windows import Window
@@ -117,6 +125,8 @@ def mosaic_tiles(
     if not tiles:
         raise ValueError("mosaic_tiles requires at least one tile")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    from app.lib.artifacts import atomic_output
+
     out_transform = Affine(*transform) if transform else None
 
     with rasterio.open(tiles[0]["path"]) as first:
@@ -128,29 +138,46 @@ def mosaic_tiles(
         compress=str(os.environ.get("WEBGIS_GEOTIFF_COMPRESS", "deflate")),
     )
 
+    # 预填哨兵：已声明 nodata 优先；浮点缺省 NaN；整型缺省 dtype 最小值
+    # （未覆盖像素不伪装成合法的 0——#2133/#2134 同口径）。
+    declared = profile.get("nodata")
+    if declared is not None:
+        fill_value = declared
+    elif np.dtype(profile["dtype"]).kind == "f":
+        fill_value = np.nan
+    else:
+        fill_value = np.iinfo(np.dtype(profile["dtype"])).min
+
     written = 0
-    with rasterio.open(out_path, "w", **profile) as dst:
-        for tile in tiles:
-            core = tile["core_window"]
-            halo = tile.get("window") or core
-            # core 在 tile 文件内的像素偏移（halo 裁除量）
-            off_c = int(core["col_off"]) - int(halo.get("col_off", 0))
-            off_r = int(core["row_off"]) - int(halo.get("row_off", 0))
-            cw, ch = int(core["width"]), int(core["height"])
-            win = Window(int(core["col_off"]), int(core["row_off"]), cw, ch)
-            with rasterio.open(tile["path"]) as src_tile:
-                if src_tile.count != dst.count:
-                    raise ValueError(
-                        f"tile band count mismatch: {src_tile.count} != {dst.count}"
-                    )
-                data = src_tile.read(window=Window(off_c, off_r, cw, ch))
-                if data.shape[1] != ch or data.shape[2] != cw:
-                    raise ValueError(
-                        f"tile core region out of bounds: {tile['path']} "
-                        f"({data.shape} vs {cw}x{ch})"
-                    )
-                for band in range(dst.count):
-                    dst.write(data[band], band + 1, window=win)
-                written += 1
+    with atomic_output(out_path) as _tmp_out:
+        with rasterio.open(_tmp_out, "w", **profile) as dst:
+            fill_block_rows = 512
+            for row0 in range(0, int(height), fill_block_rows):
+                n_rows = min(fill_block_rows, int(height) - row0)
+                block = np.full((dst.count, n_rows, int(width)), fill_value,
+                                dtype=profile["dtype"])
+                dst.write(block, window=Window(0, row0, int(width), n_rows))
+            for tile in tiles:
+                core = tile["core_window"]
+                halo = tile.get("window") or core
+                # core 在 tile 文件内的像素偏移（halo 裁除量）
+                off_c = int(core["col_off"]) - int(halo.get("col_off", 0))
+                off_r = int(core["row_off"]) - int(halo.get("row_off", 0))
+                cw, ch = int(core["width"]), int(core["height"])
+                win = Window(int(core["col_off"]), int(core["row_off"]), cw, ch)
+                with rasterio.open(tile["path"]) as src_tile:
+                    if src_tile.count != dst.count:
+                        raise ValueError(
+                            f"tile band count mismatch: {src_tile.count} != {dst.count}"
+                        )
+                    data = src_tile.read(window=Window(off_c, off_r, cw, ch))
+                    if data.shape[1] != ch or data.shape[2] != cw:
+                        raise ValueError(
+                            f"tile core region out of bounds: {tile['path']} "
+                            f"({data.shape} vs {cw}x{ch})"
+                        )
+                    for band in range(dst.count):
+                        dst.write(data[band], band + 1, window=win)
+                    written += 1
     return {"output_path": out_path, "width": int(width), "height": int(height),
             "tiles_written": written}

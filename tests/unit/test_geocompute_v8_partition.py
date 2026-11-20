@@ -489,3 +489,77 @@ class TestRasterPartitionHonestFailures:
                                   owner_scope_override="u:part")
         assert run.status is ExecutionRunStatus.FAILED
         assert run.evidence["rcalc"].error_code == "RASTERIO_UNAVAILABLE"
+
+
+# ── #2134 回归（raster_mosaic 原子写 + nodata 预填）──────────────────
+
+def _write_tile(path, data, transform, nodata=None, crs="EPSG:4326"):
+    import rasterio
+
+    h, w = data.shape
+    with rasterio.open(
+        path, "w", driver="GTiff", height=h, width=w, count=1,
+        dtype=data.dtype, crs=crs, transform=transform, nodata=nodata,
+    ) as dst:
+        dst.write(data, 1)
+    return path
+
+
+def test_mosaic_prefills_nodata_and_writes_atomically(tmp_path):
+    """#2134: core 并集之外的像素保持 nodata（不是默认 0）；写出原子。"""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from app.lib.geo_analysis.raster_mosaic import mosaic_tiles
+
+    # 全幅 6x6；两个 tile 各覆盖 3 行（core 并集 = 全幅）
+    transform = from_origin(0, 6, 1, 1)
+    t1 = _write_tile(str(tmp_path / "t1.tif"),
+                     np.ones((3, 6), dtype="float32"), transform, nodata=-1.0)
+    t2 = _write_tile(str(tmp_path / "t2.tif"),
+                     np.full((3, 6), 2.0, dtype="float32"), transform,
+                     nodata=-1.0)
+    out = str(tmp_path / "mosaic.tif")
+    res = mosaic_tiles(
+        [{"path": t1, "core_window": {"col_off": 0, "row_off": 0, "width": 6, "height": 3}},
+         {"path": t2, "core_window": {"col_off": 0, "row_off": 3, "width": 6, "height": 3}}],
+        out_path=out, width=6, height=6, crs="EPSG:4326",
+        transform=list(transform)[:6])
+    assert res["tiles_written"] == 2
+    with rasterio.open(out) as src:
+        arr = src.read(1)
+        assert src.nodata == -1.0
+    np.testing.assert_array_equal(arr[:, :], np.vstack([np.ones((3, 6)),
+                                                        np.full((3, 6), 2.0)]))
+
+    # 并集之外（此处模拟计划不变式被破坏：只给一个覆盖半幅的 tile）→
+    # 未覆盖像素保持 nodata 而非默认 0
+    out2 = str(tmp_path / "mosaic_partial.tif")
+    mosaic_tiles(
+        [{"path": t1, "core_window": {"col_off": 0, "row_off": 0, "width": 6, "height": 3}}],
+        out_path=out2, width=6, height=6, crs="EPSG:4326",
+        transform=list(transform)[:6])
+    with rasterio.open(out2) as src:
+        arr2 = src.read(1)
+    assert (arr2[3:, :] == -1.0).all()  # nodata 预填，不是 0
+
+
+def test_crop_window_roundtrip_atomic(tmp_path):
+    """#2134: crop_window 输出内容不变（原子写路径）。"""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from app.lib.geo_analysis.raster_mosaic import crop_window
+
+    data = np.arange(64, dtype="float32").reshape(8, 8)
+    src_path = str(tmp_path / "src.tif")
+    _write_tile(src_path, data, from_origin(0, 8, 1, 1), nodata=-9.0)
+    out = str(tmp_path / "crop.tif")
+    res = crop_window(src_path,
+                      {"col_off": 2, "row_off": 3, "width": 4, "height": 2}, out)
+    assert res == {"output_path": out, "width": 4, "height": 2}
+    with rasterio.open(out) as src:
+        np.testing.assert_array_equal(src.read(1), data[3:5, 2:6])
+        assert src.nodata == -9.0
