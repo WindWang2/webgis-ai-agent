@@ -13,9 +13,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
+import math
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -87,26 +91,83 @@ def _widget_data_map(spec: MapBriefSpec, payloads: Mapping[str, Any]) -> Dict[st
     return out
 
 
+#: 静态图件渲染视口（与下方编译入口一致）。
+_STATIC_MAP_W = 960
+_STATIC_MAP_H = 600
+
+
+def _camera_to_bounds(center: Sequence[float], zoom: float,
+                      width: int, height: int) -> List[float]:
+    """map_view 镜头（MapLibre 512px 世界口径）→ [w,s,e,n] 视口 bounds。"""
+    lng = float(center[0])
+    lat = max(-85.051129, min(85.051129, float(center[1])))
+    scale = 512.0 * (2.0 ** float(zoom))
+    x = (lng + 180.0) / 360.0 * scale
+    rad = math.radians(lat)
+    y = (1.0 - math.log(math.tan(rad) + 1.0 / math.cos(rad)) / math.pi) \
+        / 2.0 * scale
+
+    def _lng(px: float) -> float:
+        return px / scale * 360.0 - 180.0
+
+    def _lat(py: float) -> float:
+        n_ = math.pi * (1.0 - 2.0 * py / scale)
+        return math.degrees(math.atan(math.sinh(n_)))
+
+    north = _lat(y - height / 2.0)
+    south = _lat(y + height / 2.0)
+    return [_lng(x - width / 2.0), min(south, north),
+            _lng(x + width / 2.0), max(south, north)]
+
+
 def _render_static_maps(
     spec: MapBriefSpec, mapspec: Optional[Mapping[str, Any]],
-) -> Dict[str, str]:
-    """map_view 块 → 静态 SVG（服务端渲染；缺席/失败 → 不伪造图件）。"""
+    *, mapspec_fingerprint: str = "",
+) -> Tuple[Dict[str, str], List[str]]:
+    """map_view 块 → 静态 SVG（服务端渲染；缺席/失败 → 不伪造图件）。
+
+    15e：逐块尊重 ``block.map_view`` —— 相机（center/zoom → 视口
+    bounds）、visible_layer_ids（图层白名单）、mapspec_fingerprint
+    （BRF-O04：pin 与现状不符 → 跳过并显式告警，不沿用会话现状伪造
+    一致）。
+    """
     maps: Dict[str, str] = {}
+    warnings: List[str] = []
     if not mapspec:
-        return maps
-    from app.services.mapspec_to_svg import compile_mapspec_to_svg
+        return maps, warnings
+    from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
 
     for block in spec.blocks:
         if block.kind != "map_view" or block.map_view is None:
             continue
+        mv = block.map_view
         try:
-            svg = compile_mapspec_to_svg(
-                dict(mapspec), width=960, height=600, target_dpi=150)
+            if (mv.mapspec_fingerprint and mapspec_fingerprint
+                    and mv.mapspec_fingerprint != mapspec_fingerprint):
+                warnings.append(
+                    f"map_view {block.id}: mapspec_fingerprint pin 不符 "
+                    f"（pin {mv.mapspec_fingerprint[:16]}… ≠ 现状 "
+                    f"{mapspec_fingerprint[:16]}…），跳过静态渲染（不伪造一致）")
+                continue
+            view_spec = dict(mapspec)
+            if mv.visible_layer_ids:
+                wanted = {str(v) for v in mv.visible_layer_ids}
+                view_spec["layers"] = [
+                    dict(layer) for layer in (mapspec.get("layers") or [])
+                    if isinstance(layer, dict)
+                    and str(layer.get("id") or "") in wanted
+                ]
+            bounds = _camera_to_bounds(
+                mv.center, mv.zoom, _STATIC_MAP_W, _STATIC_MAP_H)
+            svg = compile_mapspec_to_svg_detailed(
+                view_spec, width=_STATIC_MAP_W, height=_STATIC_MAP_H,
+                target_dpi=150, bounds=bounds,
+            ).svg
             if isinstance(svg, str) and svg.strip():
                 maps[block.id] = svg
         except Exception:  # noqa: BLE001 — 渲染失败 → 真实告警（HTML 内披露）
             continue
-    return maps
+    return maps, warnings
 
 
 async def preflight_brief(
@@ -145,8 +206,11 @@ async def freeze_brief_release(
     if draft and not allow_draft:
         raise PreflightBlocked(report)
 
-    static_maps = await asyncio.to_thread(
-        _render_static_maps, spec, mapspec)
+    static_maps, map_warnings = await asyncio.to_thread(
+        _render_static_maps, spec, mapspec,
+        mapspec_fingerprint=str(mapspec_fp or ""))
+    for _w in map_warnings:
+        logger.warning("[brief-release] %s", _w)
     spec_sha = _sha256_bytes(
         json.dumps(spec.model_dump(mode="json"), ensure_ascii=False,
                    sort_keys=True, separators=(",", ":")).encode("utf-8"))
