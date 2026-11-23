@@ -571,7 +571,10 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
 
         if mode == ResultMode.SAMPLE and v2.sample is not None:
             out = deterministic_sample(features, v2.sample, fp)
-            truncated = False
+            # features 只是 offset+window+1 的有界读窗口，抽样后又是子集：
+            # 不能把 len(features)（部分扫描量）当 total_matching 上报 —— 如实
+            # 置 truncated=True、total_matching=None（真实总量未知）。
+            truncated = True
         else:
             out = features[offset: offset + page.limit]
             truncated = len(features) > offset + page.limit

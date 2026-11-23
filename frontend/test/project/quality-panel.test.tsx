@@ -144,4 +144,17 @@ describe('QualityPanel', () => {
     await screen.findByText(/审计与修复需要登录账号/);
     expect(screen.getByRole('button', { name: /运行审计/ })).toBeDisabled();
   });
+
+  it('载荷漂移 issue_summary: null 不白屏（质量面板照常渲染）', async () => {
+    api.auditSpatialQuality.mockResolvedValue({
+      ...makeQualityReport(),
+      issue_summary: null,
+    } as unknown as ReturnType<typeof makeQualityReport>);
+    render(<QualityPanel projectId="p1" authed />);
+    await selectFirstDataset();
+    fireEvent.click(screen.getByRole('button', { name: /运行审计/ }));
+    // 报告主体（状态徽标 / 违规明细）照常呈现，而不是整块崩溃
+    expect((await screen.findAllByText(/self_intersection/)).length).toBeGreaterThan(0);
+    expect(screen.getByText(/1240/)).toBeInTheDocument();
+  });
 });

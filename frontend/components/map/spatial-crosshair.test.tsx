@@ -27,17 +27,34 @@ describe('SpatialCrosshair', () => {
   it('renders correctly and copies coordinates on reticle click with timer cleanup', () => {
     const { container, unmount } = render(<SpatialCrosshair />);
     const svg = container.querySelector('svg');
+    const dot = svg?.querySelector('circle');
     expect(svg).toBeDefined();
+    expect(dot).toBeTruthy();
 
-    if (svg) {
+    if (svg && dot) {
+      // 门控回归（spatial-crosshair.tsx:159 的 pointerEvents）：空闲态 24px
+      // 装饰框不吃指针事件（不吞要素拾取），可复制态（thinking/copied）才
+      // 'auto'。此前 fireEvent.click(svg) 绕过命中测试 —— 门控写错（恒
+      // 'auto' 或恒 'none'）该测试仍绿，对门控零回归能力。
+      expect(getComputedStyle(svg).pointerEvents).toBe('none');
       act(() => {
-        fireEvent.click(svg);
+        useHudStore.setState({ aiStatus: 'thinking' });
+      });
+      expect(getComputedStyle(svg).pointerEvents).toBe('auto');
+      act(() => {
+        useHudStore.setState({ aiStatus: 'idle' });
+      });
+      expect(getComputedStyle(svg).pointerEvents).toBe('none');
+
+      // 复制命中面 = 中心精确点（常驻 auto；死锁修复后空闲态可点）。
+      act(() => {
+        fireEvent.click(dot);
       });
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith('116.407400, 39.904200');
 
       // Click again to test timer reset
       act(() => {
-        fireEvent.click(svg);
+        fireEvent.click(dot);
       });
 
       // Fast-forward timers

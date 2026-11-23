@@ -157,6 +157,32 @@ describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () =
     expect(onComplete).toHaveBeenCalledTimes(1)
   })
 
+  it('area 标注质心用去重顶点（不含闭合重复首点，与 map-panel 同口径）', () => {
+    render(
+      <MapToolbarHUD
+        mapRef={mapRef}
+        activeMeasureTool="area"
+        measurePoints={[
+          [116.4, 39.9],
+          [116.45, 39.9],
+          [116.45, 39.95],
+          [116.4, 39.95],
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '完成标注' }))
+
+    const labels = (useHudStore.getState().annotations as any[]).filter(
+      (a) => a?.properties?.kind === 'measure_label',
+    );
+    expect(labels).toHaveLength(1);
+    const [cx, cy] = labels[0].geometry.coordinates as [number, number];
+    // 修复前：闭环 ring（首点重复）求和并除以 n+1 → 首点双倍权重、标签偏移。
+    expect(cx).toBeCloseTo((116.4 + 116.45 + 116.45 + 116.4) / 4, 10);
+    expect(cy).toBeCloseTo((39.9 + 39.9 + 39.95 + 39.95) / 4, 10);
+  })
+
   it('clears all annotations and measurement points when clear button is clicked', () => {
     useHudStore.setState({
       annotations: [

@@ -77,6 +77,13 @@ _RESULT_SIZE_BUDGET_BYTES = {
 # 即任何本会通过 latency 判决的探针都不会被本上限误杀；超限者按 latency
 # 判决本来也是 fail——只是从「跑完再判」变成「事中熔断」，结论不变、CLI 有界。
 _PROBE_TIMEOUT_S = max(_LATENCY_CLASS_BUDGET_S.values()) * _LATENCY_TOLERANCE_FACTOR
+# 可安全重放的副作用类（纯计算/只读：重复执行无外部后果）。其余分类
+# （state_mutation / artifact_creation / external_side_effect / destructive /
+# unclassified）**不执行第二次真实调用**——确定性重放不得以重复副作用为
+# 代价（重复发外部请求/写库），按 warn 如实记录「证据受限」而非伪造通过。
+_REPLAYABLE_SIDE_EFFECTS = frozenset(
+    {"pure", "deterministic_compute", "cacheable_read"}
+)
 
 
 # ── 检查项构造（与 certification.py 的 {check,status,detail} 同形）──────
@@ -348,6 +355,7 @@ def _run_probe_by_registered_name(
     elapsed_s = time.perf_counter() - t0
     if err:
         return [_check(stage, capability_label, False, f"probe raised: {err}")]
+    meta = registry._metadata.get(projected)
     # 结果断言。expect_key 声明了但结果不是 JSON object → 如实失败
     # （None == None 的空洞性通过是被禁止的证据）。
     if probe.expect_key:
@@ -372,21 +380,31 @@ def _run_probe_by_registered_name(
             )]
         checks.append(_check(stage, capability_label, True,
                              f"expectation {probe.expect_key}≈{probe.expect_value!r} holds"))
-    # 确定性重放（连跑两次深度相等；sha256 of canonical JSON）。
+    # 确定性重放（连跑两次深度相等；sha256 of canonical JSON）。仅对无外部
+    # 后果的副作用类真实执行第二次调用；副作用工具重跑一次 = 重复发外部
+    # 请求/写库，按 warn 记录证据受限（不伪造「重放通过」）。
     if probe.replay:
-        second, err2 = _probe_callable(func, probe.args)
-        if err2:
-            return checks + [_check(stage, capability_label, False,
-                                    f"replay probe raised: {err2}")]
-        if _result_digest(first) != _result_digest(second):
-            return checks + [_check(
-                stage, capability_label, False,
-                "deterministic replay mismatch (two probes produced different results)",
-            )]
-        checks.append(_check(stage, capability_label, True, "deterministic replay holds"))
+        side_effect = meta.get("side_effect") if isinstance(meta, dict) else None
+        if side_effect in _REPLAYABLE_SIDE_EFFECTS:
+            second, err2 = _probe_callable(func, probe.args)
+            if err2:
+                return checks + [_check(stage, capability_label, False,
+                                        f"replay probe raised: {err2}")]
+            if _result_digest(first) != _result_digest(second):
+                return checks + [_check(
+                    stage, capability_label, False,
+                    "deterministic replay mismatch (two probes produced different results)",
+                )]
+            checks.append(_check(stage, capability_label, True, "deterministic replay holds"))
+        else:
+            checks.append(_check(
+                stage, capability_label, True,
+                f"deterministic replay skipped: side_effect={side_effect!r} tools "
+                "are not executed twice (replay would duplicate real side effects)",
+                warn_only=True,
+            ))
     # latency / result-size 类别核验（声明探针的首次调用实测；报告只记
     # 判决——latency 不记原始耗时，result size 随确定性结果本身确定）。
-    meta = registry._metadata.get(projected)
     latency_class = meta.get("latency_class") if isinstance(meta, dict) else None
     latency_ok, latency_detail = _classify_latency(latency_class, elapsed_s)
     checks.append(_check(stage, capability_label, latency_ok, latency_detail))

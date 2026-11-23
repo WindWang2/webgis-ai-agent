@@ -118,6 +118,11 @@ MAX_TILES_PER_RUN = 65536
 #: owner scope **值**白名单（R1-C6：与 registry / embedding_cache / reuse
 #: 同口径）—— 值含 "/" 或 ".." 会拼出 output 根路径之外的目录（穿越）。
 _SCOPE_VALUE_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
+#: run_key / run_id 白名单（同 R1-C6 口径）——run_id 进 output 目录名
+#: （``outputs/<scope>/<run_id>``）与重投影产物名
+#: （``reprojected/<run_id>_reprojected.tif``），含 "/" / ".." 即写出
+#: registry_dir 之外（目录穿越）。首字符禁 dots：裸 ".." / "." 也是逃逸。
+_RUN_KEY_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 
 
 def _prior_masks_digest(prompt: Optional[PromptSpec]) -> Optional[str]:
@@ -319,6 +324,14 @@ class InferenceEngine:
                     "(charset/length whitelist)"
                 )
         run_id = request.run_key or uuid.uuid4().hex[:16]
+        # R1-C6 同口径：run_id 进 output 目录名 / 重投影产物名 —— 未校验的
+        # run_key 含 ".." 会写出 registry_dir 之外（:763 output_dir 与
+        # :1939 重投影产物路径两个拼装点）。
+        if not _RUN_KEY_RE.match(run_id):
+            raise ModelOpsError(
+                "run_key must match ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ "
+                "(path-safe run id)"
+            )
         perf = PerfCounters()
         run_started = time.perf_counter()
         queued_from = time.perf_counter()
@@ -2079,10 +2092,21 @@ class InferenceEngine:
             from app.services.modelops.geo_output import publish_geojson_to_postgis
 
             # PostGIS 是增量通道：失败 honest skip（GeoJSON 文件已兜底）。
-            result["class_polygons"]["postgis"] = publish_geojson_to_postgis(
-                feature_collection,
-                table=request.postgis_table,
-            )
+            # 发布在推理**完成之后**调用 —— 任何逃逸异常都会让已跑完的
+            # 整次推理失败（产物已在盘上），故就地兜底为 reason。
+            try:
+                result["class_polygons"]["postgis"] = publish_geojson_to_postgis(
+                    feature_collection,
+                    table=request.postgis_table,
+                )
+            except Exception as exc:  # noqa: BLE001 — 增量通道失败不影响产物
+                logger.warning(
+                    "postgis publish to %s failed: %s", request.postgis_table, exc
+                )
+                result["class_polygons"]["postgis"] = {
+                    "published": False,
+                    "reason": f"postgis publish raised: {exc}",
+                }
         return result
 
     def _publish_raster(

@@ -135,6 +135,28 @@ class TestDurableStatisticsStore:
 
             assert db.query(DatasetStatisticsRecord).count() <= 5
 
+    def test_opportunistic_prune_runs_on_sidecar_thread(self, stats_db, monkeypatch):
+        """每 100 次 save 的机会式清理必须走旁路线程 + 硬超时（评审 P2）。
+
+        内联执行会让黑洞 DB 阻塞查询热路径，绕过 DB_TIMEOUT_S 的防护承诺。
+        """
+        import threading
+
+        store = DurableStatisticsStore(ttl_s=3600)
+        seen = {}
+        real_prune = store.prune
+
+        def _spy_prune(*, now=None):
+            seen["thread"] = threading.current_thread().name
+            return real_prune(now=now)
+
+        monkeypatch.setattr(store, "prune", _spy_prune)
+        store._save_count = 99  # 下一次 save 即触发机会式清理
+        assert store.save(
+            DatasetStatistics(dataset_fingerprint="fp-prune-sidecar", row_count=1)
+        ) is True
+        assert seen.get("thread", "").startswith("stats-db")
+
     def test_request_path_uses_durable_fallback(self, stats_db):
         """descriptor 无统计 → 进程缓存 miss → durable 命中。"""
         store = DurableStatisticsStore(ttl_s=3600)

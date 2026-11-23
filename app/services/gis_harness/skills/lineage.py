@@ -126,9 +126,17 @@ class SkillLineageStore:
                 self._total -= 1
             if not series:
                 del self._nodes[skill_id]
-        while self._total > self._capacity and self._nodes:
-            oldest = next(iter(self._nodes))
-            self._total -= len(self._nodes.pop(oldest))
+        # review P2-3：容量超限且无 inactive 节点可驱逐时，绝不整条 pop 仍含
+        # active 节点的 series（那会让 active_version() 静默变 None）——
+        # 只驱逐「全 inactive」的 series；没有可驱逐对象时容许软性超限。
+        while self._total > self._capacity:
+            victim_id = next(
+                (sid for sid, series in self._nodes.items()
+                 if not any(node.active for node in series)),
+                None)
+            if victim_id is None:
+                break
+            self._total -= len(self._nodes.pop(victim_id))
 
     def clear(self) -> None:
         self._nodes.clear()

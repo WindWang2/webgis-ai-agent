@@ -151,6 +151,35 @@ describe('MVT 层编辑拾取走权威链（P2/A02/A03）', () => {
     expect(pickMock.mock.calls[0][0].tolerancePx).toBe(6);
   });
 
+  it('权威拾取返回 null geometry（合法 GeoJSON）→ 不设 vertexTarget，拖拽 handler 不解引用 null', async () => {
+    const map = fakeMap();
+    const mapRef = { current: { getMap: () => map } } as unknown as React.RefObject<MapRef | null>;
+    act(() => {
+      useHudStore.setState({
+        layers: [MVT_LAYER] as never,
+        editTarget: { layerId: 'ref:big-0001', refId: 'ref:big-0001' },
+        activeMapTool: 'edit_vertices',
+      } as never);
+    });
+    render(<FeatureLayerEditor mapRef={mapRef} />);
+    const { click } = clickHandlers(map);
+    // 修复前：geometry ?? null 存入 vertexTarget → 同步 effect 与 onDown 的
+    // ringOf(null) 解引用 geometry.type 抛 TypeError。
+    pickMock.mockResolvedValueOnce({
+      id: 'wf1-null',
+      feature: { type: 'Feature', geometry: null, properties: { _wfid: 'wf1-null' } },
+      distPx: 0,
+    });
+    await act(async () => {
+      await click({ lngLat: { lng: 104.5, lat: 30.5 }, point: { x: 10450, y: -3050 } });
+    });
+    expect(submitMock).not.toHaveBeenCalled();
+    const calls = map.on.mock.calls as Array<[string, ...unknown[]]>;
+    const onDown = calls.find(([ev]) => ev === 'mousedown')?.[2];
+    expect(typeof onDown).toBe('function');
+    expect(() => (onDown as (e: unknown) => void)({ point: { x: 0, y: 0 }, lngLat: { lng: 0, lat: 0 } })).not.toThrow();
+  });
+
   it('权威拾取未命中 → 零提交（V04：无服务端写入）', async () => {
     const map = fakeMap();
     const mapRef = { current: { getMap: () => map } } as unknown as React.RefObject<MapRef | null>;

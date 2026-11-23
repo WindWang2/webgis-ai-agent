@@ -38,7 +38,9 @@ from app.services.gis_harness.execution_compiler.requirement_to_tasks import (
     MIN_DENSITY_POINTS,
 )
 from app.services.gis_harness.execution_compiler.units import (
+    _adjudicate_denominator,
     dimensions_compatible,
+    statistic_semantics,
     unit_dimension_of,
 )
 from app.services.gis_harness.intent import resolve_map_request_intent
@@ -207,6 +209,44 @@ class TestScientificUnitOracles:
         assert per_capita[0].verdict == "missing_denominator"
         assert any("missing_denominator" in d or "伪装率" in d
                    for d in comp.disclosures)
+
+    def test_mean_statistic_is_not_fail_open_satisfied(self):
+        """mean/median/min/max 的量纲随被统计字段而定（DEM 高程均值=m）
+        —— 声明面不得虚构 expected_unit=unitless + satisfied（fail-open）。
+        """
+        from app.services.gis_harness.execution_compiler.units import (
+            statistic_semantics,
+        )
+
+        for stat in ("mean", "median", "min", "max"):
+            semantics, unit, denom = statistic_semantics(stat)
+            assert semantics == "none"
+            assert unit == "", f"{stat} 不得虚构期望单位: {unit!r}"
+            assert denom == ""
+            verdict, detail = _adjudicate_denominator(semantics, denom, {})
+            assert verdict == "not_applicable", (
+                f"{stat} 恒返 satisfied 是无证据绑定的 fail-open")
+            assert detail
+        # count 语义仍是无分母义务的 satisfied（行为不变）
+        assert _adjudicate_denominator("count", "", {})[0] == "satisfied"
+
+    def test_workflow_row_cap_truncation_is_disclosed(self):
+        """行上限（64）截断绝不静默：被丢行必须计数披露（此前只记
+        appended，被丢族的 goal 验收证据连计数都不剩）。"""
+        existing_rows = [
+            {"capability": f"cap.{i}", "status": "complete"}
+            for i in range(63)]
+        contract = build_contract(
+            "admin_facility_distribution", workflow_id="awf.cap.disclose")
+        state = new_state(contract, contract_fingerprint="fp")
+        for entry in state.steps.values():
+            entry.state = "satisfied"
+        merged = merge_workflow_rows(
+            {"plan_id": "p", "analysis_steps": existing_rows},
+            [(state, contract)])
+        assert len(merged["analysis_steps"]) == 64
+        assert merged["analysis_workflow_row_count"] == 1
+        assert merged["analysis_workflow_rows_dropped"] == 2
 
     def test_density_gate_threshold_is_data_driven(self):
         """密度表达门槛：数据事实在场时按点数裁决；缺席=unknown 不虚构。"""

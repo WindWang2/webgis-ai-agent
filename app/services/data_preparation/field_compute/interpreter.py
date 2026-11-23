@@ -19,7 +19,7 @@ import math
 import re
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.data_preparation.field_compute.contracts import (
@@ -495,7 +495,13 @@ def _eval_call(node: ExprNode, st: _RowState) -> Value:
             digits = int(d)
         x = _num(vals[0])
         q = Decimal(1).scaleb(-digits)
-        r = float(Decimal(str(x)).quantize(q, rounding=ROUND_HALF_UP))
+        try:
+            r = float(Decimal(str(x)).quantize(q, rounding=ROUND_HALF_UP))
+        except InvalidOperation as exc:
+            # |x|≳1e28 或 to_integer 大整数：quantize 超出十进制上下文精度。
+            # 行级错误（NUMERIC_OVERFLOW），不让 InvalidOperation 逃逸成整次崩溃。
+            raise RowError("NUMERIC_OVERFLOW",
+                           f"round 结果超出十进制精度：{x!r}") from exc
         return Value.number(r, unit=vals[0].unit,
                             unit_status=vals[0].unit_status)
     if name == "sqrt":

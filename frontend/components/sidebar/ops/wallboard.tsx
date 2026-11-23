@@ -43,6 +43,13 @@ export function Wallboard({
   const [auto, setAuto] = useState(!prefersReducedMotion.current);
   const [viewIdx, setViewIdx] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // 大屏时钟：独立 tick（评审 P2）—— 原来只在 Wallboard 自身重渲染时求值，
+  // auto=false（reduced-motion 默认关或用户按 Space）后不再重渲染，时钟永久停住。
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   const containerRef = useRef<HTMLDivElement | null>(null);
   // context-panel 容器带 transform（滑入动画）—— position:fixed 会被收编为
   // 面板内定位，大屏必须 portal 到 body 才能真正覆盖全屏。
@@ -121,7 +128,7 @@ export function Wallboard({
         <div className="flex items-baseline gap-3">
           <h2 className="text-heading font-semibold">{t('knjg0dq')}</h2>
           <span className="text-meta tabular-nums text-ink-muted" data-testid="wallboard-clock">
-            {new Date().toLocaleTimeString(locale, { hour12: false })}
+            {now.toLocaleTimeString(locale, { hour12: false })}
           </span>
           <span className="text-micro text-ink-muted">
             {auto ? t('autoCarousel', { p0: CAROUSEL_INTERVAL_MS / 1000 }) : t('manualMode')}
@@ -181,11 +188,12 @@ export function Wallboard({
         ))}
       </div>
 
-      {/* 当前视图 */}
+      {/* 当前视图 —— 只挂载可见视图（评审 P2：hidden 不卸载会让两个不可见
+          面板的轮询定时器持续打后端，约 11 条通道）。 */}
       <div className="min-h-0 flex-1">
-        <div hidden={VIEWS[viewIdx].key !== 'cluster'}><ClusterDashboard ownerToken={ownerToken} variant="wallboard" /></div>
-        <div hidden={VIEWS[viewIdx].key !== 'breaker'}><BreakerPanel /></div>
-        <div hidden={VIEWS[viewIdx].key !== 'health'}><SystemHealthPanel ownerToken={ownerToken} /></div>
+        {VIEWS[viewIdx].key === 'cluster' && <ClusterDashboard ownerToken={ownerToken} variant="wallboard" />}
+        {VIEWS[viewIdx].key === 'breaker' && <BreakerPanel />}
+        {VIEWS[viewIdx].key === 'health' && <SystemHealthPanel ownerToken={ownerToken} />}
       </div>
 
       <p className="mt-3 text-micro text-ink-muted">

@@ -233,6 +233,37 @@ describe('MapHarnessCards', () => {
     }
   });
 
+  it('「稍后」dismiss 后新代次 pending 复现：卡片回归（确认不被静默跳过）', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValue(fetchJson({
+        session_id: 's1', mode: 'required', confirmed: false, pending: true,
+        required_render_seq: 5, latest_observation_seq: 7, verdict_present: true,
+      }));
+      render(<MapHarnessCards sessionId="s1" />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+
+      // 「稍后」：本次裁决的卡收起的（done=true）。
+      fireEvent.click(screen.getByTestId('display-confirm-dismiss'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+      expect(screen.queryByTestId('display-confirmation-card')).toBeNull();
+
+      // live generation 前进 → 2s debounce 复查：新观测代次仍 pending。
+      // 修复前：done 无代次归属，卡永居 null —— required 模式用户确认被静默跳过。
+      fetchMock.mockResolvedValue(fetchJson({
+        session_id: 's1', mode: 'required', confirmed: false, pending: true,
+        required_render_seq: 8, latest_observation_seq: 9, verdict_present: true,
+      }));
+      markPendingRemoved('layer-a');
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+    } finally {
+      clearPendingRemoved();
+      vi.useRealTimers();
+    }
+  });
+
   it('并发水合乱序返回：陈旧响应不覆盖新态（required pending 不被吞成已确认）', async () => {
     vi.useFakeTimers();
     try {

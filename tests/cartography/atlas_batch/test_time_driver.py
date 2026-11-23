@@ -137,6 +137,29 @@ class TestTimeDriverBinding:
         assert len(doc["sources"]["s1"]["inlineData"]["features"]) == 2
         assert doc["temporal"]["cursor_frame"] == "f-2022"
 
+    def test_writeback_hits_data_key_when_inline_data_falsy(self):
+        """review P2-6：源含 falsy inlineData + 真 data 时回写 data 键。
+
+        写 inlineData 会让渲染读取的 data 保持全量 —— 时间窗静默失效。
+        """
+        from app.services.gis_harness.temporal_products.time_filter import (
+            apply_time_window_to_doc,
+        )
+        doc = _temporal_doc([2021, 2022])
+        src = doc["sources"]["s1"]
+        src["data"] = src.pop("inlineData")
+        src["inlineData"] = None  # falsy 占位（渲染侧不会读它）
+        tw = {"frame_id": "f-2021", "label": "2021",
+              "start": "2021-01-01T00:00:00Z", "end": "2022-01-01T00:00:00Z",
+              "time_field": "year", "time_representation": "year_int",
+              "granularity": "year", "layer_id": "schools"}
+        out = apply_time_window_to_doc(doc, tw)
+        feats = out["sources"]["s1"]["data"]["features"]
+        assert [f["properties"]["year"] for f in feats] == [2021]
+        assert out["sources"]["s1"]["inlineData"] is None
+        # 输入不被动。
+        assert len(src["data"]["features"]) == 2
+
 
 class TestSvgTimeAnnotation:
     def test_temporal_note_in_svg(self):

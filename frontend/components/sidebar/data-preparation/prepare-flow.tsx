@@ -90,6 +90,10 @@ export function PrepareFlow({ sessionId: sessionIdProp, ownerToken }: PrepareFlo
     setPreview(null);
     setRoleChoices({});
     setSourceRef('');
+    // 在途 inspect/prepare 的 finally 因 epoch 不匹配永不清除（R2 #2191）——
+    // 显式复位，否则切换会话后检查/准备按钮永久卡 loading（无取消入口）。
+    setInspecting(false);
+    setPreparing(false);
     void refreshUploads();
   }, [refreshUploads]);
 

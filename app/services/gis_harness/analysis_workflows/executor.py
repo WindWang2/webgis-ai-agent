@@ -167,6 +167,10 @@ class WorkflowExecutor:
         #: 步骤只水合一次；预算门在首水合处一次性裁决）
         self._role_cache: Dict[Tuple[str, str], Tuple[
             Optional[Dict[str, Any]], str]] = {}
+        #: (role, ref) → 在途水合锁（同波多步骤经 asyncio.gather 并发消费
+        #: 同一 role: 时单飞——后到者等锁后命中缓存，同一大 FC 不被并发
+        #: 水合两次导致峰值内存翻倍）
+        self._role_locks: Dict[Tuple[str, str], asyncio.Lock] = {}
 
     # ── 输入解析 ─────────────────────────────────────────────────────────
 
@@ -271,15 +275,20 @@ class WorkflowExecutor:
                     identities[param] = ref_identity(ref, rev)
                     continue
                 cache_key = (role, ref)
-                if cache_key in self._role_cache:
-                    payload, ident = self._role_cache[cache_key]
-                else:
-                    payload, ident, hydrate_warnings = await self._hydrate(
-                        session_id, ref, param, step.step_id)
-                    warnings.extend(hydrate_warnings)
-                    if payload is None and hydrate_warnings:
-                        return None, identities, warnings
-                    self._role_cache[cache_key] = (payload, ident)
+                lock = self._role_locks.get(cache_key)
+                if lock is None:
+                    lock = asyncio.Lock()
+                    self._role_locks[cache_key] = lock
+                async with lock:
+                    if cache_key in self._role_cache:
+                        payload, ident = self._role_cache[cache_key]
+                    else:
+                        payload, ident, hydrate_warnings = await self._hydrate(
+                            session_id, ref, param, step.step_id)
+                        warnings.extend(hydrate_warnings)
+                        if payload is None and hydrate_warnings:
+                            return None, identities, warnings
+                        self._role_cache[cache_key] = (payload, ident)
                 # ADR-0284 D2：执行期衔接门（实测几何 vs 步骤语义合同）
                 gate = check_payload_semantics(
                     param, payload, step.semantic_contract)
@@ -314,7 +323,11 @@ class WorkflowExecutor:
                 if payload is None:
                     envelope = state.envelopes.get(upstream)
                     if envelope and envelope.ref and self._sd is not None:
-                        payload = await self._sd.get(session_id, envelope.ref)
+                        try:
+                            payload = await self._sd.get(
+                                session_id, envelope.ref)
+                        except Exception:  # noqa: BLE001 — ref 死亡=typed 缺失
+                            payload = None
                     if not isinstance(payload, dict):
                         warnings.append(
                             f"上游步骤 {upstream} 的产物不可水合（ref 失效）")
@@ -640,8 +653,13 @@ class WorkflowExecutor:
             twin_receipt["reused_from_step"] = twin
             state.receipts[step.step_id] = twin_receipt
             if envelope_clone.ref and self._sd is not None:
-                self._step_payloads[step.step_id] = await self._sd.get(
-                    session_id, envelope_clone.ref)  # type: ignore[assignment]
+                try:
+                    self._step_payloads[step.step_id] = await self._sd.get(
+                        session_id, envelope_clone.ref)  # type: ignore[assignment]
+                except Exception:  # noqa: BLE001 — 产物重读失败不废复用本身
+                    logger.warning(
+                        "reused step %s payload re-read failed (ref=%s)",
+                        step.step_id, envelope_clone.ref, exc_info=True)
             entry.state = "satisfied"
             entry.reason_code = ""
             entry.message = ""
@@ -669,6 +687,7 @@ class WorkflowExecutor:
         # a source ref was overwritten in place. Always re-read live identity.
         self._role_cache.clear()
         self._step_payloads.clear()
+        self._role_locks.clear()
         state.status = "running"
         state.touch()
         state.log("workflow_start", turn=self._turn)

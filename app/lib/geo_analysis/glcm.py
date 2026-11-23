@@ -19,8 +19,9 @@
 - **nodata 感知**：任一像元无效的共生对被剔除；窗口内有效对数为 0
   → 该窗口全部属性 NaN；
 - **规模守卫（先估算后分配）**：H·W·window²·n_offsets ≤ 64M 操作
-  估算，超限抛 ``ResourceScaleMismatch``；逐行分块 bincount 把峰值
-  内存钉在常数预算内（块内全量，不做流式承诺）；
+  估算，超限抛 ``ResourceScaleMismatch``；按扁平窗口轴分块 bincount
+  把峰值内存钉在常数预算内（nw·levels² ≤ 4M entries，块内全量，不做
+  流式承诺）；
 - scikit-image **不是**声明依赖——本模块零第三方依赖（numpy only），
   确定性（bincount 顺序求和）、无随机成分。
 """
@@ -260,8 +261,14 @@ def glcm_texture(
     wins_v = sliding_window_view(vpad, (window, window))
     _, n_cols = wins_q.shape[:2]
 
+    # 块预算：块内窗口数 nw ≤ chunk_windows ⇒ bincount 缓冲 nw·levels²
+    # ≤ _CHUNK_HIST_CELLS。不得按行分块：列数 > chunk_windows 时
+    # max(1,...) 会把 rows_per_chunk 兜底成 1，单块 nw = n_cols 远超
+    # 预算（宽栅格 + levels=64 → 数 GB）→ OOM。按扁平窗口轴分块使
+    # 预算与栅格宽窄解耦（P2 修复）；bincount 为精确计数、逐窗属性
+    # 相互独立 ⇒ 与旧逐行分块结果逐位一致。
     chunk_windows = max(1, _CHUNK_HIST_CELLS // (levels * levels))
-    rows_per_chunk = max(1, chunk_windows // max(1, n_cols))
+    n_windows = h * n_cols
 
     acc_sum: Dict[str, np.ndarray] = {p: np.zeros((h, w)) for p in props}
     acc_cnt: Dict[str, np.ndarray] = {p: np.zeros((h, w)) for p in props}
@@ -270,13 +277,16 @@ def glcm_texture(
         pv, qv = _pair_views(wins_q, dy, dx)
         pvm, qvm = _pair_views(wins_v, dy, dx)
         n_pair_pos = pv.shape[-2] * pv.shape[-1]
-        for r0 in range(0, h, rows_per_chunk):
-            r1 = min(r0 + rows_per_chunk, h)
-            nw = (r1 - r0) * n_cols
-            p_block = pv[r0:r1].reshape(nw, n_pair_pos)
-            q_block = qv[r0:r1].reshape(nw, n_pair_pos)
-            both = (pvm[r0:r1].reshape(nw, n_pair_pos)
-                    & qvm[r0:r1].reshape(nw, n_pair_pos))
+        for w0 in range(0, n_windows, chunk_windows):
+            w1 = min(w0 + chunk_windows, n_windows)
+            nw = w1 - w0
+            r0 = w0 // n_cols
+            r1 = -(-w1 // n_cols)          # ceil：块可能跨越行边界
+            off = w0 - r0 * n_cols
+            p_block = pv[r0:r1].reshape(-1, n_pair_pos)[off:off + nw]
+            q_block = qv[r0:r1].reshape(-1, n_pair_pos)[off:off + nw]
+            both = (pvm[r0:r1].reshape(-1, n_pair_pos)[off:off + nw]
+                    & qvm[r0:r1].reshape(-1, n_pair_pos)[off:off + nw])
             win_idx = np.repeat(
                 np.arange(nw, dtype=np.int64), n_pair_pos,
             ).reshape(nw, n_pair_pos)
@@ -287,12 +297,12 @@ def glcm_texture(
                 nw, levels, levels)
             counts = counts + counts.transpose(0, 2, 1)     # P+Pᵀ 对称约定
             block_props = _properties_from_counts(counts, levels)
-            shape2 = (r1 - r0, n_cols)
             for name in props:
-                vals = block_props[name].reshape(shape2)
+                vals = block_props[name]
                 finite = np.isfinite(vals)
-                acc_sum[name][r0:r1] += np.where(finite, vals, 0.0)
-                acc_cnt[name][r0:r1] += finite
+                # 扁平窗口轴回写（(h,w) C 连续 ⇒ reshape(-1) 为视图）
+                acc_sum[name].reshape(-1)[w0:w1] += np.where(finite, vals, 0.0)
+                acc_cnt[name].reshape(-1)[w0:w1] += finite
         del pv, qv, pvm, qvm
 
     # 多方向 = NaN 感知均值（graycoprops 惯例；全方向退化 → NaN）。

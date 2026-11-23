@@ -168,6 +168,35 @@ class TestRasterTerrainLane:
         assert body["ref_registration_error"] is None
         assert body["terrain"]["qualification"] == "analysis_grade"
 
+    async def test_dedup_hit_still_runs_vector_lane(self, client):
+        """A1（评审）续：幂等命中同样不得静默跳过矢量摄入车道。
+
+        场景：首传未开 register_ref → 同内容再传开 register_ref —— dedup
+        命中分支此前只补跑栅格车道，矢量整个跳过：session_ref 与
+        ref_registration_error 双双为 None，登记静默不发生且无披露。
+        """
+        # 首传：不开 register_ref（无车道）
+        r1 = await client.post(
+            "/api/v1/upload",
+            files={"files": ("a.geojson", _GEOJSON_BYTES, "application/geo+json")},
+            data={"session_id": "sess-vector-lane-2"},
+        )
+        assert r1.status_code == 200, r1.text
+        assert r1.json().get("deduplicated") is not True
+        assert r1.json().get("session_ref") is None
+
+        # 再传：同内容 + register_ref → dedup 命中，但矢量车道必须补跑
+        r2 = await client.post(
+            "/api/v1/upload",
+            files={"files": ("a.geojson", _GEOJSON_BYTES, "application/geo+json")},
+            data={"session_id": "sess-vector-lane-2", "register_ref": "true"},
+        )
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["deduplicated"] is True
+        assert body["session_ref"], "矢量 dedup 命中必须补跑 V3 摄入车道并登记 ref"
+        assert body["ref_registration_error"] is None
+
     async def test_missing_datum_declaration_is_display_only(self, client, app_and_db):
         r = await client.post(
             "/api/v1/upload",

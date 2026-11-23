@@ -155,6 +155,63 @@ class TestDetectOtherRepresentations:
         probe = detect_time_binding(_fc([{"year": y} for y in YEARS]))
         assert probe.semantics == "snapshot"  # 年对齐值 → 快照语义
 
+    def test_unknown_explicit_granularity_refused(self):
+        # review P2-5：未知显式粒度不得被兜底成 hour（否则 day 精度边界串
+        # lo==hi，所有帧过滤为空且无拒绝码）。
+        probe = detect_time_binding(
+            _fc([{"d": f"2023-{m:02d}-15"} for m in (1, 2, 4)]),
+            granularity="fortnight",
+        )
+        assert not probe.ok
+        assert probe.code == "invalid_granularity"
+
+    def test_probe_bounds_retained_field_values(self):
+        # review P2-4：自动探测只为评分保留有界样本，不再把每个特征的每个
+        # 属性值全量常驻（50k 特征 × 20 属性 = 100 万对象）。
+        import weakref
+
+        from app.services.gis_harness.temporal_products.frames import (
+            _MAX_PROBE_SAMPLE,
+            probe_fc_time_field,
+        )
+
+        n_features, n_lazy = 9000, 12
+        live_at_end: list = []
+
+        class _Value:
+            """按需生成的属性值：存活数 = 探测器实际留存数。"""
+
+            live: "weakref.WeakSet" = weakref.WeakSet()
+
+            def __init__(self) -> None:
+                _Value.live.add(self)
+
+        class _LazyProps(dict):
+            """properties：非时间字段的值在迭代时才生成（输入不持有它们）。"""
+
+            def items(self):
+                for k, v in super().items():
+                    yield (k, _Value() if k.startswith("f") else v)
+                live_at_end.append(len(_Value.live))
+
+        features = []
+        for i in range(n_features):
+            props = _LazyProps({"year": 2020 + (i % 3)})
+            for j in range(n_lazy):
+                props[f"f{j}"] = None
+            features.append(
+                {"type": "Feature", "geometry": None, "properties": props})
+        fc = {"type": "FeatureCollection", "features": features}
+
+        field, sample, all_values = probe_fc_time_field(fc)
+        assert field == "year"
+        assert len(all_values) == n_features
+        assert sample[:3] == [2020, 2021, 2022]
+        bound = n_lazy * _MAX_PROBE_SAMPLE
+        # 探测期任一时点不得常驻全部值（未修复时 = 9000×12 全量常驻）。
+        assert live_at_end[-1] < n_features * n_lazy, (
+            f"探测期常驻 {live_at_end[-1]} 个非时间字段值（应有界 ≤ {bound}）")
+
 
 class TestGranularityFromSpan:
     def test_five_years_of_hours_coarsens(self):

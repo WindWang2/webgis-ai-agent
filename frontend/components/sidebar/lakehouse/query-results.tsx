@@ -73,7 +73,9 @@ export function QueryResults({
         frame,
         nodata:
           labeledResult.attrs.nodata_per_variable?.[name] ?? labeledResult.attrs.nodata,
-        steps: (labeledResult.coords.time as Array<number | string>).length || 1,
+        // 评审 P2：coords.time 可能缺席（labeled 只选 bbox/tags）—— 未判空即取
+        // .length 会抛 TypeError 白屏。
+        steps: (Array.isArray(labeledResult.coords.time) ? labeledResult.coords.time.length : 0) || 1,
       };
     }
     return null;

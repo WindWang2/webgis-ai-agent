@@ -1373,7 +1373,10 @@ def _check_label_collision(
             top_n = max(int(label_spec["topN"]), 0)
             band_ratio = _label_band_top_ratio(label_spec, float(zoom))
             cap = float(top_n) * band_ratio
-            est_labels = min(est_labels, cap * coverage)
+            # 钳到 topN × 档内 topRatio（docstring 契约）——est_labels 已乘
+            # bbox 可见覆盖率，再乘一次 coverage 会把注记数低估
+            # coverage 倍，拥挤误判 pass。
+            est_labels = min(est_labels, cap)
             strategy_evidence.update({
                 "top_n": top_n, "band_top_ratio": band_ratio,
                 "effective_labels": int(est_labels),

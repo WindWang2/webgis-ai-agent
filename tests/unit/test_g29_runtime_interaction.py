@@ -484,6 +484,37 @@ async def test_invalidate_turn_kills_pending(fresh_service):
     assert out["result"] == "duplicate" and out["state"] == "invalidated"
 
 
+@pytest.mark.asyncio
+async def test_invalidate_turn_cancels_host_policy_dialog(fresh_service):
+    """P2 regression：invalidate_turn 只把 PENDING/ANSWER_WRITTEN 翻成
+    INVALIDATED 并 _emit_update，**不向 stdin 排队 deferred cancel**。
+    无原生 timeout 的 dialog（宿主策略期限那一类）在 vendor
+    侧没有自行 resolve 的兑底，其 promise 会永久挂起（心跳清扫
+    只宩单 pending/answer_written，INVALIDATED 记录永不被复审，缺失不可恢复）。
+    必须与 expire_due 的宿主策略期限分支同片排队 cancelled:true。"""
+    record, rpc, bridge, entry = _make_record(fresh_service)
+    assert record.native_timeout_ms is None  # select 无原生 timeout → 宿主策略期限
+    count = fresh_service.invalidate_turn("sess-A", "turn-A", "turn-teardown")
+    assert count == 1
+    assert record.state is InteractionState.INVALIDATED
+    flushed = await fresh_service.flush_deferred_writes()
+    assert flushed == 1
+    assert rpc.sent == [
+        {"type": "extension_ui_response", "id": "nat-1", "cancelled": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invalidate_turn_leaves_native_timeout_dialog_to_vendor(fresh_service):
+    """带原生 timeout 的 dialog：vendor 自行 resolve 默认值 —— 与
+    expire_due 同款，不写 stdin（迟到写对 vendor 无害但状态不诚实）。"""
+    record, rpc, bridge, entry = _make_record(fresh_service, native_timeout_ms=3000)
+    fresh_service.invalidate_turn("sess-A", "turn-A", "turn-teardown")
+    assert record.state is InteractionState.INVALIDATED
+    assert await fresh_service.flush_deferred_writes() == 0
+    assert rpc.sent == []
+
+
 def test_waiting_for_user_budget_hook(fresh_service):
     record, rpc, bridge, entry = _make_record(fresh_service)
     assert fresh_service.waiting_for_user("turn-A") is True

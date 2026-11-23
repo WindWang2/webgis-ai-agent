@@ -299,6 +299,9 @@ def apply_time_window_to_doc(
     payload = src.get("inlineData") or src.get("data")
     if not isinstance(payload, dict) or not isinstance(payload.get("features"), list):
         return doc
+    # review P2-6：回写键 = 实际承载 payload 的键。源同时含 falsy inlineData
+    # 与真 data 时写 inlineData，会让渲染读取的 data 保持全量 —— 时间窗静默失效。
+    payload_key = "inlineData" if src.get("inlineData") else "data"
 
     kept = [
         f for f in payload["features"]
@@ -308,10 +311,7 @@ def apply_time_window_to_doc(
 
     new_payload = {**payload, "features": kept}
     new_src = {**src}
-    if "inlineData" in new_src:
-        new_src["inlineData"] = new_payload
-    else:
-        new_src["data"] = new_payload
+    new_src[payload_key] = new_payload
     new_sources = {**sources, target_sid: new_src}
 
     # temporal cursor 盖章（本页帧）—— SVG 时间注记/导出证据随页正确。

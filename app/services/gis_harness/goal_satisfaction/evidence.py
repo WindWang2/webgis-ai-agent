@@ -289,21 +289,12 @@ def build_evidence_registry(
     checked_revision = str(block.get("checked_revision") or "")
     evidence: List[GoalEvidence] = []
     # 优先级即截断序（review P2-5）：产品裁决/制图评审/导出回执/角色资格
-    # 先入（关键裁决证据不得被大章节的行证据挤出 64 上界），行证据殿后。
+    # 先入（关键裁决证据不得被大章节的行证据挤出 64 上界），行证据殿后；
+    # 能力回执投影再殿后（只读披露面，语义闸不经此表 —— 见下方注释）。
     evidence.extend(_map_product_evidence(map_product))
     evidence.extend(_frame_product_evidence(map_product))
     evidence.extend(_cartography_review_evidence(cartographic_review))
     evidence.extend(_export_receipt_evidence(chapter, checked_revision))
-    # G28 P1：新能力权威回执（G14/G17/G18/G19/G20/G10）—— 生产收集器
-    # 只读投影；bundle 缺席/关闭 = 旧形状（零漂移）。
-    if receipts is not None:
-        from .receipts import receipt_evidence_rows
-
-        evidence.extend(receipt_evidence_rows(
-            receipts,
-            session_id=str(chapter.get("session_id")
-                           or block.get("session_id") or ""),
-        ))
     contract = _dict(chapter.get("workflow_contract"))
     for role in _rows(contract.get("roles"))[:8]:
         role_name = str(role.get("role") or "")[:32]
@@ -329,6 +320,19 @@ def build_evidence_registry(
         _rows(chapter.get("data_requirements")),
         source="chapter:data_requirements", prefix="data",
     ))
+    # G28 P1：新能力权威回执（G14/G17/G18/G19/G20/G10）—— 生产收集器
+    # 只读投影；bundle 缺席/关闭 = 旧形状（零漂移）。
+    # **必须在行证据之后入表**：bundle 可达 34 行，先入会把 analysis 行证据
+    # 挤出 64 上界 → 分析需求恒 pending、全局永不定（行证据驱动需求裁决，
+    # 回执投影只是披露面 —— 语义闸另走 receipts 参数，不经此表）。
+    if receipts is not None:
+        from .receipts import receipt_evidence_rows
+
+        evidence.extend(receipt_evidence_rows(
+            receipts,
+            session_id=str(chapter.get("session_id")
+                           or block.get("session_id") or ""),
+        ))
     priority = {EvidenceStatus.PRESENT: 0, EvidenceStatus.ABSENT: 1, EvidenceStatus.STALE: 2, EvidenceStatus.FAILED: 3}
     grouped = {}
     for item in evidence:

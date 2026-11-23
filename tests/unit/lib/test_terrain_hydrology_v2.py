@@ -551,3 +551,35 @@ def test_algorithm_registry_and_parity_clean():
         if "terrain." in issue
     ]
     assert parity == []
+
+def test_fill_depressions_meta_finite_with_invalid_cells():
+    """P2 修复：DEM 含 NaN/±Inf/nodata 无效像元时 lift 必须按 valid 掩膜。
+
+    旧实现 lift=filled−z 含无效像元的 NaN/Inf → filled_volume 与
+    max_fill_depth 写入 nan（filled_cell_count 仍正确）—— JSON 序列化
+    产出非法 NaN；chunked 版本作为参考解的 max_fill_depth 变 nan 还使
+    近似收敛比对失去基准。
+    """
+    import json
+
+    z = _pit_dem()
+    z[0, 0] = np.nan            # 非有限无效像元
+    z[6, 6] = np.inf            # 非有限无效像元
+    z[2, 5] = -9999.0           # 声明 nodata 的无效像元
+
+    filled, meta = tlib.fill_depressions(z, 2.0, nodata=-9999.0)
+    assert math.isfinite(meta["filled_volume"]), meta
+    assert math.isfinite(meta["max_fill_depth"]), meta
+    # 无效像元不改变有效像元的填充语义：坑仍精确填到溢流高程 0
+    assert float(filled[3, 3]) == 0.0
+    assert meta["filled_cell_count"] == 1
+    assert meta["filled_volume"] == pytest.approx(5.0)
+    assert meta["max_fill_depth"] == pytest.approx(5.0)
+    json.dumps(meta, allow_nan=False)   # 旧实现在此抛 ValueError（nan）
+
+    # chunked（w=7 < 64 → 单带全量路径）：同样不得产出 nan 元数据
+    fch, mch = tlib.fill_depressions_chunked(z, 2.0, nodata=-9999.0)
+    assert math.isfinite(mch["filled_volume"]), mch
+    assert math.isfinite(mch["max_fill_depth"]), mch
+    assert mch["max_fill_depth"] == pytest.approx(5.0)
+    json.dumps(mch, allow_nan=False)

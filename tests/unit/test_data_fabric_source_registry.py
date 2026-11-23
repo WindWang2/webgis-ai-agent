@@ -134,6 +134,72 @@ def test_unknown_get_is_loud():
     assert "unknown source_id" in str(exc.value)
 
 
+def test_failed_reload_keeps_previous_registry(tmp_path):
+    """评审 P2：load() 不得先清空再解析 —— 任一坏 YAML 抛错离开时，上一份
+    完好注册表必须保持可用（否则每次 get() 都报 known: []，retrieval 侧
+    静默降级成零卡片）。"""
+    _write(tmp_path, "a.yaml", dict(_VALID))
+    service = SourceRegistryService(tmp_path).load()
+    assert service.get("test_src").name == "Test Source"
+    _write(tmp_path, "b.yaml", dict(_VALID, source_id="broken_src", protocol="carrier_pigeon"))
+    with pytest.raises(SourceRegistryError):
+        service.load()
+    # 旧注册表原样可用：不掏空、不静默跳过
+    assert service.get("test_src").name == "Test Source"
+    assert [s.source_id for s in service.list_sources()] == ["test_src"]
+
+
+def test_get_during_reload_never_sees_emptied_registry(tmp_path, monkeypatch):
+    """并发：A 线程热重载解析期间，B 线程 get() 绝不读到空注册表。"""
+    import threading
+    import time as _time
+
+    _write(tmp_path, "a.yaml", dict(_VALID))
+    service = SourceRegistryService(tmp_path).load()
+    _write(tmp_path, "b.yaml", dict(_VALID, source_id="test_src2", name="Second"))
+    in_parse = threading.Event()
+    release = threading.Event()
+    real_parse = service._parse_file
+
+    def _slow_parse(path):
+        if path.name == "b.yaml":
+            in_parse.set()
+            assert release.wait(10)
+        return real_parse(path)
+
+    monkeypatch.setattr(service, "_parse_file", _slow_parse)
+    failures = []
+
+    def _reload():
+        try:
+            service.load()
+        except Exception as exc:  # noqa: BLE001
+            failures.append(exc)
+
+    def _reader():
+        assert in_parse.wait(10)
+        # 0.5s 节流窗内 force=False → 不触发重载，直读 _loaded（正是缺陷窗口）
+        service._last_reload_check = _time.monotonic()
+        for _ in range(20):
+            try:
+                service.get("test_src")
+            except Exception as exc:  # noqa: BLE001
+                failures.append(exc)
+                return
+
+    t_reload = threading.Thread(target=_reload, daemon=True)
+    t_reader = threading.Thread(target=_reader, daemon=True)
+    t_reload.start()
+    t_reader.start()
+    assert in_parse.wait(10)
+    release.set()
+    t_reload.join(10)
+    t_reader.join(10)
+    assert not t_reload.is_alive() and not t_reader.is_alive()
+    assert failures == []
+    assert service.get("test_src").name == "Test Source"
+
+
 # ── Fabric bridge ────────────────────────────────────────────────────────────
 
 

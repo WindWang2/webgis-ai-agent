@@ -195,6 +195,11 @@ export function FieldComputePanel({ sessionId: sessionIdProp, ownerToken }: Fiel
     setExecError(null);
     setStaleHint(false);
     setCancelled(false);
+    // 在途请求的 finally 因代次不匹配永不清除（R2 #2191）—— 这里显式复位，
+    // 否则切换会话后 describe/preview/execute 按钮永久禁用（无取消入口）。
+    setDescribeLoading(false);
+    setPreviewing(false);
+    setExecuting(false);
     void refreshUploads();
   }, [refreshUploads]);
 

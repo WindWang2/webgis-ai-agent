@@ -972,6 +972,108 @@ describe('#1745 面板盒高钳位', () => {
   });
 });
 
+// ── #1745（5）：_clipText 二分裁剪（O(n²) → O(log n)）────────────────────
+
+describe('#1745 _clipText 二分裁剪', () => {
+  /** measureText 宽度 = 串长 × charWidth（对串长单调），并计数调用次数。 */
+  function clipCtx(charWidth: number) {
+    const state = { measureCalls: 0 };
+    const calls: Array<{ op: string; args: unknown[] }> = [];
+    const rec = (op: string) => (...a: unknown[]) => calls.push({ op, args: a });
+    const ctx: any = {
+      fillText: rec('fillText'),
+      fillRect: rec('fillRect'),
+      strokeRect: rec('strokeRect'),
+      beginPath: rec('beginPath'),
+      moveTo: rec('moveTo'),
+      lineTo: rec('lineTo'),
+      closePath: rec('closePath'),
+      fill: rec('fill'),
+      stroke: rec('stroke'),
+      rotate: rec('rotate'),
+      translate: rec('translate'),
+      arc: rec('arc'),
+      arcTo: rec('arcTo'),
+      save: () => {},
+      restore: () => {},
+      createLinearGradient: () => ({ addColorStop: () => {} }),
+      measureText: (t: string) => {
+        state.measureCalls += 1;
+        return { width: t.length * charWidth };
+      },
+    };
+    return { ctx, calls, state };
+  }
+
+  it('长属性值单元格：measureText 调用对数级（逐字符回扫是 O(len²)）', () => {
+    const long = 'x'.repeat(5000);
+    const table = buildExportTableData('T', [{ v: long }]);
+    expect(table).toBeTruthy();
+    const { ctx, calls, state } = clipCtx(1);
+    drawChromeTable(
+      { ctx, ...DRAW_BASE },
+      { kind: 'table', anchor: 'top-left', table: table! },
+      { marginX: 40 },
+    );
+    // 5000 字符：线性回扫 ≈ 4700+ 次 measureText；二分 ≈ log2(5000) ≈ 13 次。
+    expect(state.measureCalls).toBeLessThan(50);
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    // 裁剪结果与线性回扫一致：最长可容纳前缀 + '…'（colW=296 → maxW=288）。
+    expect(texts).toContain(`${'x'.repeat(287)}…`);
+  });
+
+  it('未超宽文本原样返回（不追加省略号）', () => {
+    const table = buildExportTableData('T', [{ v: 'short' }]);
+    const { ctx, calls, state } = clipCtx(1);
+    drawChromeTable(
+      { ctx, ...DRAW_BASE },
+      { kind: 'table', anchor: 'top-left', table: table! },
+      { marginX: 40 },
+    );
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    expect(texts).toContain('short');
+    expect(state.measureCalls).toBeGreaterThan(0);
+  });
+});
+
+// ── 图例绑定缺失：不得回退别层同类型 legend_spec ──────────────────────────
+
+describe('buildExportChrome — 图例绑定缺失语义', () => {
+  it('绑定层无 legend_spec 时不挂别层图例，改发 component_skipped_invalid', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'lg', type: 'legend', options: { layerId: 'a' } })]),
+        viewport: VIEWPORT,
+        // 只有别层（b）有同类型 spec —— 旧实现按类型兜底发现把它挂进导出件。
+        legendSpecsByLayer: {
+          b: { type: 'graduated', field: '别层字段', breaks: [0, 1], palette: 'Blues', palette_colors: ['#eff3ff', '#08519c'] } as any,
+        },
+      },
+      CANVAS,
+    );
+    expect(model.legend).toBeUndefined();
+    expect(model.legends).toEqual([]);
+    expect(model.degradations).toContainEqual(
+      expect.objectContaining({ code: 'component_skipped_invalid', componentId: 'lg' }),
+    );
+  });
+
+  it('未绑定 layerId 的实例仍按类型兜底发现一次（HUD 语义不回归）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'lg', type: 'legend', options: {} })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {
+          b: { type: 'graduated', field: '别层字段', breaks: [0, 1], palette: 'Blues', palette_colors: ['#eff3ff', '#08519c'] } as any,
+        },
+      },
+      CANVAS,
+    );
+    expect(model.legend?.legendSpec).toMatchObject({ field: '别层字段' });
+    expect(model.degradations).toEqual([]);
+  });
+});
+
 // ── G3D05（ADR-0275）：透视比例尺披露注记 ──────────────────────────────
 
 describe('drawChromeScaleBar perspective note (G3D05)', () => {

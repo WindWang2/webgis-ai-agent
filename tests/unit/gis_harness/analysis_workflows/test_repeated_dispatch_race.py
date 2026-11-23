@@ -244,3 +244,118 @@ async def test_cancelling_wave_preserves_task_cancellation():
     assert producer_cancelled.is_set()
     assert all(entry.state != "satisfied" for entry in state.steps.values())
     assert state.envelopes == state.receipts == {}
+
+
+# ── 同波并发：role 水合单飞 + store 失败不得逃出 execute ──────────────────
+
+
+async def test_same_wave_role_hydration_is_single_flight():
+    """同波多步骤消费同一 role:（asyncio.gather 并发）→ 只水合一次。
+
+    在途去重缺失时，await 期间缓存未写入，同一大 FC 被并发水合两次
+    （峰值内存翻倍）—— 后到者必须等在途锁并命中缓存。
+    """
+    from app.services.gis_harness.analysis_workflows.contracts import (
+        DataRoleBinding,
+    )
+
+    get_calls: list = []
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class Store:
+        async def get_ref_descriptor(self, session_id, ref):
+            return {"feature_count": 1, "content_revision": 1}
+
+        async def get(self, session_id, ref):
+            get_calls.append(ref)
+            entered.set()
+            await release.wait()
+            return FC
+
+    async def dispatch(tool, args, session_id):
+        assert args["points"] == FC
+        return {"success": True}
+
+    contract = _contract(
+        AnalysisStepSpec(step_id="a", tool_name="t1",
+                         role_inputs={"points": "role:subject"}),
+        AnalysisStepSpec(step_id="b", tool_name="t2",
+                         role_inputs={"points": "role:subject"}),
+    )
+    contract.data_contracts["subject"] = DataRoleBinding(
+        role="subject", ref="ref:geojson-subject")
+    state = new_state(contract, contract_fingerprint="fp")
+    executor = WorkflowExecutor(registry=None, session_data=Store(),
+                                dispatch=dispatch)
+    task = asyncio.create_task(executor.execute(SESSION, contract, state))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        # 让第二个步骤到达在途锁（阻塞在锁上，不发起第二次 get）
+        await asyncio.sleep(0.02)
+        assert len(get_calls) == 1, (
+            f"同一 role 被并发水合 {len(get_calls)} 次（峰值内存翻倍）")
+    finally:
+        release.set()
+        await asyncio.wait_for(task, timeout=5)
+    assert state.status == "satisfied"
+    assert len(get_calls) == 1
+
+
+async def test_step_upstream_store_failure_is_typed_not_escaping():
+    """上游产物 ref 水合时 store 抛错 → typed blocked，异常不得逃出 execute
+    （否则步骤卡 running、status 未定稿、末尾 persist 不执行）。"""
+
+    class Store:
+        async def get(self, session_id, ref):
+            raise OSError("ref store unavailable")
+
+    async def dispatch(tool, args, session_id):
+        return {"success": True, "result_ref": "ref:geojson-a"}
+
+    contract = _contract(
+        AnalysisStepSpec(step_id="a", tool_name="producer"),
+        AnalysisStepSpec(step_id="b", tool_name="consumer",
+                         role_inputs={"geojson": "step:a"},
+                         depends_on=("a",)),
+    )
+    state = new_state(contract, contract_fingerprint="fp")
+    executor = WorkflowExecutor(registry=None, session_data=Store(),
+                                dispatch=dispatch)
+    await asyncio.wait_for(executor.execute(SESSION, contract, state), timeout=5)
+    assert state.steps["a"].state == "satisfied"
+    assert state.steps["b"].state == "blocked"
+    assert "不可水合" in state.steps["b"].message
+    assert state.status != "satisfied"
+    assert state.status != "running"
+
+
+async def test_repeated_step_reuse_survives_payload_reread_failure():
+    """复用步骤的产物重读失败（store 抛错）不得逃出 execute —— 复用本身
+    成立（envelope 克隆已落），payload 缓存缺省由后续水合补。"""
+    calls = 0
+
+    class Store:
+        async def store(self, session_id, payload, *, prefix):
+            return "ref:geojson-a"
+
+        async def get(self, session_id, ref):
+            raise OSError("ref store unavailable")
+
+    async def dispatch(tool, args, session_id):
+        nonlocal calls
+        calls += 1
+        return ({"success": True, "result_ref": "ref:geojson-a"}
+                if calls == 1 else _repeat())
+
+    contract = _contract(
+        AnalysisStepSpec(step_id="a", tool_name="producer"),
+        AnalysisStepSpec(step_id="b", tool_name="producer", depends_on=("a",)),
+    )
+    state = new_state(contract, contract_fingerprint="fp")
+    executor = WorkflowExecutor(registry=None, session_data=Store(),
+                                dispatch=dispatch)
+    await asyncio.wait_for(executor.execute(SESSION, contract, state), timeout=5)
+    assert state.status == "satisfied"
+    assert state.steps["b"].state == "satisfied"
+    assert state.receipts["b"]["reused_from_step"] == "a"

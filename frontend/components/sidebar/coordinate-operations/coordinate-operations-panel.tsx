@@ -57,7 +57,23 @@ export function CoordinateOperationsPanel({
   const [describing, setDescribing] = useState(false);
   const [targetCrs, setTargetCrs] = useState('EPSG:32650');
   const [crsLookup, setCrsLookup] = useState<CrsLookupView | null>(null);
-  const [aoi, setAoi] = useState<AoiInput | null>(null);
+  // AOI 四格按文本维护：只有四格全部填了有限数字才算「显式 AOI」——
+  // 缺格/清空都保持未设定，绝不以 0 兜底拼出用户从未输入的范围
+  // （评审 P2：{west:0,…} 退化 bbox 会被 aoi_derivation='explicit' 当真保存）。
+  const [aoiText, setAoiText] = useState<Record<keyof AoiInput, string>>({
+    west: '', south: '', east: '', north: '',
+  });
+  const aoi = useMemo<AoiInput | null>(() => {
+    const nums: Record<string, number> = {};
+    for (const k of ['west', 'south', 'east', 'north'] as const) {
+      const raw = aoiText[k].trim();
+      if (!raw) return null;
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return null;
+      nums[k] = n;
+    }
+    return nums as unknown as AoiInput;
+  }, [aoiText]);
   const [listing, setListing] = useState<OperationsListing | null>(null);
   const [listingLoading, setListingLoading] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null);
@@ -381,14 +397,8 @@ export function CoordinateOperationsPanel({
             <div className="mt-1 grid grid-cols-4 gap-1">
               {(['west', 'south', 'east', 'north'] as const).map((k) => (
                 <input key={k} type="number" step="0.0001" placeholder={k}
-                  value={aoi?.[k] ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value === '' ? null : Number(e.target.value);
-                    setAoi((prev) => {
-                      const base = prev ?? { west: 0, south: 0, east: 0, north: 0 };
-                      return { ...base, [k]: v ?? 0 };
-                    });
-                  }}
+                  value={aoiText[k]}
+                  onChange={(e) => setAoiText((prev) => ({ ...prev, [k]: e.target.value }))}
                   className="rounded border border-border px-1 py-1" />
               ))}
             </div>

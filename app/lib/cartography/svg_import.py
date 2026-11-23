@@ -693,6 +693,13 @@ def _emit(
             for prim in target:
                 state.primitives.append(
                     _shift_primitive(prim, m))
+                # 评审（P2 perf）：use 展开放大**边扩边校验** —— 此前
+                # MAX_PRIMITIVES 只在整树走完后(:import_svg_asset)校验，
+                # N 次 use × M 图元可把峰值内存放大约 400 倍才被拒。
+                if len(state.primitives) > MAX_PRIMITIVES:
+                    raise SymbolAssetError(
+                        "SVG_TOO_MANY_PRIMITIVES",
+                        f"{len(state.primitives)} > {MAX_PRIMITIVES}")
         finally:
             state.use_stack.pop()
     # g/defs/svg 由 _walk 递归；其余 tag 不该到这里（_walk 已过滤）。
@@ -843,6 +850,13 @@ def _walk(
                           in_defs=False, root=root)
             else:
                 _emit(sub, el, own_matrix, inherited2)
+            # 评审（P2 perf）：defs 子树的节点数并入**全局**节点预算 ——
+            # 此前子节点走独立 _ImportState 计数，defs 内的 use 放大不占
+            # MAX_INPUT_NODES（节点预算对 defs 内容形同虚设）。
+            state.nodes += sub.nodes
+            if state.nodes > MAX_INPUT_NODES:
+                raise SymbolAssetError(
+                    "SVG_TOO_MANY_NODES", f"节点数超 {MAX_INPUT_NODES}")
             state.defs[el.get("id", "")] = sub.primitives
             return
     if tag in ("path", "rect", "circle", "ellipse", "line", "polygon", "polyline", "use"):

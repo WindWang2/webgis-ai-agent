@@ -14,6 +14,7 @@ import type { MapSpec } from '@/lib/mapspec-compiler/types';
 const rmg = vi.hoisted(() => ({
   map: null as ReturnType<typeof makeMockMaplibreMap> | null,
   lostHandlers: new Set<() => void>(),
+  mapMounts: 0,
 }));
 
 vi.mock('react-map-gl/maplibre', () => {
@@ -21,6 +22,7 @@ vi.mock('react-map-gl/maplibre', () => {
   const MapMock = React.forwardRef(function MapMock(props: any, ref: any) {
     React.useImperativeHandle(ref, () => ({ getMap: () => rmg.map }), []);
     React.useEffect(() => {
+      rmg.mapMounts += 1;
       const t = setTimeout(() => props.onLoad?.(), 0);
       return () => clearTimeout(t);
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -84,6 +86,16 @@ afterEach(() => {
 });
 
 describe('FrameViewport 生命周期（P4）', () => {
+  it('挂载只建一张地图：key 不含首渲染为 null 的登记代际（g0→g1 翻 key）', async () => {
+    rmg.mapMounts = 0;
+    const { unmount } = mount();
+    await waitFor(() => expect(rmg.mapMounts).toBeGreaterThanOrEqual(1));
+    // onLoad → mapReady 重渲染：修复前 key 由 g0 翻到 g1，首张地图被弃后重挂。
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(rmg.mapMounts).toBe(1);
+    unmount();
+  });
+
   it('挂载登记预算槽位；卸载释放（A09/A26）', async () => {
     const { unmount } = mount();
     await waitFor(() => expect(mapInstanceRegistry.has('frame:fp-1')).toBe(true));

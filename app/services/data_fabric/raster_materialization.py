@@ -95,6 +95,9 @@ async def publish_cog_artifact(
         try:
             if source_path.resolve().parent == final_path.parent.resolve():
                 os.replace(source_path, final_path)
+                # 同目录发布不走 tmp：先前 mkstemp 造出的空 .tmp 必须删掉，
+                # 否则每次发布在会话目录泄漏一个孤儿临时文件。
+                tmp_path.unlink(missing_ok=True)
             else:
                 import shutil
 

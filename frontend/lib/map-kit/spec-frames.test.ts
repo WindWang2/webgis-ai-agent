@@ -3,7 +3,7 @@
  * view→extent 换算与后端 publication _frame_geometry 同口径。
  */
 import { describe, expect, it } from 'vitest';
-import { specFramesToExportFrames } from './spec-frames';
+import { productFramesToExportFrames, specFramesToExportFrames } from './spec-frames';
 
 describe('spec-frames 适配（W9）', () => {
   it('extent / title / enabled 过滤', () => {
@@ -48,5 +48,57 @@ describe('spec-frames 适配（W9）', () => {
   it('undefined / 非数组安全', () => {
     expect(specFramesToExportFrames(undefined).frames).toEqual([]);
     expect(specFramesToExportFrames(null).frames).toEqual([]);
+  });
+});
+
+describe('productFramesToExportFrames — where 谓词', () => {
+  function run(where: unknown) {
+    return productFramesToExportFrames({
+      layout: { frames: [{ id: 'f1', title: '第一页', extent: [1, 2, 3, 4] }] },
+      frame_product: {
+        enabled: true,
+        frames: [{ frame_id: 'f1', data: { layer_id: 'l', where } }],
+      },
+    } as never);
+  }
+
+  it('eq 谓词投影为 ExportFrame.where', () => {
+    const r = run({ op: 'eq', field: 'year', value: 2022 });
+    expect(r.frames).toHaveLength(1);
+    expect(r.frames[0].where).toEqual({ layerId: 'l', field: 'year', equal: 2022 });
+    expect(r.limitations).not.toContain('client_canvas_no_non_eq_where');
+  });
+
+  it('非 eq 谓词（neq/in/gt）不被静默丢弃 —— 进 limitations', () => {
+    // 旧实现：where.op 非 eq 时 hasWhere=false，有 extent 仍产出帧但过滤
+    // 条件整体丢弃且无任何披露（静默近似为纯范围帧）。
+    for (const op of ['neq', 'in', 'gt']) {
+      const r = run({ op, field: 'year', value: 2022 });
+      expect(r.frames).toHaveLength(1);
+      expect(r.frames[0].where).toBeUndefined();
+      expect(r.limitations).toContain('client_canvas_no_non_eq_where');
+    }
+  });
+
+  it('残缺 where（缺 op / 缺 field）同样披露', () => {
+    for (const where of [{ field: 'year', value: 1 }, { op: 'eq', value: 1 }, { op: 'eq', field: 'year' }]) {
+      const r = run(where);
+      expect(r.frames).toHaveLength(1);
+      expect(r.frames[0].where).toBeUndefined();
+      expect(r.limitations).toContain('client_canvas_no_non_eq_where');
+    }
+  });
+
+  it('无 extent 的非 eq 谓词帧仍计 skippedCount（不计入 limitations）', () => {
+    const r = productFramesToExportFrames({
+      layout: { frames: [{ id: 'f1', title: '第一页' }] },
+      frame_product: {
+        enabled: true,
+        frames: [{ frame_id: 'f1', data: { layer_id: 'l', where: { op: 'neq', field: 'year', value: 1 } } }],
+      },
+    } as never);
+    expect(r.frames).toHaveLength(0);
+    expect(r.skippedCount).toBe(1);
+    expect(r.limitations).not.toContain('client_canvas_no_non_eq_where');
   });
 });

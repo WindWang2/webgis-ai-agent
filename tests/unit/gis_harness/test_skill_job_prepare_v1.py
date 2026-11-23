@@ -88,6 +88,30 @@ async def test_binding_facts_rejects_non_geojson():
 
 
 @pytest.mark.asyncio
+async def test_binding_facts_tolerates_non_dict_properties():
+    """review P2-1：properties 为非 dict（list/str）时有界降级，不抛 AttributeError。"""
+    data = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [104.0, 30.6]},
+             "properties": {"score": 1.5}},
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [104.0, 30.6]},
+             "properties": ["score"]},
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [104.0, 30.6]},
+             "properties": "score"},
+        ],
+    }
+    facts, err = extract_binding_facts(data)
+    assert err is None
+    assert facts.feature_count == 3
+    assert "score" in facts.fields
+    assert facts.field_types["score"] == "numeric"
+
+
+@pytest.mark.asyncio
 async def test_prepare_validate_report_journey(registry):
     from app.services.session_data import session_data_manager
 

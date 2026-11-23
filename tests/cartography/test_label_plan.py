@@ -316,3 +316,21 @@ def test_dense_overlap_reduction_gate():
     drop = report.overlap_reduction_table(3200)
     assert drop >= 0.50
 
+
+
+def test_explicit_field_not_hijacked_by_failed_auto_pick():
+    """P2：自动挑选失败时用户显式字段不得被降级为 hover_only + 空 zoom_bands。
+
+    plan_label_strategy 见到 field_choice.field is None 会早退 hover_only
+    （zoom_bands 空）—— build_label_spec 必须让显式字段绕过该挟持。
+    """
+    fc, stats = _stats("sensors")   # 无 name-like 候选 → choose → field=None
+    profile = {"featureCount": len(fc["features"]), "fields": {}}
+    assert choose_label_field(profile, field_stats=stats).field is None
+    spec = build_label_spec(profile, field_stats=stats, explicit_field="device_id")
+    assert spec is not None
+    assert spec["field"] == "device_id"
+    assert spec["mode"] != "hover_only"
+    assert spec["zoomBands"], "显式字段仍须拿到 zoom 分级"
+    assert any(r.startswith("explicit_field(") for r in spec["_reasons"])
+    assert "no_label_field" not in spec["_reasons"]

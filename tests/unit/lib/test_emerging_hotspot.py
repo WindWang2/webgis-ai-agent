@@ -38,6 +38,7 @@ from app.lib.gis.scientific_errors import (
     DegenerateData,
     InsufficientSamples,
     InvalidCRS,
+    ResourceScaleMismatch,
 )
 from app.lib.geo_analysis import spatiotemporal_eha
 from app.lib.geo_analysis.spatiotemporal_eha import (
@@ -343,3 +344,46 @@ def test_emerging_hotspot_tool_evidence_blocks():
     assert any("UTM" in w for w in ev["warnings"])
     assert ev["parameters_applied"]["counts_field"] == "counts"
     assert ev["parameters_applied"]["distance_band_m"] == 100.0
+
+
+def test_eha_degenerate_band_disclosed_not_silent():
+    """P2 修复：distance_band 超过全框跨度 → W 全 1（每箱 denom_inner=0）。
+
+    旧实现：0/0 除法泄漏 RuntimeWarning，np.where 令所有 z=0、p/q=1，
+    全部箱静默判 no_pattern 且 warnings 不披露。修复后 errstate 静默
+    无效中间值 + warnings 显式披露该退化结局。
+    """
+    counts = _block([(0, 3, 6)] * 4)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        res = emerging_hotspot_narrated(counts, COORDS,
+                                        distance_band=100_000.0)
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)], (
+        f"degenerate band leaked warnings: {[str(w.message) for w in caught]}")
+    # 所有箱 z=0、p/q=1、分类全 no_pattern —— 但必须披露
+    assert all(v == 0.0 for row in res["gi_star_z"] for v in row)
+    assert all(v == 1.0 for row in res["gi_star_p"] for v in row)
+    assert set(res["categories"]) == {"no_pattern"}
+    assert any("W 全 1" in w for w in res["warnings"]), res["warnings"]
+    assert "distance_band" in res["summary"] or res["warnings"]
+
+
+def test_eha_product_guard_rejects_before_allocation():
+    """P2 修复：n×T 乘积守卫（单维上限不约束乘积）。
+
+    20000×2000 下 z/p/q 三个 n×T 嵌套 Python list ≈6GB（另有 3×320MB
+    矩阵）—— 先拒后分配。n=2001、T=2000 各自合法但乘积 4,002,000 > 4M。
+    """
+    from app.lib.geo_analysis.spatiotemporal_eha import _MAX_EHA_CELLS
+
+    n, t = _MAX_EHA_CELLS // 2000 + 1, 2000      # 乘积刚超上限
+    counts = np.zeros((n, t))
+    coords = [(float(i), 0.0) for i in range(n)]
+    with pytest.raises(ResourceScaleMismatch, match="cells"):
+        emerging_hotspot_narrated(counts, coords)
+    # 单维守卫仍在（n / T 越界各自拒绝）
+    with pytest.raises(ResourceScaleMismatch):
+        emerging_hotspot_narrated(np.zeros((20001, 4)),
+                                  [(float(i), 0.0) for i in range(20001)])
+    with pytest.raises(ResourceScaleMismatch):
+        emerging_hotspot_narrated(np.zeros((12, 2001)), COORDS)

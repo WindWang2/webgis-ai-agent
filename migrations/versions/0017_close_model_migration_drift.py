@@ -21,6 +21,7 @@ env.py 补全 model import（project/data_fabric 显式注册）由本分支另�
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op, context
 
 
@@ -47,9 +48,14 @@ def _is_sqlite() -> bool:
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
     for name, table, column in _MISSING_INDEXES:
         if _is_sqlite():
-            op.create_index(name, table, [column])
+            # create_all  coexistence guard：五个索引都是模型 index=True 出生名，
+            # create_all 自举的库上已建同名索引，无守卫即 already exists（PG 分支
+            # 有 IF NOT EXISTS）。
+            if name not in {i["name"] for i in sa.inspect(bind).get_indexes(table)}:
+                op.create_index(name, table, [column])
         else:
             op.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})")
 

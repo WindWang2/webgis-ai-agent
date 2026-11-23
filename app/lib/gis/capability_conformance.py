@@ -119,11 +119,19 @@ def validate_capability_conformance(
     """
     caps = {str(c) for c in capability_ids}
     derived = _derived_capability_tools(algorithms)
-    issues: List[ConformanceIssue] = []
+    fatal_issues: List[ConformanceIssue] = []
+    warning_issues: List[ConformanceIssue] = []
 
     def _emit(issue: ConformanceIssue) -> None:
-        if len(issues) < MAX_FINDINGS:
-            issues.append(issue)
+        # fatal（悬空 capability id）是启动 fail-fast 闸的唯一输入。若与
+        # warning 共享同一预算，>MAX_FINDINGS 条 descriptor_metadata_
+        # incomplete warning 会先把预算耗尽，同一工具及其后工具的
+        # capability_id_dangling fatal 永不发出 —— 闸被静默绕过。故 fatal
+        # 单独累计、永不被 warning 挤占，warning 才受 MAX_FINDINGS 约束。
+        if issue.severity == SEVERITY_FATAL:
+            fatal_issues.append(issue)
+        elif len(warning_issues) < MAX_FINDINGS:
+            warning_issues.append(issue)
 
     # capability → {output_semantic_type: [tool]}（输出契约分歧面）
     output_face: Dict[str, Dict[str, List[str]]] = {}
@@ -167,6 +175,10 @@ def validate_capability_conformance(
             f"providers declare distinct output_semantic_type "
             f"{variants[:4]}: {tools}"))
 
+    # 有界：fatal 全部保留（fail-fast 闸的输入不得被截断），warning 填满
+    # 剩余预算；排序键不变（code, tool, capability），同序同输出。
+    budget = max(MAX_FINDINGS - len(fatal_issues), 0)
+    issues = fatal_issues + warning_issues[:budget]
     issues.sort(key=lambda i: (i.code, i.tool, i.capability))
     return issues
 

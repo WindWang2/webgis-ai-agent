@@ -161,6 +161,15 @@ def build_scene3d_verdict(
             detail="scene 已在 spec 但无应用回执（is_compiled/mutation_revision）"
                    "——渲染代次未确认，不得宣称已上屏",
         ))
+    else:
+        # scene 整体缺席：显示门 not_applicable，渲染证据是唯一见证面。
+        # 非 blocking（没有 scene 可上屏），但缺证据不得宣称 completed
+        # （M6「无证据不宣称完成」红线）。
+        findings.append(GateFinding(
+            gate="render", code="RENDER_EVIDENCE_MISSING",
+            blocking=False,
+            detail="spec 无 scene 且无应用回执——渲染代次未确认，不得宣称完成",
+        ))
 
     # 用户显式偏好被降级的注记 → findings（进入最终回答）
     for note in degradations or []:
@@ -173,11 +182,14 @@ def build_scene3d_verdict(
     # ── 裁决：任一 blocking → blocked；门降级/证据缺失/用户偏好被降级
     # → degraded（诚实降级必须可见，即便 display 门 not_applicable——
     # 用户要 3D 被降到 2d 时 2d 门本身无从报障，降级注记是唯一见证）。
+    # 渲染证据缺失同样降级：不受 display_state == not_applicable 豁免 ——
+    # scene 缺失时显示门无从报障，缺了它 verdict=completed 而
+    # render_evidence=missing（违反「无证据不宣称完成」红线）。
     any_blocking = any(f.blocking for f in findings)
     if any_blocking:
         verdict = "blocked"
     elif (science_state == "degraded" or display_state == "degraded"
-            or (render_state != "confirmed" and display_state != "not_applicable")
+            or render_state != "confirmed"
             or bool(degradations)):
         verdict = "degraded"
     else:

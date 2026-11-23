@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
@@ -100,7 +101,9 @@ class CoordinateOperationRun(Base):
     plan_digest = Column(String(64), nullable=False)
     #: pending / running / completed / failed / cancelled
     status = Column(String(20), nullable=False, default="pending")
-    job_id = Column(Integer, nullable=True)
+    # #2208 同款：durable job 的 id 是 BigInteger（analysis_tasks.id）—— 32 位
+    # Integer 在 PG 上超 2^31-1 溢出；sqlite 变体保持 Integer（rowid 语义）。
+    job_id = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
     idempotency_key = Column(String(255), nullable=True)
     #: 有界收据（行/顶点/操作 manifest/环境/成果指针/显示副本/预算实测）
     receipt = Column(JSON, nullable=True)

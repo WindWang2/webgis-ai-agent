@@ -890,6 +890,112 @@ def test_collab_ws_inbound_non_finite_rejected():
         assert viewports == [{"lat": 30.0, "lng": 104.0}]
 
 
+def test_presence_flush_task_cancelled_before_leave_heartbeat():
+    """P2 concurrency：_flush_presence 自行把 presence_flush_task 置 None 会让
+    finally 丢失在飞任务的引用 —— 已取走 pending 的 flush 在 leave 之后仍会完成
+    heartbeat + 广播 presence update（幽灵参与者）。槽位必须只由主循环写
+    （done() 即空位），finally 取消的才是真正在飞的那个 task。
+    """
+    import asyncio
+    import threading
+
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.api.routes import ws_collab
+    from app.core.auth import create_access_token
+    from app.services.collab.presence import PresenceRegistry
+
+    sid = _sid("v6_flush_cancel")
+    # 复用 harness 的库/限流布置；本测试直驱 handler（不经 TestClient），
+    # 以便在「flush 已取走 pending 且未完成」的精确时刻断开连接。
+    _make_collab_app([(sid, "user-123", None)])
+    token = create_access_token({"sub": "user-123"})
+
+    entered = threading.Event()
+    release = threading.Event()
+    entered_calls = 0
+    completed: list[str] = []
+    orig_heartbeat = PresenceRegistry.heartbeat
+
+    async def _gated_heartbeat(self, session_id, client_id, patch):
+        nonlocal entered_calls
+        entered_calls += 1
+        if entered_calls == 2:
+            # 第二个心跳 = 200ms 节流窗口的 flush task；卡住它，模拟其
+            # await 期间主循环继续跑、连接随时可能断开。
+            entered.set()
+            await asyncio.get_running_loop().run_in_executor(None, release.wait)
+        result = await orig_heartbeat(self, session_id, client_id, patch)
+        completed.append(client_id)
+        return result
+
+    class _FakeWS:
+        def __init__(self):
+            self.inbound: asyncio.Queue = asyncio.Queue()
+            self.sent: list[str] = []
+            self.headers = {"sec-websocket-protocol": f"bearer, {token}"}
+            self.scope = {
+                "subprotocols": ["bearer", token],
+                "headers": [],
+                "client": ("127.0.0.1", 1),
+            }
+            self.client = type("_Peer", (), {"host": "127.0.0.1"})()
+
+        async def accept(self, subprotocol=None):
+            pass
+
+        async def receive_text(self):
+            item = await self.inbound.get()
+            if isinstance(item, BaseException):
+                raise item
+            return item
+
+        async def send_text(self, text):
+            self.sent.append(text)
+
+        async def close(self, code=1000, reason=None):
+            pass
+
+    async def _scenario():
+        ws = _FakeWS()
+        handler = asyncio.create_task(ws_collab.collab_websocket(ws, sid))
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if any('"hello"' in frame for frame in ws.sent):
+                break
+        hello = json.loads(next(f for f in ws.sent if '"hello"' in f))
+        client_id = hello["data"]["clientId"]
+
+        # 首帧：窗口外 → 直接中继（心跳 #1，放行）
+        ws.inbound.put_nowait(json.dumps(
+            {"event": "presence", "data": {"viewport": {"lat": 30.0, "lng": 104.0}}}))
+        # 次帧：落在 200ms 节流窗口内 → 建 flush task（心跳 #2 被卡）
+        ws.inbound.put_nowait(json.dumps(
+            {"event": "presence", "data": {"viewport": {"lat": 31.0, "lng": 105.0}}}))
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            if entered.is_set():
+                break
+        assert entered.is_set(), "节流 flush task 未进入 heartbeat（测试布置失效）"
+        assert len(completed) == 1, "首帧 presence 应已直接中继完成"
+
+        # 断开：receive_text 抛 WebSocketDisconnect → finally 取消槽位 task
+        ws.inbound.put_nowait(WebSocketDisconnect(1000))
+        await asyncio.wait_for(handler, timeout=10.0)
+        count_after_leave = len(completed)
+        # 放行被卡的心跳：修复后任务已取消，这一次心跳绝不会完成
+        release.set()
+        await asyncio.sleep(0.3)
+        assert len(completed) == count_after_leave, (
+            "leave 之后仍有 presence flush 心跳完成 → 幽灵参与者"
+            "（finally 漏取消在飞的 flush task）"
+        )
+        return client_id
+
+    _sid_client = asyncio.run(_scenario())
+    assert _sid_client
+
+
 def test_hello_document_drops_non_finite_doc():
     """hello 内联 doc 的 allow_nan=False 必须有 try：非有限 doc → 丢内联。
 

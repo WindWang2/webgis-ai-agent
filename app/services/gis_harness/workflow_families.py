@@ -509,6 +509,23 @@ class WorkflowFamilyRegistry:
         scope_level = str(getattr(getattr(intent, "scope", None),
                                   "level", "") or "")
         task_ids = set(ontology_matches or [])
+        if ontology_matches is None:
+            # review P2-18：docstring 承诺的「本体任务」信号来源此前未实现
+            # （只读显式传入的 ontology_matches，默认 None → 空集）—— 不传
+            # 该参数时双信号契约永假、场景永远无法激活。缺省按 intent 现算
+            # 本体匹配（match_task_ontology 单一事实源）。
+            try:
+                from app.services.gis_harness.gis_ontology import (
+                    match_task_ontology,
+                )
+
+                task_ids = {
+                    str(getattr(m, "task_id", "") or "")
+                    for m in match_task_ontology(intent, limit=5)
+                    if getattr(m, "task_id", "")
+                }
+            except Exception:  # noqa: BLE001 — 本体缺席 = 无任务信号
+                task_ids = set()
         activated: List[ScenarioTemplate] = []
         for sid in sorted(self._scenarios):
             s = self._scenarios[sid]

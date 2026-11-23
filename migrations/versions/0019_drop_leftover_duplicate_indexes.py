@@ -21,6 +21,7 @@
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op, context
 
 
@@ -54,10 +55,18 @@ def upgrade() -> None:
     if _is_sqlite():
         for name, table, _column in _DUP_INDEXES:
             with op.batch_alter_table(table, schema=None) as batch_op:
-                batch_op.drop_index(name)
-        op.create_index(
-            "ix_cartography_templates_category", "cartography_templates", ["category"]
-        )
+                # if_exists=True：idx_template_* 是迁移侧索引、模型不声明，
+                # create_all 库上必然不存在，无守卫即 no such index。
+                batch_op.drop_index(name, if_exists=True)
+        # create_all  coexistence guard：ix_cartography_templates_category 是
+        # 模型 category=index=True 出生名，create_all 库上已建同名索引。
+        if "ix_cartography_templates_category" not in {
+            i["name"]
+            for i in sa.inspect(op.get_bind()).get_indexes("cartography_templates")
+        }:
+            op.create_index(
+                "ix_cartography_templates_category", "cartography_templates", ["category"]
+            )
     else:
         for name, _table, _column in _DUP_INDEXES:
             op.execute(f"DROP INDEX IF EXISTS {name}")

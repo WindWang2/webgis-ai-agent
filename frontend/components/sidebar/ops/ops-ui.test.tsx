@@ -159,6 +159,26 @@ describe('MetricsTrend（五类指标时序）', () => {
     expect(container.querySelectorAll('[data-testid="breaker-mark"]').length).toBe(marks.length * 5);
   });
 
+  it('断路器标注位置按窗内偏移计算（不越界；窗外采样不虚指）', () => {
+    const marks = samples
+      .map((s, i) => (s.breakerOpen ? { index: i, label: 'open' } : null))
+      .filter((m): m is { index: number; label: string } => m !== null);
+    const { container } = render(<MetricsTrend samples={samples} breakerMarks={marks} />);
+    // 切到 15 点窗口（全量 40 → 窗内下标 25..39）
+    fireEvent.click(screen.getByRole('radio', { name: '15' }));
+    const rendered = Array.from(container.querySelectorAll('[data-testid="breaker-mark"]'));
+    // 窗外（index < 25）的标注不渲染；窗内 34..39 全部在 0..100%
+    expect(rendered.length).toBe(6 * 5);
+    for (const el of rendered) {
+      const left = Number.parseFloat((el as HTMLElement).style.left);
+      expect(Number.isFinite(left)).toBe(true);
+      expect(left).toBeGreaterThanOrEqual(0);
+      expect(left).toBeLessThanOrEqual(100);
+    }
+    // 34 在窗内偏移 (34-25)/14 ≈ 64.29%
+    expect(Number.parseFloat((rendered[0] as HTMLElement).style.left)).toBeCloseTo(64.2857, 3);
+  });
+
   it('空采样 → 等待态', () => {
     render(<MetricsTrend samples={[]} />);
     expect(screen.getByText(/暂无采样/)).toBeInTheDocument();

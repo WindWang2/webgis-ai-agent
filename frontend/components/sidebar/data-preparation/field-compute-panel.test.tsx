@@ -194,6 +194,13 @@ beforeEach(() => {
   mockFetchRefGeoJSON.mockResolvedValue({ type: 'FeatureCollection', features: [] });
 });
 
+/** 可控 promise：手动 resolve 模拟「在飞 / 迟到」的请求。 */
+function deferred<T = unknown>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
 describe('FieldComputePanel', () => {
   it('选数据→describe→写公式→预览→执行→结果表 + 入图', async () => {
     await renderPanel();
@@ -348,5 +355,23 @@ describe('FieldComputePanel', () => {
     render(<FieldComputePanel sessionId={null} />);
     expect(screen.getByTestId('fc-no-session')).toBeTruthy();
     expect(mockListUploads).not.toHaveBeenCalled();
+  });
+
+  it('describe 在飞时切换会话：重新选源后按钮不永久禁用', async () => {
+    const d = deferred();
+    mockDescribe.mockImplementationOnce(() => d.promise as Promise<never>);
+    const view = render(<FieldComputePanel sessionId="sess-1" ownerToken={null} />);
+    const select = await screen.findByTestId('fc-source-select');
+    fireEvent.change(select, { target: { value: 'ref:data-1' } });
+    fireEvent.click(screen.getByTestId('fc-describe'));
+    expect(screen.getByTestId('fc-describe')).toBeDisabled();
+    // describe 仍在飞时切换会话（代次自增 + 整条链路复位）
+    view.rerender(<FieldComputePanel sessionId="sess-2" ownerToken={null} />);
+    fireEvent.change(screen.getByTestId('fc-source-select'), { target: { value: 'ref:data-1' } });
+    expect(screen.getByTestId('fc-describe')).not.toBeDisabled();
+    // 迟到响应落地（代次不匹配被丢弃）—— 不得把新会话按钮重新锁死
+    d.resolve(makeDescribe());
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByTestId('fc-describe')).not.toBeDisabled();
   });
 });

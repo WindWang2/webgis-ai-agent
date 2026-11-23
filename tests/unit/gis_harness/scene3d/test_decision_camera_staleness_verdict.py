@@ -388,6 +388,17 @@ def test_verdict_user_degradation_visible_even_when_display_na():
     assert verdict.verdict == "degraded"
 
 
+def test_verdict_missing_scene_without_receipt_is_not_completed():
+    """反证（review P2）：scene 缺失时 display_gate=not_applicable，缺失的
+    渲染证据曾被豁免降级 → verdict=completed 而 render_evidence=missing，
+    违反「无证据不宣称完成」红线。"""
+    verdict = build_scene3d_verdict(mapspec={"layers": []})
+    assert verdict.render_evidence == "missing"
+    assert verdict.display_gate == "not_applicable"
+    assert verdict.verdict == "degraded"
+    assert any(f.code == "RENDER_EVIDENCE_MISSING" for f in verdict.findings)
+
+
 def test_verdict_display_gate_blocking_on_dangling_terrain():
     spec = {"scene": {"mode": "2.5d", "terrain": {"source": "ghost"}},
             "sources": {}}

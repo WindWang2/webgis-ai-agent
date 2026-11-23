@@ -87,13 +87,27 @@ function emptyField(): EditableField {
   };
 }
 
-function emptyCross(n: number): EditableCross {
+function emptyCross(ruleId: string): EditableCross {
   return {
-    rule_id: `rule_${n + 1}`, kind: 'conditional_required',
+    rule_id: ruleId, kind: 'conditional_required',
     whenField: '', whenOp: 'eq', whenValueText: '', requireText: '',
     leftField: '', compareOp: 'lt', rightField: '', uniqueFieldsText: '',
     nullPolicy: 'ignore', note: '',
   };
+}
+
+/**
+ * 新增跨字段规则的 rule_id：取现有 `rule_<n>` 的最大 n + 1。
+ * 以数组长度编号会在「删掉任一规则再新增」时与剩余项重名（如 [r1,r2,r3]
+ * 删 r1 后新增得 rule_3）—— 后端按 duplicate rule_id 拒收（评审 P2）。
+ */
+function nextCrossRuleId(existing: EditableCross[]): string {
+  let max = 0;
+  for (const c of existing) {
+    const m = /^rule_(\d+)$/.exec(c.rule_id.trim());
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `rule_${max + 1}`;
 }
 
 function toEditable(rule: FieldContractFieldRule): EditableField {
@@ -225,6 +239,8 @@ export function FieldContractsPanel({ sessionId, ownerToken }: FieldContractsPan
   const [fields, setFields] = useState<EditableField[]>([emptyField()]);
   const [crossRules, setCrossRules] = useState<EditableCross[]>([]);
   const [savedInfo, setSavedInfo] = useState<{ revision: number; digest: string } | null>(null);
+  /** 草稿校验失败码（buildDocument 的 typed 拒绝）—— 必须如实展示，绝不静默。 */
+  const [draftError, setDraftError] = useState<string | null>(null);
   const editorSyncedRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -290,7 +306,10 @@ export function FieldContractsPanel({ sessionId, ownerToken }: FieldContractsPan
 
   const doSaveDraft = useCallback(async () => {
     const doc = buildDocument();
-    if (typeof doc === 'string') return;
+    // 评审 P2：校验错误码曾被 `typeof doc === 'string'` 静默丢弃（字段名为空 /
+    // 默认值 JSON 非法 / enum 超上限 / 删光字段后点保存零反馈）。typed 码原样展示。
+    if (typeof doc === 'string') { setDraftError(doc); return; }
+    setDraftError(null);
     const view = await fc.saveDraft(doc);
     if (view) setSavedInfo({ revision: view.revision, digest: view.normalized_digest });
   }, [buildDocument, fc]);
@@ -653,7 +672,7 @@ export function FieldContractsPanel({ sessionId, ownerToken }: FieldContractsPan
               </button>
               <button
                 type="button"
-                onClick={() => setCrossRules((prev) => (prev.length >= MAX_CROSS_RULES ? prev : [...prev, emptyCross(prev.length)]))}
+                onClick={() => setCrossRules((prev) => (prev.length >= MAX_CROSS_RULES ? prev : [...prev, emptyCross(nextCrossRuleId(prev))]))}
                 disabled={crossRules.length >= MAX_CROSS_RULES}
                 className="rounded-md border border-edge-subtle px-2.5 py-1 text-caption text-ink-secondary hover:bg-surface-hover disabled:opacity-50"
                 data-testid="fc-add-cross"
@@ -671,6 +690,11 @@ export function FieldContractsPanel({ sessionId, ownerToken }: FieldContractsPan
             {savedInfo && (
               <p className="text-caption text-ink-muted" data-testid="fc-draft-meta">
                 {t('draft.saved', { revision: savedInfo.revision })} · {t('draft.digest', { digest: savedInfo.digest.slice(0, 12) })}
+              </p>
+            )}
+            {draftError && (
+              <p className="text-caption text-status-error" data-testid="fc-draft-error">
+                {draftError}
               </p>
             )}
           </section>

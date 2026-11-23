@@ -268,7 +268,12 @@ def build_scale_profile(
 
         mode = "generalized" if gen is not None else "raw"
         displayed = len(gen.feature_collection["features"]) if gen else feature_count
-        suppressed = feature_count - displayed
+        # suppressed 以本带**实际输入**（receipt.input_count）为基准，不是
+        # source.feature_count：源 revision 声明数与实际入泛化要素数不一致
+        # 时，带统计会静默错值，而 receipt.stats_match 仍自洽为 True。
+        raw_input = gen.receipt.get("input_count") if gen is not None else None
+        band_input = int(raw_input) if isinstance(raw_input, int) else feature_count
+        suppressed = max(0, band_input - displayed)
         degrade: List[str] = []
         if gen is not None:
             degrade = [

@@ -307,6 +307,30 @@ describe('MapPanel — FE-3 interaction UX', () => {
     expect(screen.getAllByText('春阳水饺').length).toBeGreaterThan(0);
   });
 
+  it('聚焦去重守卫可达：800ms 复位窗口内 layers 身份变化不重复 fitBounds（#739）', async () => {
+    const layer = pointLayer('poi', 'POI');
+    // src.bbox 分支：同步取得 bbox（无 await 窗口），fit + POST 在 effect 内落定。
+    (layer.source as any).bbox = [116, 39, 117, 40];
+    const view = await renderPanel([layer]);
+    await settleInteractive(['poi__point']);
+    expect(rmg.map._calls.fitBounds).toHaveLength(0);
+
+    // 聚焦请求 → 一次 fitBounds。
+    act(() => { hud.setState({ focusLayerId: 'poi' }); });
+    await waitFor(() => expect(rmg.map._calls.fitBounds).toHaveLength(1));
+
+    // 800ms 复位窗口内 layers 身份变化（set_view 回灌重写 layers）——
+    // 修复前：effect cleanup 清掉 lastFittedFocusRef → 重跑重新 fit（重复）。
+    rerenderPanel(view, [{ ...layer }]);
+    await drainRuntime();
+    await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+    expect(rmg.map._calls.fitBounds).toHaveLength(1);
+
+    // 复位定时器照常清理 focusLayerId（#843/#852：取消不清标记不吞复位）。
+    await act(async () => { await new Promise((r) => setTimeout(r, 900)); });
+    expect(hud.state.focusLayerId).toBeNull();
+  });
+
   it('click stores the PARENT layer id (longest-prefix — poi vs poi_schools)', async () => {
     renderPanel([pointLayer('poi', 'POI'), pointLayer('poi_schools', 'Schools')]);
     await settleInteractive(['poi__point', 'poi_schools__point']);

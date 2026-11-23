@@ -36,6 +36,9 @@ export function useLakehouseDatasets(options: {
       // dataset REST 面只有 session 域 —— project 域数据集暂不可列举。
       setDatasets([]);
       setError(null);
+      // 在途请求被上面 abort + seq++ 掉，其 finally 的 seq 守卫会跳过复位
+      // （评审 P2）—— 这里显式解除 loading，否则列表永久转圈。
+      setLoading(false);
       return;
     }
     const seq = ++reqRef.current.seq;
@@ -93,6 +96,10 @@ export function useLakehouseDatasetDetail(options: {
       reqRef.current.controller?.abort();
       setDetail(null);
       setVersions([]);
+      // 在途详情被上面 abort + seq++ 掉，其 finally 的 seq 守卫会跳过复位
+      // （评审 P2）—— 显式解除 loading 并清掉上一选中项残留的错误。
+      setLoading(false);
+      setError(null);
       return;
     }
     const seq = ++reqRef.current.seq;

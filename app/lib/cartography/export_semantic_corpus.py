@@ -342,6 +342,12 @@ def expected_semantics(mapspec: dict) -> dict:
 # ── 2) SVG → 实然语义面 ─────────────────────────────────────────────────
 
 
+def _walk_hit_cap(walked: List[Tuple[Any, int]]) -> bool:
+    """遍历是否触顶（节点数/深度上限）——触顶即语义面本身不完整。"""
+    return (len(walked) >= MAX_WALK_NODES
+            or any(depth >= MAX_WALK_DEPTH for _, depth in walked))
+
+
 def _walk_elements(root: Any) -> List[Tuple[Any, int]]:
     """document 序遍历（节点/深度双 bounded —— 防病态深宽输入）。"""
     out: List[Tuple[Any, int]] = []
@@ -391,7 +397,14 @@ def extract_semantics(svg: str) -> dict:
     vector_layer_colors: set = set()
     truncated = False
 
-    for elem, _depth in _walk_elements(root):
+    # 遍历触顶（>MAX_WALK_NODES 节点 / >MAX_WALK_DEPTH 深度）时语义面
+    # 本身不完整——必须如实置 truncated，否则超大 SVG 会静默给出不完整
+    # 语义面（家族假 missing、隐藏层泄漏漏报）。
+    walked = _walk_elements(root)
+    if _walk_hit_cap(walked):
+        truncated = True
+
+    for elem, _depth in walked:
         tag = _local_tag(elem)
         if tag != "g":
             continue
@@ -408,7 +421,10 @@ def extract_semantics(svg: str) -> dict:
                 truncated = True
 
         if "mapspec-vector-layers" in classes:
-            for node, _d in _walk_elements(elem):
+            layer_nodes = _walk_elements(elem)
+            if _walk_hit_cap(layer_nodes):
+                truncated = True
+            for node, _d in layer_nodes:
                 ntag = _local_tag(node)
                 if ntag not in ("rect", "circle", "path", "line", "image", "text"):
                     continue
@@ -549,11 +565,15 @@ def compare_semantics(expected: dict, actual: dict, *,
     - ``extra``：隐藏 layer 的 id 分组或 paint 独占颜色出现在导出件
       （user-wins：隐藏不得入导出件）。
     ``ok = missing == 0 and extra == 0``。解析失败的 actual 等价于空抽取面
-    （全部 expected 族 missing，除非有回执）。
+    （全部 expected 族 missing，除非有回执）。actual 的语义面遍历触顶
+    （``truncated``）时面不完整：缺席不构成「静默丢失」证据（改判
+    ``degraded`` 并披露），隐藏层「未泄漏」亦不可信——不完整证据不予盖章
+    （``ok`` 为 False）。
     """
     expected = expected if isinstance(expected, dict) else {}
     actual = actual if isinstance(actual, dict) else {}
     parse_ok = actual.get("parse_ok") is True
+    actual_truncated = actual.get("truncated") is True
 
     expected_families = [
         f for f in (expected.get("chrome_families") or [])
@@ -594,6 +614,9 @@ def compare_semantics(expected: dict, actual: dict, *,
         hit = next((r for r in receipts if _receipt_matches(r, family, family_components)), None)
         if hit is not None:
             _verdict(family, "degraded", f"omitted_receipt code={hit['code'] or 'n/a'}")
+        elif actual_truncated:
+            # 语义面遍历触顶：缺席可能只是没遍历到，不是静默丢失证据。
+            _verdict(family, "degraded", "semantic_surface_truncated")
         else:
             _verdict(family, "missing", "marker_absent_without_receipt")
 
@@ -620,13 +643,18 @@ def compare_semantics(expected: dict, actual: dict, *,
             if leaked_colors:
                 detail_parts.append("paint_colors=" + ",".join(leaked_colors[:8]))
             _verdict("hidden_layers", "extra", "hidden_layer_leaked " + " ".join(detail_parts))
+        elif actual_truncated:
+            # 面不完整：没看到 ≠ 没泄漏（不漏报）。
+            _verdict("hidden_layers", "degraded", "semantic_surface_truncated")
         else:
             _verdict("hidden_layers", "match", "hidden_layers_absent_from_export")
 
-    ok = summary["missing"] == 0 and summary["extra"] == 0
+    ok = (summary["missing"] == 0 and summary["extra"] == 0
+          and not actual_truncated)
     return {
         "families": report_families,
         "summary": summary,
         "ok": ok,
         "parse_ok": parse_ok,
+        "truncated": actual_truncated,
     }

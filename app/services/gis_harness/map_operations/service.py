@@ -763,7 +763,12 @@ async def commit_map_operation(
 
     if not superseded:
         for ce in compiled:
-            if (ce.intent is None and not ce.deferred) or ce.state in ("applied", "skipped"):
+            # failed 也跳过：batch 抛异常被标 failed 的 presentation 效果若
+            # 回到顺序链，mutation_id 由 :pres 变 :e{idx}（引擎不去重）→
+            # 失败记录被覆盖，且违反「presentation 组单事务」约定。
+            if (ce.intent is None and not ce.deferred) or ce.state in (
+                "applied", "skipped", "failed",
+            ):
                 continue
             if ce.deferred:
                 fresh_spec = await _load_spec(session_id)

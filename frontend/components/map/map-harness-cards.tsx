@@ -240,6 +240,14 @@ function DisplayConfirmationCard(props: {
   const [acking, setAcking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // done 只对设置它时的观测代次生效：live generation 前进后 required
+  // 模式再现 pending（新 latest_observation_seq）时卡片必须回归 —— 否则
+  // 「稍后」一次 dismissal 会把新一代次的用户确认静默跳过。
+  const doneSeqRef = useRef<number | null>(null);
+  const markDone = useCallback(() => {
+    doneSeqRef.current = status.latest_observation_seq;
+    setDone(true);
+  }, [status.latest_observation_seq]);
 
   const acknowledge = useCallback(async () => {
     if (acking) return;
@@ -250,10 +258,10 @@ function DisplayConfirmationCard(props: {
         sessionId, status.latest_observation_seq, ownerToken,
       );
       if (resp.accepted && resp.confirmed) {
-        setDone(true);
+        markDone();
         onAcked({ ...status, confirmed: true, pending: false });
       } else if (resp.reason === 'mode_auto') {
-        setDone(true);
+        markDone();
         onAcked({ ...status, confirmed: true, pending: false });
       } else {
         setError(t('map.finalAck.notConfirmed'));
@@ -263,9 +271,9 @@ function DisplayConfirmationCard(props: {
     } finally {
       setAcking(false);
     }
-  }, [acking, onAcked, ownerToken, sessionId, status, t]);
+  }, [acking, markDone, onAcked, ownerToken, sessionId, status, t]);
 
-  if (done || !status.pending) return null;
+  if ((done && doneSeqRef.current === status.latest_observation_seq) || !status.pending) return null;
 
   return (
     <div
@@ -295,7 +303,7 @@ function DisplayConfirmationCard(props: {
         <button
           type="button"
           data-testid="display-confirm-dismiss"
-          onClick={() => setDone(true)}
+          onClick={markDone}
           className="rounded-md border border-edge-subtle px-2 py-1 text-micro text-ink-muted hover:bg-surface-overlay"
         >
           {t('map.finalAck.later')}

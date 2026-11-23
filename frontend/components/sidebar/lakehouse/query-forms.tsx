@@ -78,6 +78,10 @@ export function parseBbox(text: string): [number, number, number, number] | null
   if (parts.length !== 4) return null;
   const nums = parts.map(Number);
   if (nums.some((n) => !Number.isFinite(n))) return null;
+  // 每轴 min < max（与后端 _resolve_bbox / labeled_selection 同口径，也和本文件
+  // parseSlice 的 start ≤ stop 一致）。反向 bbox 在 scan 路径会被 row-group
+  // 相交判定全部剪掉 → 静默返回 0 要素、0/N row-group 且无任何提示（评审 P2）。
+  if (!(nums[0] < nums[2]) || !(nums[1] < nums[3])) return null;
   return [nums[0], nums[1], nums[2], nums[3]];
 }
 

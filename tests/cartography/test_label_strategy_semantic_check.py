@@ -117,3 +117,31 @@ def test_strategy_passes_through_label_spec_size():
     layer = _dense_circle(field="name", mode="top_n", topN=2000, size=6)
     check = _checks(_spec(layer))[0]
     assert check["evidence"]["font_px"] == 6
+
+
+def test_top_n_cap_not_multiplied_by_coverage_twice():
+    """P2：est_labels 已乘 bbox 可见覆盖率，钳制不得再乘一次。
+
+    双乘会把注记数低估 coverage 倍 —— bbox 部分可见时拥挤误判 pass。
+    3200 要素 × 覆盖率 ≈0.47 ≈ 1500 可见；top_n=400 → 有效注记数 400
+    （双乘覆盖率会得到 ≈188）。
+    """
+    # 数据 bbox 只有一部分落在视口内（覆盖率 ≈ 0.47 < 1）
+    profile = {
+        "featureCount": 3200,
+        "bbox": [103.0, 30.5, 106.0, 30.8],
+        "geometryTypes": ["Point"],
+        "crs": "EPSG:4326",
+        "crs_status": "explicit",
+        "fields": {
+            "name": {"type": "string", "sampleValues": ["惠民超市·A03店"],
+                     "null_count": 0},
+        },
+    }
+    layer = _dense_circle(field="name", mode="top_n", topN=400,
+                          priorityField="price")
+    check = _checks(_spec(layer, zoom=10, profile=profile))[0]
+    evidence = check["evidence"]
+    assert 0 < evidence["label_strategy"]["band_top_ratio"] <= 1
+    # 钳制 = topN × band_ratio（不再乘覆盖率）；双乘会得到 400×0.47≈188
+    assert evidence["est_visible_labels"] == 400

@@ -62,6 +62,20 @@ def test_viewport_layer_relation_missing_inputs():
     assert viewport_layer_relation([0, 0, 1], [0, 0, 1, 1]) is None
 
 
+def test_viewport_layer_relation_rejects_non_numeric_bounds():
+    """P2 regression：bbox/viewport 含 None / 字符串 / NaN 时不得抛 ValueError
+    穿透 format_layer_schema → format_layer_lines → build_map_state_summary →
+    assemble（整轮失败）。无法解析即按「无法判断」返回 None。"""
+    assert viewport_layer_relation([0, 0, "10", 10], [1, 1, 2, 2]) is None
+    assert viewport_layer_relation([0, 0, 10, 10], [None, 1, 2, 2]) is None
+    assert viewport_layer_relation([0, 0, 10, 10], [1, "s", 2, 2]) is None
+    assert viewport_layer_relation([0, 0, 10, float("nan")], [1, 1, 2, 2]) is None
+    assert viewport_layer_relation([0, 0, 10, 10], [1, 1, 2, float("inf")]) is None
+    # 合法数值仍照常判定（回归保护：守卫不得误杀正常路径）
+    assert viewport_layer_relation([0, 0, 10, 10], [1, 1, 2, 2]) == "在视口内"
+    assert viewport_layer_relation([0, 0, 10, 10], [20, 20, 30, 30]) == "在视口外"
+
+
 def test_format_layer_schema_includes_bbox_and_relation():
     schema = {"geom": "Point", "count": 2, "fields": {}, "bbox": [100, 30, 101, 31]}
     out = format_layer_schema(schema, viewport_bounds=[99, 29, 102, 32])

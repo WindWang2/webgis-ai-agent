@@ -810,6 +810,17 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
                     tile_bytes = self.read_tile_bytes(int(z), int(x), int(y))
                 except (ValueError, DataFabricError) as exc:
                     data["tile_read"] = f"failed: {exc}"
+                except Exception as exc:  # noqa: BLE001 — 网络/requests 故障须 typed 化
+                    import requests as _requests
+
+                    if not isinstance(exc, _requests.exceptions.RequestException):
+                        raise
+                    from app.services.data_fabric.errors import SourceUnreachableError
+
+                    raise SourceUnreachableError(
+                        f"PMTiles tile read unreachable for '{dataset_id}' at "
+                        f"{z}/{x}/{y}: {exc}"
+                    ) from exc
                 else:
                     if tile_bytes is None:
                         data["tile_read"] = "tile absent in archive"

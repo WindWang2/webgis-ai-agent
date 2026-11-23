@@ -235,27 +235,48 @@ def probe_fc_time_field(
     from app.services.temporal.profiler import profile_field
 
     features = fc.get("features", []) if isinstance(fc, dict) else []
-    field_values: Dict[str, List[Any]] = {}
-    for f in features:
-        props = f.get("properties") if isinstance(f, dict) else None
-        if isinstance(props, dict):
-            for k, v in props.items():
-                field_values.setdefault(k, []).append(v)
 
     if time_field is not None:
-        if time_field not in field_values:
+        # review P2-4：显式字段只收集该字段的值，不再把每个特征的每个属性
+        # 都留下（50k 特征 × 20 属性 = 100 万对象常驻一次 bind）。
+        values: List[Any] = []
+        seen = False
+        for f in features:
+            props = f.get("properties") if isinstance(f, dict) else None
+            if isinstance(props, dict) and time_field in props:
+                seen = True
+                values.append(props[time_field])
+        if not seen:
             return "", [], []
-        return time_field, field_values[time_field][:_MAX_PROBE_SAMPLE], field_values[time_field]
+        return time_field, values[:_MAX_PROBE_SAMPLE], values
 
     # 自动探测：profiler 评分（confidence ≥ 0.4）取最高分字段。
+    # review P2-4：每字段只保留 _MAX_PROBE_SAMPLE 个值用于评分（有界），
+    # 全量值只对最终选定字段再收集一次（全量解析的唯一事实源不变）。
+    samples: Dict[str, List[Any]] = {}
+    for f in features:
+        props = f.get("properties") if isinstance(f, dict) else None
+        if not isinstance(props, dict):
+            continue
+        for k, v in props.items():
+            bucket = samples.get(k)
+            if bucket is None:
+                bucket = samples[k] = []
+            if len(bucket) < _MAX_PROBE_SAMPLE:
+                bucket.append(v)
     best_field, best_score = "", 0.0
-    for fname, vals in field_values.items():
-        tf = profile_field(fname, vals[:_MAX_PROBE_SAMPLE])
+    for fname, vals in samples.items():
+        tf = profile_field(fname, vals)
         if tf.confidence_score >= 0.4 and tf.confidence_score > best_score:
             best_field, best_score = fname, tf.confidence_score
     if not best_field:
         return "", [], []
-    return best_field, field_values[best_field][:_MAX_PROBE_SAMPLE], field_values[best_field]
+    full: List[Any] = []
+    for f in features:
+        props = f.get("properties") if isinstance(f, dict) else None
+        if isinstance(props, dict) and best_field in props:
+            full.append(props[best_field])
+    return best_field, samples[best_field], full
 
 
 def _gap_steps(a: datetime, b: datetime, granularity: str) -> float:
@@ -350,6 +371,16 @@ def detect_time_binding(
     # epoch/iso 由观测跨度估计。
     explicit_granularity = granularity
     if explicit_granularity:
+        # review P2-5：显式粒度必须落在词表内。未知值会被
+        # _bucket_start/_bucket_step/_bucket_key 兜底成 hour；配合 day 精度
+        # 的边界串（lo==hi）会使所有帧过滤为空且无任何拒绝码 —— 诚实拒绝。
+        if explicit_granularity not in _GRANULARITY_ORDER:
+            return TimeBindingProbe(
+                ok=False, code="invalid_granularity",
+                message=f"粒度 {explicit_granularity!r} 不在词表 "
+                        f"{'|'.join(_GRANULARITY_ORDER)}",
+                time_field=field, representation=representation,
+            )
         eff_granularity = explicit_granularity
     else:
         eff_granularity = _natural_granularity(representation, format_hint)

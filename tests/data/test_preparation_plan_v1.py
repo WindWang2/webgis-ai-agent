@@ -25,6 +25,7 @@ from app.services.data_preparation.plan import (
     PlanValidationError,
     RenameFieldStep,
     ReprojectStep,
+    _plans_path,
     build_plan,
     compute_plan_hash,
     discard_plan,
@@ -245,6 +246,18 @@ class TestApplySteps:
             _payload(fc), [DedupStep(key_fields=("学校编号",))])
         assert len(new["geojson"]["features"]) == 5
         assert ev[0]["dropped"] == 1
+
+    def test_dedup_feature_without_properties_is_not_fatal(self):
+        """feature 无 properties 成员：视作全空属性参与去重（与 axis_swap /
+        rename_field 的 isinstance 防护同口径），不得抛 AttributeError。"""
+        fc = _school_fc(3)
+        fc["features"][1] = {"type": "Feature", "geometry": None}
+        new, ev, _ = apply_steps(
+            _payload(fc), [DedupStep(key_fields=("学校编号",))])
+        assert len(new["geojson"]["features"]) == 3
+        assert ev[0]["dropped"] == 0
+        assert new["geojson"]["features"][1] == {
+            "type": "Feature", "geometry": None}
 
     def test_rename_field(self):
         payload = _payload(_school_fc(3))
@@ -505,3 +518,30 @@ class TestReviewR1Regressions:
         # 层之外的路径回退（dry_run 纯函数不改状态）+ API 闸由 API 测试锁定
         stored = await get_plan(sid, plan.plan_id)
         assert stored.state == "executed"
+
+
+# ── 计划 ring：单行坏 JSON 只跳该行（文档纪律「坏行跳过」）─────────────────
+
+class TestPlanRingBadLineTolerance:
+    async def test_bad_jsonl_line_skipped_not_whole_file(self):
+        """plans.jsonl 单行坏 JSON（半写/损坏）→ 跳过该行；不得被外层 except
+        吞成「全文件按空」，否则随后 save_plan 全量覆写、静默丢失全部计划。"""
+        sid = "sess-prep-badline"
+        plan = build_plan(
+            session_id=sid, owner="u", input_ref="ref:x",
+            input_fingerprint="dsd-v1:" + "a" * 64,
+            steps=[DedupStep(key_fields=("学校编号",))])
+        assert await save_plan(plan)
+        path = _plans_path(sid)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("{not json\n")
+        assert (await get_plan(sid, plan.plan_id)) is not None
+        # 后续保存是 read-modify-write：历史没被清空，两条计划才能并存
+        plan2 = build_plan(
+            session_id=sid, owner="u", input_ref="ref:x",
+            input_fingerprint="dsd-v1:" + "a" * 64,
+            steps=[FieldMappingStep(role="name", field="学校名称",
+                                    source="user")])
+        assert await save_plan(plan2)
+        assert (await get_plan(sid, plan.plan_id)) is not None
+        assert (await get_plan(sid, plan2.plan_id)) is not None

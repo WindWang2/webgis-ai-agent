@@ -75,8 +75,13 @@ class TenantScope:
 
     @property
     def is_global(self) -> bool:
+        # 空串分量与 None 同义（_enc 均映射到 "_" 哨兵）—— is_global 必须与
+        # scope_key 口径一致，否则 owner="" 会得到全局键却 is_global=False，
+        # 落入全局命名空间却按租户对待（跨会话可见）。
         return (
-            self.org_id is None and self.owner is None and self.project_id is None
+            self.org_id is None
+            and self.owner in (None, "")
+            and self.project_id in (None, "")
         )
 
     def scope_key(self) -> str:

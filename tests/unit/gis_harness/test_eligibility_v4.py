@@ -253,6 +253,30 @@ class TestCheckEligibilityV4Integration:
         assert report.disabled
         assert report.disabled[0].reason_code == "NEEDS_ADMIN_UNITS"
 
+    def test_absent_facts_pass_element_rules(self) -> None:
+        """反证（review P2）：元素级 requires_geometry / min_points 在
+        geometryTypes 或 featureCount 缺席时不得判失败 —— 事实缺席被当作
+        不满足会让主元素被静默禁用并按 INSUFFICIENT_POINTS/PRIVACY 码落
+        「点位过少/隐私聚合」披露，违反 unknown 放行红线。"""
+        recipe = _recipe(eligibility=[
+            _rule(element="visual_heatmap", check_points=True,
+                  reason_code="INSUFFICIENT_POINTS"),
+            _rule(element="aggregate_grid", min_points=20,
+                  requires_geometry=["Point", "MultiPoint"],
+                  reason_code="PRIVACY_AGGREGATED"),
+        ])
+        for profile in ({}, None, {"fields": None},
+                        {"geometryTypes": [], "featureCount": None}):
+            report = check_eligibility(recipe, profile=profile)
+            assert report.disabled == [], profile
+            assert report.eligible is True, profile
+        # 对照：事实在场且不满足 → 仍照常禁用（行为不回退）
+        report = check_eligibility(recipe, profile={
+            "geometryTypes": ["Point"], "featureCount": 3})
+        codes = {d.reason_code for d in report.disabled}
+        assert {"INSUFFICIENT_POINTS", "PRIVACY_AGGREGATED"} <= codes
+        assert report.eligible is True   # 元素级失败不降 recipe 资格
+
 
 # ── resolve_fallback_chain ──────────────────────────────────────────────
 

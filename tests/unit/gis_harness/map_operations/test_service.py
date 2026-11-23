@@ -495,3 +495,58 @@ async def test_failed_receipt_not_invertible():
     ))
     assert receipt["status"] in ("rejected", "failed")
     assert receipt["invertible"] is False
+
+
+# ── review P2：只读情境面 fail-open 不得炸整笔操作 ────────────────────
+
+
+async def test_focused_layer_survives_non_dict_snapshot(monkeypatch):
+    """反证（review P2）：snapshot 返回 None / recent_interactions 非 list 时
+    _focused_layer_id 必须 fail-open 为 unknown —— 异常会穿透
+    _compile_effects（只包住 _compile_single）把整笔操作变 500。"""
+    from app.services.gis_harness.map_operations import resolver
+
+    async def _none_snapshot(store, sid):
+        return None
+
+    async def _bad_recent(store, sid):
+        return {"selection": None, "recent_interactions": {"not": "a list"}}
+
+    target = ("app.services.gis_harness.interaction_ir.projection."
+              "interaction_snapshot_via_store")
+    monkeypatch.setattr(target, _none_snapshot)
+    assert await resolver._focused_layer_id("s-none") is None
+    monkeypatch.setattr(target, _bad_recent)
+    assert await resolver._focused_layer_id("s-bad") is None
+
+
+async def test_failed_presentation_effect_not_resubmitted_in_chain(monkeypatch):
+    """反证（review P2）：batch 抛异常被标 failed 的 presentation 效果不得
+    回到顺序链逐个重投（mutation_id 由 :pres 变 :e{idx}，引擎不去重 →
+    失败记录被覆盖 + 违反 presentation 组单事务约定）。"""
+    from app.services import gis_world_state
+
+    sid = f"mop-{uuid.uuid4().hex[:10]}"
+    await _seed(sid)
+
+    async def _boom_batch(*args, **kwargs):
+        raise RuntimeError("batch down")
+
+    single_calls = []
+
+    async def _spy_single(sid_, intent, **kwargs):
+        single_calls.append(kwargs.get("mutation_id"))
+        raise RuntimeError("single down")
+
+    monkeypatch.setattr(gis_world_state, "apply_gis_mutation_batch", _boom_batch)
+    monkeypatch.setattr(gis_world_state, "apply_gis_mutation", _spy_single)
+
+    receipt = await commit_map_operation(sid, MapOperationRequest(
+        operation_id=mint_operation_id(), mode="commit",
+        effects=[{"kind": "set_layer_visibility", "target_kind": "layer_ref",
+                  "target": "人口热力图", "visible": False}],
+    ))
+    # presentation 组内失败如实入回执，但不重投
+    assert receipt["effects"][0]["state"] == "failed"
+    assert receipt["effects"][0]["reason_code"] == "internal_error"
+    assert single_calls == [], single_calls

@@ -5,7 +5,7 @@
  * 必选闸（未选全禁用执行）、阻断禁用执行、准备执行链（plan→preview→
  * execute→bind）与收据渲染、入图按钮出现。API 全 mock（@/lib/api/*）。
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PrepareFlow } from './prepare-flow';
@@ -115,6 +115,13 @@ beforeEach(() => {
                 feature_count: 20 }],
   });
 });
+
+/** 可控 promise：手动 resolve 模拟「在飞 / 迟到」的请求。 */
+function deferred<T = unknown>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
 
 describe('PrepareFlow', () => {
   it('装载上传列表并允许选择后检查', async () => {
@@ -236,5 +243,33 @@ describe('PrepareFlow', () => {
       </I18nProvider>,
     );
     expect(mockListUploads).not.toHaveBeenCalled();
+  });
+
+  it('inspect 在飞时切换会话：重新选源后检查按钮不永久卡 loading', async () => {
+    const { I18nProvider } = await import('@/lib/i18n/i18n-provider');
+    const d = deferred();
+    mockInspect.mockImplementationOnce(() => d.promise as Promise<never>);
+    const view = render(
+      <I18nProvider>
+        <PrepareFlow sessionId="sess-1" ownerToken={null} />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByTestId('dp-source-select'),
+      { target: { value: 'ref:data-1' } });
+    fireEvent.click(screen.getByTestId('dp-inspect'));
+    expect(screen.getByTestId('dp-inspect')).toBeDisabled();
+    // inspect 仍在飞时切换会话（epoch 自增 + 链路复位）
+    view.rerender(
+      <I18nProvider>
+        <PrepareFlow sessionId="sess-2" ownerToken={null} />
+      </I18nProvider>,
+    );
+    fireEvent.change(screen.getByTestId('dp-source-select'),
+      { target: { value: 'ref:data-1' } });
+    expect(screen.getByTestId('dp-inspect')).not.toBeDisabled();
+    // 迟到响应落地（epoch 不匹配被丢弃）—— 不得把新会话按钮重新锁死
+    d.resolve(makeInspection());
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByTestId('dp-inspect')).not.toBeDisabled();
   });
 });

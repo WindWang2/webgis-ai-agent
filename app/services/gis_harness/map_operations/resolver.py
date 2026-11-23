@@ -93,12 +93,17 @@ async def _focused_layer_id(session_id: str) -> Optional[str]:
         snap = await interaction_snapshot_via_store(session_data_manager, session_id)
     except Exception:  # noqa: BLE001 — 只读情境面 fail-open 为 unknown
         return None
+    if not isinstance(snap, dict):
+        # store 投影返回 None/非 dict 时同样 fail-open：异常不得穿透
+        # _compile_effects（它只包住 _compile_single）把整笔操作变 500。
+        return None
     selection = snap.get("selection") or {}
     if isinstance(selection, dict):
         layer_id = selection.get("layer_id")
         if isinstance(layer_id, str) and layer_id:
             return layer_id
-    for rec in reversed(snap.get("recent_interactions") or []):
+    recent = snap.get("recent_interactions")
+    for rec in reversed(recent if isinstance(recent, list) else []):
         if not isinstance(rec, dict):
             continue
         layer_id = rec.get("layer_id")

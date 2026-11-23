@@ -149,8 +149,15 @@ def _gated_screenshot(
             "screenshot_fingerprint_mismatch", provider=mode,
             screenshot_sha256=entry.sha256)
     # C13 会话绑定护栏：跨会话猜 ref 在解析面直接拒绝（诚实缺席）。
-    data = resolve_visual_screenshot(
-        entry, session_id=str(obs.session_id or ""))
+    # review P2-13：快照无 session_id 时不得传空串 —— 那会让解析面的会话
+    # 绑定护栏整体跳过（fail-open），任意 vshot ref 无所有权证据即可读出
+    # 字节。无会话上下文 = 无所有权证据 → 拒绝评估。
+    session_id = str(obs.session_id or "")
+    if not session_id:
+        return None, VisualObservationResult.not_evaluated(
+            "screenshot_session_unbound", provider=mode,
+            screenshot_sha256=entry.sha256)
+    data = resolve_visual_screenshot(entry, session_id=session_id)
     if data is None:
         return None, VisualObservationResult.not_evaluated(
             "screenshot_unresolvable", provider=mode,
@@ -312,9 +319,12 @@ def _entity_from_bbox_or_map(bbox: Any) -> str:
         return "map"
     try:
         ymin, xmin, ymax, xmax = bbox.to_list()
+        # review P2-14：int() 也必须在 try 内 —— VLM 可能返回非数值坐标
+        # （None/str），那会让 ValueError 逃出 evaluate()，违反「失败只降级」
+        # 契约（_entity_from_bbox_or_map 由 _critiques_to_findings 调用）。
+        return f"bbox[{int(ymin)},{int(xmin)},{int(ymax)},{int(xmax)}]"
     except Exception:  # noqa: BLE001 — 定位是增值信息，不是门禁
         return "map"
-    return f"bbox[{int(ymin)},{int(xmin)},{int(ymax)},{int(xmax)}]"
 
 
 def _taxonomy_of(finding: Any) -> str:

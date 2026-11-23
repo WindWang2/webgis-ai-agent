@@ -26,6 +26,18 @@ class TestTsProjectionContract:
     def test_projection_is_deterministic(self):
         assert emit_typescript() == emit_typescript()
 
+    def test_tuple_fields_project_as_ts_tuples(self):
+        """review P2 回归：定长元组注释投影为 TS 元组类型。
+
+        _ts_of 此无 tuple origin 分支，元组字段一路落到 unknown —— 如
+        MapSpecTemporalConfig.extent（ISO instant [start, end) 二元组）在
+        TS 侧静默丢失定长契约（投影幂等 + 字节比对，永不告警）。
+        """
+        content = emit_typescript()
+        assert "extent: [string, string];" in content, (
+            "元组字段必须投影为定长元组（此前为 extent: unknown）")
+        assert "extent: unknown;" not in content
+
     def test_generated_file_has_do_not_edit_header(self):
         content = OUTPUT.read_text(encoding="utf-8")
         assert "DO NOT EDIT" in content

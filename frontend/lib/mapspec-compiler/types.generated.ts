@@ -540,7 +540,7 @@ export interface MapSpecTemporalConfig {
   time_format_hint?: string;
   timezone?: string;
   granularity: "year" | "quarter" | "month" | "week" | "day" | "hour";
-  extent: unknown;
+  extent: [string, string];
   frames: TemporalFrame[];
   cursor_frame: string;
   playback?: TemporalPlaybackConfig;

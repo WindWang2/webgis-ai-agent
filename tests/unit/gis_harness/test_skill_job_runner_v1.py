@@ -284,3 +284,41 @@ async def test_runs_listing_survives_refresh(_registry):
     assert runs[0]["skill_id"] == "validate_spatial_data"
     assert runs[0]["status"] == "completed"
     assert runs[0]["result_ref"].startswith("ref:skillreport-")
+
+
+@pytest.mark.asyncio
+async def test_runs_listing_uses_single_db_session(monkeypatch):
+    """review P2-2：批量列表复用单次 DB 会话（不逐 job 各开一次 = N+1）。"""
+    import app.core.database as db_mod
+    from app.models.db_model import AnalysisTask
+    from app.services.gis_harness.skill_jobs.runner import list_skill_job_views
+
+    sid = "t-run-list-sessions"
+    with db_mod.SessionLocal() as db:
+        for i in range(3):
+            db.add(AnalysisTask(
+                task_type="skill_job", job_kind="skill_job", session_id=sid,
+                status="completed",
+                parameters={"skill_id": f"skill-{i}", "skill_version": "1.0.0"}))
+        db.commit()
+
+    real = db_mod.SessionLocal
+    opened: list = []
+
+    class _CountingSession:
+        def __init__(self) -> None:
+            opened.append(1)
+            self._s = real()
+
+        def close(self) -> None:
+            self._s.close()
+
+        def __getattr__(self, name):
+            return getattr(self._s, name)
+
+    monkeypatch.setattr(db_mod, "SessionLocal", _CountingSession)
+    runs = await list_skill_job_views(session_id=sid)
+    assert sorted(r["skill_id"] for r in runs) == [
+        "skill-0", "skill-1", "skill-2"]
+    assert all(r["status"] == "completed" for r in runs)
+    assert len(opened) == 1, f"N+1 会话（应为 1）：{len(opened)}"

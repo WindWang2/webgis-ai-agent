@@ -199,13 +199,25 @@ def build_analysis_graph(
         graph["notes"].append("no session plan chapter — call webgis_map_intent")
         return graph
 
-    execution = _execution_nodes(chapter)
-    product = _product_nodes(
-        chapter, mapspec,
-        descriptors=descriptors,
-        observation=observation,
-        current_revision=current_revision,
-    )
+    # 执行/产品投影与 next_action/goal_graph 同纪律：畸形章节（下游
+    # 投影抛错）按缺席降级，绝不逃出「绝不抛给调用方」的承诺。
+    execution: List[Dict[str, Any]] = []
+    try:
+        execution = _execution_nodes(chapter)
+    except Exception:  # noqa: BLE001 — 执行投影是增值视图，缺席不阻断
+        execution = []
+        graph["notes"].append("execution projection failed")
+    product: List[Dict[str, Any]] = []
+    try:
+        product = _product_nodes(
+            chapter, mapspec,
+            descriptors=descriptors,
+            observation=observation,
+            current_revision=current_revision,
+        )
+    except Exception:  # noqa: BLE001 — 产品投影同上
+        product = []
+        graph["notes"].append("product projection failed")
     goal = _goal_node(plan, chapter)
 
     # 统一确定性下一动作（执行债 → 产品债 → 观察债 → 收尾债）。

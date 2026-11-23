@@ -796,6 +796,20 @@ def slx_regression_narrated(
         )
     wm = _regression_weights(gdf, n, weights_scheme, k, distance_band)
     wx_raw = wm.matrix @ x_raw
+    # 与 _design_matrix 同式的零方差防御（P2 修复）：W 全零（distance_band
+    # 过小 / queen·rook 全岛 → s0=0）时 W·X 列恒 0，滞后项不可识别 ——
+    # se=0、t/p=NaN 且 _vif 对常数列还会编造 vif=1.0。OLS（零方差解释
+    # 变量）与 SAR/SEM（空权重矩阵）均拒此情形，SLX 不得静默出模型。
+    wx_ptp = np.ptp(wx_raw, axis=0)
+    if np.any(wx_ptp == 0.0):
+        bad = [f"WX:{names[i]}" for i in np.flatnonzero(wx_ptp == 0.0)]
+        raise DegenerateData(
+            f"spatially lagged field(s) with zero variance: {bad}",
+            correction_hint="the weights matrix is likely empty (every "
+                            "observation is an island) — increase the "
+                            "distance band / k, or check geometry "
+                            "connectivity",
+        )
     x_mat = np.column_stack([x_base, wx_raw])
     col_names = [*base_names, *[f"WX:{f}" for f in names]]
     if x_mat.shape[1] > n - 1:

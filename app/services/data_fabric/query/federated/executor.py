@@ -743,7 +743,21 @@ class PhysicalExecutor:
                             self._synthesize_hop(spec, scan_by_id, seq[k + 1])
                         )
                     if feasible:
+                        # 尾重排后 hop_estimates 必须随 hops 同序重排：否则后续
+                        # observe() 以原计划序的估计基数记错（adaptive_observations
+                        # /EXPLAIN 实证失真）。
+                        est_by_sid = {
+                            h.right.source_id: (
+                                hop_estimates[i + 1 + j]
+                                if i + 1 + j < len(hop_estimates)
+                                else None
+                            )
+                            for j, h in enumerate(hops[i + 1:])
+                        }
                         hops = hops[: i + 1] + rebuilt
+                        hop_estimates = hop_estimates[: i + 1] + [
+                            est_by_sid.get(sid) for sid in new_tail
+                        ]
                         # 修复评审 R1 双执行：推进到**新尾序的第一跳**（重建
                         # 列表已保留旧 hops[:i+1]，hops[i] 不再重跑）。
                         i += 1

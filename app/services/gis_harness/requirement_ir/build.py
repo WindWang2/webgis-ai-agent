@@ -199,9 +199,13 @@ def _seed_scene_locks_from_cues(spec: GISIntentSpec) -> None:
     """
     from app.services.gis_harness.requirement_ir.contracts import UserLock
 
-    def _upsert(scope: str, value: str) -> None:
+    def _upsert(scope: str, value: str, *, keep_siblings: bool = False) -> None:
         for lock in [item for item in spec.locks if item.scope == scope]:
-            if lock.value != value:
+            # scene_camera 的 pitch/bearing 是同一偏好的**两个轴**而非互斥
+            # 取值：同一话语既表达 pitch 又表达 bearing 时，第二种不得顶掉
+            # 第一种（否则该轴失去 user-wins 保护）。scene_mode 的维度值是
+            # 互斥取值，仍按「最新表达 wins」替换。
+            if lock.value != value and not keep_siblings:
                 spec.locks.remove(lock)
         if not any(item.scope == scope and item.value == value
                    for item in spec.locks) and len(spec.locks) < 32:
@@ -212,9 +216,9 @@ def _seed_scene_locks_from_cues(spec: GISIntentSpec) -> None:
     if spec.scene.dimension:
         _upsert("scene_mode", spec.scene.dimension)
     if spec.scene.camera_pitch is not None:
-        _upsert("scene_camera", "pitch")
+        _upsert("scene_camera", "pitch", keep_siblings=True)
     if spec.scene.camera_bearing is not None:
-        _upsert("scene_camera", "bearing")
+        _upsert("scene_camera", "bearing", keep_siblings=True)
 
 
 def _apply_scene_cues_to_spec(spec: GISIntentSpec, query: str) -> bool:

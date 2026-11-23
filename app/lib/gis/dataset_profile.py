@@ -532,20 +532,28 @@ class DatasetProfile(BaseModel):
     def from_artifact_record(cls, record: Any) -> "DatasetProfile":
         """ArtifactRecord（registry 记录或其 to_dict）→ 画像（O(1)）。"""
         r = record
-        metadata = getattr(r, "metadata", None) or (r.get("metadata") if isinstance(r, dict) else None) or {}
+        is_dict = isinstance(r, dict)
+        metadata = getattr(r, "metadata", None) or (r.get("metadata") if is_dict else None) or {}
         artifact_type = getattr(r, "artifact_type", None)
-        if artifact_type is None and isinstance(r, dict):
+        if artifact_type is None and is_dict:
             artifact_type = r.get("artifact_type")
+
+        def _field(key: str, default: Any = None) -> Any:
+            # dict 形 record（to_dict 投影）与对象形 record 同权 —— 只认
+            # 属性时 dict 的 feature_count/bbox/crs 恒为空，画像静默丢失
+            # 要素数与空间范围。
+            return r.get(key, default) if is_dict else getattr(r, key, default)
+
         geom_types = metadata.get("geometry_types") or []
         return cls(
             source="artifact_record",
             artifact_type=str(artifact_type or ""),
-            feature_count=getattr(r, "feature_count", None),
+            feature_count=_field("feature_count"),
             geometry_types=[str(t) for t in geom_types][:MAX_GEOMETRY_TYPES]
             if isinstance(geom_types, list)
             else [],
-            bbox=list(getattr(r, "bbox", None) or []) or None,
-            crs=str(getattr(r, "crs", "") or ""),
+            bbox=list(_field("bbox") or []) or None,
+            crs=str(_field("crs") or ""),
             fields_status="unknown",
         )
 

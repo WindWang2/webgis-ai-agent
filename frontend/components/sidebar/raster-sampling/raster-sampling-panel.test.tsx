@@ -8,7 +8,7 @@
  * 与 field-compute-panel.test.tsx 同款：API/store/toast 全 mock；
  * useT 用键直回的确定性 translator（i18n 键完整性由 key-completeness 测试锁）。
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RasterSamplingPanel } from './raster-sampling-panel';
@@ -386,5 +386,39 @@ describe('RasterSamplingPanel', () => {
     fireEvent.click(screen.getByText('createPlan'));
     await waitFor(() => expect(mockAddToast).toHaveBeenCalled());
     expect(mockAddToast.mock.calls[0][0]).toContain('BUDGET_EXCEEDED');
+  });
+
+  it('后台执行状态查询失败：如实披露、停轮询、解除 executing', async () => {
+    mockCreatePlan.mockResolvedValue(makePlan());
+    // 后台执行：无 receipt + job_id → 进入 2.5s 状态轮询腿
+    mockExecutePlan.mockResolvedValue({
+      success: true, idempotent_reuse: false, job_id: '7', status: 'running',
+    });
+    mockPlanStatus.mockRejectedValue(new Error('STATUS_UNAVAILABLE'));
+    setup();
+    await screen.findByText('温度栅格');
+    fireEvent.change(screen.getAllByRole('combobox')[0],
+      { target: { value: 'ref:raster-a' } });
+    fireEvent.change(screen.getAllByRole('textbox').find(
+      (el) => (el as HTMLInputElement).value === '') as HTMLElement,
+      { target: { value: 'ref:points-1' } });
+    fireEvent.click(screen.getByText('createPlan'));
+    await waitFor(() => expect(mockCreatePlan).toHaveBeenCalled());
+    expect(await screen.findByText('rsp_abc123')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('backgroundRun'));
+    // 轮询 tick 上的状态查询失败：必须停轮询并解除 executing（旧实现静默吞错，
+    // 每 2.5s 无限打后端且 executing 永久卡真）
+    await waitFor(() => {
+      const btn = screen.queryByText('execute')?.closest('button') as HTMLButtonElement | null;
+      expect(btn?.disabled).toBe(false);
+    }, { timeout: 8000 });
+
+    // 失败被如实披露
+    expect(mockAddToast.mock.calls.some((c: unknown[]) => String(c[0]).includes('STATUS_UNAVAILABLE'))).toBe(true);
+    // 轮询已停：再等两个周期不再打后端
+    const statusCalls = mockPlanStatus.mock.calls.length;
+    await act(async () => { await new Promise((r) => setTimeout(r, 3000)); });
+    expect(mockPlanStatus.mock.calls.length).toBe(statusCalls);
   });
 });

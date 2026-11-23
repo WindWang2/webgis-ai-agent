@@ -187,8 +187,9 @@ def _frame_gate(map_product: Optional[Dict[str, Any]]):
         # 复审第二轮加固：行在场时 required=0 只可能是双伪造（summary 与行
         # 标志同时伪造）—— 生产者（verify_frame_product）对启用产品的每个
         # 槽位恒发 required=True，且空 required 集不可能产出 complete 状态
-        # → fail-closed（绝不静默放行）。
-        if frame_rows and str(fp.get("status")) == "complete":
+        # → fail-closed（绝不静默放行）。status 自报 incomplete 同样不放行：
+        # 伪造块经 return None 会整体绕过闸，未完成画幅产品仍可判 FULFILLED。
+        if frame_rows:
             def _gate_double_forge(out):
                 out.verdict = ReqState.PARTIAL
                 out.failed_rule = R_FRAME_INCOMPLETE

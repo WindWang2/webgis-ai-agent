@@ -408,6 +408,26 @@ def test_resolver_kriging_min_features_falls_back_with_evidence():
     assert any("insufficient_features:interpolation.kriging" in x for x in res.rejected)
 
 
+def test_resolver_explicit_hint_substitution_disclosed_when_undeclared():
+    """显式点名算法被硬门拒、替补又不在其声明 fallback 链内时，顶替必须
+    落进 fallback_trail 证据面（UK 只声明 kriging 为 fallback，6 点连
+    kriging 一并被拒，实际替补是 IDW —— 未声明等价性，不得静默）。"""
+    r = _resolver()
+    tools = set(_tool_registry().list_tools())
+    prof = {"geometryTypes": ["Point"], "featureCount": 6}
+    res = r.resolve(
+        "spatial_interpolation", profile=prof, available_tools=tools,
+        algorithm_hint="interpolation.universal_kriging",
+    )
+    assert res.algorithm == "interpolation.idw"
+    assert any(
+        s.from_element == "interpolation.universal_kriging"
+        and s.to_element == "interpolation.idw"
+        and s.reason_code == "explicit_request_substituted_undeclared"
+        for s in res.fallback_trail
+    )
+
+
 def _resolver():
     from app.lib.gis.algorithm_resolver import AlgorithmResolver
     return AlgorithmResolver()

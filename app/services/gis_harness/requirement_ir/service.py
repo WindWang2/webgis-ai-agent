@@ -36,6 +36,7 @@ from app.services.gis_harness.requirement_ir.clarify import (
     to_legacy_request,
 )
 from app.services.gis_harness.requirement_ir.contracts import (
+    MAX_FIELD_PROVENANCE,
     MAX_PATCHES,
     PatchRecord,
     RequirementDocument,
@@ -306,7 +307,9 @@ async def _ensure_document_unlocked(
     if classification.kind == "edit":
         patches = diff_to_patches(doc, resolved, turn=turn, query=query)
         applied = 0
-        for record in patches:
+        pending = list(patches)
+        while pending:
+            record = pending.pop(0)
             try:
                 doc, was_applied = apply_patch(doc, record)
                 if was_applied:
@@ -316,6 +319,16 @@ async def _ensure_document_unlocked(
                 patch_errors.append(code)
                 if code == "patch_stale_revision":
                     break   # CAS 失败：其余 patch 基于过期基线，全部放弃
+                # 非 CAS 拒绝（值非法/路径未知/锁冲突）：该 patch 未入账、
+                # revision 未前进 —— 后续 patch 的链式 expected_revision
+                # 必须同步下移，否则全部 PatchStale 被静默丢弃（本轮差分
+                # 截断；diff_to_patches 的链式 CAS 假设全量应用）。
+                pending = [
+                    p.model_copy(update={"expected_revision": (
+                        p.expected_revision - 1
+                        if p.expected_revision is not None else None)})
+                    for p in pending
+                ]
         doc = record_ambiguities(doc, plan_clarifications(doc), turn)
         state, doc = _fold_if_needed(state, doc)
         new_dump = doc.model_dump()
@@ -392,7 +405,10 @@ def _restore_user_fields(
         _resolve_setter,
     )
     spec = doc.intent.model_copy(deep=True)
-    for path, payload in list(user_fields.items())[:16]:
+    # 上界与 field_provenance 的 max_length 对齐（MAX_FIELD_PROVENANCE）：
+    # 硬编码 16 会让 >16 个 user-origin 字段中超出的部分静默不携带
+    # （user-wins 违约且无日志）。
+    for path, payload in list(user_fields.items())[:MAX_FIELD_PROVENANCE]:
         old_value, prov = payload if isinstance(payload, tuple) else (None, payload)
         if old_value is None or prov is None or not getattr(prov, "is_user", lambda: False)():
             continue
@@ -413,6 +429,16 @@ def _restore_user_fields(
             observe_optional_failure(__name__)
             continue
         spec.field_provenance[path] = prov
+    # scene_camera 携带锁只在该轴字段确有值时才保留保护力：超替后新话语无
+    # 相机 cue、值又没能恢复时，锁在而字段为 None —— agent 写该轴必被
+    # _lock_conflict 拒绝且无用户解锁途径（锁保护的是一个不存在的值）。
+    # 必须在值恢复之后裁剪：早裁会把正常超替的好锁误删。
+    spec.locks = [
+        lock for lock in spec.locks
+        if not (lock.scope == "scene_camera" and (
+            (lock.value == "pitch" and spec.scene.camera_pitch is None)
+            or (lock.value == "bearing" and spec.scene.camera_bearing is None)))
+    ]
     return doc.model_copy(update={"intent": spec})
 
 

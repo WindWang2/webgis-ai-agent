@@ -200,6 +200,34 @@ async def test_auto_decisions_do_not_revoke_user_verdict(sid):
 
 
 @pytest.mark.asyncio
+async def test_auto_decision_same_proposal_keeps_rejection_memory(sid):
+    """review P2-15：同 proposal_id 的 auto 收场不得抹掉先前的用户拒绝。
+
+    旧实现按 proposal_id 无条件删旧条目 —— rejected 之后的
+    auto_applied/auto_failed 会把拒绝记忆一起删掉，同一 patch 反复再提案。
+    """
+    await record_decision(
+        sid, decision=DECISION_REJECTED, proposal_id="vrepair-same-1",
+        recurrence_fingerprints=["fp-x"], revision=1)
+    await record_decision(
+        sid, decision=DECISION_AUTO_FAILED, proposal_id="vrepair-same-1",
+        recurrence_fingerprints=["fp-x"], revision=2)
+    await record_decision(
+        sid, decision=DECISION_AUTO_APPLIED, proposal_id="vrepair-same-1",
+        recurrence_fingerprints=["fp-x"], revision=3)
+    decisions = await load_decisions(sid)
+    assert rejected_fingerprints(decisions) == frozenset({"fp-x"})
+    # 最近决策仍是最后一条 auto 收场（账本按时序保真）。
+    assert decision_for_proposal(decisions, "vrepair-same-1")["decision"] == \
+        DECISION_AUTO_APPLIED
+    # 用户改主意仍整体替换（同 proposal_id 的新裁决压掉旧裁决）。
+    await record_decision(
+        sid, decision=DECISION_APPROVED, proposal_id="vrepair-same-1",
+        recurrence_fingerprints=["fp-x"], revision=4)
+    assert rejected_fingerprints(await load_decisions(sid)) == frozenset()
+
+
+@pytest.mark.asyncio
 async def test_decision_ledger_bounded_and_replaced(sid):
     for i in range(40):
         await record_decision(

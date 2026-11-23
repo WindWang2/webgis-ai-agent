@@ -216,6 +216,12 @@ def normalize_windows(
         if not isinstance(mn, (int, float)) or not isinstance(mx, (int, float)):
             return None
         mn_f, mx_f = float(mn), float(mx)
+        # 有限数值域（docstring 契约）：NaN/±inf fail-closed ——
+        # min(24, NaN) 返回 24，max_zoom=NaN 的窗口会被静默接受为
+        # [x,24) 全域窗（与 zoom_gate_of_layer._clamp 同口径）。
+        for f in (mn_f, mx_f):
+            if f != f or f in (float("inf"), float("-inf")):
+                return None
         # 钳制到 [0,24] 后复核 min<max（文档契约「钳制后 min<max」）：整体
         # 越界窗（两端都 <0 或都 >24，如 [-10,-5] / [25,30]）钳制后退化为
         # 零宽 [0,0)/[24,24)，与 [8,8] 同为空窗，必须拒；部分越界仍合法

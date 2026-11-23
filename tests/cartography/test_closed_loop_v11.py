@@ -154,10 +154,13 @@ def test_action_space_extended() -> None:
     from app.lib.cartography.selfheal_actions import SELFHEAL_ACTIONS
 
     ids = {a.action_id for a in SELFHEAL_ACTIONS}
-    # V10 五类之上的四类扩展（W7.4）
+    # V10 五类之上的动作扩展（W7.4）——``resample`` 已撤销注册：它标注
+    # AUTO_SAFE + SURFACE_RUNTIME 却无 build_runtime_patch 执行分支
+    # （恒返 None 的死端，触发词命中后白跑一轮，与 relayout_* 同族）。
     for new_action in ("switch_composition", "change_aggregation",
-                       "change_projection", "resample"):
+                       "change_projection"):
         assert new_action in ids
+    assert "resample" not in ids
     # 注册表自洽：trigger 非空、expected_effect ∈ (0,1]
     for spec in SELFHEAL_ACTIONS:
         assert spec.triggers

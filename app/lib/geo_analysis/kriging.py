@@ -1329,8 +1329,10 @@ def directional_variogram(
     条轴，因此 ``azimuth_deg`` 与 ``azimuth_deg + 180`` 返回逐位一致的曲线。
 
     ``tolerance_deg`` 为轴向半角（0 < t ≤ 90；90 = 全向，各向同性退化）。
-    ``band_width``（工作 CRS 单位）进一步限制配对中点到轴线的垂距
-    （GSLIB band 语义），进 meta 披露。滞后 bin 沿用
+    ``band_width``（工作 CRS 单位）进一步限制配对**中点**到轴线的垂距
+    （GSLIB band 语义；轴线过数据质心 —— 质心锚定使结果对工作 CRS 的
+    平移（UTM 带原点）不变，原点锚定会让 band 在真实 UTM 坐标下恒空），
+    进 meta 披露。滞后 bin 沿用
     :func:`empirical_variogram` 约定（同一 span/edges/空 bin 丢弃）；
     配对行走沿用行步幅策略控制 ``max_pairs`` 预算，确定性。
 
@@ -1376,6 +1378,10 @@ def directional_variogram(
 
     t = math.radians(az)
     ux, uy = math.cos(t), math.sin(t)
+    # 轴线锚点 = 数据质心（P2 修复的一部分）：band 判据是配对中点到轴线的
+    # 垂距，轴线过质心 ⇒ 平移不变（UTM 带原点漂移不改变结果），且
+    # band_width 在工具层的 UTM 工作帧里真正可用。
+    anchor = pts.mean(axis=0)
     total_pairs = n * (n - 1) // 2
     stride = max(1, int(math.ceil(total_pairs / max(max_pairs, 1))))
     kept_pairs = 0
@@ -1388,7 +1394,16 @@ def directional_variogram(
         rel = np.minimum(rel, 180.0 - rel)
         keep = rel <= tol
         if bw is not None:
-            perp = np.abs(ux * v[:, 1] - uy * v[:, 0])   # 到轴线的垂距
+            # GSLIB band 语义（docstring 契约）：band_width 限制的是**配对
+            # 中点**到轴线的垂距，不是配对位移向量与轴的垂距 |u×v| ——
+            # 后者对平行于轴的远轴对恒为 0（整条远轴平移的配对全被误纳），
+            # 方向变异函数被离轴对污染（P2 修复）。
+            # GSLIB band 语义（docstring 契约）：band_width 限制的是**配对
+            # 中点**到轴线的垂距，不是配对位移向量与轴的垂距 |u×v| ——
+            # 后者对平行于轴的远轴对恒为 0（整条远轴平移的配对全被误纳），
+            # 方向变异函数被离轴对污染（P2 修复）。
+            mid = pts[i] + 0.5 * v - anchor           # 中点相对锚点 (m, 2)
+            perp = np.abs(ux * mid[:, 1] - uy * mid[:, 0])
             keep &= perp <= bw
         b = np.searchsorted(edges, d, side="right") - 1
         valid = keep & (b >= 0) & (b < n_lags)
@@ -2163,10 +2178,14 @@ def block_kriging(
         d_sb = np.sqrt((diff_sb ** 2).sum(axis=-1))             # (c, k, 4)
         g_sb = _gamma(g.model, d_sb, g.sill, g.range_m, g.nugget, nu=g.nu).mean(axis=2)
 
-        # 块内平均 γ̄(B,B)：16 个有序子点对（含 4 个自对 γ(0)=0）
+        # 块内平均 γ̄(B,B)：16 个有序子点对；4 个自对按文档约定取
+        # γ(0)=0 —— _gamma(0)=nugget（h→0⁺ 的跳变不属于 h=0 的值），
+        # 不归零会把 γ̄(B,B) 高估 nugget/4，块克里金方差系统性低估
+        # （P2 修复）。
         diff_in = sub[:, :, None, :] - sub[:, None, :, :]       # (c, 4, 4, 2)
         d_in = np.sqrt((diff_in ** 2).sum(axis=-1))
-        g_in = _gamma(g.model, d_in, g.sill, g.range_m, g.nugget, nu=g.nu).mean(axis=(1, 2))
+        g_in = _gamma(g.model, d_in, g.sill, g.range_m, g.nugget, nu=g.nu)
+        g_in = np.where(np.eye(4, dtype=bool), 0.0, g_in).mean(axis=(1, 2))
 
         mat = np.zeros((c, k + 1, k + 1))
         mat[:, :k, :k] = gamma_ss

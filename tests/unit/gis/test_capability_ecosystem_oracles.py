@@ -280,6 +280,27 @@ def test_cap_o02_external_unavailable_downgrades_verified(monkeypatch):
         f"{target} 已 EXTERNAL_UNAVAILABLE，不得再是 native_verified")
 
 
+def test_cap_o02_declared_only_truncation_is_disclosed():
+    """声明态能力循环超预算 break 时 len(records) 恰等于 max_records（不是
+    >），旧判据 `len(records) > max_records` 恒 False —— 被丢掉的
+    declared_only 能力不进 records 也不进 diagnostics，快照谎称完整。"""
+    full = compile_availability_snapshot(bootstrap=True)
+    tool_backed = sum(1 for r in full.records if r.tool_id)
+    declared_total = sum(1 for r in full.records
+                         if r.availability_status == "declared_only")
+    assert declared_total > 1, "需要多条声明态能力才能观测截断披露"
+
+    # max_records = 工具态记录数 + 1：声明态循环在第 1 条 append 后即触顶
+    snap = compile_availability_snapshot(bootstrap=True,
+                                        max_records=tool_backed + 1)
+    assert snap.truncated is True
+    kept_declared = sum(1 for r in snap.records
+                        if r.availability_status == "declared_only")
+    assert kept_declared == 1
+    assert (f"declared_only_capabilities_omitted_{declared_total - 1}"
+            in snap.diagnostics), snap.diagnostics
+
+
 # ── CAP-O03 registry 漂移 ─────────────────────────────────────────────
 
 
@@ -684,6 +705,33 @@ def test_cap_o12_slow_provider_returns_not_evaluated_within_budget(monkeypatch):
     assert closed.qualified is False
     assert "permission" in closed.facets
     assert closed.facets["permission"] == "failed"
+
+
+def test_cap_o12_non_numeric_deadline_never_escapes():
+    """deadline_s 为非数值（"5s"/list/dict）时预算闸不得抛未捕获异常。
+
+    旧实现在探测返回后 ``float(deadline_s)`` 裸算：TypeError/ValueError
+    逸出 qualify_provider，冲破「预算不足一律 not_evaluated」的 fail-closed
+    契约（同函数另两处已有 try 守卫）。
+    """
+    assert not MISSING, RED
+    host = ExtensionHost(_registry(), HostPolicy())
+    calls: list[Any] = []
+
+    def _fast_probe(provider_id, remaining_s):
+        calls.append(remaining_s)
+        return None
+
+    for bad_deadline in ("5s", [1, 2], {"a": 1}):
+        res = qualify_provider(
+            "cap_o12_bad_deadline", budget={"deadline_s": bad_deadline},
+            permissions=frozenset({"read", "model_infer"}),
+            host=host, probe=_fast_probe)
+        assert res.provider_id == "cap_o12_bad_deadline"
+        assert res.facets.get("permission") in ("pass", "proven_pass")
+        # 不可解析的预算 = 无预算约束（与 remaining 计算同口径），不降级也不抛
+        assert "BUDGET_DEADLINE_EXCEEDED_DEGRADED" not in res.reason_codes
+    assert calls, "注入探测必须被真实调用"
 
 
 # ── CAP-O13 文档可执行 ────────────────────────────────────────────────

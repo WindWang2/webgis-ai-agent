@@ -621,9 +621,11 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 description="r_max = 比例 × min(窗宽,窗高)；上限 0.5（半窗）",
             ),
             ParameterSpec(
-                name="envelopes", type="integer", default=0, minimum=0, maximum=499,
+                name="envelopes", type="integer", default=99, minimum=1, maximum=499,
                 unit="count",
-                description="CSR 模拟包络次数（0=纯描述；固定种子 42）",
+                description="CSR 模拟包络次数（1-499，默认 99，固定种子 42）；"
+                            "本工具的输出（包络分位/秩 p 值/MonteCarloSummary）"
+                            "依赖 ≥1 次模拟，0 无意义",
             ),
         ],
     ),

@@ -165,6 +165,30 @@ def test_materialize_deterministic(registry, variant_record):
         materialize_template(variant_record).model_dump()
 
 
+def test_materialize_rejects_out_of_vocabulary_layout_profile(registry,
+                                                              variant_record):
+    """review P2 回归：载荷侧 layout_profile 覆写按 Literal 词表 fail-closed。
+
+    赋值路径不过 pydantic 校验（模板未设 validate_assignment）而载荷侧是无
+    校验 str —— 词表外值此前被静默物化进模板。变体与 inline 两条路径都验。
+    """
+    for bad in ("totally_bogus_profile", "Standard", "standard ", "dense "):
+        rec = variant_record.model_copy(deep=True)
+        rec.payload.layout_profile = bad
+        with pytest.raises(TemplateAssetError, match="layout_profile_unknown"):
+            materialize_template(rec)
+    # 词表内值照常覆写
+    rec = variant_record.model_copy(deep=True)
+    rec.payload.layout_profile = "dense"
+    assert materialize_template(rec).layout_profile == "dense"
+    # inline 路径的载荷级覆写同闸
+    payload = _inline_payload()
+    payload.layout_profile = "nope"
+    rec2 = TemplateAssetRecord(asset_id="asset.test.inline1", payload=payload)
+    with pytest.raises(TemplateAssetError, match="layout_profile_unknown"):
+        materialize_template(rec2)
+
+
 # ── 指纹 ──────────────────────────────────────────────────────────────────
 
 

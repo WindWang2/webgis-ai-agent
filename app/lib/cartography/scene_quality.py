@@ -180,8 +180,12 @@ def evaluate_scene_quality(
     mode = scene.get("mode")
     terrain = scene.get("terrain")
     camera = scene.get("camera")
-    sources = spec.get("sources") or {}
-    layers = spec.get("layers") or []
+    # 坏文档不得让质量门自己崩：sources/layers 非声明形状时按空面处理
+    # （真实 finding 仍可产出，而不是 AttributeError 后全部门面丢失）。
+    sources_raw = spec.get("sources")
+    sources = sources_raw if isinstance(sources_raw, dict) else {}
+    layers_raw = spec.get("layers")
+    layers = layers_raw if isinstance(layers_raw, list) else []
 
     # ── terrain 数据面完整性（与 coordinator.validate 双闸同口径）────────
     if isinstance(terrain, dict):
@@ -247,7 +251,8 @@ def evaluate_scene_quality(
         if layer.get("type") != "fill-extrusion":
             continue
         has_vertical_content = True
-        paint = layer.get("paint") or {}
+        paint = layer.get("paint")
+        paint = paint if isinstance(paint, dict) else {}
         contract = layer.get("extrusion") or {}
         has_height_evidence = bool(
             paint.get("fill-extrusion-height")
@@ -471,4 +476,15 @@ def scene_quality_report_safe(spec: Any) -> Dict[str, Any]:
         ]
         return {"passed": report["passed"], "blocking_count": report["blocking_count"], "findings": findings}
     except Exception:  # noqa: BLE001 — 门禁绝不影响主流程（诚实记录交给调用方）
-        return {"passed": True, "blocking_count": 0, "findings": [], "error": "scene_quality_gate_error"}
+        # fail-closed（与 critic_engine 同款）：评测自身崩 ⇒ 不可信为「通过」。
+        # fail-open 会让阻断性 finding 全部丢失，坏文档静默过关。
+        return {
+            "passed": False,
+            "blocking_count": 1,
+            "findings": [{
+                "code": "SCENE_QUALITY_GATE_ERROR",
+                "severity": "blocking",
+                "detail": "scene quality evaluation failed (fail-closed)",
+            }],
+            "error": "scene_quality_gate_error",
+        }

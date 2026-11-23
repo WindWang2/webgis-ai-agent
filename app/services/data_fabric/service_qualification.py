@@ -39,6 +39,13 @@ def qualification_for_descriptor(descriptor: Any) -> Dict[str, Any]:
         if descriptor.startswith("ref:fabric-cog/"):
             return _evidence(NUMERIC_RASTER, "materialized COG asset ref")
         return _evidence(UNKNOWN, "unrecognized ref form")
+    # 别名形态（wms_wmts / ogc_tiles / …）与规范名在 AdapterRegistry 中等价
+    # （registry.py 的 aliases）。不先规范化就会漏查 _TILE_PROTOCOLS，瓦片
+    # 服务被误判成 vector_features —— 击穿 G01 的 display_only/numeric 边界。
+    if source_type:
+        from app.services.data_fabric.fabric.probing import canonical_source_type
+
+        source_type = canonical_source_type(source_type)
     if source_type in _TILE_PROTOCOLS:
         cap = (metadata or {}).get("capability") or {}
         state = cap.get("state") or "unknown"

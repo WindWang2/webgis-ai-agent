@@ -185,7 +185,9 @@ def derive_importance_model(
         if not present:
             derivation.reason_codes.append("user_field_absent:values_not_in_data")
             return derivation
-        non_null = sum(dist.values())
+        # None 桶（缺失值）不计入非空：与 distinct_values（distinct 面已排除
+        # None 键）同口径，否则字段有缺失值时覆盖率虚高、夸大取舍证据强度。
+        non_null = sum(c for v, c in dist.items() if v is not None)
         derivation.selected = ImportanceModel(
             field=user_field,
             # 与词表序同款 canonical 化：kept/匹配面是 List[str] 契约。
@@ -255,7 +257,9 @@ def derive_importance_model(
                 assessment.reason_codes.append("no_ordered_vocabulary")
             continue
 
-        non_null = sum(dist.values())
+        # None 桶（缺失值）不计入非空 —— 与上方 distinct_values=len(values)
+        # （已排除 None 键）同口径；计入会让覆盖率虚高。
+        non_null = sum(c for v, c in dist.items() if v is not None)
         coverage = non_null / total if total else 0.0
         model = ImportanceModel(
             field=field,

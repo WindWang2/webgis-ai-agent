@@ -160,6 +160,19 @@ def normalize_heatmap_radius(
             f"legacy radius={legacy}"
         )
 
+    # 分析带宽契约区间（BANDWIDTH_M_MIN/MAX）与像素半径同样钳制：legacy
+    # radius=5 或 5e4 米会静默进入带宽（sigma = bandwidth / cell_size），
+    # 让密度面整体失真——不猜测、不静默，钳制并记录。
+    if contract.bandwidth_m is not None:
+        clamped_bw = max(
+            BANDWIDTH_M_MIN, min(BANDWIDTH_M_MAX, float(contract.bandwidth_m)))
+        if clamped_bw != contract.bandwidth_m:
+            warnings.append(
+                f"bandwidth_m {contract.bandwidth_m} clamped to {clamped_bw} "
+                f"([{BANDWIDTH_M_MIN}, {BANDWIDTH_M_MAX}] m)"
+            )
+        contract.bandwidth_m = clamped_bw
+
     contract.warnings = warnings
     return contract
 

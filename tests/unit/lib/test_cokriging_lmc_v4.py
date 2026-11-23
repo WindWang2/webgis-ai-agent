@@ -97,6 +97,46 @@ def test_cokriging_deterministic():
     assert np.array_equal(a.variances, b.variances)
 
 
+def test_cokriging_nugget_not_polluting_offdiagonal_covariance():
+    """P2 修复：交叉块金 nug12 不得进入 C11/C22 非对角元与全程 C12。
+
+    纯 nugget LMC（结构 sill=0、nug1=nug2=1、ρ=0.8 ⇒ nug12=0.8）隔离
+    块金项：修复后系统为对角占优，解析方差 = nug1·(1+1/k1)（w1=1/k1、
+    λ1=−nug1/k1、rhs=0）。缺陷版把 nug12 加到所有 h>0 的直接/交叉协
+    方差，方差被系统性低估（同配置下为 0.3 而非 1.5）。
+    """
+    from app.lib.geo_analysis.cokriging_lmc import LMCModel
+    from app.lib.geo_analysis.kriging import VariogramFit
+
+    rng = np.random.default_rng(3)
+    xy1 = rng.uniform(0, 10_000, (16, 2))
+    xy2 = rng.uniform(0, 10_000, (12, 2))
+    z1 = 5.0 + rng.normal(0, 1.0, len(xy1))
+    z2 = 3.0 + rng.normal(0, 1.0, len(xy2))
+    nug1 = nug2 = 1.0
+    rho = 0.8
+    lmc = LMCModel(
+        rho=rho,
+        structures=[("spherical", 0.0, 0.0, 100.0)],
+        variogram1=VariogramFit(model="spherical", sill=0.0,
+                                range_m=100.0, nugget=nug1),
+        variogram2=VariogramFit(model="spherical", sill=0.0,
+                                range_m=100.0, nugget=nug2),
+    )
+    k1, k2 = 2, 2
+    targets = np.array([[5000.0, 5000.0], [1234.0, 4321.0]])
+    ck = cokriging_lmc(xy1, z1, xy2, z2, targets, lmc=lmc, k1=k1, k2=k2)
+    expected_var = nug1 * (1.0 + 1.0 / k1)
+    assert np.allclose(ck.variances, expected_var, rtol=1e-9), (
+        f"variances {ck.variances} != nugget-only cokriging variance "
+        f"{expected_var}（交叉块金泄漏进 h>0 协方差？）")
+    # 纯 nugget 下主变量权重均等 ⇒ 预测为主变量邻域均值
+    from scipy.spatial import cKDTree
+    for t_i, t in enumerate(targets):
+        nb = cKDTree(xy1).query(t, k=k1)[1]
+        assert abs(ck.predictions[t_i] - float(np.mean(z1[nb]))) < 1e-9
+
+
 def test_cokriging_lmc_surface_tool_registered_with_complete_descriptor():
     """工具 cokriging_lmc_surface 注册存在且描述符完整（quality 棘轮闸静态引用）。"""
     from app.tools.advanced_spatial import register_advanced_spatial_tools

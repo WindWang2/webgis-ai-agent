@@ -319,3 +319,40 @@ class TestPerfBlockWorkReceipt:
             "data_plane": {"bytesFetched": 5_000_000_000},  # > 1e9 事件计数界
         })
         assert out["data_plane"]["bytesFetched"] == 5_000_000_000
+
+
+class TestNonFiniteNumbersFailClosedWithoutCrashing:
+    """P2：Python json 可解析 NaN/Infinity —— int() 对它们抛异常，
+    fail-closed 校验自身不能崩（500）。"""
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"),
+                                     float("-inf")])
+    def test_nonfinite_revision_is_rejected_not_raised(self, bad):
+        normalized, errors = validate_render_apply_ack(
+            _ack(mapspec_revision=bad))
+        assert normalized is None
+        assert errors == ["mapspec_revision must be a non-negative number"]
+
+    def test_nonfinite_style_epoch_is_disclosed_not_raised(self):
+        payload = _ack()
+        payload["work"] = {
+            "work_id": "w1",
+            "work_fingerprint": "rw-1-abc",
+            "style_epoch": float("inf"),
+        }
+        normalized, errors = validate_render_apply_ack(payload)
+        assert normalized is not None
+        assert "style_epoch" not in normalized["work"]
+        assert any("style_epoch" in e for e in errors)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_nonfinite_perf_counts_absent_not_raised(self, bad):
+        out = normalize_render_perf_block({
+            "schema_version": PERF_SCHEMA_VERSION,
+            "render_failures": bad,
+            "data_plane": {"requests": bad, "bytesFetched": bad},
+        })
+        assert out is not None
+        assert out["render_failures"] == 0
+        assert out["data_plane"]["requests"] == 0
+        assert out["data_plane"]["bytesFetched"] == 0

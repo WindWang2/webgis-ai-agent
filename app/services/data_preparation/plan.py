@@ -362,7 +362,11 @@ def _load_sync(path: Path) -> List[PreparationPlan]:
                 line = line.strip()
                 if not line:
                     continue
-                plan = PreparationPlan.from_dict(json.loads(line))
+                try:
+                    raw = json.loads(line)
+                except Exception:  # noqa: BLE001 — 坏行跳过（持久化纪律）
+                    continue
+                plan = PreparationPlan.from_dict(raw)
                 if plan is not None:
                     out.append(plan)
     except Exception:  # noqa: BLE001 — 读失败按空（诚实缺席）

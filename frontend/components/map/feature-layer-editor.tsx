@@ -421,7 +421,12 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
         if (active === 'delete_feature') {
           await submit([{ op: 'delete_features' }], { featureIds: [picked.id], labelKey: 'map.edit.deleteFeature', what: t('map.edit.deleteFeature') });
         } else {
-          setVertexTarget({ featureId: picked.id, geometry: picked.feature.geometry ?? null });
+          // 合法 GeoJSON 允许 feature.geometry = null；顶点编辑只接受
+          // 有点/线/面几何的目标（ringOf / 拖拽 handler 解引用 geometry.type，
+          // 存 null 会 TypeError 崩溃）。
+          const geometry = picked.feature.geometry;
+          if (!geometry) return;
+          setVertexTarget({ featureId: picked.id, geometry });
         }
         return;
       }

@@ -118,6 +118,12 @@ def assess_intent_acceptance(
 
     desired_ok = True
     user_hidden: List[str] = []
+    if not requirements["layers"]:
+        # 空需求集不可验收：无层需求时 desired 面「全满足」是真空真 ——
+        # READY 即 accepted、observation 非空即 intent_verified，等于对
+        # 无意图层可核的章节橡皮图章（诚实未知，不假通过）。
+        desired_ok = False
+        unmet.append("no_layer_requirements")
     for layer_id in requirements["layers"]:
         spec_layer = spec_layers.get(layer_id)
         if spec_layer is None:

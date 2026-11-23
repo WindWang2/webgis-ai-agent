@@ -171,9 +171,35 @@ def downgrade() -> None:
             op.execute(f"DROP INDEX IF EXISTS {index_name}")
 
     if _is_sqlite():
+        # upgrade 的 SQLite 分支把 org_id/creator_id 放松为 nullable、把 id 收敛为
+        # INTEGER PRIMARY KEY（PG 分支只放松 org_id，creator_id/id 早已就位）。回滚到
+        # 0012 必须对称还原这三处，否则再次 upgrade 时它们变成 no-op、迁移不可往返。
+        # org_id/creator_id 的 NOT NULL 仅在确实没有 NULL 行时恢复（与 PG 分支同前提：
+        # 期间产生的匿名/无 creator job 不能被删除，规范 §39）；有 NULL 行则保留
+        # nullable 并在此说明理由。
+        bind = op.get_bind()
+        has_null_org = bind.execute(
+            sa.text(f"SELECT 1 FROM {TABLE} WHERE org_id IS NULL LIMIT 1")
+        ).first() is not None
+        has_null_creator = bind.execute(
+            sa.text(f"SELECT 1 FROM {TABLE} WHERE creator_id IS NULL LIMIT 1")
+        ).first() is not None
         with op.batch_alter_table(TABLE, copy_from=_reflected_table(), schema=None) as batch_op:
             for name, _type_key, _default in reversed(NEW_COLUMNS):
                 batch_op.drop_column(name)
+            if not has_null_org:
+                batch_op.alter_column("org_id", existing_type=sa.Integer(), nullable=False)
+            if not has_null_creator:
+                batch_op.alter_column(
+                    "creator_id", existing_type=sa.String(length=255), nullable=False
+                )
+            # id 由 INTEGER PRIMARY KEY 还原为 0012 的 BigInteger。
+            batch_op.alter_column(
+                "id",
+                existing_type=sa.Integer(),
+                type_=sa.BigInteger(),
+                existing_nullable=False,
+            )
             batch_op.create_check_constraint("ck_task_status", OLD_STATUS_CHECK)
             batch_op.create_check_constraint("ck_task_progress", PROGRESS_CHECK)
         return

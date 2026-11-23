@@ -235,7 +235,11 @@ def apply_steps(
             dropped2 = 0
             for feat in features:
                 _check_cancel()
-                props = feat.get("properties") if isinstance(feat, dict) else {}
+                props = feat.get("properties") if isinstance(feat, dict) else None
+                if not isinstance(props, dict):
+                    # feature 无 properties 成员（或不是对象）→ 视作全空属性，
+                    # 与 axis_swap / rename_field 的 isinstance 防护同口径
+                    props = {}
                 key = json.dumps(
                     [props.get(k) for k in step.key_fields],
                     ensure_ascii=False, sort_keys=True, default=str)

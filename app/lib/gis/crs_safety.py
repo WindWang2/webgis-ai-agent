@@ -176,7 +176,9 @@ def recommend_metric_crs(bbox: Optional[Tuple[float, float, float, float]], crs:
             from pyproj import Transformer
 
             minx, miny, maxx, maxy = Transformer.from_crs(crs, "EPSG:4326", always_xy=True).transform_bounds(minx, miny, maxx, maxy)
-    except (TypeError, ValueError):
+    except Exception:  # noqa: BLE001 — 非法 crs 串下 pyproj 抛 CRSError
+        # （RuntimeError 子类，不是 ValueError）—— 任何变换失败都必须落到
+        # 文档承诺的保守空串，由调用方处理，绝不逸出到 resolver 硬门之外。
         return ""
     import math
 

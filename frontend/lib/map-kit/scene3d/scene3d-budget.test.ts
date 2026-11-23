@@ -219,8 +219,7 @@ describe('setStyle sweep ownership release (G5 leak fix)', () => {
 });
 
 describe('tile budget deferral (review R1-P2-3)', () => {
-  it('defers (not fails) an over-budget tile; loads after pressure release', async () => {
-    const map = makeFakeMap();
+  it('defers (not fails) an over-budget tile; loads after pressure release', async () => {    const map = makeFakeMap();
     // 预算只够一个 tile 的几何（每 tile GLB fixture = 2 三角）。
     const mgr = new Scene3DManager(map as never, { budgetLimits: { maxTriangles: 3 } });
     const tilesetUrl = 'https://assets.test/tiles/tileset.json';
@@ -301,5 +300,80 @@ describe('tile budget deferral (review R1-P2-3)', () => {
     mgr.sync({ ...(spec as object), scene: { mode: '2d', assets: [] } } as never);
     expect(mgr.budgetUsage().triangles).toBe(0);
     mgr.dispose();
+  });
+});
+
+describe('tile budget deferral retry (deferred tile must not stay a hole)', () => {
+  it('budget-deferred tile is retried by a timer — no camera event / sibling load needed', async () => {
+    // 旧实现只记 budgetDeferredAt 退避，没有对应重试定时器：末位延后的
+    // tile 在无相机事件、无其它 tile 加载完成时永不重试，画面留洞。
+    vi.useFakeTimers();
+    try {
+      const map = makeFakeMap();
+      const mgr = new Scene3DManager(map as never, { budgetLimits: { maxTriangles: 3 } });
+      const tilesetUrl = 'https://assets.test/tiles/tileset.json';
+      const spec = {
+        version: '1.7',
+        sources: {
+          'tiles-src': { type: 'model3d', format: '3dtiles', url: tilesetUrl, content_revision: 1 },
+        } as never,
+        layers: [],
+        scene: {
+          mode: '3d',
+          assets: [{
+            id: 'city', source: 'tiles-src',
+            placement: { anchor: [104.06, 30.67], altitude_m: 0 }, visible: true,
+          }] as never,
+        } as never,
+      } as never;
+      const tilesetDoc = buildTilesetFixture();
+      const glb = buildGlbFixture({ triangles: 2 });
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url === tilesetUrl) {
+          return new Response(JSON.stringify(tilesetDoc), {
+            status: 200,
+            headers: { 'content-type': 'application/json', 'content-length': '1' },
+          });
+        }
+        if (url.endsWith('.glb')) {
+          return new Response(glb, {
+            status: 200,
+            headers: { 'content-length': String(glb.byteLength) },
+          });
+        }
+        return new Response('not found', { status: 404 });
+      }));
+
+      mgr.sync(spec);
+      await vi.advanceTimersByTimeAsync(60);
+
+      const internals = mgr as unknown as {
+        mounted: Map<string, {
+          tiles: Map<string, { tile: { id: string; contentUri: string }; model: unknown; attached: boolean; budgetDeferredAt: number | null; loading: boolean }>;
+          prevRender: Set<string>;
+        }>;
+        loadTile: (m: unknown, e: unknown) => Promise<void>;
+      };
+      const mounted = internals.mounted.get('city');
+      expect(mounted).toBeTruthy();
+      const entries = [...mounted!.tiles.values()];
+      for (const e of entries) mounted!.prevRender.add(e.tile.id);
+
+      await internals.loadTile(mounted, entries[0]);
+      await internals.loadTile(mounted, entries[1]);
+      expect(entries[0].model).toBeTruthy();
+      expect(entries[1].budgetDeferredAt).not.toBeNull();
+
+      // 之后既无相机事件也无其它 tile 完成 —— 只有退避重试定时器能再驱动。
+      const runSchedule = vi.spyOn(
+        mgr as never as { runSchedule: (m: unknown) => void },
+        'runSchedule',
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(runSchedule).toHaveBeenCalled();
+      mgr.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

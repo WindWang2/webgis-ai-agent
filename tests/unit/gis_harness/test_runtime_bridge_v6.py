@@ -565,3 +565,42 @@ async def test_kill_switch_disables_service(clean_session, monkeypatch):
     await _save_plan(clean_session, _chapter())
     monkeypatch.setenv("GIS_WORKFLOW_RUNTIME_V6", "0")
     assert await maybe_update_runtime_projection(clean_session, reason="t") is None
+
+
+@pytest.mark.asyncio
+async def test_lock_window_spec_mutation_abandons_write(clean_session, monkeypatch):
+    """反证（review P2）：锁内守卫只重验 goal/rows/自身块，未重验锁前读入的
+    mapspec/render_seq —— 等锁窗口内 spec 突变时，块会带着旧 checked_revision
+    与旧血缘索引落库（runtime_state_machine:714-721 显式防此害）。"""
+    import app.services.gis_harness.runtime_bridge as bridge
+    from app.services.session_data import session_data_manager
+    from app.services.session_plan import load_session_plan
+
+    monkeypatch.setattr(
+        bridge, "derive_runtime_block",
+        lambda chapter, **kw: derive_runtime_block(
+            chapter, compile_fn=_compile_for(_dag()),
+            mapspec_revision=kw.get("mapspec_revision", 0),
+            render_seq=kw.get("render_seq", 0),
+            stored=kw.get("stored")),
+    )
+    await _save_plan(clean_session, _chapter())
+
+    real_get = session_data_manager.get_map_state
+    calls = {"n": 0}
+
+    async def flaky_get(sid):
+        calls["n"] += 1
+        state = dict(await real_get(sid) or {})
+        # 第二次读取（等锁/锁内重验）时 spec 已被并发突变推进
+        if calls["n"] >= 2:
+            state["_cartographic_mutation_revision"] = int(
+                state.get("_cartographic_mutation_revision") or 0) + 7
+        return state
+
+    monkeypatch.setattr(session_data_manager, "get_map_state", flaky_get)
+
+    block = await maybe_update_runtime_projection(clean_session, reason="test")
+    assert block is None, "等锁窗口内 spec 突变必须放弃本次派生（旧血缘不落库）"
+    fresh = await load_session_plan(clean_session)
+    assert WORKFLOW_RUNTIME_KEY not in fresh.gis_chapter

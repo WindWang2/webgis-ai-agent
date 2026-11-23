@@ -123,6 +123,16 @@ class TestBoundsAndEmpty:
         g = build_analysis_graph(_FakePlan(chapter, superseded=True), None)
         assert any("superseded" in n for n in g["notes"])
 
+    def test_malformed_chapter_projection_never_raises(self):
+        """畸形章节（行是非 dict）→ 执行/产品投影降级缺席，绝不抛给调用方
+        （与 next_action / goal_graph 投影同纪律 —— 图是检视图，不是门槛）。"""
+        chapter = _chapter()
+        chapter["data_requirements"] = ["oops-not-a-dict"]
+        chapter["analysis_steps"] = ["oops-not-a-dict"]
+        g = _build(chapter)
+        assert g["counts"]["execution"] == 0
+        assert any("execution projection failed" in n for n in g["notes"])
+
 
 class TestRoute:
     def test_route_registered(self):

@@ -309,7 +309,11 @@ class RemoteInferenceProvider:
                 )
             try:
                 data = resp.json()
-            except ValueError as exc:
+            # RecursionError 是 RuntimeError 子类而**非** ValueError 子类：
+            # 病态深嵌套 JSON（64MiB 字节预算内即可构造）会绕过 except
+            # ValueError 向上逃逸成未处理异常（500）—— 响应体完全不可信，
+            # 与字节上限/错误体 sanitize/redirect 逐跳重过策略同一口径设防。
+            except (ValueError, RecursionError) as exc:
                 raise RemoteInferenceError("remote response is not valid JSON") from exc
             probs_raw = data.get("class_probabilities")
             if not isinstance(probs_raw, list):

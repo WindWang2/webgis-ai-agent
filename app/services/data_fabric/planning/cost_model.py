@@ -72,6 +72,10 @@ def bbox_selectivity(
         cx0, cy0, cx1, cy1 = (float(v) for v in coverage_bbox)
     except (TypeError, ValueError):
         return 1.0
+    if rx0 > rx1:
+        # 请求 bbox 跨反子午线（minx>maxx）：朴素交宽恒 0 → selectivity=0 会谎报
+        # 0 行/0 字节、预算恒过。无法可靠声称缩减 → 保守上界 1.0。
+        return 1.0
     inter_w = max(0.0, min(rx1, cx1) - max(rx0, cx0))
     inter_h = max(0.0, min(ry1, cy1) - max(ry0, cy0))
     cov_w = max(0.0, cx1 - cx0)

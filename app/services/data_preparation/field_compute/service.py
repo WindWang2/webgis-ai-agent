@@ -30,7 +30,7 @@ from app.lib.cancellation import OperationCancelled, current_token
 from app.services.data_preparation.field_compute import receipt as store
 from app.services.data_preparation.field_compute.contracts import (
     FUNCTION_SET_VERSION, IR_VERSION, MAX_BATCH_ROWS, MAX_PREVIEW_ROWS,
-    MAX_ROW_OPS, MAX_ROWS, ColumnResult, CompileError,
+    MAX_ROW_OPS, MAX_ROWS, MAX_STRING_INPUT, ColumnResult, CompileError,
     ComputePlan, ComputeReceipt, ExecError, ScopeSpec,
 )
 from app.services.data_preparation.field_compute.functions import (
@@ -208,6 +208,17 @@ def _scope_features(rows: Sequence[Tuple[Dict[str, Any], Any]]
     return [{"properties": props} for props, _ in rows]
 
 
+def _bounded_sample_value(v: Any) -> Any:
+    """样本值有界：长文本截到 ``MAX_STRING_INPUT``（与解释器字符串上限同口径）。
+
+    describe 自称「无数据本体」：schema / dtype / 单位提示之外只回少量样本，
+    不得把超长属性值原样塞进响应（长文本字段可致响应巨大）。
+    """
+    if isinstance(v, str) and len(v) > MAX_STRING_INPUT:
+        return v[:MAX_STRING_INPUT]
+    return v
+
+
 # ── describe ───────────────────────────────────────────────────────────────
 
 async def describe_source(session_id: str, source_ref: str) -> Dict[str, Any]:
@@ -222,13 +233,16 @@ async def describe_source(session_id: str, source_ref: str) -> Dict[str, Any]:
             "dtype": types.get(name, "any"),
             "unit_hint": "",              # 字段名不作可信单位证据
             "unit_confidence": "undeclared",
-            "sample": [r.get(name) for r in rows[:3] if name in r][:3],
+            "sample": [_bounded_sample_value(r.get(name))
+                       for r in rows[:3] if name in r][:3],
         })
     mode, reason = geometry_gate(crs, crs_source)
     return {
         "input_ref": source_ref, "data_shape": shape, "row_count": len(rows),
         "crs": crs, "crs_source": crs_source,
-        "fields": fields[:64], "sample_rows": [dict(r) for r in rows[:5]],
+        "fields": fields[:64],
+        "sample_rows": [{k: _bounded_sample_value(v) for k, v in r.items()}
+                        for r in rows[:5]],
         "function_set_version": FUNCTION_SET_VERSION, "ir_version": IR_VERSION,
         "functions": function_help(),
         "scope_modes": sorted({"all_rows", "selection", "predicate"}),
@@ -823,6 +837,9 @@ async def _register_output(session_id: str, plan: ComputePlan, output_ref: str,
     """既有 descriptor / provenance / artifact 入口（增值面，失败不阻断）。"""
     degraded: List[str] = []
     minted = False
+    # 输出 descriptor 刚 minted 的指纹（溯源链的 output 锚）；mint 失败时留空
+    # —— 不得回退成输入锚指纹，那会把溯源链指到错误的对象上。
+    out_fingerprint = ""
     try:
         from app.lib.data.profile import DatasetProfileV3, profile_features
         from app.lib.gis.dataset_descriptor import SourceRef
@@ -845,6 +862,8 @@ async def _register_output(session_id: str, plan: ComputePlan, output_ref: str,
         put = await get_dataset_semantic_store().put(
             session_id, output_ref, descriptor.with_fingerprints())
         minted = bool(put.ok)
+        out_fingerprint = str(getattr(put, "fingerprint", "") or "") or str(
+            getattr(descriptor, "descriptor_fingerprint", "") or "")
         if not minted:
             degraded.append("DESCRIPTOR_MINT_SKIPPED")
     except Exception as exc:  # noqa: BLE001
@@ -854,7 +873,7 @@ async def _register_output(session_id: str, plan: ComputePlan, output_ref: str,
         from app.services.dataset_semantics.provenance import record_transformation
         await record_transformation(
             session_id, output_ref=output_ref,
-            output_fingerprint=plan.anchor.descriptor_fingerprint,
+            output_fingerprint=out_fingerprint,
             inputs=[{"ref": plan.input_ref,
                      "descriptor_fingerprint": plan.anchor.descriptor_fingerprint}],
             algorithm="field_compute", algorithm_version=FUNCTION_SET_VERSION,
@@ -897,6 +916,22 @@ def _manifest_path(session_id: str, project_id: str) -> Path:
         raise ValueError("invalid session id for project manifest")
     key = hashlib.sha256(str(project_id).encode("utf-8")).hexdigest()[:24]
     return d / "field_compute" / "projects" / f"{key}.jsonl"
+
+
+#: per-manifest 追加锁：项目清单的 read-modify-write 必须串行，否则并发
+#: save_to_project（不同指纹计划 / 复用路径）互相覆盖、丢失清单条目。弱引用
+#: 锁表同 _EXEC_LOCKS 纪律：无活跃保存的清单锁可被 GC。
+_MANIFEST_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = \
+    weakref.WeakValueDictionary()
+
+
+def _manifest_lock(path: Path) -> "asyncio.Lock":
+    key = str(path)
+    lock = _MANIFEST_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _MANIFEST_LOCKS[key] = lock
+    return lock
 
 
 def _append_manifest_sync(path: Path, record: Dict[str, Any]) -> None:
@@ -947,8 +982,10 @@ async def save_to_project(session_id: str, output_ref: str, project_id: str,
         "saved_at": time.time(),
     }
     try:
-        await asyncio.to_thread(_append_manifest_sync,
-                                _manifest_path(session_id, project_id), record)
+        path = _manifest_path(session_id, project_id)
+        # 清单 read-modify-write 串行：并发保存不得互相覆盖
+        async with _manifest_lock(path):
+            await asyncio.to_thread(_append_manifest_sync, path, record)
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -999,10 +1036,20 @@ async def list_project_results(session_id: str, project_id: str
         return []
     try:
         lines = await asyncio.to_thread(path.read_text, encoding="utf-8")
-        return [json.loads(line) for line in lines.splitlines()
-                if line.strip() and json.loads(line).get("project_id") == project_id]
     except Exception:  # noqa: BLE001
         return []
+    out: List[Dict[str, Any]] = []
+    for line in lines.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)     # 逐行容错：单行坏 JSON 只丢该行
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(rec, dict) and rec.get("project_id") == project_id:
+            out.append(rec)
+    return out
 
 
 # ── 结果与计划查询 ─────────────────────────────────────────────────────────

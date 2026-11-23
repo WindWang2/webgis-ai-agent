@@ -414,6 +414,20 @@ class TestEvolution:
         # history preserved
         assert len(store.history("point_distribution_analysis")) == 2
 
+    def test_capacity_overflow_never_drops_active_series(self):
+        """review P2-3：无 inactive 节点可驱逐时，不得整条删除仍含 active 的 series。"""
+        store = SkillLineageStore(capacity=8)
+        for i in range(12):
+            store.register(f"skill-{i}", "1.0.0", trust_tier="core")
+        # 每个 series 只有唯一 active 节点 → 不可驱逐，也不得被静默抹掉
+        for i in range(12):
+            assert store.active_version(f"skill-{i}") is not None, f"skill-{i} active 丢失"
+            assert len(store.history(f"skill-{i}")) == 1
+        # inactive 节点仍按容量优先驱逐（回归保护：不因软超限而停止驱逐）
+        for i in range(6):
+            store.register(f"skill-{i}", "2.0.0", parent_version="1.0.0")
+        assert store.active_version("skill-0").version == "2.0.0"
+
 
 # ── Composition ────────────────────────────────────────────────────────
 

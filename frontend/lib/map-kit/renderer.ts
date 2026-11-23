@@ -63,8 +63,12 @@ const VIEWPORT_RENDER_BUDGET = 5000;
  * W7：陈旧视口应用取消 —— refresh 的重活在 idle 回调里执行；新一轮
  * refresh 使旧 token 失效，旧回调不再 setData（避免排队中的过时视口
  * 突变逐个落地，表现为缩放停止后地图"抖动回放"）。
+ *
+ * token 按 map 记账（WeakMap）：对比视图下对 map B 的 refresh 不得作废
+ * map A 排队中的 apply —— 模块级单值会让 A 的内联源保留陈旧视口裁剪
+ * 且无后续触发。
  */
-let _viewportRefreshGeneration = 0;
+const _viewportRefreshGeneration = new WeakMap<object, number>();
 
 /**
  * Phase 8: viewport-driven feature culling for large inline GeoJSON sources.
@@ -301,15 +305,18 @@ export function addGeoJsonSource(
 export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox) {
   if (!map) return;
   // W7：新一代 token 使在途旧回调失效 —— 连续平移/缩放时排队中的过时
-  // 视口应用被取消（最后稳定视口的 refresh 是唯一落地的写）。
-  const generation = ++_viewportRefreshGeneration;
+  // 视口应用被取消（最后稳定视口的 refresh 是唯一落地的写）。token 按
+  // map 记账：别图 refresh 不作废本图排队中的 apply。
+  const generation = (_viewportRefreshGeneration.get(map) ?? 0) + 1;
+  _viewportRefreshGeneration.set(map, generation);
+  const current = () => _viewportRefreshGeneration.get(map) ?? 0;
   const apply = () => {
-    if (generation !== _viewportRefreshGeneration) return; // stale → cancelled
+    if (generation !== current()) return; // stale → cancelled
     // R1-m13：idle 回调推迟 ≤200ms 执行 —— 地图可能已卸载/样式已重建，
     // 全体访问有界包裹（与 boundedVisibilityRepair 同款防御口径）。
     try {
       _registeredGeoJsonSourceIds.forEach((id) => {
-        if (generation !== _viewportRefreshGeneration) return; // 中途失效同样取消
+        if (generation !== current()) return; // 中途失效同样取消
         if (isMvtSourceId(id)) return; // #668: double-crop guard
         const source = map.getSource?.(id) as GeoJSONSource;
         if (!source) return;
@@ -327,7 +334,7 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
             viewport,
             VIEWPORT_RENDER_BUDGET,
           ).then((trimmed) => {
-            if (generation !== _viewportRefreshGeneration || map.getSource(id) !== source) return; // stale source or viewport
+            if (generation !== current() || map.getSource(id) !== source) return; // stale source or viewport
             const effective = trimmed ?? _filterForViewport(source, raw, viewport); // 同步兜底
             if (_lastGeoJsonData.get(source) !== effective) {
               _lastGeoJsonData.set(source, effective);

@@ -932,7 +932,10 @@ def publication_preflight(ir: PublicationIR, document: Dict[str, Any]) -> List[D
 
     has_attribution = any(
         isinstance(c, dict) and c.get("type") == "attribution"
-        and str((c.get("options") or {}).get("text") or "").strip()
+        # options 为非 dict（list/str）时不得 .get —— 坏文档应得到 warning，
+        # 而不是让 preflight 自己崩（导出规划 500）。
+        and isinstance(c.get("options"), dict)
+        and str(c["options"].get("text") or "").strip()
         for c in comps
     )
     if not has_attribution:

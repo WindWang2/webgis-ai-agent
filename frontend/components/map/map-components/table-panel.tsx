@@ -457,9 +457,16 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     }
     setFetchedRef(undefined);
     let alive = true;
-    void loadTableArtifact(tableRef).then((payload) => {
-      if (alive) setFetchedRef(payload);
-    });
+    // .catch 与 ensureLayerData / chapter-artifact 同构（#2160）：拒绝必须落
+    // unavailable 终态 —— 否则 alive 失效、fetchedRef 永驻 undefined，面板
+    // 永久「加载中」并冒未处理拒绝。
+    void loadTableArtifact(tableRef)
+      .then((payload) => {
+        if (alive) setFetchedRef(payload);
+      })
+      .catch(() => {
+        if (alive) setFetchedRef(null);
+      });
     return () => {
       alive = false;
     };
@@ -656,6 +663,8 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     // 再点同一行 → 清除（与 chart 类别同款 toggle 语义）。
     if (sel && sel.source === 'table' && sel.layer_id === layerId && sel.selected_ids.length === 1 && sel.selected_ids[0] === rowId) {
       publishSelection('clear_selection', { source: 'table', layer_id: layerId });
+      // ADR-0285 D2：clear 也上行 IR（与 PagedTableBody 同通道）。
+      emitTableSelectionChanged({ layerId, action: 'clear' });
       return;
     }
     publishSelection('select', {
@@ -665,6 +674,9 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
       id_field: state.status === 'ready' && state.idField ? state.idField : undefined,
       artifact_ref: tableRef || undefined,
     });
+    // ADR-0285 D2：表格行定位上行 IR（保留 table 来源身份，与 map 点选
+    // 区分）—— inline 体与 PagedTableBody 同一动作两通道行为一致。
+    emitTableSelectionChanged({ layerId, featureId: rowId });
   };
 
   const title = typeof options['title'] === 'string' && options['title'].trim()

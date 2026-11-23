@@ -6,7 +6,7 @@
  * 基数诊断不显示绿灯。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 // zustand store 形态：hook 是函数且带 getState（vi.mock 工厂被提升 ——
 // mock 形态在工厂内自建，不引用外层变量）
@@ -229,5 +229,28 @@ describe('DataJoinPanel', () => {
     const btn = await screen.findByRole('button', { name: /加入地图|add to map/i });
     expect(btn).toBeDisabled();
     expect(apiMock.renderRef).not.toHaveBeenCalled();
+  });
+
+  it('关闭面板即停止轮询（不再打 inspectRun）', async () => {
+    apiMock.createPlan.mockResolvedValue({ plan_id: 'p1', revision: 1 });
+    // 执行后仍 running → 进入 1s 轮询腿
+    apiMock.execute.mockResolvedValue({
+      run_id: 'dj-3', plan_id: 'p1', status: 'running', job_id: 11,
+      error_code: null, output_ref: null, output_rows: null, receipt: null,
+      created_at: null,
+    });
+    openPanel();
+    render(<DataJoinPanel sessionId="s1" ownerToken={null} />);
+    const inputs = screen.getAllByLabelText(/键字段|key field/i);
+    fireEvent.change(inputs[0], { target: { value: 'k' } });
+    fireEvent.change(inputs[1], { target: { value: 'k' } });
+    fireEvent.click(screen.getByRole('button', { name: /执行|execute/i }));
+    await waitFor(() => expect(apiMock.execute).toHaveBeenCalled());
+    // 放行 execute 的 promise 续体，让 pollRun 进入首个 1s 休眠
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    // 未到终态即关闭面板
+    await act(async () => { useDataJoinStore.getState().close(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 1300)); });
+    expect(apiMock.inspectRun).not.toHaveBeenCalled();
   });
 });

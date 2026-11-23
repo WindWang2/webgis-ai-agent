@@ -86,6 +86,69 @@ def test_p1_line_family_not_counted_against_bars():
         "line 族不受 12 条类目上限约束（此前误套）")
 
 
+# ── P2（cartography review swarm）：点级/条目级截断披露与类目标签 ──────────
+
+
+def test_p2_per_series_point_truncation_disclosed():
+    """点级截断按序列逐个发生（每序列帽 64）——聚合帽不披露真实丢弃。
+
+    2 序列 70+10 点：raw=80 ≤ 64×2=128 不披露，实际丢 6 点。
+    """
+    from app.lib.cartography.svg_charts import render_chart_panel
+
+    chart = {"type": "line", "title": "两序列", "series": [
+        {"name": "a", "data": [{"name": f"p{i}", "value": float(i)}
+                               for i in range(70)]},
+        {"name": "b", "data": [{"name": f"q{i}", "value": float(i)}
+                               for i in range(10)]}]}
+    _svg, _status, trunc = render_chart_panel(0, 0, chart)
+    assert any("80" in t and "74" in t for t in trunc), trunc
+
+
+def test_p2_multi_series_bar_labels_use_category_names():
+    """多序列柱族的类目标签取点的 name/x，不取序列名。
+
+    此前 cat.append((序列名, v)) + _render_bars 的 row[0][0] 让所有类目
+    都标成序列 0 名。
+    """
+    from app.lib.cartography.svg_charts import render_chart_panel
+
+    chart = {"type": "grouped_bar", "title": "分组柱", "series": [
+        {"name": "序列甲", "data": [{"name": "类目一", "value": 1.0},
+                                    {"name": "类目二", "value": 2.0}]},
+        {"name": "序列乙", "data": [{"name": "类目一", "value": 3.0},
+                                    {"name": "类目二", "value": 4.0}]}]}
+    svg, _status, _trunc = render_chart_panel(0, 0, chart)
+    assert "类目一" in svg and "类目二" in svg, svg
+
+
+def test_p2_polar_and_special_truncation_disclosed():
+    """极坐标/特殊族的条目帽截断回传（此前闸门只查 category_rows）。
+
+    pie 15 切片 / box_plot 15 箱 / ranking_list 15 行 / radar 15 轴。
+    """
+    from app.lib.cartography.svg_charts import render_chart_panel
+
+    pts = [{"name": f"s{i}", "value": float(i + 1)} for i in range(15)]
+    _svg, _st, trunc = render_chart_panel(
+        0, 0, {"type": "pie", "title": "饼", "data": pts})
+    assert any("15" in t and "12" in t for t in trunc), trunc
+
+    boxes = [{"name": f"b{i}", "value": float(i), "q1": 0.0, "q3": 2.0,
+              "min": 0.0, "max": 3.0} for i in range(15)]
+    _svg, _st, trunc = render_chart_panel(
+        0, 0, {"type": "box_plot", "title": "箱", "data": boxes})
+    assert any("15" in t and "12" in t for t in trunc), trunc
+
+    _svg, _st, trunc = render_chart_panel(
+        0, 0, {"type": "ranking_list", "title": "榜", "data": pts})
+    assert any("15" in t and "12" in t for t in trunc), trunc
+
+    _svg, _st, trunc = render_chart_panel(
+        0, 0, {"type": "radar", "title": "雷达", "data": pts})
+    assert any("15" in t and "8" in t for t in trunc), trunc
+
+
 # ── P1-3：多 colorbar gradient id 唯一 ──────────────────────────────────
 
 

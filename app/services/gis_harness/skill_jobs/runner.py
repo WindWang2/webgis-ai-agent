@@ -469,11 +469,52 @@ async def start_skill_job(
     return view
 
 
+def _job_view_from_row(row: Any) -> Dict[str, Any]:
+    """从 durable job 行构造有界运行视图（刷新回看的权威来源）。"""
+    from app.services.jobs.lifecycle import coerce_status, is_active, is_cancellable, is_retryable_status
+
+    status = coerce_status(row.status or "pending")
+    view: Dict[str, Any] = {
+        "job_id": str(row.id),
+        "kind": "skill_job",
+        "status": status.value,
+        "progress": row.progress,
+        "message": (row.progress_message or "")[:200],
+        "cancellable": is_cancellable(status),
+        "retryable": is_retryable_status(status),
+        "active": is_active(status),
+        "attempt": row.attempt or 1,
+        "session_id": row.session_id,
+        "project_id": row.project_id,
+        "error": (row.error_trace or "").splitlines()[-1][:200] if row.error_trace else None,
+        "result_ref": row.result_ref,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+    }
+    summary = row.result_summary if isinstance(row.result_summary, dict) else {}
+    run_record = summary.get("run_record") if isinstance(summary.get("run_record"), dict) else None
+    if run_record is None:
+        # run_async_job 把 body 返回值整体落 result_summary —— run 记录
+        # 直接位于顶层（run_record 键）或整体即 run_record 形状。
+        if summary.get("schema_version") == "skilljob.run/v1":
+            run_record = summary
+    if run_record is not None:
+        view["run_record"] = run_record
+        view["skill"] = run_record.get("skill") or {}
+        view["evidence_covered"] = run_record.get("evidence_covered", [])
+        view["evidence_not_covered"] = run_record.get("evidence_not_covered", [])
+        view["artifact_refs"] = run_record.get("artifact_refs", {})
+        view["steps"] = run_record.get("steps", [])
+    params = row.parameters if isinstance(row.parameters, dict) else {}
+    view["skill_id"] = params.get("skill_id", "")
+    view["skill_version"] = params.get("skill_version", "")
+    return view
+
+
 def _job_view_sync(job_id: int) -> Optional[Dict[str, Any]]:
     """从 durable job 行构造有界运行视图（刷新回看的权威来源）。"""
     from app.core.database import SessionLocal
     from app.models.db_model import AnalysisTask
-    from app.services.jobs.lifecycle import coerce_status, is_active, is_cancellable, is_retryable_status
     from sqlalchemy import select
 
     with contextlib.closing(SessionLocal()) as db:
@@ -481,42 +522,7 @@ def _job_view_sync(job_id: int) -> Optional[Dict[str, Any]]:
             select(AnalysisTask).where(AnalysisTask.id == job_id)).scalar_one_or_none()
         if row is None:
             return None
-        status = coerce_status(row.status or "pending")
-        view: Dict[str, Any] = {
-            "job_id": str(row.id),
-            "kind": "skill_job",
-            "status": status.value,
-            "progress": row.progress,
-            "message": (row.progress_message or "")[:200],
-            "cancellable": is_cancellable(status),
-            "retryable": is_retryable_status(status),
-            "active": is_active(status),
-            "attempt": row.attempt or 1,
-            "session_id": row.session_id,
-            "project_id": row.project_id,
-            "error": (row.error_trace or "").splitlines()[-1][:200] if row.error_trace else None,
-            "result_ref": row.result_ref,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "completed_at": row.completed_at.isoformat() if row.completed_at else None,
-        }
-        summary = row.result_summary if isinstance(row.result_summary, dict) else {}
-        run_record = summary.get("run_record") if isinstance(summary.get("run_record"), dict) else None
-        if run_record is None:
-            # run_async_job 把 body 返回值整体落 result_summary —— run 记录
-            # 直接位于顶层（run_record 键）或整体即 run_record 形状。
-            if summary.get("schema_version") == "skilljob.run/v1":
-                run_record = summary
-        if run_record is not None:
-            view["run_record"] = run_record
-            view["skill"] = run_record.get("skill") or {}
-            view["evidence_covered"] = run_record.get("evidence_covered", [])
-            view["evidence_not_covered"] = run_record.get("evidence_not_covered", [])
-            view["artifact_refs"] = run_record.get("artifact_refs", {})
-            view["steps"] = run_record.get("steps", [])
-        params = row.parameters if isinstance(row.parameters, dict) else {}
-        view["skill_id"] = params.get("skill_id", "")
-        view["skill_version"] = params.get("skill_version", "")
-        return view
+        return _job_view_from_row(row)
 
 
 async def get_skill_job_view(job_id: int) -> Optional[Dict[str, Any]]:
@@ -533,15 +539,11 @@ async def list_skill_job_views(
 
     with contextlib.closing(SessionLocal()) as db:
         rows = db.execute(
-            select(AnalysisTask.id)
+            select(AnalysisTask)
             .where(AnalysisTask.session_id == session_id,
                    AnalysisTask.job_kind == "skill_job")
             .order_by(AnalysisTask.created_at.desc())
             .limit(min(max(limit, 1), 50))
         ).scalars().all()
-    views = []
-    for jid in rows:
-        view = _job_view_sync(int(jid))
-        if view is not None:
-            views.append(view)
-    return views
+        # review P2-2：单会话批量构建视图（原逐 job 各开一次会话 = N+1）。
+        return [_job_view_from_row(row) for row in rows]

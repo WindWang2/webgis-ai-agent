@@ -123,6 +123,24 @@ def test_acceptance_rejects_verdict_and_spec_gaps():
     assert r4["intent_verified"] is True
 
 
+def test_acceptance_empty_requirements_not_rubber_stamped():
+    """反证（review P2）：需求集为空（planned 层与 map_layers 均无
+    layer_id）时 desired 面"全满足"是真空真 —— READY 即 accepted、
+    observation 非空即 intent_verified 等于橡皮图章。"""
+    chapter = {"plan_id": "planEmpty", "query": "q", "map_layers": []}
+    r = assess_intent_acceptance(
+        chapter, _mapspec(), _observation(), product_verdict="READY")
+    assert r["accepted"] is False
+    assert r["intent_verified"] is False
+    assert "no_layer_requirements" in r["unmet"]
+    # 无 layer_id 的 map_layers 同样不构成需求
+    chapter2 = {"plan_id": "planEmpty2", "query": "q",
+                "map_layers": [{"role": "primary"}]}
+    r2 = assess_intent_acceptance(
+        chapter2, _mapspec(), _observation(), product_verdict="READY")
+    assert r2["accepted"] is False
+
+
 def test_acceptance_observed_gaps():
     obs = _observation()
     obs["layers"]["layer-admin"] = {"mounted": True, "visible": False}

@@ -57,26 +57,28 @@ def _table_exists(name: str) -> bool:
 def _columns_of(name: str) -> set:
     """列名集合（双后端：sqlite PRAGMA / postgres information_schema）。
 
+    fail-closed：表缺失一律 raise。旧实现把「表没了」也返回空集，调用方的
+    `if cols and ...` 于是把「无法内省」误判成「无需增列」而静默跳过 ——
+    confidence/expires_at 缺失不报错，schema 与模型静默漂移。
+
     （迁移门禁修复：按方言分流 —— 非 sqlite 方言先打 PRAGMA 会以语法
     错误中止事务，后续语句全部 InFailedSqlTransaction。）
     """
+    if not _table_exists(name):
+        raise RuntimeError(
+            f"_columns_of({name!r}): 表缺失，拒绝静默跳过列迁移"
+            "（否则 schema 与模型静默漂移）"
+        )
     bind = op.get_bind()
     if bind.dialect.name == "sqlite":
-        try:
-            rows = bind.execute(sa.text(f"PRAGMA table_info({name})")).fetchall()
-            if rows:
-                return {r[1] for r in rows}
-        except Exception:  # noqa: BLE001 —— PRAGMA 不可用则退 information_schema
-            pass
-    try:
-        rows = bind.execute(
-            sa.text("SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = :n AND table_schema = current_schema()"),
-            {"n": name},
-        ).fetchall()
-        return {r[0] for r in rows}
-    except Exception:  # noqa: BLE001
-        return set()
+        rows = bind.execute(sa.text(f"PRAGMA table_info({name})")).fetchall()
+        return {r[1] for r in rows}
+    rows = bind.execute(
+        sa.text("SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :n AND table_schema = current_schema()"),
+        {"n": name},
+    ).fetchall()
+    return {r[0] for r in rows}
 
 
 def upgrade() -> None:

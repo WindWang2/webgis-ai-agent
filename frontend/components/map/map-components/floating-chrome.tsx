@@ -260,6 +260,13 @@ export function FloatingChrome({
 
   /** 手势/按钮收尾：乐观 override + 单次 CAS 提交（失败回滚 override）。 */
   function commitPlacement(nextPlacement: ComponentPlacement, override: ComponentPlacement | null): void {
+    // 任何一次 durable 提交都作废未触发的键盘去抖提交（startGesture 同纪律，
+    // Review R1 MINOR-5a）：否则 500ms 窗口内的折叠/复位会被陈旧键盘
+    // placement POST 后到并把 collapsed/reset 回滚。
+    if (keyCommitTimerRef.current) {
+      clearTimeout(keyCommitTimerRef.current);
+      keyCommitTimerRef.current = null;
+    }
     setComponentPlacementOverride(merged.id, override);
     commitComponentPatch(merged.id, { placement: nextPlacement }).catch((err) => {
       setComponentPlacementOverride(merged.id, null);

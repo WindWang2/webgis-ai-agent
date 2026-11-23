@@ -369,14 +369,19 @@ def decide_alignment(
 def _fallback_fill_nodata(profile: RasterGridProfile) -> float:
     """源未声明 nodata 时，VRT 足迹外填充哨兵（#931 语义：B 外 = 无效）。
 
-    float → NaN（浮点天然无效值）；整型 → dtype 最小值（与真实数据的
+    float → NaN（浮点天然无效值）；整型 → dtype 极值（与真实数据的
     碰撞概率远低于整型 0 —— 旧实现正是用 0 且依赖整幅 footprint 掩膜）。
+    无符号整型（uint8/16/32）的 ``iinfo().min == 0`` 本身就是高频真实
+    值（背景/0 类）—— 拿它当哨兵会把 B 中真实 0 像元经
+    ``valid_mask_for`` 静默剔除（P2 修复），故无符号取 ``iinfo().max``。
     """
     import numpy as np
 
-    if np.dtype(profile.dtype).kind == "f":
+    dt = np.dtype(profile.dtype)
+    if dt.kind == "f":
         return float("nan")
-    return float(np.iinfo(np.dtype(profile.dtype)).min)
+    info = np.iinfo(dt)
+    return float(info.max) if dt.kind == "u" else float(info.min)
 
 
 @contextmanager

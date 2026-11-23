@@ -623,7 +623,11 @@ def solve_layout_v4(
     healed_component_ids: set = set()
 
     def _load(zone: str) -> int:
-        return sum(1 for p in placements if p.zone == zone)
+        # 与 V3 同口径：**列单位累加**（不是组件计数）+ 环境占用
+        # （zone_occupancy）。按组件计清会把 width_units≥2 的已放组件
+        # 当成 1 单位，自愈重排时放进 V3 口径已满的槽 → 超容重叠。
+        return (sum(p.width_units for p in placements if p.zone == zone)
+                + cons.zone_occupancy.get(zone, 0))
 
     def _fits(zone: str, width: int) -> bool:
         if zone in EXCLUSIVE_ZONES and any(p.zone == zone for p in placements):

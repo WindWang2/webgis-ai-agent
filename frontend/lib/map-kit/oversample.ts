@@ -16,7 +16,11 @@
  */
 
 export function computeOversampleBoost(dpi: number): number {
-  return Math.min(2, Math.max(0, Math.round(Math.log2(dpi / 96))));
+  // NaN/负数/非有限输入：Math.log2 产 NaN 会穿透 min/max clamp，使 z=NaN、
+  // 瓦片网格为空、底图静默消失 —— 无 boost 是唯一安全回退。
+  const raw = Math.round(Math.log2(dpi / 96));
+  if (Number.isNaN(raw)) return 0;
+  return Math.min(2, Math.max(0, raw));
 }
 
 /**

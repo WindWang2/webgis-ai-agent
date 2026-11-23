@@ -74,7 +74,9 @@ def geojson_to_wkt(geom: Dict[str, Any]) -> str:
     if gtype == "Point":
         return f"POINT {_ring_line(coords)}"
     if gtype == "MultiPoint":
-        return "MULTIPOINT (" + ", ".join(_ring_line([c if isinstance(c, list) and not isinstance(c[0], list) else c]) for c in coords) + ")"
+        # c 为空 list（如 [[]]）时 c[0] 会抛 IndexError（非 typed）；加非空守卫
+        # 后交由 _coords_to_wkt 抛 PredicateError（与其余几何路径一致的 typed 拒绝）。
+        return "MULTIPOINT (" + ", ".join(_ring_line([c if isinstance(c, list) and c and not isinstance(c[0], list) else c]) for c in coords) + ")"
     if gtype == "LineString":
         return f"LINESTRING {_ring_line(coords)}"
     if gtype == "MultiLineString":

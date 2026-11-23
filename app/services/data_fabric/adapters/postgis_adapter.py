@@ -1200,7 +1200,12 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 total_matching = int(row[0]) if row and row[0] is not None else None
                 db_queries += 1
 
-            non_geom_cols = [c for c in columns if c not in ("_geojson", "_cursor_key")]
+            # 游标键别名列（_cursor_key_N）不出现在 schema_info.columns
+            # （与属性侧 :1154 的 startswith 一致 —— 精确匹配会漏掉 _cursor_key_0 等）。
+            non_geom_cols = [
+                c for c in columns
+                if c != "_geojson" and not c.startswith("_cursor_key")
+            ]
 
             fetched = len(features)
             if total_matching is not None:
@@ -1307,7 +1312,13 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         "dataset SRID is unknown (0); spatial predicate unsupported. "
                         "Hint: set a SRID constraint on the geometry column or use bbox."
                     )
-                # bbox 由调用方本地过滤（bounded fetch + exact local filter）
+                # bbox 由调用方本地过滤（bounded fetch + exact local filter）——
+                # 但本地过滤需要几何列序列化出的 _geojson；无几何列时几何恒为
+                # NULL，bbox 会静默丢光所有行 → 必须 typed 拒绝（禁静默空成功）。
+                if not meta.geom_col:
+                    raise InvalidQueryError(
+                        "dataset has no geometry column; spatial predicate unsupported"
+                    )
             else:
                 geom_field = v2.spatial.field or meta.geom_col
                 if not geom_field:

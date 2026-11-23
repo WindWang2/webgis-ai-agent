@@ -405,6 +405,10 @@ class SourceFactsService:
             with self._lock:
                 self._entries[key] = base
                 self._entries.move_to_end(key)
+                # 与 get() 同一 LRU 淘汰：直写 _entries 也必须受 _max 约束，
+                # 否则不同 fingerprint 持续观察计数会无界增长、绕过 LRU。
+                while len(self._entries) > self._max:
+                    self._entries.popitem(last=False)
             self._durable.save(base)
             return True
         except Exception as exc:  # noqa: BLE001 - 事实收割绝不阻断查询

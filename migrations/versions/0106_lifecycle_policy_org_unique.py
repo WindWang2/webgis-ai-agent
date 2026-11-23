@@ -43,7 +43,13 @@ def _index_columns(table: str, index_name: str) -> str | None:
     insp = sa.inspect(op.get_bind())
     for ix in insp.get_indexes(table):
         if ix.get("name") == index_name:
-            return ",".join(ix.get("column_names") or [])
+            cols = ix.get("column_names") or []
+            # 表达式索引（create_all 按模型建的 COALESCE 形）在 PG 反射里
+            # column_names 含 None（表达式元素）—— 直接 join 会 TypeError。
+            # 它不是朴素 (org_id, name) 形，返回 None 让调用方判为「无需替换」。
+            if any(c is None for c in cols):
+                return None
+            return ",".join(cols)
     return None
 
 

@@ -169,3 +169,26 @@ class TestBandSelection:
         d = derive_importance_model(ROAD_SCHEMA, ROAD_DIST, feature_count=2760)
         with pytest.raises(ValueError):
             kept_values_for_band(d.selected, "galaxy", DEFAULT_KEEP_RANKS)
+
+
+class TestNoneBucketNotCountedAsNonNull:
+    """P2：None 桶（缺失值）计入 sum(dist.values()) 会让覆盖率虚高。"""
+
+    def test_computational_path_excludes_none_bucket(self):
+        dist = {"道路等级": {"国道": 10, "省道": 20, None: 100}}
+        schema = _field_schema({"道路等级": "string"})
+        d = derive_importance_model(schema, dist, feature_count=200)
+        assert d.selected is not None
+        # 非空 = 30/200；把 None 桶计入会得到 130/200
+        assert d.selected.non_null_coverage == round(30 / 200, 6)
+        assert d.selected.distinct_values == 2  # None 不是 distinct 值
+
+    def test_user_override_path_excludes_none_bucket(self):
+        dist = {"道路等级": {"国道": 10, "省道": 20, None: 100}}
+        d = derive_importance_model(
+            ROAD_SCHEMA, dist, feature_count=200,
+            user_field="道路等级", user_value_order=["国道", "省道"],
+        )
+        assert d.selected is not None
+        assert d.selected.evidence == "user_override"
+        assert d.selected.non_null_coverage == round(30 / 200, 6)

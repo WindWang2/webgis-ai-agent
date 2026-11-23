@@ -508,3 +508,21 @@ def test_multiple_testing_correction_semantics():
     p_nan = np.array([0.01, np.nan, 0.5])
     assert np.isnan(multiple_testing_correction(p_nan, "bh")).sum() == 0
     assert multiple_testing_correction(p_nan, "bh")[1] == 1.0
+
+
+def test_slx_rejects_zero_variance_lagged_terms():
+    """P2 修复：W 全零（band 过小 / 全岛）时 SLX 必须类型化拒绝。
+
+    旧实现把恒 0 的 W·X 列直接 stacking 进设计阵：se=0、t/p=NaN，
+    _vif 对常数列还会编造 vif=1.0 —— 静默产出不可识别模型。OLS（零方差
+    解释变量）与 SAR/SEM（空权重矩阵）均拒此情形，SLX 不得例外。
+    """
+    fc = _grid_fc(6, 6, lambda r, c: {"x1": float(r), "y": 2.0 + 3.0 * float(r)})
+    with pytest.raises(DegenerateData, match="zero variance"):
+        slx_regression_narrated(fc, "y", ["x1"],
+                                weights_scheme="distance_band",
+                                distance_band=1e-6)
+    # 正常连通权重下 SLX 照常工作（防御不误伤）
+    res = slx_regression_narrated(fc, "y", ["x1"], weights_scheme="rook")
+    assert res.success
+    assert any(c["name"] == "WX:x1" for c in res.data["coefficients"])

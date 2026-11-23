@@ -499,3 +499,40 @@ async def test_bridge_no_clarification_without_pending(monkeypatch):
 
 def test_clarification_in_sse_vocabulary():
     assert "clarification" in CHAT_EVENT_TYPES
+
+
+# ── 4) turn 收口采集：空 questions 的 envelope 不得被吞成系统性故障 ──
+
+
+@pytest.mark.asyncio
+async def test_collect_settlement_clarification_empty_questions(monkeypatch):
+    """P2 regression：``_env.questions`` 为空列表时 ``questions[0]`` 抛
+    IndexError，被外层 never-raise 吞掉只记 debug —— blocking 澄清静默丢失、
+    turn 按「无澄清」收口，且故障被记成 ``clarification_collect_failed``
+    系统性指标。空 questions 不是 blocking 澄清，必须诚实跳过。"""
+    from types import SimpleNamespace
+
+    from app.services.chat import pi_turn_clarification as clar_mod
+    from app.services.gis_harness.requirement_ir import envelope as env_mod
+    from app.services.harness_kernel import metrics as hk_metrics
+
+    recorded = []
+    monkeypatch.setattr(
+        env_mod, "collect_turn_clarification",
+        AsyncMock(return_value=(
+            SimpleNamespace(questions=[], request_id="req-empty"),
+            "pending",
+        )),
+    )
+    monkeypatch.setattr(
+        hk_metrics, "record", lambda event, **dims: recorded.append(event)
+    )
+
+    out = await clar_mod.collect_settlement_clarification(
+        "sess-empty-q", "turn-empty-q"
+    )
+
+    assert out is None
+    assert "clarification_collect_failed" not in recorded, (
+        "empty-questions envelope was swallowed as a systematic failure (P2)"
+    )

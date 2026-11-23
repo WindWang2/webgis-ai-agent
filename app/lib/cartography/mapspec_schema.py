@@ -693,7 +693,9 @@ class MapSpecRepresentationWindow(_SpecModel):
     min_zoom: Number
     max_zoom: Number
     mode: Literal[REPRESENTATION_MODES]  # type: ignore[valid-type]
-    reason_codes: List[StrictStr] = Field(default_factory=list)
+    #: 有界（≤8）：与 quality/disclosures/eligibility 同款纪律，防病理
+    #: 文档塞任意长度证据列表（docstring 承诺即强制）。
+    reason_codes: List[StrictStr] = Field(default_factory=list, max_length=8)
     #: v1.9 additive（GOAL 04）：窗口级源覆盖。artifact 模式窗
     #: （generalized/aggregate_grid）携带时，该窗的渲染副本/导出裁决从
     #: 此 source id 取数据（spec.sources 内的派生工件源）；缺失 = 主层
@@ -717,7 +719,8 @@ class MapSpecLayerRepresentation(_SpecModel):
 
     model_config = ConfigDict(extra="allow")
 
-    windows: List[MapSpecRepresentationWindow] = Field(default_factory=list)
+    windows: List[MapSpecRepresentationWindow] = Field(
+        default_factory=list, max_length=MAX_REPRESENTATION_WINDOWS)
 
 
 class MapSpecLayerFlow(_SpecModel):

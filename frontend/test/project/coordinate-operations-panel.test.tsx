@@ -157,4 +157,47 @@ describe('CoordinateOperationsPanel', () => {
     expect(screen.getByText(/显示副本不可用/)).toBeTruthy();
     expect(screen.getAllByText(/1201/).length).toBeGreaterThan(0);
   });
+
+  it('AOI 缺格不以 0 兜底：只填一格 → 计划不带 aoi、derivation=none', async () => {
+    apiMock.describeSource.mockResolvedValue(DESCRIBE);
+    apiMock.createPlan.mockResolvedValue({
+      plan_id: 'p1', revision: 1, status: 'draft', normalized_digest: 'dg',
+      plan: { source: {}, target_crs: 'EPSG:32650' },
+    });
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: /检查源/ }));
+    await waitFor(() => expect(screen.getByText('EPSG:4326')).toBeTruthy());
+    // 只在 west 输入 116.4（其余三格留空）
+    fireEvent.change(screen.getByPlaceholderText('west'), { target: { value: '116.4' } });
+    fireEvent.click(screen.getByRole('button', { name: /保存计划/ }));
+    await waitFor(() => expect(apiMock.createPlan).toHaveBeenCalled());
+    const plan = apiMock.createPlan.mock.calls[0][0] as {
+      aoi?: unknown; aoi_derivation?: string;
+    };
+    expect(plan.aoi_derivation).toBe('none');
+    expect(plan.aoi == null).toBe(true);
+  });
+
+  it('AOI 清空某格即解除（四格齐全才发 explicit 全量 bbox）', async () => {
+    apiMock.describeSource.mockResolvedValue(DESCRIBE);
+    apiMock.createPlan.mockResolvedValue({
+      plan_id: 'p1', revision: 1, status: 'draft', normalized_digest: 'dg',
+      plan: { source: {}, target_crs: 'EPSG:32650' },
+    });
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: /检查源/ }));
+    await waitFor(() => expect(screen.getByText('EPSG:4326')).toBeTruthy());
+    for (const [k, v] of [['west', '116.4'], ['south', '39.9'], ['east', '116.5'], ['north', '40.0']] as const) {
+      fireEvent.change(screen.getByPlaceholderText(k), { target: { value: v } });
+    }
+    // 清掉 east → 不再是完整 bbox
+    fireEvent.change(screen.getByPlaceholderText('east'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /保存计划/ }));
+    await waitFor(() => expect(apiMock.createPlan).toHaveBeenCalled());
+    const plan = apiMock.createPlan.mock.calls[0][0] as {
+      aoi?: unknown; aoi_derivation?: string;
+    };
+    expect(plan.aoi_derivation).toBe('none');
+    expect(plan.aoi == null).toBe(true);
+  });
 });

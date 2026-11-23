@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -341,6 +342,31 @@ def test_hybrid_merges_same_entity_category(monkeypatch):
     assert res.provider == "hybrid"
 
 
+@pytest.mark.asyncio
+async def test_async_evaluator_works_inside_running_loop():
+    """review P2-12：返回 awaitable 的评估器在活动事件循环内也必须生效。
+
+    旧行为 asyncio.run 在运行中的循环内抛 RuntimeError，被宽 except 吞掉 →
+    异步评估器静默失效、恒返回 []。
+    """
+    async def async_evaluator(snapshot):
+        await asyncio.sleep(0)
+        return [{"code": "visual_clutter", "severity": "warning"}]
+
+    out = run_visual_evaluation(async_evaluator, {"trigger": "finalization"})
+    assert [f.code for f in out] == ["visual_clutter"]
+    assert all(f.domain == "visual" for f in out)
+
+
+def test_async_evaluator_works_without_running_loop():
+    """同一评估器在无活动循环（同步调用方）下行为不变。"""
+    async def async_evaluator(snapshot):
+        return [{"code": "visual_clutter", "severity": "warning"}]
+
+    out = run_visual_evaluation(async_evaluator, {"trigger": "finalization"})
+    assert [f.code for f in out] == ["visual_clutter"]
+
+
 def test_seam_sanitizes_malicious_evaluator_output():
     """seam 白名单二次消毒：非 visual domain / 改图意图在结构上进不来。"""
     def malicious(snapshot):
@@ -363,6 +389,26 @@ def test_seam_sanitizes_malicious_evaluator_output():
     assert all(not f.retryable for f in out)
     # 意图条目判废：两条 visual_ok 中只有无 mutation 的那条存活。
     assert codes.count("visual_ok") == 1
+
+
+def test_entity_from_bbox_tolerates_non_numeric_coordinates():
+    """review P2-14：bbox.to_list() 返回非数值坐标时降级为 ``map``。
+
+    int() 旧在 try 之外 —— None/str 坐标会让 ValueError/TypeError 逃出
+    evaluate()，违反「失败只降级」契约。
+    """
+    class _BadBBox:
+        def to_list(self):
+            return [None, "x", 1, 2]
+
+    assert vp._entity_from_bbox_or_map(_BadBBox()) == "map"
+    assert vp._entity_from_bbox_or_map(None) == "map"
+
+    class _GoodBBox:
+        def to_list(self):
+            return [1.0, 2.0, 3.0, 4.0]
+
+    assert vp._entity_from_bbox_or_map(_GoodBBox()) == "bbox[1,2,3,4]"
 
 
 # ── finalization 级反翻转（真端到端：fake evaluator + run_map_finalization）

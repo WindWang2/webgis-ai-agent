@@ -40,6 +40,7 @@ from app.services.gis_harness.evidence_claim import (
     mark_evidence_superseded,
     narrative_claim_unverified,
     project_artifact_record,
+    project_artifact_registry,
     project_dataset_version,
     project_goal_evidence,
     project_product_facet,
@@ -190,6 +191,24 @@ def test_stale_version_projection():
     )
     store.upsert_evidence(node)
     assert store.get_evidence(node.evidence_id).freshness is EvidenceFreshness.STALE
+
+
+def test_non_dict_metadata_does_not_break_registry_projection():
+    """record.metadata 为真值非 dict（list/str）→ 按缺席处理，绝不抛
+    AttributeError（否则 project_artifact_registry 整循环中断、证据投影
+    全失败）。"""
+    rec = FakeArtifact(artifact_id="ref:weird", status="valid")
+    rec.metadata = ["not", "a", "dict"]
+    node = project_artifact_record(rec, tenant_id="t1", session_id="s1")
+    assert node.ref == "ref:weird"
+    assert node.version == ""
+    assert node.metadata.get("proof_source") == "self_attested_metadata"
+    # 注册表投影循环继续（第二条记录照常入表）
+    store = ClaimStore()
+    nodes = project_artifact_registry(
+        {"a": rec, "b": FakeArtifact(artifact_id="ref:ok", status="valid")},
+        store, tenant_id="t1", session_id="s1")
+    assert len(nodes) == 2
 
 
 def test_cross_tenant_ref_rejected():

@@ -547,3 +547,48 @@ def test_join_count_nonfree_sampling_wording_sync():
     assert any("non-free sampling" in a for a in desc.assumptions)
     assert not any(a.strip().startswith("期望/方差用 free sampling")
                    for a in desc.assumptions)
+
+
+def test_weights_sensitivity_tie_majority_is_hash_seed_independent():
+    """P2 修复：平票多数决不得依赖字符串哈希随机化（跨进程一致）。
+
+    5×5 棋盘（k=4）产生 2:2 平票：knn/rook 判 dispersion、queen/
+    distance_band 判 random。旧实现 ``max(set(verdicts), key=count)``
+    的胜者随 PYTHONHASHSEED 翻转（实测 seed 0-4 → random、seed 5 →
+    dispersion）→ majority_verdict / dissenters / 叙事跨进程不一致。
+    修复后按方案评估序（knn 优先）确定性取 dispersion。
+    """
+    import os
+    import subprocess
+    import sys
+
+    fc = _grid_fc(5, 5, lambda r, c: (r + c) % 2)
+    res = weights_sensitivity_narrated(fc, "val", k=4, permutations=99)
+    assert res.success, res.summary
+    verdicts = [s["verdict"] for s in res.data["schemes"] if s["status"] == "ok"]
+    assert verdicts.count("dispersion") == verdicts.count("random") == 2
+    assert res.data["majority_verdict"] == "dispersion"   # 平票 → knn（评估序首位）
+    assert res.data["rank_stability"] == 0.5
+    dissent = [s["scheme"] for s in res.data["schemes"]
+               if s["status"] == "ok" and s["verdict"] != "dispersion"]
+    assert dissent == ["queen", "distance_band"]
+
+    # 跨哈希种子逐位一致（旧实现在 seed 0 与 5 下给出不同多数判读）
+    code = (
+        "import json,sys\n"
+        "from app.lib.geo_analysis.statistics import weights_sensitivity_narrated\n"
+        "fc=json.loads(sys.argv[1])\n"
+        "r=weights_sensitivity_narrated(fc,'val',k=4,permutations=99)\n"
+        "print(json.dumps(r.data,sort_keys=True))\n"
+    )
+    payloads = set()
+    for hash_seed in ("0", "5", "31337"):
+        proc = subprocess.run(
+            [sys.executable, "-c", code, json.dumps(fc)],
+            capture_output=True, text=True, check=True,
+            env=dict(os.environ, PYTHONHASHSEED=hash_seed),
+        )
+        payloads.add(proc.stdout.strip())
+    assert len(payloads) == 1, (
+        f"majority payload differs across PYTHONHASHSEED: {payloads}")
+    assert '"majority_verdict": "dispersion"' in payloads.pop()

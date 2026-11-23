@@ -1367,8 +1367,9 @@ def fcls_unmix(
     # ── 阶段 B：边界像元 δ-增广 NNLS（scipy 精确非负解，披露路径）──
     n_boundary = int((~interior).sum())
     x_all = x_con
-    if n_boundary > _FCLS_NNLS_BUDGET:
-        raise ValueError("FCLS NNLS boundary pixels exceed bounded computation budget; reduce raster extent")
+    # review R2-4 契约：NNLS 耗时面预算**超过仅披露，不拒绝**（闭式解主
+    # 路径不受影响；预算用于警示批处理时长）。此处 raise 会让 meta 的
+    # nnls_budget_exceeded 永为 False（死键）并违反上述契约（P2 修复）。
     if n_boundary:
         from scipy.optimize import nnls as _nnls
 

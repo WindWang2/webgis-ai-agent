@@ -794,15 +794,20 @@ export async function buildExportChrome(
     const isColorbar = comp.type === 'continuous_colorbar';
     const spec =
       (comp.layerId && opts.legendSpecsByLayer[comp.layerId]) ||
-      Object.values(opts.legendSpecsByLayer).find(
-        (s) => isColorbar
-          ? s.type === 'continuous' || s.type === 'divergent'
-          // V4：bivariate 加入 legend 组件的类型兜底发现（与 live
-          // legends.tsx legendForComponent 的 wanted 词表同源）
-          // G41：可靠性双通道图例与 bivariate 一样走专用绘制器。
-          : s.type === 'graduated' || s.type === 'categorical'
-            || s.type === 'bivariate' || s.type === 'reliability_dual_channel',
-      ) ||
+      // 类型兜底发现仅用于**未绑定 layerId** 的实例（HUD 发现语义，防丢
+      // 图例）。绑定层缺席时若回退到别层同类型 spec，导出件会挂上别层的
+      // 图例（数据错标）—— 那由下方 component_skipped_invalid 如实披露。
+      (!comp.layerId
+        ? Object.values(opts.legendSpecsByLayer).find(
+            (s) => isColorbar
+              ? s.type === 'continuous' || s.type === 'divergent'
+              // V4：bivariate 加入 legend 组件的类型兜底发现（与 live
+              // legends.tsx legendForComponent 的 wanted 词表同源）
+              // G41：可靠性双通道图例与 bivariate 一样走专用绘制器。
+              : s.type === 'graduated' || s.type === 'categorical'
+                || s.type === 'bivariate' || s.type === 'reliability_dual_channel',
+          )
+        : undefined) ||
       (!isColorbar ? opts.fallbackLegendSpec : undefined);
     if (!spec) {
       // W7（ADR-0118）：绑定缺失不再静默 —— live 同场景图例缺席，导出侧
@@ -1978,11 +1983,17 @@ export function drawChromeTable(
 /** 画布单行文本截断（导出侧无自动换行；与 stats 卡同一裁剪约定）。 */
 function _clipText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
   if (ctx.measureText(text).width <= maxW) return text;
-  let clipped = text;
-  while (clipped.length > 1 && ctx.measureText(`${clipped}…`).width > maxW) {
-    clipped = clipped.slice(0, -1);
+  // #1745：measureText 成本随串长线性 —— 逐字符回扫是 O(n²)，数千字符的
+  // 属性值会把导出关键路径的主线程拖死。改为二分（宽度对串长单调，结果
+  // 与线性回扫一致：最长可容纳前缀 + '…'，下限 1 字符）。
+  let lo = 1;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (ctx.measureText(`${text.slice(0, mid)}…`).width > maxW) hi = mid - 1;
+    else lo = mid;
   }
-  return `${clipped}…`;
+  return `${text.slice(0, lo)}…`;
 }
 
 /**

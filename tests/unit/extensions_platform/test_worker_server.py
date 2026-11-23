@@ -368,6 +368,41 @@ class TestCallLoop:
         server._ctx = _boot_ctx_only(pack, grants=[])
         assert server.serve_once() is False  # EOF → False（退出循环）
 
+
+class TestProviderTilePayload:
+    """P2：get_tile 的 RPC 载荷必须携带 extent——漏传它宿主侧
+    projection_v3 永远得到 TilePayload(extent=None)，瓦片地理范围静默丢失。"""
+
+    def test_get_tile_rpc_payload_carries_extent(self, tmp_path):
+        from types import SimpleNamespace
+
+        from app.extensions_platform.sdk.provider import TilePayload
+
+        tile = TilePayload(
+            data=bytes.fromhex("89504e47"),
+            content_type="image/png",
+            extent=(0.0, 1.0, 2.0, 3.0),
+            metadata={"z": 0},
+        )
+
+        class _Instance:
+            def get_tile(self, z, x, y, **params):
+                assert (z, x, y) == (0, 0, 0)
+                return tile
+
+        server = WorkerServer(tmp_path, io.BytesIO(), io.BytesIO())
+        server._ctx = SimpleNamespace(
+            extension_id="acme.pack",
+            get_provider_instance=lambda source_type, profile: _Instance(),
+        )
+        payload = server._handle_provider_call(
+            "provider:prov:get_tile", {"z": 0, "x": 0, "y": 0}
+        )
+        assert payload["data_hex"] == "89504e47"
+        assert payload["content_type"] == "image/png"
+        assert payload["extent"] == [0.0, 1.0, 2.0, 3.0]
+        assert payload["metadata"] == {"z": 0}
+
     def test_pending_frames_processed_before_stream(self, tmp_path):
         pack = _make_pack(tmp_path, TOOL_MAIN)
         pipe = _Pipe()

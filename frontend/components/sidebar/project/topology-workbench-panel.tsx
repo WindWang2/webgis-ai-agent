@@ -13,7 +13,7 @@
  * - 例外是用户决定（理由必填）；修复候选明确区分建议与可提交计划。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, LocateFixed, Network, RefreshCw } from 'lucide-react';
 
 import { EmptyState } from '@/components/shared/empty-state';
@@ -91,6 +91,8 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recheckBusy, setRecheckBusy] = useState(false);
+  /** openFinding 的请求代际（慢网下旧响应的证据/候选不得覆盖新问题）。 */
+  const findingReqRef = useRef(0);
 
   // 规则集创建表单
   const [showCreate, setShowCreate] = useState(false);
@@ -163,9 +165,12 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
   const running = runs.some((r) => r.status === 'pending' || r.status === 'running');
   useEffect(() => {
     if (!running) return;
-    const h = window.setInterval(() => { void loadRuns(); void loadRunDetail(); }, 10_000);
+    // findings 必须一起刷新（评审 P2）：运行完成时 selectedRunId/severityFilter/
+    // statusFilter/offset 一个都不变，loadFindings 的 effect 不会重跑 —— 问题队列
+    // 会留着上一运行的旧数据，与运行详情的 findings_total/open 计数自相矛盾。
+    const h = window.setInterval(() => { void loadRuns(); void loadRunDetail(); void loadFindings(); }, 10_000);
     return () => window.clearInterval(h);
-  }, [running, loadRuns, loadRunDetail]);
+  }, [running, loadRuns, loadRunDetail, loadFindings]);
 
   const handleCreateRuleset = async () => {
     setBusy(true); setError(null);
@@ -239,14 +244,19 @@ export function TopologyWorkbenchPanel({ projectId, sessionId, authed }: Topolog
 
   const openFinding = async (f: TopologyFinding) => {
     setSelectedFinding(f); setWitness(null); setCandidates(null); setExceptionReason('');
+    // 请求代际守卫（评审 P2）：慢网下先后点开两个问题，先发请求的
+    // witness/candidates 后返回会覆盖后者，抽屉展示错问题的证据与修复候选。
+    const gen = ++findingReqRef.current;
     try {
       const [w, c] = await Promise.all([
         fetchFindingWitness(f.id).catch(() => null),
         fetchRepairCandidates(f.id).catch(() => null),
       ]);
+      if (gen !== findingReqRef.current) return;
       setWitness(w);
       setCandidates(c?.candidates ?? []);
     } catch (err) {
+      if (gen !== findingReqRef.current) return;
       setError(parseApiErrorDetail(err, 'finding'));
     }
   };

@@ -101,8 +101,14 @@ def replay(
     sampling = next((s for s in plan.steps if s.step_type == "sampling"), None)
     if sampling:
         rate = float(sampling.params.get("rate") or 1.0)
-        features = [f for i, f in enumerate(features) if (i % max(1, int(round(1.0 / rate))) == 0)] \
-            if 0.0 < rate < 1.0 else features
+        # 保留 ~rate*n 行（与 cost.rows=int(rows*rate) 一致）；此前 stride=
+        # round(1/rate)：rate≥0.7 时 stride=1 保留全部、rate≈0.6/0.4 保留 50%，
+        # 与请求 rate 不符。均匀取 k=round(rate*n) 个（含首行）。
+        if 0.0 < rate < 1.0:
+            n = len(features)
+            k = max(1, int(round(rate * n)))
+            if k < n:
+                features = [features[i * n // k] for i in range(k)]
 
     return {
         "plan_id": plan.plan_id,

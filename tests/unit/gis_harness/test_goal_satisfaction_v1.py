@@ -171,6 +171,60 @@ def test_evidence_registry_bounded():
     assert len(build_evidence_registry(ch)) <= 64
 
 
+def test_receipt_bundle_does_not_evict_row_evidence():
+    """大回执 bundle（≤34 行）先于行证据入表时会把 analysis 行证据挤出
+    64 上界 → 分析需求恒 pending、全局永不定。行证据必须排在回执投影之前。
+    """
+    ch = _chapter()
+    ch["analysis_steps"] = [{"capability": f"cap{i}", "purpose": "p",
+                             "status": "complete"} for i in range(30)]
+    ch["data_requirements"] = [{"capability": f"dcap{i}", "purpose": "p",
+                                "status": "complete"} for i in range(30)]
+    bundle = {
+        "session_id": "",
+        "families": {
+            "edit": [{"ref_id": f"r{i}", "seq": 1} for i in range(4)],
+            "compute": [{"plan_id": f"p{i}", "input_ref": f"in{i}",
+                         "output_ref": f"out{i}"} for i in range(8)],
+            "import": [{"member_key": f"m{i}", "status": "completed"}
+                       for i in range(8)],
+            "delivery": [{"format": "geojson", "job_id": f"j{i}",
+                          "status": "completed"} for i in range(4)],
+            "raster": [{"source_id": f"src{i}", "layer_ids": ["l"]}
+                       for i in range(8)],
+            "refresh": [{"proposal_id": f"pr{i}", "status": "adopted"}
+                        for i in range(2)],
+        },
+    }
+    evidence = build_evidence_registry(ch, _ready_product(), receipts=bundle)
+    ids = {e.id for e in evidence}
+    assert len(evidence) <= 64
+    # 行证据（需求裁决的输入）不得被回执投影挤出
+    assert "row:cap29" in ids, "analysis 行证据被回执 bundle 挤出 64 上界"
+    assert "data:dcap29" in ids
+    # 回执投影仍在（披露面未丢）
+    assert any(e.kind == EvidenceKind.CAPABILITY_RECEIPT for e in evidence)
+
+
+def test_frame_gate_not_bypassed_by_incomplete_forged_block():
+    """frame_product 块 status=incomplete + summary.required=0 而帧行在场
+    → 闸 fail-closed（此前 return None 整体绕过：未完成画幅产品仍可判
+    map FULFILLED）。"""
+    ch = _chapter()
+    ch["map_layers"] = [{"layer_id": "l1", "role": "primary"}]
+    product = _ready_product(frame_product={
+        "status": "incomplete",
+        "summary": {"required": 0, "verified": 0, "snapshot_only": 0},
+        "frames": [{"frame_id": "f1", "required": False,
+                    "binding": "bound", "observation": "not_observed"}],
+    })
+    report = evaluate_goal_satisfaction(ch, map_product=product)
+    map_req = next(v for v in report.requirements
+                   if v.requirement_id == "map")
+    assert map_req.verdict != RequirementState.FULFILLED
+    assert "frame_summary_rows_mismatch" in map_req.missing
+
+
 # ── 评估器（G3/G4）────────────────────────────────────────────────────────
 
 def test_happy_path_single_goal_satisfied():

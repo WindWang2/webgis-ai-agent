@@ -484,3 +484,33 @@ class TestGeneralContracts:
         assert block is not None and "windows" in block
         import json
         json.dumps(block)  # 可序列化
+
+
+class TestFiniteZoomDomain:
+    """P2：normalize_windows 的「有限数值域」必须真的校验。
+
+    min(24, NaN) 返回 24 → max_zoom=NaN 的窗被静默接受为 [x,24) 全域窗。
+    """
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"),
+                                     float("-inf")])
+    def test_non_finite_max_zoom_rejected(self, bad):
+        # 单窗全域计划：max_zoom=NaN 时 min(24, NaN) 返回 24 → 该窗被静默
+        # 接受为 [0,24) 全域窗（正是本 finding 描述的漏洞）。
+        assert normalize_windows([
+            {"min_zoom": 0, "max_zoom": bad, "mode": "raw"}]) is None
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"),
+                                     float("-inf")])
+    def test_non_finite_min_zoom_rejected(self, bad):
+        assert normalize_windows([
+            {"min_zoom": bad, "max_zoom": 24, "mode": "raw"}]) is None
+
+    def test_representation_window_instances_also_checked(self):
+        from app.lib.cartography.representation import RepresentationWindow
+
+        windows = [
+            RepresentationWindow(min_zoom=0, max_zoom=float("nan"),
+                                 mode="raw"),
+        ]
+        assert normalize_windows(windows) is None

@@ -241,6 +241,14 @@ def _ts_of(annotation: Any, owner: str, field: str, optional_mark: bool) -> str:
         if inner.startswith("["):
             return inner  # 元组 override 已含完整形状
         return f"{inner}[]"
+    if origin is not None and origin.__name__ in ("tuple", "Tuple"):
+        # 定长元组 → TS 元组类型（review P2：此前无 tuple 分支，元组注释
+        # 一路落到函数末尾的 unknown —— 如 MapSpecTemporalConfig.extent
+        # 的 [start, end) ISO instant 二元组，TS 侧定长契约静默丢失）。
+        if not args:
+            return "unknown[]"
+        return "[" + ", ".join(
+            _ts_of(a, owner, field, False) for a in args) + "]"
     if origin is not None and origin.__name__ == "dict":
         if args and len(args) == 2:
             return f"Record<string, {_ts_of(args[1], owner, field, False)}>"

@@ -36,7 +36,10 @@ def split_fresh_findings(
             observed = int(f.get("observed_revision") or 0)
         except (TypeError, ValueError):
             observed = 0
-        if observed == int(current_revision):
+        # review P2-16：observed=0（缺省/未知，旧数据）保守按过期处理 ——
+        # 否则「_cartographic_mutation_revision 缺失（current=0）」时缺
+        # observed_revision 的旧证据会以 0==0 混过新鲜度门。
+        if observed > 0 and observed == int(current_revision):
             fresh.append(f)
         else:
             stale += 1

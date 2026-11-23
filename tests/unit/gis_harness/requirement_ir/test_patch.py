@@ -53,6 +53,37 @@ class TestSetPatch:
         assert new.intent.statistics.group_by == "grid"
         assert new.intent.core.group_by == "grid"
 
+    def test_set_syncs_core_normalization(self):
+        """反证（review P2）：statistics.normalization 的 patch 必须同步
+        core.comparison（derive_sections 由 core.comparison 派生 normalization）
+        —— 不同步则 patch 过的口径在下次从 core 重派生时静默回退，
+        intent_view 外泄陈旧 core。"""
+        doc = _doc("统计成都各区小学数量")
+        assert doc.intent.core.comparison == ""
+        new, applied = apply_patch(doc, _patch(
+            path="statistics.normalization", value="per_capita", op_id="n1"))
+        assert applied
+        assert new.intent.statistics.normalization == "per_capita"
+        assert new.intent.core.comparison == "per_capita"
+        # 重派生口径一致（intent_view 不再陈旧）
+        from app.services.gis_harness.requirement_ir.projection import intent_view
+        from app.services.gis_harness.requirement_ir.normalize import (
+            normalize_normalization,
+        )
+        assert normalize_normalization(
+            intent_view(new).comparison) == "per_capita"
+
+    def test_remove_last_measure_clears_core_measure(self):
+        """反证（review P2）：删空 measures 后 core.measure 必须跟着清 ——
+        否则 intent_view 外泄陈旧度量、重派生时复活已删除的 measure。"""
+        doc = _doc("统计成都各区小学的平均身高")
+        assert doc.intent.measures and doc.intent.core.measure
+        mid = doc.intent.measures[0].id
+        new, applied = apply_patch(doc, _patch(
+            op="remove_measure", value={"id": mid}, op_id="rm1"))
+        assert applied and new.intent.measures == []
+        assert new.intent.core.measure == ""
+
     def test_set_syncs_core_scope(self):
         doc = _doc()
         new, _ = apply_patch(doc, _patch(

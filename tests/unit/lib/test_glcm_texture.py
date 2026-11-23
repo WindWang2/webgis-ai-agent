@@ -164,3 +164,53 @@ def test_glcm_scale_guard_and_quantization(monkeypatch):
     res_nd = glcm_texture(masked, window=3, levels=8)
     assert np.isnan(res_nd["properties"]["contrast"][:, 3]).all()
     assert np.isfinite(res_nd["properties"]["contrast"][:, :1]).all()
+
+
+def test_glcm_chunk_budget_wide_raster(monkeypatch):
+    """P2 修复：列数 > 块窗口预算时 bincount 缓冲不得突破 _CHUNK_HIST_CELLS。
+
+    旧逐行分块被 max(1, ...) 兜底成单行：nw = n_cols（宽栅格）⇒
+    minlength = n_cols·levels² 远超 4M 预算（1100×4096 ≈ 4.5M，
+    17 行×10 万列时约 3.3GB）→ OOM。修复按扁平窗口轴分块，块内窗口数
+    恒 ≤ chunk_windows；同时钉死宽栅格结果与逐窗手算黄金一致（分块
+    不改变数值——bincount 为精确计数、逐窗属性相互独立）。
+    """
+    levels = 64
+    chunk_windows = glcm_mod._CHUNK_HIST_CELLS // (levels * levels)
+    n_cols = chunk_windows + 200          # 列数 > 块窗口预算（触发旧缺陷路径）
+    h = 40
+    rng = np.random.default_rng(7)
+    arr = rng.uniform(0.0, 100.0, (h, n_cols))
+
+    max_minlength = 0
+    orig_bincount = np.bincount
+
+    def _spy(x, *args, **kwargs):
+        nonlocal max_minlength
+        max_minlength = max(max_minlength, int(kwargs.get("minlength", 0)))
+        return orig_bincount(x, *args, **kwargs)
+
+    monkeypatch.setattr(np, "bincount", _spy)
+    try:
+        out = glcm_texture(arr, window=3, levels=levels, directions="all4")
+    finally:
+        monkeypatch.undo()
+
+    assert max_minlength > 0
+    assert max_minlength <= glcm_mod._CHUNK_HIST_CELLS, (
+        f"bincount 缓冲 {max_minlength:,} 突破预算 "
+        f"{glcm_mod._CHUNK_HIST_CELLS:,}（宽栅格未按窗口轴分块？）")
+
+    # 数值锚：内部窗口与逐窗手算黄金（window_glcm_counts）逐位一致
+    valid = np.isfinite(arr)
+    q, _ = glcm_mod._quantize(arr, valid, levels)
+    pad = 3 // 2
+    qpad = np.pad(q, pad, mode="constant", constant_values=0)
+    r, c = 5, 600                        # 内部窗口（不含 padding）
+    ref = []
+    for dy, dx in [(0, 1), (1, -1), (1, 0), (1, 1)]:
+        counts = window_glcm_counts(qpad[r:r + 3, c:c + 3], levels, dy, dx)
+        ref.append(glcm_mod._properties_from_counts(
+            counts[None, :, :], levels)["contrast"][0])
+    assert out["properties"]["contrast"][r, c] == pytest.approx(
+        float(np.mean(ref)), rel=1e-12, abs=1e-12)

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app.services.gis_harness.hotpath_convergence.flag_registry import (
     REGISTRY,
+    get_flag,
     registered_envs,
 )
 
@@ -95,3 +96,22 @@ def test_known_flag_semantics_snapshot():
     assert by_env["GIS_AWF_PRODUCT_GATE"].kind == "stable"
     assert by_env["GIS_AWF_PRODUCT_GATE"].default_on is True
     assert by_env["GIS_AWF_PRODUCT_GATE"].owner == "services/gis_harness/tool_map_product.py"
+
+
+def test_goal_receipt_adapters_registered():
+    """GIS_GOAL_RECEIPT_ADAPTERS 是默认 ON 且 _collect_delivery 读 DB 的
+    热路径 kill switch —— 按「gis_harness/ 下每个 GIS_* 字面量都必须登记」
+    不变量登记在册（此前未登记 → 静默增殖）。"""
+    from app.services.gis_harness.goal_satisfaction.receipts import (
+        ENV_RECEIPT_ADAPTERS,
+        adapters_enabled,
+    )
+
+    assert ENV_RECEIPT_ADAPTERS == "GIS_GOAL_RECEIPT_ADAPTERS"
+    flag = get_flag(ENV_RECEIPT_ADAPTERS)
+    assert flag is not None, "goal receipt kill switch 未登记进 flag_registry"
+    assert flag.kind == "stable"
+    assert flag.default_on is True
+    assert flag.owner == "services/gis_harness/goal_satisfaction/receipts.py"
+    # 默认值与模块实际语义一致（默认开）
+    assert adapters_enabled() is True

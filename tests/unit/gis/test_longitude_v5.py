@@ -234,3 +234,78 @@ def test_taxonomy_routes_crs_error_via_pipeline():
     fc = classify_harness_failure(exception=CRSError("bad EPSG"),
                                   message="reproject failed")
     assert fc is HarnessFailureClass.CRS_ERROR
+
+
+# ------------------------------------------------- 大几何采样（P2 修复）
+
+def _big_multipolygon_second_part_crosses_am():
+    """MultiPolygon：第一部分 600 个 pm180 顶点（先把采样预算吃满），
+    第二部分跨 antimeridian 的 e360 环（200…250）。"""
+    first_ring = [[float(i % 100), float(i % 7)] for i in range(600)]
+    first_ring.append(first_ring[0])
+    # e360 连续帧：200 → 250 穿越 180 经线
+    second_ring = [[200.0 + i * 0.1, 10.0 + i * 0.01] for i in range(40)]
+    second_ring.append(second_ring[0])
+    return {
+        "type": "MultiPolygon",
+        "coordinates": [[first_ring], [second_ring]],
+    }
+
+
+def test_large_geometry_sample_covers_later_rings():
+    """>512 顶点的几何：DFS 前缀采样只看得见第一个环，后续环的经度被
+    系统性丢掉 —— 约定判定与 AM 拆分据此在残缺证据上下全局结论。等分
+    索引采样后第二部分进入样本。"""
+    from app.lib.gis.longitude import _sample_lons_with_truncation
+
+    coords = _big_multipolygon_second_part_crosses_am()["coordinates"]
+    lons, truncated = _sample_lons_with_truncation(coords)
+    assert truncated is True
+    assert len(lons) <= 512
+    assert max(lons) > 180.0, "第二部分的 e360 经度必须进入样本"
+
+
+def test_large_geometry_e360_convention_detected_and_split():
+    """同一几何：约定必须判为 e360（而非 ambiguous），pm180 归一时跨 AM
+    的第二部分必须被拆出来（旧前缀采样下两者都静默失败）。"""
+    geom = _big_multipolygon_second_part_crosses_am()
+    facts = describe_longitude_semantics(None, geom)
+    assert facts["convention"] == "e360"
+    assert facts["normalization_required"] is True
+    assert facts["geometry_sample_truncated"] is True
+    assert facts["evidence"] == "geometry"
+
+    out = normalize_geojson_geometry(geom, "pm180")
+    assert out["type"] == "GeometryCollection"
+    lons = [p[0] for p in _flat_coords(out)]
+    assert min(lons) < 0.0 and max(lons) > 0.0, (
+        "跨 AM 部分应被拆分并平回 pm180（出现负经度）")
+
+
+def test_small_geometry_sample_is_unchanged():
+    """≤cap 顶点的几何：样本仍是全量 DFS 顺序（无回归）。"""
+    from app.lib.gis.longitude import _sample_lons, _sample_lons_with_truncation
+
+    coords = [[[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [0.0, 0.0]]]
+    assert _sample_lons(coords) == [0.0, 1.0, 2.0, 0.0]
+    assert _sample_lons_with_truncation(coords) == ([0.0, 1.0, 2.0, 0.0], False)
+    assert describe_longitude_semantics(None, {"type": "Polygon",
+                                               "coordinates": coords})[
+        "geometry_sample_truncated"] is False
+
+
+def _flat_coords(geometry):
+    """递归摊平几何坐标（测试辅助）。"""
+    gtype = geometry.get("type")
+    if gtype == "GeometryCollection":
+        for child in geometry.get("geometries", []):
+            yield from _flat_coords(child)
+        return
+    coords = geometry.get("coordinates")
+    if coords is None:
+        return
+    if coords and isinstance(coords[0], (int, float)):
+        yield coords
+        return
+    for child in coords:
+        yield from _flat_coords({"type": "Point", "coordinates": child})

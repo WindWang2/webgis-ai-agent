@@ -253,6 +253,19 @@ def test_ogc_links_next_cursor(ogc):
     assert r2.features  # 第二页使用 next URL
 
 
+def test_ogc_short_page_with_next_link_is_not_dropped(ogc):
+    """短页（<limit）+ links.next：has_more/next_cursor 必须保留，后续页不得静默丢弃。"""
+    ogc.session.conformance = []  # 无 offset 扩展 → links.next 游标语义
+    ogc.session.items_response = {
+        "type": "FeatureCollection",
+        "features": OGC_ITEMS["features"][:1],  # 短页：1 个 < limit(5)
+        "links": [{"rel": "next", "href": "https://example.com/ogc/collections/parcels/items?token=abc"}],
+    }
+    res = ogc.query("parcels", QuerySpec(limit=5, page_kind="cursor"))
+    assert res.truncated is True, "短页 + links.next 必须判定 has_more（后续页不得丢弃）"
+    assert res.next_cursor, "links.next 必须 surfaced 为 cursor"
+
+
 def test_ogc_datetime_pushdown(ogc):
     ogc.profile.options["temporal_field"] = "time"
     spec = QuerySpec(limit=5, datetime_range=["2024-01-01", "2024-12-31"])

@@ -144,6 +144,29 @@ class TestObligationEvaluation:
         ev = report.obligations[0]
         assert ev.status == "warning"  # degrade_with_disclosure → warning not blocked
 
+    def test_temporal_obligation_satisfied_by_count_without_time_field(self):
+        """review P2-21：画像仅含 temporalObservationCount（无时间字段）时
+        不得误判「时间维度不足/观测数不足」—— 守卫已因计数在场放行。"""
+        from app.services.gis_harness.recipe_packs._kit import obl
+
+        report = self._report(
+            [obl("trend_obs", "temporal", precondition="min_temporal_observations:4",
+                 code="TREND_SHORT", action="block_method")],
+            profile={"featureCount": 30, "fields": {"v": {"type": "number"}},
+                     "temporalObservationCount": 9},
+        )
+        ev = report.obligations[0]
+        assert ev.status == "satisfied", ev.detail
+        assert report.method_blockers == []
+        # 计数不足时仍诚实降级（不因计数在场就一律放行）。
+        short = self._report(
+            [obl("trend_obs", "temporal", precondition="min_temporal_observations:4",
+                 code="TREND_SHORT", action="degrade_with_disclosure")],
+            profile={"featureCount": 30, "fields": {"v": {"type": "number"}},
+                     "temporalObservationCount": 2},
+        )
+        assert short.obligations[0].status == "warning"
+
     def test_block_method_violation_becomes_method_blocker(self):
         from app.services.gis_harness.recipe_packs._kit import obl
 

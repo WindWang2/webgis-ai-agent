@@ -211,7 +211,13 @@ def qualify_node(
                     f"user constraint ≤ {ctx.max_latency_class}",
                     "choose a faster alternative or relax the constraint"))
         # tier 可见性（tier>=3 需显式确认 —— 资格层只披露，不裁决）
-        if int(node.extras.get("tier", 1)) >= 3:
+        # 与 :248-251 同一防御：extras 的 tier 可能为 None/非数字串，
+        # 裸 int() 会让 TypeError/ValueError 逃逸纯函数。
+        try:
+            tier_value = int(node.extras.get("tier", 1))
+        except (TypeError, ValueError):
+            tier_value = 1
+        if tier_value >= 3:
             degraded.append(_reason(
                 "confirm_required",
                 f"tier={node.extras.get('tier')}",
@@ -418,20 +424,28 @@ def qualify_model_for_input(
     lo = model_node.extras.get("min_m_per_px")
     hi = model_node.extras.get("max_m_per_px")
     res = ctx.resolution_m_per_px
-    if res is not None and res > 0 and lo is not None and hi is not None:
-        if not (float(lo) <= res <= float(hi)):
+    # 已声明的界（0/1/2 个）：模型无 min/max_m_per_px 时没有任何可校验的
+    # 约束 —— 报任何结论都是误报（reason 文本会变成 "[None, None] m/px"）。
+    declared = [b for b in (lo, hi) if b is not None]
+    if res is not None and res > 0 and declared:
+        # 只声明一端时按已声明端校验（此前静默跳过 → 越界输入被判合格）。
+        out_of_range = (
+            (lo is not None and res < float(lo))
+            or (hi is not None and res > float(hi))
+        )
+        if out_of_range:
             reasons.append(_reason(
                 "resolution",
                 f"{res} m/px",
                 f"[{lo}, {hi}] m/px",
                 "resample to the model range or pick another model"))
-    elif res is None and (lo is not None or hi is not None):
+    elif res is None and declared:
         unknown.append(_reason(
             "resolution_unknown",
             "resolution context absent",
             f"[{lo}, {hi}] m/px",
             "provide resolution or projected CRS context"))
-    elif res == 0:
+    elif res == 0 and declared:
         # 软结论（degraded 面）：地理 CRS 无法判定米制口径 —— 不硬拒
         #（R1-C3/B-6 同一纪律：未知 ≠ 不兼容），由 qualify_node 聚合为
         # degraded 并保留可解释 reason。

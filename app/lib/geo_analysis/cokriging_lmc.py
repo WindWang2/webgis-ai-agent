@@ -252,7 +252,10 @@ def cokriging_lmc(
         out = np.zeros_like(h)
         for m, s1u, _, r in lmc.structures:
             out = out + s1u * struct_corr(m, h, r)
-        out = np.where(h <= 0.0, nug1 + out, out + nug12)
+        # nugget 只在 h=0（对角）进入直接协方差；h>0 只含结构项——
+        # 交叉块金 nug12 只属于 C12 的对角元，加到 C11/C22 的非对角元
+        # 会污染直接协方差（不随距离衰减到 0）。
+        out = np.where(h <= 0.0, nug1 + out, out)
         return out
 
     def C22(h: np.ndarray) -> np.ndarray:
@@ -260,7 +263,7 @@ def cokriging_lmc(
         out = np.zeros_like(h)
         for m, _, s2u, r in lmc.structures:
             out = out + s2u * struct_corr(m, h, r)
-        out = np.where(h <= 0.0, nug2 + out, out + nug12)
+        out = np.where(h <= 0.0, nug2 + out, out)
         return out
 
     def C12(h: np.ndarray) -> np.ndarray:
@@ -269,7 +272,9 @@ def cokriging_lmc(
         for m, s1u, s2u, r in lmc.structures:
             out = out + rho * np.sqrt(max(s1u, 0.0) * max(s2u, 0.0)) \
                 * struct_corr(m, h, r)
-        return out + nug12
+        # 交叉块金只在 h=0（共位样对）进入交叉协方差；h>0 只含结构项，
+        # 保证 C12 随距离衰减到 0。
+        return np.where(h <= 0.0, out + nug12, out)
 
     C00 = float(C11(np.array([0.0]))[0])  # = nug1 + Σs1u
 

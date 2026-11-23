@@ -780,7 +780,11 @@ def seed_execution_catalog(
     catalog.certification_evidence_fingerprint = fingerprint
     global _cached_catalog
     with _lock:
-        _cached_catalog = catalog
+        # degraded（如播种早于 pi-bridge 注入 → 工具面缺席、条目不全）
+        # 不写单例 —— 与 get_execution_catalog 同一道闸：否则缺条目的
+        # 目录被永久锁死，后续无参调用只能读到残缺快照。
+        if not catalog.degraded_sources:
+            _cached_catalog = catalog
     return catalog
 
 

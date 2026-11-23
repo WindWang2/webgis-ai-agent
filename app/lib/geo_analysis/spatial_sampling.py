@@ -47,6 +47,11 @@ SAMPLING_SEED_DEFAULT = 42
 #: 拒绝采样尝试上限（× 需求点数）：bbox 覆盖率极低的凹型多边形不再
 #: 无限尝试 —— 超限即类型化报错（披露提示降分辨率/简化几何）。
 _MAX_REJECTION_ATTEMPTS_FACTOR = 200
+# 总量守卫：random_points_in_polygons 的总样本 = n × 多边形数，单封顶
+# （_validate_n 的 1e6/面）不约束乘积 —— 1e6 × 1000 面 = 1e9 点会在任何
+# 守卫前把 collected_x 等 Python list 推到数十 GB（P2 修复）。取值与
+# systematic_grid_points 的 4M 格网守卫同口径。
+_MAX_TOTAL_SAMPLES = 4_000_000
 
 _PREPARED_MIN_VERTICES = 24
 
@@ -186,6 +191,9 @@ def random_points_in_polygons(
 
     返回 (FeatureCollection, meta)。meta：n_per_polygon / polygon_count /
     zero_area_skipped / seed / design="srs_per_polygon" / attempts。
+
+    总量守卫：n × 有效多边形数 ≤ 4,000,000（单面 1e6 封顶不约束乘积，
+    超标在分配前 :class:`ResourceScaleMismatch` 拒绝）。
     """
     n_i = _validate_n(n)
     seed_i = _validate_seed(seed)
@@ -197,6 +205,18 @@ def random_points_in_polygons(
         raise DegenerateData(
             "all polygons have zero area in projected space",
             correction_hint="check the sampling frame geometry",
+        )
+    # 总量守卫（P2 修复）：在任何分配前拒绝 n×多边形数 的超标组合 ——
+    # 单面封顶不约束乘积，1e9 点会先于任何守卫涨爆内存。
+    total_planned = n_i * len(valid_idx)
+    if total_planned > _MAX_TOTAL_SAMPLES:
+        raise ResourceScaleMismatch(
+            f"total planned samples {total_planned:,} (n={n_i} per polygon × "
+            f"{len(valid_idx)} polygons) exceed the {_MAX_TOTAL_SAMPLES:,} guard",
+            estimated=f"{total_planned:,} points",
+            limit=f"≤{_MAX_TOTAL_SAMPLES:,} points",
+            correction_hint="reduce n_per_polygon or split the frame into "
+                            "batches",
         )
     rng = np.random.default_rng(seed_i)
     xs: List[float] = []

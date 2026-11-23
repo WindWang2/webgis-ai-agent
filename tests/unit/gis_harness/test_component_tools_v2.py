@@ -179,6 +179,36 @@ async def test_component_update_stats_panel(registry, clean_session):
 
 
 @pytest.mark.asyncio
+async def test_component_update_tolerates_unparseable_legacy_component(registry, clean_session):
+    """review P2-11：历史组件形状非法不得让整次调用抛 pydantic ValidationError。
+
+    引擎 SetLayoutIntent 只做结构性 id/type 检查，model 非法但结构合法的
+    条目可持久化（前端新组件类型/旧 spec 遗留类型名）—— 对另一个合法组件的
+    突变必须走 typed 契约（成功或诚实失败），不得逸出异常；历史条目也不被
+    顺手删除。
+    """
+    await _seed_components(clean_session)
+    seeded = [c.to_mapspec() for c in build_default_components(primary_cartography="visual_heatmap")]
+    await mapspec_store.layout_set(clean_session, components=[
+        *seeded,
+        {"id": "legacy-future-widget", "type": "future_widget", "position": "top-right"},
+    ])
+    handler = registry._tools["webgis_component_update"]
+    res = await handler(
+        session_id=clean_session, component_type="north_arrow",
+        variant="arrow_simple",
+    )
+    assert isinstance(res, dict) and "success" in res, "必须返回 typed 结果而非抛异常"
+    if not res["success"]:
+        # 引擎写侧（mutation_handlers._handle_patchcomponent）仍全量解析 ——
+        # 以 typed 失败收场（带 message），不再逸出 pydantic ValidationError。
+        assert res.get("message")
+    spec = await mapspec_store.get_mapspec(clean_session)
+    ids = {c.get("id") for c in spec["layout"]["components"]}
+    assert "legacy-future-widget" in ids, "无关历史条目不得被顺手删除"
+
+
+@pytest.mark.asyncio
 async def test_component_update_variant_and_placement(registry, clean_session):
     await _seed_components(clean_session)
     res = await registry.dispatch(

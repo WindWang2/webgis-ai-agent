@@ -164,13 +164,15 @@ export function SceneController({ getMap, sessionId }: { getMap?: () => MapViewS
   const pitch = scene?.camera?.pitch ?? 0;
   const bearing = scene?.camera?.bearing ?? 0;
 
-  const apply = useCallback(async (next: UserScenePayload | null) => {
-    if (busyRef.current) return;
+  const apply = useCallback(async (next: UserScenePayload | null): Promise<boolean> => {
+    if (busyRef.current) return false;
     busyRef.current = true;
     setBusy(true);
+    let ok = true;
     try {
       const outcome = await commitUserScene(next);
       if (outcome.outcome === 'failed') {
+        ok = false;
         // R1-P2：失败可见（此前仅 dev 日志 —— 滑杆回弹零解释）。
         try {
           const { useToastStore } = await import('@/components/ui/toast');
@@ -181,15 +183,28 @@ export function SceneController({ getMap, sessionId }: { getMap?: () => MapViewS
       }
       // superseded：committed 真相随响应回灌 → 显示态自动对齐（无本地
       // 乐观场景状态需要回滚），不额外打扰。
+    } catch {
+      // commitUserScene 契约上不抛出，但队列/传输层异常不得逃逸成未处理
+      // Promise 拒绝 —— 与 outcome='failed' 同径可见（用户零反馈违背上方
+      // 「失败可见」意图）。
+      ok = false;
+      try {
+        const { useToastStore } = await import('@/components/ui/toast');
+        useToastStore.getState().addToast(
+          t('sceneController.sceneApplyFailed'), 'warning');
+      } catch { /* toast 不可用不影响状态收敛 */
+      }
     } finally {
       busyRef.current = false;
       setBusy(false);
     }
+    return ok;
   }, [t]);
 
   const setMode = useCallback(
     (next: SceneMode) => {
       if (next === mode) return;
+      const prevIs3D = useHudStore.getState().is3D;
       useHudStore.getState().setIs3D(next !== '2d');
       // 平面 pitch（0/缺席）→ 进 3D 用安全默认 50°（scene_planning
       // SAFE_PITCH_3D 同值）；已有倾斜则保留用户/Agent 相机。
@@ -205,6 +220,11 @@ export function SceneController({ getMap, sessionId }: { getMap?: () => MapViewS
           bearing: nextBearing,
           transition_ms: prefersReducedMotion() ? 0 : undefined,
         },
+      }).then((ok) => {
+        // 提交失败 → 回滚乐观 is3D：map-panel 的 is3D 桥是单向设计
+        // （scene 2d/缺席不强制关闭），不回滚会让 hud 与 committed spec
+        // 长期分歧（地形/相机闸门停在未提交态）。
+        if (!ok) useHudStore.getState().setIs3D(prevIs3D);
       });
     },
     [apply, mode, scene],
@@ -235,11 +255,15 @@ export function SceneController({ getMap, sessionId }: { getMap?: () => MapViewS
         field === 'bearing'
           ? Math.max(-180, Math.min(180, Math.round((bearing + delta) * 10) / 10))
           : bearing;
+      const prevIs3D = useHudStore.getState().is3D;
       useHudStore.getState().setIs3D(nextPitch > 0 || mode !== '2d');
       void apply({
         ...(scene ?? {}),
         mode,
         camera: { pitch: nextPitch, bearing: nextBearing },
+      }).then((ok) => {
+        // 同 setMode：失败回滚乐观 is3D（单向桥下不回滚 = 长期分歧）。
+        if (!ok) useHudStore.getState().setIs3D(prevIs3D);
       });
     },
     [apply, bearing, mode, pitch, scene],

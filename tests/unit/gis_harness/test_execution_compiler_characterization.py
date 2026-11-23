@@ -264,6 +264,27 @@ class TestFamilyCatalogConformance:
         assert r1.to_bounded_dict() == r2.to_bounded_dict()
         assert r1.fingerprint
 
+    def test_fingerprint_is_recomputable_from_report_payload(self):
+        """指纹必须覆盖报告实际承载的载荷（前 96 条）—— verdicts>96 时
+        旧行为对全部 all_verdicts 计算，报告内容无法复算指纹，漂移检测/
+        对账校验必败。构造 >96 条裁决钉死该回归。"""
+        import hashlib
+
+        from app.services.gis_harness.execution_compiler import (
+            audit_family_conformance,
+        )
+
+        report = audit_family_conformance(
+            tool_exists=lambda t: False,
+            family_ids=["admin_facility_distribution"] * 34)
+        assert len(report.step_verdicts) == 96, "报告只存前 96 条"
+        payload = [v.to_bounded_dict() for v in report.step_verdicts[:96]]
+        expected = hashlib.sha256(
+            repr(payload).encode("utf-8")).hexdigest()[:32]
+        assert report.fingerprint == expected
+        # counts 仍覆盖全量裁决（102 条）—— 截断不吞总量
+        assert sum(report.counts.values()) == 102
+
 
 # ── C4: IR patch → 受影响节点失效集 ───────────────────────────────────────
 

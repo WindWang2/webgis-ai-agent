@@ -112,6 +112,24 @@ async def test_sparse_density_query_yields_typed_blocked_candidate(registry, sid
 
 
 @pytest.mark.asyncio
+async def test_trace_fingerprint_is_final_committed_spec(registry, sid):
+    """review P2-9：trace 的 MapSpec 指纹必须是终稿（layout_set 之后）指纹。
+
+    trace 在 layout_set 之前构建 —— 无 layer_upsert 的常见路径下恒落地为
+    "absent:not-committed"，与同载荷 out.mapspec_fingerprint 自相矛盾。
+    """
+    res = await _product(registry, sid, _point_fc(40))
+    assert res["success"] is True
+    trace = res.get("design_decision_trace") or {}
+    final_fp = str(res.get("mapspec_fingerprint") or "")
+    assert final_fp, "终稿 MapSpec 指纹必须在场"
+    assert trace.get("mapspecFingerprint") == final_fp, (
+        f"trace 指纹 {trace.get('mapspecFingerprint')!r} 与终稿 {final_fp!r} 不一致"
+    )
+    assert trace.get("mapspecFingerprint") != "absent:not-committed"
+
+
+@pytest.mark.asyncio
 async def test_engine_failure_degrades_without_blocking_product(registry, sid):
     """候选引擎异常 → 降级披露 + 主链不受影响（best_effort 纪律）。"""
     ref = await session_data_manager.store(sid, _point_fc(12), prefix="geojson")

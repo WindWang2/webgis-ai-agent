@@ -233,6 +233,11 @@ def compile_workflow(
     selected = registry.get(recipe_id) if recipe_id else (
         candidates[0] if candidates else registry.default_recipe()
     )
+    if selected is None:
+        # review P2-17：未知 recipe_id（registry.get 返回 None，validate 即
+        # 按此判定引用完整性）不得让 selected.id 抛 AttributeError —— 诚实
+        # 降级到确定性候选，覆写无效在阶段 reason code 里披露。
+        selected = candidates[0] if candidates else registry.default_recipe()
     compilation.recipe_id = selected.id
     candidate_evidence = [
         {"recipe_id": c.id, "priority": c.priority,
@@ -244,7 +249,8 @@ def compile_workflow(
         "resolve_recipe_candidates",
         reason_codes=(
             ["explicit_recipe_override"] if explicit_choice else []
-        ) + ([] if candidates else ["no_candidates_default_fallback"]),
+        ) + (["unknown_recipe_override"] if recipe_id and registry.get(recipe_id) is None else [])
+        + ([] if candidates else ["no_candidates_default_fallback"]),
         evidence={"selected": selected.id,
                   "candidates": candidate_evidence},
     ))

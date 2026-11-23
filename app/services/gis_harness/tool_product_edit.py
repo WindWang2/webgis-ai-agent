@@ -117,6 +117,18 @@ async def webgis_product_edit(
                 _kind = str(_view.kind or "") if _view else ""
                 _families = list(
                     VIEW_KIND_COMPONENT_FAMILIES.get(_kind, ()))
+                if _view is not None and not _families:
+                    # review P2-10：map/overview 等合法 ViewKind 没有 MapSpec
+                    # 组件族承载面（其物理面是图层而非 layout 组件）。语义 spec
+                    # 已提交而物理面无对应操作时，必须进欠账账本诚实披露 —— 否则
+                    # removed_components/unapplied_effects 双空，语义 spec 与
+                    # MapSpec 静默分叉且账本（唯一对账真相）无任何披露。
+                    unapplied.append({
+                        "effect": "no_component_family",
+                        "detail": f"view {_view.view_id} kind={_kind or 'unknown'} "
+                                  "has no MapSpec component family — physical "
+                                  "面（图层）需经图层工具单独处理",
+                    })
             for comp in components:
                 if not isinstance(comp, dict):
                     continue

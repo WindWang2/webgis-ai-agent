@@ -165,6 +165,45 @@ def test_s07_deep_nesting_budget():
     assert ei.value.code in ("SVG_TOO_DEEP", "SVG_TOO_MANY_NODES")
 
 
+def test_p2_use_amplification_bounded_during_walk():
+    """review P2 回归：use 展开放大边扩边校验。
+
+    此前 MAX_PRIMITIVES 只在整树走完后校验 —— N 次 use × M 图元可把峰值
+    内存放大约 400 倍才被拒。150 图元目标 × 2 次 use = 300 > 200：修正后
+    在第 2 次 use 展开途中即拒；未修正代码会走完余下子树、改栽在后续
+    <text> 上（不同 code，故本测试对未修正代码必失败）。
+    """
+    svg = (
+        b'<svg viewBox="0 0 64 64"><defs><g id="big">'
+        + b'<path d="M0 0 L1 1"/>' * 150
+        + b'</g></defs><use href="#big"/><use href="#big"/>'
+        b'<text>x</text></svg>')
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(svg, kind="point_symbol")
+    assert ei.value.code == "SVG_TOO_MANY_PRIMITIVES"
+
+
+def test_p2_defs_subtree_counts_toward_node_budget():
+    """review P2 回归：defs 内具名 g 的子节点并入全局节点预算。
+
+    此前每个 defs 目标走独立 _ImportState 计数（各自一份 400 节点预算），
+    全局 MAX_INPUT_NODES 对 defs 内容形同虚设。两个各 201 路径的具名组
+    + 顶层 1 路径 = 405 > 400：必须拒；未修正代码只数到 4 个节点 →
+    静默接受（本测试对未修正代码必失败）。
+    """
+    from app.lib.cartography.svg_import import MAX_INPUT_NODES
+
+    half = MAX_INPUT_NODES // 2 + 1  # 201（单目标不越各自预算，合起来越）
+    svg = (
+        b'<svg viewBox="0 0 64 64"><defs>'
+        + b'<g id="a">' + b'<path d="M0 0 L1 1"/>' * half + b'</g>'
+        + b'<g id="b">' + b'<path d="M0 0 L1 1"/>' * half + b'</g>'
+        + b'</defs><path d="M2 2 L3 3"/></svg>')
+    with pytest.raises(SymbolAssetError) as ei:
+        import_svg_asset(svg, kind="point_symbol")
+    assert ei.value.code == "SVG_TOO_MANY_NODES"
+
+
 def test_s08_unsupported_elements_disclosed():
     cases = {
         "clip": (b'<svg viewBox="0 0 10 10"><clipPath id="c"><rect width="4" height="4"/></clipPath>'

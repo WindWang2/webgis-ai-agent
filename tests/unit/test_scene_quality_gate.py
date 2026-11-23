@@ -381,3 +381,41 @@ def test_scene_quality_codes_vocabulary_extended():
                  "SCENE_LABEL_OCCLUSION_RISK",
                  "SCENE_EXPORT_VECTOR_DEGRADE"):
         assert code in SCENE_QUALITY_CODES
+
+
+class TestSceneQualityRobustness:
+    """P2：坏文档（sources/paint 非 dict）不得让质量门自己崩；评测异常
+    必须 fail-closed（不是 passed=True 的 fail-open）。"""
+
+    def test_non_dict_sources_still_yields_real_findings(self):
+        spec = _healthy_3d_spec()
+        spec["sources"] = ["not", "a", "dict"]
+        report = evaluate_scene_quality(spec)
+        # terrain.source 'dem' 悬空 → 阻断性 finding 照常产出（不丢）
+        assert report["passed"] is False
+        assert any(f["code"] == "SCENE_TERRAIN_SOURCE_REF"
+                   for f in report["findings"])
+
+    def test_non_dict_paint_still_yields_real_findings(self):
+        spec = _healthy_3d_spec()
+        spec["layers"].append({
+            "id": "extr", "type": "fill-extrusion", "source": "s1",
+            "paint": ["not", "a", "dict"],
+        })
+        report = evaluate_scene_quality(spec)
+        # 不崩，且证据诚实的 warning 照常产出（非阻断 → passed 仍 True）
+        assert any(f["code"] == "SCENE_EXTRUSION_NO_EVIDENCE"
+                   for f in report["findings"])
+
+    def test_safe_report_fails_closed_on_evaluation_error(self, monkeypatch):
+        from app.lib.cartography import scene_quality as sq
+
+        def _boom(spec, **kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(sq, "evaluate_scene_quality", _boom)
+        report = sq.scene_quality_report_safe(_healthy_3d_spec())
+        assert report["passed"] is False
+        assert report["blocking_count"] == 1
+        assert report["findings"][0]["code"] == "SCENE_QUALITY_GATE_ERROR"
+        assert report["error"] == "scene_quality_gate_error"

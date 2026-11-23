@@ -222,3 +222,40 @@ class TestDeterminism:
         r2 = _build()
         assert json.dumps(r1.profile.model_dump(), sort_keys=True) == json.dumps(
             r2.profile.model_dump(), sort_keys=True)
+
+
+class TestBandStatsUseActualInputCount:
+    """P2：suppressed 必须以本带实际输入（receipt.input_count）为基准。
+
+    source.feature_count（源 revision 声明值）与实际入泛化要素数不一致时，
+    旧口径会给出静默错值，而 receipt.stats_match 仍自洽为 True。
+    """
+
+    def test_suppressed_follows_receipt_input_not_source_declaration(self):
+        fc = _roads_fc(ROAD_DIST)
+        actual = len(fc["features"])
+        declared = actual + 500          # 源声明数 ≠ 实际要素数
+        imp = derive_importance_model(
+            ROAD_SCHEMA, {"道路等级": ROAD_DIST}, feature_count=actual)
+        result = build_scale_profile(
+            layer_id="roads",
+            feature_collection=fc,
+            source=SourceRevision(
+                ref="ref:geojson:roads", content_revision=2,
+                data_fingerprint="sha256:bb", feature_count=declared,
+                geometry_family="line"),
+            geometry_family="line",
+            latitude_hint=30.0,
+            importance=imp,
+        )
+        for band in result.profile.bands:
+            art = result.artifacts.get(band.scale.tier)
+            if art is None:
+                continue
+            expected_input = art.receipt["input_count"]
+            assert band.stats.original_feature_count == declared
+            #  suppressed = input − displayed（不是 declared − displayed）
+            assert band.stats.suppressed_feature_count == max(
+                0, expected_input - band.stats.displayed_feature_count)
+            assert band.stats.suppressed_feature_count < declared
+            assert art.receipt["stats_match"] is True

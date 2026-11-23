@@ -812,11 +812,18 @@ class ModelOpsService:
         ref_dir = self._settings.registry_dir / "outputs" / scope_key / "prompt_refs"
         ref_dir.mkdir(parents=True, exist_ok=True)
         # review fix：sidecar 以**掩膜内容**寻址（同内容重 refine 复用同一
-        # 文件——prompt_refs 不随 run 数线性增长）。
+        # 文件——prompt_refs 不随 run 数线性增长）。但掩膜字节只覆盖几何
+        # 形状：两个不同源栅格（不同 CRS/transform/尺寸）可产出相同掩膜字节，
+        # 此时复用前者 sidecar 会把错误的 georef 带给后者 → refine 结果静默
+        # 错位。故网格身份（CRS + transform + 尺寸）一并进摘要。
+        grid_digest = _hashlib.sha256(
+            f"{meta.crs}|{tuple(meta.transform or [])}|{meta.width}x{meta.height}"
+            .encode("utf-8")
+        ).hexdigest()
         mask_digest = _hashlib.sha256(
             np.ascontiguousarray(mask).tobytes()
         ).hexdigest()
-        sidecar = ref_dir / f"refine-{mask_digest[:16]}-c{int(candidate_index)}.tif"
+        sidecar = ref_dir / f"refine-{mask_digest[:16]}-{grid_digest[:16]}-c{int(candidate_index)}.tif"
         if not sidecar.exists():
             with rasterio.open(
                 sidecar, "w", driver="GTiff", width=meta.width, height=meta.height,

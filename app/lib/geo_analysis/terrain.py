@@ -1067,7 +1067,10 @@ def fill_depressions(
             counter += 1
     del known, heap
 
-    lift = filled - z
+    # lift 只计有效像元：无效像元（NaN/±Inf/nodata）的 filled−z 为 NaN/Inf，
+    # 会毒化 filled_volume 与 max_fill_depth 为 nan（JSON 非法）——
+    # filled_cell_count 的 >0 判定本就排除 NaN，保持正确（P2 修复）。
+    lift = np.where(valid, filled - z, 0.0)
     meta = _meta_base(
         "terrain.sink_fill", valid,
         cell_size=cy, cell_size_x=cx,
@@ -3459,7 +3462,10 @@ def fill_depressions_chunked(
             filled[:, c0:c1] = band_z
         if changed == 0:
             break
-    lift = filled - z
+    # lift 只计有效像元（同 fill_depressions，P2 修复）：无效像元的
+    # filled−z 为 NaN/Inf，会让 filled_volume/max_fill_depth 变 nan ——
+    # 作为参考解的 max_fill_depth 随之失效，近似收敛比对失去基准。
+    lift = np.where(valid, filled - z, 0.0)
     meta = _meta_base(
         "terrain.sink_fill_chunked", valid,
         cell_size=cell_size,

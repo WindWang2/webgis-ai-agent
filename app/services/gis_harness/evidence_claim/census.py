@@ -46,7 +46,11 @@ def project_artifact_record(
         or getattr(record, "producer_tool", "")
         or ""
     )
-    meta = getattr(record, "metadata", None) or {}
+    # metadata 为真值非 dict（list/str）时按缺席处理 —— 否则下方
+    # meta.get(...) 抛 AttributeError，整个 registry 投影循环中断。
+    meta = getattr(record, "metadata", None)
+    if not isinstance(meta, dict):
+        meta = {}
     kind = EvidenceKind.ARTIFACT
     atype = str(getattr(record, "artifact_type", "") or "")
     if atype in ("stats_table", "admin_aggregate_table", "grid_aggregate", "od_matrix"):

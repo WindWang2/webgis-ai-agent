@@ -214,6 +214,17 @@ def _omitted_digest(items: Any, projector: Callable[[Any, List[int]], Any]) -> s
     return digest.hexdigest()
 
 
+def _fresh_budget() -> List[int]:
+    """独立节点预算（每投影项一份）。
+
+    共享单个预算时，先消费的域（sources）耗尽 4096 后，后续
+    layers/layout/view/scene 全塌为 ``{"truncated": True}`` —— 指纹对
+    paint/视野/表现变更失明，陈旧观察可被盖章到新 revision。与
+    ``_omitted_digest`` 的逐项预算同口径。
+    """
+    return [_MAX_METADATA_NODES]
+
+
 def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
     """Return the bounded metadata that can affect cartographic review.
 
@@ -224,10 +235,9 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
     sources = mapspec.get("sources") if isinstance(mapspec.get("sources"), dict) else {}
     projected_sources: Dict[str, Any] = {}
     layers = mapspec.get("layers") if isinstance(mapspec.get("layers"), list) else []
-    budget = [_MAX_METADATA_NODES]
     source_items = list(sources.items())
     for source_id, source in source_items[:_MAX_METADATA_ITEMS]:
-        projected_sources[str(source_id)] = _project_source(source, budget)
+        projected_sources[str(source_id)] = _project_source(source, _fresh_budget())
     omitted_sources = source_items[_MAX_METADATA_ITEMS:]
     if omitted_sources:
         projected_sources["__omitted_sources__"] = {
@@ -236,7 +246,7 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
         }
     projected_layers = []
     for layer in layers[:_MAX_METADATA_ITEMS]:
-        projected = _project_layer(layer, budget)
+        projected = _project_layer(layer, _fresh_budget())
         if projected is not None:
             projected_layers.append(projected)
     omitted_layers = list(enumerate(layers[_MAX_METADATA_ITEMS:], _MAX_METADATA_ITEMS))
@@ -248,17 +258,17 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
     projection = {
         "version": mapspec.get("version"),
         "cartographic_profile": _bounded_metadata(
-            mapspec.get("cartographic_profile"), budget=budget
+            mapspec.get("cartographic_profile"), budget=_fresh_budget()
         ),
-        "view": _bounded_metadata(mapspec.get("view") or {}, budget=budget),
-        "layout": _bounded_metadata(mapspec.get("layout") or {}, budget=budget),
-        "time": _bounded_metadata(mapspec.get("time") or {}, budget=budget),
+        "view": _bounded_metadata(mapspec.get("view") or {}, budget=_fresh_budget()),
+        "layout": _bounded_metadata(mapspec.get("layout") or {}, budget=_fresh_budget()),
+        "time": _bounded_metadata(mapspec.get("time") or {}, budget=_fresh_budget()),
         # D1（评审）：scene（mode/terrain/camera/assets）此前不进指纹 ——
         # scene-only 变更（换模式/资产增删显隐）revision 前进而指纹不变，
         # 观察接受门只比对指纹，settle 窗口内的旧观察被误盖章到新 revision
         #（scene3d_assets/layers 证据归属错代）。与 view/layout/time 同款
         # 有界投影（指针/参数面，无数据负载；预算与截断语义一致）。
-        "scene": _bounded_metadata(mapspec.get("scene") or {}, budget=budget),
+        "scene": _bounded_metadata(mapspec.get("scene") or {}, budget=_fresh_budget()),
         "sources": projected_sources,
         "layers": projected_layers,
         "source_count": len(sources),
@@ -268,7 +278,8 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
     # 变化必须是可观察 spec 变更（displayed_at 门控依赖）；同时存量无
     # temporal 的 spec 指纹逐位不变（product manifest 跨版本不漂移）。
     if mapspec.get("temporal"):
-        projection["temporal"] = _bounded_metadata(mapspec.get("temporal"), budget=budget)
+        projection["temporal"] = _bounded_metadata(
+            mapspec.get("temporal"), budget=_fresh_budget())
     return projection
 
 

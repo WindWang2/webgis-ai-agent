@@ -1380,10 +1380,15 @@ async def maybe_finalize_map_product(
                         session_id,
                     )
                     return result
+                # 修复记忆合并必须读**锁内 fresh 章节**的已存块：stored 是
+                # 锁外快照，并发终验在该窗口落块时其 repair_memory 会被静默
+                # 丢弃（lost update —— goal/revision/rows/render-seq 四道
+                # 守卫都不覆盖 repair_memory 键）。
+                stored_now = fresh.gis_chapter.get("map_product")
                 prior_repairs_merged = (
-                    list(stored.get("repair_memory") or [])
-                    + list(stored.get("repairs") or [])
-                    if isinstance(stored, dict)
+                    list(stored_now.get("repair_memory") or [])
+                    + list(stored_now.get("repairs") or [])
+                    if isinstance(stored_now, dict)
                     else []
                 )
                 merged_repairs = list(
@@ -1696,7 +1701,7 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
                 "required_render_seq": _required_seq,
             }
     except Exception:  # noqa: BLE001 — 确认面缺席按 auto（True）
-        payload["display_confirmed"] = False
+        payload["display_confirmed"] = True
         logger.warning("Display confirmation unavailable", exc_info=True)
     # ADR-0183（G5 接线 W4）：goal satisfaction 投影随 task_complete 面
     # 下行（additive；块缺席/旧块 → 键省略，零漂移）。

@@ -158,9 +158,9 @@ async def webgis_map_intent(
         )
     except Exception:  # noqa: BLE001 — 能力层缺席不阻断意图解析
         situation = None
+    _verified = await _project_verified_recipes()
     candidates = planner.recipes.select_candidates(
-        intent, project_verified=await _project_verified_recipes(),
-        situation=situation,
+        intent, project_verified=_verified, situation=situation,
     )
     try:
         available = set(registry.list_tools())
@@ -168,8 +168,12 @@ async def webgis_map_intent(
         available = set()
     # audit #825: 把注册表可见工具传给 planner —— 解析不到的能力在 plan
     # 里标记 unavailable（docstring 承诺的诚实报告）。
+    # review P2-7：project_verified 与 candidates（:161-164）及 product 阶段
+    # （tool_map_product.py:115-127）同源 —— 意图阶段不得按无记忆裁决，
+    # 否则 recommended_recipe 与 candidates[0]/_selected_recipe 互相矛盾。
     plan = await asyncio.to_thread(
-        planner.plan_from_intent, intent, available_tools=available or None, situation=situation)
+        planner.plan_from_intent, intent, available_tools=available or None,
+        project_verified=_verified, situation=situation)
 
     capabilities = []
     # #1076(D-7): resolved_tool 与 resolved_algorithm 同源于

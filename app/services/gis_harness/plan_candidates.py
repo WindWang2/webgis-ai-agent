@@ -515,7 +515,15 @@ def generate_plan_candidates(
         candidate_set.selected_id = feasible.candidate_id
         # 零漂移改写规则：仅当语义 top-1 recipe 被科学阻断而最优候选可行
         # 时，选择才改写 recipe（其余场景计划仍由既有管线产出）。
-        top1 = next((c for c in candidates if c.kind == "recipe"), None)
+        # 语义 top-1 按池内序（:488 同一定义）取 —— candidates 已在 505 行
+        # 就地排序，若在排序后的列表里找「第一个 recipe」会拿到可行候选而非
+        # 被阻断的语义 top-1，rerouted/reroute_reason 恒不置位（零漂移披露
+        # 与 trace 证据丢失）。
+        top1 = next(
+            (c for c in candidates
+             if c.kind == "recipe" and c.recipe_id == top1_recipe_id),
+            None,
+        )
         if top1 is not None and top1.status == "rejected" \
                 and feasible.recipe_id != top1.recipe_id:
             candidate_set.rerouted = True

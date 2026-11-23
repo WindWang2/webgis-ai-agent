@@ -296,3 +296,66 @@ def test_many_edits_survive_storage_roundtrip():
         assert s is not None and not errs
     assert len(s.overrides) == 2 + MAX_OVERRIDES > MAX_OVERRIDES
     assert spec_from_storage(storage_payload(s)) is not None
+
+
+# ── review P2：payload/reason/target 消毒与 validate_assignment 逃逸 ────
+
+
+def test_add_view_payload_is_bounded_before_ledger():
+    """反证（review P2）：add_view 的 payload.view 原样进 override 账并随
+    storage_payload 落盘 —— 任意额外键与超长字符串会让 chapter 载荷无界。"""
+    s = _spec(views=[_view("v-map")])
+    raw = {
+        "view_id": "v-chart", "kind": "chart",
+        "evil_unknown_key": "x" * 5000,
+        "binding": {"filter": {"k": "v" * 5000, "k2": "ok"}},
+        "evidence": {"decisions": ["d" * 5000]},
+    }
+    ns, errs, aff = apply_product_edit(
+        s, "add_view", "", {"view": raw}, "加图表")
+    assert ns is not None and not errs and aff == ["v-chart"]
+    # pydantic 仍做 fail-closed 校验：未知键被拒（不进入 spec）
+    assert "evil_unknown_key" not in ns.view("v-chart").model_dump()
+    # 落账载荷有界：键名 ≤80、值 ≤200、键数/条数有界（键过滤归 pydantic，
+    # 消毒层只负责有界性 —— 未知键仍可能在场，但其值已被截断）
+    ledger = ns.overrides[-1].payload["view"]
+    assert all(len(str(k)) <= 80 for k in ledger)
+    assert len(str(ledger["evil_unknown_key"])) <= 200
+    assert len(ledger["binding"]["filter"]) == 2
+    assert len(ledger["binding"]["filter"]["k"]) <= 200
+    assert len(ledger["evidence"]["decisions"][0]) <= 200
+    assert len(str(storage_payload(ns))) < 20000
+
+
+def test_replace_component_oversized_values_do_not_escape():
+    """反证（review P2）：replace_component 把消毒后最长 200 字的值赋给
+    chart_kind(≤40)/component_hint(≤120) —— validate_assignment=True 下
+    未截断会抛 ValidationError 逃逸 apply_product_edit（先验证后提交）。"""
+    s = _spec(views=[_view("v-map"), _view("v-chart", "chart")])
+    # component_hint 无词表：超长值截断到字段上界后合法落账
+    ns, errs, aff = apply_product_edit(
+        s, "replace_component", "v-chart", {"component_hint": "h" * 199})
+    assert ns is not None and not errs, errs
+    assert aff == ["v-chart"]
+    assert len(ns.view("v-chart").binding.component_hint) <= 120
+    assert validate_product_spec(ns) == []
+    # chart_kind 越界值：不得抛 ValidationError 逃逸（fail-closed 返回 errors）
+    ns2, errs2, _ = apply_product_edit(
+        s, "replace_component", "v-chart", {"chart_kind": "c" * 199})
+    assert ns2 is None and errs2
+
+
+def test_override_reason_and_target_are_bounded():
+    """反证（review P2）：reason/target 未消毒就构造 ProductOverride
+    （reason≤200/target≤120）—— toggle_component 的 target 从不校验，
+    超长即 ValidationError 逃逸。"""
+    s = _spec(views=[_view("v-map")])
+    ns, errs, _ = apply_product_edit(
+        s, "toggle_view", "v-map", {}, "R" * 999)
+    assert ns is not None and not errs, errs
+    assert len(ns.overrides[-1].reason) <= 200
+
+    ns2, errs2, _ = apply_product_edit(
+        s, "toggle_component", "T" * 999, {"component_type": "chart_panel"})
+    assert ns2 is not None and not errs2, errs2
+    assert len(ns2.overrides[-1].target) <= 120

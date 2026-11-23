@@ -159,6 +159,119 @@ describe('parseGltf fixture round-trip', () => {
   });
 });
 
+describe('material numeric validation (zero-check)', () => {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const bin = new Uint8Array(positions.buffer);
+  const base = {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: positions.byteLength }],
+    buffers: [{ byteLength: bin.length }],
+  };
+
+  it('rejects baseColorFactor shorter than 3 ([undefined,…] → NaN otherwise)', async () => {
+    await expect(parseGltf(glbJsonBin({
+      ...base,
+      materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 0] } }],
+    }, bin))).rejects.toMatchObject({ code: 'corrupt' });
+  });
+
+  it('rejects non-numeric baseColorFactor components', async () => {
+    await expect(parseGltf(glbJsonBin({
+      ...base,
+      materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 0, 'red'] } }],
+    }, bin))).rejects.toMatchObject({ code: 'corrupt' });
+    await expect(parseGltf(glbJsonBin({
+      ...base,
+      materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, null] } }],
+    }, bin))).rejects.toMatchObject({ code: 'corrupt' });
+  });
+
+  it('rejects non-numeric metallicFactor / roughnessFactor', async () => {
+    await expect(parseGltf(glbJsonBin({
+      ...base,
+      materials: [{ pbrMetallicRoughness: { metallicFactor: 'high' } }],
+    }, bin))).rejects.toMatchObject({ code: 'corrupt' });
+    await expect(parseGltf(glbJsonBin({
+      ...base,
+      materials: [{ pbrMetallicRoughness: { roughnessFactor: {} } }],
+    }, bin))).rejects.toMatchObject({ code: 'corrupt' });
+  });
+
+  it('accepts a 3-component baseColorFactor (alpha defaults to 1)', async () => {
+    const parsed = await parseGltf(glbJsonBin({
+      ...base,
+      materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.6] } }],
+    }, bin));
+    expect(parsed.materials[0].baseColorFactor).toEqual([0.2, 0.4, 0.6, 1]);
+  });
+
+  it('rejects primitive.material index out of range / negative (materials[i] 取空)', async () => {
+    await expect(parseGltf(glbJsonBin({
+      ...base,
+      materials: [{ pbrMetallicRoughness: {} }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: 5 }] }],
+    }, bin))).rejects.toThrowError(/material 5 out of range/);
+    await expect(parseGltf(glbJsonBin({
+      ...base,
+      materials: [{ pbrMetallicRoughness: {} }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: -1 }] }],
+    }, bin))).rejects.toThrowError(/material -1 out of range/);
+  });
+});
+
+describe('accessor without bufferView and without sparse', () => {
+  it('rejects a small-count zero-filled attribute accessor (silent zero geometry)', async () => {
+    const doc = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      accessors: [{ componentType: 5126, count: 3, type: 'VEC3' }],
+      buffers: [],
+    };
+    // 旧实现 out 全零静默返回 → 渲染出零几何；现 typed 拒绝。
+    await expect(parseGltf(glbJson(doc))).rejects.toThrowError(/neither bufferView nor sparse/);
+  });
+
+  it('still accepts the spec-legal sparse-only form (no base bufferView)', async () => {
+    const values = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    const idx = new Uint16Array([0, 1, 2]);
+    const bin = new Uint8Array(idx.byteLength + values.byteLength);
+    bin.set(new Uint8Array(idx.buffer), 0);
+    bin.set(new Uint8Array(values.buffer), idx.byteLength);
+    const doc = {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      accessors: [{
+        componentType: 5126,
+        count: 3,
+        type: 'VEC3',
+        sparse: {
+          count: 3,
+          indices: { bufferView: 0, componentType: 5123 },
+          values: { bufferView: 1 },
+        },
+      }],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: idx.byteLength },
+        { buffer: 0, byteOffset: idx.byteLength, byteLength: values.byteLength },
+      ],
+      buffers: [{ byteLength: bin.length }],
+    };
+    const parsed = await parseGltf(glbJsonBin(doc, bin));
+    expect(Array.from(parsed.roots[0].primitives[0].positions)).toEqual(Array.from(values));
+  });
+});
+
 describe('typed rejections', () => {
   it('rejects glTF 1.0 version', async () => {
     const buf = glbJson({ asset: { version: '1.0' } });

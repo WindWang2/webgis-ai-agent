@@ -88,6 +88,15 @@ _CATEGORY_TO_KIND: Dict[str, GoalNodeKind] = {
 #: 让「教育公平/人均/率」类目标的科学欠账在图上可见，而不是藏在文案里）。
 _DENOMINATOR_MARKERS = ("DENOMINATOR",)
 
+#: 有界裁剪时恒保留的节点 kind（终节骨架 + 制图/披露面）——行派生节点
+#: 不得把 goal→…→verify/observe/deliver 骨架挤出图（source="role:*" 的
+#: 科学欠债节点同样保留，见 build_goal_graph 的裁剪逻辑）。
+_PROTECTED_KINDS = frozenset({
+    GoalNodeKind.GOAL.value, GoalNodeKind.CARTOGRAPHY.value,
+    GoalNodeKind.VERIFY.value, GoalNodeKind.OBSERVE.value,
+    GoalNodeKind.DELIVER.value, GoalNodeKind.DISCLOSE.value,
+})
+
 
 def _row_kind(capability: str, purpose: str) -> Optional[GoalNodeKind]:
     """capability → 分析节点 kind（registry category 确定性映射）。
@@ -172,14 +181,17 @@ class SpatialGoalGraph(BaseModel):
         return None
 
     def to_bounded_dict(self) -> Dict[str, Any]:
+        # node_count 必须与**实际列出的**节点一致（此前报全量而 nodes 被
+        # 截断 —— 计数与载荷互相矛盾）。
+        nodes = self.nodes[:_MAX_NODES]
         return {
             "schema": "goal_graph.v1",
             "goal": self.goal[:200],
             "plan_id": self.plan_id[:64],
             "recipe_id": self.recipe_id[:64],
             "fingerprint": self.fingerprint(),
-            "node_count": len(self.nodes),
-            "nodes": [n.to_bounded_dict() for n in self.nodes[:_MAX_NODES]],
+            "node_count": len(nodes),
+            "nodes": [n.to_bounded_dict() for n in nodes],
         }
 
     def summary_line(self) -> str:
@@ -245,11 +257,15 @@ def build_goal_graph(chapter: Dict[str, Any]) -> SpatialGoalGraph:
     steps = [s for s in chapter.get("analysis_steps") or [] if isinstance(s, dict)]
 
     # acquire/inspect/validate：每个数据需求行一条科学链。
+    # 行内 capability 重复（LLM/planner 平行投影的已知形态）只展开一次 —
+    # 重复节点 id 会让 node()/diff/下游 dict 化只认首个，图结构失真。
     analyze_deps: Dict[str, List[Tuple[str, DependencyKind]]] = {}
+    seen_requirement_caps: set = set()
     for row in requirements[:12]:
         cap = str(row.get("capability") or "")
-        if not cap:
+        if not cap or cap in seen_requirement_caps:
             continue
+        seen_requirement_caps.add(cap)
         acq_id = f"acquire:{cap}"
         insp_id = f"inspect:{cap}"
         val_id = f"validate:{cap}"
@@ -280,8 +296,8 @@ def build_goal_graph(chapter: Dict[str, Any]) -> SpatialGoalGraph:
     step_node_by_cap: Dict[str, str] = {}
     for row in steps[:16]:
         cap = str(row.get("capability") or "")
-        if not cap:
-            continue
+        if not cap or cap in step_node_by_cap:
+            continue  # 重复 capability：首行获胜，不造同 id 的第二节点
         kind = _row_kind(cap, str(row.get("purpose") or ""))
         if kind is None:
             continue  # data_access 行：acquire 链已表达，不造分析节点
@@ -335,10 +351,12 @@ def build_goal_graph(chapter: Dict[str, Any]) -> SpatialGoalGraph:
                         "acquire:denominator"],
             dep_kinds=[DependencyKind.ARTIFACT.value, DependencyKind.SCIENCE.value],
         ))
+    disclosed_codes: set = set()
     for w in warnings[:_MAX_WARNINGS_NODES]:
         code = str(w.get("code") or "")
-        if not code:
-            continue
+        if not code or code in disclosed_codes:
+            continue  # 重复 warning code：不造同 id 的第二披露节点
+        disclosed_codes.add(code)
         graph.nodes.append(GoalNode(
             id=f"disclose:{code[:48]}", kind=GoalNodeKind.DISCLOSE.value,
             label=code[:_MAX_LABEL], source=f"warning:{code[:48]}",
@@ -398,6 +416,28 @@ def build_goal_graph(chapter: Dict[str, Any]) -> SpatialGoalGraph:
         dep_kinds=[DependencyKind.SCIENCE.value, DependencyKind.MAP.value]
         + [DependencyKind.DISCLOSURE.value] * (len(deliver_deps) - 2),
     ))
+    # 有界红线（模块 docstring：≤48 节点）：12 需求×3 + 16 步 + 警告 +
+    # 制图 + 收口可远超上限 —— 此前只在 to_bounded_dict 静默截断，终端
+    # verify/observe/deliver 被整段丢弃。此处按优先级裁剪：终节/制图/披露
+    # 骨架与科学欠债节点（source=role:*）恒保留，行派生节点按构造序补位，
+    # 并清掉指向被丢节点的依赖（无悬空边）。
+    if len(graph.nodes) > _MAX_NODES:
+        protected: List[GoalNode] = []
+        trimmable: List[GoalNode] = []
+        for n in graph.nodes:
+            if n.kind in _PROTECTED_KINDS or str(n.source).startswith("role:"):
+                protected.append(n)
+            else:
+                trimmable.append(n)
+        budget = max(0, _MAX_NODES - len(protected))
+        dropped = {n.id for n in trimmable[budget:]}
+        kept = protected + trimmable[:budget]
+        for n in kept:
+            pairs = [(d, k) for d, k in zip(n.depends_on, n.dep_kinds)
+                     if d not in dropped]
+            n.depends_on = [d for d, _ in pairs]
+            n.dep_kinds = [k for _, k in pairs]
+        graph.nodes = kept
     return graph
 
 

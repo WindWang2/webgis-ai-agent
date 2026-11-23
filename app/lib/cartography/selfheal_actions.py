@@ -135,12 +135,12 @@ SELFHEAL_ACTIONS: Tuple[SelfHealActionSpec, ...] = (
     _spec("change_projection", RISK_SEMANTIC, SURFACE_DESIRED_STATE, 0.5,
           "换投影/范围：等积投影切换或范围重框（尺度语义级）",
           {"carto.scale.svs", "VISUAL_COMPOSITION_BALANCE"}),
-    _spec("resample", RISK_AUTO_SAFE, SURFACE_RUNTIME, 0.5,
-          "重采样：密度超载层的视口抽稀参数调整（呈现级）",
-          {"carto.load.ratio", "VISUAL_INFORMATION_DENSITY"}),
     # R9 P2-2 清偿：撤销 relayout_* 新造动作注册（无执行器分支 = 死端）。
     # ADR-0283 D4 的版式发现路由直接使用 component_composer.REPAIR_ACTIONS
     # 既有词表（semantic_checks_layout._FIX_ROUTE），不在此另立动作面。
+    # 同族清偿：``resample``（曾注册 auto_safe + SURFACE_RUNTIME）无
+    # build_runtime_patch 执行分支，恒返 None —— 触发词命中后白跑一轮，
+    # AUTO_SAFE 标注具有误导性（与 relayout_* 同款死端），撤销注册。
 )
 
 
@@ -412,7 +412,17 @@ def _build_palette_rotation(layer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             if not isinstance(spec, dict) or not spec.get("method"):
                 continue
             cloned = copy.deepcopy(spec)
-            _rotate_step_colors(cloned, best_colors)
+            try:
+                _rotate_step_colors(cloned, best_colors)
+            except ValueError:
+                # 色数与 paint stop/case 数不等（legend 色数 ≠ paint 停靠
+                # 数）：该属性跳过轮换——zip(strict=True) 的 ValueError 不得
+                # 逃出 _build_palette_rotation/build_presentation_commit
+                # 打断自愈编排（其余属性与 legend 轮换照常落地）。
+                logging.getLogger(__name__).debug(
+                    "selfheal_actions: palette color count mismatch on paint "
+                    "property %s (skipped)", prop)
+                continue
             paint_patch = paint_patch or {}
             paint_patch[prop] = cloned
     return {

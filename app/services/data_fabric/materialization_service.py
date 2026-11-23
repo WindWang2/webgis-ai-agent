@@ -471,6 +471,9 @@ class MaterializationService:
             "format": "geoparquet",
             "feature_count": int(table.num_rows),
             "bytes": int(size),
+            # G18：磁盘工件物理路径（_materialize_geoparquet_result 透传 written["path"]；
+            # 契约测试 test_geoparquet_fast_lane_v5 期望该键存在）。
+            "path": str(path),
             "content_sha256": content_sha256,
             **({"data_object_id": data_object_id} if data_object_id else {}),
             "durable": durable_state,

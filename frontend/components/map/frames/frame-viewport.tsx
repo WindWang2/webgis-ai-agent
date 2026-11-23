@@ -278,7 +278,11 @@ export const FrameViewport = forwardRef<FrameViewportHandle, FrameViewportProps>
 
     return (
       <Map
-        key={`frame-map-${frameId}-g${registrationRef.current?.generation ?? 0}-r${rebuildEpoch}`}
+        // key 只用「身份 + 重建代际」：registrationRef 由挂载 effect 赋值，
+        // 首渲染为 null（g0）、赋值后再渲染变 g1 —— 代际进 key 会让每次挂载
+        // 先建后弃一张地图（WebGL 上下文/加载耗时翻倍）。context loss 重建
+        // 由 rebuildEpoch 驱动，frameId 变化已改变 key，代际项是冗余的。
+        key={`frame-map-${frameId}-r${rebuildEpoch}`}
         id={`frame-${frameId}`}
         ref={mapRef}
         mapStyle={mapStyle}

@@ -149,6 +149,23 @@ class TestScenarios:
         activated = layer.match_scenarios(intent, ["sar.interpretation"])
         assert activated == []
 
+    def test_scenario_activates_from_intent_ontology_by_default(
+        self, layer: WorkflowFamilyRegistry,
+    ):
+        """review P2-18：不传 ontology_matches 时按 intent 本体匹配激活。
+
+        旧实现 task_ids 只来自显式参数（默认 None → 空集）—— 文档承诺的
+        「本体任务」来源未实现，场景永远无法激活。
+        """
+        from app.services.gis_harness.intent import resolve_map_request_intent
+
+        intent = resolve_map_request_intent("成都小学的分布情况")
+        activated = layer.match_scenarios(intent)
+        assert "scenario.school_distribution" in [
+            s.scenario_id for s in activated]
+        # 显式传入（含空表）仍被尊重：空表 = 无任务信号 → 不激活。
+        assert layer.match_scenarios(intent, []) == []
+
     def test_all_scenarios_have_minimal_fallback(self, layer: WorkflowFamilyRegistry):
         for s in layer.scenarios:
             assert s.minimal_disclosure, s.scenario_id
@@ -214,3 +231,20 @@ class TestRegistryValidationIntegration:
 def COMPOSITE_RECIPES_REF():
     from app.services.gis_harness.workflow_families import COMPOSITE_RECIPES
     return COMPOSITE_RECIPES
+
+
+class TestDataRoleFallbackPairing:
+    """声明 DATA_ROLE_MISSING_<ROLE> 回退的 recipe 必须同时声明该数据角色
+    （评审 P2：否则回退永不触发，缺分母仍按密度出图）。"""
+
+    def test_drainage_density_declares_denominator_role(self):
+        reg = get_recipe_registry()
+        recipe = reg.get("drainage_density_stats")
+        assert recipe is not None and recipe.workflow is not None
+        roles = [str(r.role) for r in (recipe.workflow.data_roles or [])]
+        assert "denominator" in roles, (
+            f"drainage_density_stats 声明了 DATA_ROLE_MISSING_DENOMINATOR 回退"
+            f"但 data_roles={roles} —— 回退不可达，缺分母仍按密度出图")
+        codes = [str(getattr(p, "reason_code", "") or "")
+                 for p in (recipe.workflow.fallback_policies or [])]
+        assert "DATA_ROLE_MISSING_DENOMINATOR" in codes

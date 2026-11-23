@@ -54,6 +54,27 @@ export function VisualAttachBar({ sessionId, ownerToken }: {
     }
   }, [sessionId, begin, setSession]);
 
+  // 本地缩略图 objectURL 回收（评审 P2）：blob URL 不 revoke 会随会话不断累积
+  // 泄漏地图截图 PNG —— 移除草稿 / 切换会话（store 清空）/ 发送消费后草稿消失
+  // 都不回收。这里按「没有任何草稿在用」才 revoke，避免 temp→真实 evidence id
+  // 替换瞬间误回收仍在显示的缩略图。
+  const thumbUrlsRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const inUse = new Set<string>();
+    for (const d of drafts) if (d.thumbUrl) inUse.add(d.thumbUrl);
+    for (const url of thumbUrlsRef.current.values()) {
+      if (!inUse.has(url)) URL.revokeObjectURL(url);
+    }
+    thumbUrlsRef.current = new Map(
+      drafts.filter((d) => d.thumbUrl).map((d) => [d.evidenceId, d.thumbUrl as string]),
+    );
+  }, [drafts]);
+  // 卸载：回收仍在登记的 URL
+  useEffect(() => () => {
+    for (const url of thumbUrlsRef.current.values()) URL.revokeObjectURL(url);
+    thumbUrlsRef.current = new Map();
+  }, []);
+
   const sessionReady = typeof sessionId === 'string' && sessionId.length > 0;
 
   const mapIdentity = useCallback(() => {

@@ -191,6 +191,7 @@ def _fake_worker_process(pack: Path, script_frames: list[dict]) -> WorkerProcess
     wp._frames = queue.Queue()
     wp._reader = None
     wp._lock = threading.RLock()
+    wp._starting = False
     wp.in_flight = False
     wp.tools = []
     wp.resource_warnings = []

@@ -212,3 +212,33 @@ describe('FloatingChrome — 标题栏操作', () => {
     );
   });
 });
+
+describe('FloatingChrome — 键盘去抖提交', () => {
+  it('500ms 窗口内折叠：陈旧键盘 placement 不后到提交（不把 collapsed 回滚）', () => {
+    vi.useFakeTimers();
+    try {
+      renderChrome();
+      const titleBar = screen.getByTestId('fc-test-title-bar');
+      // 键盘移动：乐观 override 即时生效，durable 提交按 500ms 静默去抖。
+      act(() => {
+        fireEvent.keyDown(titleBar, { key: 'ArrowRight' });
+      });
+      expect(commitMock).not.toHaveBeenCalled();
+      // 去抖窗口内点折叠（一次 durable 提交）。
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: '折叠面板' }));
+      });
+      // 修复前：陈旧键盘 placement 的定时器未清，500ms 后到 POST → 折叠被回滚。
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(commitMock).toHaveBeenCalledTimes(1);
+      expect(commitMock).toHaveBeenCalledWith(
+        'comp-1',
+        expect.objectContaining({ placement: expect.objectContaining({ collapsed: true }) }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -236,9 +236,10 @@ def landscape_metrics(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """分类栅格景观格局指标（FRAGSTATS 口径，4 邻接）。
 
-    类级：PLAND（类面积占比 %）、NP（斑块数）、PD（斑块密度 /100ha）、
-    LPI（最大斑块占比 %）。景观级：ED（边缘密度 m/ha）、SHDI、SIDI、
-    PR（类丰富度）。nodata 像元不计面积、不产生边缘。
+    类级：PLAND（类面积占比 %）、NP（斑块数）、PD（斑块密度 /100ha，
+    分母为景观总面积——FRAGSTATS 口径）、LPI（最大斑块占比 %）。景观级：
+    ED（边缘密度 m/ha）、SHDI、SIDI、PR（类丰富度）。nodata 像元不计面积、
+    不产生边缘。
 
     返回 (逐类指标表 dict, meta dict)。护栏：≤ 50M 像元；类别 ≤ 256。
     """
@@ -314,8 +315,9 @@ def landscape_metrics(
             "pland_pct": round(pland, 4),
             "n_patches": n_patch,
             "patch_density_per_100ha": round(
-                n_patch / (patch_cells * cell_area_ha) * 100.0, 6)
-            if patch_cells else 0.0,
+                # PD 分母是**景观总面积**（FRAGSTATS 口径，与 LPI/PLAND 的
+                # 分母一致）——按类面积归一会让小类 PD 虚高、跨类不可比。
+                n_patch / total_area_ha * 100.0, 6),
             "lpi_pct": round(100.0 * _largest_patch_cells(
                 mask, structure) / float(valid.sum()), 4),
             "edge_density_m_per_ha": round(

@@ -145,7 +145,46 @@ def test_provider_legacy_snapshot_without_fingerprint_still_gated():
     assert result.reason == "screenshot_unresolvable"
 
 
+def test_provider_snapshot_without_session_id_is_refused():
+    """review P2-13：快照无 session_id 不得 fail-open 跳过 C13 会话绑定护栏。
+
+    旧行为把空串传给 resolve_visual_screenshot —— 解析面的所有权门整体
+    跳过，任意 vshot ref 无所有权证据即可读出字节。
+    """
+    obs = VisualObservationInput(
+        trigger="finalization", session_id="",
+        mapspec_revision=7, mapspec_fingerprint=_FP_A,
+        screenshot=_ref(7, _FP_A),
+    )
+    result = evaluate_observation(obs)
+    assert not result.evaluated
+    assert result.reason == "screenshot_session_unbound"
+
+
 # ── observed_revision 流动 ────────────────────────────────────────────────
+
+def test_split_fresh_findings_treats_missing_revision_as_stale():
+    """review P2-16：缺 observed_revision（0）的旧证据不得混过新鲜度门。
+
+    ``_cartographic_mutation_revision`` 缺失（current=0）时，0==0 会让缺
+    观测号的旧证据被判为 fresh —— 违背「缺省按过期处理」。
+    """
+    from app.services.gis_harness.visual_observation.stored_findings import (
+        split_fresh_findings,
+    )
+
+    legacy = [{"code": "visual_overlap"}]  # 无 observed_revision 键
+    fresh, stale = split_fresh_findings(legacy, 0)
+    assert fresh == [] and stale == 1
+    fresh, stale = split_fresh_findings(
+        [{"code": "visual_overlap", "observed_revision": 0}], 0)
+    assert fresh == [] and stale == 1
+    stamped = [{"code": "visual_overlap", "observed_revision": 7}]
+    fresh, stale = split_fresh_findings(stamped, 7)
+    assert len(fresh) == 1 and stale == 0
+    fresh, stale = split_fresh_findings(stamped, 8)
+    assert fresh == [] and stale == 1
+
 
 def test_unified_finding_observed_revision_round_trips():
     uf = UnifiedFinding(

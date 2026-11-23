@@ -127,3 +127,54 @@ def test_evidence_rows_bounded_refs_only():
     assert len(rows) == 2
     assert rows[0]["id"] == "frame:f1" and rows[0]["status"] == "verified"
     assert rows[1]["status"] == "not_observed"
+
+
+def _wide_doc(n_frames: int) -> dict:
+    """画幅数超过证据行上界（_MAX_EVIDENCE_FRAMES=12）的文档。"""
+    feats = [
+        {"type": "Feature", "geometry": {"type": "Point",
+                                         "coordinates": [104, 30]},
+         "properties": {"year": 2022, "v": 1.0}},
+    ]
+    frames = [{"frame_id": f"f{i}",
+               "data": {"ref": "r", "layer_id": "l", "field": "v",
+                        "where": {"op": "eq", "field": "year",
+                                  "value": 2022}}}
+              for i in range(n_frames)]
+    return {
+        "version": "2.0",
+        "sources": {"s": {"type": "geojson",
+                          "inlineData": {"type": "FeatureCollection",
+                                         "features": feats}}},
+        "layers": [{"id": "l", "type": "circle", "source": "s"}],
+        "layout": {"frames": [{"id": f"f{i}", "title": str(i)}
+                              for i in range(n_frames)]},
+        "frame_product": {
+            "schema_version": "frame_product.v1", "enabled": True,
+            "product_kind": "time_series", "grid": {"columns": 4},
+            "frames": frames,
+        },
+    }
+
+
+def test_uninspected_required_frames_block_complete():
+    """画幅 >12 时第 13+ 个 required 帧从未检视 —— 不得仍判 complete
+    （「全部 required 才 complete」红线：证据行有界不是逃逸口）。"""
+    doc = _wide_doc(14)
+    observed = {f"f{i}": {"revision": 9, "mode": "live_observed"}
+                for i in range(12)}
+    out = verify_frame_product(doc, observed=observed, mapspec_revision=9)
+    assert out["status"] == "incomplete"
+    assert any(p.startswith("frame_not_inspected:") for p in out["problems"])
+    assert "frame_not_inspected:f12" in out["problems"]
+
+
+def test_out_of_scope_required_id_blocks_complete():
+    """调用方 required_frame_ids 越界（槽位中不存在）→ 该 required 帧
+    不可验证 → 不得 complete（fail-closed）。"""
+    out = verify_frame_product(
+        _doc(), observed={"f1": {"revision": 9, "mode": "live_observed"},
+                          "f2": {"revision": 9, "mode": "live_observed"}},
+        mapspec_revision=9, required_frame_ids=["f1", "f2", "ghost"])
+    assert out["status"] == "incomplete"
+    assert "frame_not_inspected:ghost" in out["problems"]

@@ -370,3 +370,115 @@ def test_rest_rerun_requires_bound_run(lifecycle_project, _client):
     r = _client.post(
         f"/api/v1/projects/{project_id}/map-products/{v1}/rerun", headers=_auth())
     assert r.status_code == 409  # 无绑定 run → 诚实拒绝
+
+
+async def test_rest_rerun_records_from_owned_session_not_detached_run(monkeypatch):
+    """P2 data-integrity：引擎返回的 run 是 worker 线程内已关闭 SessionLocal 的
+    detached 实例（SessionLocal 未设 expire_on_commit=False）—— rerun 的记账
+    必须像 restore 的 _record_full 那样用 owned 会话按 run.id 重取。直接消费
+    该实例的属性会抛 DetachedInstanceError，且不在本路由任何 try 内 → 500。"""
+    from sqlalchemy.orm.exc import DetachedInstanceError
+
+    from app.api.routes import project as project_mod
+    from app.models.db_model import User
+    from app.models.project import Project, Workflow, WorkflowRun
+
+    project_id = f"proj_{uuid.uuid4().hex[:8]}"
+    workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
+    run_id = f"run_{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as s:
+        s.merge(User(id="u_lc", username="lc", email="lc@example.com",
+                     password_hash="x", role="viewer", is_active=True))
+        s.add(Project(id=project_id, name="rerun-detach", owner_id="u_lc"))
+        s.add(Workflow(id=workflow_id, project_id=project_id, name="w", graph_spec={}))
+        s.add(WorkflowRun(
+            id=run_id, project_id=project_id, workflow_id=workflow_id,
+            status="completed", input_bindings={},
+            input_dataset_fingerprints={"ds1": "fpA"},
+            run_manifest={"steps": [], "artifacts": [
+                {"id": "a1", "content_fingerprint": "out-run"}]},
+        ))
+        s.commit()
+        # V1 的账本指纹与 run 的证据不同 → maybe_auto_record_version 记 V2
+        v1 = MapProductService.record_version(
+            s, project_id, workflow_run_id=run_id, label="base",
+            run_manifest={"steps": [], "artifacts": []})
+
+    class _DetachedRun:
+        """引擎 worker Session 关闭后的 detached run：status/id 已加载可读，
+        其余属性按 SQLAlchemy 语义抛 DetachedInstanceError。"""
+
+        id = run_id
+        status = "completed"
+
+        def __getattr__(self, name):
+            raise DetachedInstanceError(
+                f"Instance <WorkflowRun at 0x> is not bound to a Session; "
+                f"attribute {name!r} requires a session")
+
+    async def _fake_engine(*args, **kwargs):
+        return _DetachedRun()
+
+    monkeypatch.setattr(project_mod, "_run_workflow_engine", _fake_engine)
+    monkeypatch.setattr(project_mod, "get_tool_registry", lambda: object())
+    resp = await project_mod.rerun_map_product_version(
+        project_id, int(v1.version_no), SessionLocal(), {"user_id": "u_lc"})
+    assert resp["run_id"] == run_id
+    assert resp["recorded_version_no"] == int(v1.version_no) + 1
+
+
+async def test_rerun_route_never_consumes_request_level_db(monkeypatch):
+    """P2 concurrency：请求级 Session 绝不进 worker 线程（本文件 63-64 行
+    纪律；db=db 关键字不含 db. 属性访问，恰好绕过 #565 AST 守卫）—— 用
+    「一被 ORM 使用即炸」的 db 替身驱动 rerun 路由：所有同步 DB 工作只能在
+    工作线程里开自己的 SessionLocal。"""
+    from app.api.routes import project as project_mod
+    from app.models.db_model import User
+    from app.models.project import Project, Workflow, WorkflowRun
+
+    project_id = f"proj_{uuid.uuid4().hex[:8]}"
+    workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
+    run_id = f"run_{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as s:
+        s.merge(User(id="u_lc", username="lc", email="lc@example.com",
+                     password_hash="x", role="viewer", is_active=True))
+        s.add(Project(id=project_id, name="rerun-nodb", owner_id="u_lc"))
+        s.add(Workflow(id=workflow_id, project_id=project_id, name="w", graph_spec={}))
+        s.add(WorkflowRun(
+            id=run_id, project_id=project_id, workflow_id=workflow_id,
+            status="completed", input_bindings={},
+            run_manifest={"steps": [], "artifacts": []},
+        ))
+        s.commit()
+        v1 = MapProductService.record_version(
+            s, project_id, workflow_run_id=run_id, label="base",
+            run_manifest={"steps": [], "artifacts": []})
+
+    class _ExplodingDb:
+        """请求级 Session 替身：任何 ORM 使用都意味着它被跨线程消费了。"""
+
+        def _boom(self, *args, **kwargs):
+            raise AssertionError(
+                "request-level db consumed by the route (cross-thread Session)")
+
+        execute = query = get = add = delete = commit = rollback = flush = refresh = _boom
+
+        def close(self):
+            pass
+
+    class _CompletedRun:
+        id = run_id
+        status = "completed"
+
+        def __getattr__(self, name):
+            raise AttributeError(name)
+
+    async def _fake_engine(*args, **kwargs):
+        return _CompletedRun()
+
+    monkeypatch.setattr(project_mod, "_run_workflow_engine", _fake_engine)
+    monkeypatch.setattr(project_mod, "get_tool_registry", lambda: object())
+    resp = await project_mod.rerun_map_product_version(
+        project_id, int(v1.version_no), _ExplodingDb(), {"user_id": "u_lc"})
+    assert resp["run_id"] == run_id
+    assert resp["recorded_version_no"] == int(v1.version_no)

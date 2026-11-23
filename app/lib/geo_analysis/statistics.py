@@ -1,7 +1,7 @@
 import hashlib
 import math
 import threading
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
@@ -1682,6 +1682,20 @@ def st_dbscan_narrated(
     except ImportError:
         return GeoAnalysisResult(False, None, "scikit-learn not installed", error_type="ImportError")
 
+    # 参数守卫（与 cluster_narrated 的 DBSCAN 分支同口径，P2 修复）：
+    # min_samples<1 会让 sklearn 的原始 ValueError 逃逸工具边界；eps≤0 时
+    # 距离矩阵退化（归一化除以 1e-6 / 无边）却静默返回全噪声。
+    if (not np.isfinite(eps1_spatial_meters) or eps1_spatial_meters <= 0
+            or not np.isfinite(eps2_temporal_seconds) or eps2_temporal_seconds <= 0
+            or min_samples <= 0):
+        return GeoAnalysisResult(
+            False, None,
+            f"ST-DBSCAN requires eps1_spatial_meters>0, eps2_temporal_seconds>0 "
+            f"and min_samples>0 (got eps1={eps1_spatial_meters}, "
+            f"eps2={eps2_temporal_seconds}, min_samples={min_samples})",
+            error_type="ValueError",
+        )
+
     out = validated_input(
         geojson,
         failure=Failure(
@@ -1721,7 +1735,17 @@ def st_dbscan_narrated(
 
     ts_series = gdf[target_ts_field]
     try:
-        parsed_dt = pd.to_datetime(ts_series, errors="coerce", utc=True)
+        # 数值型 epoch 按仓库统一时间契约取**秒**（kriging_st / cv /
+        # temporal_cube 同口径）。pd.to_datetime 对数值默认纳秒 —— 秒级
+        # 字段会被静默解析成 1970 年，t_seconds 与 eps2 的比较随之失真，
+        # 而下方 correction_hint 明示支持 numeric epoch（P2 修复）。
+        if pd.api.types.is_numeric_dtype(ts_series):
+            parsed_dt = pd.to_datetime(
+                pd.to_numeric(ts_series, errors="coerce"), unit="s",
+                utc=True, errors="coerce",
+            )
+        else:
+            parsed_dt = pd.to_datetime(ts_series, errors="coerce", utc=True)
         valid_mask = parsed_dt.notna()
         if not valid_mask.any():
             return GeoAnalysisResult(
@@ -3322,7 +3346,12 @@ def weights_sensitivity_narrated(
         )
     i_values = [s["moran_i"] for s in ok]
     verdicts = [s["verdict"] for s in ok]
-    majority = max(set(verdicts), key=verdicts.count)
+    # 确定性多数决（P2 修复）：max(set(...), key=count) 的平票胜者取决于
+    # 字符串哈希随机化 —— 同输入跨进程给出不同 majority_verdict/dissenters
+    # /叙事（点输入跳过的 queen/rook 后 knn vs distance_band 即 1:1 平票）。
+    # Counter.most_common 对等票保持**方案评估序**（knn → queen → rook →
+    # distance_band，主方案 knn 优先）—— 无哈希依赖、跨进程逐位一致。
+    majority = Counter(verdicts).most_common(1)[0][0]
     rank_stability = verdicts.count(majority) / len(verdicts)
     dissenters = [s["scheme"] for s in ok if s["verdict"] != majority]
     rank_order = [s["scheme"] for s in sorted(ok, key=lambda s: -abs(s["moran_i"]))]

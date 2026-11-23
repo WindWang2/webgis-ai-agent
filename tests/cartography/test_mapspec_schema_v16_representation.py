@@ -166,3 +166,35 @@ class TestVisibilityGateTypeDiscipline:
         report = evaluate_cartography_semantics(spec)
         checks = _scale_checks(report)
         assert checks[0].status == "pass"
+
+
+class TestBoundedWindowContract:
+    """P2：文档声明的有界性（reason_codes ≤8、windows ≤ MAX_REPRESENTATION_WINDOWS）
+    必须在 schema 上强制，而不是只写在 docstring 里。"""
+
+    def test_too_many_reason_codes_is_invalid_disclosed(self):
+        wide = [dict(w) for w in WINDOWS]
+        wide[0]["reason_codes"] = [f"REPR.C{i}" for i in range(9)]
+        r = ms.parse_mapspec(_spec(representation={"windows": wide}))
+        assert not r.valid
+        assert any("representation.windows" in d.path and d.kind == "invalid"
+                   for d in r.disclosures)
+
+    def test_too_many_windows_is_invalid_disclosed(self):
+        many = [
+            {"min_zoom": i, "max_zoom": i + 1, "mode": "raw"}
+            for i in range(ms.MAX_REPRESENTATION_WINDOWS + 1)
+        ]
+        r = ms.parse_mapspec(_spec(representation={"windows": many}))
+        assert not r.valid
+        assert any("representation.windows" in d.path and d.kind == "invalid"
+                   for d in r.disclosures)
+
+    def test_bounded_window_lists_still_valid(self):
+        ok = [
+            {"min_zoom": 0, "max_zoom": 12, "mode": "raw",
+             "reason_codes": [f"REPR.C{i}" for i in range(8)]},
+            {"min_zoom": 12, "max_zoom": 24, "mode": "point_cluster"},
+        ]
+        r = ms.parse_mapspec(_spec(representation={"windows": ok}))
+        assert r.valid is True

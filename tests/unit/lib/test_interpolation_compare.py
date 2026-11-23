@@ -83,7 +83,11 @@ def test_compare_recommendation_beats_idw_on_stationary_field():
 # ── honest skips ────────────────────────────────────────────────────────────
 
 def test_compare_sample_floor_skips_honest():
-    fc = _stationary_fc(n=5)
+    # seed=7：5 点中 4 点在凸包上、1 点在内部 —— TIN LOOCV 有覆盖残差。
+    # （seed=42 的 5 点恰好全处凸位置：留一预测全 NaN，P2 修复后
+    # tin_loocv 类型化拒绝、compare 诚实 skip —— 该语义由
+    # test_tin_interpolation.py 的专项回归覆盖；本测试只测样本下限。）
+    fc = _stationary_fc(n=5, seed=7)
     out = compare_interpolation_models(fc, "v", cv_budget=10_000)
     by_method = {r["method"]: r for r in out["comparison"]}
     # floors: idw≥2, tin≥4, trend≥6, rbf≥3, kriging≥20

@@ -622,6 +622,66 @@ def test_mvt_tile_rejects_attribute_filter_typed():
     assert a.serve_mvt_tile("public.schools", 10, 512, 300) == b"\x1a\x02tile"
 
 
+# ── P2 review-wave regressions ───────────────────────────────────────────────
+
+
+class _NoGeomRoutingCursor(_RoutingCursor):
+    """geometry_columns 无行 → aspatial 表（geom_col=None, srid=None）。"""
+
+    def execute(self, sql, params=()):
+        if isinstance(sql, str) and "f_geometry_column, srid, type" in sql.lower():
+            self._executed.append((sql, params))
+            self.description = []
+            self._result = None
+            return
+        super().execute(sql, params)
+
+
+def _no_geom_adapter(executed):
+    adapter = PostGISAdapter.__new__(PostGISAdapter)
+
+    class _ConnCtx:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return _FakeConn(_NoGeomRoutingCursor(executed, srid=0))
+
+        def __exit__(self, *a):
+            return None
+
+    adapter._connection_context = _ConnCtx
+    adapter._meta_cache = {}
+    adapter._caps = default_capabilities("postgis")
+    adapter.profile = ConnectionProfile(id="p_nogeo", source_type="postgis")
+    return adapter
+
+
+def test_no_geom_col_bbox_is_typed_not_silent_empty():
+    """无几何列的 bbox 查询必须 typed 拒绝，而非 _geojson 恒 NULL 静默返回空。"""
+    executed: list = []
+    a = _no_geom_adapter(executed)
+    spec = QuerySpec(bbox=[100.0, 30.0, 105.0, 32.0], limit=5)
+    with pytest.raises(InvalidQueryError, match="no geometry column"):
+        a.query("public.aspatial", spec)
+
+
+def test_cursor_key_alias_excluded_from_schema_info_columns():
+    """_cursor_key_N 别名列不得泄漏进 schema_info.columns（与属性侧一致）。"""
+    executed: list = []
+    a = _adapter(executed, rows=[])
+    spec = QuerySpec(
+        fields=["name"], page_kind="cursor",
+        order_by=[{"field": "students", "direction": "asc"}],
+    )
+    res = a.query("public.schools", spec)
+    cols = res.schema_info["columns"]
+    assert not any(c.startswith("_cursor_key") for c in cols), (
+        f"cursor-key aliases leaked into schema_info.columns: {cols}"
+    )
+    assert "name" in cols
+
+
 @pytest.fixture(autouse=True)
 def _reset_shared_meta_cache():
     """共享 meta cache 是进程级的 —— 跨用例隔离（假连接复用同一 pool key）。"""

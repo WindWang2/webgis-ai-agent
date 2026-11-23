@@ -321,3 +321,68 @@ def test_zonal_chunked_large_zone_matches_full_array_oracle(
         assert row[key] == pytest.approx(getattr(data[valid], key)(),
                                          rel=1e-10), key
     assert row["valid_pixel_coverage"] == pytest.approx(1.0)
+
+
+def test_zonal_wide_zone_blocks_respect_budget_window(tmp_path, monkeypatch):
+    """P2 修复：宽 zone 的分块读取不得按 chunk_rows×zone_width 分配。
+
+    旧实现只按行分块：2048 行 × 10 万列的宽 zone 单块 ≈1.6GB float64
+    （再加掩膜/抽取拷贝），远超 side² 预算窗口。修复后块同时受列约束
+    （块面积 ≤ side²）。本测试以 side=4 + 40 列宽栅格钉死该不变量：
+    未修复代码的单块为 4×40=160 > 16。
+    """
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+    from shapely.geometry import mapping, Polygon
+
+    import app.lib.geo_analysis.raster_ops as ops
+    import app.lib.geo_raster as gr
+
+    h, w = 8, 40                      # 宽 zone：列数远超预算边长
+    data = np.arange(h * w, dtype="float64").reshape(h, w)
+    raster_path = str(tmp_path / "wide.tif")
+    transform = from_origin(100, 200, 2, 3)   # x∈[100,180], y∈[176,200]
+    with rasterio.open(raster_path, "w", driver="GTiff", height=h, width=w,
+                       count=1, dtype="float64", crs="EPSG:3857",
+                       transform=transform, nodata=-9999.0) as dst:
+        dst.write(data, 1)
+    poly = Polygon([(100, 176), (180, 176), (180, 200), (100, 200)])
+    fc = {"type": "FeatureCollection", "crs": "EPSG:3857",
+          "features": [{"type": "Feature", "geometry": mapping(poly),
+                        "properties": {}}]}
+
+    side = 4
+    monkeypatch.setattr(
+        "app.lib.geo_analysis.raster_grid.window_side_from_budget",
+        lambda *a, **k: side)
+
+    reads: list = []
+    orig_reader = gr.RasterSource.reader
+
+    def _spy_reader(self):
+        r = orig_reader(self)
+        orig_rw = r.read_window
+
+        def _wrapped(window, *a, **k):
+            reads.append(tuple(int(v) for v in window))
+            return orig_rw(window, *a, **k)
+
+        r.read_window = _wrapped
+        return r
+
+    monkeypatch.setattr(gr.RasterSource, "reader", _spy_reader)
+
+    (row,) = ops.zonal_statistics(
+        fc, raster_path, stats=["count", "sum", "mean", "min", "max", "std"])
+    assert reads, "no windowed reads recorded"
+    for col_off, row_off, bw, bh in reads:
+        assert bw * bh <= side * side, (
+            f"read block {bw}×{bh}={bw * bh} cells exceeds budget window "
+            f"side²={side * side}（宽 zone 未按列分块？）")
+    # 统计口径不受分块形状影响
+    assert row["count"] == h * w
+    assert row["sum"] == pytest.approx(float(data.sum()), rel=1e-12)
+    assert row["mean"] == pytest.approx(float(data.mean()), rel=1e-12)
+    assert row["min"] == pytest.approx(float(data.min()))
+    assert row["max"] == pytest.approx(float(data.max()))

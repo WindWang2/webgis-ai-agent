@@ -98,7 +98,18 @@ async def record_decision(
             if isinstance(entries, list) else []
         items = [
             e for e in items
-            if not (proposal_id and str(e.get("proposal_id") or "") == str(proposal_id))
+            if not (
+                proposal_id
+                and str(e.get("proposal_id") or "") == str(proposal_id)
+                # review P2-15：auto 收场记录不得删除同 proposal_id 的用户
+                # 裁决（approved/rejected）—— 否则拒绝记忆被抹掉，同一 patch
+                # 反复再提案（违背本模块「auto 不覆写用户裁决」的声明）。
+                # 用户改主意（新裁决仍是 approved/rejected）仍整体替换；
+                # auto 条目之间照旧按 proposal_id 去重（账本有界）。
+                and (decision in (DECISION_APPROVED, DECISION_REJECTED)
+                     or str(e.get("decision") or "") not in (
+                         DECISION_APPROVED, DECISION_REJECTED))
+            )
         ]
         items.append(entry)
         while len(items) > MAX_DECISIONS:

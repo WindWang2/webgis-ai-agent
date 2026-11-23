@@ -97,6 +97,24 @@ class TestQualificationDualTrack:
             assert ev["role_class"] == DISPLAY_ONLY
             assert ev["numeric_raster_eligible"] is False
 
+    def test_registry_aliases_of_tile_protocols_are_display_only(self):
+        """AdapterRegistry 的别名形态（wms_wmts / ogc_tiles）同样是瓦片服务。
+
+        registry 对这两类源明确声明 ``is_raster_tile=True, notes="raster/tile
+        service; no vector feature query"``；资格映射不先规范化 source_type
+        就会把它们漏查成 vector_features，击穿 G01 的 display_only 边界。
+        """
+        for alias in ("wms_wmts", "ogc_tiles"):
+            ev = qualification_for_descriptor({"source_type": alias, "metadata": {}})
+            assert ev["role_class"] == DISPLAY_ONLY, alias
+            assert ev["numeric_raster_eligible"] is False, alias
+        # coverages 别名同样必须规范化（→ numeric/unknown，绝不回落矢量）
+        ev = qualification_for_descriptor({
+            "source_type": "ogc_coverages",
+            "metadata": {"subset_read_ready": True},
+        })
+        assert ev["role_class"] == NUMERIC_RASTER
+
     def test_coverage_ready_is_numeric(self):
         ev = qualification_for_descriptor({
             "source_type": "ogc_api_coverages",

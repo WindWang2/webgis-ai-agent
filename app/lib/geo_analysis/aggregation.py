@@ -196,7 +196,16 @@ def spatial_aggregate(
             
         summary = f"Successfully aggregated points to {len(polygons)} polygons."
         if value_field:
-            summary += f" Used field '{value_field}' for {', '.join([s for s in stats if s != 'count'])}."
+            if value_field in points.columns:
+                summary += f" Used field '{value_field}' for {', '.join([s for s in stats if s != 'count'])}."
+            else:
+                # G-9（#873）同类降级披露：value_field 缺失（拼错/投影丢失）时
+                # sum/mean/max/min 被静默跳过并降级为 count —— 必须在信封显式
+                # 披露，否则调用方以为拿到了 value_field 的统计量。
+                summary += (
+                    f" ⚠ value_field '{value_field}' not found in point attributes; "
+                    f"stats fell back to count."
+                )
 
         return GeoAnalysisResult(
             success=True,
@@ -503,7 +512,13 @@ def aggregate_with_denominator(
     den_list = [float(v) if pd.notna(v) else None for v in denom]
     for i in range(len(zones)):
         if bool(valid.iloc[i]):
-            rates.append(float(num_list[i]) / float(denom.iloc[i]))
+            _num = num_list[i]
+            # M2 契约：分子全 NaN 的区（fabricated mask 置 NaN）→ rate=None，
+            # 绝不让 float(nan)/denom 产出 NaN 值污染 JSON 输出。
+            if _num is None or not np.isfinite(_num):
+                rates.append(None)
+            else:
+                rates.append(float(_num) / float(denom.iloc[i]))
         else:
             rates.append(None)
 

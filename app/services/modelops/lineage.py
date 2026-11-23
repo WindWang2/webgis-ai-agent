@@ -26,7 +26,7 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from app.lib.modelops.errors import DescriptorError
 
@@ -49,7 +49,12 @@ EVENT_TYPES = frozenset(
 )
 
 _MAX_PAYLOAD_BYTES = 256 * 1024
+#: 单文件事件数的设计上限。轮转会破坏"registry 记录不可变 + append-only
+#: 时间线 + seq 全局单调"的冻结契约（段文件与 seq 归零），故本版只做读取
+#: 侧 memo（见 ``load``），不引入轮转；常量保留为文档化上限。
 _MAX_EVENTS_PER_FILE = 10_000
+#: 解析结果 memo 的键数上界（防长期模型版本集合无界增长）。
+_MAX_CACHED_FILES = 64
 
 _SECRET_MARKERS = ("password", "secret", "token", "api_key", "apikey", "credential")
 _SAFE_RE = re.compile(r"[^A-Za-z0-9_\-.]")
@@ -78,6 +83,10 @@ class ModelLineageStore:
         self._root = Path(root)
         self._lock = threading.Lock()
         self._seqs: Dict[str, int] = {}
+        # P2 perf：load() 的全量读入 + 排序按 (size, mtime) memo ——
+        # latest_metrics/deployment_state/history 每次调用都重读全文件，
+        # 耗时随事件数线性增长；缓存键含 size/mtime，跨进程追加仍可见。
+        self._event_cache: Dict[str, Tuple[Tuple[int, int], list]] = {}
 
     def _file(self, model_id: str, model_version: str) -> Path:
         return self._root / f"{_safe(model_id)}@{_safe(model_version)}.jsonl"
@@ -140,6 +149,16 @@ class ModelLineageStore:
         path = self._file(model_id, model_version)
         if not path.exists():
             return []
+        try:
+            stat = path.stat()
+            stamp = (stat.st_size, stat.st_mtime_ns)
+        except OSError:  # pragma: no cover — 竞态删除
+            return []
+        cache_key = str(path)
+        with self._lock:
+            cached = self._event_cache.get(cache_key)
+        if cached is not None and cached[0] == stamp:
+            return list(cached[1])
         events: list[LineageEvent] = []
         bad = 0
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -156,6 +175,9 @@ class ModelLineageStore:
                 self._seqs[key] = max(
                     self._seqs.get(key, 0), int(events[-1].get("seq", 0))
                 )
+            if len(self._event_cache) >= _MAX_CACHED_FILES:
+                self._event_cache.clear()  # 有界：长期版本集合不让 memo 无界增长
+            self._event_cache[cache_key] = (stamp, events)
         if bad:  # pragma: no cover — 观测面（交错行容忍）
             import logging
 
@@ -163,7 +185,7 @@ class ModelLineageStore:
                 "lineage %s@%s: %d unparsable lines skipped",
                 model_id, model_version, bad,
             )
-        return events
+        return list(events)
 
     def history(self, model_id: str, model_version: Optional[str] = None) -> list[LineageEvent]:
         """时间线（单版本或全部版本；全版本按文件名glob + seq 归并）。"""

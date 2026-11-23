@@ -113,7 +113,10 @@ def extract_binding_facts(data: Any) -> Tuple[BindingFacts, Optional[str]]:
         for f in features[:_FIELD_SAMPLE_MAX]:
             if not isinstance(f, dict):
                 continue
-            v = (f.get("properties") or {}).get(name)
+            props = f.get("properties") or {}
+            if not isinstance(props, dict):
+                continue  # properties 非 dict（list/str/...）时无字段可抽
+            v = props.get(name)
             if v is None:
                 continue
             total += 1

@@ -556,7 +556,58 @@ async def test_service_non_subset_candidate_does_not_write_contract(clean_sessio
 
 
 @pytest.mark.asyncio
-async def test_projection_line_appears_after_service_run(clean_session):
+async def test_service_identical_blockers_over_budget_not_unblocked(clean_session, monkeypatch):
+    """review P2-19：阻断数 > MAX_BLOCKERS 时不得因截断假判 unblocked。
+
+    重算集合与基线逐字相同（10 个 data_blockers）—— 截断到 8 后成了基线
+    的严格子集，旧实现判 unblocked 并发出虚假「科学契约解除」披露。
+    """
+    import app.services.gis_harness.workflow_instance as wfi
+    from app.services.gis_harness.workflow_instance import MAX_BLOCKERS
+    from app.services.session_plan import load_session_plan
+
+    blockers = [f"role_{i}" for i in range(MAX_BLOCKERS + 2)]
+    contract = {
+        "recipe_id": "r", "roles": [], "obligations": [],
+        "method_blockers": [], "data_blockers": blockers,
+    }
+    ch = _chapter(recipe_id="r", contract=contract)
+    await _save_plan(clean_session, ch)
+    same = dict(contract)
+    same["data_blockers"] = list(blockers)      # 逐字相同：无任何解除
+    monkeypatch.setattr(wfi, "derive_unblock_contract", lambda chapter: dict(same))
+    block = await wfi.maybe_update_workflow_instance(clean_session, reason="t")
+    assert block is not None
+    sci = (await load_session_plan(clean_session)).gis_chapter[
+        WORKFLOW_INSTANCE_KEY]["science"]
+    assert sci["direction"] == "equal", "无新证据不得判 unblocked"
+    assert sci["divergent"] is False
+    assert sci.get("disclosure") in (None, "")
+
+
+@pytest.mark.asyncio
+async def test_service_render_observation_failure_only_logs(clean_session, monkeypatch):
+    """review P2-20：render observation 读取失败只记日志（不逸出异常）。
+
+    旧实现 load_render_observation 在任何 try 之外 —— 其异常直接逃出
+    maybe_update_workflow_instance，违反「失败只记日志」契约。
+    """
+    import app.services.gis_harness.render_observation as ro_mod
+    import app.services.gis_harness.workflow_instance as wfi
+
+    async def _boom(session_id, map_state):
+        raise RuntimeError("observation store down")
+
+    monkeypatch.setattr(ro_mod, "load_render_observation", _boom)
+    ch = _chapter()
+    await _save_plan(clean_session, ch)
+    block = await wfi.maybe_update_workflow_instance(clean_session, reason="t")
+    assert block is not None, "观测读失败必须降级继续（render_seq=0），不得抛出"
+    assert block["render_observation_seq"] == 0
+
+
+@pytest.mark.asyncio
+async def test_service_projection_line_appears_after_service_run(clean_session):
     from app.services.session_plan import (
         format_session_plan_projection,
         load_session_plan,

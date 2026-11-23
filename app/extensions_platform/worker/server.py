@@ -509,6 +509,9 @@ class WorkerServer:
             return {
                 "data_hex": result.data.hex(),
                 "content_type": getattr(result, "content_type", "image/png"),
+                # extent 是瓦片地理范围：漏传它宿主侧永远得到
+                # TilePayload(extent=None)，瓦片范围静默丢失。
+                "extent": _jsonable(getattr(result, "extent", None)),
                 "metadata": _jsonable(getattr(result, "metadata", None)),
             }
         return _jsonable(result)

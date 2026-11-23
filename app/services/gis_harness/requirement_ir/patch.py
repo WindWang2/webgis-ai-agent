@@ -403,6 +403,14 @@ def _sync_core(spec: GISIntentSpec, path: str) -> None:
         core.subject = SubjectIntent(type=core.subject.type, category=spec.subject.category)
     elif path == "statistics.group_by":
         core.group_by = spec.statistics.group_by
+    elif path == "statistics.normalization":
+        # core.comparison 是 normalization 的**派生源**（derive_sections:
+        # normalize_normalization(core.comparison)）—— 不同步则 patch 过的
+        # 口径在下次从 core 重派生（超替/幂等探测）时静默回退，intent_view
+        # 外泄陈旧 core。"none" 是缺省值：core 保留原词面（比较语义不由
+        # 本 path 表达，清空会误伤 goal_satisfaction 的 comparison 面）。
+        if spec.statistics.normalization != "none":
+            core.comparison = spec.statistics.normalization
     elif path in ("time.range_start", "time.range_end", "time.granularity", "time.series"):
         core.time = _canonical_time_str(spec)
     elif path == "output.formats":
@@ -560,6 +568,10 @@ def apply_patch(
         if target.provenance.is_user() and patch.actor != "user":
             raise PatchConflict(f"measures.{measure_id}", patch.actor)
         spec.measures = [m for m in spec.measures if m.id != measure_id]
+        # core.measure 是 measures 的派生源（derive_sections 由它造 m1）：
+        # 删空后不同步 → intent_view 外泄陈旧度量、重派生时复活已删 measure。
+        if not spec.measures:
+            spec.core.measure = ""
 
     elif patch.op == "answer_ambiguity":
         fields = _measure_fields_strict(patch, ("context_key", "answer"))
