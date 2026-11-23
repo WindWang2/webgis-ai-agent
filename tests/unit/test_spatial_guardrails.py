@@ -247,6 +247,12 @@ def test_t4_bbox_area_budget_blocks_mega_requests():
     check_area_budget([-0.1, -0.1, 0.1, 0.1])
 
 
+def test_t4_bbox_area_budget_negative_cos_latitude_not_bypassable():
+    """平均纬度越界（>90°）时 cos 为负不得让面积预算失效。"""
+    with pytest.raises(GeofenceRedlineViolationError):
+        check_area_budget([0.0, 100.0, 50.0, 200.0])
+
+
 def test_t4_redline_zone_json_enforcement(tmp_path):
     zone_file = tmp_path / "redlines.json"
     zone_file.write_text(

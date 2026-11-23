@@ -684,12 +684,16 @@ def register_layer_management_tools(registry: ToolRegistry):
            required_context=("map_state",),
            map_mutations=("style_layer",),
            failure_modes=("invalid_args",))
-    def display_layer(ref_id: str, name: str, color: Optional[str] = None, session_id: Optional[str] = None) -> dict:
+    async def display_layer(ref_id: str, name: str, color: Optional[str] = None, session_id: Optional[str] = None) -> dict:
         """显示隐藏的结果图层"""
         if not session_id:
             return {"error": "Missing session_id context"}
 
-        params: dict = {"layer_id": ref_id, "visible": True, "name": name}
+        layer_id, err = await resolve_layer_ref(session_id, ref_id)
+        if err:
+            return err
+
+        params: dict = {"layer_id": layer_id, "visible": True, "name": name}
         if color is not None:
             params["color"] = color
 

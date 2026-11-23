@@ -459,9 +459,10 @@ def register_field_compute_tools(registry: ToolRegistry) -> None:
             q = (
                 db.query(AnalysisTask)
                 .filter(AnalysisTask.task_type == "field_compute_apply")
+                .filter(AnalysisTask.session_id == sid)
                 .order_by(AnalysisTask.id.desc())
             )
-            for candidate in q.limit(10):
+            for candidate in q:
                 params = candidate.parameters if isinstance(candidate.parameters, dict) else {}
                 if params.get("plan_id") == plan_id and candidate.session_id == sid:
                     row = {

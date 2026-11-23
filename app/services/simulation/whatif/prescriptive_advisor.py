@@ -181,6 +181,14 @@ class PrescriptiveAdvisor:
     ) -> PrescriptionResult:
         """确定性处方核：Pareto + ROI + 优先级 + 模板因果链（同输入同输出）。"""
         goals = {**DEFAULT_OPTIMIZATION_GOALS, **(optimization_goals or {})}
+        invalid_directions = sorted(
+            {d for d in goals.values() if d not in ("", "maximize", "minimize")}
+        )
+        if invalid_directions:
+            raise ValueError(
+                "optimization directions must be maximize or minimize: "
+                + ", ".join(invalid_directions)
+            )
         if not branches:
             return PrescriptionResult(mode="deterministic")
 

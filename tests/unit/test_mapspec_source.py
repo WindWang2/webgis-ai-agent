@@ -7,6 +7,7 @@ shape knowledge, not storage.
 from typing import Any, Dict
 
 from app.services.mapspec_source import (
+    is_data_fabric_entry,
     is_raster_entry,
     profile_data,
     raster_bounds,
@@ -49,6 +50,19 @@ def test_store_data_ref_cursor_string_lands_in_url():
   entry: Dict[str, Any] = {"type": "geojson"}
   store_data(entry, "ref:geojson-abc123")
   assert entry["url"] == "ref:geojson-abc123"
+
+
+def test_store_data_ref_cursor_string_is_not_a_data_fabric_entry():
+  """A string ref: carrier stays a geojson source, not a Data Fabric source.
+
+  store_data writes the cursor into both `ref_id` and `url`; the `url` shape
+  must not be read as a fabric marker, otherwise profile_data returns None
+  (inlineData-only) and the profiler silently skips the source.
+  """
+  entry: Dict[str, Any] = {"type": "geojson"}
+  store_data(entry, "ref:geojson-abc123")
+  assert is_data_fabric_entry(entry) is False
+  assert profile_data(entry) == "ref:geojson-abc123"
 
 
 def test_store_data_string_replacement_clears_stale_raster_type():

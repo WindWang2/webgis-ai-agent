@@ -369,6 +369,39 @@ async def test_large_chart_goes_through_ref_channel(registry, clean_session):
 
 
 @pytest.mark.asyncio
+async def test_large_chart_store_outage_never_persists_phantom_ref(
+    registry, clean_session, monkeypatch
+):
+    """P2 data-integrity：Redis 宕机时 store() 返回哨兵 ref（无载荷）；
+    attach 面板绝不能把它写进 MapSpec options.chartRef（幻影引用）。"""
+    from app.services.session_data_protocol import UNAVAILABLE_REF_PREFIX
+
+    async def _unavailable_store(session_id, data, prefix="data"):
+        return f"{UNAVAILABLE_REF_PREFIX}deadbeef"
+
+    monkeypatch.setattr(session_data_manager, "store", _unavailable_store)
+    await _seed_components(clean_session)
+    data = [
+        {"name": f"district-unit-{i:04d}-" + "x" * 80, "value": i}
+        for i in range(400)
+    ]
+
+    res = await registry.dispatch(
+        "generate_chart",
+        {"chart_type": "bar", "title": "大数据", "data": data,
+         "session_id": clean_session, "attach_to_map": True},
+        session_id=clean_session,
+    )
+    # 图表本体照常生成；面板附加显式失败可见
+    assert res["chart"]["type"] == "bar"
+    assert res["map_chart_panel"]["attached"] is False
+    assert "error" in res["map_chart_panel"]
+    # 哨兵 ref 不得进入 MapSpec（任何组件 options）
+    spec = await mapspec_store.get_mapspec(clean_session) or {}
+    assert UNAVAILABLE_REF_PREFIX not in str(spec)
+
+
+@pytest.mark.asyncio
 async def test_component_update_change_is_json_serializable(registry, clean_session):
     """#1065: placement 变更的 change 记录此前携带 pydantic ComponentPlacement
     对象 —— dispatch 的 json.dumps(default=numpy_json_default) 抛 TypeError，

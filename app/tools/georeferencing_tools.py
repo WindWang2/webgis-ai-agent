@@ -309,7 +309,8 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
             if action == "create":
                 if not source_id:
                     return {"success": False, "code": "INVALID_GCP_COORDS", "message": "source_id is required when action='create'."}
-                pl = service.create_plan(
+                pl = await asyncio.to_thread(
+                    service.create_plan,
                     session_id=sid,
                     source_id=source_id,
                     name=name or "Georeference Plan",
@@ -319,7 +320,8 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
                     generate_cog=bool(generate_cog),
                 )
                 if parsed_gcps is not None:
-                    pl = service.revise_draft(
+                    pl = await asyncio.to_thread(
+                        service.revise_draft,
                         session_id=sid,
                         plan_id=pl.plan_id,
                         expected_revision=pl.revision,
@@ -332,7 +334,8 @@ def register_georeferencing_tools(registry: ToolRegistry) -> None:
                         "code": "INVALID_GCP_COORDS",
                         "message": "plan_id and expected_revision are required when action='update'.",
                     }
-                pl = service.revise_draft(
+                pl = await asyncio.to_thread(
+                    service.revise_draft,
                     session_id=sid,
                     plan_id=plan_id,
                     expected_revision=int(expected_revision),

@@ -59,8 +59,8 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
 
         sid = _resolve_session_id(session_id)
         if not sid:
-            return {"success": True, "datasets": [], "count": 0,
-                    "message": "当前会话没有数据资产。可先上传数据或执行查询/分析。"}
+            return {"success": False, "code": "NO_SESSION",
+                    "error": "缺少有效会话（未绑定运行时上下文或 session_id 与运行时会话不一致）"}
         result = await get_data_catalog().search(
             session_id=sid, filter_=CatalogFilter(), limit=50, owner=sid
         )
@@ -95,8 +95,8 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
 
         sid = _resolve_session_id(session_id)
         if not sid:
-            return {"success": True, "datasets": [], "count": 0,
-                    "message": "当前会话没有数据资产。"}
+            return {"success": False, "code": "NO_SESSION",
+                    "error": "缺少有效会话（未绑定运行时上下文或 session_id 与运行时会话不一致）"}
         try:
             flt = CatalogFilter(**{k: v for k, v in kwargs.items() if v})
         except Exception as e:  # noqa: BLE001 — 非法过滤值走校验错误路径
@@ -271,7 +271,10 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         from app.services.data_catalog.catalog import CatalogFilter, get_data_catalog
 
         sid = _resolve_session_id(session_id)
-        if not sid or not role:
+        if not sid:
+            return {"success": False, "code": "NO_SESSION",
+                    "error": "缺少有效会话（未绑定运行时上下文或 session_id 与运行时会话不一致）"}
+        if not role:
             return {"success": True, "datasets": [], "count": 0}
         result = await get_data_catalog().search(
             session_id=sid, filter_=CatalogFilter(role=str(role)), limit=20, owner=sid

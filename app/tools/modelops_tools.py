@@ -202,6 +202,18 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         scope = normalize_scope(session_id=session_id, project_id=project_id)
+        if postgis_table:
+            # LLM 提供的标识符在工具面就收敛（与发布通道同一白名单），
+            # 绝不把未校验表名交给引擎/DDL。
+            from app.services.modelops.geo_output import validate_table_name
+
+            try:
+                postgis_table = validate_table_name(postgis_table)
+            except (TypeError, ValueError) as exc:
+                raise ModelOpsError(
+                    str(exc),
+                    correction_hint="pass a lowercase identifier matching ^[a-z_][a-z0-9_]{0,62}$",
+                ) from exc
         service = get_modelops_service()
         roi: Optional[List[float]] = None
         if roi_bbox is not None:

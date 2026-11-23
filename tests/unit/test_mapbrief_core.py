@@ -547,3 +547,30 @@ class TestBriefCompiler:
         # db=None → messages 缺席；trace 缺席 → ValueError（422 语义）
         with pytest.raises(ValueError):
             await bc.compile_brief_draft(Conv(), db=None)
+
+
+# ── 5. 冻结发布：静态图件渲染失败必须告警 ────────────────────────────
+
+
+class TestStaticMapRenderWarnings:
+    def test_render_exception_appends_warning(self, monkeypatch):
+        from app.services.storymap import brief_release
+        from app.services import mapspec_to_svg
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("render exploded")
+
+        monkeypatch.setattr(
+            mapspec_to_svg, "compile_mapspec_to_svg_detailed", boom)
+        spec = MapBriefSpec.model_validate(_brief(
+            facts=[],
+            blocks=[{
+                "id": "blk-map1", "chapter_id": "arc-introduction",
+                "kind": "map_view",
+                "map_view": {"center": [104.06, 30.67], "zoom": 10},
+            }],
+        ))
+        maps, warnings = brief_release._render_static_maps(
+            spec, {"layers": []})
+        assert maps == {}
+        assert any("blk-map1" in w and "渲染失败" in w for w in warnings)

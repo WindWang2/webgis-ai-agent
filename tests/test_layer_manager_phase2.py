@@ -288,3 +288,35 @@ async def test_finalize_display_rejects_empty_and_unknown(registry, session_with
         "finalize_display", {"show_refs": ["ref:geojson-does-not-exist"]}, session_id=sid
     )
     assert "error" in unknown
+
+
+# ─── display_layer: P1-6 gate (previously passed the raw LLM ref through) ──
+
+
+@pytest.mark.asyncio
+async def test_display_layer_rejects_unknown_ref(registry, session_with_layer):
+    """P1-6: an LLM ref not owned by this session must be refused before it
+    reaches the frontend's prefix-match handler."""
+    sid, _ref = session_with_layer
+    for bad in ["", "ref:", "ref:not-in-this-session-xyz"]:
+        out = await registry.dispatch(
+            "display_layer",
+            {"ref_id": bad, "name": "x"},
+            session_id=sid,
+        )
+        assert "error" in out, f"expected reject for ref_id={bad!r}, got {out}"
+
+
+@pytest.mark.asyncio
+async def test_display_layer_resolves_alias_to_canonical_id(registry, session_with_layer):
+    """The frontend must receive the session-owned canonical id, not the raw
+    alias the LLM emitted."""
+    sid, ref = session_with_layer
+    out = await registry.dispatch(
+        "display_layer",
+        {"ref_id": "我的层", "name": "结果"},
+        session_id=sid,
+    )
+    assert out.get("success") is True, f"expected success, got {out}"
+    assert out["command"] == "LAYER_VISIBILITY_UPDATE"
+    assert out["params"]["layer_id"] == ref

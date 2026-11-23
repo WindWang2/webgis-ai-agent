@@ -1242,7 +1242,12 @@ async def _apply_tool_result_unlocked(
             )
             if lock is not None and lock.lost:
                 return [], None
-            await save_session_plan(new, store=backend)
+            if not await save_session_plan(new, store=backend):
+                logger.error(
+                    "[SessionPlan] supersede persist rejected session=%s",
+                    session_id,
+                )
+                return [], None
             events.append(_superseded_event(old, new))
             events.append(_updated_event(new))
             return events, facts
@@ -1265,7 +1270,12 @@ async def _apply_tool_result_unlocked(
         plan.replaced = replaced
         if lock is not None and lock.lost:
             return [], None
-        await save_session_plan(plan, store=backend)
+        if not await save_session_plan(plan, store=backend):
+            logger.error(
+                "[SessionPlan] replace persist rejected session=%s",
+                session_id,
+            )
+            return [], None
         events.append(_updated_event(plan))
         return events, facts
 
@@ -1287,7 +1297,12 @@ async def _apply_tool_result_unlocked(
         )
         if lock is not None and lock.lost:
             return [], None
-        await save_session_plan(plan, store=backend)
+        if not await save_session_plan(plan, store=backend):
+            logger.error(
+                "[SessionPlan] product persist rejected session=%s",
+                session_id,
+            )
+            return [], None
         events.append(_updated_event(plan))
         events.extend(_progress_event(plan, row) for row in changed)
         return events, None
@@ -1298,7 +1313,12 @@ async def _apply_tool_result_unlocked(
         merge_product_edit_result(plan.gis_chapter, raw)
         if lock is not None and lock.lost:
             return [], None
-        await save_session_plan(plan, store=backend)
+        if not await save_session_plan(plan, store=backend):
+            logger.error(
+                "[SessionPlan] product edit persist rejected session=%s",
+                session_id,
+            )
+            return [], None
         events.append(_updated_event(plan))
         return events, None
 
@@ -1310,7 +1330,12 @@ async def _apply_tool_result_unlocked(
     from app.services.session_data_protocol import is_unavailable_ref
     if is_unavailable_ref(geojson_ref):
         changed = _mark_progress(plan, hits, status="failed")
-        await save_session_plan(plan, store=backend)
+        if not await save_session_plan(plan, store=backend):
+            logger.error(
+                "[SessionPlan] failed-ref persist rejected session=%s",
+                session_id,
+            )
+            return [], None
         return [_progress_event(plan, row) for row in changed], None
     changed = _mark_progress(
         plan, hits, status="complete", bound_ref=geojson_ref or ""
@@ -1319,7 +1344,12 @@ async def _apply_tool_result_unlocked(
         return [], None
     if lock is not None and lock.lost:
         return [], None
-    await save_session_plan(plan, store=backend)
+    if not await save_session_plan(plan, store=backend):
+        logger.error(
+            "[SessionPlan] progress persist rejected session=%s",
+            session_id,
+        )
+        return [], None
     # P1（ADR-0082）：成功绑定 ref 的能力行同步注册产物记录 —— capability/
     # tool/血缘上下文在此最完整（dispatch seam 只登记 ref 本身）。锁内
     # 直通（lock 透传跳过重取，避免非重入自锁）；失败降级为日志。

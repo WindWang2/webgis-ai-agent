@@ -445,7 +445,22 @@ async def _attach_chart_panel(
     inline_bytes = estimate_json_bytes(chart)
     if inline_bytes > 32 * 1024:
         from app.services.session_data import session_data_manager
+        from app.services.session_data_protocol import is_unavailable_ref
         ref_id = await session_data_manager.store(session_id, {"chart": chart}, prefix="chart")
+        # R2-2 (sibling of cartography_tools): a Redis outage makes store()
+        # return the unavailable-ref sentinel. Never write it into MapSpec
+        # options.chartRef — that is a phantom ref with no payload anywhere.
+        if is_unavailable_ref(ref_id):
+            return {
+                "map_chart_panel": {
+                    "attached": False,
+                    "inline": False,
+                    "bytes": inline_bytes,
+                    "layer_count_unchanged": True,
+                    "error": "会话存储暂时不可用，无法保存图表载荷；图表已生成，请稍后重试 attach_to_map。",
+                    "hint": "稍后重试 attach_to_map；或用 webgis_component_update(create=true, component_type=chart_panel)。",
+                },
+            }
         options["chartRef"] = ref_id
     else:
         options["chart"] = chart

@@ -1008,6 +1008,10 @@ def _encode_geometry_pieces(gtype: str, coords, z: int, x: int, y: int) -> List[
     relative to the first piece's cursor position. Non-crossing input yields
     a single group, byte-identical to the pre-split encoding.
     """
+    if coords is None:
+        # Malformed feature (supported type but null coordinates): skip it
+        # instead of crashing the whole tile encode.
+        return []
     if gtype in _IS_POINT:
         pts = coords if gtype == "MultiPoint" else [coords]
         gb = _encode_points(pts, z, x, y)

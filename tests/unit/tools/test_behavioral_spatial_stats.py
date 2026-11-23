@@ -352,6 +352,32 @@ async def test_interpolation_model_compare_behavioral(registry):
     assert "scientific_evidence" in out
 
 
+@pytest.mark.asyncio
+async def test_interpolation_model_compare_validation_tracks_recommended(registry):
+    """推荐方法的 CV 证据必须进入 scientific_evidence.validation。
+
+    6×6 平滑场上 idw 是首个带 validation 的行，但推荐方法为
+    trend_surface；未修复时证据循环在 idw 行无条件 break，
+    validation 静默缺失。
+    """
+    fc = _grid_fc(6, 6, lambda r, c: {
+        "v": float(10.0 * np.sin(c / 2.0) + 3.0 * r)})
+    out = await registry.dispatch(
+        "interpolation_model_compare", {"geojson": fc, "value_field": "v"})
+    assert out.get("recommended") is not None, out
+    recommended_method = out["recommended"]["method"]
+    rows = out.get("comparison") or []
+    rec_index = next(
+        i for i, row in enumerate(rows) if row["method"] == recommended_method)
+    # 触发条件：推荐方法之前已存在带 validation 的其他方法行
+    assert any(row.get("validation") for row in rows[:rec_index]), rows
+    validation = (out.get("scientific_evidence") or {}).get("validation")
+    assert validation is not None, out.get("scientific_evidence")
+    assert validation["target"] == f"interpolation_compare:{recommended_method}"
+    assert validation["rmse"] == pytest.approx(
+        out["recommended"]["rmse"], abs=1e-5)
+
+
 # ── remote_sensing（波段栈降维）───────────────────────────────────────
 
 

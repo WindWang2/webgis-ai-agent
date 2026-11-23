@@ -863,6 +863,23 @@ def test_t11_prescriptive_advisor_deterministic_core():
     )
 
 
+@pytest.mark.parametrize("direction", ["max", "increase", "MAXIMIZE"])
+def test_t11b_prescriptive_advisor_rejects_unknown_direction(direction):
+    """未识别方向不得按 minimize 反向计分，应显式拒绝（对齐 comparison_engine）。"""
+    advisor = PrescriptiveAdvisor()
+    branch = _mk_branch_diff(
+        "A",
+        [_metric("service_coverage_population", 100.0, 120.0)],  # +20%
+        cost_proxy=100.0,
+    )
+    with pytest.raises(ValueError, match="maximize or minimize"):
+        advisor.advise(
+            baseline_metrics={"service_coverage_population": 100.0},
+            branches=[branch],
+            optimization_goals={"service_coverage_population": direction},
+        )
+
+
 @pytest.mark.asyncio
 async def test_t12_llm_degradation_paths_never_raise(monkeypatch):
     # CI 注入 LLM_API_KEY=test-key-not-real（非占位符集合）——显式置空，

@@ -187,6 +187,31 @@ async def test_feature_detail_native_and_positional_namespaces(registry):
 
 
 @pytest.mark.asyncio
+async def test_feature_detail_native_scan_offloads_to_thread(registry, monkeypatch):
+    """P2：全量 features 线性扫描须经 asyncio.to_thread 卸载，不阻塞事件循环。"""
+    import threading
+
+    import app.services.feature_pages as fp
+
+    seen_threads = []
+    real = fp.resolve_feature_stable_id
+
+    def _tracking(feature):
+        seen_threads.append(threading.current_thread())
+        return real(feature)
+
+    monkeypatch.setattr(fp, "resolve_feature_stable_id", _tracking)
+
+    store = _FakeRefStore(_fc(50))
+    out = await _run(registry, "webgis_layer_feature_detail",
+                     {"ref_id": "ref:schools", "feature_id": "49"}, store)
+    assert out["id_mode"] == "native"
+    assert out["feature"]["properties"]["i"] == 49
+    assert seen_threads, "扫描未调用 resolve_feature_stable_id"
+    assert all(t is not threading.main_thread() for t in seen_threads)
+
+
+@pytest.mark.asyncio
 async def test_missing_ref_not_found(registry):
     store = _FakeRefStore(_fc(5))
     out = await _run(registry, "webgis_layer_features_page",

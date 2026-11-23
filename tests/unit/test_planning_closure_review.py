@@ -81,6 +81,43 @@ async def test_clear_marker_can_accept_new_plan_but_rejects_old_plan_resurrectio
     assert (await store.load_current('s')).intent == 'new'
 
 
+@pytest.mark.asyncio
+async def test_clear_invalidates_local_cache_before_revision_read():
+    class CacheAsideMemoryStore(MemorySessionStore):
+        """Memory backend with a process-local read cache (as Redis may have)."""
+
+        def __init__(self):
+            super().__init__()
+            self._read_cache = {}
+
+        def invalidate_local_cache(self, session_id):
+            for key in [k for k in self._read_cache if k[0] == session_id]:
+                self._read_cache.pop(key, None)
+
+        async def get(self, session_id, ref_id_or_alias):
+            key = (session_id, ref_id_or_alias)
+            if key not in self._read_cache:
+                self._read_cache[key] = await super().get(session_id, ref_id_or_alias)
+            return self._read_cache[key]
+
+    backend = CacheAsideMemoryStore()
+    store = PlanStore(session_store=backend)
+    await store.save(CanonicalPlan(plan_id='p', session_id='s', intent='old', revision=1))
+    # Warm this process's read cache, then let another worker advance the
+    # persisted revision — the process-local copy is now stale.
+    ref_id = await backend.resolve_alias('s', 'plan-current')
+    persisted = await backend.get('s', ref_id)
+    advanced = dict(persisted, revision=persisted['revision'] + 1)
+    assert await backend.overwrite('s', ref_id, advanced, expected_revision=persisted['revision'])
+
+    await store.clear('s')
+
+    assert await store.load_current('s') is None
+    tombstone = await MemorySessionStore.get(backend, 's', ref_id)
+    assert tombstone['_cleared'] is True
+    assert tombstone['revision'] == persisted['revision'] + 2
+
+
 def test_stac_cache_keys_url_and_ttl_without_retaining_primitive_or_closing_live_catalog(monkeypatch):
     import pystac_client
     from app.services.rs import stac_client as module

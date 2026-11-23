@@ -508,6 +508,14 @@ def render_raster_tile(
                     )
             elif bands:
                 indexes = tuple(b for b in bands if 1 <= b <= src.count)[:3]
+                if len(bands) == 3 and len(indexes) != 3:
+                    # A 3-band request that loses a band to the range filter
+                    # must not fall into the count<3 branch and silently
+                    # render band 1 only (RGB request degraded to grayscale).
+                    raise RasterTileError(
+                        "BAND_OUT_OF_RANGE",
+                        "requested RGB bands reference a band absent from this raster",
+                    )
             else:
                 indexes = (1,) if src.count < 3 else (1, 2, 3)
             if not indexes:

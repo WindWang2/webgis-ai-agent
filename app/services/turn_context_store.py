@@ -304,18 +304,19 @@ async def _update_receipt(
             )
     try:
         Row = _receipt_row_cls()
-        row = (
-            await db.execute(_select_row(Row, turn_id))
-        ).scalar_one_or_none()
-        if row is None:
-            return False
-        current_rank = _STATUS_RANK.get(str(row.status), 0)
+        from sqlalchemy import update as _update
+
+        # review P2：rank 守卫必须原子 —— 条件 UPDATE 把单调校验放进 WHERE
+        # （单语句裁决）；先 SELECT 再提交会让并发弱写者双双通过检查，后
+        # 提交者以弱状态覆盖强状态。
+        stmt = _update(Row).where(Row.turn_id == turn_id)
         if require_rank is not None:
-            new_status = str(fields.get("status", row.status))
-            if _STATUS_RANK.get(new_status, 0) <= current_rank:
-                return False  # weaker/equal late observation — never rewrite
-        for key, value in fields.items():
-            setattr(row, key, value)
+            new_rank = _STATUS_RANK.get(str(fields.get("status", "")), 0)
+            weaker = tuple(s for s, rank in _STATUS_RANK.items() if rank < new_rank)
+            stmt = stmt.where(Row.status.in_(weaker))
+        result = await db.execute(stmt.values(**fields))
+        if result.rowcount != 1:
+            return False  # no row, or a stronger/equal state — never rewrite
         await db.commit()
         return True
     except Exception as exc:  # noqa: BLE001

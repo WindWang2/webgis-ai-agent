@@ -165,7 +165,10 @@ def _render_static_maps(
             ).svg
             if isinstance(svg, str) and svg.strip():
                 maps[block.id] = svg
-        except Exception:  # noqa: BLE001 — 渲染失败 → 真实告警（HTML 内披露）
+        except Exception as exc:  # noqa: BLE001 — 渲染失败 → 真实告警（HTML 内披露）
+            warnings.append(
+                f"map_view {block.id}: 静态渲染失败"
+                f"（{type(exc).__name__}: {exc}），该块不附静态图件")
             continue
     return maps, warnings
 

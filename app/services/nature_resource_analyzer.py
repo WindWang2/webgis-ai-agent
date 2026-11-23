@@ -62,8 +62,15 @@ class NatureResourceAnalyzer:
         if count == 3:
             return {"red": 1, "green": 2, "blue": 3, "source": "guess-3band-rgb"}
 
+        # 陆地卫星 Landsat-8/9 Collection 2 标准 11 波段（B1..B11）：
+        # NIR=B5, SWIR1=B6, SWIR2=B7。此前一律套 Sentinel-2 预设会把
+        # nir 猜成 B8(pan)、swir 猜成 B11/B12(TIRS)，导致非 strict 模式
+        # 下 NDWI/NBR 静默用错波段。
+        if count == 11:
+            return {**SATELLITE_PRESETS["landsat-8-9"], "source": "preset-landsat8-9"}
+
         # 哨兵/陆地卫星通常波段较多，默认尝试匹配常用索引
-        if count >= 11:
+        if count >= 12:
             return {**SATELLITE_PRESETS["sentinel-2"], "source": "preset-sentinel2"}
 
         return {"source": "unknown"}

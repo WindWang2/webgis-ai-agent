@@ -439,3 +439,71 @@ async def test_failed_dispatch_without_chapter_is_noop(sid):
     assert events == []
     plan = await load_session_plan(sid)
     assert plan.gis_chapter is None
+
+
+class _OverwriteFailingStore:
+    """Delegating store whose CAS overwrite always rejects (transient error)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    async def overwrite(self, *args, **kwargs):
+        return False
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["supersede", "replace", "product", "product_edit", "failed_ref", "complete"],
+)
+@pytest.mark.asyncio
+async def test_save_rejection_emits_no_sse(sid, case):
+    """save_session_plan 返 False（CAS 被拒/瞬时 RedisError）时不得发 SSE。
+
+    未落盘却先发计划事件 → 前端见新计划、存储仍是旧信封，下轮投影回退。
+    """
+    gis = _gis("成都市小学分布情况", "成都市")
+    await apply_tool_result(
+        sid, "webgis_map_intent", {"plan": gis}, success=True,
+    )
+    failing = _OverwriteFailingStore(session_data_manager)
+    if case == "supersede":
+        events = await apply_tool_result(
+            sid, "webgis_map_intent",
+            {"plan": _gis("北京市小学分布情况", "北京市")},
+            success=True, store=failing,
+        )
+    elif case == "replace":
+        events = await apply_tool_result(
+            sid, "webgis_map_intent", {"plan": gis},
+            success=True, store=failing,
+        )
+    elif case == "product":
+        events = await apply_tool_result(
+            sid, "webgis_map_product",
+            {"completeness": {"missing": []}, "status": "complete"},
+            success=True, store=failing,
+        )
+    elif case == "product_edit":
+        events = await apply_tool_result(
+            sid, "webgis_product_edit",
+            {"product_spec": {"digest": "d1", "spec_version": 1}},
+            success=True, store=failing,
+        )
+    elif case == "failed_ref":
+        events = await apply_tool_result(
+            sid, "query_local_poi", {"success": True}, success=True,
+            geojson_ref="ref:redis-unavailable-test", store=failing,
+        )
+    else:
+        events = await apply_tool_result(
+            sid, "query_local_poi", {"success": True}, success=True,
+            geojson_ref="ref:geojson:save-rejected", store=failing,
+        )
+    assert events == []
+    # Store is truth: rejected write leaves the persisted envelope untouched.
+    plan = await load_session_plan(sid)
+    assert plan.gis_chapter["query"] == "成都市小学分布情况"
+    assert all(row.status == "pending" for row in plan.progress)

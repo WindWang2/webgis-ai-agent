@@ -123,7 +123,6 @@ class RefSpillStore:
                     "data": data,
                 },
                 ensure_ascii=False,
-                default=str,
             )
             blob = envelope.encode("utf-8")
         except Exception as e:  # noqa: BLE001 — 不可序列化的 payload 不 spill

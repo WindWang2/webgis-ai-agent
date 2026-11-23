@@ -354,3 +354,22 @@ class TestMapStateSnapshotIsolation:
         assert snapshot["layers"] == [{"id": "L1", "opacity": 1.0}]
         assert snapshot["viewport"] == {"zoom": 5}
         assert mgr._map_state[sid]["layers"][0]["opacity"] == 0.5
+
+
+class TestRefSpillSerializationFidelity:
+    def test_non_json_payload_is_not_spilled_as_strings(self, tmp_path):
+        """P2 data-integrity: datetime/Decimal 不得被 default=str 静默降型。"""
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
+        from app.services.session_data import RefSpillStore
+
+        spill = RefSpillStore(str(tmp_path))
+        payload = {
+            "when": datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            "amount": Decimal("1.50"),
+        }
+        # 不可 JSON 序列化 → 不落盘（而非把值转成字符串改变结构）
+        assert spill.spill("s1", "ref:data-dt0001", payload) is False
+        assert spill.has("s1", "ref:data-dt0001") is False
+        assert spill.load("s1", "ref:data-dt0001") is None

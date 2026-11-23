@@ -1067,7 +1067,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                 )
                 if recommended and row["method"] == recommended["method"]:
                     val_metrics = v
-                break
+                    break
         geojson_result = {
             "type": "FeatureCollection",
             "features": [],

@@ -46,6 +46,28 @@ def test_manifest_output_is_lf_stable(tmp_path):
     assert b"\r\n" not in raw
 
 
+def test_sbom_degrades_when_pnpm_lock_is_invalid_yaml(tmp_path):
+    """pnpm-lock.yaml 存在但非法 YAML：generate_sbom 降级为 unavailable，
+    不得抛 yaml.YAMLError 崩溃。"""
+    from unittest import mock
+
+    from app.services import offline_inventory
+
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text(
+        json.dumps({"dependencies": {"next": "14.0.0"}}), encoding="utf-8")
+    (frontend / "pnpm-lock.yaml").write_text(
+        "packages: [unclosed", encoding="utf-8")
+
+    fake_module = tmp_path / "app" / "services" / "offline_inventory.py"
+    with mock.patch.object(offline_inventory, "__file__", str(fake_module)):
+        frontend_payload = offline_inventory.generate_sbom()["frontend"]
+    assert frontend_payload["resolved_packages"] == []
+    assert frontend_payload["lock_source"] == (
+        "frontend/pnpm-lock.yaml (unavailable)")
+
+
 def test_preflight_write_probe_works_on_platform(tmp_path):
     """DATA_DIR/TMP_DIR 可写性探针在本平台真实可执行。"""
     from app.services.offline_preflight import check_data_dirs

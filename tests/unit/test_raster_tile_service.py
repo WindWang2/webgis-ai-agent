@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import from_bounds
 from PIL import Image
@@ -12,6 +13,7 @@ from app.services.raster_tile_service import (
     _transparent_tile_png,
     _normalize_channel,
     render_raster_tile,
+    RasterTileError,
 )
 
 
@@ -135,6 +137,28 @@ def test_render_uses_dataset_global_stretch_across_tiles(monkeypatch, tmp_path):
 
     # Stats are cached per (raster, band-subset) after the first render (C5).
     assert (path, (1,)) in svc._STATS_CACHE
+
+
+def test_three_band_request_with_missing_band_raises_not_degrades(tmp_path):
+    """P2: bands=(1,2,4) on a 3-band raster must raise BAND_OUT_OF_RANGE.
+
+    The range filter previously left two indexes, which fell outside the
+    count>=3 branch and silently rendered band 1 as a grayscale tile for an
+    RGB request.
+    """
+    path = str(tmp_path / "three_band.tif")
+    width = height = 100
+    data = np.ones((3, height, width), dtype=np.uint16)
+    transform = from_bounds(116.0, 39.0, 117.0, 40.0, width, height)
+    with rasterio.open(
+        path, "w", driver="GTiff", height=height, width=width,
+        count=3, dtype="uint16", crs="EPSG:4326", transform=transform,
+    ) as dst:
+        dst.write(data)
+
+    with pytest.raises(RasterTileError) as excinfo:
+        render_raster_tile(path, z=8, x=210, y=97, tile_size=256, bands=(1, 2, 4))
+    assert excinfo.value.code == "BAND_OUT_OF_RANGE"
 
 
 def test_multiband_read_uses_indexes_not_all_bands(monkeypatch, tmp_path):

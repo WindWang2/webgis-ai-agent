@@ -17,8 +17,8 @@ class SkillCreator:
         name: 技能名称 (如 terrain_analysis)
         code: 完整的 Python 代码
         description: 技能描述
-        target_dir: 覆盖写入目录（默认 self.skills_dir；quarantine 流程传入
-            <skills_dir>/quarantine —— 未审批技能不进可加载面）
+        target_dir: 覆盖写入目录（默认 <skills_dir>/quarantine —— 未审批技能
+            不进可加载面；审批由 admin 上传端点直接写入并登记哈希）
         """
         skills_dir = target_dir or os.path.join(self.skills_dir, "quarantine")
         # 安全：name 来自 LLM（含 prompt injection 风险），必须是合法 Python 标识符。

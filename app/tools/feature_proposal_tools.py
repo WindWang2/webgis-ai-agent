@@ -61,7 +61,7 @@ def register_feature_proposal_tools(registry: ToolRegistry) -> None:
         ops: List[Dict[str, Any]],
         feature_ids: Optional[List[str]] = None,
         title: Optional[str] = None,
-        submit: bool = True,
+        submit: bool = False,
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not session_id:

@@ -138,19 +138,16 @@ def is_raster_entry(entry: Dict[str, Any]) -> bool:
 def is_data_fabric_entry(entry: Dict[str, Any]) -> bool:
     """True if the entry is a DataFabric lazy or materialized protocol source entry (ADR-0050).
 
-    Deliberately does NOT treat a bare ``ref_id`` as a fabric marker: the
-    geojson ref branch of :func:`store_data` also writes ``ref_id``, so that
-    heuristic misclassified every session geojson-ref source as fabric (and
-    pipeline.py's profiler then skipped them). Fabric entries carry an
-    explicit ``type``, a ``catalog_item_id``, the ``lazy`` flag, or a fabric
-    ``ref:`` URL."""
+    Deliberately does NOT treat a bare ``ref_id`` or a ``ref:`` ``url`` as a
+    fabric marker: the geojson ref branches of :func:`store_data` also write
+    ``ref_id``/``url`` for every session geojson-ref source, so those
+    heuristics misclassified them as fabric (and pipeline.py's profiler then
+    skipped them). Fabric entries carry an explicit ``type``, a
+    ``catalog_item_id``, or the ``lazy`` flag."""
     st = entry.get("type")
     if st in DATAFABRIC_SOURCE_TYPES:
         return True
     if "catalog_item_id" in entry or entry.get("lazy") is True:
-        return True
-    url_val = entry.get(_URL)
-    if isinstance(url_val, str) and url_val.startswith("ref:"):
         return True
     return False
 
