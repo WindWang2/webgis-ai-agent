@@ -15,8 +15,10 @@
 """
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
+import pytest
 from sqlalchemy import text
 
 REPO = Path(__file__).resolve().parents[1]
@@ -339,3 +341,211 @@ def test_v9_org_backfill_up_down_up(tmp_path, monkeypatch):
 
     # ── up/down/up 纪律：空库再升一次必须幂等可过 ──
     command.upgrade(cfg, POST_V9_HEAD)
+
+
+# ── 6. PG 分批回填的终止条件（#1306 分批 + 归属不可解析）────────────────
+#
+# _exec_update_batched 的 PG 路径按 ctid 分批 UPDATE，每批一个
+# autocommit_block。当 SET 的子查询解析不出归属（creator/project 为空、
+# 孤儿 id、归属人 org 为 NULL）时，UPDATE 把列设回原值仍计入 rowcount、
+# 行仍满足 where → rc 永 >0 → 循环打到 1_000_000 硬帽（每批还是一个独立
+# autocommit 事务，PG 升级事实挂死）。SQLite 路径全量一次、不触发，故用
+# 「PG 形 SQL → SQLite 可执行」的绑定在本地复现该路径。
+
+
+class _PgBackfillBind:
+    """把 PG 形批量子查询翻译成 SQLite 可执行形式，模拟 PG 回填路径。
+
+    ``ctid`` → ``rowid``；``IS DISTINCT FROM`` → ``IS NOT``（SQLite 的
+    NULL 安全不等比较）。每批 execute 后即 commit —— 对应真实路径里每批
+    都在自己的 ``autocommit_block`` 中落库（#1306）。
+    """
+
+    def __init__(self, engine, max_calls: int = 16):
+        self._engine = engine
+        self._conn = engine.connect()
+        self._max_calls = max_calls
+        self.calls = 0
+
+    @property
+    def dialect(self):
+        return self._engine.dialect
+
+    def execute(self, statement):
+        self.calls += 1
+        if self.calls > self._max_calls:
+            raise AssertionError(
+                f"回填循环未在真实进度为 0 时终止（已跑到第 {self.calls} 批；"
+                "未修复时将打到 1_000_000 硬帽）"
+            )
+        sql = str(statement).replace("ctid", "rowid")
+        sql = sql.replace("IS DISTINCT FROM", "IS NOT")
+        result = self._conn.exec_driver_sql(sql)
+        self._conn.commit()
+        return result
+
+    def dispose(self):
+        self._conn.close()
+
+
+class _FakeAutocommitContext:
+    @contextlib.contextmanager
+    def autocommit_block(self):
+        yield
+
+
+def _run_pg_backfill(module_name, engine, table, set_clause, where_clause,
+                     monkeypatch):
+    """在「假装是 PG」的绑定上跑某个 V9 迁移的分批回填 helper。"""
+    import importlib
+
+    from alembic import op
+
+    module = importlib.import_module(f"migrations.versions.{module_name}")
+    bind = _PgBackfillBind(engine)
+    monkeypatch.setattr(module, "_is_sqlite", lambda: False)
+    monkeypatch.setattr(op, "get_bind", lambda: bind)
+    monkeypatch.setattr(op, "get_context", lambda: _FakeAutocommitContext())
+    try:
+        module._exec_update_batched(table, set_clause, where_clause)
+    finally:
+        bind.dispose()
+    return bind
+
+
+def _seed_org_resolution_world(engine) -> None:
+    """users/projects + 三张待回填表：一行可解析 + 若干不可解析。"""
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE users (id VARCHAR(64) PRIMARY KEY, org_id INTEGER)"
+        ))
+        conn.execute(text(
+            "CREATE TABLE projects (id VARCHAR(64) PRIMARY KEY, org_id INTEGER)"
+        ))
+        conn.execute(text(
+            "CREATE TABLE geocompute_runs (run_id VARCHAR(64) PRIMARY KEY,"
+            " creator_id VARCHAR(64), org_id VARCHAR(255))"
+        ))
+        conn.execute(text(
+            "CREATE TABLE workflow_instances (instance_id VARCHAR(64) PRIMARY KEY,"
+            " project_id VARCHAR(64), org_id VARCHAR(255))"
+        ))
+        conn.execute(text(
+            "CREATE TABLE lakehouse_datasets (dataset_id VARCHAR(64) PRIMARY KEY,"
+            " owner_type VARCHAR(16), owner_id VARCHAR(64), org_id VARCHAR(255))"
+        ))
+        conn.execute(text("INSERT INTO users VALUES ('u1', 2), ('u9', NULL)"))
+        conn.execute(text("INSERT INTO projects VALUES ('p2', 2), ('p0', NULL)"))
+        # 可解析（r1/wi1/ld1）+ 三类不可解析：归属 id 为空 / 孤儿 / 归属人无 org
+        conn.execute(text(
+            "INSERT INTO geocompute_runs VALUES"
+            " ('r1','u1',NULL),('r2',NULL,NULL),('r3','ghost',NULL),('r4','u9',NULL)"
+        ))
+        conn.execute(text(
+            "INSERT INTO workflow_instances VALUES"
+            " ('wi1','p2',NULL),('wi2','p0',NULL),('wi3',NULL,NULL),('wi4','ghost',NULL)"
+        ))
+        conn.execute(text(
+            "INSERT INTO lakehouse_datasets VALUES"
+            " ('ld1','project','p2',NULL),('ld2','project','p0',NULL),"
+            " ('ld3','project','ghost',NULL)"
+        ))
+
+
+#: (迁移模块, 表, 主键列, SET 子句, 回填后应有的 org_id)
+_PG_BACKFILL_CASES = (
+    (
+        "0036_security_v9_geocompute_org",
+        "geocompute_runs",
+        "run_id",
+        "org_id = (SELECT CAST(u.org_id AS VARCHAR) FROM users u"
+        " WHERE u.id = geocompute_runs.creator_id AND u.org_id IS NOT NULL)",
+        {"r1": "2", "r2": None, "r3": None, "r4": None},
+    ),
+    (
+        "0037_security_v9_workflow_runtime_org",
+        "workflow_instances",
+        "instance_id",
+        "org_id = (SELECT CAST(p.org_id AS VARCHAR) FROM projects p"
+        " WHERE p.id = workflow_instances.project_id AND p.org_id IS NOT NULL)",
+        {"wi1": "2", "wi2": None, "wi3": None, "wi4": None},
+    ),
+    (
+        "0038_security_v9_lakehouse_org",
+        "lakehouse_datasets",
+        "dataset_id",
+        "org_id = (SELECT CAST(p.org_id AS VARCHAR) FROM projects p"
+        " WHERE p.id = lakehouse_datasets.owner_id AND p.org_id IS NOT NULL)",
+        {"ld1": "2", "ld2": None, "ld3": None},
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "module_name,table,pk,set_clause,expected",
+    _PG_BACKFILL_CASES,
+    ids=[case[0].split("_")[0] for case in _PG_BACKFILL_CASES],
+)
+def test_pg_backfill_terminates_when_owner_unresolvable(
+    tmp_path, monkeypatch, module_name, table, pk, set_clause, expected
+):
+    """归属不可解析时，分批回填必须收敛而不是死循环打到硬帽。
+
+    可解析行本轮写入；不可解析行保持 NULL 留给随后的兜底回填（default
+    组织）—— 循环条件必须是「本轮真实改行数」。
+    """
+    import sqlalchemy
+
+    engine = sqlalchemy.create_engine(
+        f"sqlite:///{tmp_path / f'{module_name[:4]}.db'}"
+    )
+    _seed_org_resolution_world(engine)
+    try:
+        _run_pg_backfill(
+            module_name, engine, table, set_clause, "org_id IS NULL", monkeypatch
+        )
+        with engine.connect() as conn:
+            rows = dict(conn.execute(
+                text(f"SELECT {pk}, org_id FROM {table}")
+            ).fetchall())
+        assert rows == expected
+    finally:
+        engine.dispose()
+
+
+# ── 7. 0041 refresh 家族表的时钟源单一化 ────────────────────────────────
+
+
+def test_0041_refresh_family_timestamps_have_no_server_default(
+    tmp_path, monkeypatch
+):
+    """created_at/rotated_at 曾用 CURRENT_TIMESTAMP 服务端缺省 —— PG 上它落到
+    TIMESTAMP WITHOUT TIME ZONE 是**会话本地墙钟**，而 expires_at 由应用侧 UTC
+    生成：同一行两个时钟源，expires_at 比较整体偏移一个时区差，直接削弱本表
+    承载的 reuse_detected 防盗用重放控制。仓库纪律（0022/0024/0026）：时钟列
+    不设服务端缺省，一律由应用侧 UTC 写入。
+    """
+    import importlib
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine, inspect
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'fam.db'}")
+    module = importlib.import_module(
+        "migrations.versions.0041_security_v9_refresh_families"
+    )
+    with engine.begin() as conn:
+        with Operations.context(MigrationContext.configure(conn)):
+            module.upgrade()
+    try:
+        defaults = {
+            c["name"]: c.get("default")
+            for c in inspect(engine).get_columns("refresh_token_families")
+        }
+        for column in ("created_at", "rotated_at", "expires_at"):
+            assert defaults.get(column) is None, (
+                f"{column} 不得有服务端缺省 —— 时钟源必须单一（应用侧 UTC）"
+            )
+    finally:
+        engine.dispose()

@@ -71,6 +71,29 @@ def test_r1_vh_ratio_db_rejected_and_contract_text():
     assert "log-ratio" in schema["description"]
 
 
+def test_vh_ratio_nodata_sentinel_excluded_from_negative_guard():
+    """nodata 像元必须排除在「负值 ⇒ dB 域」守卫之外（掩膜语义同
+    ratio_change）。哨兵标量（如 -9999）曾被 np.equal(nodata, True) 漏掉，
+    线性功率场里的 nodata 哨兵被误报成 dB 域输入；而标量 1 又让守卫整体失效。
+    """
+    vv = np.array([[4.0, 2.0, -9999.0]])
+    vh = np.array([[1.0, 2.0, 3.0]])
+    # 布尔掩膜：nodata 像元不入守卫、不入输出
+    res = vh_ratio(vv, vh, nodata=np.array([[False, False, True]]))
+    np.testing.assert_allclose(res["array"][0, :2], [4.0, 1.0], atol=1e-12)
+    assert np.isnan(res["array"][0, 2])
+    assert res["stats"]["valid_pixels"] == 2
+    # 哨兵标量不得触发 dB 误报（标量掩膜 → 全无效，与 ratio_change 同语义）
+    res = vh_ratio(vv, vh, nodata=-9999)
+    assert np.isnan(res["array"]).all()
+    # 守卫本身没被关掉：真有负值时仍然类型化拒绝
+    with pytest.raises(UnsupportedMethod, match="线性功率"):
+        vh_ratio(
+            np.array([[2.0, 4.0]]), np.array([[1.0, -0.5]]),
+            nodata=np.array([[False, False]]),
+        )
+
+
 # ── R-2：acquisition_comparability 接线（P0）─────────────────────────
 
 def _acquisitions(n: int, *, orbit: str = "ascending",

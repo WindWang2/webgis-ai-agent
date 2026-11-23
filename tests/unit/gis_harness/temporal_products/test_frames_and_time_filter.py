@@ -199,6 +199,39 @@ class TestTimeFilterCompiler:
         hi = normalize_boundary_value(frame["end"], "date_string", "quarter")
         assert hi == "2023-04"
 
+    def test_date_string_precision_follows_data_literal_not_granularity(self):
+        """显式 granularity 细于列精度（"YYYY-MM" 列传 day/week）时，边界
+        必须按数据字面精度渲染 —— 否则 lo 排到所有数据字面之后
+        （"2023-07-01" > "2023-07"），每帧 where/MapLibre 过滤命中 0 条。"""
+        # YYYY-MM 列 + day 粒度 → 月精度边界（与数据同构）
+        assert normalize_boundary_value(
+            "2023-07-01T00:00:00Z", "date_string", "day", "UTC",
+            "2023-07") == "2023-07"
+        assert normalize_boundary_value(
+            "2023-09-30T00:00:00Z", "date_string", "week", "UTC",
+            "2023-09") == "2023-09"
+        # YYYY 列 + day 粒度 → 年精度
+        assert normalize_boundary_value(
+            "2023-07-01T00:00:00Z", "date_string", "day", "UTC",
+            "2023") == "2023"
+        # YYYY-MM-DD 列 + week 粒度 → 日精度（字典序仍是时间序）
+        assert normalize_boundary_value(
+            "2023-07-05T00:00:00Z", "date_string", "week", "UTC",
+            "2023-07-05") == "2023-07-05"
+        # hint 缺席 → 退化为 granularity（既有行为/兼容直调）
+        assert normalize_boundary_value(
+            "2023-01-01T00:00:00Z", "date_string", "quarter") == "2023-01"
+        # where AST / MapLibre 两侧同源（地图与统计同窗）
+        frame = {"start": "2023-07-01T00:00:00Z", "end": "2023-08-01T00:00:00Z"}
+        ast = compile_where_ast(frame, "m", "date_string", "day", "UTC", "2023-07")
+        mlf = compile_maplibre_filter(frame, "m", "date_string", "day", "UTC",
+                                      "2023-07")
+        assert ast["terms"][0]["value"] == "2023-07"
+        assert ast["terms"][1]["value"] == "2023-08"
+        assert mlf[1][2] == "2023-07" and mlf[2][2] == "2023-08"
+        # 窗内数据字面命中（此前 day 精度边界会全数脱靶）
+        assert "2023-07" <= "2023-07" < "2023-08"
+
     def test_maplibre_filter_same_values_as_where(self):
         # 地图与统计同窗的结构性保证：两侧值完全同源。
         frame = {"start": "2023-01-01T00:00:00Z", "end": "2024-01-01T00:00:00Z"}

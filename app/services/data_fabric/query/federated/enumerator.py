@@ -604,9 +604,20 @@ def _enumerate_fixed_chain(
         if crs_meta:
             transforms.append(crs_meta)
         right_tree: LogicalNode = _scan_tree(right_src, ctx)
-        if crs_meta and crs_meta.get("placement") == "server" and right_tree is not None:
-            # server placement 必然落在右 scan（累积左子树无法回溯重扫）。
-            right_tree = _with_output_crs(right_tree, crs_meta["to_crs"])
+        if (
+            crs_meta
+            and crs_meta.get("placement") == "server"
+            and crs_meta.get("transform_side")
+        ):
+            # server placement 落在**决策侧** scan（transform_side）：右 scan，
+            # 或首跳的左 scan（server_capable[0] 仅当 len(sources_in)==1 为真
+            # —— 那时累积左子树本身就是 scan）。绝不一律落右：那会让
+            # transform_side=left 时左侧几何永不变换、右 scan 反被标为目标
+            # CRS，空间跳两侧坐标系静默错位。
+            if crs_meta["transform_side"] == "left":
+                tree = _with_output_crs(tree, crs_meta["to_crs"])
+            elif right_tree is not None:
+                right_tree = _with_output_crs(right_tree, crs_meta["to_crs"])
         right_cand = _Candidate(
             tree=right_tree,
             sources_in=(right_sid,),

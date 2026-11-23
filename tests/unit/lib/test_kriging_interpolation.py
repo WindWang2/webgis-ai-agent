@@ -496,6 +496,86 @@ def test_driver_antimeridian_split_bbox():
     assert len(out["records"]) > 0, "antimeridian dataset must produce cells"
 
 
+def test_driver_antimeridian_band_covers_both_halves():
+    """A ±180° band must be gridded over BOTH halves of the dateline.
+
+    The naive min/max span of a dateline band is ~360°, so the old
+    ``crosses_am = span > 180`` path split at the *naive* bounds: the +180 half
+    collapsed to a ~0.01° sliver (or nothing) and the -180 half was dropped
+    entirely, leaving the band ungridded. The wrapped (tightest) interval must
+    drive both split bboxes."""
+    import h3
+
+    rng = np.random.default_rng(17)
+    feats = []
+    for _ in range(80):
+        lon = rng.uniform(179.0, 180.0) if rng.random() < 0.5 else rng.uniform(-180.0, -179.0)
+        lat = rng.uniform(-16.0, -15.0)
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {"v": float(rng.uniform(0, 10))},
+        })
+    out = kriging_interpolation(
+        {"type": "FeatureCollection", "features": feats}, "v",
+        resolution=6, cross_validate=False,
+    )
+    cell_lons = [h3.cell_to_latlng(r["h3_index"])[1] for r in out["records"]]
+    east = sum(1 for lon in cell_lons if lon > 179.0)
+    west = sum(1 for lon in cell_lons if lon < -179.0)
+    assert east > 0 and west > 0, (
+        f"dateline band must grid both halves, got east={east} west={west}"
+    )
+    assert all(lon > 179.0 or lon < -179.0 for lon in cell_lons), (
+        "no cell may fall outside the dateline band (complement-grid regression)"
+    )
+
+
+def test_driver_wide_non_antimeridian_extent_grids_the_data():
+    """A broad extent that does NOT straddle ±180° (e.g. -100..100°, 200° wide)
+    must be gridded over the DATA area.
+
+    ``crosses_am`` used to key on the naive span alone (>180°), so such a
+    dataset was split into the complementary cells ([100,180]∪[-180,-100]):
+    zero cells over the samples, a pure-extrapolation surface, and a metadata
+    bbox describing the wrong region. It also understated the wrapped width,
+    silently disabling the H3 resource guard."""
+    import h3
+
+    rng = np.random.default_rng(21)
+    lons = rng.uniform(-100.0, 100.0, 90)
+    lats = rng.uniform(84.5, 86.0, 90)  # polar → metric CRS handles the width
+    feats = [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(a), float(b)]},
+            "properties": {"v": float(v)},
+        }
+        for a, b, v in zip(lons, lats, rng.uniform(0, 10, 90))
+    ]
+    out = kriging_interpolation(
+        {"type": "FeatureCollection", "features": feats}, "v",
+        resolution=4, cross_validate=False,
+    )
+    cell_lons = [h3.cell_to_latlng(r["h3_index"])[1] for r in out["records"]]
+    assert cell_lons, "wide non-dateline dataset must produce cells"
+    inside = sum(1 for lon in cell_lons if -100.5 < lon < 100.5)
+    assert inside == len(cell_lons), (
+        f"every cell must lie over the sample extent, got {inside}/{len(cell_lons)} "
+        f"(lon range {min(cell_lons):.1f}..{max(cell_lons):.1f})"
+    )
+    assert min(cell_lons) < -50.0 and max(cell_lons) > 50.0, (
+        "cells must actually span the data area, not hug one edge"
+    )
+    bbox = out["metadata"]["bbox"]
+    assert lons.min() - 0.05 < bbox[0] < lons.min() + 0.05, (
+        f"metadata bbox must describe the sample extent, got {bbox}"
+    )
+    assert lons.max() - 0.05 < bbox[2] < lons.max() + 0.05, (
+        f"metadata bbox must describe the sample extent, got {bbox}"
+    )
+
+
 def test_tool_rejects_unknown_fc_crs_member():
     """Review #6: an FC-level crs member naming an unsupported CRS is a
     structured rejection — never a silent lon/lat read of projected data."""

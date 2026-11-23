@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -136,6 +137,47 @@ class TestProbes:
             if c["stage"] == "runtime_probe" and c["status"] == "warn"
         ]
         assert warns
+
+    def test_hung_probe_is_cut_off_at_hard_cap(self, monkeypatch):
+        """P1：挂起的工具（无限阻塞）必须在 _PROBE_TIMEOUT_S 处熔断为探针
+        失败——`certify --staged` 不得永久阻塞（latency 判决只做事后判决，
+        不做事中限制；这里把上限压到 0.1s 验证熔断本身）。"""
+        import threading
+        from types import SimpleNamespace
+
+        from app.extensions_platform import capability_certification as cc
+        from app.extensions_platform.capability_certification import (
+            _run_probe_by_registered_name,
+        )
+        from app.tools.registry import ToolRegistry
+
+        release = threading.Event()
+        # 兜底释放：即使探针没被熔断（未修复路径）也不把测试进程挂死。
+        releaser = threading.Timer(3.0, release.set)
+        releaser.daemon = True
+        releaser.start()
+
+        def hung_tool(**kwargs):
+            release.wait()
+            return {"area": 6}
+
+        registry = ToolRegistry()
+        registry.register("certv4_hung_tool", "never returns", hung_tool)
+        host = SimpleNamespace(_tool_registry=registry)
+        probe = SimpleNamespace(args={}, replay=False, expect_key=None)
+
+        monkeypatch.setattr(cc, "_PROBE_TIMEOUT_S", 0.1)
+        t0 = time.monotonic()
+        checks = _run_probe_by_registered_name(
+            host, "certv4_hung_tool", probe, "runtime_probe", "tool:hung",
+        )
+        elapsed = time.monotonic() - t0
+        # 熔断（≈0.1s）而非等兜底释放（3s）——证明存在事中取消点。
+        assert elapsed < 2.0, f"probe was not cut off at the hard cap ({elapsed:.2f}s)"
+        assert any(
+            c["status"] == "fail" and "did not return within" in c["detail"]
+            for c in checks
+        ), checks
 
 
 class TestSkills:

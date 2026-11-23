@@ -193,3 +193,54 @@ describe('inline 层保持本地命中（A01 不回退）', () => {
     expect(pickMock).not.toHaveBeenCalled();
   });
 });
+
+describe('草稿预览同步（draft 代次进 effect 依赖）', () => {
+  it('draw_line 逐点点击后草稿（线 + 顶点）同步进 draft 源，Escape 清空', async () => {
+    const map = fakeMap();
+    const draftSource = { setData: vi.fn() };
+    // 稳定 source 引用：观察同步 effect 写入的 FeatureCollection。
+    map.getSource.mockReturnValue(draftSource as never);
+    const mapRef = { current: { getMap: () => map } } as unknown as React.RefObject<MapRef | null>;
+    act(() => {
+      useHudStore.setState({
+        layers: [INLINE_LAYER] as never,
+        editTarget: { layerId: 'ref:small-0002', refId: 'ref:small-0002' },
+        activeMapTool: 'draw_line',
+      } as never);
+    });
+    render(<FeatureLayerEditor mapRef={mapRef} />);
+    const { click } = clickHandlers(map);
+
+    // 修复前：bump() 只触发重渲染，同步 effect 依赖不含草稿代次 →
+    // setData 停留在挂载时的空 FeatureCollection，草稿预览永不渲染。
+    await act(async () => {
+      await click({ lngLat: { lng: 104.0, lat: 30.5 }, point: { x: 10400, y: -3050 } });
+    });
+    await waitFor(() => expect(draftSource.setData).toHaveBeenCalled());
+    const afterFirst = draftSource.setData.mock.calls.at(-1)?.[0] as { features: unknown[] };
+    expect(afterFirst.features).toHaveLength(1); // 首点只有顶点，无线
+
+    await act(async () => {
+      await click({ lngLat: { lng: 105.0, lat: 30.5 }, point: { x: 10500, y: -3050 } });
+    });
+    await waitFor(() => {
+      const last = draftSource.setData.mock.calls.at(-1)?.[0] as { features: unknown[] };
+      expect(last.features).toHaveLength(3); // 1 条 LineString + 2 个顶点
+    });
+    const withDraft = draftSource.setData.mock.calls.at(-1)?.[0] as {
+      features: Array<{ geometry: { type: string } }>;
+    };
+    expect(withDraft.features[0].geometry.type).toBe('LineString');
+
+    // Escape 取消草稿（V05 零写入）—— 已渲染的陈旧草稿必须被清掉。
+    // 派生在 body 上冒泡（真实按键 target 是聚焦元素，window 无 getAttribute）。
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await waitFor(() => {
+      const last = draftSource.setData.mock.calls.at(-1)?.[0] as { features: unknown[] };
+      expect(last.features).toHaveLength(0);
+    });
+    expect(submitMock).not.toHaveBeenCalled(); // 取消不落任何服务端写入
+  });
+});

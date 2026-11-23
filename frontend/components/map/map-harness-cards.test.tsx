@@ -10,6 +10,7 @@ import {
   pushOperationReceipt,
   setReceiptBusSession,
 } from '@/lib/map-operations/receipt-bus';
+import { clearPendingRemoved, markPendingRemoved } from '@/lib/mapspec/session-cursor';
 
 function fetchJson(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -228,6 +229,56 @@ describe('MapHarnessCards', () => {
       expect(line.textContent).toContain('等待用户确认');
       expect(line.textContent).not.toContain('自动确认');
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('并发水合乱序返回：陈旧响应不覆盖新态（required pending 不被吞成已确认）', async () => {
+    vi.useFakeTimers();
+    try {
+      // 受控 fetch：按发出顺序挂起，由测试决定响应次序（模拟慢响应后到）。
+      const inflight: Array<(r: Response) => void> = [];
+      fetchMock.mockImplementation(
+        () => new Promise<Response>((resolve) => { inflight.push(resolve); }),
+      );
+      render(<MapHarnessCards sessionId="s1" />);
+      // 挂载 5s 兜底水合 + 回执环回填（两个请求挂起，先不响应）。
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+      const displayCalls = () => fetchMock.mock.calls
+        .map((c) => String(c[0]))
+        .filter((u) => u.includes('/display-confirmation') && !u.includes('/ack'));
+      expect(displayCalls()).toHaveLength(1);
+      await act(async () => { inflight[1](fetchJson({ operations: [] })); });
+
+      // MapSpec live generation 变化 → 2s debounce 复查（第二次水合发出）。
+      markPendingRemoved('layer-a');
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(displayCalls()).toHaveLength(2);
+
+      // 新态先到：required + pending（等待用户确认）。
+      await act(async () => {
+        inflight[2](fetchJson({
+          session_id: 's1', mode: 'required', confirmed: false, pending: true,
+          required_render_seq: 9, latest_observation_seq: 9, verdict_present: true,
+        }));
+      });
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+      expect(screen.getByTestId('final-acceptance-line').textContent).toContain('等待用户确认');
+
+      // 旧响应后到（挂载兜底那次的陈旧快照 confirmed:true）—— 修复前它会
+      // setConfirmStatus(旧态)：待确认卡被吞、行改口"用户已确认"。
+      await act(async () => {
+        inflight[0](fetchJson({
+          session_id: 's1', mode: 'required', confirmed: true, pending: false,
+          required_render_seq: 5, latest_observation_seq: 5, verdict_present: true,
+        }));
+      });
+      expect(screen.getByTestId('display-confirmation-card')).toBeInTheDocument();
+      const line = screen.getByTestId('final-acceptance-line');
+      expect(line.textContent).toContain('等待用户确认');
+      expect(line.textContent).not.toContain('用户已确认');
+    } finally {
+      clearPendingRemoved();
       vi.useRealTimers();
     }
   });

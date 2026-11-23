@@ -185,6 +185,33 @@ class TestSelfHealMapping:
         for intent in intents:
             assert isinstance(intent, (SetSceneIntent, SetViewIntent, PatchLayerPresentationIntent))
 
+    def test_pitch_warning_is_not_repaired(self):
+        # 红线：只消费 blocking finding。60<pitch<=85 是 warning（披露信号，
+        # 合法相机）——不得产生 SetViewIntent 静默把相机钳到 55。
+        from app.lib.cartography.scene_selfheal import plan_scene_repairs
+
+        spec = _healthy_3d_spec()
+        spec["scene"]["camera"]["pitch"] = 70
+        report = evaluate_scene_quality(spec)
+        pitch_findings = [f for f in report["findings"]
+                          if f["code"] == "SCENE_PITCH_EXTREME"]
+        assert pitch_findings, "expected a pitch finding at 70"
+        assert all(f["severity"] == "warning" for f in pitch_findings)
+        intents = plan_scene_repairs(spec, report["findings"])
+        assert not any(isinstance(i, SetViewIntent) for i in intents)
+
+    def test_pitch_blocking_is_repaired(self):
+        # 对照组：pitch>85 是 blocking，照旧映射 SetViewIntent(pitch=55)。
+        from app.lib.cartography.scene_selfheal import plan_scene_repairs
+
+        spec = _healthy_3d_spec()
+        spec["scene"]["camera"]["pitch"] = 89
+        report = evaluate_scene_quality(spec)
+        intents = plan_scene_repairs(spec, report["findings"])
+        view = [i for i in intents if isinstance(i, SetViewIntent)]
+        assert len(view) == 1
+        assert view[0].pitch == 55.0
+
     def test_exaggeration_blocks_map_to_set_scene(self):
         from app.lib.cartography.scene_selfheal import plan_scene_repairs
 

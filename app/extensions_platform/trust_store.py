@@ -160,8 +160,11 @@ class TrustStore:
         key_ids = revoked.get("key_ids") or []
         fingerprints = revoked.get("fingerprints") or []
         packages_raw = revoked.get("packages") or []
-        if not all(isinstance(k, str) and k for k in key_ids):
-            raise _store_error("revoked.key_ids must be non-empty strings")
+        # key_ids 必须先校验为 list：字符串/dict 会被按字符/键迭代从而通过
+        # all() 检查，frozenset 退化为单字符集合——被吊销签名钥静默不吊销
+        # （fail open）；标量等不可迭代值则逃逸为未捕获 TypeError。
+        if not isinstance(key_ids, list) or not all(isinstance(k, str) and k for k in key_ids):
+            raise _store_error("revoked.key_ids must be a list of non-empty strings")
         if not all(isinstance(f, str) and _is_sha256_hex(f) for f in fingerprints):
             raise _store_error("revoked.fingerprints must be sha256 hex strings")
         packages: list[tuple[str, Optional[str]]] = []

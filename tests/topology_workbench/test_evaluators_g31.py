@@ -39,8 +39,10 @@ from tests.topology_workbench.fixtures_g31 import (
     FACILITY_AT_ENDPOINT,
     FACILITY_AT_START,
     FACILITY_FAR,
+    LAT0,
     LINE_FAR_ENDPOINT,
     LINE_NEAR_FACILITY,
+    LON0,
     MULTIPOLYGON_WITH_HOLE,
     NESTED_SMALL,
     PARCEL_E_RECT,
@@ -54,6 +56,7 @@ from tests.topology_workbench.fixtures_g31 import (
     lake_source,
     parcels_cover,
     parcels_with_hole,
+    rect,
 )
 
 MEASURE = MeasureSpace("EPSG:4326", "EPSG:32650")
@@ -201,6 +204,61 @@ def test_t06_building_partially_outside():
     assert f.metric["value"] == pytest.approx(9_000, rel=0.02)
     roles = {loc["role"] for loc in f.locators}
     assert roles == {"checked", "target"}
+
+
+def test_t06_within_policy_flags_boundary_touch():
+    """within 政策双语义：covered 贴边合法；within 贴边即违规（接触长度度量）。
+
+    贴边 witness 是 1-D 接触段 —— 若仍按面族算面积得 0.0 ≤ 阈值被 continue，
+    该违规永不生成 finding，within 政策静默失效。
+    """
+    # 建筑西边与东地块西边重合（贴边），其余完全在地块内
+    bld = rect(LON0 + dlon(500), LAT0 + dlat(700), 150, 100)
+    features = fc(feat("bld-touch", bld))["features"]
+    target = fc(feat("parcel-e", PARCEL_E_RECT))["features"]
+
+    # covered（默认）：贴边宽容 → 无违规
+    out_covered = run_rule(IN_RULE,
+                           checked=snap("checked", features, "any"),
+                           target=snap("target", target, "polygon"))
+    assert out_covered.outcome == "no_violations"
+    assert out_covered.findings == []
+
+    # within：贴边违规 → finding，度量 = 接触长度（共享边 ≈100m，±1%）
+    rule = {"rule_id": "in", "rule_type": "objects_covered_by_target", "severity": "error",
+            "params": {"boundary_policy": "within", "outside_area_threshold_m2": 1.0}}
+    out = run_rule(rule,
+                   checked=snap("checked", features, "any"),
+                   target=snap("target", target, "polygon"))
+    assert out.outcome == "violations_found"
+    (f,) = out.findings
+    assert f.metric["value"] == pytest.approx(100, rel=0.01)
+    assert f.metric["unit"] == "m"
+    assert f.geometry_type == "LineString"
+    roles = {loc["role"] for loc in f.locators}
+    assert roles == {"checked", "target"}
+
+
+def test_t06_target_locator_follows_strtree_index():
+    """target 含剔除要素时，locator 必须指向 STRtree 命中的那个有效要素。
+
+    STRtree 建在已过滤的 tgt_geoms 上；用其下标回索引未过滤的
+    target.features 会指向错误要素（或被剔除要素 → locator 丢失）。
+    """
+    target_features = [
+        feat("null-geom", {"type": "Polygon", "coordinates": None}),  # 剔除（坏坐标）
+        feat("parcel-w", PARCEL_W),
+        feat("parcel-e", PARCEL_E_RECT),
+    ]
+    out = run_rule(IN_RULE,
+                   checked=snap("checked", fc(feat("bld-1", BUILDING_CROSS))["features"], "any"),
+                   target=snap("target", target_features, "polygon"))
+    assert out.outcome == "violations_found"
+    (f,) = out.findings
+    tgt_locs = [loc for loc in f.locators if loc["role"] == "target"]
+    # 越界分量只触及东地块 —— locator 必须是 parcel-e（快照下标 2），不是西地块
+    assert [loc["identity"]["value"] for loc in tgt_locs] == ["parcel-e"]
+    assert tgt_locs[0]["feature_index"] == 2
 
 
 # ─── T08 区域支持 ─────────────────────────────────────────────────────

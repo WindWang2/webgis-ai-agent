@@ -60,6 +60,31 @@ def test_breach_max_depth_fallback_to_fill():
     assert bm["fallback_filled_cells"] >= 0  # 超深洼地回退填洼（诚实计数）
 
 
+def test_breach_outlet_extension_guards_receiver_sentinel():
+    """出口延伸段必须守卫 receiver 哨兵 −1（R1-C1 同族：负索引静默出错）。
+
+    洼地溢流链终到「无更低在网邻域」的出口像元（边界/全局最小，常见）时
+    ``flat[outlet] == -1``：旧实现让 −1 通过 ``nxt in seen`` 检查，负索引读到
+    **格尾像元**并把它的高程刻低（``bflat[-1]``），还沿错误的接收链把整行
+    下游一起刻低。出口本身就是最低地形时延伸段应立即停止。
+    """
+    z = np.array([
+        [30.0, 30.0, 30.0, 30.0, 30.0],
+        [30.0, 20.0, 21.0, 22.0, 30.0],
+        [30.0, 21.0, 22.0, 23.0, 30.0],
+        [30.0, 22.0, 23.0, 24.0, 30.0],
+        [21.0, 22.0, 23.0, 24.0, 30.0],  # r4c0 = 全局最小（汇，receiver −1）
+    ])
+    breached, bm = breach_depressions(z, CELL)
+    assert bm["n_depressions"] >= 1
+    # 出口即最低地形：出口下游一律不许被延伸段改动
+    np.testing.assert_array_equal(breached[4, 1:], z[4, 1:])
+    # 负索引 −1 的落点（格尾像元）高程不变
+    assert breached[-1, -1] == z[-1, -1]
+    # 洼地本意未被削弱：pit→出口仍切出下降通道
+    assert float(z[4, 0] - breached[4, 0]) > 0.0
+
+
 def test_hand_zero_on_streams_and_finite_offstream():
     z = _basin()
     hand_arr, hm = hand(z, CELL, stream_threshold=200)

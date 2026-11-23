@@ -159,6 +159,37 @@ class TestMeasureOps:
         assert applied
         assert all(m.statistic != "density" for m in doc.intent.measures)
 
+    def test_add_measure_long_phrase_not_rejected_by_container_cap(self):
+        """2 段路径（measures.phrase / datasets）曾解析到**容器**字段，
+        把容器计数上限（MAX_MEASURES=8 / MAX_DATASETS=16）当成单项长度上限
+        —— measure 短语 >8 字、数据集名 >16 字即被 patch_value_invalid
+        拒绝（schema 允许 128）。"""
+        doc = _doc()
+        long_phrase = "成都市每万名常住人口普通小学学位供给数"
+        assert len(long_phrase) > 8
+        doc, applied = apply_patch(doc, _patch(
+            op="add_measure", value={"statistic": "density",
+                                     "phrase": long_phrase},
+            op_id="m-long"))
+        assert applied
+        added = next(m for m in doc.intent.measures if m.statistic == "density")
+        assert added.phrase == long_phrase
+        # 真越界（>MeasureSpec.phrase 的 128）仍拒绝
+        with pytest.raises(PatchValueInvalid):
+            apply_patch(doc, _patch(
+                op="add_measure", value={"statistic": "density",
+                                         "phrase": "x" * 200},
+                op_id="m-too-long"))
+
+    def test_set_datasets_long_name_not_rejected_by_container_cap(self):
+        doc = _doc()
+        name = "chengdu_primary_schools_full_precision_dataset"
+        assert len(name) > 16
+        doc, applied = apply_patch(doc, _patch(
+            path="datasets", value=[name], op_id="d1"))
+        assert applied
+        assert name in doc.intent.datasets
+
     def test_remove_user_measure_requires_user(self):
         doc = _doc()
         doc, _ = apply_patch(doc, _patch(

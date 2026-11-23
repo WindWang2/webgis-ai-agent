@@ -146,10 +146,25 @@ def _v_str(path: str, value: Any) -> str:
         if field is None:
             break
         if index < len(parts) - 1:
-            model = field.annotation
-            if not hasattr(model, "model_fields"):
-                break
+            annotation = field.annotation
+            if hasattr(annotation, "model_fields"):
+                model = annotation
+                continue
+            # 容器字段（List[MeasureSpec] / Tuple[str, ...]）：其
+            # max_length 是**条目计数**上限（MAX_MEASURES/MAX_DATASETS），
+            # 不是单项长度上限 —— 续走到条目模型（如 measures.phrase →
+            # MeasureSpec.phrase 的 128），标量条目则无单项长度约束
+            # （落 MAX_TEXT）。此前在此 break 会把 8/16 的计数上限当成
+            # 单项长度上限，合法短语/数据集名被 patch_value_invalid 拒绝。
+            args = get_args(annotation)
+            if args and hasattr(args[0], "model_fields"):
+                model = args[0]
+                continue
+            break
     limits = [getattr(meta, "max_length", MAX_TEXT) for meta in field.metadata] if field else []
+    if field is not None and get_args(field.annotation)[:1] == (str,):
+        # 末段即标量容器（datasets）：容器 max_length 是计数，不当单项上限
+        limits = []
     limit = min([MAX_TEXT, *limits])
     if len(value) > limit:
         raise PatchValueInvalid(path, f"expect str <= {limit} characters")

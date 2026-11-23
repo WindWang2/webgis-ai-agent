@@ -5,6 +5,7 @@ digest 确定性 / 视图关系图 dangling+cycle 拒绝。
 """
 
 from app.services.gis_harness.product_spec import (
+    MAX_OVERRIDES,
     MAX_VIEWS,
     PRODUCT_SPEC_VERSION,
     RELATION_KINDS,
@@ -242,3 +243,56 @@ def test_edit_unknown_op_and_payload_validation():
         {"text": "长" * 999})
     assert ns3 is not None and not errs3
     assert len(ns3.view("v-map").title) <= 160
+
+
+# ── M6：编辑账上限 = 软账(MAX_OVERRIDES) + 结构性 remove_view 账(≤MAX_VIEWS) ──
+
+
+def test_edit_ledger_bound_matches_schema_max_length():
+    """overrides 的 model max_length 必须等于编辑账上限
+    MAX_OVERRIDES+MAX_VIEWS：此前 max_length=MAX_OVERRIDES(16) 与账上限
+    (28) 冲突 —— >16 次编辑后落盘 28 条，spec_from_storage 的
+    model_validate 失败返 None，整个 spec 被静默丢弃。"""
+    from app.services.gis_harness.product_spec import (
+        MAX_OVERRIDES,
+        MAX_VIEWS,
+        ProductOverride,
+    )
+
+    field = MapProductSpec.model_fields["overrides"]
+    (meta,) = field.metadata
+    assert meta.max_length == MAX_OVERRIDES + MAX_VIEWS
+    # 结构性账 + 软账满仓（28 条）仍可往返
+    s = _spec(views=[_view(f"v{i}") for i in range(MAX_VIEWS)])
+    s.overrides = [
+        ProductOverride(op="remove_view", target=f"v{i}", reason="删")
+        for i in range(MAX_VIEWS)
+    ] + [
+        ProductOverride(op="set_caption", target=f"v{i % MAX_VIEWS}",
+                        payload={"text": "t"}, reason="改")
+        for i in range(MAX_OVERRIDES)
+    ]
+    assert len(s.overrides) == MAX_OVERRIDES + MAX_VIEWS
+    assert spec_from_storage(storage_payload(s)) is not None
+    assert validate_product_spec(s) == []
+    # 超账上限仍被拒（软上限语义不变）
+    s.overrides = list(s.overrides) + [
+        ProductOverride(op="set_caption", target="v0", payload={"text": "t"})]
+    assert spec_from_storage(storage_payload(s)) is None
+    assert validate_product_spec(s)
+
+
+def test_many_edits_survive_storage_roundtrip():
+    """结构性 remove_view 账（≤MAX_VIEWS，永不裁）+ 软账（≤MAX_OVERRIDES）
+    合计 >16 条时 spec 仍可读回（回归：落盘 28 条曾整体丢弃）。"""
+    s = _spec(views=[_view(f"v{i}") for i in range(MAX_VIEWS)])
+    for i in range(2):  # 结构性账（删除证据，永不裁掉）
+        s, errs, _ = apply_product_edit(
+            s, "remove_view", f"v{i}", reason=f"删视图 v{i}")
+        assert s is not None and not errs
+    for i in range(MAX_OVERRIDES):  # 软账（保留最近 16 条）
+        s, errs, _ = apply_product_edit(
+            s, "set_caption", "v2", {"text": f"第{i}版标题"})
+        assert s is not None and not errs
+    assert len(s.overrides) == 2 + MAX_OVERRIDES > MAX_OVERRIDES
+    assert spec_from_storage(storage_payload(s)) is not None

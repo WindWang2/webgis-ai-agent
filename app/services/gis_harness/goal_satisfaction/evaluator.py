@@ -98,6 +98,19 @@ R_FRAME_SNAPSHOT_ONLY = "frame_product_snapshot_only"
 _DELIVERY_DETAIL_PREFIX = "delivery:"
 _MAP_EXPORT_DETAIL_PREFIX = "map_export:"
 
+
+def _detail_fmt(detail: Any) -> str:
+    """detail 里的 ``fmt=<token>`` **终结**值（小写；无 token → ""）。
+
+    与 :func:`_delivery_caps_verdict` 的行选择同口径（token 精确匹配）：
+    子串匹配 ``fmt=geojson in detail`` 会把 export:geojson 需求错配到
+    ``fmt=geojsonseq`` 回执 —— 用错格式回执把导出需求判 FULFILLED。
+    """
+    for token in str(detail or "").split():
+        if token.startswith("fmt="):
+            return token[4:].strip().lower()
+    return ""
+
 #: 语义 cap 码 → 失败规则 id（semantics.py 词表对齐）。
 _CAP_RULE_MAP = {
     "population_partial": R_RECEIPT_PARTIAL,
@@ -601,11 +614,14 @@ def _eval_export_requirement(
     receipt = next((e for e in evidence if e.id == receipt_id), None)
     if receipt is None and requirement.delivery_expected and receipts:
         # 交付需求也接受 delivery:<fmt> 命名回执（适配器产出两种 id 形态）。
+        # fmt 取 detail 内 token 的**精确**匹配（同 _delivery_caps_verdict
+        # 行选择口径）—— 子串匹配会让 export:geojson 命中 fmt=geojsonseq。
+        want_fmt = str(requirement.export_format or "").strip().lower()
         receipt = next(
             (e for e in evidence
              if e.id.startswith("export_receipt:delivery:")
              and e.detail.startswith(_DELIVERY_DETAIL_PREFIX)
-             and f"fmt={requirement.export_format}" in e.detail), None)
+             and _detail_fmt(e.detail) == want_fmt), None)
         if receipt is not None:
             receipt_id = receipt.id
     out.evidence_ids = [receipt_id]

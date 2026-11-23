@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any, Dict
 
 import pytest
 
@@ -156,3 +157,98 @@ def test_build_deterministic_and_bounded() -> None:
     b = build_typed_dag(**kw).to_bounded_dict()
     assert a == b
     assert len(json.dumps(a, ensure_ascii=False)) < 16_000
+
+
+def test_multi_input_ports_all_get_data_flow_suppliers() -> None:
+    """多输入算法节点：cap 依赖生成数据流边，每个声明端口都有供给。
+
+    回归（P1）：历史上角色边只接 ``inputs[0].name``、cap→cap 依赖仅作
+    ``depends_on`` 元数据（不生成数据流边）→ 第二个声明端口在运行时拿不到
+    descriptor（driver ``_gather_inputs`` 只认边视图）→ 绑定门判
+    MISSING_INPUT → 节点 BLOCKED、实例 FAILED。
+    """
+    steps = [
+        SimpleNamespace(capability="poi_query", status="pending",
+                        resolved_algorithm="", depends_on=[], optional=False),
+        SimpleNamespace(capability="service_area", status="pending",
+                        resolved_algorithm="",
+                        depends_on=["poi_query", "point_profile"],
+                        optional=False),
+        SimpleNamespace(capability="point_profile", status="pending",
+                        resolved_algorithm="", depends_on=["poi_query"],
+                        optional=False),
+    ]
+    roles = [SimpleNamespace(role="network", status="bound")]
+    method = _method(method_id="network.service_area",
+                     output_artifacts=("service_area",),
+                     requires_roles=("network",),
+                     capabilities=("service_area",))
+    g = build_typed_dag(steps, data_roles=roles, selected_method=method)
+    assert g.validation_violations == []
+    edge_pairs = {(e.from_node, e.to_node, e.to_port) for e in g.edges}
+    # cap 依赖供给落在类型精确的声明端口（poi_query 出 poi_feature_set →
+    # input1；point_profile 出 point_feature_set → input2）
+    assert ("cap:poi_query", "cap:service_area", "input1") in edge_pairs
+    assert ("cap:point_profile", "cap:service_area", "input2") in edge_pairs
+    assert ("cap:poi_query", "cap:point_profile", "input1") in edge_pairs
+    # 无端口悬空：每个声明输入端口都是某条数据流边的 to_port
+    for n in g.nodes:
+        if n.kind != "analysis":
+            continue
+        fed = {e.to_port for e in g.edges if e.to_node == n.node_id}
+        assert {p.name for p in n.inputs} <= fed, n.node_id
+    # 确定性不回归
+    again = build_typed_dag(steps, data_roles=roles, selected_method=method)
+    assert again.to_bounded_dict() == g.to_bounded_dict()
+
+
+def test_compiled_multi_input_nodes_pass_binding_gate() -> None:
+    """真实编译产物（accessibility_analysis）过 driver 边视图 + 绑定门。
+
+    端到端回归（P1）：按 ``driver._gather_inputs`` 的同一种收集逻辑
+    （``machine.upstream_ports`` 边视图）为每个声明端口取 descriptor，
+    ``verify_node_bindings`` 必须全过 —— 修复前 ``cap:service_area.input2``
+    恒缺 descriptor（MISSING_INPUT → BLOCKED）。
+    """
+    from app.services.gis_harness.workflow_v4.compiler_v4 import (
+        compile_workflow_v4,
+    )
+    from app.services.workflow_runtime import machine as M
+    from app.services.workflow_runtime.binding import verify_node_bindings
+
+    c = compile_workflow_v4("分析公园的服务区可达性",
+                            recipe_id="accessibility_analysis")
+    dag = c.typed_dag
+    assert dag.get("nodes") and dag["validation_violations"] == []
+    # 上游节点声明产出 → 运行态 descriptor 形态（artifact_type + 几何族 +
+    # 非空计数；CRS/单位缺省 = unknown 诚实放行）
+    desc_by_node: Dict[str, Any] = {}
+    for n in dag["nodes"]:
+        outs = n.get("outputs") or []
+        if outs:
+            desc_by_node[n["node_id"]] = {
+                "artifact_type": str(outs[0].get("artifact_type") or ""),
+                "feature_count": 3, "geometry_types": ["Point"],
+            }
+    upstream = M.upstream_ports(dag)
+    for n in dag["nodes"]:
+        if n.get("kind") != "analysis":
+            continue
+        port_names = [str(p["name"]) for p in n.get("inputs") or []]
+        port_descs: Dict[str, Any] = {}
+        for idx, (up, to_port) in enumerate(
+                upstream.get(n["node_id"], [])[:4]):
+            port = to_port if to_port in port_names else (
+                port_names[idx] if idx < len(port_names)
+                else f"input{idx + 1}")
+            port_descs[port] = desc_by_node.get(up)
+        # 回归点：每个声明端口都拿到 descriptor（input2 曾恒缺）
+        assert set(port_names) <= set(port_descs), n["node_id"]
+        ns = SimpleNamespace(
+            node_id=n["node_id"],
+            inputs=[SimpleNamespace(**p) for p in n.get("inputs") or []],
+            outputs=[])
+        verdict = verify_node_bindings(ns, port_descs)
+        assert verdict.ok, (
+            n["node_id"], sorted(port_descs),
+            [f"{v.port}:{v.code}" for v in verdict.violations])

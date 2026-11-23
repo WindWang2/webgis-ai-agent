@@ -364,6 +364,78 @@ def test_arcgis_exceeded_transfer_limit_honest(arcgis):
     assert int(call["params"]["resultRecordCount"]) == 2000, "页大小必须钳制到服务上限"
 
 
+def test_arcgis_has_more_survives_local_remainder_on_full_page():
+    """M-2 × V5 拆分回归：满页远端行被本地余项滤到 <limit 时，truncated/
+    has_more 仍按**远端页大小**判定。
+
+    页窗口以远端行数为准：若用本地过滤后的 returned 计算，拆分过滤下一旦
+    满页远端行被滤剩不足 limit，truncated/has_more 双双谎报 False ——
+    联邦执行器据此停止翻页，后续匹配行静默丢失。
+    """
+    profile = ConnectionProfile(provider_type="arcgis", endpoint="")
+    profile.url = "https://example.com/arcgis/rest/services/Hosted/FS/FeatureServer"
+
+    class _SplitArcGIS(ArcGISAdapter):
+        def capabilities_v2(self, descriptor=None):
+            caps = super().capabilities_v2(descriptor)
+            return caps.model_copy(update={"filter_ops_local": ["like"]})
+
+    adapter = _SplitArcGIS(profile)
+    s = FakeSession()
+    layer = dict(ARCGIS_LAYER)
+    layer["fields"] = [
+        {"name": "pid", "type": "esriFieldTypeInteger"},
+        {"name": "name", "type": "esriFieldTypeString"},
+    ]
+    layer["supportsPagination"] = True
+    layer["maxRecordCount"] = 2000
+
+    def route(url, params=None, timeout=None, **kwargs):
+        s.calls.append({"url": url, "params": dict(params or {})})
+        if url.rstrip("/").endswith("FeatureServer"):
+            return FakeResponse(json_data=ARCGIS_SERVICE)
+        if url.rstrip("/").endswith("/0"):
+            return FakeResponse(json_data=layer)
+        if url.rstrip("/").endswith("/query"):
+            return FakeResponse(json_data={
+                "features": [
+                    {"properties": {"pid": 1, "name": "alpha"}},
+                    {"properties": {"pid": 1, "name": "beta"}},
+                ],
+                "exceededTransferLimit": False,
+            })
+        return FakeResponse(json_data={})
+
+    s.get = route
+    adapter.session = s
+    from app.services.data_fabric.fingerprint import dataset_fingerprint_service
+    from app.services.data_fabric.query.statistics import (
+        DatasetStatistics,
+        invalidate_statistics,
+        put_statistics,
+    )
+
+    fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(adapter.describe("0"))
+    put_statistics(DatasetStatistics(dataset_fingerprint=fp, row_count=2, source_type="arcgis"))
+    try:
+        res = adapter.query("0", QuerySpec(limit=2, filter_expr={
+            "op": "and",
+            "args": [
+                {"op": "eq", "field": "pid", "value": 1},
+                {"op": "like", "field": "name", "pattern": "alpha"},
+            ],
+        }))
+    finally:
+        invalidate_statistics(fp)
+    call = [c for c in s.calls if c["url"].rstrip("/").endswith("/query")][-1]
+    assert call["params"]["where"] == "pid = 1", "远端只编译可推半"
+    assert [f["properties"]["name"] for f in res.features] == ["alpha"]
+    assert res.truncated is True, (
+        "满页（远端 2 行 = limit）被本地余项滤剩 1 行不得谎报完整"
+    )
+    assert res.has_more is True
+
+
 def test_arcgis_count_only_statistics(arcgis):
     arcgis.session.query_response = {"count": 12345}
     spec = QuerySpec(limit=1, aggregate=[{"func": "count"}])

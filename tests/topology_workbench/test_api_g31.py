@@ -206,6 +206,44 @@ def test_journey_g31_full(client: TestClient):
     assert counts.get("accepted_exception") == 1  # 洞的例外跨运行延续（锚点匹配）
 
 
+def test_recheck_blocked_rule_is_not_resolved(client: TestClient):
+    """复验：新运行该规则被阻断 → 不判 resolved（"无法判定"≠"证据消失"）。
+
+    blocked 规则的 computation 仍是 full —— resolved 判定只查
+    computation=full 会把规则阻断（target 为空等）误判成旧问题已解决。
+    """
+    target_ref = _store("rc-tgt", fc(feat("parcel-e", PARCEL_E_RECT)))
+    bld_ref = _store("rc-bld", fc(feat("bld-1", BUILDING_CROSS)))
+    ruleset_id = _create_ruleset(client, "recheck-blocked", [
+        {"rule_id": "in", "rule_type": "objects_covered_by_target", "severity": "error",
+         "params": {"boundary_policy": "covered", "outside_area_threshold_m2": 1.0}}])
+    res = _submit(client, ruleset_id, {
+        "checked": {"kind": "session_ref", "ref": bld_ref, "session_id": "twb-sess"},
+        "target": {"kind": "session_ref", "ref": target_ref, "session_id": "twb-sess"},
+    })
+    run = _wait_completed(client, res["run_id"])
+    rules = {rr["rule_id"]: rr for rr in run["rule_results"]}
+    assert rules["in"]["outcome"] == "violations_found"
+
+    # target 源换成"无有效几何"的载荷 → 新运行该规则 blocked（target_empty）
+    payload = asyncio.get_event_loop().run_until_complete(
+        session_data_manager.get("twb-sess", target_ref))
+    payload["features"] = [{"type": "Feature", "properties": {"id": "null-geom"},
+                            "geometry": None}]
+    asyncio.get_event_loop().run_until_complete(
+        session_data_manager.overwrite("twb-sess", target_ref, payload))
+
+    r = client.post(f"{PREFIX}/runs/{res['run_id']}/recheck", headers=_auth(), json={})
+    rj = r.json()
+    assert rj["status"] == "completed"
+    assert rj["resolved_count"] == 0
+    assert rj["persisted_count"] >= 1
+    counts = client.get(f"{PREFIX}/runs/{res['run_id']}/findings",
+                        headers=_auth()).json()["status_counts"]
+    assert counts.get("resolved", 0) == 0  # 阻断不是 resolved 的证据
+    assert counts.get("open", 0) >= 1
+
+
 # ═══ T12/T13/T14：scope 语义 ═══════════════════════════════════════
 
 

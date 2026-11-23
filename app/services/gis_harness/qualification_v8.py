@@ -310,6 +310,16 @@ def qualify_node(
                     f"permission={req_perm} not granted",
                     f"requires {req_perm}",
                     "elevate authorization before dispatch"))
+            elif granted is None:
+                # 授予面整体缺席（两张 map 均空）→ 权限状态**未观察**：
+                # unknown 诚实披露。此前该分支缺席 → 工具静默判 ELIGIBLE
+                # （权限未授予也放行 —— fail-open，P1 安全面）。
+                unknown.append(_reason(
+                    "required_permission",
+                    "permission grant state unobserved",
+                    f"requires {req_perm}",
+                    "supply credentials_present/dependency_available "
+                    "to qualify this tool"))
 
     # ── 算法段（algorithm registry 声明的 preconditions）──
     if node.kind == KIND_ALGORITHM:

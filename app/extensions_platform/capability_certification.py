@@ -44,6 +44,7 @@ import hmac
 import inspect
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -71,6 +72,11 @@ _RESULT_SIZE_BUDGET_BYTES = {
     "bounded": 1024 * 1024,
     "ref_offload": 1024 * 1024,
 }
+# 探针单次调用硬上限（秒）：挂起的工具（无限 sleep / 死锁网络调用）不得把
+# `certify --staged` 永久阻塞。取值 = 最宽松声明类别（slow）预算 × 容忍倍数，
+# 即任何本会通过 latency 判决的探针都不会被本上限误杀；超限者按 latency
+# 判决本来也是 fail——只是从「跑完再判」变成「事中熔断」，结论不变、CLI 有界。
+_PROBE_TIMEOUT_S = max(_LATENCY_CLASS_BUDGET_S.values()) * _LATENCY_TOLERANCE_FACTOR
 
 
 # ── 检查项构造（与 certification.py 的 {check,status,detail} 同形）──────
@@ -235,23 +241,52 @@ def _bounded(detail: str, limit: int = 400) -> str:
     return detail if len(detail) <= limit else detail[:limit] + "…(truncated)"
 
 
+def _call_with_probe_timeout(call) -> Any:
+    """在 daemon 线程中执行一次探针调用，等待 _PROBE_TIMEOUT_S 后熔断。
+
+    Python 无强杀线程原语：超时的探针线程按 daemon 留场到进程退出——
+    「认证不等挂起的工具」远优于「certify CLI 永久阻塞」。超时与工具自身
+    异常都交由调用方的 except 归一为探针失败证据（认证收集而非中断）。
+    """
+    box: dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            box["value"] = call()
+        except BaseException as exc:  # noqa: BLE001 - 回主线程原样重抛
+            box["error"] = exc
+
+    worker = threading.Thread(target=_run, name="extension-probe", daemon=True)
+    worker.start()
+    worker.join(_PROBE_TIMEOUT_S)
+    if worker.is_alive():
+        raise TimeoutError(
+            f"probe did not return within {_PROBE_TIMEOUT_S:g}s (hard cap); "
+            "the tool appears hung"
+        )
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
 def _probe_callable(func, args: dict[str, Any]) -> tuple[Optional[Any], str]:
     """执行一次探针调用；async 工具在无运行循环时驱动事件循环。
 
     运行循环已存在（进程内服务侧调用）时无法同步等待协程——按探针失败
-    如实上报（认证不能为产证据而伪造执行）。
+    如实上报（认证不能为产证据而伪造执行）。每次调用受
+    :data:`_PROBE_TIMEOUT_S` 硬上限约束：挂起的工具熔断为探针失败。
     """
     try:
         if inspect.iscoroutinefunction(func):
             try:
                 asyncio.get_running_loop()
             except RuntimeError:
-                return run_sync(func(**args)), ""
+                return _call_with_probe_timeout(lambda: run_sync(func(**args))), ""
             return None, (
                 "async tool cannot be probed synchronously inside a running "
                 "event loop (run certification from the CLI instead)"
             )
-        return func(**args), ""
+        return _call_with_probe_timeout(lambda: func(**args)), ""
     except Exception as exc:  # noqa: BLE001 - 探针收集而非中断
         return None, _bounded(f"{type(exc).__name__}: {exc}")
 
@@ -775,10 +810,25 @@ def save_certification_report(
     # gate 读到。
     target = pack_dir / CERTIFICATION_FILENAME
     tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(body, encoding="utf-8")
     import os
 
-    os.replace(tmp, target)
+    try:
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        # 只读目录 / 磁盘满等 I/O 失败归一为 typed 诊断：
+        # run_pack_certification 的 save 分支与 CLI main() 只捕
+        # (ExtensionPlatformError, ValueError)——裸 OSError 会以 traceback
+        # 崩溃而非干净诊断。顺带清掉半份 tmp（原子写的中间态绝不能被
+        # gate 读到）。
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise ExtensionPlatformError(ExtensionDiagnostic.error(
+            DiagnosticCode.CERTIFICATION_INVALID,
+            f"cannot write certification report to {str(target)!r}: {exc}",
+        )) from exc
     return doc
 
 

@@ -293,8 +293,13 @@ class DataImportService:
             task = self._commit_tasks.get(batch_id)
             if task is not None and not task.done():
                 raise DataImportError("COMMIT_IN_PROGRESS", "提交进行中，请先取消", status=409)
-            if state.status == BatchStatus.COMMITTING:
-                active = self._active_commit_job(state)
+            # 锁内重读（评审 P1）：start_commit 持同一把锁把状态推进到
+            # COMMITTING 后才放锁；锁外快照可能仍是旧值（configured/…），
+            # 不重读就会 rmtree 掉在飞 durable job 的 staging（该 run 随后
+            # 以 NOT_FOUND 中断）。
+            fresh = await asyncio.to_thread(staging.load_state, batch_id)
+            if fresh is not None and fresh.status == BatchStatus.COMMITTING:
+                active = self._active_commit_job(fresh)
                 if active is not None:
                     raise DataImportError(
                         "COMMIT_IN_PROGRESS",

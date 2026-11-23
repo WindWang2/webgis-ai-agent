@@ -898,7 +898,11 @@ def sar_ml_regression_narrated(
     sigma2 = sse / n
     lr = _lr_test(ll_max, ols["log_lik"])
     pseudo_r2 = 1.0 - sse / ols["sse"] if ols["sse"] > 0 else 0.0
-    # 条件渐近协方差（给定 ρ̂）：σ²(X_ρ'A'A X_ρ)⁻¹ 的对角，A = I − ρW。
+    # 条件渐近协方差（给定 ρ̂）：SAR 的 ML-β 是 **Ay 对 X** 的 OLS
+    # （A = I − ρW），而 Ay = Xβ + ε —— A 只作用在 y 上、与 ε 不相干，故
+    # Var(β̂|ρ̂) = σ²(X'X)⁻¹（与 OLS 同式，但 σ² 取 SAR 变换残差 sse/n）。
+    # 不要照 SEM 改成 (AX)'(AX)：SEM 是 Cy = CXβ + ε（两侧同变换）才有
+    # (CX)'(CX) 面包；SAR 换过去会把截距标准误放大一个量级（蒙特卡洛验证）。
     # 不含 ρ̂ 自身的估计不确定性（披露于 docstring），t/p 仅作参考量级。
     se = np.sqrt(np.maximum(
         np.diag(np.linalg.pinv(x_mat.T @ x_mat)) * sigma2, 0.0))

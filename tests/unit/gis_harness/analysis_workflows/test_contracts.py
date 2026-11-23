@@ -101,6 +101,38 @@ def test_cycle_dependency_rejected():
     assert "依赖环" in str(ei.value)
 
 
+def test_indirect_cycle_dependency_rejected():
+    """间接环（a→b→c→b）同样显式失败 —— 环检测记路径，不漏判。"""
+    a = AnalysisStepSpec(step_id="a", tool_name="t1", depends_on=("b",))
+    b = AnalysisStepSpec(step_id="b", tool_name="t2", depends_on=("c",))
+    c = AnalysisStepSpec(step_id="c", tool_name="t3", depends_on=("b",))
+    with pytest.raises(ContractValidationError) as ei:
+        validate_workflow_contract(_contract(steps=(a, b, c)))
+    assert "依赖环" in str(ei.value)
+
+
+def test_diamond_dependency_is_not_a_cycle():
+    """菱形依赖（A→B→D, A→C→D）是合法 DAG：D 经两条路径到达，
+    全局 seen 集曾把它误判「依赖环」而 fail-closed 拒绝合法契约。"""
+    a = AnalysisStepSpec(step_id="A", tool_name="t1")
+    b = AnalysisStepSpec(step_id="B", tool_name="t2", depends_on=("A",))
+    c = AnalysisStepSpec(step_id="C", tool_name="t3", depends_on=("A",))
+    d = AnalysisStepSpec(step_id="D", tool_name="t4", depends_on=("B", "C"))
+    warnings = validate_workflow_contract(
+        _contract(steps=(a, b, c, d)), tool_exists=lambda n: True)
+    assert warnings == []
+
+
+def test_duplicate_depends_on_entries_are_not_a_cycle():
+    """depends_on 重复项（同一依赖列两次）是合法声明 —— 二次到达同一节点
+    不得读成环。"""
+    x = AnalysisStepSpec(step_id="x", tool_name="t1", depends_on=("y", "y"))
+    y = AnalysisStepSpec(step_id="y", tool_name="t2")
+    warnings = validate_workflow_contract(
+        _contract(steps=(x, y)), tool_exists=lambda n: True)
+    assert warnings == []
+
+
 def test_dangling_step_reference_rejected():
     bad = AnalysisStepSpec(
         step_id="s1", tool_name="t1",

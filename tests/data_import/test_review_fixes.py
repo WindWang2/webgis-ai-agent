@@ -1,4 +1,4 @@
-"""G17 评审修复回归（P1-1/P1-2/P2-1/P2-2/P2-3/P2-4/P2-8/P2-9）。
+"""G17 评审修复回归（P1-1/P1-2/P2-1/P2-2/P2-3/P2-4/P2-8/P2-9 + 复审 P1 波次）。
 
 每条对应独立评审 finding；修复前这些测试必须失败（防回归）。
 """
@@ -12,15 +12,18 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from .fixtures import make_csv_bytes  # noqa: E402
+from .fixtures import make_csv_bytes, make_geojson_bytes, point_feature  # noqa: E402
 
 from app.core.config import settings
-from app.services.data_import import budgets
+from app.services.data_import import budgets, staging
+from app.services.data_import.models import BatchStatus
 from app.services.data_import.service import DataImportError, DataImportService
+from app.services.session_data import session_data_manager
 
 pytestmark = pytest.mark.heavy
 
 SESSION = "sess-g17-fixes-0001"
+GEOJSON_ONE = make_geojson_bytes([point_feature({"n": 1}, 116.3, 39.8)])
 
 
 @pytest.fixture()
@@ -254,3 +257,83 @@ async def test_p2_9_cancel_intent_persisted(env, tmp_path):
     assert st is not None and st.cancel_requested is True
     final = await env.get_batch(state.batch_id, SESSION)
     assert final.status.value in ("cancelled", "partial", "failed")
+
+
+async def test_p1_commit_keeps_over_cap_columns(env, tmp_path):
+    """P1（数据完整性）：>64 列 CSV 提交不得静默丢列（预览帽只适用预览）。"""
+    n_cols = budgets.SAMPLE_COLUMNS_IN_PREVIEW + 6
+    header = [f"c{i:03d}" for i in range(n_cols)]
+    row = [f"v{i}" for i in range(n_cols)]
+    csv = make_csv_bytes([row], header)
+    state = await env.create_batch(SESSION, "u", [("wide.csv", csv)])
+    m = state.members[0]
+    assert m.fields_total == n_cols
+    await env.save_plan(state.batch_id, SESSION, {m.member_key: {"mode": "table"}},
+                        selected=[m.member_key])
+    # 预览仍按预览帽有界（SAMPLE_COLUMNS_IN_PREVIEW，行为不变）
+    pv = await env.preview_members(state.batch_id, SESSION, [m.member_key], row_limit=10)
+    assert len(pv["previews"][0]["columns"]) == budgets.SAMPLE_COLUMNS_IN_PREVIEW
+    # 提交产物必须含全部列（超帽列不得从 table 产物中静默消失）
+    out = await env.start_commit(state.batch_id, SESSION, background=False)
+    r = out["receipts"][m.member_key]
+    assert r["status"] == "completed"
+    d = await session_data_manager.get(SESSION, r["output_ref"])
+    cols = [c["name"] for c in d["table"]["columns"]]
+    assert cols == header
+    assert d["table"]["rows"][0][-1] == f"v{n_cols - 1}"
+
+
+async def test_p1_delete_batch_rechecks_committing_inside_lock(env, tmp_path, monkeypatch):
+    """P1（并发）：delete_batch 锁外快照陈旧时，锁内必须重读状态 ——
+    在飞 durable job 的 staging 不得被 rmtree（该 run 会以 NOT_FOUND 中断）。"""
+    state = await env.create_batch(SESSION, "u", [("x.geojson", GEOJSON_ONE)])
+    # 另一副本的在飞提交：磁盘状态 COMMITTING + 活跃 job 证据
+    committing = staging.load_state(state.batch_id)
+    committing.status = BatchStatus.COMMITTING
+    committing.active_job_id = 424242
+    staging.save_state(committing)
+    monkeypatch.setattr(
+        env, "_active_commit_job",
+        lambda st: {"job_id": int(st.active_job_id or 424242), "status": "running"},
+    )
+    # 竞态窗口：锁外快照读于状态推进之前（陈旧：仍为 configured）
+    real_load = staging.load_state
+    stale = staging.load_state(state.batch_id)
+    stale.status = BatchStatus.CONFIGURED
+    stale.active_job_id = None
+    seen = {"n": 0}
+
+    def fake_load(batch_id, **kw):
+        seen["n"] += 1
+        return stale if seen["n"] == 1 else real_load(batch_id, **kw)
+
+    monkeypatch.setattr(staging, "load_state", fake_load)
+
+    with pytest.raises(DataImportError) as ei:
+        await env.delete_batch(state.batch_id, SESSION)
+    assert ei.value.code == "COMMIT_IN_PROGRESS"
+    assert staging.batch_root(state.batch_id).exists()
+
+
+async def test_p1_session_cap_protects_committing_batch(env, tmp_path, monkeypatch):
+    """P1（数据完整性）：会话批次帽不得淘汰 COMMITTING 批次 ——
+    它可能正被另一副本的 durable job 提交（staging 被删 → 该 run NOT_FOUND）。"""
+    monkeypatch.setattr(budgets, "MAX_BATCHES_PER_SESSION", 2)
+    states = []
+    for i, name in enumerate(("a", "b", "c")):
+        st = staging.stage_files(SESSION, "u", [(f"{name}.geojson", GEOJSON_ONE)])
+        # 显式 created_at 保证「最旧」判定确定（isoformat 秒级精度会打平）
+        st.created_at = f"2026-01-0{i + 1}T00:00:00+00:00"
+        staging.save_state(st)
+        states.append(st)
+    # 最旧批次置为在飞提交（跨副本证据）
+    states[0].status = BatchStatus.COMMITTING
+    states[0].active_job_id = 7
+    staging.save_state(states[0])
+
+    listed = await env.list_batches(SESSION)
+    assert states[0].batch_id in {b["batch_id"] for b in listed}
+    # 在飞批次 staging 必须保留；帽仍对空闲批次生效（淘汰最旧 1 个）
+    surviving = [p.name for p in staging.batches_root().iterdir() if p.is_dir()]
+    assert states[0].batch_id in surviving
+    assert len(surviving) == budgets.MAX_BATCHES_PER_SESSION

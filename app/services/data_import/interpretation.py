@@ -338,8 +338,14 @@ def interpret_table(
     hints: Optional[Dict[str, Any]] = None,
     row_limit: int,
     cancel: CancelCheck = lambda: None,
+    cap_columns: bool = True,
 ) -> InterpretResult:
-    """表格解释（CSV/XLSX）—— preview 与 commit 的共同入口。"""
+    """表格解释（CSV/XLSX）—— preview 与 commit 的共同入口。
+
+    cap_columns：预览列帽（SAMPLE_COLUMNS_IN_PREVIEW）只适用于预览；
+    提交路径必须传 False —— 超帽列不得从提交产物中静默消失（与矢量路径
+    一致：收据无披露地丢列即数据损坏）。
+    """
     result = InterpretResult()
     hints = hints or {}
     is_xlsx = str(path).lower().endswith(".xlsx")
@@ -367,7 +373,9 @@ def interpret_table(
                 columns.append(k)
             if len(seen[k]) < 200:
                 seen[k].append(r[k])
-    columns = columns[: budgets.SAMPLE_COLUMNS_IN_PREVIEW]
+    if cap_columns:
+        # 预览帽：仅预览有界（提交见 cap_columns=False；矢量路径无此帽）
+        columns = columns[: budgets.SAMPLE_COLUMNS_IN_PREVIEW]
     result.columns = columns
     result.rows_scanned = len(rows)
     result.rows_total = None  # 未全量扫描，总数未知（合同 3）

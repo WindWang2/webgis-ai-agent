@@ -130,7 +130,17 @@ def _hello_document(doc: dict | None) -> dict | None:
     """Inline only small UTF-8 documents; clients refetch larger revisions."""
     if doc is None:
         return None
-    return doc if len(json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")) < 64 * 1024 else None
+    # #1733 同口径：allow_nan=False 对含 NaN/Inf 的 doc 抛 ValueError ——
+    # 此处无 try 会在订阅总线/建 send_task/join presence 之后炸出 handler，
+    # listener/send_task/presence 全泄漏且会话永远连不上（ws_service 遗留
+    # 直写通道可写入非有限值）。丢内联 doc（client 经 sync 重取），帧级
+    # 防线与 send_loop 的 dumps try 一致。
+    try:
+        encoded = json.dumps(doc, ensure_ascii=False, allow_nan=False)
+    except ValueError:
+        logger.info("[ws-collab] non-finite hello doc dropped")
+        return None
+    return doc if len(encoded.encode("utf-8")) < 64 * 1024 else None
 
 
 async def _reconciliation_anomalies(session_id: str) -> dict:

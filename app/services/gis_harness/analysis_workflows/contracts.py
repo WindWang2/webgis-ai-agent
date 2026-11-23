@@ -231,6 +231,8 @@ def _check_step_dag(steps: List[AnalysisStepSpec]) -> None:
                         [x.step_id for x in steps].count(s.step_id) > 1})
         raise ContractValidationError(
             AWF_INVALID_CONTRACT, f"重复 step_id: {dupes}")
+    # 环检测共享的「已验证无环」集（跨步骤复用；契约步骤 ≤24）。
+    done: set[str] = set()
     for step in steps:
         for dep in step.depends_on:
             if dep not in by_id:
@@ -247,16 +249,31 @@ def _check_step_dag(steps: List[AnalysisStepSpec]) -> None:
                     raise ContractValidationError(
                         AWF_INVALID_CONTRACT,
                         f"步骤 {step.step_id} 参数 {param} 引用不存在的上游步骤 {upstream}")
-        # 环检测（逐步 DFS，契约步骤 ≤24，无需 Tarjan）
-        seen: set[str] = set()
-        stack = [step.step_id]
+        # 环检测（逐步 DFS，契约步骤 ≤24，无需 Tarjan）：on_path 只记
+        # **当前路径**（灰集）而非全局 seen —— 菱形依赖（A→B→D, A→C→D）
+        # 与 depends_on 重复项是合法 DAG，全局 seen 会把二次到达误判成
+        # 「依赖环」而 fail-closed 拒绝合法契约；done（黑集）= 已展开
+        # 且无环的分支，不重复展开。
+        if step.step_id in done:
+            continue
+        on_path: set[str] = {step.step_id}
+        stack = [(step.step_id, iter(by_id[step.step_id].depends_on))]
         while stack:
-            cur = stack.pop()
-            if cur in seen:
-                raise ContractValidationError(
-                    AWF_INVALID_CONTRACT, f"依赖环：包含步骤 {cur}")
-            seen.add(cur)
-            stack.extend(by_id[cur].depends_on)
+            node, deps = stack[-1]
+            descended = False
+            for dep in deps:
+                if dep in on_path:
+                    raise ContractValidationError(
+                        AWF_INVALID_CONTRACT, f"依赖环：包含步骤 {dep}")
+                if dep not in done:
+                    on_path.add(dep)
+                    stack.append((dep, iter(by_id[dep].depends_on)))
+                    descended = True
+                    break
+            if not descended:
+                stack.pop()
+                on_path.discard(node)
+                done.add(node)
 
 
 def validate_workflow_contract(

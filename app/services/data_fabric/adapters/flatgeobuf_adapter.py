@@ -703,10 +703,15 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         """GeoDataFrame → (features, 属性行)。投影在属性层应用。"""
         if gdf is None or len(gdf) == 0:
             return [], []
+        # 不可序列化（NaN 坐标等）→ typed 错误：绝不吞成空 features ——
+        # 那会让上层产出 truncated=False/total_matching=0 的「完整空结果」，
+        # 把读取失败伪装成零命中。
         try:
             data = json.loads(gdf.to_json())
-        except Exception:
-            data = {"type": "FeatureCollection", "features": []}
+        except Exception as e:
+            raise SourceBadResponseError(
+                f"FlatGeobuf feature serialization failed: {e}"
+            ) from e
         raw_features = data.get("features", []) if isinstance(data, dict) else []
         out: List[Dict[str, Any]] = []
         for f in raw_features:

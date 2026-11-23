@@ -132,7 +132,9 @@ def upgrade() -> None:
             with op.batch_alter_table(_RUN_TABLE, schema=None) as batch_op:
                 for name, expr in _RUN_CHECKS:
                     if not _constraint_exists(_RUN_TABLE, name):
-                        batch_op.create_check_constraint(name, _RUN_TABLE, expr)
+                        # batch 形签名是 (name, condition) —— 多传表名位置参
+                        # 会把表名吃成 condition、expr 吃成 table_name → TypeError。
+                        batch_op.create_check_constraint(name, expr)
     else:
         for name, expr in _RUN_CHECKS:
             if not _constraint_exists(_RUN_TABLE, name):
@@ -158,9 +160,9 @@ def upgrade() -> None:
     if context.get_context().dialect.name == "sqlite":
         if not _constraint_exists(_WORKER_TABLE, "ck_gc_worker_role"):
             with op.batch_alter_table(_WORKER_TABLE, schema=None) as batch_op:
+                # 同上：batch 形不收表名位置参。
                 batch_op.create_check_constraint(
-                    "ck_gc_worker_role", _WORKER_TABLE,
-                    "role IN ('coordinator','worker')")
+                    "ck_gc_worker_role", "role IN ('coordinator','worker')")
     else:
         for name, expr in _WORKER_CHECKS:
             if not _constraint_exists(_WORKER_TABLE, name):

@@ -114,8 +114,13 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
   const geometryAtDragStartRef = useRef<GeoJSON.Geometry | null>(null);
   const [splitTarget, setSplitTarget] = useState<string | null>(null);
   const draftRef = useRef<Draft>(null);
-  const [, forceRender] = useState(0);
-  const bump = useCallback(() => forceRender((n) => n + 1), []);
+  /**
+   * 草稿代次：draft 是 ref 源（手势期间零 setState / 零 REST），bump() 只
+   * 递增本代次触发重渲染 —— 草稿同步 effect 必须依赖它才能重跑，否则画线/
+   * 面/分割时草稿预览永不渲染，Escape 也清不掉已渲染的陈旧草稿。
+   */
+  const [draftEpoch, setDraftEpoch] = useState(0);
+  const bump = useCallback(() => setDraftEpoch((n) => n + 1), []);
   /** selection 订阅（merge 按钮可用性）。 */
   const [selectionGen, setSelectionGen] = useState(getSelectionGeneration());
   useEffect(() => subscribeSelection(() => setSelectionGen(getSelectionGeneration())), []);
@@ -285,7 +290,9 @@ export function FeatureLayerEditor({ mapRef }: { mapRef: React.RefObject<MapRef 
       }
     }
     source.setData({ type: 'FeatureCollection', features } as never);
-  }, [mapReady, getMap, editTarget, vertexTarget, status, selectionGen]);
+    // draftEpoch：draftRef 变更的唯一可依赖信号（bump 递增）—— 缺它则
+    // 顶点增删后同步不重跑，预览停滞 / Escape 残留陈旧草稿。
+  }, [mapReady, getMap, editTarget, vertexTarget, status, selectionGen, draftEpoch]);
 
   const parseAttributes = useCallback((): Record<string, unknown> | string => {
     const raw = attributesJson.trim();

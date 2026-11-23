@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { SpatialCrosshair } from './spatial-crosshair';
 import { useHudStore } from '@/lib/store/useHudStore';
 
@@ -47,5 +48,30 @@ describe('SpatialCrosshair', () => {
 
     // Unmount to verify no errors from dangling timers
     unmount();
+  });
+
+  it('空闲态点击准星中心点即可复制坐标（pointer-events 门控不死锁）', async () => {
+    // user-event 的直接 API 走真实指针路径并校验 pointer-events（fireEvent 会
+    // 绕过门控，正是此前该缺陷被测试掩盖的原因）；直接 API 不替换剪贴板桩，
+    // beforeEach 的 writeText spy 保持可断言。本环境 user-event 与 fake
+    // timers 不兼容（内部 wait 永不结算），用例内切回真实计时器。
+    vi.useRealTimers();
+    const { container } = render(<SpatialCrosshair />);
+    const svg = container.querySelector('svg');
+    const dot = svg?.querySelector('circle');
+    expect(svg).toBeTruthy();
+    expect(dot).toBeTruthy();
+
+    // 审计契约：空闲态 24px 装饰框仍 pointer-events:none（不吞要素拾取）。
+    expect(getComputedStyle(svg as Element).pointerEvents).toBe('none');
+    // 死锁修复：复制命中面收敛到中心精确点（常驻 auto）。
+    expect(getComputedStyle(dot as Element).pointerEvents).toBe('auto');
+
+    // 未修复代码：dot 继承 svg 的 'none' → 上面的样式断言先失败；
+    // 即使绕过断言，user-event 也会因 pointer-events 拒绝点击。
+    await userEvent.click(dot as Element);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('116.407400, 39.904200');
+    // 复制反馈出现（aria-label 翻转）。
+    expect(svg!.getAttribute('aria-label')).toBe('坐标已复制');
   });
 });

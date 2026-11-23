@@ -94,6 +94,34 @@ def test_build_observation_summary_bounded():
     assert empty["aggregate"] == "unknown" and empty["health"] == "blocked"
 
 
+def test_build_observation_summary_accepts_canonical_list_layers():
+    """canonical 载荷 layers 是 list[dict]（chat_schema，条目带
+    id/runtime_store_id）—— 对 list 调 .items() 曾抛 AttributeError，
+    摘要/health 投影全失效。"""
+    obs = {
+        "revision": 5,
+        "layers": [
+            {"id": "l0", "mounted": True, "render_complete": True,
+             "feature_count": 42},
+            {"runtime_store_id": "l1", "mounted": True,
+             "render_complete": True, "feature_count": 7},
+            {"id": "l2", "mounted": True},  # 弱态
+        ],
+        "charts": [{"rendered": True, "data_points": 2}],
+    }
+    summary = build_observation_summary(obs, intent_verified=True)
+    assert summary["layers"] == {
+        "l0": "semantically_correct", "l1": "semantically_correct",
+        "l2": "mounted"}
+    assert summary["aggregate"] == "mounted"
+    assert summary["health"] == "degraded"
+    assert summary["observed_revision"] == 5
+    # 有界：>32 条目截断（不炸）
+    big = {"layers": [{"id": f"x{i}", "mounted": True}
+                      for i in range(40)]}
+    assert len(build_observation_summary(big)["layers"]) <= 32
+
+
 def test_map_product_block_carries_observation_health():
     from app.services.gis_harness.completion.contracts import (
         MapCompletionResult,

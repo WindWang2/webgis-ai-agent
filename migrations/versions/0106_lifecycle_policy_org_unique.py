@@ -47,6 +47,35 @@ def _index_columns(table: str, index_name: str) -> str | None:
     return None
 
 
+def _is_unique_constraint(table: str, name: str) -> bool:
+    """``name`` 是否是表级 UNIQUE 约束（而非独立索引）。
+
+    commit d3695d42a 的旧版 0106 用 ``batch.create_unique_constraint`` 建的是
+    **约束**；PG 反射把约束的支撑索引也报进 ``get_indexes``（PG 方言只过滤
+    indisprimary），此时 ``DROP INDEX`` 会被 PG 以 DEPENDENCY_INTERNAL 拒绝
+    （"cannot drop index ... because constraint ... requires it"）—— 必须
+    ``DROP CONSTRAINT``。
+    """
+    insp = sa.inspect(op.get_bind())
+    return any(
+        uq.get("name") == name for uq in insp.get_unique_constraints(table)
+    )
+
+
+def _is_plain_org_name_unique(table: str, name: str) -> bool:
+    """``name`` 是否以朴素 ``(org_id, name)`` 唯一形态在场。
+
+    旧版 0106 的 ``create_unique_constraint`` 在 PG 上落成约束（+同名支撑
+    索引）、在 SQLite 上落成表级 UNIQUE（``get_indexes`` 看不见），两种形态
+    都要能识别，否则 COALESCE 表达式索引建不出来、修复断链。
+    """
+    insp = sa.inspect(op.get_bind())
+    for uq in insp.get_unique_constraints(table):
+        if uq.get("name") == name and (uq.get("column_names") or []) == ["org_id", "name"]:
+            return True
+    return _index_columns(table, name) == "org_id,name"
+
+
 def upgrade() -> None:
     if _TABLE not in set(sa.inspect(op.get_bind()).get_table_names()):
         return
@@ -54,9 +83,12 @@ def upgrade() -> None:
         with op.batch_alter_table(_TABLE) as batch:
             batch.drop_constraint(_OLD, type_="unique")
     # 旧版本迁移可能已建过朴素唯一约束/索引 —— 先去掉再建 COALESCE 形。
-    if _index_columns(_TABLE, _NEW) == "org_id,name":
+    if _is_plain_org_name_unique(_TABLE, _NEW):
         with op.batch_alter_table(_TABLE) as batch:
-            batch.drop_index(_NEW)
+            if _is_unique_constraint(_TABLE, _NEW):
+                batch.drop_constraint(_NEW, type_="unique")
+            else:
+                batch.drop_index(_NEW)
     if _NEW not in _unique_names(_TABLE):
         # 表达式唯一索引：NULL org_id 归一到 -1，全局默认名全局唯一（#2209）。
         # PG/SQLite 均支持表达式索引；IF NOT EXISTS 保证重试幂等。

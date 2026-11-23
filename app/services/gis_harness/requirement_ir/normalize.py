@@ -148,15 +148,24 @@ def normalize_time(text: str) -> Tuple[str, str, TimeGranularity, bool]:
     """时间词规范形 → (range_start, range_end, granularity, series)。
 
     「2020-2024」→ 显式区间；「逐年/近五年」→ series；未表达 → 全空。
+    话语同时含粒度词与显式年份区间（「逐年 2020-2024」）时区间**不丢**：
+    此前粒度词分支提前 return，digest 丢失 range（不同年份同 digest）并
+    误报 time_range_missing_for_series 澄清。
     """
     value = normalize_text(text)
     if not value:
         return ("", "", "none", False)
+    year_values = [m.group(0) for m in _YEAR_RE.finditer(value)]
     for synonyms, granularity, series in _TIME_TABLE:
         for synonym in synonyms:
             if _contains(value, synonym):
+                if len(year_values) >= 2:
+                    return (year_values[0], year_values[-1],
+                            granularity, series)
+                if len(year_values) == 1:
+                    return (year_values[0], year_values[0],
+                            granularity, series)
                 return ("", "", granularity, series)
-    year_values = [m.group(0) for m in _YEAR_RE.finditer(value)]
     if len(year_values) >= 2:
         return (year_values[0], year_values[-1], "year", True)
     if len(year_values) == 1:

@@ -256,7 +256,13 @@ class MapProductSpec(BaseModel):
     views: List[ProductView] = Field(default_factory=list, max_length=MAX_VIEWS)
     relations: List[ProductRelation] = Field(default_factory=list, max_length=MAX_RELATIONS)
     delivery: ProductDeliveryIntent = Field(default_factory=ProductDeliveryIntent)
-    overrides: List[ProductOverride] = Field(default_factory=list, max_length=MAX_OVERRIDES)
+    #: 编辑账上限 = MAX_OVERRIDES（软账）+ MAX_VIEWS（结构性 remove_view 账，
+    #: 编辑存活的撤回证据，永不裁掉 —— 见 apply_product_edit 裁剪注释与
+    #: validate_product_spec 的同值软上限）。此前 max_length=MAX_OVERRIDES
+    #: 与账上限冲突：>16 次编辑后落盘 28 条，spec_from_storage 的
+    #: model_validate 失败返 None → 整个 spec 被静默丢弃。
+    overrides: List[ProductOverride] = Field(
+        default_factory=list, max_length=MAX_OVERRIDES + MAX_VIEWS)
     #: 引用面（类型库指针 —— 不内嵌模板本体）
     recipe_id: str = Field(default="", max_length=80)
     template_id: str = Field(default="", max_length=80)

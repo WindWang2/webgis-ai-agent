@@ -279,12 +279,19 @@ def list_batch_states(
 def _enforce_session_batch_cap(
     session_id: str, states: List[ImportBatchState], *, data_dir: Optional[str] = None
 ) -> None:
-    """会话内未终态批次超上限时，最旧的先过期（只清自己目录）。"""
-    from app.services.data_import.models import BATCH_TERMINAL
+    """会话内未终态批次超上限时，最旧的先过期（只清自己目录）。
+
+    COMMITTING 批次可能在另一副本有活跃 durable job（跨进程在飞证据，
+    G23）—— 绝不纳入过期淘汰（评审 P1）：list_batches 不得 rmtree 在飞
+    提交的 staging（该 run 会以 NOT_FOUND 中断）。它们仍计入上限（不放
+    松边界），只是无可淘汰时保守保留，由 TTL / 看门狗收敛。
+    """
+    from app.services.data_import.models import BATCH_TERMINAL, BatchStatus
 
     active = [s for s in states if s.status not in BATCH_TERMINAL]
     overflow = len(active) - budgets.MAX_BATCHES_PER_SESSION
-    for state in sorted(active, key=lambda s: s.created_at)[: max(0, overflow)]:
+    expirable = [s for s in active if s.status != BatchStatus.COMMITTING]
+    for state in sorted(expirable, key=lambda s: s.created_at)[: max(0, overflow)]:
         expire_batch(state.batch_id, data_dir=data_dir)
 
 

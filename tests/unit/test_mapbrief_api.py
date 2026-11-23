@@ -427,3 +427,45 @@ class TestSharing:
         c, _ = app_client
         resp = await c.get("/api/v1/briefs/sessions/nope")
         assert resp.status_code == 404
+
+
+# ── 错误映射纪律（_http_error） ──────────────────────────────────────
+
+
+class TestErrorMapping:
+    """未映射异常不得伪装 422 把内部细节（SQL 原文等）回给客户端。
+
+    契约：RevisionConflict→409；BriefNotFound/ReleaseNotFound→404；
+    BriefCorrupt→422（结构化）；PreflightBlocked→409（携带报告）；
+    ValidationError/ValueError→422（文档契约 + locked 行为锁）；其余
+    （DB/commit/TypeError…）→ 500 通用文案。
+    """
+
+    def test_unmapped_db_error_is_500_without_internal_detail(self):
+        from sqlalchemy.exc import OperationalError
+
+        from app.api.routes.brief import _http_error
+
+        exc = OperationalError(
+            "INSERT INTO briefs (id) VALUES (:id)", {},
+            Exception('relation "briefs" does not exist'))
+        http_exc = _http_error(exc)
+        assert http_exc.status_code == 500
+        detail = str(http_exc.detail)
+        assert "briefs" not in detail
+        assert "INSERT" not in detail
+
+    def test_unmapped_type_error_is_500(self):
+        from app.api.routes.brief import _http_error
+
+        exc = TypeError("unsupported operand type(s) for +: 'NoneType'")
+        assert _http_error(exc).status_code == 500
+
+    def test_value_error_still_422_with_message(self):
+        """文档契约行为锁：locked 块内容编辑被拒仍是 422 + 原文 detail。"""
+        from app.api.routes.brief import _http_error
+
+        exc = ValueError("block b1 is locked; unlock before editing content")
+        http_exc = _http_error(exc)
+        assert http_exc.status_code == 422
+        assert http_exc.detail == str(exc)

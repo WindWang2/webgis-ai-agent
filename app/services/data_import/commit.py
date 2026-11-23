@@ -187,6 +187,8 @@ async def commit_member(
                 hints=member.hints,
                 row_limit=budgets.COMMIT_ROW_LIMIT,
                 cancel=_check_cancel,
+                # 提交不走预览列帽（评审 P1）：超帽列不得从产物中静默消失
+                cap_columns=False,
             )
     except InterpretationError as e:
         receipt.error_code = e.code

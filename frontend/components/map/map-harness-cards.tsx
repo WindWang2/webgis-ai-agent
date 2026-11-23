@@ -338,15 +338,21 @@ export function MapHarnessCards(props: {
     let cancelled = false;
     let mountTimer: ReturnType<typeof setTimeout> | null = null;
     let debounce: ReturnType<typeof setTimeout> | null = null;
+    // 水合序号守卫：挂载兜底（5s）与 live-generation debounce（2s）两次水合
+    // 可并发，慢的旧响应后到会用陈旧裁决覆盖新态 —— required 模式可把「等待
+    // 用户确认」伪造成「已确认」并吞掉待确认卡。只接受最新一次水合的响应。
+    let hydrateSeq = 0;
     const hydrate = async () => {
       if (cancelled || mountedSessionRef.current !== sessionId) return;
+      const seq = ++hydrateSeq;
       try {
         const status = await fetchDisplayConfirmation(sessionId, ownerToken);
-        if (!cancelled && mountedSessionRef.current === sessionId) {
+        if (cancelled || seq !== hydrateSeq) return;
+        if (mountedSessionRef.current === sessionId) {
           setConfirmStatus(status);
         }
       } catch {
-        if (!cancelled) setConfirmStatus(null);
+        if (!cancelled && seq === hydrateSeq) setConfirmStatus(null);
       }
     };
     mountTimer = setTimeout(() => {

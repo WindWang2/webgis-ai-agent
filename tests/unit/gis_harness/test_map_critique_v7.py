@@ -139,6 +139,24 @@ def test_publication_components_no_demand_without_export_or_layers():
     assert check_publication_components(ch, full) == []
 
 
+def test_publication_components_read_canonical_layout_components():
+    """真实 MapSpec 组件在 layout.components（MapSpecLayoutConfig）——
+    只读顶层 components 键会让三项出版组件恒报缺失（假阳性 warning +
+    add_component 修复路由）。"""
+    ch = _chapter()
+    spec = {
+        "layout": {"components": [{"id": "t", "type": "title"}]},
+        "exports": ["pdf"],
+    }
+    codes = {f.target for f in check_publication_components(ch, spec)}
+    assert codes == {"north_arrow", "scale_bar"}
+    # 齐备（layout 面）→ 零 finding
+    full = {"layout": {"components": [
+        {"id": f"c{i}", "type": t} for i, t in enumerate(
+            ("title", "north_arrow", "scale_bar"))]}, "exports": ["pdf"]}
+    assert check_publication_components(ch, full) == []
+
+
 # ── label collision ──────────────────────────────────────────────────────
 
 

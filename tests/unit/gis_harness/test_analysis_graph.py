@@ -140,6 +140,28 @@ class TestRoute:
             pass
         assert "/api/v1/sessions/{session_id}/analysis-graph" in paths
 
+    async def test_handler_uses_conversation_id(self, monkeypatch):
+        """回归：handler 曾读 ``conversation.session_id`` —— Conversation
+        只有 PK ``id``（session_id 语义 = Conversation.id，守卫查询即
+        ``Conversation.id == session_id``），属主校验通过的请求 100%
+        AttributeError → 500。此处直接驱动 handler 本体。"""
+        from app.api.routes import analysis_graph
+        from app.models.db_model import Conversation
+
+        conv = Conversation(id="sess-handler")
+        assert not hasattr(conv, "session_id")
+        seen: list[str] = []
+
+        async def _fake_build(session_id: str) -> dict:
+            seen.append(session_id)
+            return {"nodes": [], "goal": None}
+
+        monkeypatch.setattr(
+            analysis_graph, "build_analysis_graph_for_session", _fake_build)
+        result = await analysis_graph.get_analysis_graph(conv)
+        assert seen == ["sess-handler"]
+        assert result == {"nodes": [], "goal": None}
+
 
 class TestInvariants:
     def test_projection_reads_only_no_mutation(self):

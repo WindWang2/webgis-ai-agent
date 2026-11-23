@@ -188,6 +188,28 @@ class TestRegistryValidationIntegration:
         issues = validate_gis_library()
         assert not any("workflow_families" in i for i in issues)
 
+    def test_family_conformance_gate_failure_is_not_swallowed(self, monkeypatch):
+        """family 对账闸失败（execution_compiler 导入断裂 / audit 抛错）
+        必须作为违规披露 —— 此前 except Exception: pass 让该闸整体消失、
+        悬空引用报为通过。"""
+        import builtins
+
+        from app.services.gis_harness.registry_validation import (
+            validate_gis_library,
+        )
+
+        real_import = builtins.__import__
+
+        def _boom(name, *args, **kwargs):
+            if name == "app.services.gis_harness.execution_compiler":
+                raise ImportError("synthetic import break")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _boom)
+        issues = validate_gis_library()
+        assert any("family_conformance: validation unavailable" in i
+                   for i in issues)
+
 
 def COMPOSITE_RECIPES_REF():
     from app.services.gis_harness.workflow_families import COMPOSITE_RECIPES

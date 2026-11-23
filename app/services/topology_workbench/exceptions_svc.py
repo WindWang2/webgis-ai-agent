@@ -260,9 +260,15 @@ async def recheck_run(
         ).scalars():
             new_keys_by_rule.setdefault(f.rule_id, set()).add(f.finding_key)
 
-        # 新运行逐规则计算完整性（resolved 需要该规则 computation=full）
+        # 新运行逐规则计算完整性（resolved 需要该规则 applicable 且
+        # computation=full —— blocked 规则（AOI/target/connectors 为空等）
+        # computation 仍为 full，"无法判定"绝不构成"证据消失"）
         computation_by_rule = {
             (rr or {}).get("rule_id"): (rr or {}).get("computation")
+            for rr in (new_run.rule_results or [])
+        }
+        applicability_by_rule = {
+            (rr or {}).get("rule_id"): (rr or {}).get("applicability")
             for rr in (new_run.rule_results or [])
         }
 
@@ -280,12 +286,13 @@ async def recheck_run(
                 persisted_keys.append(f.finding_key)
                 continue
             comp = computation_by_rule.get(f.rule_id)
-            if comp == "full":
+            if (comp == "full"
+                    and applicability_by_rule.get(f.rule_id) == "applicable"):
                 f.status = "resolved"
                 f.resolved_by_run_id = new_run_id
                 resolved_keys.append(f.finding_key)
             else:
-                # 新运行该规则计算不完整 —— 无法证明证据消失，不判 resolved
+                # 新运行该规则计算不完整或被阻断 —— 无法证明证据消失，不判 resolved
                 persisted_keys.append(f.finding_key)
         # receipt 证据（绑输入/输出 revision + 规则 digest + 受影响问题）
         recheck_evidence = {

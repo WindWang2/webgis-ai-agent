@@ -615,6 +615,88 @@ async def test_empty_result_disclosed_as_warning_not_failure(clean_session):
     assert result.status == STATUS_COMPLETE
 
 
+@pytest.mark.asyncio
+async def test_single_run_repairs_beyond_disclosure_cap_reach_durable_memory(
+        clean_session):
+    """单轮 >MAX_DISCLOSED_REPAIRS(6) 条修复必须全量进 durable
+    repair_memory：披露面（repairs）有界 ≤6，但记忆面不得在源处被截断 ——
+    否则多出的修复永不进记忆，后续轮 prior_repairs 缺项 → 重新对抗用户
+    已覆盖的修复（map_product_block all_repairs 契约明示此回归面）。"""
+    from app.services.gis_harness.completion.pipeline import MAX_DISCLOSED_REPAIRS
+    from app.services.gis_harness.map_completion import MAX_REPAIR_MEMORY
+
+    ref = await _store_ref(clean_session)
+    # 多结果层 + 全隐藏 + 零组件 → 单轮可修复发现 >6（show_layer×N +
+    # add_component×N）。
+    chapter = _chapter(bound_ref=ref)
+    chapter["map_layers"] = [
+        {"role": "primary", "layer_id": f"ly-{i}", "enabled": True}
+        for i in range(5)
+    ]
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(clean_session, InitProjectIntent())
+    for i in range(5):
+        await engine.apply_mutation(
+            clean_session,
+            UpsertLayerIntent(
+                layer={
+                    "id": f"ly-{i}",
+                    "source": f"s-ly-{i}",
+                    "type": "circle",
+                    "paint": {"circle-color": "#00f"},
+                    "layout": {"visibility": "none"},
+                },
+                source_data=_geojson(),
+            ),
+        )
+    # 先跑一次拿全量 repairs_applied（披露帽不再吞掉它们）
+    result = await run_map_finalization(clean_session, chapter=chapter)
+    assert len(result.repairs_applied) > MAX_DISCLOSED_REPAIRS, (
+        f"单轮修复数 {len(result.repairs_applied)} 未超过披露帽 —— 场景不足，"
+        "回归测试失去意义")
+    assert len(result.to_dict()["repairs"]) <= MAX_DISCLOSED_REPAIRS
+
+    # 干净会话重放同一场景：maybe_finalize 内部单轮完成全部修复 → durable
+    # 记忆面必须收全量（≤MAX_REPAIR_MEMORY），披露面仍 ≤6。
+    from app.services.session_plan import load_session_plan
+
+    sid2 = f"mcf-session-{uuid.uuid4().hex[:8]}"
+    await session_data_manager.clear_session(sid2)
+    try:
+        ref2 = await _store_ref(sid2)
+        chapter2 = _chapter(bound_ref=ref2)
+        chapter2["map_layers"] = list(chapter["map_layers"])
+        engine2 = MapSpecLifecycleEngine()
+        await engine2.apply_mutation(sid2, InitProjectIntent())
+        for i in range(5):
+            await engine2.apply_mutation(
+                sid2,
+                UpsertLayerIntent(
+                    layer={
+                        "id": f"ly-{i}",
+                        "source": f"s-ly-{i}",
+                        "type": "circle",
+                        "paint": {"circle-color": "#00f"},
+                        "layout": {"visibility": "none"},
+                    },
+                    source_data=_geojson(),
+                ),
+            )
+        await _save_plan(sid2, chapter2)
+        await maybe_finalize_map_product(sid2, force=True)
+        plan = await load_session_plan(sid2)
+        block = plan.gis_chapter["map_product"]
+        assert len(block["repair_memory"]) > MAX_DISCLOSED_REPAIRS
+        assert set(block["repair_memory"]) >= set(result.repairs_applied)
+        assert len(block["repair_memory"]) <= MAX_REPAIR_MEMORY
+        assert len(block["repairs"]) <= MAX_DISCLOSED_REPAIRS
+    finally:
+        await session_data_manager.clear_session(sid2)
+        d = BASE_STORAGE_DIR / sid2
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+
+
 # ── maybe_finalize：幂等门 + 章节块 + 投影 ───────────────────────────
 
 

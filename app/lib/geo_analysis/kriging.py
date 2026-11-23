@@ -2984,16 +2984,28 @@ def kriging_interpolation(
         )
 
     # --- H3 target cells (lon/lat bbox) + resource guard (IDW contract) --
+    from app.lib.gis.longitude import minimal_longitude_interval
+
     buf = 0.009
-    raw_min_lon = float(lonlat[:, 0].min())
-    raw_max_lon = float(lonlat[:, 0].max())
-    crosses_am = (raw_max_lon - raw_min_lon) > 180.0
+    # AM wrap detection (parity with interpolation._target_cells_for_samples):
+    # wrap only when the largest EMPTY longitude gap exceeds 180°, i.e. the
+    # samples form a narrow dateline band. A broad extent keeps its naive
+    # bounds — judging "span > 180°" alone would split e.g. -100..100° samples
+    # into the complementary cells ([100,180]∪[-180,-100]), leaving the data
+    # area with no cells at all (pure extrapolation + wrong metadata bbox).
+    west, east = minimal_longitude_interval(lonlat[:, 0])
+    crosses_am = east > 180.0
+    # wrapped-frame bounds + width: for a dateline band the naive min/max span
+    # is ~360°, which understates the wrapped width (→ resource guard silently
+    # disabled) and widens both split bboxes past the data.
+    raw_min_lon = east - 360.0 if crosses_am else west
+    raw_max_lon = west if crosses_am else east
+    wrapped_width = (east - west) if crosses_am else None
     min_lon = max(raw_min_lon - buf, -180.0)
     max_lon = min(raw_max_lon + buf, 180.0)
     min_lat = max(float(lonlat[:, 1].min()) - buf, -90.0)
     max_lat = min(float(lonlat[:, 1].max()) + buf, 90.0)
     if crosses_am:
-        wrapped_width = 360.0 - (raw_max_lon - raw_min_lon)
         estimate = int(122 * (7 ** resolution) * (wrapped_width * (max_lat - min_lat) / 41253.0))
     else:
         estimate = _estimate_h3_cells(min_lon, min_lat, max_lon, max_lat, resolution)
@@ -3020,14 +3032,24 @@ def kriging_interpolation(
         if min_lon > -180.0:
             target_cells |= set(h3.geo_to_cells(bbox_b, resolution))
     else:
-        bbox_polygon = {
-            "type": "Polygon",
-            "coordinates": [[
-                [min_lon, min_lat], [max_lon, min_lat], [max_lon, max_lat],
-                [min_lon, max_lat], [min_lon, min_lat],
-            ]],
-        }
-        target_cells = set(h3.geo_to_cells(bbox_polygon, resolution))
+        # h3 fills the spherical COMPLEMENT of any polygon wider than 180°
+        # (a -100..100° bbox polyfills to cells in [100,180]∪[-180,-100]), so a
+        # broad non-dateline extent is polyfilled in ≤180° longitude chunks and
+        # unioned. Widths ≤180° (the common case) stay a single chunk —
+        # bit-identical to the historical single-bbox polyfill.
+        target_cells = set()
+        chunk_start = min_lon
+        while chunk_start < max_lon:
+            chunk_end = min(chunk_start + 180.0, max_lon)
+            bbox_polygon = {
+                "type": "Polygon",
+                "coordinates": [[
+                    [chunk_start, min_lat], [chunk_end, min_lat], [chunk_end, max_lat],
+                    [chunk_start, max_lat], [chunk_start, min_lat],
+                ]],
+            }
+            target_cells |= set(h3.geo_to_cells(bbox_polygon, resolution))
+            chunk_start = chunk_end
     # MINOR-8（数值评审）：set 迭代序随 PYTHONHASHSEED 跨进程漂移 ——
     # 复现性契约要求确定性记录序，统一排序后进入 latlng 循环。
     target_cells = sorted(target_cells)

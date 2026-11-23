@@ -33,23 +33,53 @@ def _is_sqlite() -> bool:
     return context.get_context().dialect.name == "sqlite"
 
 
+def _inspected_state() -> tuple[set[str], set[str], set[tuple[str, str]]]:
+    """(现有列, 现有索引, 现有 FK) —— SQLite 分支的幂等守卫。
+
+    头注释承诺「存量列/索引已存在时跳过」：create_all 自举的库（模型早已
+    声明这两列/索引/FK，见 #476 drift 背景）上 SQLite 分支裸
+    add_column / create_index 即 duplicate column / index 失败。
+    SQLite 反射的 FK 无名字（PRAGMA foreign_key_list 只有 id），故按
+    (约束列, 被引表) 二元组判存在性。
+    """
+    insp = sa.inspect(op.get_bind())
+    if TABLE not in set(insp.get_table_names()):
+        return set(), set(), set()
+    columns = {c["name"] for c in insp.get_columns(TABLE)}
+    indexes = {i["name"] for i in insp.get_indexes(TABLE)}
+    fks = {
+        (fk["constrained_columns"][0], fk["referred_table"])
+        for fk in insp.get_foreign_keys(TABLE)
+        if fk.get("constrained_columns")
+    }
+    return columns, indexes, fks
+
+
 def upgrade() -> None:
     if _is_sqlite():
+        columns, indexes, fks = _inspected_state()
         with op.batch_alter_table(TABLE, schema=None) as batch_op:
-            batch_op.add_column(sa.Column('org_id', sa.Integer(), nullable=True))
-            batch_op.add_column(sa.Column('creator_id', sa.String(length=255), nullable=True))
-            batch_op.create_index('idx_document_org', ['org_id'])
+            if 'org_id' not in columns:
+                batch_op.add_column(sa.Column('org_id', sa.Integer(), nullable=True))
+            if 'creator_id' not in columns:
+                batch_op.add_column(
+                    sa.Column('creator_id', sa.String(length=255), nullable=True)
+                )
+            if 'idx_document_org' not in indexes:
+                batch_op.create_index('idx_document_org', ['org_id'])
             # #2209：SQLite 路径补齐 FK（与 PG 分支 / 模型声明同形）。应用侧
             # SQLite 连接不开 PRAGMA foreign_keys，本补齐面向 schema 声明正确性
             # （pragma foreign_keys=ON 的连接与 create_all 对照均一致）。
-            batch_op.create_foreign_key(
-                'fk_knowledge_documents_org', 'organizations',
-                ['org_id'], ['id'], ondelete='CASCADE',
-            )
-            batch_op.create_foreign_key(
-                'fk_knowledge_documents_creator', 'users',
-                ['creator_id'], ['id'], ondelete='SET NULL',
-            )
+            if ('org_id', 'organizations') not in fks:
+                batch_op.create_foreign_key(
+                    'fk_knowledge_documents_org', 'organizations',
+                    ['org_id'], ['id'], ondelete='CASCADE',
+                )
+            if ('creator_id', 'users') not in fks:
+                batch_op.create_foreign_key(
+                    'fk_knowledge_documents_creator', 'users',
+                    ['creator_id'], ['id'], ondelete='SET NULL',
+                )
     else:
         # PostgreSQL：IF NOT EXISTS 与 create_all 幂等共存（create_all 引导的
         # 存量库已有这两列 —— 见迁移头注释的 drift 背景）。

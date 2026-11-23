@@ -495,7 +495,13 @@ async def run_map_finalization(
     # error 会被静默丢弃、误判 complete。
     all_errors = [f for f in findings if f.severity == "error"]
     result.findings = findings[:MAX_FINDINGS]
-    result.repairs_applied = all_repairs[:MAX_DISCLOSED_REPAIRS]
+    # repairs_applied 承载**全量**本轮修复：披露面（to_dict/SSE 载荷/
+    # finalization chain）各自再截断（≤6/≤4），而 durable repair_memory 的
+    # 合并（maybe_finalize 的 prior ∪ applied → map_product_block）必须见到
+    # 全量 —— 在此截到 MAX_DISCLOSED_REPAIRS 会让单轮 >6 条修复永不进
+    # 记忆，后续轮 prior_repairs 缺项 → 重新对抗用户已覆盖的修复
+    # （map_product_block all_repairs 契约明示此回归面）。
+    result.repairs_applied = list(all_repairs)
 
     layer_err = [f for f in findings if f.code in (
         F_NO_RESULT_LAYER, F_LAYER_MISSING, F_SOURCE_MISSING, F_LAYER_HIDDEN,

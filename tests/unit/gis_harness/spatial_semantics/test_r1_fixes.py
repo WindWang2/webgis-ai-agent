@@ -281,3 +281,51 @@ def test_p2_contract_roundtrip_with_occupied_span() -> None:
     d.pop("lon_span_occupied"), d.pop("lon_center_hint")
     c3 = SpatialSemanticContract.from_dict(d)
     assert c3.lon_span_occupied is None
+
+
+# ══ P1：投影米坐标不做 %360 环绕归一（bbox 中心/跨度） ═══════════════════
+
+def test_p1_projected_meter_bbox_not_wrapped_mod_360() -> None:
+    """3857 数据 bbox 宽 ≥360 **米**时不得被 %360 绕回：宽 bbox 的中心会
+    塌到 minx，反算经纬错误 → suggested_transform 指向错误 UTM 带
+    （buffer/density 即触发）。"""
+    from app.services.gis_harness.spatial_semantics.resolve import (
+        _bbox_center_and_span,
+        resolve_calculation_space,
+    )
+
+    # 600km × 600km 的 3857 窗口（中心 ≈ 112.3°E / 34.2°N）
+    x0, y0 = 12200000.0, 3760000.0
+    x1, y1 = x0 + 600000.0, y0 + 600000.0
+    clon_x, clat_y, span_x, _ = _bbox_center_and_span([x0, y0, x1, y1])
+    assert span_x == pytest.approx(600000.0)
+    assert clon_x == pytest.approx((x0 + x1) / 2)
+    assert clat_y == pytest.approx((y0 + y1) / 2)
+
+    contract = SpatialSemanticContract(
+        source_crs="EPSG:3857", crs_class="projected",
+        data_bbox=[x0, y0, x1, y1])
+    result = resolve_calculation_space(contract)
+    lon, lat = Transformer.from_crs(
+        "EPSG:3857", "EPSG:4326", always_xy=True).transform(clon_x, clat_y)
+    assert 111.0 < lon < 114.0 and 33.0 < lat < 35.0
+    # 反算中心落在 49 带（108-114°E），不是绕回后偏西的 48 带
+    assert result.suggested_transform.endswith("EPSG:32649"), (
+        f"投影 bbox 中心绕回导致选带错误: {result.suggested_transform}")
+
+
+def test_p1_geographic_bbox_still_wraps_across_antimeridian() -> None:
+    """地理（经纬度）坐标的 %360 环绕语义不变：跨 AM 的 minx>maxx 负跨度
+    仍绕回正跨度（AM 证据链的输入）。"""
+    from app.services.gis_harness.spatial_semantics.resolve import (
+        _bbox_center_and_span,
+    )
+
+    clon, clat, span, _ = _bbox_center_and_span(
+        [170.0, 0.0, -170.0, 10.0], wrap_degrees=True)
+    assert span == pytest.approx(20.0)
+    assert clon == pytest.approx(180.0)
+    # 普通地理 bbox（无环绕）中心即中点
+    clon2, _, span2, _ = _bbox_center_and_span(
+        [104.0, 30.0, 106.0, 31.0], wrap_degrees=True)
+    assert span2 == pytest.approx(2.0) and clon2 == pytest.approx(105.0)

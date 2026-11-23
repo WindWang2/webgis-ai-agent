@@ -35,9 +35,17 @@ _MISSING_INDEXES: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def _index_exists(table: str, index: str) -> bool:
+    """create_all-coexistence guard（repo convention，0033 同款）。"""
+    return index in {i["name"] for i in sa.inspect(op.get_bind()).get_indexes(table)}
+
+
 def upgrade() -> None:
     for name, table, column in _MISSING_INDEXES:
-        op.create_index(name, table, [column])
+        # 本迁移专治 create_all 漂移，而 create_all 自举的库早已按模型
+        # index=True 建出同名索引 —— 无守卫即 DuplicateObject。
+        if not _index_exists(table, name):
+            op.create_index(name, table, [column])
 
 
 def downgrade() -> None:

@@ -890,6 +890,27 @@ def test_collab_ws_inbound_non_finite_rejected():
         assert viewports == [{"lat": 30.0, "lng": 104.0}]
 
 
+def test_hello_document_drops_non_finite_doc():
+    """hello 内联 doc 的 allow_nan=False 必须有 try：非有限 doc → 丢内联。
+
+    _hello_document 在 handler 的 try 之前求值（订阅总线 / send_task /
+    presence join 之后）—— 无 try 时 ValueError 直接炸出 handler，
+    listener/send_task/presence 全泄漏且该会话永远连不上。丢内联 doc
+    后客户端经 sync 重取（sync 路径的 dumps 由 send_loop 兜底）。
+    """
+    from app.api.routes.ws_collab import _hello_document
+
+    # 未修复代码在此抛 ValueError（不是返回 None）
+    assert _hello_document(None) is None
+    small = {"workbench": {"version": 1, "layers": ["l1"]}}
+    assert _hello_document(small) is small
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert _hello_document({"workbench": {"opacity": bad}}) is None
+    # 深层嵌套的非有限值同样被丢（dumps 遍历全树）
+    assert _hello_document(
+        {"workbench": {"groups": [{"a": {"b": [1.0, float("nan")]}}]}}) is None
+
+
 # ─── artifact 感知（W8）：投影端点 + 失效事件 ────────────────────────────────
 
 @pytest.mark.asyncio

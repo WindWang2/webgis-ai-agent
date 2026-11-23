@@ -126,6 +126,10 @@ async def build_session_cube(
     # #2143 N28：按时间步顺序记录指纹列表 —— 按 path 为键的 dict 曾把
     # 同一文件的多个时间步折叠，[A,A,B] 与 [A,B,B] 复用键相同。
     fingerprint_seq: List[str] = []
+    # 血缘/披露投影（源路径 → 内容指纹）：manifest payload 的
+    # input_fingerprints 与返回的 content_fingerprints 的公开形状。与身份键
+    # fingerprint_seq 并存 —— 重复源在此仍按 path 折叠（历史形状，未改 API）。
+    fingerprints: Dict[str, str] = {}
     times: List[str] = []
     for time_label, path in resolved:
         times.append(time_label)
@@ -142,7 +146,9 @@ async def build_session_cube(
                 f"no chunks for time {time_label}", code="CUBE_BUILD_FAILED"
             )
         band_groups.append(descriptors)
-        fingerprint_seq.append(await asyncio.to_thread(_raster_fingerprint, path))
+        digest = await asyncio.to_thread(_raster_fingerprint, path)
+        fingerprint_seq.append(digest)
+        fingerprints[str(path)] = digest
 
     # 网格一致性预检（fail-fast，错误消息带时间步 —— 写入侧还会再验一次）。
     from app.services.lakehouse.cube_store import _validate_band_groups

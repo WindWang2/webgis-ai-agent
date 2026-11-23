@@ -1534,7 +1534,8 @@ def breach_depressions(
         seen = {cur}
         while rvalid[cur]:
             nxt = int(flat[cur])
-            if nxt == cur or nxt in seen:
+            # -1 = 无接收者（汇/边界外流哨兵）：负索引会绕到格尾像元
+            if nxt < 0 or nxt == cur or nxt in seen:
                 break
             path.append(nxt)
             seen.add(nxt)
@@ -1556,7 +1557,9 @@ def breach_depressions(
         ext_guard = 4 * (h + w)
         while rvalid[cc] and ext_guard > 0:
             nxt = int(flat[cc])
-            if nxt == cc or nxt in seen:
+            # -1 = 无接收者（汇/边界外流哨兵）：负索引会绕到格尾像元，
+            # 把 DEM 末像元（bflat[-1]）当出口下游刻低，并沿错误的接收链续刻
+            if nxt < 0 or nxt == cc or nxt in seen:
                 break
             ext_chain = ext_chain - eps
             ext_guard -= 1

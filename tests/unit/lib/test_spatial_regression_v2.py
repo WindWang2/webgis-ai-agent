@@ -264,6 +264,46 @@ def test_sem_ml_recovers_lambda():
     assert unc_types == {"validation_metrics", "statistical_significance"}
 
 
+def test_sar_ml_conditional_se_is_sigma2_xtx_inverse():
+    """SAR 系数标准误 = √(σ²·diag[(X'X)⁻¹])（给定 ρ̂ 的条件渐近协方差）。
+
+    ML-β 是 **Ay 对 X** 的 OLS（A = I−ρW），而 Ay = Xβ + ε（A 只作用于 y、
+    与 ε 不相干）→ Var(β̂|ρ̂) = σ²(X'X)⁻¹。与 OLS「同式」是代数结论而非 bug：
+    SEM 才是 (CX)'(CX) 面包（那里 Cy = CXβ + ε，两侧同变换）。把 SAR 换成
+    (AX)'(AX) 会把截距标准误放大一个量级（蒙特卡洛验证，ρ=0.9 时 ≈100×）。
+    """
+    from app.lib.geo_analysis.spatial_weights import build_contiguity_weights
+    from app.lib.geo_processor.core import to_utm_gdf
+
+    fc = _sar_generated_grid(seed=1, rho=0.9)
+    res = sar_ml_regression_narrated(fc, "y", ["x1"], weights_scheme="rook")
+    assert res.success, res.summary
+
+    # 手算：UTM gdf + 行标准化 rook 邻接 + 显式 Ay-on-X OLS
+    gdf, _ = to_utm_gdf(fc)
+    gdf = gdf.reset_index(drop=True)
+    y = gdf["y"].to_numpy(float)
+    x_mat = np.column_stack([np.ones(len(gdf)), gdf["x1"].to_numpy(float)])
+    n = len(gdf)
+    w = build_contiguity_weights(gdf, "rook", row_standardized=True)
+    w_dense = w.matrix.toarray()
+    rho = float(res.data["rho"])
+    a_y = y - rho * (w_dense @ y)
+    beta, *_ = np.linalg.lstsq(x_mat, a_y, rcond=None)
+    resid = a_y - x_mat @ beta
+    sigma2 = float(resid @ resid) / n
+    se_hand = np.sqrt(np.diag(np.linalg.pinv(x_mat.T @ x_mat)) * sigma2)
+
+    se_reported = [c["std_error"] for c in res.data["coefficients"]]
+    # rho 在 payload 里四舍五入到 6 位 → 手算 σ² 有 ~1e-8 相对差
+    np.testing.assert_allclose(se_reported, se_hand, rtol=1e-6)
+    assert res.data["sigma2"] == pytest.approx(sigma2, rel=1e-6)
+    # 与 (AX)'(AX) 面包显著不同（防止将来被"修"错）
+    a_x = x_mat - rho * (w_dense @ x_mat)
+    se_ax = np.sqrt(np.diag(np.linalg.pinv(a_x.T @ a_x)) * sigma2)
+    assert se_ax[0] > 3.0 * se_hand[0]
+
+
 def test_sar_ml_scale_guard_and_degenerate_inputs(monkeypatch):
     fc = _sar_generated_grid(seed=3, rho=0.5)
     # guard BEFORE eigen allocation: shrink the cap under a small n
