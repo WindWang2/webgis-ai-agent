@@ -1133,6 +1133,38 @@ class TestC1ClearSessionNoResurrect:
         ), "in-memory orphan repair did not run during clear (P1)"
 
     @pytest.mark.asyncio
+    async def test_clear_session_keeps_local_marker_until_straggler_drains(
+        self, engine, monkeypatch
+    ):
+        """P2: quiesce 超时后 straggler turn 仍在清理路径 —— 本地 clearing
+        标记不得立刻丢弃，否则其写库会复活已删除的会话行；turn 排空后再清。"""
+        sid = "sess-p2-straggler-marker"
+        engine._clear_quiesce_timeout = 0.01
+        release_turn = asyncio.Event()
+
+        async def straggler():
+            await release_turn.wait()
+
+        turn_task = asyncio.create_task(straggler())
+        engine._active_turn_tasks[sid] = turn_task
+        db_ctx, svc = _mock_history_delete(deleted=True)
+        with db_ctx as mock_db_ctx, svc, patch(
+            "app.services.chat.execution_engine.session_data_manager"
+        ) as mock_sdm:
+            _enter_db_ctx(mock_db_ctx)
+            mock_sdm.clear_session = AsyncMock()
+            ok = await engine.clear_session(sid)
+        assert ok is True
+        assert sid in engine._clearing_sessions, (
+            "local clearing marker dropped while the cancelled turn was still "
+            "draining its cleanup (P2)"
+        )
+        release_turn.set()
+        await asyncio.wait_for(turn_task, timeout=5)
+        await asyncio.sleep(0)
+        assert sid not in engine._clearing_sessions
+
+    @pytest.mark.asyncio
     async def test_new_turn_refused_while_session_clearing(self, engine, monkeypatch):
         """P1: a NEW turn POSTed while clear_session is mid-flight must be
         refused cleanly (SessionClearingError), not raced into the delete."""

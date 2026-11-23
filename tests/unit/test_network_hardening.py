@@ -229,3 +229,13 @@ def test_nearest_neighbor_basic_distance_symmetric_property():
     assert abs(lon) < 1.0 and abs(lat) < 1.0, (
         "nearest_neighbor must emit WGS84, not UTM metres"
     )
+
+
+def test_build_graph_unrecognized_dict_type_raises():
+    """A dict that is neither a GeoJSON FeatureCollection nor Feature used to
+    fall through to features=[] and return a 0-node graph as if the network
+    were empty; it must be a typed input error instead."""
+    with pytest.raises(ValueError, match="FeatureCollection"):
+        NetworkGraphBuilder().build_graph(
+            {"type": "Topology", "features": [_line_feature(0.0, 0.0, 1.0, 1.0)]}
+        )

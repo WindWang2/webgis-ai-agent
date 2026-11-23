@@ -172,6 +172,17 @@ class TestDrift:
         with pytest.raises(Exception, match="stale_runtime"):
             assert_reusable(record, plan=plan, current_runtime_fingerprint="rt-new")
 
+    def test_unavailable_current_runtime_is_unknown_not_current(self, monkeypatch):
+        """当前 runtime 指纹不可得 → 不得跳过世代比对判 current/reusable。"""
+        from app.services.geocompute import drift as drift_mod
+
+        plan = self._plan()
+        record = build_plan_record(plan, runtime_manifest_fingerprint="rt-old")
+        monkeypatch.setattr(drift_mod, "_current_runtime_fingerprint", lambda: None)
+        verdict = check_plan_drift(record, plan=plan)
+        assert verdict.state == "unknown"
+        assert verdict.reusable is False
+
     def test_degraded_plan_detected(self):
         record = build_plan_record(self._plan(), runtime_manifest_fingerprint="rt-1")
         verdict = check_plan_drift(

@@ -22,6 +22,7 @@ Ri  cartographer.revise（仅按审计红线 suggested_fix 的 AUTO_SAFE 修复�
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -32,6 +33,7 @@ from app.services.agent_swarm.contracts import (
     DeliveryAuditReport,
 )
 from app.services.agent_swarm.delegation_contracts import (
+    DEFAULT_TASK_TIMEOUT_S,
     SwarmReceiptStatus,
     SwarmSpecialistRole,
     SubagentReceipt,
@@ -41,6 +43,10 @@ from app.services.agent_swarm.specialists.cartographer import CartographerAgent
 from app.services.agent_swarm.specialists.ledger import ArtifactLedger
 
 logger = logging.getLogger(__name__)
+
+#: governor 排队上限（与单任务硬墙钟同源）：排队过期为诚实终止，
+#: 不再把 Web 请求面无界挂在背压上（与 orchestrator.acquire 同纪律）。
+_GOVERNOR_ACQUIRE_TIMEOUT_S: float = DEFAULT_TASK_TIMEOUT_S
 
 
 @dataclass
@@ -105,6 +111,13 @@ class CartoAuditDuoSession:
         # 账本防呆：未显式注入时回退用制图专家的账本 —— compose 与 audit
         # 必须共享同一取货位，否则审计永远 V0 不可达。
         self._ledger = ledger or getattr(cartographer, "_ledger", None)
+        if governor is None:
+            # 与 SwarmOrchestrator 同一回退：未注入时仍受集群 ≤3 熔断约束。
+            from app.services.agent_swarm.orchestrator import (
+                get_swarm_concurrency_governor,
+            )
+
+            governor = get_swarm_concurrency_governor()
         self._governor = governor
         self._aggregator = aggregator
         self._clock = clock
@@ -198,7 +211,10 @@ class CartoAuditDuoSession:
         assignment_id = f"{run_id}:{action}:{round_index}"
         started = self._clock()
         if self._governor is not None:
-            await self._governor.acquire(assignment_id, f"swarm.cartography.{action}")
+            await asyncio.wait_for(
+                self._governor.acquire(assignment_id, f"swarm.cartography.{action}"),
+                timeout=_GOVERNOR_ACQUIRE_TIMEOUT_S,
+            )
         try:
             value = fn()
         finally:
@@ -214,7 +230,7 @@ class CartoAuditDuoSession:
                 f"{action} {run_label}: {value.summary}"
             )[:400],
             wall_time_s=self._clock() - started,
-            finished_at=self._clock(),
+            finished_at=time.time(),
         )
         self._pending_receipts.append(receipt)
         return value
@@ -233,7 +249,10 @@ class CartoAuditDuoSession:
         assignment_id = f"{run_id}:audit:{round_index}"
         started = self._clock()
         if self._governor is not None:
-            await self._governor.acquire(assignment_id, "swarm.audit.judge")
+            await asyncio.wait_for(
+                self._governor.acquire(assignment_id, "swarm.audit.judge"),
+                timeout=_GOVERNOR_ACQUIRE_TIMEOUT_S,
+            )
         try:
             report = self._auditor.audit(
                 delivery,
@@ -258,7 +277,7 @@ class CartoAuditDuoSession:
                 f"vetoes={len(report.vetoes)}"
             )[:400],
             wall_time_s=self._clock() - started,
-            finished_at=self._clock(),
+            finished_at=time.time(),
         )
         self._pending_receipts.append(receipt)
         return report
@@ -357,7 +376,7 @@ class InProcessSpecialistRuntime:
                 error=str(exc)[:300],
                 error_code="non_retryable",
                 wall_time_s=time.monotonic() - started,
-                finished_at=time.monotonic(),
+                finished_at=time.time(),
             )
         return SubagentReceipt(
             assignment_id=assignment.assignment_id,
@@ -367,7 +386,7 @@ class InProcessSpecialistRuntime:
             produced_refs=refs,
             summary=summary[:400],
             wall_time_s=time.monotonic() - started,
-            finished_at=time.monotonic(),
+            finished_at=time.time(),
         )
 
 

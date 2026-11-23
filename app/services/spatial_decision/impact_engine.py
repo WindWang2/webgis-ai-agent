@@ -258,10 +258,6 @@ class SpatialImpactEngine:
             indirect_r = 5000.0
 
         # Explicit user parameters take precedence over scenario and rule defaults.
-        for rule in rules or []:
-            params = getattr(rule, "parameters", None) or {}
-            direct_r = float(params.get("direct_radius_m", direct_r))
-            indirect_r = float(params.get("indirect_radius_m", indirect_r))
         parameters = parameters or {}
         direct_r = max(0.0, float(parameters.get("direct_radius_m", direct_r)))
         indirect_r = max(direct_r, float(parameters.get("indirect_radius_m", indirect_r)))

@@ -482,3 +482,51 @@ async def test_rerun_route_never_consumes_request_level_db(monkeypatch):
         project_id, int(v1.version_no), _ExplodingDb(), {"user_id": "u_lc"})
     assert resp["run_id"] == run_id
     assert resp["recorded_version_no"] == int(v1.version_no)
+
+
+async def test_workspace_snapshot_route_never_consumes_request_level_db(monkeypatch):
+    """P2 concurrency：workspace 快照面同样不得把请求级 Session 送进 worker
+    线程（db=db 关键字绕过 #565 AST 守卫）—— 以「一被 ORM 使用即炸」的
+    替身驱动 save 路由，鉴权查询只能在工作线程自建 SessionLocal。"""
+    from types import SimpleNamespace
+
+    from app.api.routes import project as project_mod
+    from app.models.db_model import User
+    from app.models.project import Project
+
+    project_id = f"proj_{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as s:
+        s.merge(User(id="u_lc", username="lc", email="lc@example.com",
+                     password_hash="x", role="viewer", is_active=True))
+        s.add(Project(id=project_id, name="ws-nodb", owner_id="u_lc"))
+        s.commit()
+
+    class _ExplodingDb:
+        def _boom(self, *args, **kwargs):
+            raise AssertionError(
+                "request-level db consumed by the route (cross-thread Session)")
+
+        execute = query = get = add = delete = commit = rollback = flush = refresh = _boom
+
+        def close(self):
+            pass
+
+    async def _ok_session(*args, **kwargs):
+        return None
+
+    class _Svc:
+        async def save_snapshot(self, *args, **kwargs):
+            return SimpleNamespace(
+                project_id=project_id, snapshot_id="snap-1", label="l",
+                durable_pointers=[], materialize_skipped=[],
+                model_dump=lambda mode="json": {})
+
+    monkeypatch.setattr(project_mod, "_verify_session_access", _ok_session)
+    monkeypatch.setattr(
+        "app.services.workspace.snapshot.get_workspace_snapshot_service",
+        lambda: _Svc(),
+    )
+    req = project_mod.WorkspaceSnapshotSaveRequest(session_id="sess", label="l")
+    resp = await project_mod.save_workspace_snapshot(
+        project_id, req, _ExplodingDb(), {"user_id": "u_lc"}, None)
+    assert resp.snapshot_id == "snap-1"

@@ -246,17 +246,14 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             if replay is not None:
                 return self._replay(replay, authority=request.state.idempotency_authority)
             if redis is not None:
-                # Only a newly acquired lock can authorize another execution.
-                try:
-                    acquired = await redis.set(lock_key, token, nx=True, ex=LOCK_TTL_S)
-                except Exception as exc:  # noqa: BLE001 — fail-open
-                    logger.warning("[Idempotency] lock reacquire failed (%s); failing open", exc)
-                    redis = None
-                if redis is not None and not acquired:
-                    return JSONResponse(
-                        status_code=409, content={"detail": "Idempotent request is still in progress"},
-                        headers={"Retry-After": "1"},
-                    )
+                # 等待结束仍无重放记录：首个执行者已完成但响应不可缓存
+                # （非 JSON / 5xx / Set-Cookie / 超限），或等待超时后锁才
+                # 释放。锁空闲不代表 handler 未执行 —— 重新抢锁执行会把
+                # 已生效的 mutating handler 再跑一遍（单飞静默退化）。
+                return JSONResponse(
+                    status_code=409, content={"detail": "Idempotent request is still in progress"},
+                    headers={"Retry-After": "1"},
+                )
         response = await call_next(request)
         if redis is not None:
             return await self._store_response(redis, idem_key, lock_key, token, response, principal=caller_principal_digest(request), authority=request.state.idempotency_authority)
@@ -270,7 +267,9 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 return stored
             inflight = await redis.get(f"{_INFLIGHT_PREFIX}{idem_key}")
             if inflight is None:
-                return None
+                # 锁在两次 GET 之间释放：重放记录可能恰好在该窗口写入
+                # （_store_response 先存后放锁），再确认一次再判定。
+                return await redis.get(f"{_RESP_PREFIX}{idem_key}")
             await asyncio.sleep(WAIT_INTERVAL_S)
         return None
 

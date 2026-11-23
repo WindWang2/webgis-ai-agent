@@ -68,20 +68,33 @@ def _session_file_lock(session_id: str) -> Iterator[None]:
         os.close(fd)
 
 
+def _empty_state(session_id: str) -> Dict[str, Any]:
+    return {"session_id": session_id, "sources": {}, "plans": {}, "idempotency": {}}
+
+
 def _read_state_unlocked(session_id: str) -> Dict[str, Any]:
     sp = _state_path(session_id)
     if not sp.is_file():
-        return {"session_id": session_id, "sources": {}, "plans": {}, "idempotency": {}}
+        return _empty_state(session_id)
     try:
         data = json.loads(sp.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            return {"session_id": session_id, "sources": {}, "plans": {}, "idempotency": {}}
+            raise ValueError("state root is not a JSON object")
         data.setdefault("sources", {})
         data.setdefault("plans", {})
         data.setdefault("idempotency", {})
         return data
-    except Exception:  # noqa: BLE001
-        return {"session_id": session_id, "sources": {}, "plans": {}, "idempotency": {}}
+    except Exception as exc:  # noqa: BLE001
+        # Fail closed: returning an empty state here would let the next
+        # save_source / mutate_plan_cas write it back and silently erase every
+        # source/plan record of this session.
+        raise GeorefDomainError(
+            GeorefErrorCode.SOURCE_CORRUPT_OR_TAMPERED,
+            f"Georeference state for session '{session_id}' is unreadable ({exc}); "
+            "refusing to treat it as empty or overwrite it.",
+            status_code=500,
+            details={"session_id": session_id},
+        ) from exc
 
 
 def _write_state_unlocked(session_id: str, state: Dict[str, Any]) -> None:

@@ -113,6 +113,16 @@ def test_open_loop_metrics_pinned(registry):
     assert by_kind["out_of_scope"]["precision_at_1"] == 0.0
 
 
+def test_out_of_scope_cases_do_not_inflate_recall(registry):
+    """oos 案例无合法工具（valid 集为空）——不得按满分计入 recall 分母。"""
+    oos = [c for c in get_retrieval_eval_corpus()
+           if c.kind == "out_of_scope"]
+    assert oos and all(not c.valid_tools for c in oos)
+    report = retrieval_eval_report(registry, oos)
+    assert report.recall_at_5 == 0.0
+    assert report.recall_at_10 == 0.0
+
+
 def test_v5_kill_switch_preserves_lexical_baseline(registry, monkeypatch):
     """GIS_TOOL_RETRIEVAL_V6=0 → 词法基线行为（hybrid 全通道关闭）。
 

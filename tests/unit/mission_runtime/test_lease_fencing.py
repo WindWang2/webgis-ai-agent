@@ -62,6 +62,19 @@ def test_heartbeat_extension(mission_store):
         m.mission_id, owner="w1", lease_epoch=ep + 99, ttl_s=30.0) is False
 
 
+def test_same_owner_renew_keeps_epoch(mission_store):
+    """Doc contract: same-owner renew is a heartbeat, not a new lease."""
+    m = mission_store.create_mission(org_id="1", user_id="u", root_goal="g")
+    ep1, exp1 = mission_store.acquire_lease(m.mission_id, owner="w1", ttl_s=5.0)
+    ep2, exp2 = mission_store.acquire_lease(m.mission_id, owner="w1", ttl_s=60.0)
+    assert ep2 == ep1
+    assert exp2 > exp1
+    # An in-flight writer holding the pre-renew epoch must not be fenced out.
+    rec = mission_store.patch_mission(
+        m.mission_id, lease_epoch=ep1, owner="w1", root_goal="renewed")
+    assert rec.root_goal == "renewed"
+
+
 def test_release_only_by_holder(mission_store):
     m = mission_store.create_mission(org_id="1", user_id="u", root_goal="g")
     ep, _ = mission_store.acquire_lease(m.mission_id, owner="w1")

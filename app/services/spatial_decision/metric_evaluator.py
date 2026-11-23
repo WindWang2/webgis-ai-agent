@@ -301,7 +301,11 @@ class MetricEvaluator:
             is_missing = False
             gap_note = None
 
-            if m_key in baseline_metrics and not baseline_metrics[m_key].missing_baseline:
+            if (
+                m_key in baseline_metrics
+                and not baseline_metrics[m_key].missing_baseline
+                and baseline_metrics[m_key].baseline is not None
+            ):
                 bm = baseline_metrics[m_key]
                 base_val = bm.baseline
                 base_unit = bm.unit

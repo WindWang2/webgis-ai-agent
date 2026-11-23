@@ -1308,6 +1308,10 @@ export function compileMapSpec(
     //   heatmap-radius；仅 circle 原生层可改写，否则透传 + 证据）；
     // - point_cluster 窗 → 上方簇三子层已承载（跳过）；
     // - hidden 窗 → 不产出层 + 证据（detail visibility 门）。
+    // P2（review）：raw/artifact 克隆先于 G40 补丁创建 —— G40 会整体替换
+    // 主层 filter（新数组）并原地改 paint/layout，spread 出来的克隆追不上
+    // 新 filter（类别排除缺失 → 类别要素双绘）。收集后统一同步最终定义。
+    const rawWindowClones: Array<CompiledLayer & { layout: MapLibrePaint }> = [];
     if (planEffective) {
       const subNoneLayout = vis.visibility === "none"
         ? { layout: { visibility: "none" as const } }
@@ -1373,6 +1377,7 @@ export function compileMapSpec(
         };
         if (subNoneLayout) repSub.layout = { ...maplibreLayer.layout, visibility: "none" };
         compiledLayers.push(repSub);
+        rawWindowClones.push(repSub);
         recordSymbolLawEvidence("representation-window-layer", {
           mode: w.mode, minZoom: wMin, maxZoom: wMax, sublayerId: repSub.id,
         }, layer.id);
@@ -1390,6 +1395,18 @@ export function compileMapSpec(
           ? ["all", maplibreLayer.filter, g40MainFilterExtra]
           : g40MainFilterExtra) as typeof maplibreLayer.filter;
       }
+    }
+    // P2（review）：把克隆同步到主层最终定义（G40 paint/layout 原地补丁 +
+    // filter 整体替换之后）。visibility:none 的窗子层保持自隐。
+    for (const clone of rawWindowClones) {
+      const cloneHidden = (clone.layout as Record<string, unknown> | undefined)?.visibility === "none";
+      clone.paint = { ...maplibreLayer.paint };
+      clone.layout = {
+        ...maplibreLayer.layout,
+        ...(cloneHidden ? { visibility: "none" as const } : {}),
+      };
+      if (maplibreLayer.filter !== undefined) clone.filter = maplibreLayer.filter;
+      else delete clone.filter;
     }
     compiledLayers.push(maplibreLayer);
     for (const sub of g40SublayerDefs) {
@@ -1422,8 +1439,10 @@ export function compileMapSpec(
         type: "symbol",
         source: layer.source,
         // C11 v1.5：标注子层继承主层 zoom 门（显隐经 layout.visibility）。
-        ...(vis.gate.minzoom !== undefined ? { minzoom: vis.gate.minzoom } : {}),
-        ...(vis.gate.maxzoom !== undefined ? { maxzoom: vis.gate.maxzoom } : {}),
+        // P2（review）：必须继承 **合成门**（vis ∩ 表达窗门）—— 仅继承
+        // vis.gate 会让标注在主层 zoom 窗外（退化门时主层恒隐）仍渲染。
+        ...(maplibreLayer.minzoom !== undefined ? { minzoom: maplibreLayer.minzoom } : {}),
+        ...(maplibreLayer.maxzoom !== undefined ? { maxzoom: maplibreLayer.maxzoom } : {}),
         layout: {
           "text-field": asExpression(["get", labelSpec.field]),
           "text-size": compileStyleMethod(labelSpec.size ?? layer.layout?.labelSize ?? 12),

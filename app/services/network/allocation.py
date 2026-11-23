@@ -698,6 +698,14 @@ class NetworkLocationAllocationService:
                 correction_hint="choose solver='auto' (default), 'heuristic', or 'exact_milp'",
             )
         problem_norm = problem_type.lower()
+        if problem_norm not in ("p_median", "max_coverage", "p_center"):
+            # Same contract as the exact_milp dispatch below: an unrecognized
+            # spelling must not silently solve p_median while the summary
+            # echoes the requested string.
+            raise UnsupportedMethod(
+                f"未知选址问题类型 {problem_type!r}（合法：p_median | max_coverage | p_center）",
+                correction_hint="use one of p_median | max_coverage | p_center",
+            )
         if solver == "exact_milp":
             if problem_norm == "p_median":
                 return self.p_median_exact(

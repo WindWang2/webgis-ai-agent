@@ -165,7 +165,11 @@ def list_exceptions(
         stmt = select(TopologyException).order_by(TopologyException.created_at.desc())
         if ruleset_id:
             stmt = stmt.where(TopologyException.ruleset_id == ruleset_id)
-        if actor_user_id and not is_admin:
+        if not is_admin:
+            if not actor_user_id:
+                # 无身份（工具路径/未登录）不是超管 —— 无可见例外，绝不回退全表
+                # （anchor 内含源指纹/locator/metric，泄露即跨用户证据泄露）。
+                return []
             # 归属 = created_by 或（agent 会话内创建时）会话属主兜底
             from sqlalchemy import or_
             from app.models.db_model import Conversation

@@ -100,6 +100,28 @@ def _all_case_ids() -> dict:
 
 
 class TestRegistrationCompleteness:
+    def test_failed_builtin_import_is_retried(self, monkeypatch):
+        """内置注册在导入失败后必须可重试：旧代码把 _BUILTINS_LOADED
+        置 True 提前到 import 之前，失败后二次调用直接返回空注册表。"""
+        import builtins
+
+        monkeypatch.setattr(index, "_BUILTINS_LOADED", False)
+        monkeypatch.setattr(index, "_REGISTRY", [])
+        real_import = builtins.__import__
+
+        def failing_import(name, *args, **kwargs):
+            if name == "app.evaluation":
+                raise ImportError("simulated builtin import failure")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", failing_import)
+        with pytest.raises(ImportError):
+            index._all_registrations()
+        monkeypatch.setattr(builtins, "__import__", real_import)
+
+        names = {r.name for r in index._all_registrations()}
+        assert "quality_scenario" in names and "retrieval_eval" in names
+
     @pytest.mark.xfail(
         strict=True,
         reason="生产缺口（#1552）：chaos/closed_loop/retrieval 语料模块与 "

@@ -271,6 +271,7 @@ class CriticAuditorAgent(BaseSpecialistAgent):
                     chapter,
                     user_goal=user_goal,
                     map_product=map_product,
+                    cartographic_review=review,
                 )
             except Exception as exc:  # noqa: BLE001 — 评估面异常按无证据处理
                 logger.warning("goal satisfaction evaluator failed: %s", exc)

@@ -773,7 +773,12 @@ async def _bounded_descriptors(
 
     async def _one(ref_id: str):
         try:
-            return ref_id, await store.get_ref_descriptor(session_id, ref_id)
+            # 单描述符有界等待（与 _gather_sources 同纪律）：任一
+            # get_ref_descriptor 挂起不能无限期阻塞本轮编译。
+            return ref_id, await asyncio.wait_for(
+                store.get_ref_descriptor(session_id, ref_id),
+                timeout=_SOURCE_TIMEOUT_S,
+            )
         except Exception:  # noqa: BLE001 — 单描述符失败不失败编译
             return ref_id, None
 

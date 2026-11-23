@@ -49,6 +49,15 @@ def test_task_complete_without_render_observation_is_contradiction():
     }
 
 
+def test_non_mapping_verdict_does_not_raise():
+    """verdict 为真值非 dict（字符串/数字）→ 按缺席处理，不得抛异常。"""
+    for verdict in ("complete", 42):
+        trace = _trace_without_render()
+        trace["verdict"] = verdict
+        report = project_journey_evidence(trace, mode="offline_replay")
+        assert report["schema_version"] == "gis_journey_evidence.v1"
+
+
 def test_cross_session_chain_cannot_settle_or_leak_identity():
     import copy
 

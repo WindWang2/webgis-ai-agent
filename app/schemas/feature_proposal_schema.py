@@ -234,8 +234,8 @@ class FeatureProposalSummaryResponse(BaseModel):
     merge: Optional[Dict[str, Any]] = None
     has_approval: bool = False
     resolutions_count: int = 0
-    created_at: str
-    updated_at: str
+    created_at: float
+    updated_at: float
 
 
 class FeatureProposalEnvelopeResponse(BaseModel):

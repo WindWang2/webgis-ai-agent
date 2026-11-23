@@ -251,3 +251,41 @@ class TestE2SFCAContractAndTool:
         assert c is not None
         for spec in c.parameters:
             assert spec.name in nt.NetworkAccessibilityArgs.model_fields, spec.name
+
+
+class TestAccessibilityInputValidation:
+    """P2 review fixes: invalid method/cutoff must not fall through silently,
+    and an empty facility layer must not fabricate a 0%-coverage success."""
+
+    def test_e2sfca_nonpositive_cutoff_rejected(self):
+        graph, dataset = _build_graph()
+        svc = _service()
+        with pytest.raises(ValueError, match="cutoff_minutes"):
+            svc.network_accessibility(
+                demand_points=[_demand("d1", 116.000)],
+                facilities=[_facility("f1", 116.000)],  # co-located pair → t=0
+                graph=graph, network_dataset=dataset,
+                cutoff_minutes=0.0, method="e2sfca",
+            )
+
+    def test_unknown_method_rejected(self):
+        graph, dataset = _build_graph()
+        svc = _service()
+        with pytest.raises(ValueError, match="15min_circle"):
+            svc.network_accessibility(
+                demand_points=[_demand("d1", 116.000)],
+                facilities=[_facility("f1", 116.001)],
+                graph=graph, network_dataset=dataset,
+                cutoff_minutes=15.0, method="3sfca",
+            )
+
+    def test_empty_facilities_rejected_instead_of_zero_coverage(self):
+        graph, dataset = _build_graph()
+        svc = _service()
+        with pytest.raises(ValueError, match="facilit"):
+            svc.network_accessibility(
+                demand_points=[_demand("d1", 116.000)],
+                facilities=[],
+                graph=graph, network_dataset=dataset,
+                cutoff_minutes=15.0, method="15min_circle",
+            )

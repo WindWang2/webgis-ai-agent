@@ -59,6 +59,24 @@ async def test_idempotency_waiter_never_executes_while_lock_is_held(monkeypatch)
     execute.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_idempotency_waiter_never_reexecutes_after_uncached_completion(monkeypatch):
+    from starlette.responses import Response
+
+    from app.core.idempotency import IdempotencyMiddleware
+
+    middleware = IdempotencyMiddleware(object())
+    # 首次 SET NX 失败（他人持锁）；等待期间锁被释放且无重放记录，
+    # 说明首个执行者已完成但响应不可缓存 —— 绝不能再执行 mutating handler。
+    redis = SimpleNamespace(set=AsyncMock(side_effect=[False, True]))
+    monkeypatch.setattr(middleware, "_wait_for_response", AsyncMock(return_value=None))
+    execute = AsyncMock(return_value=Response(content=b"stream", media_type="text/plain"))
+    request = SimpleNamespace(headers={}, state=SimpleNamespace(idempotency_authority="a"))
+    response = await middleware._singleflight(redis, "same-key", request, execute)
+    assert response.status_code == 409
+    execute.assert_not_called()
+
+
 def test_serialization_failure_is_an_error_event():
     from app.utils.sse import sse_event
 

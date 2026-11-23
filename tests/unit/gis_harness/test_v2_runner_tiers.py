@@ -243,3 +243,66 @@ async def test_execute_tier_mapspec_store_error_is_not_product_failure(monkeypat
     assert not any("component missing in MapSpec" in f for f in r.failures)
     assert not any("numeric assertion failed" in f for f in r.failures)
     assert not any("mapspec missing after script" in f for f in r.failures)
+
+
+async def test_execute_tier_artifact_lookup_error_is_not_product_failure(
+    monkeypatch,
+):
+    """review P2：list_artifacts 抛错不得折算成 "artifact type missing"
+    产品失败 —— 基础设施故障单独记账。"""
+    from app.evaluation.case import ScriptStep
+
+    async def _boom(session_id):
+        raise RuntimeError("artifact registry unavailable")
+
+    monkeypatch.setattr(
+        "app.services.artifact_registry.list_artifacts", _boom)
+    case = GISBenchmarkCase(
+        id="UT-exec-artifact-error", name="artifact error",
+        group="hard-negative", query="青羊区小学数量", plan_only=False,
+        script=[ScriptStep(tool="stub_tool", args={})],
+        expected_artifact_types=["chart"],
+    )
+    r = await GISBenchmarkRunner(registry=_StubExecRegistry()).run_case(case)
+    assert not r.passed
+    assert any("infrastructure" in f for f in r.failures), r.failures
+    assert not any("artifact type missing" in f for f in r.failures)
+
+
+class _BoomListRegistry:
+    """registry.list_tools 抛错替身（初始化成功、列举失败）。"""
+
+    def list_tools(self):
+        raise RuntimeError("tool registry unavailable")
+
+    async def dispatch(self, tool, args, session_id=None):
+        return {"success": True, "value": 1}
+
+
+async def test_plan_tier_tool_registry_error_is_not_product_failure():
+    """review P2：_tool_names 吞掉列举异常 → planner 在虚构工具面上
+    裁决。基础设施故障必须单独记账，不产伪产品失败。"""
+    case = GISBenchmarkCase(
+        id="UT-tool-registry-error", name="registry error",
+        group="hard-negative", query="成都各区小学分布", plan_only=True,
+    )
+    r = await GISBenchmarkRunner(registry=_BoomListRegistry()).run_case(case)
+    assert not r.passed
+    assert any("infrastructure" in f for f in r.failures), r.failures
+    assert not any("capabilities unresolved" in f for f in r.failures)
+
+
+async def test_execute_tier_tool_registry_error_not_silent_skip():
+    """review P2：注册表故障不得静默判 skipped("tools not registered")。"""
+    from app.evaluation.case import ScriptStep
+
+    case = GISBenchmarkCase(
+        id="UT-exec-tool-registry-error", name="registry error",
+        group="hard-negative", query="成都各区小学分布", plan_only=False,
+        script=[ScriptStep(tool="stub_tool", args={})],
+    )
+    r = await GISBenchmarkRunner(registry=_BoomListRegistry()).run_case(case)
+    assert r.status == "fail"
+    assert any("infrastructure" in f for f in r.failures), r.failures
+    assert not any("tools not registered" in f for f in r.failures)
+    assert r.skipped_reason == ""

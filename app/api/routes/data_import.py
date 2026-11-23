@@ -31,6 +31,7 @@ from app.schemas.data_import_schema import (
 from app.services.auth_history_bridge import verify_session_owner
 from app.services.data_import import budgets
 from app.services.data_import.service import DataImportError, get_data_import_service
+from app.services.data_parser import MAX_VECTOR_SIZE
 from app.tools._utils import async_db_session
 
 logger = logging.getLogger(__name__)
@@ -113,9 +114,28 @@ async def create_batch(
             detail=f"TOO_MANY_FILES: 单批最多 {budgets.MAX_FILES_PER_BATCH} 个文件",
         )
     payloads: List[tuple] = []
+    total_bytes = 0
     for f in files:
-        content = await f.read()
-        payloads.append((f.filename or "file", content))
+        # P2 resource-leak：有界读 —— 单文件与批次合计闸在路由层先于内存
+        # 占用生效（service 的落盘前校验救不了已读入的字节）。
+        name = f.filename or "file"
+        remaining = budgets.MAX_BATCH_RAW_BYTES - total_bytes
+        content = await f.read(min(MAX_VECTOR_SIZE, remaining) + 1)
+        if len(content) > MAX_VECTOR_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"FILE_TOO_LARGE: {name}: 超过单文件上限 {MAX_VECTOR_SIZE} 字节",
+            )
+        total_bytes += len(content)
+        if total_bytes > budgets.MAX_BATCH_RAW_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"BATCH_TOO_LARGE: 批次合计超过上限 "
+                    f"{budgets.MAX_BATCH_RAW_BYTES} 字节"
+                ),
+            )
+        payloads.append((name, content))
     service = get_data_import_service()
     try:
         state = await service.create_batch(

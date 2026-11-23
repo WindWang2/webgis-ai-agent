@@ -30,8 +30,9 @@ class MissionArtifactOwnership:
         owner: str,
         refs: Iterable[str],
         kind: str = "artifact",
+        org_id: Optional[str] = None,
     ) -> C.MissionRecord:
-        rec = self.store.get_mission(mission_id)
+        rec = self.store.get_mission(mission_id, org_id=org_id)
         if rec is None:
             raise TransitionRejected("MISSION_NOT_FOUND")
         bucket = _BUCKETS.get(kind, "artifact_refs")
@@ -48,8 +49,8 @@ class MissionArtifactOwnership:
         return self.store.patch_mission(
             mission_id, lease_epoch=lease_epoch, owner=owner, refs=data, expected_revision=rec.revision)
 
-    def inventory(self, mission_id: str) -> dict:
-        rec = self.store.get_mission(mission_id)
+    def inventory(self, mission_id: str, *, org_id: Optional[str] = None) -> dict:
+        rec = self.store.get_mission(mission_id, org_id=org_id)
         if rec is None:
             return {}
         return rec.refs.model_dump()

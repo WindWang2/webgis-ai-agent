@@ -131,7 +131,11 @@ def operation_class_from_side_effect(side_effect: str) -> OperationClass:
         return OperationClass.COMPENSATABLE
     if se in ("repeatable", "idempotent"):
         return OperationClass(se) if se in OperationClass._value2member_map_ else OperationClass.IDEMPOTENT
-    return OperationClass.PURE
+    if se == "pure":
+        return OperationClass.PURE
+    # Unknown vocabulary must never fall back to the most permissive class:
+    # a typo / new token must not turn an external side effect into blind-retry.
+    return OperationClass.DESTRUCTIVE_AT_MOST_ONCE
 
 
 class RecoveryClass(str, Enum):
@@ -210,6 +214,9 @@ class MissionResourceBudget(BaseModel):
         hits: List[str] = []
         for dim, limit in (self.quota or {}).items():
             if float(limit) <= 0:
+                # Zero/negative budget means zero capacity (reserve() rejects
+                # every positive amount); do not silently treat it as unlimited.
+                hits.append(str(dim))
                 continue
             used = float(self.consumed.get(dim, 0.0)) + float(self.reserved.get(dim, 0.0))
             if used >= float(limit):
@@ -325,17 +332,57 @@ class MissionCheckpoint(BaseModel):
         raw = self.model_dump()
         # ensure serialized size stays bounded
         import json
-        blob = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
-        if len(blob.encode("utf-8")) <= MAX_CHECKPOINT_BYTES:
+
+        def _size(value: Dict[str, Any]) -> int:
+            return len(json.dumps(
+                value, ensure_ascii=False, separators=(",", ":"),
+            ).encode("utf-8"))
+
+        if _size(raw) <= MAX_CHECKPOINT_BYTES:
             return raw
         # strip note / truncate lists
         raw["note"] = (raw.get("note") or "")[:80]
-        for key in ("workflow_instance_refs",):
-            raw[key] = list(raw.get(key) or [])[:8]
+        raw["workflow_instance_refs"] = list(raw.get("workflow_instance_refs") or [])[:8]
         fr = raw.get("frontier") or {}
         for k in ("completed", "running", "pending", "failed", "blocked"):
             fr[k] = list(fr.get(k) or [])[:16]
         raw["frontier"] = fr
+        refs = raw.get("refs") or {}
+        for k in list(refs):
+            if isinstance(refs[k], list):
+                refs[k] = list(refs[k])[:16]
+        raw["refs"] = refs
+        # A single strip cannot guarantee the byte cap (refs alone may exceed
+        # it): shrink the list payloads, re-measuring after each pass.
+        containers = (
+            (refs, list(refs)),
+            (fr, ["completed", "running", "pending", "failed", "blocked"]),
+            (raw, ["workflow_instance_refs"]),
+        )
+        while _size(raw) > MAX_CHECKPOINT_BYTES:
+            shrunk = False
+            for container, keys in containers:
+                for k in keys:
+                    cur = container.get(k) or []
+                    if cur:
+                        container[k] = list(cur)[: max(1, len(cur) // 2)]
+                        shrunk = True
+            if not shrunk:
+                break
+        if _size(raw) > MAX_CHECKPOINT_BYTES:
+            # Last resort: clamp every string / list / mapping so the promise
+            # holds even for oversized opaque refs.
+            def _clamp(node: Any) -> Any:
+                if isinstance(node, dict):
+                    return {str(k)[:64]: _clamp(v)
+                            for k, v in list(node.items())[:16]}
+                if isinstance(node, list):
+                    return [_clamp(v) for v in node[:8]]
+                if isinstance(node, str):
+                    return node[:48]
+                return node
+
+            raw = _clamp(raw)
         return raw
 
 

@@ -548,12 +548,18 @@ class PiAgentHarness:
                     mutation["tool_call_id"] == tool_call_id
                     and mutation.get("session_id") == eff_session_id
                 ):
+                    # result 可能为 None / 非 dict（事件透传未校验）：录音路径
+                    # 不得因此抛异常。warnings 非 list（null/str）按空处理。
+                    result_dict = result if isinstance(result, dict) else {}
+                    warnings = result_dict.get("warnings")
+                    if not isinstance(warnings, list):
+                        warnings = []
                     mutation_accepted = (
-                        not is_error and result.get("success", True) is not False
+                        not is_error and result_dict.get("success", True) is not False
                     )
                     semantic_valid = (
                         mutation_accepted
-                        and result.get("is_compiled") is True
+                        and result_dict.get("is_compiled") is True
                     )
                     mutation["is_valid"] = semantic_valid  # SEMANTIC_VALID tier
                     mutation["mutation_accepted"] = mutation_accepted
@@ -567,11 +573,11 @@ class PiAgentHarness:
                     # checks report NOT_EVALUATED (never a fake pass).
                     cartography_errors = [
                         f"{f.get('check')}: {f.get('message')}"
-                        for f in (result.get("cartography_findings") or [])
+                        for f in (result_dict.get("cartography_findings") or [])
                         if isinstance(f, dict) and f.get("severity") == "error"
                         and f.get("evaluated", True)
                     ]
-                    mutation["semantic_errors"] = _slim_args_for_retention(result.get("warnings", []) + cartography_errors)
+                    mutation["semantic_errors"] = _slim_args_for_retention(warnings + cartography_errors)
                     break
         return result_entry
 
@@ -756,6 +762,12 @@ class PiAgentHarness:
                         )
                         continue
                     self._resolved_refs[memo_key] = resolution
+                    # 单例 harness 跨 session 生命期内有界：本 session 的
+                    # ref 上限为 MAX_EVENTS，2×MAX_EVENTS 不会被本轮写入淘汰
+                    # （FIFO 先淘汰更早的其它 session 条目）。
+                    if len(self._resolved_refs) > self.MAX_EVENTS * 2:
+                        oldest = next(iter(self._resolved_refs))
+                        del self._resolved_refs[oldest]
             for rc in cursors_snapshot:
                 resolution = self._resolved_refs.get((self.session_id, rc["ref_cursor"]))
                 if resolution is None:
@@ -819,6 +831,10 @@ class PiAgentHarness:
                 mut = mutation_results.get(tcid, {})
                 validity = self._validity_for_mutation(tcid, mut, res)
                 self._validity_cache[tcid] = validity
+                # 与 _cartography_review_cache 同款有界淘汰（插入序 FIFO）。
+                if len(self._validity_cache) > 128:
+                    oldest = next(iter(self._validity_cache))
+                    del self._validity_cache[oldest]
 
             ev = ToolCallEvidence(
                 run_id=tc.get("run_id", self._active_run_id),

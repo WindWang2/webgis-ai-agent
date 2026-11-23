@@ -124,8 +124,11 @@ class GeoJSONWriter:
             geom = f.get("geometry")
             if isinstance(geom, dict) and geom:
                 g = dict(geom)
-                g["coordinates"] = _round_coords(g.get("coordinates"),
-                                                 self.ctx.coordinate_precision)
+                if g.get("type") != "GeometryCollection":
+                    # RFC 7946：GeometryCollection 只有 "geometries"，没有
+                    # "coordinates" —— 不得把缺失键补成 null。
+                    g["coordinates"] = _round_coords(
+                        g.get("coordinates"), self.ctx.coordinate_precision)
                 if isinstance(g.get("geometries"), list):
                     g["geometries"] = [
                         {**gg, "coordinates": _round_coords(gg.get("coordinates"),
@@ -245,6 +248,13 @@ class PyogrioWriter:
         # 字段名损失码由 loss.analyze_losses 单点声明（truncated=自动映射 /
         # mapped=显式映射，附 ack 语义）—— writer 不再重复发射，避免回执
         # 出现重复码或把自动截断误标为显式映射（评审 NEW-1）。
+        if self.rows == 0:
+            # 零批次/零要素：GPKG/FGB 主文件从未创建（_member→stat 会抛裸
+            # FileNotFoundError），Shapefile 会产出空 ZIP 冒充数据成员。
+            # 统一 typed 拒绝，交由服务层按"无行可交付"失败。
+            raise WriterError(
+                dl_contracts.ERR_WRITE_FAILED,
+                "没有可写入的要素 —— 拒绝生成空数据成员")
         if self.driver == "ESRI Shapefile":
             zip_path = self.ctx.out_dir / f"{self.ctx.base_filename}.zip"
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:

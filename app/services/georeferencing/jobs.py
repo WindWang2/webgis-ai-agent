@@ -441,6 +441,9 @@ async def start_georeference_job(
                 mutate_plan_cas(session_id, plan.plan_id, expected_revision=None, mutator=_cleanup_active)
             except Exception:  # noqa: BLE001
                 pass
+            # Terminal job: drop the process-level stage entry so the mapping does
+            # not grow without bound (mirrors the _RUNNERS done_callback pop).
+            _STAGE_BY_JOB.pop(job_id, None)
 
     if background:
         task = asyncio.get_running_loop().create_task(_run_guarded(), name=f"georef:{job_id}")

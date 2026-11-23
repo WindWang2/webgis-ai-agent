@@ -1,6 +1,9 @@
 """BBox and geometry relations for chat context construction."""
 from __future__ import annotations
 
+from app.services.chat.context.formatters import _finite_number
+
+
 def _bbox_intersects(a: list[float], b: list[float]) -> bool:
     """两个 [w,s,e,n] 是否相交（含边界接触）。"""
     return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
@@ -24,10 +27,14 @@ def viewport_layer_relation(viewport_bounds: list[float] | None, layer_bbox: lis
         return None
     if not (isinstance(layer_bbox, list) and len(layer_bbox) >= 4):
         return None
-    v = [float(x) for x in viewport_bounds[:4]]
-    layer_b = [float(x) for x in layer_bbox[:4]]
-    if not _bbox_intersects(v, layer_b):
+    v = [_finite_number(x) for x in viewport_bounds[:4]]
+    layer_b = [_finite_number(x) for x in layer_bbox[:4]]
+    if None in v or None in layer_b:
+        return None
+    v_f = [x for x in v if x is not None]
+    layer_f = [x for x in layer_b if x is not None]
+    if not _bbox_intersects(v_f, layer_f):
         return "在视口外"
-    if _bbox_contains(v, layer_b):
+    if _bbox_contains(v_f, layer_f):
         return "在视口内"
     return "局部相交"

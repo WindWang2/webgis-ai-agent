@@ -648,6 +648,7 @@ class Settings(BaseSettings):
         # allow_private 早退，故 LLM_BASE_URL（allow_private=True）路径同样受护。
         _METADATA_IPS = {
             "169.254.169.254",  # AWS / GCP
+            "metadata.google.internal",   # GCP（urlparse().hostname 无尾点）
             "metadata.google.internal.",  # GCP（尾部点保留 FQDN 习惯）
             "169.254.169.254.",   # 带尾点的变体
             "100.100.100.200",    # 阿里云 IMDS

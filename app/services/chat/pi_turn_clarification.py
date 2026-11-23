@@ -49,16 +49,27 @@ async def collect_settlement_clarification(
             get_runtime as _get_rt,
         )
         if _env is not None:
+            questions = [
+                {"code": q.code,
+                 "context_key": q.context_key,
+                 "question_zh": q.question_zh}
+                for q in _env.questions
+            ]
+            if not questions:
+                # P2：空 questions 不得让 questions[0] 抛 IndexError（会被外层
+                # never-raise 吞成 debug，blocking 澄清静默丢失）。无问题可问
+                # 即无澄清可展示 —— 显式告警并如实返回 None（不写 pending 章）。
+                logger.warning(
+                    "[PiBridge] clarification envelope without questions "
+                    "session=%s turn=%s request=%s",
+                    turn_sid, turn_id, getattr(_env, "request_id", ""),
+                )
+                return None
             await _get_rt(turn_sid).update_chapter_clarification(
                 status="pending",
                 turn_id=turn_id,
-                question=_env.questions[0].question_zh,
-                questions=[
-                    {"code": q.code,
-                     "context_key": q.context_key,
-                     "question_zh": q.question_zh}
-                    for q in _env.questions
-                ],
+                question=questions[0]["question_zh"],
+                questions=questions,
                 request_id=_env.request_id,
             )
             return _env

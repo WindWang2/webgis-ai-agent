@@ -180,10 +180,17 @@ def _candidate_expect(
         receipt_pins[call_id] = receipt_pin
     if receipt_pins:
         expect["receipt"] = receipt_pins
-        # dedup 合同（review P2-3）：首 op 同参重发必为 repeated ——
-        # 校准会自然裁掉不可复现者。
-        expect["receipt_repeat"] = {
-            next(iter(receipt_pins)): "repeated"}
+        # dedup 合同（review P2-3）：T4 以首个带工具的 op（ops[0]）为
+        # 同参重发对象 —— key 必须与之一致（首个带 pin 的调用可能不是
+        # ops[0]），否则录制场景恒红。校准会自然裁掉不可复现者。
+        first_tool_index = next(
+            (i for i, call in enumerate(calls)
+             if call.get("tool_name")), None)
+        if first_tool_index is not None:
+            first_call_id = str(
+                calls[first_tool_index].get("tool_call_id")
+                or f"call-{first_tool_index + 1}")
+            expect["receipt_repeat"] = {first_call_id: "repeated"}
     return expect, registry
 
 
@@ -197,6 +204,8 @@ def _trace_turn(trace: Dict[str, Any]) -> Tuple[TurnSpec, Dict[str, List[str]]]:
     expect, registry = _candidate_expect(trace, calls)
     return TurnSpec(
         user_input=str(trace.get("user_input") or ""),
+        # 录制侧最终输出文本 → 重放实际侧（nondeterministic_text 校验用）。
+        output_text=str(trace.get("final_text") or ""),
         ops=[_op_from_tool_call(call, i) for i, call in enumerate(calls)],
         expect=expect,
     ), registry

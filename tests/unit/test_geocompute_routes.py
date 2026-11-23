@@ -134,3 +134,32 @@ def test_unsupported_category_is_typed_failure():
     run = resp.json()
     assert run["status"] == "failed"
     assert run["evidence"]["n9"]["error_code"] == "OPERATION_UNSUPPORTED"
+
+
+@pytest.mark.asyncio
+async def test_list_runs_clamps_limit_offset_before_store(monkeypatch):
+    """P2 api-contract：回显的分页元数据必须与实际查询一致 —— 负 offset /
+    超大 limit 必须钳制后再透传 store，而不是原样查询、只钳制回显。"""
+    from app.api.routes import geocompute as geo_routes
+    from app.core import tenancy
+    from app.services.geocompute import run_evidence
+    from app.services.geocompute.cluster import store as store_mod
+
+    seen = {}
+
+    class _Store:
+        def list_runs(self, owner_scope, **kwargs):
+            seen.update(kwargs)
+            return []
+
+    monkeypatch.setattr(store_mod, "ClusterRunStore", lambda: _Store())
+    monkeypatch.setattr(tenancy, "effective_org_in_thread", lambda user: "")
+    monkeypatch.setattr(run_evidence, "list_snapshots", lambda *a, **k: [])
+
+    resp = await geo_routes.list_execution_runs(
+        status=None, limit=1000, offset=-7, user={"user_id": "gc-user"},
+    )
+    assert seen["limit"] == 100
+    assert seen["offset"] == 0
+    assert resp["limit"] == 100
+    assert resp["offset"] == 0

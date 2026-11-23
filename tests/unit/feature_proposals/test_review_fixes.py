@@ -404,6 +404,26 @@ async def test_r2_1_properties_level_natural_key_indexed_after_materialize(clien
     assert idx.get(wfid) == wfid
 
 
+# ── P2:Summary 响应时间戳契约须与运行时 float 一致 ─────────────────────────
+
+
+def test_summary_response_timestamps_declared_as_float():
+    from app.schemas.feature_proposal_schema import FeatureProposalSummaryResponse
+
+    # proposal_summary() 原样回传持久记录的 float 时间戳；声明为 str 会让
+    # OpenAPI 契约与实测线格式不符（前端按字符串解析会错）。
+    model = FeatureProposalSummaryResponse(
+        proposal_id="fpr-1", ref_id="ref-1", title="t", author_kind="agent",
+        status="draft", revision=1, candidate_digest="d",
+        created_at=1700000000.0, updated_at=1700000001.5,
+    )
+    assert isinstance(model.created_at, float)
+    assert isinstance(model.updated_at, float)
+    schema = FeatureProposalSummaryResponse.model_json_schema()
+    assert schema["properties"]["created_at"]["type"] == "number"
+    assert schema["properties"]["updated_at"]["type"] == "number"
+
+
 # ── R2-2:merge 提案收敛(不与其他 op 混排;父集=feature_ids)──────────────
 
 

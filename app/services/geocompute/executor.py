@@ -380,8 +380,10 @@ class NodeResultStore:
                     _, evicted = self._entries.popitem(last=False)
                     self._bytes -= evicted.get("__size__", 0)
             if re_spilled is not None:
-                # 调用方仍拿到完整载荷（一次性拷贝）；内部驻留是 stub
-                return {k: v for k, v in clean.items()}
+                # 调用方仍拿到完整载荷（一次性拷贝）；内部驻留是 stub。
+                # 必须携带 __size__ 标记：复用点的入口检查是
+                # ``_SIZE_KEY in cached``，裸载荷会被判为 miss。
+                return {**clean, _SIZE_KEY: stub_size}
             try:
                 from app.services.geocompute.cluster.metrics import (
                     record_spill_rehydrate,

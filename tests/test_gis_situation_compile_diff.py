@@ -4,6 +4,7 @@
 descriptor-first（绝不 resolve payload）、viewport 取数优先级、确定性、
 diff 变更分组与 revision 单调守卫、快照只前进。
 """
+import asyncio
 import uuid
 
 import pytest
@@ -189,6 +190,26 @@ async def test_compile_empty_session_all_unknown():
         assert fact.status in ("unknown", "known")
     assert situation.map.layers.status == "unknown"
     assert situation.evidence.sources_unavailable == []
+
+
+@pytest.mark.asyncio
+async def test_bounded_descriptors_times_out_a_hanging_store(monkeypatch):
+    """描述符 fan-out 与 5 源同纪律：挂起的 get_ref_descriptor 不得阻塞编译。"""
+    from app.services.gis_situation import compiler as compiler_mod
+    from app.services.gis_situation.contract import SituationEvidence
+
+    class _HangingStore:
+        async def get_ref_descriptor(self, session_id, ref_id):
+            await asyncio.sleep(3600)
+
+    monkeypatch.setattr(compiler_mod, "_SOURCE_TIMEOUT_S", 0.05)
+    result = await asyncio.wait_for(
+        compiler_mod._bounded_descriptors(
+            "s1", _HangingStore(), {"ref:a": "别名"}, [], SituationEvidence(),
+        ),
+        timeout=1.0,
+    )
+    assert result == {}
 
 
 # ── diff / snapshot（S3）──────────────────────────────────────────────────

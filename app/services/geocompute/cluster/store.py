@@ -18,6 +18,7 @@ from app.services.org_quota_admission import admit_persistent_write
 
 import json
 import logging
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
@@ -140,6 +141,17 @@ class ClusterRunStore:
             except (TypeError, ValueError):
                 resource_request = None
         _estimate_from_snapshot(plan_snapshot)
+        # memory_mb 与 rows/bytes 同一 ingress 校验：NaN/Inf（JSON 1e400、
+        # 字符串 "inf"）在 claim 侧 int() 会抛未捕获异常 —— 拒绝在提交端。
+        for _node in (plan_snapshot or {}).get("nodes") or []:
+            _est = _node.get("estimate") or {}
+            try:
+                _mem_mb = float(_est.get("memory_mb") or 0)
+            except (TypeError, ValueError) as exc:
+                raise ClusterBackpressureError(
+                    "invalid resource estimate") from exc
+            if not math.isfinite(_mem_mb):
+                raise ClusterBackpressureError("invalid resource estimate")
         run_id = new_run_id()
         admission_ledger = ClusterLedger(factory=self._factory)
         admission_ledger.ensure_scopes(["global"])
@@ -1504,9 +1516,13 @@ def _claims_for_row(row: Any, *, units: int) -> dict[str, ResourceClaim]:
     for node in (row.plan_snapshot or {}).get("nodes") or []:
         est = node.get("estimate") or {}
         try:
-            est_mem_mb += float(est.get("memory_mb") or 0)
+            _mem_mb = float(est.get("memory_mb") or 0)
         except (TypeError, ValueError):
-            pass
+            continue
+        # NaN/Inf 会令下方 int() 抛未捕获异常（每 tick 崩溃 → 调度停摆）；
+        # 非有限估计按缺席处理（0 = 不预留该维）。
+        if math.isfinite(_mem_mb) and _mem_mb > 0:
+            est_mem_mb += _mem_mb
     est_mem_mb = float(min(int(est_mem_mb), _MAX_CLAIM_MEM_MB))
     raw_req = row.resource_request if isinstance(row.resource_request, dict) else {}
     try:

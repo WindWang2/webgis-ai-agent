@@ -1391,9 +1391,12 @@ def retrieval_eval_report(
                 break
         if must_not:
             must_not_total += 1
-        for k, acc in ((5, r5_vals), (10, r10_vals)):
-            top = set(ranked[:k])
-            acc.append(len(top & valid) / len(valid) if valid else 1.0)
+        # 无合法工具的 oos 案例不进入召回分母（否则空 valid 集恒记
+        # 满分，虚涨 recall@5/10）。
+        if valid:
+            for k, acc in ((5, r5_vals), (10, r10_vals)):
+                top = set(ranked[:k])
+                acc.append(len(top & valid) / len(valid))
         for name in names:
             try:
                 desc = registry.descriptor(name)

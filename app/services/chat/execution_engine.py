@@ -1602,7 +1602,12 @@ class ChatExecutionEngine:
         # H-5（#860）非流式 parity：tracker 先于规划创建——取消在规划等待期
         # （最长 120s planner 调用）也有可点燃的对象，而不是等规划结束后才生效。
         task = self.tracker.create(session_id, message)
-        await self._maybe_plan(session_id, message, messages)
+        try:
+            await self._maybe_plan(session_id, message, messages)
+        except Exception as e:
+            # P2：规划是 best-effort，map_state/Redis 抖动不得令整回合失败，
+            # 也不得把 tracker 任务留在 running（本方法内无兜底 finally）。
+            logger.warning(f"[chat_execution_engine] 规划阶段异常，降级无计划: {e}")
         executed_tools: set[tuple[str, str]] = set()
         owner_token = self.get_session_owner_token(session_id)
         # #684：捕获本用户轮原始消息与 turn_id，用于按用户轮衰减与固定关键词源。
@@ -3315,7 +3320,18 @@ class ChatExecutionEngine:
                     await session_data_manager.unset_session_clearing(session_id)
                 except Exception as exc:
                     logger.warning("clear_session: clearing marker rollback failed: %s", exc)
-            self._clearing_sessions.discard(session_id)
+                self._clearing_sessions.discard(session_id)
+            else:
+                # P2：delete 成功后跨副本 marker 仍在（TTL 30s）；本地 marker 也
+                # 必须保留到被取消 turn 真正排空 —— quiesce 超时后 straggler 的
+                # 清理写入仍可能复活已删会话行。turn 结束（清理完成）再清 mark。
+                straggler = self._active_turn_tasks.get(session_id)
+                if straggler is not None and not straggler.done():
+                    straggler.add_done_callback(
+                        lambda _t, _sid=session_id: self._clearing_sessions.discard(_sid)
+                    )
+                else:
+                    self._clearing_sessions.discard(session_id)
 
     def _detect_suspicious_result(self, result: Any) -> bool:
         return _is_suspicious_result_fn(result)

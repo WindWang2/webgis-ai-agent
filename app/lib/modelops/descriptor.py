@@ -44,7 +44,14 @@ _SECRET_KEY_MARKERS = ("password", "secret", "token", "api_key", "apikey", "cred
 
 def _reject_secret_keys(where: str, mapping: Any, depth: int = 0) -> None:
     """mapping 的键不得命中 secret 词根（值一律以 credentials_ref 引用）。"""
-    if depth > 6 or not isinstance(mapping, dict):
+    if depth > 6:
+        return
+    if isinstance(mapping, (list, tuple)):
+        for item in mapping:
+            if isinstance(item, (dict, list, tuple)):
+                _reject_secret_keys(where, item, depth + 1)
+        return
+    if not isinstance(mapping, dict):
         return
     for key in mapping:
         if isinstance(key, str) and any(marker in key.lower() for marker in _SECRET_KEY_MARKERS):
@@ -52,7 +59,7 @@ def _reject_secret_keys(where: str, mapping: Any, depth: int = 0) -> None:
                 f"{where}: key {key!r} looks like a secret; pass a credentials_ref "
                 "instead — secret values are supplied via the secrets channel only"
             )
-        if isinstance(mapping[key], dict):
+        if isinstance(mapping[key], (dict, list, tuple)):
             _reject_secret_keys(where, mapping[key], depth + 1)
 
 
@@ -187,7 +194,7 @@ class ClassSchema(BaseModel):
     @model_validator(mode="after")
     def _nodata_in_range(self) -> "ClassSchema":
         if self.classes and self.nodata_class is not None:
-            if not (0 <= self.nodata_class < len(self.classes) + 1):
+            if not (0 <= self.nodata_class < len(self.classes)):
                 raise DescriptorError("nodata_class outside class index space")
         return self
 

@@ -205,6 +205,17 @@ class TestNodeResultStoreSpill:
             assert store._bytes >= 0
             assert "__spilled__" in store._entries["k"]
 
+    def test_respilled_rehydrate_keeps_size_marker_for_reuse(self, tmp_path):
+        """re-spill 分支返回的载荷必须带 __size__：复用点入口检查是
+        ``_SIZE_KEY in cached``，裸载荷会让 spill 命中永远退化为 miss。"""
+        from app.services.geocompute.executor import _SPILLED_STUB_BYTES
+
+        store = self._store(tmp_path, max_bytes=1000)
+        store.put("k", self._payload(200))
+        got = store.get("k")
+        assert got is not None and got["features"]
+        assert got["__size__"] == min(_SPILLED_STUB_BYTES, 1000)
+
     def test_spill_blob_corruption_degrades_to_miss(self, tmp_path):
         """blob 字节被删（TTL 清扫竞态）→ rehydrate 失败 → 复用 miss
         （诚实重算），绝不返回半份载荷。"""

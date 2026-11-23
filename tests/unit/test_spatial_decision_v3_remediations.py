@@ -415,3 +415,51 @@ async def test_remediation_mapspec_polygon_alternatives_semantic_and_svg():
         svg = compile_mapspec_to_svg(mapspec)
         assert "<path" in svg
 
+
+@pytest.mark.asyncio
+async def test_mapspec_null_feature_properties_do_not_abort_authoring():
+    """GeoJSON ``"properties": null`` is legal and must not abort V3 authoring."""
+    from unittest.mock import patch
+
+    class DummyProb:
+        problem_id = "test_prob_null_props"
+        goal = "Null properties"
+
+    class DummyRec:
+        decision_fingerprint = "nullprops"
+
+    class DummyResult:
+        problem = DummyProb()
+        recommendation = DummyRec()
+        comparison_ref_id = "ref_null"
+        comparison_geojson = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+                    "properties": None,
+                },
+                {
+                    "type": "Feature",
+                    "geometry": None,
+                    "properties": None,
+                },
+            ],
+        }
+
+    upserted = []
+
+    async def mock_upsert(*, session_id, layer, source_data):
+        upserted.append((layer, source_data))
+        return {"success": True, "layer": layer}
+
+    with patch("app.services.spatial_decision.mapspec_integration._upsert_decision_layer", side_effect=mock_upsert):
+        res = await apply_v3_decision_to_mapspec("sess_null", DummyResult())
+
+    assert res["success"] is True
+    assert len(upserted) == 1
+    layer, data = upserted[0]
+    assert layer["type"] == "circle"
+    assert data["features"][0]["properties"] is None
+

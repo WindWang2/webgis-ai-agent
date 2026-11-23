@@ -119,6 +119,16 @@ class TestMetadataAndStacCoverage:
         with pytest.raises(ValueError):
             Settings._validate_no_ssrf(url, field="TEST", allow_private=True)
 
+    def test_gcp_metadata_without_trailing_dot_blocked_even_with_private_allowed(
+        self,
+    ) -> None:
+        # urlparse().hostname 不保留尾部点（返回 "metadata.google.internal"），
+        # 只收录带点形态会让 LLM_BASE_URL 的内网豁免放行 GCP IMDS。
+        with pytest.raises(ValueError):
+            Settings._validate_no_ssrf(
+                "http://metadata.google.internal/v1", field="TEST", allow_private=True
+            )
+
     def test_stac_api_url_is_validated_on_settings_construction(self) -> None:
         # SEC-07：STAC_API_URL 此前不在 _validate_external_urls 列内 ——
         # stac_client 直接检索该目录，等于出网白名单覆盖面上的洞。

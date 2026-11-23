@@ -157,6 +157,12 @@ def prompt_windows(
         col = max(0, x0 - margin_x)
         h = min(max_window_px, raster_height - row)
         w = min(max_window_px, raster_width - col)
+        if h <= 0 or w <= 0:
+            raise PlanningError(
+                f"prompt window {(row, col)} falls outside the "
+                f"{raster_width}x{raster_height} raster extent",
+                correction_hint="pass prompt pixels within the raster bounds",
+            )
         return [(int(row), int(col), int(h), int(w))]
     windows: List[Tuple[int, int, int, int]] = []
     for point in prompt.points:
@@ -165,12 +171,24 @@ def prompt_windows(
         col = max(0, int(px) - margin_x // 2)
         h = min(chip_hw[0] + margin_y // 2, raster_height - row)
         w = min(chip_hw[1] + margin_x // 2, raster_width - col)
+        if h <= 0 or w <= 0:
+            raise PlanningError(
+                f"prompt point {(px, py)} falls outside the "
+                f"{raster_width}x{raster_height} raster extent",
+                correction_hint="pass prompt pixels within the raster bounds",
+            )
         windows.append((int(row), int(col), int(h), int(w)))
     for bx, by, bw, bh in prompt.boxes:
         row = max(0, int(by))
         col = max(0, int(bx))
         h = min(int(bh) + margin_y, raster_height - row)
         w = min(int(bw) + margin_x, raster_width - col)
+        if h <= 0 or w <= 0:
+            raise PlanningError(
+                f"prompt box {(bx, by, bw, bh)} falls outside the "
+                f"{raster_width}x{raster_height} raster extent",
+                correction_hint="pass prompt pixels within the raster bounds",
+            )
         windows.append((int(row), int(col), int(h), int(w)))
     if not windows and prompt.anchor_box is not None:
         # mask-only/多边形 prompt 超单窗上限：anchor 网格化分窗（行主序、

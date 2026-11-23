@@ -386,8 +386,20 @@ async def _run_delivery_job(
                 token, _make_progress(job_id))
 
         # 阶段 C（async）：durable/台账登记（增值记录，绝不阻断交付本体）
-        await _finalize_delivery(job_id, delivery_id, spec, snapshot, outcome,
-                                 project_id, worker_id, actor=actor)
+        try:
+            await _finalize_delivery(job_id, delivery_id, spec, snapshot, outcome,
+                                     project_id, worker_id, actor=actor)
+        except (OperationCancelled, DeliveryError):
+            raise
+        except Exception:  # noqa: BLE001 — 已发布交付不得因收尾异常被标记失败
+            # 阶段 B 的 atomic_publish 已成功：终态目录是唯一真相。收尾
+            # （重写回执/DB 迁移/登记）异常不得让外层 _fail 把已发布交付
+            # 标记 failed —— 否则终态目录成孤儿、resolve_download 404。
+            logger.exception(
+                "[data-delivery] finalize degraded after publish for %s",
+                delivery_id)
+            _converge_completed_after_publish(
+                job_id, delivery_id, outcome, worker_id)
     except OperationCancelled:
         dl_store.discard_staging(delivery_id)
         from app.core.database import SessionLocal
@@ -692,6 +704,41 @@ async def _finalize_delivery(
     progress(100, "交付完成")
 
 
+def _converge_completed_after_publish(
+    job_id: str, delivery_id: str, outcome: Dict[str, Any], worker_id: str,
+) -> None:
+    """发布成功后的收尾降级：尽力把 job 收敛为 completed（下载以终态为准）。
+
+    atomic_publish 已成功时，收尾异常（回执重写/DB/登记）不代表交付本体失败；
+    绝不能走 _fail 把已发布交付标记 failed（终态目录会成孤儿且下载 404）。
+    """
+    from app.services.jobs.store import DurableJobStore
+
+    receipt: DeliveryReceipt = outcome["receipt"]
+    try:
+        from app.core.database import SessionLocal
+
+        with SessionLocal() as db:
+            final_status = DurableJobStore.mark_succeeded_sync(
+                db, job_id,
+                result=_receipt_summary(receipt),
+                result_ref=f"data-delivery/{delivery_id}",
+                message=(f"交付完成（收尾登记降级）：{receipt.row_count} 行 · "
+                         f"{receipt.bytes_total} 字节"),
+                worker_id=worker_id,
+            )
+            db.commit()
+        if final_status is not None and str(getattr(final_status, "value",
+                                                    final_status)) == "cancelled":
+            dl_store.discard_final(delivery_id)
+        progress = _make_progress(job_id)
+        progress(100, "交付完成")
+    except Exception:  # noqa: BLE001 — 无 DB 可用时保持原状（绝不谎报成功）
+        logger.exception(
+            "[data-delivery] degraded finalize could not mark job %s completed",
+            job_id)
+
+
 def _load_frozen(job_id: str) -> Dict[str, Any]:
     from app.core.database import SessionLocal
     from app.services.jobs.store import DurableJobStore
@@ -949,10 +996,11 @@ def _verify_output(staging: Path, fmt: str, expected_rows: Optional[int],
             raise DeliveryError(
                 dl_contracts.ERR_VERIFY_FAILED,
                 f"反读行数 {evidence['rows_read']} ≠ 写入 {expected_rows}")
-        if crs_meta.get("transformed") and fmt in ("geojson",) and crs_meta.get("target") \
-                and "4326" not in (crs_meta["target"] or "").upper():
-            raise DeliveryError(dl_contracts.ERR_VERIFY_FAILED,
-                                "GeoJSON 变换目标必须是 EPSG:4326")
+        if crs_meta.get("transformed") and fmt in ("geojson",) and crs_meta.get("target"):
+            target_crs = (crs_meta["target"] or "").strip().upper()
+            if target_crs not in ("EPSG:4326", "WGS84", "OGC:CRS84"):
+                raise DeliveryError(dl_contracts.ERR_VERIFY_FAILED,
+                                    "GeoJSON 变换目标必须是 EPSG:4326")
         return evidence
     except DeliveryError:
         raise

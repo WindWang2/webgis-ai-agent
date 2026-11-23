@@ -36,6 +36,30 @@ async def test_chat_simple_response(registry):
 
 
 @pytest.mark.asyncio
+async def test_planner_failure_degrades_without_leaking_running_task(registry, monkeypatch):
+    """P2 regression：_maybe_plan 抛错（map_state/Redis 抖动）不得令整回合失败，
+    tracker 任务也不能停在 running。"""
+    from app.services.task_tracker import TaskStatus
+
+    engine = ChatEngine(registry)
+    mock_response = {"choices": [{"message": {"content": "无计划也可答", "tool_calls": None}}]}
+
+    async def boom(*a, **kw):
+        raise RuntimeError("session_data down")
+
+    async def fake_save_msg_async(*a, **kw):
+        return None
+
+    monkeypatch.setattr(engine, "_maybe_plan", boom)
+    monkeypatch.setattr(engine, "_save_msg_async", fake_save_msg_async)
+    with patch.object(engine, "_call_llm", new_callable=AsyncMock, return_value=mock_response):
+        result = await engine.chat("你好", session_id="p2-plan-degrade")
+    assert result["content"] == "无计划也可答"
+    running = [t for t in engine.tracker.list_all() if t.status == TaskStatus.running]
+    assert running == []
+
+
+@pytest.mark.asyncio
 async def test_chat_with_tool_call(registry):
     """测试工具调用流程"""
     engine = ChatEngine(registry)

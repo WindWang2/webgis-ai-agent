@@ -681,6 +681,19 @@ class TestCriticEngineFailClosed:
         assert engine.client is not None
         assert engine.client.provider == "gemini"
 
+    def test_invalid_timeout_env_degrades_to_default(self, monkeypatch):
+        """非数字 timeout 配置不得抛 ValueError（evaluate 永不抛契约）。"""
+        from app.lib.harness.visual_judge.vlm_provider import (
+            _DEFAULT_TIMEOUT_S,
+        )
+
+        monkeypatch.setenv("CARTO_VISUAL_JUDGE_PROVIDER", "gemini")
+        monkeypatch.setenv("CARTO_VISUAL_JUDGE_API_KEY", "real-key")
+        monkeypatch.setenv("CARTO_VISUAL_JUDGE_TIMEOUT_S", "not-a-number")
+        engine = build_critic_engine()
+        assert engine.client is not None
+        assert engine.client.timeout_s == _DEFAULT_TIMEOUT_S
+
     async def test_mutation_intent_critique_is_quarantined(self):
         raw = json.dumps({"critiques": [
             {"dimension": "readability", "severity": "error", "suggestion": "ok",

@@ -318,3 +318,40 @@ def test_need_paths_snapped_mid_edges_match_reference(
     assert result["dest_nodes"][0][0].startswith("vt_")
     assert set(g) == {"n0", "n1", "n2", "n3"}
     assert all("_barrier_factor" not in data for _, _, data in g.edges(data=True))
+
+
+def test_need_paths_supports_more_than_256_origins():
+    """The arbitrary 256-origin cap on need_paths rejected requests that had
+    already passed od_matrix_scale_guard (e.g. closest_facility with >256
+    demand points); the cost-only matrix path has no such cap."""
+    g, ds = _chain(300)
+    svc = NetworkODMatrixService()
+    origins = [f"n{i}" for i in range(257)]
+    res = svc.network_od_paths(origins, ["n299"], graph=g, network_dataset=ds)
+    assert len(res["origin_labels"]) == 257
+    assert len(res["pairs"]) == 257
+    assert all(info["reachable"] for info in res["pairs"].values())
+
+
+def test_closest_facility_with_more_than_256_demands():
+    """The user-facing symptom of the removed origin cap: closest_facility
+    uses demands as path origins, so >256 demands used to fail even though
+    the n×m pair count was far below od_matrix_scale_guard."""
+    g, ds = _chain(300)
+    demands = [
+        DemandPoint(
+            demand_id=f"d{i}", weight=1.0,
+            geometry={"type": "Point", "coordinates": [116.0 + i * 0.0001, 39.0]},
+        )
+        for i in range(257)
+    ]
+    facility = Facility(
+        facility_id="f0",
+        geometry={"type": "Point", "coordinates": [116.0 + 299 * 0.0001, 39.0]},
+    )
+    res = NetworkClosestFacilityService().network_closest_facility(
+        demand_points=demands, facilities=[facility], graph=g, network_dataset=ds,
+    )
+    assert res.status == "success"
+    assert res.summary["demand_count"] == 257
+    assert res.summary["routes_found"] == 257

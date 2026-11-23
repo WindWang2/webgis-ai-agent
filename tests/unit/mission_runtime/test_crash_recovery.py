@@ -323,3 +323,50 @@ def test_attach_session_rejects_foreign_organization(runtime):
     with pytest.raises(FencingError):
         runtime.attach_session(mission.mission_id, worker_id="worker", session_id="foreign", org_id="other-org")
     assert not runtime.store.get_mission(mission.mission_id).refs.active_session_ids
+
+
+def test_crash_during_compensatable_unresolved(runtime):
+    """An interrupted compensatable op may have external effects — never blind rerun."""
+    m = runtime.create(org_id="1", user_id="u", root_goal="g")
+    runtime.start(m.mission_id, worker_id="w1")
+    ep = runtime.store.get_mission(m.mission_id).lease_epoch
+    bridge = DurableSwarmBridge(runtime.store)
+    run = bridge.begin_run(
+        m.mission_id, org_id="1",
+        task_descriptors=[{"task_id": "tc", "side_effect": "compensatable"}],
+        lease_epoch=ep, owner="w1",
+    )
+    bridge.mark_running(
+        run.swarm_run_id, "tc", assignment_id="a1", side_effect="compensatable")
+    got = runtime.store.get_swarm_run(run.swarm_run_id)
+    assert got.tasks["tc"].operation_class == OperationClass.COMPENSATABLE
+    _expire(runtime.store, m.mission_id)
+    result = runtime.resume(m.mission_id, worker_id="w2")
+    assert "tc" in result["unresolved"]
+    assert "tc" not in result["resume_plans"][0]["retry"]
+    settled = runtime.store.get_swarm_run(run.swarm_run_id)
+    assert settled.tasks["tc"].state == SwarmTaskDurableState.UNRESOLVED
+
+
+def test_begin_run_swarm_ref_full_keeps_new_run(runtime):
+    """A full swarm_run_refs bucket must not silently drop the new run id."""
+    from app.services.mission_runtime import contracts as C
+
+    m = runtime.create(org_id="1", user_id="u", root_goal="g")
+    runtime.start(m.mission_id, worker_id="w1")
+    ep = runtime.store.get_mission(m.mission_id).lease_epoch
+    rec = runtime.store.get_mission(m.mission_id)
+    refs = rec.refs.model_dump()
+    refs["swarm_run_refs"] = [f"swr-old-{i}" for i in range(C.MAX_REFS)]
+    runtime.store.patch_mission(
+        m.mission_id, lease_epoch=ep, owner="w1", refs=refs,
+        expected_revision=rec.revision)
+    bridge = DurableSwarmBridge(runtime.store)
+    run = bridge.begin_run(
+        m.mission_id, org_id="1",
+        task_descriptors=[{"task_id": "t1", "side_effect": "pure"}],
+        lease_epoch=ep, owner="w1",
+    )
+    got = runtime.store.get_mission(m.mission_id)
+    assert run.swarm_run_id in got.refs.swarm_run_refs
+    assert len(got.refs.swarm_run_refs) == C.MAX_REFS

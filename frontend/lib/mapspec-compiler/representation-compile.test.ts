@@ -497,6 +497,89 @@ describe("compileMapSpec：g) heatmap 表达窗子层 paint 与 live 对齐（#1
   });
 });
 
+// ── P2（review）：G40 类别绑定 × raw 窗克隆 / label 合成门 ─────────────────
+describe("compileMapSpec：h) raw 窗克隆同步主层最终定义（G40）", () => {
+  const windows: MapSpecRepresentationWindow[] = [
+    { min_zoom: 0, max_zoom: 11, mode: "raw" },
+    { min_zoom: 11, max_zoom: 14, mode: "hidden" },
+    { min_zoom: 14, max_zoom: 24, mode: "raw" },
+  ];
+
+  it("area_texture + category_binding：raw 窗克隆继承类别排除 filter", () => {
+    const r = compileMapSpec(
+      specWith({
+        windows,
+        layer: {
+          type: "fill",
+          paint: { color: "#ff0000" },
+          symbol_asset: {
+            schema_version: 1,
+            asset_id: "cartoasset.builtin.hatch",
+            revision: 1,
+            content_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            kind: "area_texture",
+            params: {},
+            category_binding: {
+              field: "zone",
+              map: [
+                { key: "a", asset_id: "a", revision: 1, content_digest: "sha256:bbbb" },
+                { key: "b", asset_id: "b", revision: 1, content_digest: "sha256:cccc" },
+              ],
+            },
+          },
+        },
+      }),
+    );
+    expect(r.report.success).toBe(true);
+    const main = layerOf(r, "L");
+    const rep2 = layerOf(r, "L__rep2");
+    // G40 主层 filter 为整体替换（新数组）—— 克隆必须在补丁后同步，否则
+    // 类别要素既被纹理子层绘制又被克隆再画一次（双绘）。
+    expect(main.filter).toEqual(
+      ["!", ["in", ["get", "zone"], ["literal", ["a", "b"]]]],
+    );
+    expect(rep2.filter).toEqual(main.filter);
+    expect(rep2.paint["fill-pattern"]).toBe(main.paint["fill-pattern"]);
+  });
+});
+
+describe("compileMapSpec：i) label 子层继承合成 zoom 门", () => {
+  it("raw 窗 [11,24)：标注层与主层同门（不越窗渲染）", () => {
+    const r = compileMapSpec(
+      specWith({
+        windows: [
+          { min_zoom: 0, max_zoom: 11, mode: "hidden" },
+          { min_zoom: 11, max_zoom: 24, mode: "raw" },
+        ],
+        layer: { label: { field: "v" } },
+      }),
+    );
+    const main = layerOf(r, "L");
+    const label = layerOf(r, "L-label");
+    expect(main.minzoom).toBe(11);
+    expect(main.maxzoom).toBe(24);
+    expect(label.minzoom).toBe(11);
+    expect(label.maxzoom).toBe(24);
+  });
+
+  it("退化门（主层恒隐 minzoom=24）→ 标注层同为恒隐门", () => {
+    const r = compileMapSpec(
+      specWith({
+        windows: [
+          { min_zoom: 0, max_zoom: 11, mode: "visual_heatmap" },
+          { min_zoom: 11, max_zoom: 24, mode: "raw" },
+        ],
+        layer: { visibility: { max_zoom: 6 }, label: { field: "v" } },
+      }),
+    );
+    const main = layerOf(r, "L");
+    const label = layerOf(r, "L-label");
+    expect(main.minzoom).toBe(24);
+    expect(label.minzoom).toBe(24);
+    expect(label.maxzoom).toBeUndefined();
+  });
+});
+
 // ── 版本协商门（疑似实现漏洞，测试报告 #1）───────────────────────────────
 // 本分支把 MapSpec 契约扩到 v1.6（layer.representation.windows），后端
 // KNOWN_VERSIONS 与 contract_manifest.json 均含 "1.6"，前端

@@ -203,12 +203,15 @@ def evaluate_spatial_constraint(
             return ConstraintEvaluation(
                 constraint_id=constraint.id,
                 alternative_id=alt_id,
-                passed=True,
+                passed=False,
                 observed_value="no_boundary",
                 threshold="within",
-                margin=None,
-                penalty=0.0,
-                evidence_statement="No boundary specified.",
+                margin=-1.0,
+                penalty=constraint.penalty_weight if constraint.constraint_type == ConstraintType.SOFT else 0.0,
+                evidence_statement=(
+                    "No boundary specified; WITHIN constraint cannot be verified "
+                    "and fails closed."
+                ),
             )
 
         within = alt_geom.within(ref_geom)

@@ -171,3 +171,36 @@ class TestAudit815AttributeFilterCrsMember:
         res = SpatialAnalyzer.attribute_filter(fc, "pop > 60")
         assert res.success
         assert "crs" not in res.data
+
+
+class TestAudit814HighLevelSolverLayerShapes:
+    def test_unrecognized_layers_raise_instead_of_empty_success(self):
+        """#814 semantics extended to the other high-level solvers: an
+        unrecognized layer shape must not become an empty input and return a
+        success result with zero facilities/demands."""
+        from app.services.network.engine import NetworkGraphEngine
+
+        network, nodes = _grid_network()
+        engine = NetworkGraphEngine()
+        bad = {"unrecognized": True}
+
+        with pytest.raises(ValueError):
+            asyncio.run(engine.solve_closest_facility(
+                network=network, incidents=[nodes[0]], facilities=bad))
+        with pytest.raises(ValueError):
+            asyncio.run(engine.solve_service_area(
+                network=network, facilities=bad, breaks_minutes=[5.0]))
+        with pytest.raises(ValueError):
+            asyncio.run(engine.solve_location_allocation(
+                network=network, candidate_facilities=bad,
+                demand_points=[nodes[4]], n_to_choose=1))
+        with pytest.raises(ValueError):
+            asyncio.run(engine.solve_location_allocation(
+                network=network, candidate_facilities=[nodes[0]],
+                demand_points=bad, n_to_choose=1))
+        with pytest.raises(ValueError):
+            asyncio.run(engine.solve_gravity_access(
+                network=network, demand_points=bad, facilities=[nodes[0]]))
+        with pytest.raises(ValueError):
+            asyncio.run(engine.solve_huff_interaction(
+                network=network, demand_points=bad, facilities=[nodes[0]]))

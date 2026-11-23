@@ -325,14 +325,14 @@ class SourceSnapshot:
 
     async def verify_unchanged(self, session_id: Optional[str]) -> None:
         """执行前复核：内容指纹漂移 → typed 拒绝（不混读两版本）。"""
-        if self.kind == "session_ref" and session_id:
+        if self.kind in ("session_ref", "table_rows") and session_id:
             from app.services.session_data import session_data_manager
 
             payload = await session_data_manager.get(session_id, self._src_ref or "")
             if payload is None:
                 raise SourceResolutionError(
                     dl_contracts.ERR_SOURCE_EXPIRED, "源会话引用已过期或被清除")
-            fresh = _snapshot_from_payload(self.label, payload, self._src_ref)
+            fresh = _snapshot_from_payload(self.label, payload, self._src_ref or "")
             if fresh.content_fingerprint != self.content_fingerprint:
                 raise SourceResolutionError(
                     dl_contracts.ERR_SOURCE_REVISION_CHANGED,

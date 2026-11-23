@@ -517,6 +517,22 @@ class TestOperators:
         payload = ops.execute_node(self._ctx(), node, {"agg": upstream})
         assert payload["rows"] == [{"kind": "a"}]
 
+    def test_empty_rows_channel_flows_to_downstream_ops(self):
+        """上游产出 0 行（FILTER/AGGREGATE/SPATIAL_JOIN 的 {"rows": []}）→
+        下游按空输出继续，而非把空通道误判为缺失输入硬失败。"""
+        upstream = {"ref_id": "ref:x", "rows": [], "metadata": {}}
+        filt = _node("f", NodeCategory.FILTER, inputs=["agg"],
+                     parameters={"predicate": {"op": "eq", "field": "kind",
+                                               "value": "a"}})
+        filtered = ops.execute_node(self._ctx(), filt, {"agg": upstream})
+        assert filtered["rows"] == []
+        assert filtered["metadata"]["filtered_from"] == 0
+        agg = _node("agg", NodeCategory.AGGREGATE, inputs=["f"],
+                    parameters={"aggregates": [{"func": "count", "field": "v"}],
+                                "group_by": ["kind"]})
+        payload = ops.execute_node(self._ctx(), agg, {"f": filtered})
+        assert payload["rows"] == []
+
     def test_filter_on_bare_row_features_keeps_matches(self):
         """裸属性行被包装进 features（旧 ref / MATERIALIZE 落存重取形状）→
         谓词作用在行本体（_props_of），匹配项不丢。"""

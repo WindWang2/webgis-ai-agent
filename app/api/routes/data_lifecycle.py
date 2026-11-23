@@ -291,9 +291,10 @@ def upsert_policy(
     if org in (None, ""):
         raise HTTPException(status_code=403, detail="org_context_required")
     with SessionLocal() as db:
-        row = db.query(LifecyclePolicy).filter_by(name=name, org_id=org).one_or_none()
+        row_name = name[:64]
+        row = db.query(LifecyclePolicy).filter_by(name=row_name, org_id=org).one_or_none()
         if row is None:
-            row = LifecyclePolicy(name=name[:64], kind=body.kind, org_id=org)
+            row = LifecyclePolicy(name=row_name, kind=body.kind, org_id=org)
             db.add(row)
         row.kind = body.kind
         row.action = body.action

@@ -1103,22 +1103,41 @@ async def rerun_map_product_version(
     rerun. Style-only versions are refused — the machine contract says no
     recomputation is needed (use restore style_only instead)."""
     user_id, org_id = actor_ids(user)
-    # #1215：同 restore —— async handler 的同步 DB 调用经 to_thread。
-    project = await asyncio.to_thread(
-        ProjectService.get_project_for_write, db=db, project_id=project_id,
-        user_id=user_id, org_id=org_id)
+    # #1215 / P2：async handler 的同步 DB 调用经 to_thread；worker 线程内自建
+    # SessionLocal（sync Session 绝不跨线程共享，见本文件 63-64 行）。
+    def _load_project():
+        with SessionLocal() as owned:
+            return ProjectService.get_project_for_write(
+                db=owned, project_id=project_id,
+                user_id=user_id, org_id=org_id)
+
+    project = await asyncio.to_thread(_load_project)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    row = await asyncio.to_thread(
-        MapProductService.get_version, db, project_id, version_no)
+
+    def _load_row():
+        with SessionLocal() as owned:
+            loaded = MapProductService.get_version(owned, project_id, version_no)
+            if loaded is None:
+                return None
+            # 只投影标量：owned 会话关闭后不再消费 ORM 实例属性。
+            return SimpleNamespace(
+                workflow_run_id=loaded.workflow_run_id,
+                version_no=loaded.version_no,
+            )
+
+    row = await asyncio.to_thread(_load_row)
     if row is None:
         raise HTTPException(status_code=404, detail="Map product version not found")
     if not row.workflow_run_id:
         raise HTTPException(status_code=409, detail="version has no bound workflow run")
     if row.version_no > 1:
-        diff = await asyncio.to_thread(
-            MapProductService.diff_versions_pairwise,
-            db, project_id, row.version_no - 1, row.version_no)
+        def _diff_pairwise():
+            with SessionLocal() as owned:
+                return MapProductService.diff_versions_pairwise(
+                    owned, project_id, row.version_no - 1, row.version_no)
+
+        diff = await asyncio.to_thread(_diff_pairwise)
         if not diff.get("analysis_recomputation_expected"):
             raise HTTPException(
                 status_code=409,
@@ -1167,20 +1186,34 @@ async def rerun_map_product_version(
     except Exception as e:  # noqa: BLE001
         logger.exception("Map product rerun failed")
         raise HTTPException(status_code=409, detail="Workflow rerun failed") from e
-    # review M-C3：auto-record 幂等；缺席时补谱系行（IntegrityError 由
-    # record_version 的重试路径消化 —— 并发完成同 run 不双记）。
-    if str(run.status) != "completed":
+    # review M-C3 / P2：run 是引擎线程内已关闭 Session 的 detached 实例 ——
+    # 状态与记账都在 owned 会话内按 run.id 重取（同 restore 的 _record_full）。
+    def _run_completed() -> bool:
+        with SessionLocal() as owned:
+            fresh = owned.get(WorkflowRun, run.id)
+            return fresh is not None and str(fresh.status) == "completed"
+
+    if not await asyncio.to_thread(_run_completed):
         raise HTTPException(status_code=409, detail="Workflow replay did not complete; no new version recorded")
-    new_row = await asyncio.to_thread(
-        MapProductService.maybe_auto_record_version,
-        db, run, label=f"rerun of V{version_no}")
+
+    def _record_rerun():
+        with SessionLocal() as owned:
+            fresh = owned.get(WorkflowRun, run.id)
+            if fresh is None:
+                return None
+            created = MapProductService.maybe_auto_record_version(
+                owned, fresh, label=f"rerun of V{version_no}")
+            if created is None:
+                created = MapProductService.record_version(
+                    owned, project_id, workflow_run_id=cast("str", run.id),
+                    label=f"rerun of V{version_no}",
+                    actor=str(user.get("user_id") or "user"),
+                    parent_version_no=version_no, lineage_kind="rerun")
+            return SimpleNamespace(version_no=created.version_no)
+
+    new_row = await asyncio.to_thread(_record_rerun)
     if new_row is None:
-        new_row = await asyncio.to_thread(
-            MapProductService.record_version,
-            db, project_id, workflow_run_id=cast("str", run.id),
-            label=f"rerun of V{version_no}",
-            actor=str(user.get("user_id") or "user"),
-            parent_version_no=version_no, lineage_kind="rerun")
+        raise HTTPException(status_code=409, detail="Workflow replay did not complete; no new version recorded")
     return {"run_id": run.id, "recorded_version_no": new_row.version_no,
             "from_step": from_step, "source_version_no": version_no}
 
@@ -1809,7 +1842,7 @@ async def save_workspace_snapshot(
     session purge/TTL sweeps.
     """
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_for_write, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_for_write_offloaded(project_id, user_id, org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(req.session_id, user, owner_token)
@@ -1846,7 +1879,7 @@ async def list_workspace_snapshots(
     """Bounded snapshot list (≤50) for the project (plus the optional
     session's legacy session-scoped snapshots, honestly labeled ``home``)."""
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_with_auth_offloaded(project_id, user_id, org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if session_id:
@@ -1881,7 +1914,7 @@ async def inspect_workspace_snapshot(
     Probes run against the caller's own session — the session gate doubles
     as the ref-id leak guard (audit §4.3)."""
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_with_auth_offloaded(project_id, user_id, org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(session_id, user, owner_token)
@@ -1914,7 +1947,7 @@ async def restore_workspace_snapshot(
     (digest-verified read before write; failures degrade honestly to
     ``expired`` + ``degraded`` — dead refs are never marked valid)."""
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_for_write, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_for_write_offloaded(project_id, user_id, org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(req.session_id, user, owner_token)
@@ -1947,7 +1980,7 @@ async def clone_workspace_snapshot(
     disclosed by verify, never fabricated). BOTH sessions must belong to
     the caller — the source gate is 404 without existence leak."""
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_for_write, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_for_write_offloaded(project_id, user_id, org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(req.source_session_id, user, owner_token)
@@ -1979,7 +2012,7 @@ async def delete_workspace_snapshot(
     sweep). Snapshots created by another user within the project are
     refused at the service layer."""
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_for_write, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_for_write_offloaded(project_id, user_id, org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(session_id, user, owner_token)
@@ -2006,7 +2039,7 @@ async def describe_workspace(
     """Workspace inventory (§十五): snapshot count, artifact summary by
     lifecycle state, layer refs, durable coverage %."""
     user_id, org_id = actor_ids(user)
-    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_with_auth_offloaded(project_id, user_id, org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if session_id:

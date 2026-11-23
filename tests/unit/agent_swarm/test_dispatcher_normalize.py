@@ -372,6 +372,16 @@ class TestSubagentDispatcherRuntime:
         assert len(receipt.produced_refs) == MAX_REFS_PER_RECEIPT
         assert len(receipt.summary) == MAX_SUMMARY_CHARS
 
+    async def test_non_ref_success_outputs_stripped_not_folded(
+        self, fake_subagent
+    ):
+        fake_subagent.result = _FakeRunResult(
+            success=True, refs=["ref:ok", "inline-geojson", 42]
+        )
+        receipt = await SubagentDispatcherRuntime().execute(_assignment())
+        assert receipt.status == SwarmReceiptStatus.SUCCEEDED
+        assert receipt.produced_refs == ["ref:ok"]
+
     async def test_error_message_clipped(self, fake_subagent):
         fake_subagent.result = _FakeRunResult(success=False, error="e" * 900)
         receipt = await SubagentDispatcherRuntime().execute(_assignment())

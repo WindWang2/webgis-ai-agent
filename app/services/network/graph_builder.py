@@ -349,7 +349,13 @@ class NetworkGraphBuilder:
             elif data.get("type") == "Feature":
                 features = [data]
             else:
-                features = data.get("features", [])
+                # A dict without a FeatureCollection/Feature type is an
+                # unrecognized input shape; treating it as an empty feature
+                # list returned a 0-node graph as if the network were empty.
+                raise ValueError(
+                    f"Unrecognized network input dict type {data.get('type')!r}: "
+                    "expected a GeoJSON FeatureCollection or Feature"
+                )
         elif isinstance(data, list):
             features = data
         else:

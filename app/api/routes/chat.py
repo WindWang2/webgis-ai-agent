@@ -1114,6 +1114,10 @@ async def chat_completions(
                         )
                     except Exception:  # noqa: BLE001 — guard wiring is additive
                         pass
+            # C-F2 parity：守卫与能力写完后 request 级连接即可归还 ——
+            # 后续 turn（LLM+工具，秒~分钟）与持久化各用短生命周期会话。
+            if db is not None:
+                await db.close()
             try:
                 try:
                     await _record_frontend_cartographic_observation(_affinity_sid, req.map_state)

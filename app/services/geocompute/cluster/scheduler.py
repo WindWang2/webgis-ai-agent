@@ -686,6 +686,25 @@ class ClusterCoordinator:
         # 只有当本地槽位满员（有等待者拿不到槽位）时才抢占。
         if len(self._inflight) < self._local_slots:
             return 0
+        # 等待者必须先过 placement 门槛（与 _dispatch 同一口径）：被 profile/
+        # envelope 卡住的 waiter 永远拿不到槽位，对之为其抢占只会白耗受害者
+        # 一次完整重执行并消耗 preempts 保险丝。
+        workers = self._eligible_workers()
+        if workers is not None:
+            from app.services.geocompute.cluster.contracts import ResourceRequest
+            from app.services.geocompute.cluster.placement import (
+                eligible_workers,
+                request_from_run_row,
+            )
+
+            gated: list[dict[str, Any]] = []
+            for waiter in waiting:
+                req = request_from_run_row(waiter)
+                if req == ResourceRequest() or eligible_workers(req, workers):
+                    gated.append(waiter)
+            waiting = gated
+            if not waiting:
+                return 0
         # M4：受害者仅限**本 coordinator** 的在跑 run —— 抢占的目的是给
         # 本地等待者腾槽位；对远端 run 让出不释放本地槽位，只是浪费一次
         # 完整重执行。

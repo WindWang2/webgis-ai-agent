@@ -253,6 +253,7 @@ def revise_draft(
     if target_crs is not None:
         new_crs = validate_metric_projected_crs(target_crs).canonical_crs
     new_gcps: Optional[List[GcpPoint]] = None
+    stale_manual_gcps = 0
     if gcps is not None:
         new_gcps = _normalize_gcp_inputs(gcps, width=src.width, height=src.height, target_crs=new_crs)
     elif target_crs is not None and new_crs != existing.target_crs and existing.gcps:
@@ -268,6 +269,7 @@ def revise_draft(
                 reprojected.append(g_copy)
             else:
                 reprojected.append(g)
+                stale_manual_gcps += 1
         new_gcps = reprojected
 
     validated_res = _validated_target_res(target_resolution_m)
@@ -287,6 +289,12 @@ def revise_draft(
         if new_gcps is not None:
             cur.gcps = new_gcps
         cur.fit_metrics = solve_affine_gcps(cur.gcps, width=src.width, height=src.height)
+        if stale_manual_gcps and cur.fit_metrics is not None:
+            cur.fit_metrics.warnings.append(
+                f"Target CRS changed from {existing.target_crs} to {new_crs}; {stale_manual_gcps} "
+                "GCP(s) with explicit map coordinates (no WGS84 provenance) were kept unchanged "
+                "and are now interpreted in the new CRS."
+            )
         cur.revision += 1
         cur.preview_stale = True
         cur.updated_at = _now()
@@ -451,6 +459,14 @@ def import_gcps(
             for g in plan.gcps
         ]
         merged_inputs = existing_inputs + items
+        if len(merged_inputs) > MAX_GCPS_PER_PLAN:
+            raise GeorefDomainError(
+                GeorefErrorCode.INVALID_GCP_COORDS,
+                f"Import would exceed the {MAX_GCPS_PER_PLAN}-GCP plan limit "
+                f"(existing {len(existing_inputs)} + imported {len(items)}); "
+                "use replace_existing=true or remove GCPs first.",
+                status_code=422,
+            )
 
     return revise_draft(
         session_id=session_id,
@@ -778,9 +794,18 @@ async def bind_mapspec_layer(
     retired_for_layer: List[GeorefArtifactRecord] = []
 
     def _save_bind(cur: GeorefDraftPlan) -> GeorefDraftPlan:
-        if cur.latest_artifact:
-            cur.latest_artifact.mapspec_layer_id = lid
-            cur.latest_artifact.mapspec_revision = new_rev
+        # commit_expression 是 await 点：期间 georef job 可能已完成并替换
+        # latest_artifact。绝不能把指向旧 raster_ref 的 bind 记录盖到新产物上。
+        if cur.latest_artifact is None or cur.latest_artifact.artifact_id != art.artifact_id:
+            current_aid = cur.latest_artifact.artifact_id if cur.latest_artifact else "none"
+            raise GeorefDomainError(
+                GeorefErrorCode.CAS_CONFLICT,
+                f"Artifact '{art.artifact_id}' was superseded by '{current_aid}' while MapSpec bind "
+                f"was in flight; layer '{lid}' was registered but not recorded on the newer artifact.",
+                status_code=409,
+            )
+        cur.latest_artifact.mapspec_layer_id = lid
+        cur.latest_artifact.mapspec_revision = new_rev
         kept: List[GeorefArtifactRecord] = []
         for old in cur.superseded_artifacts:
             if old.mapspec_layer_id == lid and old.artifact_id != art.artifact_id:
@@ -792,7 +817,26 @@ async def bind_mapspec_layer(
         cur.updated_at = _now()
         return cur
 
-    updated = mutate_plan_cas(session_id, plan_id, expected_revision=None, mutator=_save_bind)
+    try:
+        updated = mutate_plan_cas(session_id, plan_id, expected_revision=None, mutator=_save_bind)
+    except GeorefDomainError as exc:
+        if exc.code != GeorefErrorCode.CAS_CONFLICT:
+            raise
+        return GeorefBindLayerResponse(
+            bound=False,
+            partial_success=True,
+            layer_id=lid,
+            mapspec_revision=new_rev,
+            current_mapspec_revision=new_rev,
+            error_code=GeorefErrorCode.CAS_CONFLICT.value,
+            message=(
+                f"GeoRaster layer '{display_name}' ({lid}) was registered at MapSpec revision {new_rev}, "
+                f"but plan artifact '{art.artifact_id}' was superseded while the bind was in flight; "
+                "re-bind the latest artifact to attach it."
+            ),
+            artifact=art,
+            mapspec=receipt.get("mapspec") if isinstance(receipt.get("mapspec"), dict) else None,
+        )
     for old in retired_for_layer:
         await cleanup_artifact_resources(session_id, old)
     return GeorefBindLayerResponse(

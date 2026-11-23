@@ -50,7 +50,7 @@ def generate_decision_report_markdown(result: SpatialDecisionResult) -> str:
         status_str = "⚠️ 数据缺失" if m.missing_baseline else "✅ 真实基线"
         # GIS-03: metrics without a real baseline are unsimulated (None).
         # Render "—" for the numeric cells instead of crashing on f"{None:.2f}".
-        if m.missing_baseline or m.baseline is None:
+        if m.missing_baseline or m.baseline is None or m.delta_pct is None:
             base_str = "—" if m.baseline is None else f"{m.baseline:.2f}"
             sim_str = "—" if m.simulated is None else f"{m.simulated:.2f}"
             delta_str = "—" if m.delta_pct is None else f"{m.delta_pct:+.2f}%"
@@ -121,8 +121,12 @@ def generate_comparison_report_markdown(comparison: ScenarioComparisonResult) ->
 
     lines.append("## 3. 空间影响覆盖面积对比")
     for sid, area_km2 in comparison.affected_area_comparison.items():
-        scen_obj = next(s for s in comparison.scenarios if s.scenario.scenario_id == sid)
-        lines.append(f"- **{scen_obj.scenario.name}** (`{sid}`): 影响总面积 **{area_km2:.2f} km²**")
+        scen_obj = next(
+            (s for s in comparison.scenarios if s.scenario.scenario_id == sid),
+            None,
+        )
+        scen_name = scen_obj.scenario.name if scen_obj is not None else sid
+        lines.append(f"- **{scen_name}** (`{sid}`): 影响总面积 **{area_km2:.2f} km²**")
     lines.append("")
 
     lines.append("## 4. 权衡分析 (Trade-Off Analysis)")

@@ -165,6 +165,7 @@ def publish_data_object_for_delivery(
             max_total_bytes=budget,
         )
         return {
+            "state": "published",
             "data_object_id": identity.data_object_id,
             "manifest_location": identity.manifest_location,
             "content_sha256": identity.content_sha256,

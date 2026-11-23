@@ -257,6 +257,11 @@ def merge_instances(
         off_y = row - (tile.read_window[0] - tile.pad[1])
         off_x = col - (tile.read_window[1] - tile.pad[0])
         core = inst_mask[off_y: off_y + core_h, off_x: off_x + core_w]
+        if core.shape != (core_h, core_w):
+            raise PreprocessError(
+                f"tile {tile.index}: core slice {core.shape} != core "
+                f"{(core_h, core_w)} (planner/provider geometry mismatch)"
+            )
         for tile_inst in np.unique(core):
             if tile_inst == 0:
                 continue

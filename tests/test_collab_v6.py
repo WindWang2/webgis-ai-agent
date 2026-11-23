@@ -890,7 +890,7 @@ def test_collab_ws_inbound_non_finite_rejected():
         assert viewports == [{"lat": 30.0, "lng": 104.0}]
 
 
-def test_presence_flush_task_cancelled_before_leave_heartbeat():
+def test_presence_flush_task_cancelled_before_leave_heartbeat(monkeypatch):
     """P2 concurrency：_flush_presence 自行把 presence_flush_task 置 None 会让
     finally 丢失在飞任务的引用 —— 已取走 pending 的 flush 在 leave 之后仍会完成
     heartbeat + 广播 presence update（幽灵参与者）。槽位必须只由主循环写
@@ -928,6 +928,8 @@ def test_presence_flush_task_cancelled_before_leave_heartbeat():
         result = await orig_heartbeat(self, session_id, client_id, patch)
         completed.append(client_id)
         return result
+
+    monkeypatch.setattr(PresenceRegistry, "heartbeat", _gated_heartbeat)
 
     class _FakeWS:
         def __init__(self):

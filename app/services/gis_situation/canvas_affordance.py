@@ -690,9 +690,10 @@ def topology_derive(
                 continue
             if not fgeom.is_valid:
                 fgeom = shapely.make_valid(fgeom)
+            properties = feature.get("properties")
             reference = str(
                 feature.get("id")
-                or (feature.get("properties") or {}).get("id")
+                or (properties.get("id") if isinstance(properties, dict) else None)
                 or index
             )
             if op == "difference":

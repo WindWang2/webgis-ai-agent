@@ -290,6 +290,25 @@ def test_topology_derive_never_raises_on_invalid_geometry():
     assert "error" in result or result["hit_count"] == 0
 
 
+def test_topology_derive_tolerates_non_dict_properties():
+    """非 dict properties 不得中止整层派生（单要素引用回退索引）。"""
+    features = [
+        {
+            "geometry": _box_polygon(116.31, 39.81, 116.32, 39.82),
+            "properties": ["not", "a", "dict"],
+        },
+        {
+            "id": "w-ok",
+            "geometry": _box_polygon(116.33, 39.82, 116.34, 39.83),
+            "properties": {"type": "pond"},
+        },
+    ]
+    result = topology_derive(_box_polygon(), features, op="select_intersect")
+    assert "error" not in result
+    assert result["hit_count"] == 2
+    assert result["hit_refs"] == ["0", "w-ok"]
+
+
 # ---------------------------------------------------------------------------
 # T4 情境注入
 # ---------------------------------------------------------------------------

@@ -199,15 +199,18 @@ def qualify(
             )
 
     # ── modality（RGB 模型 vs 多光谱输入等；fusion 的混合输入豁免）──
+    # 时序源的 band_count 是 C*T 栈（上面已按 input_bands 整除校验）；
+    # RGB 判定看每切片波段数（= input_bands），而非整个栈的波段数。
+    modality_bands = descriptor.input_bands if is_temporal_task else profile.band_count
     if (
         MODALITY_OPTICAL_RGB in descriptor.input_modalities
         and "sar_optical_fusion" not in descriptor.task_types
-        and profile.band_count > 3
+        and modality_bands > 3
     ):
         failures.append(
             CompatibilityFailure(
                 FAILURE_MODALITY,
-                f"RGB model vs {profile.band_count}-band multispectral input",
+                f"RGB model vs {modality_bands}-band multispectral input",
                 fix_hint="select the 3 RGB bands explicitly or use a multispectral model",
             )
         )

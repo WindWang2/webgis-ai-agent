@@ -238,8 +238,9 @@ def _rows_channel(pl: NodePayload) -> Optional[list[dict]]:
     与 ``features`` 键内的 ``{"rows": [...]}`` 信封（durable.py await 通道
     对落存载荷的盲包）。
     """
-    if pl.get("rows"):
-        return pl["rows"]
+    rows = pl.get("rows")
+    if isinstance(rows, list):
+        return rows
     feats = pl.get("features")
     if isinstance(feats, dict) and isinstance(feats.get("rows"), list):
         return feats["rows"]

@@ -251,8 +251,11 @@ class NetworkODMatrixService:
         # endpoint-only resolution made the OD family report up to ~2 edge
         # lengths more than routing for the same physical OD pair. Node-id
         # inputs keep using the caller's graph untouched (no copy).
-        if need_paths and len(origins) > 256:
-            raise ValueError("path reconstruction supports at most256 origins; split the request")
+        # No origin-count cap here: the cost-only matrix path already
+        # materializes the same per-origin Dijkstra trees, and path mode only
+        # materializes paths for the requested destinations. The previous
+        # 256-origin hard limit rejected requests that had already passed
+        # od_matrix_scale_guard (e.g. closest_facility with >256 demands).
         needs_split = any(not isinstance(t, str) for t in origins) or any(
             not isinstance(t, str) for t in destinations
         )

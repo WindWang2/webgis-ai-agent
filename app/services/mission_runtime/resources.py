@@ -36,12 +36,24 @@ class MissionResourceLedger:
         lease_epoch: int,
         owner: str,
         quota: Dict[str, float],
+        org_id: Optional[str] = None,
     ) -> C.MissionRecord:
-        rec = self.store.get_mission(mission_id)
+        rec = self.store.get_mission(mission_id, org_id=org_id)
         if rec is None:
             raise TransitionRejected("MISSION_NOT_FOUND")
         budget = rec.resource_budget.model_dump()
-        budget["quota"] = {str(k)[:64]: float(v) for k, v in (quota or {}).items()}
+        # Never persist an unbounded caller-supplied quota: clamp known
+        # dimensions to the server-owned ceilings (same as quota_policy).
+        from app.services.mission_runtime.quota_policy import MISSION_CEILINGS
+
+        clamped: Dict[str, float] = {}
+        for k, v in (quota or {}).items():
+            key = str(k)[:64]
+            val = float(v)
+            if key in MISSION_CEILINGS:
+                val = min(float(MISSION_CEILINGS[key]), val)
+            clamped[key] = val
+        budget["quota"] = clamped
         return self.store.patch_mission(
             mission_id, lease_epoch=lease_epoch, owner=owner,
             resource_budget=budget, expected_revision=rec.revision)
@@ -54,8 +66,9 @@ class MissionResourceLedger:
         owner: str,
         dim: str,
         amount: float,
+        org_id: Optional[str] = None,
     ) -> C.MissionRecord:
-        rec = self.store.get_mission(mission_id)
+        rec = self.store.get_mission(mission_id, org_id=org_id)
         if rec is None:
             raise TransitionRejected("MISSION_NOT_FOUND")
         budget = rec.resource_budget
@@ -88,6 +101,7 @@ class MissionResourceLedger:
         retry: bool = False,
         idempotency_key: str = "",
         seen_keys: Optional[set] = None,
+        org_id: Optional[str] = None,
     ) -> C.MissionRecord:
         """Synchronous thread-only charge; duplicate idempotency_key is no-op.
 
@@ -97,14 +111,14 @@ class MissionResourceLedger:
         from app.lib.runtime.sync_io import warn_if_event_loop
         warn_if_event_loop("MissionResourceLedger.commit_consumption")
         if idempotency_key and seen_keys is not None and idempotency_key in seen_keys:
-            got = self.store.get_mission(mission_id)
+            got = self.store.get_mission(mission_id, org_id=org_id)
             if got is None:
                 raise TransitionRejected("MISSION_NOT_FOUND")
             return got
 
         last_conflict: Optional[Exception] = None
         for _attempt in range(self._MAX_CAS_ATTEMPTS):
-            rec = self.store.get_mission(mission_id)
+            rec = self.store.get_mission(mission_id, org_id=org_id)
             if rec is None:
                 raise TransitionRejected("MISSION_NOT_FOUND")
             budget = rec.resource_budget
@@ -116,7 +130,11 @@ class MissionResourceLedger:
                 refs = rec.refs.model_dump()
                 ev = list(refs.get("evidence_refs") or [])
                 if ticket not in ev:
-                    ev = (ev + [ticket])[: C.MAX_REFS]
+                    # Never silently evict a receipt ticket: dropping one would
+                    # re-enable double charging for that idempotency key.
+                    if len(ev) >= C.MAX_REFS:
+                        raise TransitionRejected("RECEIPT_CAPACITY_EXCEEDED")
+                    ev = ev + [ticket]
                     refs["evidence_refs"] = ev
             else:
                 refs = None
@@ -153,8 +171,9 @@ class MissionResourceLedger:
         owner: str,
         dim: str,
         amount: float,
+        org_id: Optional[str] = None,
     ) -> C.MissionRecord:
-        rec = self.store.get_mission(mission_id)
+        rec = self.store.get_mission(mission_id, org_id=org_id)
         if rec is None:
             raise TransitionRejected("MISSION_NOT_FOUND")
         budget = rec.resource_budget
@@ -163,8 +182,8 @@ class MissionResourceLedger:
             mission_id, lease_epoch=lease_epoch, owner=owner,
             resource_budget=budget.model_dump(), expected_revision=rec.revision)
 
-    def exhausted(self, mission_id: str) -> list[str]:
-        rec = self.store.get_mission(mission_id)
+    def exhausted(self, mission_id: str, *, org_id: Optional[str] = None) -> list[str]:
+        rec = self.store.get_mission(mission_id, org_id=org_id)
         if rec is None:
             return []
         return rec.resource_budget.exhausted()

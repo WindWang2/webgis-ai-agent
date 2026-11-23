@@ -41,6 +41,20 @@ def test_descriptor_secret_guard(tiny_desc_factory):
         tiny_desc_factory(provenance={"api_key": "sk-123"})
 
 
+def test_descriptor_secret_guard_scans_nested_lists(tiny_desc_factory):
+    """provenance 里 list 内 dict 的 secret 键同样被拒（不只顶层 dict）。"""
+    with pytest.raises(ValidationError, match="secret"):
+        tiny_desc_factory(provenance={"sources": [{"api_key": "sk-123"}]})
+
+
+def test_class_schema_nodata_class_must_be_a_class_index():
+    from app.lib.modelops.descriptor import ClassSchema
+
+    assert ClassSchema(classes=("bg", "water"), nodata_class=1).nodata_class == 1
+    with pytest.raises(ValidationError, match="nodata_class"):
+        ClassSchema(classes=("bg", "water"), nodata_class=2)
+
+
 def test_descriptor_segmentation_requires_class_schema(tiny_desc_factory):
     with pytest.raises(ValidationError):
         tiny_desc_factory(class_schema=None)

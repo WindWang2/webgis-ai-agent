@@ -286,3 +286,44 @@ def test_durable_rows_chain_downstream_filter_not_silently_emptied(job_env):
     assert ev.output_ref, "rows 下游 FILTER 不得静默滤光到无输出"
     out = run_coro_sync(session_data_manager.get(session_id, ev.output_ref))
     assert out == {"rows": [{"kind": "a", "count_v": 3}]}
+
+
+def test_durable_envelope_features_counted_and_bytes_estimated(job_env, monkeypatch):
+    """features 为 rows 信封 dict：行计数/字节估计经 row_items 投影。
+
+    修复前：``_estimate_payload_bytes`` 对 dict 切片抛 TypeError —— 节点已
+    成功却在 finish_job 前崩溅（job 落 failed）；``node_output_ready`` 与
+    job 摘要的 rows 也会少报为 len(dict)=1。
+    """
+    from app.services.geocompute import ops, tasks
+
+    rows = [{"kind": "a", "v": i} for i in range(3)]
+
+    def _scan(ctx, node, payloads):
+        return {"features": {"rows": rows}, "metadata": {}}
+
+    monkeypatch.setitem(ops.REGISTRY, NodeCategory.SOURCE_SCAN, _scan)
+    emitted: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        tasks, "_emit_event",
+        lambda run_id, event, **kw: emitted.append((event, kw)),
+    )
+    node = ExecutionNode(
+        node_id="ss1", category=NodeCategory.SOURCE_SCAN,
+        policy=ExecutionPolicyKind.DURABLE_JOB,
+        parameters={"marker": "envelope-features-tasks"},
+    )
+    plan = ExecutionPlan(plan_id="pd-envelope", nodes=[node])
+    run = GeoExecutionEngine(max_workers=1).execute_plan(
+        plan, session_id="geocompute-envelope-features"
+    )
+    assert run.status is ExecutionRunStatus.COMPLETED, run.summary_lines()
+    ready = [kw for ev, kw in emitted
+             if ev == "node_output_ready" and kw.get("node_id") == "ss1"]
+    assert ready and ready[0]["rows"] == 3
+    assert ready[0]["bytes_"] > 0
+    from app.models.db_model import AnalysisTask
+
+    with job_env["db"]() as db:
+        job = db.query(AnalysisTask).one()
+        assert job.result_summary["rows"] == 3

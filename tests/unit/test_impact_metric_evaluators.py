@@ -315,3 +315,39 @@ def test_uncertainty_description_generation():
     assert isinstance(desc, str)
     assert len(desc) > 0
     assert "85" in desc or "0.85" in desc or "confidence" in desc.lower()
+
+
+def test_scenario_radii_not_overridden_by_rule_parameters():
+    """Scenario-specific radii must survive rules that also carry radius params."""
+    from app.services.spatial_decision.impact_engine import SpatialImpactEngine
+
+    engine = SpatialImpactEngine()
+    target_area = TargetAreaSpec(
+        query="Growth Area",
+        geometry_type="Point",
+        center=(116.4074, 39.9042),
+        geometry={"type": "Point", "coordinates": [116.4074, 39.9042]},
+        resolved_name="Growth Area",
+        source="geojson",
+    )
+    rule = DomainRule(
+        id="rule_custom_radius",
+        domain="test",
+        name="Custom radius",
+        statement="Would override the scenario defaults if applied last.",
+        parameters={"direct_radius_m": 100.0, "indirect_radius_m": 200.0},
+    )
+
+    for scenario_type, expected_direct, expected_indirect in (
+        ("population_growth", 1000.0, 3000.0),
+        ("traffic_restriction", 2000.0, 5000.0),
+    ):
+        zones, _ = engine.calculate_impacts(
+            scenario_type=scenario_type,
+            target_area=target_area,
+            rules=[rule],
+            parameters={},
+        )
+        radii = {z.zone_type: z.radius_m for z in zones}
+        assert radii["direct"] == expected_direct
+        assert radii["indirect"] == expected_indirect

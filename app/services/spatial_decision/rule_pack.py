@@ -396,9 +396,13 @@ class DomainRulePackRegistry:
         for cond_key, cond_val in conditions.items():
             ctx_val = context.get(cond_key)
             if ctx_val is None:
-                # Try finding key without unit suffix or normalized key
-                alt_keys = [k for k in context if k.startswith(cond_key.split("_")[0])]
-                if alt_keys:
+                # Only accept an unambiguous unit-suffixed extension of the
+                # condition key (e.g. "distance" -> "distance_m"). Matching on
+                # the first underscore-separated token could bind "distance_m"
+                # to "distance_km" (a different unit), and taking alt_keys[0]
+                # arbitrarily chose one of several candidates.
+                alt_keys = [k for k in context if k.startswith(f"{cond_key}_")]
+                if len(alt_keys) == 1:
                     ctx_val = context[alt_keys[0]]
 
             if ctx_val is None:

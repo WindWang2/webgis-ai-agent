@@ -5,9 +5,10 @@
 """
 from __future__ import annotations
 
+import math
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.contracts.cartography_components import ComponentPlacement
 
@@ -90,6 +91,17 @@ class SetViewBody(ClientMutationIdMixin):
     zoom: Optional[float] = None
     pitch: Optional[float] = None
     bearing: Optional[float] = None
+
+    @field_validator("center", "zoom", "pitch", "bearing")
+    @classmethod
+    def _finite_view_values(cls, v: Any) -> Any:
+        """NaN/Inf 视图值在边界拒绝（JSON 解析默认放行 NaN，不可写入 MapSpec）。"""
+        if v is None:
+            return v
+        values = v if isinstance(v, list) else [v]
+        if any(not math.isfinite(float(x)) for x in values):
+            raise ValueError("view values must be finite")
+        return v
 
 
 class SetSceneBody(ClientMutationIdMixin):

@@ -66,6 +66,19 @@ def test_rgb_model_vs_multispectral(tiny_desc_factory):
     assert M in codes(report) or FAILURE_BAND_COUNT in codes(report)
 
 
+def test_temporal_rgb_stack_not_flagged_multispectral(tiny_desc_factory):
+    """时序 RGB 栈 = 3*T 波段；模态门按每切片 3 波段判定（非整栈 >3）。"""
+    from app.lib.modelops.capabilities import TASK_TEMPORAL_FORECAST
+
+    d = tiny_desc_factory(
+        task_types=(TASK_TEMPORAL_FORECAST,),
+        output_types=("temporal_stack",),
+        temporal=TemporalRequirements(max_length=8),
+    )
+    report = qualify(d, _profile(band_count=6, temporal_length=2))
+    assert report.compatible
+
+
 def test_sar_missing_polarization(tiny_desc_factory):
     d = tiny_desc_factory(
         input_modalities=("sar",),

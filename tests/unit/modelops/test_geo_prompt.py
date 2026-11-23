@@ -384,6 +384,25 @@ def test_prompt_windows_anchor_grid_for_large_mask_prompt():
         assert row < 6500 and row + h > 6000
 
 
+def test_prompt_windows_rejects_prompts_outside_raster():
+    """越出栅格的 prompt 必须 typed 拒绝（旧实现返回负尺寸窗口）。"""
+    point = PromptSpec(points=((50, 1500),))
+    with pytest.raises(PlanningError, match="outside"):
+        prompt_windows(point, raster_height=1000, raster_width=1000, chip_hw=(64, 64))
+    spread = PromptSpec(points=((10, 10), (10, 1500)))
+    with pytest.raises(PlanningError, match="outside"):
+        prompt_windows(
+            spread, raster_height=1000, raster_width=1000,
+            chip_hw=(64, 64), max_window_px=64,
+        )
+    boxes = PromptSpec(boxes=((10, 10, 10, 10), (10, 1490, 10, 10)))
+    with pytest.raises(PlanningError, match="outside"):
+        prompt_windows(
+            boxes, raster_height=1000, raster_width=1000,
+            chip_hw=(64, 64), max_window_px=64,
+        )
+
+
 def test_schema_version_constant_is_v1():
     assert GEO_PROMPT_SCHEMA_VERSION == 1
 

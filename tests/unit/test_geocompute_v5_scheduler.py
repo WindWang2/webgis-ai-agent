@@ -886,6 +886,28 @@ class TestRunEvidenceSnapshot:
         replay = run_evidence.load_snapshot("gexec-small", owner_scope="u:rt")
         assert replay is not None and replay.evidence["n1"].rows_emitted == 3
 
+    def test_long_owner_scope_reads_use_write_side_truncation(self, v5_env):
+        """写侧按列宽存 ``owner_scope[:40]``；读侧（list/load/extras）必须
+        同一投影，否则长 owner 域的快照读静默永不命中。"""
+        from app.services.geocompute import run_evidence
+
+        owner = "u:" + "x" * 60
+        run = ExecutionRun(
+            run_id="gexec-long-owner", plan_id="p", plan_fingerprint="fp",
+            status=ExecutionRunStatus.COMPLETED,
+            evidence={"n1": NodeEvidence(status="completed", rows_emitted=1)},
+        )
+        assert run_evidence.save_snapshot(
+            run, owner,
+            extras={"reproducibility": {"classification": "reproducible"}},
+        ) is True
+        assert run_evidence.load_snapshot(
+            run.run_id, owner_scope=owner) is not None
+        listed = run_evidence.list_snapshots(owner)
+        assert any(r["run_id"] == run.run_id for r in listed)
+        extras = run_evidence.load_snapshot_extras(run.run_id, owner_scope=owner)
+        assert extras["reproducibility"]["classification"] == "reproducible"
+
 
 # ------------------------------------------------------ 5. eager 诚实披露
 

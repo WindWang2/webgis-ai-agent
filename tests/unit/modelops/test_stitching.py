@@ -102,6 +102,13 @@ def test_geometry_mismatch_raises():
                            input_nodata=None, policy=SegmentationMergePolicy(), num_classes=2)
 
 
+def test_instance_geometry_mismatch_raises():
+    """provider 输出几何不符时 core 切片形状校验（禁止静默广播错列）。"""
+    plan = _plan(4, 4)
+    with pytest.raises(PreprocessError):
+        merge_instances(plan, [np.zeros((4, 3), dtype=np.int32)], [{1: 1}])
+
+
 # ── detection oracle ─────────────────────────────────────────────────
 
 

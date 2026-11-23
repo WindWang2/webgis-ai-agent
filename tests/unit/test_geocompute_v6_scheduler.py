@@ -21,7 +21,7 @@ from app.services.geocompute.cluster.store import (
     ClusterRunStore,
     _utcnow,
 )
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 
 @pytest.fixture(autouse=True)
@@ -386,6 +386,72 @@ class TestPreemption:
         finally:
             release.set()
             ops.execute_node = real_execute
+
+    def test_profile_gated_waiter_does_not_trigger_preemption(
+        self, env, monkeypatch,
+    ):
+        """被 placement 门槛卡住的 waiter 不构成抢占依据（与 _dispatch 同
+        口径）：否则白耗受害者一次完整重执行并消耗 preempts 保险丝。"""
+        _, make_coordinator, _ = env
+        coord = make_coordinator("coord-a", local_slots=1, preempt_wait_s=0.0)
+        from app.services.task_queue import celery_app
+
+        old_created = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+        waiter = {
+            "run_id": "w1", "tenant_key": "t:1", "priority": 10,
+            "created_at": old_created, "required_profiles": ["raster"],
+            "resource_request": None, "preempts": 0, "id": 2,
+        }
+        victim = {
+            "run_id": "v1", "tenant_key": "t:1", "priority": 0,
+            "created_at": old_created, "preempts": 0,
+            "coordinator_id": "coord-a", "id": 1,
+        }
+        requested: list[str] = []
+        monkeypatch.setitem(celery_app.conf, "task_always_eager", False)
+        monkeypatch.setattr(coord._store, "scan_dispatchable", lambda **kw: [waiter])
+        monkeypatch.setattr(coord._store, "scan_running", lambda **kw: [victim])
+        monkeypatch.setattr(coord._store, "live_workers", lambda **kw: [])
+        monkeypatch.setattr(
+            coord._store, "request_yield",
+            lambda run_id: requested.append(run_id) or True,
+        )
+        coord._inflight["v1"] = object()
+        assert coord._maybe_preempt() == 0
+        assert requested == []
+
+    def test_ungated_waiter_still_preempts_in_broker_mode(
+        self, env, monkeypatch,
+    ):
+        """无 profile/envelope 要求的 waiter 与 _dispatch 一样恒可派发 →
+        仍然构成抢占依据（V6 语义不因 gating 收紧）。"""
+        _, make_coordinator, _ = env
+        coord = make_coordinator("coord-a", local_slots=1, preempt_wait_s=0.0)
+        from app.services.task_queue import celery_app
+
+        old_created = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+        waiter = {
+            "run_id": "w1", "tenant_key": "t:1", "priority": 10,
+            "created_at": old_created, "required_profiles": [],
+            "resource_request": None, "preempts": 0, "id": 2,
+        }
+        victim = {
+            "run_id": "v1", "tenant_key": "t:1", "priority": 0,
+            "created_at": old_created, "preempts": 0,
+            "coordinator_id": "coord-a", "id": 1,
+        }
+        requested: list[str] = []
+        monkeypatch.setitem(celery_app.conf, "task_always_eager", False)
+        monkeypatch.setattr(coord._store, "scan_dispatchable", lambda **kw: [waiter])
+        monkeypatch.setattr(coord._store, "scan_running", lambda **kw: [victim])
+        monkeypatch.setattr(coord._store, "live_workers", lambda **kw: [])
+        monkeypatch.setattr(
+            coord._store, "request_yield",
+            lambda run_id: requested.append(run_id) or True,
+        )
+        coord._inflight["v1"] = object()
+        assert coord._maybe_preempt() == 1
+        assert requested == ["v1"]
 
 
 class TestChannelMatching:

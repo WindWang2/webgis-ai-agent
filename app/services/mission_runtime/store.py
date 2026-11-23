@@ -261,7 +261,7 @@ class MissionStore:
                 same = (row.lease_owner or "") == owner_tok
                 if held > now and not same:
                     return None
-                new_epoch = int(row.lease_epoch or 0) + 1
+                new_epoch = int(row.lease_epoch or 0) + (0 if same else 1)
                 updated = db.execute(
                     sa.update(GISMissionRow)
                     .where(
@@ -608,9 +608,10 @@ class MissionStore:
         now = self._now()
         task_map = dict(tasks or {})
         if len(task_map) > C.MAX_SWARM_TASKS:
-            # deterministic truncate by sorted key
-            keep = sorted(task_map.keys())[: C.MAX_SWARM_TASKS]
-            task_map = {k: task_map[k] for k in keep}
+            # Never silently drop tasks: an unexecuted task must not let the
+            # run report success from the remaining subset.
+            raise TransitionRejected(
+                f"TOO_MANY_SWARM_TASKS:{len(task_map)}>{C.MAX_SWARM_TASKS}")
         org_tok = str(org_id or "")
         if not org_tok:
             raise TransitionRejected("ORG_REQUIRED")

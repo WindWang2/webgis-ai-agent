@@ -647,6 +647,11 @@ class PiRpcClient:
         finally:
             if self._process is proc:
                 self._process = None
+            # P2：reader 的 finally 代际守卫在 _process 清空后必然 return，跳过
+            # _fail_all_pending —— stop() 自身必须无条件收口在飞 RPC，否则调用方
+            # 只能等满 PI_RPC_TIMEOUT（默认 300s）。
+            if getattr(self, "_pending_requests", None) is not None:
+                self._fail_all_pending("Pi process stopped")
 
         if self._reader_task:
             self._reader_task.cancel()
@@ -784,7 +789,7 @@ class PiRpcClient:
                     # AgentSessionEvent: has "type" but no "id"
                     elif "type" in obj and "id" not in obj:
                         self._enqueue_event(obj)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     logger.warning(f"[PiRpcClient] Invalid JSON: {line[:200]}")
         except asyncio.CancelledError:
             raise
