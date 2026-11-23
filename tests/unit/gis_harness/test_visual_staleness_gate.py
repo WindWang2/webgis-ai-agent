@@ -164,20 +164,27 @@ def test_provider_snapshot_without_session_id_is_refused():
 # ── observed_revision 流动 ────────────────────────────────────────────────
 
 def test_split_fresh_findings_treats_missing_revision_as_stale():
-    """review P2-16：缺 observed_revision（0）的旧证据不得混过新鲜度门。
+    """review P2-16：会话已变更（current > 0）时，缺 observed_revision 的旧证据
+    不得混过新鲜度门。
 
-    ``_cartographic_mutation_revision`` 缺失（current=0）时，0==0 会让缺
-    观测号的旧证据被判为 fresh —— 违背「缺省按过期处理」。
+    current == 0 表示会话从未变更，此时缺省观测号与当前态一致，仍须视为
+    fresh —— 否则所有不带 observed_revision 的观测证据都会永久失效，视觉
+    修复面直接不可用（既有契约，见
+    test_plan_unhealable_category_is_skipped_honestly）。
     """
     from app.services.gis_harness.visual_observation.stored_findings import (
         split_fresh_findings,
     )
 
     legacy = [{"code": "visual_overlap"}]  # 无 observed_revision 键
+    # 无变更会话：缺省观测号视为新鲜（保持修复面可用）
     fresh, stale = split_fresh_findings(legacy, 0)
+    assert len(fresh) == 1 and stale == 0
+    # 会话已变更：无法证明新鲜 → fail-closed 判过期
+    fresh, stale = split_fresh_findings(legacy, 3)
     assert fresh == [] and stale == 1
     fresh, stale = split_fresh_findings(
-        [{"code": "visual_overlap", "observed_revision": 0}], 0)
+        [{"code": "visual_overlap", "observed_revision": 0}], 3)
     assert fresh == [] and stale == 1
     stamped = [{"code": "visual_overlap", "observed_revision": 7}]
     fresh, stale = split_fresh_findings(stamped, 7)
