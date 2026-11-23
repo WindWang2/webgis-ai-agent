@@ -638,7 +638,7 @@ export function ExplorationPanel({ sessionId, ownerToken = null }: PanelProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {tableRows.slice(0, 50).map((row, i) => (
+                    {tableRows.map((row, i) => (
                       <tr key={i} className="border-b last:border-0">
                         {tableFields.map((f) => (
                           <td key={f} className="px-2 py-1 truncate max-w-40">{String(row[f] ?? '')}</td>

@@ -217,6 +217,7 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
                 f"/输入{rr.get('input_completeness')}"
                 + (f" —— {rr.get('blocked_message')}" if rr.get("blocked_code") else "")
             )
+        rule_lines_shown = rule_lines[:16]
         comp = run.get("completeness") or {}
         return {
             "success": True,
@@ -229,12 +230,17 @@ def register_topology_workbench_tools(registry: ToolRegistry) -> None:
             "budget_truncated": comp.get("budget_truncated"),
             "failure": {"code": comp.get("failure_code"), "message": comp.get("failure_message")}
             if comp.get("failure_code") else None,
-            "rule_results": rule_lines[:16],
+            "rule_results": rule_lines_shown,
+            "rule_results_total": len(rule_lines),
+            "rule_results_truncated": len(rule_lines) > len(rule_lines_shown),
             "message": (
                 f"运行 {run['status']}：{run['findings_total']} 条问题"
                 f"（{run['findings_open']} 条待处理）"
                 + ("；注意存在未知/跳过范围，不能按全部通过解读"
                    if comp.get("all_skipped_or_unknown") else "")
+                + (f"；规则结论仅展示前 {len(rule_lines_shown)}/{len(rule_lines)} 条"
+                   "（见 rule_results_total/rule_results_truncated）"
+                   if len(rule_lines) > len(rule_lines_shown) else "")
             ),
         }
 

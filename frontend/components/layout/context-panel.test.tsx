@@ -71,6 +71,8 @@ vi.mock('@/components/sidebar/data-sources-tab', () => ({ DataSourcesTab: () => 
 vi.mock('@/components/sidebar/map-studio-tab', () => ({ MapStudioTab: () => <div data-testid="tab-map-studio" /> }));
 vi.mock('@/components/sidebar/tasks-tab', () => ({ TasksTab: () => <div data-testid="tab-tasks" /> }));
 vi.mock('@/components/sidebar/results-tab', () => ({ ResultsTab: () => <div data-testid="tab-results" /> }));
+vi.mock('@/components/sidebar/market/market-tab', () => ({ MarketTab: () => <div data-testid="tab-market" /> }));
+vi.mock('@/components/sidebar/modelops/modelops-tab', () => ({ ModelOpsTab: () => <div data-testid="tab-modelops" /> }));
 
 // Import AFTER the mocks are registered.
 import { ContextPanel } from './context-panel';
@@ -147,6 +149,21 @@ describe('ContextPanel', () => {
     expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'rail-tab-export_layout');
     expect(screen.getByText('制图工坊')).toBeInTheDocument();
     expect(screen.getByTestId('tab-map-studio')).toBeInTheDocument();
+  });
+
+  it('renders PANEL_META icon + title for market/modelops (no chat fallback)', () => {
+    store.activeLeftTab = 'market';
+    const { container, rerender } = render(<ContextPanel {...baseProps} />);
+    expect(screen.getByText('市场')).toBeInTheDocument();
+    expect(screen.getByText('扩展市场 · 包浏览 · 下载')).toBeInTheDocument();
+    expect(container.querySelector('svg.lucide-store')).not.toBeNull();
+    expect(container.querySelector('svg.lucide-message-circle')).toBeNull();
+
+    store.activeLeftTab = 'modelops';
+    rerender(<ContextPanel {...baseProps} />);
+    expect(screen.getByText('ModelOps')).toBeInTheDocument();
+    expect(container.querySelector('svg.lucide-cpu')).not.toBeNull();
+    expect(container.querySelector('svg.lucide-message-circle')).toBeNull();
   });
 
   it('close button collapses the panel', () => {

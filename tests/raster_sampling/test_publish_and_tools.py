@@ -148,3 +148,36 @@ def test_build_display_curves_part_order_is_natural():
     assert [p["part"] for p in pts] == ["part-2", "part-10"]
     assert pts[0]["gap"] is False
     assert pts[1]["gap"] is True  # part 切换断口
+
+
+def test_execute_timeout_without_registered_job_reports_not_submitted(
+        monkeypatch):
+    """P2：wait_for 超时若取消发生在 job 登记前（尚无 job 行），不得谎报
+    submitted/running 并指引轮询一个不存在的 job。"""
+    import asyncio
+
+    from app.services.raster_sampling import service as rs_service
+    from app.tools import raster_sampling_tools as mod
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    mod.register_raster_sampling_tools(registry)
+    fn = registry.get("webgis_raster_sampling_execute")
+    assert fn is not None
+
+    monkeypatch.setattr(mod, "_sid", lambda _provided: "sess-1")
+
+    async def _stuck(**_kwargs):
+        await asyncio.sleep(30)  # 取消早于 submit_async_job
+        return {"job_id": "never"}
+
+    async def _status(**_kwargs):
+        return {"success": True, "plan_id": "plan-1", "job": None}
+
+    monkeypatch.setattr(rs_service, "execute", _stuck)
+    monkeypatch.setattr(rs_service, "status", _status)
+
+    out = asyncio.run(fn(plan_id="plan-1", wait_max_s=1, session_id="sess-1"))
+    assert out["success"] is False
+    assert out["code"] == "EXECUTION_NOT_SUBMITTED"
+    assert "next" not in out

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { MapSpec } from '@/lib/mapspec-compiler/types.generated';
 import {
   APPLY_ACK_SCHEMA_VERSION,
+  MAX_ACK_COMPONENTS,
   MAX_ACK_LAYERS,
   buildRenderApplyAck,
   isStaleApplyAck,
@@ -231,6 +232,25 @@ describe('buildRenderApplyAck', () => {
     });
     expect(ack.layers).toHaveLength(MAX_ACK_LAYERS);
     expect(ack.partial_apply.discarded).toBe(3);
+  });
+
+  it('component truncation downgrades transaction status to partial', () => {
+    const comps = Array.from({ length: MAX_ACK_COMPONENTS + 2 }, (_, i) => ({
+      id: `c${i}`,
+      type: 'title' as const,
+    }));
+    const ack = buildRenderApplyAck({
+      spec: spec({ layout: { components: comps } }),
+      applied: applied(['l1', 'l2']),
+      revision: 5,
+      mapIdle: true,
+      mountedComponentIds: new Set(comps.map((c) => c.id)),
+    });
+    expect(ack.components).toHaveLength(MAX_ACK_COMPONENTS);
+    expect(ack.components.every((e) => e.status === 'applied')).toBe(true);
+    expect(ack.partial_apply.discarded).toBe(2);
+    // 组件被预算截断 ≠ 全量落地：消费方不得看到 applied。
+    expect(ack.status).toBe('partial');
   });
 
   it('reconcile error downgrades transaction (never claims fully applied)', () => {

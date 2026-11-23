@@ -31,6 +31,8 @@ import {
   LayoutDashboard,
   Activity,
   Radar,
+  Store,
+  Cpu,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
@@ -156,6 +158,9 @@ const PANEL_META: Record<string, PanelMeta> = {
   ops: { icon: Activity },
   // Agent 运行控制台（append-only 注册行）。
   cockpit: { icon: Radar },
+  // V9（ADR-0145）：智能资产面板（append-only 注册行）。
+  market: { icon: Store },
+  modelops: { icon: Cpu },
 };
 
 export function ContextPanel({

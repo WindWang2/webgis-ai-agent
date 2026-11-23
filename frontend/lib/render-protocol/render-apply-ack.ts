@@ -373,7 +373,8 @@ export function buildRenderApplyAck({
   const status: ApplyAckStatus =
     failedCount > 0
       ? (appliedCount > 0 ? 'partial' : 'failed')
-      : (pendingCount > 0 || skippedCount > 0 || discarded > 0 || sourceStaleCount > 0
+      : (pendingCount > 0 || skippedCount > 0 || discarded > 0
+          || discardedComponents > 0 || sourceStaleCount > 0
           ? 'partial'
           : 'applied');
   // reconcile 报错 = apply 管线本身异常（applied spec 可能是旧一轮的

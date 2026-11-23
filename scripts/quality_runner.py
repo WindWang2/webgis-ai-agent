@@ -393,7 +393,7 @@ def main() -> int:
 
     report = {
         "lane": args.lane,
-        "lanes_run": lanes,
+        "lanes_run": [r["lane"] for r in lane_reports],
         "all_ok": all(r["ok"] for r in lane_reports),
         "total_s": total,
         "lanes": lane_reports,

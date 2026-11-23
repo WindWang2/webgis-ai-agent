@@ -13,6 +13,7 @@ lane 静默失去测试映射。本测试通过 monkeypatch subprocess.run 伪�
 from __future__ import annotations
 
 import importlib.util
+import json
 import types
 from pathlib import Path
 
@@ -95,3 +96,30 @@ def test_unmapped_paths_yield_base_only(
     _patch_git(monkeypatch, ["docs/x.md", "frontend/app/page.tsx"])
     targets = qr._changed_py_targets()
     assert targets == ["tests/quality/", "tests/unit/tools/"]
+
+
+def test_full_local_failure_report_lists_only_executed_lanes(
+    qr: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """full-local 首车道失败后 break：lanes_run 不得再列未执行的车道。"""
+    ran: list[str] = []
+
+    def fake_run_lane(lane: str, retry_failed: bool) -> dict:
+        ran.append(lane)
+        ok = lane != qr.FULL_ORDER[0]
+        return {"lane": lane, "title": lane, "ok": ok,
+                "flake_recovered": 0,
+                "steps": [{"command": "pytest", "exit": 0 if ok else 1,
+                           "elapsed_s": 0.0, "tail": ""}]}
+
+    monkeypatch.setattr(qr, "_run_lane", fake_run_lane)
+    monkeypatch.setattr(qr, "REPORT_DIR", tmp_path)
+    monkeypatch.setattr(qr.sys, "argv", ["quality_runner.py", "full-local"])
+    monkeypatch.setenv("QUALITY_ORDER_SEED", "0")
+
+    assert qr.main() == 1
+    payload = json.loads(
+        (tmp_path / "runner-report.json").read_text(encoding="utf-8"))
+    assert payload["lanes_run"] == ran
+    assert ran == [qr.FULL_ORDER[0]], "首车道失败后应停止执行（行为不变）"
+    assert payload["lanes_run"] != qr.FULL_ORDER

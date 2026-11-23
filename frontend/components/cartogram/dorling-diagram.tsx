@@ -34,6 +34,8 @@ interface ViewState {
 const IDENTITY: ViewState = { scale: 1, tx: 0, ty: 0 };
 const MIN_SCALE = 1;
 const MAX_SCALE = 14;
+/** 指针移动超过该距离（CSS px）即视为拖拽平移，不再当作点击。 */
+const CLICK_DRAG_THRESHOLD = 4;
 
 export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: Props) {
   const t = useT('cartogram.diagram');
@@ -44,6 +46,7 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
   const [hovered, setHovered] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
+  const dragMoved = useRef(false);
 
   useEffect(() => {
     setView(IDENTITY);
@@ -87,6 +90,7 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
   const onPointerDown = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0) return;
     drag.current = { x: event.clientX, y: event.clientY, tx: view.tx, ty: view.ty };
+    dragMoved.current = false;
     (event.target as Element).setPointerCapture?.(event.pointerId);
   }, [view.tx, view.ty]);
 
@@ -99,6 +103,9 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
     const fitScale = Math.min(rect.width / extent, rect.height / extent) || 1;
     const dx = (event.clientX - start.x) / fitScale;
     const dy = (event.clientY - start.y) / fitScale;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > CLICK_DRAG_THRESHOLD) {
+      dragMoved.current = true;
+    }
     setView((prev) => ({ scale: prev.scale, tx: start.tx + dx, ty: start.ty + dy }));
   }, [extent]);
 
@@ -124,6 +131,11 @@ export function DorlingDiagram({ layout, selectedId, onSelect, height = 420 }: P
   }, [ids, selectedId, onSelect]);
 
   const onClick = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
+    if (dragMoved.current) {
+      // 拖动平移后的 click 不是选择：忽略本次并复位。
+      dragMoved.current = false;
+      return;
+    }
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();

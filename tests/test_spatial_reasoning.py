@@ -312,3 +312,25 @@ def test_error_result_structure():
     assert "test error" in result["uncertainty"]
     assert isinstance(result["recommendations"], list)
     assert len(result["recommendations"]) > 0
+
+
+# ─── exception-path failure shape (#529 regression) ──────────────
+
+
+@pytest.mark.asyncio
+async def test_spatial_reasoning_exception_path_is_classified_error():
+    """Non-dict LLM output (e.g. a JSON array) raises ValidationError, which the
+    ValueError handler catches. That result must carry the canonical failure
+    markers, otherwise dispatch classifies the failure as success."""
+    from app.services.llm_result_formatter import is_error_dict
+    from app.tools.spatial_reasoning import spatial_reasoning
+
+    with patch(
+        "app.tools.spatial_reasoning._call_llm",
+        return_value=["not", "a", "dict"],
+    ):
+        result = await spatial_reasoning("测试查询")
+
+    assert result["success"] is False
+    assert result["code"] == "spatial_reasoning_error"
+    assert is_error_dict(result)

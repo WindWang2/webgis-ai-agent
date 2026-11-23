@@ -262,6 +262,25 @@ describe('WidgetHost 挂载与双向绑定', () => {
     expect(useHudStore.getState().copilotWidgets).toHaveLength(0);
   });
 
+  it('payload 形状不合法的卡片被跳过，不因缺字段触发 TypeError', () => {
+    render(<WidgetHost />);
+    act(() => {
+      useHudStore.getState().pushCopilotWidget({
+        widget_id: 'w-bad-hist',
+        kind: 'histogram_slider',
+        payload: { field: 'ndvi', min: 0, max: 30 },
+      });
+      useHudStore.getState().pushCopilotWidget({
+        widget_id: 'w-bad-cand',
+        kind: 'candidate_picker',
+        payload: {},
+      });
+      useHudStore.getState().pushCopilotWidget(histogramSpec());
+    });
+    expect(screen.getAllByTestId('generative-widget-histogram_slider')).toHaveLength(1);
+    expect(screen.queryByTestId('generative-widget-candidate_picker')).toBeNull();
+  });
+
   it('同 widget_id 重复挂载幂等（resume 重放），FIFO 上限 4', () => {
     useHudStore.getState().pushCopilotWidget(histogramSpec());
     useHudStore.getState().pushCopilotWidget(histogramSpec());

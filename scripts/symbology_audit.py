@@ -57,7 +57,7 @@ FILE_ALLOWLIST: dict[str, str] = {
 # 01/02 线领地：只报告不拦截
 REPORT_ONLY = {"app/services/gis_harness/"}
 
-# 扫描两条正则：method 赋值 与 palette 字面量赋值（词边界，避免误伤普通字符串）
+# 扫描三条正则：method 赋值、palette 字面量赋值 与 k 赋值（词边界，避免误伤普通字符串）
 RE_METHOD_KW = re.compile(
     r"\b(?:method|recommended_method|default_method)\s*=\s*[\"'](quantiles|equal_interval|natural_breaks|std_dev|head_tail)[\"']"
 )
@@ -104,6 +104,9 @@ def main() -> int:
             m = RE_PALETTE_KW.search(line)
             if m:
                 hits.append(f"palette 硬编码 {m.group(1)!r}")
+            m = RE_K_ASSIGN.search(line)
+            if m:
+                hits.append(f"k 硬编码 {m.group(1)!r}")
             if not hits:
                 continue
             reason = allowlist_reason(rel)

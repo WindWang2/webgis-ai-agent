@@ -69,10 +69,22 @@ export function PreviewModal({ result, title, onClose }: PreviewModalProps) {
   // Copy full JSON payload
   const handleCopyJson = useCallback(() => {
     const rawData = JSON.stringify(result, null, 2);
-    navigator.clipboard.writeText(rawData).then(() => {
-      setJsonCopied(true);
-      setTimeout(() => setJsonCopied(false), 2000);
-    });
+    // 非安全上下文 / 旧浏览器没有 navigator.clipboard（同步 TypeError），
+    // 权限被拒时 promise reject —— 两条路径都要接管，否则产生 unhandled rejection。
+    let task: Promise<void>;
+    try {
+      task = navigator.clipboard.writeText(rawData);
+    } catch {
+      return; // 剪贴板 API 不可用：静默降级
+    }
+    task
+      .then(() => {
+        setJsonCopied(true);
+        setTimeout(() => setJsonCopied(false), 2000);
+      })
+      .catch(() => {
+        // 权限被拒 / 文档失焦：剪贴板不可用，静默降级
+      });
   }, [result]);
 
   // Tab keyboard navigation (WAI-APG tablist)

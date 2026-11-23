@@ -17,8 +17,11 @@
 
 import {
   CategoryBinding,
+  PointParams,
   SymbolAssetBinding,
   SymbolAssetDocument,
+  SymbolAssetParamError,
+  TextureParams,
   normalizePointParams,
   normalizeTextureParams,
   pointImageId,
@@ -147,8 +150,14 @@ export function projectSymbolAssetLayer(
   const failures: RegistrationFailure[] = [];
   const disclosures: string[] = [];
   if (binding.kind === 'point_symbol') {
-    const params = normalizePointParams(
-      (binding.params ?? {}) as Record<string, unknown>, doc);
+    let params: PointParams;
+    try {
+      params = normalizePointParams(
+        (binding.params ?? {}) as Record<string, unknown>, doc);
+    } catch (err) {
+      if (!(err instanceof SymbolAssetParamError)) throw err;
+      return { failure: { code: err.code, message: err.message } };
+    }
     const main = ensureRegistered(map, doc, params as unknown as Record<string, unknown>, binding.content_digest);
     if ('code' in main) {
       return {
@@ -239,8 +248,14 @@ export function projectSymbolAssetLayer(
     };
   }
   // area_texture
-  const params = normalizeTextureParams(
-    (binding.params ?? {}) as Record<string, unknown>, doc);
+  let params: TextureParams;
+  try {
+    params = normalizeTextureParams(
+      (binding.params ?? {}) as Record<string, unknown>, doc);
+  } catch (err) {
+    if (!(err instanceof SymbolAssetParamError)) throw err;
+    return { failure: { code: err.code, message: err.message } };
+  }
   const main = ensureRegistered(map, doc, params as unknown as Record<string, unknown>, binding.content_digest);
   if ('code' in main) {
     return {

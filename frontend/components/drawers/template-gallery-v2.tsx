@@ -175,7 +175,14 @@ function applyLayoutTemplate(detail: TemplateDetail, hud: HudApplyState): ApplyO
   if (Object.keys(updates).length === 0) {
     return { ok: false, errorKey: 'drawers.templates.applyError.noLayoutFields', params: { name: detail.name } };
   }
-  hud.updateExportSettings?.(updates);
+  if (!hud.updateExportSettings) {
+    return {
+      ok: false,
+      errorKey: 'drawers.templates.applyError.applyFailed',
+      params: { name: detail.name, reason: 'export settings store unavailable' },
+    };
+  }
+  hud.updateExportSettings(updates);
   return { ok: true, detail };
 }
 

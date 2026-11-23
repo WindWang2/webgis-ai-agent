@@ -96,6 +96,29 @@ def _stitch_way_rings(ways: list) -> list:
                 break
         if not placed:
             rings.append(list(coords))
+            continue
+        # 桥接 way 的首尾可能分属两个已存在的链：拼到首个环后需继续与其余环
+        # 合并，否则晚到的桥接 way 会留下两个伪环（各被直线补合成闭合多边形）。
+        while ring[0] != ring[-1]:
+            merged_any = False
+            for other in rings:
+                if other is ring or other[0] == other[-1]:
+                    continue
+                if ring[-1] == other[0]:
+                    ring.extend(other[1:])
+                elif ring[-1] == other[-1]:
+                    ring.extend(reversed(other[:-1]))
+                elif ring[0] == other[-1]:
+                    ring[:0] = other[:-1]
+                elif ring[0] == other[0]:
+                    ring[:0] = list(reversed(other[1:]))
+                else:
+                    continue
+                rings.remove(other)
+                merged_any = True
+                break
+            if not merged_any:
+                break
     # 闭合（首尾不等时补上首点）
     for ring in rings:
         if ring and ring[0] != ring[-1]:

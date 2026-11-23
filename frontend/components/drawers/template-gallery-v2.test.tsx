@@ -287,6 +287,30 @@ describe('TemplateGalleryV2 apply (#465)', () => {
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
   });
 
+  it('layout apply errors instead of false success when the export settings store is unavailable', async () => {
+    const card = { ...BASEMAP_CARD, id: 'tmpl_ly_noexport', kind: 'layout', name: 'A4 无导出卡' };
+    mockTemplates.list.mockResolvedValue(page([card]));
+    mockTemplates.get.mockResolvedValue({
+      ...card,
+      payload: { paperSize: 'A4' },
+    });
+    const hud = mockHudState as unknown as { updateExportSettings?: unknown };
+    const original = hud.updateExportSettings;
+    hud.updateExportSettings = undefined;
+    const onApply = vi.fn();
+    try {
+      render(<TemplateGalleryV2 open={true} onClose={() => {}} onApply={onApply} />);
+      await waitFor(() => expect(screen.getByText('A4 无导出卡')).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: /应用$/ }));
+      await waitFor(() =>
+        expect(mockAddToast).toHaveBeenCalledWith(expect.stringContaining('A4 无导出卡'), 'error')
+      );
+      expect(onApply).not.toHaveBeenCalled();
+    } finally {
+      hud.updateExportSettings = original;
+    }
+  });
+
   it('thematic/composite apply is an explicit error — no false success', async () => {
     const card = { ...BASEMAP_CARD, id: 'tmpl_th_x', kind: 'thematic', name: '专题卡' };
     mockTemplates.list.mockResolvedValue(page([card]));

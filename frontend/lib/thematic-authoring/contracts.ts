@@ -194,6 +194,8 @@ export function sizeForValue(
   ch: { min_value: number; max_value: number; min_size: number; max_size: number; scaling: string },
 ): number | null {
   if (!Number.isFinite(value)) return null;
+  // 退化值域（全要素同值）无合法比例映射：0/0 产生 NaN，按非法输入返回 null。
+  if (ch.max_value === ch.min_value) return null;
   if (ch.scaling === 'area_sqrt') {
     const area =
       ch.min_size ** 2 +

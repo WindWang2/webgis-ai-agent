@@ -61,6 +61,17 @@ describe('DorlingDiagram', () => {
     expect(svg?.getAttribute('viewBox')).toBe('0 0 1000 1000');
   });
 
+  it('拖拽平移后的 click 不触发选择（拖动距离超过阈值）', () => {
+    const onSelect = vi.fn();
+    render(<DorlingDiagram layout={layout()} selectedId={null} onSelect={onSelect} />);
+    const svg = document.querySelector('svg') as SVGSVGElement;
+    fireEvent.pointerDown(svg, { button: 0, pointerId: 1, clientX: 500, clientY: 500 });
+    fireEvent.pointerMove(svg, { pointerId: 1, clientX: 560, clientY: 500 });
+    fireEvent.pointerUp(svg, { pointerId: 1 });
+    fireEvent.click(svg, { clientX: 560, clientY: 500 });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it('点击圆按稳定身份回调', () => {
     const onSelect = vi.fn();
     render(<DorlingDiagram layout={layout()} selectedId={null} onSelect={onSelect} />);

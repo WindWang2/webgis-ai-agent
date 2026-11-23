@@ -172,4 +172,39 @@ describe('ExplorationPanel', () => {
     expect((post![1]!.body as { title: string }).title).toBe('测试视图');
     (globalThis as unknown as { __G46_LAYERS__?: unknown[] }).__G46_LAYERS__ = [];
   });
+
+  it('结果表「加载更多」拉回的第 51+ 行可见', async () => {
+    const firstPage = Array.from({ length: 50 }, (_, i) => ({ properties: { name: `row-${i}` } }));
+    mockApi((path) => {
+      if (path.includes('/inspect')) return inspectResp;
+      if (path.includes('/views')) return { views: [] };
+      if (path.includes('/features')) {
+        const cursor = new URLSearchParams(path.split('?')[1] ?? '').get('cursor');
+        return cursor
+          ? {
+              features: [{ properties: { name: 'row-50' } }],
+              pagination: { next_cursor: null, has_more: false },
+              total_matching: 51,
+            }
+          : {
+              features: firstPage,
+              pagination: { next_cursor: 'c2', has_more: true },
+              total_matching: 51,
+            };
+      }
+      // preview 保持 pending：避免 combinedWhere 变化触发结果表重置（本测只验证分页追加）
+      return new Promise(() => {});
+    });
+    (globalThis as unknown as { __G46_LAYERS__?: unknown[] }).__G46_LAYERS__ = hudLayers;
+    bindExploration('ref:test-1', 3, 'layer-a');
+    render(<ExplorationPanel sessionId="s1" ownerToken={null} />);
+    const select = screen.getByTestId('g46-source-select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'layer-a' } });
+    const more = await screen.findByTestId('g46-table-more');
+    expect(screen.getByText('row-49')).toBeTruthy();
+    expect(screen.queryByText('row-50')).toBeNull();
+    fireEvent.click(more);
+    expect(await screen.findByText('row-50')).toBeTruthy();
+    (globalThis as unknown as { __G46_LAYERS__?: unknown[] }).__G46_LAYERS__ = [];
+  });
 });

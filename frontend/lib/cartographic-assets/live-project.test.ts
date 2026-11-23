@@ -240,3 +240,39 @@ describe('projectSymbolAssetLayer：类别 icon-image 表达式与注册名同�
     expect(added.has(iconImage)).toBe(true);
   });
 });
+
+describe('projectSymbolAssetLayer：参数非法 → typed failure（不逃逸异常）', () => {
+  it('点符号 params 越界 → failure（PARAM_OUT_OF_RANGE），不抛 SymbolAssetParamError', () => {
+    const { map } = fakeMap();
+    const out = projectSymbolAssetLayer(map, {
+      schema_version: 1,
+      asset_id: 'cartoasset.builtin.triangle',
+      revision: 1,
+      content_digest: tri.content_digest,
+      kind: 'point_symbol',
+      params: { size_px: 0 },
+    }, pointDocs);
+    expect('failure' in out).toBe(true);
+    if ('failure' in out) {
+      expect(out.failure.code).toBe('PARAM_OUT_OF_RANGE');
+      expect(out.failure.message).toContain('size_px');
+    }
+  });
+
+  it('面纹理 params 未知键 → failure（UNKNOWN_PARAM），不抛 SymbolAssetParamError', () => {
+    const hatch = BUILTIN_DOCUMENTS['cartoasset.builtin.hatch'];
+    const { map } = fakeMap();
+    const out = projectSymbolAssetLayer(map, {
+      schema_version: 1,
+      asset_id: 'cartoasset.builtin.hatch',
+      revision: 1,
+      content_digest: hatch.content_digest,
+      kind: 'area_texture',
+      params: { bogus: 1 },
+    }, new Map<string, SymbolAssetDocument>([[hatch.content_digest, hatch]]));
+    expect('failure' in out).toBe(true);
+    if ('failure' in out) {
+      expect(out.failure.code).toBe('UNKNOWN_PARAM');
+    }
+  });
+});

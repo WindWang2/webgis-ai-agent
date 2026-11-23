@@ -365,6 +365,64 @@ async def test_tool_render_failure_marks_failed(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_tool_render_exception_marks_failed_and_removes_partial(monkeypatch, tmp_path):
+    """Tool path: generate_report raising must not leave the Report row in
+    'processing' forever nor leave a partial artifact behind."""
+    from app.tools import report as tool_mod
+    from app.tools.registry import ToolRegistry
+    from app.tools.report import register_report_tools
+
+    reg = ToolRegistry()
+    register_report_tools(reg)
+    tool_fn = reg._tools["generate_analysis_report"]
+
+    report_rows: dict[str, Report] = {}
+
+    class _FakeSyncDB:
+        def get(self, model, pk):
+            if model is Conversation:
+                return Conversation(id="sess-tool", title="t")
+            if model is Report:
+                return report_rows.get(pk)
+            return None
+
+        def query(self, model):
+            q = MagicMock()
+            q.filter.return_value.order_by.return_value.all.return_value = [_msg()]
+            return q
+
+        def add(self, row):
+            report_rows[row.id] = row
+
+        def commit(self):
+            pass
+
+    @contextmanager
+    def fake_db_session():
+        yield _FakeSyncDB()
+
+    monkeypatch.setattr(tool_mod, "db_session", fake_db_session)
+    monkeypatch.setattr(tool_mod, "REPORT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        tool_mod, "mapspec_store", MagicMock(get_mapspec=AsyncMock(return_value=None))
+    )
+
+    async def raising_render(**kwargs):
+        # 模拟写了一半 markdown 后渲染崩溃
+        with open(kwargs["output_path"], "w", encoding="utf-8") as f:
+            f.write("# partial\n")
+        raise RuntimeError("render exploded")
+
+    monkeypatch.setattr(tool_mod.spatial_report_engine, "generate_report", raising_render)
+
+    result = await tool_fn(format="markdown", session_id="sess-tool")
+    assert "error" in result
+    (report_row,) = report_rows.values()
+    assert report_row.status == "failed"
+    assert not os.path.exists(report_row.file_path)
+
+
+@pytest.mark.asyncio
 async def test_concurrent_report_generation_parallel(monkeypatch, tmp_path):
     """Two concurrent report requests must render in parallel in worker
     threads, not serialize on the event loop."""

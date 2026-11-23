@@ -60,6 +60,8 @@ export interface IndexedCommand {
   lowerTitle: string;
   /** group.lower() 预计算。 */
   lowerGroup: string;
+  /** keywords.lower() 预计算。 */
+  lowerKeywords: string;
 }
 
 /** 查询前一次性建索引（预 lowers）。 */
@@ -71,6 +73,7 @@ export function buildSearchIndex(items: { id: string; title: string; group: stri
     keywords: it.keywords ?? '',
     lowerTitle: it.title.toLowerCase(),
     lowerGroup: it.group.toLowerCase(),
+    lowerKeywords: (it.keywords ?? '').toLowerCase(),
   }));
 }
 
@@ -96,7 +99,7 @@ export function searchIndexed(index: IndexedCommand[], query: string): ScoredHit
       hits.push({ id: it.id, score: onTitle.score + 40, indices: onTitle.indices });
       continue;
     }
-    const onKeywords = it.keywords ? fuzzyMatch(q, it.keywords.toLowerCase()) : null;
+    const onKeywords = it.keywords ? fuzzyMatch(q, it.lowerKeywords) : null;
     if (onKeywords) {
       hits.push({ id: it.id, score: onKeywords.score + 20 });
       continue;

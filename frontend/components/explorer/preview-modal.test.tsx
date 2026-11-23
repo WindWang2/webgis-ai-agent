@@ -100,6 +100,37 @@ describe('PreviewModal', () => {
     expect(await screen.findByText('已复制')).toBeInTheDocument();
   });
 
+  it('degrades gracefully when clipboard API is unavailable (non-secure context)', () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      writable: true,
+      configurable: true,
+    });
+
+    render(<PreviewModal result={mockQueryResult} onClose={vi.fn()} />);
+    const copyBtn = screen.getByRole('button', { name: '复制原始 JSON 数据' });
+
+    expect(() => fireEvent.click(copyBtn)).not.toThrow();
+    expect(screen.queryByText('已复制')).not.toBeInTheDocument();
+  });
+
+  it('does not surface an unhandled rejection when clipboard write is denied', async () => {
+    const writeTextSpy = vi.fn().mockRejectedValue(new DOMException('denied', 'NotAllowedError'));
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeTextSpy },
+      writable: true,
+      configurable: true,
+    });
+
+    render(<PreviewModal result={mockQueryResult} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '复制原始 JSON 数据' }));
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(writeTextSpy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('已复制')).not.toBeInTheDocument();
+  });
+
   it('calls onClose when close icon button is clicked or Escape is pressed', async () => {
     const user = userEvent.setup();
     const handleClose = vi.fn();
