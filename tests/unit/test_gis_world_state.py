@@ -414,6 +414,22 @@ async def test_user_wins_guard_blocks_agent_remove_layer():
 
 
 @pytest.mark.asyncio
+async def test_world_state_tolerates_non_dict_current_view():
+    """P2: current_view 为 null/字符串时 build_world_state 不得抛 AttributeError。"""
+    from app.services.gis_world_state.state import build_world_state
+
+    sid = "gws-bad-current-view-1"
+    await session_data_manager.clear_session(sid)
+    await session_data_manager.set_map_state(sid, "mapspec", {
+        "specVersion": 3, "layers": [], "sources": {}, "layout": {"components": []},
+    })
+    for malformed in (None, "not-a-dict"):
+        await session_data_manager.set_map_state(sid, "current_view", malformed)
+        state = await build_world_state(sid)
+        assert state["viewport"]["center"] is None
+
+
+@pytest.mark.asyncio
 async def test_user_wins_patch_hint_does_not_teach_remount():
     """H02: reversal hint no longer tells the model to rebuild the layer."""
     sid = "gws-guard-hint-1"

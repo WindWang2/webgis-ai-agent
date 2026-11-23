@@ -115,15 +115,17 @@ def _cache_evict(cache_dir: str) -> None:
             (os.path.getmtime(os.path.join(cache_dir, n)), n)
             for n in os.listdir(cache_dir) if n.endswith(".svg")
         ]
+        # 并发面：其它 worker 可能在 listdir 后逐出条目 —— getsize 同处
+        # try 内，本轮逐出 best-effort 放弃，绝不让 OSError 逃逸阻断渲染。
+        sizes = {n: os.path.getsize(os.path.join(cache_dir, n)) for _, n in entries}
     except OSError:
         return
     if len(entries) <= _PAGE_CACHE_MAX_ENTRIES:
-        total = sum(os.path.getsize(os.path.join(cache_dir, n)) for _, n in entries) \
-            if entries else 0
+        total = sum(sizes.values())
         if total <= _PAGE_CACHE_MAX_BYTES:
             return
     entries.sort()  # mtime 升序：最旧先逐出
-    total = sum(os.path.getsize(os.path.join(cache_dir, n)) for _, n in entries)
+    total = sum(sizes.values())
     for mtime, name in entries:
         if len(entries) <= _PAGE_CACHE_MAX_ENTRIES and total <= _PAGE_CACHE_MAX_BYTES:
             break

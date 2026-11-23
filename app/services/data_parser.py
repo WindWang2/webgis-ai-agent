@@ -176,6 +176,25 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
         raise
 
 
+def _atomic_copy_file(src: Path, dst: Path) -> None:
+    """文件原子复制（#1634 范式）：同目录 tmp + os.replace。
+
+    非原子 copy2 在磁盘满/进程被杀时会在 dst 留下残缺文件；下游按
+    output_path 直读，会把半截结果当成完整文件服务。
+    """
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{dst.name}.", suffix=".tmp", dir=str(dst.parent),
+    )
+    os.close(fd)
+    try:
+        shutil.copy2(src, tmp_name)
+        os.replace(tmp_name, dst)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
 def _validate_shapefile_zip(file_path: Path) -> None:
     """Validate a zip archive contains a valid shapefile and is safe to process."""
     try:
@@ -580,10 +599,10 @@ def parse_raster(
     except Exception as e:
         raise ParseError(f"栅格文件读取失败: {e}")
 
-    # 复制原始文件到上传目录（避免同名 SameFileError）
+    # 复制原始文件到上传目录（避免同名 SameFileError；原子发布，见 #1634）
     output_path = upload_dir / "original.tif"
     if file_path.resolve() != output_path.resolve():
-        shutil.copy2(file_path, output_path)
+        _atomic_copy_file(file_path, output_path)
 
     return {
         "file_type": "raster",

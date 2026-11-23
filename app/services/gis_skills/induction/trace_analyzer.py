@@ -184,6 +184,35 @@ def _is_digest_only(arguments: Any) -> bool:
         "_digest_only" in arguments or "_arg_keys" in arguments)
 
 
+def _mutation_step_indexes(steps: List[InducedStep],
+                           records: List[Dict[str, Any]]) -> Optional[set]:
+    """MAP_MUTATIONS 记录 → 步骤下标（同工具按出现序 join，仿 dispatch 面）。
+
+    返回 ``None`` 表示记录完全没有工具归属证据（旧形态语料），由调用方
+    沿用末步保守语义；返回空集表示有工具名但无匹配步骤（不猜，不落末步）。
+    """
+    attributed = False
+    used: set = set()
+    indexes: set = set()
+    for record in records:
+        tool = ""
+        for key in ("tool", "tool_name", "name"):
+            value = record.get(key)
+            if isinstance(value, str) and value:
+                tool = value
+                break
+        if not tool:
+            continue
+        attributed = True
+        for index, step in enumerate(steps):
+            if index in used or step.tool_name != tool:
+                continue
+            used.add(index)
+            indexes.add(index)
+            break
+    return indexes if attributed else None
+
+
 def merge_analyses(analyses: List[TraceAnalysis]) -> Tuple[TraceAnalysis,
                                                             List[str]]:
     """同构轨迹合并（ADR-0191 D2：跨轨迹参数证据池互相印证）。
@@ -320,10 +349,17 @@ def analyze_trace(
             duration_ms=float(call.get("duration_ms") or 0.0),
         ))
     if steps and (int((t.mutations or {}).get("count") or 0) > 0):
-        steps[-1] = steps[-1].model_copy(
-            update={"is_mutation": True,
-                    "evidence_kinds": steps[-1].evidence_kinds
-                    + ["map_mutation_receipt"]})
+        records = [r for r in ((t.mutations or {}).get("records") or [])
+                   if isinstance(r, dict)]
+        indexes = _mutation_step_indexes(steps, records)
+        if indexes is None:
+            # 记录无工具归属（旧形态/语料 fixture）：保守沿用末步语义。
+            indexes = {len(steps) - 1}
+        for index in indexes:
+            steps[index] = steps[index].model_copy(
+                update={"is_mutation": True,
+                        "evidence_kinds": steps[index].evidence_kinds
+                        + ["map_mutation_receipt"]})
 
     goal = (t.normalized_goal or "").strip()
     return TraceAnalysis(

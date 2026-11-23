@@ -164,6 +164,9 @@ async def preview_flow_product(session_id: str, config: FlowProductConfig) -> Di
         product, edge_fc, encoding_changed = restyle_product(cached, edge_fc, node_fc, config)
         if encoding_changed:
             product.pop("edge_ref", None)
+        # 样式变体是独立产品：不得沿用分析缓存产品的 ref 覆盖写，
+        # 否则先前 preview 的 ref 会被套上新样式（envelope 与 apply 不一致）。
+        product.pop("product_ref", None)
         product = await _store_product(session_id, product, edge_fc, node_fc, config)
         cache_hit = "analysis"
     else:

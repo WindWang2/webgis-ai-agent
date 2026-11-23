@@ -707,7 +707,10 @@ class MapProductService:
 
         prev_style = getattr(previous, "mapspec_fingerprint", None)
         curr_style = current.get("mapspec_fingerprint")
-        style_changed = bool(prev_style) and bool(curr_style) and prev_style != curr_style
+        # 来源行没有 MapSpec 指纹（restore/fork/auto-record 降级行）不能
+        # 掩盖样式移动：当前侧带指纹 = 样式从缺失变为在场。反向（当前侧
+        # 缺失）仍是"未知"，不谎报变更（否则合并会把空样式侧当样式来源）。
+        style_changed = bool(curr_style) and (prev_style or "") != curr_style
 
         data_changed = prev_inputs != curr_inputs
         algorithm_changed = prev_algos != curr_algos

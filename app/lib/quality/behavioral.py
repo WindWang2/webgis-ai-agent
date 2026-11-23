@@ -26,7 +26,12 @@ import functools
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from app.lib.quality.discovery import _iter_scan_files, _rel, repo_root
+from app.lib.quality.discovery import (
+    EXCLUDED_PREFIXES,
+    _iter_scan_files,
+    _rel,
+    repo_root,
+)
 
 #: 行为证据等级（工具行 ``behavior`` 字段词表）。
 BEHAVIOR_LEVELS: Tuple[str, ...] = ("dispatch", "mention", "none")
@@ -61,6 +66,8 @@ def _behavioral_cached(root_str: str) -> Tuple[Tuple[str, Tuple[str, ...]], ...]
     hits: Dict[str, List[str]] = {}
     for path in _iter_scan_files(base):
         rel = _rel(base, path)
+        if rel.startswith(EXCLUDED_PREFIXES):
+            continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
         except (OSError, SyntaxError):

@@ -26,7 +26,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.auth import owner_token_matches
+from app.core.auth import authorize_session_write, owner_token_matches
 from app.models.db_model import Conversation, Message
 
 from app.tools._utils import async_db_session
@@ -314,11 +314,22 @@ class AsyncHistoryService(HistoryStoreProtocol):
     ) -> None:
         """Deep seam method: atomically record user query and assistant response."""
         if self.db is not None:
+            conv = await self.db.get(Conversation, session_id)
+            # Ownership guard: knowing a session_id must not grant write access
+            # (same rules as get_session / delete_session).
+            if not authorize_session_write(conv, user_id):
+                logger.warning(
+                    "Refusing commit_interaction for session %s — ownership mismatch",
+                    session_id,
+                )
+                return
             await self._commit_interaction_internal(session_id, user_content, assistant_content, metadata)
         else:
             async with async_db_session() as db:
                 svc = AsyncHistoryService(db)
-                await svc._commit_interaction_internal(session_id, user_content, assistant_content, metadata)
+                await svc.commit_interaction(
+                    session_id, user_content, assistant_content, metadata, user_id=user_id
+                )
 
     async def save_interaction(
         self,

@@ -162,7 +162,14 @@ async def record_export_lineage(
     # 3) 血缘注册（registry 内部自取 per-session lock；增值，绝不阻断）。
     from app.services.flow_product.export import verify_flow_map_spec
 
-    flow_products = verify_flow_map_spec(mapspec or {})["products"][:4]
+    try:
+        flow_products = verify_flow_map_spec(
+            mapspec if isinstance(mapspec, dict) else {}
+        )["products"][:4]
+    except Exception:  # noqa: BLE001 — 校验是增值元数据，失败不阻断导出/血缘/回执
+        logger.info("[export-lineage] flow product verify skipped session=%s",
+                    session_id, exc_info=True)
+        flow_products = []
     metadata: Dict[str, Any] = {
         "format": fmt,
         "vector": bool(vector),

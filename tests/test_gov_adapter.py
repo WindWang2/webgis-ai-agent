@@ -39,6 +39,12 @@ def test_guess_format():
     assert adapter._guess_format("http://example.com/data.xlsx") == "xlsx"
     assert adapter._guess_format("http://example.com/data.json") == "json"
     assert adapter._guess_format("http://example.com/data") == "unknown"
+    # Gov portal links commonly carry query strings/fragments or uppercase
+    # extensions; these used to be classified "unknown" and then failed parse.
+    assert adapter._guess_format("http://example.com/data.csv?download=1") == "csv"
+    assert adapter._guess_format("http://example.com/data.XLSX?token=abc#frag") == "xlsx"
+    assert adapter._guess_format("http://example.com/data.Xls") == "xls"
+    assert adapter._guess_format("http://example.com/data.JSON?x=1") == "json"
 
 
 def test_detect_encoding_utf8():

@@ -308,13 +308,20 @@ class GovDataAdapter(BaseDataAdapter):
 
     @staticmethod
     def _guess_format(url: str) -> str:
-        if url.endswith(".csv"):
+        # Gov portal links routinely append query strings (?download=1) or
+        # serve mixed-case extensions. Match the URL path only and fold case,
+        # otherwise these links were reported as "unknown" → content_type
+        # application/octet-stream → parse() rejected every fetched file.
+        import urllib.parse
+
+        path = urllib.parse.urlsplit(url).path.lower()
+        if path.endswith(".csv"):
             return "csv"
-        elif url.endswith(".xlsx"):
+        elif path.endswith(".xlsx"):
             return "xlsx"
-        elif url.endswith(".xls"):
+        elif path.endswith(".xls"):
             return "xls"
-        elif url.endswith(".json"):
+        elif path.endswith(".json"):
             return "json"
         return "unknown"
 

@@ -114,6 +114,19 @@ describe('FrameFetchCache（M7 防风暴）', () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
+  it('loader 拒绝后移出缓存：同 key 下次 fetch 重新取数', async () => {
+    const cache = new FrameFetchCache<string>();
+    const loader = vi.fn()
+      .mockRejectedValueOnce(new Error('transient'))
+      .mockResolvedValueOnce('ok');
+    await expect(cache.fetch('k', loader)).rejects.toThrow('transient');
+    expect(cache.size).toBe(0);
+    expect(await cache.fetch('k', loader)).toBe('ok');
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(temporalMetrics.fetches).toBe(2);
+    expect(temporalMetrics.cacheHits).toBe(0);
+  });
+
   it('LRU 上限 24（长播放内存有界）', async () => {
     const cache = new FrameFetchCache<number>();
     for (let i = 0; i < 30; i += 1) {

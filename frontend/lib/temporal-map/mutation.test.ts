@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '@/lib/api/transport';
 import { emitTemporalWindowSettled } from '@/lib/interaction/bus';
-import { commitMapSpecDocument } from '@/lib/mapspec/session-cursor';
+import { commitMapSpecDocument, setMapSpecRevision } from '@/lib/mapspec/session-cursor';
 import { commitUserTemporal } from './mutation';
 
 const session = vi.hoisted(() => ({
@@ -75,6 +75,25 @@ describe('temporal mutation interaction ownership', () => {
     expect(emitTemporalWindowSettled).toHaveBeenCalledWith(
       { current: '2021' },
       { clientMutationId: 'temporal-mutation', outcome: 'committed', mutationRevision: 3 },
+    );
+    expect(session.listeners.size).toBe(0);
+  });
+
+  it('does not commit a soft rejection returned with HTTP 200', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce({
+      success: false,
+      status: 'rejected',
+      correction_hint: 'cursor_frame 不在 frames 中',
+      mapspec: { layers: [] },
+      mutation_revision: 9,
+    });
+    const result = await commitUserTemporal({ cursor_frame: '2021' });
+    expect(result.outcome).toBe('failed');
+    expect(setMapSpecRevision).not.toHaveBeenCalled();
+    expect(commitMapSpecDocument).not.toHaveBeenCalled();
+    expect(emitTemporalWindowSettled).toHaveBeenCalledWith(
+      { current: '2021' },
+      { clientMutationId: 'temporal-mutation', outcome: 'failed', mutationRevision: undefined },
     );
     expect(session.listeners.size).toBe(0);
   });

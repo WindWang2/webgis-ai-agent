@@ -36,13 +36,18 @@ export async function isolateLayerAndCommit(layerId: string): Promise<void> {
   if (isolatedLayerId != null) await clearIsolateAndCommit();
 
   const snapshot: Record<string, boolean> = {};
-  for (const layer of layers) {
+  // 切换目标时 clearIsolateAndCommit 已恢复可见性：快照必须读最新数组，
+  // 入口引用是恢复前的旧状态（会把刚恢复的层漏出快照 → 不再被隐藏）。
+  for (const layer of useHudStore.getState().layers) {
     if (layer.id === layerId) continue;
     if (layer.visible) snapshot[layer.id] = true;
   }
   beginIsolate(layerId, snapshot);
   tagUserDisplayed(layerId, true);
   for (const id of Object.keys(snapshot)) {
+    // await 期间隔离可能已切换/退出：旧快照不得继续 toggle（否则可能把
+    // 新隔离目标本身关掉）。
+    if (useHudStore.getState().isolatedLayerId !== layerId) return;
     if (isLocked(id) || !useHudStore.getState().layers.find((layer) => layer.id === id)?.visible) continue;
     try {
       await toggleLayerAndCommit(id);

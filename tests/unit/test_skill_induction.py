@@ -95,6 +95,7 @@ def _satisfaction_block(verdict: str = "satisfied", fulfilled: int = 5,
 def _chain(steps=GOOD_STEPS, *, with_error: bool = False,
            digest_only_at: int | None = None,
            with_mutation: bool = True,
+           mutation_tool: str | None = None,
            user_goal: str | None = None) -> dict:
     goal = user_goal or "水质超标多边形提取并结合下风向人口做空间暴露度评估"
     stages: list = [
@@ -114,8 +115,11 @@ def _chain(steps=GOOD_STEPS, *, with_error: bool = False,
             else {"status": "ok", "result": f"rows={i * 7}", "latency_ms": 10 * i}
         stages.append({"stage": "TOOL_RESULTS", "tool": tool, **result})
     if with_mutation:
-        stages.append({"stage": "MAP_MUTATIONS", "op": "add_layer",
-                       "layer": "exposure_index"})
+        record = {"stage": "MAP_MUTATIONS", "op": "add_layer",
+                  "layer": "exposure_index"}
+        if mutation_tool:
+            record["tool"] = mutation_tool
+        stages.append(record)
     stages.append({"stage": "FINAL_VERDICT", "verdict": "ready"})
     return {"stages": stages, "total_records": len(stages),
             "completeness": 1.0,
@@ -126,6 +130,7 @@ def _make_trace(*, satisfaction=None, with_error: bool = False,
                 digest_only_at: int | None = None,
                 truncated: bool = False,
                 steps=GOOD_STEPS, turn_id: str = "t-induct",
+                mutation_tool: str | None = None,
                 user_goal: str | None = None) -> ReplayTrace:
     map_product: dict = {}
     if satisfaction is not False:
@@ -136,6 +141,7 @@ def _make_trace(*, satisfaction=None, with_error: bool = False,
         session_id="sess-induct-07", turn_id=turn_id,
         chain_dict=_chain(steps, with_error=with_error,
                           digest_only_at=digest_only_at,
+                          mutation_tool=mutation_tool,
                           user_goal=user_goal),
         turn_summary={"outcome": {"status": "ok"}, "work": {"artifacts": 1}},
         map_product=map_product,
@@ -266,6 +272,19 @@ class TestTraceAnalyzerGate:
             turn_id="t-strict")
         assert analyze_trace(trace).accepted is True
         assert analyze_trace(trace, satisfaction_threshold=1.0).accepted is False
+
+    def test_mutation_evidence_attached_to_actual_step(self):
+        # 中段 mutation 调用：证据必须挂到该步，而非末尾 export 步。
+        steps = GOOD_STEPS[:3] + [
+            ("apply_mutation", {"layer": "exposure_index"}),
+        ] + GOOD_STEPS[4:]
+        analysis = analyze_trace(_make_trace(
+            steps=steps, turn_id="t-mut-mid",
+            mutation_tool="apply_mutation"))
+        mutation_steps = [s for s in analysis.steps if s.is_mutation]
+        assert [s.seq for s in mutation_steps] == [4]
+        assert "map_mutation_receipt" in mutation_steps[0].evidence_kinds
+        assert "map_mutation_receipt" not in analysis.steps[-1].evidence_kinds
 
 
 # ── 参数泛化 ─────────────────────────────────────────────────────────────

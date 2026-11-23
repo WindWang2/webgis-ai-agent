@@ -91,6 +91,49 @@ describe('layer-ops · isolate', () => {
     await isolateLayerAndCommit('ghost');
     expect(useHudStore.getState().isolatedLayerId).toBeNull();
   });
+
+  it('切换隔离目标：被恢复的层重新进入新快照并被隐藏', async () => {
+    seed([mkLayer('a'), mkLayer('b'), mkLayer('c')]);
+    await isolateLayerAndCommit('a');
+    expect(useHudStore.getState().layers.find((l) => l.id === 'c')?.visible).toBe(false);
+
+    await isolateLayerAndCommit('b');
+    const s = useHudStore.getState();
+    expect(s.isolatedLayerId).toBe('b');
+    expect(s.isolatedFrom).toEqual({ a: true, c: true });
+    expect(s.layers.find((l) => l.id === 'a')?.visible).toBe(false);
+    expect(s.layers.find((l) => l.id === 'b')?.visible).toBe(true);
+    expect(s.layers.find((l) => l.id === 'c')?.visible).toBe(false);
+  });
+
+  it('切换隔离目标时，旧隔离未完成的隐藏循环不得关掉新目标', async () => {
+    seed([mkLayer('a'), mkLayer('x'), mkLayer('b'), mkLayer('c')]);
+    let releaseX!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseX = resolve; });
+    // 只卡住第一次 isolate 对 x 的隐藏（模拟慢 CAS）。
+    vi.mocked(toggleLayerAndCommit).mockImplementationOnce(async (id: string) => {
+      useHudStore.getState().toggleLayer(id);
+      await gate;
+    });
+
+    const first = isolateLayerAndCommit('a');
+    expect(useHudStore.getState().layers.find((l) => l.id === 'x')?.visible).toBe(false);
+
+    await clearIsolateAndCommit();
+    await isolateLayerAndCommit('b');
+    expect(useHudStore.getState().isolatedLayerId).toBe('b');
+    expect(useHudStore.getState().layers.find((l) => l.id === 'b')?.visible).toBe(true);
+
+    releaseX();
+    await first;
+
+    const s = useHudStore.getState();
+    expect(s.isolatedLayerId).toBe('b');
+    expect(s.layers.find((l) => l.id === 'b')?.visible).toBe(true);
+    expect(s.layers.find((l) => l.id === 'a')?.visible).toBe(false);
+    expect(s.layers.find((l) => l.id === 'x')?.visible).toBe(false);
+    expect(s.layers.find((l) => l.id === 'c')?.visible).toBe(false);
+  });
 });
 
 describe('layer-ops · batch', () => {

@@ -206,6 +206,27 @@ async def test_yearbook_ingest_links_adcode(stats_env):
     assert {r["township"] for r in jt["rows"]} == {"云合镇", "又新镇"}
 
 
+def test_yearbook_merged_header_keeps_column_alignment():
+    """主表头为空的合并单元格列不得被踢出 cols，否则其后数据列整体前移。
+
+    双行表头中第 3 列主表头为空、子表头「乙指标」无 '#' 前缀。旧实现跳过
+    该列后，数据 [1, 2, 3] 错位成 甲指标=1、丙指标=2，真正的丙指标值 3 丢失。
+    """
+    from app.services.local_yearbook import _merged_headers, _sheet_rows
+
+    raw = pd.DataFrame([
+        ["名称", "甲指标", None, "丙指标"],
+        [None, None, "乙指标", None],
+        ["四川省某镇", 1, 2, 3],
+    ])
+    assert len(_merged_headers(raw, 0)) == 3  # 每列占位，不因空主表头被剔除
+    rows = _sheet_rows(raw, 2024, "", None)
+    ind = json.loads(rows[0][7])
+    assert ind["甲指标"] == 1
+    assert ind["乙指标"] == 2
+    assert ind["丙指标"] == 3  # 旧实现为 2（整体前移）
+
+
 @pytest.mark.asyncio
 async def test_county_panel_roundtrip(stats_env):
     _, panel, _ = _ingest_all()

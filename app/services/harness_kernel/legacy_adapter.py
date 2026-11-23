@@ -185,7 +185,7 @@ async def project_orchestrator_plan(
             # review R4：越界赋值绕过 max_length 会在下次 load 时整信封作废
             # （validate 失败 → load None → 静默新建空信封）—— 构造期截断。
             envelope.steps = steps[:MAX_STEPS]
-            for st in steps:
+            for st in envelope.steps:
                 events.append(_step_event(envelope, st))
         hk_metrics.record("host_parity", host="chatengine")
         if lock is not None and lock.lost:

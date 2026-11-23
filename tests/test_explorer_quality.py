@@ -102,3 +102,19 @@ def test_thematic_score_matches_chinese_bigrams_and_normalizes_metadata():
     assert relevant > unrelated
     assert engine.calc_thematic_score("SCHOOLS", "", dataset_tags=["Schools"]) > 0
     assert engine.calc_thematic_score("the and", "the and", dataset_tags=["the", "and"]) == 0
+
+
+def test_precision_score_accepts_zero_coordinates():
+    """A coordinate of exactly 0.0 (equator / prime meridian) is valid and must
+    not be treated as missing by the truthiness check."""
+    engine = QualityEngine()
+    assert engine.calc_precision_score([{"lat": 0.0, "lon": 0.0}]) == 1.0
+    assert engine.calc_precision_score([{"lat": 0.0, "lon": 116.4}]) == 1.0
+    score = engine.calc_precision_score(
+        [
+            {"lat": 0.0, "lon": 0.0},
+            {"lat": 39.9, "lon": 116.4},
+            {"lat": None, "lon": 116.4},
+        ]
+    )
+    assert score == 0.6667

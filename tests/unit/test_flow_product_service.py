@@ -96,7 +96,8 @@ async def test_production_cache_hit_style_reuse_and_source_invalidation():
     assert restyled["cache_hit"] == "analysis"
     assert restyled["aggregation_reused"]
     assert restyled["edge_ref"] == first["edge_ref"]
-    assert restyled["product_ref"] == first["product_ref"]
+    # 仅样式不同也是独立产品：不得复用并覆盖先前 preview 的 product_ref
+    assert restyled["product_ref"] != first["product_ref"]
 
     filtered = await preview(sid, _config(top_n=1))
     assert filtered["cache_hit"] == "miss"
@@ -108,6 +109,36 @@ async def test_production_cache_hit_style_reuse_and_source_invalidation():
     assert stale["source_revision"] == 2
     with pytest.raises(FlowServiceError, match="changed"):
         await query_flow_product(sid, first["product_ref"], kind="product")
+    await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_restyled_preview_does_not_overwrite_prior_product():
+    sid, _ = await _session_with_source()
+    first = await preview(sid, _config())
+    restyled = await preview(sid, _config(width_max_px=12, palette=["#000000", "#ffffff"]))
+    assert restyled["cache_hit"] == "analysis"
+    assert restyled["product_ref"] != first["product_ref"]
+
+    # 分析缓存复用不得改写先前 preview 的产品载荷
+    stored_first = await session_data_manager.get(sid, first["product_ref"])
+    assert stored_first["config"]["width_max_px"] == 8.0
+    assert stored_first["mapspec"] == first["mapspec_fragment"]
+    stored_restyled = await session_data_manager.get(sid, restyled["product_ref"])
+    assert stored_restyled["config"]["width_max_px"] == 12.0
+
+    # apply 先前的 ref 必须套用先前 envelope 的样式，而非后一次 preview 的样式
+    applied = await apply_flow_product_preview(
+        sid, first["product_ref"], expected_revision=first["mapspec_revision"],
+        mutation_id="flow-service-restyle-apply-first",
+    )
+    assert applied["success"], applied.get("error_msg")
+    edge_layer = next(
+        layer for layer in applied["mapspec"]["layers"]
+        if layer["id"].endswith("-edges")
+    )
+    assert edge_layer["paint"]["width"]["stops"][1][1] == 8.0
+    assert edge_layer["flow"]["product_ref"] == first["product_ref"]
     await session_data_manager.clear_session(sid)
 
 

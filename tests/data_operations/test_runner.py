@@ -9,6 +9,7 @@ import asyncio
 
 
 from app.services.data_operations.runner import (
+    find_active_jobs,
     run_async_job,
     submit_async_job,
 )
@@ -211,3 +212,27 @@ async def test_orphan_pending_never_claimed(ops_env):
 
     assert await _sweep() >= 1
     assert _job_row(ops_env, job_id)["status"] == "failed"
+
+
+async def test_find_active_jobs_not_truncated_before_parameter_filter(ops_env):
+    """P2：活跃 job 超过 20 个时，参数匹配的目标行不能被 limit(20) 截掉。
+
+    恢复判据依赖 find_active_jobs 找到目标 job；若先截断再在 Python 侧
+    过滤参数，旧的目标行会被新 job 挤出窗口，误判「无活跃 job」导致重复
+    提交/并发执行。
+    """
+    task_type = "g23_scan_test"
+    target_id, _, _ = submit_async_job(
+        task_type=task_type, display_name="target",
+        params={"batch_id": "target-batch"}, idempotency_key="scan-target",
+        session_id="sess-scan")
+    for i in range(25):
+        submit_async_job(
+            task_type=task_type, display_name=f"other-{i}",
+            params={"batch_id": f"other-{i}"},
+            idempotency_key=f"scan-other-{i}", session_id="sess-scan")
+
+    hits = find_active_jobs(
+        task_type=task_type, session_id="sess-scan",
+        parameter_match={"batch_id": "target-batch"})
+    assert hits == [(target_id, "pending")]

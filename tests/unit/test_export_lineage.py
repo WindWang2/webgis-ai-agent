@@ -320,6 +320,62 @@ async def test_record_lineage_artifact_failure_receipt_still_written(
 
 
 @pytest.mark.asyncio
+async def test_record_lineage_flow_verify_raises_still_records(
+    clean_session, _own_ok, monkeypatch
+):
+    """flow 校验抛错 = 增值元数据失败 → 血缘/回执仍落（不穿透 500）。"""
+    await ensure_session_plan_slot(clean_session)
+    plan = await load_session_plan(clean_session)
+    if not isinstance(plan.gis_chapter, dict):
+        plan.gis_chapter = {}
+    from app.services.session_plan import save_session_plan
+
+    await save_session_plan(plan)
+
+    def _boom(*a, **kw):
+        raise RuntimeError("flow verify down")
+
+    monkeypatch.setattr("app.services.flow_product.export.verify_flow_map_spec", _boom)
+    filename = f"map_export_flow_{uuid.uuid4().hex[:12]}.png"
+    out = await record_export_lineage(
+        clean_session, filename=filename, ext="png",
+        user_id="u1", db=object(),
+    )
+    assert out is not None and out["artifact_recorded"] is True
+    assert out["receipt_recorded"] is True
+    rec = await get_artifact(clean_session, export_ref(filename))
+    assert "flow_products" not in rec.metadata
+
+
+@pytest.mark.asyncio
+async def test_record_lineage_non_dict_mapspec_still_records(
+    clean_session, _own_ok, monkeypatch
+):
+    """mapspec 非 dict → flow 校验不炸，血缘/回执仍落。"""
+    await ensure_session_plan_slot(clean_session)
+    plan = await load_session_plan(clean_session)
+    if not isinstance(plan.gis_chapter, dict):
+        plan.gis_chapter = {}
+    from app.services.session_plan import save_session_plan
+
+    await save_session_plan(plan)
+
+    async def _non_dict(session_id):
+        return ["not", "a", "dict"]
+
+    monkeypatch.setattr(
+        "app.services.mapspec_store.mapspec_store.get_mapspec", _non_dict
+    )
+    filename = f"map_export_flow_{uuid.uuid4().hex[:12]}.png"
+    out = await record_export_lineage(
+        clean_session, filename=filename, ext="png",
+        user_id="u1", db=object(),
+    )
+    assert out is not None and out["artifact_recorded"] is True
+    assert out["receipt_recorded"] is True
+
+
+@pytest.mark.asyncio
 async def test_record_lineage_rejects_oversized_filename(clean_session, _own_ok):
     out = await record_export_lineage(
         clean_session, filename="x" * 201 + ".png", ext="png",

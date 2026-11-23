@@ -188,6 +188,32 @@ def test_cancel_cleans_workdir(atlas_exports, atlas_job_db, atlas_spec_store,
                 if n.startswith(f"atlas_{job_id}_")]
 
 
+@pytest.mark.parametrize("max_entries", [None, 0])
+def test_cache_evict_survives_concurrent_removal(tmp_path, monkeypatch, max_entries):
+    """R2-P2：listdir 后共享缓存条目被其它 worker 逐出 → getsize OSError 不得逃逸。"""
+    from app.services.atlas_batch import executor as ex_mod
+
+    (tmp_path / "a.svg").write_text("<svg/>", encoding="utf-8")
+    (tmp_path / "b.svg").write_text("<svg/>", encoding="utf-8")
+    if max_entries is not None:
+        # 0 强制走「条目超限」分支（第二条 getsize 汇总）
+        monkeypatch.setattr(ex_mod, "_PAGE_CACHE_MAX_ENTRIES", max_entries)
+
+    real_getsize = os.path.getsize
+    root = str(tmp_path)
+
+    def vanished_getsize(path):
+        if str(path).startswith(root):
+            raise FileNotFoundError(2, "No such file or directory", str(path))
+        return real_getsize(path)
+
+    monkeypatch.setattr(os.path, "getsize", vanished_getsize)
+    # 未修复时 FileNotFoundError 逃逸（页循环只捕 PageCompileFailure）
+    ex_mod._cache_evict(str(tmp_path))
+    # 容量守卫 best-effort：并发删除面下静默放弃本轮逐出，文件未被误删
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a.svg", "b.svg"]
+
+
 def test_busy_assembly_typed_failure_keeps_cache(atlas_exports, atlas_job_db,
                                                  atlas_spec_store, compile_counter,
                                                  monkeypatch):

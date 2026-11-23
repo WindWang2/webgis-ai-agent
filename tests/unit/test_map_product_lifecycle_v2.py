@@ -184,6 +184,40 @@ def test_merge_identical_versions_refused(lifecycle_project):
             MapProductService.merge_dimensions(s, project_id, v3, v4)
 
 
+def test_merge_accepts_style_move_from_version_without_mapspec_fingerprint(lifecycle_project):
+    """来源版本无 MapSpec 指纹（restore/fork/无 MapSpec 的 auto-record 降级
+    行）时样式移动仍须被识别：不能误报 "nothing to merge" 拒绝合并。"""
+    project_id, _ = lifecycle_project
+    manifest = {
+        "steps": [
+            {"step_id": "s1", "tool_name": "poi_query", "algorithm": "poi.query",
+             "args": {"q": "小学"}},
+            {"step_id": "s2", "tool_name": "admin_aggregate", "algorithm": "admin.aggregate",
+             "args": {"by": "district"}},
+        ],
+        "artifacts": [{"id": "a1", "content_fingerprint": "out1"}],
+    }
+    with SessionLocal() as s:
+        no_style = MapProductService.record_version(
+            s, project_id, mapspec_fingerprint=None,
+            input_dataset_fingerprints={"ds1": "fpA"}, run_manifest=manifest,
+        )
+        style_moved = MapProductService.record_version(
+            s, project_id, mapspec_fingerprint="carto-v4",
+            input_dataset_fingerprints={"ds1": "fpA"}, run_manifest=manifest,
+        )
+        diff = MapProductService.diff_versions_pairwise(
+            s, project_id, no_style.version_no, style_moved.version_no)
+        assert diff["style_changed"] is True
+        assert diff["analysis_recomputation_expected"] is False
+        merged = MapProductService.merge_dimensions(
+            s, project_id, no_style.version_no, style_moved.version_no)
+        assert merged.lineage_kind == "merge"
+        assert merged.mapspec_fingerprint == "carto-v4"
+        # 计算身份来自分析侧（无样式指纹的来源版本）
+        assert merged.parent_version_no == no_style.version_no
+
+
 # ── auto-record idempotency ─────────────────────────────────────────────────
 
 

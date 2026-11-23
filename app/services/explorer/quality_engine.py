@@ -121,10 +121,12 @@ class QualityEngine:
         """计算地理编码精度分数"""
         if not geocoded_results:
             return 0.0
-        # 有精确坐标的比例
+        # 有精确坐标的比例（0.0 是赤道/本初子午线上的合法坐标，不能按假值排除）
         has_precise = sum(
             1 for r in geocoded_results
-            if r.get("lat") and r.get("lon") and r.get("precision") != "district"
+            if r.get("lat") is not None
+            and r.get("lon") is not None
+            and r.get("precision") != "district"
         )
         return round(has_precise / len(geocoded_results), 4)
 

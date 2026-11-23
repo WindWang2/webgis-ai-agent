@@ -344,7 +344,10 @@ def publish_chunk(
                 "key": key,
                 # str() 规整 + 宽异常捕获，同 publish_artifact（#1742）。
                 "src_path": str(source_path) if source_path else "",
-                "src_identity": _source_identity(source_path) if source_path else "",
+                # 无 source 时也必须写入 _source_identity("")（=|unstatable）：
+                # 写 "" 会与 get_chunk 对空 src_path 的重算结果永不相等，
+                # 整条 chunk 缓存永久 miss。
+                "src_identity": _source_identity(source_path),
                 "created_at": time.time(),
             }, f)
     except (OSError, TypeError, ValueError):

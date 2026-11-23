@@ -273,7 +273,16 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
   // 串行链内执行：revision 在轮到本笔时才读（ST-P1-2）。
   await enqueueUserMutation(async () => {
     const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
-    if (!sessionId) return;
+    if (!sessionId) {
+      // 无绑定会话：乐观 pending 已在上方合并 —— 直接 return 会让这笔操作
+      // 永不清理 pending、不发 failed、调用方也无从回滚（地图停在未持久化
+      // 的乐观态）。清理本笔 pending 后抛出，调用方按失败语义回滚 HUD。
+      if (patch.visible !== undefined) emitPresentationEvent('visible', 'failed');
+      if (patch.opacity !== undefined) emitPresentationEvent('opacity', 'failed');
+      clearPendingPresentation(specLayerId, mutationId);
+      clearPendingPresentation(patch.layerId, mutationId);
+      throw new Error('当前没有已绑定会话，改动未保存');
+    }
     if (sessionId !== enqueuedSessionId) return; // 会话已切换：作废排队操作
 
     try {
@@ -818,6 +827,10 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
         return removeLayerFromSpec(specLayerId, enqueuedSessionId);
       },
     );
+    // 会话在 await 窗口内切换：removeLayerFromSpecOnce 的守卫把在途尝试
+    // 折叠为 'reflected'（未发 POST / 响应已作废）—— 服务端并未落账，
+    // 不得把 reflected 投影为 committed，旧会话结局也不得进新会话 ledger。
+    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
     // ADR-0227：删除结局如实入事件（reflected = 并发已删，服务端真相一致；
     // unsynced = 双 superseded 未落账 —— 绝不投影为成功）。关联真实铸造的
     // client_mutation_id（committed 那笔在服务端留有 c:<id> 存证）。

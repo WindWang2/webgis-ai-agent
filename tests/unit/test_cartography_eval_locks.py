@@ -101,6 +101,45 @@ async def test_cartography_eval_lock_held_never_evicted():
 
 
 @pytest.mark.asyncio
+async def test_harness_eviction_keeps_in_flight_session_lock():
+    """#1681: harness LRU 逐出不得摘掉在飞评测的会话 eval 锁。
+
+    旧实现 ``_cartography_eval_locks.pop(evicted_session)`` 无条件执行：
+    >128 会话且旧会话评测在飞时，锁被摘后同会话取锁重建新对象，同一会话
+    可并发持两把「互斥锁」。
+    """
+    from app.services.cartography_runtime import (
+        _get_session_harness,
+        _harnesses,
+    )
+
+    held_sid = "harness-evict-held-session"
+    limit = 2
+    saved_harnesses = dict(_harnesses)
+    saved_latest = cartography_runtime._harness
+    with patch.object(cartography_runtime, "_HARNESS_REGISTRY_LIMIT", limit):
+        _cartography_eval_locks.clear()
+        _harnesses.clear()
+        try:
+            held = _get_cartography_eval_lock(held_sid)
+            await held.acquire()  # 模拟该会话评测在飞
+            assert _get_session_harness(held_sid, create=True) is not None
+            # 压力超过 harness 上限：held_sid 成为最旧条目并被逐出 harness
+            for i in range(limit + 1):
+                assert _get_session_harness(f"harness-filler-{i}", create=True) is not None
+            assert held_sid not in _harnesses, "前置条件失败：harness 未被逐出"
+            assert held_sid in _cartography_eval_locks, "在飞会话的 eval 锁被 harness 逐出"
+            assert _cartography_eval_locks[held_sid] is held
+        finally:
+            if held.locked():
+                held.release()
+            _cartography_eval_locks.clear()
+            _harnesses.clear()
+            _harnesses.update(saved_harnesses)
+            cartography_runtime._harness = saved_latest
+
+
+@pytest.mark.asyncio
 async def test_lock_in_use_covers_waiter_handoff_window():
     """#1681: _lock_in_use 同时看 locked() 与 _waiters（release 交接窗口）。
 

@@ -38,6 +38,7 @@ from app.services.gis_memory.contract import (
     SCOPE_PROJECT,
     SCOPE_SESSION,
     SCOPE_USER,
+    STATUS_ACTIVE,
     SpatialMemoryRecord,
     kind_base_weight,
 )
@@ -331,11 +332,36 @@ class ProactiveRetriever:
         return last is None or (time.monotonic() - last) >= self._staleness_s
 
     def _load_scope(self, db, org_id: str, scope: str, scope_id: str) -> int:
-        from app.services.gis_memory.store import get_active_memories
+        from sqlalchemy import or_, select
+        from app.models.spatial_memory import GISSpatialMemory
+        from app.services.gis_memory.store import SCOPE_BUDGET, _now_naive, _to_record
 
+        # 按作用域预算（session 80 / project 400 / user 200）加载，而不是
+        # get_active_memories 的 200 行硬上限——否则预算内超出的 active 记忆
+        # 永不进索引、永不召回。与 store.get_active_memories 同谓词。
+        budget = SCOPE_BUDGET.get(scope, 200)
+        now = _now_naive()
+        records = [_to_record(row) for row in db.execute(
+            select(GISSpatialMemory).where(
+                GISSpatialMemory.org_id == org_id,
+                GISSpatialMemory.scope == scope,
+                GISSpatialMemory.scope_id == scope_id,
+                GISSpatialMemory.status == STATUS_ACTIVE,
+                or_(
+                    GISSpatialMemory.expires_at.is_(None),
+                    GISSpatialMemory.expires_at > now,
+                ),
+                GISSpatialMemory.sensitive.is_(False),
+            ).order_by(
+                GISSpatialMemory.last_validated_at.desc()
+            ).limit(budget)
+        ).scalars().all()]
         loaded = 0
-        records = get_active_memories(db, org_id, scope, scope_id, limit=200)
-        self.index.prune_scope(org_id, scope, scope_id, {record.id for record in records})
+        # 只有确认本作用域已完整加载（未触及 budget 截断）才可 prune；
+        # 截断时不在本页的旧条目可能仍在架，按页 prune 会误删活记忆。
+        if len(records) < budget:
+            self.index.prune_scope(
+                org_id, scope, scope_id, {record.id for record in records})
         for record in records:
             entry = entry_from_record(record)
             # 重温不丢命中计数：优先沿用进程内计数，否则回退上次持久化的

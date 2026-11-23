@@ -378,6 +378,35 @@ async def test_s6_legacy_host_reads_writes_same_contract(registry, sid):
     plan_store.clear_cache()
 
 
+@pytest.mark.asyncio
+async def test_s6b_legacy_projection_events_match_truncated_envelope(registry, sid):
+    """> MAX_STEPS 时只对已持久化步骤发事件（不得披露被截断的步骤）。"""
+    from app.services.chat.plan_orchestrator import Plan, PlanStep as OrchStep
+    from app.services.harness_kernel import legacy_adapter
+    from app.services.harness_kernel.models import MAX_STEPS
+
+    await legacy_adapter.begin_turn(sid, "turn-leg-trunc", message=QUERY)
+    orch_plan = Plan(
+        intent=QUERY,
+        domains=["poi"],
+        steps=[
+            OrchStep(n=i, goal=f"步骤 {i}", tool_family="poi")
+            for i in range(1, MAX_STEPS + 2)
+        ],
+    )
+    events = await legacy_adapter.project_orchestrator_plan(
+        sid, orch_plan, turn_id="turn-leg-trunc"
+    )
+    plan = await load_session_plan(sid)
+    persisted = {s.id for s in plan.steps}
+    event_ids = {e.data["step_id"] for e in events}
+    assert len(persisted) == MAX_STEPS
+    assert event_ids <= persisted
+    assert f"l{MAX_STEPS + 1}" not in event_ids
+
+    await legacy_adapter.end_turn(sid, "turn-leg-trunc", status="completed")
+
+
 # ── Scenario 7 ──────────────────────────────────────────────────────────────
 
 

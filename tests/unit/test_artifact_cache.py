@@ -132,3 +132,19 @@ def test_chunk_publish_full_scan_count_bounded_and_cap_enforced(monkeypatch):
         assert total <= 2 * 1024, "eviction still enforces the cap"
     finally:
         ac.clear_chunk_cache()
+
+
+def test_publish_chunk_without_source_roundtrips(tmp_path, monkeypatch):
+    """P2 regression: ``source_path=""`` must still yield a cache hit.
+
+    publish_chunk used to record ``src_identity=""`` while get_chunk
+    recomputes ``_source_identity("")`` (= ``"|unstatable"``), so every
+    sourceless chunk was a permanent miss.
+    """
+    from app.lib import artifact_cache as ac
+
+    monkeypatch.setattr(ac, "CHUNK_DIR", str(tmp_path / "chunks"))
+    key = "a1b2c3d4e5f60718"
+    stored = ac.publish_chunk(key, b"CHUNK_PAYLOAD", source_path="")
+    assert stored == ac._chunk_path(key)
+    assert ac.get_chunk(key) == stored

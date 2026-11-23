@@ -619,6 +619,7 @@ def query_quality_trend_sync(
                     CartographyQualityRun.ts,
                     CartographyQualityRun.lane,
                     CartographyQualityRun.scene_id,
+                    CartographyQualityRun.session_id,
                     CartographyQualityRun.app_version,
                     CartographyQualityRun.passed,
                 )
@@ -647,6 +648,7 @@ def query_quality_trend_sync(
                     "ts": row.ts,
                     "lane": row.lane,
                     "scene_id": row.scene_id,
+                    "session_id": row.session_id,
                     "app_version": row.app_version,
                     "passed": row.passed,
                 })

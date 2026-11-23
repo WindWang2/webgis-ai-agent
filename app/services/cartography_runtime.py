@@ -248,7 +248,11 @@ def _get_session_harness(
     _harness = created  # compatibility/telemetry summary: most recently active
     while len(_harnesses) > _HARNESS_REGISTRY_LIMIT:
         evicted_session, _ = _harnesses.popitem(last=False)
-        _cartography_eval_locks.pop(evicted_session, None)
+        # #1681：同 _get_cartography_eval_lock 的逐出守卫 —— 在飞评测的锁被
+        # 摘掉后同会话会重建新锁，导致同一会话并发双评。
+        evicted_lock = _cartography_eval_locks.get(evicted_session)
+        if evicted_lock is None or not _lock_in_use(evicted_lock):
+            _cartography_eval_locks.pop(evicted_session, None)
         for key in list(_cartography_eval_cache):
             if key[0] == evicted_session:
                 del _cartography_eval_cache[key]
